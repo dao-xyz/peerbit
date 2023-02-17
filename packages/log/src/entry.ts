@@ -21,6 +21,7 @@ import {
 	Ed25519PublicKey,
 	sha256Base64,
 	randomBytes,
+	sha256Base64Sync,
 } from "@dao-xyz/peerbit-crypto";
 import { verify } from "@dao-xyz/peerbit-crypto";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
@@ -287,6 +288,10 @@ export class Entry<T>
 	}
 
 	async getPayload(): Promise<Payload<T>> {
+		if (this._payload instanceof DecryptedThing) {
+			return this.payload;
+		}
+
 		await this._payload.decrypt(
 			this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined))
 		);
@@ -422,8 +427,8 @@ export class Entry<T>
 		await store.rm(this.hash);
 	}
 
-	static createGid(seed?: Uint8Array): Promise<string> {
-		return sha256Base64(seed || randomBytes(32));
+	static createGid(seed?: Uint8Array): string {
+		return sha256Base64Sync(seed || randomBytes(32));
 	}
 
 	static async create<T>(properties: {
@@ -566,7 +571,7 @@ export class Entry<T>
 				throw new Error("Unexpected behaviour, could not find gid");
 			}
 		} else {
-			gid = properties.gid || (await Entry.createGid(properties.gidSeed));
+			gid = properties.gid || Entry.createGid(properties.gidSeed);
 		}
 
 		maxChainLength += 1n; // include this

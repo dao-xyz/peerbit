@@ -46,6 +46,7 @@ describe("query", () => {
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
+			replicators: () => [],
 			store: {
 				...DefaultOptions,
 				encryption: {
@@ -63,6 +64,7 @@ describe("query", () => {
 
 		await observerStore.init(observer, await createIdentity(), {
 			role: new ObserverType(),
+			replicators: () => [],
 			store: {
 				...DefaultOptions,
 				resolveCache: () => new Cache(createStore()),
@@ -97,19 +99,17 @@ describe("query", () => {
 			})
 		);
 
-		let response: StringResult = undefined as any;
+		let responses: StringResult[] = (
+			await observerStore.query.send(
+				new StringQueryRequest({
+					queries: [],
+				}),
 
-		await observerStore.query.send(
-			new StringQueryRequest({
-				queries: [],
-			}),
-			(r) => {
-				response = r;
-			},
-			{ amount: 1 }
-		);
-		expect(response).toBeDefined();
-		expect(response).toMatchObject(
+				{ amount: 1 }
+			)
+		).map((x) => x.response);
+		expect(responses[0]).toBeDefined();
+		expect(responses[0]).toMatchObject(
 			new StringResult({
 				string: "hello world",
 				metadatas: undefined, //  because we are matching without any specific query
@@ -130,28 +130,25 @@ describe("query", () => {
 			})
 		);
 
-		let response: StringResult = undefined as any;
-
-		await observerStore.query.send(
-			new StringQueryRequest({
-				queries: [
-					new StringMatchQuery({
-						exactMatch: true,
-						value: "o w",
-					}),
-					new StringMatchQuery({
-						exactMatch: true,
-						value: "orld",
-					}),
-				],
-			}),
-			(r) => {
-				response = r;
-			},
-			{ amount: 1 }
-		);
-		expect(response).toBeDefined();
-		expect(response).toMatchObject(
+		let response: StringResult[] = (
+			await observerStore.query.send(
+				new StringQueryRequest({
+					queries: [
+						new StringMatchQuery({
+							exactMatch: true,
+							value: "o w",
+						}),
+						new StringMatchQuery({
+							exactMatch: true,
+							value: "orld",
+						}),
+					],
+				}),
+				{ amount: 1 }
+			)
+		).map((x) => x.response);
+		expect(response[0]).toBeDefined();
+		expect(response[0]).toMatchObject(
 			new StringResult({
 				string: "hello world",
 				metadatas: new RangeMetadatas({
@@ -198,6 +195,7 @@ describe("query", () => {
 		const store = new DString({});
 		await store.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
+			replicators: () => [],
 			store: {
 				...DefaultOptions,
 				encryption: {

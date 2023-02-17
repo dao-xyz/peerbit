@@ -4,9 +4,9 @@ import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { equals } from "@dao-xyz/uint8arrays";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
-	FieldBigIntCompareQuery,
-	FieldByteMatchQuery,
-	FieldStringMatchQuery,
+	IntegerCompareQuery,
+	ByteMatchQuery,
+	StringMatchQuery,
 	MemoryCompareQuery,
 	DocumentQueryRequest,
 	Query,
@@ -16,10 +16,16 @@ import {
 	ModifiedAtQuery,
 	compare,
 	Context,
-	FieldMissingQuery,
+	MissingQuery,
+	StringMatchMethod,
 } from "./query.js";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { CanRead, RPC, QueryContext, RPCOptions } from "@dao-xyz/peerbit-rpc";
+import {
+	CanRead,
+	RPC,
+	QueryContext,
+	RPCOptions,
+	RPCResponse,
+} from "@dao-xyz/peerbit-rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { Store } from "@dao-xyz/peerbit-store";
@@ -99,6 +105,12 @@ export interface IndexedValue<T> {
 	source: Uint8Array;
 }
 
+export type RemoteQueryOptions<R> = RPCOptions<R> & { sync?: boolean };
+export type QueryOptions<R> = {
+	onResponse?: (response: Results<R>) => void;
+	remote?: boolean | RemoteQueryOptions<Results<R>>;
+	local?: boolean;
+};
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
 	@field({ type: RPC })
@@ -107,10 +119,12 @@ export class DocumentIndex<T> extends ComposableProgram {
 	@field({ type: "string" })
 	indexBy: string;
 
-	_sync: (result: Results<T>) => Promise<void>;
-	_index: Map<string, IndexedValue<T>>;
 	type: AbstractType<T>;
-	_store: Store<Operation<T>>;
+
+	private _sync: (result: Results<T>) => Promise<void>;
+	private _index: Map<string, IndexedValue<T>>;
+	private _store: Store<Operation<T>>;
+	private _replicators: () => string[][] | undefined;
 
 	constructor(properties: {
 		query?: RPC<DocumentQueryRequest, Results<T>>;
@@ -119,6 +133,13 @@ export class DocumentIndex<T> extends ComposableProgram {
 		super();
 		this._query = properties.query || new RPC();
 		this.indexBy = properties.indexBy;
+	}
+
+	get index(): Map<string, IndexedValue<T>> {
+		return this._index;
+	}
+	set replicators(replicators: () => string[][] | undefined) {
+		this._replicators = replicators;
 	}
 
 	async setup(properties: {
@@ -131,32 +152,55 @@ export class DocumentIndex<T> extends ComposableProgram {
 		this._store = properties.store;
 		this.type = properties.type;
 		this._sync = properties.sync;
+
 		await this._query.setup({
 			context: this,
 			canRead: properties.canRead,
 			responseHandler: async (query, context) => {
 				const results = await this.queryHandler(query, context);
-				if (results.length > 0) {
-					return new Results({
-						results: results.map(
-							(r) =>
-								new ResultWithSource({
-									source: serialize(r.value),
-									context: r.context,
-								})
-						),
-					});
-				}
-				return undefined;
+				return new Results({
+					// Even if results might have length 0, respond, because then we now at least there are no matching results
+					results: results.map(
+						(r) =>
+							new ResultWithSource({
+								source: serialize(r.value),
+								context: r.context,
+							})
+					),
+				});
 			},
 			responseType: Results,
 			queryType: DocumentQueryRequest,
 		});
 	}
 
-	public get(key: Keyable): IndexedValue<T> | undefined {
-		const stringKey = asString(key);
-		return this._index.get(stringKey);
+	public async get(
+		key: Keyable,
+		options?: QueryOptions<T>
+	): Promise<Results<T> | undefined> {
+		let results: Results<T>[] | undefined;
+		if (key instanceof Uint8Array) {
+			results = await this.query(
+				new DocumentQueryRequest({
+					queries: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
+				})
+			);
+		} else {
+			const stringValue = asString(key);
+			results = await this.query(
+				new DocumentQueryRequest({
+					queries: [
+						new StringMatchQuery({
+							key: [this.indexBy],
+							value: stringValue,
+						}),
+					],
+				}),
+				options
+			);
+		}
+
+		return results?.[0];
 	}
 
 	get size(): number {
@@ -179,8 +223,24 @@ export class DocumentIndex<T> extends ComposableProgram {
 	queryHandler(
 		query: DocumentQueryRequest,
 		context?: QueryContext // TODO needed?
-	): Promise<IndexedValue<T>[]> {
+	): IndexedValue<T>[] {
 		const queries: Query[] = query.queries;
+		if (
+			query.queries.length === 1 &&
+			(query.queries[0] instanceof ByteMatchQuery ||
+				query.queries[0] instanceof StringMatchQuery) &&
+			query.queries[0].key.length === 1 &&
+			query.queries[0].key[0] === this.indexBy
+		) {
+			if (
+				query.queries[0] instanceof StringMatchQuery ||
+				query.queries[0] instanceof ByteMatchQuery
+			) {
+				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
+				return doc ? [doc] : [];
+			}
+		}
+
 		const results = this._queryDocuments((doc) =>
 			queries?.length > 0
 				? queries
@@ -191,25 +251,39 @@ export class DocumentIndex<T> extends ComposableProgram {
 									fv = fv[f.key[i]];
 								}
 
-								if (f instanceof FieldStringMatchQuery) {
+								if (f instanceof StringMatchQuery) {
 									if (typeof fv !== "string") {
 										return false;
 									}
-									return fv.toLowerCase().indexOf(f.value.toLowerCase()) !== -1;
-								} else if (f instanceof FieldByteMatchQuery) {
+									let compare = f.value;
+									if (!f.caseSensitive) {
+										fv = fv.toLowerCase();
+										compare = compare.toLowerCase();
+									}
+
+									if (f.method === StringMatchMethod.exact) {
+										return fv === compare;
+									}
+									if (f.method === StringMatchMethod.prefix) {
+										return fv.startsWith(compare);
+									}
+									if (f.method === StringMatchMethod.contains) {
+										return fv.includes(compare);
+									}
+								} else if (f instanceof ByteMatchQuery) {
 									if (fv instanceof Uint8Array === false) {
 										return false;
 									}
 									return equals(fv, f.value);
-								} else if (f instanceof FieldBigIntCompareQuery) {
+								} else if (f instanceof IntegerCompareQuery) {
 									const value: bigint | number = fv;
 
 									if (typeof value !== "bigint" && typeof value !== "number") {
 										return false;
 									}
 
-									return compare(value, f.compare, f.value);
-								} else if (f instanceof FieldMissingQuery) {
+									return compare(value, f.compare, f.value.value);
+								} else if (f instanceof MissingQuery) {
 									return fv == null; // null or undefined
 								}
 							} else if (f instanceof MemoryCompareQuery) {
@@ -270,19 +344,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 				: true
 		);
 
-		return Promise.resolve(results);
+		return results;
 	}
-	public query(
+	public async query(
 		queryRequest: DocumentQueryRequest,
-		responseHandler: (response: Results<T>, from?: PublicSignKey) => void,
-		options?: {
-			remote?: false | (RPCOptions & { sync?: boolean });
-			local?: boolean;
-		}
-	): Promise<void[]> {
-		const promises: Promise<void>[] = [];
+		options?: QueryOptions<T>
+	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
-		let remote: RPCOptions | undefined;
+
+		let remote: RemoteQueryOptions<Results<T>> | undefined = undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
 				remote = {};
@@ -290,51 +360,136 @@ export class DocumentIndex<T> extends ComposableProgram {
 				remote = undefined;
 			}
 		} else {
-			remote = options?.remote;
+			remote = options?.remote || {};
 		}
 
+		const promises: Promise<Results<T> | Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
 				"Expecting either 'options.remote' or 'options.local' to be true"
 			);
 		}
+		const allResults: Results<T>[] = [];
 
 		if (local) {
-			promises.push(
-				this.queryHandler(queryRequest, {
-					address: this.address.toString(),
-					from: this.identity.publicKey,
-				}).then((results) => {
-					if (results.length > 0) {
-						responseHandler(
-							new Results({
-								results: results.map(
-									(r) =>
-										new ResultWithSource({
-											context: r.context,
-											value: r.value,
-											source: r.source,
-										})
-								),
+			const results = this.queryHandler(queryRequest, {
+				address: this.address.toString(),
+				from: this.identity.publicKey,
+			});
+			if (results.length > 0) {
+				const resultsObject = new Results({
+					results: results.map(
+						(r) =>
+							new ResultWithSource({
+								context: r.context,
+								value: r.value,
+								source: r.source,
 							})
-						);
-					}
-				})
-			);
+					),
+				});
+				options?.onResponse && options.onResponse(resultsObject);
+				allResults.push(resultsObject);
+			}
 		}
+
 		if (remote) {
-			const remoteHandler = async (
-				response: Results<T>,
-				from?: PublicSignKey
-			) => {
-				response.results.forEach((r) => r.init(this.type));
-				if (typeof options?.remote !== "boolean" && options?.remote?.sync) {
-					await this._sync(response);
-				}
-				responseHandler(response, from);
+			const responseHandler = async (responses: RPCResponse<Results<T>>[]) => {
+				return Promise.all(
+					responses.map(async (x) => {
+						x.response.results.forEach((r) => r.init(this.type));
+						if (typeof options?.remote !== "boolean" && options?.remote?.sync) {
+							await this._sync(x.response);
+						}
+						options?.onResponse && options.onResponse(x.response);
+						return x.response;
+					})
+				);
 			};
-			promises.push(this._query.send(queryRequest, remoteHandler, remote));
+
+			const replicatorGroups = await this._replicators();
+			if (replicatorGroups) {
+				// In each shard/group only query a subset
+
+				let replicatorGroupsToQuery = [...replicatorGroups].filter(
+					(x) =>
+						!x.find((x) => x === this.libp2p.directsub.publicKey.hashcode())
+				);
+				let rng = Math.round(Math.random() * replicatorGroups.length);
+				const startRng = rng;
+
+				const fn = async () => {
+					const rs: Results<T>[] = [];
+					let missingReponses = false;
+					while (replicatorGroupsToQuery.length > 0) {
+						const peersToQuery: string[] = new Array(
+							replicatorGroupsToQuery.length
+						);
+						let counter = 0;
+						const peerToGroupIndex = new Map<string, number>();
+						for (let i = 0; i < replicatorGroupsToQuery.length; i++) {
+							const group = replicatorGroupsToQuery[i];
+							peersToQuery[counter] = group[rng % group.length];
+							peerToGroupIndex.set(peersToQuery[counter], i);
+							counter++;
+						}
+						if (peersToQuery.length > 0) {
+							const results = await this._query.send(queryRequest, {
+								...remote,
+								to: peersToQuery,
+							});
+							for (const result of results) {
+								if (!result.from) {
+									continue;
+								}
+								rs.push(...(await responseHandler(results)));
+								peerToGroupIndex.delete(result.from.hashcode());
+							}
+
+							responseHandler(results);
+							const indicesLeft = new Set([...peerToGroupIndex.values()]);
+
+							rng += 1;
+							replicatorGroupsToQuery = replicatorGroupsToQuery.filter(
+								(v, ix) => {
+									if (indicesLeft.has(ix)) {
+										const peerIndex = rng % v.length;
+										if (rng === startRng || peerIndex === startRng % v.length) {
+											// TODO Last condition needed?
+											missingReponses = true;
+											return false;
+										}
+										return true;
+									}
+									return false;
+								}
+							);
+						}
+					}
+					if (missingReponses) {
+						logger.error("Did not recieve responses from all shards");
+					}
+
+					return rs;
+				};
+				promises.push(fn());
+			} else {
+				promises.push(
+					this._query
+						.send(queryRequest, remote)
+						.then((response) => responseHandler(response))
+				);
+			}
 		}
-		return Promise.all(promises);
+		const resolved = await Promise.all(promises);
+		for (const r of resolved) {
+			if (r) {
+				if (r instanceof Array) {
+					allResults.push(...r);
+				} else {
+					allResults.push(r);
+				}
+			}
+		}
+		return allResults;
 	}
 }

@@ -161,11 +161,8 @@ export class TrustedNetwork extends Program {
 		return canAppendByRelation(entry, (key) => this.isTrusted(key));
 	}
 
-	async canRead(key?: PublicSignKey): Promise<boolean> {
-		if (!key) {
-			return false;
-		}
-		return this.isTrusted(key);
+	async canRead(_key?: PublicSignKey): Promise<boolean> {
+		return true; // TODO should we have read access control?
 	}
 
 	async add(
@@ -181,7 +178,7 @@ export class TrustedNetwork extends Program {
 			key = trustee as PublicSignKey | PeerIdAddress;
 		}
 
-		const existingRelation = this.getRelation(
+		const existingRelation = await this.getRelation(
 			key,
 			this.trustGraph.store.identity.publicKey
 		);
@@ -193,11 +190,11 @@ export class TrustedNetwork extends Program {
 			await this.trustGraph.put(relation);
 			return relation;
 		}
-		return existingRelation.value;
+		return existingRelation;
 	}
 
-	hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
-		return !!this.getRelation(trustee, truster);
+	async hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
+		return !!(await this.getRelation(trustee, truster));
 	}
 	getRelation(
 		trustee: PublicSignKey | PeerIdAddress,
@@ -235,9 +232,12 @@ export class TrustedNetwork extends Program {
 		} else {
 			let trusted = false;
 			let stopper: (() => any) | any;
-			this.logIndex.query.send(
-				new LogQueryRequest({ queries: [] }),
-				async (heads, from) => {
+			this.logIndex.query.send(new LogQueryRequest({ queries: [] }), {
+				stopper: (s) => {
+					stopper = s;
+				},
+				timeout: options?.timeout || 10 * 1000,
+				onResponse: async (heads, from) => {
 					if (!from) {
 						return;
 					}
@@ -258,13 +258,7 @@ export class TrustedNetwork extends Program {
 						trusted = true;
 					}
 				},
-				{
-					stopper: (s) => {
-						stopper = s;
-					},
-					timeout: options?.timeout || 10 * 1000,
-				}
-			);
+			});
 			try {
 				await waitFor(() => trusted);
 				return trusted;

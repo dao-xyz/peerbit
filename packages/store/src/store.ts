@@ -24,6 +24,7 @@ import { Snapshot } from "./snapshot.js";
 import {
 	AccessError,
 	PublicKeyEncryptionResolver,
+	PublicSignKey,
 } from "@dao-xyz/peerbit-crypto";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";

@@ -89,6 +89,7 @@ const store = new TestStore({
 const keypair = await X25519Keypair.create();
 await store.init(session.peers[0], await createIdentity(), {
 	role: new ReplicatorType(),
+	replicators: () => [],
 	store: {
 		...DefaultOptions,
 		encryption: {
@@ -130,7 +131,7 @@ suite
 			resolver.set(doc.id, () => {
 				deferred.resolve();
 			});
-			await store.docs.put(doc);
+			await store.docs.put(doc, { unique: true });
 		},
 
 		defer: true,

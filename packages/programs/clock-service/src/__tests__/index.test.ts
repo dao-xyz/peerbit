@@ -51,6 +51,7 @@ describe("clock", () => {
 		});
 		await responder.init(session.peers[0], responderIdentity, {
 			role: new ReplicatorType(),
+			replicators: () => [],
 			store: {
 				cacheId: "id",
 				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),
@@ -66,7 +67,7 @@ describe("clock", () => {
 				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),
 			} as any,
 		} as any);
-		const topic = responder.clock._remoteSigner._rpcTopic;
+		const topic = responder.clock._remoteSigner.rpcTopic;
 		if (!topic) {
 			throw new Error("Expecting topic");
 		}

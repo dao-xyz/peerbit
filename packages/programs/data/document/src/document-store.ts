@@ -20,10 +20,14 @@ import {
 	Encoding,
 	Entry,
 } from "@dao-xyz/peerbit-log";
-import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
+import {
+	ComposableProgram,
+	Program,
+	ProgramInitializationOptions,
+} from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
-import { AccessError } from "@dao-xyz/peerbit-crypto";
+import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
@@ -95,6 +99,10 @@ export class Documents<T> extends ComposableProgram {
 		return this._events;
 	}
 
+	async init(_, __, options: ProgramInitializationOptions) {
+		this._index.replicators = options.replicators;
+		return super.init(_, __, options);
+	}
 	async setup(options: {
 		type: AbstractType<T>;
 		canRead?: CanRead;
@@ -171,10 +179,16 @@ export class Documents<T> extends ComposableProgram {
 					save: this.role instanceof ReplicatorType, // TODO is this expected?
 					canAppend: this._optionCanAppend?.bind(this) || (() => true),
 				});
-				const y = 123;
 			},
 		});
 	}
+	private async _resolveEntry(history: Entry<Operation<T>> | string) {
+		return typeof history === "string"
+			? this.store.oplog.get(history) ||
+					(await Entry.fromMultihash(this.store.oplog.storage, history))
+			: history;
+	}
+
 	async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
 		const l0 = await this._canAppend(entry);
 		if (!l0) {
@@ -188,9 +202,16 @@ export class Documents<T> extends ComposableProgram {
 	}
 
 	async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
-		const pointsToHistory = (history: Entry<Operation<T>>) => {
+		const resolve = async (history: Entry<Operation<T>> | string) => {
+			return typeof history === "string"
+				? this.store.oplog.get(history) ||
+						(await Entry.fromMultihash(this.store.oplog.storage, history))
+				: history;
+		};
+		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
 			// make sure nexts only points to this document at some point in history
-			let current = history;
+			let current = await resolve(history);
+
 			const next = entry.next[0];
 			while (
 				current?.hash &&
@@ -210,7 +231,10 @@ export class Documents<T> extends ComposableProgram {
 				encoding: this.store.oplog.encoding,
 				encryption: this.store.oplog.encryption,
 			});
-			const operation = await entry.getPayloadValue();
+			const operation =
+				entry._payload instanceof DecryptedThing
+					? entry.payload.getValue(entry.encoding)
+					: await entry.getPayloadValue();
 			if (operation instanceof PutOperation) {
 				// check nexts
 				const putOperation = operation as PutOperation<T>;
@@ -221,7 +245,7 @@ export class Documents<T> extends ComposableProgram {
 				if (!key) {
 					throw new Error("Expecting document to contained index field");
 				}
-				const existingDocument = this._index.get(key);
+				const existingDocument = this._index.index.get(key); //(await this._index.get(key))?.results[0];
 				if (existingDocument) {
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
@@ -242,7 +266,7 @@ export class Documents<T> extends ComposableProgram {
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = this._index.get(operation.key);
+				const existingDocument = this._index.index.get(operation.key); //  (await this._index.get(operation.key))?.results[0];
 				if (!existingDocument) {
 					// already deleted
 					return false;
@@ -258,7 +282,10 @@ export class Documents<T> extends ComposableProgram {
 		return true;
 	}
 
-	public put(doc: T, options?: AddOperationOptions<Operation<T>>) {
+	public async put(
+		doc: T,
+		options?: AddOperationOptions<Operation<T>> & { unique?: boolean }
+	) {
 		if (doc instanceof Program) {
 			if (this.parentProgram == null) {
 				throw new Error(
@@ -274,9 +301,12 @@ export class Documents<T> extends ComposableProgram {
 				`The provided document doesn't contain field '${this._index.indexBy}'`
 			);
 		}
-		const ser = serialize(doc);
-		const existingDocument = this._index.get(key);
 
+		const ser = serialize(doc);
+		const existingDocument = options?.unique
+			? undefined
+			: (await this._index.get(key, { local: true, remote: { sync: true } }))
+					?.results[0];
 		return this.store.addOperation(
 			new PutOperation({
 				key: asString((doc as any)[this._index.indexBy]),
@@ -284,24 +314,27 @@ export class Documents<T> extends ComposableProgram {
 				value: doc,
 			}),
 			{
-				nexts: existingDocument ? [existingDocument.entry] : [],
+				nexts: existingDocument
+					? [await this._resolveEntry(existingDocument.context.head)]
+					: [], //
 				...options,
 			}
 		);
 	}
 
-	del(key: Keyable, options?: AddOperationOptions<Operation<T>>) {
-		const k = asString(key);
-		const existing = this._index.get(k);
+	async del(key: Keyable, options?: AddOperationOptions<Operation<T>>) {
+		const existing = (
+			await this._index.get(key, { local: true, remote: { sync: true } })
+		)?.results[0];
 		if (!existing) {
-			throw new Error(`No entry with key '${k}' in the database`);
+			throw new Error(`No entry with key '${key}' in the database`);
 		}
 
 		return this.store.addOperation(
 			new DeleteOperation({
-				key: asString(k),
+				key: asString(key),
 			}),
-			{ nexts: [existing.entry], ...options }
+			{ nexts: [await this._resolveEntry(existing.context.head)], ...options } //
 		);
 	}
 
@@ -318,7 +351,10 @@ export class Documents<T> extends ComposableProgram {
 		let dedupEntries: Entry<Operation<T>>[] = [];
 		let visited = new Set<string>();
 		for (const item of entries) {
-			const payload = await item.getPayloadValue();
+			const payload =
+				item._payload instanceof DecryptedThing
+					? item.payload.getValue(item.encoding)
+					: await item.getPayloadValue();
 			let itemKey: string;
 			if (
 				payload instanceof PutOperation ||
@@ -335,26 +371,31 @@ export class Documents<T> extends ComposableProgram {
 			visited.add(itemKey);
 			dedupEntries.push(item);
 		}
+
 		let documentsChanged: DocumentsChange<T> = {
 			added: [],
 			removed: [],
 		};
+
 		for (const item of dedupEntries) {
 			try {
-				const payload = await item.getPayloadValue();
+				const payload =
+					item._payload instanceof DecryptedThing
+						? item.payload.getValue(item.encoding)
+						: await item.getPayloadValue();
 				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
 					const key = payload.key;
 					const value = this.deserializeOrPass(payload);
 
 					documentsChanged.added.push(value);
 
-					this._index._index.set(key, {
+					this._index.index.set(key, {
 						entry: item,
 						key: payload.key,
 						value: value,
 						context: new Context({
 							created:
-								this._index.get(key)?.context.created ||
+								this._index.index.get(key)?.context.created || //(await this._index.get(key))?.results[0]?.context.created ||
 								item.metadata.clock.timestamp.wallTime,
 							modified: item.metadata.clock.timestamp.wallTime,
 							head: item.hash,
@@ -397,14 +438,14 @@ export class Documents<T> extends ComposableProgram {
 
 					// update index
 					const key = (payload as DeleteOperation | PutOperation<T>).key;
-					const value = this._index._index.get(key)!;
+					const value = this._index.index.get(key)!;
 
 					documentsChanged.removed.push(value.value);
 					if (value.value instanceof Program) {
 						await value.value.close();
 					}
 
-					this._index._index.delete(key);
+					this._index.index.delete(key);
 				} else {
 					// Unknown operation
 				}

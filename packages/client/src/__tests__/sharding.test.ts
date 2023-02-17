@@ -7,6 +7,7 @@ import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
+import { AbsolutMinReplicas } from "../exchange-heads";
 
 describe(`sharding`, () => {
 	let session: LSession;
@@ -403,9 +404,6 @@ describe(`sharding`, () => {
 		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 
-		const asd = client1.COUNTER;
-		client1.COUNTER = 0;
-
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 
 		await waitFor(
@@ -471,5 +469,33 @@ describe(`sharding`, () => {
 			entryCount,
 			true
 		);
+	});
+
+	it("sets replicators groups correctly", async () => {
+		const store = new PermissionedEventStore({
+			trusted: [client1.id, client2.id, client3.id],
+		});
+		const init = store.init.bind(store);
+		let replicatorsFn: any = undefined;
+		store.init = (a, b, options) => {
+			replicatorsFn = options.replicators;
+			return init(a, b, options);
+		};
+		db1 = await client1.open<PermissionedEventStore>(store, { minReplicas: 1 });
+
+		client1.getReplicatorsSorted = () => ["a", "b", "c", "d", "e"];
+		expect(replicatorsFn()).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
+		client1.programs.get(db1.address.toString())!.minReplicas =
+			new AbsolutMinReplicas(2);
+		expect(replicatorsFn()).toEqual([["a", "d"], ["b", "e"], ["c"]]);
+		client1.programs.get(db1.address.toString())!.minReplicas =
+			new AbsolutMinReplicas(3);
+		expect(replicatorsFn()).toEqual([
+			["a", "c", "e"],
+			["b", "d"],
+		]);
+		client1.programs.get(db1.address.toString())!.minReplicas =
+			new AbsolutMinReplicas(5);
+		expect(replicatorsFn()).toEqual([["a", "b", "c", "d", "e"]]);
 	});
 });

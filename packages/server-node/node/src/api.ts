@@ -384,10 +384,6 @@ export const startServer = async (
 			});
 		});
 	});
-	server.on("close", () => {
-		console.log("Exit server");
-	});
-
 	console.log("API available at port", port);
 	return server;
 };

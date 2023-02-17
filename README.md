@@ -18,16 +18,18 @@
 
 ![tests](https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg)
 
-## P2P databases simplified
+## P2P databases at scale
 Started originally as a fork of OrbitDB: A peer-to-peer database on top of Libp2p (and optionally IPFS) supporting encryption, sharding and discoverability (searching).
 
 Peerbit provides an abstraction layer that lets you program with distributed data types. For example, ```String``` can be replaced with [DString](./packages/programs/data/string) (distributed string). Some datatypes, like [Document store](./packages/programs/data/document) are sharded automatically as long as there are not data dependencies between indiviudal documents.
  
+Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 mb/s. 
+
 Every peer has an identity which is simply their public key, this key can *currently* either be secp256k1 or a Ed25519 key. To prevent peers from manually sign messages, you can link identities together in a trust graph. This allows you to have a root identity that approves and revokes permissions to keys that can act on your behalf. Hence this allows you to build applications that allows users to act on multiple devices and chains seamlessly.
  
-Peers have the possibility to organize themselves into "permissioned" regions. Within a region you can be more confident that peers will respect the sharding distribution algorithm and replicate and index content. Additionally, secret information can be shared freely, this allows peers in the permissioned regions to help each other to decrypt messages in order to be able to index and understand content.
- 
 Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
+
+
 
 ### Goals
 The goal of this project is to create a  <span style="color:coral;">cheaper</span> and a more <span style="color:coral;">private</span> way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating a stateful application should and could be made easier if you are approaching it with a P2P database framework like this, since there are no "servers" and "clients", just peers. It should not take longer than a weekend to get started to build your first distributed app!
@@ -87,7 +89,8 @@ import {
 	Documents,
 	DocumentIndex,
 	DocumentQueryRequest,
-	FieldStringMatchQuery,
+	StringMatchQuery,
+	StringMatchMethod,
 	Results,
 } from "@dao-xyz/peerbit-document";
 
@@ -159,23 +162,19 @@ await store.docs.put(doc3);
 const peer2 = await Peerbit.create ({libp2: another_libp2p_instance})
 const store2 = peer2.open(store.address);
 
-let response: Results<Document> = undefined as any;
-await store2.docs.index.query(
+let responses: Results<Document>[] =  await store2.docs.index.query(
     new DocumentQueryRequest({
         queries: [
-            new FieldStringMatchQuery({
+            new StringMatchQuery({
                 key: "name",
                 value: "ello",
+				method: StringMatchMethod.contains
             }),
         ],
-    }),
-    (r: Results<Document>) => {
-        response = r;
-    },
-    { amount: 1 }
+    })
 );
-expect(response.results).toHaveLength(2);
-expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);
+expect(responses[0].results).toHaveLength(2);
+expect(responses[0].results.map((x) => x.value.id)).toEqual(["1", "2"]);
 ```
 
 
@@ -308,5 +307,5 @@ The most important module here is
 ```@dao-xyz/peerbit-crypto``` that is defining all different key types for signing and encrypting messages.
 
 
-## Running a server node 
-See the [CLI](./packages/server-node)
+## Running a relay or replicating server node 
+Check out the [CLI](./packages/server-node)

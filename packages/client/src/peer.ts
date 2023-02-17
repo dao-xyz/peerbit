@@ -4,7 +4,6 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
-import { multiaddr } from "@multiformats/multiaddr";
 import {
 	createExchangeHeadsMessage,
 	ExchangeHeadsMessage,
@@ -40,10 +39,9 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { Program, Address, CanTrust } from "@dao-xyz/peerbit-program";
+import { Program, Address } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
-import { ExchangeSwarmMessage } from "./exchange-network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
@@ -466,7 +464,6 @@ export class Peerbit {
 		return new LazyLevel(cacheStorage);
 	}
 
-	COUNTER = 0;
 	// Callback for local writes to the database. We the update to pubsub.
 	onWrite<T>(
 		program: Program,
@@ -508,6 +505,11 @@ export class Peerbit {
 					: message.topics[0]
 			} ${message.data.length}`
 		); */
+
+		if (message.topics.find((x) => this.programs.has(x)) == null) {
+			return; // not for me
+		}
+
 		if (this._disconnecting) {
 			logger.warn("Got message while disconnecting");
 			return;
@@ -626,44 +628,6 @@ export class Peerbit {
 						); */
 					}
 				}
-			} else if (msg instanceof ExchangeSwarmMessage) {
-				let hasAll = true;
-				for (const i of msg.info) {
-					if (!this.libp2p.peerStore.has(peerIdFromString(i.id))) {
-						hasAll = false;
-						break;
-					}
-				}
-				if (hasAll) {
-					return;
-				}
-
-				await Promise.all(
-					msg.info.map(async (info) => {
-						if (info.id === this.id.toString()) {
-							return;
-						}
-						const suffix = "/p2p/" + info.id;
-						this._libp2p.peerStore.addressBook.set(
-							info.peerId,
-							info.multiaddrs
-						);
-						const promises = await Promise.any(
-							info.multiaddrs.map((addr) =>
-								this._libp2p.dial(
-									// addr
-									multiaddr(
-										addr.toString() +
-											(addr.toString().indexOf(suffix) === -1 ? suffix : "")
-									)
-								)
-							)
-						);
-						//  const promises = await this._libp2p.dial(info.peerId)
-
-						return promises;
-					})
-				);
 			} else {
 				throw new Error("Unexpected message");
 			}
@@ -869,6 +833,8 @@ export class Peerbit {
 						// TODO perhaps send less messages to more recievers for performance reasons?
 						await this._libp2p.directsub.publish(bytes, {
 							to: newPeers,
+							strict: true,
+							topics: [address],
 						});
 					}
 					if (storeChanged) {
@@ -881,6 +847,7 @@ export class Peerbit {
 		return changed;
 	}
 
+	/* TODO put this on the program level
 	getCanTrust(address: Address): CanTrust | undefined {
 		const p = this.programs.get(address.toString())?.program;
 		if (p) {
@@ -891,7 +858,7 @@ export class Peerbit {
 			}
 		}
 		return;
-	}
+	} */
 
 	// Callback when a store was closed
 	async _onClose(program: Program, store: Store<any>) {
@@ -992,11 +959,6 @@ export class Peerbit {
 				". Unexpected error. " +
 				this.programs.get(address)?.program
 		);
-
-		/* const replicators = this.getReplicators(address) || [];
-		replicators.sort((a, b) => a.localeCompare(b)); // TODO this is anyway semisorted, just insert the idKeyhash on the right place instead
-		this._sortedPeersCache.set(address.toString(), replicators);
-		return replicators; */
 	}
 
 	getObservers(address: Address): string[] | undefined {
@@ -1025,27 +987,27 @@ export class Peerbit {
 	): Promise<string[]> {
 		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
 		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
-		const peersPreFilter: string[] =
-			this.getReplicatorsSorted(address.toString()) || [];
+		const peers: string[] = this.getReplicatorsSorted(address.toString()) || [];
 
 		// Assumption: Network specification is accurate
 		// Replication topic is not an address we assume that the network allows all participants
+		/* TODO put this on the program level
 		const network = this.getCanTrust(address);
 		let peers: string[];
 		if (network) {
 			const isTrusted = (peer: string) =>
 				network
 					? network.isTrusted(
-							peer // TODO improve perf, caching etc?
-					  )
+						peer // TODO improve perf, caching etc?
+					)
 					: true;
-
+	
 			peers = await Promise.all(peersPreFilter.map(isTrusted)).then((results) =>
 				peersPreFilter.filter((_v, index) => results[index])
 			);
 		} else {
 			peers = peersPreFilter;
-		}
+		} */
 
 		if (peers.length === 0) {
 			return [];
@@ -1197,7 +1159,7 @@ export class Peerbit {
 			const minReplicas =
 				options.minReplicas != null
 					? typeof options.minReplicas === "number"
-						? new AbsolutMinReplicas(this._minReplicas)
+						? new AbsolutMinReplicas(options.minReplicas)
 						: options.minReplicas
 					: new AbsolutMinReplicas(this._minReplicas);
 
@@ -1214,18 +1176,32 @@ export class Peerbit {
 				onClose: () => this._onProgamClose(program),
 				onDrop: () => this._onProgamClose(program),
 				role,
-
+				replicators: () => {
+					// TODO Optimize this so we don't have to recreate the array all the time!
+					const minReplicas = resolveMinReplicas();
+					const replicators = this.getReplicatorsSorted(
+						program.address.toString()
+					);
+					const numberOfGroups = Math.min(
+						Math.ceil(replicators!.length / minReplicas)
+					);
+					const groups = new Array<string[]>(numberOfGroups);
+					for (let i = 0; i < groups.length; i++) {
+						groups[i] = [];
+					}
+					for (let i = 0; i < replicators!.length; i++) {
+						groups[i % numberOfGroups].push(replicators![i]);
+					}
+					return groups;
+				},
 				// If the program opens more programs
 				open: (program) => this.open(program, options),
 
 				store: {
 					...options,
 					cacheId: programAddress,
-					replicator: (gid: string) => {
-						this.COUNTER += 1;
-
-						return this.isLeader(program.address, gid, resolveMinReplicas());
-					},
+					replicator: (gid: string) =>
+						this.isLeader(program.address, gid, resolveMinReplicas()),
 					replicatorsCacheId: () => this._lastSubscriptionMessageId,
 					resolveCache: (store) => {
 						const programAddress = program.address?.toString();

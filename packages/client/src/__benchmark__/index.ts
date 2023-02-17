@@ -94,9 +94,9 @@ suite
 			const doc = new Document({
 				id: uuid(),
 				name: uuid(),
-				number: 1n,
+				number: 2341n,
 			});
-			const entry = await writeStore.docs.put(doc);
+			const entry = await writeStore.docs.put(doc, { unique: true });
 
 			// wait for reading
 			readerResolver.set(entry.entry.hash, deferred.resolve.bind(deferred));
