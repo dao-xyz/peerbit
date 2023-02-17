@@ -256,7 +256,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 										return false;
 									}
 									let compare = f.value;
-									if (!f.caseSensitive) {
+									if (f.caseInsensitive) {
 										fv = fv.toLowerCase();
 										compare = compare.toLowerCase();
 									}

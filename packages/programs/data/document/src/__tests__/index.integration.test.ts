@@ -475,6 +475,7 @@ describe("index", () => {
 								new StringMatchQuery({
 									key: "name",
 									value: "hello world",
+									caseInsensitive: true,
 								}),
 							],
 						})
@@ -492,6 +493,7 @@ describe("index", () => {
 								new StringMatchQuery({
 									key: "name",
 									value: "Hello World",
+									caseInsensitive: true,
 								}),
 							],
 						})
@@ -508,23 +510,8 @@ describe("index", () => {
 							queries: [
 								new StringMatchQuery({
 									key: "name",
-									value: "hello world",
-									caseSensitive: true,
-								}),
-							],
-						})
-					);
-					expect(responses[0].results).toHaveLength(1);
-					expect(
-						responses[0].results.map((x) => x.value.id)
-					).toContainAllValues(["1"]);
-					responses = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
-							queries: [
-								new StringMatchQuery({
-									key: "name",
 									value: "Hello World",
-									caseSensitive: true,
+									caseInsensitive: false,
 								}),
 							],
 						})
@@ -533,6 +520,21 @@ describe("index", () => {
 					expect(
 						responses[0].results.map((x) => x.value.id)
 					).toContainAllValues(["2"]);
+					responses = await stores[1].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new StringMatchQuery({
+									key: "name",
+									value: "hello world",
+									caseInsensitive: false,
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(1);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1"]);
 				});
 				it("prefix", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
@@ -542,6 +544,7 @@ describe("index", () => {
 									key: "name",
 									value: "hel",
 									method: StringMatchMethod.prefix,
+									caseInsensitive: true,
 								}),
 							],
 						}),
@@ -561,6 +564,7 @@ describe("index", () => {
 									key: "name",
 									value: "ello",
 									method: StringMatchMethod.contains,
+									caseInsensitive: true,
 								}),
 							],
 						})

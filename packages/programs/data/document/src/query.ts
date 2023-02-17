@@ -194,18 +194,18 @@ export class StringMatchQuery extends StateFieldQuery {
 	method: StringMatchMethod;
 
 	@field({ type: "bool" })
-	caseSensitive: boolean;
+	caseInsensitive: boolean;
 
 	constructor(props: {
 		key: string[] | string;
 		value: string;
 		method?: StringMatchMethod;
-		caseSensitive?: boolean;
+		caseInsensitive?: boolean;
 	}) {
 		super(props);
 		this.value = props.value;
 		this.method = props.method ?? StringMatchMethod.exact;
-		this.caseSensitive = props.caseSensitive ?? false;
+		this.caseInsensitive = props.caseInsensitive ?? false;
 	}
 }
 
