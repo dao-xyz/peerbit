@@ -90,8 +90,7 @@ await store.docs.put(doc3);
 const peer2 = await Peerbit.create ({libp2: another_libp2p_instance})
 const store2 = peer2.open(store.address);
 
-let response: Results<Document> = undefined as any;
-await store2.docs.index.query(
+let responses: Results<Document>[] = await store2.docs.index.query(
     new DocumentQueryRequest({
         queries: [
             new FieldStringMatchQuery({
@@ -99,12 +98,8 @@ await store2.docs.index.query(
                 value: "ello",
             }),
         ],
-    }),
-    (r: Results<Document>) => {
-        response = r;
-    },
-    { amount: 1 }
+    })
 );
-expect(response.results).toHaveLength(2);
-expect(response.results.map((x) => x.value.id)).toEqual(["1", "2"]);
+expect(responses.results[0]).toHaveLength(2);
+expect(responses.results[0].map((x) => x.value.id)).toEqual(["1", "2"]);
 ```
