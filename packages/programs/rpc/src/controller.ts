@@ -1,14 +1,22 @@
 import {
 	AbstractType,
+	BinaryWriter,
 	BorshError,
 	deserialize,
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import {
+	DecryptedThing,
+	MaybeEncrypted,
+	MaybeSigned,
+	PublicSignKey,
+	randomBytes,
+	toBase64,
+} from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
-import { send, RPCOptions, respond, logger, RPCResponse } from "./io.js";
+import { RPCOptions, logger, RPCResponse } from "./io.js";
 import {
 	AbstractProgram,
 	Address,
@@ -20,8 +28,9 @@ import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { equals } from "uint8arrays";
 
-export type SearchContext = (() => Address) | AbstractProgram | string;
+export type SearchContext = (() => Address) | AbstractProgram;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
 /* export type RPCTopicOption =
 	| { queryAddressSuffix: string }
@@ -45,45 +54,26 @@ export type ResponseHandler<Q, R> = (
 
 @variant("rpc")
 export class RPC<Q, R> extends ComposableProgram {
-	/* rpcRegion?: RPCTopic; */
 	canRead: CanRead;
 
-	_subscribed = false;
-	_onMessageBinded: (evt: CustomEvent<PubSubData>) => any;
-	_responseHandler: ResponseHandler<Q, (R | undefined) | R>;
-	_requestType: AbstractType<Q>;
-	_responseType: AbstractType<R>;
-	_rpcTopic: string | undefined;
-	_context: SearchContext;
+	private _subscribedResponses = false;
+	private _subscribedRequests = false;
+	private _onRequestBinded: (evt: CustomEvent<PubSubData>) => any;
+	private _onResponseBinded: (evt: CustomEvent<PubSubData>) => any;
+	private _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
+	private _responseResolver: Map<string, (request: ResponseV0) => any>;
+	private _requestType: AbstractType<Q> | Uint8ArrayConstructor;
+	private _responseType: AbstractType<R>;
+	private _rpcTopic: string | undefined;
+	private _context: SearchContext;
 
 	public setup(options: RPCSetupOptions<Q, R>) {
-		/* if (options.rpcTopic) {
-			if (
-				!!(options.rpcTopic as { rpcRegion }).rpcRegion &&
-				!!(options.rpcTopic as { rpcRegion }).rpcRegion ==
-				!!(options.rpcTopic as { queryAddressSuffix })
-					.queryAddressSuffix
-			) {
-				throw new Error(
-					"Expected either rpcRegion or queryAddressSuffix or none"
-				);
-			}
-			if ((options.rpcTopic as { rpcRegion }).rpcRegion) {
-				this.rpcRegion = new RPCRegion({
-					id: (options.rpcTopic as { rpcRegion }).rpcRegion,
-				});
-			} else if (options.rpcTopic as { queryAddressSuffix }) {
-				this.rpcRegion = new RPCAddressSuffix({
-					suffix: (options.rpcTopic as { queryAddressSuffix })
-						.queryAddressSuffix,
-				});
-			}
-		} */
 		this._rpcTopic = options.topic ?? this._rpcTopic;
 		this._context = options.context;
 		this._responseHandler = options.responseHandler;
 		this._requestType = options.queryType;
 		this._responseType = options.responseType;
+		this._responseResolver = new Map();
 		this.canRead = options.canRead || (() => Promise.resolve(true));
 	}
 
@@ -99,119 +89,173 @@ export class RPC<Q, R> extends ComposableProgram {
 				.withPath({ index: this._programIndex! })
 				.toString();
 		if (options.role instanceof ReplicatorType) {
-			this._subscribe();
+			await this._subscribeRequests();
 		}
 		return this;
 	}
 
 	public async close(): Promise<void> {
-		if (this._subscribed) {
+		if (this._subscribedResponses) {
 			await this.libp2p.directsub.unsubscribe(this.rpcTopic);
 			await this.libp2p.directsub.removeEventListener(
 				"data",
-				this._onMessageBinded
+				this._onRequestBinded
 			);
-			this._subscribed = false;
+			this._subscribedResponses = false;
+		}
+
+		if (this._subscribedRequests) {
+			this._responseResolver = undefined as any;
+			await this.libp2p.directsub.unsubscribe(this.rpcTopic);
+			await this.libp2p.directsub.removeEventListener(
+				"data",
+				this._onResponseBinded
+			);
+			this._subscribedRequests = false;
 		}
 	}
 
-	_subscribe(): void {
-		if (this._subscribed) {
+	private async _subscribeRequests(): Promise<void> {
+		if (this._subscribedRequests) {
 			return;
 		}
 
-		this._onMessageBinded = this._onMessage.bind(this);
-		this.libp2p.directsub.subscribe(this.rpcTopic);
-		this.libp2p.directsub.addEventListener("data", this._onMessageBinded);
-		logger.debug("subscribing to query topic: " + this.rpcTopic);
-		this._subscribed = true;
+		this._onRequestBinded = this._onRequest.bind(this);
+		this.libp2p.directsub.addEventListener("data", this._onRequestBinded);
+		await this.libp2p.directsub.subscribe(this.rpcTopic);
+		logger.debug("subscribing to query topic (requests): " + this.rpcTopic);
+		this._subscribedRequests = true;
 	}
 
-	async _onMessage(evt: CustomEvent<PubSubData>): Promise<void> {
-		//if (evt.detail.type === "signed")
-		{
-			const message = evt.detail;
-			if (message) {
-				/*  if (message.from.equals(this.libp2p.peerId)) {
-					 return;
-				 } */
-				try {
-					try {
-						const { result: request, from } = await decryptVerifyInto(
-							message.data,
-							RPCMessage,
-							this.encryption?.getAnyKeypair ||
-								(() => Promise.resolve(undefined)),
+	private async _subscribeResponses(): Promise<void> {
+		if (this._subscribedResponses) {
+			return;
+		}
+
+		this._onResponseBinded = this._onResponse.bind(this);
+		this.libp2p.directsub.addEventListener("data", this._onResponseBinded);
+		await this.libp2p.directsub.subscribe(this.rpcTopic);
+		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
+		this._subscribedResponses = true;
+	}
+
+	async _onRequest(evt: CustomEvent<PubSubData>): Promise<void> {
+		const message = evt.detail;
+
+		if (message?.topics.find((x) => x === this.rpcTopic) != null) {
+			try {
+				const request = deserialize(message.data, RPCMessage);
+				if (request instanceof RequestV0) {
+					const maybeEncrypted = deserialize<MaybeEncrypted<MaybeSigned<any>>>(
+						request.request,
+						MaybeEncrypted
+					);
+					const decrypted = await maybeEncrypted.decrypt(
+						this.encryption?.getAnyKeypair
+					);
+					const maybeSigned = decrypted.getValue(MaybeSigned);
+					if (!(await maybeSigned.verify())) {
+						throw new AccessError();
+					}
+
+					if (!(await this.canRead(maybeSigned.signature?.publicKey))) {
+						throw new AccessError();
+					}
+
+					const requestData =
+						this._requestType === Uint8Array
+							? (maybeSigned.data as Q)
+							: deserialize(
+									maybeSigned.data,
+									this._requestType as AbstractType<Q>
+							  );
+					const response = await this._responseHandler(requestData, {
+						address: this.contextAddress.toString(),
+						from: maybeSigned.signature!.publicKey,
+					});
+
+					if (response) {
+						const encryption = this.encryption || {
+							getEncryptionKeypair: () => X25519Keypair.create(),
+						};
+
+						// send query and wait for replies in a generator like behaviour
+						const serializedResponse = serialize(response);
+						let maybeSignedMessage = new MaybeSigned({
+							data: serializedResponse,
+						});
+
+						// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
+						// with directsub with a certain reciever. If we use (this.identity) we are going to use an identity
+						// that is now known in the .directsub network, hence the message might not be delivired if we
+						// send with { to: [RECIEVER] } param
+						maybeSignedMessage = await maybeSignedMessage.sign(
+							this.libp2p.directsub.sign.bind(this.libp2p.directsub)
+						);
+
+						const decryptedMessage = new DecryptedThing<
+							MaybeSigned<Uint8Array>
+						>({
+							data: serialize(maybeSignedMessage),
+						});
+						let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> =
+							decryptedMessage;
+
+						maybeEncryptedMessage = await decryptedMessage.encrypt(
+							encryption.getEncryptionKeypair,
+							request.respondTo
+						);
+
+						await this.libp2p.directsub.publish(
+							serialize(
+								new ResponseV0({
+									response: serialize(maybeEncryptedMessage),
+									requestId: request.id,
+								})
+							),
 							{
-								isTrusted: (key) =>
-									Promise.resolve(this.canRead(key.signature?.publicKey)),
+								topics: [this.rpcTopic],
+								to: [maybeSigned.signature!.publicKey.hashcode()],
+								strict: true,
 							}
 						);
-						if (request instanceof RequestV0) {
-							if (request.context != undefined) {
-								if (request.context != this.contextAddress) {
-									logger.debug("Recieved a request for another context");
-									return;
-								}
-							}
-
-							const response = await this._responseHandler(
-								(this._requestType as any) === Uint8Array
-									? (request.request as Q)
-									: deserialize(request.request, this._requestType),
-								{
-									address: this.contextAddress,
-									from,
-								}
-							);
-
-							if (response) {
-								await respond(
-									this.libp2p,
-									this.getRpcResponseTopic(request),
-									request,
-									new ResponseV0({
-										response: serialize(response),
-										context: this.contextAddress,
-									}),
-									{
-										encryption: this.encryption,
-
-										// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
-										// with directsub with a certain reciever. If we use (this.identity) we are going to use an identity
-										// that is now known in the .directsub network, hence the message might not be delivired if we
-										// send with { to: [RECIEVER] } param
-										signer: this.libp2p.directsub.sign.bind(
-											this.libp2p.directsub
-										),
-									}
-								);
-							}
-						} else {
-							return;
-						}
-					} catch (error: any) {
-						if (error instanceof BorshError) {
-							logger.debug("Got message for a different namespace");
-							return;
-						}
-						if (error instanceof AccessError) {
-							logger.debug("Got message I could not decrypt");
-							return;
-						}
-
-						logger.error(
-							"Error handling query: " +
-								(error?.message ? error?.message?.toString() : error)
-						);
-						throw error;
 					}
-				} catch (error: any) {
-					if (error.constructor.name === "BorshError") {
-						return; // unknown message
-					}
-					console.error(error);
+				} else {
+					return;
 				}
+			} catch (error: any) {
+				if (error instanceof AccessError) {
+					logger.debug("Got message I could not decrypt");
+					return;
+				}
+
+				if (error instanceof BorshError) {
+					logger.debug("Got message for a different namespace");
+					return;
+				}
+				logger.error(
+					"Error handling query: " +
+						(error?.message ? error?.message?.toString() : error)
+				);
+			}
+		}
+	}
+	async _onResponse(evt: CustomEvent<PubSubData>): Promise<void> {
+		const message = evt.detail;
+		if (message?.topics.find((x) => x === this.rpcTopic) != null) {
+			try {
+				const rpcMessage = deserialize(message.data, RPCMessage);
+				if (rpcMessage instanceof ResponseV0) {
+					this._responseResolver.get(toBase64(rpcMessage.requestId))?.(
+						rpcMessage
+					);
+				}
+			} catch (error) {
+				if (error instanceof BorshError) {
+					logger.debug("Namespace error");
+					return; // Name space conflict most likely
+				}
+				logger.error("failed ot deserialize query response", error);
 			}
 		}
 	}
@@ -223,32 +267,136 @@ export class RPC<Q, R> extends ComposableProgram {
 		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
 		// this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
 		const keypair = await X25519Keypair.create();
-		const r = new RequestV0({
-			request:
-				(this._requestType as any) === Uint8Array
-					? (request as Uint8Array)
-					: serialize(request),
-			context: options?.context || this.contextAddress.toString(),
+		const requestData =
+			(this._requestType as any) === Uint8Array
+				? (request as Uint8Array)
+				: serialize(request);
+
+		const timeout = options?.timeout || 10 * 1000;
+
+		// send query and wait for replies in a generator like behaviour
+		let timeoutFn: any = undefined;
+		let maybeSignedMessage = new MaybeSigned<any>({ data: requestData });
+		maybeSignedMessage = await maybeSignedMessage.sign(
+			this.libp2p.directsub.sign.bind(this.libp2p.directsub)
+		);
+
+		const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
+			data: serialize(maybeSignedMessage),
+		});
+
+		let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> =
+			decryptedMessage;
+		if (
+			options?.encryption?.responders &&
+			options?.encryption?.responders.length > 0
+		) {
+			maybeEncryptedMessage = await decryptedMessage.encrypt(
+				options.encryption.key,
+				...options.encryption.responders
+			);
+		}
+
+		const requestMessage = new RequestV0({
+			request: serialize(maybeEncryptedMessage),
 			respondTo: keypair.publicKey,
 		});
-		return send(
-			this.libp2p,
-			this.rpcTopic,
-			this.getRpcResponseTopic(r),
-			r,
-			this._responseType,
-			keypair,
-			options
-		);
+		const requestBytes = serialize(requestMessage);
+		const requetsMessageIdString = toBase64(requestMessage.id);
+		const allResults: RPCResponse<R>[] = [];
+
+		await this._subscribeResponses();
+
+		const publicOptions = options?.to
+			? { to: options.to, strict: true, topics: [this.rpcTopic] }
+			: { topics: [this.rpcTopic] };
+
+		const responsePromise = new Promise<void>((rs, rj) => {
+			const resolve = () => {
+				timeoutFn && clearTimeout(timeoutFn);
+				rs();
+			};
+			options?.stopper && options.stopper(resolve);
+			const reject = (error) => {
+				logger.error(error?.message);
+				timeoutFn && clearTimeout(timeoutFn);
+				rs();
+			};
+			const expectedResponders =
+				options?.to && options.to.length > 0
+					? new Set(
+							options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
+					  )
+					: undefined;
+			const responders = new Set<string>();
+			const _responseHandler = async (response: ResponseV0) => {
+				try {
+					const { result: resultData, from } = await decryptVerifyInto(
+						response.response,
+						this._responseType,
+						keypair,
+						{
+							isTrusted: options?.isTrusted,
+						}
+					);
+					options?.onResponse && options.onResponse(resultData, from);
+					allResults.push({ response: resultData, from });
+
+					if (
+						options?.amount != null &&
+						allResults.length >= (options.amount as number)
+					) {
+						resolve!();
+					}
+
+					if (from && expectedResponders?.has(from.hashcode())) {
+						responders.add(from.hashcode());
+						if (responders.size === expectedResponders.size) {
+							resolve();
+						}
+					}
+				} catch (error) {
+					if (error instanceof AccessError) {
+						return; // Ignore things we can not open
+					}
+
+					if (error instanceof BorshError && !options?.strict) {
+						logger.debug("Namespace error");
+						return; // Name space conflict most likely
+					}
+
+					console.error("failed ot deserialize query response", error);
+					reject(error);
+				}
+			};
+			try {
+				this._responseResolver.set(requetsMessageIdString, _responseHandler);
+			} catch (error: any) {
+				// timeout
+				if (error.constructor.name != "TimeoutError") {
+					throw new Error(
+						"Got unexpected error when query: " + error.constructor.name
+					);
+				}
+			}
+			timeoutFn = setTimeout(() => {
+				resolve();
+			}, timeout);
+		});
+
+		await this.libp2p.directsub.publish(requestBytes, publicOptions);
+		await responsePromise;
+		this._responseResolver.delete(requetsMessageIdString);
+		return allResults;
 	}
 
-	get contextAddress(): string {
+	get contextAddress(): Address {
 		if (typeof this._context === "string") {
 			return this._context;
 		}
 		return this._context instanceof AbstractProgram
-			? this._context.address.toString()
-			: this._context().toString();
+			? this._context.address
+			: this._context();
 	}
 
 	public get rpcTopic(): string {

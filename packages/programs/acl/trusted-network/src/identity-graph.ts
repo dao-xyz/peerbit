@@ -190,7 +190,7 @@ export const getRelation = async (
 	db: Documents<IdentityRelation>
 ): Promise<IdentityRelation | undefined> => {
 	return (await db.index.get(new IdentityRelation({ from, to }).id))
-		?.results?.[0].value;
+		?.results?.[0]?.value;
 };
 
 export const createIdentityGraphStore = (props: {

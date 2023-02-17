@@ -102,7 +102,8 @@ describe("index", () => {
 		programs.push(store);
 		const result = await store.init(session.peers[i], identites[i], {
 			...options,
-			replicators: () => undefined,
+			replicators: () =>
+				session.peers.map((x) => [x.directsub.publicKey.hashcode()]),
 			store: {
 				...DefaultOptions,
 				resolveCache: async () => new Cache(createStore()),

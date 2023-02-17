@@ -15,6 +15,8 @@ it("compare", () => {
 it("startWith", () => {
 	const a = new Uint8Array([1]);
 	const b = new Uint8Array([1, 2, 3]);
+	const c = new Uint8Array([2, 1, 3]);
+
 	const empty = new Uint8Array();
 	expect(startsWith(b, a)).toBeTrue();
 	expect(startsWith(a, b)).toBeFalse();
@@ -22,4 +24,6 @@ it("startWith", () => {
 	expect(startsWith(a, empty)).toBeTrue();
 	expect(startsWith(b, empty)).toBeTrue();
 	expect(startsWith(empty, a)).toBeFalse();
+	expect(startsWith(a, c)).toBeFalse();
+	expect(startsWith(c, a)).toBeFalse();
 });

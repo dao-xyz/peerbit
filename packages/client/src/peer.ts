@@ -4,7 +4,6 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
-import { multiaddr } from "@multiformats/multiaddr";
 import {
 	createExchangeHeadsMessage,
 	ExchangeHeadsMessage,
@@ -40,10 +39,9 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { Program, Address, CanTrust } from "@dao-xyz/peerbit-program";
+import { Program, Address } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
-import { ExchangeSwarmMessage } from "./exchange-network.js";
 import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
@@ -507,6 +505,11 @@ export class Peerbit {
 					: message.topics[0]
 			} ${message.data.length}`
 		); */
+
+		if (message.topics.find((x) => this.programs.has(x)) == null) {
+			return; // not for me
+		}
+
 		if (this._disconnecting) {
 			logger.warn("Got message while disconnecting");
 			return;
@@ -625,44 +628,6 @@ export class Peerbit {
 						); */
 					}
 				}
-			} else if (msg instanceof ExchangeSwarmMessage) {
-				let hasAll = true;
-				for (const i of msg.info) {
-					if (!this.libp2p.peerStore.has(peerIdFromString(i.id))) {
-						hasAll = false;
-						break;
-					}
-				}
-				if (hasAll) {
-					return;
-				}
-
-				await Promise.all(
-					msg.info.map(async (info) => {
-						if (info.id === this.id.toString()) {
-							return;
-						}
-						const suffix = "/p2p/" + info.id;
-						this._libp2p.peerStore.addressBook.set(
-							info.peerId,
-							info.multiaddrs
-						);
-						const promises = await Promise.any(
-							info.multiaddrs.map((addr) =>
-								this._libp2p.dial(
-									// addr
-									multiaddr(
-										addr.toString() +
-											(addr.toString().indexOf(suffix) === -1 ? suffix : "")
-									)
-								)
-							)
-						);
-						//  const promises = await this._libp2p.dial(info.peerId)
-
-						return promises;
-					})
-				);
 			} else {
 				throw new Error("Unexpected message");
 			}
@@ -868,6 +833,8 @@ export class Peerbit {
 						// TODO perhaps send less messages to more recievers for performance reasons?
 						await this._libp2p.directsub.publish(bytes, {
 							to: newPeers,
+							strict: true,
+							topics: [address],
 						});
 					}
 					if (storeChanged) {
@@ -1034,7 +1001,7 @@ export class Peerbit {
 						peer // TODO improve perf, caching etc?
 					)
 					: true;
-
+	
 			peers = await Promise.all(peersPreFilter.map(isTrusted)).then((results) =>
 				peersPreFilter.filter((_v, index) => results[index])
 			);

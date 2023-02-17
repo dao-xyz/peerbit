@@ -36,12 +36,16 @@ export class PubSubData extends PubSubMessage {
 	@field({ type: vec("string") })
 	topics: string[];
 
+	@field({ type: "bool" })
+	strict: boolean; // only deliver message to initial to recievers
+
 	@field({ type: Uint8Array })
 	data: Uint8Array;
 
 	constructor(options: {
 		topics: string[];
 		data: Uint8Array | Uint8ArrayList;
+		strict?: boolean;
 	}) {
 		super();
 		this.data =
@@ -49,6 +53,7 @@ export class PubSubData extends PubSubMessage {
 				? options.data
 				: options.data.subarray();
 		this.topics = options.topics;
+		this.strict = options.strict ?? false;
 	}
 
 	_serialized: Uint8ArrayList;

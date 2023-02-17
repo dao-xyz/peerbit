@@ -154,11 +154,7 @@ export class BigUnsignedIntegerValue extends IntegerValue {
 
 	constructor(number: bigint) {
 		super();
-		if (
-			Number.isInteger(number) === false ||
-			number > 18446744073709551615n ||
-			number < 0
-		) {
+		if (number > 18446744073709551615n || number < 0) {
 			throw new Error("Number is not u32");
 		}
 		this.number = number;
@@ -208,7 +204,7 @@ export class FieldStringMatchQuery extends StateFieldQuery {
 }
 
 @variant(3)
-export class FieldBigIntCompareQuery extends StateFieldQuery {
+export class FieldIntegerCompareQuery extends StateFieldQuery {
 	@field({ type: "u8" })
 	compare: Compare;
 

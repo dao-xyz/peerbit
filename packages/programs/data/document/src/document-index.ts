@@ -4,7 +4,7 @@ import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { equals } from "@dao-xyz/uint8arrays";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
-	FieldBigIntCompareQuery,
+	FieldIntegerCompareQuery,
 	FieldByteMatchQuery,
 	FieldStringMatchQuery,
 	MemoryCompareQuery,
@@ -140,6 +140,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	set replicators(replicators: () => string[][] | undefined) {
 		this._replicators = replicators;
 	}
+
 	async setup(properties: {
 		type: AbstractType<T>;
 		store: Store<Operation<T>>;
@@ -195,7 +196,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 							value: stringValue,
 						}),
 					],
-				})
+				}),
+				options
 			);
 		}
 
@@ -222,8 +224,24 @@ export class DocumentIndex<T> extends ComposableProgram {
 	queryHandler(
 		query: DocumentQueryRequest,
 		context?: QueryContext // TODO needed?
-	): Promise<IndexedValue<T>[]> {
+	): IndexedValue<T>[] {
 		const queries: Query[] = query.queries;
+		if (
+			query.queries.length === 1 &&
+			(query.queries[0] instanceof FieldByteMatchQuery ||
+				query.queries[0] instanceof FieldStringMatchQuery) &&
+			query.queries[0].key.length === 1 &&
+			query.queries[0].key[0] === this.indexBy
+		) {
+			if (
+				query.queries[0] instanceof FieldStringMatchQuery ||
+				query.queries[0] instanceof FieldByteMatchQuery
+			) {
+				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
+				return doc ? [doc] : [];
+			}
+		}
+
 		const results = this._queryDocuments((doc) =>
 			queries?.length > 0
 				? queries
@@ -244,7 +262,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 										return false;
 									}
 									return equals(fv, f.value);
-								} else if (f instanceof FieldBigIntCompareQuery) {
+								} else if (f instanceof FieldIntegerCompareQuery) {
 									const value: bigint | number = fv;
 
 									if (typeof value !== "bigint" && typeof value !== "number") {
@@ -313,15 +331,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 				: true
 		);
 
-		return Promise.resolve(results);
+		return results;
 	}
 	public async query(
 		queryRequest: DocumentQueryRequest,
 		options?: QueryOptions<T>
 	): Promise<Results<T>[]> {
-		const promises: Promise<Results<T> | Results<T>[] | undefined>[] = [];
 		const local = typeof options?.local == "boolean" ? options?.local : true;
-		let remote: RemoteQueryOptions<Results<T>> | undefined;
+
+		let remote: RemoteQueryOptions<Results<T>> | undefined = undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
 				remote = {};
@@ -332,35 +350,35 @@ export class DocumentIndex<T> extends ComposableProgram {
 			remote = options?.remote || {};
 		}
 
+		const promises: Promise<Results<T> | Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
 				"Expecting either 'options.remote' or 'options.local' to be true"
 			);
 		}
+		const allResults: Results<T>[] = [];
 
 		if (local) {
-			promises.push(
-				this.queryHandler(queryRequest, {
-					address: this.address.toString(),
-					from: this.identity.publicKey,
-				}).then((results) => {
-					if (results.length > 0) {
-						const resultsObject = new Results({
-							results: results.map(
-								(r) =>
-									new ResultWithSource({
-										context: r.context,
-										value: r.value,
-										source: r.source,
-									})
-							),
-						});
-						options?.onResponse && options.onResponse(resultsObject);
-						return resultsObject;
-					}
-				})
-			);
+			const results = this.queryHandler(queryRequest, {
+				address: this.address.toString(),
+				from: this.identity.publicKey,
+			});
+			if (results.length > 0) {
+				const resultsObject = new Results({
+					results: results.map(
+						(r) =>
+							new ResultWithSource({
+								context: r.context,
+								value: r.value,
+								source: r.source,
+							})
+					),
+				});
+				options?.onResponse && options.onResponse(resultsObject);
+				allResults.push(resultsObject);
+			}
 		}
+
 		if (remote) {
 			const responseHandler = async (responses: RPCResponse<Results<T>>[]) => {
 				return Promise.all(
@@ -442,15 +460,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 				};
 				promises.push(fn());
 			} else {
-				/* 	promises.push(
-						this._query
-							.send(queryRequest, remote)
-							.then((response) => responseHandler(response))
-					); */
+				promises.push(
+					this._query
+						.send(queryRequest, remote)
+						.then((response) => responseHandler(response))
+				);
 			}
 		}
 		const resolved = await Promise.all(promises);
-		const allResults: Results<T>[] = [];
 		for (const r of resolved) {
 			if (r) {
 				if (r instanceof Array) {

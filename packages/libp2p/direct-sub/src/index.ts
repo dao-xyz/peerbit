@@ -308,8 +308,16 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 	async publish(
 		data: Uint8Array,
 		options:
-			| { topics: string[]; to?: (string | PeerId | PublicSignKey)[] }
-			| { to: (string | PeerId | PublicSignKey)[] }
+			| {
+					topics?: string[];
+					to?: (string | PeerId | PublicSignKey)[];
+					strict?: false;
+			  }
+			| {
+					topics: string[];
+					to: (string | PeerId | PublicSignKey)[];
+					strict: true;
+			  }
 	): Promise<void> {
 		const topics =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
@@ -325,11 +333,12 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		const message = new PubSubData({
 			topics: topics.map((x) => x.toString()),
 			data,
+			strict: options.strict,
 		});
 		const bytes = message.serialize();
 		await super.publish(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
-			{ to: this.getNeighboursWithTopics(topics, tos) }
+			{ to: options?.strict ? tos : this.getNeighboursWithTopics(topics, tos) }
 		);
 	}
 
@@ -414,11 +423,18 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			const isFromSelf = this.libp2p.peerId.equals(from);
 			if (!isFromSelf || this.emitSelf) {
 				//	const isForAll = message.to.length === 0;
-				const isForMe =
-					pubsubMessage.topics.find((topic) =>
-						this.subscriptions.has(topic)
-					) /*  && !isForAll */ ||
-					message.to.find((x) => this.publicKeyHash === x);
+				let isForMe: boolean;
+				if (pubsubMessage.strict) {
+					isForMe =
+						!!pubsubMessage.topics.find((topic) =>
+							this.subscriptions.has(topic)
+						) && !!message.to.find((x) => this.publicKeyHash === x);
+				} else {
+					isForMe =
+						!!pubsubMessage.topics.find((topic) =>
+							this.subscriptions.has(topic)
+						) || !!message.to.find((x) => this.publicKeyHash === x);
+				}
 				if (isForMe) {
 					if (verified === undefined) {
 						verified = await message.verify(

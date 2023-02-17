@@ -224,6 +224,21 @@ describe("pubsub", function () {
 			expect(peers[2].recieved).toHaveLength(1);
 		});
 
+		it("1->TOPIC strict to", async () => {
+			await peers[0].stream.publish(data, {
+				topics: [TOPIC],
+				to: [peers[2].stream.publicKey],
+				strict: true,
+			});
+			await waitFor(() => peers[2].recieved.length === 1);
+			expect(new Uint8Array(peers[2].recieved[0].data)).toEqual(data);
+			expect(peers[2].recieved[0].topics).toEqual([TOPIC]);
+			expect(peers[1].recieved).toHaveLength(0);
+			await delay(3000); // wait some more time to make sure we dont get more messages
+			expect(peers[1].recieved).toHaveLength(0);
+			expect(peers[2].recieved).toHaveLength(1);
+		});
+
 		it("send without topic directly", async () => {
 			await peers[0].stream.publish(data, {
 				to: [peers[1].stream.libp2p.peerId],

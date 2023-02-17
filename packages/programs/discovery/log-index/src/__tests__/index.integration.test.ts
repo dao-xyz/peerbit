@@ -58,7 +58,7 @@ describe("query", () => {
 			await logIndex.setup({
 				store,
 				rpcTopic: topic,
-				context: "context",
+				context: () => logIndex.query.parentProgram.address,
 			});
 			logIndices.push(logIndex);
 			const encryption = {
@@ -100,7 +100,7 @@ describe("query", () => {
 				},
 				{
 					role: i === 0 ? new ReplicatorType() : new ObserverType(),
-					replicators: () => undefined,
+					replicators: () => [],
 					store: {
 						...DefaultOptions,
 						encryption,

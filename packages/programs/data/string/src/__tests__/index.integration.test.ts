@@ -46,7 +46,7 @@ describe("query", () => {
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
-			replicators: () => undefined,
+			replicators: () => [],
 			store: {
 				...DefaultOptions,
 				encryption: {
@@ -64,7 +64,7 @@ describe("query", () => {
 
 		await observerStore.init(observer, await createIdentity(), {
 			role: new ObserverType(),
-			replicators: () => undefined,
+			replicators: () => [],
 			store: {
 				...DefaultOptions,
 				resolveCache: () => new Cache(createStore()),
@@ -195,7 +195,7 @@ describe("query", () => {
 		const store = new DString({});
 		await store.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
-			replicators: () => undefined,
+			replicators: () => [],
 			store: {
 				...DefaultOptions,
 				encryption: {

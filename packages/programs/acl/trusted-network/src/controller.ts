@@ -161,11 +161,8 @@ export class TrustedNetwork extends Program {
 		return canAppendByRelation(entry, (key) => this.isTrusted(key));
 	}
 
-	async canRead(key?: PublicSignKey): Promise<boolean> {
-		if (!key) {
-			return false;
-		}
-		return this.isTrusted(key);
+	async canRead(_key?: PublicSignKey): Promise<boolean> {
+		return true; // TODO should we have read access control?
 	}
 
 	async add(
@@ -181,7 +178,7 @@ export class TrustedNetwork extends Program {
 			key = trustee as PublicSignKey | PeerIdAddress;
 		}
 
-		const existingRelation = this.getRelation(
+		const existingRelation = await this.getRelation(
 			key,
 			this.trustGraph.store.identity.publicKey
 		);
@@ -196,8 +193,8 @@ export class TrustedNetwork extends Program {
 		return existingRelation;
 	}
 
-	hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
-		return !!this.getRelation(trustee, truster);
+	async hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
+		return !!(await this.getRelation(trustee, truster));
 	}
 	getRelation(
 		trustee: PublicSignKey | PeerIdAddress,

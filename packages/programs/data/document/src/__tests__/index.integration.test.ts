@@ -1,7 +1,7 @@
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentsChange } from "../document-store";
 import {
-	FieldBigIntCompareQuery,
+	FieldIntegerCompareQuery,
 	FieldStringMatchQuery,
 	MemoryCompareQuery,
 	MemoryCompare,
@@ -113,7 +113,9 @@ describe("index", () => {
 				});
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => undefined,
+					replicators: () => [
+						[session.peers[0].directsub.publicKey.hashcode()],
+					],
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -172,7 +174,7 @@ describe("index", () => {
 				});
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => undefined,
+					replicators: () => [],
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -183,13 +185,13 @@ describe("index", () => {
 				for (let i = 0; i < insertions; i++) {
 					rngs.push(Buffer.from(crypto.randomBytes(1e5)).toString("base64"));
 				}
-
-				for (let i = 0; i < insertions; i++) {
+				for (let i = 0; i < 20000; i++) {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
 							name: rngs[i],
-						})
+						}),
+						{ unique: true }
 					);
 				}
 			});
@@ -204,7 +206,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					replicators: () => undefined,
+					replicators: () => [],
 					role: new ReplicatorType(),
 					store: {
 						...DefaultOptions,
@@ -246,7 +248,7 @@ describe("index", () => {
 
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => undefined,
+					replicators: () => [],
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -294,7 +296,7 @@ describe("index", () => {
 
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => undefined,
+					replicators: () => [],
 					store: {
 						...DefaultOptions,
 						resolveCache: () => new Cache(createStore()),
@@ -344,7 +346,9 @@ describe("index", () => {
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
 						role: i === 0 ? new ReplicatorType() : new ObserverType(),
-						replicators: () => undefined,
+						replicators: () => [
+							[session.peers[0].directsub.publicKey.hashcode()],
+						],
 						store: {
 							...DefaultOptions,
 							encryption: {
@@ -602,7 +606,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldBigIntCompareQuery({
+								new FieldIntegerCompareQuery({
 									key: "number",
 									compare: Compare.Equal,
 									value: 2n,
@@ -619,7 +623,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldBigIntCompareQuery({
+								new FieldIntegerCompareQuery({
 									key: "number",
 									compare: Compare.Greater,
 									value: 2n,
@@ -636,7 +640,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldBigIntCompareQuery({
+								new FieldIntegerCompareQuery({
 									key: "number",
 									compare: Compare.GreaterOrEqual,
 									value: 2n,
@@ -657,7 +661,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldBigIntCompareQuery({
+								new FieldIntegerCompareQuery({
 									key: "number",
 									compare: Compare.Less,
 									value: 2n,
@@ -674,7 +678,7 @@ describe("index", () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new FieldBigIntCompareQuery({
+								new FieldIntegerCompareQuery({
 									key: "number",
 									compare: Compare.LessOrEqual,
 									value: 2n,
@@ -894,7 +898,9 @@ describe("index", () => {
 						// we don't init, but in real use case we would init here
 						return program;
 					},
-					replicators: () => undefined,
+					replicators: () => [
+						[session.peers[0].directsub.publicKey.hashcode()],
+					],
 					store: {
 						...DefaultOptions,
 						encryption: {
@@ -946,7 +952,7 @@ describe("index", () => {
 			const subProgram = new SubProgram();
 			subProgram.init(session.peers[0], await createIdentity(), {
 				role: new ReplicatorType(),
-				replicators: () => undefined,
+				replicators: () => [],
 				store: {
 					...DefaultOptions,
 					replicator: () => Promise.resolve(true),
@@ -1022,7 +1028,9 @@ describe("index", () => {
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
 						role: new ReplicatorType(),
-						replicators: () => undefined,
+						replicators: () => [
+							session.peers.map((x) => x.directsub.publicKey.hashcode()),
+						],
 						store: {
 							...DefaultOptions,
 							encryption: {
@@ -1067,7 +1075,7 @@ describe("index", () => {
 				await session.stop();
 			});
 
-			it("undefined all", async () => {
+			it("queries all if undefined", async () => {
 				stores[0].docs._index.replicators = () => undefined;
 				await stores[0].docs.index.query(
 					new DocumentQueryRequest({ queries: [] }),
@@ -1172,7 +1180,7 @@ describe("index", () => {
 						stores[i].docs._index.queryHandler = (a, b) => {
 							if (!failedOnce) {
 								failedOnce = true;
-								throw Error();
+								throw new Error("Expected error");
 							}
 							return fn(a, b);
 						};
@@ -1197,7 +1205,7 @@ describe("index", () => {
 					];
 					for (let i = 1; i < stores.length; i++) {
 						stores[i].docs._index.queryHandler = (a, b) => {
-							throw Error();
+							throw new Error("Expected error");
 						};
 					}
 

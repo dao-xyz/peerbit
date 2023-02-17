@@ -27,7 +27,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { LogIndex } from "@dao-xyz/peerbit-logindex";
-import { AccessError } from "@dao-xyz/peerbit-crypto";
+import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
@@ -231,7 +231,10 @@ export class Documents<T> extends ComposableProgram {
 				encoding: this.store.oplog.encoding,
 				encryption: this.store.oplog.encryption,
 			});
-			const operation = await entry.getPayloadValue();
+			const operation =
+				entry._payload instanceof DecryptedThing
+					? entry.payload.getValue(entry.encoding)
+					: await entry.getPayloadValue();
 			if (operation instanceof PutOperation) {
 				// check nexts
 				const putOperation = operation as PutOperation<T>;
@@ -279,7 +282,10 @@ export class Documents<T> extends ComposableProgram {
 		return true;
 	}
 
-	public async put(doc: T, options?: AddOperationOptions<Operation<T>>) {
+	public async put(
+		doc: T,
+		options?: AddOperationOptions<Operation<T>> & { unique?: boolean }
+	) {
 		if (doc instanceof Program) {
 			if (this.parentProgram == null) {
 				throw new Error(
@@ -295,9 +301,12 @@ export class Documents<T> extends ComposableProgram {
 				`The provided document doesn't contain field '${this._index.indexBy}'`
 			);
 		}
-		const ser = serialize(doc);
-		const existingDocument = this._index.index.get(key); // (await this._index.get(key))?.results[0];
 
+		const ser = serialize(doc);
+		const existingDocument = options?.unique
+			? undefined
+			: (await this._index.get(key, { local: true, remote: { sync: true } }))
+					?.results[0];
 		return this.store.addOperation(
 			new PutOperation({
 				key: asString((doc as any)[this._index.indexBy]),
@@ -305,24 +314,27 @@ export class Documents<T> extends ComposableProgram {
 				value: doc,
 			}),
 			{
-				nexts: existingDocument ? [existingDocument.entry] : [], // await this._resolveEntry(existingDocument.context.head)
+				nexts: existingDocument
+					? [await this._resolveEntry(existingDocument.context.head)]
+					: [], //
 				...options,
 			}
 		);
 	}
 
 	async del(key: Keyable, options?: AddOperationOptions<Operation<T>>) {
-		const k = asString(key);
-		const existing = this._index.index.get(k); // (await this._index.get(k))?.results[0];
+		const existing = (
+			await this._index.get(key, { local: true, remote: { sync: true } })
+		)?.results[0];
 		if (!existing) {
-			throw new Error(`No entry with key '${k}' in the database`);
+			throw new Error(`No entry with key '${key}' in the database`);
 		}
 
 		return this.store.addOperation(
 			new DeleteOperation({
-				key: asString(k),
+				key: asString(key),
 			}),
-			{ nexts: [existing.entry], ...options } //
+			{ nexts: [await this._resolveEntry(existing.context.head)], ...options } //
 		);
 	}
 
@@ -339,7 +351,10 @@ export class Documents<T> extends ComposableProgram {
 		let dedupEntries: Entry<Operation<T>>[] = [];
 		let visited = new Set<string>();
 		for (const item of entries) {
-			const payload = await item.getPayloadValue();
+			const payload =
+				item._payload instanceof DecryptedThing
+					? item.payload.getValue(item.encoding)
+					: await item.getPayloadValue();
 			let itemKey: string;
 			if (
 				payload instanceof PutOperation ||
@@ -356,13 +371,18 @@ export class Documents<T> extends ComposableProgram {
 			visited.add(itemKey);
 			dedupEntries.push(item);
 		}
+
 		let documentsChanged: DocumentsChange<T> = {
 			added: [],
 			removed: [],
 		};
+
 		for (const item of dedupEntries) {
 			try {
-				const payload = await item.getPayloadValue();
+				const payload =
+					item._payload instanceof DecryptedThing
+						? item.payload.getValue(item.encoding)
+						: await item.getPayloadValue();
 				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
 					const key = payload.key;
 					const value = this.deserializeOrPass(payload);
