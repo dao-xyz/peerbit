@@ -472,6 +472,7 @@ export abstract class DirectStream<
 			// Get accurate latency
 			promises.push(
 				this.ping(peer).then((latency) => {
+					// TODO what happens if a peer send a ping back then leaves? Any problems?
 					this.addRouteConnection(this.publicKey, peerKey, latency);
 				})
 			);
@@ -502,9 +503,10 @@ export abstract class DirectStream<
 					continue;
 				}
 				for (const [key, hello] of hellos) {
-					if (!(await hello.header.verify())) {
+					if (!hello.header.verify()) {
 						hellos.delete(key);
 					}
+
 					promises.push(this.publishMessage(this.libp2p.peerId, hello, [peer]));
 				}
 			}
@@ -590,6 +592,9 @@ export abstract class DirectStream<
 	 */
 	public onPeerUnreachable(publicKey: PublicSignKey) {
 		// override this fn
+
+		this.hellosToReplay.delete(publicKey.hashcode());
+
 		this.dispatchEvent(
 			new CustomEvent("peer:unreachable", { detail: publicKey })
 		);
@@ -815,7 +820,15 @@ export abstract class DirectStream<
 	}
 	async onHello(from: PeerId, peerStream: PeerStreams, message: Hello) {
 		if (!(await message.verify(false))) {
-			logger.warn("Recieved hello message that did not verify");
+			const a = message.header.verify();
+			const b =
+				message.networkInfo.pingLatencies.length ===
+				message.signatures.signatures.length - 1;
+			logger.warn(
+				`Recieved hello message that did not verify. Header: ${a}, Ping info ${b}, Signatures ${
+					a && b
+				}`
+			);
 			return false;
 		}
 

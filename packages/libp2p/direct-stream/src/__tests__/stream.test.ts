@@ -623,12 +623,16 @@ describe("streams", function () {
 			await stream1.start();
 			await stream2.start();
 			await waitForPeers(stream1, stream2);
-
+			expect(stream2.hellosToReplay.size).toEqual(1);
 			await stream1.stop();
+			await waitFor(() => stream2.hellosToReplay.size === 0);
 			await stream2.stop();
 			await delay(1000); // Some delay seems to be necessary TODO fix
 			await stream1.start();
+			expect(stream1.hellosToReplay.size).toEqual(0);
 			await stream2.start();
+			await waitFor(() => stream1.hellosToReplay.size === 1);
+			await waitFor(() => stream2.hellosToReplay.size === 1);
 			await waitForPeers(stream1, stream2);
 		});
 
