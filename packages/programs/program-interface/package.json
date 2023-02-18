@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-program",
-	"version": "0.1.21",
+	"version": "0.1.22",
 	"description": "Program interface",
 	"type": "module",
 	"sideEffects": false,
@@ -31,9 +31,9 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.4",
-		"@dao-xyz/libp2p-direct-sub": "^0.1.16",
+		"@dao-xyz/libp2p-direct-sub": "^0.1.17",
 		"@dao-xyz/peerbit-crypto": "^0.1.10",
-		"@dao-xyz/peerbit-libp2p": "^0.1.17",
-		"@dao-xyz/peerbit-store": "^0.1.21"
+		"@dao-xyz/peerbit-libp2p": "^0.1.18",
+		"@dao-xyz/peerbit-store": "^0.1.22"
 	}
 }
