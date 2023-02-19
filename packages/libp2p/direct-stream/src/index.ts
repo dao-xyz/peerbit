@@ -1129,7 +1129,7 @@ export abstract class DirectStream<
 						const path = this.routes.getPath(this.publicKeyHash, to, {
 							block:
 								from !== this.libp2p.peerId
-									? this.peerIdToPublicKey.get(from.toString())!.hashcode()
+									? this.peerIdToPublicKey.get(from.toString())?.hashcode()
 									: undefined,
 						});
 						if (path && path.length > 0) {
