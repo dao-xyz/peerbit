@@ -1150,6 +1150,7 @@ export abstract class DirectStream<
 		} else {
 			peers = to;
 		}
+
 		if (message instanceof DataMessage) {
 			const meTo = message.to.findIndex(
 				(value) => value === this.publicKeyHash

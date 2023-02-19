@@ -31,6 +31,7 @@ describe("pubsub", function () {
 			await Promise.all(peers.map((peer) => peer.stream.stop()));
 			await session.stop();
 		});
+
 		it("can share topics when connecting after subscribe, 2 peers", async () => {
 			let streams: DirectSub[] = [];
 			for (const peer of session.peers.slice(0, 2)) {

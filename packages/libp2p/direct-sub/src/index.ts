@@ -87,18 +87,11 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return super.stop();
 	}
 
-	public async onPeerConnected(peerId: PeerId, conn: Connection) {
-		const ret = await super.onPeerConnected(peerId, conn);
-		//	this.streamToTopics.set(peerId.toString(), new Set());
-
-		// Aggregate subscribers for my topics through this new connection because if we don't do this we might end up with a situtation where
+	public async onPeerReachable(publicKey: PublicSignKey) {
+		// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
 		// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
-		const stream = this.peers.get(getPublicKeyFromPeerId(peerId).hashcode());
-		if (stream) {
-			await this.requestSubscribers([...this.topics.keys()], [stream]);
-		}
-
-		return ret;
+		await this.requestSubscribers([...this.topics.keys()], publicKey);
+		return super.onPeerReachable(publicKey);
 	}
 
 	public async onPeerDisconnected(peerId: PeerId) {
@@ -257,7 +250,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 
 	async requestSubscribers(
 		topic: string | string[],
-		streams?: PeerStreams[]
+		from?: PublicSignKey
 	): Promise<void> {
 		if (!this.started) {
 			throw new CodeError("not started yet", "ERR_NOT_STARTED_YET");
@@ -274,9 +267,9 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return this.publishMessage(
 			this.libp2p.peerId,
 			await new DataMessage({
+				to: from ? [from.hashcode()] : [],
 				data: toUint8Array(new GetSubscribers({ topics }).serialize()),
-			}).sign(this.sign),
-			streams
+			}).sign(this.sign)
 		);
 	}
 
