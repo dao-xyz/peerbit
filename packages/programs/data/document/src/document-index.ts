@@ -439,13 +439,12 @@ export class DocumentIndex<T> extends ComposableProgram {
 							});
 							for (const result of results) {
 								if (!result.from) {
-									continue;
+									throw new Error("Unexpected, missing from");
 								}
-								rs.push(...(await responseHandler(results)));
 								peerToGroupIndex.delete(result.from.hashcode());
 							}
-
-							responseHandler(results);
+							const resultsInitialized = await responseHandler(results);
+							rs.push(...resultsInitialized);
 							const indicesLeft = new Set([...peerToGroupIndex.values()]);
 
 							rng += 1;
