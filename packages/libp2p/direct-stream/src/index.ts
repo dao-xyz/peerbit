@@ -25,7 +25,7 @@ import {
 	PingPong,
 	Pong,
 } from "./messages.js";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { TimeoutError, waitFor } from "@dao-xyz/peerbit-time";
 import {
 	getKeypairFromPeerId,
 	getPublicKeyFromPeerId,
@@ -365,7 +365,13 @@ export abstract class DirectStream<
 
 		this.pingJob = setInterval(() => {
 			this.peers.forEach((peer) => {
-				this.ping(peer);
+				this.ping(peer).catch((e) => {
+					if (e instanceof TimeoutError) {
+						// Ignore
+					} else {
+						logger.error(e);
+					}
+				});
 			});
 		}, this.pingInterval);
 	}
@@ -975,7 +981,7 @@ export abstract class DirectStream<
 					const start = +new Date();
 					const timeout = setTimeout(() => {
 						this.pingWaiting.del(hash);
-						reject(new Error("Ping timed out"));
+						reject(new TimeoutError("Ping timed out"));
 					}, 10000);
 					const resolver = () => {
 						const end = +new Date();
