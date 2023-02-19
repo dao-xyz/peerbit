@@ -232,6 +232,7 @@ export type DirectStreamOptions = {
 	maxInboundStreams?: number;
 	maxOutboundStreams?: number;
 	signaturePolicy?: SignaturePolicy;
+	pingInterval?: number;
 };
 
 export abstract class DirectStream<
@@ -270,7 +271,10 @@ export abstract class DirectStream<
 	private readonly maxInboundStreams: number;
 	private readonly maxOutboundStreams: number;
 	private topology: any;
-	private _pingWaiting: Cache<() => void> = new Cache({ max: 1e4 }); // 1e4 max outgoing ping awaits, TODO choose this lim correctly
+	private pingWaiting: Cache<{ resolve: () => void; abort: () => void }> =
+		new Cache({ max: 1e4 }); // 1e4 max outgoing ping awaits, TODO choose this lim correctly
+	private pingJob: any;
+	private pingInterval: number;
 
 	constructor(
 		libp2p: Libp2p,
@@ -282,6 +286,7 @@ export abstract class DirectStream<
 			canRelayMessage = false,
 			emitSelf = false,
 			messageProcessingConcurrency = 10,
+			pingInterval = 10 * 1000,
 			maxInboundStreams = 1, // TODO, should this be 1, why can't this be one (tests fail)
 			maxOutboundStreams = 1, // TODO, should this be 1, why can't this be one (tests fail)
 			signaturePolicy = "StictSign",
@@ -307,6 +312,7 @@ export abstract class DirectStream<
 		this.seenCache = new Cache({ max: 1e3, ttl: 10 * 60 * 1e3 });
 		this.peerKeyHashToPublicKey = new Map();
 		this.peerIdToPublicKey = new Map();
+		this.pingInterval = pingInterval;
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
 		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
@@ -356,6 +362,12 @@ export abstract class DirectStream<
 				this.onPeerConnected(conn.remotePeer, conn);
 			}
 		});
+
+		this.pingJob = setInterval(() => {
+			this.peers.forEach((peer) => {
+				this.ping(peer);
+			});
+		}, this.pingInterval);
 	}
 
 	/**
@@ -365,6 +377,8 @@ export abstract class DirectStream<
 		if (!this.started) {
 			return;
 		}
+
+		clearInterval(this.pingJob);
 
 		await this.libp2p.unhandle(this.multicodecs);
 
@@ -381,11 +395,11 @@ export abstract class DirectStream<
 		for (const peerStreams of this.peers.values()) {
 			peerStreams.close();
 		}
-
-		this._pingWaiting.map.forEach((v) => {
-			v.value && v.value(); //  resolve all timeouts
+		this.pingWaiting.map.forEach((v) => {
+			v.value && v.value.abort(); //  resolve all timeouts
 		});
-		this._pingWaiting.clear();
+
+		this.pingWaiting.clear();
 		this.queue.clear();
 		this.hellosToReplay.clear();
 		this.earlyGoodbyes.clear();
@@ -470,12 +484,7 @@ export abstract class DirectStream<
 			const promises: Promise<any>[] = [];
 
 			// Get accurate latency
-			promises.push(
-				this.ping(peer).then((latency) => {
-					// TODO what happens if a peer send a ping back then leaves? Any problems?
-					this.addRouteConnection(this.publicKey, peerKey, latency);
-				})
-			);
+			promises.push(this.ping(peer));
 
 			// Say hello
 			promises.push(
@@ -573,6 +582,14 @@ export abstract class DirectStream<
 			await this.publishMessage(this.libp2p.peerId, earlyGoodBye);
 			this.earlyGoodbyes.delete(peerKeyHash);
 		}
+		this.pingWaiting.map.forEach((v) => {
+			v.value && v.value.abort(); //  resolve all timeouts
+		});
+		/* try {
+			
+		} catch (error) {
+
+		} */
 	}
 
 	/**
@@ -848,7 +865,9 @@ export abstract class DirectStream<
 		}
 
 		const latency = await this.ping(peerStream); // ping the sender
-		message.networkInfo.pingLatencies.push(latency);
+		message.networkInfo.pingLatencies.push(
+			Math.min(latency ?? 4294967295, 4294967295)
+		); // TODO don't propagate if latency is high?
 
 		await message.sign(this.sign); // sign it so othere peers can now I have seen it (and can build a network graph from trace info)
 
@@ -937,37 +956,48 @@ export abstract class DirectStream<
 			);
 		} else if (message instanceof Pong) {
 			// Let the (waiting) thread know that we have recieved the pong
-			const resolver = this._pingWaiting.get(
+			const resolver = this.pingWaiting.get(
 				await sha256Base64(message.pingBytes)
 			);
 			if (resolver) {
-				resolver();
+				resolver.resolve();
 			}
 		} else {
 			throw new Error("Unsupported");
 		}
 	}
 
-	async ping(stream: PeerStreams): Promise<number> {
-		return new Promise<number>((resolve, reject) => {
+	async ping(stream: PeerStreams): Promise<number | undefined> {
+		return new Promise<number | undefined>((resolve, reject) => {
 			const ping = new Ping();
 			sha256Base64(ping.pingBytes)
 				.then((hash) => {
 					const start = +new Date();
 					const timeout = setTimeout(() => {
-						this._pingWaiting.del(hash);
+						this.pingWaiting.del(hash);
 						reject(new Error("Ping timed out"));
 					}, 10000);
 					const resolver = () => {
 						const end = +new Date();
-						this._pingWaiting.del(hash);
+						this.pingWaiting.del(hash);
 						clearTimeout(timeout);
-						resolve(end - start);
+
+						// TODO what happens if a peer send a ping back then leaves? Any problems?
+						const latency = end - start;
+						this.addRouteConnection(this.publicKey, stream.publicKey, latency);
+						resolve(latency);
 					};
-					this._pingWaiting.add(hash, resolver);
+					this.pingWaiting.add(hash, {
+						resolve: resolver,
+						abort: () => {
+							this.pingWaiting.del(hash);
+							clearTimeout(timeout);
+							resolve(undefined);
+						},
+					});
 					this.publishMessage(this.libp2p.peerId, ping, [stream]).catch(
 						(err) => {
-							this._pingWaiting.del(hash);
+							this.pingWaiting.del(hash);
 							clearTimeout(timeout);
 							reject(err);
 						}

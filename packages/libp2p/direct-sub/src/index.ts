@@ -387,6 +387,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 	}
 	public onPeerUnreachable(publicKey: PublicSignKey) {
 		super.onPeerUnreachable(publicKey);
+
 		const publicKeyHash = publicKey.hashcode();
 		const peerTopics = this.peerToTopic.get(publicKeyHash);
 
@@ -495,6 +496,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				// if no subscription data, or new subscription has data (and is newer) then overwrite it.
 				// subscription where data is undefined is not intended to replace existing data
 				const existingSubscription = peers.get(subscriberKey);
+
 				if (
 					!existingSubscription ||
 					(existingSubscription.timestamp < message.header.timetamp &&

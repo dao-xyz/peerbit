@@ -32,6 +32,7 @@ describe("pubsub", function () {
 			await session.stop();
 		});
 		it("can share topics when connecting after subscribe, 2 peers", async () => {
+			let streams: DirectSub[] = [];
 			for (const peer of session.peers.slice(0, 2)) {
 				const stream = new DirectSub(peer, { canRelayMessage: true });
 				const client: {
@@ -52,6 +53,7 @@ describe("pubsub", function () {
 					client.recieved.push(msg.detail);
 				});
 				await stream.start();
+				streams.push(stream);
 			}
 
 			const TOPIC = "world";
@@ -71,6 +73,8 @@ describe("pubsub", function () {
 					.getSubscribers(TOPIC)
 					?.has(peers[0].stream.publicKeyHash)
 			);
+
+			await Promise.all(streams.map((s) => s.stop()));
 		});
 
 		it("can share topics when connecting after subscribe, 3 peers and 1 relay", async () => {
@@ -122,6 +126,7 @@ describe("pubsub", function () {
 					.getSubscribers(TOPIC)
 					?.has(peers[0].stream.publicKeyHash)
 			);
+			await Promise.all(peers.map((x) => x.stream.stop()));
 		});
 	});
 
@@ -180,9 +185,9 @@ describe("pubsub", function () {
 			await waitForPeers(peers[1].stream, peers[2].stream);
 			await delay(1000);
 
-			peers[0].stream.subscribe(TOPIC);
-			peers[1].stream.subscribe(TOPIC);
-			peers[2].stream.subscribe(TOPIC);
+			await peers[0].stream.subscribe(TOPIC);
+			await peers[1].stream.subscribe(TOPIC);
+			await peers[2].stream.subscribe(TOPIC);
 
 			for (let i = 0; i < peers.length; i++) {
 				for (let j = 0; j < peers.length; j++) {

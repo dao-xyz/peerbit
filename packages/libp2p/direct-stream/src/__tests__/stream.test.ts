@@ -7,10 +7,14 @@ import { DataMessage, Message } from "../messages";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
 class TestStreamImpl extends DirectStream {
-	constructor(libp2p: Libp2p, id = "test/0.0.0") {
-		super(libp2p, [id], {
+	constructor(
+		libp2p: Libp2p,
+		options: { id?: string; pingInterval?: number } = {}
+	) {
+		super(libp2p, [options.id || "test/0.0.0"], {
 			canRelayMessage: true,
 			emitSelf: true,
+			...options,
 		});
 	}
 }
@@ -56,6 +60,27 @@ describe("streams", function () {
 				streams[0].peers.get(streams[1].publicKeyHash)!
 			);
 			expect(ping).toBeNumber();
+		});
+
+		it("ping interval", async () => {
+			// 0 and 2 not connected
+			session = await LSession.connected(2);
+
+			const pingInterval = 1000;
+			streams = session.peers.map(
+				(x) => new TestStreamImpl(x, { pingInterval })
+			);
+			await Promise.all(streams.map((x) => x.start()));
+
+			await waitForPeers(...streams);
+
+			let counter = 0;
+			const pingFn = streams[0].onPing.bind(streams[0]);
+			streams[0].onPing = (a, b, c) => {
+				counter += 1;
+				return pingFn(a, b, c);
+			};
+			await waitFor(() => counter > 5);
 		});
 	});
 
@@ -586,6 +611,7 @@ describe("streams", function () {
 			});
 
 			afterAll(async () => {
+				await Promise.all(peers.map((peer) => peer.stream.stop()));
 				await session.stop();
 			});
 			it("will replay on connect", async () => {
@@ -611,9 +637,9 @@ describe("streams", function () {
 		});
 
 		afterEach(async () => {
-			await session.stop();
 			await stream1?.stop();
 			await stream2?.stop();
+			await session.stop();
 		});
 
 		it("can restart", async () => {
@@ -678,16 +704,18 @@ describe("streams", function () {
 		});
 
 		afterEach(async () => {
-			await session.stop();
 			await stream1?.stop();
 			await stream2?.stop();
+			await stream1b?.stop();
+			await stream2b?.stop();
+			await session.stop();
 		});
 
 		it("can setup multiple streams at once", async () => {
 			stream1 = new TestStreamImpl(session.peers[0]);
 			stream2 = new TestStreamImpl(session.peers[1]);
-			stream1b = new TestStreamImpl(session.peers[0], "alt");
-			stream2b = new TestStreamImpl(session.peers[1], "alt");
+			stream1b = new TestStreamImpl(session.peers[0], { id: "alt" });
+			stream2b = new TestStreamImpl(session.peers[1], { id: "alt" });
 			stream1.start();
 			stream2.start();
 			stream1b.start();
