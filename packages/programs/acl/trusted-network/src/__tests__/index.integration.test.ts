@@ -357,14 +357,13 @@ describe("index", () => {
 					}),
 					{
 						remote: {
-							//signer: identity(2),
 							timeout: 20000,
-							amount: 2, // response from peer and peer2
 						},
 						local: false,
 					}
 				);
 
+			expect(responses.length).toEqual(3);
 			expect(responses.filter((x) => x.results.length >= 2)).toHaveLength(2);
 
 			// Try query with untrusted
