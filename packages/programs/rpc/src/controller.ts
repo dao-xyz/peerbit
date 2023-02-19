@@ -339,20 +339,24 @@ export class RPC<Q, R> extends ComposableProgram {
 							isTrusted: options?.isTrusted,
 						}
 					);
-					options?.onResponse && options.onResponse(resultData, from);
-					allResults.push({ response: resultData, from });
 
-					if (
-						options?.amount != null &&
-						allResults.length >= (options.amount as number)
-					) {
-						resolve!();
-					}
-
-					if (from && expectedResponders?.has(from.hashcode())) {
-						responders.add(from.hashcode());
-						if (responders.size === expectedResponders.size) {
-							resolve();
+					if (expectedResponders) {
+						if (from && expectedResponders?.has(from.hashcode())) {
+							options?.onResponse && options.onResponse(resultData, from);
+							allResults.push({ response: resultData, from });
+							responders.add(from.hashcode());
+							if (responders.size === expectedResponders.size) {
+								resolve();
+							}
+						}
+					} else {
+						options?.onResponse && options.onResponse(resultData, from);
+						allResults.push({ response: resultData, from });
+						if (
+							options?.amount != null &&
+							allResults.length >= (options.amount as number)
+						) {
+							resolve!();
 						}
 					}
 				} catch (error) {
