@@ -203,6 +203,7 @@ export type ProgramInitializationOptions = {
 	onClose?: () => void;
 	onDrop?: () => void;
 	open?: OpenProgram;
+	openedBy?: AbstractProgram;
 };
 
 @variant(0)
@@ -219,7 +220,7 @@ export abstract class AbstractProgram {
 	private _role: SubscriptionType;
 
 	open?: (program: Program) => Promise<Program>;
-	private programsOpened: Program[];
+	programsOpened: Program[];
 	parentProgram: Program;
 
 	get initialized() {
@@ -252,11 +253,13 @@ export abstract class AbstractProgram {
 		if (options.open) {
 			this.programsOpened = [];
 			this.open = async (program) => {
-				if (program.initialized) {
-					return program;
+				if (!program.openedByPrograms) {
+					program.openedByPrograms = [];
 				}
+				program.openedByPrograms.push(this);
+				this.programsOpened.push(program);
+
 				const opened = await options.open!(program);
-				this.programsOpened.push(opened);
 				return opened;
 			};
 		}
@@ -279,11 +282,11 @@ export abstract class AbstractProgram {
 		return this;
 	}
 
-	async close(): Promise<void> {
+	async close(): Promise<boolean> {
 		if (!this.initialized) {
-			return;
+			return false;
 		}
-		const promises: Promise<void>[] = [];
+		const promises: Promise<void | boolean>[] = [];
 		for (const store of this.stores.values()) {
 			promises.push(store.close());
 		}
@@ -292,12 +295,13 @@ export abstract class AbstractProgram {
 		}
 		if (this.programsOpened) {
 			for (const program of this.programsOpened) {
-				promises.push(program.close());
+				promises.push(program.close(this));
 			}
 			this.programsOpened = [];
 		}
 		await Promise.all(promises);
 		this._onClose && this._onClose();
+		return true;
 	}
 
 	async drop(): Promise<void> {
@@ -434,6 +438,8 @@ export abstract class Program
 
 	private _address?: Address;
 
+	openedByPrograms: (AbstractProgram | undefined)[];
+
 	constructor(properties?: { id?: string }) {
 		super();
 		if (properties) {
@@ -476,6 +482,13 @@ export abstract class Program
 		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
+		(this.openedByPrograms || (this.openedByPrograms = [])).push(
+			options.openedBy
+		);
+		if (this.initialized) {
+			return this;
+		}
+
 		// TODO, determine whether setup should be called before or after save
 		if (this.parentProgram === undefined) {
 			await this.save(libp2p.directblock);
@@ -483,6 +496,7 @@ export abstract class Program
 
 		await this.setup();
 		await super.init(libp2p, identity, options);
+
 		if (this.parentProgram != undefined && this._address) {
 			throw new Error(
 				"Expecting address to be undefined as this program is part of another program"
@@ -560,6 +574,24 @@ export abstract class Program
 		return der as S;
 	}
 
+	async close(from?: AbstractProgram): Promise<boolean> {
+		if (from) {
+			if (!this.openedByPrograms) {
+				throw new Error("Expected: openedByPrograms to be non-empty");
+			}
+
+			const ix = this.openedByPrograms.findIndex((x) => x == from);
+			if (ix !== -1) {
+				this.openedByPrograms.splice(ix, 1);
+				if (this.openedByPrograms.length === 0) {
+					return super.close();
+				} else {
+					return false; // don't close, because someone else depends on this
+				}
+			}
+		}
+		return super.close();
+	}
 	async drop(): Promise<void> {
 		await super.drop();
 		return this.delete();

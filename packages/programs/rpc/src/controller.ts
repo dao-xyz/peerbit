@@ -94,7 +94,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		return this;
 	}
 
-	public async close(): Promise<void> {
+	public async close(): Promise<boolean> {
 		if (this._subscribedResponses) {
 			await this.libp2p.directsub.unsubscribe(this.rpcTopic);
 			await this.libp2p.directsub.removeEventListener(
@@ -113,6 +113,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			);
 			this._subscribedRequests = false;
 		}
+		return true;
 	}
 
 	private async _subscribeRequests(): Promise<void> {

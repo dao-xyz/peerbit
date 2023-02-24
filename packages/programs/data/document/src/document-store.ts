@@ -58,18 +58,18 @@ export class Documents<T> extends ComposableProgram {
 	immutable: boolean; // "Can I overwrite a document?"
 
 	@field({ type: DocumentIndex })
-	_index: DocumentIndex<T>;
+	private _index: DocumentIndex<T>;
 
 	@field({ type: LogIndex })
-	_logIndex: LogIndex;
+	private _logIndex: LogIndex;
 
-	_clazz?: AbstractType<T>;
+	private _clazz?: AbstractType<T>;
 
-	_valueEncoding: Encoding<T>;
+	private _valueEncoding: Encoding<T>;
 
-	_optionCanAppend?: CanAppend<Operation<T>>;
-	_canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
-	_events: EventEmitter<DocumentEvents<T>>;
+	private _optionCanAppend?: CanAppend<Operation<T>>;
+	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
+	private _events: EventEmitter<DocumentEvents<T>>;
 
 	constructor(properties: {
 		immutable?: boolean;
@@ -110,12 +110,12 @@ export class Documents<T> extends ComposableProgram {
 		canOpen?: (program: Program) => Promise<boolean>;
 	}) {
 		this._clazz = options.type;
-		this._canOpen = options.canOpen;
+		this.canOpen = options.canOpen;
 		this._events = new EventEmitter();
 
 		/* eslint-disable */
 		if (Program.isPrototypeOf(this._clazz)) {
-			if (!this._canOpen) {
+			if (!this.canOpen) {
 				throw new Error(
 					"setup needs to be called with the canOpen option when the document type is a Program"
 				);
@@ -413,7 +413,7 @@ export class Documents<T> extends ComposableProgram {
 
 						// if replicator, then open
 						if (
-							(await this._canOpen!(value, item)) &&
+							(await this.canOpen!(value, item)) &&
 							this.role instanceof ReplicatorType &&
 							(await this.store.options.replicator!(item.gid))
 						) {
@@ -442,7 +442,7 @@ export class Documents<T> extends ComposableProgram {
 
 					documentsChanged.removed.push(value.value);
 					if (value.value instanceof Program) {
-						await value.value.close();
+						await value.value.close(this);
 					}
 
 					this._index.index.delete(key);

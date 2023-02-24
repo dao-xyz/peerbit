@@ -4,6 +4,7 @@ import { ComposableProgram, Program } from "..";
 import { getValuesWithType } from "../utils.js";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { MemoryLevelBlockStore } from "@dao-xyz/libp2p-direct-block";
+import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 
 @variant("x1")
 class P1 extends ComposableProgram {}
@@ -33,6 +34,17 @@ class P2 extends Program {
 		super();
 		this.store = [new ExtendedEmbeddedStore({ store })];
 		this.program = new P1();
+	}
+
+	async setup(): Promise<void> {
+		return;
+	}
+}
+
+@variant("p3")
+class P3 extends Program {
+	constructor() {
+		super();
 	}
 
 	async setup(): Promise<void> {
@@ -82,6 +94,92 @@ describe("program", () => {
 		await p.save(mem);
 		expect(p.program.address.toString()).toEndWith("/0");
 		await mem.close();
+	});
+
+	it("subprogram will not close if opened outside a program", async () => {
+		const p = new P3();
+		const p2 = new P3();
+
+		let open = async (open: Program): Promise<Program> => {
+			return open;
+		};
+		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+		await p2.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+
+		let p3 = await p.open!(new P3());
+		let closeCounter = 0;
+
+		// Open it outside a program (call init on p3)
+		await p3.init(session.peers[0], await Ed25519Keypair.create(), {
+			onClose: () => {
+				closeCounter++;
+			},
+			store: {},
+		} as any);
+
+		expect(p.programsOpened).toHaveLength(1);
+		expect(p3.programsOpened).toBeUndefined();
+		expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
+
+		await p2.open!(p3);
+		expect(p.programsOpened).toHaveLength(1);
+		expect(p2.programsOpened).toHaveLength(1);
+		expect(p3.programsOpened).toBeUndefined();
+		expect(p3.openedByPrograms).toContainAllValues([undefined, p, p2]);
+
+		await p2.close();
+		expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
+		expect(closeCounter).toEqual(0);
+		await p.close();
+		expect(p3.openedByPrograms).toContainAllValues([undefined]);
+		expect(closeCounter).toEqual(0);
+	});
+
+	it("subprogram will close if no dependency", async () => {
+		const p = new P3();
+		const p2 = new P3();
+
+		let open = async (open: Program): Promise<Program> => {
+			return open;
+		};
+		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+		await p2.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+
+		let p3 = await p.open!(new P3());
+		let closeCounter = 0;
+		p3["_onClose"] = () => {
+			closeCounter += 1;
+		};
+		p3["_initialized"] = true;
+
+		expect(p.programsOpened).toHaveLength(1);
+		expect(p3.programsOpened).toBeUndefined();
+		expect(p3.openedByPrograms).toContainAllValues([p]);
+
+		await p2.open!(p3);
+		expect(p.programsOpened).toHaveLength(1);
+		expect(p2.programsOpened).toHaveLength(1);
+		expect(p3.programsOpened).toBeUndefined();
+		expect(p3.openedByPrograms).toContainAllValues([p, p2]);
+
+		await p2.close();
+		expect(p3.openedByPrograms).toContainAllValues([p]);
+		expect(closeCounter).toEqual(0);
+		await p.close();
+		expect(p3.openedByPrograms).toContainAllValues([]);
+		expect(closeCounter).toEqual(1);
 	});
 
 	it("will create indices", async () => {

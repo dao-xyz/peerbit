@@ -25,6 +25,7 @@ import {
 import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
 import {
+	AbstractProgram,
 	ObserverType,
 	Program,
 	ReplicatorType,
@@ -138,7 +139,7 @@ describe("index", () => {
 				});
 
 				const putOperation = (await store.docs.put(doc)).entry;
-				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.index.size).toEqual(1);
 
 				expect(changes.length).toEqual(1);
 				expect(changes[0].added).toHaveLength(1);
@@ -146,7 +147,7 @@ describe("index", () => {
 				expect(changes[0].removed).toHaveLength(0);
 
 				const putOperation2 = (await store.docs.put(doc2)).entry;
-				expect(store.docs._index.size).toEqual(2);
+				expect(store.docs.index.size).toEqual(2);
 				expect(putOperation2.next).toContainAllValues([]); // because doc 2 is independent of doc 1
 
 				expect(changes.length).toEqual(2);
@@ -157,7 +158,7 @@ describe("index", () => {
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(deleteOperation.next).toContainAllValues([putOperation.hash]); // because delete is dependent on put
-				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.index.size).toEqual(1);
 
 				expect(changes.length).toEqual(3);
 				expect(changes[2].added).toHaveLength(0);
@@ -225,14 +226,14 @@ describe("index", () => {
 				});
 
 				const _putOperation = await store.docs.put(doc);
-				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.index.size).toEqual(1);
 				const putOperation2 = (await store.docs.put(editDoc)).entry;
-				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.index.size).toEqual(1);
 				expect(putOperation2.next).toHaveLength(1);
 
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
-				expect(store.docs._index.size).toEqual(0);
+				expect(store.docs.index.size).toEqual(0);
 				expect(
 					store.docs.store.oplog.values.toArray().map((x) => x.hash)
 				).toEqual([deleteOperation.hash]); // the delete operation
@@ -269,7 +270,7 @@ describe("index", () => {
 
 				// put doc
 				await store.docs.put(doc);
-				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.index.size).toEqual(1);
 				expect(changes.length).toEqual(1);
 				expect(changes[0].added).toHaveLength(1);
 				expect(changes[0].added[0].id).toEqual(doc.id);
@@ -277,7 +278,7 @@ describe("index", () => {
 
 				// put doc again and make sure it still exist in index with trim to 1 option
 				await store.docs.put(doc);
-				expect(store.docs._index.size).toEqual(1);
+				expect(store.docs.index.size).toEqual(1);
 				expect(store.docs.store.oplog.values.length).toEqual(1);
 				expect(changes.length).toEqual(2);
 				expect(changes[1].added).toHaveLength(1);
@@ -317,7 +318,7 @@ describe("index", () => {
 
 				expect(store.docs.index.size).toEqual(10);
 				expect(store.docs.store.oplog.values.length).toEqual(10);
-				expect(store.docs.store.oplog.headsIndex._index.size).toEqual(10);
+				expect(store.docs.store.oplog.headsIndex.index.size).toEqual(10);
 			});
 		});
 
@@ -657,7 +658,7 @@ describe("index", () => {
 								it("modified between", async () => {
 									let response: Results<Document> = undefined as any;
 				
-									const allDocs = [...writeStore.docs.index._index.values()].sort(
+									const allDocs = [...writeStore.docs.index.index.values()].sort(
 										(a, b) =>
 											Number(
 												a.entry.metadata.clock.timestamp.wallTime -
@@ -923,9 +924,9 @@ describe("index", () => {
 
 			closed = false;
 
-			async close(): Promise<void> {
-				this.closed = true;
-				return super.close();
+			async close(from?: AbstractProgram): Promise<boolean> {
+				this.closed = await super.close(from);
+				return this.closed;
 			}
 		}
 
@@ -986,6 +987,7 @@ describe("index", () => {
 					role: i === 0 ? new ReplicatorType() : new ObserverType(),
 					open: async (program) => {
 						openEvents.push(program);
+						program["_initialized"] = true;
 						// we don't init, but in real use case we would init here
 						return program;
 					},
@@ -1017,7 +1019,7 @@ describe("index", () => {
 			}
 		});
 		afterEach(async () => {
-			await Promise.all(stores.map((x) => x.store.drop()));
+			await Promise.all(stores.map((x) => x.store.close()));
 		});
 
 		afterAll(async () => {
@@ -1051,7 +1053,7 @@ describe("index", () => {
 				},
 			});
 			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
-			expect(stores[0].openEvents).toHaveLength(0);
+			expect(stores[0].openEvents).toHaveLength(1);
 			await stores[0].store.close();
 			expect(subProgram.closed).toBeFalse();
 			await subProgram.close();
@@ -1076,19 +1078,22 @@ describe("index", () => {
 
 		it("will close on delete", async () => {
 			const subProgram = new SubProgram();
-			const close = subProgram.close.bind(subProgram);
-			let closed = false;
-
-			subProgram.close = () => {
-				closed = true;
-				return close();
-			};
-
 			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			expect(stores[0].openEvents).toHaveLength(1);
 			expect(stores[0].openEvents[0]).toEqual(subProgram);
 			await stores[0].store.docs.del(subProgram.id);
-			await waitFor(() => closed);
+			await waitFor(() => subProgram.closed);
+		});
+
+		it("can prevent subprograms to be opened", async () => {
+			stores[0].store.docs.canOpen = (_) => Promise.resolve(false);
+			const subProgram = new SubProgram();
+			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
+			subProgram.openedByPrograms = [undefined];
+			expect(stores[0].openEvents).toHaveLength(0);
+			await stores[0].store.docs.del(subProgram.id);
+			await delay(5000);
+			expect(subProgram.closed).toBeFalse(); // since we didn't open it on put, we should also not close it here
 		});
 	});
 
@@ -1147,10 +1152,10 @@ describe("index", () => {
 				}
 
 				for (let i = 0; i < stores.length; i++) {
-					const fn = stores[i].docs._index.queryHandler.bind(
-						stores[i].docs._index
+					const fn = stores[i].docs.index.queryHandler.bind(
+						stores[i].docs.index
 					);
-					stores[i].docs._index.queryHandler = (a, b) => {
+					stores[i].docs.index.queryHandler = (a, b) => {
 						counters[i] += 1;
 						return fn(a, b);
 					};
@@ -1167,7 +1172,7 @@ describe("index", () => {
 			});
 
 			it("queries all if undefined", async () => {
-				stores[0].docs._index.replicators = () => undefined;
+				stores[0].docs.index.replicators = () => undefined;
 				await stores[0].docs.index.query(
 					new DocumentQueryRequest({ queries: [] }),
 					{ remote: { amount: 2 } }
@@ -1178,7 +1183,7 @@ describe("index", () => {
 			});
 
 			it("all", async () => {
-				stores[0].docs._index.replicators = () => [
+				stores[0].docs.index.replicators = () => [
 					[stores[1].libp2p.directsub.publicKey.hashcode()],
 					[stores[2].libp2p.directsub.publicKey.hashcode()],
 				];
@@ -1191,7 +1196,7 @@ describe("index", () => {
 			});
 
 			it("will always query locally", async () => {
-				stores[0].docs._index.replicators = () => [];
+				stores[0].docs.index.replicators = () => [];
 				await stores[0].docs.index.query(
 					new DocumentQueryRequest({ queries: [] })
 				);
@@ -1201,7 +1206,7 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs._index.replicators = () => [
+				stores[0].docs.index.replicators = () => [
 					[stores[1].libp2p.directsub.publicKey.hashcode()],
 				];
 				await stores[0].docs.index.query(
@@ -1213,7 +1218,7 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs._index.replicators = () => [
+				stores[0].docs.index.replicators = () => [
 					[stores[1].libp2p.directsub.publicKey.hashcode()],
 					[stores[2].libp2p.directsub.publicKey.hashcode()],
 				];
@@ -1226,7 +1231,7 @@ describe("index", () => {
 				expect(counters[2]).toEqual(1);
 			});
 			it("ignore shard if I am replicator", async () => {
-				stores[0].docs._index.replicators = () => [
+				stores[0].docs.index.replicators = () => [
 					[
 						stores[0].libp2p.directsub.publicKey.hashcode(),
 						stores[1].libp2p.directsub.publicKey.hashcode(),
@@ -1244,19 +1249,17 @@ describe("index", () => {
 				let fns: any[];
 
 				beforeEach(() => {
-					fns = stores.map((x) =>
-						x.docs._index.queryHandler.bind(x.docs._index)
-					);
+					fns = stores.map((x) => x.docs.index.queryHandler.bind(x.docs.index));
 				});
 
 				afterEach(() => {
 					stores.forEach((x, ix) => {
-						x.docs._index.queryHandler = fns[ix];
+						x.docs.index.queryHandler = fns[ix];
 					});
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs._index.replicators = () => [
+					stores[0].docs.index.replicators = () => [
 						[
 							stores[1].libp2p.directsub.publicKey.hashcode(),
 							stores[2].libp2p.directsub.publicKey.hashcode(),
@@ -1265,10 +1268,10 @@ describe("index", () => {
 
 					let failedOnce = false;
 					for (let i = 1; i < stores.length; i++) {
-						const fn = stores[i].docs._index.queryHandler.bind(
-							stores[1].docs._index
+						const fn = stores[i].docs.index.queryHandler.bind(
+							stores[1].docs.index
 						);
-						stores[i].docs._index.queryHandler = (a, b) => {
+						stores[i].docs.index.queryHandler = (a, b) => {
 							if (!failedOnce) {
 								failedOnce = true;
 								throw new Error("Expected error");
@@ -1288,14 +1291,14 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs._index.replicators = () => [
+					stores[0].docs.index.replicators = () => [
 						[
 							stores[1].libp2p.directsub.publicKey.hashcode(),
 							stores[2].libp2p.directsub.publicKey.hashcode(),
 						],
 					];
 					for (let i = 1; i < stores.length; i++) {
-						stores[i].docs._index.queryHandler = (a, b) => {
+						stores[i].docs.index.queryHandler = (a, b) => {
 							throw new Error("Expected error");
 						};
 					}
