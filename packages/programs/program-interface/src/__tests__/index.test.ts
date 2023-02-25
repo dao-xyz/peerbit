@@ -136,18 +136,28 @@ describe("program", () => {
 		await p2.close();
 		expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
 		expect(closeCounter).toEqual(0);
+		expect(p3.closed).toBeFalse();
 		await p.close();
 		expect(p3.openedByPrograms).toContainAllValues([undefined]);
 		expect(closeCounter).toEqual(0);
+		expect(p3.closed).toBeFalse();
 	});
 
 	it("subprogram will close if no dependency", async () => {
 		const p = new P3();
 		const p2 = new P3();
 
+		let closeCounter = 0;
+
 		let open = async (open: Program): Promise<Program> => {
+			open["_onClose"] = () => {
+				closeCounter += 1;
+			};
+			open["_closed"] = false;
+			open["_initialized"] = true;
 			return open;
 		};
+
 		await p.init(session.peers[0], await Ed25519Keypair.create(), {
 			open,
 			store: {},
@@ -158,11 +168,6 @@ describe("program", () => {
 		} as any);
 
 		let p3 = await p.open!(new P3());
-		let closeCounter = 0;
-		p3["_onClose"] = () => {
-			closeCounter += 1;
-		};
-		p3["_initialized"] = true;
 
 		expect(p.programsOpened).toHaveLength(1);
 		expect(p3.programsOpened).toBeUndefined();
@@ -177,9 +182,11 @@ describe("program", () => {
 		await p2.close();
 		expect(p3.openedByPrograms).toContainAllValues([p]);
 		expect(closeCounter).toEqual(0);
+		expect(p3.closed).toBeFalse();
 		await p.close();
 		expect(p3.openedByPrograms).toContainAllValues([]);
 		expect(closeCounter).toEqual(1);
+		expect(p3.closed).toBeTrue();
 	});
 
 	it("will create indices", async () => {

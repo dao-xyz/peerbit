@@ -223,6 +223,8 @@ export abstract class AbstractProgram {
 	programsOpened: Program[];
 	parentProgram: Program;
 
+	_closed: boolean;
+
 	get initialized() {
 		return this._initialized;
 	}
@@ -233,6 +235,13 @@ export abstract class AbstractProgram {
 
 	get role() {
 		return this._role;
+	}
+
+	get closed() {
+		if (this._closed === undefined) {
+			return true;
+		}
+		return this._closed;
 	}
 
 	async init(
@@ -279,6 +288,7 @@ export abstract class AbstractProgram {
 		);
 
 		this._initialized = true;
+		this._closed = false;
 		return this;
 	}
 
@@ -301,6 +311,7 @@ export abstract class AbstractProgram {
 		}
 		await Promise.all(promises);
 		this._onClose && this._onClose();
+		this._closed = true;
 		return true;
 	}
 
@@ -503,6 +514,7 @@ export abstract class Program
 			);
 		}
 
+		this._closed = false;
 		return this;
 	}
 
@@ -583,11 +595,12 @@ export abstract class Program
 			const ix = this.openedByPrograms.findIndex((x) => x == from);
 			if (ix !== -1) {
 				this.openedByPrograms.splice(ix, 1);
-				if (this.openedByPrograms.length === 0) {
-					return super.close();
-				} else {
+				if (this.openedByPrograms.length !== 0) {
 					return false; // don't close, because someone else depends on this
 				}
+				// else close!
+			} else {
+				return false;
 			}
 		}
 		return super.close();

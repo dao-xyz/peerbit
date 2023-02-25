@@ -921,13 +921,6 @@ describe("index", () => {
 				super(properties);
 			}
 			async setup() {}
-
-			closed = false;
-
-			async close(from?: AbstractProgram): Promise<boolean> {
-				this.closed = await super.close(from);
-				return this.closed;
-			}
 		}
 
 		@variant("test_program_documents")
@@ -988,6 +981,8 @@ describe("index", () => {
 					open: async (program) => {
 						openEvents.push(program);
 						program["_initialized"] = true;
+						program["_closed"] = false;
+
 						// we don't init, but in real use case we would init here
 						return program;
 					},
@@ -1090,10 +1085,12 @@ describe("index", () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			subProgram.openedByPrograms = [undefined];
+			expect(subProgram.closed).toBeTrue();
+			subProgram["_closed"] = false;
+			expect(subProgram.closed).toBeFalse();
 			expect(stores[0].openEvents).toHaveLength(0);
 			await stores[0].store.docs.del(subProgram.id);
-			await delay(5000);
-			expect(subProgram.closed).toBeFalse(); // since we didn't open it on put, we should also not close it here
+			expect(subProgram.closed).toBeFalse();
 		});
 	});
 
