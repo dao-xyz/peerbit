@@ -73,6 +73,52 @@ describe("program", () => {
 		await session.stop();
 	});
 
+	it("can re-open from closed", async () => {
+		const p = new P3();
+		let open = async (open: Program): Promise<Program> => {
+			return open;
+		};
+		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+
+		expect(p.closed).toBeFalse();
+		expect(p.initialized).toBeTrue();
+		await p.close();
+		expect(p.closed).toBeTrue();
+		expect(p.initialized).toBeFalse();
+		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+		expect(p.closed).toBeFalse();
+		expect(p.initialized).toBeTrue();
+	});
+
+	it("can re-open from dropped", async () => {
+		const p = new P3();
+		let open = async (open: Program): Promise<Program> => {
+			return open;
+		};
+		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+
+		expect(p.closed).toBeFalse();
+		expect(p.initialized).toBeTrue();
+		await p.drop();
+		expect(p.closed).toBeTrue();
+		expect(p.initialized).toBeFalse();
+		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			open,
+			store: {},
+		} as any);
+		expect(p.closed).toBeFalse();
+		expect(p.initialized).toBeTrue();
+	});
+
 	it("can resolve stores and programs", () => {
 		const store = new Store();
 		const p = new P2(store);

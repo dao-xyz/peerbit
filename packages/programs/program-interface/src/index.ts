@@ -223,8 +223,6 @@ export abstract class AbstractProgram {
 	programsOpened: Program[];
 	parentProgram: Program;
 
-	_closed: boolean;
-
 	get initialized() {
 		return this._initialized;
 	}
@@ -238,10 +236,7 @@ export abstract class AbstractProgram {
 	}
 
 	get closed() {
-		if (this._closed === undefined) {
-			return true;
-		}
-		return this._closed;
+		return !this._initialized;
 	}
 
 	async init(
@@ -288,7 +283,6 @@ export abstract class AbstractProgram {
 		);
 
 		this._initialized = true;
-		this._closed = false;
 		return this;
 	}
 
@@ -311,7 +305,7 @@ export abstract class AbstractProgram {
 		}
 		await Promise.all(promises);
 		this._onClose && this._onClose();
-		this._closed = true;
+		this._initialized = false;
 		return true;
 	}
 
@@ -514,7 +508,6 @@ export abstract class Program
 			);
 		}
 
-		this._closed = false;
 		return this;
 	}
 
