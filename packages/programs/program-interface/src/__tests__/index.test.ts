@@ -199,7 +199,6 @@ describe("program", () => {
 			open["_onClose"] = () => {
 				closeCounter += 1;
 			};
-			open["_closed"] = false;
 			open["_initialized"] = true;
 			return open;
 		};

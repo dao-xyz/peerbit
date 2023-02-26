@@ -981,7 +981,6 @@ describe("index", () => {
 					open: async (program) => {
 						openEvents.push(program);
 						program["_initialized"] = true;
-						program["_closed"] = false;
 
 						// we don't init, but in real use case we would init here
 						return program;
@@ -1086,7 +1085,7 @@ describe("index", () => {
 			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			subProgram.openedByPrograms = [undefined];
 			expect(subProgram.closed).toBeTrue();
-			subProgram["_closed"] = false;
+			subProgram["_initialized"] = true;
 			expect(subProgram.closed).toBeFalse();
 			expect(stores[0].openEvents).toHaveLength(0);
 			await stores[0].store.docs.del(subProgram.id);
