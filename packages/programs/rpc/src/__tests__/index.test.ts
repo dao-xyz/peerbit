@@ -57,7 +57,7 @@ class RPCTest extends Program {
 
 describe("rpc", () => {
 	let session: LSession, responder: RPCTest, reader: RPCTest;
-	beforeAll(async () => {
+	beforeEach(async () => {
 		session = await LSession.connected(3);
 
 		const topic = uuid();
@@ -86,7 +86,7 @@ describe("rpc", () => {
 			responder.query.rpcTopic
 		);
 	});
-	afterAll(async () => {
+	afterEach(async () => {
 		await session.stop();
 	});
 
@@ -141,6 +141,12 @@ describe("rpc", () => {
 			)
 		).map((x) => x.response);
 		await waitFor(() => results.length === 1);
+	});
+
+	it("close", async () => {
+		expect(reader.query.initialized).toBeTrue();
+		await reader.close();
+		expect(reader.query.initialized).toBeFalse();
 	});
 
 	/* it("context", async () => {

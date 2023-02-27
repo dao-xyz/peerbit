@@ -113,7 +113,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			);
 			this._subscribedRequests = false;
 		}
-		return true;
+		return super.close();
 	}
 
 	private async _subscribeRequests(): Promise<void> {
