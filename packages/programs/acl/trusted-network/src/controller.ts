@@ -6,7 +6,6 @@ import {
 	PutOperation,
 } from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
@@ -131,11 +130,7 @@ export class TrustedNetwork extends Program {
 	@field({ type: Documents })
 	trustGraph: Documents<IdentityRelation>;
 
-	constructor(props?: {
-		id?: string;
-		rootTrust: PublicSignKey;
-		logIndex?: LogIndex;
-	}) {
+	constructor(props?: { id?: string; rootTrust: PublicSignKey }) {
 		super(props);
 		if (props) {
 			this.trustGraph = createIdentityGraphStore({
