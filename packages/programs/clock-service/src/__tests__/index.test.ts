@@ -62,11 +62,13 @@ describe("clock", () => {
 
 		reader = deserialize(serialize(responder), P);
 		await reader.init(session.peers[1], await createIdentity(), {
+			replicators: () => [],
 			store: {
 				cacheId: "id",
 				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),
 			} as any,
 		} as any);
+
 		const topic = responder.clock._remoteSigner.rpcTopic;
 		if (!topic) {
 			throw new Error("Expecting topic");
