@@ -18,7 +18,7 @@ import {
 	Context,
 	MissingQuery,
 	StringMatchMethod,
-	LogEntryEncryptionQuery,
+	EntryEncryptedByQuery,
 	SignedByQuery,
 } from "./query.js";
 import {
@@ -340,7 +340,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 									}
 								}
 								return true;
-							} else if (f instanceof LogEntryEncryptionQuery) {
+							} else if (f instanceof EntryEncryptedByQuery) {
 								if (doc.entry._payload instanceof EncryptedThing) {
 									const check = (
 										encryptedThing: EncryptedThing<any>,
@@ -407,9 +407,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 								return true;
 							} else if (f instanceof SignedByQuery) {
-								if (doc.entry.signatures.length !== f.publicKeys.length) {
-									return false;
-								}
 								for (const key of f.publicKeys) {
 									let exist = false;
 									for (const signature of doc.entry.signatures) {
