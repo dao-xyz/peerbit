@@ -1,4 +1,6 @@
 import { AbstractType, deserialize, field, variant, vec } from "@dao-xyz/borsh";
+import { PublicSignKey, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
+import { EntryEncryptionTemplate } from "@dao-xyz/peerbit-log";
 
 export enum Compare {
 	Equal = 0,
@@ -344,5 +346,68 @@ export class Results<T> {
 		if (properties) {
 			this.results = properties.results;
 		}
+	}
+}
+
+@variant(5)
+export class LogQuery extends Query {}
+
+/**
+ * Find logs that can be decrypted by certain keys
+ */
+
+@variant(0)
+export class LogEntryEncryptionQuery
+	extends LogQuery
+	implements
+		EntryEncryptionTemplate<
+			X25519PublicKey[],
+			X25519PublicKey[],
+			X25519PublicKey[],
+			X25519PublicKey[]
+		>
+{
+	@field({ type: vec(X25519PublicKey) })
+	metadata: X25519PublicKey[];
+
+	@field({ type: vec(X25519PublicKey) })
+	payload: X25519PublicKey[];
+
+	@field({ type: vec(X25519PublicKey) })
+	next: X25519PublicKey[];
+
+	@field({ type: vec(X25519PublicKey) })
+	signatures: X25519PublicKey[];
+
+	constructor(properties?: {
+		metadata: X25519PublicKey[];
+		next: X25519PublicKey[];
+		payload: X25519PublicKey[];
+		signatures: X25519PublicKey[];
+	}) {
+		super();
+		if (properties) {
+			this.metadata = properties.metadata;
+			this.payload = properties.payload;
+			this.next = properties.next;
+			this.signatures = properties.signatures;
+		}
+	}
+}
+
+@variant(1)
+export class SignedByQuery extends LogQuery {
+	@field({ type: vec(PublicSignKey) })
+	_publicKeys: PublicSignKey[];
+
+	constructor(properties: { publicKeys: PublicSignKey[] }) {
+		super();
+		if (properties) {
+			this._publicKeys = properties.publicKeys;
+		}
+	}
+
+	get publicKeys() {
+		return this._publicKeys;
 	}
 }

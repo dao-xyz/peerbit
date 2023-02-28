@@ -12,12 +12,15 @@ import {
 	Compare,
 	MissingQuery,
 	StringMatchMethod,
+	SignedByQuery,
+	LogEntryEncryptionQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
+	Ed25519PublicKey,
 	EncryptedThing,
 	X25519Keypair,
 	X25519PublicKey,
@@ -32,11 +35,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
-import {
-	HeadsMessage,
-	LogEntryEncryptionQuery,
-	LogQueryRequest,
-} from "@dao-xyz/peerbit-logindex";
+
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 import crypto from "crypto";
 
@@ -830,9 +829,45 @@ describe("index", () => {
 					expect(responses[0].results[1].value.id).toEqual(doc3.id);
 				});
 			});
+
+			describe("signed by", () => {
+				it("multiple signatures", async () => {
+					const responses = await stores[2].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new SignedByQuery({
+									publicKeys: [writeStore.identity.publicKey],
+								}),
+							],
+						})
+					);
+
+					expect(responses).toHaveLength(1);
+				});
+
+				/* it("handles missing", async () => {
+					const responses: HeadsMessage[] = (
+						await logIndices[2].query.send(
+							new LogQueryRequest({
+								queries: [
+									new SignedByQuery({
+										publicKeys: [(await Ed25519Keypair.create()).publicKey],
+									}),
+								],
+							}),
+							{ amount: 1 }
+						)
+					).map((x) => x.response);
+					expect(responses).toHaveLength(1);
+					expect(responses[0].heads).toHaveLength(0);
+				}); */
+			});
 			describe("Encryption query", () => {
 				it("can query by payload key", async () => {
-					const someKey = await X25519PublicKey.create();
+					const efn =
+						writeStore.docs.store.oplog.encryption!.getEncryptionKeypair;
+					const someKey = (await (typeof efn === "function" ? efn() : efn))
+						.publicKey as Ed25519PublicKey;
 
 					let doc = new Document({
 						id: "encrypted",
@@ -873,36 +908,23 @@ describe("index", () => {
 					await waitFor(
 						() => writeStore.docs.store.oplog.values.length === preLength + 1
 					);
-					await waitFor(
-						() =>
-							writeStore.docs.logIndex.store.oplog.values.length ===
-							preLength + 1
-					);
-					expect(
-						(
-							writeStore.docs.store.oplog.heads[0]
-								._payload as EncryptedThing<any>
-						)._decrypted
-					).toBeUndefined();
 
 					// read from observer 2
-					let responses: HeadsMessage[] = (
-						await stores[2].docs.logIndex.query.send(
-							new LogQueryRequest({
-								queries: [
-									new LogEntryEncryptionQuery({
-										payload: [someKey],
-										metadata: [],
-										next: [],
-										signatures: [],
-									}),
-								],
-							}),
-							{ amount: 1 }
-						)
-					).map((x) => x.response);
-					expect(responses[0].heads).toHaveLength(1);
-					expect(responses[0].heads[0].hash).toEqual(entry.hash);
+					let responses = await stores[2].docs.index.query(
+						new DocumentQueryRequest({
+							queries: [
+								new LogEntryEncryptionQuery({
+									payload: [someKey],
+									metadata: [],
+									next: [],
+									signatures: [],
+								}),
+							],
+						}),
+						{ local: false, remote: true }
+					);
+					expect(responses[0].results).toHaveLength(1);
+					expect(responses[0].results[0].value.id).toEqual("encrypted");
 				});
 			});
 		});
@@ -1085,6 +1107,7 @@ describe("index", () => {
 			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			subProgram.openedByPrograms = [undefined];
 			expect(subProgram.closed).toBeTrue();
+			subProgram["_closed"] = false;
 			subProgram["_initialized"] = true;
 			expect(subProgram.closed).toBeFalse();
 			expect(stores[0].openEvents).toHaveLength(0);

@@ -26,7 +26,6 @@ import {
 	ProgramInitializationOptions,
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
-import { LogIndex } from "@dao-xyz/peerbit-logindex";
 import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
@@ -60,9 +59,6 @@ export class Documents<T> extends ComposableProgram {
 	@field({ type: DocumentIndex })
 	private _index: DocumentIndex<T>;
 
-	@field({ type: LogIndex })
-	private _logIndex: LogIndex;
-
 	private _clazz?: AbstractType<T>;
 
 	private _valueEncoding: Encoding<T>;
@@ -71,23 +67,15 @@ export class Documents<T> extends ComposableProgram {
 	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
 	private _events: EventEmitter<DocumentEvents<T>>;
 
-	constructor(properties: {
-		immutable?: boolean;
-		index: DocumentIndex<T>;
-		logIndex?: LogIndex;
-	}) {
+	constructor(properties: { immutable?: boolean; index: DocumentIndex<T> }) {
 		super();
 		if (properties) {
 			this.store = new Store();
 			this.immutable = properties.immutable ?? false;
 			this._index = properties.index;
-			this._logIndex = properties.logIndex || new LogIndex();
 		}
 	}
 
-	get logIndex(): LogIndex {
-		return this._logIndex;
-	}
 	get index(): DocumentIndex<T> {
 		return this._index;
 	}
@@ -130,11 +118,7 @@ export class Documents<T> extends ComposableProgram {
 			canAppend: this.canAppend.bind(this),
 			onUpdate: this.handleChanges.bind(this),
 		});
-		await this._logIndex.setup({
-			store: this.store,
-			canRead: options.canRead || (() => Promise.resolve(true)),
-			context: this,
-		});
+
 		await this._index.setup({
 			type: this._clazz,
 			store: this.store,

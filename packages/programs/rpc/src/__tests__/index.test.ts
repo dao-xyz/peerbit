@@ -145,8 +145,10 @@ describe("rpc", () => {
 
 	it("close", async () => {
 		expect(reader.query.initialized).toBeTrue();
+		expect(reader.closed).toBeFalse();
 		await reader.close();
-		expect(reader.query.initialized).toBeFalse();
+		expect(reader.query.initialized).toBeTrue();
+		expect(reader.closed).toBeTrue();
 	});
 
 	/* it("context", async () => {

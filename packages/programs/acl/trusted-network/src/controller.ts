@@ -1,5 +1,10 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
-import { Documents, Operation, PutOperation } from "@dao-xyz/peerbit-document";
+import {
+	DocumentQueryRequest,
+	Documents,
+	Operation,
+	PutOperation,
+} from "@dao-xyz/peerbit-document";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { LogIndex, LogQueryRequest } from "@dao-xyz/peerbit-logindex";
 import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
@@ -126,9 +131,6 @@ export class TrustedNetwork extends Program {
 	@field({ type: Documents })
 	trustGraph: Documents<IdentityRelation>;
 
-	@field({ type: LogIndex })
-	logIndex: LogIndex;
-
 	constructor(props?: {
 		id?: string;
 		rootTrust: PublicSignKey;
@@ -141,7 +143,6 @@ export class TrustedNetwork extends Program {
 				id: this.id,
 			});
 			this.rootTrust = props.rootTrust;
-			this.logIndex = props.logIndex || new LogIndex({ query: new RPC() });
 		}
 	}
 
@@ -151,10 +152,6 @@ export class TrustedNetwork extends Program {
 			canAppend: this.canAppend.bind(this),
 			canRead: this.canRead.bind(this),
 		}); // self referencing access controller
-		return this.logIndex.setup({
-			store: this.trustGraph.store,
-			context: this,
-		});
 	}
 
 	async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
@@ -230,41 +227,10 @@ export class TrustedNetwork extends Program {
 		if (this.trustGraph.role instanceof ReplicatorType) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
-			let trusted = false;
-			let stopper: (() => any) | any;
-			this.logIndex.query.send(new LogQueryRequest({ queries: [] }), {
-				stopper: (s) => {
-					stopper = s;
-				},
-				timeout: options?.timeout || 10 * 1000,
-				onResponse: async (heads, from) => {
-					if (!from) {
-						return;
-					}
-
-					await this.trustGraph.store.sync(heads.heads, {
-						canAppend: () => Promise.resolve(true),
-						save: true,
-					});
-
-					const isTrustedSender = await this._isTrustedLocal(from, truster);
-					if (!isTrustedSender) {
-						return;
-					}
-
-					const isTrustedTrustee = await this._isTrustedLocal(trustee, truster);
-					if (isTrustedTrustee) {
-						stopper && stopper();
-						trusted = true;
-					}
-				},
+			this.trustGraph.index.query(new DocumentQueryRequest({ queries: [] }), {
+				remote: { sync: true },
 			});
-			try {
-				await waitFor(() => trusted);
-				return trusted;
-			} catch (error) {
-				return false;
-			}
+			return this._isTrustedLocal(trustee, truster);
 		}
 	}
 

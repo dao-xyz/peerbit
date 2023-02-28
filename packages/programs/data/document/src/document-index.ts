@@ -18,6 +18,8 @@ import {
 	Context,
 	MissingQuery,
 	StringMatchMethod,
+	LogEntryEncryptionQuery,
+	SignedByQuery,
 } from "./query.js";
 import {
 	CanRead,
@@ -25,10 +27,13 @@ import {
 	QueryContext,
 	RPCOptions,
 	RPCResponse,
+	queryAll,
+	MissingResponsesError,
 } from "@dao-xyz/peerbit-rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { Store } from "@dao-xyz/peerbit-store";
+import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 const logger = loggerFn({ module: "document-index" });
 
 @variant(0)
@@ -335,6 +340,89 @@ export class DocumentIndex<T> extends ComposableProgram {
 									}
 								}
 								return true;
+							} else if (f instanceof LogEntryEncryptionQuery) {
+								if (doc.entry._payload instanceof EncryptedThing) {
+									const check = (
+										encryptedThing: EncryptedThing<any>,
+										keysToFind: X25519PublicKey[]
+									) => {
+										for (const k of encryptedThing._envelope._ks) {
+											for (const s of keysToFind) {
+												if (k._recieverPublicKey.equals(s)) {
+													return true;
+												}
+											}
+										}
+										return false;
+									};
+
+									if (f.metadata.length > 0) {
+										if (
+											!check(
+												doc.entry._payload as EncryptedThing<any>,
+												f.metadata
+											)
+										) {
+											return false;
+										}
+									}
+
+									if (f.next.length > 0) {
+										if (
+											!check(doc.entry._payload as EncryptedThing<any>, f.next)
+										) {
+											return false;
+										}
+									}
+
+									if (f.payload.length > 0) {
+										if (
+											!check(
+												doc.entry._payload as EncryptedThing<any>,
+												f.payload
+											)
+										) {
+											return false;
+										}
+									}
+
+									if (f.signatures.length > 0) {
+										if (
+											!check(
+												doc.entry._payload as EncryptedThing<any>,
+												f.signatures
+											)
+										) {
+											return false;
+										}
+									}
+								} else {
+									return (
+										f.signatures.length == 0 &&
+										f.payload.length == 0 &&
+										f.metadata.length == 0 &&
+										f.next.length == 0
+									);
+								}
+
+								return true;
+							} else if (f instanceof SignedByQuery) {
+								if (doc.entry.signatures.length !== f.publicKeys.length) {
+									return false;
+								}
+								for (const key of f.publicKeys) {
+									let exist = false;
+									for (const signature of doc.entry.signatures) {
+										if (key.equals(signature.publicKey)) {
+											exist = true;
+										}
+									}
+
+									if (!exist) {
+										return false;
+									}
+								}
+								return true;
 							}
 
 							logger.info("Unsupported query type: " + f.constructor.name);
@@ -393,7 +481,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		}
 
 		if (remote) {
-			const responseHandler = async (responses: RPCResponse<Results<T>>[]) => {
+			const initFn = async (responses: RPCResponse<Results<T>>[]) => {
 				return Promise.all(
 					responses.map(async (x) => {
 						x.response.results.forEach((r) => r.init(this.type));
@@ -408,66 +496,27 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 			const replicatorGroups = await this._replicators();
 			if (replicatorGroups) {
-				// In each shard/group only query a subset
-
-				let replicatorGroupsToQuery = [...replicatorGroups].filter(
-					(x) =>
-						!x.find((x) => x === this.libp2p.directsub.publicKey.hashcode())
-				);
-				let rng = Math.round(Math.random() * replicatorGroups.length);
-				const startRng = rng;
-
 				const fn = async () => {
 					const rs: Results<T>[] = [];
-					let missingReponses = false;
-					while (replicatorGroupsToQuery.length > 0) {
-						const peersToQuery: string[] = new Array(
-							replicatorGroupsToQuery.length
+					const responseHandler = async (
+						results: RPCResponse<Results<T>>[]
+					) => {
+						const resultsInitialized = await initFn(results);
+						rs.push(...resultsInitialized);
+					};
+					try {
+						await queryAll(
+							this._query,
+							replicatorGroups,
+							queryRequest,
+							responseHandler,
+							remote
 						);
-						let counter = 0;
-						const peerToGroupIndex = new Map<string, number>();
-						for (let i = 0; i < replicatorGroupsToQuery.length; i++) {
-							const group = replicatorGroupsToQuery[i];
-							peersToQuery[counter] = group[rng % group.length];
-							peerToGroupIndex.set(peersToQuery[counter], i);
-							counter++;
-						}
-						if (peersToQuery.length > 0) {
-							const results = await this._query.send(queryRequest, {
-								...remote,
-								to: peersToQuery,
-							});
-							for (const result of results) {
-								if (!result.from) {
-									throw new Error("Unexpected, missing from");
-								}
-								peerToGroupIndex.delete(result.from.hashcode());
-							}
-							const resultsInitialized = await responseHandler(results);
-							rs.push(...resultsInitialized);
-							const indicesLeft = new Set([...peerToGroupIndex.values()]);
-
-							rng += 1;
-							replicatorGroupsToQuery = replicatorGroupsToQuery.filter(
-								(v, ix) => {
-									if (indicesLeft.has(ix)) {
-										const peerIndex = rng % v.length;
-										if (rng === startRng || peerIndex === startRng % v.length) {
-											// TODO Last condition needed?
-											missingReponses = true;
-											return false;
-										}
-										return true;
-									}
-									return false;
-								}
-							);
+					} catch (error) {
+						if (error instanceof MissingResponsesError) {
+							logger.error("Did not reciveve responses from all shard");
 						}
 					}
-					if (missingReponses) {
-						logger.error("Did not recieve responses from all shards");
-					}
-
 					return rs;
 				};
 				promises.push(fn());
@@ -475,10 +524,11 @@ export class DocumentIndex<T> extends ComposableProgram {
 				promises.push(
 					this._query
 						.send(queryRequest, remote)
-						.then((response) => responseHandler(response))
+						.then((response) => initFn(response))
 				);
 			}
 		}
+
 		const resolved = await Promise.all(promises);
 		for (const r of resolved) {
 			if (r) {
