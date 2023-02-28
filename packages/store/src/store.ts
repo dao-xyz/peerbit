@@ -25,6 +25,7 @@ import {
 	AccessError,
 	PublicKeyEncryptionResolver,
 	PublicSignKey,
+	SignatureWithKey,
 } from "@dao-xyz/peerbit-crypto";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
@@ -39,6 +40,7 @@ export class CachedValue {}
 export type AddOperationOptions<T> = {
 	skipCanAppendCheck?: boolean;
 	identity?: Identity;
+	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
 	nexts?: Entry<T>[];
 	reciever?: EncryptionTemplateMaybeEncrypted;
 };
@@ -241,6 +243,7 @@ export class Store<T> implements Initiable<T> {
 			this.id,
 			"_heads_removed"
 		);
+
 		await this.loadLastHeadsPath();
 
 		this.snapshotPath = path.join(options.cacheId, this.id, "snapshot");
@@ -609,6 +612,7 @@ export class Store<T> implements Initiable<T> {
 			reciever: options?.reciever,
 			canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
 			identity: options?.identity,
+			signers: options?.signers,
 		});
 
 		logger.debug("Appended entry with hash: " + change.entry.hash);

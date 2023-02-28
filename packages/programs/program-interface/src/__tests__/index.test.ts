@@ -87,7 +87,7 @@ describe("program", () => {
 		expect(p.initialized).toBeTrue();
 		await p.close();
 		expect(p.closed).toBeTrue();
-		expect(p.initialized).toBeFalse();
+		expect(p.initialized).toBeTrue();
 		await p.init(session.peers[0], await Ed25519Keypair.create(), {
 			open,
 			store: {},
@@ -199,6 +199,7 @@ describe("program", () => {
 			open["_onClose"] = () => {
 				closeCounter += 1;
 			};
+			open["_closed"] = false;
 			open["_initialized"] = true;
 			return open;
 		};
@@ -217,12 +218,14 @@ describe("program", () => {
 		expect(p.programsOpened).toHaveLength(1);
 		expect(p3.programsOpened).toBeUndefined();
 		expect(p3.openedByPrograms).toContainAllValues([p]);
+		expect(p3.closed).toBeFalse();
 
 		await p2.open!(p3);
 		expect(p.programsOpened).toHaveLength(1);
 		expect(p2.programsOpened).toHaveLength(1);
 		expect(p3.programsOpened).toBeUndefined();
 		expect(p3.openedByPrograms).toContainAllValues([p, p2]);
+		expect(p3.closed).toBeFalse();
 
 		await p2.close();
 		expect(p3.openedByPrograms).toContainAllValues([p]);

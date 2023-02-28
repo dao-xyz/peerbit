@@ -100,8 +100,11 @@ describe(`load`, function () {
 		});
 
 		await waitFor(() => done);
+		expect(store.initialized).toBeTrue();
 		await store.close();
+		expect(store.initialized).toBeTrue();
 		await store.load();
+		expect(store.initialized).toBeTrue();
 		expect(store.oplog.values.length).toEqual(1);
 	});
 

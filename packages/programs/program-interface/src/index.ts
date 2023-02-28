@@ -235,10 +235,6 @@ export abstract class AbstractProgram {
 		return this._role;
 	}
 
-	get closed() {
-		return !this._initialized;
-	}
-
 	async init(
 		libp2p: Libp2pExtended,
 		identity: Identity,
@@ -247,7 +243,6 @@ export abstract class AbstractProgram {
 		if (this.initialized) {
 			throw new Error("Already initialized");
 		}
-
 		this._libp2p = libp2p;
 		this._identity = identity;
 		this._encryption = options.store.encryption;
@@ -305,7 +300,6 @@ export abstract class AbstractProgram {
 		}
 		await Promise.all(promises);
 		this._onClose && this._onClose();
-		this._initialized = false;
 		return true;
 	}
 
@@ -443,6 +437,8 @@ export abstract class Program
 
 	private _address?: Address;
 
+	private _closed: boolean;
+
 	openedByPrograms: (AbstractProgram | undefined)[];
 
 	constructor(properties?: { id?: string }) {
@@ -453,6 +449,11 @@ export abstract class Program
 			this.id = uuid();
 		}
 	}
+
+	get closed() {
+		return this._closed !== false;
+	}
+
 	get address() {
 		if (this._address) {
 			return this._address;
@@ -490,6 +491,9 @@ export abstract class Program
 		(this.openedByPrograms || (this.openedByPrograms = [])).push(
 			options.openedBy
 		);
+
+		this._closed = false;
+
 		if (this.initialized) {
 			return this;
 		}
@@ -520,6 +524,7 @@ export abstract class Program
 	}
 
 	async load() {
+		this._closed = false;
 		await Promise.all(this.allStores.map((store) => store.load()));
 	}
 
@@ -596,9 +601,11 @@ export abstract class Program
 				return false;
 			}
 		}
+		this._closed = true;
 		return super.close();
 	}
 	async drop(): Promise<void> {
+		this._closed = true;
 		await super.drop();
 		return this.delete();
 	}
