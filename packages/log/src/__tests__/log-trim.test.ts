@@ -14,6 +14,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
+import { waitFor } from "@dao-xyz/peerbit-time";
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
 const __dirname = dirname(__filename);
@@ -469,5 +470,32 @@ describe("Append trim", function () {
 		expect(await log.storage.get(a2.hash)).toBeUndefined();
 		expect(await log.storage.get(a3.hash)).toBeUndefined();
 		expect(await log.storage.get(a4.hash)).toBeDefined();
+	});
+
+	it("trim to time", async () => {
+		const maxAge = 3000;
+		const log = new Log<string>(
+			store,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{
+				logId: "A",
+				trim: { type: "time", maxAge },
+			} // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
+		);
+
+		let t0 = +new Date();
+		const { entry: a1, removed: r1 } = await log.append("hello1");
+		expect(r1).toHaveLength(0);
+		expect(await log.storage.get(a1.hash)).toBeDefined();
+		expect(log.toArray().map((x) => x.payload.getValue())).toEqual(["hello1"]);
+		const { entry: a2, removed: r2 } = await log.append("hello2");
+		expect(r2).toContainAllValues([]);
+
+		await waitFor(() => +new Date() - t0 > maxAge);
+		const { entry: a3, removed: r3 } = await log.append("hello2");
+		expect(r3).toContainAllValues([a1, a2]);
 	});
 });

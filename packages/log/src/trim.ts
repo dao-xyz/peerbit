@@ -5,12 +5,27 @@ import { Entry } from "./entry.js";
 import { Values } from "./values.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
-	return (
-		a.from === b.from &&
-		a.to === b.to &&
-		a.type === b.type &&
-		a.filter?.canTrim === b.filter?.canTrim
-	);
+	if (a.type === b.type) {
+		if (a.type === "length" && b.type === "length") {
+			return (
+				a.from === b.from &&
+				a.to === b.to &&
+				a.filter?.canTrim === b.filter?.canTrim
+			);
+		}
+		if (a.type === "bytelength" && b.type === "bytelength") {
+			return (
+				a.from === b.from &&
+				a.to === b.to &&
+				a.filter?.canTrim === b.filter?.canTrim
+			);
+		}
+
+		if (a.type === "time" && b.type === "time") {
+			return a.maxAge === b.maxAge && a.filter?.canTrim === b.filter?.canTrim;
+		}
+	}
+	return false;
 };
 
 const trimOptionsStricter = (from: TrimOptions, to: TrimOptions) => {
@@ -19,13 +34,23 @@ const trimOptionsStricter = (from: TrimOptions, to: TrimOptions) => {
 		return true; // we don't really know
 	}
 
-	if (from.to > to.to) {
-		return true;
+	if (
+		(from.type === "bytelength" || from.type === "length") &&
+		(to.type === "bytelength" || to.type === "length")
+	) {
+		if (from.to > to.to) {
+			return true;
+		}
+		const fromFrom = from.from || from.to;
+		const fromTo = to.from || to.to;
+		return fromFrom > fromTo;
+	} else {
+		if (from.type === "time" && to.type === "time") {
+			return from.maxAge > to.maxAge;
+		}
 	}
-	const fromFrom = from.from || from.to;
-	const fromTo = to.from || to.to;
 
-	return fromFrom > fromTo;
+	throw new Error("Unexpected");
 };
 
 export type TrimToLengthOption = { type: "length"; to: number; from?: number };
@@ -34,7 +59,16 @@ export type TrimToByteLengthOption = {
 	to: number;
 	from?: number;
 };
-export type TrimCondition = TrimToByteLengthOption | TrimToLengthOption;
+
+export type TrimToTime = {
+	type: "time";
+	maxAge: number; // ms
+};
+
+export type TrimCondition =
+	| TrimToByteLengthOption
+	| TrimToLengthOption
+	| TrimToTime;
 export type TrimCanAppendOption = {
 	filter?: {
 		canTrim: (gid: string) => Promise<boolean> | boolean;
@@ -102,6 +136,13 @@ export class Trim<T> {
 				return [];
 			}
 			done = () => this._log.values.byteLength <= option.to;
+		} else if (option.type == "time") {
+			const s0 = BigInt(+new Date() * 1e6);
+			const maxAge = option.maxAge * 1e6;
+			done = () =>
+				!this._log.values.tail ||
+				s0 - this._log.values.tail?.value.metadata.clock.timestamp.wallTime <
+					maxAge;
 		} else {
 			return [];
 		}

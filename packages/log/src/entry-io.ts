@@ -2,9 +2,10 @@ import pMap from "p-map";
 import pDoWhilst from "p-do-whilst";
 import { Entry } from "./entry.js";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Timestamp } from "./clock.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 
 export interface EntryFetchOptions<T> {
 	length?: number;
