@@ -13,7 +13,7 @@ import {
 	MissingQuery,
 	StringMatchMethod,
 	SignedByQuery,
-	LogEntryEncryptionQuery,
+	EntryEncryptedByQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -913,7 +913,7 @@ describe("index", () => {
 					let responses = await stores[2].docs.index.query(
 						new DocumentQueryRequest({
 							queries: [
-								new LogEntryEncryptionQuery({
+								new EntryEncryptedByQuery({
 									payload: [someKey],
 									metadata: [],
 									next: [],

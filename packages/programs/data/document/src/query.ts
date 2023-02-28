@@ -357,7 +357,7 @@ export class LogQuery extends Query {}
  */
 
 @variant(0)
-export class LogEntryEncryptionQuery
+export class EntryEncryptedByQuery
 	extends LogQuery
 	implements
 		EntryEncryptionTemplate<
