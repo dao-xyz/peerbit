@@ -25,6 +25,17 @@ Peerbit provides an abstraction layer that lets you program with distributed dat
  
 Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 mb/s. 
 
+
+<video controls autoplay muted>
+    <source  src="./livestream.mp4" type="video/mp4">
+</video>
+
+*Left side is putting video frames in a [document store](https://github.com/dao-xyz/peerbit-examples/blob/master/packages/live-streaming/frontend/src/media/database.ts), every few ms. Right side is subscribed to changes of the document store and renders the changes once they arrive. [Source code](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming).*
+
+
+
+
+
 Every peer has an identity which is simply their public key, this key can *currently* either be secp256k1 or a Ed25519 key. To prevent peers from manually sign messages, you can link identities together in a trust graph. This allows you to have a root identity that approves and revokes permissions to keys that can act on your behalf. Hence this allows you to build applications that allows users to act on multiple devices and chains seamlessly.
  
 Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
