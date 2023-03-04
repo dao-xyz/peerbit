@@ -14,21 +14,40 @@
 </h3>
 
 <h3 align="center">🤫 E2EE &nbsp; &nbsp; 👯 P2P &nbsp; &nbsp; ⚖️ Auto-sharding  &nbsp; &nbsp;  🔍 Searchable</h3>
-<br>
 
-![tests](https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg)
+<p align="center">
+<img src="https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg" alt="Tests")
+</p>
 
-## P2P databases at scale
-Started originally as a fork of OrbitDB: A peer-to-peer database on top of Libp2p (and optionally IPFS) supporting encryption, sharding and discoverability (searching).
+## P2P database for scalable applications
+Peerbit is as easy-to-use as Firebase and provide P2P functionality like OrbitDB or GunJS yet with performance for data-intensive applications like live-streaming and cloud-gaming. It's built on top of Libp2p (and works with IPFS) supporting encryption, sharding and discoverability (searching). 
 
-Peerbit provides an abstraction layer that lets you program with distributed data types. For example, ```String``` can be replaced with [DString](./packages/programs/data/string) (distributed string). Some datatypes, like [Document store](./packages/programs/data/document) are sharded automatically as long as there are not data dependencies between indiviudal documents.
- 
-Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 mb/s. 
+Your database schema can remain very simple but still utilize P2P networks, auto-scaling, E2E-encryption, discoverability and all other features you'd expect from a database. 
 
-https://user-images.githubusercontent.com/11876955/222755918-404db25b-08bc-454f-b9f1-ac3b5b02db71.mp4
+### Comparison with alternatives
+
+||<sub>Peerbit</sub>|<sub>OrbitDB</sub>|<sub>gunJS</sub>|<sub>IPFS</sub>|<sub>Arweave</sub>|
+| ------------ | ------------ | ------------ | ------------ | ------------ | ------------ |
+|<sub>**Performance**</sub>|<sub>Highly performant. E.g. video-streaming, real-time editing & cloud-gaming</sub>|<sub>Chat-rooms, document store</sub>|<sub>Performant applications</sub>|<sub>File-storage</sub>|<sub>File-storage</sub>|
+|<sub>**Search**</sub>|<sub>X</sub>|   |<sub>X</sub>|   |   |
+|<sub>**Browser-friendly**</sub>|<sub>X</sub>|   |<sub>X</sub>|   |   |
+|<sub>**CID**</sub>|<sub>X</sub>|<sub>X</sub>|   |<sub>X</sub>|<sub>X</sub>|
+|<sub>**Sharding**</sub>|<sub>X</sub>|   |   |   |   |
+|<sub>**Built-in encryption**</sub>|<sub>X</sub>|   |   |   |   |
+|<sub>**Supports multiple key-types**</sub>|<sub>X</sub>|   |   |   |   |
+|<sub>**Discovery algorithm**</sub>|<sub>Automatic based on content</sub>|<sub>KAD DHT</sub>|<sub>Custom solution</sub>|<sub>KAD DHT</sub>|<sub>KAD DHT</sub>|
+|<sub>**Client language**</sub>|<sub>Typescript</sub>|<sub>Javascript</sub>|<sub>Javascript</sub>|<sub>Typescript, Go, Rust</sub>|<sub>Typescript/Javascript, PHP</sub>|
+|<sub>**Intended usage**</sub>|<sub>High-performance applications & storage|<sub>Databases on IPFS</sub>|<sub>Performant applications</sub>|<sub>Granular control of individual files</sub>|<sub>?Permanent? storage</sub>|
+
+
+### Performance
+Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 MB/s. 
+
+![Dogestream](/videostream.gif)
 
 *Left side is putting video frames in a [document store](https://github.com/dao-xyz/peerbit-examples/blob/master/packages/live-streaming/frontend/src/media/database.ts), every few ms. Right side is subscribed to changes of the document store and renders the changes once they arrive. [Source code](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming).*
 
+Peerbit provides an abstraction layer that lets you program with distributed data types. For example, ```String``` can be replaced with [DString](./packages/programs/data/string) (distributed string). Some datatypes, like [Document store](./packages/programs/data/document) are sharded automatically as long as there are not data dependencies between indiviudal documents.
 
 Every peer has an identity which is simply their public key, this key can *currently* either be secp256k1 or a Ed25519 key. To prevent peers from manually sign messages, you can link identities together in a trust graph. This allows you to have a root identity that approves and revokes permissions to keys that can act on your behalf. Hence this allows you to build applications that allows users to act on multiple devices and chains seamlessly.
  
