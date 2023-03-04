@@ -10,6 +10,7 @@ import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
 import { DirectStream, DataMessage } from "@dao-xyz/libp2p-direct-stream";
 import * as Block from "multiformats/block";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
 export class BlockMessage {}
 
@@ -50,9 +51,8 @@ export class DirectBlock extends DirectStream implements BlockStore {
 	constructor(
 		libp2p: Libp2p,
 		options?: {
-			canRelayBlocks?: boolean;
+			canRelayMessage?: boolean;
 			localStore?: BlockStore;
-			transportTopic?: string;
 			localTimeout?: number;
 		}
 	) {
@@ -60,7 +60,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 			emitSelf: false,
 			signaturePolicy: "StrictNoSign",
 			messageProcessingConcurrency: 10,
-			canRelayMessage: options?.canRelayBlocks ?? true,
+			canRelayMessage: options?.canRelayMessage ?? true,
 		});
 
 		this._libp2p = libp2p;
@@ -172,10 +172,19 @@ export class DirectBlock extends DirectStream implements BlockStore {
 				});
 			}
 		);
+		const publish = (to?: PublicSignKey[]) =>
+			this.publish(serialize(new BlockRequest(cidString)), { to: to });
+		await publish();
+		const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) =>
+			publish([e.detail]);
 
-		await this.publish(serialize(new BlockRequest(cidString)));
+		// we want to make sure that if some new peers join, we also try to ask them
+		this.addEventListener("peer:reachable", publishOnNewPeers);
+		const result = await promise;
 
-		return promise;
+		// stop asking new peers, because we already got an response
+		this.removeEventListener("peer:reachable", publishOnNewPeers);
+		return result;
 	}
 
 	async close(): Promise<void> {

@@ -8,10 +8,6 @@ import { waitForPeers } from "./utils";
 describe("transport", function () {
 	let session: LSession, store: DirectBlock, store2: DirectBlock;
 
-	beforeEach(async () => {
-		session = await LSession.connected(2);
-	});
-
 	afterEach(async () => {
 		await store?.close();
 		await store2?.close();
@@ -19,6 +15,8 @@ describe("transport", function () {
 	});
 
 	it("can restart", async () => {
+		session = await LSession.connected(2);
+
 		store = new DirectBlock(session.peers[0], {
 			localStore: new MemoryLevelBlockStore(),
 		});
@@ -40,6 +38,8 @@ describe("transport", function () {
 	});
 
 	it("rw", async () => {
+		session = await LSession.connected(2);
+
 		store = new DirectBlock(session.peers[0], {
 			localStore: new MemoryLevelBlockStore(),
 		});
@@ -64,7 +64,38 @@ describe("transport", function () {
 		expect(await getBlockValue(readData!)).toEqual(data);
 	});
 
+	it("reads from joining peer", async () => {
+		session = await LSession.disconnected(2);
+
+		store = new DirectBlock(session.peers[0], {
+			localStore: new MemoryLevelBlockStore(),
+		});
+		store2 = new DirectBlock(session.peers[1], {
+			localStore: new MemoryLevelBlockStore(),
+		});
+
+		expect((store as DirectBlock)._gossip).toBeFalse();
+
+		await store.open();
+		await store2.open();
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store.put(await createBlock(data, "raw"));
+
+		expect(stringifyCid(cid)).toEqual(
+			"zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"
+		);
+		const readDataPromise = store2.get<Uint8Array>(stringifyCid(cid));
+
+		await session.connect(); // we connect after get request is sent
+		await waitForPeers(store, store2);
+
+		expect(await getBlockValue((await readDataPromise)!)).toEqual(data);
+	});
+
 	it("timeout", async () => {
+		session = await LSession.connected(2);
+
 		store = new DirectBlock(session.peers[0], {
 			localStore: new MemoryLevelBlockStore(),
 		});

@@ -72,6 +72,10 @@ export class Address {
 		return this._path;
 	}
 
+	get bytes(): Uint8Array {
+		return serialize(this);
+	}
+
 	private _toString: string;
 
 	toString() {
