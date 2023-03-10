@@ -36,7 +36,6 @@ or if you just want a node as a relay in a separate process
 ```
 peerbit start --relay  > log.txt 2>&1 &
 ```
-(you can try to run ```docker exec ipfs_host ipfs id)``` to check ipfs is running in the background)
 
 3.
 Setup a test domain (so can access the node)
