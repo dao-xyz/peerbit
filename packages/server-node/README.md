@@ -32,7 +32,7 @@ Start the node in a background process
 ```sh
 peerbit start > log.txt 2>&1 &
 ```
-or if you just want an IPFS node as a relay in a separate process
+or if you just want a node as a relay in a separate process
 ```
 peerbit start --relay  > log.txt 2>&1 &
 ```
