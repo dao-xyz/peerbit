@@ -1096,10 +1096,10 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@dao-xyz/borsh@^5.1.4":
-  version "5.1.4"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.4.tgz#d87530d4b64325c8313170fda847ddc350159bc1"
-  integrity sha512-ID1Qm3h+l077puCiGtgcCW7rmf/4Uam7iR+tT49oWW7AFCFSF4PF4o9Li6tGLF7p7IcE6xh+CZkvjhd7+73sjA==
+"@dao-xyz/borsh@^5.1.5":
+  version "5.1.5"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.5.tgz#f932e81ad939f9dd5f7270f1359200cb160b0d34"
+  integrity sha512-F2p+jUPEu/0F1b5CBg1sL2chKP1STByV5rt8ulQnu6s9Pm++Nm7oWFZ9Deb4SljQ7KoAfXe8mWQ3z4XSUf2jpg==
   dependencies:
     "@protobufjs/float" "^1.0.2"
     "@protobufjs/utf8" "^1.1.0"
