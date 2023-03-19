@@ -1,4 +1,6 @@
 import {
+	AsIndexable,
+	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
 	DocumentIndex,
 	Operation,
@@ -49,7 +51,9 @@ export interface DocumentEvents<T> {
 }
 
 @variant("documents")
-export class Documents<T> extends ComposableProgram {
+export class Documents<
+	T extends Record<string, any>
+> extends ComposableProgram {
 	@field({ type: Store })
 	store: Store<Operation<T>>;
 
@@ -60,8 +64,6 @@ export class Documents<T> extends ComposableProgram {
 	private _index: DocumentIndex<T>;
 
 	private _clazz?: AbstractType<T>;
-
-	private _valueEncoding: Encoding<T>;
 
 	private _optionCanAppend?: CanAppend<Operation<T>>;
 	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
@@ -96,6 +98,7 @@ export class Documents<T> extends ComposableProgram {
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
 		canOpen?: (program: Program) => Promise<boolean>;
+		toIndex?: AsIndexable<T>;
 	}) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
@@ -109,12 +112,11 @@ export class Documents<T> extends ComposableProgram {
 				);
 			}
 		}
-		this._valueEncoding = BORSH_ENCODING(this._clazz);
 		if (options.canAppend) {
 			this._optionCanAppend = options.canAppend;
 		}
 		await this.store.setup({
-			encoding: BORSH_ENCODING(Operation),
+			encoding: BORSH_ENCODING_OPERATION,
 			canAppend: this.canAppend.bind(this),
 			onUpdate: this.handleChanges.bind(this),
 		});
@@ -123,6 +125,7 @@ export class Documents<T> extends ComposableProgram {
 			type: this._clazz,
 			store: this.store,
 			canRead: options.canRead || (() => Promise.resolve(true)),
+			toIndex: options.toIndex || ((obj) => obj),
 			sync: async (result: Results<T>) => {
 				const entries = (
 					await Promise.all(
@@ -223,7 +226,7 @@ export class Documents<T> extends ComposableProgram {
 				// check nexts
 				const putOperation = operation as PutOperation<T>;
 
-				const key = putOperation.getValue(this._valueEncoding)[
+				const key = putOperation.getValue(this.index.valueEncoding)[
 					this._index.indexBy
 				];
 				if (!key) {
@@ -376,7 +379,7 @@ export class Documents<T> extends ComposableProgram {
 					this._index.index.set(key, {
 						entry: item,
 						key: payload.key,
-						value: value,
+						value: this._index.toIndex(value),
 						context: new Context({
 							created:
 								this._index.index.get(key)?.context.created || //(await this._index.get(key))?.results[0]?.context.created ||
@@ -424,7 +427,7 @@ export class Documents<T> extends ComposableProgram {
 					const key = (payload as DeleteOperation | PutOperation<T>).key;
 					const value = this._index.index.get(key)!;
 
-					documentsChanged.removed.push(value.value);
+					documentsChanged.removed.push(await this.index.getDocument(value));
 					if (value.value instanceof Program) {
 						await value.value.close(this);
 					}
