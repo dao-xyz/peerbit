@@ -13,7 +13,7 @@ import { v4 as uuid } from "uuid";
 // Include test utilities
 import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { ObserverType, Program } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
@@ -200,8 +200,10 @@ describe(`Create & Open`, function () {
 			await db.add("hello2");
 			await db.close();
 			await db.load();
-			await waitFor(() => db.iterator({ limit: -1 }).collect().length == 2);
-			const res = db.iterator({ limit: -1 }).collect();
+			await waitForAsync(
+				async () => (await db.iterator({ limit: -1 })).collect().length == 2
+			);
+			const res = (await db.iterator({ limit: -1 })).collect();
 			expect(res.length).toEqual(2);
 			expect(res[0].payload.getValue().value).toEqual("hello1");
 			expect(res[1].payload.getValue().value).toEqual("hello2");

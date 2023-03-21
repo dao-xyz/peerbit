@@ -42,7 +42,7 @@ describe(`addOperation`, function () {
 		const cache = new Cache(cacheStore);
 		let done = false;
 		const onWrite = async (store: Store<any>, entry: Entry<any>) => {
-			const heads = await store.oplog.heads;
+			const heads = await store.oplog.getHeads();
 			expect(heads.length).toEqual(1);
 			assert.deepStrictEqual(entry.payload.getValue(), data);
 			assert.deepStrictEqual(index._index, heads);
@@ -93,7 +93,7 @@ describe(`addOperation`, function () {
 		const onWrite = async (store: Store<any>, entry: Entry<any>) => {
 			eventsFired++;
 			if (eventsFired === writes) {
-				const heads = store.oplog.heads;
+				const heads = await store.oplog.getHeads();
 				expect(heads.length).toEqual(1);
 				expect(index._index.length).toEqual(writes);
 				store.getCachedHeads().then((localHeads) => {
@@ -109,7 +109,6 @@ describe(`addOperation`, function () {
 
 		store = new Store({ storeIndex: 1 });
 		index = new SimpleIndex(store);
-
 		await store.init(
 			blockStore,
 			{
@@ -123,6 +122,7 @@ describe(`addOperation`, function () {
 				onWrite: onWrite,
 			}
 		);
+		await store.load();
 
 		for (let i = 0; i < writes; i++) {
 			await store.addOperation({ step: i });
@@ -179,7 +179,7 @@ describe(`addOperation`, function () {
 		const onWrite = async (store: Store<any>, entry: Entry<any>) => {
 			eventsFired++;
 			if (eventsFired === writes) {
-				const heads = store.oplog.heads;
+				const heads = await store.oplog.getHeads();
 				expect(heads.length).toEqual(3);
 				expect(index._index.length).toEqual(writes);
 				store.getCachedHeads().then((localHeads) => {

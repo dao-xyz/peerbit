@@ -71,7 +71,9 @@ describe(`browser`, function () {
 
 		await waitFor(() => db1.store.oplog.values.length === 2);
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(2);
 	});
@@ -127,7 +129,9 @@ describe(`browser`, function () {
 
 		await waitFor(() => db1.store.oplog.values.length === 2);
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(2);
 	});
@@ -173,7 +177,9 @@ describe(`browser`, function () {
 
 		await waitFor(() => db1.store.oplog.values.length === 2);
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 		await waitFor(() => db2.store.oplog.values.length === 2);
 	});
@@ -222,7 +228,9 @@ describe(`browser`, function () {
 
 		await waitFor(() => db1.store.oplog.values.length === 2);
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 		await waitFor(() => db2.store.oplog.values.length === 2);
 	});

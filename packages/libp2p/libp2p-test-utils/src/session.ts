@@ -56,9 +56,6 @@ export class LSession<T extends Libp2p = Libp2p> {
 		for (let i = 0; i < n; i++) {
 			const result = async () => {
 				const node = await createLibp2p({
-					connectionManager: {
-						autoDial: false,
-					},
 					addresses: {
 						listen: ["/ip4/127.0.0.1/tcp/0"],
 					},

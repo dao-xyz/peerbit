@@ -151,7 +151,7 @@ describe("Log - Encryption", function () {
 			});
 
 			// Remove decrypted caches of the log2 values
-			log2.toArray().forEach((value) => {
+			(await log2.toArray()).forEach((value) => {
 				value._metadata.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
@@ -160,8 +160,8 @@ describe("Log - Encryption", function () {
 
 			await log1.join(log2);
 			expect(log1.length).toEqual(1);
-			const item = last(log1.toArray());
-			expect(item.next.length).toEqual(0);
+			const item = last(await log1.toArray());
+			expect((await item.getNext()).length).toEqual(0);
 			expect(
 				(await item.getSignatures()).map((x) => x.publicKey.hashcode())
 			).toContainAllValues([
@@ -205,7 +205,7 @@ describe("Log - Encryption", function () {
 			});
 
 			// Remove decrypted caches of the log2 values
-			log2.toArray().forEach((value) => {
+			(await log2.toArray()).forEach((value) => {
 				value._metadata.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
@@ -214,8 +214,8 @@ describe("Log - Encryption", function () {
 
 			await log1.join(log2);
 			expect(log1.length).toEqual(4);
-			const item = last(log1.toArray());
-			expect(item.next.length).toEqual(1);
+			const item = last(await log1.toArray());
+			expect((await item.getNext()).length).toEqual(1);
 		});
 	});
 });

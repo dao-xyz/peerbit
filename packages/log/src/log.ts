@@ -25,22 +25,19 @@ import {
 	PublicKeyEncryptionResolver,
 	SignatureWithKey,
 } from "@dao-xyz/peerbit-crypto";
-import { deserialize, serialize } from "@dao-xyz/borsh";
+import { serialize } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { Identity } from "./identity.js";
 import { HeadsIndex } from "./heads.js";
-import { BlockStore, getBlockValue } from "@dao-xyz/libp2p-direct-block";
-import { Values } from "./values.js";
-import Yallist from "yallist";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import { EntryNode, Values } from "./values.js";
 import { Trim, TrimOptions } from "./trim.js";
+import { logger } from "./logger.js";
+import { Cache } from "@dao-xyz/cache";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 const randomId = () => new Date().getTime().toString();
 const getHash = <T>(e: Entry<T>) => e.hash;
-const uniqueEntriesReducer = <T>(res: Map<string, Entry<T>>, acc: Entry<T>) => {
-	res.set(acc.hash, acc);
-	return res;
-};
 
 export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
 
@@ -48,13 +45,13 @@ export type LogOptions<T> = {
 	encryption?: PublicKeyEncryptionResolver;
 	encoding?: Encoding<T>;
 	logId?: string;
-	entries?: Entry<T>[];
-	heads?: any;
 	clock?: LamportClock;
 	sortFn?: Sorting.ISortFunction;
 	concurrency?: number;
 	trim?: TrimOptions;
 };
+
+const ENTRY_CACHE_MAX = 1000; // TODO as param
 
 /**
  * @description
@@ -84,6 +81,7 @@ export class Log<T> {
 	private _encryption?: PublicKeyEncryptionResolver;
 	private _encoding: Encoding<T>;
 	private _trim: Trim<T>;
+	private _entryCache: Cache<Entry<T>>;
 
 	constructor(
 		store: BlockStore,
@@ -99,15 +97,7 @@ export class Log<T> {
 		}
 		//
 		const { logId, encoding, concurrency, trim, encryption } = options;
-		let { sortFn, entries, heads } = options;
-
-		if (isDefined(entries) && !Array.isArray(entries)) {
-			throw new Error("'entries' argument must be an array of Entry instances");
-		}
-
-		if (isDefined(heads) && !Array.isArray(heads)) {
-			throw new Error("'heads' argument must be an array");
-		}
+		let { sortFn } = options;
 
 		if (!isDefined(sortFn)) {
 			sortFn = LastWriteWins;
@@ -129,62 +119,39 @@ export class Log<T> {
 		this._encoding = encoding || JSON_ENCODING;
 
 		// Add entries to the internal cache
-		const uniqueEntries = (entries || []).reduce(
-			uniqueEntriesReducer,
-			new Map()
-		);
-		this._entryIndex = new EntryIndex(uniqueEntries);
-		entries = [...uniqueEntries.values()];
-
-		// Init io for entries (as these are not created with the append method)
-		entries.map((e) => {
-			e.init({ encryption: this._encryption, encoding: this._encoding });
-		});
-
-		// Set heads if not passed as an argument
-		heads = heads || Log.findHeads(entries);
-		this._headsIndex = new HeadsIndex({
-			sortFn: this._sortFn,
-			entries: heads.reduce(uniqueEntriesReducer, new Map()),
-		});
-		this._values = new Values(this._sortFn, entries);
 
 		// Index of all next pointers in this log
-		this._nextsIndex = new Map();
 
 		// Clock
 		this._hlc = new HLC();
 
+		this._nextsIndex = new Map();
+		this._headsIndex = new HeadsIndex({});
+		this._entryCache = new Cache({ max: ENTRY_CACHE_MAX });
+		this._entryIndex = new EntryIndex({
+			store: this._storage,
+			init: (e) => e.init(this),
+			cache: this._entryCache,
+		});
+		this._values = new Values(this._entryIndex, this._sortFn);
 		this._trim = new Trim(
 			{
-				deleteNode: async (node: Yallist.Node<Entry<T>>) => {
-					if (this.entryIndex.has(node.value.hash)) {
+				deleteNode: async (node: EntryNode) => {
+					// TODO check if we have before delete?
+					const entry = await this.get(node.value.hash);
+					if (entry) {
 						this.values.deleteNode(node);
-						this.entryIndex.delete(node.value.hash);
+						await this.entryIndex.delete(node.value.hash);
 						this.headsIndex.del(node.value);
 						this.nextsIndex.delete(node.value.hash);
 						await this.storage.rm(node.value.hash);
 					}
+					return entry;
 				},
-				values: this.values,
+				values: () => this.values,
 			},
 			trim
 		);
-
-		const addToNextsIndex = (e: Entry<T>) => {
-			e.next.forEach((a) => {
-				let nextIndexSet = this._nextsIndex.get(a);
-				if (!nextIndexSet) {
-					nextIndexSet = new Set();
-					nextIndexSet.add(e.hash);
-					this._nextsIndex.set(a, nextIndexSet);
-				} else {
-					nextIndexSet.add(e.hash);
-				}
-			});
-		};
-
-		entries.forEach(addToNextsIndex);
 	}
 
 	get id() {
@@ -195,7 +162,7 @@ export class Log<T> {
 	 * Returns the length of the log.
 	 */
 	get length() {
-		return this._entryIndex.length;
+		return this._values.length;
 	}
 
 	get values(): Values<T> {
@@ -203,10 +170,20 @@ export class Log<T> {
 	}
 
 	/**
+	 * Checks if a entry is part of the log
+	 * @param {string} hash The hash of the entry
+	 * @returns {boolean}
+	 */
+
+	has(cid: string) {
+		return this._entryIndex._index.has(cid);
+	}
+	/**
 	 * Get all entries sorted. Don't use this method anywhere where performance matters
 	 */
-	toArray(): Entry<T>[] {
-		return this._values.toArray();
+	toArray(): Promise<Entry<T>[]> {
+		// we call init, because the values might be unitialized
+		return this._values.toArray().then((arr) => arr.map((x) => x.init(this)));
 	}
 
 	/**
@@ -219,8 +196,20 @@ export class Log<T> {
 	/**
 	 * Don't use this anywhere performance matters
 	 */
-	get heads(): Entry<T>[] {
-		return this.headsIndex.array;
+	async getHeads(): Promise<Entry<T>[]> {
+		const heads: Promise<Entry<T> | undefined>[] = new Array(
+			this.headsIndex.index.size
+		);
+		let i = 0;
+		for (const hash of this.headsIndex.index) {
+			heads[i++] = this._entryIndex.get(hash).then((x) => x?.init(this));
+		}
+		const resolved = await Promise.all(heads);
+		const defined = resolved.filter((x) => !!x);
+		if (defined.length !== resolved.length) {
+			logger.error("Failed to resolve all heads");
+		}
+		return defined as Entry<T>[];
 	}
 
 	/**
@@ -228,8 +217,8 @@ export class Log<T> {
 	 * are not in the log currently.
 	 * @returns {Array<Entry<T>>}
 	 */
-	get tails() {
-		return Log.findTails(this.toArray());
+	async getTails(): Promise<Entry<T>[]> {
+		return Log.findTails(await this.toArray());
 	}
 
 	/**
@@ -237,8 +226,8 @@ export class Log<T> {
 	 * are not in the log currently.
 	 * @returns {Array<string>} Array of hashes
 	 */
-	get tailHashes() {
-		return Log.findTailHashes(this.toArray());
+	async getTailHashes(): Promise<string[]> {
+		return Log.findTailHashes(await this.toArray());
 	}
 
 	/**
@@ -288,30 +277,15 @@ export class Log<T> {
 	 * Find an entry.
 	 * @param {string} [hash] The hashes of the entry
 	 */
-	get(hash: string): Entry<T> | undefined {
+	get(hash: string): Promise<Entry<T> | undefined> {
 		return this._entryIndex.get(hash);
 	}
 
-	/**
-	 * Checks if a entry is part of the log
-	 * @param {string} hash The hash of the entry
-	 * @returns {boolean}
-	 */
-	has(entry: Entry<string> | string) {
-		if (entry instanceof Entry && !entry.hash) {
-			throw new Error("Expected entry hash to be defined");
-		}
-		return (
-			this._entryIndex.get(entry instanceof Entry ? entry.hash : entry) !==
-			undefined
-		);
-	}
-
-	traverse(
+	async traverse(
 		rootEntries: Entry<T>[],
 		amount = -1,
 		endHash?: string
-	): { [key: string]: Entry<T> } {
+	): Promise<{ [key: string]: Entry<T> }> {
 		// Sort the given given root entries and use as the starting stack
 		let stack: Entry<T>[] = rootEntries.sort(this._sortFn).reverse();
 
@@ -359,9 +333,9 @@ export class Log<T> {
 			if (endHash && endHash === entry.hash) break;
 
 			// Add entry's next references to the stack
-			const entries = entry.next
-				.map(getEntry)
-				.filter((x) => !!x) as Entry<any>[];
+			const entries = (await Promise.all(entry.next.map(getEntry))).filter(
+				(x) => !!x
+			) as Entry<any>[];
 			entries.forEach(addToStack);
 		}
 
@@ -371,10 +345,10 @@ export class Log<T> {
 		return result;
 	}
 
-	getReferenceSamples(
+	async getReferenceSamples(
 		from: Entry<T>,
 		options?: { pointerCount?: number; memoryLimit?: number }
-	): Entry<T>[] {
+	): Promise<Entry<T>[]> {
 		const hashes = new Set<string>();
 		const pointerCount = options?.pointerCount || 0;
 		const memoryLimit = options?.memoryLimit;
@@ -393,11 +367,12 @@ export class Log<T> {
 						break outer;
 					}
 					const nextNext = new Set<string>();
-					next.forEach((n) => {
-						this.get(n)?.next?.forEach((n2) => {
+					for (const n of next) {
+						const nentry = await this.get(n);
+						nentry?.next.forEach((n2) => {
 							nextNext.add(n2);
 						});
-					});
+					}
 					next = nextNext;
 				}
 
@@ -407,7 +382,7 @@ export class Log<T> {
 						if (!memoryLimit) {
 							hashes.add(n);
 						} else {
-							const entry = this.get(n);
+							const entry = await this.get(n);
 							if (!entry) {
 								break outer;
 							}
@@ -427,7 +402,7 @@ export class Log<T> {
 
 		const ret: Entry<any>[] = [];
 		for (const hash of hashes) {
-			const entry = this.get(hash);
+			const entry = await this.get(hash);
 			if (entry) {
 				ret.push(entry);
 			}
@@ -471,9 +446,7 @@ export class Log<T> {
 		}
 
 		const hasNext = !!options.nexts;
-		const nexts: Entry<any>[] = options.nexts || [
-			...this.headsIndex._index.values(),
-		];
+		const nexts: Entry<any>[] = options.nexts || (await this.getHeads());
 
 		// Calculate max time for log/graph
 		const clock = new Clock({
@@ -536,9 +509,9 @@ export class Log<T> {
 			this.headsIndex.reset([entry]);
 		}
 
-		this._entryIndex.set(entry.hash, entry);
+		await this._entryIndex.set(entry);
 		this._headsIndex.put(entry);
-		this._values.put(entry);
+		await this._values.put(entry);
 
 		// if next contails all gids
 		if (options.onGidsShadowed && removedGids.size > 0) {
@@ -546,16 +519,61 @@ export class Log<T> {
 		}
 
 		entry.init({ encoding: this._encoding, encryption: this._encryption });
-
 		const removed = await this.trim(options?.trim);
-
 		return { entry, removed };
+	}
+
+	async reset(entries: Entry<T>[], heads?: Entry<T>[]) {
+		this._nextsIndex = new Map();
+		this._entryIndex = new EntryIndex({
+			store: this._storage,
+			init: (e) => e.init(this),
+			cache: this._entryCache,
+		});
+		const promises: Promise<any>[] = [];
+		const set = new Set<string>();
+		const uniqueEntries: Entry<T>[] = [];
+		for (const entry of entries) {
+			if (!entry.hash) {
+				throw new Error("Unexpected");
+			}
+
+			if (set.has(entry.hash)) {
+				continue;
+			}
+
+			set.add(entry.hash);
+			uniqueEntries.push(entry);
+			promises.push(this._entryIndex.set(entry));
+		}
+
+		await Promise.all(promises);
+
+		// Set heads if not passed as an argument
+		const foundHeads = heads ? heads : Log.findHeads(uniqueEntries);
+
+		this._headsIndex = new HeadsIndex({ entries: foundHeads });
+
+		this._values = new Values(this._entryIndex, this._sortFn, uniqueEntries);
+
+		for (const e of entries) {
+			for (const a of e.next) {
+				let nextIndexSet = this._nextsIndex.get(a);
+				if (!nextIndexSet) {
+					nextIndexSet = new Set();
+					nextIndexSet.add(e.hash);
+					this._nextsIndex.set(a, nextIndexSet);
+				} else {
+					nextIndexSet.add(e.hash);
+				}
+			}
+		}
 	}
 
 	iterator(options?: {
 		from?: "tail" | "head";
 		amount?: number;
-	}): IterableIterator<Entry<T>> {
+	}): IterableIterator<string> {
 		const from = options?.from || "tail";
 		const amount = typeof options?.amount === "number" ? options?.amount : -1;
 		let next = from === "tail" ? this._values.tail : this._values.head;
@@ -566,7 +584,8 @@ export class Log<T> {
 				if (amount >= 0 && counter >= amount) {
 					return;
 				}
-				yield next.value;
+
+				yield next.value.hash;
 				counter++;
 
 				next = nextFn(next);
@@ -605,13 +624,13 @@ export class Log<T> {
 			if (!isDefined(e.hash)) {
 				throw new Error("Unexpected");
 			}
-			const entry = this.get(e.hash);
+			const entry = await this.get(e.hash);
 			if (!entry) {
 				// Update the internal entry index
-				this._entryIndex.set(e.hash, e);
-				this._values.put(e);
+				await this._entryIndex.set(e);
+				await this._values.put(e);
 			}
-			e.next.forEach((a) => {
+			for (const a of e.next) {
 				let nextIndexSet = this._nextsIndex[a];
 				if (!nextIndexSet) {
 					nextIndexSet = new Set();
@@ -621,7 +640,7 @@ export class Log<T> {
 					nextIndexSet.add(a);
 				}
 				nextFromNew.add(a);
-			});
+			}
 
 			const clock = await e.getClock();
 			this._hlc.update(clock.timestamp);
@@ -629,22 +648,27 @@ export class Log<T> {
 
 		// Merge the heads
 		const notReferencedByNewItems = (e: Entry<any>) => !nextFromNew.has(e.hash);
-
 		const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex.has(e.hash);
-		newItems.forEach((v, k) => {
-			if (notInCurrentNexts(v) && notReferencedByNewItems(v)) {
-				this.headsIndex.put(v);
-			}
-		});
 
-		nextFromNew.forEach((next) => {
-			this.headsIndex.del(this.get(next)!);
-		});
+		const added: Entry<T>[] = new Array(newItems.size);
+		let i = 0;
+		for (const [_hash, item] of newItems) {
+			if (notInCurrentNexts(item) && notReferencedByNewItems(item)) {
+				this.headsIndex.put(item);
+			}
+			added[i++] = item;
+		}
+
+		const delPromises: Promise<any>[] = new Array(nextFromNew.size);
+		for (const [i, next] of nextFromNew.entries()) {
+			delPromises[i] = this.get(next).then((v) => this.headsIndex.del(v!));
+		}
+		await Promise.all(delPromises);
 
 		const removed = await this.trim(options?.trim);
 
 		return {
-			added: [...newItems.values()],
+			added,
 			removed,
 		};
 	}
@@ -657,12 +681,12 @@ export class Log<T> {
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
 			this._trim.deleteFromCache(entry);
-			this._values.delete(entry);
-			this._entryIndex.delete(entry.hash);
+			await this._values.delete(entry);
+			await this._entryIndex.delete(entry.hash);
 			this._headsIndex.del(entry);
 			this._nextsIndex.delete(entry.hash);
 			for (const next of entry.next) {
-				const ne = this.get(next);
+				const ne = await this.get(next);
 				if (ne) {
 					stack.push(ne);
 				}
@@ -675,12 +699,12 @@ export class Log<T> {
 
 	async delete(entry: Entry<any>) {
 		this._trim.deleteFromCache(entry);
-		this._values.delete(entry);
-		this._entryIndex.delete(entry.hash);
+		await this._values.delete(entry);
+		await this._entryIndex.delete(entry.hash);
 		this._headsIndex.del(entry);
 		this._nextsIndex.delete(entry.hash);
 		for (const next of entry.next) {
-			const ne = this.get(next);
+			const ne = await this.get(next);
 			if (ne) {
 				const nexts = this._nextsIndex.get(next)!;
 				nexts.delete(entry.hash);
@@ -696,10 +720,10 @@ export class Log<T> {
 	 * Get the log in JSON format.
 	 * @returns {Object} An object with the id and heads properties
 	 */
-	toJSON() {
+	async toJSON() {
 		return {
 			id: this._id,
-			heads: [...this.headsIndex.index.values()]
+			heads: (await this.getHeads())
 				.sort(this._sortFn) // default sorting
 				.reverse() // we want the latest as the first element
 				.map(getHash), // return only the head hashes
@@ -726,29 +750,34 @@ export class Log<T> {
 	 * └─one
 	 *   └─three
 	 */
-	toString(
+	async toString(
 		payloadMapper: (payload: Payload<T>) => string = (payload) =>
 			(payload.getValue() as any).toString()
-	) {
-		return this.toArray()
-			.slice()
-			.reverse()
-			.map((e, idx) => {
-				const parents: Entry<any>[] = Entry.findDirectChildren(
-					e,
-					this.toArray()
-				);
-				const len = parents.length;
-				let padding = new Array(Math.max(len - 1, 0));
-				padding = len > 1 ? padding.fill("  ") : padding;
-				padding = len > 0 ? padding.concat(["└─"]) : padding;
-				/* istanbul ignore next */
-				return (
-					padding.join("") +
-					(payloadMapper ? payloadMapper(e.payload) : e.payload)
-				);
-			})
-			.join("\n");
+	): Promise<string> {
+		return (
+			await Promise.all(
+				(
+					await this.toArray()
+				)
+					.slice()
+					.reverse()
+					.map(async (e, idx) => {
+						const parents: Entry<any>[] = Entry.findDirectChildren(
+							e,
+							await this.toArray()
+						);
+						const len = parents.length;
+						let padding = new Array(Math.max(len - 1, 0));
+						padding = len > 1 ? padding.fill("  ") : padding;
+						padding = len > 0 ? padding.concat(["└─"]) : padding;
+						/* istanbul ignore next */
+						return (
+							padding.join("") +
+							(payloadMapper ? payloadMapper(e.payload) : e.payload)
+						);
+					})
+			)
+		).join("\n");
 	}
 
 	/**
@@ -774,15 +803,16 @@ export class Log<T> {
 			onFetched: options?.onFetched,
 			concurrency: options?.concurrency,
 			sortFn: options?.sortFn,
+			replicate: options?.replicate,
 		});
-		return new Log<T>(store, identity, {
+		const log = new Log<T>(store, identity, {
 			encryption: options?.encryption,
 			encoding: options?.encoding,
 			logId,
-			entries,
-			heads,
 			sortFn: options?.sortFn,
 		});
+		await log.reset(entries, heads);
+		return log;
 	}
 
 	static async fromEntryHash<T>(
@@ -800,6 +830,7 @@ export class Log<T> {
 			concurrency?: number;
 			sortFn?: any;
 			onFetched?: any;
+			replicate?: boolean;
 		} = { length: -1, exclude: [] }
 	): Promise<Log<T>> {
 		// TODO: need to verify the entries with 'key'
@@ -812,14 +843,17 @@ export class Log<T> {
 			concurrency: options.concurrency,
 			onFetched: options.onFetched,
 			sortFn: options.sortFn,
+			replicate: options.replicate,
 		});
-		return new Log<T>(store, identity, {
+
+		const log = new Log<T>(store, identity, {
 			encryption: options?.encryption,
 			encoding: options?.encoding,
 			logId: options.logId,
-			entries,
 			sortFn: options.sortFn,
 		});
+		await log.reset(entries);
+		return log;
 	}
 
 	/**
@@ -845,6 +879,7 @@ export class Log<T> {
 			timeout?: number;
 			sortFn?: Sorting.ISortFunction;
 			onFetched?: (entry: Entry<T>) => void;
+			replicate?: boolean;
 		} = { encoding: JSON_ENCODING }
 	) {
 		// TODO: need to verify the entries with 'key'
@@ -854,14 +889,16 @@ export class Log<T> {
 			encoding: options.encoding,
 			timeout: options?.timeout,
 			onFetched: options?.onFetched,
+			replicate: options.replicate,
 		});
-		return new Log<T>(store, identity, {
+		const log = new Log<T>(store, identity, {
 			encryption: options?.encryption,
 			encoding: options?.encoding,
 			logId,
-			entries,
 			sortFn: options?.sortFn,
 		});
+		await log.reset(entries);
+		return log;
 	}
 
 	static async fromEntry<T>(
@@ -885,12 +922,15 @@ export class Log<T> {
 			shouldFetch: options.shouldFetch,
 			onFetched: options.onFetched,
 		});
-		return new Log<T>(store, identity, {
+
+		const log = new Log<T>(store, identity, {
 			encryption: options?.encryption,
 			encoding: options?.encoding,
-			entries,
 			sortFn: options.sortFn,
 		});
+
+		await log.reset(entries);
+		return log;
 	}
 
 	/**
@@ -902,18 +942,7 @@ export class Log<T> {
 	 * @param {Array<Entry<T>>} entries Entries to search heads from
 	 * @returns {Array<Entry<T>>}
 	 */
-	static findHeads<T>(entriesOrLogs: (Entry<T> | Log<T>)[]) {
-		const entries: Entry<T>[] = [];
-		entriesOrLogs.forEach((entryOrLog) => {
-			if (entryOrLog instanceof Entry) {
-				entries.push(entryOrLog);
-			} else {
-				for (const head of entryOrLog.headsIndex.index.values()) {
-					entries.push(head);
-				}
-			}
-		});
-
+	static findHeads<T>(entries: Entry<T>[]) {
 		const indexReducer = (
 			res: { [key: string]: string },
 			entry: Entry<any>,
@@ -926,10 +955,7 @@ export class Log<T> {
 
 		const items = entries.reduce(indexReducer, {});
 		const exists = (e: Entry<T>) => items[e.hash] === undefined;
-		const compareIds = (a: Entry<T>, b: Entry<T>) =>
-			Clock.compare(a.metadata.clock, b.metadata.clock);
-
-		return entries.filter(exists).sort(compareIds);
+		return entries.filter(exists);
 	}
 
 	// Find entries that point to another entry that is not in the
@@ -1013,12 +1039,12 @@ export class Log<T> {
 		from: Log<T>,
 		into: Log<T>
 	): Promise<Map<string, Entry<T>>> {
-		const stack: string[] = [...from._headsIndex._index.keys()];
+		const stack: string[] = [...from._headsIndex.index.keys()];
 		const traversed: { [key: string]: boolean } = {};
 		const res: Map<string, Entry<T>> = new Map();
 
 		const pushToStack = (hash: string) => {
-			if (!traversed[hash] && !into.get(hash)) {
+			if (!traversed[hash]) {
 				stack.push(hash);
 				traversed[hash] = true;
 			}
@@ -1029,8 +1055,8 @@ export class Log<T> {
 			if (!hash) {
 				throw new Error("Unexpected");
 			}
-			const entry = from.get(hash);
-			if (entry && !into.get(hash)) {
+			const entry = await from.get(hash);
+			if (entry && !(await into.get(hash))) {
 				// TODO do we need to do som GID checks?
 				res.set(entry.hash, entry);
 				traversed[entry.hash] = true;

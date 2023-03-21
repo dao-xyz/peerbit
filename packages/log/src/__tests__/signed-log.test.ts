@@ -114,11 +114,12 @@ describe("Signed Log", function () {
 			{ logId: "A" }
 		);
 		await log.append("one");
-		assert.notStrictEqual(await log.toArray()[0].signatures, null);
-		assert.deepStrictEqual(
-			await log.toArray()[0].signatures[0].publicKey,
-			signKey.keypair.publicKey
-		);
+		assert.notStrictEqual((await log.toArray())[0].signatures, null);
+		expect(
+			(await log.toArray())[0].signatures[0].publicKey.equals(
+				signKey.keypair.publicKey
+			)
+		).toBeTrue();
 	});
 
 	it("can sign with multiple identities", async () => {
@@ -138,7 +139,7 @@ describe("Signed Log", function () {
 		await log.append("one", { signers });
 		expect(
 			await Promise.all(
-				log.toArray()[0].signatures.map((x) => x.publicKey.hashcode())
+				(await log.toArray())[0].signatures.map((x) => x.publicKey.hashcode())
 			)
 		).toContainAllValues([
 			await signKey.keypair.publicKey.hashcode(),
@@ -198,19 +199,19 @@ describe("Signed Log", function () {
 		try {
 			await log1.append("one");
 			await log2.append("two");
-			let entry: Entry<string> = log2.toArray()[0];
-			entry._signatures = await log1.toArray()[0]._signatures;
+			let entry: Entry<string> = (await log2.toArray())[0];
+			entry._signatures = (await log1.toArray())[0]._signatures;
 			await log1.join(log2, { verifySignatures: true });
 		} catch (e: any) {
 			err = e.toString();
 		}
 
-		const entry = log2.toArray()[0];
+		const entry = (await log2.toArray())[0];
 		expect(err).toEqual(
 			`Error: Invalid signature entry with hash "${entry.hash}"`
 		);
-		expect(log1.toArray().length).toEqual(1);
-		expect(log1.toArray()[0].payload.getValue()).toEqual("one");
+		expect((await log1.toArray()).length).toEqual(1);
+		expect((await log1.toArray())[0].payload.getValue()).toEqual("one");
 	});
 
 	/* 

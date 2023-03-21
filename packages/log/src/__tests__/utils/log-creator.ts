@@ -75,19 +75,20 @@ export class LogCreator {
 			await log.join(log3);
 			await log.append("entryC0", {
 				timestamp: new Timestamp({
-					wallTime: logA.toArray()[5].metadata.clock.timestamp.wallTime,
-					logical: logA.toArray()[5].metadata.clock.timestamp.logical + 1,
+					wallTime: (await logA.toArray())[5].metadata.clock.timestamp.wallTime,
+					logical:
+						(await logA.toArray())[5].metadata.clock.timestamp.logical + 1,
 				}),
 			});
 			await log.join(logA);
-			expect(log.toArray().map((h) => h.payload.getValue())).toStrictEqual(
-				expectedData
-			);
+			expect(
+				(await log.toArray()).map((h) => h.payload.getValue())
+			).toStrictEqual(expectedData);
 			return log;
 		};
 
 		const log = await create();
-		return { log: log, expectedData: expectedData, json: log.toJSON() };
+		return { log: log, expectedData: expectedData, json: await log.toJSON() };
 	}
 
 	static async createLogWithTwoHundredEntries(

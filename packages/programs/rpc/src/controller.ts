@@ -11,7 +11,6 @@ import {
 	MaybeEncrypted,
 	MaybeSigned,
 	PublicSignKey,
-	randomBytes,
 	toBase64,
 } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
@@ -28,7 +27,6 @@ import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { equals } from "uint8arrays";
 
 export type SearchContext = (() => Address) | AbstractProgram;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;

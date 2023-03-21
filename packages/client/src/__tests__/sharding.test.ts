@@ -51,7 +51,7 @@ describe(`sharding`, () => {
 
 	const sampleSize = 200;
 
-	const checkReplicas = (
+	const checkReplicas = async (
 		dbs: PermissionedEventStore[],
 		minReplicas: number,
 		entryCount: number,
@@ -59,7 +59,7 @@ describe(`sharding`, () => {
 	) => {
 		const map = new Map<string, number>();
 		for (const db of dbs) {
-			for (const value of db.store.store.oplog.values.toArray()) {
+			for (const value of await db.store.store.oplog.values.toArray()) {
 				map.set(value.hash, (map.get(value.hash) || 0) + 1);
 			}
 		}
@@ -142,7 +142,7 @@ describe(`sharding`, () => {
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2, db3],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -220,7 +220,7 @@ describe(`sharding`, () => {
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		).toBeTrue();
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2, db3],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -263,7 +263,7 @@ describe(`sharding`, () => {
 				db3.store.store.oplog.values.length < entryCount * 0.85
 		);
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2, db3],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -274,7 +274,7 @@ describe(`sharding`, () => {
 
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -354,7 +354,7 @@ describe(`sharding`, () => {
 			delayInterval: 500,
 		});
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2, db3],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -363,7 +363,7 @@ describe(`sharding`, () => {
 		await db3.close();
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -453,7 +453,7 @@ describe(`sharding`, () => {
 			delayInterval: 500,
 		});
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2, db3],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,
@@ -463,7 +463,7 @@ describe(`sharding`, () => {
 		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
 		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
 
-		checkReplicas(
+		await checkReplicas(
 			[db1, db2],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
 			entryCount,

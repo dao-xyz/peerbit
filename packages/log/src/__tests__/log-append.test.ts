@@ -67,25 +67,25 @@ describe("Log - Append", function () {
 		});
 
 		it("added the correct values", async () => {
-			log.toArray().forEach((entry) => {
+			(await log.toArray()).forEach((entry) => {
 				expect(entry.payload.getValue()).toEqual("hello1");
 			});
 		});
 
 		it("added the correct amount of next pointers", async () => {
-			log.toArray().forEach((entry) => {
+			(await log.toArray()).forEach((entry) => {
 				expect(entry.next.length).toEqual(0);
 			});
 		});
 
 		it("has the correct heads", async () => {
-			log.heads.forEach((head) => {
-				expect(head.hash).toEqual(log.toArray()[0].hash);
-			});
+			for (const head of await log.getHeads()) {
+				expect(head.hash).toEqual((await log.toArray())[0].hash);
+			}
 		});
 
 		it("updated the clocks correctly", async () => {
-			log.toArray().forEach((entry) => {
+			(await log.toArray()).forEach((entry) => {
 				expect(entry.metadata.clock.id).toEqual(
 					new Uint8Array(signKey.keypair.publicKey.bytes)
 				);
@@ -118,9 +118,11 @@ describe("Log - Append", function () {
 					})
 				).entry;
 				// Make sure the log has the right heads after each append
-				const values = log.toArray();
-				expect(log.heads.length).toEqual(1);
-				expect(log.heads[0].hash).toEqual(values[values.length - 1].hash);
+				const values = await log.toArray();
+				expect((await log.getHeads()).length).toEqual(1);
+				expect((await log.getHeads())[0].hash).toEqual(
+					values[values.length - 1].hash
+				);
 			}
 		});
 
@@ -129,24 +131,24 @@ describe("Log - Append", function () {
 		});
 
 		it("added the correct values", async () => {
-			log.toArray().forEach((entry, index) => {
+			(await log.toArray()).forEach((entry, index) => {
 				expect(entry.payload.getValue()).toEqual("hello" + index);
 			});
 		});
 
 		it("updated the clocks correctly", async () => {
-			log.toArray().forEach((entry, index) => {
+			for (const [index, entry] of (await log.toArray()).entries()) {
 				if (index > 0) {
 					expect(
 						entry.metadata.clock.timestamp.compare(
-							log.toArray()[index - 1].metadata.clock.timestamp
+							(await log.toArray())[index - 1].metadata.clock.timestamp
 						)
 					).toBeGreaterThan(0);
 				}
 				expect(entry.metadata.clock.id).toEqual(
 					new Uint8Array(signKey.keypair.publicKey.bytes)
 				);
-			});
+			}
 		});
 
 		/*    it('added the correct amount of refs pointers', async () => {

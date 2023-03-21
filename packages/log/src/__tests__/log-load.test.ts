@@ -44,6 +44,7 @@ const last = <T>(arr: T[]): T => {
 
 class SlowBlockStore implements BlockStore {
 	_store: BlockStore;
+	lag: number = 3000;
 	constructor(store: BlockStore) {
 		this._store = store;
 	}
@@ -51,7 +52,7 @@ class SlowBlockStore implements BlockStore {
 		cid: string,
 		options?: GetOptions | undefined
 	): Promise<Block.Block<T, any, any, any> | undefined> {
-		await delay(3000);
+		await delay(this.lag);
 		return this._store.get(cid, options);
 	}
 	put(
@@ -161,10 +162,12 @@ describe("Log - Load", function () {
 				json,
 				{}
 			);
-			expect(log.heads[0].gid).toEqual(data.heads[0].gid);
+			expect((await log.getHeads())[0].gid).toEqual(
+				(await data.getHeads())[0].gid
+			);
 			expect(log.length).toEqual(16);
 			assert.deepStrictEqual(
-				log.toArray().map((e) => e.payload.getValue()),
+				(await log.toArray()).map((e) => e.payload.getValue()),
 				fixture.expectedData
 			);
 		});
@@ -188,13 +191,14 @@ describe("Log - Load", function () {
 			);
 
 			expect(log.length).toEqual(16);
-			expect(log.toArray().map((e) => e.payload.getValue())).toEqual(
+			expect((await log.toArray()).map((e) => e.payload.getValue())).toEqual(
 				firstWriteExpectedData
 			);
 		});
 
 		it("respects timeout parameter", async () => {
 			const slowStore = new SlowBlockStore(store);
+			slowStore.lag = 0;
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				slowStore,
 				signKeys
@@ -202,8 +206,8 @@ describe("Log - Load", function () {
 			const json = fixture.json;
 			json.heads = ["zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus"];
 			const timeout = 500;
+			slowStore.lag = 3000;
 			const st = new Date().getTime();
-
 			const log = await Log.fromJSON(
 				slowStore,
 				{
@@ -253,11 +257,12 @@ describe("Log - Load", function () {
 			);
 
 			await log1.join(log2);
-
-			expect(log1.heads[0].gid).toEqual(data.heads[0].gid);
+			expect((await log1.getHeads()).map((x) => x.gid)).toContainAllValues(
+				(await data.getHeads()).map((x) => x.gid)
+			);
 			expect(log1.length).toEqual(16);
 			assert.deepStrictEqual(
-				log1.toArray().map((e) => e.payload.getValue()),
+				(await log1.toArray()).map((e) => e.payload.getValue()),
 				fixture.expectedData
 			);
 		});
@@ -292,7 +297,7 @@ describe("Log - Load", function () {
 
 			expect(log1.length).toEqual(16);
 			assert.deepStrictEqual(
-				log1.toArray().map((e) => e.payload.getValue()),
+				(await log1.toArray()).map((e) => e.payload.getValue()),
 				firstWriteExpectedData
 			);
 		});
@@ -317,7 +322,7 @@ describe("Log - Load", function () {
 			);
 			expect(log.length).toEqual(0);
 			assert.deepStrictEqual(
-				log.toArray().map((e) => e.payload.getValue()),
+				(await log.toArray()).map((e) => e.payload.getValue()),
 				[]
 			);
 		});
@@ -337,13 +342,15 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				data.heads,
+				await data.getHeads(),
 				{ length: -1 }
 			);
-			expect(log.heads[0].gid).toEqual(data.heads[0].gid);
+			expect((await log.getHeads())[0].gid).toEqual(
+				(await data.getHeads())[0].gid
+			);
 			expect(log.length).toEqual(16);
 			assert.deepStrictEqual(
-				log.toArray().map((e) => e.payload.getValue()),
+				(await log.toArray()).map((e) => e.payload.getValue()),
 				fixture.expectedData
 			);
 		});
@@ -361,12 +368,12 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				data.heads,
+				await data.getHeads(),
 				{ length: -1, sortFn: FirstWriteWins }
 			);
 			expect(log.length).toEqual(16);
 			assert.deepStrictEqual(
-				log.toArray().map((e) => e.payload.getValue()),
+				(await log.toArray()).map((e) => e.payload.getValue()),
 				firstWriteExpectedData
 			);
 		});
@@ -383,13 +390,15 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				data.heads,
-				{ length: data.heads.length }
+				await data.getHeads(),
+				{ length: (await data.getHeads()).length }
 			);
-			expect(log1.heads[0].gid).toEqual(data.heads[0].gid);
-			expect(log1.length).toEqual(data.heads.length);
-			expect(log1.toArray()[0].payload.getValue()).toEqual("entryC0");
-			expect(log1.toArray()[1].payload.getValue()).toEqual("entryA10");
+			expect((await log1.getHeads())[0].gid).toEqual(
+				(await data.getHeads())[0].gid
+			);
+			expect(log1.length).toEqual((await data.getHeads()).length);
+			expect((await log1.toArray())[0].payload.getValue()).toEqual("entryC0");
+			expect((await log1.toArray())[1].payload.getValue()).toEqual("entryA10");
 
 			const log2 = await Log.fromEntry<string>(
 				store,
@@ -397,15 +406,17 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				data.heads,
+				await data.getHeads(),
 				{ length: 4 }
 			);
-			expect(log2.heads[0].gid).toEqual(data.heads[0].gid);
+			expect((await log2.getHeads())[0].gid).toEqual(
+				(await data.getHeads())[0].gid
+			);
 			expect(log2.length).toEqual(4);
-			expect(log2.toArray()[0].payload.getValue()).toEqual("entryC0");
-			expect(log2.toArray()[1].payload.getValue()).toEqual("entryA8");
-			expect(log2.toArray()[2].payload.getValue()).toEqual("entryA9");
-			expect(log2.toArray()[3].payload.getValue()).toEqual("entryA10");
+			expect((await log2.toArray())[0].payload.getValue()).toEqual("entryC0");
+			expect((await log2.toArray())[1].payload.getValue()).toEqual("entryA8");
+			expect((await log2.toArray())[2].payload.getValue()).toEqual("entryA9");
+			expect((await log2.toArray())[3].payload.getValue()).toEqual("entryA10");
 
 			const log3 = await Log.fromEntry<string>(
 				store,
@@ -413,18 +424,20 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				data.heads,
+				await data.getHeads(),
 				{ length: 7 }
 			);
-			expect(log3.heads[0].gid).toEqual(data.heads[0].gid);
+			expect((await log3.getHeads())[0].gid).toEqual(
+				(await data.getHeads())[0].gid
+			);
 			expect(log3.length).toEqual(7);
-			expect(log3.toArray()[0].payload.getValue()).toEqual("entryB5");
-			expect(log3.toArray()[1].payload.getValue()).toEqual("entryA6");
-			expect(log3.toArray()[2].payload.getValue()).toEqual("entryC0");
-			expect(log3.toArray()[3].payload.getValue()).toEqual("entryA7");
-			expect(log3.toArray()[4].payload.getValue()).toEqual("entryA8");
-			expect(log3.toArray()[5].payload.getValue()).toEqual("entryA9");
-			expect(log3.toArray()[6].payload.getValue()).toEqual("entryA10");
+			expect((await log3.toArray())[0].payload.getValue()).toEqual("entryB5");
+			expect((await log3.toArray())[1].payload.getValue()).toEqual("entryA6");
+			expect((await log3.toArray())[2].payload.getValue()).toEqual("entryC0");
+			expect((await log3.toArray())[3].payload.getValue()).toEqual("entryA7");
+			expect((await log3.toArray())[4].payload.getValue()).toEqual("entryA8");
+			expect((await log3.toArray())[5].payload.getValue()).toEqual("entryA9");
+			expect((await log3.toArray())[6].payload.getValue()).toEqual("entryA10");
 		});
 
 		it("onProgress callback is fired for each entry", async () => {
@@ -860,9 +873,9 @@ describe("Log - Load", function () {
 				{ length: amount * 2 }
 			);
 			expect(b.length).toEqual(amount * 2);
-			expect(b.toArray().map((e) => e.payload.getValue())).toContainAllValues(
-				itemsInB
-			);
+			expect(
+				(await b.toArray()).map((e) => e.payload.getValue())
+			).toContainAllValues(itemsInB);
 
 			const c = await Log.fromEntry<string>(
 				store,
@@ -910,9 +923,9 @@ describe("Log - Load", function () {
 				"EOF",
 			];
 
-			expect(c.toArray().map((e) => e.payload.getValue())).toContainAllValues(
-				tmp
-			);
+			expect(
+				(await c.toArray()).map((e) => e.payload.getValue())
+			).toContainAllValues(tmp);
 
 			// make sure logX comes after A, B and C
 			const logX = new Log<string>(
@@ -932,7 +945,7 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(logX.toArray()),
+				last(await logX.toArray()),
 				{ length: -1 }
 			);
 
@@ -947,7 +960,7 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(c.toArray()),
+				last(await c.toArray()),
 				{ length: -1 }
 			);
 			const g = await Log.fromEntry<string>(
@@ -956,7 +969,7 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(d.toArray()),
+				last(await d.toArray()),
 				{ length: -1 }
 			);
 
@@ -1031,7 +1044,7 @@ describe("Log - Load", function () {
 				"entryA15",
 			];
 
-			expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
+			expect((await log1.toArray()).map((e) => e.payload.getValue())).toEqual(
 				expectedData
 			);
 		});
@@ -1105,9 +1118,9 @@ describe("Log - Load", function () {
 				"entryC0",
 			];
 
-			expect(log.toArray().map((e) => e.payload.getValue())).toStrictEqual(
-				expectedData
-			);
+			expect(
+				(await log.toArray()).map((e) => e.payload.getValue())
+			).toStrictEqual(expectedData);
 		});
 
 		it("sorts", async () => {
@@ -1172,32 +1185,32 @@ describe("Log - Load", function () {
 				"entryA10",
 			];
 
-			const fetchOrder = log.toArray().slice().sort(Entry.compare);
+			const fetchOrder = (await log.toArray()).slice().sort(Entry.compare);
 			assert.deepStrictEqual(
 				fetchOrder.map((e) => e.payload.getValue()),
 				expectedData
 			);
 
-			const reverseOrder = log.toArray().slice().reverse().sort(Entry.compare);
+			const reverseOrder = (await log.toArray())
+				.slice()
+				.reverse()
+				.sort(Entry.compare);
 			assert.deepStrictEqual(fetchOrder, reverseOrder);
 
-			const hashOrder = log
-				.toArray()
+			const hashOrder = (await log.toArray())
 				.slice()
 				.sort((a, b) => a.hash.localeCompare(b.hash))
 				.sort(Entry.compare);
 			assert.deepStrictEqual(fetchOrder, hashOrder);
 
-			const randomOrder2 = log
-				.toArray()
+			const randomOrder2 = (await log.toArray())
 				.slice()
 				.sort((a, b) => 0.5 - Math.random())
 				.sort(Entry.compare);
 			assert.deepStrictEqual(fetchOrder, randomOrder2);
 
 			// partial data
-			const partialLog = log
-				.toArray()
+			const partialLog = (await log.toArray())
 				.filter((e) => e.payload.getValue() !== "entryC0")
 				.sort(Entry.compare);
 			assert.deepStrictEqual(
@@ -1205,8 +1218,7 @@ describe("Log - Load", function () {
 				expectedData2
 			);
 
-			const partialLog2 = log
-				.toArray()
+			const partialLog2 = (await log.toArray())
 				.filter((e) => e.payload.getValue() !== "entryA10")
 				.sort(Entry.compare);
 			assert.deepStrictEqual(
@@ -1214,8 +1226,7 @@ describe("Log - Load", function () {
 				expectedData3
 			);
 
-			const partialLog3 = log
-				.toArray()
+			const partialLog3 = (await log.toArray())
 				.filter((e) => e.payload.getValue() !== "entryB5")
 				.sort(Entry.compare);
 			assert.deepStrictEqual(
@@ -1232,7 +1243,7 @@ describe("Log - Load", function () {
 			const log = testLog.log;
 			const expectedData = testLog.expectedData;
 
-			const fetchOrder = log.toArray().slice().sort(Entry.compare);
+			const fetchOrder = (await log.toArray()).slice().sort(Entry.compare);
 			assert.deepStrictEqual(
 				fetchOrder.map((e) => e.payload.getValue()),
 				expectedData
@@ -1240,8 +1251,7 @@ describe("Log - Load", function () {
 
 			let sorted;
 			for (let i = 0; i < 1000; i++) {
-				const randomOrder = log
-					.toArray()
+				const randomOrder = (await log.toArray())
 					.slice()
 					.sort((a, b) => 0.5 - Math.random());
 				sorted = randomOrder.sort(Entry.compare);
@@ -1260,7 +1270,7 @@ describe("Log - Load", function () {
 			const log = testLog.log;
 			const expectedData = testLog.expectedData;
 			assert.deepStrictEqual(
-				log.toArray().map((e) => e.payload.getValue()),
+				(await log.toArray()).map((e) => e.payload.getValue()),
 				expectedData
 			);
 		});
@@ -1281,7 +1291,7 @@ describe("Log - Load", function () {
 			);
 			await firstWriteWinsLog.join(testLog.log);
 			assert.deepStrictEqual(
-				firstWriteWinsLog.toArray().map((e) => e.payload.getValue()),
+				(await firstWriteWinsLog.toArray()).map((e) => e.payload.getValue()),
 				firstWriteExpectedData
 			);
 		});
@@ -1340,14 +1350,14 @@ describe("Log - Load", function () {
 
 			for (let i = 1; i <= 5; i++) {
 				await logA.append("entryA" + i, {
-					nexts: logA.heads,
+					nexts: await logA.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
 					}),
 				});
 				await logB.append("entryB" + i, {
-					nexts: logB.heads,
+					nexts: await logB.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 1,
@@ -1360,7 +1370,7 @@ describe("Log - Load", function () {
 
 			for (let i = 6; i <= 10; i++) {
 				await logA.append("entryA" + i, {
-					nexts: logA.heads,
+					nexts: await logA.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1370,7 +1380,7 @@ describe("Log - Load", function () {
 
 			await log.join(log3);
 			await log.append("entryC0", {
-				nexts: logB.heads,
+				nexts: await logB.getHeads(),
 				timestamp: new Timestamp({
 					wallTime: BigInt(11),
 					logical: 0,
@@ -1395,7 +1405,7 @@ describe("Log - Load", function () {
 			const first5 = ["entryB5", "entryA8", "entryA9", "entryA10", "entryC0"];
 
 			assert.deepStrictEqual(
-				res.toArray().map((e) => e.payload.getValue()),
+				(await res.toArray()).map((e) => e.payload.getValue()),
 				first5
 			);
 
@@ -1426,7 +1436,9 @@ describe("Log - Load", function () {
 				"entryC0",
 			];
 
-			expect(res.toArray().map((e) => e.payload.getValue())).toEqual(first11);
+			expect((await res.toArray()).map((e) => e.payload.getValue())).toEqual(
+				first11
+			);
 
 			// All but one
 			res = await Log.fromMultihash(
@@ -1458,7 +1470,7 @@ describe("Log - Load", function () {
 			];
 
 			assert.deepStrictEqual(
-				res.toArray().map((e) => e.payload.getValue()),
+				(await res.toArray()).map((e) => e.payload.getValue()),
 				all
 			);
 		});
@@ -1501,14 +1513,14 @@ describe("Log - Load", function () {
 
 			for (let i = 1; i <= 5; i++) {
 				await logA.append("entryA" + i, {
-					nexts: logA.heads,
+					nexts: await logA.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
 					}),
 				});
 				await logB.append("entryB" + i, {
-					nexts: logB.heads,
+					nexts: await logB.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 1,
@@ -1520,7 +1532,7 @@ describe("Log - Load", function () {
 
 			for (let i = 6; i <= 10; i++) {
 				await logA.append("entryA" + i, {
-					nexts: logA.heads,
+					nexts: await logA.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1530,7 +1542,7 @@ describe("Log - Load", function () {
 
 			await log.join(log3);
 			await log.append("entryC0", {
-				nexts: logB.heads,
+				nexts: await logB.getHeads(),
 				timestamp: new Timestamp({
 					wallTime: BigInt(11),
 					logical: 0,
@@ -1555,7 +1567,9 @@ describe("Log - Load", function () {
 			// TODO, make sure partial load is deterministic (ordered by time)
 			const first5 = ["entryB5", "entryA8", "entryA9", "entryA10", "entryC0"];
 
-			expect(res.toArray().map((e) => e.payload.getValue())).toEqual(first5);
+			expect((await res.toArray()).map((e) => e.payload.getValue())).toEqual(
+				first5
+			);
 
 			// First 11
 			res = await Log.fromMultihash(
@@ -1582,7 +1596,9 @@ describe("Log - Load", function () {
 				"entryC0",
 			];
 
-			expect(res.toArray().map((e) => e.payload.getValue())).toEqual(first11);
+			expect((await res.toArray()).map((e) => e.payload.getValue())).toEqual(
+				first11
+			);
 
 			// All but one
 			res = await Log.fromMultihash(
@@ -1613,7 +1629,9 @@ describe("Log - Load", function () {
 				"entryC0",
 			];
 
-			expect(res.toArray().map((e) => e.payload.getValue())).toEqual(all);
+			expect((await res.toArray()).map((e) => e.payload.getValue())).toEqual(
+				all
+			);
 		});
 
 		describe("fetches a log", () => {
@@ -1716,7 +1734,7 @@ describe("Log - Load", function () {
 					{ length: -1 }
 				);
 				expect(a.length).toEqual(amount);
-				expect(a.toArray()[0].hash).toEqual(items1[0].hash);
+				expect((await a.toArray())[0].hash).toEqual(items1[0].hash);
 			});
 		});
 	});

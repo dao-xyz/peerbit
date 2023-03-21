@@ -44,7 +44,7 @@ export const createLibp2pExtended: (
 		const opts = args?.libp2p as CreateOptions | undefined;
 		peer = (await createLibp2p({
 			peerId: opts?.peerId,
-			connectionManager: opts?.connectionManager || { autoDial: false },
+			connectionManager: opts?.connectionManager,
 			addresses: opts?.addresses || { listen: ["/ip4/127.0.0.1/tcp/0"] },
 			transports: opts?.transports || [webSockets()],
 			connectionEncryption: [noise()],
@@ -57,11 +57,12 @@ export const createLibp2pExtended: (
 		signaturePolicy: "StrictNoSign",
 	});
 
-	peer.directblock = new DirectBlock(peer, {
-		localStore: args?.blocks?.directory
+	peer.directblock = new DirectBlock(
+		peer,
+		args?.blocks?.directory
 			? new LevelBlockStore(new Level(args.blocks.directory!))
-			: new MemoryLevelBlockStore(),
-	});
+			: new MemoryLevelBlockStore()
+	);
 
 	const start = peer.start.bind(peer);
 

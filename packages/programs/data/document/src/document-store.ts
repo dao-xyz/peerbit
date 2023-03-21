@@ -1,5 +1,5 @@
 import {
-	AsIndexable,
+	Indexable,
 	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
 	DocumentIndex,
@@ -98,7 +98,7 @@ export class Documents<
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
 		canOpen?: (program: Program) => Promise<boolean>;
-		toIndex?: AsIndexable<T>;
+		indexFields?: Indexable<T>;
 	}) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
@@ -125,7 +125,7 @@ export class Documents<
 			type: this._clazz,
 			store: this.store,
 			canRead: options.canRead || (() => Promise.resolve(true)),
-			toIndex: options.toIndex || ((obj) => obj),
+			indexFields: options.indexFields || ((obj) => obj),
 			sync: async (result: Results<T>) => {
 				const entries = (
 					await Promise.all(
@@ -163,7 +163,6 @@ export class Documents<
 					)
 				).filter((x) => !!x) as Entry<any>[];
 				await this.store.sync(entries, {
-					save: this.role instanceof ReplicatorType, // TODO is this expected?
 					canAppend: this._optionCanAppend?.bind(this) || (() => true),
 				});
 			},
@@ -171,8 +170,11 @@ export class Documents<
 	}
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
-			? this.store.oplog.get(history) ||
-					(await Entry.fromMultihash(this.store.oplog.storage, history))
+			? (await this.store.oplog.get(history)) ||
+					(await Entry.fromMultihash<Operation<T>>(
+						this.store.oplog.storage,
+						history
+					))
 			: history;
 	}
 
@@ -205,7 +207,7 @@ export class Documents<
 				next !== current?.hash &&
 				current.next.length > 0
 			) {
-				current = this.store.oplog.get(current.next[0])!;
+				current = await this.store.oplog.get(current.next[0])!;
 			}
 			if (current?.hash === next) {
 				return true; // Ok, we are pointing this new edit to some exising point in time of the old document
@@ -328,7 +330,7 @@ export class Documents<
 	async handleChanges(change: Change<Operation<T>>): Promise<void> {
 		const removed = [...(change.removed || [])];
 		const removedSet = new Set<string>(removed.map((x) => x.hash));
-		const entries = [...change.added, ...(change.removed || [])]
+		const entries = [...change.added, ...(removed || [])]
 			.sort(this.store.oplog.sortFn)
 			.reverse(); // sort so we get newest to oldest
 
@@ -413,9 +415,9 @@ export class Documents<
 					removedSet.has(item.hash)
 				) {
 					// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-					const nexts = item.next
-						.map((n) => this.store.oplog.get(n))
-						.filter((x) => !!x) as Entry<any>[];
+					const nexts = (
+						await Promise.all(item.next.map((n) => this.store.oplog.get(n)))
+					).filter((x) => !!x) as Entry<any>[];
 
 					if (nexts.length > 0) {
 						await this.store.removeEntry(nexts, {

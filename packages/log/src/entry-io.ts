@@ -14,6 +14,7 @@ export interface EntryFetchOptions<T> {
 	concurrency?: number;
 	encoding?: Encoding<T>;
 	encryption?: PublicKeyEncryptionResolver;
+	replicate?: boolean;
 }
 interface EntryFetchStrictOptions<T> {
 	length: number;

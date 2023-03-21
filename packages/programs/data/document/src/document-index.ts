@@ -117,7 +117,7 @@ export type QueryOptions<R> = {
 	local?: boolean;
 };
 
-export type AsIndexable<T> = (obj: T) => Record<string, any>;
+export type Indexable<T> = (obj: T) => Record<string, any>;
 
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
@@ -134,7 +134,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	private _index: Map<string, IndexedValue<T>>;
 	private _store: Store<Operation<T>>;
 	private _replicators: () => string[][] | undefined;
-	private _toIndex: AsIndexable<T>;
+	private _toIndex: Indexable<T>;
 
 	constructor(properties: {
 		query?: RPC<DocumentQueryRequest, Results<T>>;
@@ -153,7 +153,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		return this._valueEncoding;
 	}
 
-	get toIndex(): AsIndexable<T> {
+	get toIndex(): Indexable<T> {
 		return this._toIndex;
 	}
 	set replicators(replicators: () => string[][] | undefined) {
@@ -164,14 +164,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 		type: AbstractType<T>;
 		store: Store<Operation<T>>;
 		canRead: CanRead;
-		toIndex: AsIndexable<T>;
+		indexFields: Indexable<T>;
 		sync: (result: Results<T>) => Promise<void>;
 	}) {
 		this._index = new Map();
 		this._store = properties.store;
 		this.type = properties.type;
 		this._sync = properties.sync;
-		this._toIndex = properties.toIndex;
+		this._toIndex = properties.indexFields;
 		this._valueEncoding = BORSH_ENCODING(this.type);
 
 		await this._query.setup({

@@ -107,7 +107,7 @@ export class DString extends Program {
 		return false;
 	}
 
-	add(
+	async add(
 		value: string,
 		index: Range,
 		options?: AddOperationOptions<StringOperation>
@@ -117,16 +117,16 @@ export class DString extends Program {
 				index,
 				value,
 			}),
-			{ nexts: this.store.oplog.heads, ...options }
+			{ nexts: await this.store.oplog.getHeads(), ...options }
 		);
 	}
 
-	del(index: Range, options?: AddOperationOptions<StringOperation>) {
+	async del(index: Range, options?: AddOperationOptions<StringOperation>) {
 		const operation = {
 			index,
 		} as StringOperation;
 		return this.store.addOperation(operation, {
-			nexts: this.store.oplog.heads,
+			nexts: await this.store.oplog.getHeads(),
 			...options,
 		});
 	}

@@ -41,7 +41,10 @@ describe(`Use a Custom Cache`, function () {
 					const db1 = await database.create(client1, "custom-keystore");
 					await database.tryInsert(db1);
 
-					assert.deepEqual(database.getTestValue(db1), database.expectedValue);
+					assert.deepEqual(
+						await database.getTestValue(db1),
+						database.expectedValue
+					);
 					await db1.store.close();
 				} catch (error) {
 					const e = 123;

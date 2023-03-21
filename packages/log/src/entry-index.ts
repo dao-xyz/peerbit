@@ -1,27 +1,80 @@
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import { Cache } from "@dao-xyz/cache";
 import { Entry } from "./entry.js";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { logger } from "./logger.js";
+
 export class EntryIndex<T> {
-	_cache: Map<string, Entry<T>>;
-	constructor(entries = new Map<string, Entry<T>>()) {
-		this._cache = entries;
+	_cache: Cache<Entry<T> | null>;
+	_store: BlockStore;
+	_init: (entry: Entry<T>) => void;
+	_index: Set<string>;
+
+	constructor(properties: {
+		store: BlockStore;
+		init: (entry: Entry<T>) => void;
+		cache: Cache<Entry<T>>;
+	}) {
+		this._cache = properties.cache;
+		this._store = properties.store;
+		this._init = properties.init;
+		this._index = new Set();
 	}
 
-	set(k: string, v: Entry<T>) {
-		this._cache.set(k, v);
+	async set(v: Entry<T>, options?: { save: boolean }) {
+		if (options?.save) {
+			const existingHash = v.hash;
+			v.hash = undefined as any;
+			try {
+				const hash = await Entry.toMultihash(this._store, v);
+				v.hash = existingHash;
+				if (v.hash === undefined) {
+					v.hash = hash; // can happen if you sync entries that you load directly from ipfs
+				} else if (existingHash !== v.hash) {
+					logger.error("Head hash didn't match the contents");
+					throw new Error("Head hash didn't match the contents");
+				}
+			} catch (error) {
+				logger.error(error);
+				throw error;
+			}
+		} else if (!v.hash) {
+			throw new Error("Unexpected");
+		}
+		this._cache.add(v.hash, v);
+		this._index.add(v.hash);
 	}
 
-	get(k: string): Entry<T> | undefined {
-		return this._cache.get(k);
+	async get(
+		k: string,
+		options?: { replicate?: boolean; timeout?: number }
+	): Promise<Entry<T> | undefined> {
+		if (this._index.has(k)) {
+			let mem = this._cache.get(k);
+			if (mem === undefined) {
+				mem = await this.getFromStore(k, options);
+				if (mem) {
+					this._init(mem);
+					mem.hash = k;
+				}
+				this._cache.add(k, mem);
+			}
+			return mem ? mem : undefined;
+		}
+		return undefined;
 	}
 
-	has(k: string): boolean {
-		return this._cache.has(k);
+	private async getFromStore(
+		k: string,
+		options?: { replicate?: boolean; timeout?: number }
+	): Promise<Entry<T> | null> {
+		const value = await this._store.get<Uint8Array>(k, options);
+		return value ? deserialize(value.value, Entry) : null;
 	}
 
-	delete(k: string) {
-		return this._cache.delete(k);
-	}
-
-	get length(): number {
-		return this._cache.size;
+	async delete(k: string) {
+		this._cache.del(k);
+		this._index.delete(k);
+		return this._store.rm(k);
 	}
 }

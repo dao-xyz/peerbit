@@ -178,7 +178,7 @@ describe("index", () => {
 		);
 
 		await l0b.accessController.trustedNetwork.trustGraph.store.sync(
-			l0a.accessController.trustedNetwork.trustGraph.store.oplog.heads
+			await l0a.accessController.trustedNetwork.trustGraph.store.oplog.getHeads()
 		);
 
 		replicators = [
@@ -196,8 +196,8 @@ describe("index", () => {
 			})
 		); // Now trusted
 
-		await l0a.store.store.sync(l0b.store.store.oplog.heads);
-		await l0b.store.store.sync(l0a.store.store.oplog.heads);
+		await l0a.store.store.sync(await l0b.store.store.oplog.getHeads());
+		await l0b.store.store.sync(await l0a.store.store.oplog.getHeads());
 
 		await waitFor(() => l0a.store.index.size === 2);
 		await waitFor(() => l0b.store.index.size === 2);
@@ -228,7 +228,7 @@ describe("index", () => {
 				options
 			)) as TestStore;
 
-			await l0b.store.store.sync(l0a.store.store.oplog.heads);
+			await l0b.store.store.sync(await l0a.store.store.oplog.getHeads());
 
 			await waitFor(() => l0b.store.index.size === 1);
 			await expect(
@@ -258,7 +258,7 @@ describe("index", () => {
 			);
 
 			await l0b.accessController.access.store.sync(
-				l0a.accessController.access.store.oplog.heads
+				await l0a.accessController.access.store.oplog.getHeads()
 			);
 			await waitFor(() => l0b.accessController.access.index.size === 2);
 			await l0b.store.put(
@@ -336,10 +336,10 @@ describe("index", () => {
 			);
 
 			await l0b.accessController.access.store.sync(
-				l0a.accessController.access.store.oplog.heads
+				await l0a.accessController.access.store.oplog.getHeads()
 			);
 			await l0c.accessController.access.store.sync(
-				l0a.accessController.access.store.oplog.heads
+				await l0a.accessController.access.store.oplog.getHeads()
 			);
 
 			await expect(
@@ -355,8 +355,7 @@ describe("index", () => {
 				identity(2).publicKey
 			);
 			await l0c.accessController.identityGraphController.relationGraph.store.sync(
-				l0b.accessController.identityGraphController.relationGraph.store.oplog
-					.heads
+				await l0b.accessController.identityGraphController.relationGraph.store.oplog.getHeads()
 			);
 
 			await waitFor(
@@ -414,7 +413,7 @@ describe("index", () => {
 			expect(access.id).toBeDefined();
 			await l0a.accessController.access.put(access);
 			await l0b.accessController.access.store.sync(
-				l0a.accessController.access.store.oplog.heads
+				await l0a.accessController.access.store.oplog.getHeads()
 			);
 
 			await waitFor(() => l0b.accessController.access.index.size === 1);
@@ -480,7 +479,7 @@ describe("index", () => {
 				}).initialize()
 			);
 			await l0b.accessController.access.store.sync(
-				l0a.accessController.access.store.oplog.heads
+				await l0a.accessController.access.store.oplog.getHeads()
 			);
 			await waitFor(() => l0b.accessController.access.index.size === 1);
 
@@ -541,7 +540,7 @@ describe("index", () => {
 
 		// Allow all for easy query
 		l0b.accessController.access.store.sync(
-			l0a.accessController.access.store.oplog.heads
+			await l0a.accessController.access.store.oplog.getHeads()
 		);
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);

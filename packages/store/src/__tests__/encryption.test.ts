@@ -84,7 +84,7 @@ describe(`addOperation`, function () {
 		let done = false;
 		const onWrite = async (store: Store<any>, entry: Entry<any>) => {
 			try {
-				const heads = store.oplog.heads;
+				const heads = await store.oplog.getHeads();
 				expect(heads.length).toEqual(1);
 				assert.deepStrictEqual(entry.payload.getValue(), data);
 				/*   expect(store.replicationStatus.progress).toEqual(1n);
@@ -95,7 +95,7 @@ describe(`addOperation`, function () {
 				if (!localHeads) {
 					fail();
 				}
-				const firstHead = store.oplog.get(localHeads[0])!;
+				const firstHead = (await store.oplog.get(localHeads[0]))!;
 				(firstHead._payload as EncryptedThing<any>)._decrypted = undefined;
 				firstHead.init({
 					encryption: store.oplog.encryption,
@@ -149,7 +149,7 @@ describe(`addOperation`, function () {
 		let done = false;
 
 		const onWrite = async (store: Store<any>, entry: Entry<any>) => {
-			const heads = store.oplog.heads;
+			const heads = await store.oplog.getHeads();
 			expect(heads.length).toEqual(1);
 			assert.deepStrictEqual(entry.payload.getValue(), data);
 			/* expect(store.replicationStatus.progress).toEqual(1n);
@@ -161,7 +161,7 @@ describe(`addOperation`, function () {
 				fail();
 			}
 
-			const firstHead = store.oplog.get(localHeads[0])!;
+			const firstHead = (await store.oplog.get(localHeads[0]))!;
 			(firstHead._payload as EncryptedThing<any>)._decrypted = undefined;
 			firstHead.init({
 				encryption: store.oplog.encryption,

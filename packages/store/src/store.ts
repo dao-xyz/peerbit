@@ -24,7 +24,6 @@ import { Snapshot } from "./snapshot.js";
 import {
 	AccessError,
 	PublicKeyEncryptionResolver,
-	PublicSignKey,
 	SignatureWithKey,
 } from "@dao-xyz/peerbit-crypto";
 import { EntryWithRefs } from "./entry-with-refs.js";
@@ -181,12 +180,12 @@ export class Store<T> implements Initiable<T> {
 	private _store: BlockStore;
 	private _cache: Cache;
 	private _oplog: Log<T>;
-	private _queue: PQueue<any, any>;
+	private _cacheWriteQueue: PQueue<any, any>;
 
 	private _key: string;
-
 	private _saveFile: (file: any) => Promise<string>;
 	private _loadFile: (cid: string) => Promise<Uint8Array | undefined>;
+	private _loaded = false;
 
 	constructor(properties?: { storeIndex: number }) {
 		if (properties) {
@@ -253,7 +252,7 @@ export class Store<T> implements Initiable<T> {
 
 		// addOperation and log-joins queue. Adding ops and joins to the queue
 		// makes sure they get processed sequentially to avoid race conditions
-		this._queue = new PQueue({ concurrency: 1 });
+		this._cacheWriteQueue = new PQueue({ concurrency: 1 });
 		if (this._options.onOpen) {
 			await this._options.onOpen(this);
 		}
@@ -262,7 +261,23 @@ export class Store<T> implements Initiable<T> {
 		return this;
 	}
 
-	async updateCachedHeads(
+	/* private _updateCacheHeadsJob: any;
+	private _updateCacheChange: {
+		added: (Entry<T> | string)[];
+		removed: (Entry<T> | string)[];
+	}
+	updateCacheHeads(change: {
+		added: (Entry<T> | string)[];
+		removed: (Entry<T> | string)[];
+	},
+		reset?: boolean) {
+		clearTimeout(this._updateCacheHeadsJob)
+		this._updateCacheHeadsJob = setTimeout(() => {
+			this._cacheWriteQueue.add(() =>)
+		}, 100)
+	} */
+
+	private async _updateCachedHeads(
 		change: {
 			added: (Entry<T> | string)[];
 			removed: (Entry<T> | string)[];
@@ -270,11 +285,15 @@ export class Store<T> implements Initiable<T> {
 		reset?: boolean
 	) {
 		if (typeof reset !== "boolean") {
-			if (this.oplog.headsIndex.index.size <= change.added.length) {
+			// Only reset all heads if loaded once, since we don't want too loose track of unloaded heads
+			if (
+				this._loaded &&
+				this.oplog.headsIndex.index.size <= change.added.length
+			) {
 				let addedIsAllHeads = true;
 				for (const entry of change.added) {
 					const hash = typeof entry === "string" ? entry : entry.hash;
-					if (!this.oplog.headsIndex.get(hash)) {
+					if (!this.oplog.headsIndex.has(hash)) {
 						addedIsAllHeads = false;
 					}
 				}
@@ -298,14 +317,16 @@ export class Store<T> implements Initiable<T> {
 				uuid()
 			);
 			const counter = lastCounter + BigInt(hashes.length);
-			await this._cache.set(
-				headsPath,
-				serialize(new CachePath(newHeadsPath.toString()))
-			);
-			await this._cache.set(
-				newHeadsPath,
-				serialize(new HeadsCache(hashes, counter, lastPath))
-			);
+			await Promise.all([
+				this._cache.set(
+					headsPath,
+					serialize(new CachePath(newHeadsPath.toString()))
+				),
+				this._cache.set(
+					newHeadsPath,
+					serialize(new HeadsCache(hashes, counter, lastPath))
+				),
+			]);
 			return { counter, newPath: newHeadsPath };
 		};
 
@@ -323,7 +344,6 @@ export class Store<T> implements Initiable<T> {
 			this._lastRemovedHeadsPath = undefined;
 			this._lastHeadsCount = 0n;
 			this._lastRemovedHeadsCount = 0n;
-
 			this._headsPathCounter += 1;
 		}
 
@@ -357,7 +377,7 @@ export class Store<T> implements Initiable<T> {
 						this._lastHeadsPath,
 						this._lastRemovedHeadsPath
 					);
-					await this.updateCachedHeads(
+					await this._updateCachedHeads(
 						{ added: resetToHeads, removed: [] },
 						true
 					);
@@ -370,7 +390,7 @@ export class Store<T> implements Initiable<T> {
 		// Wait for the operations queue to finish processing
 		// to make sure everything that all operations that have
 		// been queued will be written to disk
-		await this._queue?.onIdle();
+		await this._cacheWriteQueue?.onIdle();
 		await this._cache?.idle();
 	}
 
@@ -481,7 +501,7 @@ export class Store<T> implements Initiable<T> {
 
 		await this.idle();
 		await this._cache.close();
-
+		this._loaded = false;
 		this._oplog = null as any;
 		this._lastHeadsPath = undefined;
 		this._lastRemovedHeadsPath = undefined;
@@ -537,7 +557,12 @@ export class Store<T> implements Initiable<T> {
 		return heads;
 	}
 
-	async load(amount?: number, opts?: { fetchEntryTimeout?: number }) {
+	async load(
+		opts: { fetchEntryTimeout?: number } & (
+			| { amount?: number }
+			| { heads?: true }
+		) = {}
+	) {
 		if (!this.initialized) {
 			throw new Error("Store needs to be initialized before loaded");
 		}
@@ -545,7 +570,6 @@ export class Store<T> implements Initiable<T> {
 		if (this._cache.status !== "open") {
 			await this._cache.open();
 		}
-		amount = amount ?? -1;
 
 		if (this._options.onLoad) {
 			await this._options.onLoad(this);
@@ -554,20 +578,46 @@ export class Store<T> implements Initiable<T> {
 		const heads = await this.loadHeads();
 
 		// Load the log
-		const log = await Log.fromEntryHash(this._store, this.identity, heads, {
-			...this.logOptions,
-			length: amount,
-			timeout: opts?.fetchEntryTimeout,
-			onFetched: this._onLoadProgress.bind(this),
-			concurrency: this._options.replicationConcurrency,
-		});
-
-		this._oplog = log;
-
+		if ((opts as { heads?: true }).heads) {
+			const entries = await Promise.all(
+				heads.map((x) =>
+					Entry.fromMultihash<T>(this._store, x, {
+						timeout: opts?.fetchEntryTimeout,
+						replicate: true,
+					})
+				)
+			);
+			this._oplog = new Log(this._store, this.identity, {
+				...this.logOptions,
+				concurrency: this._options.replicationConcurrency,
+			});
+			await this._oplog.reset(entries);
+		} else {
+			const amount = (opts as { amount?: number }).amount;
+			if (amount != null && amount >= 0 && amount < heads.length) {
+				throw new Error(
+					"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
+						amount +
+						" entries"
+				);
+			}
+			this._oplog = await Log.fromEntryHash(this._store, this.identity, heads, {
+				...this.logOptions,
+				length: amount ?? -1,
+				timeout: opts?.fetchEntryTimeout,
+				onFetched: this._onLoadProgress.bind(this),
+				concurrency: this._options.replicationConcurrency,
+			});
+		}
 		// Update the index
 		if (heads.length > 0) {
-			await this._updateIndex({ added: log.toArray(), removed: [] });
+			await this._updateIndex({
+				added: await this._oplog.toArray(),
+				removed: [],
+			});
 		}
+
+		this._loaded = true;
 		this._options.onReady && this._options.onReady(this);
 	}
 
@@ -607,6 +657,15 @@ export class Store<T> implements Initiable<T> {
 			throw new Error("Store is closed");
 		}
 
+		if (!this._loaded) {
+			await this._cacheWriteQueue.add(async () => {
+				if (this._loaded) {
+					return;
+				}
+				return this.load({ heads: true });
+			});
+		}
+
 		const change = await this._oplog.append(data, {
 			nexts: options?.nexts,
 			reciever: options?.reciever,
@@ -616,16 +675,19 @@ export class Store<T> implements Initiable<T> {
 		});
 
 		logger.debug("Appended entry with hash: " + change.entry.hash);
+
 		const changes: Change<T> = {
 			added: [change.entry],
 			removed: change.removed,
 		};
+
 		await Promise.all([
-			this.updateCachedHeads(changes),
+			this._cacheWriteQueue.add(() => this._updateCachedHeads(changes)),
 			this._updateIndex(changes),
 		]);
 
 		this._options.onWrite && this._options.onWrite(this, change.entry);
+
 		return change;
 	}
 
@@ -661,7 +723,7 @@ export class Store<T> implements Initiable<T> {
 		};
 
 		await Promise.all([
-			this.updateCachedHeads(change),
+			this._updateCachedHeads(change),
 			this._updateIndex(change),
 		]);
 		return change;
@@ -674,7 +736,7 @@ export class Store<T> implements Initiable<T> {
 	 */
 	async sync(
 		entries: (EntryWithRefs<T> | Entry<T> | string)[],
-		options: { canAppend?: CanAppend<T>; save: boolean } = { save: true }
+		options: { canAppend?: CanAppend<T> } = {}
 	): Promise<boolean> {
 		logger.debug(`Sync request #${entries.length}`);
 		if (entries.length === 0) {
@@ -710,10 +772,7 @@ export class Store<T> implements Initiable<T> {
 					const headHash = head.hash;
 					head.hash = undefined as any;
 					try {
-						const block = await createBlock(serialize(head), "raw");
-						const hash = options?.save
-							? await this._store.put(block)
-							: stringifyCid(block.cid);
+						const hash = await Entry.toMultihash(this._store, head);
 						head.hash = headHash;
 						if (head.hash === undefined) {
 							head.hash = hash; // can happen if you sync entries that you load directly from ipfs
@@ -769,7 +828,7 @@ export class Store<T> implements Initiable<T> {
 		);
 
 		await Promise.all([
-			this.updateCachedHeads(change),
+			this._updateCachedHeads(change),
 			this._updateIndex(change),
 		]);
 		this._options.onReplicationComplete &&
@@ -779,12 +838,13 @@ export class Store<T> implements Initiable<T> {
 
 	async saveSnapshot() {
 		const snapshotData = this._oplog.toSnapshot();
+		const values = await snapshotData.values;
 		const buf = serialize(
 			new Snapshot({
 				id: snapshotData.id,
 				heads: snapshotData.heads,
-				size: BigInt(snapshotData.values.length),
-				values: snapshotData.values,
+				size: BigInt(values.length),
+				values: values,
 			})
 		);
 
@@ -822,13 +882,21 @@ export class Store<T> implements Initiable<T> {
 			}
 			const snapshotData = deserialize(file, Snapshot);
 
+			const headEntries = new Array(snapshotData.heads.length);
+			const valuesMap = new Map();
+			for (const v of snapshotData.values) {
+				valuesMap.set(v.hash, v);
+			}
+			for (const [i, hash] of snapshotData.heads.entries()) {
+				headEntries[i] = valuesMap.get(hash);
+			}
 			// Fetch the entries
 			// Timeout 1 sec to only load entries that are already fetched (in order to not get stuck at loading)
 			if (snapshotData) {
 				this._oplog = await Log.fromEntry(
 					this._store,
 					this.identity,
-					snapshotData.heads,
+					headEntries,
 					{
 						sortFn: this._options.sortFn,
 						length: -1,
@@ -837,7 +905,7 @@ export class Store<T> implements Initiable<T> {
 					}
 				);
 				await this._updateIndex({
-					added: this._oplog.values.toArray(),
+					added: await this._oplog.values.toArray(),
 					removed: [],
 				});
 				this._options.onReplicationComplete &&
@@ -847,6 +915,7 @@ export class Store<T> implements Initiable<T> {
 		} else {
 			throw new Error(`Snapshot for ${this.id} not found!`);
 		}
+		this._loaded = true;
 
 		return this;
 	}

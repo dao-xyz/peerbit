@@ -20,7 +20,7 @@ export class EventIndex<T> {
 		this._store = store;
 	}
 
-	get() {
+	async get() {
 		return this._store ? this._store.oplog.values.toArray() : [];
 	}
 }
@@ -63,12 +63,12 @@ export class EventStore<T> extends Program {
 		);
 	}
 
-	get(hash: string) {
-		return this.iterator({ gte: hash, limit: 1 }).collect()[0];
+	async get(hash: string) {
+		return (await this.iterator({ gte: hash, limit: 1 })).collect()[0];
 	}
 
-	iterator(options?: any) {
-		const messages = this._query(options);
+	async iterator(options?: any) {
+		const messages = await this._query(options);
 		let currentIndex = 0;
 		const iterator = {
 			[Symbol.iterator]() {
@@ -91,15 +91,15 @@ export class EventStore<T> extends Program {
 		return iterator;
 	}
 
-	_query(opts: any) {
+	async _query(opts: any) {
 		if (!opts) opts = {};
 
 		const amount = opts.limit
 			? opts.limit > -1
 				? opts.limit
-				: this._index.get().length
+				: (await this._index.get()).length
 			: 1; // Return 1 if no limit is provided
-		const events = this._index.get().slice();
+		const events = (await this._index.get()).slice();
 		let result: Entry<Operation<T>>[] = [];
 
 		if (opts.gt || opts.gte) {

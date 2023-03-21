@@ -85,7 +85,7 @@ describe("Entry - Persistency", function () {
 			{ logId: "X" }
 		);
 		await log.append("one");
-		const hash = log.toArray()[0].hash;
+		const hash = (await log.toArray())[0].hash;
 		const res = await EntryIO.fetchAll(store, hash, { length: 1 });
 		expect(res.length).toEqual(1);
 	});
@@ -100,8 +100,9 @@ describe("Entry - Persistency", function () {
 			{ logId: "X" }
 		);
 		await log.append("one");
-		await log.append("two");
-		const hash = last(log.toArray()).hash;
+		const e2 = await log.append("two");
+		const hash = last(await log.toArray()).hash;
+		expect(hash).toEqual(e2.entry.hash);
 		const res = await EntryIO.fetchAll(store, hash, { length: 2 });
 		expect(res.length).toEqual(2);
 	});
@@ -117,7 +118,7 @@ describe("Entry - Persistency", function () {
 		);
 		await log.append("one");
 		await log.append("two");
-		const hash = last(log.toArray()).hash;
+		const hash = last(await log.toArray()).hash;
 		const res = await EntryIO.fetchAll(store, hash, { length: 1 });
 		expect(res.length).toEqual(1);
 	});
@@ -169,6 +170,8 @@ describe("Entry - Persistency", function () {
 		for (let i = 1; i <= count; i++) {
 			await log.append("hello" + i);
 			if (i % 10 === 0) {
+				let e = await log2.toArray();
+				let h = (await log2.getHeads()).concat(await log.getHeads());
 				log2 = new Log(
 					store,
 					{
@@ -177,10 +180,9 @@ describe("Entry - Persistency", function () {
 					},
 					{
 						logId: log2.id,
-						entries: log2.toArray(),
-						heads: log2.heads.concat(log.heads),
 					}
 				);
+				await log2.reset(e, h);
 				await log2.append("hi" + i);
 			}
 		}
@@ -219,14 +221,16 @@ describe("Entry - Persistency", function () {
 		for (let i = 1; i <= count; i++) {
 			await log.append("hello" + i);
 			if (i % 10 === 0) {
+				let e = await log2.toArray();
 				log2 = new Log(
 					store,
 					{
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
-					{ logId: log2.id, entries: log2.toArray() }
+					{ logId: log2.id }
 				);
+				await log2.reset(e);
 				await log2.append("hi" + i);
 				await log2.join(log);
 			}
@@ -274,6 +278,8 @@ describe("Entry - Persistency", function () {
 		for (let i = 1; i <= count; i++) {
 			await log.append("hello" + i);
 			if (i % 10 === 0) {
+				let e = await log2.toArray();
+				let h = await log2.getHeads();
 				log2 = new Log(
 					store,
 					{
@@ -282,14 +288,18 @@ describe("Entry - Persistency", function () {
 					},
 					{
 						logId: log2.id,
-						entries: log2.toArray(),
-						heads: log2.heads,
 					}
 				);
+				await log2.reset(e, h);
 				await log2.append("hi" + i);
 				await log2.join(log);
+
+				let x = await log2.toArray();
+				let y = await log2.getHeads();
 			}
 			if (i % 25 === 0) {
+				let e = await log3.toArray();
+				let h = (await log3.getHeads()).concat(await log2.getHeads());
 				log3 = new Log(
 					store,
 					{
@@ -298,10 +308,9 @@ describe("Entry - Persistency", function () {
 					},
 					{
 						logId: log3.id,
-						entries: log3.toArray(),
-						heads: log3.heads.concat(log2.heads),
 					}
 				);
+				await log3.reset(e, h);
 				await log3.append("--" + i);
 			}
 		}
@@ -354,6 +363,8 @@ describe("Entry - Persistency", function () {
 				await log2.join(log);
 			}
 			if (i % 25 === 0) {
+				let e = await log3.toArray();
+				let h = (await log3.getHeads()).concat(await log2.getHeads());
 				log3 = new Log(
 					store,
 					{
@@ -362,10 +373,10 @@ describe("Entry - Persistency", function () {
 					},
 					{
 						logId: log3.id,
-						entries: log3.toArray(),
-						heads: log3.heads.concat(log2.heads),
 					}
 				);
+
+				await log3.reset(e, h);
 				await log3.append("--" + i);
 			}
 		}
@@ -383,8 +394,8 @@ describe("Entry - Persistency", function () {
 		await log4.join(log2);
 		await log4.join(log3);
 
-		const values3 = log3.toArray().map((e) => e.payload.getValue());
-		const values4 = log4.toArray().map((e) => e.payload.getValue());
+		const values3 = (await log3.toArray()).map((e) => e.payload.getValue());
+		const values4 = (await log4.toArray()).map((e) => e.payload.getValue());
 
 		assert.deepStrictEqual(values3, values4);
 	});

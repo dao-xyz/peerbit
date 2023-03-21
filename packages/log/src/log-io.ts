@@ -37,11 +37,10 @@ export class LogIO {
 		if (!isDefined(format)) {
 			format = "dag-cbor";
 		}
-		if (log.toArray().length < 1)
-			throw new Error("Can't serialize an empty log");
+		if (log.length < 1) throw new Error("Can't serialize an empty log");
 
 		return store.put(
-			await createBlock(log.toJSON(), format!, {
+			await createBlock(await log.toJSON(), format!, {
 				links: IPLD_LINKS,
 			})
 		);
@@ -55,6 +54,7 @@ export class LogIO {
 		if (!isDefined(hash)) throw new Error(`Invalid hash: ${hash}`);
 
 		const block = await store.get<{ id: string; heads: string[] }>(hash);
+
 		if (!block) {
 			throw new Error("Not found");
 		}
@@ -164,7 +164,10 @@ export class LogIO {
 				encoding: options.encoding || JSON_ENCODING,
 			});
 
-			cache.set(e.hash, e);
+			if (e.hash) {
+				cache.set(e.hash, e);
+			}
+
 			(await e.getNext()).forEach((n) => {
 				if (!options.shouldFetch || options.shouldFetch(n)) {
 					hashes.push(n);

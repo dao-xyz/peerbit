@@ -6,8 +6,8 @@ export class Snapshot {
 	@field({ type: "string" })
 	id: string;
 
-	@field({ type: vec(Entry) })
-	heads: Entry<any>[];
+	@field({ type: vec("string") })
+	heads: string[];
 
 	@field({ type: "u64" })
 	size: bigint;
@@ -17,7 +17,7 @@ export class Snapshot {
 
 	constructor(props?: {
 		id: string;
-		heads: Entry<any>[];
+		heads: string[];
 		size: bigint;
 		values: Entry<any>[];
 	}) {
