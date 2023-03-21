@@ -79,13 +79,18 @@ export class IdentityGraph extends Program {
 	@field({ type: Documents })
 	relationGraph: Documents<IdentityRelation>;
 
-	constructor(props?: { id?: string }) {
+	constructor(props?: {
+		id?: string;
+		relationGraph?: Documents<IdentityRelation>;
+	}) {
 		super(props);
 		if (props) {
-			this.relationGraph = createIdentityGraphStore({
-				...props,
-				id: this.id,
-			});
+			this.relationGraph =
+				props.relationGraph ||
+				createIdentityGraphStore({
+					...props,
+					id: this.id,
+				});
 		}
 	}
 
@@ -98,6 +103,14 @@ export class IdentityGraph extends Program {
 			type: IdentityRelation,
 			canAppend: this.canAppend.bind(this),
 			canRead: options?.canRead,
+			index: {
+				fields: (obj, _entry) => {
+					return {
+						from: obj.from.hashcode(),
+						to: obj.to.hashcode(),
+					};
+				},
+			},
 		}); // self referencing access controller
 	}
 
@@ -146,6 +159,14 @@ export class TrustedNetwork extends Program {
 			type: IdentityRelation,
 			canAppend: this.canAppend.bind(this),
 			canRead: this.canRead.bind(this),
+			index: {
+				fields: (obj, _entry) => {
+					return {
+						from: obj.from.hashcode(),
+						to: obj.to.hashcode(),
+					};
+				},
+			},
 		}); // self referencing access controller
 	}
 

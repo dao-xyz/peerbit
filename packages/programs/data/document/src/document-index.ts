@@ -7,19 +7,14 @@ import {
 	IntegerCompareQuery,
 	ByteMatchQuery,
 	StringMatchQuery,
-	MemoryCompareQuery,
 	DocumentQueryRequest,
 	Query,
 	ResultWithSource,
 	StateFieldQuery,
-	CreatedAtQuery,
-	ModifiedAtQuery,
 	compare,
 	Context,
 	MissingQuery,
 	StringMatchMethod,
-	EntryEncryptedByQuery,
-	SignedByQuery,
 } from "./query.js";
 import {
 	CanRead,
@@ -37,7 +32,7 @@ import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 const logger = loggerFn({ module: "document-index" });
 
 @variant(0)
-export class Operation<T> { }
+export class Operation<T> {}
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
@@ -104,10 +99,8 @@ export class DeleteOperation extends Operation<any> {
 
 export interface IndexedValue<T> {
 	key: string;
-	value: Record<string, any>; // decrypted, decoded
-	entry: Entry<Operation<T>>;
+	value: Record<string, any> | T; // decrypted, decoded
 	context: Context;
-	source: Uint8Array;
 }
 
 export type RemoteQueryOptions<R> = RPCOptions<R> & { sync?: boolean };
@@ -117,7 +110,10 @@ export type QueryOptions<R> = {
 	local?: boolean;
 };
 
-export type Indexable<T> = (obj: T) => Record<string, any>;
+export type Indexable<T> = (
+	obj: T,
+	entry: Entry<Operation<T>>
+) => Record<string, any>;
 
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
@@ -228,31 +224,36 @@ export class DocumentIndex<T> extends ComposableProgram {
 		return this._index.size;
 	}
 
-	async getDocument(indexedValue: IndexedValue<T>): Promise<T> {
-		const payloadValue = await indexedValue.entry.getPayloadValue();
+	async getDocument(indexedValue: { context: { head: string } }): Promise<T> {
+		const payloadValue = await this._store.oplog
+			.get(indexedValue.context.head)
+			.then((x) => x?.getPayloadValue());
 		if (payloadValue instanceof PutOperation) {
 			return payloadValue.getValue(this.valueEncoding);
 		}
 		throw new Error("Unexpected");
 	}
 
-	_queryDocuments(
+	async _queryDocuments(
 		filter: (doc: IndexedValue<T>) => boolean
-	): IndexedValue<T>[] {
+	): Promise<{ context: Context; value: T }[]> {
 		// Whether we return the full operation data or just the db value
-		const results: IndexedValue<T>[] = [];
+		const results: { context: Context; value: T }[] = [];
 		for (const value of this._index.values()) {
 			if (filter(value)) {
-				results.push(value);
+				results.push({
+					context: value.context,
+					value: await this.getDocument(value),
+				});
 			}
 		}
 		return results;
 	}
 
-	queryHandler(
+	async queryHandler(
 		query: DocumentQueryRequest,
 		context?: QueryContext // TODO needed?
-	): IndexedValue<T>[] {
+	): Promise<{ context: Context; value: T }[]> {
 		const queries: Query[] = query.queries;
 		if (
 			query.queries.length === 1 &&
@@ -266,56 +267,58 @@ export class DocumentIndex<T> extends ComposableProgram {
 				query.queries[0] instanceof ByteMatchQuery
 			) {
 				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
-				return doc ? [doc] : [];
+				return doc
+					? [{ value: await this.getDocument(doc), context: doc.context }]
+					: [];
 			}
 		}
 
-		const results = this._queryDocuments((doc) =>
+		const results = await this._queryDocuments((doc) =>
 			queries?.length > 0
 				? queries
-					.map((f) => {
-						if (f instanceof StateFieldQuery) {
-							let fv: any = doc.value;
-							for (let i = 0; i < f.key.length; i++) {
-								fv = fv[f.key[i]];
-							}
-
-							if (f instanceof StringMatchQuery) {
-								if (typeof fv !== "string") {
-									return false;
-								}
-								let compare = f.value;
-								if (f.caseInsensitive) {
-									fv = fv.toLowerCase();
-									compare = compare.toLowerCase();
+						.map((f) => {
+							if (f instanceof StateFieldQuery) {
+								let fv: any = doc.value;
+								for (let i = 0; i < f.key.length; i++) {
+									fv = fv[f.key[i]];
 								}
 
-								if (f.method === StringMatchMethod.exact) {
-									return fv === compare;
-								}
-								if (f.method === StringMatchMethod.prefix) {
-									return fv.startsWith(compare);
-								}
-								if (f.method === StringMatchMethod.contains) {
-									return fv.includes(compare);
-								}
-							} else if (f instanceof ByteMatchQuery) {
-								if (fv instanceof Uint8Array === false) {
-									return false;
-								}
-								return equals(fv, f.value);
-							} else if (f instanceof IntegerCompareQuery) {
-								const value: bigint | number = fv;
+								if (f instanceof StringMatchQuery) {
+									if (typeof fv !== "string") {
+										return false;
+									}
+									let compare = f.value;
+									if (f.caseInsensitive) {
+										fv = fv.toLowerCase();
+										compare = compare.toLowerCase();
+									}
 
-								if (typeof value !== "bigint" && typeof value !== "number") {
-									return false;
-								}
+									if (f.method === StringMatchMethod.exact) {
+										return fv === compare;
+									}
+									if (f.method === StringMatchMethod.prefix) {
+										return fv.startsWith(compare);
+									}
+									if (f.method === StringMatchMethod.contains) {
+										return fv.includes(compare);
+									}
+								} else if (f instanceof ByteMatchQuery) {
+									if (fv instanceof Uint8Array === false) {
+										return false;
+									}
+									return equals(fv, f.value);
+								} else if (f instanceof IntegerCompareQuery) {
+									const value: bigint | number = fv;
 
-								return compare(value, f.compare, f.value.value);
-							} else if (f instanceof MissingQuery) {
-								return fv == null; // null or undefined
-							}
-						} else if (f instanceof MemoryCompareQuery) {
+									if (typeof value !== "bigint" && typeof value !== "number") {
+										return false;
+									}
+
+									return compare(value, f.compare, f.value.value);
+								} else if (f instanceof MissingQuery) {
+									return fv == null; // null or undefined
+								}
+							} /* else if (f instanceof MemoryCompareQuery) {
 							const operation = doc.entry.payload.getValue(
 								BORSH_ENCODING_OPERATION
 							);
@@ -340,7 +343,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 								return false;
 							}
 							return true;
-						} else if (f instanceof CreatedAtQuery) {
+						}  else if (f instanceof CreatedAtQuery) {
 							for (const created of f.created) {
 								if (
 									!compare(
@@ -366,7 +369,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 								}
 							}
 							return true;
-						} else if (f instanceof EntryEncryptedByQuery) {
+						}  else if (f instanceof EntryEncryptedByQuery) {
 							if (doc.entry._payload instanceof EncryptedThing) {
 								const check = (
 									encryptedThing: EncryptedThing<any>,
@@ -446,12 +449,12 @@ export class DocumentIndex<T> extends ComposableProgram {
 								}
 							}
 							return true;
-						}
+						} */
 
-						logger.info("Unsupported query type: " + f.constructor.name);
-						return false;
-					})
-					.reduce((prev, current) => prev && current)
+							logger.info("Unsupported query type: " + f.constructor.name);
+							return false;
+						})
+						.reduce((prev, current) => prev && current)
 				: true
 		);
 
@@ -483,7 +486,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		const allResults: Results<T>[] = [];
 
 		if (local) {
-			const results = this.queryHandler(queryRequest, {
+			const results = await this.queryHandler(queryRequest, {
 				address: this.address.toString(),
 				from: this.identity.publicKey,
 			});
@@ -491,12 +494,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 				const resultsObject = new Results<T>({
 					results: await Promise.all(
 						results.map(async (r) => {
-							const payloadValue = await r.entry.getPayloadValue();
+							const payloadValue = await this._store.oplog
+								.get(r.context.head)
+								.then((x) => x?.getPayloadValue());
 							if (payloadValue instanceof PutOperation) {
 								return new ResultWithSource({
 									context: r.context,
-									value: await this.getDocument(r),
-									source: r.source,
+									value: r.value,
+									source: payloadValue.data,
 								});
 							}
 							throw new Error("Unexpected");

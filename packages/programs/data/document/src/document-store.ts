@@ -173,10 +173,10 @@ export class Documents<
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
 			? (await this.store.oplog.get(history)) ||
-			(await Entry.fromMultihash<Operation<T>>(
-				this.store.oplog.storage,
-				history
-			))
+					(await Entry.fromMultihash<Operation<T>>(
+						this.store.oplog.storage,
+						history
+					))
 			: history;
 	}
 
@@ -196,7 +196,7 @@ export class Documents<
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
 				? this.store.oplog.get(history) ||
-				(await Entry.fromMultihash(this.store.oplog.storage, history))
+						(await Entry.fromMultihash(this.store.oplog.storage, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
@@ -236,7 +236,7 @@ export class Documents<
 				if (!key) {
 					throw new Error("Expecting document to contained index field");
 				}
-				const existingDocument = this._index.index.get(key); //(await this._index.get(key))?.results[0];
+				const existingDocument = this._index.index.get(key);
 				if (existingDocument) {
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
@@ -246,8 +246,12 @@ export class Documents<
 					if (entry.next.length !== 1) {
 						return false;
 					}
-
-					return pointsToHistory(existingDocument.entry);
+					let doc = await this.store.oplog.get(existingDocument.context.head);
+					if (!doc) {
+						logger.error("Failed to find Document from head");
+						return false;
+					}
+					return pointsToHistory(doc);
 				} else {
 					if (entry.next.length !== 0) {
 						return false;
@@ -262,7 +266,12 @@ export class Documents<
 					// already deleted
 					return false;
 				}
-				return pointsToHistory(existingDocument.entry); // references the existing document
+				let doc = await this.store.oplog.get(existingDocument.context.head);
+				if (!doc) {
+					logger.error("Failed to find Document from head");
+					return false;
+				}
+				return pointsToHistory(doc); // references the existing document
 			}
 		} catch (error) {
 			if (error instanceof AccessError) {
@@ -297,7 +306,7 @@ export class Documents<
 		const existingDocument = options?.unique
 			? undefined
 			: (await this._index.get(key, { local: true, remote: { sync: true } }))
-				?.results[0];
+					?.results[0];
 		return this.store.addOperation(
 			new PutOperation({
 				key: asString((doc as any)[this._index.indexBy]),
@@ -331,7 +340,10 @@ export class Documents<
 
 	async handleChanges(change: Change<Operation<T>>): Promise<void> {
 		const removed = [...(change.removed || [])];
-		const removedSet = new Set<string>(removed.map((x) => x.hash));
+		const removedSet = new Map<string, Entry<Operation<T>>>();
+		for (const r of removed) {
+			removedSet.set(r.hash, r);
+		}
 		const entries = [...change.added, ...(removed || [])]
 			.sort(this.store.oplog.sortFn)
 			.reverse(); // sort so we get newest to oldest
@@ -381,17 +393,15 @@ export class Documents<
 					documentsChanged.added.push(value);
 
 					this._index.index.set(key, {
-						entry: item,
 						key: payload.key,
-						value: this._index.toIndex(value),
+						value: this._index.toIndex(value, item),
 						context: new Context({
 							created:
-								this._index.index.get(key)?.context.created || //(await this._index.get(key))?.results[0]?.context.created ||
+								this._index.index.get(key)?.context.created ||
 								item.metadata.clock.timestamp.wallTime,
 							modified: item.metadata.clock.timestamp.wallTime,
 							head: item.hash,
 						}),
-						source: payload.data,
 					});
 
 					// Program specific
@@ -416,26 +426,37 @@ export class Documents<
 					payload instanceof PutOperation ||
 					removedSet.has(item.hash)
 				) {
-					// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-					const nexts = (
-						await Promise.all(item.next.map((n) => this.store.oplog.get(n)))
-					).filter((x) => !!x) as Entry<any>[];
+					const key = (payload as DeleteOperation | PutOperation<T>).key;
 
-					if (nexts.length > 0) {
-						await this.store.removeEntry(nexts, {
-							recursively: true,
-						});
+					let value: T;
+					if (payload instanceof PutOperation) {
+						value = this.deserializeOrPass(payload);
+					} else if (payload instanceof DeleteOperation) {
+						value = await this.index.getDocument(this.index.index.get(key)!);
+					} else {
+						throw new Error("Unexpecte");
+					}
+
+					documentsChanged.removed.push(value);
+
+					if (value instanceof Program) {
+						// TODO is this tested?
+						await value.close(this);
+					}
+
+					if (item.next.length > 0) {
+						// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
+						const nexts = (
+							await Promise.all(item.next.map((n) => this.store.oplog.get(n)))
+						).filter((x) => !!x) as Entry<any>[];
+						if (nexts.length > 0) {
+							await this.store.removeEntry(nexts, {
+								recursively: true,
+							});
+						}
 					}
 
 					// update index
-					const key = (payload as DeleteOperation | PutOperation<T>).key;
-					const value = this._index.index.get(key)!;
-
-					documentsChanged.removed.push(await this.index.getDocument(value));
-					if (value.value instanceof Program) {
-						await value.value.close(this);
-					}
-
 					this._index.index.delete(key);
 				} else {
 					// Unknown operation

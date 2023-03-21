@@ -3,32 +3,23 @@ import { Documents, DocumentsChange } from "../document-store";
 import {
 	IntegerCompareQuery,
 	StringMatchQuery,
-	MemoryCompareQuery,
-	MemoryCompare,
 	DocumentQueryRequest,
 	Results,
-	CreatedAtQuery,
-	U64Compare,
 	Compare,
 	MissingQuery,
 	StringMatchMethod,
-	SignedByQuery,
-	EntryEncryptedByQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
-	Ed25519PublicKey,
-	EncryptedThing,
 	X25519Keypair,
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
 import {
-	AbstractProgram,
 	ObserverType,
 	Program,
 	ReplicatorType,
@@ -64,8 +55,8 @@ class TestStore extends Program {
 	@field({ type: Documents })
 	docs: Documents<Document>;
 
-	constructor(properties?: { docs: Documents<Document> }) {
-		super();
+	constructor(properties?: { id?: string; docs: Documents<Document> }) {
+		super(properties);
 		if (properties) {
 			this.docs = properties.docs;
 		}
@@ -92,12 +83,14 @@ describe("index", () => {
 	describe("operations", () => {
 		describe("crud", () => {
 			let store: TestStore;
+			let store2: TestStore;
 
 			beforeAll(async () => {
-				session = await LSession.connected(1);
+				session = await LSession.connected(2);
 			});
 			afterEach(async () => {
 				await store?.close();
+				await store2?.close();
 			});
 
 			afterAll(async () => {
@@ -237,6 +230,22 @@ describe("index", () => {
 					(await store.docs.store.oplog.values.toArray()).map((x) => x.hash)
 				).toEqual([deleteOperation.hash]); // the delete operation
 			});
+		});
+		describe("index", () => {
+			let store: TestStore;
+			let store2: TestStore;
+
+			beforeAll(async () => {
+				session = await LSession.connected(2);
+			});
+			afterEach(async () => {
+				await store?.close();
+				await store2?.close();
+			});
+
+			afterAll(async () => {
+				await session.stop();
+			});
 
 			it("trim deduplicate changes", async () => {
 				store = new TestStore({
@@ -325,7 +334,7 @@ describe("index", () => {
 					let indexedNameField = "xyz";
 					class FilteredStore extends TestStore {
 						constructor(properties: { docs: Documents<Document> }) {
-							super(properties);
+							super({ ...properties });
 						}
 						async setup(): Promise<void> {
 							await this.docs.setup({
@@ -358,11 +367,6 @@ describe("index", () => {
 						},
 					});
 
-					const changes: DocumentsChange<Document>[] = [];
-					store.docs.events.addEventListener("change", (evt) => {
-						changes.push(evt.detail);
-					});
-
 					let doc = new Document({
 						id: uuid(),
 						name: "Hello world",
@@ -375,10 +379,33 @@ describe("index", () => {
 					expect(indexedValues[0].value).toEqual({
 						[indexedNameField]: doc.name,
 					});
+
+					await waitForPeersStreams(
+						session.peers[0].directblock,
+						session.peers[1].directblock
+					);
+					store2 = (await FilteredStore.load<FilteredStore>(
+						session.peers[1].directblock,
+						store.address
+					))!;
+					await store2.init(session.peers[1], await createIdentity(), {
+						role: new ReplicatorType(),
+						replicators: () => [
+							[session.peers[0].directsub.publicKey.hashcode()],
+						],
+						store: {
+							...DefaultOptions,
+							resolveCache: () => new Cache(createStore()),
+						},
+					});
+
+					let results = await store2.docs.index.query(
+						new DocumentQueryRequest({ queries: [] })
+					);
+					expect(results).toHaveLength(1);
 				});
 			});
 		});
-
 		describe("query", () => {
 			let peersCount = 3,
 				stores: TestStore[] = [],
@@ -649,13 +676,13 @@ describe("index", () => {
 				expect(responses[0].results.map((x) => x.value.id)).toEqual(["4"]);
 			});
 
-			describe("time", () => {
+			/* describe("time", () => {
 				it("created before", async () => {
 					const allDocs = [...writeStore.docs.index.index.values()].sort(
 						(a, b) =>
 							Number(
 								a.entry.metadata.clock.timestamp.wallTime -
-									b.entry.metadata.clock.timestamp.wallTime
+								b.entry.metadata.clock.timestamp.wallTime
 							)
 					);
 
@@ -684,7 +711,7 @@ describe("index", () => {
 						(a, b) =>
 							Number(
 								a.entry.metadata.clock.timestamp.wallTime -
-									b.entry.metadata.clock.timestamp.wallTime
+								b.entry.metadata.clock.timestamp.wallTime
 							)
 					);
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
@@ -710,45 +737,7 @@ describe("index", () => {
 						responses[0].results.map((x) => x.context.head)
 					).toContainAllValues([allDocs[2].entry.hash]);
 				});
-
-				/*
-								it("modified between", async () => {
-									let response: Results<Document> = undefined as any;
-				
-									const allDocs = [...writeStore.docs.index.index.values()].sort(
-										(a, b) =>
-											Number(
-												a.entry.metadata.clock.timestamp.wallTime -
-												b.entry.metadata.clock.timestamp.wallTime
-											)
-									);
-									await stores[1].docs.index.query(
-										new DocumentQueryRequest({
-											queries: [
-												new ModifiedAtQuery({
-													modified: [
-														new U64Compare({
-															compare: Compare.GreaterOrEqual,
-															value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
-														}),
-														new U64Compare({
-															compare: Compare.Less,
-															value: allDocs[2].entry.metadata.clock.timestamp.wallTime,
-														}),
-													],
-												}),
-											],
-										}),
-										(r: Results<Document>) => {
-											response = r;
-										},
-										{ remote: { amount: 1 } }
-									);
-									expect(
-										response.results.map((x) => x.context.head)
-									).toContainAllValues([allDocs[1].entry.hash]);
-								}); */
-			});
+			}); */
 
 			describe("number", () => {
 				it("equal", async () => {
@@ -845,7 +834,7 @@ describe("index", () => {
 				});
 			});
 
-			describe("Memory compare query", () => {
+			/*describe("Memory compare query", () => {
 				it("Can query by memory", async () => {
 					const numberToMatch = 123;
 
@@ -888,7 +877,7 @@ describe("index", () => {
 				});
 			});
 
-			describe("signed by", () => {
+			 describe("signed by", () => {
 				it("multiple signatures", async () => {
 					const responses = await stores[2].docs.index.query(
 						new DocumentQueryRequest({
@@ -903,22 +892,6 @@ describe("index", () => {
 					expect(responses).toHaveLength(1);
 				});
 
-				/* it("handles missing", async () => {
-					const responses: HeadsMessage[] = (
-						await logIndices[2].query.send(
-							new LogQueryRequest({
-								queries: [
-									new SignedByQuery({
-										publicKeys: [(await Ed25519Keypair.create()).publicKey],
-									}),
-								],
-							}),
-							{ amount: 1 }
-						)
-					).map((x) => x.response);
-					expect(responses).toHaveLength(1);
-					expect(responses[0].heads).toHaveLength(0);
-				}); */
 			});
 			describe("Encryption query", () => {
 				it("can query by payload key", async () => {
@@ -975,7 +948,7 @@ describe("index", () => {
 					expect(responses[0].results).toHaveLength(1);
 					expect(responses[0].results[0].value.id).toEqual("encrypted");
 				});
-			});
+			}); */
 		});
 	});
 

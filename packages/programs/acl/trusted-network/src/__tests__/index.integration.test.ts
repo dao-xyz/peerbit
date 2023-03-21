@@ -6,13 +6,12 @@ import {
 	getPathGenerator,
 	getToByFrom,
 	TrustedNetwork,
-	KEY_OFFSET,
-	OFFSET_TO_KEY,
+	IdentityGraph,
 } from "..";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Secp256k1Keccak256PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Identity } from "@dao-xyz/peerbit-log";
+import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
 import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
@@ -20,7 +19,6 @@ import { DefaultOptions, IStoreOptions } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/lazy-level";
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import {
-	ObserverType,
 	Program,
 	ReplicatorType,
 	SubscriptionType,
@@ -29,6 +27,7 @@ import {
 	Documents,
 	DocumentQueryRequest,
 	Results,
+	Operation,
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
@@ -41,19 +40,16 @@ const createIdentity = async () => {
 	} as Identity;
 };
 
-@variant("identity_graph")
-class IdentityGraph extends Program {
-	@field({ type: Documents })
-	store: Documents<IdentityRelation>;
-
-	constructor(properties?: { store: Documents<IdentityRelation> }) {
-		super();
-		if (properties) {
-			this.store = properties.store;
-		}
+@variant("any_identity_graph")
+class AnyCanAppendIdentityGraph extends IdentityGraph {
+	constructor(props?: {
+		id?: string;
+		relationGraph?: Documents<IdentityRelation>;
+	}) {
+		super(props);
 	}
-	async setup(): Promise<void> {
-		await this.store.setup({ type: IdentityRelation });
+	async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
+		return true;
 	}
 }
 describe("index", () => {
@@ -101,37 +97,6 @@ describe("index", () => {
 			await session.stop();
 		});
 
-		it("serializes relation with right padding ed25519", async () => {
-			const from = (await Ed25519Keypair.create()).publicKey;
-			const to = (await Ed25519Keypair.create()).publicKey;
-			const relation = new IdentityRelation({ from, to });
-			const serRelation = serialize(relation);
-			const serFrom = serialize(from);
-			const serTo = serialize(to);
-
-			expect(serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY)).toEqual(serTo); // To key has a fixed offset from 0
-			expect(
-				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
-			).toEqual(serFrom); // From key has a fixed offset from 0
-		});
-
-		it("serializes relation with right padding sepc256k1", async () => {
-			const from = new Secp256k1Keccak256PublicKey({
-				address: await Wallet.createRandom().getAddress(),
-			});
-			const to = (await Ed25519Keypair.create()).publicKey;
-			const relation = new IdentityRelation({ from, to });
-			const serRelation = serialize(relation);
-			const serFrom = serialize(from);
-			const serTo = serialize(to);
-
-			expect(
-				serRelation.slice(KEY_OFFSET, KEY_OFFSET + serFrom.length)
-			).toEqual(serFrom); // From key has a fixed offset from 0
-			const sliceTo = serRelation.slice(KEY_OFFSET + OFFSET_TO_KEY);
-			expect(sliceTo).toEqual(serTo); // To key has a fixed offset from 0
-		});
-
 		it("path", async () => {
 			const a = (await Ed25519Keypair.create()).publicKey;
 			const b = new Secp256k1Keccak256PublicKey({
@@ -139,8 +104,8 @@ describe("index", () => {
 			});
 			const c = (await Ed25519Keypair.create()).publicKey;
 
-			const store = new IdentityGraph({
-				store: createIdentityGraphStore({
+			const store = new AnyCanAppendIdentityGraph({
+				relationGraph: createIdentityGraphStore({
 					id: session.peers[0].peerId.toString(),
 				}),
 			});
@@ -154,23 +119,23 @@ describe("index", () => {
 				to: c,
 				from: b,
 			});
-			await store.store.put(ab);
-			await store.store.put(bc);
+			await store.relationGraph.put(ab);
+			await store.relationGraph.put(bc);
 
 			// Get relations one by one
-			const trustingC = await getFromByTo.resolve(c, store.store);
+			const trustingC = await getFromByTo.resolve(c, store.relationGraph);
 			expect(trustingC).toHaveLength(1);
 			expect(trustingC[0].id).toEqual(bc.id);
 
-			const bIsTrusting = await getToByFrom.resolve(b, store.store);
+			const bIsTrusting = await getToByFrom.resolve(b, store.relationGraph);
 			expect(bIsTrusting).toHaveLength(1);
 			expect(bIsTrusting[0].id).toEqual(bc.id);
 
-			const trustingB = await getFromByTo.resolve(b, store.store);
+			const trustingB = await getFromByTo.resolve(b, store.relationGraph);
 			expect(trustingB).toHaveLength(1);
 			expect(trustingB[0].id).toEqual(ab.id);
 
-			const aIsTrusting = await getToByFrom.resolve(a, store.store);
+			const aIsTrusting = await getToByFrom.resolve(a, store.relationGraph);
 			expect(aIsTrusting).toHaveLength(1);
 			expect(aIsTrusting[0].id).toEqual(ab.id);
 
@@ -178,7 +143,7 @@ describe("index", () => {
 			const relationsFromGeneratorFromByTo: IdentityRelation[] = [];
 			for await (const relation of getPathGenerator(
 				c,
-				store.store,
+				store.relationGraph,
 				getFromByTo
 			)) {
 				relationsFromGeneratorFromByTo.push(relation);
@@ -190,7 +155,7 @@ describe("index", () => {
 			const relationsFromGeneratorToByFrom: IdentityRelation[] = [];
 			for await (const relation of getPathGenerator(
 				a,
-				store.store,
+				store.relationGraph,
 				getToByFrom
 			)) {
 				relationsFromGeneratorToByFrom.push(relation);
@@ -206,8 +171,8 @@ describe("index", () => {
 				address: await Wallet.createRandom().getAddress(),
 			});
 
-			const store = new IdentityGraph({
-				store: createIdentityGraphStore({
+			const store = new AnyCanAppendIdentityGraph({
+				relationGraph: createIdentityGraphStore({
 					id: session.peers[0].peerId.toString(),
 				}),
 			});
@@ -219,14 +184,14 @@ describe("index", () => {
 				from: a,
 			});
 
-			await store.store.put(ab);
+			await store.relationGraph.put(ab);
 
-			let trustingB = await getFromByTo.resolve(b, store.store);
+			let trustingB = await getFromByTo.resolve(b, store.relationGraph);
 			expect(trustingB).toHaveLength(1);
 			expect(trustingB[0].id).toEqual(ab.id);
 
-			await store.store.del(ab.id);
-			trustingB = await getFromByTo.resolve(b, store.store);
+			await store.relationGraph.del(ab.id);
+			trustingB = await getFromByTo.resolve(b, store.relationGraph);
 			expect(trustingB).toHaveLength(0);
 		});
 	});
@@ -353,7 +318,6 @@ describe("index", () => {
 
 			// Try query with trusted
 			// await delay(3000); // with github ci this fails for some reason, hence this delay. TODO identify what proecss to wait for
-
 			let responses: Results<IdentityRelation>[] =
 				await l0c.trustGraph.index.query(
 					new DocumentQueryRequest({

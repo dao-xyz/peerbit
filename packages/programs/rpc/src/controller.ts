@@ -229,7 +229,7 @@ export class RPC<Q, R> extends ComposableProgram {
 				}
 
 				if (error instanceof BorshError) {
-					logger.debug("Got message for a different namespace");
+					logger.error("Got message for a different namespace");
 					return;
 				}
 				logger.error(

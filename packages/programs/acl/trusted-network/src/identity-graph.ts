@@ -2,10 +2,8 @@ import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
 	DocumentIndex,
-	IndexedValue,
 	DocumentQueryRequest,
-	MemoryCompare,
-	MemoryCompareQuery,
+	StringMatchQuery,
 } from "@dao-xyz/peerbit-document";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { concat } from "uint8arrays";
@@ -20,8 +18,6 @@ export type RelationResolver = {
 	next: (relation: IdentityRelation) => PublicSignKey;
 };
 
-export const OFFSET_TO_KEY = 74;
-export const KEY_OFFSET = 2 + 32; // Relation discriminator + IdentityRelation discriminator + id
 export const getFromByTo: RelationResolver = {
 	resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
 		const ser = serialize(to);
@@ -30,18 +26,14 @@ export const getFromByTo: RelationResolver = {
 				await db.index.queryHandler(
 					new DocumentQueryRequest({
 						queries: [
-							new MemoryCompareQuery({
-								compares: [
-									new MemoryCompare({
-										bytes: ser,
-										offset: BigInt(KEY_OFFSET + OFFSET_TO_KEY),
-									}),
-								],
+							new StringMatchQuery({
+								key: "to",
+								value: to.hashcode(),
 							}),
 						],
 					})
 				)
-			).map((x) => db.index.getDocument(x))
+			).map((x) => x.value)
 		);
 	},
 	next: (relation) => relation.from,
@@ -49,24 +41,19 @@ export const getFromByTo: RelationResolver = {
 
 export const getToByFrom: RelationResolver = {
 	resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
-		const ser = serialize(from);
 		return Promise.all(
 			(
 				await db.index.queryHandler(
 					new DocumentQueryRequest({
 						queries: [
-							new MemoryCompareQuery({
-								compares: [
-									new MemoryCompare({
-										bytes: ser,
-										offset: BigInt(KEY_OFFSET),
-									}),
-								],
+							new StringMatchQuery({
+								key: "from",
+								value: from.hashcode(),
 							}),
 						],
 					})
 				)
-			).map((x) => db.index.getDocument(x))
+			).map((x) => x.value)
 		);
 	},
 	next: (relation) => relation.to,
@@ -141,9 +128,6 @@ export class IdentityRelation extends AbstractRelation {
 	@field({ type: PublicSignKey })
 	_from: PublicSignKey;
 
-	@field({ type: Uint8Array })
-	padding: Uint8Array;
-
 	@field({ type: PublicSignKey })
 	_to: PublicSignKey;
 
@@ -155,8 +139,6 @@ export class IdentityRelation extends AbstractRelation {
 		if (properties) {
 			this._from = properties.from;
 			this._to = properties.to;
-			const serFrom = serialize(this._from);
-			this.padding = new Uint8Array(OFFSET_TO_KEY - serFrom.length - 4); // -4 comes from u32 describing length the padding array
 			this.initializeId();
 		}
 	}
@@ -174,7 +156,6 @@ export class IdentityRelation extends AbstractRelation {
 	}
 
 	static id(to: PublicSignKey, from: PublicSignKey) {
-		// we do make sure id has fixed length, this is important because we want the byte offest of the `trustee` and `truster` to be fixed
 		return sha256Sync(concat([serialize(to), serialize(from)]));
 	}
 }

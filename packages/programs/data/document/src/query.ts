@@ -63,8 +63,8 @@ export class DocumentQueryRequest {
 	}
 }
 
-@variant(1)
-export abstract class ContextQuery extends Query {}
+/* @variant(1)
+export abstract class ContextQuery extends Query { }
 
 @variant(0)
 export class CreatedAtQuery extends ContextQuery {
@@ -91,7 +91,7 @@ export class ModifiedAtQuery extends ContextQuery {
 		}
 	}
 }
-
+ */
 @variant(2)
 export abstract class StateQuery extends Query {}
 
@@ -247,7 +247,7 @@ export class MissingQuery extends StateFieldQuery {
 }
 
 // TODO MemoryCompareQuery can be replaces with ByteMatchQuery? Or Nesteed Queries + ByteMatchQuery?
-@variant(0)
+/* @variant(0)
 export class MemoryCompare {
 	@field({ type: Uint8Array })
 	bytes: Uint8Array;
@@ -274,7 +274,7 @@ export class MemoryCompareQuery extends Query {
 			this.compares = opts.compares;
 		}
 	}
-}
+} */
 
 /// ----- RESULTS -----
 
@@ -349,23 +349,23 @@ export class Results<T> {
 	}
 }
 
-@variant(5)
-export class LogQuery extends Query {}
+/* @variant(5)
+export class LogQuery extends Query { } */
 
 /**
  * Find logs that can be decrypted by certain keys
  */
-
+/* 
 @variant(0)
 export class EntryEncryptedByQuery
 	extends LogQuery
 	implements
-		EntryEncryptionTemplate<
-			X25519PublicKey[],
-			X25519PublicKey[],
-			X25519PublicKey[],
-			X25519PublicKey[]
-		>
+	EntryEncryptionTemplate<
+		X25519PublicKey[],
+		X25519PublicKey[],
+		X25519PublicKey[],
+		X25519PublicKey[]
+	>
 {
 	@field({ type: vec(X25519PublicKey) })
 	metadata: X25519PublicKey[];
@@ -411,3 +411,4 @@ export class SignedByQuery extends LogQuery {
 		return this._publicKeys;
 	}
 }
+ */

@@ -11,11 +11,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { AbstractLevel } from "abstract-level";
-import {
-	ObserverType,
-	Program,
-	ReplicatorType,
-} from "@dao-xyz/peerbit-program";
+import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";

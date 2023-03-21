@@ -208,7 +208,7 @@ export class Trim<T> {
 				// never break on the tail
 				break;
 			}
-			values.byteLength;
+
 			if (!looped || (looped && node !== tail)) {
 				lastNode = node;
 			}
