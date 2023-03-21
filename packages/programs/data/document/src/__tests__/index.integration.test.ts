@@ -330,8 +330,10 @@ describe("index", () => {
 						async setup(): Promise<void> {
 							await this.docs.setup({
 								type: Document,
-								indexFields: (obj) => {
-									return { [indexedNameField]: obj.name };
+								index: {
+									fields: (obj) => {
+										return { [indexedNameField]: obj.name };
+									},
 								},
 							});
 						}

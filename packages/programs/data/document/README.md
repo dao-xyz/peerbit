@@ -53,7 +53,11 @@ class TestStore extends Program {
         }
     }
     async setup(): Promise<void> {
-        await this.docs.setup({ type: Document });
+        await this.docs.setup({ 
+			type: Document, 
+			index: {
+				fields: (obj) => obj // here you can filter and transform what fields you want to index
+			}})
     }
 }
 
