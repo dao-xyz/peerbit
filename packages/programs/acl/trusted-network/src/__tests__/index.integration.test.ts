@@ -336,13 +336,17 @@ describe("index", () => {
 			await l0a.add(identity(1).publicKey);
 			//	await delay(11000);
 
-			await l0b.trustGraph.store.sync(l0a.trustGraph.store.oplog.heads);
+			await l0b.trustGraph.store.sync(
+				await l0a.trustGraph.store.oplog.getHeads()
+			);
 
 			await waitFor(() => l0b.trustGraph.index.size == 1);
 
 			await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
 
-			await l0a.trustGraph.store.sync(l0b.trustGraph.store.oplog.heads);
+			await l0a.trustGraph.store.sync(
+				await l0b.trustGraph.store.oplog.getHeads()
+			);
 
 			await waitFor(() => l0b.trustGraph.index.size == 2);
 			await waitFor(() => l0a.trustGraph.index.size == 2);

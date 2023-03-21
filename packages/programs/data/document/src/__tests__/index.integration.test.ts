@@ -234,7 +234,7 @@ describe("index", () => {
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(store.docs.index.size).toEqual(0);
 				expect(
-					store.docs.store.oplog.values.toArray().map((x) => x.hash)
+					(await store.docs.store.oplog.values.toArray()).map((x) => x.hash)
 				).toEqual([deleteOperation.hash]); // the delete operation
 			});
 
@@ -318,6 +318,62 @@ describe("index", () => {
 				expect(store.docs.index.size).toEqual(10);
 				expect(store.docs.store.oplog.values.length).toEqual(10);
 				expect(store.docs.store.oplog.headsIndex.index.size).toEqual(10);
+			});
+
+			describe("field extractor", () => {
+				it("filters field", async () => {
+					let indexedNameField = "xyz";
+					class FilteredStore extends TestStore {
+						constructor(properties: { docs: Documents<Document> }) {
+							super(properties);
+						}
+						async setup(): Promise<void> {
+							await this.docs.setup({
+								type: Document,
+								indexFields: (obj) => {
+									return { [indexedNameField]: obj.name };
+								},
+							});
+						}
+					}
+
+					store = new FilteredStore({
+						docs: new Documents<Document>({
+							index: new DocumentIndex({
+								indexBy: "id",
+							}),
+						}),
+					});
+
+					await store.init(session.peers[0], await createIdentity(), {
+						role: new ReplicatorType(),
+						replicators: () => [
+							[session.peers[0].directsub.publicKey.hashcode()],
+						],
+						store: {
+							...DefaultOptions,
+							resolveCache: () => new Cache(createStore()),
+						},
+					});
+
+					const changes: DocumentsChange<Document>[] = [];
+					store.docs.events.addEventListener("change", (evt) => {
+						changes.push(evt.detail);
+					});
+
+					let doc = new Document({
+						id: uuid(),
+						name: "Hello world",
+					});
+
+					await store.docs.put(doc);
+
+					let indexedValues = [...store.docs.index.index.values()];
+					expect(indexedValues).toHaveLength(1);
+					expect(indexedValues[0].value).toEqual({
+						[indexedNameField]: doc.name,
+					});
+				});
 			});
 		});
 
@@ -458,7 +514,7 @@ describe("index", () => {
 
 			it("can match sync", async () => {
 				expect(stores[1].docs.index.size).toEqual(0);
-				await stores[1].docs.index.query(
+				let results = await stores[1].docs.index.query(
 					new DocumentQueryRequest({
 						queries: [],
 					}),
@@ -885,26 +941,17 @@ describe("index", () => {
 							},
 						})
 					).entry;
-					expect(
-						(
-							stores[1].docs.store.oplog.heads[0]
-								._payload as EncryptedThing<any>
-						)._decrypted
-					).toBeDefined();
 
-					delete (
-						stores[1].docs.store.oplog.heads[0]._payload as EncryptedThing<any>
-					)._decrypted;
+					delete (entry._payload as EncryptedThing<any>)._decrypted;
 
 					expect(
-						(
-							stores[1].docs.store.oplog.heads[0]
-								._payload as EncryptedThing<any>
-						)._decrypted
+						(entry._payload as EncryptedThing<any>)._decrypted
 					).toBeUndefined();
 
 					const preLength = writeStore.docs.store.oplog.values.length;
-					await writeStore.docs.store.sync(stores[1].docs.store.oplog.heads);
+					await writeStore.docs.store.sync(
+						await stores[1].docs.store.oplog.getHeads()
+					);
 					await waitFor(
 						() => writeStore.docs.store.oplog.values.length === preLength + 1
 					);
@@ -1086,7 +1133,7 @@ describe("index", () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			await stores[0].store.docs.store.sync(
-				stores[1].store.docs.store.oplog.values.toArray()
+				await stores[1].store.docs.store.oplog.values.toArray()
 			);
 			expect(stores[0].openEvents).toHaveLength(1);
 			expect(stores[1].openEvents).toHaveLength(0);

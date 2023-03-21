@@ -556,9 +556,6 @@ export class Entry<T>
 					}
 					// replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
 					else if (
-						/*   maxChainLength < n.maxChainLength ||
-						  maxClock < n.clock.logical ||
-						  (maxClock == n.clock.logical && n.gid < gid) */ // Longest chain?
 						Timestamp.compare(n.metadata.clock.timestamp, maxClock) > 0 ||
 						(Timestamp.compare(n.metadata.clock.timestamp, maxClock) == 0 &&
 							n.metadata.gid < gid)
@@ -690,7 +687,7 @@ export class Entry<T>
 	static async fromMultihash<T>(
 		store: BlockStore,
 		hash: string,
-		options?: { timeout?: number }
+		options?: { timeout?: number; replicate?: boolean }
 	) {
 		if (!hash) throw new Error(`Invalid hash: ${hash}`);
 		const bytes = await store.get<Uint8Array>(hash, options);
@@ -699,7 +696,7 @@ export class Entry<T>
 		}
 		const entry = deserialize(await getBlockValue(bytes), Entry);
 		entry.hash = hash;
-		return entry;
+		return entry as Entry<T>;
 	}
 
 	/**

@@ -30,7 +30,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.4",
+		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/libp2p-direct-sub": "^0.1.21",
 		"@dao-xyz/peerbit-crypto": "^0.1.10",
 		"@dao-xyz/peerbit-libp2p": "^0.1.23",

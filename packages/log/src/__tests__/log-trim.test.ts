@@ -75,7 +75,7 @@ describe("Append trim", function () {
 		await log.append("hello3");
 		await log.trim();
 		expect(log.length).toEqual(1);
-		expect(log.toArray()[0].payload.getValue()).toEqual("hello3");
+		expect((await log.toArray())[0].payload.getValue()).toEqual("hello3");
 	});
 
 	it("respect canTrim for length type", async () => {
@@ -103,8 +103,8 @@ describe("Append trim", function () {
 			},
 		});
 		expect(log.length).toEqual(2);
-		expect(log.toArray()[0].payload.getValue()).toEqual("hello1");
-		expect(log.toArray()[1].payload.getValue()).toEqual("hello3");
+		expect((await log.toArray())[0].payload.getValue()).toEqual("hello1");
+		expect((await log.toArray())[1].payload.getValue()).toEqual("hello3");
 		expect(canTrimInvocations).toEqual(2);
 	});
 
@@ -396,13 +396,13 @@ describe("Append trim", function () {
 		expect(await log.storage.get(a2.hash)).toBeDefined();
 		expect(log.length).toEqual(2);
 		const { entry: a3, removed } = await log.append("hello3");
-		expect(removed).toContainAllValues([a1, a2]);
+		expect(removed.map((x) => x.hash)).toContainAllValues([a1.hash, a2.hash]);
 		expect(log.length).toEqual(1);
 		await (log.storage as MemoryLevelBlockStore).idle();
 		expect(await log.storage.get(a1.hash)).toBeUndefined();
 		expect(await log.storage.get(a2.hash)).toBeUndefined();
 		expect(await log.storage.get(a3.hash)).toBeDefined();
-		expect(log.toArray()[0].payload.getValue()).toEqual("hello3");
+		expect((await log.toArray())[0].payload.getValue()).toEqual("hello3");
 	});
 
 	it("trimming and concurrency", async () => {
@@ -435,7 +435,7 @@ describe("Append trim", function () {
 		await Promise.all(promises);
 		expect(canTrimInvocations).toBeLessThan(100); // even though conc. trimming is sync
 		expect(log.length).toEqual(1);
-		expect(log.toArray()[0].payload.getValue()).toEqual("hello99");
+		expect((await log.toArray())[0].payload.getValue()).toEqual("hello99");
 	});
 
 	it("cut back to bytelength", async () => {
@@ -453,18 +453,26 @@ describe("Append trim", function () {
 		const { entry: a1, removed: r1 } = await log.append("hello1");
 		expect(r1).toHaveLength(0);
 		expect(await log.storage.get(a1.hash)).toBeDefined();
-		expect(log.toArray().map((x) => x.payload.getValue())).toEqual(["hello1"]);
+		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
+			"hello1",
+		]);
 		const { entry: a2, removed: r2 } = await log.append("hello2");
-		expect(r2).toContainAllValues([a1]);
+		expect(r2.map((x) => x.hash)).toContainAllValues([a1.hash]);
 		expect(await log.storage.get(a2.hash)).toBeDefined();
-		expect(log.toArray().map((x) => x.payload.getValue())).toEqual(["hello2"]);
+		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
+			"hello2",
+		]);
 		const { entry: a3, removed: r3 } = await log.append("hello3");
-		expect(r3).toContainAllValues([a2]);
+		expect(r3.map((x) => x.hash)).toContainAllValues([a2.hash]);
 		expect(await log.storage.get(a3.hash)).toBeDefined();
-		expect(log.toArray().map((x) => x.payload.getValue())).toEqual(["hello3"]);
+		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
+			"hello3",
+		]);
 		const { entry: a4, removed: r4 } = await log.append("hello4");
-		expect(r4).toContainAllValues([a3]);
-		expect(log.toArray().map((x) => x.payload.getValue())).toEqual(["hello4"]);
+		expect(r4.map((x) => x.hash)).toContainAllValues([a3.hash]);
+		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
+			"hello4",
+		]);
 		await (log.storage as MemoryLevelBlockStore).idle();
 		expect(await log.storage.get(a1.hash)).toBeUndefined();
 		expect(await log.storage.get(a2.hash)).toBeUndefined();
@@ -490,12 +498,14 @@ describe("Append trim", function () {
 		const { entry: a1, removed: r1 } = await log.append("hello1");
 		expect(r1).toHaveLength(0);
 		expect(await log.storage.get(a1.hash)).toBeDefined();
-		expect(log.toArray().map((x) => x.payload.getValue())).toEqual(["hello1"]);
+		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
+			"hello1",
+		]);
 		const { entry: a2, removed: r2 } = await log.append("hello2");
-		expect(r2).toContainAllValues([]);
+		expect(r2.map((x) => x.hash)).toContainAllValues([]);
 
 		await waitFor(() => +new Date() - t0 > maxAge);
 		const { entry: a3, removed: r3 } = await log.append("hello2");
-		expect(r3).toContainAllValues([a1, a2]);
+		expect(r3.map((x) => x.hash)).toContainAllValues([a1.hash, a2.hash]);
 	});
 });

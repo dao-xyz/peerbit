@@ -81,11 +81,11 @@ describe(`Sync`, () => {
 			await store.addOperation("i: " + i);
 		}
 
-		expect(store.oplog.heads.length).toEqual(1);
+		expect((await store.oplog.getHeads()).length).toEqual(1);
 		expect(store.oplog.values.length).toEqual(entryCount);
-		await store2.sync(store.oplog.heads);
+		await store2.sync(await store.oplog.getHeads());
 		await waitFor(() => store2.oplog.values.length == entryCount);
-		expect(store2.oplog.heads).toHaveLength(1);
+		expect(await store2.oplog.getHeads()).toHaveLength(1);
 	});
 
 	it("syncs with references", async () => {
@@ -117,14 +117,14 @@ describe(`Sync`, () => {
 			await store.addOperation(i);
 		}
 
-		expect(store.oplog.heads.length).toEqual(1);
+		expect((await store.oplog.getHeads()).length).toEqual(1);
 		expect(store.oplog.values.length).toEqual(entryCount);
 		await store2.sync([
 			{
-				entry: store.oplog.heads[0],
+				entry: (await store.oplog.getHeads())[0],
 				references: [
-					store.oplog.values.toArray()[3],
-					store.oplog.values.toArray()[6],
+					(await store.oplog.values.toArray())[3],
+					(await store.oplog.values.toArray())[6],
 				],
 			},
 		]);
@@ -135,6 +135,6 @@ describe(`Sync`, () => {
 		expect(fetchCallBackEntries[2].payload.getValue()).toEqual(6); // because second reference
 
 		// the order of the rest is kind of random because we do Log.fromEntry/fromEntryHash which loads concurrently so we dont know what entries arrive firs
-		expect(store2.oplog.heads).toHaveLength(1);
+		expect(await store2.oplog.getHeads()).toHaveLength(1);
 	});
 });

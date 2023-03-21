@@ -86,8 +86,8 @@ describe("Log - Join Concurrent Entries", function () {
 			expect(hash1).toEqual(hash2);
 			expect(log1.length).toEqual(20);
 			assert.deepStrictEqual(
-				log1.toArray().map((e) => e.payload.getValue()),
-				log2.toArray().map((e) => e.payload.getValue())
+				(await log1.toArray()).map((e) => e.payload.getValue()),
+				(await log2.toArray()).map((e) => e.payload.getValue())
 			);
 
 			// Joining after concurrently appending same payload joins entry once
@@ -101,8 +101,8 @@ describe("Log - Join Concurrent Entries", function () {
 
 			expect(log1.length).toEqual(log2.length);
 			expect(log1.length).toEqual(40);
-			expect(log1.toArray().map((e) => e.payload.getValue())).toEqual(
-				log2.toArray().map((e) => e.payload.getValue())
+			expect((await log1.toArray()).map((e) => e.payload.getValue())).toEqual(
+				(await log2.toArray()).map((e) => e.payload.getValue())
 			);
 		});
 

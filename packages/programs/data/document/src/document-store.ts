@@ -1,4 +1,6 @@
 import {
+	Indexable,
+	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
 	DocumentIndex,
 	Operation,
@@ -49,7 +51,9 @@ export interface DocumentEvents<T> {
 }
 
 @variant("documents")
-export class Documents<T> extends ComposableProgram {
+export class Documents<
+	T extends Record<string, any>
+> extends ComposableProgram {
 	@field({ type: Store })
 	store: Store<Operation<T>>;
 
@@ -60,8 +64,6 @@ export class Documents<T> extends ComposableProgram {
 	private _index: DocumentIndex<T>;
 
 	private _clazz?: AbstractType<T>;
-
-	private _valueEncoding: Encoding<T>;
 
 	private _optionCanAppend?: CanAppend<Operation<T>>;
 	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
@@ -96,6 +98,7 @@ export class Documents<T> extends ComposableProgram {
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
 		canOpen?: (program: Program) => Promise<boolean>;
+		indexFields?: Indexable<T>;
 	}) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
@@ -109,12 +112,11 @@ export class Documents<T> extends ComposableProgram {
 				);
 			}
 		}
-		this._valueEncoding = BORSH_ENCODING(this._clazz);
 		if (options.canAppend) {
 			this._optionCanAppend = options.canAppend;
 		}
 		await this.store.setup({
-			encoding: BORSH_ENCODING(Operation),
+			encoding: BORSH_ENCODING_OPERATION,
 			canAppend: this.canAppend.bind(this),
 			onUpdate: this.handleChanges.bind(this),
 		});
@@ -123,6 +125,7 @@ export class Documents<T> extends ComposableProgram {
 			type: this._clazz,
 			store: this.store,
 			canRead: options.canRead || (() => Promise.resolve(true)),
+			indexFields: options.indexFields || ((obj) => obj),
 			sync: async (result: Results<T>) => {
 				const entries = (
 					await Promise.all(
@@ -160,7 +163,6 @@ export class Documents<T> extends ComposableProgram {
 					)
 				).filter((x) => !!x) as Entry<any>[];
 				await this.store.sync(entries, {
-					save: this.role instanceof ReplicatorType, // TODO is this expected?
 					canAppend: this._optionCanAppend?.bind(this) || (() => true),
 				});
 			},
@@ -168,8 +170,11 @@ export class Documents<T> extends ComposableProgram {
 	}
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
-			? this.store.oplog.get(history) ||
-					(await Entry.fromMultihash(this.store.oplog.storage, history))
+			? (await this.store.oplog.get(history)) ||
+					(await Entry.fromMultihash<Operation<T>>(
+						this.store.oplog.storage,
+						history
+					))
 			: history;
 	}
 
@@ -202,7 +207,7 @@ export class Documents<T> extends ComposableProgram {
 				next !== current?.hash &&
 				current.next.length > 0
 			) {
-				current = this.store.oplog.get(current.next[0])!;
+				current = await this.store.oplog.get(current.next[0])!;
 			}
 			if (current?.hash === next) {
 				return true; // Ok, we are pointing this new edit to some exising point in time of the old document
@@ -223,7 +228,7 @@ export class Documents<T> extends ComposableProgram {
 				// check nexts
 				const putOperation = operation as PutOperation<T>;
 
-				const key = putOperation.getValue(this._valueEncoding)[
+				const key = putOperation.getValue(this.index.valueEncoding)[
 					this._index.indexBy
 				];
 				if (!key) {
@@ -325,7 +330,7 @@ export class Documents<T> extends ComposableProgram {
 	async handleChanges(change: Change<Operation<T>>): Promise<void> {
 		const removed = [...(change.removed || [])];
 		const removedSet = new Set<string>(removed.map((x) => x.hash));
-		const entries = [...change.added, ...(change.removed || [])]
+		const entries = [...change.added, ...(removed || [])]
 			.sort(this.store.oplog.sortFn)
 			.reverse(); // sort so we get newest to oldest
 
@@ -376,7 +381,7 @@ export class Documents<T> extends ComposableProgram {
 					this._index.index.set(key, {
 						entry: item,
 						key: payload.key,
-						value: value,
+						value: this._index.toIndex(value),
 						context: new Context({
 							created:
 								this._index.index.get(key)?.context.created || //(await this._index.get(key))?.results[0]?.context.created ||
@@ -410,9 +415,9 @@ export class Documents<T> extends ComposableProgram {
 					removedSet.has(item.hash)
 				) {
 					// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-					const nexts = item.next
-						.map((n) => this.store.oplog.get(n))
-						.filter((x) => !!x) as Entry<any>[];
+					const nexts = (
+						await Promise.all(item.next.map((n) => this.store.oplog.get(n)))
+					).filter((x) => !!x) as Entry<any>[];
 
 					if (nexts.length > 0) {
 						await this.store.removeEntry(nexts, {
@@ -424,7 +429,7 @@ export class Documents<T> extends ComposableProgram {
 					const key = (payload as DeleteOperation | PutOperation<T>).key;
 					const value = this._index.index.get(key)!;
 
-					documentsChanged.removed.push(value.value);
+					documentsChanged.removed.push(await this.index.getDocument(value));
 					if (value.value instanceof Program) {
 						await value.value.close(this);
 					}

@@ -17,13 +17,9 @@ describe("transport", function () {
 	it("can restart", async () => {
 		session = await LSession.connected(2);
 
-		store = new DirectBlock(session.peers[0], {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		store = new DirectBlock(session.peers[0], new MemoryLevelBlockStore());
 		await store.open();
-		store2 = new DirectBlock(session.peers[1], {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		store2 = new DirectBlock(session.peers[1], new MemoryLevelBlockStore());
 
 		await store2.open();
 
@@ -40,12 +36,8 @@ describe("transport", function () {
 	it("rw", async () => {
 		session = await LSession.connected(2);
 
-		store = new DirectBlock(session.peers[0], {
-			localStore: new MemoryLevelBlockStore(),
-		});
-		store2 = new DirectBlock(session.peers[1], {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		store = new DirectBlock(session.peers[0], new MemoryLevelBlockStore());
+		store2 = new DirectBlock(session.peers[1], new MemoryLevelBlockStore());
 
 		expect((store as DirectBlock)._gossip).toBeFalse();
 
@@ -67,12 +59,8 @@ describe("transport", function () {
 	it("reads from joining peer", async () => {
 		session = await LSession.disconnected(2);
 
-		store = new DirectBlock(session.peers[0], {
-			localStore: new MemoryLevelBlockStore(),
-		});
-		store2 = new DirectBlock(session.peers[1], {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		store = new DirectBlock(session.peers[0], new MemoryLevelBlockStore());
+		store2 = new DirectBlock(session.peers[1], new MemoryLevelBlockStore());
 
 		expect((store as DirectBlock)._gossip).toBeFalse();
 
@@ -96,13 +84,9 @@ describe("transport", function () {
 	it("timeout", async () => {
 		session = await LSession.connected(2);
 
-		store = new DirectBlock(session.peers[0], {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		store = new DirectBlock(session.peers[0], new MemoryLevelBlockStore());
 		await store.open();
-		store2 = new DirectBlock(session.peers[1], {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		store2 = new DirectBlock(session.peers[1], new MemoryLevelBlockStore());
 		await store2.open();
 
 		await waitForPeers(store, store2);

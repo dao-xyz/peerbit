@@ -14,6 +14,7 @@ import {
 } from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
+import { Entry } from "../entry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -59,7 +60,9 @@ describe("Log - Iterator", function () {
 	describe("Basic iterator functionality", () => {
 		let log1: Log<string>;
 
+		let entries: Entry<any>[];
 		beforeEach(async () => {
+			entries = [];
 			log1 = new Log(
 				store,
 				{
@@ -70,7 +73,7 @@ describe("Log - Iterator", function () {
 			);
 
 			for (let i = 0; i <= 100; i++) {
-				await log1.append("entry" + i);
+				entries.push((await log1.append("entry" + i)).entry);
 			}
 		});
 
@@ -95,7 +98,7 @@ describe("Log - Iterator", function () {
 			expect(length).toEqual(10);
 			let i = 0;
 			for (const entry of it) {
-				expect(entry.payload.getValue()).toEqual("entry" + i++);
+				expect(entry).toEqual(entries[i++].hash);
 			}
 		});
 
@@ -109,7 +112,7 @@ describe("Log - Iterator", function () {
 			expect(length).toEqual(10);
 			let i = 0;
 			for (const entry of it) {
-				expect(entry.payload.getValue()).toEqual("entry" + (100 - i++));
+				expect(entry).toEqual(entries[100 - i++].hash);
 			}
 		});
 
@@ -119,7 +122,7 @@ describe("Log - Iterator", function () {
 			expect(length).toEqual(101);
 			let i = 0;
 			for (const entry of it) {
-				expect(entry.payload.getValue()).toEqual("entry" + i++);
+				expect(entry).toEqual(entries[i++].hash);
 			}
 		});
 	});

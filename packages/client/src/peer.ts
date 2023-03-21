@@ -741,7 +741,7 @@ export class Peerbit {
 			const programInfo = this.programs.get(address);
 			if (programInfo) {
 				for (const [_, store] of programInfo.program.allStoresMap) {
-					const heads = store.oplog.heads;
+					const heads = await store.oplog.getHeads();
 					const groupedByGid = await groupByGid(heads);
 					let storeChanged = false;
 					for (const [gid, entries] of groupedByGid) {

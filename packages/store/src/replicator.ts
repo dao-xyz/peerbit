@@ -13,7 +13,10 @@ export const join = async <T>(
 	// Notify the Store that we made progress
 
 	const shouldFetch = (h: string) => {
-		return !!h && !into.has(h);
+		if (!h) {
+			throw new Error("Unexpected");
+		}
+		return !into.has(h);
 	};
 
 	let log: Log<any>;
@@ -36,6 +39,7 @@ export const join = async <T>(
 				shouldFetch,
 				concurrency: options?.concurrency,
 				onFetched: options?.onFetched,
+				replicate: true,
 			}
 		);
 	} else {
@@ -65,6 +69,7 @@ export const join = async <T>(
 			shouldFetch,
 			concurrency: options?.concurrency,
 			onFetched: options?.onFetched,
+			replicate: true,
 		});
 	}
 	return into.join(log);

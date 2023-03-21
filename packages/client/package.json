@@ -30,7 +30,7 @@
 		"import": "./lib/esm/index.js"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.4",
+		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/lazy-level": "^0.0.3",
 		"@dao-xyz/peerbit-crypto": "^0.1.10",
 		"@dao-xyz/peerbit-keystore": "^0.1.25",

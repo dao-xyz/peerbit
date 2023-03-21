@@ -68,14 +68,14 @@ describe(`Automatic Replication`, function () {
 				db1.address!
 			))!,
 			{
-				onReplicationComplete: (_) => {
+				onReplicationComplete: async (_) => {
 					// Listen for the 'replicated' events and check that all the entries
 					// were replicated to the second database
-					expect(db2.iterator({ limit: -1 }).collect().length).toEqual(
+					expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
 						entryCount
 					);
-					const result1 = db1.iterator({ limit: -1 }).collect();
-					const result2 = db2.iterator({ limit: -1 }).collect();
+					const result1 = (await db1.iterator({ limit: -1 })).collect();
+					const result2 = (await db2.iterator({ limit: -1 })).collect();
 					expect(result1.length).toEqual(result2.length);
 					for (let i = 0; i < result1.length; i++) {
 						assert(result1[i].equals(result2[i]));
@@ -123,14 +123,14 @@ describe(`Automatic Replication`, function () {
 				db1.address!
 			))!,
 			{
-				onReplicationComplete: (_) => {
+				onReplicationComplete: async (_) => {
 					// Listen for the 'replicated' events and check that all the entries
 					// were replicated to the second database
-					expect(db2.iterator({ limit: -1 }).collect().length).toEqual(
+					expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
 						entryCount
 					);
-					const result1 = db1.iterator({ limit: -1 }).collect();
-					const result2 = db2.iterator({ limit: -1 }).collect();
+					const result1 = (await db1.iterator({ limit: -1 })).collect();
+					const result2 = (await db2.iterator({ limit: -1 })).collect();
 					expect(result1.length).toEqual(result2.length);
 					for (let i = 0; i < result1.length; i++) {
 						expect(result1[i].equals(result2[i])).toBeTrue();

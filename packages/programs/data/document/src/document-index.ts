@@ -39,7 +39,7 @@ const logger = loggerFn({ module: "document-index" });
 @variant(0)
 export class Operation<T> {}
 
-export const encoding = BORSH_ENCODING(Operation);
+export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
 @variant(0)
 export class PutOperation<T> extends Operation<T> {
@@ -104,7 +104,7 @@ export class DeleteOperation extends Operation<any> {
 
 export interface IndexedValue<T> {
 	key: string;
-	value: T; // decrypted, decoded
+	value: Record<string, any>; // decrypted, decoded
 	entry: Entry<Operation<T>>;
 	context: Context;
 	source: Uint8Array;
@@ -116,6 +116,9 @@ export type QueryOptions<R> = {
 	remote?: boolean | RemoteQueryOptions<Results<R>>;
 	local?: boolean;
 };
+
+export type Indexable<T> = (obj: T) => Record<string, any>;
+
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
 	@field({ type: RPC })
@@ -125,11 +128,13 @@ export class DocumentIndex<T> extends ComposableProgram {
 	indexBy: string;
 
 	type: AbstractType<T>;
+	private _valueEncoding: Encoding<T>;
 
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
 	private _store: Store<Operation<T>>;
 	private _replicators: () => string[][] | undefined;
+	private _toIndex: Indexable<T>;
 
 	constructor(properties: {
 		query?: RPC<DocumentQueryRequest, Results<T>>;
@@ -143,6 +148,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 	get index(): Map<string, IndexedValue<T>> {
 		return this._index;
 	}
+
+	get valueEncoding() {
+		return this._valueEncoding;
+	}
+
+	get toIndex(): Indexable<T> {
+		return this._toIndex;
+	}
 	set replicators(replicators: () => string[][] | undefined) {
 		this._replicators = replicators;
 	}
@@ -151,12 +164,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 		type: AbstractType<T>;
 		store: Store<Operation<T>>;
 		canRead: CanRead;
+		indexFields: Indexable<T>;
 		sync: (result: Results<T>) => Promise<void>;
 	}) {
 		this._index = new Map();
 		this._store = properties.store;
 		this.type = properties.type;
 		this._sync = properties.sync;
+		this._toIndex = properties.indexFields;
+		this._valueEncoding = BORSH_ENCODING(this.type);
 
 		await this._query.setup({
 			context: this,
@@ -210,6 +226,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	get size(): number {
 		return this._index.size;
+	}
+
+	async getDocument(indexedValue: IndexedValue<T>): Promise<T> {
+		const payloadValue = await indexedValue.entry.getPayloadValue();
+		if (payloadValue instanceof PutOperation) {
+			return payloadValue.getValue(this.valueEncoding);
+		}
+		throw new Error("Unexpected");
 	}
 
 	_queryDocuments(
@@ -292,7 +316,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 									return fv == null; // null or undefined
 								}
 							} else if (f instanceof MemoryCompareQuery) {
-								const operation = doc.entry.payload.getValue(encoding);
+								const operation = doc.entry.payload.getValue(
+									BORSH_ENCODING_OPERATION
+								);
 								if (!operation) {
 									throw new Error(
 										"Unexpected, missing cached value for payload"
@@ -462,14 +488,19 @@ export class DocumentIndex<T> extends ComposableProgram {
 				from: this.identity.publicKey,
 			});
 			if (results.length > 0) {
-				const resultsObject = new Results({
-					results: results.map(
-						(r) =>
-							new ResultWithSource({
-								context: r.context,
-								value: r.value,
-								source: r.source,
-							})
+				const resultsObject = new Results<T>({
+					results: await Promise.all(
+						results.map(async (r) => {
+							const payloadValue = await r.entry.getPayloadValue();
+							if (payloadValue instanceof PutOperation) {
+								return new ResultWithSource({
+									context: r.context,
+									value: await this.getDocument(r),
+									source: r.source,
+								});
+							}
+							throw new Error("Unexpected");
+						})
 					),
 				});
 				options?.onResponse && options.onResponse(resultsObject);

@@ -7,8 +7,8 @@ export const databases = [
 		create: (client: Peerbit, id: string) =>
 			client.open(new EventStore({ id: "xyz1" }), uuid()),
 		tryInsert: (db: EventStore<any>) => db.add("hello"),
-		getTestValue: (db: EventStore<any>) =>
-			db.iterator().next().value?.payload.getValue().value as string,
+		getTestValue: async (db: EventStore<any>) =>
+			(await db.iterator()).next().value?.payload.getValue().value as string,
 		expectedValue: "hello",
 	},
 ];

@@ -35,9 +35,7 @@ await session.connect([
 ]);
 const stores: DirectBlock[] = await Promise.all(
 	session.peers.map(async (peer) => {
-		const stream = new DirectBlock(peer, {
-			localStore: new MemoryLevelBlockStore(),
-		});
+		const stream = new DirectBlock(peer, new MemoryLevelBlockStore());
 		await stream.open();
 		return stream;
 	})

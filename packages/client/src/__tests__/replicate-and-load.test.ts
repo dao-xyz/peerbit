@@ -83,7 +83,7 @@ describe(`Replicate and Load`, function () {
 					if (db2.store.oplog.length === entryCount) {
 						clearInterval(timer);
 
-						const items = db2.iterator({ limit: -1 }).collect();
+						const items = (await db2.iterator({ limit: -1 })).collect();
 						expect(items.length).toEqual(entryCount);
 						expect(items[0].payload.getValue().value).toEqual("hello0");
 						expect(items[items.length - 1].payload.getValue().value).toEqual(

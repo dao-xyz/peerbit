@@ -56,7 +56,9 @@ describe(`Write-only`, () => {
 
 		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(1); // ... but will not recieve entries
 	});
@@ -76,7 +78,9 @@ describe(`Write-only`, () => {
 
 		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(1); // ... but will not recieve entries
 	});
@@ -98,7 +102,9 @@ describe(`Write-only`, () => {
 
 		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
 		expect(
-			db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+			(await db1.store.oplog.values.toArray()).map(
+				(x) => x.payload.getValue().value
+			)
 		).toContainAllValues(["hello", "world"]);
 
 		await waitFor(() => db2.store.oplog.values.length === 2); // ... since syncAll: true

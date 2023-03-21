@@ -69,11 +69,11 @@ describe(`Replication`, function () {
 
 		await waitFor(() => done);
 		expect(updated).toEqual(1);
-		expect(db2.iterator({ limit: -1 }).collect().length).toEqual(1);
+		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(1);
 
-		const db1Entries: Entry<Operation<string>>[] = db1
-			.iterator({ limit: -1 })
-			.collect();
+		const db1Entries: Entry<Operation<string>>[] = (
+			await db1.iterator({ limit: -1 })
+		).collect();
 		expect(db1Entries.length).toEqual(1);
 		expect(
 			await client1.findLeaders(
@@ -86,9 +86,9 @@ describe(`Replication`, function () {
 		);
 		expect(db1Entries[0].payload.getValue().value).toEqual(value);
 
-		const db2Entries: Entry<Operation<string>>[] = db2
-			.iterator({ limit: -1 })
-			.collect();
+		const db2Entries: Entry<Operation<string>>[] = (
+			await db2.iterator({ limit: -1 })
+		).collect();
 		expect(db2Entries.length).toEqual(1);
 		expect(
 			await client2.findLeaders(
@@ -115,10 +115,10 @@ describe(`Replication`, function () {
 			))!,
 			{
 				...options,
-				onReplicationComplete: () => {
+				onReplicationComplete: async () => {
 					// Once db2 has finished replication, make sure it has all elements
 					// and process to the asserts below
-					const all = db2.iterator({ limit: -1 }).collect().length;
+					const all = (await db2.iterator({ limit: -1 })).collect().length;
 					done = all === entryCount;
 				},
 			}
@@ -135,7 +135,7 @@ describe(`Replication`, function () {
 		await mapSeries(entryArr, add);
 
 		await waitFor(() => done);
-		const entries = db2.iterator({ limit: -1 }).collect();
+		const entries = (await db2.iterator({ limit: -1 })).collect();
 		expect(entries.length).toEqual(entryCount);
 		expect(entries[0].payload.getValue().value).toEqual("hello0");
 		expect(entries[entries.length - 1].payload.getValue().value).toEqual(
@@ -193,10 +193,10 @@ describe(`Replication`, function () {
 					progressEventsEntries.push(entry);
 				},
 
-				onReplicationComplete: (store) => {
+				onReplicationComplete: async (store) => {
 					// Once db2 has finished replication, make sure it has all elements
 					// and process to the asserts below
-					const all = db2.iterator({ limit: -1 }).collect().length;
+					const all = (await db2.iterator({ limit: -1 })).collect().length;
 					done = all === entryCount;
 				},
 			}
@@ -208,14 +208,19 @@ describe(`Replication`, function () {
 		let adds: number[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			adds.push(i);
+			await db1.add("hello " + i, { nexts: [] });
+			// TODO when nexts is omitted, entrise will dependon each other,
+			// When entries arrive in db2 unecessary fetches occur because there is already a sync in progress?
 		}
 
-		await mapSeries(adds, (i) => db1.add("hello " + i));
+		//await mapSeries(adds, (i) => db1.add("hello " + i));
 
 		await waitFor(() => done);
 
 		// All entries should be in the database
-		expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount);
+		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
+			entryCount
+		);
 
 		// progress events should increase monotonically
 		expect(progressEvents).toEqual(entryCount);
@@ -272,11 +277,11 @@ describe(`Replication`, function () {
 				onReplicationFetch: (store, entry) => {
 					progressEvents += 1;
 				},
-				onReplicationComplete: (store) => {
+				onReplicationComplete: async (store) => {
 					replicatedEventCount++;
 					// Once db2 has finished replication, make sure it has all elements
 					// and process to the asserts below
-					const all = db2.iterator({ limit: -1 }).collect().length;
+					const all = (await db2.iterator({ limit: -1 })).collect().length;
 					done = all === entryCount;
 				},
 			}
@@ -285,7 +290,9 @@ describe(`Replication`, function () {
 		await waitFor(() => done);
 
 		// All entries should be in the database
-		expect(db2.iterator({ limit: -1 }).collect().length).toEqual(entryCount);
+		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
+			entryCount
+		);
 		// 'replicated' event should've been received only once
 		expect(replicatedEventCount).toEqual(1);
 
@@ -329,10 +336,10 @@ describe(`Replication`, function () {
 			))!,
 			{
 				...options,
-				onReplicationComplete: (store) => {
+				onReplicationComplete: async (store) => {
 					// Once db2 has finished replication, make sure it has all elements
 					// and process to the asserts below
-					const all = db2.iterator({ limit: -1 }).collect().length;
+					const all = (await db2.iterator({ limit: -1 })).collect().length;
 					done = all === entryCount * 2;
 				},
 				onReplicationQueued: (store, entry) => {
@@ -369,8 +376,8 @@ describe(`Replication`, function () {
 			);
 		}
 
-		const values1 = db1.iterator({ limit: -1 }).collect();
-		const values2 = db2.iterator({ limit: -1 }).collect();
+		const values1 = (await db1.iterator({ limit: -1 })).collect();
+		const values2 = (await db2.iterator({ limit: -1 })).collect();
 		expect(values1.length).toEqual(values2.length);
 		for (let i = 0; i < values1.length; i++) {
 			assert(values1[i].equals(values2[i]));

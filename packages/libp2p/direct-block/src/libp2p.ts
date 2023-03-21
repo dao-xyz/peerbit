@@ -42,7 +42,7 @@ export class BlockResponse extends BlockMessage {
 
 export class DirectBlock extends DirectStream implements BlockStore {
 	_libp2p: Libp2p;
-	_localStore?: BlockStore;
+	_localStore: BlockStore;
 	_responseHandler?: (evt: CustomEvent<DataMessage>) => any;
 	_resolvers: Map<string, (data: Uint8Array) => void>;
 	_gossip = false;
@@ -50,9 +50,9 @@ export class DirectBlock extends DirectStream implements BlockStore {
 
 	constructor(
 		libp2p: Libp2p,
+		localStore: BlockStore,
 		options?: {
 			canRelayMessage?: boolean;
-			localStore?: BlockStore;
 			localTimeout?: number;
 		}
 	) {
@@ -65,8 +65,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 
 		this._libp2p = libp2p;
 		const localTimeout = options?.localTimeout || 1000;
-		this._localStore = options?.localStore;
-
+		this._localStore = localStore;
 		this._resolvers = new Map();
 		this._responseHandler = async (evt: CustomEvent<DataMessage>) => {
 			if (!evt) {
@@ -129,6 +128,9 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		if (!value) {
 			// try to get it remotelly
 			value = await this._readFromPeers(cid, cidObject, options);
+			if (options?.replicate && value) {
+				this._localStore!.put(value, options);
+			}
 		}
 		return value;
 	}

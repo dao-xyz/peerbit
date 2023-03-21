@@ -96,7 +96,7 @@ describe(`Subprogram`, () => {
 		const _eventStore2 = await store.eventStore.put(
 			new EventStore({ id: "store 2" })
 		);
-		expect(store.eventStore.store.oplog.heads).toHaveLength(2); // two independent documents
+		expect(await store.eventStore.store.oplog.getHeads()).toHaveLength(2); // two independent documents
 		await waitFor(() => client2.programs.size == 3);
 		expect(program.accessRequests).toHaveLength(2);
 

@@ -87,7 +87,7 @@ describe("Log - Heads and Tails", function () {
 				{ logId: "A" }
 			);
 			await log1.append("helloA1");
-			expect(log1.heads.length).toEqual(1);
+			expect((await log1.getHeads()).length).toEqual(1);
 		});
 
 		it("finds one head after two entries", async () => {
@@ -101,7 +101,7 @@ describe("Log - Heads and Tails", function () {
 			);
 			await log1.append("helloA1");
 			await log1.append("helloA2");
-			expect(log1.heads.length).toEqual(1);
+			expect((await log1.getHeads()).length).toEqual(1);
 		});
 
 		it("log contains the head entry", async () => {
@@ -115,7 +115,10 @@ describe("Log - Heads and Tails", function () {
 			);
 			await log1.append("helloA1");
 			await log1.append("helloA2");
-			assert.deepStrictEqual(log1.get(log1.heads[0].hash), log1.heads[0]);
+			assert.deepStrictEqual(
+				(await log1.get((await log1.getHeads())[0].hash))?.hash,
+				(await log1.getHeads())[0].hash
+			);
 		});
 
 		it("finds head after a join and append", async () => {
@@ -142,10 +145,13 @@ describe("Log - Heads and Tails", function () {
 
 			await log2.join(log1);
 			await log2.append("helloB2");
-			const expectedHead = last(log2.toArray());
+			const expectedHead = last(await log2.toArray());
 
-			expect(log2.heads.length).toEqual(1);
-			assert.deepStrictEqual(log2.heads[0].hash, expectedHead.hash);
+			expect((await log2.getHeads()).length).toEqual(1);
+			assert.deepStrictEqual(
+				(await log2.getHeads())[0].hash,
+				expectedHead.hash
+			);
 		});
 
 		it("finds two heads after a join", async () => {
@@ -168,18 +174,20 @@ describe("Log - Heads and Tails", function () {
 
 			await log1.append("helloA1");
 			await log1.append("helloA2");
-			const expectedHead1 = last(log1.toArray());
+			const expectedHead1 = last(await log1.toArray());
 
 			await log2.append("helloB1");
 			await log2.append("helloB2");
-			const expectedHead2 = last(log2.toArray());
+			const expectedHead2 = last(await log2.toArray());
 
 			await log1.join(log2);
 
-			const heads = log1.heads;
+			const heads = await log1.getHeads();
 			expect(heads.length).toEqual(2);
-			expect(heads[0].hash).toEqual(expectedHead2.hash);
-			expect(heads[1].hash).toEqual(expectedHead1.hash);
+			expect(heads.map((x) => x.hash)).toContainAllValues([
+				expectedHead1.hash,
+				expectedHead2.hash,
+			]);
 		});
 
 		it("finds two heads after two joins", async () => {
@@ -212,12 +220,12 @@ describe("Log - Heads and Tails", function () {
 
 			await log1.append("helloA3");
 			await log1.append("helloA4");
-			const expectedHead2 = last(log2.toArray());
-			const expectedHead1 = last(log1.toArray());
+			const expectedHead2 = last(await log2.toArray());
+			const expectedHead1 = last(await log1.toArray());
 
 			await log1.join(log2);
 
-			const heads = log1.heads;
+			const heads = await log1.getHeads();
 			expect(heads.length).toEqual(2);
 			expect(heads[0].hash).toEqual(expectedHead1.hash);
 			expect(heads[1].hash).toEqual(expectedHead2.hash);
@@ -256,18 +264,20 @@ describe("Log - Heads and Tails", function () {
 			await log1.join(log2);
 			await log1.append("helloA3");
 			await log1.append("helloA4");
-			const expectedHead1 = last(log1.toArray());
+			const expectedHead1 = last(await log1.toArray());
 			await log3.append("helloC1");
 			await log3.append("helloC2");
 			await log2.join(log3);
 			await log2.append("helloB3");
-			const expectedHead2 = last(log2.toArray());
+			const expectedHead2 = last(await log2.toArray());
 			await log1.join(log2);
 
-			const heads = log1.heads;
+			const heads = await log1.getHeads();
 			expect(heads.length).toEqual(2);
-			expect(heads[1].hash).toEqual(expectedHead1.hash);
-			expect(heads[0].hash).toEqual(expectedHead2.hash);
+			expect(heads.map((x) => x.hash)).toContainAllValues([
+				expectedHead1.hash,
+				expectedHead2.hash,
+			]);
 		});
 
 		it("finds three heads after three joins", async () => {
@@ -303,20 +313,22 @@ describe("Log - Heads and Tails", function () {
 			await log1.join(log2);
 			await log1.append("helloA3");
 			await log1.append("helloA4");
-			const expectedHead1 = last(log1.toArray());
+			const expectedHead1 = last(await log1.toArray());
 			await log3.append("helloC1");
 			await log2.append("helloB3");
 			await log3.append("helloC2");
-			const expectedHead2 = last(log2.toArray());
-			const expectedHead3 = last(log3.toArray());
+			const expectedHead2 = last(await log2.toArray());
+			const expectedHead3 = last(await log3.toArray());
 			await log1.join(log2);
 			await log1.join(log3);
 
-			const heads = log1.heads;
+			const heads = await log1.getHeads();
 			expect(heads.length).toEqual(3);
-			assert.deepStrictEqual(heads[2].hash, expectedHead1.hash);
-			assert.deepStrictEqual(heads[1].hash, expectedHead2.hash);
-			assert.deepStrictEqual(heads[0].hash, expectedHead3.hash);
+			expect(heads.map((x) => x.hash)).toContainAllValues([
+				expectedHead1.hash,
+				expectedHead2.hash,
+				expectedHead3.hash,
+			]);
 		});
 	});
 
@@ -331,7 +343,7 @@ describe("Log - Heads and Tails", function () {
 				{ logId: "A" }
 			);
 			await log1.append("helloA1");
-			expect(log1.tails.length).toEqual(1);
+			expect((await log1.getTails()).length).toEqual(1);
 		});
 
 		it("tail is a Entry", async () => {
@@ -366,7 +378,7 @@ describe("Log - Heads and Tails", function () {
 			await log1.append("helloA1");
 			await log2.append("helloB1");
 			await log1.join(log2);
-			expect(log1.tails.length).toEqual(2);
+			expect((await log1.getTails()).length).toEqual(2);
 		});
 
 		it("returns tail hashes", async () => {
@@ -393,11 +405,11 @@ describe("Log - Heads and Tails", function () {
 			await log1.join(log2);
 
 			// the joined log will only contain the last two entries a2, b2
-			expect(log1.toArray().map((x) => x.hash)).toContainAllValues([
+			expect((await log1.toArray()).map((x) => x.hash)).toContainAllValues([
 				a2.hash,
 				b2.hash,
 			]);
-			expect(log1.tailHashes).toContainAllValues([a1.hash, b1.hash]);
+			expect(await log1.getTailHashes()).toContainAllValues([a1.hash, b1.hash]);
 		});
 
 		it("returns no tail hashes if all entries point to empty nexts", async () => {
@@ -420,7 +432,7 @@ describe("Log - Heads and Tails", function () {
 			await log1.append("helloA1");
 			await log2.append("helloB1");
 			await log1.join(log2);
-			expect(log1.tailHashes.length).toEqual(0);
+			expect((await log1.getTailHashes()).length).toEqual(0);
 		});
 
 		it("returns tails after loading a partial log", async () => {
@@ -451,13 +463,17 @@ describe("Log - Heads and Tails", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				log1.heads,
+				await log1.getHeads(),
 				{ length: 2 }
 			);
 			expect(log4.length).toEqual(2);
-			expect(log4.tails.length).toEqual(2);
-			expect(log4.tails[0].hash).toEqual(log4.toArray()[0].hash);
-			expect(log4.tails[1].hash).toEqual(log4.toArray()[1].hash);
+			expect((await log4.getTails()).length).toEqual(2);
+			expect((await log4.getTails())[0].hash).toEqual(
+				(await log4.toArray())[0].hash
+			);
+			expect((await log4.getTails())[1].hash).toEqual(
+				(await log4.toArray())[1].hash
+			);
 		});
 
 		it("returns tails sorted by public key", async () => {
@@ -499,15 +515,15 @@ describe("Log - Heads and Tails", function () {
 			await log3.join(log1);
 			await log3.join(log2);
 			await log4.join(log3);
-			expect(log4.tails.length).toEqual(3);
+			expect((await log4.getTails()).length).toEqual(3);
 
-			expect(log4.tails[0].metadata.clock.id).toEqual(
+			expect((await log4.getTails())[0].metadata.clock.id).toEqual(
 				new Uint8Array(signKey.keypair.publicKey.bytes)
 			);
-			expect(log4.tails[1].metadata.clock.id).toEqual(
+			expect((await log4.getTails())[1].metadata.clock.id).toEqual(
 				new Uint8Array(signKey2.keypair.publicKey.bytes)
 			);
-			expect(log4.tails[2].metadata.clock.id).toEqual(
+			expect((await log4.getTails())[2].metadata.clock.id).toEqual(
 				new Uint8Array(signKey3.keypair.publicKey.bytes)
 			);
 		});

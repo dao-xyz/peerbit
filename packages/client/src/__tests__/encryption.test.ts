@@ -3,7 +3,7 @@ import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
@@ -19,11 +19,13 @@ const addHello = async (db: EventStore<string>, receiver: X25519PublicKey) => {
 	});
 };
 const checkHello = async (db: EventStore<string>) => {
-	await waitFor(() => db.iterator({ limit: -1 }).collect().length === 1);
+	await waitForAsync(
+		async () => (await db.iterator({ limit: -1 })).collect().length === 1
+	);
 
-	const entries: Entry<Operation<string>>[] = db
-		.iterator({ limit: -1 })
-		.collect();
+	const entries: Entry<Operation<string>>[] = (
+		await db.iterator({ limit: -1 })
+	).collect();
 
 	expect(entries.length).toEqual(1);
 	await entries[0].getPayload();

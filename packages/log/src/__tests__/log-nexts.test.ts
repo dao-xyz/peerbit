@@ -62,21 +62,23 @@ describe("Log - Nexts", function () {
 			const { entry: e1 } = await log1.append("1", { nexts: [e0] });
 
 			const { entry: e2a } = await log1.append("2a", {
-				nexts: log1.heads,
+				nexts: await log1.getHeads(),
 			});
-			expect(log1.toArray()[0].next?.length).toEqual(0);
-			expect(log1.toArray()[1].next).toEqual([e0.hash]);
-			expect(log1.toArray()[2].next).toEqual([e1.hash]);
-			expect(log1.heads.map((h) => h.hash)).toContainAllValues([e2a.hash]);
+			expect((await log1.toArray())[0].next?.length).toEqual(0);
+			expect((await log1.toArray())[1].next).toEqual([e0.hash]);
+			expect((await log1.toArray())[2].next).toEqual([e1.hash]);
+			expect((await log1.getHeads()).map((h) => h.hash)).toContainAllValues([
+				e2a.hash,
+			]);
 			/*    expect([...log1._nextsIndexToHead[e0.hash]]).toEqual([e1.hash]); */
 
 			// fork at root
 			const { entry: e2ForkAtRoot } = await log1.append("2b", {
 				nexts: [],
 			});
-			expect(log1.toArray()[3]).toEqual(e2ForkAtRoot); // Due to clock  // If we only use logical clok then it should be index 1 since clock is reset as this is a root "fork"
-			expect(log1.toArray()[2]).toEqual(e2a);
-			expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+			expect((await log1.toArray())[3].hash).toEqual(e2ForkAtRoot.hash); // Due to clock  // If we only use logical clok then it should be index 1 since clock is reset as this is a root "fork"
+			expect((await log1.toArray())[2].hash).toEqual(e2a.hash);
+			expect((await log1.getHeads()).map((h) => h.hash)).toContainAllValues([
 				e2a.hash,
 				e2ForkAtRoot.hash,
 			]);
@@ -85,8 +87,8 @@ describe("Log - Nexts", function () {
 			const { entry: e2ForkAt0 } = await log1.append("2c", {
 				nexts: [e0],
 			});
-			expect(log1.toArray()[4].next).toEqual([e0.hash]);
-			expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+			expect((await log1.toArray())[4].next).toEqual([e0.hash]);
+			expect((await log1.getHeads()).map((h) => h.hash)).toContainAllValues([
 				e2a.hash,
 				e2ForkAtRoot.hash,
 				e2ForkAt0.hash,
@@ -96,8 +98,8 @@ describe("Log - Nexts", function () {
 			const { entry: e2ForkAt1 } = await log1.append("2d", {
 				nexts: [e1],
 			});
-			expect(log1.toArray()[5].next).toEqual([e1.hash]);
-			expect(log1.heads.map((h) => h.hash)).toContainAllValues([
+			expect((await log1.toArray())[5].next).toEqual([e1.hash]);
+			expect((await log1.getHeads()).map((h) => h.hash)).toContainAllValues([
 				e2a.hash,
 				e2ForkAtRoot.hash,
 				e2ForkAt0.hash,

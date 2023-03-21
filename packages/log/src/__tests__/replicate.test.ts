@@ -89,7 +89,7 @@ describe("ipfs-log - Replication", function () {
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
 				hash,
-				{}
+				{ timeout: 1000, replicate: true }
 			);
 			await log1.join(log);
 			processing--;
@@ -113,7 +113,7 @@ describe("ipfs-log - Replication", function () {
 					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 				},
 				hash,
-				{}
+				{ timeout: 1000, replicate: true }
 			);
 			await log2.join(log);
 			processing--;
@@ -234,7 +234,11 @@ describe("ipfs-log - Replication", function () {
 			expect(log1.length).toEqual(amount);
 			expect(log2.length).toEqual(amount);
 			expect(
-				[0, 1, 2, 3, 9, 10].map((i) => result.toArray()[i].payload.getValue())
+				await Promise.all(
+					[0, 1, 2, 3, 9, 10].map(async (i) =>
+						(await result.toArray())[i].payload.getValue()
+					)
+				)
 			).toEqual(["A1", "B1", "A2", "B2", "B5", "A6"]);
 		});
 	});

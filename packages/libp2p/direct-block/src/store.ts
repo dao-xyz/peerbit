@@ -3,7 +3,11 @@ import * as dagCbor from "@ipld/dag-cbor";
 import * as Block from "multiformats/block";
 import type { MultihashHasher } from "multiformats/hashes/hasher";
 
-export type GetOptions = { timeout?: number; hasher?: MultihashHasher<number> };
+export type GetOptions = {
+	timeout?: number;
+	replicate?: boolean;
+	hasher?: MultihashHasher<number>;
+};
 export type PutOptions = {
 	timeout?: number;
 };
@@ -16,7 +20,7 @@ export interface BlockStore {
 	): Promise<Block.Block<T, any, any, any> | undefined>;
 	put<T>(
 		value: Block.Block<T, any, any, any>,
-		optsions?: PutOptions
+		options?: PutOptions
 	): Promise<string>;
 	rm(cid: string): Promise<void>;
 	open(): Promise<this>;

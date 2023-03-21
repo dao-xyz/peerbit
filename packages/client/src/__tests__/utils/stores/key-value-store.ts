@@ -20,8 +20,8 @@ export class KeyValueIndex {
 		this._store = store;
 	}
 
-	updateIndex() {
-		const values = this._store.oplog.values.toArray();
+	async updateIndex() {
+		const values = await this._store.oplog.values.toArray();
 		const handled: { [key: string]: boolean } = {};
 		for (let i = values.length - 1; i >= 0; i--) {
 			const item = values[i];

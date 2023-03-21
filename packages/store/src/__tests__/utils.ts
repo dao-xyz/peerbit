@@ -13,6 +13,6 @@ export class SimpleIndex<T> {
 	}
 
 	async updateIndex(change: Change<T>) {
-		this._index = this._store.oplog.values.toArray();
+		this._index = await this._store.oplog.values.toArray();
 	}
 }

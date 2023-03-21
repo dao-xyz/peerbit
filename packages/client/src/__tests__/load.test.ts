@@ -6,7 +6,7 @@ import { EventStore } from "./utils/stores/event-store.js";
 import { jest } from "@jest/globals";
 import { v4 as uuid } from "uuid";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { field, variant } from "@dao-xyz/borsh";
 
 const dbPath = "./tmp/tests/persistency";
@@ -61,10 +61,11 @@ describe(`load`, () => {
 				))!
 			);
 			await db.load();
-			await waitFor(
-				() => db.iterator({ limit: -1 }).collect().length === entryCount
+			await waitForAsync(
+				async () =>
+					(await db.iterator({ limit: -1 })).collect().length === entryCount
 			);
-			const items = db.iterator({ limit: -1 }).collect();
+			const items = (await db.iterator({ limit: -1 })).collect();
 			expect(items.length).toEqual(entryCount);
 			expect(items[0].payload.getValue().value).toEqual("hello0");
 			expect(items[items.length - 1].payload.getValue().value).toEqual(
@@ -80,11 +81,12 @@ describe(`load`, () => {
 					Address.parse(address)
 				))!
 			);
-			await db.store.load(amount);
-			await waitFor(
-				() => db.iterator({ limit: -1 }).collect().length === amount
+			await db.store.load({ amount: 3 });
+			await waitForAsync(
+				async () =>
+					(await db.iterator({ limit: -1 })).collect().length === amount
 			);
-			const items = db.iterator({ limit: -1 }).collect();
+			const items = (await db.iterator({ limit: -1 })).collect();
 			expect(items.length).toEqual(amount);
 			expect(items[0].payload.getValue().value).toEqual(
 				"hello" + (entryCount - amount)
@@ -107,10 +109,11 @@ describe(`load`, () => {
 					))!
 				);
 				await db.load();
-				await waitFor(
-					() => db.iterator({ limit: -1 }).collect().length === entryCount
+				await waitForAsync(
+					async () =>
+						(await db.iterator({ limit: -1 })).collect().length === entryCount
 				);
-				const items = db.iterator({ limit: -1 }).collect();
+				const items = (await db.iterator({ limit: -1 })).collect();
 				expect(items.length).toEqual(entryCount);
 				expect(items[0].payload.getValue().value).toEqual("hello0");
 				expect(items[1].payload.getValue().value).toEqual("hello1");
@@ -149,15 +152,18 @@ describe(`load`, () => {
 					))!
 				);
 				await db.load();
-				await waitFor(
-					() => db.iterator({ limit: -1 }).collect().length === entryCount + i
+				await waitForAsync(
+					async () =>
+						(await db.iterator({ limit: -1 })).collect().length ===
+						entryCount + i
 				);
 				await db.add("hello" + (entryCount + i));
-				await waitFor(
-					() =>
-						db.iterator({ limit: -1 }).collect().length === entryCount + i + 1
+				await waitForAsync(
+					async () =>
+						(await db.iterator({ limit: -1 })).collect().length ===
+						entryCount + i + 1
 				);
-				const items = db.iterator({ limit: -1 }).collect();
+				const items = (await db.iterator({ limit: -1 })).collect();
 				expect(items.length).toEqual(entryCount + i + 1);
 				expect(items[items.length - 1].payload.getValue().value).toEqual(
 					"hello" + (entryCount + i)
@@ -176,9 +182,11 @@ describe(`load`, () => {
 				{
 					onReady: async (store) => {
 						await waitFor(
-							() => db.iterator({ limit: -1 }).collect().length === entryCount
+							async () =>
+								(await db.iterator({ limit: -1 })).collect().length ===
+								entryCount
 						);
-						const items = db.iterator({ limit: -1 }).collect();
+						const items = (await db.iterator({ limit: -1 })).collect();
 						expect(items.length).toEqual(entryCount);
 						expect(items[0].payload.getValue().value).toEqual("hello0");
 						expect(items[items.length - 1].payload.getValue().value).toEqual(
@@ -284,21 +292,23 @@ describe(`load`, () => {
 				))!
 			);
 			await db.load();
-			await waitFor(
-				() => db.db.iterator({ limit: -1 }).collect().length === entryCount
+			await waitForAsync(
+				async () =>
+					(await db.db.iterator({ limit: -1 })).collect().length === entryCount
 			);
-			await waitFor(
-				() => db.db2.iterator({ limit: -1 }).collect().length === entryCount
+			await waitForAsync(
+				async () =>
+					(await db.db2.iterator({ limit: -1 })).collect().length === entryCount
 			);
 
-			const itemsA = db.db.iterator({ limit: -1 }).collect();
+			const itemsA = (await db.db.iterator({ limit: -1 })).collect();
 			expect(itemsA.length).toEqual(entryCount);
 			expect(itemsA[0].payload.getValue().value).toEqual("a0");
 			expect(itemsA[itemsA.length - 1].payload.getValue().value).toEqual(
 				"a" + (entryCount - 1)
 			);
 
-			const itemsB = db.db2.iterator({ limit: -1 }).collect();
+			const itemsB = (await db.db2.iterator({ limit: -1 })).collect();
 			expect(itemsB.length).toEqual(entryCount);
 			expect(itemsB[0].payload.getValue().value).toEqual("b0");
 			expect(itemsB[itemsB.length - 1].payload.getValue().value).toEqual(
@@ -504,7 +514,7 @@ describe(`load`, () => {
 				))!
 			);
 			await db.loadFromSnapshot();
-			const items = db.iterator({ limit: -1 }).collect();
+			const items = (await db.iterator({ limit: -1 })).collect();
 			expect(items.length).toEqual(0);
 		});
 	});
@@ -557,7 +567,7 @@ describe(`load`, () => {
 				))!
 			);
 			await db.loadFromSnapshot();
-			const items = db.iterator({ limit: -1 }).collect();
+			const items = (await db.iterator({ limit: -1 })).collect();
 			expect(items.length).toEqual(entryCount);
 			expect(items[0].payload.getValue().value).toEqual("hello0");
 			expect(items[entryCount - 1].payload.getValue().value).toEqual(
@@ -576,11 +586,13 @@ describe(`load`, () => {
 				);
 				await db.loadFromSnapshot();
 				const expectedCount = entryCount + i;
-				await waitFor(
-					() => db.iterator({ limit: -1 }).collect().length === expectedCount
+				await waitForAsync(
+					async () =>
+						(await db.iterator({ limit: -1 })).collect().length ===
+						expectedCount
 				);
 				await db.add("hello" + (entryCount + i));
-				const items = db.iterator({ limit: -1 }).collect();
+				const items = (await db.iterator({ limit: -1 })).collect();
 				expect(items.length).toEqual(expectedCount + 1);
 				expect(items[0].payload.getValue().value).toEqual("hello0");
 				expect(items[items.length - 1].payload.getValue().value).toEqual(
@@ -626,8 +638,8 @@ describe(`load`, () => {
 					Address.parse(address)
 				))!,
 				{
-					onReady: (store) => {
-						const items = db.iterator({ limit: -1 }).collect();
+					onReady: async (store) => {
+						const items = (await db.iterator({ limit: -1 })).collect();
 						expect(items.length).toEqual(entryCount);
 						expect(items[0].payload.getValue().value).toEqual("hello0");
 						expect(items[entryCount - 1].payload.getValue().value).toEqual(

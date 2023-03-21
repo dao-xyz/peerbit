@@ -25,22 +25,24 @@ export const KEY_OFFSET = 2 + 32; // Relation discriminator + IdentityRelation d
 export const getFromByTo: RelationResolver = {
 	resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
 		const ser = serialize(to);
-		return (
-			await db.index.queryHandler(
-				new DocumentQueryRequest({
-					queries: [
-						new MemoryCompareQuery({
-							compares: [
-								new MemoryCompare({
-									bytes: ser,
-									offset: BigInt(KEY_OFFSET + OFFSET_TO_KEY),
-								}),
-							],
-						}),
-					],
-				})
-			)
-		).map((x) => x.value);
+		return Promise.all(
+			(
+				await db.index.queryHandler(
+					new DocumentQueryRequest({
+						queries: [
+							new MemoryCompareQuery({
+								compares: [
+									new MemoryCompare({
+										bytes: ser,
+										offset: BigInt(KEY_OFFSET + OFFSET_TO_KEY),
+									}),
+								],
+							}),
+						],
+					})
+				)
+			).map((x) => db.index.getDocument(x))
+		);
 	},
 	next: (relation) => relation.from,
 };
@@ -48,22 +50,24 @@ export const getFromByTo: RelationResolver = {
 export const getToByFrom: RelationResolver = {
 	resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
 		const ser = serialize(from);
-		return (
-			await db.index.queryHandler(
-				new DocumentQueryRequest({
-					queries: [
-						new MemoryCompareQuery({
-							compares: [
-								new MemoryCompare({
-									bytes: ser,
-									offset: BigInt(KEY_OFFSET),
-								}),
-							],
-						}),
-					],
-				})
-			)
-		).map((x) => x.value);
+		return Promise.all(
+			(
+				await db.index.queryHandler(
+					new DocumentQueryRequest({
+						queries: [
+							new MemoryCompareQuery({
+								compares: [
+									new MemoryCompare({
+										bytes: ser,
+										offset: BigInt(KEY_OFFSET),
+									}),
+								],
+							}),
+						],
+					})
+				)
+			).map((x) => db.index.getDocument(x))
+		);
 	},
 	next: (relation) => relation.to,
 };

@@ -1,23 +1,15 @@
 import { Entry } from "./entry.js";
-import { ISortFunction } from "./log-sorting.js";
 
 export class HeadsIndex<T> {
-	_index: Map<string, Entry<T>> = new Map();
-	//  _headsCache?: Entry<T>[];
-	_sortFn: ISortFunction;
+	private _index: Set<string> = new Set();
+	private _gids: Map<string, number>;
 
-	_gids: Map<string, number>;
-
-	constructor(properties: {
-		sortFn: ISortFunction;
-		entries: Map<string, Entry<T>>;
-	}) {
+	constructor(properties: { entries?: Entry<T>[] }) {
 		this._gids = new Map();
-		this._sortFn = properties.sortFn;
 		this.reset(properties.entries);
 	}
 
-	get index(): Map<string, Entry<T>> {
+	get index() {
 		return this._index;
 	}
 
@@ -25,16 +17,16 @@ export class HeadsIndex<T> {
 		return this._gids;
 	}
 
-	reset(entries: Map<string, Entry<T>> | Entry<T>[]) {
+	reset(entries?: Entry<T>[]) {
 		this._index.clear();
 		this._gids = new Map();
-		entries.forEach((v) => {
+		entries?.forEach((v) => {
 			this.put(v);
 		});
 	}
 
-	get(hash: string) {
-		return this._index.get(hash);
+	has(cid: string) {
+		return this._index.has(cid);
 	}
 
 	put(entry: Entry<any>) {
@@ -46,7 +38,7 @@ export class HeadsIndex<T> {
 			return;
 		}
 
-		this._index.set(entry.hash, entry);
+		this._index.add(entry.hash);
 		if (!this._gids.has(entry.gid)) {
 			this._gids.set(entry.gid, 1);
 		} else {
@@ -54,7 +46,10 @@ export class HeadsIndex<T> {
 		}
 	}
 
-	del(entry: Entry<any>): { removed: boolean; lastWithGid: boolean } {
+	del(entry: { hash: string; gid: string }): {
+		removed: boolean;
+		lastWithGid: boolean;
+	} {
 		const wasHead = this._index.delete(entry.hash);
 		if (!wasHead) {
 			return {
@@ -77,14 +72,5 @@ export class HeadsIndex<T> {
 			lastWithGid: lastWithGid,
 		};
 		//     this._headsCache = undefined; // TODO do smarter things here, only remove the element needed (?)
-	}
-
-	/**
-	 * Returns an array of heads.
-	 * Dont use this anywhere where performance matters
-	 * @returns {Array<Entry<T>>}
-	 */
-	get array(): Entry<T>[] {
-		return [...this._index.values()].sort(this._sortFn).reverse();
 	}
 }

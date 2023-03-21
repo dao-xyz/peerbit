@@ -122,25 +122,27 @@ describe(`Multiple Databases`, function () {
 					await delay(3000); // add some delay, so that we absorb any extra (unwanted) replication
 
 					// Verify that the databases contain all the right entries
-					remoteDatabasesA.forEach((db) => {
+					for (const db of remoteDatabasesA) {
 						try {
-							const result = db.iterator({ limit: -1 }).collect().length;
+							const result = (await db.iterator({ limit: -1 })).collect()
+								.length;
 							expect(result).toEqual(entryCount);
 							expect(db.store.oplog.length).toEqual(entryCount);
 						} catch (error) {
 							reject(error);
 						}
-					});
+					}
 
-					remoteDatabasesB.forEach((db) => {
+					for (const db of remoteDatabasesB) {
 						try {
-							const result = db.iterator({ limit: -1 }).collect().length;
+							const result = (await db.iterator({ limit: -1 })).collect()
+								.length;
 							expect(result).toEqual(entryCount);
 							expect(db.store.oplog.length).toEqual(entryCount);
 						} catch (error) {
 							reject(error);
 						}
-					});
+					}
 					resolve(true);
 				}
 			}, 200);

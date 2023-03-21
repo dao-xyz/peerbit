@@ -5,13 +5,17 @@ import {
 import { Ed25519Keypair, Keypair } from "@dao-xyz/peerbit-crypto";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "../entry";
+import { EntryIndex } from "../entry-index";
 import { LastWriteWins } from "../log-sorting";
 import { Values } from "../values";
 import { identityFromSignKey } from "./utils";
+import { Cache } from "@dao-xyz/cache";
 
 describe("values", () => {
 	let e1: Entry<string>, e2: Entry<string>, e3: Entry<string>;
 	let store: BlockStore;
+	let storage: (h: string) => Entry<string> | undefined;
+	let entryIndex: EntryIndex<string>;
 	beforeEach(async () => {
 		const identity = identityFromSignKey(
 			new KeyWithMeta({
@@ -45,54 +49,81 @@ describe("values", () => {
 			data: "3",
 			next: [e2],
 		});
+		entryIndex = new EntryIndex({
+			store,
+			init: (e) => {},
+			cache: new Cache({ max: 1000 }),
+		});
+		await entryIndex.set(e1);
+		await entryIndex.set(e2);
+		await entryIndex.set(e3);
 	});
 	afterEach(async () => {
 		await store.close();
 	});
-	it("put last", () => {
-		const values = new Values<string>(LastWriteWins, []);
-		values.put(e1);
-		values.put(e2);
-		values.put(e3);
-		expect(values.head!.value).toEqual(e3);
-		expect(values.toArray()).toEqual([e1, e2, e3]);
+	it("put last", async () => {
+		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		await values.put(e1);
+		await values.put(e2);
+		await values.put(e3);
+		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).toEqual([
+			e1.hash,
+			e2.hash,
+			e3.hash,
+		]);
 	});
 
-	it("put middle", () => {
-		const values = new Values<string>(LastWriteWins, []);
-		values.put(e1);
-		values.put(e3);
-		values.put(e2);
-		expect(values.head!.value).toEqual(e3);
-		expect(values.toArray()).toEqual([e1, e2, e3]);
+	it("put middle", async () => {
+		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		await values.put(e1);
+		await values.put(e3);
+		await values.put(e2);
+		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).toEqual([
+			e1.hash,
+			e2.hash,
+			e3.hash,
+		]);
 	});
 
-	it("put first", () => {
-		const values = new Values<string>(LastWriteWins, []);
-		values.put(e2);
-		values.put(e3);
-		values.put(e1);
-		expect(values.head!.value).toEqual(e3);
-		expect(values.toArray()).toEqual([e1, e2, e3]);
+	it("put first", async () => {
+		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		await values.put(e2);
+		await values.put(e3);
+		await values.put(e1);
+		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).toEqual([
+			e1.hash,
+			e2.hash,
+			e3.hash,
+		]);
 	});
 
-	it("delete", () => {
-		const values = new Values<string>(LastWriteWins, []);
-		values.put(e1);
-		values.put(e2);
-		values.put(e3);
-		expect(values.head!.value).toEqual(e3);
-		expect(values.toArray()).toEqual([e1, e2, e3]);
-		values.delete(e2);
-		expect(values.toArray()).toEqual([e1, e3]);
-		expect(values.head!.value).toEqual(e3);
-		expect(values.tail!.value).toEqual(e1);
-		values.delete(e1);
-		expect(values.toArray()).toEqual([e3]);
-		expect(values.head!.value).toEqual(e3);
-		expect(values.tail!.value).toEqual(e3);
-		values.delete(e3);
-		expect(values.toArray()).toEqual([]);
+	it("delete", async () => {
+		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		await values.put(e1);
+		await values.put(e2);
+		await values.put(e3);
+		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).toEqual([
+			e1.hash,
+			e2.hash,
+			e3.hash,
+		]);
+		await values.delete(e2);
+		expect((await values.toArray()).map((x) => x.hash)).toEqual([
+			e1.hash,
+			e3.hash,
+		]);
+		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect(values.tail!.value.hash).toEqual(e1.hash);
+		await values.delete(e1);
+		expect((await values.toArray()).map((x) => x.hash)).toEqual([e3.hash]);
+		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect(values.tail!.value.hash).toEqual(e3.hash);
+		await values.delete(e3);
+		expect(await values.toArray()).toEqual([]);
 		expect(values.head).toBeNull();
 		expect(values.tail).toBeNull();
 	});

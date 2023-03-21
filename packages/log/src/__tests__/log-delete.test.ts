@@ -71,18 +71,18 @@ describe("Log - Delete", function () {
 
 		await log.deleteRecursively(e2);
 		expect(log.nextsIndex.size).toEqual(0);
-		expect(log.toArray().length).toEqual(1);
-		expect(log.get(e1.hash)).toBeUndefined();
+		expect((await log.toArray()).length).toEqual(1);
+		expect(await log.get(e1.hash)).toBeUndefined();
 		expect(await blockExists(e1.hash)).toBeFalse();
-		expect(log.get(e2.hash)).toBeUndefined();
+		expect(await log.get(e2.hash)).toBeUndefined();
 		expect(await blockExists(e2.hash)).toBeFalse();
-		expect(log.get(e3.hash)).toBeDefined();
+		expect(await log.get(e3.hash)).toBeDefined();
 		expect(await blockExists(e3.hash)).toBeTrue();
 
 		await log.deleteRecursively(e3);
-		expect(log.toArray().length).toEqual(0);
-		expect(log.heads).toHaveLength(0);
+		expect((await log.toArray()).length).toEqual(0);
+		expect(await log.getHeads()).toHaveLength(0);
 		expect(log.nextsIndex.size).toEqual(0);
-		expect(log.entryIndex.length).toEqual(0);
+		expect(log.entryIndex._cache.size).toEqual(0);
 	});
 });

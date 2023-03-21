@@ -2,7 +2,7 @@ import { Cache } from "@dao-xyz/cache";
 import PQueue from "p-queue";
 import Yallist from "yallist";
 import { Entry } from "./entry.js";
-import { Values } from "./values.js";
+import { EntryNode, Values } from "./values.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
 	if (a.type === b.type) {
@@ -78,14 +78,14 @@ export type TrimCanAppendOption = {
 export type TrimOptions = TrimCanAppendOption & TrimCondition;
 
 interface Log<T> {
-	values: Values<T>;
-	deleteNode: (node: Yallist.Node<Entry<T>>) => Promise<void>;
+	values: () => Values<T>;
+	deleteNode: (node: EntryNode) => Promise<Entry<T> | undefined>;
 }
 export class Trim<T> {
 	private _trim?: TrimOptions;
-	private _canTrimCacheLastNode: Yallist.Node<Entry<T>> | undefined | null;
-	private _trimLastHead: Yallist.Node<Entry<T>> | undefined | null;
-	private _trimLastTail: Yallist.Node<Entry<T>> | undefined | null;
+	private _canTrimCacheLastNode: EntryNode | undefined | null;
+	private _trimLastHead: EntryNode | undefined | null;
+	private _trimLastTail: EntryNode | undefined | null;
 	private _trimLastOptions: TrimOptions;
 	private _trimLastSeed: string | undefined;
 	private _canTrimCacheHashBreakpoint: Cache<boolean>;
@@ -99,7 +99,7 @@ export class Trim<T> {
 	}
 
 	deleteFromCache(entry: Entry<T>) {
-		if (this._canTrimCacheLastNode?.value === entry) {
+		if (this._canTrimCacheLastNode?.value.hash === entry.hash) {
 			this._canTrimCacheLastNode = this._canTrimCacheLastNode.prev;
 		}
 	}
@@ -108,7 +108,7 @@ export class Trim<T> {
 		return this._trim;
 	}
 
-	async _trimTask(
+	private async trimTask(
 		option: TrimOptions | undefined = this._trim
 	): Promise<Entry<T>[]> {
 		if (!option) {
@@ -117,37 +117,46 @@ export class Trim<T> {
 
 		///  TODO Make this method less ugly
 
-		const deleted: Entry<any>[] = [];
+		const deleted: Entry<T>[] = [];
 
-		const promises: Promise<void>[] = [];
-		let done: () => boolean;
+		let done: () => Promise<boolean> | boolean;
+		const values = this._log.values();
 		if (option.type === "length") {
 			const to = option.to;
 			const from = option.from ?? to;
-			if (this._log.values.length < from) {
+			if (values.length < from) {
 				return [];
 			}
-			done = () => this._log.values.length <= to;
+			done = () => values.length <= to;
 		} else if (option.type == "bytelength") {
 			// prune to max sum payload sizes in bytes
 			const byteLengthFrom = option.from ?? option.to;
 
-			if (this._log.values.byteLength < byteLengthFrom) {
+			if (values.byteLength < byteLengthFrom) {
 				return [];
 			}
-			done = () => this._log.values.byteLength <= option.to;
+			done = () => values.byteLength <= option.to;
 		} else if (option.type == "time") {
 			const s0 = BigInt(+new Date() * 1e6);
 			const maxAge = option.maxAge * 1e6;
-			done = () =>
-				!this._log.values.tail ||
-				s0 - this._log.values.tail?.value.metadata.clock.timestamp.wallTime <
-					maxAge;
+			done = async () => {
+				if (!values.tail) {
+					return true;
+				}
+
+				const nodeValue = await values.getEntry(values.tail);
+
+				if (!nodeValue) {
+					return true;
+				}
+
+				return s0 - nodeValue.metadata.clock.timestamp.wallTime < maxAge;
+			};
 		} else {
 			return [];
 		}
 
-		const tail = this._log.values.tail;
+		const tail = values.tail;
 
 		if (
 			this._trimLastOptions &&
@@ -171,16 +180,15 @@ export class Trim<T> {
 				!trimOptionsEqual(this._trimLastOptions, option);
 
 			const changed =
-				this._trimLastHead !== this._log.values.head ||
-				this._trimLastTail !== this._log.values.tail ||
+				this._trimLastHead !== values.head ||
+				this._trimLastTail !== values.tail ||
 				trimOptionsChanged;
 			if (!changed) {
 				return [];
 			}
 		}
 
-		let node: Yallist.Node<Entry<T>> | undefined | null =
-			this._canTrimCacheLastNode || tail;
+		let node: EntryNode | undefined | null = this._canTrimCacheLastNode || tail;
 		let lastNode = node;
 		let looped = false;
 		const startNode = node;
@@ -189,8 +197,8 @@ export class Trim<T> {
 		// TODO only go through heads?
 		while (
 			node &&
-			!done() &&
-			this._log.values.length > 0 &&
+			!(await done()) &&
+			values.length > 0 &&
 			node &&
 			(!looped || node !== startNode)
 		) {
@@ -200,12 +208,13 @@ export class Trim<T> {
 				// never break on the tail
 				break;
 			}
-
+			values.byteLength;
 			if (!looped || (looped && node !== tail)) {
 				lastNode = node;
 			}
 
 			let deleteAble = true;
+
 			if (option.filter?.canTrim) {
 				deleteAble = canTrimByGid.get(node.value.gid);
 				if (deleteAble === undefined) {
@@ -222,8 +231,10 @@ export class Trim<T> {
 
 			if (deleteAble) {
 				// TODO, under some concurrency condition the node can already be removed by another trim process
-				deleted.push(node.value);
-				promises.push(this._log.deleteNode(node));
+				const entry = await this._log.deleteNode(node);
+				if (entry) {
+					deleted.push(entry);
+				}
 			}
 
 			if (!prev) {
@@ -241,12 +252,11 @@ export class Trim<T> {
 
 		// remember the node where we started last time from
 		this._canTrimCacheLastNode = node || lastNode;
-		this._trimLastHead = this._log.values.head;
-		this._trimLastTail = this._log.values.tail;
+		this._trimLastHead = values.head;
+		this._trimLastTail = values.tail;
 		this._trimLastOptions = option;
 		this._trimLastSeed = seed;
 
-		await Promise.all(promises);
 		return deleted;
 	}
 	/**
@@ -256,7 +266,7 @@ export class Trim<T> {
 	async trim(
 		option: TrimOptions | undefined = this._trim
 	): Promise<Entry<T>[]> {
-		const result = await this._queue.add(() => this._trimTask(option));
+		const result = await this._queue.add(() => this.trimTask(option));
 		if (result instanceof Object) {
 			return result;
 		}

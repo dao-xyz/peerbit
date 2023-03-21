@@ -300,6 +300,38 @@ describe(`load`, function () {
 		await checkHashes(store, store.headsPath, [cachedHeads]);
 	});
 
+	it("can cache heads concurrently", async () => {
+		const cache = new Cache(await createStore());
+		store = new Store({ storeIndex: 0 });
+		index = new SimpleIndex(store);
+
+		await store.init(
+			blockStore,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{
+				...DefaultOptions,
+				resolveCache: () => Promise.resolve(cache),
+				onUpdate: index.updateIndex.bind(index),
+			}
+		);
+		await store.load();
+		const entries: Promise<Entry<any>>[] = [];
+		let entryCount = 100;
+		for (let i = 0; i < entryCount; i++) {
+			entries.push(
+				store.addOperation({ data: i }, { nexts: [] }).then((x) => x.entry)
+			);
+		}
+		await Promise.all(entries);
+		expect(store.oplog.length).toEqual(entryCount);
+		expect(await store.oplog.getHeads()).toHaveLength(entryCount);
+		const cachedHeads = await store.getCachedHeads();
+		expect(cachedHeads).toHaveLength(entryCount);
+	});
+
 	it("resets heads when referencing all", async () => {
 		const cache = new Cache(await createStore());
 		let done = false;
@@ -321,6 +353,7 @@ describe(`load`, function () {
 				},
 			}
 		);
+		await store.load();
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 3; i++) {
 			entries.push(
@@ -333,5 +366,45 @@ describe(`load`, function () {
 		expect(await store.getCachedHeads()).toHaveLength(1);
 		await checkHashes(store, store.headsPath, [[e4.hash]]);
 		await checkHashes(store, store.removedHeadsPath, []);
+	});
+
+	it("will load heads on write", async () => {
+		store = new Store({ storeIndex: 0 });
+		index = new SimpleIndex(store);
+		const level = await createStore();
+		await store.init(
+			blockStore,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{
+				...DefaultOptions,
+				resolveCache: async () => Promise.resolve(new Cache(level)),
+				onUpdate: index.updateIndex.bind(index),
+			}
+		);
+
+		await store.addOperation({ data: 1 });
+		expect(store.oplog.values.length).toEqual(1);
+		await store.close();
+
+		store = new Store({ storeIndex: 0 });
+		index = new SimpleIndex(store);
+		await store.init(
+			blockStore,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{
+				...DefaultOptions,
+				resolveCache: async () => Promise.resolve(new Cache(level)),
+				onUpdate: index.updateIndex.bind(index),
+			}
+		);
+
+		await store.addOperation({ data: 2 });
+		expect(store.oplog.values.length).toEqual(2);
 	});
 });

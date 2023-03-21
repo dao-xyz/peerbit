@@ -1,9 +1,7 @@
-import assert from "assert";
 import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { LogCreator } from "./utils/log-creator.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -67,9 +65,9 @@ describe("Log - GetPow2Refs", function () {
 			}
 		});
 		it("get refs one", async () => {
-			const heads = log1.heads;
+			const heads = await log1.getHeads();
 			expect(heads).toHaveLength(1);
-			const refs = log1.getReferenceSamples(heads[0], {
+			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 1,
 			});
 			expect(refs).toHaveLength(1);
@@ -79,8 +77,8 @@ describe("Log - GetPow2Refs", function () {
 		});
 
 		it("get refs 4", async () => {
-			const heads = log1.heads;
-			const refs = log1.getReferenceSamples(heads[0], {
+			const heads = await log1.getHeads();
+			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 4,
 			});
 			expect(refs).toHaveLength(2); // 2**2 = 4
@@ -96,8 +94,8 @@ describe("Log - GetPow2Refs", function () {
 		});
 
 		it("get refs 8", async () => {
-			const heads = log1.heads;
-			const refs = log1.getReferenceSamples(heads[0], {
+			const heads = await log1.getHeads();
+			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 8,
 			});
 			expect(refs).toHaveLength(3); // 2**3 = 8
@@ -113,9 +111,9 @@ describe("Log - GetPow2Refs", function () {
 		});
 
 		it("get refs with memory limit", async () => {
-			const heads = log1.heads;
+			const heads = await log1.getHeads();
 			expect(heads).toHaveLength(1);
-			const refs = log1.getReferenceSamples(heads[0], {
+			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: Number.MAX_SAFE_INTEGER,
 				memoryLimit: 100,
 			});
@@ -150,8 +148,8 @@ describe("Log - GetPow2Refs", function () {
 		});
 
 		it("no refs if no nexts", async () => {
-			const heads = log1.heads;
-			const refs = log1.getReferenceSamples(heads[0], {
+			const heads = await log1.getHeads();
+			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 8,
 			});
 			expect(refs).toHaveLength(1); // because heads[0] has no nexts (all commits are roots)
