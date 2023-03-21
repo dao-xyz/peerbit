@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-direct-block",
-	"version": "0.1.22",
+	"version": "0.1.23",
 	"description": "Block store for Peerbit",
 	"type": "module",
 	"sideEffects": false,
@@ -50,13 +50,13 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@dao-xyz/libp2p-test-utils": "^0.1.6"
+		"@dao-xyz/libp2p-test-utils": "^0.1.7"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/lazy-level": "^0.0.3",
-		"@dao-xyz/libp2p-direct-stream": "^0.1.20",
-		"@dao-xyz/peerbit-crypto": "^0.1.10",
+		"@dao-xyz/libp2p-direct-stream": "^0.1.21",
+		"@dao-xyz/peerbit-crypto": "^0.1.11",
 		"@ipld/dag-cbor": "^9.0.0",
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.43.0",
