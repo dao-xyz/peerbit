@@ -300,6 +300,62 @@ describe(`load`, function () {
 		await checkHashes(store, store.headsPath, [cachedHeads]);
 	});
 
+	it("resets heads on load", async () => {
+		const cache = new Cache(await createStore());
+		store = new Store({ storeIndex: 0 });
+		index = new SimpleIndex(store);
+
+		await store.init(
+			blockStore,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{
+				...DefaultOptions,
+				resolveCache: () => Promise.resolve(cache),
+				onUpdate: index.updateIndex.bind(index),
+			}
+		);
+		const entries: Entry<any>[] = [];
+		for (let i = 0; i < 6; i++) {
+			entries.push(
+				(await store.addOperation({ data: i }, { nexts: [] })).entry
+			);
+		}
+		const cachedHeads = await store.getCachedHeads();
+		expect(cachedHeads).toContainAllValues(entries.map((x) => x!.hash));
+
+		// Make sure that all hashes, one in each file
+		await checkHashes(
+			store,
+			store.headsPath,
+			entries.reverse().map((x) => [x.hash])
+		);
+
+		await store.close();
+		store = new Store({ storeIndex: 0 });
+		index = new SimpleIndex(store);
+		await store.init(
+			blockStore,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{
+				...DefaultOptions,
+				resolveCache: () => Promise.resolve(cache),
+				onUpdate: index.updateIndex.bind(index),
+			}
+		);
+		await store.load();
+
+		// Make sure that all hashes are in the first "file", since its reseted
+		await checkHashes(store, store.headsPath, [
+			entries.reverse().map((x) => x.hash),
+		]);
+	});
+
 	it("can cache heads concurrently", async () => {
 		const cache = new Cache(await createStore());
 		store = new Store({ storeIndex: 0 });
@@ -372,6 +428,8 @@ describe(`load`, function () {
 		store = new Store({ storeIndex: 0 });
 		index = new SimpleIndex(store);
 		const level = await createStore();
+		const cache = new Cache(await createStore());
+
 		await store.init(
 			blockStore,
 			{
@@ -380,7 +438,7 @@ describe(`load`, function () {
 			},
 			{
 				...DefaultOptions,
-				resolveCache: async () => Promise.resolve(new Cache(level)),
+				resolveCache: async () => Promise.resolve(cache),
 				onUpdate: index.updateIndex.bind(index),
 			}
 		);
@@ -399,7 +457,7 @@ describe(`load`, function () {
 			},
 			{
 				...DefaultOptions,
-				resolveCache: async () => Promise.resolve(new Cache(level)),
+				resolveCache: async () => Promise.resolve(cache),
 				onUpdate: index.updateIndex.bind(index),
 			}
 		);

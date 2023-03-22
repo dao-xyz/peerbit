@@ -617,6 +617,7 @@ export class Store<T> implements Initiable<T> {
 			});
 		}
 
+		await this._updateCachedHeads({ added: heads, removed: [] }, true);
 		this._loaded = true;
 		this._options.onReady && this._options.onReady(this);
 	}
@@ -649,14 +650,7 @@ export class Store<T> implements Initiable<T> {
 		);
 	}
 
-	async addOperation(
-		data: T,
-		options?: AddOperationOptions<T>
-	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
-		if (this.closed) {
-			throw new Error("Store is closed");
-		}
-
+	private async waitForHeads() {
 		if (!this._loaded) {
 			await this._cacheWriteQueue.add(async () => {
 				if (this._loaded) {
@@ -665,6 +659,17 @@ export class Store<T> implements Initiable<T> {
 				return this.load({ heads: true });
 			});
 		}
+	}
+
+	async addOperation(
+		data: T,
+		options?: AddOperationOptions<T>
+	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
+		if (this.closed) {
+			throw new Error("Store is closed");
+		}
+
+		await this.waitForHeads();
 
 		const change = await this._oplog.append(data, {
 			nexts: options?.nexts,
@@ -695,6 +700,8 @@ export class Store<T> implements Initiable<T> {
 		entry: Entry<T> | Entry<T>[],
 		options?: { recursively?: boolean }
 	) {
+		await this.waitForHeads();
+
 		const entries = Array.isArray(entry) ? entry : [entry];
 		if (entries.length === 0) {
 			return {
