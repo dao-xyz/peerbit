@@ -617,7 +617,10 @@ export class Store<T> implements Initiable<T> {
 			});
 		}
 
-		await this._updateCachedHeads({ added: heads, removed: [] }, true);
+		await this._updateCachedHeads(
+			{ added: [...this._oplog.headsIndex.index.values()], removed: [] },
+			true
+		);
 		this._loaded = true;
 		this._options.onReady && this._options.onReady(this);
 	}
