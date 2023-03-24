@@ -131,35 +131,32 @@ export class Documents<
 			sync: async (result: Results<T>) => {
 				const entries = (
 					await Promise.all(
-						result.results.map((result) => {
-							return this.store.store
-								.get<Uint8Array>(result.context.head, {
-									timeout: 10 * 10000,
-								})
-								.then(async (bytes) => {
-									if (!bytes) {
-										logger.error(
-											"Faield to resolve block: ",
-											result.context.head
-										);
-										return;
-									}
-
-									const entry = deserialize(await getBlockValue(bytes), Entry);
-									if (!this._optionCanAppend) {
+						result.results.map(async (result) => {
+							let entry = await this.store.oplog.get(result.context.head);
+							if (!entry) {
+								entry = await Entry.fromMultihash(
+									this.store.store,
+									result.context.head
+								);
+								entry.init(this.store.oplog);
+							}
+							if (!entry) {
+								logger.error("Failed to resolve entry: " + result.context.head);
+								return undefined;
+							}
+							if (!this._optionCanAppend) {
+								return entry;
+							}
+							return Promise.resolve(this._optionCanAppend(entry)) // we do optionalCanAppend on query because we might not be able to actually check with history whether we can append, TODO make more resilient/robust!
+								.then((r) => {
+									if (r) {
 										return entry;
 									}
-									return Promise.resolve(this._optionCanAppend(entry)) // we do optionalCanAppend on query because we might not be able to actually check with history whether we can append, TODO make more resilient/robust!
-										.then((r) => {
-											if (r) {
-												return entry;
-											}
-											return undefined;
-										})
-										.catch((e: any) => {
-											logger.info("canAppend resulted in error: " + e.message);
-											return undefined;
-										});
+									return undefined;
+								})
+								.catch((e: any) => {
+									logger.error("canAppend resulted in error: " + e.message);
+									return undefined;
 								});
 						})
 					)
