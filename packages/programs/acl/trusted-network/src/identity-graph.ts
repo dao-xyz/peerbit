@@ -2,8 +2,8 @@ import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
 	DocumentIndex,
-	DocumentQueryRequest,
-	StringMatchQuery,
+	DocumentQuery,
+	StringMatch,
 } from "@dao-xyz/peerbit-document";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { concat } from "uint8arrays";
@@ -24,9 +24,9 @@ export const getFromByTo: RelationResolver = {
 		return Promise.all(
 			(
 				await db.index.queryHandler(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [
-							new StringMatchQuery({
+							new StringMatch({
 								key: "to",
 								value: to.hashcode(),
 							}),
@@ -44,9 +44,9 @@ export const getToByFrom: RelationResolver = {
 		return Promise.all(
 			(
 				await db.index.queryHandler(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [
-							new StringMatchQuery({
+							new StringMatch({
 								key: "from",
 								value: from.hashcode(),
 							}),

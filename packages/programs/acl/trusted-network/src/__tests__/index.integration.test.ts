@@ -25,7 +25,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import {
 	Documents,
-	DocumentQueryRequest,
+	DocumentQuery,
 	Results,
 	Operation,
 } from "@dao-xyz/peerbit-document";
@@ -320,7 +320,7 @@ describe("index", () => {
 			// await delay(3000); // with github ci this fails for some reason, hence this delay. TODO identify what proecss to wait for
 			let responses: Results<IdentityRelation>[] =
 				await l0c.trustGraph.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [],
 					}),
 					{
@@ -338,7 +338,7 @@ describe("index", () => {
 			// TODO we are not using read access control on the trust graph anymore, but should we?
 			/* let untrustedResponse: Results<IdentityRelation>[] =
 				await l0d.trustGraph.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [],
 					}),
 					{

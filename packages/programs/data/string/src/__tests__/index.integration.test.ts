@@ -2,7 +2,7 @@ import { DString } from "../string-store.js";
 import {
 	StringQueryRequest,
 	StringResult,
-	StringMatchQuery,
+	StringMatch,
 	RangeMetadatas,
 	RangeMetadata,
 } from "../index.js";
@@ -134,11 +134,11 @@ describe("query", () => {
 			await observerStore.query.send(
 				new StringQueryRequest({
 					queries: [
-						new StringMatchQuery({
+						new StringMatch({
 							exactMatch: true,
 							value: "o w",
 						}),
-						new StringMatchQuery({
+						new StringMatch({
 							exactMatch: true,
 							value: "orld",
 						}),

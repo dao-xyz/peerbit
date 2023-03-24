@@ -11,8 +11,8 @@ import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
 	Documents,
 	DocumentIndex,
-	DocumentQueryRequest,
-	StringMatchQuery,
+	DocumentQuery,
+	StringMatch,
 	Results,
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
@@ -451,9 +451,9 @@ describe("index", () => {
 
 			const q = async (): Promise<Results<Document>> => {
 				let results: Results<Document>[] = await l0b.store.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [
-							new StringMatchQuery({
+							new StringMatch({
 								key: "id",
 								value: "1",
 							}),
@@ -547,7 +547,7 @@ describe("index", () => {
 
 		let results: Results<Document>[] =
 			await l0b.accessController.access.index.query(
-				new DocumentQueryRequest({
+				new DocumentQuery({
 					queries: [],
 				}),
 				{

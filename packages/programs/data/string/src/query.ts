@@ -30,7 +30,7 @@ export class RangeMetadatas {
 /// ----- QUERY -----
 
 @variant(0)
-export class StringMatchQuery {
+export class StringMatch {
 	@field({ type: "string" })
 	value: string;
 
@@ -52,10 +52,10 @@ export class StringMatchQuery {
 
 @variant(0)
 export class StringQueryRequest {
-	@field({ type: vec(StringMatchQuery) })
-	queries!: StringMatchQuery[];
+	@field({ type: vec(StringMatch) })
+	queries!: StringMatch[];
 
-	constructor(properties?: { queries: StringMatchQuery[] }) {
+	constructor(properties?: { queries: StringMatch[] }) {
 		if (properties) {
 			this.queries = properties.queries;
 		}

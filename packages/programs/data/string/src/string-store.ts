@@ -2,7 +2,7 @@ import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
 	RangeMetadata,
 	RangeMetadatas,
-	StringMatchQuery,
+	StringMatch,
 	StringQueryRequest,
 	StringResult,
 } from "./query.js";
@@ -143,8 +143,8 @@ export class DString extends Program {
 
 		const content = this._index.string;
 		const relaventQueries = stringQuery.queries.filter(
-			(x) => x instanceof StringMatchQuery
-		) as StringMatchQuery[];
+			(x) => x instanceof StringMatch
+		) as StringMatch[];
 		if (relaventQueries.length == 0) {
 			logger.debug("Responding with all");
 			return new StringResult({
