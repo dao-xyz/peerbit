@@ -1,13 +1,15 @@
-import { field, option, serialize, variant } from "@dao-xyz/borsh";
+import { field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { Documents, DocumentsChange } from "../document-store";
 import {
-	IntegerCompareQuery,
-	StringMatchQuery,
-	DocumentQueryRequest,
+	IntegerCompare,
+	StringMatch,
 	Results,
 	Compare,
-	MissingQuery,
+	MissingField,
+	And,
+	DocumentQuery,
 	StringMatchMethod,
+	Or,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -41,11 +43,15 @@ class Document {
 	@field({ type: option("u64") })
 	number?: bigint;
 
+	@field({ type: option(vec("string")) })
+	tags?: string[];
+
 	constructor(opts: Document) {
 		if (opts) {
 			this.id = opts.id;
 			this.name = opts.name;
 			this.number = opts.number;
+			this.tags = opts.tags;
 		}
 	}
 }
@@ -400,7 +406,7 @@ describe("index", () => {
 					});
 
 					let results = await store2.docs.index.query(
-						new DocumentQueryRequest({ queries: [] })
+						new DocumentQuery({ queries: [] })
 					);
 					expect(results).toHaveLength(1);
 				});
@@ -515,14 +521,14 @@ describe("index", () => {
 
 			it("no-args", async () => {
 				let response: Results<Document>[] = await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] })
+					new DocumentQuery({ queries: [] })
 				);
 				expect(response[0].results).toHaveLength(4);
 			});
 
 			it("match locally", async () => {
 				let response: Results<Document>[] = await stores[0].docs.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [],
 					}),
 					{ remote: false }
@@ -532,7 +538,7 @@ describe("index", () => {
 
 			it("match all", async () => {
 				let responses: Results<Document>[] = await stores[1].docs.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [],
 					}),
 					{ remote: { amount: 1 } }
@@ -544,7 +550,7 @@ describe("index", () => {
 			it("can match sync", async () => {
 				expect(stores[1].docs.index.size).toEqual(0);
 				let results = await stores[1].docs.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [],
 					}),
 					{ remote: { amount: 1, sync: true } }
@@ -555,9 +561,9 @@ describe("index", () => {
 			describe("string", () => {
 				it("exact", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new StringMatchQuery({
+								new StringMatch({
 									key: "name",
 									value: "hello world",
 									caseInsensitive: true,
@@ -573,9 +579,9 @@ describe("index", () => {
 
 				it("exact-case-insensitive", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new StringMatchQuery({
+								new StringMatch({
 									key: "name",
 									value: "Hello World",
 									caseInsensitive: true,
@@ -591,9 +597,9 @@ describe("index", () => {
 
 				it("exact case sensitive", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new StringMatchQuery({
+								new StringMatch({
 									key: "name",
 									value: "Hello World",
 									caseInsensitive: false,
@@ -606,9 +612,9 @@ describe("index", () => {
 						responses[0].results.map((x) => x.value.id)
 					).toContainAllValues(["2"]);
 					responses = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new StringMatchQuery({
+								new StringMatch({
 									key: "name",
 									value: "hello world",
 									caseInsensitive: false,
@@ -623,9 +629,9 @@ describe("index", () => {
 				});
 				it("prefix", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new StringMatchQuery({
+								new StringMatch({
 									key: "name",
 									value: "hel",
 									method: StringMatchMethod.prefix,
@@ -643,9 +649,9 @@ describe("index", () => {
 
 				it("contains", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new StringMatchQuery({
+								new StringMatch({
 									key: "name",
 									value: "ello",
 									method: StringMatchMethod.contains,
@@ -659,13 +665,48 @@ describe("index", () => {
 						responses[0].results.map((x) => x.value.id)
 					).toContainAllValues(["1", "2"]);
 				});
+
+				it("arr", async () => {
+					let docArray1 = new Document({
+						id: "a",
+						name: undefined,
+						number: undefined,
+						tags: ["Hello", "World"],
+					});
+
+					let docArray2 = new Document({
+						id: "b",
+						name: undefined,
+						number: undefined,
+						tags: ["Hello"],
+					});
+					await writeStore.docs.put(docArray1);
+					await writeStore.docs.put(docArray2);
+
+					let responses: Results<Document>[] = await stores[1].docs.index.query(
+						new DocumentQuery({
+							queries: [
+								new StringMatch({
+									key: "tags",
+									value: "world",
+									method: StringMatchMethod.contains,
+									caseInsensitive: true,
+								}),
+							],
+						})
+					);
+					expect(responses[0].results).toHaveLength(1);
+					expect(
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["a"]);
+				});
 			});
 
 			it("missing", async () => {
 				let responses: Results<Document>[] = await stores[1].docs.index.query(
-					new DocumentQueryRequest({
+					new DocumentQuery({
 						queries: [
-							new MissingQuery({
+							new MissingField({
 								key: "name",
 							}),
 						],
@@ -675,76 +716,66 @@ describe("index", () => {
 				expect(responses[0].results).toHaveLength(1);
 				expect(responses[0].results.map((x) => x.value.id)).toEqual(["4"]);
 			});
-
-			/* describe("time", () => {
-				it("created before", async () => {
-					const allDocs = [...writeStore.docs.index.index.values()].sort(
-						(a, b) =>
-							Number(
-								a.entry.metadata.clock.timestamp.wallTime -
-								b.entry.metadata.clock.timestamp.wallTime
-							)
-					);
-
+			describe("bool", () => {
+				it("and", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new CreatedAtQuery({
-									created: [
-										new U64Compare({
-											compare: Compare.LessOrEqual,
-											value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
-										}),
-									],
-								}),
+								new And([
+									new StringMatch({
+										key: "name",
+										value: "hello",
+										caseInsensitive: true,
+										method: StringMatchMethod.contains,
+									}),
+									new StringMatch({
+										key: "name",
+										value: "world",
+										caseInsensitive: true,
+										method: StringMatchMethod.contains,
+									}),
+								]),
 							],
 						}),
 						{ remote: { amount: 1 } }
 					);
+					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.context.head)
-					).toContainAllValues([allDocs[0].entry.hash, allDocs[1].entry.hash]); // allDocs[1] is also included because it was edited before allDocs[1].entry.metadata.clock.timestamp.wallTime
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1", "2"]);
 				});
 
-				it("created between", async () => {
-					const allDocs = [...writeStore.docs.index.index.values()].sort(
-						(a, b) =>
-							Number(
-								a.entry.metadata.clock.timestamp.wallTime -
-								b.entry.metadata.clock.timestamp.wallTime
-							)
-					);
+				it("or", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new CreatedAtQuery({
-									created: [
-										new U64Compare({
-											compare: Compare.Greater,
-											value: allDocs[1].entry.metadata.clock.timestamp.wallTime,
-										}),
-										new U64Compare({
-											compare: Compare.LessOrEqual,
-											value: allDocs[2].entry.metadata.clock.timestamp.wallTime,
-										}),
-									],
-								}),
+								new Or([
+									new StringMatch({
+										key: "id",
+										value: "1",
+									}),
+									new StringMatch({
+										key: "id",
+										value: "2",
+									}),
+								]),
 							],
 						}),
 						{ remote: { amount: 1 } }
 					);
+					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.context.head)
-					).toContainAllValues([allDocs[2].entry.hash]);
+						responses[0].results.map((x) => x.value.id)
+					).toContainAllValues(["1", "2"]);
 				});
-			}); */
+			});
 
 			describe("number", () => {
 				it("equal", async () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new IntegerCompareQuery({
+								new IntegerCompare({
 									key: "number",
 									compare: Compare.Equal,
 									value: 2n,
@@ -759,9 +790,9 @@ describe("index", () => {
 
 				it("gt", async () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new IntegerCompareQuery({
+								new IntegerCompare({
 									key: "number",
 									compare: Compare.Greater,
 									value: 2n,
@@ -776,9 +807,9 @@ describe("index", () => {
 
 				it("gte", async () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new IntegerCompareQuery({
+								new IntegerCompare({
 									key: "number",
 									compare: Compare.GreaterOrEqual,
 									value: 2n,
@@ -797,9 +828,9 @@ describe("index", () => {
 
 				it("lt", async () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new IntegerCompareQuery({
+								new IntegerCompare({
 									key: "number",
 									compare: Compare.Less,
 									value: 2n,
@@ -814,9 +845,9 @@ describe("index", () => {
 
 				it("lte", async () => {
 					let response: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
+						new DocumentQuery({
 							queries: [
-								new IntegerCompareQuery({
+								new IntegerCompare({
 									key: "number",
 									compare: Compare.LessOrEqual,
 									value: 2n,
@@ -833,122 +864,6 @@ describe("index", () => {
 					expect(response[0].results[1].value.number).toEqual(2n);
 				});
 			});
-
-			/*describe("Memory compare query", () => {
-				it("Can query by memory", async () => {
-					const numberToMatch = 123;
-
-					let doc2 = new Document({
-						id: "8",
-						name: "x",
-						number: BigInt(numberToMatch),
-					});
-
-					let doc3 = new Document({
-						id: "9",
-						name: "y",
-						number: BigInt(numberToMatch),
-					});
-
-					const bytes = serialize(doc3);
-					const numberOffset = 24;
-					expect(bytes[numberOffset]).toEqual(numberToMatch);
-					await writeStore.docs.put(doc2);
-					await writeStore.docs.put(doc3);
-
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQueryRequest({
-							queries: [
-								new MemoryCompareQuery({
-									compares: [
-										new MemoryCompare({
-											bytes: new Uint8Array([123, 0, 0]), // add some 0  trailing so we now we can match more than the exact value
-											offset: BigInt(numberOffset),
-										}),
-									],
-								}),
-							],
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(responses[0].results).toHaveLength(2);
-					expect(responses[0].results[0].value.id).toEqual(doc2.id);
-					expect(responses[0].results[1].value.id).toEqual(doc3.id);
-				});
-			});
-
-			 describe("signed by", () => {
-				it("multiple signatures", async () => {
-					const responses = await stores[2].docs.index.query(
-						new DocumentQueryRequest({
-							queries: [
-								new SignedByQuery({
-									publicKeys: [writeStore.identity.publicKey],
-								}),
-							],
-						})
-					);
-
-					expect(responses).toHaveLength(1);
-				});
-
-			});
-			describe("Encryption query", () => {
-				it("can query by payload key", async () => {
-					const efn =
-						writeStore.docs.store.oplog.encryption!.getEncryptionKeypair;
-					const someKey = (await (typeof efn === "function" ? efn() : efn))
-						.publicKey as Ed25519PublicKey;
-
-					let doc = new Document({
-						id: "encrypted",
-						name: "encrypted",
-					});
-
-					// write from 1
-					const entry = (
-						await stores[1].docs.put(doc, {
-							reciever: {
-								payload: [someKey],
-								metadata: undefined,
-								next: undefined,
-								signatures: undefined,
-							},
-						})
-					).entry;
-
-					delete (entry._payload as EncryptedThing<any>)._decrypted;
-
-					expect(
-						(entry._payload as EncryptedThing<any>)._decrypted
-					).toBeUndefined();
-
-					const preLength = writeStore.docs.store.oplog.values.length;
-					await writeStore.docs.store.sync(
-						await stores[1].docs.store.oplog.getHeads()
-					);
-					await waitFor(
-						() => writeStore.docs.store.oplog.values.length === preLength + 1
-					);
-
-					// read from observer 2
-					let responses = await stores[2].docs.index.query(
-						new DocumentQueryRequest({
-							queries: [
-								new EntryEncryptedByQuery({
-									payload: [someKey],
-									metadata: [],
-									next: [],
-									signatures: [],
-								}),
-							],
-						}),
-						{ local: false, remote: true }
-					);
-					expect(responses[0].results).toHaveLength(1);
-					expect(responses[0].results[0].value.id).toEqual("encrypted");
-				});
-			}); */
 		});
 	});
 
@@ -1214,10 +1129,9 @@ describe("index", () => {
 
 			it("queries all if undefined", async () => {
 				stores[0].docs.index.replicators = () => undefined;
-				await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] }),
-					{ remote: { amount: 2 } }
-				);
+				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }), {
+					remote: { amount: 2 },
+				});
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(1);
@@ -1228,9 +1142,7 @@ describe("index", () => {
 					[stores[1].libp2p.directsub.publicKey.hashcode()],
 					[stores[2].libp2p.directsub.publicKey.hashcode()],
 				];
-				await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] })
-				);
+				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(1);
@@ -1238,9 +1150,7 @@ describe("index", () => {
 
 			it("will always query locally", async () => {
 				stores[0].docs.index.replicators = () => [];
-				await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] })
-				);
+				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
 				expect(counters[2]).toEqual(0);
@@ -1250,9 +1160,7 @@ describe("index", () => {
 				stores[0].docs.index.replicators = () => [
 					[stores[1].libp2p.directsub.publicKey.hashcode()],
 				];
-				await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] })
-				);
+				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(0);
@@ -1263,10 +1171,9 @@ describe("index", () => {
 					[stores[1].libp2p.directsub.publicKey.hashcode()],
 					[stores[2].libp2p.directsub.publicKey.hashcode()],
 				];
-				await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] }),
-					{ local: false }
-				);
+				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }), {
+					local: false,
+				});
 				expect(counters[0]).toEqual(0);
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(1);
@@ -1278,9 +1185,7 @@ describe("index", () => {
 						stores[1].libp2p.directsub.publicKey.hashcode(),
 					],
 				];
-				await stores[0].docs.index.query(
-					new DocumentQueryRequest({ queries: [] })
-				);
+				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
 				expect(counters[2]).toEqual(0);
@@ -1321,10 +1226,9 @@ describe("index", () => {
 						};
 					}
 					let timeout = 1000;
-					await stores[0].docs.index.query(
-						new DocumentQueryRequest({ queries: [] }),
-						{ remote: { timeout } }
-					);
+					await stores[0].docs.index.query(new DocumentQuery({ queries: [] }), {
+						remote: { timeout },
+					});
 					expect(failedOnce).toBeTrue();
 					expect(counters[0]).toEqual(1);
 					expect(counters[1] + counters[2]).toEqual(1);
@@ -1346,10 +1250,9 @@ describe("index", () => {
 
 					let timeout = 1000;
 
-					await stores[0].docs.index.query(
-						new DocumentQueryRequest({ queries: [] }),
-						{ remote: { timeout } }
-					);
+					await stores[0].docs.index.query(new DocumentQuery({ queries: [] }), {
+						remote: { timeout },
+					});
 					expect(counters[0]).toEqual(1);
 					expect(counters[1]).toEqual(0);
 					expect(counters[2]).toEqual(0);

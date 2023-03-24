@@ -52,7 +52,7 @@ export class U64Compare {
 export abstract class Query {}
 
 @variant(0)
-export class DocumentQueryRequest {
+export class DocumentQuery {
 	@field({ type: vec(Query) })
 	queries!: Query[];
 
@@ -92,6 +92,32 @@ export class ModifiedAtQuery extends ContextQuery {
 	}
 }
  */
+
+@variant(1)
+export abstract class LogicalQuery extends Query {}
+
+@variant(0)
+export class And extends LogicalQuery {
+	@field({ type: vec(Query) })
+	and: Query[];
+
+	constructor(and: Query[]) {
+		super();
+		this.and = and;
+	}
+}
+
+@variant(1)
+export class Or extends LogicalQuery {
+	@field({ type: vec(Query) })
+	or: Query[];
+
+	constructor(or: Query[]) {
+		super();
+		this.or = or;
+	}
+}
+
 @variant(2)
 export abstract class StateQuery extends Query {}
 
@@ -188,7 +214,7 @@ export enum StringMatchMethod {
 }
 
 @variant(2)
-export class StringMatchQuery extends StateFieldQuery {
+export class StringMatch extends StateFieldQuery {
 	@field({ type: "string" })
 	value: string;
 
@@ -212,7 +238,7 @@ export class StringMatchQuery extends StateFieldQuery {
 }
 
 @variant(3)
-export class IntegerCompareQuery extends StateFieldQuery {
+export class IntegerCompare extends StateFieldQuery {
 	@field({ type: "u8" })
 	compare: Compare;
 
@@ -240,7 +266,7 @@ export class IntegerCompareQuery extends StateFieldQuery {
 }
 
 @variant(4)
-export class MissingQuery extends StateFieldQuery {
+export class MissingField extends StateFieldQuery {
 	constructor(props: { key: string[] | string }) {
 		super(props);
 	}

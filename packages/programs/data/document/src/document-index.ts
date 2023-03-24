@@ -4,17 +4,20 @@ import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
 import { equals } from "@dao-xyz/uint8arrays";
 import { ComposableProgram } from "@dao-xyz/peerbit-program";
 import {
-	IntegerCompareQuery,
+	IntegerCompare,
 	ByteMatchQuery,
-	StringMatchQuery,
-	DocumentQueryRequest,
+	StringMatch,
+	DocumentQuery,
 	Query,
 	ResultWithSource,
 	StateFieldQuery,
 	compare,
 	Context,
-	MissingQuery,
+	MissingField,
 	StringMatchMethod,
+	LogicalQuery,
+	And,
+	Or,
 } from "./query.js";
 import {
 	CanRead,
@@ -28,7 +31,7 @@ import {
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { Store } from "@dao-xyz/peerbit-store";
-import { EncryptedThing, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
+
 const logger = loggerFn({ module: "document-index" });
 
 @variant(0)
@@ -118,7 +121,7 @@ export type Indexable<T> = (
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
 	@field({ type: RPC })
-	_query: RPC<DocumentQueryRequest, Results<T>>;
+	_query: RPC<DocumentQuery, Results<T>>;
 
 	@field({ type: "string" })
 	indexBy: string;
@@ -133,7 +136,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	private _toIndex: Indexable<T>;
 
 	constructor(properties: {
-		query?: RPC<DocumentQueryRequest, Results<T>>;
+		query?: RPC<DocumentQuery, Results<T>>;
 		indexBy: string;
 	}) {
 		super();
@@ -187,7 +190,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				});
 			},
 			responseType: Results,
-			queryType: DocumentQueryRequest,
+			queryType: DocumentQuery,
 		});
 	}
 
@@ -198,16 +201,16 @@ export class DocumentIndex<T> extends ComposableProgram {
 		let results: Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
 			results = await this.query(
-				new DocumentQueryRequest({
+				new DocumentQuery({
 					queries: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
 				})
 			);
 		} else {
 			const stringValue = asString(key);
 			results = await this.query(
-				new DocumentQueryRequest({
+				new DocumentQuery({
 					queries: [
-						new StringMatchQuery({
+						new StringMatch({
 							key: [this.indexBy],
 							value: stringValue,
 						}),
@@ -251,19 +254,19 @@ export class DocumentIndex<T> extends ComposableProgram {
 	}
 
 	async queryHandler(
-		query: DocumentQueryRequest,
+		query: DocumentQuery,
 		context?: QueryContext // TODO needed?
 	): Promise<{ context: Context; value: T }[]> {
 		const queries: Query[] = query.queries;
 		if (
 			query.queries.length === 1 &&
 			(query.queries[0] instanceof ByteMatchQuery ||
-				query.queries[0] instanceof StringMatchQuery) &&
+				query.queries[0] instanceof StringMatch) &&
 			query.queries[0].key.length === 1 &&
 			query.queries[0].key[0] === this.indexBy
 		) {
 			if (
-				query.queries[0] instanceof StringMatchQuery ||
+				query.queries[0] instanceof StringMatch ||
 				query.queries[0] instanceof ByteMatchQuery
 			) {
 				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
@@ -277,182 +280,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 			queries?.length > 0
 				? queries
 						.map((f) => {
-							if (f instanceof StateFieldQuery) {
-								let fv: any = doc.value;
-								for (let i = 0; i < f.key.length; i++) {
-									fv = fv[f.key[i]];
-								}
-
-								if (f instanceof StringMatchQuery) {
-									if (typeof fv !== "string") {
-										return false;
-									}
-									let compare = f.value;
-									if (f.caseInsensitive) {
-										fv = fv.toLowerCase();
-										compare = compare.toLowerCase();
-									}
-
-									if (f.method === StringMatchMethod.exact) {
-										return fv === compare;
-									}
-									if (f.method === StringMatchMethod.prefix) {
-										return fv.startsWith(compare);
-									}
-									if (f.method === StringMatchMethod.contains) {
-										return fv.includes(compare);
-									}
-								} else if (f instanceof ByteMatchQuery) {
-									if (fv instanceof Uint8Array === false) {
-										return false;
-									}
-									return equals(fv, f.value);
-								} else if (f instanceof IntegerCompareQuery) {
-									const value: bigint | number = fv;
-
-									if (typeof value !== "bigint" && typeof value !== "number") {
-										return false;
-									}
-
-									return compare(value, f.compare, f.value.value);
-								} else if (f instanceof MissingQuery) {
-									return fv == null; // null or undefined
-								}
-							} /* else if (f instanceof MemoryCompareQuery) {
-							const operation = doc.entry.payload.getValue(
-								BORSH_ENCODING_OPERATION
-							);
-							if (!operation) {
-								throw new Error(
-									"Unexpected, missing cached value for payload"
-								);
-							}
-							if (operation instanceof PutOperation) {
-								const bytes = operation.data;
-								for (const compare of f.compares) {
-									const offsetn = Number(compare.offset); // TODO type check
-
-									for (let b = 0; b < compare.bytes.length; b++) {
-										if (bytes[offsetn + b] !== compare.bytes[b]) {
-											return false;
-										}
-									}
-								}
-							} else {
-								// TODO add implementations for PutAll
-								return false;
-							}
-							return true;
-						}  else if (f instanceof CreatedAtQuery) {
-							for (const created of f.created) {
-								if (
-									!compare(
-										doc.context.created,
-										created.compare,
-										created.value
-									)
-								) {
-									return false;
-								}
-							}
-							return true;
-						} else if (f instanceof ModifiedAtQuery) {
-							for (const modified of f.modified) {
-								if (
-									!compare(
-										doc.context.modified,
-										modified.compare,
-										modified.value
-									)
-								) {
-									return false;
-								}
-							}
-							return true;
-						}  else if (f instanceof EntryEncryptedByQuery) {
-							if (doc.entry._payload instanceof EncryptedThing) {
-								const check = (
-									encryptedThing: EncryptedThing<any>,
-									keysToFind: X25519PublicKey[]
-								) => {
-									for (const k of encryptedThing._envelope._ks) {
-										for (const s of keysToFind) {
-											if (k._recieverPublicKey.equals(s)) {
-												return true;
-											}
-										}
-									}
-									return false;
-								};
-
-								if (f.metadata.length > 0) {
-									if (
-										!check(
-											doc.entry._payload as EncryptedThing<any>,
-											f.metadata
-										)
-									) {
-										return false;
-									}
-								}
-
-								if (f.next.length > 0) {
-									if (
-										!check(doc.entry._payload as EncryptedThing<any>, f.next)
-									) {
-										return false;
-									}
-								}
-
-								if (f.payload.length > 0) {
-									if (
-										!check(
-											doc.entry._payload as EncryptedThing<any>,
-											f.payload
-										)
-									) {
-										return false;
-									}
-								}
-
-								if (f.signatures.length > 0) {
-									if (
-										!check(
-											doc.entry._payload as EncryptedThing<any>,
-											f.signatures
-										)
-									) {
-										return false;
-									}
-								}
-							} else {
-								return (
-									f.signatures.length == 0 &&
-									f.payload.length == 0 &&
-									f.metadata.length == 0 &&
-									f.next.length == 0
-								);
-							}
-
-							return true;
-						} else if (f instanceof SignedByQuery) {
-							for (const key of f.publicKeys) {
-								let exist = false;
-								for (const signature of doc.entry.signatures) {
-									if (key.equals(signature.publicKey)) {
-										exist = true;
-									}
-								}
-
-								if (!exist) {
-									return false;
-								}
-							}
-							return true;
-						} */
-
-							logger.info("Unsupported query type: " + f.constructor.name);
-							return false;
+							const nested = this.handleQueryObject(f, doc);
+							return nested;
 						})
 						.reduce((prev, current) => prev && current)
 				: true
@@ -460,8 +289,94 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 		return results;
 	}
+
+	private handleQueryObject(f: Query, doc: IndexedValue<T>) {
+		if (f instanceof StateFieldQuery) {
+			let fv: any = doc.value;
+			for (let i = 0; i < f.key.length; i++) {
+				fv = fv[f.key[i]];
+			}
+
+			if (f instanceof StringMatch) {
+				let compare = f.value;
+				if (f.caseInsensitive) {
+					compare = compare.toLowerCase();
+				}
+
+				if (Array.isArray(fv)) {
+					for (const string of fv) {
+						if (this.handleStringMatch(f, compare, string)) {
+							return true;
+						}
+					}
+					return false;
+				} else {
+					if (this.handleStringMatch(f, compare, fv)) {
+						return true;
+					}
+					return false;
+				}
+			} else if (f instanceof ByteMatchQuery) {
+				if (fv instanceof Uint8Array === false) {
+					return false;
+				}
+				return equals(fv, f.value);
+			} else if (f instanceof IntegerCompare) {
+				const value: bigint | number = fv;
+
+				if (typeof value !== "bigint" && typeof value !== "number") {
+					return false;
+				}
+				return compare(value, f.compare, f.value.value);
+			} else if (f instanceof MissingField) {
+				return fv == null; // null or undefined
+			}
+		} else if (f instanceof LogicalQuery) {
+			if (f instanceof And) {
+				for (const and of f.and) {
+					if (!this.handleQueryObject(and, doc)) {
+						return false;
+					}
+				}
+				return true;
+			}
+
+			if (f instanceof Or) {
+				for (const or of f.or) {
+					if (this.handleQueryObject(or, doc)) {
+						return true;
+					}
+				}
+				return false;
+			}
+			return false;
+		}
+
+		logger.info("Unsupported query type: " + f.constructor.name);
+		return false;
+	}
+
+	private handleStringMatch(f: StringMatch, compare: string, fv: string) {
+		if (typeof fv !== "string") {
+			return false;
+		}
+		if (f.caseInsensitive) {
+			fv = fv.toLowerCase();
+		}
+		if (f.method === StringMatchMethod.exact) {
+			return fv === compare;
+		}
+		if (f.method === StringMatchMethod.prefix) {
+			return fv.startsWith(compare);
+		}
+		if (f.method === StringMatchMethod.contains) {
+			return fv.includes(compare);
+		}
+		throw new Error("Unsupported");
+	}
+
 	public async query(
-		queryRequest: DocumentQueryRequest,
+		queryRequest: DocumentQuery,
 		options?: QueryOptions<T>
 	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
