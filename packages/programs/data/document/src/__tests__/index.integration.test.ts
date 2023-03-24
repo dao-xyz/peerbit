@@ -666,39 +666,47 @@ describe("index", () => {
 					).toContainAllValues(["1", "2"]);
 				});
 
-				it("arr", async () => {
+				describe("arr", () => {
 					let docArray1 = new Document({
 						id: "a",
-						name: undefined,
+						name: "_",
 						number: undefined,
 						tags: ["Hello", "World"],
 					});
 
 					let docArray2 = new Document({
 						id: "b",
-						name: undefined,
+						name: "__",
 						number: undefined,
 						tags: ["Hello"],
 					});
-					await writeStore.docs.put(docArray1);
-					await writeStore.docs.put(docArray2);
-
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
-						new DocumentQuery({
-							queries: [
-								new StringMatch({
-									key: "tags",
-									value: "world",
-									method: StringMatchMethod.contains,
-									caseInsensitive: true,
-								}),
-							],
-						})
-					);
-					expect(responses[0].results).toHaveLength(1);
-					expect(
-						responses[0].results.map((x) => x.value.id)
-					).toContainAllValues(["a"]);
+					beforeEach(async () => {
+						await writeStore.docs.put(docArray1);
+						await writeStore.docs.put(docArray2);
+					});
+					afterEach(async () => {
+						await writeStore.docs.del(docArray1.id);
+						await writeStore.docs.del(docArray2.id);
+					});
+					it("arr", async () => {
+						let responses: Results<Document>[] =
+							await stores[1].docs.index.query(
+								new DocumentQuery({
+									queries: [
+										new StringMatch({
+											key: "tags",
+											value: "world",
+											method: StringMatchMethod.contains,
+											caseInsensitive: true,
+										}),
+									],
+								})
+							);
+						expect(responses[0].results).toHaveLength(1);
+						expect(
+							responses[0].results.map((x) => x.value.id)
+						).toContainAllValues(["a"]);
+					});
 				});
 			});
 
