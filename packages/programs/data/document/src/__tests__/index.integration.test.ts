@@ -716,7 +716,7 @@ describe("index", () => {
 				expect(responses[0].results).toHaveLength(1);
 				expect(responses[0].results.map((x) => x.value.id)).toEqual(["4"]);
 			});
-			describe("bool", () => {
+			describe("logical", () => {
 				it("and", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(
 						new DocumentQuery({
