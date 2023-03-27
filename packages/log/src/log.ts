@@ -40,6 +40,7 @@ const randomId = () => new Date().getTime().toString();
 const getHash = <T>(e: Entry<T>) => e.hash;
 
 export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
+export type Change2<T> = { added: Entry<T>; removed: Entry<T>[] };
 
 export type LogOptions<T> = {
 	encryption?: PublicKeyEncryptionResolver;
@@ -467,11 +468,11 @@ export class Log<T> {
 			gidSeed: options.gidSeed,
 			encryption: options.reciever
 				? {
-						options: this._encryption as PublicKeyEncryptionResolver,
-						reciever: {
-							...options.reciever,
-						},
-				  }
+					options: this._encryption as PublicKeyEncryptionResolver,
+					reciever: {
+						...options.reciever,
+					},
+				}
 				: undefined,
 			canAppend: options.canAppend,
 		});
@@ -631,11 +632,11 @@ export class Log<T> {
 				await this._values.put(e);
 			}
 			for (const a of e.next) {
-				let nextIndexSet = this._nextsIndex[a];
+				let nextIndexSet = this._nextsIndex.get(e.hash);
 				if (!nextIndexSet) {
 					nextIndexSet = new Set();
 					nextIndexSet.add(a);
-					this._nextsIndex[a] = nextIndexSet;
+					this._nextsIndex.set(a, nextIndexSet);
 				} else {
 					nextIndexSet.add(a);
 				}
@@ -672,6 +673,132 @@ export class Log<T> {
 			removed,
 		};
 	}
+
+	async join2(
+		entries: (string | Entry<T>)[],
+		options?: { canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean, onChange?: (change: Change2<T>) => void | Promise<void>, verifySignatures?: boolean; trim?: TrimOptions }
+	): Promise<void> {
+
+		const stack: string[] = [];
+		let visited = new Set<string>();
+		let nextRefs: Map<string, Entry<T>[]> = new Map();
+		let entriesBottomUp: Entry<T>[] = [];
+		let resolvedEntries: Map<string, Entry<T>> = new Map();
+		for (const e of entries) {
+			let hash: string;
+			if (e instanceof Entry) {
+				hash = e.hash;
+				resolvedEntries.set(e.hash, e)
+			}
+			else {
+				hash = e;
+			}
+			if (this.has(hash)) {
+				continue;
+			}
+			stack.push(hash);
+		}
+
+		for (const hash of stack) {
+
+			if (visited.has(hash)) {
+				continue;
+			}
+			visited.add(hash)
+
+			const entry = resolvedEntries.get(hash) || await Entry.fromMultihash<T>(this._storage, hash);
+			entry.init(this);
+			resolvedEntries.set(entry.hash, entry);
+
+			if (entry.next) {
+				let isRoot = true;
+				for (const next of entry.next) {
+
+					if (this.has(next)) {
+						this._headsIndex.del((await this.get(next))!)
+						continue;
+					}
+
+					isRoot = false;
+
+
+
+
+					let nextIndexSet = nextRefs.get(next);
+					if (!nextIndexSet) {
+						nextIndexSet = [];
+						nextIndexSet.push(entry);
+						nextRefs.set(next, nextIndexSet);
+					} else {
+						nextIndexSet.push(entry);
+					}
+					if (!visited.has(next)) {
+						stack.push(next);
+					}
+				}
+				if (isRoot) {
+					entriesBottomUp.push(entry);
+				}
+			}
+			else {
+				entriesBottomUp.push(entry)
+			}
+		}
+
+		// Get the difference of the logs
+		const nextFromNew = new Set<string>();
+		while (entriesBottomUp.length > 0) {
+			const e = (entriesBottomUp.shift())!;
+
+			if (options?.verifySignatures) {
+				if (!(await e.verifySignatures())) {
+					throw new Error('Invalid signature entry with hash "' + e.hash + '"');
+				}
+			}
+			if (!isDefined(e.hash)) {
+				throw new Error("Unexpected");
+			}
+
+			if (!this.has(e.hash)) {
+
+				if (options?.canAppend && !(await options.canAppend(e))) {
+					continue;
+				}
+
+				// Update the internal entry index
+				await this._entryIndex.set(e);
+				await this._values.put(e);
+				let forward = nextRefs.get(e.hash);
+				if (forward) {
+					for (const en of forward) {
+						entriesBottomUp.push(en);
+					}
+				}
+				else {
+					this.headsIndex.put(e);
+				}
+
+				for (const a of e.next) {
+					let nextIndexSet = this._nextsIndex.get(a);
+					if (!nextIndexSet) {
+						nextIndexSet = new Set();
+						nextIndexSet.add(e.hash);
+						this._nextsIndex.set(a, nextIndexSet);
+					} else {
+						nextIndexSet.add(a);
+					}
+					nextFromNew.add(a);
+				}
+
+				const clock = await e.getClock();
+				this._hlc.update(clock.timestamp);
+
+				const removed = await this.trim(options?.trim);
+				options?.onChange && (await options.onChange({ added: e, removed: removed }))
+			}
+		}
+	}
+
 
 	/// TODO simplify methods below
 

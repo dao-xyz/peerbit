@@ -10,6 +10,7 @@ import {
 	Change,
 	TrimToByteLengthOption,
 	TrimToLengthOption,
+	Change2,
 } from "@dao-xyz/peerbit-log";
 import {
 	Encoding,
@@ -35,7 +36,7 @@ import { join } from "./replicator.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
 export const logger = loggerFn({ module: "store" });
 
-export class CachedValue {}
+export class CachedValue { }
 export type AddOperationOptions<T> = {
 	skipCanAppendCheck?: boolean;
 	identity?: Identity;
@@ -126,7 +127,7 @@ export interface IStoreOptions<T> {
 
 export interface IInitializationOptions<T>
 	extends IStoreOptions<T>,
-		IInitializationOptionsDefault<T> {
+	IInitializationOptionsDefault<T> {
 	resolveCache: (store: Store<any>) => Promise<Cache> | Cache;
 	replicator?: (gid: string) => Promise<boolean>;
 	replicatorsCacheId?: () => string;
@@ -276,6 +277,7 @@ export class Store<T> implements Initiable<T> {
 			this._cacheWriteQueue.add(() =>)
 		}, 100)
 	} */
+
 
 	private async _updateCachedHeads(
 		change: {
@@ -435,7 +437,7 @@ export class Store<T> implements Initiable<T> {
 		return this._storeIndex.toString();
 	}
 
-	get oplog(): Log<any> {
+	get oplog(): Log<T> {
 		return this._oplog;
 	}
 
@@ -597,8 +599,8 @@ export class Store<T> implements Initiable<T> {
 			if (amount != null && amount >= 0 && amount < heads.length) {
 				throw new Error(
 					"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
-						amount +
-						" entries"
+					amount +
+					" entries"
 				);
 			}
 			this._oplog = await Log.fromEntryHash(this._store, this.identity, heads, {
@@ -733,7 +735,7 @@ export class Store<T> implements Initiable<T> {
 		};
 
 		await Promise.all([
-			this._updateCachedHeads(change),
+			this._cacheWriteQueue.add(() => this._updateCachedHeads(change)),
 			this._updateIndex(change),
 		]);
 		return change;
@@ -746,104 +748,47 @@ export class Store<T> implements Initiable<T> {
 	 */
 	async sync(
 		entries: (EntryWithRefs<T> | Entry<T> | string)[],
-		options: { canAppend?: CanAppend<T> } = {}
-	): Promise<boolean> {
+		options: { canAppend?: CanAppend<T>, onChange?: ((change: Change2<any>) => void | Promise<void>) } = {}
+	): Promise<void> {
+
+		await this.waitForHeads()
+
 		logger.debug(`Sync request #${entries.length}`);
-		if (entries.length === 0) {
-			return false;
+		let entriesToJoin: (Entry<T> | string)[] = [];
+		for (const e of entries) {
+			if (e instanceof Entry || typeof e === 'string') {
+				entriesToJoin.push(e)
+			}
+			else {
+				for (const ref of e.references) {
+					entriesToJoin.push(ref);
+				}
+				entriesToJoin.push(e.entry);
+			}
 		}
-
-		const handle = async (headToHandle: EntryWithRefs<T> | Entry<T>) => {
-			const allEntries =
-				headToHandle instanceof Entry
-					? [headToHandle]
-					: [headToHandle.entry, ...headToHandle.references];
-			await Promise.all(
-				allEntries.map((h) =>
-					h.init({
-						encoding: this.oplog.encoding,
-						encryption: this.oplog.encryption,
-					})
-				)
-			);
-			const entry =
-				headToHandle instanceof Entry ? headToHandle : headToHandle.entry;
-
-			this._options.onReplicationQueued &&
-				this._options.onReplicationQueued(this, entry);
-
-			const canAppend = options?.canAppend || this.canAppend;
-			if (canAppend && !(await canAppend(entry))) {
-				logger.debug("Not allowd to append head " + entry.hash);
-				return Promise.resolve(null);
+		let addedMap: Map<string, Entry<T>> = new Map()
+		let allRemoved: Entry<T>[] = []
+		await this.oplog.join2(entriesToJoin, {
+			canAppend: (entry) => {
+				let canAppend = (options?.canAppend || this.canAppend);
+				return !canAppend || canAppend(entry)
+			},
+			onChange: (change) => {
+				options?.onChange?.(change)
+				addedMap.set(change.added.hash, change.added);
+				for (const removed of change.removed) {
+					addedMap.delete(removed.hash);
+					allRemoved.push(removed)
+				}
+				return this._updateIndex({ added: [change.added], removed: change.removed })
 			}
-			await Promise.all(
-				allEntries.map(async (head) => {
-					const headHash = head.hash;
-					head.hash = undefined as any;
-					try {
-						const hash = await Entry.toMultihash(this._store, head);
-						head.hash = headHash;
-						if (head.hash === undefined) {
-							head.hash = hash; // can happen if you sync entries that you load directly from ipfs
-						} else if (hash !== head.hash) {
-							logger.error("Head hash didn't match the contents");
-							throw new Error("Head hash didn't match the contents");
-						}
-					} catch (error) {
-						logger.error(error);
-						throw error;
-					}
-				})
-			);
+		})
 
-			return headToHandle;
-		};
-		const hash = (entry: EntryWithRefs<T> | Entry<T> | string) => {
-			if (entry instanceof Entry) {
-				return entry.hash;
-			} else if (typeof entry === "string") {
-				return entry;
-			}
-			return entry.entry.hash;
-		};
+		let change: Change<T> = { added: [...addedMap.values()], removed: allRemoved }
+		await this._cacheWriteQueue.add(() => this._updateCachedHeads(change))
 
-		const newEntries: (Entry<T> | EntryWithRefs<T>)[] = [];
-		for (const entry of entries) {
-			const h = hash(entry);
-			if (h && this.oplog.has(h)) {
-				continue;
-			}
-			newEntries.push(
-				typeof entry === "string"
-					? await Entry.fromMultihash(this._store, entry)
-					: entry
-			);
-		}
-
-		if (newEntries.length === 0) {
-			return false;
-		}
-
-		const saved = await mapSeries(newEntries, handle);
-		const change = await join(
-			saved as EntryWithRefs<T>[] | Entry<T>[],
-			this._oplog,
-			{
-				concurrency: this._options.replicationConcurrency,
-				onFetched: (entry) =>
-					this._options.onReplicationFetch &&
-					this._options.onReplicationFetch(this, entry),
-			}
-		);
-
-		await Promise.all([
-			this._updateCachedHeads(change),
-			this._updateIndex(change),
-		]);
 		this._options.onReplicationComplete &&
 			this._options.onReplicationComplete(this);
-		return true;
 	}
 
 	async saveSnapshot() {
@@ -880,7 +825,6 @@ export class Store<T> implements Initiable<T> {
 		if (this._options.onLoad) {
 			await this._options.onLoad(this);
 		}
-		await this.sync([]);
 
 		const snapshotCID = await this._cache
 			.get(this.snapshotPath)

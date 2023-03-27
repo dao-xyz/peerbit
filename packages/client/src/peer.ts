@@ -550,8 +550,7 @@ export class Peerbit {
 				const programAddressObject = Address.parse(programAddress);
 
 				logger.debug(
-					`${this.id}: Recieved heads: ${
-						heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
+					`${this.id}: Recieved heads: ${heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
 					}, storeIndex: ${storeIndex}`
 				);
 				if (heads) {
@@ -565,9 +564,9 @@ export class Peerbit {
 					if (!storeInfo) {
 						logger.error(
 							"Missing store info, which was expected to exist for " +
-								programAddressObject +
-								", " +
-								storeIndex
+							programAddressObject +
+							", " +
+							storeIndex
 						);
 						return;
 					}
@@ -721,9 +720,9 @@ export class Peerbit {
 				} catch (error: any) {
 					logger.warn(
 						"Recieved subscription with invalid data on topic: " +
-							subscription.topic +
-							". Error: " +
-							error?.message
+						subscription.topic +
+						". Error: " +
+						error?.message
 					);
 				}
 			}
@@ -772,10 +771,9 @@ export class Peerbit {
 								// console.log('new gid for peer', newPeers.length, this.id.toString(), newPeer, gid, entries.length, newPeers)
 								try {
 									logger.debug(
-										`${this.id}: Exchange heads ${
-											entries.length === 1
-												? entries[0].hash
-												: "#" + entries.length
+										`${this.id}: Exchange heads ${entries.length === 1
+											? entries[0].hash
+											: "#" + entries.length
 										}  on rebalance`
 									);
 									for (const entry of entries) {
@@ -785,7 +783,7 @@ export class Peerbit {
 									if (error instanceof TimeoutError) {
 										logger.error(
 											"Missing channel when reorg to peer: " +
-												currentPeer.toString()
+											currentPeer.toString()
 										);
 										continue;
 									}
@@ -955,9 +953,9 @@ export class Peerbit {
 		}
 		throw new Error(
 			"Missing sorted peer list of address: " +
-				address +
-				". Unexpected error. " +
-				this.programs.get(address)?.program
+			address +
+			". Unexpected error. " +
+			this.programs.get(address)?.program
 		);
 	}
 

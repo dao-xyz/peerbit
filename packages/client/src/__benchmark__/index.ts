@@ -11,7 +11,7 @@ import { v4 as uuid } from "uuid";
 import { Peerbit } from "../peer.js";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 1,080 ops/sec ±5.03% (76 runs sampled)
+// put x 1,257 ops/sec ±2.41% (81 runs sampled)
 
 @variant("document")
 class Document {
@@ -71,11 +71,11 @@ for (const [i, peer] of session.peers.entries()) {
 		onUpdate:
 			i === session.peers.length - 1
 				? (change) => {
-						change.added.forEach((e) => {
-							readerResolver.get(e.hash)?.();
-							readerResolver.delete(e.hash);
-						});
-				  }
+					change.added.forEach((e) => {
+						readerResolver.get(e.hash)?.();
+						readerResolver.delete(e.hash);
+					});
+				}
 				: undefined,
 		role:
 			i === session.peers.length - 1

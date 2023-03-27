@@ -17,7 +17,7 @@ import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 11,146 ops/sec ±5.74% (77 runs sampled)
+// put x 11,709 ops/sec ±5.40% (79 runs sampled)
 
 @variant("document")
 class Document {
