@@ -135,7 +135,11 @@ describe(`Replication`, function () {
 		} catch (error) {
 			console.error(
 				"Did not recieve all entries, missing: " +
-					(db2.store.oplog.length - entryCount)
+					(db2.store.oplog.length - entryCount),
+				"Fetch events: " +
+					fetchEvents +
+					", fetch hashes size: " +
+					fetchHashes.size
 			);
 			const entries = (await db2.iterator({ limit: -1 })).collect();
 			for (const entry of entries) {
