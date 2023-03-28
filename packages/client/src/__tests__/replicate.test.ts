@@ -133,6 +133,9 @@ describe(`Replication`, function () {
 				(await db2.iterator({ limit: -1 })).collect().length === entryCount
 		);
 		const entries = (await db2.iterator({ limit: -1 })).collect();
+		entries.sort((x, y) =>
+			x.metadata.clock.timestamp.compare(y.metadata.clock.timestamp)
+		);
 		expect(entries.length).toEqual(entryCount);
 		expect(entries[0].payload.getValue().value).toEqual("hello0");
 		expect(entries[entries.length - 1].payload.getValue().value).toEqual(
