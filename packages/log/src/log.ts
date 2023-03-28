@@ -637,7 +637,9 @@ export class Log<T> {
 
 			const entry =
 				resolvedEntries.get(hash) ||
-				(await Entry.fromMultihash<T>(this._storage, hash));
+				(await Entry.fromMultihash<T>(this._storage, hash, {
+					replicate: true,
+				}));
 			entry.init(this);
 			resolvedEntries.set(entry.hash, entry);
 			const nexts = await entry.getNext();
