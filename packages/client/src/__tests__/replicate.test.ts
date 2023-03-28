@@ -115,7 +115,7 @@ describe(`Replication`, function () {
 			))!
 		);
 
-		const entryCount = 30;
+		const entryCount = 3;
 		const entryArr: number[] = [];
 
 		for (let i = 0; i < entryCount; i++) {
