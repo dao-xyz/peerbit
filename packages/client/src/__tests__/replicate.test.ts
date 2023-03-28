@@ -133,10 +133,9 @@ describe(`Replication`, function () {
 			x.metadata.clock.timestamp.compare(y.metadata.clock.timestamp)
 		);
 		expect(entries.length).toEqual(entryCount);
-		expect(entries[0].payload.getValue().value).toEqual("hello0");
-		expect(entries[entries.length - 1].payload.getValue().value).toEqual(
-			"hello99"
-		);
+		for (let i = 0; i < entryCount; i++) {
+			expect(entries[i].payload.getValue().value).toEqual("hello" + i);
+		}
 	});
 
 	it("emits correct replication info", async () => {
