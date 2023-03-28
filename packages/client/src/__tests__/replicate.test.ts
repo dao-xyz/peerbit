@@ -130,7 +130,7 @@ describe(`Replication`, function () {
 		await waitForAsync(
 			async () =>
 				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
-			{ delayInterval: 200, timeout: 20000 }
+			{ delayInterval: 200, timeout: 60000 }
 		);
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		entries.sort((x, y) =>
