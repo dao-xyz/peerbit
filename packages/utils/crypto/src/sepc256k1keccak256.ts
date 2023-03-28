@@ -1,7 +1,7 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
 import { verifyMessage, Wallet } from "@ethersproject/wallet";
-import { joinSignature, arrayify } from "@ethersproject/bytes";
+import { joinSignature } from "@ethersproject/bytes";
 import { hashMessage } from "@ethersproject/hash";
 
 import { equals } from "@dao-xyz/uint8arrays";

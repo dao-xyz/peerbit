@@ -692,7 +692,7 @@ export class Entry<T>
 		if (!hash) throw new Error(`Invalid hash: ${hash}`);
 		const bytes = await store.get<Uint8Array>(hash, options);
 		if (!bytes) {
-			throw new Error("Fialed to resolve block: " + hash);
+			throw new Error("Failed to resolve block: " + hash);
 		}
 		const entry = deserialize(await getBlockValue(bytes), Entry);
 		entry.hash = hash;

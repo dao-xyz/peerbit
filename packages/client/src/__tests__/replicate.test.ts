@@ -38,7 +38,7 @@ describe(`Replication`, function () {
 		session = await LSession.connected(2);
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
-		db1 = await client1.open(new EventStore<string>({ id: "a" }));
+		db1 = await client1.open(new EventStore<string>());
 	});
 
 	afterEach(async () => {
@@ -127,11 +127,25 @@ describe(`Replication`, function () {
 
 		// Once db2 has finished replication, make sure it has all elements
 		// and process to the asserts below
-		await waitFor(() => db2.store.oplog.length === entryCount);
+		try {
+			await waitFor(() => db2.store.oplog.length === entryCount);
+		} catch (error) {
+			console.error(
+				"Did not recieve all entries, missing: " +
+					(entryCount - db2.store.oplog.length)
+			);
+			const entries = (await db2.iterator({ limit: -1 })).collect();
+			for (const entry of entries) {
+				console.error(entry.payload.getValue().value);
+			}
+			throw error;
+		}
+
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		entries.sort((x, y) =>
 			x.metadata.clock.timestamp.compare(y.metadata.clock.timestamp)
 		);
+
 		expect(entries.length).toEqual(entryCount);
 		for (let i = 0; i < entryCount; i++) {
 			expect(entries[i].payload.getValue().value).toEqual("hello" + i);
