@@ -97,8 +97,9 @@ export class EventStore<T> extends Program {
 		const amount = opts.limit
 			? opts.limit > -1
 				? opts.limit
-				: (await this._index.get()).length
+				: this.store.oplog.length
 			: 1; // Return 1 if no limit is provided
+
 		const events = (await this._index.get()).slice();
 		let result: Entry<Operation<T>>[] = [];
 

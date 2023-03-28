@@ -152,7 +152,15 @@ describe(`Replication`, function () {
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		expect(entries.length).toEqual(entryCount);
 		for (let i = 0; i < entryCount; i++) {
-			expect(entries[i].payload.getValue().value).toEqual("hello" + i);
+			try {
+				expect(entries[i].payload.getValue().value).toEqual("hello" + i);
+			} catch (error) {
+				console.error(
+					"Entries out of order: " +
+						entries.map((x) => x.payload.getValue().value).join(", ")
+				);
+				throw error;
+			}
 		}
 	});
 
