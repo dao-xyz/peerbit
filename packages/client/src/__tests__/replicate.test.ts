@@ -121,7 +121,6 @@ describe(`Replication`, function () {
 		for (let i = 0; i < entryCount; i++) {
 			//	entryArr.push(i);
 			await db1.add("hello" + i);
-			await delay(100);
 		}
 
 		/* 	const add = (i: number) => db1.add("hello" + i);
