@@ -630,7 +630,7 @@ export class Log<T> {
 		}
 
 		for (const hash of stack) {
-			if (visited.has(hash)) {
+			if (visited.has(hash) || this.has(hash)) {
 				continue;
 			}
 			visited.add(hash);
@@ -643,11 +643,14 @@ export class Log<T> {
 			entry.init(this);
 			resolvedEntries.set(entry.hash, entry);
 			const nexts = await entry.getNext();
+
 			if (nexts) {
 				let isRoot = true;
 				for (const next of nexts) {
 					if (this.has(next)) {
-						this._headsIndex.del((await this.get(next))!);
+						if (this._headsIndex.has(next)) {
+							this._headsIndex.del((await this.get(next))!);
+						}
 						continue;
 					}
 
@@ -1086,42 +1089,5 @@ export class Log<T> {
 
 		entries.forEach(addToIndex);
 		return entries.reduce(reduceTailHashes, []);
-	}
-
-	static async difference<T>(
-		from: Log<T>,
-		into: Log<T>
-	): Promise<Map<string, Entry<T>>> {
-		const stack: string[] = [...from._headsIndex.index.keys()];
-		const traversed: { [key: string]: boolean } = {};
-		const res: Map<string, Entry<T>> = new Map();
-
-		const pushToStack = (hash: string) => {
-			if (!traversed[hash]) {
-				stack.push(hash);
-				traversed[hash] = true;
-			}
-		};
-
-		while (stack.length > 0) {
-			const hash = stack.shift();
-			if (!hash) {
-				throw new Error("Unexpected");
-			}
-			const entry = await from.get(hash);
-			if (entry && !(await into.get(hash))) {
-				// TODO do we need to do som GID checks?
-				res.set(entry.hash, entry);
-				traversed[entry.hash] = true;
-
-				// TODO init below is kind of flaky to do this here, but we dont want to iterate over all entries before the difference method is invoked in the join log method
-				entry.init({
-					encryption: into._encryption,
-					encoding: into._encoding,
-				});
-				(await entry.getNext()).forEach(pushToStack);
-			}
-		}
-		return res;
 	}
 }
