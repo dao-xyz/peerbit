@@ -85,12 +85,11 @@ describe("transport", function () {
 		for (let i = 0; i < 100; i++) {
 			promises.push(store2.get<Uint8Array>(stringifyCid(cid)));
 		}
-		const datas = await Promise.all(promises);
+		const resolved = await Promise.all(promises);
 		expect(publishCounter).toEqual(1);
-		for (const data of datas) {
-			expect(await getBlockValue(data!)).toEqual(data);
+		for (const b of resolved) {
+			expect(await getBlockValue(b!)).toEqual(data);
 		}
-		//	expect(await getBlockValue(readData2!)).toEqual(data);
 	});
 
 	it("reads from joining peer", async () => {
