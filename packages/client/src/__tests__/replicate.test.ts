@@ -127,11 +127,7 @@ describe(`Replication`, function () {
 
 		// Once db2 has finished replication, make sure it has all elements
 		// and process to the asserts below
-		await waitForAsync(
-			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
-			{ delayInterval: 200, timeout: 60000 }
-		);
+		await waitFor(() => db2.store.oplog.length === entryCount);
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		entries.sort((x, y) =>
 			x.metadata.clock.timestamp.compare(y.metadata.clock.timestamp)
@@ -172,11 +168,7 @@ describe(`Replication`, function () {
 		//await mapSeries(adds, (i) => db1.add("hello " + i));
 
 		// All entries should be in the database
-		await waitForAsync(
-			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
-			{ delayInterval: 200, timeout: 20000 }
-		);
+		await waitFor(() => db2.store.oplog.length === entryCount);
 
 		// All entries should be in the database
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
