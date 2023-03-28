@@ -172,34 +172,6 @@ describe(`load`, () => {
 			}
 		});
 
-		it("loading a database emits 'ready' event", async () => {
-			let done = false;
-			db = await client1.open(
-				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				))!,
-				{
-					onReady: async (store) => {
-						await waitFor(
-							async () =>
-								(await db.iterator({ limit: -1 })).collect().length ===
-								entryCount
-						);
-						const items = (await db.iterator({ limit: -1 })).collect();
-						expect(items.length).toEqual(entryCount);
-						expect(items[0].payload.getValue().value).toEqual("hello0");
-						expect(items[items.length - 1].payload.getValue().value).toEqual(
-							"hello" + (entryCount - 1)
-						);
-						done = true;
-					},
-				}
-			);
-			await db.load();
-			await waitFor(() => done);
-		});
-
 		it("loading a database emits 'load.progress' event", async () => {
 			let count = 0;
 			let done = false;
@@ -631,26 +603,22 @@ describe(`load`, () => {
 			});
 	 */
 		it("loading a database emits 'ready' event", async () => {
-			let done = false;
 			db = await client1.open(
 				(await EventStore.load<EventStore<string>>(
 					client1.libp2p.directblock,
 					Address.parse(address)
-				))!,
-				{
-					onReady: async (store) => {
-						const items = (await db.iterator({ limit: -1 })).collect();
-						expect(items.length).toEqual(entryCount);
-						expect(items[0].payload.getValue().value).toEqual("hello0");
-						expect(items[entryCount - 1].payload.getValue().value).toEqual(
-							"hello" + (entryCount - 1)
-						);
-						done = true;
-					},
-				}
+				))!
 			);
 			await db.loadFromSnapshot();
-			await waitFor(() => done);
+			expect((await db.iterator({ limit: -1 })).collect().length).toEqual(
+				entryCount
+			);
+			const items = (await db.iterator({ limit: -1 })).collect();
+			expect(items.length).toEqual(entryCount);
+			expect(items[0].payload.getValue().value).toEqual("hello0");
+			expect(items[entryCount - 1].payload.getValue().value).toEqual(
+				"hello" + (entryCount - 1)
+			);
 		});
 
 		it("loading a database emits 'load.progress' event", async () => {

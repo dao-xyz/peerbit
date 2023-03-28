@@ -71,11 +71,11 @@ for (const [i, peer] of session.peers.entries()) {
 		onUpdate:
 			i === session.peers.length - 1
 				? (change) => {
-					change.added.forEach((e) => {
-						readerResolver.get(e.hash)?.();
-						readerResolver.delete(e.hash);
-					});
-				}
+						change.added.forEach((e) => {
+							readerResolver.get(e.hash)?.();
+							readerResolver.delete(e.hash);
+						});
+				  }
 				: undefined,
 		role:
 			i === session.peers.length - 1

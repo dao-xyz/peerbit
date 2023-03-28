@@ -1,4 +1,3 @@
-import mapSeries from "p-each-series";
 import PQueue from "p-queue";
 import {
 	Log,
@@ -32,11 +31,11 @@ import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import path from "path-browserify";
 import { v4 as uuid } from "uuid";
-import { join } from "./replicator.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
+
 export const logger = loggerFn({ module: "store" });
 
-export class CachedValue { }
+export class CachedValue {}
 export type AddOperationOptions<T> = {
 	skipCanAppendCheck?: boolean;
 	identity?: Identity;
@@ -115,10 +114,6 @@ export interface IStoreOptions<T> {
 	onLoad?: (store: Store<T>) => void;
 	onLoadProgress?: (store: Store<T>, entry: Entry<T>) => void;
 	onOpen?: (store: Store<any>) => Promise<void>;
-	onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
-	onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
-	onReplicationComplete?: (store: Store<any>) => void; // TODO, do we need this?
-	onReady?: (store: Store<T>) => void; // TODO, do we need this?
 	encryption?: PublicKeyEncryptionResolver;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
@@ -127,7 +122,7 @@ export interface IStoreOptions<T> {
 
 export interface IInitializationOptions<T>
 	extends IStoreOptions<T>,
-	IInitializationOptionsDefault<T> {
+		IInitializationOptionsDefault<T> {
 	resolveCache: (store: Store<any>) => Promise<Cache> | Cache;
 	replicator?: (gid: string) => Promise<boolean>;
 	replicatorsCacheId?: () => string;
@@ -261,23 +256,6 @@ export class Store<T> implements Initiable<T> {
 
 		return this;
 	}
-
-	/* private _updateCacheHeadsJob: any;
-	private _updateCacheChange: {
-		added: (Entry<T> | string)[];
-		removed: (Entry<T> | string)[];
-	}
-	updateCacheHeads(change: {
-		added: (Entry<T> | string)[];
-		removed: (Entry<T> | string)[];
-	},
-		reset?: boolean) {
-		clearTimeout(this._updateCacheHeadsJob)
-		this._updateCacheHeadsJob = setTimeout(() => {
-			this._cacheWriteQueue.add(() =>)
-		}, 100)
-	} */
-
 
 	private async _updateCachedHeads(
 		change: {
@@ -599,8 +577,8 @@ export class Store<T> implements Initiable<T> {
 			if (amount != null && amount >= 0 && amount < heads.length) {
 				throw new Error(
 					"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
-					amount +
-					" entries"
+						amount +
+						" entries"
 				);
 			}
 			this._oplog = await Log.fromEntryHash(this._store, this.identity, heads, {
@@ -624,7 +602,6 @@ export class Store<T> implements Initiable<T> {
 			true
 		);
 		this._loaded = true;
-		this._options.onReady && this._options.onReady(this);
 	}
 
 	async loadLastHeadsPath() {
@@ -748,47 +725,52 @@ export class Store<T> implements Initiable<T> {
 	 */
 	async sync(
 		entries: (EntryWithRefs<T> | Entry<T> | string)[],
-		options: { canAppend?: CanAppend<T>, onChange?: ((change: Change2<any>) => void | Promise<void>) } = {}
+		options: {
+			canAppend?: CanAppend<T>;
+			onChange?: (change: Change2<any>) => void | Promise<void>;
+		} = {}
 	): Promise<void> {
-
-		await this.waitForHeads()
+		await this.waitForHeads();
 
 		logger.debug(`Sync request #${entries.length}`);
-		let entriesToJoin: (Entry<T> | string)[] = [];
+		const entriesToJoin: (Entry<T> | string)[] = [];
 		for (const e of entries) {
-			if (e instanceof Entry || typeof e === 'string') {
-				entriesToJoin.push(e)
-			}
-			else {
+			if (e instanceof Entry || typeof e === "string") {
+				entriesToJoin.push(e);
+			} else {
 				for (const ref of e.references) {
 					entriesToJoin.push(ref);
 				}
 				entriesToJoin.push(e.entry);
 			}
 		}
-		let addedMap: Map<string, Entry<T>> = new Map()
-		let allRemoved: Entry<T>[] = []
-		await this.oplog.join2(entriesToJoin, {
+		const addedMap: Map<string, Entry<T>> = new Map();
+		const allRemoved: Entry<T>[] = [];
+
+		await this.oplog.join(entriesToJoin, {
 			canAppend: (entry) => {
-				let canAppend = (options?.canAppend || this.canAppend);
-				return !canAppend || canAppend(entry)
+				const canAppend = options?.canAppend || this.canAppend;
+				return !canAppend || canAppend(entry);
 			},
 			onChange: (change) => {
-				options?.onChange?.(change)
+				options?.onChange?.(change);
 				addedMap.set(change.added.hash, change.added);
 				for (const removed of change.removed) {
 					addedMap.delete(removed.hash);
-					allRemoved.push(removed)
+					allRemoved.push(removed);
 				}
-				return this._updateIndex({ added: [change.added], removed: change.removed })
-			}
-		})
+				return this._updateIndex({
+					added: [change.added],
+					removed: change.removed,
+				});
+			},
+		});
 
-		let change: Change<T> = { added: [...addedMap.values()], removed: allRemoved }
-		await this._cacheWriteQueue.add(() => this._updateCachedHeads(change))
-
-		this._options.onReplicationComplete &&
-			this._options.onReplicationComplete(this);
+		const change: Change<T> = {
+			added: [...addedMap.values()],
+			removed: allRemoved,
+		};
+		await this._cacheWriteQueue.add(() => this._updateCachedHeads(change));
 	}
 
 	async saveSnapshot() {
@@ -862,10 +844,7 @@ export class Store<T> implements Initiable<T> {
 					added: await this._oplog.values.toArray(),
 					removed: [],
 				});
-				this._options.onReplicationComplete &&
-					this._options.onReplicationComplete(this);
 			}
-			this._options.onReady && this._options.onReady(this);
 		} else {
 			throw new Error(`Snapshot for ${this.id} not found!`);
 		}

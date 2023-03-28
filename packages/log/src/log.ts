@@ -468,11 +468,11 @@ export class Log<T> {
 			gidSeed: options.gidSeed,
 			encryption: options.reciever
 				? {
-					options: this._encryption as PublicKeyEncryptionResolver,
-					reciever: {
-						...options.reciever,
-					},
-				}
+						options: this._encryption as PublicKeyEncryptionResolver,
+						reciever: {
+							...options.reciever,
+						},
+				  }
 				: undefined,
 			canAppend: options.canAppend,
 		});
@@ -598,99 +598,29 @@ export class Log<T> {
 		return this._trim.trim(option);
 	}
 
-	/**
-	 * Join two logs.
-	 *
-	 * Joins another log into this one.
-	 *
-	 * @param {Log} log Log to join with this Log
-	 * @param {number} [size=-1] Max size of the joined log
-	 * @returns {Promise<Log>} This Log instance
-	 * @example
-	 * await log1.join(log2)
-	 */
 	async join(
-		log: Log<T>,
-		options?: { verifySignatures?: boolean; trim?: TrimOptions }
-	): Promise<Change<T>> {
-		// Get the difference of the logs
-		const newItems = await Log.difference(log, this);
-		const nextFromNew = new Set<string>();
-		for (const e of newItems.values()) {
-			if (options?.verifySignatures) {
-				if (!(await e.verifySignatures())) {
-					throw new Error('Invalid signature entry with hash "' + e.hash + '"');
-				}
-			}
-			if (!isDefined(e.hash)) {
-				throw new Error("Unexpected");
-			}
-			const entry = await this.get(e.hash);
-			if (!entry) {
-				// Update the internal entry index
-				await this._entryIndex.set(e);
-				await this._values.put(e);
-			}
-			for (const a of e.next) {
-				let nextIndexSet = this._nextsIndex.get(e.hash);
-				if (!nextIndexSet) {
-					nextIndexSet = new Set();
-					nextIndexSet.add(a);
-					this._nextsIndex.set(a, nextIndexSet);
-				} else {
-					nextIndexSet.add(a);
-				}
-				nextFromNew.add(a);
-			}
-
-			const clock = await e.getClock();
-			this._hlc.update(clock.timestamp);
+		entriesOrLog: (string | Entry<T>)[] | Log<T>,
+		options?: {
+			canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean;
+			onChange?: (change: Change2<T>) => void | Promise<void>;
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
 		}
-
-		// Merge the heads
-		const notReferencedByNewItems = (e: Entry<any>) => !nextFromNew.has(e.hash);
-		const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex.has(e.hash);
-
-		const added: Entry<T>[] = new Array(newItems.size);
-		let i = 0;
-		for (const [_hash, item] of newItems) {
-			if (notInCurrentNexts(item) && notReferencedByNewItems(item)) {
-				this.headsIndex.put(item);
-			}
-			added[i++] = item;
-		}
-
-		const delPromises: Promise<any>[] = new Array(nextFromNew.size);
-		for (const [i, next] of nextFromNew.entries()) {
-			delPromises[i] = this.get(next).then((v) => this.headsIndex.del(v!));
-		}
-		await Promise.all(delPromises);
-
-		const removed = await this.trim(options?.trim);
-
-		return {
-			added,
-			removed,
-		};
-	}
-
-	async join2(
-		entries: (string | Entry<T>)[],
-		options?: { canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean, onChange?: (change: Change2<T>) => void | Promise<void>, verifySignatures?: boolean; trim?: TrimOptions }
 	): Promise<void> {
-
 		const stack: string[] = [];
-		let visited = new Set<string>();
-		let nextRefs: Map<string, Entry<T>[]> = new Map();
-		let entriesBottomUp: Entry<T>[] = [];
-		let resolvedEntries: Map<string, Entry<T>> = new Map();
+		const visited = new Set<string>();
+		const nextRefs: Map<string, Entry<T>[]> = new Map();
+		const entriesBottomUp: Entry<T>[] = [];
+		const resolvedEntries: Map<string, Entry<T>> = new Map();
+		const entries = Array.isArray(entriesOrLog)
+			? entriesOrLog
+			: await entriesOrLog.values.toArray();
 		for (const e of entries) {
 			let hash: string;
 			if (e instanceof Entry) {
 				hash = e.hash;
-				resolvedEntries.set(e.hash, e)
-			}
-			else {
+				resolvedEntries.set(e.hash, e);
+			} else {
 				hash = e;
 			}
 			if (this.has(hash)) {
@@ -700,29 +630,26 @@ export class Log<T> {
 		}
 
 		for (const hash of stack) {
-
 			if (visited.has(hash)) {
 				continue;
 			}
-			visited.add(hash)
+			visited.add(hash);
 
-			const entry = resolvedEntries.get(hash) || await Entry.fromMultihash<T>(this._storage, hash);
+			const entry =
+				resolvedEntries.get(hash) ||
+				(await Entry.fromMultihash<T>(this._storage, hash));
 			entry.init(this);
 			resolvedEntries.set(entry.hash, entry);
-
-			if (entry.next) {
+			const nexts = await entry.getNext();
+			if (nexts) {
 				let isRoot = true;
-				for (const next of entry.next) {
-
+				for (const next of nexts) {
 					if (this.has(next)) {
-						this._headsIndex.del((await this.get(next))!)
+						this._headsIndex.del((await this.get(next))!);
 						continue;
 					}
 
 					isRoot = false;
-
-
-
 
 					let nextIndexSet = nextRefs.get(next);
 					if (!nextIndexSet) {
@@ -739,16 +666,15 @@ export class Log<T> {
 				if (isRoot) {
 					entriesBottomUp.push(entry);
 				}
-			}
-			else {
-				entriesBottomUp.push(entry)
+			} else {
+				entriesBottomUp.push(entry);
 			}
 		}
 
 		// Get the difference of the logs
 		const nextFromNew = new Set<string>();
 		while (entriesBottomUp.length > 0) {
-			const e = (entriesBottomUp.shift())!;
+			const e = entriesBottomUp.shift()!;
 
 			if (options?.verifySignatures) {
 				if (!(await e.verifySignatures())) {
@@ -760,7 +686,6 @@ export class Log<T> {
 			}
 
 			if (!this.has(e.hash)) {
-
 				if (options?.canAppend && !(await options.canAppend(e))) {
 					continue;
 				}
@@ -768,13 +693,12 @@ export class Log<T> {
 				// Update the internal entry index
 				await this._entryIndex.set(e);
 				await this._values.put(e);
-				let forward = nextRefs.get(e.hash);
+				const forward = nextRefs.get(e.hash);
 				if (forward) {
 					for (const en of forward) {
 						entriesBottomUp.push(en);
 					}
-				}
-				else {
+				} else {
 					this.headsIndex.put(e);
 				}
 
@@ -794,11 +718,11 @@ export class Log<T> {
 				this._hlc.update(clock.timestamp);
 
 				const removed = await this.trim(options?.trim);
-				options?.onChange && (await options.onChange({ added: e, removed: removed }))
+				options?.onChange &&
+					(await options.onChange({ added: e, removed: removed }));
 			}
 		}
 	}
-
 
 	/// TODO simplify methods below
 

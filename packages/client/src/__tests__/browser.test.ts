@@ -35,11 +35,9 @@ describe(`browser`, function () {
 		session = await LSession.connected(2);
 
 		client1 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[0],
 		});
 		client2 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[1],
 		});
 
@@ -85,12 +83,10 @@ describe(`browser`, function () {
 		session.peers[1].dial(session.peers[2].getMultiaddrs()[0]);
 
 		client1 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[0],
 		});
 
 		client2 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[1],
 		});
 
@@ -140,11 +136,9 @@ describe(`browser`, function () {
 		session = await LSession.connected(2);
 
 		client1 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[0],
 		});
 		client2 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[1],
 		});
 		await waitForPeersBlock(
@@ -188,11 +182,9 @@ describe(`browser`, function () {
 		session = await LSession.connected(2);
 
 		client1 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[0],
 		});
 		client2 = await Peerbit.create({
-			browser: true,
 			libp2p: session.peers[1],
 		});
 

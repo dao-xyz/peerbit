@@ -23,8 +23,23 @@ describe(`Sync`, () => {
 		cacheStore: AbstractLevel<any, string, Uint8Array>;
 
 	let index: SimpleIndex<string>;
+	let fromMultihash: any;
+	let fromMultiHashCounter: number;
+
+	beforeAll(() => {
+		fromMultihash = Entry.fromMultihash;
+		// TODO monkeypatching might lead to sideeffects in other tests!
+		Entry.fromMultihash = (s, h, o) => {
+			fromMultiHashCounter += 1;
+			return fromMultihash(s, h, o);
+		};
+	});
+	afterAll(() => {
+		Entry.fromMultihash = fromMultihash;
+	});
 
 	beforeEach(async () => {
+		fromMultiHashCounter = 0;
 		cacheStore = await createStore();
 		keystore = new Keystore(await createStore());
 		session = await LSession.connected(2);
@@ -92,8 +107,6 @@ describe(`Sync`, () => {
 		const cache = new Cache(cacheStore);
 		const index2 = new SimpleIndex(store);
 		store2 = new Store({ storeIndex: 1 });
-
-		const fetchCallBackEntries: Entry<any>[] = [];
 		await store2.init(
 			session.peers[1].directblock,
 			{
@@ -106,9 +119,6 @@ describe(`Sync`, () => {
 				resolveCache: () => Promise.resolve(cache),
 				onUpdate: index2.updateIndex.bind(index2),
 				cacheId: "id",
-				onReplicationFetch: (store, entry) => {
-					fetchCallBackEntries.push(entry);
-				},
 			}
 		);
 
@@ -126,16 +136,11 @@ describe(`Sync`, () => {
 				references: [
 					(await store.oplog.values.toArray())[3],
 					(await store.oplog.values.toArray())[6],
-				]
+				],
 			},
 		]);
-		expect(store2.oplog.values.length).toEqual(entryCount)
-		/* expect(fetchCallBackEntries).toHaveLength(10);
-		expect(fetchCallBackEntries[0].payload.getValue()).toEqual(9); // because head
-		expect(fetchCallBackEntries[1].payload.getValue()).toEqual(3); // because first reference
-		expect(fetchCallBackEntries[2].payload.getValue()).toEqual(6); // because second reference
- */
-		// the order of the rest is kind of random because we do Log.fromEntry/fromEntryHash which loads concurrently so we dont know what entries arrive firs
+		expect(store2.oplog.values.length).toEqual(entryCount);
+		expect(fromMultiHashCounter).toEqual(7); // since passing 3 references only 10 - 3 = 7 needs to be loaded from disc or network
 		expect(await store2.oplog.getHeads()).toHaveLength(1);
 	});
 });

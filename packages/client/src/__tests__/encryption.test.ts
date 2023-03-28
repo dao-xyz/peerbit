@@ -80,12 +80,7 @@ describe(`encryption`, function () {
 	it("replicates database of 1 entry known keys", async () => {
 		let done = false;
 
-		db2 = await client2.open<EventStore<string>>(db1.address, {
-			onReplicationComplete: async (_store) => {
-				await checkHello(db1);
-				done = true;
-			},
-		});
+		db2 = await client2.open<EventStore<string>>(db1.address);
 		await waitForPeers(
 			session.peers[1],
 			session.peers[0],
@@ -97,6 +92,7 @@ describe(`encryption`, function () {
 		).toBeDefined();
 
 		await addHello(db1, recieverKey.keypair.publicKey);
-		await waitFor(() => done);
+		await waitFor(() => db2.store.oplog.length === 1);
+		await checkHello(db2);
 	});
 });

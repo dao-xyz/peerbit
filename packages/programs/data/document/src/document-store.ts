@@ -136,7 +136,7 @@ export class Documents<
 							})
 						)
 					).filter((x) => !!x) as Entry<any>[]; */
-				await this.store.sync(result.results.map(x => x.context.head));
+				await this.store.sync(result.results.map((x) => x.context.head));
 			},
 		});
 	}
@@ -174,10 +174,10 @@ export class Documents<
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
 			? (await this.store.oplog.get(history)) ||
-			(await Entry.fromMultihash<Operation<T>>(
-				this.store.oplog.storage,
-				history
-			))
+					(await Entry.fromMultihash<Operation<T>>(
+						this.store.oplog.storage,
+						history
+					))
 			: history;
 	}
 
@@ -197,7 +197,7 @@ export class Documents<
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
 				? this.store.oplog.get(history) ||
-				(await Entry.fromMultihash(this.store.oplog.storage, history))
+						(await Entry.fromMultihash(this.store.oplog.storage, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
@@ -307,7 +307,7 @@ export class Documents<
 		const existingDocument = options?.unique
 			? undefined
 			: (await this._index.get(key, { local: true, remote: { sync: true } }))
-				?.results[0];
+					?.results[0];
 		return this.store.addOperation(
 			new PutOperation({
 				key: asString((doc as any)[this._index.indexBy]),
