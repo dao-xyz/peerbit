@@ -1,11 +1,10 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
-import { IStoreOptions } from "@dao-xyz/peerbit-store";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 
 describe(`Replication`, function () {
@@ -130,7 +129,8 @@ describe(`Replication`, function () {
 		// and process to the asserts below
 		await waitForAsync(
 			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
+			{ delayInterval: 200, timeout: 20000 }
 		);
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		entries.sort((x, y) =>
@@ -174,7 +174,8 @@ describe(`Replication`, function () {
 		// All entries should be in the database
 		await waitForAsync(
 			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
+			{ delayInterval: 200, timeout: 20000 }
 		);
 
 		// All entries should be in the database
@@ -213,7 +214,8 @@ describe(`Replication`, function () {
 		// All entries should be in the database
 		await waitForAsync(
 			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
+			{ delayInterval: 200, timeout: 20000 }
 		);
 
 		// progress events should (increase monotonically)
@@ -259,7 +261,8 @@ describe(`Replication`, function () {
 		// All entries should be in the database
 		await waitForAsync(
 			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount * 2
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount * 2,
+			{ delayInterval: 200, timeout: 20000 }
 		);
 
 		// Database values should match
