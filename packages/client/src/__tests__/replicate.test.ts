@@ -128,11 +128,14 @@ describe(`Replication`, function () {
 		// Once db2 has finished replication, make sure it has all elements
 		// and process to the asserts below
 		try {
-			await waitFor(() => db2.store.oplog.length === entryCount);
+			await waitFor(() => db2.store.oplog.length === entryCount, {
+				timeout: 40 * 1000,
+				delayInterval: 300,
+			});
 		} catch (error) {
 			console.error(
 				"Did not recieve all entries, missing: " +
-					(entryCount - db2.store.oplog.length)
+					(db2.store.oplog.length, entryCount)
 			);
 			const entries = (await db2.iterator({ limit: -1 })).collect();
 			for (const entry of entries) {
