@@ -1,7 +1,7 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
@@ -119,11 +119,13 @@ describe(`Replication`, function () {
 		const entryArr: number[] = [];
 
 		for (let i = 0; i < entryCount; i++) {
-			entryArr.push(i);
+			//	entryArr.push(i);
+			await db1.add("hello" + i);
+			await delay(100);
 		}
 
-		const add = (i: number) => db1.add("hello" + i);
-		await mapSeries(entryArr, add);
+		/* 	const add = (i: number) => db1.add("hello" + i);
+			await mapSeries(entryArr, add); */
 
 		// Once db2 has finished replication, make sure it has all elements
 		// and process to the asserts below
@@ -149,10 +151,6 @@ describe(`Replication`, function () {
 		}
 
 		const entries = (await db2.iterator({ limit: -1 })).collect();
-		entries.sort((x, y) =>
-			x.metadata.clock.timestamp.compare(y.metadata.clock.timestamp)
-		);
-
 		expect(entries.length).toEqual(entryCount);
 		for (let i = 0; i < entryCount; i++) {
 			expect(entries[i].payload.getValue().value).toEqual("hello" + i);

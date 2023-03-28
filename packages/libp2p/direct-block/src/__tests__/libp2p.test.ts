@@ -81,12 +81,15 @@ describe("transport", function () {
 			publishCounter += 1;
 			return publish(d, o);
 		};
-		const readDataPromise1 = store2.get<Uint8Array>(stringifyCid(cid));
-		const readDataPromise2 = store2.get<Uint8Array>(stringifyCid(cid));
-		const readData1 = await readDataPromise1;
-		const readData2 = await readDataPromise2;
+		const promises: Promise<any>[] = [];
+		for (let i = 0; i < 100; i++) {
+			promises.push(store2.get<Uint8Array>(stringifyCid(cid)));
+		}
+		const datas = await Promise.all(promises);
 		expect(publishCounter).toEqual(1);
-		expect(await getBlockValue(readData1!)).toEqual(data);
+		for (const data of datas) {
+			expect(await getBlockValue(data!)).toEqual(data);
+		}
 		//	expect(await getBlockValue(readData2!)).toEqual(data);
 	});
 
