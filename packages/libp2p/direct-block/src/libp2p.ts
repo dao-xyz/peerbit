@@ -45,6 +45,10 @@ export class DirectBlock extends DirectStream implements BlockStore {
 	_localStore: BlockStore;
 	_responseHandler?: (evt: CustomEvent<DataMessage>) => any;
 	_resolvers: Map<string, (data: Uint8Array) => void>;
+	_readFromPeersPromises: Map<
+		string,
+		Promise<Block.Block<any, any, any, 1> | undefined> | undefined
+	>;
 	_gossip = false;
 	_open = false;
 
@@ -67,6 +71,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		const localTimeout = options?.localTimeout || 1000;
 		this._localStore = localStore;
 		this._resolvers = new Map();
+		this._readFromPeersPromises = new Map();
 		this._responseHandler = async (evt: CustomEvent<DataMessage>) => {
 			if (!evt) {
 				return;
@@ -156,37 +161,48 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		options: { timeout?: number; hasher?: any } = {}
 	): Promise<Block.Block<any, any, any, any> | undefined> {
 		const codec = codecCodes[cidObject.code];
-		const promise = new Promise<Block.Block<any, any, any, 1> | undefined>(
-			(resolve, reject) => {
-				const timeoutCallback = setTimeout(() => {
-					resolve(undefined);
-				}, options.timeout || 30 * 1000);
+		let promise = this._readFromPeersPromises.get(cidString);
+		if (!promise) {
+			promise = new Promise<Block.Block<any, any, any, 1> | undefined>(
+				(resolve, reject) => {
+					const timeoutCallback = setTimeout(() => {
+						resolve(undefined);
+					}, options.timeout || 30 * 1000);
 
-				this._resolvers.set(cidString, async (bytes: Uint8Array) => {
-					const value = await checkDecodeBlock(cidObject, bytes, {
-						codec,
-						hasher: options?.hasher,
+					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
+						const value = await checkDecodeBlock(cidObject, bytes, {
+							codec,
+							hasher: options?.hasher,
+						});
+
+						clearTimeout(timeoutCallback);
+						this._resolvers.delete(cidString); // TODO concurrency might not work as expected here
+						resolve(value);
 					});
+				}
+			);
+			const publish = (to?: PublicSignKey[]) =>
+				this.publish(serialize(new BlockRequest(cidString)), { to: to });
+			await publish();
 
-					clearTimeout(timeoutCallback);
-					this._resolvers.delete(cidString); // TODO concurrency might not work as expected here
-					resolve(value);
-				});
-			}
-		);
-		const publish = (to?: PublicSignKey[]) =>
-			this.publish(serialize(new BlockRequest(cidString)), { to: to });
-		await publish();
-		const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) =>
-			publish([e.detail]);
+			const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) =>
+				publish([e.detail]);
 
-		// we want to make sure that if some new peers join, we also try to ask them
-		this.addEventListener("peer:reachable", publishOnNewPeers);
-		const result = await promise;
+			this._readFromPeersPromises.set(cidString, promise);
 
-		// stop asking new peers, because we already got an response
-		this.removeEventListener("peer:reachable", publishOnNewPeers);
-		return result;
+			// we want to make sure that if some new peers join, we also try to ask them
+			this.addEventListener("peer:reachable", publishOnNewPeers);
+
+			const result = await promise;
+			this._readFromPeersPromises.delete(cidString);
+
+			// stop asking new peers, because we already got an response
+			this.removeEventListener("peer:reachable", publishOnNewPeers);
+			return result;
+		} else {
+			const result = await promise;
+			return result;
+		}
 	}
 
 	async close(): Promise<void> {
@@ -197,6 +213,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		this.removeEventListener("data", this._responseHandler);
 
 		await this._localStore?.close();
+		this._readFromPeersPromises.clear();
 		this._resolvers.clear();
 		this._open = false;
 

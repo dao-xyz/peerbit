@@ -56,6 +56,40 @@ describe("transport", function () {
 		expect(await getBlockValue(readData!)).toEqual(data);
 	});
 
+	it("read concurrently", async () => {
+		session = await LSession.connected(2);
+
+		store = new DirectBlock(session.peers[0], new MemoryLevelBlockStore());
+		store2 = new DirectBlock(session.peers[1], new MemoryLevelBlockStore());
+
+		expect((store as DirectBlock)._gossip).toBeFalse();
+
+		await store.open();
+		await store2.open();
+
+		await waitForPeers(store, store2);
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store.put(await createBlock(data, "raw"));
+
+		expect(stringifyCid(cid)).toEqual(
+			"zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"
+		);
+		let publishCounter = 0;
+		const publish = store2.publish.bind(store2);
+		store2.publish = (d, o) => {
+			publishCounter += 1;
+			return publish(d, o);
+		};
+		const readDataPromise1 = store2.get<Uint8Array>(stringifyCid(cid));
+		const readDataPromise2 = store2.get<Uint8Array>(stringifyCid(cid));
+		const readData1 = await readDataPromise1;
+		const readData2 = await readDataPromise2;
+		expect(publishCounter).toEqual(1);
+		expect(await getBlockValue(readData1!)).toEqual(data);
+		//	expect(await getBlockValue(readData2!)).toEqual(data);
+	});
+
 	it("reads from joining peer", async () => {
 		session = await LSession.disconnected(2);
 
