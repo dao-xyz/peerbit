@@ -66,7 +66,13 @@ export class Values<T> {
 	get length() {
 		return this._values.length;
 	}
+	_putPromise: Promise<any>;
 	async put(value: Entry<T>) {
+		await this._putPromise;
+		this._putPromise = this._put(value);
+		return this._putPromise;
+	}
+	async _put(value: Entry<T>) {
 		// assume we want to insert at head (or somehere close)
 		let walker = this._values.head;
 		let last: EntryNode | undefined = undefined;
@@ -88,11 +94,14 @@ export class Values<T> {
 		if (!value.hash) {
 			throw new Error("Unexpected");
 		}
-		_insertAfter(this._values, last, {
-			byteLength: value._payload.byteLength,
-			gid: value.gid,
-			hash: value.hash,
-		});
+
+		if (last?.value?.hash !== value.hash) {
+			_insertAfter(this._values, last, {
+				byteLength: value._payload.byteLength,
+				gid: value.gid,
+				hash: value.hash,
+			});
+		}
 	}
 
 	async delete(value: Entry<T> | string) {
