@@ -129,25 +129,22 @@ describe(`Replication`, function () {
 		// Once db2 has finished replication, make sure it has all elements
 		// and process to the asserts below
 		try {
-			await waitFor(() => db2.store.oplog.length === entryCount, {
-				timeout: 40 * 1000,
-				delayInterval: 300,
-			});
+			await waitFor(() => db2.store.oplog.length === entryCount);
 		} catch (error) {
 			console.error(
 				"Did not recieve all entries, missing: " +
-					(db2.store.oplog.length - entryCount),
+				(db2.store.oplog.length - entryCount),
 				"Fetch events: " +
-					fetchEvents +
-					", fetch hashes size: " +
-					fetchHashes.size
+				fetchEvents +
+				", fetch hashes size: " +
+				fetchHashes.size
 			);
 			const entries = (await db2.iterator({ limit: -1 })).collect();
 			console.error(
 				"Entries: (" +
-					entries.length +
-					"), " +
-					entries.map((x) => x.payload.getValue().value).join(", ")
+				entries.length +
+				"), " +
+				entries.map((x) => x.payload.getValue().value).join(", ")
 			);
 			throw error;
 		}
@@ -160,7 +157,7 @@ describe(`Replication`, function () {
 			} catch (error) {
 				console.error(
 					"Entries out of order: " +
-						entries.map((x) => x.payload.getValue().value).join(", ")
+					entries.map((x) => x.payload.getValue().value).join(", ")
 				);
 				throw error;
 			}
@@ -232,13 +229,10 @@ describe(`Replication`, function () {
 		);
 
 		// All entries should be in the database
-		await waitForAsync(
-			async () =>
-				(await db2.iterator({ limit: -1 })).collect().length === entryCount,
-			{ delayInterval: 200, timeout: 20000 }
-		);
+		await waitFor(() => db2.store.oplog.length === entryCount);
 
 		// progress events should (increase monotonically)
+		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(entryCount);
 		expect(fetchEvents).toEqual(fetchHashes.size);
 		expect(fetchEvents).toEqual(entryCount - 3); // - 3 because we also send some references for faster syncing (see exchange-heads.ts)
 	});
