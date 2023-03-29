@@ -143,9 +143,12 @@ describe(`Replication`, function () {
 					fetchHashes.size
 			);
 			const entries = (await db2.iterator({ limit: -1 })).collect();
-			for (const entry of entries) {
-				console.error(entry.payload.getValue().value);
-			}
+			console.error(
+				"Entries: (" +
+					entries.length +
+					"), " +
+					entries.map((x) => x.payload.getValue().value).join(", ")
+			);
 			throw error;
 		}
 
