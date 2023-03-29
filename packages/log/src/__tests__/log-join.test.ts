@@ -184,6 +184,7 @@ describe("Log - Join", function () {
 				items3.length + items2.length + items1.length
 			);
 
+			expect((await logA.getHeads()).length).toEqual(1);
 			await logA.join(await logB.getHeads());
 
 			expect(logA.length).toEqual(
@@ -212,6 +213,32 @@ describe("Log - Join", function () {
 			const item = last(await log1.toArray());
 			expect(item.next.length).toEqual(1);
 			expect((await log1.getHeads()).length).toEqual(2);
+		});
+
+		it("joins concurrently", async () => {
+			let expectedData: string[] = [];
+			let len = 2;
+			let entries: Entry<any>[] = [];
+			for (let i = 0; i < len; i++) {
+				expectedData.push("" + i);
+				entries.push((await log2.append("" + i)).entry);
+			}
+			let promises: Promise<any>[] = [];
+			for (let i = 0; i < len; i++) {
+				promises.push(log1.join([entries[i]]));
+			}
+
+			await Promise.all(promises);
+
+			expect(log1.length).toEqual(len);
+			expect((await log1.toArray()).map((e) => e.payload.getValue())).toEqual(
+				expectedData
+			);
+
+			const item = last(await log1.toArray());
+			let allHeads = await log1.getHeads();
+			expect(allHeads.length).toEqual(1);
+			expect(item.next.length).toEqual(1);
 		});
 
 		it("joins with extra references", async () => {
@@ -257,9 +284,11 @@ describe("Log - Join", function () {
 		});
 
 		it("joins logs twice", async () => {
-			await log1.append("helloA1");
-			await log2.append("helloB1");
+			const { entry: a1 } = await log1.append("helloA1");
+			const { entry: b1 } = await log2.append("helloB1");
 			await log2.join(await log1.getHeads());
+			expect(log2.length).toEqual(2);
+			expect(await log2.getHeads()).toContainAllValues([a1, b1]);
 
 			const { entry: a2 } = await log1.append("helloA2");
 			const { entry: b2 } = await log2.append("helloB2");
@@ -267,11 +296,10 @@ describe("Log - Join", function () {
 
 			const expectedData = ["helloA1", "helloB1", "helloA2", "helloB2"];
 
-			expect(log2.length).toEqual(4);
-			assert.deepStrictEqual(
-				(await log2.toArray()).map((e) => e.payload.getValue()),
+			expect((await log2.toArray()).map((e) => e.payload.getValue())).toEqual(
 				expectedData
 			);
+			expect(log2.length).toEqual(4);
 
 			expect(await log1.getHeads()).toContainAllValues([a2]);
 			expect(await log2.getHeads()).toContainAllValues([a2, b2]);

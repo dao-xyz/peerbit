@@ -23,20 +23,22 @@ export class EntryIndex<T> {
 
 	async set(v: Entry<T>, options?: { save: boolean }) {
 		if (options?.save) {
-			const existingHash = v.hash;
-			v.hash = undefined as any;
-			try {
-				const hash = await Entry.toMultihash(this._store, v);
-				v.hash = existingHash;
-				if (v.hash === undefined) {
-					v.hash = hash; // can happen if you sync entries that you load directly from ipfs
-				} else if (existingHash !== v.hash) {
-					logger.error("Head hash didn't match the contents");
-					throw new Error("Head hash didn't match the contents");
+			if (!v.replicated) {
+				const existingHash = v.hash;
+				v.hash = undefined as any;
+				try {
+					const hash = await Entry.toMultihash(this._store, v);
+					v.hash = existingHash;
+					if (v.hash === undefined) {
+						v.hash = hash; // can happen if you sync entries that you load directly from ipfs
+					} else if (existingHash !== v.hash) {
+						logger.error("Head hash didn't match the contents");
+						throw new Error("Head hash didn't match the contents");
+					}
+				} catch (error) {
+					logger.error(error);
+					throw error;
 				}
-			} catch (error) {
-				logger.error(error);
-				throw error;
 			}
 		} else if (!v.hash) {
 			throw new Error("Unexpected");

@@ -481,7 +481,7 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		nexts.forEach((e) => {
+		for (const e of nexts) {
 			let nextIndexSet = this._nextsIndex.get(e.hash);
 			if (!nextIndexSet) {
 				nextIndexSet = new Set();
@@ -490,16 +490,16 @@ export class Log<T> {
 			} else {
 				nextIndexSet.add(entry.hash);
 			}
-		});
+		}
 
 		const removedGids: Set<string> = new Set();
 		if (hasNext) {
-			nexts.forEach((next) => {
+			for (const next of nexts) {
 				const deletion = this._headsIndex.del(next);
 				if (deletion.lastWithGid && next.gid !== entry.gid) {
 					removedGids.add(next.gid);
 				}
-			});
+			}
 		} else {
 			// next is all heads, which means we should just overwrite
 			for (const key of this.headsIndex.gids.keys()) {
@@ -598,6 +598,7 @@ export class Log<T> {
 		return this._trim.trim(option);
 	}
 
+	_joining: Map<string, Promise<any>> = new Map();
 	async join(
 		entriesOrLog: (string | Entry<T>)[] | Log<T>,
 		options?: {
@@ -647,15 +648,13 @@ export class Log<T> {
 			if (nexts) {
 				let isRoot = true;
 				for (const next of nexts) {
-					if (this.has(next)) {
+					if (!this.has(next)) {
+						isRoot = false;
+					} else {
 						if (this._headsIndex.has(next)) {
 							this._headsIndex.del((await this.get(next))!);
 						}
-						continue;
 					}
-
-					isRoot = false;
-
 					let nextIndexSet = nextRefs.get(next);
 					if (!nextIndexSet) {
 						nextIndexSet = [];
@@ -677,55 +676,77 @@ export class Log<T> {
 		}
 
 		// Get the difference of the logs
-		const nextFromNew = new Set<string>();
 		while (entriesBottomUp.length > 0) {
 			const e = entriesBottomUp.shift()!;
+			await this._joining.get(e.hash);
+			this._joining.set(
+				e.hash,
+				this.joinEntry(e, nextRefs, entriesBottomUp, options).then(() =>
+					this._joining.delete(e.hash)
+				)
+			);
+			await this._joining.get(e.hash);
+		}
+	}
+	private async joinEntry(
+		e: Entry<T>,
+		nextRefs: Map<string, Entry<T>[]>,
+		stack: Entry<T>[],
+		options?: {
+			canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean;
+			onChange?: (change: Change2<T>) => void | Promise<void>;
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+		}
+	) {
+		if (!isDefined(e.hash)) {
+			throw new Error("Unexpected");
+		}
 
+		if (!this.has(e.hash)) {
 			if (options?.verifySignatures) {
 				if (!(await e.verifySignatures())) {
 					throw new Error('Invalid signature entry with hash "' + e.hash + '"');
 				}
 			}
-			if (!isDefined(e.hash)) {
-				throw new Error("Unexpected");
+
+			if (options?.canAppend && !(await options.canAppend(e))) {
+				return;
 			}
 
-			if (!this.has(e.hash)) {
-				if (options?.canAppend && !(await options.canAppend(e))) {
-					continue;
-				}
+			// Update the internal entry index
+			await this._entryIndex.set(e);
+			await this._values.put(e);
 
-				// Update the internal entry index
-				await this._entryIndex.set(e);
-				await this._values.put(e);
-				const forward = nextRefs.get(e.hash);
-				if (forward) {
-					for (const en of forward) {
-						entriesBottomUp.push(en);
-					}
+			for (const a of e.next) {
+				let nextIndexSet = this._nextsIndex.get(a);
+				if (!nextIndexSet) {
+					nextIndexSet = new Set();
+					nextIndexSet.add(e.hash);
+					this._nextsIndex.set(a, nextIndexSet);
 				} else {
-					this.headsIndex.put(e);
+					nextIndexSet.add(a);
 				}
-
-				for (const a of e.next) {
-					let nextIndexSet = this._nextsIndex.get(a);
-					if (!nextIndexSet) {
-						nextIndexSet = new Set();
-						nextIndexSet.add(e.hash);
-						this._nextsIndex.set(a, nextIndexSet);
-					} else {
-						nextIndexSet.add(a);
-					}
-					nextFromNew.add(a);
-				}
-
-				const clock = await e.getClock();
-				this._hlc.update(clock.timestamp);
-
-				const removed = await this.trim(options?.trim);
-				options?.onChange &&
-					(await options.onChange({ added: e, removed: removed }));
 			}
+
+			const clock = await e.getClock();
+			this._hlc.update(clock.timestamp);
+
+			const removed = await this.trim(options?.trim);
+			options?.onChange &&
+				(await options.onChange({ added: e, removed: removed }));
+		}
+
+		const forward = nextRefs.get(e.hash);
+		if (forward) {
+			if (this._headsIndex.has(e.hash)) {
+				this._headsIndex.del(e);
+			}
+			for (const en of forward) {
+				stack.push(en);
+			}
+		} else {
+			this.headsIndex.put(e);
 		}
 	}
 
