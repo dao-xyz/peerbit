@@ -7744,10 +7744,10 @@ libnpmpublish@^6.0.4:
     semver "^7.3.7"
     ssri "^9.0.0"
 
-libp2p@^0.43.2:
-  version "0.43.2"
-  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.43.2.tgz#7e03abd2ef5b89adc9082e147033469ade67f85a"
-  integrity sha512-vEP0DMeflDHAlcN3Rga+pDSEc8zFauidGrQg1ZVlJ4r9acY69xBm4KjI6eFsJx8KDahzfL9REJHr5xMbeSNK7w==
+libp2p@^0.43.3:
+  version "0.43.3"
+  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.43.3.tgz#40937de5bc19ba58140331b8dc2ba3d9dbfbf0ec"
+  integrity sha512-zQVJ/hLS1ZPALkafi6EyqvK/6zEzrYgtpBeXj3fkGQNS4sbL8VnGU7leNJw5bkNqBbMfyo8C5V2mnKn53fjJZQ==
   dependencies:
     "@achingbrain/nat-port-mapper" "^1.0.3"
     "@libp2p/crypto" "^1.0.4"
