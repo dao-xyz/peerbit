@@ -129,44 +129,48 @@ export class Documents<
 			canRead: options.canRead || (() => Promise.resolve(true)),
 			fields: options.index?.fields || ((obj) => obj),
 			sync: async (result: Results<T>) => {
-				const entries = (
-					await Promise.all(
-						result.results.map(async (result) => {
-							let entry = await this.store.oplog.get(result.context.head);
-							if (!entry) {
-								entry = await Entry.fromMultihash(
-									this.store.store,
-									result.context.head
-								);
-								entry.init(this.store.oplog);
-							}
-							if (!entry) {
-								logger.error("Failed to resolve entry: " + result.context.head);
-								return undefined;
-							}
-							if (!this._optionCanAppend) {
-								return entry;
-							}
-							return Promise.resolve(this._optionCanAppend(entry)) // we do optionalCanAppend on query because we might not be able to actually check with history whether we can append, TODO make more resilient/robust!
-								.then((r) => {
-									if (r) {
-										return entry;
-									}
-									return undefined;
-								})
-								.catch((e: any) => {
-									logger.error("canAppend resulted in error: " + e.message);
-									return undefined;
-								});
-						})
-					)
-				).filter((x) => !!x) as Entry<any>[];
-				await this.store.sync(entries, {
-					canAppend: this._optionCanAppend?.bind(this) || (() => true),
-				});
+				/* 	const entries = (
+						await Promise.all(
+							result.results.map(async (result) => {
+								return this.syncHash(result.context.head)
+							})
+						)
+					).filter((x) => !!x) as Entry<any>[]; */
+				await this.store.sync(result.results.map((x) => x.context.head));
 			},
 		});
 	}
+
+	/* 	private async syncHash(hash: string) {
+			let entry = await this.store.oplog.get(hash);
+			if (!entry) {
+				entry = await Entry.fromMultihash(
+					this.store.store,
+					hash
+				);
+				entry.init(this.store.oplog);
+			}
+			if (!entry) {
+				logger.error("Failed to resolve entry: " + hash);
+				return undefined;
+			}
+			if (!this._optionCanAppend) {
+				return entry;
+			}
+			// we do optionalCanAppend on query because we might not be able to actually check with history whether we can append
+			// TODO make more resilient/robust!
+	
+			try {
+				const r = await this.canAppend(entry)
+				if (r) {
+					return entry;
+				}
+				return undefined;
+			} catch (e: any) {
+				logger.error("canAppend resulted in error: " + e.message);
+				return undefined;
+			}
+		} */
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
 			? (await this.store.oplog.get(history)) ||

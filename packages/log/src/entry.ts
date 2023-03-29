@@ -203,9 +203,10 @@ export class Entry<T>
 	@field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to recieve the hash, which we later set
 	hash: string; // "zd...Foo", we'll set the hash after persisting the entry
 
-	_encryption?: PublicKeyEncryptionResolver;
-	_encoding?: Encoding<T>;
+	private _encryption?: PublicKeyEncryptionResolver;
+	private _encoding?: Encoding<T>;
 	createdLocally?: boolean;
+	replicated: boolean | undefined;
 
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
@@ -671,7 +672,9 @@ export class Entry<T>
 			throw new Error("Expected hash to be missing");
 		}
 
-		return store.put(await createBlock(serialize(entry), "raw"));
+		const result = store.put(await createBlock(serialize(entry), "raw"));
+		entry.replicated = true;
+		return result;
 	}
 
 	/**
@@ -692,10 +695,11 @@ export class Entry<T>
 		if (!hash) throw new Error(`Invalid hash: ${hash}`);
 		const bytes = await store.get<Uint8Array>(hash, options);
 		if (!bytes) {
-			throw new Error("Fialed to resolve block: " + hash);
+			throw new Error("Failed to resolve block: " + hash);
 		}
 		const entry = deserialize(await getBlockValue(bytes), Entry);
 		entry.hash = hash;
+		entry.replicated = options?.replicate || undefined;
 		return entry as Entry<T>;
 	}
 

@@ -4,7 +4,7 @@ import { KeyBlocks } from "./utils/stores/key-value-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { ObserverType } from "@dao-xyz/peerbit-program";
 
 describe(`Automatic Replication`, function () {
@@ -45,12 +45,7 @@ describe(`Automatic Replication`, function () {
 		const db3 = await client1.open(
 			new KeyBlocks<string>({
 				id: "replicate-automatically-tests-kv",
-			}),
-			{
-				onReplicationComplete: (_) => {
-					fail();
-				},
-			}
+			})
 		);
 
 		// Create the entries in the first database
@@ -61,43 +56,33 @@ describe(`Automatic Replication`, function () {
 		await mapSeries(entryArr, (i) => db1.add("hello" + i));
 
 		// Open the second database
-		let done = false;
 		const db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			))!,
-			{
-				onReplicationComplete: async (_) => {
-					// Listen for the 'replicated' events and check that all the entries
-					// were replicated to the second database
-					expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
-						entryCount
-					);
-					const result1 = (await db1.iterator({ limit: -1 })).collect();
-					const result2 = (await db2.iterator({ limit: -1 })).collect();
-					expect(result1.length).toEqual(result2.length);
-					for (let i = 0; i < result1.length; i++) {
-						assert(result1[i].equals(result2[i]));
-					}
-					done = true;
-				},
-			}
+			))!
 		);
 
-		const _db4 = await client2.open<KeyBlocks<string>>(
+		const db4 = await client2.open<KeyBlocks<string>>(
 			(await KeyBlocks.load<KeyBlocks<string>>(
 				client2.libp2p.directblock,
 				db3.address!
-			))!,
-			{
-				onReplicationComplete: (_) => {
-					fail();
-				},
-			}
+			))!
 		);
 
-		await waitFor(() => done);
+		await waitForAsync(
+			async () =>
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount
+		);
+		const result1 = (await db1.iterator({ limit: -1 })).collect();
+		const result2 = (await db2.iterator({ limit: -1 })).collect();
+		expect(result1.length).toEqual(result2.length);
+		for (let i = 0; i < result1.length; i++) {
+			assert(result1[i].equals(result2[i]));
+		}
+
+		expect(db3.store.oplog.length).toEqual(0);
+		expect(db4.store.oplog.length).toEqual(0);
 	});
 
 	it("starts replicating the database when peers connect in write mode", async () => {
@@ -116,30 +101,22 @@ describe(`Automatic Replication`, function () {
 		await mapSeries(entryArr, (i) => db1.add("hello" + i));
 
 		// Open the second database
-		let done = false;
 		const db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			))!,
-			{
-				onReplicationComplete: async (_) => {
-					// Listen for the 'replicated' events and check that all the entries
-					// were replicated to the second database
-					expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
-						entryCount
-					);
-					const result1 = (await db1.iterator({ limit: -1 })).collect();
-					const result2 = (await db2.iterator({ limit: -1 })).collect();
-					expect(result1.length).toEqual(result2.length);
-					for (let i = 0; i < result1.length; i++) {
-						expect(result1[i].equals(result2[i])).toBeTrue();
-					}
-					done = true;
-				},
-			}
+			))!
 		);
 
-		await waitFor(() => done);
+		await waitForAsync(
+			async () =>
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount
+		);
+		const result1 = (await db1.iterator({ limit: -1 })).collect();
+		const result2 = (await db2.iterator({ limit: -1 })).collect();
+		expect(result1.length).toEqual(result2.length);
+		for (let i = 0; i < result1.length; i++) {
+			expect(result1[i].equals(result2[i])).toBeTrue();
+		}
 	});
 });

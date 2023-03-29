@@ -93,13 +93,14 @@ export const SortByClockId: ISortFunction = (a, b, resolveConflict) => {
  * @throws {Error} if func ever returns 0
  */
 export const NoZeroes = (func: ISortFunction) => {
-	const msg = `Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`;
-
 	const comparator = <T>(a: Entry<T>, b: Entry<T>) => {
 		// Validate by calling the function
 		const result = func(a, b, (a, b) => -1);
 		if (result === 0) {
-			throw Error(msg);
+			console.error(a.hash, b.hash, a.payload.getValue(), b.payload.getValue());
+			throw Error(
+				`Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`
+			);
 		}
 		return result;
 	};

@@ -100,6 +100,17 @@ describe("values", () => {
 		]);
 	});
 
+	it("put concurrently", async () => {
+		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		let promises: Promise<any>[] = [];
+		for (let i = 0; i < 100; i++) {
+			promises.push(values.put(e1));
+		}
+
+		await Promise.all(promises);
+		expect(values.head!.value.hash).toEqual(e1.hash);
+		expect((await values.toArray()).length).toEqual(1);
+	});
 	it("delete", async () => {
 		const values = new Values<string>(entryIndex, LastWriteWins, []);
 		await values.put(e1);

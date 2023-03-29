@@ -42,7 +42,6 @@ import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { Program, Address } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
-import isNode from "is-node";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import {
@@ -97,7 +96,6 @@ export type CreateOptions = {
 	storage: Storage;
 	cache: LazyLevel;
 	localNetwork: boolean;
-	browser?: boolean;
 } & OptionalCreateOptions;
 
 export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
@@ -110,7 +108,6 @@ export type CreateInstanceOptions = {
 	identity?: Identity;
 	cache?: LazyLevel;
 	localNetwork?: boolean;
-	browser?: boolean;
 } & OptionalCreateOptions;
 export type OpenOptions = {
 	identity?: Identity;
@@ -162,7 +159,6 @@ export class Peerbit {
 	programs: Map<string, ProgramWithMetadata>;
 	limitSigning: boolean;
 	localNetwork: boolean;
-	browser: boolean; // is running inside of browser?
 
 	private _sortedPeersCache: Map<string, string[]> = new Map();
 	private _gidPeersHistory: Map<string, Set<string>> = new Map();
@@ -218,7 +214,6 @@ export class Peerbit {
 		this.caches = {};
 		this._minReplicas = options.minReplicas || MIN_REPLICAS;
 		this.limitSigning = options.limitSigning || false;
-		this.browser = options.browser || !isNode;
 		this.localNetwork = options.localNetwork;
 		this.caches[this.directory] = {
 			cache: options.cache,
@@ -227,21 +222,6 @@ export class Peerbit {
 		this.keystore = options.keystore;
 
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
-
-		// 	This is kept naively for know since we yet don't know whether there are edge cases where refreshes are needed
-
-		/* 
-		const refreshInterval = options.refreshIntreval || 100;
-
-		const promise: Promise<boolean> | undefined = undefined;
-			this._refreshInterval = setInterval(async () => {
-				if (promise) {
-					return;
-				}
-				promise = this.replicationReorganization([...this.programs.keys()]);
-				await promise;
-				promise = undefined;
-			}, refreshInterval); */
 
 		this.libp2p.directsub.addEventListener("data", this._onMessage.bind(this));
 		this.libp2p.directsub.addEventListener(
@@ -1242,21 +1222,7 @@ export class Peerbit {
 						}
 						return;
 					},
-					onReplicationComplete: async (store) => {
-						if (options.onReplicationComplete) {
-							options.onReplicationComplete(store);
-						}
-					},
-					onReplicationFetch: async (store, entry) => {
-						if (options.onReplicationFetch) {
-							options.onReplicationFetch(store, entry);
-						}
-					},
-					onReplicationQueued: async (store, entry) => {
-						if (options.onReplicationQueued) {
-							options.onReplicationQueued(store, entry);
-						}
-					},
+
 					onOpen: async (store) => {
 						if (options.onOpen) {
 							return options.onOpen(store);

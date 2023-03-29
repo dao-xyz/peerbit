@@ -40,6 +40,7 @@ const randomId = () => new Date().getTime().toString();
 const getHash = <T>(e: Entry<T>) => e.hash;
 
 export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
+export type Change2<T> = { added: Entry<T>; removed: Entry<T>[] };
 
 export type LogOptions<T> = {
 	encryption?: PublicKeyEncryptionResolver;
@@ -480,7 +481,7 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		nexts.forEach((e) => {
+		for (const e of nexts) {
 			let nextIndexSet = this._nextsIndex.get(e.hash);
 			if (!nextIndexSet) {
 				nextIndexSet = new Set();
@@ -489,16 +490,16 @@ export class Log<T> {
 			} else {
 				nextIndexSet.add(entry.hash);
 			}
-		});
+		}
 
 		const removedGids: Set<string> = new Set();
 		if (hasNext) {
-			nexts.forEach((next) => {
+			for (const next of nexts) {
 				const deletion = this._headsIndex.del(next);
 				if (deletion.lastWithGid && next.gid !== entry.gid) {
 					removedGids.add(next.gid);
 				}
-			});
+			}
 		} else {
 			// next is all heads, which means we should just overwrite
 			for (const key of this.headsIndex.gids.keys()) {
@@ -597,80 +598,156 @@ export class Log<T> {
 		return this._trim.trim(option);
 	}
 
-	/**
-	 * Join two logs.
-	 *
-	 * Joins another log into this one.
-	 *
-	 * @param {Log} log Log to join with this Log
-	 * @param {number} [size=-1] Max size of the joined log
-	 * @returns {Promise<Log>} This Log instance
-	 * @example
-	 * await log1.join(log2)
-	 */
+	_joining: Map<string, Promise<any>> = new Map();
 	async join(
-		log: Log<T>,
-		options?: { verifySignatures?: boolean; trim?: TrimOptions }
-	): Promise<Change<T>> {
+		entriesOrLog: (string | Entry<T>)[] | Log<T>,
+		options?: {
+			canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean;
+			onChange?: (change: Change2<T>) => void | Promise<void>;
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+		}
+	): Promise<void> {
+		const stack: string[] = [];
+		const visited = new Set<string>();
+		const nextRefs: Map<string, Entry<T>[]> = new Map();
+		const entriesBottomUp: Entry<T>[] = [];
+		const resolvedEntries: Map<string, Entry<T>> = new Map();
+		const entries = Array.isArray(entriesOrLog)
+			? entriesOrLog
+			: await entriesOrLog.values.toArray();
+		for (const e of entries) {
+			let hash: string;
+			if (e instanceof Entry) {
+				hash = e.hash;
+				resolvedEntries.set(e.hash, e);
+			} else {
+				hash = e;
+			}
+			if (this.has(hash)) {
+				continue;
+			}
+			stack.push(hash);
+		}
+
+		for (const hash of stack) {
+			if (visited.has(hash) || this.has(hash)) {
+				continue;
+			}
+			visited.add(hash);
+
+			const entry =
+				resolvedEntries.get(hash) ||
+				(await Entry.fromMultihash<T>(this._storage, hash, {
+					replicate: true,
+				}));
+			entry.init(this);
+			resolvedEntries.set(entry.hash, entry);
+			const nexts = await entry.getNext();
+
+			if (nexts) {
+				let isRoot = true;
+				for (const next of nexts) {
+					if (!this.has(next)) {
+						isRoot = false;
+					} else {
+						if (this._headsIndex.has(next)) {
+							this._headsIndex.del((await this.get(next))!);
+						}
+					}
+					let nextIndexSet = nextRefs.get(next);
+					if (!nextIndexSet) {
+						nextIndexSet = [];
+						nextIndexSet.push(entry);
+						nextRefs.set(next, nextIndexSet);
+					} else {
+						nextIndexSet.push(entry);
+					}
+					if (!visited.has(next)) {
+						stack.push(next);
+					}
+				}
+				if (isRoot) {
+					entriesBottomUp.push(entry);
+				}
+			} else {
+				entriesBottomUp.push(entry);
+			}
+		}
+
 		// Get the difference of the logs
-		const newItems = await Log.difference(log, this);
-		const nextFromNew = new Set<string>();
-		for (const e of newItems.values()) {
+		while (entriesBottomUp.length > 0) {
+			const e = entriesBottomUp.shift()!;
+			await this._joining.get(e.hash);
+			this._joining.set(
+				e.hash,
+				this.joinEntry(e, nextRefs, entriesBottomUp, options).then(() =>
+					this._joining.delete(e.hash)
+				)
+			);
+			await this._joining.get(e.hash);
+		}
+	}
+	private async joinEntry(
+		e: Entry<T>,
+		nextRefs: Map<string, Entry<T>[]>,
+		stack: Entry<T>[],
+		options?: {
+			canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean;
+			onChange?: (change: Change2<T>) => void | Promise<void>;
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+		}
+	) {
+		if (!isDefined(e.hash)) {
+			throw new Error("Unexpected");
+		}
+
+		if (!this.has(e.hash)) {
 			if (options?.verifySignatures) {
 				if (!(await e.verifySignatures())) {
 					throw new Error('Invalid signature entry with hash "' + e.hash + '"');
 				}
 			}
-			if (!isDefined(e.hash)) {
-				throw new Error("Unexpected");
+
+			if (options?.canAppend && !(await options.canAppend(e))) {
+				return;
 			}
-			const entry = await this.get(e.hash);
-			if (!entry) {
-				// Update the internal entry index
-				await this._entryIndex.set(e);
-				await this._values.put(e);
-			}
+
+			// Update the internal entry index
+			await this._entryIndex.set(e);
+			await this._values.put(e);
+
 			for (const a of e.next) {
-				let nextIndexSet = this._nextsIndex[a];
+				let nextIndexSet = this._nextsIndex.get(a);
 				if (!nextIndexSet) {
 					nextIndexSet = new Set();
-					nextIndexSet.add(a);
-					this._nextsIndex[a] = nextIndexSet;
+					nextIndexSet.add(e.hash);
+					this._nextsIndex.set(a, nextIndexSet);
 				} else {
 					nextIndexSet.add(a);
 				}
-				nextFromNew.add(a);
 			}
 
 			const clock = await e.getClock();
 			this._hlc.update(clock.timestamp);
+
+			const removed = await this.trim(options?.trim);
+			options?.onChange &&
+				(await options.onChange({ added: e, removed: removed }));
 		}
 
-		// Merge the heads
-		const notReferencedByNewItems = (e: Entry<any>) => !nextFromNew.has(e.hash);
-		const notInCurrentNexts = (e: Entry<any>) => !this._nextsIndex.has(e.hash);
-
-		const added: Entry<T>[] = new Array(newItems.size);
-		let i = 0;
-		for (const [_hash, item] of newItems) {
-			if (notInCurrentNexts(item) && notReferencedByNewItems(item)) {
-				this.headsIndex.put(item);
+		const forward = nextRefs.get(e.hash);
+		if (forward) {
+			if (this._headsIndex.has(e.hash)) {
+				this._headsIndex.del(e);
 			}
-			added[i++] = item;
+			for (const en of forward) {
+				stack.push(en);
+			}
+		} else {
+			this.headsIndex.put(e);
 		}
-
-		const delPromises: Promise<any>[] = new Array(nextFromNew.size);
-		for (const [i, next] of nextFromNew.entries()) {
-			delPromises[i] = this.get(next).then((v) => this.headsIndex.del(v!));
-		}
-		await Promise.all(delPromises);
-
-		const removed = await this.trim(options?.trim);
-
-		return {
-			added,
-			removed,
-		};
 	}
 
 	/// TODO simplify methods below
@@ -1033,42 +1110,5 @@ export class Log<T> {
 
 		entries.forEach(addToIndex);
 		return entries.reduce(reduceTailHashes, []);
-	}
-
-	static async difference<T>(
-		from: Log<T>,
-		into: Log<T>
-	): Promise<Map<string, Entry<T>>> {
-		const stack: string[] = [...from._headsIndex.index.keys()];
-		const traversed: { [key: string]: boolean } = {};
-		const res: Map<string, Entry<T>> = new Map();
-
-		const pushToStack = (hash: string) => {
-			if (!traversed[hash]) {
-				stack.push(hash);
-				traversed[hash] = true;
-			}
-		};
-
-		while (stack.length > 0) {
-			const hash = stack.shift();
-			if (!hash) {
-				throw new Error("Unexpected");
-			}
-			const entry = await from.get(hash);
-			if (entry && !(await into.get(hash))) {
-				// TODO do we need to do som GID checks?
-				res.set(entry.hash, entry);
-				traversed[entry.hash] = true;
-
-				// TODO init below is kind of flaky to do this here, but we dont want to iterate over all entries before the difference method is invoked in the join log method
-				entry.init({
-					encryption: into._encryption,
-					encoding: into._encoding,
-				});
-				(await entry.getNext()).forEach(pushToStack);
-			}
-		}
-		return res;
 	}
 }

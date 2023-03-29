@@ -547,15 +547,45 @@ describe("index", () => {
 				expect(responses[0].results).toHaveLength(4);
 			});
 
-			it("can match sync", async () => {
-				expect(stores[1].docs.index.size).toEqual(0);
-				let results = await stores[1].docs.index.query(
-					new DocumentQuery({
-						queries: [],
-					}),
-					{ remote: { amount: 1, sync: true } }
-				);
-				await waitFor(() => stores[1].docs.index.size === 4);
+			describe("sync", () => {
+				it("can match sync", async () => {
+					expect(stores[1].docs.index.size).toEqual(0);
+					let canAppendEvents = 0;
+					let canAppend = stores[1].docs["_optionCanAppend"]?.bind(
+						stores[1].docs
+					);
+					let syncEvents = 0;
+					let sync = stores[1].docs.index["_sync"].bind(stores[1].docs.index);
+					stores[1].docs.index["_sync"] = async (r) => {
+						syncEvents += 1;
+						return sync(r);
+					};
+					stores[1].docs["_optionCanAppend"] = async (e) => {
+						canAppendEvents += 1;
+						return !canAppend || canAppend(e);
+					};
+
+					await stores[1].docs.index.query(
+						new DocumentQuery({
+							queries: [],
+						}),
+						{ remote: { amount: 1, sync: true } }
+					);
+
+					await waitFor(() => stores[1].docs.index.size === 4);
+					expect(canAppendEvents).toEqual(6); // 4 docuuments where 2 have been edited once (4 + 2)
+					expect(syncEvents).toEqual(1);
+
+					await stores[1].docs.index.query(
+						new DocumentQuery({
+							queries: [],
+						}),
+						{ remote: { amount: 1, sync: true } }
+					);
+					await waitFor(() => syncEvents == 2);
+					expect(canAppendEvents).toEqual(6); // no new checks, since all docs already added
+				});
+				it("will not sync already existing", async () => {});
 			});
 
 			describe("string", () => {

@@ -1,11 +1,10 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { jest } from "@jest/globals";
 import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
-import { IStoreOptions } from "@dao-xyz/peerbit-store";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 
 describe(`Replication`, function () {
@@ -16,22 +15,33 @@ describe(`Replication`, function () {
 		client2: Peerbit,
 		db1: EventStore<string>,
 		db2: EventStore<string>;
-	let options: IStoreOptions<any>;
+	let fetchEvents: number;
+	let fetchHashes: Set<string>;
+	let fromMultihash: any;
+	beforeAll(() => {
+		fromMultihash = Entry.fromMultihash;
+
+		// TODO monkeypatching might lead to sideeffects in other tests!
+		Entry.fromMultihash = (s, h, o) => {
+			fetchHashes.add(h);
+			fetchEvents += 1;
+			return fromMultihash(s, h, o);
+		};
+	});
+	afterAll(() => {
+		Entry.fromMultihash = fromMultihash;
+	});
 
 	beforeEach(async () => {
+		fetchEvents = 0;
+		fetchHashes = new Set();
 		session = await LSession.connected(2);
-
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
-		options = Object.assign({}, options, {});
-		db1 = await client1.open(new EventStore<string>({ id: "a" }), {
-			...options,
-		});
+		db1 = await client1.open(new EventStore<string>());
 	});
 
 	afterEach(async () => {
-		options = {} as any;
-
 		if (db1) await db1.drop();
 
 		if (db2) await db2.drop();
@@ -43,8 +53,6 @@ describe(`Replication`, function () {
 	});
 
 	it("replicates database of 1 entry", async () => {
-		options = Object.assign({}, options);
-		let done = false;
 		let updated = 0;
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
@@ -52,10 +60,6 @@ describe(`Replication`, function () {
 				db1.address!
 			))!,
 			{
-				...options,
-				onReplicationComplete: async () => {
-					done = true;
-				},
 				onUpdate: async () => {
 					updated += 1;
 				},
@@ -67,8 +71,7 @@ describe(`Replication`, function () {
 		const value = "hello";
 		await db1.add(value);
 
-		await waitFor(() => done);
-		expect(updated).toEqual(1);
+		await waitFor(() => updated === 1);
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(1);
 
 		const db1Entries: Entry<Operation<string>>[] = (
@@ -105,59 +108,64 @@ describe(`Replication`, function () {
 	it("replicates database of 100 entries", async () => {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 
-		options = Object.assign({}, options);
-
-		let done = false;
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			))!,
-			{
-				...options,
-				onReplicationComplete: async () => {
-					// Once db2 has finished replication, make sure it has all elements
-					// and process to the asserts below
-					const all = (await db2.iterator({ limit: -1 })).collect().length;
-					done = all === entryCount;
-				},
-			}
+			))!
 		);
 
 		const entryCount = 100;
 		const entryArr: number[] = [];
 
 		for (let i = 0; i < entryCount; i++) {
-			entryArr.push(i);
+			//	entryArr.push(i);
+			await db1.add("hello" + i);
 		}
 
-		const add = (i: number) => db1.add("hello" + i);
-		await mapSeries(entryArr, add);
+		/* 	const add = (i: number) => db1.add("hello" + i);
+			await mapSeries(entryArr, add); */
 
-		await waitFor(() => done);
+		// Once db2 has finished replication, make sure it has all elements
+		// and process to the asserts below
+		try {
+			await waitFor(() => db2.store.oplog.length === entryCount);
+		} catch (error) {
+			console.error(
+				"Did not recieve all entries, missing: " +
+					(db2.store.oplog.length - entryCount),
+				"Fetch events: " +
+					fetchEvents +
+					", fetch hashes size: " +
+					fetchHashes.size
+			);
+			const entries = (await db2.iterator({ limit: -1 })).collect();
+			console.error(
+				"Entries: (" +
+					entries.length +
+					"), " +
+					entries.map((x) => x.payload.getValue().value).join(", ")
+			);
+			throw error;
+		}
+
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		expect(entries.length).toEqual(entryCount);
-		expect(entries[0].payload.getValue().value).toEqual("hello0");
-		expect(entries[entries.length - 1].payload.getValue().value).toEqual(
-			"hello99"
-		);
+		for (let i = 0; i < entryCount; i++) {
+			try {
+				expect(entries[i].payload.getValue().value).toEqual("hello" + i);
+			} catch (error) {
+				console.error(
+					"Entries out of order: " +
+						entries.map((x) => x.payload.getValue().value).join(", ")
+				);
+				throw error;
+			}
+		}
 	});
 
 	it("emits correct replication info", async () => {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
-
-		options = Object.assign({}, options);
-
-		// Test that none of the entries gets into the replication queue twice
-		const replicateSet = new Set();
-
-		// Verify that progress count increases monotonically by saving
-		// each event's current progress into an array
-		let progressEvents: number = 0;
-		const progressEventsEntries: Entry<any>[] = [];
-		let done = false;
-
-		let replicationReorganizationDone = false;
 
 		client1.replicationReorganization = async (_changed: any) => {
 			return true; // do a noop becaus in this test we want to make sure that writes are only treated once
@@ -168,38 +176,7 @@ describe(`Replication`, function () {
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			))!,
-			{
-				...options,
-				onReplicationQueued: (store, entry) => {
-					if (!replicationReorganizationDone) {
-						return false;
-					}
-					if (!replicateSet.has(entry.hash)) {
-						replicateSet.add(entry.hash);
-					} else {
-						fail(
-							new Error(
-								"Shouldn't have started replication twice for entry " +
-									entry.hash +
-									"\n" +
-									entry.payload.getValue().value
-							)
-						);
-					}
-				},
-				onReplicationFetch: (store, entry) => {
-					progressEvents += 1;
-					progressEventsEntries.push(entry);
-				},
-
-				onReplicationComplete: async (store) => {
-					// Once db2 has finished replication, make sure it has all elements
-					// and process to the asserts below
-					const all = (await db2.iterator({ limit: -1 })).collect().length;
-					done = all === entryCount;
-				},
-			}
+			))!
 		);
 
 		const entryCount = 99;
@@ -215,7 +192,8 @@ describe(`Replication`, function () {
 
 		//await mapSeries(adds, (i) => db1.add("hello " + i));
 
-		await waitFor(() => done);
+		// All entries should be in the database
+		await waitFor(() => db2.store.oplog.length === entryCount);
 
 		// All entries should be in the database
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
@@ -223,7 +201,8 @@ describe(`Replication`, function () {
 		);
 
 		// progress events should increase monotonically
-		expect(progressEvents).toEqual(entryCount);
+		expect(fetchEvents).toEqual(fetchHashes.size);
+		expect(fetchEvents).toEqual(0); // becausel all entries were sent
 	});
 
 	it("emits correct replication info on fresh replication", async () => {
@@ -242,62 +221,22 @@ describe(`Replication`, function () {
 
 		await mapSeries(adds, add);
 
-		// Open second instance again
-		options = {};
-
-		// Test that none of the entries gets into the replication queue twice
-		const replicateSet = new Set();
-
-		// Verify that progress count increases monotonically by saving
-		// each event's current progress into an array
-		let progressEvents: number = 0;
-
-		let replicatedEventCount = 0;
-		let done = false;
-
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			))!,
-			{
-				...options,
-				onReplicationQueued: (store, entry) => {
-					if (!replicateSet.has(entry.hash)) {
-						replicateSet.add(entry.hash);
-					} else {
-						fail(
-							new Error(
-								"Shouldn't have started replication twice for entry " +
-									entry.hash
-							)
-						);
-					}
-				},
-				onReplicationFetch: (store, entry) => {
-					progressEvents += 1;
-				},
-				onReplicationComplete: async (store) => {
-					replicatedEventCount++;
-					// Once db2 has finished replication, make sure it has all elements
-					// and process to the asserts below
-					const all = (await db2.iterator({ limit: -1 })).collect().length;
-					done = all === entryCount;
-				},
-			}
+			))!
 		);
 
-		await waitFor(() => done);
-
 		// All entries should be in the database
+		await waitFor(() => db2.store.oplog.length === entryCount);
+
+		// progress events should (increase monotonically)
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
 			entryCount
 		);
-		// 'replicated' event should've been received only once
-		expect(replicatedEventCount).toEqual(1);
-
-		// progress events should (increase monotonically)
-		expect(progressEvents).toEqual(entryCount);
+		expect(fetchEvents).toEqual(fetchHashes.size);
+		expect(fetchEvents).toEqual(entryCount - 3); // - 3 because we also send some references for faster syncing (see exchange-heads.ts)
 	});
 
 	it("emits correct replication info in two-way replication", async () => {
@@ -317,13 +256,6 @@ describe(`Replication`, function () {
 		};
 
 		// Open second instance again
-		let options = {
-			overwrite: true,
-		};
-		// Test that none of the entries gets into the replication queue twice
-		const replicateSet = new Set();
-		let done = false;
-
 		client1.replicationReorganization = async (_changed: any) => {
 			return true; // do a noop becaus in this test we want to make sure that writes are only treated once
 			// and we don't want extra replication events
@@ -333,28 +265,7 @@ describe(`Replication`, function () {
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.directblock,
 				db1.address!
-			))!,
-			{
-				...options,
-				onReplicationComplete: async (store) => {
-					// Once db2 has finished replication, make sure it has all elements
-					// and process to the asserts below
-					const all = (await db2.iterator({ limit: -1 })).collect().length;
-					done = all === entryCount * 2;
-				},
-				onReplicationQueued: (store, entry) => {
-					if (!replicateSet.has(entry.hash)) {
-						replicateSet.add(entry.hash);
-					} else {
-						fail(
-							new Error(
-								"Shouldn't have started replication twice for entry " +
-									entry.hash
-							)
-						);
-					}
-				},
-			}
+			))!
 		);
 
 		expect(db1.address).toBeDefined();
@@ -362,7 +273,13 @@ describe(`Replication`, function () {
 		expect(db1.address!.toString()).toEqual(db2.address!.toString());
 
 		await mapSeries(adds, add);
-		await waitFor(() => done);
+
+		// All entries should be in the database
+		await waitForAsync(
+			async () =>
+				(await db2.iterator({ limit: -1 })).collect().length === entryCount * 2,
+			{ delayInterval: 200, timeout: 20000 }
+		);
 
 		// Database values should match
 

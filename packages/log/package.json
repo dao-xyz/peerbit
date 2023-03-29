@@ -37,7 +37,7 @@
 		"@dao-xyz/peerbit-crypto": "^0.1.11",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
 		"json-stringify-deterministic": "^1.0.7",
-		"libp2p": "^0.43.2",
+		"libp2p": "^0.43.3",
 		"p-do-whilst": "^1.1.0",
 		"p-map": "^5.5.0",
 		"p-queue": "^7.3.3",
@@ -48,9 +48,7 @@
 		"@dao-xyz/peerbit-test-utils": "^0.1.27",
 		"@types/yallist": "^4.0.1",
 		"assert": "^2.0.0",
-		"fs-extra": "^10.0.1",
-		"is-node": "^1.0.2",
-		"p-each-series": "^3.0.0"
+		"fs-extra": "^10.0.1"
 	},
 	"contributors": [
 		"haadcode",

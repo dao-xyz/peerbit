@@ -1,4 +1,3 @@
-import mapSeries from "p-each-series";
 import PQueue from "p-queue";
 import {
 	Log,
@@ -10,6 +9,7 @@ import {
 	Change,
 	TrimToByteLengthOption,
 	TrimToLengthOption,
+	Change2,
 } from "@dao-xyz/peerbit-log";
 import {
 	Encoding,
@@ -31,8 +31,8 @@ import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import path from "path-browserify";
 import { v4 as uuid } from "uuid";
-import { join } from "./replicator.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
+
 export const logger = loggerFn({ module: "store" });
 
 export class CachedValue {}
@@ -114,10 +114,6 @@ export interface IStoreOptions<T> {
 	onLoad?: (store: Store<T>) => void;
 	onLoadProgress?: (store: Store<T>, entry: Entry<T>) => void;
 	onOpen?: (store: Store<any>) => Promise<void>;
-	onReplicationQueued?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
-	onReplicationFetch?: (store: Store<any>, entry: Entry<T>) => void; // TODO, do we need this?
-	onReplicationComplete?: (store: Store<any>) => void; // TODO, do we need this?
-	onReady?: (store: Store<T>) => void; // TODO, do we need this?
 	encryption?: PublicKeyEncryptionResolver;
 	replicationConcurrency?: number;
 	sortFn?: ISortFunction;
@@ -260,22 +256,6 @@ export class Store<T> implements Initiable<T> {
 
 		return this;
 	}
-
-	/* private _updateCacheHeadsJob: any;
-	private _updateCacheChange: {
-		added: (Entry<T> | string)[];
-		removed: (Entry<T> | string)[];
-	}
-	updateCacheHeads(change: {
-		added: (Entry<T> | string)[];
-		removed: (Entry<T> | string)[];
-	},
-		reset?: boolean) {
-		clearTimeout(this._updateCacheHeadsJob)
-		this._updateCacheHeadsJob = setTimeout(() => {
-			this._cacheWriteQueue.add(() =>)
-		}, 100)
-	} */
 
 	private async _updateCachedHeads(
 		change: {
@@ -435,7 +415,7 @@ export class Store<T> implements Initiable<T> {
 		return this._storeIndex.toString();
 	}
 
-	get oplog(): Log<any> {
+	get oplog(): Log<T> {
 		return this._oplog;
 	}
 
@@ -622,7 +602,6 @@ export class Store<T> implements Initiable<T> {
 			true
 		);
 		this._loaded = true;
-		this._options.onReady && this._options.onReady(this);
 	}
 
 	async loadLastHeadsPath() {
@@ -733,7 +712,7 @@ export class Store<T> implements Initiable<T> {
 		};
 
 		await Promise.all([
-			this._updateCachedHeads(change),
+			this._cacheWriteQueue.add(() => this._updateCachedHeads(change)),
 			this._updateIndex(change),
 		]);
 		return change;
@@ -746,104 +725,52 @@ export class Store<T> implements Initiable<T> {
 	 */
 	async sync(
 		entries: (EntryWithRefs<T> | Entry<T> | string)[],
-		options: { canAppend?: CanAppend<T> } = {}
-	): Promise<boolean> {
+		options: {
+			canAppend?: CanAppend<T>;
+			onChange?: (change: Change2<any>) => void | Promise<void>;
+		} = {}
+	): Promise<void> {
+		await this.waitForHeads();
+
 		logger.debug(`Sync request #${entries.length}`);
-		if (entries.length === 0) {
-			return false;
-		}
-
-		const handle = async (headToHandle: EntryWithRefs<T> | Entry<T>) => {
-			const allEntries =
-				headToHandle instanceof Entry
-					? [headToHandle]
-					: [headToHandle.entry, ...headToHandle.references];
-			await Promise.all(
-				allEntries.map((h) =>
-					h.init({
-						encoding: this.oplog.encoding,
-						encryption: this.oplog.encryption,
-					})
-				)
-			);
-			const entry =
-				headToHandle instanceof Entry ? headToHandle : headToHandle.entry;
-
-			this._options.onReplicationQueued &&
-				this._options.onReplicationQueued(this, entry);
-
-			const canAppend = options?.canAppend || this.canAppend;
-			if (canAppend && !(await canAppend(entry))) {
-				logger.debug("Not allowd to append head " + entry.hash);
-				return Promise.resolve(null);
+		const entriesToJoin: (Entry<T> | string)[] = [];
+		for (const e of entries) {
+			if (e instanceof Entry || typeof e === "string") {
+				entriesToJoin.push(e);
+			} else {
+				for (const ref of e.references) {
+					entriesToJoin.push(ref);
+				}
+				entriesToJoin.push(e.entry);
 			}
-			await Promise.all(
-				allEntries.map(async (head) => {
-					const headHash = head.hash;
-					head.hash = undefined as any;
-					try {
-						const hash = await Entry.toMultihash(this._store, head);
-						head.hash = headHash;
-						if (head.hash === undefined) {
-							head.hash = hash; // can happen if you sync entries that you load directly from ipfs
-						} else if (hash !== head.hash) {
-							logger.error("Head hash didn't match the contents");
-							throw new Error("Head hash didn't match the contents");
-						}
-					} catch (error) {
-						logger.error(error);
-						throw error;
-					}
-				})
-			);
+		}
+		const addedMap: Map<string, Entry<T>> = new Map();
+		const allRemoved: Entry<T>[] = [];
 
-			return headToHandle;
+		await this.oplog.join(entriesToJoin, {
+			canAppend: (entry) => {
+				const canAppend = options?.canAppend || this.canAppend;
+				return !canAppend || canAppend(entry);
+			},
+			onChange: (change) => {
+				options?.onChange?.(change);
+				addedMap.set(change.added.hash, change.added);
+				for (const removed of change.removed) {
+					addedMap.delete(removed.hash);
+					allRemoved.push(removed);
+				}
+				return this._updateIndex({
+					added: [change.added],
+					removed: change.removed,
+				});
+			},
+		});
+
+		const change: Change<T> = {
+			added: [...addedMap.values()],
+			removed: allRemoved,
 		};
-		const hash = (entry: EntryWithRefs<T> | Entry<T> | string) => {
-			if (entry instanceof Entry) {
-				return entry.hash;
-			} else if (typeof entry === "string") {
-				return entry;
-			}
-			return entry.entry.hash;
-		};
-
-		const newEntries: (Entry<T> | EntryWithRefs<T>)[] = [];
-		for (const entry of entries) {
-			const h = hash(entry);
-			if (h && this.oplog.has(h)) {
-				continue;
-			}
-			newEntries.push(
-				typeof entry === "string"
-					? await Entry.fromMultihash(this._store, entry)
-					: entry
-			);
-		}
-
-		if (newEntries.length === 0) {
-			return false;
-		}
-
-		const saved = await mapSeries(newEntries, handle);
-		const change = await join(
-			saved as EntryWithRefs<T>[] | Entry<T>[],
-			this._oplog,
-			{
-				concurrency: this._options.replicationConcurrency,
-				onFetched: (entry) =>
-					this._options.onReplicationFetch &&
-					this._options.onReplicationFetch(this, entry),
-			}
-		);
-
-		await Promise.all([
-			this._updateCachedHeads(change),
-			this._updateIndex(change),
-		]);
-		this._options.onReplicationComplete &&
-			this._options.onReplicationComplete(this);
-		return true;
+		await this._cacheWriteQueue.add(() => this._updateCachedHeads(change));
 	}
 
 	async saveSnapshot() {
@@ -880,7 +807,6 @@ export class Store<T> implements Initiable<T> {
 		if (this._options.onLoad) {
 			await this._options.onLoad(this);
 		}
-		await this.sync([]);
 
 		const snapshotCID = await this._cache
 			.get(this.snapshotPath)
@@ -918,10 +844,7 @@ export class Store<T> implements Initiable<T> {
 					added: await this._oplog.values.toArray(),
 					removed: [],
 				});
-				this._options.onReplicationComplete &&
-					this._options.onReplicationComplete(this);
 			}
-			this._options.onReady && this._options.onReady(this);
 		} else {
 			throw new Error(`Snapshot for ${this.id} not found!`);
 		}

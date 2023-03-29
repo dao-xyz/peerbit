@@ -66,7 +66,21 @@ export class Values<T> {
 	get length() {
 		return this._values.length;
 	}
+
+	private _putPromise: Map<string, Promise<any>> = new Map();
 	async put(value: Entry<T>) {
+		let promise = this._putPromise.get(value.hash);
+		if (promise) {
+			return promise;
+		}
+		promise = this._put(value).then((v) => {
+			this._putPromise.delete(value.hash);
+			return v;
+		});
+		this._putPromise.set(value.hash, promise);
+		return promise;
+	}
+	async _put(value: Entry<T>) {
 		// assume we want to insert at head (or somehere close)
 		let walker = this._values.head;
 		let last: EntryNode | undefined = undefined;
@@ -74,6 +88,9 @@ export class Values<T> {
 			const walkerValue = await this.getEntry(walker);
 			if (!walkerValue) {
 				throw new Error("Missing walker value");
+			}
+			if (walkerValue.hash === value.hash) {
+				return; // already exist!
 			}
 
 			if (this._sortFn(walkerValue, value) < 0) {
@@ -88,6 +105,7 @@ export class Values<T> {
 		if (!value.hash) {
 			throw new Error("Unexpected");
 		}
+
 		_insertAfter(this._values, last, {
 			byteLength: value._payload.byteLength,
 			gid: value.gid,

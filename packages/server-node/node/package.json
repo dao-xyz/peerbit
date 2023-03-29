@@ -58,8 +58,7 @@
 		"@libp2p/mplex": "^7.1.1",
 		"@libp2p/tcp": "^6.1.4",
 		"@libp2p/websockets": "^5.0.7",
-		"is-node": "^1.0.2",
-		"libp2p": "^0.43.2"
+		"libp2p": "^0.43.3"
 	},
 	"peerDependencies": {
 		"axios": "^1.1.3",

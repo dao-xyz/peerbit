@@ -11,7 +11,7 @@ import { v4 as uuid } from "uuid";
 import { Peerbit } from "../peer.js";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 1,080 ops/sec ±5.03% (76 runs sampled)
+// put x 1,185 ops/sec ±2.95% (77 runs sampled)
 
 @variant("document")
 class Document {

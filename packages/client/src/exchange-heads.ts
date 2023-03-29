@@ -112,28 +112,30 @@ export const createExchangeHeadsMessage = async (
 	identity: Identity | undefined
 ) => {
 	const headsSet = new Set(heads);
-	const headsWithRefs = heads.map(async (head) => {
-		const refs = !includeReferences
-			? []
-			: (
-					await store.oplog.getReferenceSamples(head, {
-						pointerCount: 8,
-						memoryLimit: 1e6 / heads.length,
-					})
-			  ) // 1mb total limit split on all heads
-					.filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
-		return new EntryWithRefs({
-			entry: head,
-			references: refs,
-		});
-	});
+	const headsWithRefs = await Promise.all(
+		heads.map(async (head) => {
+			const refs = !includeReferences
+				? []
+				: (
+						await store.oplog.getReferenceSamples(head, {
+							pointerCount: 8,
+							memoryLimit: 1e6 / heads.length,
+						})
+				  ) // 1mb total limit split on all heads
+						.filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
+			return new EntryWithRefs({
+				entry: head,
+				references: refs,
+			});
+		})
+	);
 	logger.debug(`Send latest heads of '${store._storeIndex}'`);
 	const message = new ExchangeHeadsMessage({
 		storeIndex: store._storeIndex,
 		programIndex: program._programIndex,
 		programAddress: (program.address ||
 			program.parentProgram.address)!.toString(),
-		heads: await Promise.all(headsWithRefs),
+		heads: headsWithRefs,
 	});
 	const maybeSigned = new MaybeSigned({ data: serialize(message) });
 	let signedMessage: MaybeSigned<any> = maybeSigned;
