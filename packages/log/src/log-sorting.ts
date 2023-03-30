@@ -97,7 +97,6 @@ export const NoZeroes = (func: ISortFunction) => {
 		// Validate by calling the function
 		const result = func(a, b, (a, b) => -1);
 		if (result === 0) {
-			console.error(a.hash, b.hash, a.payload.getValue(), b.payload.getValue());
 			throw Error(
 				`Your log's tiebreaker function, ${func.name}, has returned zero and therefore cannot be`
 			);
