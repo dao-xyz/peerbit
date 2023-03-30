@@ -29,7 +29,7 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Context, Results } from "./query.js";
+import { Context, DocumentQuery, Results, ResultWithSource } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
 import { ReplicatorType } from "@dao-xyz/peerbit-program";
@@ -128,49 +128,11 @@ export class Documents<
 			store: this.store,
 			canRead: options.canRead || (() => Promise.resolve(true)),
 			fields: options.index?.fields || ((obj) => obj),
-			sync: async (result: Results<T>) => {
-				/* 	const entries = (
-						await Promise.all(
-							result.results.map(async (result) => {
-								return this.syncHash(result.context.head)
-							})
-						)
-					).filter((x) => !!x) as Entry<any>[]; */
-				await this.store.sync(result.results.map((x) => x.context.head));
-			},
+			sync: async (result: Results<T>) =>
+				this.store.sync(result.results.map((x) => x.context.head)),
 		});
 	}
 
-	/* 	private async syncHash(hash: string) {
-			let entry = await this.store.oplog.get(hash);
-			if (!entry) {
-				entry = await Entry.fromMultihash(
-					this.store.store,
-					hash
-				);
-				entry.init(this.store.oplog);
-			}
-			if (!entry) {
-				logger.error("Failed to resolve entry: " + hash);
-				return undefined;
-			}
-			if (!this._optionCanAppend) {
-				return entry;
-			}
-			// we do optionalCanAppend on query because we might not be able to actually check with history whether we can append
-			// TODO make more resilient/robust!
-	
-			try {
-				const r = await this.canAppend(entry)
-				if (r) {
-					return entry;
-				}
-				return undefined;
-			} catch (e: any) {
-				logger.error("canAppend resulted in error: " + e.message);
-				return undefined;
-			}
-		} */
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
 			? (await this.store.oplog.get(history)) ||
@@ -435,7 +397,7 @@ export class Documents<
 					} else if (payload instanceof DeleteOperation) {
 						value = await this.index.getDocument(this.index.index.get(key)!);
 					} else {
-						throw new Error("Unexpecte");
+						throw new Error("Unexpected");
 					}
 
 					documentsChanged.removed.push(value);
