@@ -4,6 +4,8 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
+import { multiaddr, Multiaddr } from "@multiformats/multiaddr";
+
 import {
 	createExchangeHeadsMessage,
 	ExchangeHeadsMessage,
@@ -52,7 +54,7 @@ import {
 } from "@dao-xyz/libp2p-direct-sub";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
-import { TimeoutError } from "@dao-xyz/peerbit-time";
+import { TimeoutError, waitFor } from "@dao-xyz/peerbit-time";
 import "@libp2p/peer-id";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { Libp2p } from "libp2p";
@@ -404,6 +406,22 @@ export class Peerbit {
 		return new DecryptedThing<MaybeSigned<Uint8Array>>({
 			data: serialize(signedMessage),
 		}).encrypt(this.encryption.getEncryptionKeypair, reciever);
+	}
+
+	/**
+	 * Dial a peer with an Ed25519 peerId
+	 */
+	async dial(address: string | Multiaddr) {
+		const maddress = typeof address == "string" ? multiaddr(address) : address;
+		const connection = await this.libp2p.dial(maddress);
+		const publicKey = Ed25519PublicKey.from(connection.remotePeer);
+
+		// TODO, do this as a promise instead using the onPeerConnected vents in directsub and directblock
+		return waitFor(
+			() =>
+				this.libp2p.directsub.peers.has(publicKey.hashcode()) &&
+				this.libp2p.directblock.peers.has(publicKey.hashcode())
+		);
 	}
 
 	async disconnect() {
