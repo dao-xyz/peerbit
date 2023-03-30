@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit",
-	"version": "0.3.8",
+	"version": "0.3.9",
 	"description": "Distributed p2p database on IPFS",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -35,15 +35,15 @@
 		"@dao-xyz/peerbit-crypto": "^0.1.12",
 		"@dao-xyz/peerbit-keystore": "^0.1.29",
 		"@dao-xyz/peerbit-logger": "^0.0.5",
-		"@dao-xyz/peerbit-program": "^0.3.6",
-		"@dao-xyz/peerbit-store": "^0.3.6",
+		"@dao-xyz/peerbit-program": "^0.3.7",
+		"@dao-xyz/peerbit-store": "^0.3.7",
 		"@dao-xyz/uint8arrays": "^0.0.3",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",
 		"p-queue": "^7.3.3"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-document": "^0.3.8",
+		"@dao-xyz/peerbit-document": "^0.3.9",
 		"@dao-xyz/peerbit-test-utils": "^0.1.28",
 		"fs-extra": "^10.1.0",
 		"mkdirp": "^1.0.4",
