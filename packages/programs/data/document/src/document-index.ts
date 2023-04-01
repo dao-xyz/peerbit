@@ -227,8 +227,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 		return this._index.size;
 	}
 
-	async getDocument(entry: Entry<Operation<T>>): Promise<T> {
-		const payloadValue = await entry.getPayloadValue();
+	async getDocument(value: { context: { head: string } }): Promise<T> {
+		const payloadValue = await (await this._store.oplog.get(
+			value.context.head
+		))!.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
 			return payloadValue.getValue(this.valueEncoding);
 		}
@@ -244,9 +246,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			if (filter(value)) {
 				results.push({
 					context: value.context,
-					value: await this.getDocument(
-						(await this._store.oplog.get(value.context.head))!
-					),
+					value: await this.getDocument(value),
 				});
 			}
 		}
@@ -273,9 +273,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				return doc
 					? [
 							{
-								value: await this.getDocument(
-									(await this._store.oplog.get(doc.context.head))!
-								),
+								value: await this.getDocument(doc),
 								context: doc.context,
 							},
 					  ]

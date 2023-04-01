@@ -396,7 +396,7 @@ export class Documents<
 					if (payload instanceof PutOperation) {
 						value = this.deserializeOrPass(payload);
 					} else if (payload instanceof DeleteOperation) {
-						value = await this.index.getDocument(entries[1]);
+						value = await this.getDocumentFromEntry(entries[1]!);
 					} else {
 						throw new Error("Unexpected");
 					}
@@ -426,6 +426,13 @@ export class Documents<
 		);
 	}
 
+	private async getDocumentFromEntry(entry: Entry<Operation<T>>) {
+		const payloadValue = await entry.getPayloadValue();
+		if (payloadValue instanceof PutOperation) {
+			return payloadValue.getValue(this.index.valueEncoding);
+		}
+		throw new Error("Unexpected");
+	}
 	deserializeOrPass(value: PutOperation<T>): T {
 		if (value._value) {
 			return value._value;
