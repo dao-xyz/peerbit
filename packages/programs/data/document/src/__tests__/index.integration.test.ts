@@ -162,6 +162,10 @@ describe("index", () => {
 				expect(changes[2].added).toHaveLength(0);
 				expect(changes[2].removed).toHaveLength(1);
 				expect(changes[2].removed[0].id).toEqual(doc.id);
+
+				// try close and load
+				await store.docs.store.close();
+				await store.docs.store.load();
 			});
 
 			it("many chunks", async () => {

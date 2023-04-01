@@ -14,6 +14,7 @@ import {
 	Entry,
 	Payload,
 	CanAppend,
+	EntryType,
 } from "./entry.js";
 import {
 	HLC,
@@ -419,6 +420,7 @@ export class Log<T> {
 	async append(
 		data: T,
 		options: {
+			type?: EntryType;
 			canAppend?: CanAppend<T>;
 			gidSeed?: Uint8Array;
 			nexts?: Entry<any>[];
@@ -463,6 +465,7 @@ export class Log<T> {
 			signers: options.signers,
 			data,
 			clock,
+			type: options.type,
 			encoding: this._encoding,
 			next: nexts,
 			gidSeed: options.gidSeed,
@@ -514,13 +517,20 @@ export class Log<T> {
 		this._headsIndex.put(entry);
 		await this._values.put(entry);
 
+		const removed = await this.processEntry(entry);
+
 		// if next contails all gids
 		if (options.onGidsShadowed && removedGids.size > 0) {
 			options.onGidsShadowed([...removedGids]);
 		}
 
 		entry.init({ encoding: this._encoding, encryption: this._encryption });
-		const removed = await this.trim(options?.trim);
+
+		const trimmed = await this.trim(options?.trim);
+		for (const entry of trimmed) {
+			removed.push(entry);
+		}
+
 		return { entry, removed };
 	}
 
@@ -616,6 +626,8 @@ export class Log<T> {
 		const entries = Array.isArray(entriesOrLog)
 			? entriesOrLog
 			: await entriesOrLog.values.toArray();
+
+		// Build a list of already resolved entries, and filter out already joined entries
 		for (const e of entries) {
 			let hash: string;
 			if (e instanceof Entry) {
@@ -630,6 +642,7 @@ export class Log<T> {
 			stack.push(hash);
 		}
 
+		// Resolve missing entries
 		for (const hash of stack) {
 			if (visited.has(hash) || this.has(hash)) {
 				continue;
@@ -675,7 +688,6 @@ export class Log<T> {
 			}
 		}
 
-		// Get the difference of the logs
 		while (entriesBottomUp.length > 0) {
 			const e = entriesBottomUp.shift()!;
 			await this._joining.get(e.hash);
@@ -698,7 +710,7 @@ export class Log<T> {
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
 		}
-	) {
+	): Promise<void> {
 		if (!isDefined(e.hash)) {
 			throw new Error("Unexpected");
 		}
@@ -718,21 +730,33 @@ export class Log<T> {
 			await this._entryIndex.set(e);
 			await this._values.put(e);
 
-			for (const a of e.next) {
-				let nextIndexSet = this._nextsIndex.get(a);
-				if (!nextIndexSet) {
-					nextIndexSet = new Set();
-					nextIndexSet.add(e.hash);
-					this._nextsIndex.set(a, nextIndexSet);
-				} else {
-					nextIndexSet.add(a);
+			if (e.metadata.type !== EntryType.CUT) {
+				for (const a of e.next) {
+					if (!this.has(a)) {
+						await this.join([a]);
+					}
+
+					let nextIndexSet = this._nextsIndex.get(a);
+					if (!nextIndexSet) {
+						nextIndexSet = new Set();
+						nextIndexSet.add(e.hash);
+						this._nextsIndex.set(a, nextIndexSet);
+					} else {
+						nextIndexSet.add(a);
+					}
 				}
 			}
 
 			const clock = await e.getClock();
 			this._hlc.update(clock.timestamp);
 
-			const removed = await this.trim(options?.trim);
+			const removed = await this.processEntry(e);
+			const trimmed = await this.trim(options?.trim);
+
+			for (const entry of trimmed) {
+				removed.push(entry);
+			}
+
 			options?.onChange &&
 				(await options.onChange({ added: e, removed: removed }));
 		}
@@ -750,28 +774,48 @@ export class Log<T> {
 		}
 	}
 
-	/// TODO simplify methods below
+	private async processEntry(entry: Entry<T>) {
+		if (entry.metadata.type === EntryType.CUT) {
+			return this.deleteRecursively(entry, true);
+		}
+		return [];
+	}
 
-	async deleteRecursively(from: Entry<any> | Entry<any>[]) {
+	/// TODO simplify methods below
+	async deleteRecursively(from: Entry<any> | Entry<any>[], skipFirst = false) {
 		const stack = Array.isArray(from) ? [...from] : [from];
 		const promises: Promise<void>[] = [];
+		let counter = 0;
+		const deleted: Entry<T>[] = [];
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
-			this._trim.deleteFromCache(entry);
-			await this._values.delete(entry);
-			await this._entryIndex.delete(entry.hash);
-			this._headsIndex.del(entry);
-			this._nextsIndex.delete(entry.hash);
+			if (counter > 0 || !skipFirst) {
+				this._trim.deleteFromCache(entry);
+				await this._values.delete(entry);
+				await this._entryIndex.delete(entry.hash);
+				this._headsIndex.del(entry);
+				this._nextsIndex.delete(entry.hash);
+				deleted.push(entry);
+				promises.push(entry.delete(this._storage));
+			}
+
 			for (const next of entry.next) {
-				const ne = await this.get(next);
-				if (ne) {
-					stack.push(ne);
+				const nextFromNext = this._nextsIndex.get(next);
+				if (nextFromNext) {
+					nextFromNext.delete(entry.hash);
+				}
+
+				if (!nextFromNext || nextFromNext.size === 0) {
+					const ne = await this.get(next);
+					if (ne) {
+						stack.push(ne);
+					}
 				}
 			}
-			promises.push(entry.delete(this._storage));
+			counter++;
 		}
-
 		await Promise.all(promises);
+		return deleted;
 	}
 
 	async delete(entry: Entry<any>) {

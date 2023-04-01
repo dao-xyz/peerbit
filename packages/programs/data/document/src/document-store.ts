@@ -15,13 +15,7 @@ import {
 } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
-import {
-	BORSH_ENCODING,
-	CanAppend,
-	Change,
-	Encoding,
-	Entry,
-} from "@dao-xyz/peerbit-log";
+import { CanAppend, Change, Entry, EntryType } from "@dao-xyz/peerbit-log";
 import {
 	ComposableProgram,
 	Program,
@@ -29,9 +23,8 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Context, DocumentQuery, Results, ResultWithSource } from "./query.js";
+import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { getBlockValue } from "@dao-xyz/libp2p-direct-block";
 import { ReplicatorType } from "@dao-xyz/peerbit-program";
 import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
 
@@ -270,7 +263,7 @@ export class Documents<
 			? undefined
 			: (await this._index.get(key, { local: true, remote: { sync: true } }))
 					?.results[0];
-		return this.store.addOperation(
+		return this.store.append(
 			new PutOperation({
 				key: asString((doc as any)[this._index.indexBy]),
 				data: ser,
@@ -293,11 +286,15 @@ export class Documents<
 			throw new Error(`No entry with key '${key}' in the database`);
 		}
 
-		return this.store.addOperation(
+		return this.store.append(
 			new DeleteOperation({
 				key: asString(key),
 			}),
-			{ nexts: [await this._resolveEntry(existing.context.head)], ...options } //
+			{
+				nexts: [await this._resolveEntry(existing.context.head)],
+				type: EntryType.CUT,
+				...options,
+			} //
 		);
 	}
 
@@ -314,8 +311,7 @@ export class Documents<
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
 		// in combination with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
 
-		let dedupEntries: Entry<Operation<T>>[] = [];
-		let visited = new Set<string>();
+		let visited = new Map<string, Entry<Operation<T>>[]>();
 		for (const item of entries) {
 			const payload =
 				item._payload instanceof DecryptedThing
@@ -331,11 +327,12 @@ export class Documents<
 				throw new Error("Unsupported operation type");
 			}
 
-			if (visited.has(itemKey)) {
-				continue;
+			let arr = visited.get(itemKey);
+			if (!arr) {
+				arr = [];
+				visited.set(itemKey, arr);
 			}
-			visited.add(itemKey);
-			dedupEntries.push(item);
+			arr.push(item);
 		}
 
 		let documentsChanged: DocumentsChange<T> = {
@@ -343,8 +340,9 @@ export class Documents<
 			removed: [],
 		};
 
-		for (const item of dedupEntries) {
+		for (const [itemKey, entries] of visited) {
 			try {
+				const item = entries[0];
 				const payload =
 					item._payload instanceof DecryptedThing
 						? item.payload.getValue(item.encoding)
@@ -390,12 +388,15 @@ export class Documents<
 					removedSet.has(item.hash)
 				) {
 					const key = (payload as DeleteOperation | PutOperation<T>).key;
+					if (!this.index.index.has(key)) {
+						continue;
+					}
 
 					let value: T;
 					if (payload instanceof PutOperation) {
 						value = this.deserializeOrPass(payload);
 					} else if (payload instanceof DeleteOperation) {
-						value = await this.index.getDocument(this.index.index.get(key)!);
+						value = await this.index.getDocument(entries[1]);
 					} else {
 						throw new Error("Unexpected");
 					}
@@ -405,18 +406,6 @@ export class Documents<
 					if (value instanceof Program) {
 						// TODO is this tested?
 						await value.close(this);
-					}
-
-					if (item.next.length > 0) {
-						// delete all nexts recursively (but dont delete the DELETE record (because we might want to share this with others))
-						const nexts = (
-							await Promise.all(item.next.map((n) => this.store.oplog.get(n)))
-						).filter((x) => !!x) as Entry<any>[];
-						if (nexts.length > 0) {
-							await this.store.removeEntry(nexts, {
-								recursively: true,
-							});
-						}
 					}
 
 					// update index

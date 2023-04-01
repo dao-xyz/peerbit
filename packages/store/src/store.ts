@@ -10,6 +10,7 @@ import {
 	TrimToByteLengthOption,
 	TrimToLengthOption,
 	Change2,
+	EntryType,
 } from "@dao-xyz/peerbit-log";
 import {
 	Encoding,
@@ -42,6 +43,7 @@ export type AddOperationOptions<T> = {
 	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
 	nexts?: Entry<T>[];
 	reciever?: EncryptionTemplateMaybeEncrypted;
+	type?: EntryType;
 };
 
 @variant(0)
@@ -246,7 +248,7 @@ export class Store<T> implements Initiable<T> {
 		// Create the operations log
 		this._oplog = new Log<T>(this._store, identity, this.logOptions);
 
-		// addOperation and log-joins queue. Adding ops and joins to the queue
+		// append and log-joins queue. Adding ops and joins to the queue
 		// makes sure they get processed sequentially to avoid race conditions
 		this._cacheWriteQueue = new PQueue({ concurrency: 1 });
 		if (this._options.onOpen) {
@@ -643,22 +645,21 @@ export class Store<T> implements Initiable<T> {
 		}
 	}
 
-	async addOperation(
+	async append(
 		data: T,
 		options?: AddOperationOptions<T>
 	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
 		if (this.closed) {
 			throw new Error("Store is closed");
 		}
-
 		await this.waitForHeads();
-
 		const change = await this._oplog.append(data, {
 			nexts: options?.nexts,
 			reciever: options?.reciever,
 			canAppend: options?.skipCanAppendCheck ? undefined : this.canAppend,
 			identity: options?.identity,
 			signers: options?.signers,
+			type: options?.type,
 		});
 
 		logger.debug("Appended entry with hash: " + change.entry.hash);
@@ -678,7 +679,7 @@ export class Store<T> implements Initiable<T> {
 		return change;
 	}
 
-	async removeEntry(
+	private async removeEntry(
 		entry: Entry<T> | Entry<T>[],
 		options?: { recursively?: boolean }
 	) {
@@ -700,7 +701,8 @@ export class Store<T> implements Initiable<T> {
 			}
 		}
 	}
-	async removeOperation(
+
+	async remove(
 		entry: Entry<T> | Entry<T>[],
 		options?: { recursively?: boolean }
 	): Promise<Change<T>> {

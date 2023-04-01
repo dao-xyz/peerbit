@@ -227,10 +227,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 		return this._index.size;
 	}
 
-	async getDocument(indexedValue: { context: { head: string } }): Promise<T> {
-		const payloadValue = await this._store.oplog
-			.get(indexedValue.context.head)
-			.then((x) => x?.getPayloadValue());
+	async getDocument(entry: Entry<Operation<T>>): Promise<T> {
+		const payloadValue = await entry.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
 			return payloadValue.getValue(this.valueEncoding);
 		}
@@ -246,7 +244,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 			if (filter(value)) {
 				results.push({
 					context: value.context,
-					value: await this.getDocument(value),
+					value: await this.getDocument(
+						(await this._store.oplog.get(value.context.head))!
+					),
 				});
 			}
 		}
@@ -271,7 +271,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 			) {
 				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
 				return doc
-					? [{ value: await this.getDocument(doc), context: doc.context }]
+					? [
+							{
+								value: await this.getDocument(
+									(await this._store.oplog.get(doc.context.head))!
+								),
+								context: doc.context,
+							},
+					  ]
 					: [];
 			}
 		}

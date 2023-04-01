@@ -124,6 +124,11 @@ export interface EntryEncryptionTemplate<A, B, C, D> {
 	next: D;
 }
 
+export enum EntryType {
+	APPEND = 0, // Add more data
+	CUT = 1, // Delete or Create tombstone ... delete all nexts, i
+}
+
 @variant(0)
 export class Metadata {
 	@field({ type: "string" })
@@ -135,15 +140,20 @@ export class Metadata {
 	@field({ type: "u64" })
 	maxChainLength: bigint; // longest chain/merkle tree path frmo this node. maxChainLength := max ( maxChainLength(this.next) , 1)
 
+	@field({ type: "u8" })
+	type: EntryType;
+
 	constructor(properties?: {
 		gid: string;
 		clock: Clock;
 		maxChainLength: bigint;
+		type: EntryType;
 	}) {
 		if (properties) {
 			this.gid = properties.gid;
 			this.clock = properties.clock;
 			this.maxChainLength = properties.maxChainLength;
+			this.type = properties.type;
 		}
 	}
 }
@@ -435,6 +445,7 @@ export class Entry<T>
 	static async create<T>(properties: {
 		store: BlockStore;
 		gid?: string;
+		type?: EntryType;
 		gidSeed?: Uint8Array;
 		data: T;
 		encoding?: Encoding<T>;
@@ -579,6 +590,7 @@ export class Entry<T>
 				maxChainLength,
 				clock,
 				gid,
+				type: properties.type ?? EntryType.APPEND,
 			}),
 			properties.encryption?.reciever.metadata
 		);

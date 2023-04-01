@@ -92,7 +92,7 @@ export class KeyBlocks<T> extends Program {
 			reciever?: EncryptionTemplateMaybeEncrypted;
 		}
 	) {
-		return this.store.addOperation(
+		return this.store.append(
 			{
 				op: "PUT",
 				key: key,
@@ -109,7 +109,7 @@ export class KeyBlocks<T> extends Program {
 			reciever?: EncryptionTemplateMaybeEncrypted;
 		}
 	) {
-		return this.store.addOperation(
+		return this.store.append(
 			{
 				op: "DEL",
 				key: key,

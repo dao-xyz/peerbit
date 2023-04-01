@@ -1,5 +1,3 @@
-import { cidifyString } from "./block.js";
-import * as dagCbor from "@ipld/dag-cbor";
 import * as Block from "multiformats/block";
 import type { MultihashHasher } from "multiformats/hashes/hasher";
 

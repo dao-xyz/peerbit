@@ -1,12 +1,13 @@
 import assert from "assert";
 import rmrf from "rimraf";
 import fs from "fs-extra";
-import { Entry } from "../entry.js";
+import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { compare } from "@dao-xyz/uint8arrays";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -61,7 +62,12 @@ describe("Log - Join", function () {
 		signKey2 = keys[1];
 		signKey3 = keys[2];
 		signKey4 = keys[3];
-		session = await LSession.connected(2);
+		session = await LSession.connected(3);
+		await waitForPeers(
+			session.peers[0].directblock,
+			session.peers[1].directblock,
+			session.peers[2].directblock
+		);
 	});
 
 	afterAll(async () => {
@@ -87,7 +93,7 @@ describe("Log - Join", function () {
 				{ logId: "X" }
 			);
 			log2 = new Log(
-				session.peers[0].directblock,
+				session.peers[1].directblock,
 				{
 					...signKey2.keypair,
 					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
@@ -95,7 +101,7 @@ describe("Log - Join", function () {
 				{ logId: "X" }
 			);
 			log3 = new Log(
-				session.peers[1].directblock,
+				session.peers[2].directblock,
 				{
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
@@ -103,7 +109,7 @@ describe("Log - Join", function () {
 				{ logId: "X" }
 			);
 			log4 = new Log(
-				session.peers[1].directblock,
+				session.peers[2].directblock,
 				{
 					...signKey4.keypair,
 					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
@@ -213,6 +219,121 @@ describe("Log - Join", function () {
 			const item = last(await log1.toArray());
 			expect(item.next.length).toEqual(1);
 			expect((await log1.getHeads()).length).toEqual(2);
+		});
+
+		describe("cut", () => {
+			it("joins cut", async () => {
+				const { entry: a1 } = await log1.append("helloA1");
+				const { entry: b1 } = await log2.append("helloB1", {
+					nexts: [a1],
+					type: EntryType.CUT,
+				});
+				const { entry: a2 } = await log1.append("helloA2");
+				await log1.join(await log2.getHeads());
+				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
+					a1.hash,
+					b1.hash,
+					a2.hash,
+				]);
+				const { entry: b2 } = await log2.append("helloB1", {
+					nexts: [a2],
+					type: EntryType.CUT,
+				});
+				await log1.join(await log2.getHeads());
+				expect((await log1.getHeads()).map((e) => e.hash)).toEqual([
+					b1.hash,
+					b2.hash,
+				]);
+				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
+					b1.hash,
+					b2.hash,
+				]);
+			});
+
+			it("will not reset if joining conflicting", async () => {
+				const { entry: a1 } = await log1.append("helloA1");
+				const b1 = await Entry.create({
+					data: "helloB1",
+					next: [a1],
+					type: EntryType.CUT,
+					identity: log1.identity,
+					store: log1.storage,
+				});
+				const b2 = await Entry.create({
+					data: "helloB2",
+					next: [a1],
+					type: EntryType.APPEND,
+					identity: log1.identity,
+					store: log1.storage,
+				});
+
+				// We need to store a1 somewhere else, becuse log1 will temporarely delete the block since due to the merge order
+				// TODO make this work even though there is not a third party helping
+				await log2.storage.get(a1.hash, { replicate: true });
+				expect(await log2.storage.get(a1.hash)).toBeDefined();
+				await log1.join([b1, b2]);
+				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
+					a1.hash,
+					b1.hash,
+					b2.hash,
+				]);
+			});
+
+			it("will not reset if joining conflicting (reversed)", async () => {
+				const { entry: a1 } = await log1.append("helloA1");
+				const b1 = await Entry.create({
+					data: "helloB1",
+					next: [a1],
+					type: EntryType.APPEND,
+					identity: log1.identity,
+					store: log1.storage,
+				});
+				const b2 = await Entry.create({
+					data: "helloB2",
+					next: [a1],
+					type: EntryType.CUT,
+					identity: log1.identity,
+					store: log1.storage,
+				});
+				await log1.join([b1, b2]);
+				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
+					a1.hash,
+					b1.hash,
+					b2.hash,
+				]);
+			});
+
+			it("joining multiple resets", async () => {
+				const { entry: a1 } = await log1.append("helloA1");
+				const { entry: b1 } = await log2.append("helloB1", {
+					nexts: [a1],
+					type: EntryType.CUT,
+				});
+				const { entry: b2 } = await log2.append("helloB2", {
+					nexts: [a1],
+					type: EntryType.CUT,
+				});
+				await log1.join(await log2.getHeads());
+				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
+					b1.hash,
+					b2.hash,
+				]);
+			});
+		});
+
+		it("joins heads", async () => {
+			const { entry: a1 } = await log1.append("helloA1");
+			const { entry: b1 } = await log2.append("helloB1", { nexts: [a1] });
+			await log1.join(await log2.getHeads());
+			const expectedData = ["helloA1", "helloB1"];
+			expect(log1.length).toEqual(2);
+			expect((await log1.toArray()).map((e) => e.payload.getValue())).toEqual(
+				expectedData
+			);
+
+			const item = last(await log1.toArray());
+			expect(item.next.length).toEqual(1);
+			expect((await log1.getHeads()).map((x) => x.hash)).toEqual([b1.hash]);
 		});
 
 		it("joins concurrently", async () => {

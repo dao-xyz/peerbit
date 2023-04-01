@@ -14,7 +14,7 @@ import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-describe(`addOperation`, function () {
+describe(`append`, function () {
 	let blockStore: BlockStore,
 		signKey: KeyWithMeta<Ed25519Keypair>,
 		identityStore: AbstractLevel<any, string, Uint8Array>,
@@ -77,7 +77,7 @@ describe(`addOperation`, function () {
 
 		const data = { data: 12345 };
 
-		await store.addOperation(data).then((entry) => {
+		await store.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
 
@@ -125,7 +125,7 @@ describe(`addOperation`, function () {
 		await store.load();
 
 		for (let i = 0; i < writes; i++) {
-			await store.addOperation({ step: i });
+			await store.append({ step: i });
 		}
 
 		await waitFor(() => done);
@@ -162,7 +162,7 @@ describe(`addOperation`, function () {
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < writes; i++) {
-			promises.push(store.addOperation({ step: i }, { nexts: [] }));
+			promises.push(store.append({ step: i }, { nexts: [] }));
 		}
 		await Promise.all(promises);
 		await waitFor(() => done);
@@ -211,7 +211,7 @@ describe(`addOperation`, function () {
 
 		for (let i = 0; i < writes; i++) {
 			allAddedEntries.push(
-				(await store.addOperation({ step: i }, { nexts: [] })).entry.hash
+				(await store.append({ step: i }, { nexts: [] })).entry.hash
 			);
 		}
 

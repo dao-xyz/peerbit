@@ -95,7 +95,7 @@ describe(`load`, function () {
 		);
 
 		const data = { data: 12345 };
-		await store.addOperation(data).then((entry) => {
+		await store.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
 
@@ -132,7 +132,7 @@ describe(`load`, function () {
 		);
 
 		const data = { data: 12345 };
-		await store.addOperation(data).then((entry) => {
+		await store.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
 
@@ -168,7 +168,7 @@ describe(`load`, function () {
 		);
 
 		const data = { data: 12345 };
-		await store.addOperation(data).then((entry) => {
+		await store.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
 
@@ -207,9 +207,9 @@ describe(`load`, function () {
 			}
 		);
 
-		const { entry: e1 } = await store.addOperation({ data: 1 }, { nexts: [] });
-		const { entry: e2 } = await store.addOperation({ data: 2 }, { nexts: [] });
-		const { entry: e3 } = await store.addOperation({ data: 3 }, { nexts: [] });
+		const { entry: e1 } = await store.append({ data: 1 }, { nexts: [] });
+		const { entry: e2 } = await store.append({ data: 2 }, { nexts: [] });
+		const { entry: e3 } = await store.append({ data: 3 }, { nexts: [] });
 
 		expect(await store.getCachedHeads()).toContainAllValues([
 			e1.hash,
@@ -218,7 +218,7 @@ describe(`load`, function () {
 		]);
 
 		// Remove e1
-		await store.removeOperation(e1);
+		await store.remove(e1);
 		expect(await store.getCachedHeads()).toContainAllValues([e2.hash, e3.hash]);
 
 		/// Check that memeory is correctly stored
@@ -230,7 +230,7 @@ describe(`load`, function () {
 		await checkHashes(store, store.removedHeadsPath, [[e1.hash]]);
 
 		// Remove e2
-		await store.removeOperation(e2);
+		await store.remove(e2);
 		expect(await store.getCachedHeads()).toContainAllValues([e3.hash]);
 
 		/// Check that memory is correctly stored
@@ -244,7 +244,7 @@ describe(`load`, function () {
 		);
 
 		// Remove e3 (now cache should reset because there are no more heads)
-		await store.removeOperation(e3);
+		await store.remove(e3);
 		expect(await store.getCachedHeads()).toContainAllValues([]);
 
 		/// Check that memeory is correctly stored
@@ -283,9 +283,7 @@ describe(`load`, function () {
 		);
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
-			entries.push(
-				(await store.addOperation({ data: i }, { nexts: [] })).entry
-			);
+			entries.push((await store.append({ data: i }, { nexts: [] })).entry);
 		}
 		const cachedHeads = await store.getCachedHeads();
 		expect(cachedHeads).toContainAllValues(
@@ -319,9 +317,7 @@ describe(`load`, function () {
 		);
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
-			entries.push(
-				(await store.addOperation({ data: i }, { nexts: [] })).entry
-			);
+			entries.push((await store.append({ data: i }, { nexts: [] })).entry);
 		}
 		const cachedHeads = await store.getCachedHeads();
 		expect(cachedHeads).toContainAllValues(entries.map((x) => x!.hash));
@@ -378,7 +374,7 @@ describe(`load`, function () {
 		let entryCount = 100;
 		for (let i = 0; i < entryCount; i++) {
 			entries.push(
-				store.addOperation({ data: i }, { nexts: [] }).then((x) => x.entry)
+				store.append({ data: i }, { nexts: [] }).then((x) => x.entry)
 			);
 		}
 		await Promise.all(entries);
@@ -412,13 +408,10 @@ describe(`load`, function () {
 		await store.load();
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 3; i++) {
-			entries.push(
-				(await store.addOperation({ data: i }, { nexts: [] })).entry
-			);
+			entries.push((await store.append({ data: i }, { nexts: [] })).entry);
 		}
 		expect(await store.getCachedHeads()).toHaveLength(3);
-		const e4 = (await store.addOperation({ data: 4 }, { nexts: entries }))
-			.entry;
+		const e4 = (await store.append({ data: 4 }, { nexts: entries })).entry;
 		expect(await store.getCachedHeads()).toHaveLength(1);
 		await checkHashes(store, store.headsPath, [[e4.hash]]);
 		await checkHashes(store, store.removedHeadsPath, []);
@@ -443,7 +436,7 @@ describe(`load`, function () {
 			}
 		);
 
-		await store.addOperation({ data: 1 });
+		await store.append({ data: 1 });
 		expect(store.oplog.values.length).toEqual(1);
 		await store.close();
 
@@ -462,7 +455,7 @@ describe(`load`, function () {
 			}
 		);
 
-		await store.addOperation({ data: 2 });
+		await store.append({ data: 2 });
 		expect(store.oplog.values.length).toEqual(2);
 	});
 });

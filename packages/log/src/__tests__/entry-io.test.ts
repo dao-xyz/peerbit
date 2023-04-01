@@ -14,6 +14,7 @@ import {
 } from "@dao-xyz/libp2p-direct-block";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
+import { EntryType } from "../entry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -28,7 +29,7 @@ let store: BlockStore,
 const last = (arr: any[]) => arr[arr.length - 1];
 
 describe("Entry - Persistency", function () {
-	let options, keystore: Keystore;
+	let keystore: Keystore;
 
 	beforeAll(async () => {
 		rmrf.sync(testKeyStorePath(__filenameBase));
@@ -41,16 +42,6 @@ describe("Entry - Persistency", function () {
 			await createStore(testKeyStorePath(__filenameBase))
 		);
 
-		const users = ["userA", "userB", "userC", "userD"];
-		options = users.map((user) => {
-			return Object.assign(
-				{},
-				{
-					id: user,
-					keystore,
-				}
-			);
-		});
 		await keystore.waitForOpen();
 		signKey = (await keystore.getKey(
 			new Uint8Array([0])
@@ -120,6 +111,22 @@ describe("Entry - Persistency", function () {
 		await log.append("two");
 		const hash = last(await log.toArray()).hash;
 		const res = await EntryIO.fetchAll(store, hash, { length: 1 });
+		expect(res.length).toEqual(1);
+	});
+
+	it("ignores entries after cut", async () => {
+		const log = new Log(
+			store,
+			{
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			},
+			{ logId: "X" }
+		);
+		await log.append("one");
+		await log.append("two", { type: EntryType.CUT });
+		const hash = last(await log.toArray()).hash;
+		const res = await EntryIO.fetchAll(store, hash, {});
 		expect(res.length).toEqual(1);
 	});
 

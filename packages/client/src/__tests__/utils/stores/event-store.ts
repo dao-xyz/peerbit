@@ -54,7 +54,7 @@ export class EventStore<T> extends Program {
 			nexts?: Entry<any>[];
 		}
 	) {
-		return this.store.addOperation(
+		return this.store.append(
 			{
 				op: "ADD",
 				value: data,

@@ -3,48 +3,34 @@ import fs from "fs-extra";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
+
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
-import { createStore } from "./utils.js";
+import { EntryType } from "../entry.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-let signKey: KeyWithMeta<Ed25519Keypair>;
 describe("Log - Append", function () {
-	let keystore: Keystore, store: BlockStore;
+	let store: BlockStore;
+	let signKey: Ed25519Keypair;
+
+	const blockExists = async (hash: string): Promise<boolean> => {
+		try {
+			await (store as MemoryLevelBlockStore).idle();
+			return !!(await store.get(hash, { timeout: 3000 }));
+		} catch (error) {
+			return false;
+		}
+	};
 
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		signKey = (await keystore.getKey(
-			new Uint8Array([0])
-		)) as KeyWithMeta<Ed25519Keypair>;
-
 		store = new MemoryLevelBlockStore();
+		signKey = await Ed25519Keypair.create();
 		await store.open();
 	});
 
 	afterAll(async () => {
 		await store.close();
-		rmrf.sync(testKeyStorePath(__filenameBase));
-		await keystore?.close();
 	});
 
 	describe("append one", () => {
@@ -54,8 +40,8 @@ describe("Log - Append", function () {
 			log = new Log(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				{ logId: "A" }
 			);
@@ -87,13 +73,36 @@ describe("Log - Append", function () {
 		it("updated the clocks correctly", async () => {
 			(await log.toArray()).forEach((entry) => {
 				expect(entry.metadata.clock.id).toEqual(
-					new Uint8Array(signKey.keypair.publicKey.bytes)
+					new Uint8Array(signKey.publicKey.bytes)
 				);
 				expect(entry.metadata.clock.timestamp.logical).toEqual(0);
 			});
 		});
 	});
 
+	describe("reset", () => {
+		it("append", async () => {
+			const log = new Log<string>(
+				store,
+				{
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
+				},
+				{ logId: "A" }
+			);
+			const { entry: e1 } = await log.append("hello1");
+			const { entry: e2 } = await log.append("hello2");
+			expect(await blockExists(e1.hash)).toBeTrue();
+			expect(await blockExists(e2.hash)).toBeTrue();
+			expect(log.nextsIndex.get(e1.hash)!.has(e2.hash)).toBeTrue();
+			const { entry: e3 } = await log.append("hello3", { type: EntryType.CUT });
+			// No forward pointers to next indices. We do this, so when we delete an entry, we can now whether an entry has a depenency of another entry which is not of type RESET
+			expect(log.nextsIndex.get(e2.hash)).toBeUndefined();
+			expect(await blockExists(e1.hash)).toBeFalse();
+			expect(await blockExists(e2.hash)).toBeFalse();
+			expect(await blockExists(e3.hash)).toBeTrue();
+		});
+	});
 	describe("append 100 items to a log", () => {
 		const amount = 100;
 		const nextPointerAmount = 64;
@@ -105,8 +114,8 @@ describe("Log - Append", function () {
 			log = new Log(
 				store,
 				{
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				{ logId: "A" }
 			);
@@ -146,7 +155,7 @@ describe("Log - Append", function () {
 					).toBeGreaterThan(0);
 				}
 				expect(entry.metadata.clock.id).toEqual(
-					new Uint8Array(signKey.keypair.publicKey.bytes)
+					new Uint8Array(signKey.publicKey.bytes)
 				);
 			}
 		});

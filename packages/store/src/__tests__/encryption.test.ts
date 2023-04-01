@@ -21,7 +21,7 @@ import {
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
 
-describe(`addOperation`, function () {
+describe(`append`, function () {
 	let signKey: KeyWithMeta<Ed25519Keypair>,
 		keystore: Keystore,
 		identityStore: AbstractLevel<any, string, Uint8Array>,
@@ -132,7 +132,7 @@ describe(`addOperation`, function () {
 			options
 		);
 
-		await store.addOperation(data, {
+		await store.append(data, {
 			reciever: {
 				metadata: undefined,
 				next: recieverKey.keypair.publicKey,
@@ -204,7 +204,7 @@ describe(`addOperation`, function () {
 		);
 
 		const reciever = await keystore.createEd25519Key();
-		await store.addOperation(data, {
+		await store.append(data, {
 			reciever: {
 				metadata: undefined,
 				next: reciever.keypair.publicKey,

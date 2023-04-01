@@ -93,7 +93,7 @@ describe(`Sync`, () => {
 
 		const entryCount = 10;
 		for (let i = 0; i < entryCount; i++) {
-			await store.addOperation("i: " + i);
+			await store.append("i: " + i);
 		}
 
 		expect((await store.oplog.getHeads()).length).toEqual(1);
@@ -124,7 +124,7 @@ describe(`Sync`, () => {
 
 		const entryCount = 10;
 		for (let i = 0; i < entryCount; i++) {
-			await store.addOperation(i);
+			await store.append(i);
 		}
 
 		expect((await store.oplog.getHeads()).length).toEqual(1);

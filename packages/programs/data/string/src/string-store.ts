@@ -112,7 +112,7 @@ export class DString extends Program {
 		index: Range,
 		options?: AddOperationOptions<StringOperation>
 	) {
-		return this.store.addOperation(
+		return this.store.append(
 			new StringOperation({
 				index,
 				value,
@@ -125,7 +125,7 @@ export class DString extends Program {
 		const operation = {
 			index,
 		} as StringOperation;
-		return this.store.addOperation(operation, {
+		return this.store.append(operation, {
 			nexts: await this.store.oplog.getHeads(),
 			...options,
 		});

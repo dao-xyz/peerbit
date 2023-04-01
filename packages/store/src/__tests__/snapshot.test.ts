@@ -56,7 +56,7 @@ describe(`Snapshots`, function () {
 		const writes = 10;
 
 		for (let i = 0; i < writes; i++) {
-			await store.addOperation({ step: i });
+			await store.append({ step: i });
 		}
 		const snapshot = await store.saveSnapshot();
 		/*  expect(snapshot[0].path.length).toEqual(46);
@@ -70,7 +70,7 @@ describe(`Snapshots`, function () {
 		const writes = 10;
 
 		for (let i = 0; i < writes; i++) {
-			await store.addOperation({ step: i });
+			await store.append({ step: i });
 		}
 		await store.saveSnapshot();
 		index._index = [];

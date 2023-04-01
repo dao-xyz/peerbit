@@ -1,6 +1,6 @@
 import pMap from "p-map";
 import pDoWhilst from "p-do-whilst";
-import { Entry } from "./entry.js";
+import { Entry, EntryType } from "./entry.js";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 
@@ -214,6 +214,10 @@ export class EntryIO {
 					result.push(entry);
 					cache.add(entry.hash);
 				}
+				if (entry.metadata.type === EntryType.CUT) {
+					return;
+				}
+
 				const nextSorted = [...entry.next].sort();
 				if (options.length < 0) {
 					// If we're fetching all entries (length === -1), adds nexts and refs to the queue

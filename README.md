@@ -318,7 +318,7 @@ const program = await peer.open(new StringStore({store: new Store()}), ... optio
 console.log(program.address) // "peerbit/123xyz..." 
 
 // Now you can interact the store through 
-program.store.addOperation( ... )
+program.store.append( ... )
 ```
 
 See the [DString](./packages/programs/data/string) for a complete working example that also includes a string search index

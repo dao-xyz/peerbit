@@ -808,7 +808,7 @@ export class Peerbit {
 							// delete entries since we are not suppose to replicate this anymore
 							// TODO add delay? freeze time? (to ensure resiliance for bad io)
 							if (entriesToDelete.length > 0) {
-								await store.removeOperation(entriesToDelete, {
+								await store.remove(entriesToDelete, {
 									recursively: true,
 								});
 							}
