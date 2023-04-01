@@ -200,7 +200,7 @@ export class ByteMatchQuery extends StateFieldQuery {
 	@field({ type: "u8" })
 	private _reserved: number; // Replcate MemoryCompare query with this?
 
-	constructor(props: { key: string[]; value: Uint8Array }) {
+	constructor(props: { key: string[] | string; value: Uint8Array }) {
 		super(props);
 		this.value = props.value;
 		this._reserved = 0;

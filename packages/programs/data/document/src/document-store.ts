@@ -13,7 +13,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { asString, Keyable } from "./utils.js";
+import { asString, checkKeyable, Keyable } from "./utils.js";
 import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
 import { CanAppend, Change, Entry, EntryType } from "@dao-xyz/peerbit-log";
 import {
@@ -188,11 +188,11 @@ export class Documents<
 
 				const key = putOperation.getValue(this.index.valueEncoding)[
 					this._index.indexBy
-				];
-				if (!key) {
-					throw new Error("Expecting document to contained index field");
-				}
-				const existingDocument = this._index.index.get(key);
+				] as Keyable;
+
+				checkKeyable(key);
+
+				const existingDocument = this.index.index.get(asString(key));
 				if (existingDocument) {
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
@@ -217,7 +217,7 @@ export class Documents<
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = this._index.index.get(operation.key); //  (await this._index.get(operation.key))?.results[0];
+				const existingDocument = this._index.index.get(operation.key);
 				if (!existingDocument) {
 					// already deleted
 					return false;
@@ -251,13 +251,8 @@ export class Documents<
 			doc.setupIndices();
 		}
 
-		const key = (doc as any)[this._index.indexBy];
-		if (!key) {
-			throw new Error(
-				`The provided document doesn't contain field '${this._index.indexBy}'`
-			);
-		}
-
+		const key = (doc as any)[this._index.indexBy] as Keyable;
+		checkKeyable(key);
 		const ser = serialize(doc);
 		const existingDocument = options?.unique
 			? undefined
@@ -340,7 +335,7 @@ export class Documents<
 			removed: [],
 		};
 
-		for (const [itemKey, entries] of visited) {
+		for (const [_key, entries] of visited) {
 			try {
 				const item = entries[0];
 				const payload =

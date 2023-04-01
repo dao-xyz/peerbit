@@ -10,6 +10,7 @@ import {
 	DocumentQuery,
 	StringMatchMethod,
 	Or,
+	ByteMatchQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { DefaultOptions } from "@dao-xyz/peerbit-store";
@@ -34,8 +35,8 @@ import crypto from "crypto";
 
 @variant("document")
 class Document {
-	@field({ type: "string" })
-	id: string;
+	@field({ type: Uint8Array })
+	id: Uint8Array;
 
 	@field({ type: option("string") })
 	name?: string;
@@ -327,7 +328,7 @@ describe("index", () => {
 				for (let i = 0; i < 100; i++) {
 					await store.docs.put(
 						new Document({
-							id: String(i),
+							id: Buffer.from(String(i)),
 							name: "Hello world " + String(i),
 						}),
 						{ nexts: [] }
@@ -472,36 +473,36 @@ describe("index", () => {
 				writeStore = stores[0];
 
 				let doc = new Document({
-					id: "1",
+					id: Buffer.from("1"),
 					name: "hello",
 					number: 1n,
 				});
 				let docEdit = new Document({
-					id: "1",
+					id: Buffer.from("1"),
 					name: "hello world",
 					number: 1n,
 				});
 
 				let doc2 = new Document({
-					id: "2",
+					id: Buffer.from("2"),
 					name: "hello world",
 					number: 4n,
 				});
 
 				let doc2Edit = new Document({
-					id: "2",
+					id: Buffer.from("2"),
 					name: "Hello World",
 					number: 2n,
 				});
 
 				let doc3 = new Document({
-					id: "3",
+					id: Buffer.from("3"),
 					name: "foo",
 					number: 3n,
 				});
 
 				let doc4 = new Document({
-					id: "4",
+					id: Buffer.from("4"),
 					name: undefined,
 					number: undefined,
 				});
@@ -607,7 +608,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1", "2"]);
 				});
 
@@ -625,7 +628,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1", "2"]);
 				});
 
@@ -643,7 +648,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(1);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["2"]);
 					responses = await stores[1].docs.index.query(
 						new DocumentQuery({
@@ -658,7 +665,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(1);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1"]);
 				});
 				it("prefix", async () => {
@@ -677,7 +686,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1", "2"]);
 				});
 
@@ -696,20 +707,22 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1", "2"]);
 				});
 
 				describe("arr", () => {
 					let docArray1 = new Document({
-						id: "a",
+						id: Buffer.from("a"),
 						name: "_",
 						number: undefined,
 						tags: ["Hello", "World"],
 					});
 
 					let docArray2 = new Document({
-						id: "b",
+						id: Buffer.from("b"),
 						name: "__",
 						number: undefined,
 						tags: ["Hello"],
@@ -738,7 +751,9 @@ describe("index", () => {
 							);
 						expect(responses[0].results).toHaveLength(1);
 						expect(
-							responses[0].results.map((x) => x.value.id)
+							responses[0].results.map((x) =>
+								Buffer.from(x.value.id).toString("utf8")
+							)
 						).toContainAllValues(["a"]);
 					});
 				});
@@ -756,7 +771,11 @@ describe("index", () => {
 					{ remote: { amount: 1 } }
 				);
 				expect(responses[0].results).toHaveLength(1);
-				expect(responses[0].results.map((x) => x.value.id)).toEqual(["4"]);
+				expect(
+					responses[0].results.map((x) =>
+						Buffer.from(x.value.id).toString("utf8")
+					)
+				).toEqual(["4"]);
 			});
 			describe("logical", () => {
 				it("and", async () => {
@@ -783,7 +802,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1", "2"]);
 				});
 
@@ -792,13 +813,13 @@ describe("index", () => {
 						new DocumentQuery({
 							queries: [
 								new Or([
-									new StringMatch({
+									new ByteMatchQuery({
 										key: "id",
-										value: "1",
+										value: Buffer.from("1"),
 									}),
-									new StringMatch({
+									new ByteMatchQuery({
 										key: "id",
-										value: "2",
+										value: Buffer.from("2"),
 									}),
 								]),
 							],
@@ -807,7 +828,9 @@ describe("index", () => {
 					);
 					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) => x.value.id)
+						responses[0].results.map((x) =>
+							Buffer.from(x.value.id).toString("utf8")
+						)
 					).toContainAllValues(["1", "2"]);
 				});
 			});
