@@ -204,7 +204,6 @@ describe("ipfs-log - Replication", function () {
 							buffer1.length + buffer2.length === amount * 2 &&
 							processing === 0
 						) {
-							console.log("\nAll messages received");
 							clearInterval(timer);
 							clearTimeout(timeout);
 							resolve();
