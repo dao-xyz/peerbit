@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/lazy-level",
-	"version": "0.0.3",
+	"version": "0.0.4",
 	"description": "Level with lazy transactions",
 	"type": "module",
 	"publishConfig": {
@@ -36,7 +36,7 @@
 	},
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/peerbit-logger": "^0.0.5",
+		"@dao-xyz/peerbit-logger": "^0.0.6",
 		"@dao-xyz/peerbit-time": "^0.0.22",
 		"level": "^8.0.0"
 	},
