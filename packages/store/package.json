@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-store",
-	"version": "0.4.1",
+	"version": "0.4.2",
 	"description": "Modified base class for orbit db stores for Typescript with CJS and ESM builds",
 	"type": "module",
 	"sideEffects": false,
@@ -39,13 +39,13 @@
 	"dependencies": {
 		"@dao-xyz/lazy-level": "^0.0.4",
 		"@dao-xyz/libp2p-direct-block": "^0.1.27",
-		"@dao-xyz/peerbit-log": "^0.4.1",
+		"@dao-xyz/peerbit-log": "^0.4.2",
 		"p-queue": "^7.3.3",
 		"path-browserify": "^1.0.1"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-keystore": "^0.1.31",
-		"@dao-xyz/peerbit-test-utils": "^0.1.30",
+		"@dao-xyz/peerbit-keystore": "^0.1.32",
+		"@dao-xyz/peerbit-test-utils": "^0.1.31",
 		"level": "^8.0.0",
 		"libsodium-wrappers": "^0.7.10"
 	},
