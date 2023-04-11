@@ -279,8 +279,11 @@ export class Log<T> {
 	 * Find an entry.
 	 * @param {string} [hash] The hashes of the entry
 	 */
-	get(hash: string): Promise<Entry<T> | undefined> {
-		return this._entryIndex.get(hash);
+	get(
+		hash: string,
+		options?: { timeout?: number }
+	): Promise<Entry<T> | undefined> {
+		return this._entryIndex.get(hash, options);
 	}
 
 	async traverse(
@@ -616,6 +619,7 @@ export class Log<T> {
 			onChange?: (change: Change2<T>) => void | Promise<void>;
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
+			timeout?: number;
 		}
 	): Promise<void> {
 		const stack: string[] = [];
@@ -653,19 +657,23 @@ export class Log<T> {
 				resolvedEntries.get(hash) ||
 				(await Entry.fromMultihash<T>(this._storage, hash, {
 					replicate: true,
+					timeout: options?.timeout,
 				}));
 			entry.init(this);
 			resolvedEntries.set(entry.hash, entry);
-			const nexts = await entry.getNext();
 
-			if (nexts) {
+			let nexts: string[];
+			if (
+				entry.metadata.type !== EntryType.CUT &&
+				(nexts = await entry.getNext())
+			) {
 				let isRoot = true;
 				for (const next of nexts) {
 					if (!this.has(next)) {
 						isRoot = false;
 					} else {
 						if (this._headsIndex.has(next)) {
-							this._headsIndex.del((await this.get(next))!);
+							this._headsIndex.del((await this.get(next, options))!);
 						}
 					}
 					let nextIndexSet = nextRefs.get(next);

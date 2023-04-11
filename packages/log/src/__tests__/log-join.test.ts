@@ -222,6 +222,27 @@ describe("Log - Join", function () {
 		});
 
 		describe("cut", () => {
+			let fetchEvents: number;
+			let fetchHashes: Set<string>;
+			let fromMultihash: any;
+			beforeAll(() => {
+				fetchEvents = 0;
+				fetchHashes = new Set();
+				fromMultihash = Entry.fromMultihash;
+
+				// TODO monkeypatching might lead to sideeffects in other tests!
+				Entry.fromMultihash = (s, h, o) => {
+					fetchHashes.add(h);
+					fetchEvents += 1;
+					return fromMultihash(s, h, o);
+				};
+			});
+			afterAll(() => {
+				fetchHashes = new Set();
+				fetchEvents = 0;
+				Entry.fromMultihash = fromMultihash;
+			});
+
 			it("joins cut", async () => {
 				const { entry: a1 } = await log1.append("helloA1");
 				const { entry: b1 } = await log2.append("helloB1", {
@@ -304,7 +325,7 @@ describe("Log - Join", function () {
 			});
 
 			it("joining multiple resets", async () => {
-				const { entry: a1 } = await log1.append("helloA1");
+				const { entry: a1 } = await log2.append("helloA1");
 				const { entry: b1 } = await log2.append("helloB1", {
 					nexts: [a1],
 					type: EntryType.CUT,
@@ -313,7 +334,14 @@ describe("Log - Join", function () {
 					nexts: [a1],
 					type: EntryType.CUT,
 				});
+
+				expect((await log2.getHeads()).map((x) => x.hash)).toEqual([
+					b1.hash,
+					b2.hash,
+				]);
+				fetchEvents = 0;
 				await log1.join(await log2.getHeads());
+				expect(fetchEvents).toEqual(0); // will not fetch a1 since b1 and b2 is CUT (no point iterating to nexts)
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					b1.hash,
 					b2.hash,
