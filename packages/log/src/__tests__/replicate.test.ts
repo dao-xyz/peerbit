@@ -193,7 +193,6 @@ describe("ipfs-log - Replication", function () {
 				});
 			}
 
-			console.log("\nAll messages sent");
 			const whileProcessingMessages = (timeoutMs: number) => {
 				return new Promise<void>((resolve, reject) => {
 					const timeout = setTimeout(
@@ -214,7 +213,6 @@ describe("ipfs-log - Replication", function () {
 				});
 			};
 
-			console.log("Waiting for all to process");
 			await whileProcessingMessages(5000);
 
 			const result = new Log<string>(
