@@ -1,6 +1,9 @@
 import pino from "pino";
+
+const isNode = typeof window === undefined || typeof window === "undefined";
+
 export const getEnv = (key) => {
-	if (typeof window === "undefined") {
+	if (isNode) {
 		// node
 		return process.env[key];
 	}
