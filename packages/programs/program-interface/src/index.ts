@@ -589,11 +589,7 @@ export abstract class Program
 	}
 
 	async close(from?: AbstractProgram): Promise<boolean> {
-		if (from) {
-			if (!this.openedByPrograms) {
-				throw new Error("Expected: openedByPrograms to be non-empty");
-			}
-
+		if (from && this.openedByPrograms) {
 			const ix = this.openedByPrograms.findIndex((x) => x == from);
 			if (ix !== -1) {
 				this.openedByPrograms.splice(ix, 1);
