@@ -59,8 +59,9 @@ describe("server", () => {
 			.address;
 		server = await startServer(peer);
 	});
-	afterEach(() => {
+	afterEach(async () => {
 		server.close();
+		await peer.disconnect();
 	});
 
 	afterAll(async () => {
