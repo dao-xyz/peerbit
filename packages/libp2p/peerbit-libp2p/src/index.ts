@@ -16,6 +16,12 @@ import { webSockets } from "@libp2p/websockets";
 import { AddressManagerInit } from "libp2p/address-manager";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { ConnectionManagerConfig } from "libp2p/connection-manager";
+import {
+	circuitRelayTransport,
+	circuitRelayServer,
+} from "libp2p/circuit-relay";
+import { tcp } from "@libp2p/tcp";
+import { webRTC } from "@libp2p/webrtc";
 
 export type Libp2pExtended = Libp2p & {
 	directsub: DirectSub;
@@ -34,6 +40,8 @@ type ExtendedOptions = {
 		directory?: string;
 	};
 };
+
+const isNode = typeof window === undefined || typeof window === "undefined";
 export const createLibp2pExtended: (
 	args?: ExtendedOptions & { libp2p?: Libp2p | CreateOptions }
 ) => Promise<Libp2pExtended> = async (args) => {
@@ -44,9 +52,17 @@ export const createLibp2pExtended: (
 		const opts = args?.libp2p as CreateOptions | undefined;
 		peer = (await createLibp2p({
 			peerId: opts?.peerId,
-			connectionManager: opts?.connectionManager,
-			addresses: opts?.addresses || { listen: ["/ip4/127.0.0.1/tcp/0"] },
-			transports: opts?.transports || [webSockets()],
+			connectionManager: opts?.connectionManager || {},
+			addresses: opts?.addresses || {
+				listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
+			},
+			transports: opts?.transports || [
+				webSockets(),
+				circuitRelayTransport(),
+				...(isNode ? [tcp()] : []),
+				webRTC({}),
+			],
+			relay: isNode ? circuitRelayServer() : undefined,
 			connectionEncryption: [noise()],
 			streamMuxers: [mplex()],
 		})) as Libp2pExtended;

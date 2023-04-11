@@ -8,7 +8,7 @@ suite
 	.add("start and stop", {
 		fn: async (deferred) => {
 			const node = await createLibp2pExtended({
-				libp2p: { transports: [tcp()] },
+				libp2p: {},
 			});
 			await node.start();
 			await node.stop();
