@@ -1,5 +1,4 @@
 import { createLibp2p, Libp2p } from "libp2p";
-
 import { Components } from "libp2p/components";
 import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 import {
@@ -12,16 +11,10 @@ import { mplex } from "@libp2p/mplex";
 import type { RecursivePartial } from "@libp2p/interfaces";
 import type { Transport } from "@libp2p/interface-transport";
 import { Level } from "level";
-import { webSockets } from "@libp2p/websockets";
 import { AddressManagerInit } from "libp2p/address-manager";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { ConnectionManagerConfig } from "libp2p/connection-manager";
-import {
-	circuitRelayTransport,
-	circuitRelayServer,
-} from "libp2p/circuit-relay";
-import { tcp } from "@libp2p/tcp";
-import { webRTC } from "@libp2p/webrtc";
+import { transports, relay } from "./transports.js";
 
 export type Libp2pExtended = Libp2p & {
 	directsub: DirectSub;
@@ -56,13 +49,8 @@ export const createLibp2pExtended: (
 			addresses: opts?.addresses || {
 				listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
 			},
-			transports: opts?.transports || [
-				webSockets(),
-				circuitRelayTransport(),
-				...(isNode ? [tcp()] : []),
-				webRTC({}),
-			],
-			relay: isNode ? circuitRelayServer() : undefined,
+			transports: opts?.transports || transports(),
+			relay: relay(),
 			connectionEncryption: [noise()],
 			streamMuxers: [mplex()],
 		})) as Libp2pExtended;

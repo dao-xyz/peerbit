@@ -39,6 +39,10 @@
 	},
 	"author": "dao.xyz",
 	"license": "MIT",
+	"browser": {
+		"./lib/esm/transports.js": "./lib/esm/transports-browser.js",
+		"./transports.js": "./lib/esm/transports-browser.js"
+	},
 	"dependencies": {
 		"@dao-xyz/libp2p-direct-block": "^0.1.27",
 		"@dao-xyz/libp2p-direct-sub": "^0.1.26",
