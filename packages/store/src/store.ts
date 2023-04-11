@@ -730,6 +730,7 @@ export class Store<T> implements Initiable<T> {
 		options: {
 			canAppend?: CanAppend<T>;
 			onChange?: (change: Change2<any>) => void | Promise<void>;
+			timeout?: number;
 		} = {}
 	): Promise<void> {
 		await this.waitForHeads();
@@ -766,6 +767,7 @@ export class Store<T> implements Initiable<T> {
 					removed: change.removed,
 				});
 			},
+			timeout: options.timeout,
 		});
 
 		const change: Change<T> = {
