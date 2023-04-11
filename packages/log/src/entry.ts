@@ -668,11 +668,8 @@ export class Entry<T>
 
 	/**
 	 * Get the multihash of an Entry.
-	 * @param ipfs An IPFS instance
-	 * @param entry Entry to get a multihash for
-	 * @returns {Promise<string>}
 	 * @example
-	 * const multfihash = await Entry.toMultihash(ipfs, entry)
+	 * const multfihash = await Entry.toMultihash(store, entry)
 	 * console.log(multihash)
 	 * // "Qm...Foo"
 	 */
@@ -691,11 +688,8 @@ export class Entry<T>
 
 	/**
 	 * Create an Entry from a hash.
-	 * @param {IPFS} ipfs An IPFS instance
-	 * @param {string} hash The hash to create an Entry from
-	 * @returns {Promise<Entry<T>>}
 	 * @example
-	 * const entry = await Entry.fromMultihash(ipfs, "zd...Foo")
+	 * const entry = await Entry.fromMultihash(store, "zd...Foo")
 	 * console.log(entry)
 	 * // { hash: "Zd...Foo", payload: "hello", next: [] }
 	 */
