@@ -86,7 +86,6 @@ export const createNode = async () => {
 			connectionManager: {
 				maxConnections: Infinity,
 				minConnections: 0,
-				pollInterval: 2000,
 			},
 		},
 	});
