@@ -68,14 +68,14 @@ export type SubscriptionData = { timestamp: bigint; data?: Uint8Array };
 export class DirectSub extends DirectStream<PubSubEvents> {
 	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest recieved)
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
-	public topicsToStreams: Map<string, Set<string>>; // topic -> neighbour peers that are subscribing, or neighbour peers that are connected to other peers that are subscribing
+	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
 	public subscriptions: Map<string, { counter: number; data?: Uint8Array }>; // topic -> subscription ids
 
 	constructor(libp2p: Libp2p, props?: DirectStreamOptions) {
 		super(libp2p, ["directsub/0.0.0"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
-		this.topicsToStreams = new Map();
+		this.topicsToPeers = new Map();
 		this.peerToTopic = new Map();
 	}
 
@@ -83,7 +83,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		this.subscriptions.clear();
 		this.topics.clear();
 		this.peerToTopic.clear();
-		this.topicsToStreams.clear();
+		this.topicsToPeers.clear();
 		return super.stop();
 	}
 
@@ -101,8 +101,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 
 	private initializeTopic(topic: string) {
 		this.topics.get(topic) || this.topics.set(topic, new Map());
-		this.topicsToStreams.get(topic) ||
-			this.topicsToStreams.set(topic, new Set());
+		this.topicsToPeers.get(topic) || this.topicsToPeers.set(topic, new Set());
 	}
 
 	private initializePeer(publicKey: PublicSignKey) {
@@ -192,7 +191,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		if (!subscriptions?.counter || options?.force) {
 			this.subscriptions.delete(topic);
 			this.topics.delete(topic);
-			this.topicsToStreams.delete(topic);
+			this.topicsToPeers.delete(topic);
 			await this.publishMessage(
 				this.libp2p.peerId,
 				await new DataMessage({
@@ -273,14 +272,11 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		);
 	}
 
-	getNeighboursWithTopics(
-		topics: string[],
-		otherPeers?: string[]
-	): Set<string> {
+	getPeersWithTopics(topics: string[], otherPeers?: string[]): Set<string> {
 		const peers: Set<string> = otherPeers ? new Set(otherPeers) : new Set();
 		if (topics?.length) {
 			for (const topic of topics) {
-				const peersOnTopic = this.topicsToStreams.get(topic.toString());
+				const peersOnTopic = this.topicsToPeers.get(topic.toString());
 				if (peersOnTopic) {
 					peersOnTopic.forEach((peer) => {
 						peers.add(peer);
@@ -291,12 +287,12 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return peers;
 	}
 
-	getStreamsWithTopics(topics: string[], otherPeers?: string[]): PeerStreams[] {
+	/* getStreamsWithTopics(topics: string[], otherPeers?: string[]): PeerStreams[] {
 		const peers = this.getNeighboursWithTopics(topics, otherPeers);
 		return [...this.peers.values()].filter((s) =>
 			peers.has(s.publicKey.hashcode())
 		);
-	}
+	} */
 
 	async publish(
 		data: Uint8Array,
@@ -331,32 +327,11 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		const bytes = message.serialize();
 		await super.publish(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
-			{ to: options?.strict ? tos : this.getNeighboursWithTopics(topics, tos) }
+			{ to: options?.strict ? tos : this.getPeersWithTopics(topics, tos) }
 		);
 	}
 
-	async onGoodbye(from: PeerId, peerStream: PeerStreams, message: Goodbye) {
-		const processed = await super.onGoodbye(from, peerStream, message);
-		if (message.early) {
-			return true;
-		}
-		const senderKey = message.sender.hashcode();
-		const topicsFromSender = this.peerToTopic.get(senderKey);
-		if (topicsFromSender) {
-			for (const topic of topicsFromSender) {
-				this.topicsToStreams
-					.get(topic)
-					?.delete(getPublicKeyFromPeerId(from).hashcode());
-			}
-		}
-		return processed;
-	}
-
-	deletePeerFromTopic(
-		topic: string,
-		publicKeyHash: string,
-		fromStream?: PeerId
-	) {
+	deletePeerFromTopic(topic: string, publicKeyHash: string) {
 		const peers = this.topics.get(topic);
 		let change: SubscriptionData | undefined = undefined;
 		if (peers) {
@@ -370,12 +345,8 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			this.peerToTopic.delete(publicKeyHash);
 		}
 
-		const fromStreams = fromStream
-			? [getPublicKeyFromPeerId(fromStream).hashcode()]
-			: this.peers.keys();
-		for (const fromPublicKeyHash of fromStreams) {
-			this.topicsToStreams.get(topic)?.delete(fromPublicKeyHash);
-		}
+		this.topicsToPeers.get(topic)?.delete(publicKeyHash);
+
 		return change;
 	}
 	public onPeerUnreachable(publicKey: PublicSignKey) {
@@ -427,7 +398,9 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					isForMe =
 						!!pubsubMessage.topics.find((topic) =>
 							this.subscriptions.has(topic)
-						) || !!message.to.find((x) => this.publicKeyHash === x);
+						) ||
+						(pubsubMessage.topics.length === 0 &&
+							!!message.to.find((x) => this.publicKeyHash === x));
 				}
 				if (isForMe) {
 					if (verified === undefined) {
@@ -448,15 +421,24 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			}
 
 			// Forward
-			const streamToSendTO = this.getStreamsWithTopics(
-				pubsubMessage.topics,
-				message.to
-			);
-			await this.relayMessage(
-				from,
-				message,
-				streamToSendTO.length > 0 ? streamToSendTO : undefined
-			); // if not find any stream, send to all
+			if (!pubsubMessage.strict) {
+				const newTos = this.getPeersWithTopics(
+					pubsubMessage.topics,
+					message.to
+				);
+				newTos.delete(this.publicKeyHash);
+				message.to = [...newTos];
+			}
+
+			// Only relay if we got additional recievers
+			// or we are NOT subscribing ourselves (if we are not subscribing ourselves we are)
+			// If we are not subscribing ourselves, then we don't have enough information to "stop" message propagation here
+			if (
+				message.to.length > 0 ||
+				!pubsubMessage.topics.find((topic) => this.topics.has(topic))
+			) {
+				await this.relayMessage(from, message);
+			}
 		} else if (pubsubMessage instanceof Subscribe) {
 			if (!(await message.verify(true))) {
 				logger.warn("Recieved message that did not verify Subscribe");
@@ -507,9 +489,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					}
 				}
 
-				this.topicsToStreams
-					.get(subscription.topic)
-					?.add(fromPublic.hashcode()); // "from" is perhaps actually not the subscriber, but we will reach the subscriber if we send for this topic through it connection
+				this.topicsToPeers.get(subscription.topic)?.add(subscriberKey);
 				this.peerToTopic.get(subscriberKey)?.add(subscription.topic);
 			});
 			if (changed.length > 0) {
