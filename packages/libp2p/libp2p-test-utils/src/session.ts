@@ -1,14 +1,14 @@
 import { createLibp2p, Libp2p } from "libp2p";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
-import { tcp } from "@libp2p/tcp";
-import { webSockets } from "@libp2p/websockets";
-
 import { setMaxListeners } from "events";
 import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
+import { relay, transports } from "./transports.js";
+import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
 
 export type LibP2POptions = {
+	connectionManager?: RecursivePartial<ConnectionManagerInit>;
 	datastore?: RecursivePartial<Datastore> | undefined;
 };
 export class LSession<T extends Libp2p = Libp2p> {
@@ -27,11 +27,10 @@ export class LSession<T extends Libp2p = Libp2p> {
 		for (const group of groups) {
 			for (let i = 0; i < group.length - 1; i++) {
 				for (let j = i + 1; j < group.length; j++) {
-					await group[i].peerStore.addressBook.set(
-						group[j].peerId,
-						group[j].getMultiaddrs()
-					);
-					connectPromises.push(group[i].dial(group[j].peerId));
+					const toDial = group[j]
+						.getMultiaddrs()
+						.filter((x) => x.protoCodes().includes(290) === false);
+					connectPromises.push(group[i].dial(toDial)); // By default don't connect to relayed (p2p-circuit) peers
 				}
 			}
 		}
@@ -39,8 +38,11 @@ export class LSession<T extends Libp2p = Libp2p> {
 		await Promise.all(connectPromises);
 		return this;
 	}
-	static async connected<T extends Libp2p = Libp2p>(n: number) {
-		const libs = (await LSession.disconnected<T>(n)).peers;
+	static async connected<T extends Libp2p = Libp2p>(
+		n: number,
+		options?: LibP2POptions
+	) {
+		const libs = (await LSession.disconnected<T>(n, options)).peers;
 		return new LSession(libs).connect();
 	}
 
@@ -57,10 +59,14 @@ export class LSession<T extends Libp2p = Libp2p> {
 			const result = async () => {
 				const node = await createLibp2p({
 					addresses: {
-						listen: ["/ip4/127.0.0.1/tcp/0"],
+						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
+					},
+					connectionManager: options?.connectionManager || {
+						minConnections: 0,
 					},
 					datastore: options?.datastore,
-					transports: [tcp()],
+					transports: transports(),
+					relay: relay(),
 					connectionEncryption: [noise()],
 					streamMuxers: [mplex()],
 				});
