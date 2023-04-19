@@ -13,7 +13,7 @@ import type { Transport } from "@libp2p/interface-transport";
 import { Level } from "level";
 import { AddressManagerInit } from "libp2p/address-manager";
 import { PeerId } from "@libp2p/interface-peer-id";
-import { ConnectionManagerConfig } from "libp2p/connection-manager";
+import { ConnectionManagerInit } from "libp2p/connection-manager";
 import { transports, relay } from "./transports.js";
 
 export type Libp2pExtended = Libp2p & {
@@ -25,7 +25,7 @@ type CreateOptions = {
 	transports?: RecursivePartial<(components: Components) => Transport>[];
 	addresses?: RecursivePartial<AddressManagerInit>;
 	peerId?: RecursivePartial<PeerId>;
-	connectionManager?: RecursivePartial<ConnectionManagerConfig>;
+	connectionManager?: RecursivePartial<ConnectionManagerInit>;
 	directory?: string;
 };
 type ExtendedOptions = {
@@ -45,7 +45,9 @@ export const createLibp2pExtended: (
 		const opts = args?.libp2p as CreateOptions | undefined;
 		peer = (await createLibp2p({
 			peerId: opts?.peerId,
-			connectionManager: opts?.connectionManager || {},
+			connectionManager: opts?.connectionManager || {
+				minConnections: 0,
+			},
 			addresses: opts?.addresses || {
 				listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
 			},
