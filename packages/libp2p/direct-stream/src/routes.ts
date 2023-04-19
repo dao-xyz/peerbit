@@ -2,6 +2,7 @@ import Graphs from "graphology";
 import type { MultiUndirectedGraph } from "graphology";
 import { dijkstra, unweighted } from "graphology-shortest-path";
 import { logger } from "./logger.js";
+import { MinimalEdgeMapper } from "graphology-utils/getters";
 
 interface EdgeData {
 	weight: number;
@@ -233,32 +234,42 @@ export class Routes {
 		options?: { unweighted?: boolean } | { block?: string }
 	): unweighted.ShortestPath | dijkstra.BidirectionalDijstraResult {
 		try {
-			let prevBlockWeight: number;
-			let blockEdge: string;
-
-			if ((options as { block?: boolean })?.block) {
-				blockEdge = this.getLink(from, to)!;
-				prevBlockWeight = this.getLinkData(from, to)!.weight;
-				this.graph.setEdgeAttribute(
-					blockEdge,
-					"weight",
-					Number.MAX_SAFE_INTEGER
+			let getEdgeWeight:
+				| keyof EdgeData
+				| MinimalEdgeMapper<number, EdgeData> = (edge) =>
+				this.graph.getEdgeAttribute(edge, "weight");
+			const blockId = (options as { block?: string })?.block;
+			if (blockId) {
+				const neighBourEdges = new Set(
+					this.graph
+						.inboundNeighbors(blockId)
+						.map((x) => this.graph.edges(x, blockId))
+						.flat()
 				);
+				getEdgeWeight = (edge) => {
+					if (neighBourEdges.has(edge)) {
+						return Number.MAX_SAFE_INTEGER;
+					}
+					return this.graph.getEdgeAttribute(edge, "weight");
+				};
 			}
 
+			// TODO catching for network changes and resuse last result
 			const path =
 				((options as { unweighted?: boolean })?.unweighted
 					? unweighted.bidirectional(this.graph, from, to)
-					: dijkstra.bidirectional(this.graph, from, to)) || [];
+					: dijkstra.bidirectional(this.graph, from, to, getEdgeWeight)) || [];
 			if (path?.length > 0 && path[0] !== from) {
 				path.reverse();
 			}
 
-			if ((options as { block?: boolean })?.block) {
-				this.graph.setEdgeAttribute(blockEdge!, "weight", prevBlockWeight!);
+			if (blockId) {
+				if (path.includes(blockId)) {
+					return []; // Path does not exist, as we go through a blocked node with inifite weight
+				}
 			}
 
-			return path as any;
+			return path as any; // TODO fix types
 		} catch (error) {
 			return [];
 		}

@@ -66,23 +66,21 @@ describe("routes", () => {
 			expect(path).toEqual([a, c]);
 		});
 
-		it("can block path", () => {
+		it("can block node", () => {
+			// Add slow path from a to c which should not be prefered by default
+			expect(routes.addLink(a, c, 1e3)).toContainAllValues([]);
+
 			let path = routes.getPath(a, c);
-			expect(path).toEqual([a, b, c]);
+			expect(path).toEqual([a, b, c]); // a -> b -> c fastest still
 
-			// Update the weight tobeless than 2
-			expect(routes.addLink(a, c, 0)).toContainAllValues([]);
-			path = routes.getPath(a, c);
-			expect(path).toEqual([a, c]);
-
-			// shortest path is still the same
-			let block = c;
+			// Update the weight to be less than 2
+			let block = b;
 			path = routes.getPath(a, c, { block });
-			expect(path).toEqual([a, b, c]);
+			expect(path).toEqual([a, c]); // slow path is fastest because b is blocked
 
 			// Make sure notthing has changed
 			path = routes.getPath(a, c);
-			expect(path).toEqual([a, c]);
+			expect(path).toEqual([a, b, c]);
 		});
 
 		it("missing node", () => {
