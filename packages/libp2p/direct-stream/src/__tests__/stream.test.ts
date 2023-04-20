@@ -584,21 +584,15 @@ describe("streams", function () {
 					stream.addEventListener("peer:unreachable", (msg) => {
 						client.unrechable.push(msg.detail);
 					});
-					await delay(5000);
 					await stream.start();
 				}
-				await delay(5000);
 
 				// slowly connect to that the route maps are deterministic
 				try {
 					await session.connect([[session.peers[0], session.peers[1]]]);
-					await delay(5000);
-
 					await waitFor(() => peers[0].stream.routes.linksCount === 1);
 					await waitFor(() => peers[1].stream.routes.linksCount === 1);
 					await session.connect([[session.peers[1], session.peers[2]]]);
-					await delay(5000);
-
 					await waitFor(() => peers[0].stream.routes.linksCount === 2);
 					await waitFor(() => peers[1].stream.routes.linksCount === 2);
 					await waitFor(() => peers[2].stream.routes.linksCount === 2);
