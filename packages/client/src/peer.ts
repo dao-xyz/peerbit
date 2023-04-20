@@ -56,8 +56,6 @@ import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { TimeoutError, waitFor } from "@dao-xyz/peerbit-time";
 import "@libp2p/peer-id";
-import { peerIdFromString } from "@libp2p/peer-id";
-import { Libp2p } from "libp2p";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import {
 	OBSERVER_TYPE_VARIANT,
@@ -69,6 +67,7 @@ import { TrimToByteLengthOption } from "@dao-xyz/peerbit-log";
 import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
 import { startsWith } from "@dao-xyz/uint8arrays";
 import { v4 as uuid } from "uuid";
+import { CreateLibp2pExtendedOptions } from "@dao-xyz/peerbit-libp2p";
 export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
@@ -101,8 +100,10 @@ export type CreateOptions = {
 } & OptionalCreateOptions;
 
 export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
-export type CreateInstanceOptions = {
-	libp2p?: Libp2p | Libp2pExtended;
+export type CreateInstanceOptions = (
+	| { libp2p?: Libp2pExtended }
+	| CreateLibp2pExtendedOptions
+) & {
 	storage?: Storage;
 	directory?: string;
 	keystore?: Keystore;
@@ -255,6 +256,7 @@ export class Peerbit {
 				!(options.libp2p as Libp2pExtended).directblock &&
 				!(options.libp2p as Libp2pExtended).directsub
 			) {
+				const extendedOptions = options as CreateLibp2pExtendedOptions;
 				libp2pExtended = await createLibp2pExtended({
 					libp2p: options.libp2p,
 					blocks: {
@@ -262,6 +264,7 @@ export class Peerbit {
 							options.directory &&
 							path.join(options.directory, "/blocks").toString(),
 					},
+					pubsub: extendedOptions.pubsub,
 				});
 			}
 		}
