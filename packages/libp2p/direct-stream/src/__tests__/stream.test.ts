@@ -616,6 +616,7 @@ describe("streams", function () {
 					throw error;
 				}
 				for (const peer of peers) {
+					await waitFor(() => peer.reachable.length === 3);
 					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
 						peers
 							.map((x) => x.stream.publicKeyHash)
