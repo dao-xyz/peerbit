@@ -565,7 +565,7 @@ export abstract class DirectStream<
 			}
 
 			if (fromExisting) {
-				return;
+				return; // we return here because we will enter this method once the protocol has been registered for the remote peer
 			}
 
 			// Add connection with assumed large latency
