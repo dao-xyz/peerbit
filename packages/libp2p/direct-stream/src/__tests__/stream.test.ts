@@ -32,14 +32,10 @@ describe("streams", function () {
 	describe("ping", () => {
 		let session: LSession, streams: TestStreamImpl[];
 
-		beforeEach(async () => {});
-
 		afterEach(async () => {
 			streams && (await Promise.all(streams.map((s) => s.stop())));
 			await session?.stop();
 		});
-
-		afterAll(async () => {});
 
 		it("2-ping", async () => {
 			// 0 and 2 not connected
@@ -400,10 +396,8 @@ describe("streams", function () {
 						client.unrechable.push(msg.detail);
 					});
 					await stream.start();
+					expect(stream["connectionManagerOptions"].autoDial).toBeTrue();
 				}
-				console.log("0: " + peers[0].stream.peerIdStr);
-				console.log("1: " + peers[1].stream.peerIdStr);
-				console.log("2: " + peers[2].stream.peerIdStr);
 
 				// slowly connect to that the route maps are deterministic
 				await session.connect([[session.peers[0], session.peers[1]]]);
