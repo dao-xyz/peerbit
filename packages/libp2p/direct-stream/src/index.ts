@@ -126,7 +126,6 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.outboundStream.push(
 			data instanceof Uint8Array ? new Uint8ArrayList(data) : data
 		);
-		this.outboundStream.return;
 	}
 
 	/**
@@ -1302,7 +1301,7 @@ export abstract class DirectStream<
 							"Failed to send to stream: " +
 								id.peerId +
 								". " +
-								(error?.message || error.toString())
+								(error?.message || error?.toString())
 						);
 					});
 			} else {
