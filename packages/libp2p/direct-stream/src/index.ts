@@ -401,10 +401,12 @@ export abstract class DirectStream<
 			let conn = arr[0]; // TODO choose TCP when both websocket and tcp exist
 			for (const c of arr) {
 				if (!isWebsocketConnection(c)) {
+					// TODO what is correct connection prioritization?
 					conn = c; // always favor non websocket address
 					break;
 				}
 			}
+
 			await this.onPeerConnected(conn.remotePeer, conn, true);
 		}
 
@@ -442,24 +444,20 @@ export abstract class DirectStream<
 		if (!this.started) {
 			return;
 		}
+		this.started = false;
 
 		clearTimeout(this.pingJob);
 		await this.pingJobPromise;
-
-		await this.libp2p.unhandle(this.multicodecs);
-
-		// unregister protocol and handlers
-		if (this._registrarTopologyIds != null) {
-			this._registrarTopologyIds?.map((id) => this.libp2p.unregister(id));
-		}
-
-		await Promise.all(
-			this.multicodecs.map((multicodec) => this.libp2p.unhandle(multicodec))
-		);
+		await this.libp2p.unhandle(this.multicodecs); // Seems preferable to do this call after   peerStreams.close and not the other way around (?
 
 		logger.debug("stopping");
 		for (const peerStreams of this.peers.values()) {
 			peerStreams.close();
+		}
+
+		// unregister protocol and handlers
+		if (this._registrarTopologyIds != null) {
+			this._registrarTopologyIds?.map((id) => this.libp2p.unregister(id));
 		}
 
 		this.queue.clear();
@@ -468,7 +466,6 @@ export abstract class DirectStream<
 		this.earlyGoodbyes.clear();
 		this.peers.clear();
 		this.seenCache.clear();
-		this.started = false;
 		this.routes.clear();
 		this.peerKeyHashToPublicKey.clear();
 		this.peerIdToPublicKey.clear();
@@ -499,7 +496,6 @@ export abstract class DirectStream<
 			logger.error(err);
 		});
 	}
-	_p: Set<string> = new Set();
 
 	/**
 	 * Registrar notifies an established connection with protocol
@@ -509,10 +505,10 @@ export abstract class DirectStream<
 		conn: Connection,
 		fromExisting?: boolean
 	) {
-		if (this._p.has(conn.id) && fromExisting) {
+		/* if (this._p.has(conn.id) &&  fromExisting) {
 			return;
 		}
-		this._p.add(conn.id);
+		this._p.add(conn.id); */
 		try {
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
@@ -536,33 +532,48 @@ export abstract class DirectStream<
 			// The reason we need this at all is because we will connect to existing connection and recieve connection that
 			// some times, yields a race connections where connection drop each other by reset
 
-			let stream: Stream;
-			try {
-				stream = await conn.newStream(this.multicodecs);
-				if (stream.stat.protocol == null) {
-					stream.abort(new Error("Stream was not multiplexed"));
-					return;
+			let stream: Stream = undefined as any; // TODO types
+			let tries = 0;
+			let peer: PeerStreams = undefined as any;
+			while (tries <= 3) {
+				tries++;
+				try {
+					stream = await conn.newStream(this.multicodecs);
+					if (stream.stat.protocol == null) {
+						stream.abort(new Error("Stream was not multiplexed"));
+						return;
+					}
+					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!); // TODO types
+					const existingStream = peer.outboundStream;
+					await peer.attachOutboundStream(stream);
+				} catch (error: any) {
+					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
+						continue; // Retry
+					}
+					if (
+						conn.stat.status !== "OPEN" ||
+						error?.message === "Muxer already closed"
+					) {
+						return; // fail silenty, stream was never intended to be created
+					}
+					throw error;
 				}
-			} catch (error: any) {
-				if (
-					conn.stat.status !== "OPEN" ||
-					error?.message === "Muxer already closed"
-				) {
-					return; // fail silenty, stream was never intended to be created
-				}
-				throw error;
+				break;
+			}
+			if (!stream) {
+				return;
 			}
 
-			const peer = this.addPeer(peerId, peerKey, stream.stat.protocol);
-			const existingStream = peer.outboundStream;
-			await peer.attachOutboundStream(stream);
+			if (fromExisting) {
+				return;
+			}
 
 			// Add connection with assumed large latency
 
 			this.peerIdToPublicKey.set(peerId.toString(), peerKey);
 			const promises: Promise<any>[] = [];
 
-			/* if (!existingStream) */ {
+			/* if (!existingStream)  */ {
 				this.addRouteConnection(
 					this.publicKey,
 					peerKey,
@@ -614,10 +625,6 @@ export abstract class DirectStream<
 			return resolved;
 		} catch (err: any) {
 			logger.error(err);
-
-			if (err.code === "ERR_UNSUPPORTED_PROTOCOL") {
-				return;
-			}
 		}
 	}
 
@@ -655,21 +662,22 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
-		logger.debug("connection ended", peerKey.toString());
 		this._removePeer(peerKey);
 		if (!this.publicKey.equals(peerKey)) {
 			this.removeRouteConnection(this.publicKey, peerKey);
-		}
-		this.peerIdToPublicKey.delete(peerId.toString());
 
-		// Notify network
-		const earlyGoodBye = this.earlyGoodbyes.get(peerKeyHash);
-		if (earlyGoodBye) {
-			earlyGoodBye.early = false;
-			await earlyGoodBye.sign(this.sign);
-			await this.publishMessage(this.libp2p.peerId, earlyGoodBye);
-			this.earlyGoodbyes.delete(peerKeyHash);
+			// Notify network
+			const earlyGoodBye = this.earlyGoodbyes.get(peerKeyHash);
+			if (earlyGoodBye) {
+				earlyGoodBye.early = false;
+				await earlyGoodBye.sign(this.sign);
+				await this.publishMessage(this.libp2p.peerId, earlyGoodBye);
+				this.earlyGoodbyes.delete(peerKeyHash);
+			}
 		}
+
+		this.peerIdToPublicKey.delete(peerId.toString());
+		logger.debug("connection ended:" + peerKey.toString());
 	}
 
 	/**
@@ -689,7 +697,6 @@ export abstract class DirectStream<
 	 */
 	public onPeerUnreachable(publicKey: PublicSignKey) {
 		// override this fn
-
 		this.helloMap.delete(publicKey.hashcode());
 		this.multiaddrsMap.delete(publicKey.hashcode());
 
