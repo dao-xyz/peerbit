@@ -72,7 +72,7 @@ describe(`Sync`, () => {
 	});
 
 	it("syncs normally", async () => {
-		const cache = new Cache(cacheStore);
+		const cache = new Cache(createStore());
 		const index2 = new SimpleIndex(store);
 		store2 = new Store({ storeIndex: 1 });
 
@@ -104,7 +104,7 @@ describe(`Sync`, () => {
 	});
 
 	it("syncs with references", async () => {
-		const cache = new Cache(cacheStore);
+		const cache = new Cache(createStore());
 		const index2 = new SimpleIndex(store);
 		store2 = new Store({ storeIndex: 1 });
 		await store2.init(
