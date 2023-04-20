@@ -606,6 +606,7 @@ describe("streams", function () {
 					await waitForPeers(peers[0].stream, peers[3].stream);
 				} catch (error) {
 					console.log(
+						[peers.map((x) => x.stream.peerIdStr)],
 						[...peers[0].stream.multiaddrsMap.values()],
 						peers[0].stream.routes.linksCount,
 						peers[1].stream.routes.linksCount,
