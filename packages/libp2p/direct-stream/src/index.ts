@@ -1299,7 +1299,10 @@ export abstract class DirectStream<
 					})
 					.catch((error) => {
 						logger.error(
-							"Failed to send to stream: " + id.peerId + ". " + error?.message
+							"Failed to send to stream: " +
+								id.peerId +
+								". " +
+								(error?.message || error.toString())
 						);
 					});
 			} else {
