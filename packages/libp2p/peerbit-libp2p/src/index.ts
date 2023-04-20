@@ -32,11 +32,17 @@ type ExtendedOptions = {
 	blocks?: {
 		directory?: string;
 	};
+	pubsub?: {
+		autoDial: boolean;
+	};
 };
 
 const isNode = typeof window === undefined || typeof window === "undefined";
+export type CreateLibp2pExtendedOptions = ExtendedOptions & {
+	libp2p?: Libp2p | CreateOptions;
+};
 export const createLibp2pExtended: (
-	args?: ExtendedOptions & { libp2p?: Libp2p | CreateOptions }
+	args?: CreateLibp2pExtendedOptions
 ) => Promise<Libp2pExtended> = async (args) => {
 	let peer: Libp2pExtended;
 	if ((args?.libp2p as Libp2p)?.start) {
@@ -58,17 +64,28 @@ export const createLibp2pExtended: (
 		})) as Libp2pExtended;
 	}
 
-	peer.directsub = new DirectSub(peer, {
-		canRelayMessage: true,
-		signaturePolicy: "StrictNoSign",
-	});
+	if (!peer.directsub) {
+		peer.directsub = new DirectSub(peer, {
+			canRelayMessage: true,
+			signaturePolicy: "StrictNoSign",
+			connectionManager: {
+				autoDial: args?.pubsub?.autoDial,
+			},
+		});
+	} else if (args?.pubsub) {
+		throw new Error(
+			"Directsub already seet on client, but 'pubsub' constructor arguments are provided which is unexpected"
+		);
+	}
 
-	peer.directblock = new DirectBlock(
-		peer,
-		args?.blocks?.directory
-			? new LevelBlockStore(new Level(args.blocks.directory!))
-			: new MemoryLevelBlockStore()
-	);
+	peer.directblock =
+		peer.directblock ||
+		new DirectBlock(
+			peer,
+			args?.blocks?.directory
+				? new LevelBlockStore(new Level(args.blocks.directory!))
+				: new MemoryLevelBlockStore()
+		);
 
 	const start = peer.start.bind(peer);
 
