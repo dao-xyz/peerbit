@@ -886,8 +886,13 @@ describe("streams", function () {
 			await stream1.start();
 			expect(stream1.helloMap.size).toEqual(0);
 			await stream2.start();
-			await waitFor(() => stream1.helloMap.size === 1);
-			await waitFor(() => stream2.helloMap.size === 1);
+			try {
+				await waitFor(() => stream1.helloMap.size === 1);
+				await waitFor(() => stream2.helloMap.size === 1);
+			} catch (error) {
+				console.log(stream1.helloMap.size, stream2.helloMap.size);
+				throw error;
+			}
 			await waitForPeers(stream1, stream2);
 		});
 		it("can connect after start", async () => {
