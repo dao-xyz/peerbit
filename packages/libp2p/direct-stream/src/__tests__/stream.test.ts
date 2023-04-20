@@ -3,10 +3,10 @@ import { waitFor, delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
 import { waitForPeers, DirectStream, ConnectionManagerOptions } from "..";
 import { Libp2p } from "libp2p";
-import { DataMessage, Hello, Message } from "../messages";
+import { DataMessage, Message } from "../messages";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { PeerId, isPeerId } from "@libp2p/interface-peer-id";
-import { multiaddr, Multiaddr } from "@multiformats/multiaddr";
+import { Multiaddr } from "@multiformats/multiaddr";
 
 class TestStreamImpl extends DirectStream {
 	constructor(
@@ -868,25 +868,24 @@ describe("streams", function () {
 
 		it("can restart", async () => {
 			await session.connect();
-			stream1 = new TestStreamImpl(session.peers[0]);
-			stream2 = new TestStreamImpl(session.peers[1]);
+			stream1 = new TestStreamImpl(session.peers[0], {
+				connectionManager: { autoDial: false },
+			});
+			stream2 = new TestStreamImpl(session.peers[1], {
+				connectionManager: { autoDial: false },
+			});
 			await stream1.start();
 			await stream2.start();
-			await waitForPeers(stream1, stream2);
 			await waitFor(() => stream2.helloMap.size == 1);
 			await stream1.stop();
 			await waitFor(() => stream2.helloMap.size === 0);
 			await stream2.stop();
 			await stream1.start();
 			expect(stream1.helloMap.size).toEqual(0);
+
 			await stream2.start();
-			try {
-				await waitFor(() => stream1.helloMap.size === 1);
-				await waitFor(() => stream2.helloMap.size === 1);
-			} catch (error) {
-				console.log(stream1.helloMap.size, stream2.helloMap.size);
-				throw error;
-			}
+			await waitFor(() => stream1.helloMap.size === 1);
+			await waitFor(() => stream2.helloMap.size === 1);
 			await waitForPeers(stream1, stream2);
 		});
 		it("can connect after start", async () => {
