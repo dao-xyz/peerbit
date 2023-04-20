@@ -544,7 +544,6 @@ export abstract class DirectStream<
 						return;
 					}
 					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!); // TODO types
-					const existingStream = peer.outboundStream;
 					await peer.attachOutboundStream(stream);
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
