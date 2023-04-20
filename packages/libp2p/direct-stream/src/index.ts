@@ -543,8 +543,11 @@ export abstract class DirectStream<
 					stream.abort(new Error("Stream was not multiplexed"));
 					return;
 				}
-			} catch (error) {
-				if (conn.stat.status !== "OPEN") {
+			} catch (error: any) {
+				if (
+					conn.stat.status !== "OPEN" ||
+					error?.message === "Muxer already closed"
+				) {
 					return; // fail silenty, stream was never intended to be created
 				}
 				throw error;
@@ -635,16 +638,7 @@ export abstract class DirectStream<
 	}
 
 	removeRouteConnection(from: PublicSignKey, to: PublicSignKey) {
-		const has = this.routes.hasLink(from.hashcode(), to.hashcode());
-		const a = this.routes.linksCount;
-
 		const links = this.routes.deleteLink(from.hashcode(), to.hashcode());
-		const b = this.routes.linksCount;
-
-		if (has && a === b) {
-			throw new Error("WTF");
-		}
-
 		for (const deleted of links) {
 			const key = this.peerKeyHashToPublicKey.get(deleted)!;
 			this.peerKeyHashToPublicKey.delete(deleted);
