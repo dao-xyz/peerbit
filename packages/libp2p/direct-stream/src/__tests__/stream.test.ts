@@ -588,22 +588,31 @@ describe("streams", function () {
 				}
 
 				// slowly connect to that the route maps are deterministic
-				await session.connect([[session.peers[0], session.peers[1]]]);
-				await waitFor(() => peers[0].stream.routes.linksCount === 1);
-				await waitFor(() => peers[1].stream.routes.linksCount === 1);
-				await session.connect([[session.peers[1], session.peers[2]]]);
-				await waitFor(() => peers[0].stream.routes.linksCount === 2);
-
-				await waitFor(() => peers[1].stream.routes.linksCount === 2);
-				await waitFor(() => peers[2].stream.routes.linksCount === 2);
-				await session.connect([[session.peers[0], session.peers[3]]]);
-				await waitFor(() => peers[0].stream.routes.linksCount === 3);
-				await waitFor(() => peers[1].stream.routes.linksCount === 3);
-				await waitFor(() => peers[2].stream.routes.linksCount === 3);
-				await waitFor(() => peers[3].stream.routes.linksCount === 3);
-				await waitForPeers(peers[0].stream, peers[1].stream);
-				await waitForPeers(peers[1].stream, peers[2].stream);
-				await waitForPeers(peers[0].stream, peers[3].stream);
+				try {
+					await session.connect([[session.peers[0], session.peers[1]]]);
+					await waitFor(() => peers[0].stream.routes.linksCount === 1);
+					await waitFor(() => peers[1].stream.routes.linksCount === 1);
+					await session.connect([[session.peers[1], session.peers[2]]]);
+					await waitFor(() => peers[0].stream.routes.linksCount === 2);
+					await waitFor(() => peers[1].stream.routes.linksCount === 2);
+					await waitFor(() => peers[2].stream.routes.linksCount === 2);
+					await session.connect([[session.peers[0], session.peers[3]]]);
+					await waitFor(() => peers[0].stream.routes.linksCount === 3);
+					await waitFor(() => peers[1].stream.routes.linksCount === 3);
+					await waitFor(() => peers[2].stream.routes.linksCount === 3);
+					await waitFor(() => peers[3].stream.routes.linksCount === 3);
+					await waitForPeers(peers[0].stream, peers[1].stream);
+					await waitForPeers(peers[1].stream, peers[2].stream);
+					await waitForPeers(peers[0].stream, peers[3].stream);
+				} catch (error) {
+					console.log(
+						peers[0].stream.routes.linksCount,
+						peers[1].stream.routes.linksCount,
+						peers[2].stream.routes.linksCount,
+						peers[3].stream.routes.linksCount
+					);
+					throw error;
+				}
 				for (const peer of peers) {
 					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
 						peers
