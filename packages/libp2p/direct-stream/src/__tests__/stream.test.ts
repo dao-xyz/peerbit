@@ -461,7 +461,6 @@ describe("streams", function () {
 
 			it("retry dial after a while", async () => {
 				let dials: (PeerId | Multiaddr | Multiaddr[])[] = [];
-
 				peers[0].stream.libp2p.dial = (a, b) => {
 					dials.push(a);
 					throw new Error("Mock Error");
@@ -556,7 +555,9 @@ describe("streams", function () {
 
 				peers = [];
 				for (const peer of session.peers) {
-					const stream = new TestStreamImpl(peer);
+					const stream = new TestStreamImpl(peer, {
+						connectionManager: { autoDial: false },
+					});
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
@@ -591,12 +592,8 @@ describe("streams", function () {
 				await waitFor(() => peers[0].stream.routes.linksCount === 1);
 				await waitFor(() => peers[1].stream.routes.linksCount === 1);
 				await session.connect([[session.peers[1], session.peers[2]]]);
-				try {
-					await waitFor(() => peers[0].stream.routes.linksCount === 2);
-				} catch (error) {
-					console.error(peers[0].stream.routes.linksCount);
-					throw error;
-				}
+				await waitFor(() => peers[0].stream.routes.linksCount === 2);
+
 				await waitFor(() => peers[1].stream.routes.linksCount === 2);
 				await waitFor(() => peers[2].stream.routes.linksCount === 2);
 				await session.connect([[session.peers[0], session.peers[3]]]);
@@ -789,7 +786,9 @@ describe("streams", function () {
 
 				peers = [];
 				for (const [i, peer] of session.peers.entries()) {
-					const stream = new TestStreamImpl(peer);
+					const stream = new TestStreamImpl(peer, {
+						connectionManager: { autoDial: false },
+					});
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
