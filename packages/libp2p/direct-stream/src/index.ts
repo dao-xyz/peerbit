@@ -310,7 +310,7 @@ export abstract class DirectStream<
 			maxInboundStreams = 1, // TODO, should this be 1, why can't this be one (tests fail)
 			maxOutboundStreams = 1, // TODO, should this be 1, why can't this be one (tests fail)
 			signaturePolicy = "StictSign",
-			connectionManager = { autoDial: true, retryDelay: 60 * 1000 },
+			connectionManager = { autoDial: true },
 		} = props || {};
 
 		this.libp2p = libp2p;
@@ -341,7 +341,7 @@ export abstract class DirectStream<
 		this.signaturePolicy = signaturePolicy;
 		this.connectionManagerOptions = connectionManager;
 		this.dialCacheError = new Cache({
-			ttl: connectionManager.retryDelay,
+			ttl: connectionManager.retryDelay || 60 * 1000,
 			max: 1e3,
 		});
 	}
