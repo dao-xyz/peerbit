@@ -1352,6 +1352,7 @@ export abstract class DirectStream<
 				);
 				try {
 					await this.libp2p.dial(circuitAddress);
+					return;
 				} catch (error) {
 					logger.error(
 						"Failed to connect directly to: " + circuitAddress.toString()
