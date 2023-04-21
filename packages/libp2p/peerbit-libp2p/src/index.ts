@@ -68,9 +68,7 @@ export const createLibp2pExtended: (
 		peer.directsub = new DirectSub(peer, {
 			canRelayMessage: true,
 			signaturePolicy: "StrictNoSign",
-			connectionManager: {
-				autoDial: args?.pubsub?.autoDial,
-			},
+			connectionManager: args?.pubsub,
 		});
 	} else if (args?.pubsub) {
 		throw new Error(
