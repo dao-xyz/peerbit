@@ -50,4 +50,13 @@ describe(`dial`, function () {
 		await waitFor(() => !!data);
 		expect(data && new Uint8Array(data)).toEqual(new Uint8Array([1]));
 	});
+
+	it("autodials by default", async () => {
+		expect(
+			client1.libp2p.directsub["connectionManagerOptions"].autoDial
+		).toBeTrue();
+		expect(
+			client2.libp2p.directsub["connectionManagerOptions"].autoDial
+		).toBeTrue();
+	});
 });
