@@ -368,6 +368,9 @@ export class Hello extends Message {
 	@field({ type: MessageHeader })
 	header: MessageHeader;
 
+	@field({ type: vec("string") })
+	multiaddrs: string[];
+
 	@field({ type: option(Uint8Array) })
 	data?: Uint8Array;
 
@@ -377,10 +380,12 @@ export class Hello extends Message {
 	@field({ type: Signatures })
 	signatures: Signatures;
 
-	constructor(options?: { data?: Uint8Array }) {
+	constructor(options?: { multiaddrs?: string[]; data?: Uint8Array }) {
 		super();
 		this.header = new MessageHeader();
 		this.data = options?.data;
+		this.multiaddrs =
+			options?.multiaddrs?.filter((x) => !x.includes("/p2p-circuit/")) || []; // don't forward relay addresess (TODO ?)
 		this.signatures = new Signatures();
 		this.networkInfo = new NetworkInfo([]);
 	}

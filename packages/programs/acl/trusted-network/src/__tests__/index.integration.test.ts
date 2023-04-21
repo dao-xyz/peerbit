@@ -299,7 +299,6 @@ describe("index", () => {
 			);
 
 			await l0a.add(identity(1).publicKey);
-			//	await delay(11000);
 
 			await l0b.trustGraph.store.sync(
 				await l0a.trustGraph.store.oplog.getHeads()

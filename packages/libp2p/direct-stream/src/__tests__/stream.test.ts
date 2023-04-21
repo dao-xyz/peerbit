@@ -1,19 +1,28 @@
 import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { waitFor, delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
-import { waitForPeers, DirectStream } from "..";
+import { waitForPeers, DirectStream, ConnectionManagerOptions } from "..";
 import { Libp2p } from "libp2p";
 import { DataMessage, Message } from "../messages";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PeerId, isPeerId } from "@libp2p/interface-peer-id";
+import { Multiaddr } from "@multiformats/multiaddr";
 
 class TestStreamImpl extends DirectStream {
 	constructor(
 		libp2p: Libp2p,
-		options: { id?: string; pingInterval?: number } = {}
+		options: {
+			id?: string;
+			pingInterval?: number;
+			connectionManager?: ConnectionManagerOptions;
+		} = {}
 	) {
 		super(libp2p, [options.id || "test/0.0.0"], {
 			canRelayMessage: true,
 			emitSelf: true,
+			connectionManager: options.connectionManager || {
+				autoDial: false,
+			},
 			...options,
 		});
 	}
@@ -23,14 +32,10 @@ describe("streams", function () {
 	describe("ping", () => {
 		let session: LSession, streams: TestStreamImpl[];
 
-		beforeEach(async () => {});
-
 		afterEach(async () => {
 			streams && (await Promise.all(streams.map((s) => s.stop())));
 			await session?.stop();
 		});
-
-		afterAll(async () => {});
 
 		it("2-ping", async () => {
 			// 0 and 2 not connected
@@ -41,10 +46,12 @@ describe("streams", function () {
 
 			await waitForPeers(...streams);
 
-			const ping = await streams[0].ping(
-				streams[0].peers.get(streams[1].publicKeyHash)!
+			// Pings can be aborted, by the interval pinging, so we just need to check that eventually we get results
+			await streams[0].ping(streams[0].peers.get(streams[1].publicKeyHash)!);
+			await waitFor(
+				() =>
+					streams[0].peers.get(streams[1].publicKeyHash)?.pingLatency! < 1000
 			);
-			expect(ping).toBeNumber();
 		});
 
 		it("4-ping", async () => {
@@ -56,10 +63,12 @@ describe("streams", function () {
 
 			await waitForPeers(...streams);
 
-			const ping = await streams[0].ping(
-				streams[0].peers.get(streams[1].publicKeyHash)!
+			// Pings can be aborted, by the interval pinging, so we just need to check that eventually we get results
+			await streams[0].ping(streams[0].peers.get(streams[1].publicKeyHash)!);
+			await waitFor(
+				() =>
+					streams[0].peers.get(streams[1].publicKeyHash)?.pingLatency! < 1000
 			);
-			expect(ping).toBeNumber();
 		});
 
 		it("ping interval", async () => {
@@ -272,16 +281,21 @@ describe("streams", function () {
 			await session.connect([[session.peers[0], session.peers[2]]]);
 
 			await waitForPeers(peers[0].stream, peers[2].stream);
+			const defaultEdgeWeightFnPeer0 =
+				peers[0].stream.routes.graph.getEdgeAttribute.bind(
+					peers[0].stream.routes.graph
+				);
 
 			// make path long
-			peers[0].stream.routes.graph.setEdgeAttribute(
-				peers[0].stream.routes.getLink(
-					peers[0].stream.publicKeyHash,
-					peers[2].stream.publicKeyHash
-				),
-				"weight",
-				1e5
-			);
+			peers[0].stream.routes.graph.getEdgeAttribute = (
+				edge: unknown,
+				name: any
+			) => {
+				if (edge === link) {
+					return 1e5;
+				}
+				return defaultEdgeWeightFnPeer0(edge, name);
+			};
 
 			await peers[0].stream.publish(crypto.randomBytes(1e2), {
 				to: [peers[3].stream.libp2p.peerId],
@@ -298,14 +312,20 @@ describe("streams", function () {
 			peers[1].messages = [];
 
 			// Make [0] -> [2] path short
-			peers[0].stream.routes.graph.setEdgeAttribute(
-				peers[0].stream.routes.getLink(
-					peers[0].stream.publicKeyHash,
-					peers[2].stream.publicKeyHash
-				),
-				"weight",
-				0
+			let link = peers[0].stream.routes.getLink(
+				peers[0].stream.publicKeyHash,
+				peers[2].stream.publicKeyHash
 			);
+			peers[0].stream.routes.graph.getEdgeAttribute = (
+				edge: unknown,
+				name: any
+			) => {
+				if (edge === link) {
+					return 0;
+				}
+				return defaultEdgeWeightFnPeer0(edge, name);
+			};
+
 			expect(
 				peers[0].stream.routes.getPath(
 					peers[0].stream.publicKeyHash,
@@ -313,16 +333,18 @@ describe("streams", function () {
 				).length
 			).toEqual(2);
 			await peers[0].stream.publish(crypto.randomBytes(1e2), {
-				to: [peers[2].stream.libp2p.peerId],
+				to: [peers[3].stream.libp2p.peerId],
 			});
-			await waitFor(() => peers[2].recieved.length === 1, {
-				delayInterval: 10,
-				timeout: 10 * 1000,
-			});
-			expect(peers[1].messages).toHaveLength(0); // no new messages for peer 2, because sending 1 -> 3 directly is now faster
+			await waitFor(() => peers[3].recieved.length === 1);
+			const messages = peers[1].messages.filter(
+				(x) => x instanceof DataMessage
+			);
+			expect(messages).toHaveLength(0); // no new messages for peer 1, because sending 0 -> 2 -> 3 directly is now faster
 			expect(peers[1].recieved).toHaveLength(0);
 		});
 	});
+
+	// TODO test that messages are not sent backward, triangles etc
 
 	describe("join/leave", () => {
 		let session: LSession;
@@ -334,6 +356,182 @@ describe("streams", function () {
 			unrechable: PublicSignKey[];
 		}[];
 		const data = new Uint8Array([1, 2, 3]);
+		let autoDialRetryDelay = 5 * 1000;
+
+		describe("direct connections", () => {
+			beforeEach(async () => {
+				session = await LSession.disconnected(4);
+				peers = [];
+				for (const peer of session.peers) {
+					const stream = new TestStreamImpl(peer, {
+						connectionManager: {
+							autoDial: true,
+							retryDelay: autoDialRetryDelay,
+						},
+					});
+					const client: {
+						stream: TestStreamImpl;
+						messages: Message[];
+						recieved: DataMessage[];
+						reachable: PublicSignKey[];
+						unrechable: PublicSignKey[];
+					} = {
+						messages: [],
+						recieved: [],
+						reachable: [],
+						unrechable: [],
+						stream,
+					};
+					peers.push(client);
+					stream.addEventListener("message", (msg) => {
+						client.messages.push(msg.detail);
+					});
+					stream.addEventListener("data", (msg) => {
+						client.recieved.push(msg.detail);
+					});
+					stream.addEventListener("peer:reachable", (msg) => {
+						client.reachable.push(msg.detail);
+					});
+					stream.addEventListener("peer:unreachable", (msg) => {
+						client.unrechable.push(msg.detail);
+					});
+					await stream.start();
+					expect(stream["connectionManagerOptions"].autoDial).toBeTrue();
+				}
+
+				// slowly connect to that the route maps are deterministic
+				await session.connect([[session.peers[0], session.peers[1]]]);
+				await waitFor(() => peers[0].stream.routes.linksCount === 1);
+				await waitFor(() => peers[1].stream.routes.linksCount === 1);
+				await session.connect([[session.peers[1], session.peers[2]]]);
+				await waitFor(() => peers[0].stream.routes.linksCount === 2);
+				await waitFor(() => peers[1].stream.routes.linksCount === 2);
+				await session.connect([[session.peers[2], session.peers[3]]]);
+				await waitFor(() => peers[0].stream.routes.linksCount === 3);
+				await waitFor(() => peers[1].stream.routes.linksCount === 3);
+				await waitFor(() => peers[2].stream.routes.linksCount === 3);
+				await waitForPeers(peers[0].stream, peers[1].stream);
+				await waitForPeers(peers[1].stream, peers[2].stream);
+				await waitForPeers(peers[2].stream, peers[3].stream);
+				for (const peer of peers) {
+					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
+						peers
+							.map((x) => x.stream.publicKeyHash)
+							.filter((x) => x !== peer.stream.publicKeyHash)
+					); // peer has recevied reachable event from everone
+				}
+			});
+
+			afterEach(async () => {
+				await Promise.all(peers.map((peer) => peer.stream.stop()));
+				await session.stop();
+			});
+
+			it("directly if possible", async () => {
+				let dials = 0;
+				const dialFn = peers[0].stream.libp2p.dial.bind(peers[0].stream.libp2p);
+				peers[0].stream.libp2p.dial = (a, b) => {
+					dials += 1;
+					return dialFn(a, b);
+				};
+
+				peers[3].recieved = [];
+				expect(peers[0].stream.peers.size).toEqual(1);
+
+				await peers[0].stream.publish(data, {
+					to: [peers[3].stream.libp2p.peerId],
+				});
+
+				await waitFor(() => peers[3].recieved.length === 1);
+				expect(
+					peers[3].messages.find((x) => x instanceof DataMessage)
+				).toBeDefined();
+
+				// Dialing will yield a new connection
+				await waitFor(() => peers[0].stream.peers.size === 2);
+				expect(dials).toEqual(1);
+
+				// Republishing will not result in an additional dial
+				await peers[0].stream.publish(data, {
+					to: [peers[3].stream.libp2p.peerId],
+				});
+				await waitFor(() => peers[3].recieved.length === 2);
+				expect(dials).toEqual(1);
+			});
+
+			it("retry dial after a while", async () => {
+				let dials: (PeerId | Multiaddr | Multiaddr[])[] = [];
+				peers[0].stream.libp2p.dial = (a, b) => {
+					dials.push(a);
+					throw new Error("Mock Error");
+				};
+
+				peers[3].recieved = [];
+				expect(peers[0].stream.peers.size).toEqual(1);
+
+				await peers[0].stream.publish(data, {
+					to: [peers[3].stream.libp2p.peerId],
+				});
+
+				await waitFor(() => peers[3].recieved.length === 1);
+				expect(
+					peers[3].messages.find((x) => x instanceof DataMessage)
+				).toBeDefined();
+
+				// Dialing will yield a new connection
+				await waitFor(() => peers[0].stream.peers.size === 1);
+				expect(dials).toHaveLength(2); // 1 dial directly, 1 dial through neighbour as relay
+
+				// Republishing will not result in an additional dial
+				await peers[0].stream.publish(data, {
+					to: [peers[3].stream.libp2p.peerId],
+				});
+				let t1 = +new Date();
+				expect(dials).toHaveLength(2); // No change, because TTL > autoDialRetryTimeout
+
+				await waitFor(() => peers[3].recieved.length === 2);
+				await waitFor(() => +new Date() - t1 > autoDialRetryDelay);
+
+				// Try again, now expect another dial call, since the retry interval has been reached
+				await peers[0].stream.publish(data, {
+					to: [peers[3].stream.libp2p.peerId],
+				});
+				expect(dials).toHaveLength(4); // +=  1 dial directly, 1 dial through neighbour as relay
+			});
+
+			it("through relay if fails", async () => {
+				const dialFn = peers[0].stream.libp2p.dial.bind(peers[0].stream.libp2p);
+				const filteredDial = (address: PeerId | Multiaddr | Multiaddr[]) => {
+					if (
+						isPeerId(address) &&
+						address.toString() === peers[3].stream.peerIdStr
+					) {
+						throw new Error("Mock fail"); // don't allow connect directly
+					}
+
+					let addresses: Multiaddr[] = Array.isArray(address)
+						? address
+						: [address as Multiaddr];
+					for (const a of addresses) {
+						if (
+							!a.protoNames().includes("p2p-circuit") &&
+							a.toString().includes(peers[3].stream.peerIdStr)
+						) {
+							throw new Error("Mock fail"); // don't allow connect directly
+						}
+					}
+					return dialFn(address);
+				};
+
+				peers[0].stream.libp2p.dial = filteredDial;
+				expect(peers[0].stream.peers.size).toEqual(1);
+				await peers[0].stream.publish(data, {
+					to: [peers[3].stream.libp2p.peerId],
+				});
+				await waitFor(() => peers[3].recieved.length === 1);
+				await waitFor(() => peers[0].stream.peers.size === 3); // 1 originally + 1 the relay + 1 the forwarded connecction to the peer
+			});
+		});
 
 		describe("4", () => {
 			beforeEach(async () => {
@@ -357,7 +555,9 @@ describe("streams", function () {
 
 				peers = [];
 				for (const peer of session.peers) {
-					const stream = new TestStreamImpl(peer);
+					const stream = new TestStreamImpl(peer, {
+						connectionManager: { autoDial: false },
+					});
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
@@ -388,27 +588,45 @@ describe("streams", function () {
 				}
 
 				// slowly connect to that the route maps are deterministic
-				await session.connect([[session.peers[0], session.peers[1]]]);
-				await waitFor(() => peers[0].stream.routes.linksCount === 1);
-				await waitFor(() => peers[1].stream.routes.linksCount === 1);
-				await session.connect([[session.peers[1], session.peers[2]]]);
-				await waitFor(() => peers[0].stream.routes.linksCount === 2);
-				await waitFor(() => peers[1].stream.routes.linksCount === 2);
-				await waitFor(() => peers[2].stream.routes.linksCount === 2);
-				await session.connect([[session.peers[0], session.peers[3]]]);
-				await waitFor(() => peers[0].stream.routes.linksCount === 3);
-				await waitFor(() => peers[1].stream.routes.linksCount === 3);
-				await waitFor(() => peers[2].stream.routes.linksCount === 3);
-				await waitFor(() => peers[3].stream.routes.linksCount === 3);
-				await waitForPeers(peers[0].stream, peers[1].stream);
-				await waitForPeers(peers[1].stream, peers[2].stream);
-				await waitForPeers(peers[0].stream, peers[3].stream);
+				try {
+					await session.connect([[session.peers[0], session.peers[1]]]);
+					await waitFor(() => peers[0].stream.routes.linksCount === 1);
+					await waitFor(() => peers[1].stream.routes.linksCount === 1);
+					await session.connect([[session.peers[1], session.peers[2]]]);
+					await waitFor(() => peers[0].stream.routes.linksCount === 2);
+					await waitFor(() => peers[1].stream.routes.linksCount === 2);
+					await waitFor(() => peers[2].stream.routes.linksCount === 2);
+					await session.connect([[session.peers[0], session.peers[3]]]);
+					await waitFor(() => peers[0].stream.routes.linksCount === 3);
+					await waitFor(() => peers[1].stream.routes.linksCount === 3);
+					await waitFor(() => peers[2].stream.routes.linksCount === 3);
+					await waitFor(() => peers[3].stream.routes.linksCount === 3);
+					await waitForPeers(peers[0].stream, peers[1].stream);
+					await waitForPeers(peers[1].stream, peers[2].stream);
+					await waitForPeers(peers[0].stream, peers[3].stream);
+				} catch (error) {
+					console.log(
+						[peers.map((x) => x.stream.peerIdStr)],
+						[...peers[0].stream.multiaddrsMap.values()],
+						peers[0].stream.routes.linksCount,
+						peers[1].stream.routes.linksCount,
+						peers[2].stream.routes.linksCount,
+						peers[3].stream.routes.linksCount
+					);
+					console.log([...peers[0].stream.multiaddrsMap.values()]);
+					throw error;
+				}
 				for (const peer of peers) {
+					await waitFor(() => peer.reachable.length === 3);
 					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
 						peers
 							.map((x) => x.stream.publicKeyHash)
 							.filter((x) => x !== peer.stream.publicKeyHash)
 					); // peer has recevied reachable event from everone
+				}
+
+				for (const peer of peers) {
+					expect(peer.unrechable).toHaveLength(0); // No unreachable events before stopping
 				}
 			});
 
@@ -419,6 +637,7 @@ describe("streams", function () {
 
 			it("will emit unreachable events on shutdown", async () => {
 				/** Shut down slowly and check that all unreachable events are fired */
+				let reachableBeforeStop = peers[2].reachable.length;
 				await peers[0].stream.stop();
 				const hasAll = (arr: PublicSignKey[], cmp: PublicSignKey[]) => {
 					let a = new Set(arr.map((x) => x.hashcode()));
@@ -437,6 +656,11 @@ describe("streams", function () {
 					}
 					return false;
 				};
+
+				expect(reachableBeforeStop).toEqual(peers[1].reachable.length);
+				expect(reachableBeforeStop).toEqual(peers[2].reachable.length);
+				expect(reachableBeforeStop).toEqual(peers[0].reachable.length);
+
 				expect(peers[0].unrechable).toHaveLength(0);
 				await waitFor(() =>
 					hasAll(peers[1].unrechable, [
@@ -452,6 +676,7 @@ describe("streams", function () {
 						peers[3].stream.publicKey,
 					])
 				);
+
 				await peers[2].stream.stop();
 				await waitFor(() =>
 					hasAll(peers[3].unrechable, [
@@ -574,7 +799,9 @@ describe("streams", function () {
 
 				peers = [];
 				for (const [i, peer] of session.peers.entries()) {
-					const stream = new TestStreamImpl(peer);
+					const stream = new TestStreamImpl(peer, {
+						connectionManager: { autoDial: false },
+					});
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
@@ -618,8 +845,8 @@ describe("streams", function () {
 				for (let i = 3; i < 5; i++) {
 					await waitForPeers(peers[i].stream, peers[i + 1].stream);
 				}
-				expect(peers[2].stream.hellosToReplay.size).toEqual(2); // these hellos will be forwarded on connect
-				expect(peers[3].stream.hellosToReplay.size).toEqual(2); // these hellos will be forwarded on connect
+				expect(peers[2].stream.helloMap.size).toEqual(2); // these hellos will be forwarded on connect
+				expect(peers[3].stream.helloMap.size).toEqual(2); // these hellos will be forwarded on connect
 				await session.connect([[session.peers[2], session.peers[3]]]);
 
 				for (const peer of peers) {
@@ -644,24 +871,26 @@ describe("streams", function () {
 
 		it("can restart", async () => {
 			await session.connect();
-			stream1 = new TestStreamImpl(session.peers[0]);
-			stream2 = new TestStreamImpl(session.peers[1]);
+			stream1 = new TestStreamImpl(session.peers[0], {
+				connectionManager: { autoDial: false },
+			});
+			stream2 = new TestStreamImpl(session.peers[1], {
+				connectionManager: { autoDial: false },
+			});
 			await stream1.start();
 			await stream2.start();
-			await waitForPeers(stream1, stream2);
-			expect(stream2.hellosToReplay.size).toEqual(1);
+			await waitFor(() => stream2.helloMap.size == 1);
 			await stream1.stop();
-			await waitFor(() => stream2.hellosToReplay.size === 0);
+			await waitFor(() => stream2.helloMap.size === 0);
 			await stream2.stop();
-			await delay(1000); // Some delay seems to be necessary TODO fix
 			await stream1.start();
-			expect(stream1.hellosToReplay.size).toEqual(0);
+			expect(stream1.helloMap.size).toEqual(0);
+
 			await stream2.start();
-			await waitFor(() => stream1.hellosToReplay.size === 1);
-			await waitFor(() => stream2.hellosToReplay.size === 1);
+			await waitFor(() => stream1.helloMap.size === 1);
+			await waitFor(() => stream2.helloMap.size === 1);
 			await waitForPeers(stream1, stream2);
 		});
-
 		it("can connect after start", async () => {
 			stream1 = new TestStreamImpl(session.peers[0]);
 			stream2 = new TestStreamImpl(session.peers[1]);

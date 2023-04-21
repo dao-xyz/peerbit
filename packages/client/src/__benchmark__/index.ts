@@ -65,7 +65,10 @@ let address: string | undefined = undefined;
 const readerResolver: Map<string, () => void> = new Map();
 
 for (const [i, peer] of session.peers.entries()) {
-	const client = await Peerbit.create({ libp2p: peer });
+	const client = await Peerbit.create({
+		libp2p: peer,
+		pubsub: { autoDial: false },
+	});
 	peers.push(client);
 	const store = await client.open(address || new TestStore(), {
 		onUpdate:

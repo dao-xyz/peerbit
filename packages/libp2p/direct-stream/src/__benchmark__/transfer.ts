@@ -5,7 +5,7 @@ import { DirectStream, waitForPeers } from "../index.js";
 import { delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
 
 // * size: 1kb x 1,797 ops/sec ±3.15% (77 runs sampled)
 // * size: 1000kb x 106 ops/sec ±2.26% (72 runs sampled)

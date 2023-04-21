@@ -17,7 +17,8 @@ jobs:
             matrix:
                 node-version: [16.x]
                 # Each app folder test will be run in parallel using the matrix
-                folder: [./packages/client, ./packages/programs,./packages/utils ./packages/server-node]
+                # TODO add ./packages/libp2p
+                folder: [./packages/client,./packages/log ./packages/programs ./packages/store, ./packages/utils ./packages/server-node]
 
         steps:
             - uses: actions/checkout@v3
