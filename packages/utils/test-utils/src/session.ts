@@ -5,6 +5,9 @@ import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 
 export type LibP2POptions = {
+	pubsub?: {
+		autoDial: boolean;
+	};
 	datastore?: RecursivePartial<Datastore> | undefined;
 };
 export class LSession {
@@ -25,8 +28,8 @@ export class LSession {
 		return this.session.stop();
 	}
 
-	static async connected(n: number) {
-		const session = await LSession.disconnected(n);
+	static async connected(n: number, options?: LibP2POptions) {
+		const session = await LSession.disconnected(n, options);
 		await session.connect();
 		await waitForPeersStreams(...session.peers.map((x) => x.directblock));
 		return session;
@@ -37,7 +40,10 @@ export class LSession {
 			await SSession.disconnected<Libp2pExtended>(n, options);
 		const peers = await Promise.all(
 			session.peers.map(async (peer) => {
-				const extended = await createLibp2pExtended({ libp2p: peer });
+				const extended = await createLibp2pExtended({
+					libp2p: peer,
+					pubsub: options?.pubsub,
+				});
 				await extended.start();
 				return extended;
 			})
