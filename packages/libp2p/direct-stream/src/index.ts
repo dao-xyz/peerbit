@@ -294,7 +294,7 @@ export abstract class DirectStream<
 	private pingJob: any;
 	private pingInterval: number;
 	private connectionManagerOptions: ConnectionManagerOptions;
-	private dialCacheError: Cache<string>;
+	private recentDials: Cache<string>;
 
 	constructor(
 		libp2p: Libp2p,
@@ -340,7 +340,7 @@ export abstract class DirectStream<
 		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
 		this.signaturePolicy = signaturePolicy;
 		this.connectionManagerOptions = connectionManager;
-		this.dialCacheError = new Cache({
+		this.recentDials = new Cache({
 			ttl: connectionManager.retryDelay || 60 * 1000,
 			max: 1e3,
 		});
@@ -1316,17 +1316,20 @@ export abstract class DirectStream<
 		}
 
 		const toHash = path[path.length - 1];
-		if (this.dialCacheError.has(toHash)) {
-			return;
-		}
 
 		if (this.peers.has(toHash)) {
 			return; // TODO, is this expected, or are we to dial more addresses?
 		}
 
-		// Try to either connect directly
-		let addrs = this.multiaddrsMap.get(toHash);
+		let addrs = this.multiaddrsMap.get(toHash)?.filter((x) => {
+			if (this.recentDials.has(x)) {
+				return false;
+			}
+			this.recentDials.add(x);
+			return true;
+		});
 
+		// Try to either connect directly
 		try {
 			if (addrs && addrs.length > 0) {
 				await this.libp2p.dial(addrs.map((x) => multiaddr(x)));
@@ -1360,8 +1363,6 @@ export abstract class DirectStream<
 				}
 			}
 		}
-
-		this.dialCacheError.add(toHash);
 	}
 }
 
