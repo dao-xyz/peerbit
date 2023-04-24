@@ -34,7 +34,7 @@ Your database schema can remain very simple but still utilize P2P networks, auto
 |<sub>**CID**</sub>|<sub>X</sub>|<sub>X</sub>|   |<sub>X</sub>|<sub>X</sub>|
 |<sub>**Sharding**</sub>|<sub>X</sub>|   |   |   |   |
 |<sub>**Built-in encryption**</sub>|<sub>X</sub>|   |   |   |   |
-|<sub>**Supports multiple key-types**</sub>|<sub>X</sub>|   |   |   |   |
+|<sub>**Supports multiple key-types**</sub>|<sub>X</sub>|   |   |<sub>X</sub>|   |
 |<sub>**Discovery algorithm**</sub>|<sub>Automatic based on content</sub>|<sub>KAD DHT</sub>|<sub>Custom solution</sub>|<sub>KAD DHT</sub>|<sub>KAD DHT</sub>|
 |<sub>**Client language**</sub>|<sub>Typescript</sub>|<sub>Javascript</sub>|<sub>Javascript</sub>|<sub>Typescript, Go, Rust</sub>|<sub>Typescript/Javascript, PHP</sub>|
 |<sub>**Intended usage**</sub>|<sub>High-performance applications & storage|<sub>Databases on IPFS</sub>|<sub>Performant applications</sub>|<sub>Granular control of individual files</sub>|<sub>?Permanent? storage</sub>|
