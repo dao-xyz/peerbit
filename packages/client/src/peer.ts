@@ -252,11 +252,11 @@ export class Peerbit {
 					"Expecting libp2p argument to either be of type Libp2p or Libp2pExtended"
 				);
 			}
+			const extendedOptions = options as CreateLibp2pExtendedOptions;
 			if (
 				!(options.libp2p as Libp2pExtended).directblock &&
 				!(options.libp2p as Libp2pExtended).directsub
 			) {
-				const extendedOptions = options as CreateLibp2pExtendedOptions;
 				libp2pExtended = await createLibp2pExtended({
 					libp2p: options.libp2p,
 					blocks: {
@@ -266,6 +266,12 @@ export class Peerbit {
 					},
 					pubsub: extendedOptions.pubsub,
 				});
+			} else {
+				if (extendedOptions.pubsub) {
+					throw new Error(
+						"libp2p client is already initialized as Libp2pExtended, 'pubsub' argument is unexpected"
+					);
+				}
 			}
 		}
 
