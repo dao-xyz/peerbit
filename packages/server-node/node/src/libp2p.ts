@@ -59,23 +59,6 @@ export const createNode = async () => {
 			keypair.publicKey.publicKey
 		).bytes
 	); // marshalPublicKey({ bytes: keypair.publicKey.bytes }, 'ed25519'), marshalPrivateKey({ bytes: keypair.privateKey.bytes }, 'ed25519')
-	/*const node =  await createLibp2p({
-		peerId,
-		connectionManager: {
-			maxConnections: Infinity,
-			minConnections: 0,
-			pollInterval: 2000,
-		},
-		addresses: {
-			listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
-		},
-		transports: [webSockets()],
-		connectionEncryption: [noise()],
-		streamMuxers: [mplex()],
-	});
-	await node.start();
-
-	return node as Libp2pExtended; */
 
 	const node = await createLibp2pExtended({
 		libp2p: {
