@@ -27,6 +27,12 @@ const last = (arr: any[]) => {
 	return arr[arr.length - 1];
 };
 
+const checkedStorage = async (log: Log<any>) => {
+	for (const value of await log.values.toArray()) {
+		expect(await log.storage.has(value.hash)).toBeTrue();
+	}
+};
+
 describe("Log - Join", function () {
 	let keystore: Keystore;
 	let session: LSession;
@@ -199,6 +205,9 @@ describe("Log - Join", function () {
 			// The last Entry<T>, 'entryC100', should be the only head
 			// (it points to entryB100, entryB100 and entryC99)
 			expect((await logA.getHeads()).length).toEqual(1);
+
+			await checkedStorage(logA);
+			await checkedStorage(logB);
 		});
 
 		it("joins only unique items", async () => {
@@ -352,6 +361,10 @@ describe("Log - Join", function () {
 		it("joins heads", async () => {
 			const { entry: a1 } = await log1.append("helloA1");
 			const { entry: b1 } = await log2.append("helloB1", { nexts: [a1] });
+
+			expect(log1.length).toEqual(1);
+			expect(log2.length).toEqual(1);
+
 			await log1.join(await log2.getHeads());
 			const expectedData = ["helloA1", "helloB1"];
 			expect(log1.length).toEqual(2);
