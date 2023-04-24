@@ -656,9 +656,9 @@ export class Log<T> {
 			const entry =
 				resolvedEntries.get(hash) ||
 				(await Entry.fromMultihash<T>(this._storage, hash, {
-					replicate: true,
 					timeout: options?.timeout,
 				}));
+
 			entry.init(this);
 			resolvedEntries.set(entry.hash, entry);
 
@@ -699,13 +699,11 @@ export class Log<T> {
 		while (entriesBottomUp.length > 0) {
 			const e = entriesBottomUp.shift()!;
 			await this._joining.get(e.hash);
-			this._joining.set(
-				e.hash,
-				this.joinEntry(e, nextRefs, entriesBottomUp, options).then(() =>
-					this._joining.delete(e.hash)
-				)
+			const p = this.joinEntry(e, nextRefs, entriesBottomUp, options).then(() =>
+				this._joining.delete(e.hash)
 			);
-			await this._joining.get(e.hash);
+			this._joining.set(e.hash, p);
+			await p;
 		}
 	}
 	private async joinEntry(
