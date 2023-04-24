@@ -61,6 +61,10 @@ class SlowBlockStore implements BlockStore {
 	): Promise<string> {
 		return this._store.put(value, options);
 	}
+
+	has(cid: string) {
+		return this._store.has(cid);
+	}
 	rm(cid: string): Promise<void> {
 		return this._store.rm(cid);
 	}
