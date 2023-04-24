@@ -15,7 +15,7 @@ describe(`leaders`, function () {
 		db3: EventStore<string>;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3);
+		session = await LSession.connected(3, { pubsub: { autoDial: false } });
 	});
 
 	afterAll(async () => {
@@ -25,15 +25,12 @@ describe(`leaders`, function () {
 	beforeEach(async () => {
 		client1 = await Peerbit.create({
 			libp2p: session.peers[0],
-			pubsub: { autoDial: false },
 		});
 		client2 = await Peerbit.create({
 			libp2p: session.peers[1],
-			pubsub: { autoDial: false },
 		});
 		client3 = await Peerbit.create({
 			libp2p: session.peers[2],
-			pubsub: { autoDial: false },
 		});
 	});
 

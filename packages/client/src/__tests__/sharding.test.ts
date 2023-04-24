@@ -59,6 +59,7 @@ describe(`sharding`, () => {
 		const map = new Map<string, number>();
 		for (const db of dbs) {
 			for (const value of await db.store.store.oplog.values.toArray()) {
+				expect(await db.store.store.oplog.storage.has(value.hash)).toBeTrue();
 				map.set(value.hash, (map.get(value.hash) || 0) + 1);
 			}
 		}
