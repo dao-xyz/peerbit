@@ -49,7 +49,9 @@ class TestStore extends Program {
 }
 
 const peersCount = 3;
-const session = await LSession.connected(peersCount);
+const session = await LSession.connected(peersCount, {
+	pubsub: { autoDial: false },
+});
 
 await session.connect([
 	[session.peers[0], session.peers[1]],
@@ -67,7 +69,6 @@ const readerResolver: Map<string, () => void> = new Map();
 for (const [i, peer] of session.peers.entries()) {
 	const client = await Peerbit.create({
 		libp2p: peer,
-		pubsub: { autoDial: false },
 	});
 	peers.push(client);
 	const store = await client.open(address || new TestStore(), {
