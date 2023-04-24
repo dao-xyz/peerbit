@@ -1,15 +1,12 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
-import { jest } from "@jest/globals";
+import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 
 describe(`Replication`, function () {
-	jest.setTimeout(60000);
-
 	let session: LSession;
 	let client1: Peerbit,
 		client2: Peerbit,

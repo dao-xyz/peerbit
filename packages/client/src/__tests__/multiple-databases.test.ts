@@ -5,8 +5,6 @@ import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay } from "@dao-xyz/peerbit-time";
 
 describe(`Multiple Databases`, function () {
-	jest.setTimeout(60000);
-
 	let session: LSession;
 	let client1: Peerbit, client2: Peerbit, client3: Peerbit;
 
