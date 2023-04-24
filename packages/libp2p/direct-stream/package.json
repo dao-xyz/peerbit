@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-direct-stream",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"sideEffects": false,
