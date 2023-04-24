@@ -20,23 +20,9 @@ export interface BlockStore {
 		value: Block.Block<T, any, any, any>,
 		options?: PutOptions
 	): Promise<string>;
+	has(cid: string): Promise<boolean> | boolean;
 	rm(cid: string): Promise<void>;
 	open(): Promise<this>;
 	close(): Promise<void>;
 	get status(): StoreStatus;
 }
-
-/* async function write(
-	saveBlock: (block: Block.Block<any>) => Promise<void> | void,
-	format: string,
-	value: any,
-	options: PutOptions = {}
-): Promise<CID> {
-
-	const codec = codecMap[format];
-	value = prepareBlockWrite(value, codec, options?.links);
-	const block = await Block.encode({ value, codec, hasher });
-	await saveBlock(block);
-	return block.cid;
-}
- */

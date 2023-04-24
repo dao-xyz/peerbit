@@ -70,6 +70,10 @@ export class LevelBlockStore implements BlockStore {
 		await this._level.del(cid);
 	}
 
+	async has(cid: string) {
+		return !!(await this._level.get(cid));
+	}
+
 	async open(): Promise<this> {
 		this._closed = false;
 		await this._level.open();

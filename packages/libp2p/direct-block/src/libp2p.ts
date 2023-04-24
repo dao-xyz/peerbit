@@ -121,6 +121,9 @@ export class DirectBlock extends DirectStream implements BlockStore {
 		return this._localStore!.put(value, options);
 	}
 
+	async has(cid: string) {
+		return this._localStore.has(cid);
+	}
 	async get<T>(
 		cid: string,
 		options?: GetOptions | undefined
