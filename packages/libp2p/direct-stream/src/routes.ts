@@ -224,8 +224,11 @@ export class Routes {
 		return undefined;
 	}
 
-	hasLink(from: string, to: string): any {
+	hasLink(from: string, to: string): boolean {
 		return this.graph.hasEdge(from, to);
+	}
+	hasNode(node: string): boolean {
+		return this.graph.hasNode(node);
 	}
 
 	getPath(
@@ -237,7 +240,7 @@ export class Routes {
 			let getEdgeWeight:
 				| keyof EdgeData
 				| MinimalEdgeMapper<number, EdgeData> = (edge) =>
-				this.graph.getEdgeAttribute(edge, "weight");
+					this.graph.getEdgeAttribute(edge, "weight");
 			const blockId = (options as { block?: string })?.block;
 			if (blockId) {
 				const neighBourEdges = new Set(

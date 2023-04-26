@@ -2825,7 +2825,7 @@
     "@libp2p/interface-peer-info" "^1.0.0"
     "@libp2p/interfaces" "^3.0.0"
 
-"@libp2p/interface-peer-store@^1.0.0", "@libp2p/interface-peer-store@^1.2.1", "@libp2p/interface-peer-store@^1.2.2", "@libp2p/interface-peer-store@^1.2.8":
+"@libp2p/interface-peer-store@^1.0.0", "@libp2p/interface-peer-store@^1.2.1", "@libp2p/interface-peer-store@^1.2.2":
   version "1.2.9"
   resolved "https://registry.yarnpkg.com/@libp2p/interface-peer-store/-/interface-peer-store-1.2.9.tgz#85173892e52ac230abfd45798bfab03dce20ae84"
   integrity sha512-jAAlbP1NXpEJOG6Dbr0QdP71TBYjHBc/65Ulwdn4J4f04PW1bI4JIMQeq6+/sLfaGVryvvUT/a52io8UUtB21Q==
@@ -2833,6 +2833,16 @@
     "@libp2p/interface-peer-id" "^2.0.0"
     "@libp2p/interface-peer-info" "^1.0.0"
     "@libp2p/interface-record" "^2.0.0"
+    "@libp2p/interfaces" "^3.0.0"
+    "@multiformats/multiaddr" "^12.0.0"
+
+"@libp2p/interface-peer-store@^2.0.0":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@libp2p/interface-peer-store/-/interface-peer-store-2.0.1.tgz#7c8d8ac2aaaa9b9b4e63c1c4fb3a276efbd8a41d"
+  integrity sha512-y2JNTbn/kav0JyaEcCN4BFEJwjRIe6AoNDaWl6C69ioGOBykVzTS2MA64u9y+oaj7uSgt4AkZEIWNDFXlz74mA==
+  dependencies:
+    "@libp2p/interface-peer-id" "^2.0.0"
+    "@libp2p/interface-peer-info" "^1.0.0"
     "@libp2p/interfaces" "^3.0.0"
     "@multiformats/multiaddr" "^12.0.0"
 
@@ -3073,15 +3083,15 @@
     private-ip "^3.0.0"
     uint8arraylist "^2.3.2"
 
-"@libp2p/webrtc@^1.1.5":
-  version "1.1.5"
-  resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-1.1.5.tgz#c13f9d0b6523f110068ac6af9bf94896720deab7"
-  integrity sha512-xn+lvpDY/EMD6K7dIMSC28w11PuhlemiaQ/pxvhqyg4utUfyQ8k3K/fkso7nbBSXYpMKq9A7wl/dSv8R4dpAmQ==
+"@libp2p/webrtc@^1.1.8":
+  version "1.1.8"
+  resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-1.1.8.tgz#18588072ec8f21fd1208ec0c3df9155bb24e0f8b"
+  integrity sha512-0vCwjXVxAp+tAWUZDoiRik+Nx0kdGR8Nwb8OCuiP+sDn349LkYuG5mr0TpVAw3XmAV0dYCMZ4GFWadZpiuQ9Rw==
   dependencies:
     "@chainsafe/libp2p-noise" "^11.0.0"
     "@libp2p/interface-connection" "^4.0.0"
     "@libp2p/interface-peer-id" "^2.0.0"
-    "@libp2p/interface-peer-store" "^1.2.8"
+    "@libp2p/interface-peer-store" "^2.0.0"
     "@libp2p/interface-registrar" "^2.0.8"
     "@libp2p/interface-stream-muxer" "^3.0.0"
     "@libp2p/interface-transport" "^2.0.0"

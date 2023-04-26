@@ -10,7 +10,9 @@ import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
 export type LibP2POptions = {
 	connectionManager?: RecursivePartial<ConnectionManagerInit>;
 	datastore?: RecursivePartial<Datastore> | undefined;
+	browser?: boolean
 };
+
 export class LSession<T extends Libp2p = Libp2p> {
 	peers: T[];
 
@@ -40,7 +42,7 @@ export class LSession<T extends Libp2p = Libp2p> {
 	}
 	static async connected<T extends Libp2p = Libp2p>(
 		n: number,
-		options?: LibP2POptions
+		options?: LibP2POptions | LibP2POptions[]
 	) {
 		const libs = (await LSession.disconnected<T>(n, options)).peers;
 		return new LSession(libs).connect();
@@ -48,7 +50,7 @@ export class LSession<T extends Libp2p = Libp2p> {
 
 	static async disconnected<T extends Libp2p = Libp2p>(
 		n: number,
-		options?: LibP2POptions
+		options?: LibP2POptions | LibP2POptions[]
 	) {
 		// Allow more than 11 listneers
 		setMaxListeners(Infinity);
@@ -61,12 +63,12 @@ export class LSession<T extends Libp2p = Libp2p> {
 					addresses: {
 						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
 					},
-					connectionManager: options?.connectionManager || {
+					connectionManager: (options?.[i] || options)?.connectionManager ?? {
 						minConnections: 0,
 					},
-					datastore: options?.datastore,
-					transports: transports(),
-					relay: relay(),
+					datastore: (options?.[i] || options)?.datastore,
+					transports: transports((options?.[i] || options)?.browser),
+					relay: (options?.[i] || options)?.browser ? undefined : relay(),
 					connectionEncryption: [noise()],
 					streamMuxers: [mplex()],
 				});
