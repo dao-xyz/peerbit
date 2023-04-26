@@ -10,7 +10,7 @@ import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
 export type LibP2POptions = {
 	connectionManager?: RecursivePartial<ConnectionManagerInit>;
 	datastore?: RecursivePartial<Datastore> | undefined;
-	browser?: boolean
+	browser?: boolean;
 };
 
 export class LSession<T extends Libp2p = Libp2p> {
