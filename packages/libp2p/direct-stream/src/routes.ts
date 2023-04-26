@@ -240,7 +240,7 @@ export class Routes {
 			let getEdgeWeight:
 				| keyof EdgeData
 				| MinimalEdgeMapper<number, EdgeData> = (edge) =>
-					this.graph.getEdgeAttribute(edge, "weight");
+				this.graph.getEdgeAttribute(edge, "weight");
 			const blockId = (options as { block?: string })?.block;
 			if (blockId) {
 				const neighBourEdges = new Set(
