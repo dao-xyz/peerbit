@@ -7,7 +7,10 @@ import { DataMessage, Message } from "../messages";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { PeerId, isPeerId } from "@libp2p/interface-peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
-
+import { multiaddr } from "@multiformats/multiaddr";
+import { tcp } from "@libp2p/tcp";
+import { webSockets } from "@libp2p/websockets";
+import * as filters from "@libp2p/websockets/filters";
 class TestStreamImpl extends DirectStream {
 	constructor(
 		libp2p: Libp2p,
@@ -360,15 +363,25 @@ describe("streams", function () {
 
 		describe("direct connections", () => {
 			beforeEach(async () => {
-				session = await LSession.disconnected(4);
+				session = await LSession.disconnected(4, [
+					{ browser: true },
+					{},
+					{},
+					{ browser: true },
+				]); // Second arg is due to https://github.com/libp2p/js-libp2p/issues/1690
 				peers = [];
-				for (const peer of session.peers) {
+				for (const [i, peer] of session.peers.entries()) {
 					const stream = new TestStreamImpl(peer, {
 						connectionManager: {
-							autoDial: true,
+							autoDial: i === 0,
 							retryDelay: autoDialRetryDelay,
 						},
 					});
+
+					if (i === 0) {
+						expect(stream["connectionManagerOptions"].autoDial).toBeTrue();
+					}
+
 					const client: {
 						stream: TestStreamImpl;
 						messages: Message[];
@@ -396,7 +409,6 @@ describe("streams", function () {
 						client.unrechable.push(msg.detail);
 					});
 					await stream.start();
-					expect(stream["connectionManagerOptions"].autoDial).toBeTrue();
 				}
 
 				// slowly connect to that the route maps are deterministic
@@ -413,6 +425,7 @@ describe("streams", function () {
 				await waitForPeers(peers[0].stream, peers[1].stream);
 				await waitForPeers(peers[1].stream, peers[2].stream);
 				await waitForPeers(peers[2].stream, peers[3].stream);
+
 				for (const peer of peers) {
 					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
 						peers
@@ -457,6 +470,13 @@ describe("streams", function () {
 				});
 				await waitFor(() => peers[3].recieved.length === 2);
 				expect(dials).toEqual(1);
+				expect(peers[0].stream.peers.size).toEqual(2);
+				expect(
+					peers[0].stream.peers.has(peers[3].stream.publicKeyHash)
+				).toBeTrue();
+				expect(
+					peers[0].stream.peers.has(peers[1].stream.publicKeyHash)
+				).toBeTrue();
 			});
 
 			it("retry dial after a while", async () => {
@@ -480,14 +500,16 @@ describe("streams", function () {
 
 				// Dialing will yield a new connection
 				await waitFor(() => peers[0].stream.peers.size === 1);
-				expect(dials).toHaveLength(2); // 1 dial directly, 1 dial through neighbour as relay
+				let expectedDialsCount =
+					1 + peers[2].stream.libp2p.getMultiaddrs().length; // 1 dial directly, X dials through neighbour as relay
+				expect(dials).toHaveLength(expectedDialsCount);
 
 				// Republishing will not result in an additional dial
 				await peers[0].stream.publish(data, {
 					to: [peers[3].stream.libp2p.peerId],
 				});
 				let t1 = +new Date();
-				expect(dials).toHaveLength(2); // No change, because TTL > autoDialRetryTimeout
+				expect(dials).toHaveLength(expectedDialsCount); // No change, because TTL > autoDialRetryTimeout
 
 				await waitFor(() => peers[3].recieved.length === 2);
 				await waitFor(() => +new Date() - t1 > autoDialRetryDelay);
@@ -496,7 +518,7 @@ describe("streams", function () {
 				await peers[0].stream.publish(data, {
 					to: [peers[3].stream.libp2p.peerId],
 				});
-				expect(dials).toHaveLength(4); // +=  1 dial directly, 1 dial through neighbour as relay
+				expect(dials).toHaveLength(expectedDialsCount * 2); // 1 dial directly, X dials through neighbour as relay
 			});
 
 			it("through relay if fails", async () => {
@@ -520,7 +542,12 @@ describe("streams", function () {
 							throw new Error("Mock fail"); // don't allow connect directly
 						}
 					}
-					return dialFn(address);
+					addresses = addresses.map((x) =>
+						x.protoCodes().includes(281)
+							? multiaddr(x.toString().replace("/webrtc/", "/"))
+							: x
+					); // TODO use webrtc in node
+					return dialFn(addresses);
 				};
 
 				peers[0].stream.libp2p.dial = filteredDial;
@@ -860,7 +887,9 @@ describe("streams", function () {
 		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl;
 
 		beforeEach(async () => {
-			session = await LSession.connected(2);
+			session = await LSession.connected(2, {
+				transports: [tcp(), webSockets({ filter: filters.all })],
+			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 		});
 
 		afterEach(async () => {
@@ -882,11 +911,14 @@ describe("streams", function () {
 			await waitFor(() => stream2.helloMap.size == 1);
 			await stream1.stop();
 			await waitFor(() => stream2.helloMap.size === 0);
+
 			await stream2.stop();
+			expect(stream1.peers.size).toEqual(0);
 			await stream1.start();
 			expect(stream1.helloMap.size).toEqual(0);
 
 			await stream2.start();
+			await waitFor(() => stream1.peers.size === 1);
 			await waitFor(() => stream1.helloMap.size === 1);
 			await waitFor(() => stream2.helloMap.size === 1);
 			await waitForPeers(stream1, stream2);
@@ -929,7 +961,9 @@ describe("streams", function () {
 		let stream1b: TestStreamImpl, stream2b: TestStreamImpl;
 
 		beforeEach(async () => {
-			session = await LSession.connected(2);
+			session = await LSession.connected(2, {
+				transports: [tcp(), webSockets({ filter: filters.all })],
+			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 		});
 
 		afterEach(async () => {

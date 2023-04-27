@@ -1,6 +1,7 @@
-import { LSession as SSession } from "@dao-xyz/libp2p-test-utils";
-import { RecursivePartial } from "@libp2p/interfaces";
-import { Datastore } from "interface-datastore";
+import {
+	LSession as SSession,
+	LibP2POptions as SLibP2POptions,
+} from "@dao-xyz/libp2p-test-utils";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 
@@ -8,8 +9,8 @@ export type LibP2POptions = {
 	pubsub?: {
 		autoDial: boolean;
 	};
-	datastore?: RecursivePartial<Datastore> | undefined;
-};
+} & SLibP2POptions;
+
 export class LSession {
 	private session: SSession<Libp2pExtended>;
 	constructor(session: SSession<Libp2pExtended>) {

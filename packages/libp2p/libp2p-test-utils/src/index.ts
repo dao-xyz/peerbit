@@ -1,2 +1,3 @@
-import { LSession } from "./session.js";
+import { LSession, LibP2POptions } from "./session.js";
 export { LSession };
+export type { LibP2POptions };

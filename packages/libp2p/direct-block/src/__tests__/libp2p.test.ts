@@ -2,8 +2,7 @@ import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { MemoryLevelBlockStore } from "../level";
 import { createBlock, getBlockValue, stringifyCid } from "../block.js";
 import { DirectBlock } from "..";
-import { delay } from "@dao-xyz/peerbit-time";
-import { waitForPeers } from "./utils";
+import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 
 describe("transport", function () {
 	let session: LSession, store: DirectBlock, store2: DirectBlock;
@@ -27,7 +26,6 @@ describe("transport", function () {
 		await store.close();
 		await store2.close();
 
-		await delay(3000); // Some delay seems to be necessary TODO fix
 		await store.open();
 		await store2.open();
 		await waitForPeers(store, store2);

@@ -75,6 +75,7 @@ describe(`browser`, function () {
 		).toContainAllValues(["hello", "world"]);
 		expect(db2.store.oplog.values.length).toEqual(2);
 	});
+
 	it("can replicate entries through relay", async () => {
 		session = await LSession.disconnected(3);
 
@@ -114,12 +115,9 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		/* 	await waitForPeers(session.peers[2], [client1.id], topic);
-			await waitForPeers(session.peers[2], [client2.id], topic); */
-		/* 
-			expect(client1._directConnections.size).toEqual(0); // since browser
-				expect(client2._directConnections.size).toEqual(0); // since browser
-		 */
+		await waitForPeers(session.peers[2], [client1.id], db1.address!.toString()); // TODO is this needed?
+		await waitForPeers(session.peers[2], [client2.id], db1.address!.toString()); // TODO is this needed?
+
 		await db1.add("hello");
 		await db2.add("world");
 

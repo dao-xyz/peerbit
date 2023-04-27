@@ -224,8 +224,11 @@ export class Routes {
 		return undefined;
 	}
 
-	hasLink(from: string, to: string): any {
+	hasLink(from: string, to: string): boolean {
 		return this.graph.hasEdge(from, to);
+	}
+	hasNode(node: string): boolean {
+		return this.graph.hasNode(node);
 	}
 
 	getPath(

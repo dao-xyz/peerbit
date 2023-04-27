@@ -2712,7 +2712,7 @@
     "@libp2p/peer-collections" "^3.0.1"
     "@multiformats/multiaddr" "^12.0.0"
 
-"@libp2p/interface-connection@^3.0.1", "@libp2p/interface-connection@^3.0.2":
+"@libp2p/interface-connection@^3.0.2":
   version "3.1.1"
   resolved "https://registry.yarnpkg.com/@libp2p/interface-connection/-/interface-connection-3.1.1.tgz#f43180e64de118c29f311ee7111f8bbe50e252bf"
   integrity sha512-+hxfYLv4jf+MruQEJiJeIyo/wI33/53wRL0XJTkxwQQPAkLHfZWCUY4kY9sXALd3+ASjXAENvJj9VvzZTlkRDQ==
@@ -2825,7 +2825,7 @@
     "@libp2p/interface-peer-info" "^1.0.0"
     "@libp2p/interfaces" "^3.0.0"
 
-"@libp2p/interface-peer-store@^1.0.0", "@libp2p/interface-peer-store@^1.2.1", "@libp2p/interface-peer-store@^1.2.2", "@libp2p/interface-peer-store@^1.2.8":
+"@libp2p/interface-peer-store@^1.0.0", "@libp2p/interface-peer-store@^1.2.1", "@libp2p/interface-peer-store@^1.2.2":
   version "1.2.9"
   resolved "https://registry.yarnpkg.com/@libp2p/interface-peer-store/-/interface-peer-store-1.2.9.tgz#85173892e52ac230abfd45798bfab03dce20ae84"
   integrity sha512-jAAlbP1NXpEJOG6Dbr0QdP71TBYjHBc/65Ulwdn4J4f04PW1bI4JIMQeq6+/sLfaGVryvvUT/a52io8UUtB21Q==
@@ -2833,6 +2833,16 @@
     "@libp2p/interface-peer-id" "^2.0.0"
     "@libp2p/interface-peer-info" "^1.0.0"
     "@libp2p/interface-record" "^2.0.0"
+    "@libp2p/interfaces" "^3.0.0"
+    "@multiformats/multiaddr" "^12.0.0"
+
+"@libp2p/interface-peer-store@^2.0.0":
+  version "2.0.1"
+  resolved "https://registry.yarnpkg.com/@libp2p/interface-peer-store/-/interface-peer-store-2.0.1.tgz#7c8d8ac2aaaa9b9b4e63c1c4fb3a276efbd8a41d"
+  integrity sha512-y2JNTbn/kav0JyaEcCN4BFEJwjRIe6AoNDaWl6C69ioGOBykVzTS2MA64u9y+oaj7uSgt4AkZEIWNDFXlz74mA==
+  dependencies:
+    "@libp2p/interface-peer-id" "^2.0.0"
+    "@libp2p/interface-peer-info" "^1.0.0"
     "@libp2p/interfaces" "^3.0.0"
     "@multiformats/multiaddr" "^12.0.0"
 
@@ -2915,16 +2925,16 @@
     multiformats "^11.0.0"
 
 "@libp2p/mplex@^7.1.3":
-  version "7.1.3"
-  resolved "https://registry.yarnpkg.com/@libp2p/mplex/-/mplex-7.1.3.tgz#5f9e93844e0adac848a00e9d870d33283f6564ef"
-  integrity sha512-CBjN6otOYyJzogS0rgMnE7NwIC0c6OP6qLc/LybOcI16PJHn1gP25QWrWfNOl+K5M92ybwykMnB2cPi3blLH6Q==
+  version "7.1.7"
+  resolved "https://registry.yarnpkg.com/@libp2p/mplex/-/mplex-7.1.7.tgz#ee14192f5e82aa3710ae4a102875278aea0bb127"
+  integrity sha512-8eJ6HUL3bM8ck0rb/NJ04+phBUVBMocxH/kuc2Nypn8RX9ezihV7srGGhG5N7muaMwJrRbYkFhIV4GH+8WTZUg==
   dependencies:
-    "@libp2p/interface-connection" "^3.0.1"
+    "@libp2p/interface-connection" "^4.0.0"
     "@libp2p/interface-stream-muxer" "^3.0.0"
     "@libp2p/interfaces" "^3.2.0"
     "@libp2p/logger" "^2.0.0"
     abortable-iterator "^4.0.2"
-    any-signal "^3.0.0"
+    any-signal "^4.0.1"
     benchmark "^2.1.4"
     it-batched-bytes "^1.0.0"
     it-pushable "^3.1.0"
@@ -3073,15 +3083,15 @@
     private-ip "^3.0.0"
     uint8arraylist "^2.3.2"
 
-"@libp2p/webrtc@^1.1.5":
-  version "1.1.5"
-  resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-1.1.5.tgz#c13f9d0b6523f110068ac6af9bf94896720deab7"
-  integrity sha512-xn+lvpDY/EMD6K7dIMSC28w11PuhlemiaQ/pxvhqyg4utUfyQ8k3K/fkso7nbBSXYpMKq9A7wl/dSv8R4dpAmQ==
+"@libp2p/webrtc@^1.1.8":
+  version "1.1.8"
+  resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-1.1.8.tgz#18588072ec8f21fd1208ec0c3df9155bb24e0f8b"
+  integrity sha512-0vCwjXVxAp+tAWUZDoiRik+Nx0kdGR8Nwb8OCuiP+sDn349LkYuG5mr0TpVAw3XmAV0dYCMZ4GFWadZpiuQ9Rw==
   dependencies:
     "@chainsafe/libp2p-noise" "^11.0.0"
     "@libp2p/interface-connection" "^4.0.0"
     "@libp2p/interface-peer-id" "^2.0.0"
-    "@libp2p/interface-peer-store" "^1.2.8"
+    "@libp2p/interface-peer-store" "^2.0.0"
     "@libp2p/interface-registrar" "^2.0.8"
     "@libp2p/interface-stream-muxer" "^3.0.0"
     "@libp2p/interface-transport" "^2.0.0"
@@ -4328,12 +4338,7 @@ ansi-styles@^5.0.0:
   resolved "https://registry.yarnpkg.com/ansi-styles/-/ansi-styles-5.2.0.tgz#07449690ad45777d1924ac2abb2fc8895dba836b"
   integrity sha512-Cxwpt2SfTzTtXcfOlzGEee8O+c+MmUgGrNiBcXnuWxuFJHe6a5Hz7qwhwe5OgaSYI0IJvkLqWX1ASG+cJOkEiA==
 
-any-signal@^3.0.0:
-  version "3.0.1"
-  resolved "https://registry.yarnpkg.com/any-signal/-/any-signal-3.0.1.tgz#49cae34368187a3472e31de28fb5cb1430caa9a6"
-  integrity sha512-xgZgJtKEa9YmDqXodIgl7Fl1C8yNXr8w6gXjqK3LW4GcEiYT+6AQfJSE/8SPsEpLLmcvbv8YU+qet94UewHxqg==
-
-any-signal@^4.1.1:
+any-signal@^4.0.1, any-signal@^4.1.1:
   version "4.1.1"
   resolved "https://registry.yarnpkg.com/any-signal/-/any-signal-4.1.1.tgz#928416c355c66899e6b2a91cad4488f0324bae03"
   integrity sha512-iADenERppdC+A2YKbOXXB2WUeABLaM6qnpZ70kZbPZ1cZMMJ7eF+3CaYm+/PhBizgkzlvssC7QuHS30oOiQYWA==

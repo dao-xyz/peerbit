@@ -1,6 +1,6 @@
 import B from "benchmark";
 import { LSession } from "@dao-xyz/libp2p-test-utils";
-import { waitForPeers } from "../__tests__/utils.js";
+import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 import { delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
 import { DirectBlock, MemoryLevelBlockStore, stringifyCid } from "../index.js";
