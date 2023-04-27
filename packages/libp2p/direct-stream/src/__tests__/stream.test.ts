@@ -367,7 +367,7 @@ describe("streams", function () {
 					{},
 					{},
 					{ browser: true },
-				]);
+				]); // Second arg is due to https://github.com/libp2p/js-libp2p/issues/1690
 				peers = [];
 				for (const [i, peer] of session.peers.entries()) {
 					const stream = new TestStreamImpl(peer, {
