@@ -1411,34 +1411,52 @@ export abstract class DirectStream<
 
 export const waitForPeers = async (...libs: DirectStream<any>[]) => {
 	for (let i = 0; i < libs.length; i++) {
-		await waitFor(() => {
-			for (let j = 0; j < libs.length; j++) {
+		for (let j = 0; j < libs.length; j++) {
+			try {
 				if (i === j) {
 					continue;
 				}
-				if (!libs[i].peers.has(libs[j].publicKeyHash)) {
-					return false;
-				}
-				if (
-					!libs[i].routes.hasLink(libs[i].publicKeyHash, libs[j].publicKeyHash)
-				) {
-					return false;
-				}
+				await waitFor(() => {
+					if (!libs[i].peers.has(libs[j].publicKeyHash)) {
+						return false;
+					}
+					if (
+						!libs[i].routes.hasLink(
+							libs[i].publicKeyHash,
+							libs[j].publicKeyHash
+						)
+					) {
+						return false;
+					}
 
-				if (!libs[j].peers.has(libs[i].publicKeyHash)) {
-					return false;
-				}
-				if (
-					!libs[j].routes.hasLink(libs[j].publicKeyHash, libs[i].publicKeyHash)
-				) {
-					return false;
-				}
+					return true;
+				});
+			} catch (error) {
+				throw new Error(
+					"Stream to " +
+						libs[j].publicKeyHash +
+						" does not exist. Connection exist: " +
+						libs[i].peers.has(libs[j].publicKeyHash) +
+						". Route exist: " +
+						libs[i].routes.hasLink(libs[i].publicKeyHash, libs[j].publicKeyHash)
+				);
 			}
-			return true;
-		});
+		}
+
 		const peers = libs[i].peers;
 		for (const peer of peers.values()) {
-			await waitFor(() => peer.isReadable && peer.isWritable);
+			try {
+				await waitFor(() => peer.isReadable && peer.isWritable);
+			} catch (error) {
+				throw new Error(
+					"Stream to " +
+						peer.publicKey.hashcode() +
+						" not ready. Readable: " +
+						peer.isReadable +
+						". Writable " +
+						peer.isWritable
+				);
+			}
 		}
 	}
 };
