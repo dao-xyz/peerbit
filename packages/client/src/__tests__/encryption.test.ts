@@ -33,27 +33,22 @@ const checkHello = async (db: EventStore<string>) => {
 };
 
 describe(`encryption`, function () {
-	//jest.retryTimes(1); // TODO Side effects may cause failures (or something else? Like missing await somewhere which makes this test fail if multiple tests are running and slowing down the system)
-
 	let session: LSession;
 	let client1: Peerbit,
 		client2: Peerbit,
-		client3: Peerbit,
 		db1: EventStore<string>,
 		db2: EventStore<string>;
 	let recieverKey: KeyWithMeta<Ed25519Keypair>;
 
 	beforeAll(async () => {});
 	beforeEach(async () => {
-		session = await LSession.connected(3);
+		session = await LSession.connected(2);
 
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 
 		// Trusted client 2
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
 
-		// Untrusted client 3
-		client3 = await Peerbit.create({ libp2p: session.peers[2] });
 		recieverKey = await client2.keystore.createEd25519Key();
 
 		db1 = await client1.open(new EventStore());
@@ -69,9 +64,7 @@ describe(`encryption`, function () {
 		if (client2) {
 			await client2.disconnect();
 		}
-		if (client3) {
-			await client3.disconnect();
-		}
+
 		await session.stop();
 	});
 
