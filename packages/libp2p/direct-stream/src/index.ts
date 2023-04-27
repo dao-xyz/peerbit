@@ -353,29 +353,6 @@ export abstract class DirectStream<
 		logger.debug("starting");
 		this.started = true;
 
-		// Incoming streams
-		// Called after a peer dials us
-		await Promise.all(
-			this.multicodecs.map((multicodec) =>
-				this.libp2p.handle(multicodec, this._onIncomingStream, {
-					maxInboundStreams: this.maxInboundStreams,
-					maxOutboundStreams: this.maxOutboundStreams,
-				})
-			)
-		);
-		this.topology = createTopology({
-			onConnect: this.onPeerConnected.bind(this),
-			onDisconnect: this.onPeerDisconnected.bind(this),
-		});
-
-		// register protocol with topology
-		// Topology callbacks called on connection manager changes
-		this._registrarTopologyIds = await Promise.all(
-			this.multicodecs.map((multicodec) =>
-				this.libp2p.register(multicodec, this.topology)
-			)
-		);
-
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
 		const multicodecsSet = new Set(this.multicodecs);
 		const peerToConnections: Map<string, Connection[]> = new Map();
@@ -406,6 +383,29 @@ export abstract class DirectStream<
 
 			await this.onPeerConnected(conn.remotePeer, conn, true);
 		}
+
+		// Incoming streams
+		// Called after a peer dials us
+		await Promise.all(
+			this.multicodecs.map((multicodec) =>
+				this.libp2p.handle(multicodec, this._onIncomingStream, {
+					maxInboundStreams: this.maxInboundStreams,
+					maxOutboundStreams: this.maxOutboundStreams,
+				})
+			)
+		);
+		this.topology = createTopology({
+			onConnect: this.onPeerConnected.bind(this),
+			onDisconnect: this.onPeerDisconnected.bind(this),
+		});
+
+		// register protocol with topology
+		// Topology callbacks called on connection manager changes
+		this._registrarTopologyIds = await Promise.all(
+			this.multicodecs.map((multicodec) =>
+				this.libp2p.register(multicodec, this.topology)
+			)
+		);
 
 		const pingJob = async () => {
 			// TODO don't use setInterval but waitFor previous done to be done
