@@ -180,13 +180,12 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 			}
 		);
 
-		// Only emit if the connection is new
-		if (_prevStream == null) {
-			this.dispatchEvent(new CustomEvent("stream:outbound"));
-		} else {
+		// Emit if the connection is new
+		this.dispatchEvent(new CustomEvent("stream:outbound"));
+
+		if (_prevStream != null) {
 			// End the stream without emitting a close event
 			await _prevStream.end();
-			//await this._rawOutboundStream?.close();
 		}
 		return this.outboundStream;
 	}
@@ -1301,7 +1300,7 @@ export abstract class DirectStream<
 					};
 					const timer = setTimeout(() => {
 						reject(new Error("Timed out"));
-					}, 10 * 1000);
+					}, 3 * 1000);
 					const abortHandler = () => {
 						id.removeEventListener("close", abortHandler);
 						reject(new Error("Aborted"));
