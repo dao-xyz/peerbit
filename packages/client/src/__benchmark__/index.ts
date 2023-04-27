@@ -9,6 +9,8 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { v4 as uuid } from "uuid";
 import { Peerbit } from "../peer.js";
+import { createLibp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { tcp } from "@libp2p/tcp";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // put x 1,185 ops/sec ±2.95% (77 runs sampled)
@@ -48,32 +50,28 @@ class TestStore extends Program {
 	}
 }
 
-const peersCount = 3;
-const session = await LSession.connected(peersCount, {
-	pubsub: { autoDial: false },
-});
+const peers = await Promise.all(
+	[
+		await createLibp2pExtended({ libp2p: { transports: [tcp()] } }),
+		await createLibp2pExtended({ libp2p: { transports: [tcp()] } }),
+		await createLibp2pExtended({ libp2p: { transports: [tcp()] } }),
+	].map((x) => Peerbit.create({ libp2p: x }))
+);
 
-await session.connect([
-	[session.peers[0], session.peers[1]],
-	[session.peers[1], session.peers[2]],
-]);
+await peers[0].dial(peers[1]);
+await peers[1].dial(peers[2]);
 
 const stores: TestStore[] = [];
 
 // Create store
-const peers: Peerbit[] = [];
 let address: string | undefined = undefined;
 
 const readerResolver: Map<string, () => void> = new Map();
 
-for (const [i, peer] of session.peers.entries()) {
-	const client = await Peerbit.create({
-		libp2p: peer,
-	});
-	peers.push(client);
+for (const [i, client] of peers.entries()) {
 	const store = await client.open(address || new TestStore(), {
 		onUpdate:
-			i === session.peers.length - 1
+			i === peers.length - 1
 				? (change) => {
 						change.added.forEach((e) => {
 							readerResolver.get(e.hash)?.();
@@ -81,10 +79,7 @@ for (const [i, peer] of session.peers.entries()) {
 						});
 				  }
 				: undefined,
-		role:
-			i === session.peers.length - 1
-				? new ReplicatorType()
-				: new ObserverType(),
+		role: i === peers.length - 1 ? new ReplicatorType() : new ObserverType(),
 	});
 
 	await store.load();
@@ -117,6 +112,6 @@ suite
 	})
 	.on("complete", async function (this: any, ...args: any[]) {
 		await Promise.all(peers.map((x) => x.disconnect()));
-		await session.stop();
+		await Promise.all(peers.map((n) => n.libp2p.stop()));
 	})
 	.run();
