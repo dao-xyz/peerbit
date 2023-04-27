@@ -27,7 +27,6 @@ describe("transport", function () {
 		await store.close();
 		await store2.close();
 
-		await delay(3000); // Some delay seems to be necessary TODO fix
 		await store.open();
 		await store2.open();
 		await waitForPeers(store, store2);
