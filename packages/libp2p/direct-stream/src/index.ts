@@ -544,6 +544,21 @@ export abstract class DirectStream<
 					}
 					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!); // TODO types
 					await peer.attachOutboundStream(stream);
+
+					if (!peer.inboundStream) {
+						const inboundStream = conn.streams.find(
+							(x) =>
+								x.stat.protocol &&
+								this.multicodecs.includes(x.stat.protocol) &&
+								x.stat.direction === "inbound"
+						);
+						if (inboundStream) {
+							this._onIncomingStream({
+								connection: conn,
+								stream: inboundStream,
+							});
+						}
+					}
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
 						await delay(100);
