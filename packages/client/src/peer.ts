@@ -420,8 +420,13 @@ export class Peerbit {
 	/**
 	 * Dial a peer with an Ed25519 peerId
 	 */
-	async dial(address: string | Multiaddr) {
-		const maddress = typeof address == "string" ? multiaddr(address) : address;
+	async dial(address: string | Multiaddr | Multiaddr[] | Peerbit) {
+		const maddress =
+			typeof address == "string"
+				? multiaddr(address)
+				: address instanceof Peerbit
+				? address.libp2p.getMultiaddrs()
+				: address;
 		const connection = await this.libp2p.dial(maddress);
 		const publicKey = Ed25519PublicKey.from(connection.remotePeer);
 
