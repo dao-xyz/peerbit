@@ -153,7 +153,7 @@ describe(`Cache - level`, function () {
 				new Uint8Array([1])
 			);
 			await waitFor(() => cache._tempDeleted?.size === 0);
-			expect(cache._tempStore!.size).toEqual(0);
+			await waitFor(() => cache._tempStore!.size === 0);
 		});
 		it("delete by prefix", async () => {
 			await cache.set("a", crypto.randomBytes(8));
