@@ -9,7 +9,8 @@ import { PeerId, isPeerId } from "@libp2p/interface-peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { multiaddr } from "@multiformats/multiaddr";
 import { tcp } from "@libp2p/tcp";
-
+import { webSockets } from "@libp2p/websockets";
+import * as filters from "@libp2p/websockets/filters";
 class TestStreamImpl extends DirectStream {
 	constructor(
 		libp2p: Libp2p,
@@ -58,7 +59,7 @@ describe("streams", function () {
 
 		it("4-ping", async () => {
 			// 0 and 2 not connected
-			session = await LSession.connected(4, { transports: [tcp()] }); // TODO github CI fails we do both websocket and tcp here (some CPU limit?)
+			session = await LSession.connected(4);
 
 			streams = session.peers.map((x) => new TestStreamImpl(x));
 			await Promise.all(streams.map((x) => x.start()));
@@ -110,7 +111,7 @@ describe("streams", function () {
 
 		beforeEach(async () => {
 			// 0 and 2 not connected
-			session = await LSession.disconnected(4, { transports: [tcp()] }); // TODO github CI fails we do both websocket and tcp here (some CPU limit?)
+			session = await LSession.disconnected(4);
 
 			/* 
 			┌─┐
@@ -545,7 +546,7 @@ describe("streams", function () {
 						x.protoCodes().includes(281)
 							? multiaddr(x.toString().replace("/webrtc/", "/"))
 							: x
-					); // TODO we can't seem to dial webrtc addresses directly in a Node env (?)
+					); // TODO use webrtc in node
 					return dialFn(addresses);
 				};
 
@@ -886,7 +887,9 @@ describe("streams", function () {
 		let session: LSession, stream1: TestStreamImpl, stream2: TestStreamImpl;
 
 		beforeEach(async () => {
-			session = await LSession.connected(2);
+			session = await LSession.connected(2, {
+				transports: [tcp(), webSockets({ filter: filters.all })],
+			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 		});
 
 		afterEach(async () => {
@@ -958,7 +961,9 @@ describe("streams", function () {
 		let stream1b: TestStreamImpl, stream2b: TestStreamImpl;
 
 		beforeEach(async () => {
-			session = await LSession.connected(2);
+			session = await LSession.connected(2, {
+				transports: [tcp(), webSockets({ filter: filters.all })],
+			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 		});
 
 		afterEach(async () => {

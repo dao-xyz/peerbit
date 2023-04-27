@@ -231,7 +231,7 @@ describe("index", () => {
 		};
 
 		beforeAll(async () => {
-			session = await LSession.connected(4, { transports: [tcp()] }); // TODO github CI fails we do both websocket and tcp here (some CPU limit?)
+			session = await LSession.connected(4);
 			await waitForPeersBlock(...session.peers.map((x) => x.directblock));
 		});
 		beforeEach(async () => {
