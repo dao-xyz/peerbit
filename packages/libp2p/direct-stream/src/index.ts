@@ -306,8 +306,8 @@ export abstract class DirectStream<
 			emitSelf = false,
 			messageProcessingConcurrency = 10,
 			pingInterval = 10 * 1000,
-			maxInboundStreams = libp2p.getMultiaddrs().length, // TODO, should this be 1, why can't this be one (tests fail)
-			maxOutboundStreams = libp2p.getMultiaddrs().length, // TODO, should this be 1, why can't this be one (tests fail)
+			maxInboundStreams = Math.max(libp2p.getMultiaddrs().length, 1), // TODO, should this be 1, why can't this be one (tests fail)
+			maxOutboundStreams = Math.max(libp2p.getMultiaddrs().length, 1), // TODO, should this be 1, why can't this be one (tests fail)
 			signaturePolicy = "StictSign",
 			connectionManager = { autoDial: true },
 		} = props || {};
@@ -523,7 +523,7 @@ export abstract class DirectStream<
 				}
 			}
 
-			// This condition seem to work better than the one above, for some reason. The rea
+			// This condition seem to work better than the one above, for some reason.
 			// The reason we need this at all is because we will connect to existing connection and recieve connection that
 			// some times, yields a race connections where connection drop each other by reset
 
