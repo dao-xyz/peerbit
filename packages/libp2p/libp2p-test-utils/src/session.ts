@@ -73,7 +73,7 @@ export class LSession<T extends Libp2p = Libp2p> {
 					},
 					datastore: (options?.[i] || options)?.datastore,
 					transports:
-						(options?.[i] || options).transports ??
+						(options?.[i] || options)?.transports ??
 						transports((options?.[i] || options)?.browser),
 					relay: (options?.[i] || options)?.browser ? undefined : relay(),
 					connectionEncryption: [noise()],
