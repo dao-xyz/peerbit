@@ -1294,17 +1294,17 @@ export abstract class DirectStream<
 						clearTimeout(timer);
 						rs();
 					};
-					const reject = () => {
+					const reject = (err: Error) => {
 						id.removeEventListener("stream:outbound", listener);
 						clearTimeout(timer);
-						rj();
+						rj(err);
 					};
 					const timer = setTimeout(() => {
-						reject();
+						reject(new Error("Timed out"));
 					}, 10 * 1000);
 					const abortHandler = () => {
 						id.removeEventListener("close", abortHandler);
-						reject();
+						reject(new Error("Aborted"));
 					};
 					id.addEventListener("close", abortHandler);
 
