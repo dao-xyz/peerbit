@@ -545,7 +545,8 @@ export abstract class DirectStream<
 					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!); // TODO types
 					await peer.attachOutboundStream(stream);
 
-					if (!peer.inboundStream) {
+					// TODO do we want to do this?
+					/* if (!peer.inboundStream) {
 						const inboundStream = conn.streams.find(
 							(x) =>
 								x.stat.protocol &&
@@ -558,7 +559,7 @@ export abstract class DirectStream<
 								stream: inboundStream,
 							});
 						}
-					}
+					} */
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
 						await delay(100);
