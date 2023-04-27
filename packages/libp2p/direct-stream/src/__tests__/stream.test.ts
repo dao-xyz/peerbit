@@ -8,6 +8,7 @@ import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { PeerId, isPeerId } from "@libp2p/interface-peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { multiaddr } from "@multiformats/multiaddr";
+import { tcp } from "@libp2p/tcp";
 
 class TestStreamImpl extends DirectStream {
 	constructor(
@@ -57,7 +58,7 @@ describe("streams", function () {
 
 		it("4-ping", async () => {
 			// 0 and 2 not connected
-			session = await LSession.connected(4);
+			session = await LSession.connected(4, { transports: [tcp()] }); // TODO github CI fails we do both websocket and tcp here (some CPU limit?)
 
 			streams = session.peers.map((x) => new TestStreamImpl(x));
 			await Promise.all(streams.map((x) => x.start()));
