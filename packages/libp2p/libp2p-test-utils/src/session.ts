@@ -6,8 +6,13 @@ import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
 import { relay, transports } from "./transports.js";
 import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
+import { Transport } from "@libp2p/interface-transport";
+import { Components } from "libp2p/components";
 
 export type LibP2POptions = {
+	transports?:
+		| RecursivePartial<(components: Components) => Transport>[]
+		| undefined;
 	connectionManager?: RecursivePartial<ConnectionManagerInit>;
 	datastore?: RecursivePartial<Datastore> | undefined;
 	browser?: boolean;
@@ -67,7 +72,9 @@ export class LSession<T extends Libp2p = Libp2p> {
 						minConnections: 0,
 					},
 					datastore: (options?.[i] || options)?.datastore,
-					transports: transports((options?.[i] || options)?.browser),
+					transports:
+						(options?.[i] || options).transports ??
+						transports((options?.[i] || options)?.browser),
 					relay: (options?.[i] || options)?.browser ? undefined : relay(),
 					connectionEncryption: [noise()],
 					streamMuxers: [mplex()],
