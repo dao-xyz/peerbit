@@ -17,7 +17,7 @@ import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
 import { DefaultOptions, IStoreOptions } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/lazy-level";
-import { field, serialize, variant } from "@dao-xyz/borsh";
+import { serialize, variant } from "@dao-xyz/borsh";
 import {
 	Program,
 	ReplicatorType,
@@ -31,6 +31,7 @@ import {
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
+import { tcp } from "@libp2p/tcp";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -230,7 +231,7 @@ describe("index", () => {
 		};
 
 		beforeAll(async () => {
-			session = await LSession.connected(4);
+			session = await LSession.connected(4, { transports: [tcp()] }); // TODO github CI fails we do both websocket and tcp here (some CPU limit?)
 			await waitForPeersBlock(...session.peers.map((x) => x.directblock));
 		});
 		beforeEach(async () => {

@@ -110,7 +110,7 @@ describe("streams", function () {
 
 		beforeEach(async () => {
 			// 0 and 2 not connected
-			session = await LSession.disconnected(4);
+			session = await LSession.disconnected(4, { transports: [tcp()] }); // TODO github CI fails we do both websocket and tcp here (some CPU limit?)
 
 			/* 
 			┌─┐

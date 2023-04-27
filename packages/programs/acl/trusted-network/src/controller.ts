@@ -20,8 +20,7 @@ import {
 } from "./identity-graph.js";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
-import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
