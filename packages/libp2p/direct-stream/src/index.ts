@@ -305,8 +305,8 @@ export abstract class DirectStream<
 			emitSelf = false,
 			messageProcessingConcurrency = 10,
 			pingInterval = 10 * 1000,
-			maxInboundStreams = Math.max(libp2p.getMultiaddrs().length, 1), // TODO, should this be 1, why can't this be one (tests fail)
-			maxOutboundStreams = Math.max(libp2p.getMultiaddrs().length, 1), // TODO, should this be 1, why can't this be one (tests fail)
+			maxInboundStreams = Math.max(libp2p.getMultiaddrs().length, 2), // TODO, should this be 1, why can't this be one (tests fail)
+			maxOutboundStreams = Math.max(libp2p.getMultiaddrs().length, 2), // TODO, should this be 1, why can't this be one (tests fail)
 			signaturePolicy = "StictSign",
 			connectionManager = { autoDial: true },
 		} = props || {};
