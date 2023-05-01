@@ -15,7 +15,6 @@ import * as lp from "it-length-prefixed";
 import { Libp2p } from "@libp2p/interface-libp2p";
 import { Routes } from "./routes.js";
 import { multiaddr } from "@multiformats/multiaddr";
-
 import { PeerMap } from "./peer-map.js";
 import {
 	Hello,
@@ -1049,8 +1048,6 @@ export abstract class DirectStream<
 			const hellos = this.helloMap.get(sender);
 			if (hellos) {
 				const helloSignaturHash = await message.signatures.hashPublicKeys();
-				console.log("DELETE HELLO", helloSignaturHash);
-
 				hellos.delete(helloSignaturHash);
 			}
 
