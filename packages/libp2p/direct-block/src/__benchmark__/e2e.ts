@@ -5,12 +5,15 @@ import { delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
 import { DirectBlock, MemoryLevelBlockStore, stringifyCid } from "../index.js";
 import { createBlock, getBlockValue } from "../block.js";
+import { tcp } from "@libp2p/tcp";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/e2e.ts"
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)
 // size: 1000kb x 40.51 ops/sec ±4.09% (62 runs sampled)
 
-const session: LSession = await LSession.disconnected(4);
+const session: LSession = await LSession.disconnected(4, {
+	transports: [tcp()],
+});
 
 /* 
 ┌─┐
