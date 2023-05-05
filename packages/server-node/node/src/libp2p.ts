@@ -6,7 +6,6 @@ import { getConfigDir, getKeysPath, NotFoundError } from "./config.js";
 import { checkExistPath } from "./api.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { createLibp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { Ed25519PublicKey } from "@dao-xyz/peerbit-crypto";
 
 export const saveKeys = async (keypair: Ed25519Keypair): Promise<void> => {
 	const fs = await import("fs");
