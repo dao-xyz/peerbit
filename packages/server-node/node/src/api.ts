@@ -26,8 +26,8 @@ export const getPort = (protocol: string) => {
 	throw new Error("Unsupported protocol: " + protocol);
 };
 
-const IPFS_ID_PATH = "/peer/id";
-const ADDRESSES_PATH = "/peer/addresses";
+const PEER_ID_PATH = "/peer/id";
+const ADDRESS_PATH = "/peer/address";
 const TOPICS_PATH = "/topics";
 const PROGRAM_PATH = "/program";
 const LIBRARY_PATH = "/library";
@@ -209,7 +209,6 @@ export const startServer = async (
 			res.setHeader("Access-Control-Request-Method", "*");
 			res.setHeader("Access-Control-Allow-Headers", "*");
 			res.setHeader("Access-Control-Allow-Methods", "*");
-
 			const r404 = () => {
 				res.writeHead(404);
 				res.end(e404);
@@ -217,7 +216,11 @@ export const startServer = async (
 
 			try {
 				if (req.url) {
-					if (!req.url.startsWith(IPFS_ID_PATH) && !(await adminACL(req))) {
+					if (
+						!req.url.startsWith(PEER_ID_PATH) &&
+						!req.url.startsWith(ADDRESS_PATH) &&
+						!(await adminACL(req))
+					) {
 						res.writeHead(401);
 						res.end("Not authorized");
 						return;
@@ -270,7 +273,6 @@ export const startServer = async (
 								break;
 						}
 					} else if (req.url.startsWith(PROGRAM_PATH)) {
-						const url = new URL(req.url, "http://localhost:" + port);
 						if (client instanceof Peerbit === false) {
 							res.writeHead(400);
 							res.write(notPeerBitError);
@@ -349,10 +351,10 @@ export const startServer = async (
 								r404();
 								break;
 						}
-					} else if (req.url.startsWith(IPFS_ID_PATH)) {
+					} else if (req.url.startsWith(PEER_ID_PATH)) {
 						res.writeHead(200);
 						res.end(libp2p.peerId.toString());
-					} else if (req.url.startsWith(ADDRESSES_PATH)) {
+					} else if (req.url.startsWith(ADDRESS_PATH)) {
 						res.setHeader("Content-Type", "application/json");
 						res.writeHead(200);
 						const addresses = libp2p.getMultiaddrs().map((x) => x.toString());
@@ -420,7 +422,7 @@ export const client = async (
 		);
 	};
 	const getId = async () =>
-		throwIfNot200(await axios.get(endpoint + IPFS_ID_PATH, { validateStatus }))
+		throwIfNot200(await axios.get(endpoint + PEER_ID_PATH, { validateStatus }))
 			.data;
 	const getHeaders = async () => {
 		const headers = {
@@ -437,7 +439,7 @@ export const client = async (
 				get: async () => {
 					return (
 						throwIfNot200(
-							await axios.get(endpoint + ADDRESSES_PATH, {
+							await axios.get(endpoint + ADDRESS_PATH, {
 								validateStatus,
 								headers: await getHeaders(),
 							})
