@@ -41,7 +41,8 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.10",
-		"uint8arrays": "^4.0.2"
+		"uint8arrays": "^4.0.2",
+		"hash-wasm": "^4.9.0"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
