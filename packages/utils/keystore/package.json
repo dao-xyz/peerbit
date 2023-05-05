@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-keystore",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"description": "A local key manager",
 	"sideEffects": false,
 	"module": "lib/esm/index.js",
@@ -32,13 +32,13 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/cache": "^0.0.4",
-		"@dao-xyz/peerbit-crypto": "^0.1.12",
+		"@dao-xyz/peerbit-crypto": "^0.1.13",
 		"@dao-xyz/peerbit-time": "^0.0.22",
 		"@dao-xyz/uint8arrays": "^0.0.3",
 		"level": "^8.0.0"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-test-utils": "^0.2.4",
+		"@dao-xyz/peerbit-test-utils": "^0.2.5",
 		"@types/libsodium-wrappers": "^0.7.10"
 	},
 	"bugs": "https://github.com/dao-xyz/peerbit/issues",
