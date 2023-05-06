@@ -121,6 +121,7 @@ export type OpenOptions = {
 	timeout?: number;
 	minReplicas?: MinReplicas | number;
 	trim?: TrimToByteLengthOption | TrimToLengthOption;
+	reset?: boolean;
 } & IStoreOptions<any>;
 
 const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
@@ -218,12 +219,13 @@ export class Peerbit {
 		this._minReplicas = options.minReplicas || MIN_REPLICAS;
 		this.limitSigning = options.limitSigning || false;
 		this.localNetwork = options.localNetwork;
+
 		this.caches[this.directory] = {
 			cache: options.cache,
 			handlers: new Set(),
 		};
-		this.keystore = options.keystore;
 
+		this.keystore = options.keystore;
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
 
 		this.libp2p.directsub.addEventListener("data", this._onMessage.bind(this));
@@ -1070,11 +1072,11 @@ export class Peerbit {
 	async _requestCache(
 		address: string,
 		directory: string,
-		existingCache?: LazyLevel
+		options?: { existingCache?: LazyLevel; reset?: boolean }
 	) {
 		const dir = directory || this.cacheDir;
 		if (!this.caches[dir]) {
-			const newCache = existingCache || (await this._createCache(dir));
+			const newCache = options?.existingCache || (await this._createCache(dir));
 			this.caches[dir] = { cache: newCache, handlers: new Set() };
 		}
 		this.caches[dir].handlers.add(address);
@@ -1082,6 +1084,9 @@ export class Peerbit {
 
 		// "Wake up" the caches if they need it
 		if (cache) await cache.open();
+		if (options?.reset) {
+			await cache._store.clear();
+		}
 
 		return cache;
 	}
@@ -1215,16 +1220,15 @@ export class Peerbit {
 					replicator: (gid: string) =>
 						this.isLeader(program.address, gid, resolveMinReplicas()),
 					replicatorsCacheId: () => this._lastSubscriptionMessageId,
-					resolveCache: (store) => {
+					resolveCache: async (store) => {
 						const programAddress = program.address?.toString();
 						if (!programAddress) {
 							throw new Error("Unexpected");
 						}
-						return new LazyLevel(
-							this.cache._store.sublevel(
-								path.join(programAddress, "store", store.id)
-							)
+						const sublevel = this.cache._store.sublevel(
+							path.join(programAddress, "store", store.id)
 						);
+						return new LazyLevel(sublevel);
 					},
 					onClose: async (store) => {
 						await this._onClose(program, store);
@@ -1264,22 +1268,13 @@ export class Peerbit {
 				},
 			});
 
-			const resolveCache = async (address: Address) => {
-				const cache = await this._requestCache(
-					address.toString(),
-					options.directory || this.cacheDir
-				);
-				const haveDB = await this._haveLocalData(cache, address.toString());
-				logger.debug(
-					(haveDB ? "Found" : "Didn't find") + ` database '${address}'`
-				);
-				if (options.localOnly && !haveDB) {
-					logger.warn(`Database '${address}' doesn't exist!`);
-					throw new Error(`Database '${address}' doesn't exist!`);
+			await this._requestCache(
+				program.address.toString(),
+				options.directory || this.cacheDir,
+				{
+					reset: options.reset,
 				}
-				return cache;
-			};
-			await resolveCache(program.address!);
+			);
 
 			const pm = await this.addProgram(program, minReplicas, options.sync);
 
@@ -1298,22 +1293,6 @@ export class Peerbit {
 			throw new Error("Unexpected");
 		}
 		return openStore.program as S;
-	}
-
-	/**
-	 * Check if we have the database, or part of it, saved locally
-	 * @param  {[LazyLevel]} cache [The Cache instance containing the local data]
-	 * @param  {[Address]} dbAddress [Address of the database to check]
-	 * @return {[Boolean]} [Returns true if we have cached the db locally, false if not]
-	 */
-	async _haveLocalData(cache: LazyLevel, id: string) {
-		if (!cache) {
-			return false;
-		}
-
-		const addr = id;
-		const data = await cache.get(path.join(addr, "_manifest"));
-		return data !== undefined && data !== null;
 	}
 
 	async getEncryptionKey(

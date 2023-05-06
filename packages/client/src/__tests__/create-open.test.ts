@@ -13,7 +13,7 @@ import { v4 as uuid } from "uuid";
 // Include test utilities
 import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { ObserverType, Program } from "@dao-xyz/peerbit-program";
-import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
@@ -78,14 +78,6 @@ describe(`Create & Open`, function () {
 			it("saves the database locally", async () => {
 				expect(fs.existsSync(localDataPath)).toEqual(true);
 			});
-
-			/*       it('saves database manifest reference locally', async () => {
-			  const address = db.address!.toString();
-			  const manifestHash = address.split('/')[2]
-			  await client.cache.open()
-			  const value = await client.cache.get(path.join(db.address?.toString(), '/_manifest'))
-			  expect(value).toEqual(manifestHash)
-			}) */
 
 			it("saves database manifest file locally", async () => {
 				const loaded = (await Program.load(
@@ -207,6 +199,26 @@ describe(`Create & Open`, function () {
 			expect(res.length).toEqual(2);
 			expect(res[0].payload.getValue().value).toEqual("hello1");
 			expect(res[1].payload.getValue().value).toEqual("hello2");
+			await db.drop();
+		});
+
+		it("opens and resets", async () => {
+			const path = dbPath + uuid();
+			let db = await client.open(new EventStore({ id: uuid() }), {
+				directory: path,
+			});
+			await db.add("hello1");
+			await db.add("hello2");
+			await db.close();
+			await db.load();
+			expect((await db.iterator({ limit: -1 })).collect().length).toEqual(2);
+			await db.close();
+			db = await client.open(new EventStore({ id: uuid() }), {
+				directory: path,
+				reset: true,
+			});
+			await db.load();
+			expect((await db.iterator({ limit: -1 })).collect().length).toEqual(0);
 			await db.drop();
 		});
 	});
