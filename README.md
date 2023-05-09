@@ -59,21 +59,12 @@ Data can be shared and encrypted on a granular level, you can decide exactly wha
 The goal of this project is to create a  <span style="color:coral;">cheaper</span> and a more <span style="color:coral;">private</span> way of distributing and accessing data by utilizing consumer hardware and the latest advancements in networking technology. Additionally, we believe that creating a stateful application should and could be made easier if you are approaching it with a P2P database framework like this, since there are no "servers" and "clients", just peers. It should not take longer than a weekend to get started to build your first distributed app!
 
 ### Timeline and progress
-
-- ✅ Chain agnostic identities 
-- ✅ Permissioned content based sharding 
-- ✅ E2EE (no forward secrecy)
-- ✅ Physical time with Hybrid Logical Clock
-- ✅ Generic search capabilities across networks
 - 🚧 Documentation and examples
-- 🚧 CLI for non browser nodes (SSL setup and network management)
-- 🚧 Benchmarks
-- Easy Webtransport/WebRTC setup for device to device networks
+- 🚧 Easy Webtransport/WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
 - [ZK group access controller](https://vitalik.ca/general/2022/06/15/using_snarks.html)
 - E2EE forward secrecy (or alternative security measures)
-- ~Trustless hosting 
 
 
 ### Some informational links are found below
