@@ -30,7 +30,7 @@ Your database schema can remain very simple but still utilize P2P networks, auto
 | ------------ | ------------ | ------------ | ------------ | ------------ | ------------ |
 |<sub>**Performance**</sub>|<sub>Highly performant. E.g. video-streaming, real-time editing & cloud-gaming</sub>|<sub>Chat-rooms, document store</sub>|<sub>Performant applications</sub>|<sub>File-storage</sub>|<sub>File-storage</sub>|
 |<sub>**Search**</sub>|<sub>X</sub>|   |<sub>X</sub>|   |   |
-|<sub>**Browser-friendly**</sub>|<sub>X</sub>|   |<sub>X</sub>|   |   |
+|<sub>**Browser-friendly**</sub>|<sub>X</sub>|   |<sub>X</sub>|<sub>X</sub>|   |
 |<sub>**CID**</sub>|<sub>X</sub>|<sub>X</sub>|   |<sub>X</sub>|<sub>X</sub>|
 |<sub>**Sharding**</sub>|<sub>X</sub>|   |   |   |   |
 |<sub>**Built-in encryption**</sub>|<sub>X</sub>|   |   |   |   |
