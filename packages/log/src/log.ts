@@ -1,12 +1,16 @@
+import {
+	PublicKeyEncryptionResolver,
+	SignatureWithKey,
+	randomBytes,
+	sha256Base64Sync,
+} from "@dao-xyz/peerbit-crypto";
+import type { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import { Cache } from "@dao-xyz/cache";
+import LocalStore from "@dao-xyz/lazy-level";
+
 import { EntryIndex } from "./entry-index.js";
-import { LogIO } from "./log-io.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
-import {
-	EntryFetchAllOptions,
-	EntryFetchOptions,
-	strictFetchOptions,
-} from "./entry-io.js";
 import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import {
@@ -22,52 +26,58 @@ import {
 	LamportClock,
 	Timestamp,
 } from "./clock.js";
-import {
-	PublicKeyEncryptionResolver,
-	SignatureWithKey,
-} from "@dao-xyz/peerbit-crypto";
-import { serialize } from "@dao-xyz/borsh";
+
+import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
-import { Identity } from "./identity.js";
-import { HeadsIndex } from "./heads.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import type { Identity } from "./identity.js";
+import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
 import { EntryNode, Values } from "./values.js";
 import { Trim, TrimOptions } from "./trim.js";
 import { logger } from "./logger.js";
-import { Cache } from "@dao-xyz/cache";
+import { Change } from "./change.js";
+import { EntryWithRefs } from "./entry-with-refs.js";
 
 const { LastWriteWins, NoZeroes } = Sorting;
-const randomId = () => new Date().getTime().toString();
-const getHash = <T>(e: Entry<T>) => e.hash;
 
-export type Change<T> = { added: Entry<T>[]; removed: Entry<T>[] };
-export type Change2<T> = { added: Entry<T>; removed: Entry<T>[] };
+export type LogOptions<T> = LogProperties<T> & LogEvents<T>;
 
-export type LogOptions<T> = {
+export type LogProperties<T> = {
 	encryption?: PublicKeyEncryptionResolver;
 	encoding?: Encoding<T>;
-	logId?: string;
 	clock?: LamportClock;
 	sortFn?: Sorting.ISortFunction;
-	concurrency?: number;
 	trim?: TrimOptions;
+	canAppend?: CanAppend<T>;
+	cache?: (name: string) => Promise<LocalStore> | LocalStore;
+};
+
+export type LogEvents<T> = {
+	onWrite?: (change: Entry<T>) => void;
+	onChange?: (change: Change<T>) => void;
+	onClose?: () => void;
 };
 
 const ENTRY_CACHE_MAX = 1000; // TODO as param
 
-/**
- * @description
- * Log implements a G-Set CRDT and adds ordering.
- *
- * From:
- * "A comprehensive study of Convergent and Commutative Replicated Data Types"
- * https://hal.inria.fr/inria-00555588
- */
+export type AppendOptions<T> = {
+	type?: EntryType;
+	gidSeed?: Uint8Array;
+	nexts?: Entry<any>[];
+	identity?: Identity;
+	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
+	reciever?: EncryptionTemplateMaybeEncrypted;
+	onGidsShadowed?: (gids: string[]) => void;
+	trim?: TrimOptions;
+	timestamp?: Timestamp;
+};
 
+@variant(0)
 export class Log<T> {
+	@field({ type: fixedArray("u8", 32) })
+	private _id: Uint8Array;
+
 	private _sortFn: Sorting.ISortFunction;
 	private _storage: BlockStore;
-	private _id: string;
 	private _hlc: HLC;
 
 	// Identity
@@ -85,7 +95,19 @@ export class Log<T> {
 	private _trim: Trim<T>;
 	private _entryCache: Cache<Entry<T>>;
 
-	constructor(
+	private _canAppendInit?: CanAppend<T>;
+	private _canAppend?: CanAppend<T>;
+	private _onChangeInit?: (change: Change<T>) => void;
+	private _onChange?: (change: Change<T>) => void;
+	private _onWrite?: (entry: Entry<T>) => void;
+	private _onClose?: () => void;
+	private _joining: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
+
+	constructor(properties: { id: Uint8Array } = { id: randomBytes(32) }) {
+		this._id = properties.id;
+	}
+
+	async init(
 		store: BlockStore,
 		identity: Identity,
 		options: LogOptions<T> = {}
@@ -98,8 +120,13 @@ export class Log<T> {
 			throw new Error("Identity is required");
 		}
 		//
-		const { logId, encoding, concurrency, trim, encryption } = options;
+		const { encoding, trim, encryption, onChange, cache, onWrite, onClose } =
+			options;
 		let { sortFn } = options;
+
+		this._onChangeInit = onChange;
+		this._onWrite = onWrite;
+		this._onClose = onClose;
 
 		if (!isDefined(sortFn)) {
 			sortFn = LastWriteWins;
@@ -107,18 +134,16 @@ export class Log<T> {
 		sortFn = sortFn as Sorting.ISortFunction;
 
 		this._sortFn = NoZeroes(sortFn);
-
 		this._storage = store;
-		this._id = logId || randomId();
-		/*     this._rootGid = rootGid;
-		 */
+
+		this._encoding = encoding || JSON_ENCODING;
+		this._joining = new Map();
 
 		// Identity
 		this._identity = identity;
 
 		// encoder/decoder
 		this._encryption = encryption;
-		this._encoding = encoding || JSON_ENCODING;
 
 		// Add entries to the internal cache
 
@@ -128,7 +153,8 @@ export class Log<T> {
 		this._hlc = new HLC();
 
 		this._nextsIndex = new Map();
-		this._headsIndex = new HeadsIndex({});
+		this._headsIndex = new HeadsIndex(this._id);
+		await this._headsIndex.init(store, cache);
 		this._entryCache = new Cache({ max: ENTRY_CACHE_MAX });
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
@@ -141,12 +167,23 @@ export class Log<T> {
 				deleteNode: async (node: EntryNode) => {
 					// TODO check if we have before delete?
 					const entry = await this.get(node.value.hash);
+					//f (!!entry)
+					const a = this.values.length;
 					if (entry) {
 						this.values.deleteNode(node);
 						await this.entryIndex.delete(node.value.hash);
-						this.headsIndex.del(node.value);
+						await this.headsIndex.del(node.value);
 						this.nextsIndex.delete(node.value.hash);
 						await this.storage.rm(node.value.hash);
+					}
+					const b = this.values.length;
+					if (a === b) {
+						throw new Error(
+							"UNexpected: " +
+								this.values.length +
+								"_-- " +
+								this.entryIndex._index.size
+						);
 					}
 					return entry;
 				},
@@ -156,9 +193,62 @@ export class Log<T> {
 		);
 	}
 
+	async setup(options?: {
+		encoding?: Encoding<T>;
+		canAppend?: CanAppend<T>;
+		onChange?: (change: Change<T>) => void;
+	}) {
+		this._encoding = options?.encoding || this._encoding;
+		this._canAppend = async (entry) => {
+			if (this._canAppendInit) {
+				if (!(await this._canAppendInit(entry))) {
+					return false;
+				}
+			}
+			if (options?.canAppend) {
+				if (!(await options.canAppend(entry))) {
+					return false;
+				}
+			}
+			return true;
+		};
+
+		this._onChange = async (change) => {
+			await this._onChangeInit?.(change);
+			await options?.onChange?.(change);
+		};
+	}
+	get initialized() {
+		return !!this._storage;
+	}
+
+	private _idString: string | undefined;
+
+	get idString() {
+		return this._idString || (this._idString = Log.createIdString(this.id));
+	}
+
+	public static createIdString(id: Uint8Array) {
+		return sha256Base64Sync(id);
+	}
+
 	get id() {
 		return this._id;
 	}
+	set id(id: Uint8Array) {
+		if (this.initialized) {
+			throw new Error("Can not change id after initialization");
+		}
+		this._idString = undefined;
+		this._id = id;
+	}
+
+	/* set canAppend(canAppend: CanAppend<T> | undefined) {
+		this._canAppendOption = canAppend;
+	}
+	get canAppend(): CanAppend<T> | undefined {
+		return this._canAppend;
+	} */
 
 	/**
 	 * Returns the length of the log.
@@ -422,18 +512,7 @@ export class Log<T> {
 	 */
 	async append(
 		data: T,
-		options: {
-			type?: EntryType;
-			canAppend?: CanAppend<T>;
-			gidSeed?: Uint8Array;
-			nexts?: Entry<any>[];
-			identity?: Identity;
-			signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
-			reciever?: EncryptionTemplateMaybeEncrypted;
-			onGidsShadowed?: (gids: string[]) => void;
-			trim?: TrimOptions;
-			timestamp?: Timestamp;
-		} = {}
+		options: AppendOptions<T> = {}
 	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
 		if (options.reciever && !this._encryption) {
 			throw new Error(
@@ -443,28 +522,28 @@ export class Log<T> {
 
 		// Update the clock (find the latest clock)
 		if (options.nexts) {
-			options.nexts.forEach((n) => {
+			for (const n of options.nexts) {
 				if (!n.hash)
 					throw new Error(
 						"Expecting nexts to already be saved. missing hash for one or more entries"
 					);
-			});
+			}
 		}
 
-		const hasNext = !!options.nexts;
+		await this.load({ reload: false });
+
+		const hasNext = !!options.nexts; // true for [], which means we have explicitly said that nexts are empty
 		const nexts: Entry<any>[] = options.nexts || (await this.getHeads());
 
 		// Calculate max time for log/graph
 		const clock = new Clock({
-			id: new Uint8Array(serialize(this._identity.publicKey)),
+			id: this._identity.publicKey.bytes,
 			timestamp: options.timestamp || this._hlc.now(),
 		});
 
-		const identity = options.identity || this._identity;
-
 		const entry = await Entry.create<T>({
 			store: this._storage,
-			identity: identity,
+			identity: options.identity || this._identity,
 			signers: options.signers,
 			data,
 			clock,
@@ -480,7 +559,7 @@ export class Log<T> {
 						},
 				  }
 				: undefined,
-			canAppend: options.canAppend,
+			canAppend: this._canAppend,
 		});
 
 		if (!isDefined(entry.hash)) {
@@ -501,7 +580,7 @@ export class Log<T> {
 		const removedGids: Set<string> = new Set();
 		if (hasNext) {
 			for (const next of nexts) {
-				const deletion = this._headsIndex.del(next);
+				const deletion = await this._headsIndex.del(next);
 				if (deletion.lastWithGid && next.gid !== entry.gid) {
 					removedGids.add(next.gid);
 				}
@@ -513,11 +592,11 @@ export class Log<T> {
 					removedGids.add(key);
 				}
 			}
-			this.headsIndex.reset([entry]);
+			await this.headsIndex.reset([entry], { cache: { update: false } });
 		}
 
-		await this._entryIndex.set(entry);
-		this._headsIndex.put(entry);
+		await this._entryIndex.set(entry, false); // save === false, because its already saved when Entry.create
+		await this._headsIndex.put(entry, { cache: { update: false } }); // we will update the cache a few lines later *
 		await this._values.put(entry);
 
 		const removed = await this.processEntry(entry);
@@ -528,16 +607,27 @@ export class Log<T> {
 		}
 
 		entry.init({ encoding: this._encoding, encryption: this._encryption });
+		//	console.log('put entry', entry.hash, (await this._entryIndex._index.size));
 
 		const trimmed = await this.trim(options?.trim);
+
+		//console.log("APPEND TRIMMED", trimmed.length)
 		for (const entry of trimmed) {
 			removed.push(entry);
 		}
 
+		const changes: Change<T> = {
+			added: [entry],
+			removed: removed,
+		};
+
+		await this._headsIndex.updateHeadsCache(changes); // * here
+		await this._onWrite?.(entry);
+		await this._onChange?.(changes);
 		return { entry, removed };
 	}
 
-	async reset(entries: Entry<T>[], heads?: Entry<T>[]) {
+	async reset(entries: Entry<T>[], heads?: (string | Entry<T>)[]) {
 		this._nextsIndex = new Map();
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
@@ -564,9 +654,20 @@ export class Log<T> {
 		await Promise.all(promises);
 
 		// Set heads if not passed as an argument
-		const foundHeads = heads ? heads : Log.findHeads(uniqueEntries);
+		const foundHeads = heads
+			? ((await Promise.all(
+					heads.map((x) => {
+						if (x instanceof Entry) return x;
+						const resolved = this._entryIndex.get(x);
+						if (!resolved) {
+							throw new Error("Missing head with cid: " + x);
+						}
+						return resolved;
+					})
+			  )) as Entry<T>[])
+			: Log.findHeads(uniqueEntries);
 
-		this._headsIndex = new HeadsIndex({ entries: foundHeads });
+		await this._headsIndex.reset(foundHeads);
 
 		this._values = new Values(this._entryIndex, this._sortFn, uniqueEntries);
 
@@ -582,6 +683,41 @@ export class Log<T> {
 				}
 			}
 		}
+	}
+
+	async remove(
+		entry: Entry<T> | Entry<T>[],
+		options?: { recursively?: boolean }
+	): Promise<Change<T>> {
+		await this.load({ reload: false });
+		const entries = Array.isArray(entry) ? entry : [entry];
+
+		if (entries.length === 0) {
+			return {
+				added: [],
+				removed: [],
+			};
+		}
+
+		if (options?.recursively) {
+			await this.deleteRecursively(entry);
+		} else {
+			for (const entry of entries) {
+				await this.delete(entry);
+			}
+		}
+
+		const change: Change<T> = {
+			added: [],
+			removed: Array.isArray(entry) ? entry : [entry],
+		};
+
+		/* 	await Promise.all([
+				this._logCache?.queue(change),
+				this._onUpdate(change),
+			]); */
+		await this._onChange?.(change);
+		return change;
 	}
 
 	iterator(options?: {
@@ -611,21 +747,67 @@ export class Log<T> {
 		return this._trim.trim(option);
 	}
 
-	_joining: Map<string, Promise<any>> = new Map();
+	/**
+	 *
+	 * @param entries
+	 * @returns change
+	 */
+	/* async sync(
+		entries: (EntryWithRefs<T> | Entry<T> | string)[],
+		options: {
+			canAppend?: CanAppend<T>;
+			onChange?: (change: Change<T>) => void | Promise<void>;
+			timeout?: number;
+		} = {}
+	): Promise<void> {
+
+
+		logger.debug(`Sync request #${entries.length}`);
+		const entriesToJoin: (Entry<T> | string)[] = [];
+		for (const e of entries) {
+			if (e instanceof Entry || typeof e === "string") {
+				entriesToJoin.push(e);
+			} else {
+				for (const ref of e.references) {
+					entriesToJoin.push(ref);
+				}
+				entriesToJoin.push(e.entry);
+			}
+		}
+
+		await this.join(entriesToJoin, {
+			canAppend: (entry) => {
+				const canAppend = options?.canAppend || this.canAppend;
+				return !canAppend || canAppend(entry);
+			},
+			onChange: (change) => {
+				options?.onChange?.(change);
+				return this._onChange?.({
+					added: change.added,
+					removed: change.removed,
+				});
+			},
+			timeout: options.timeout,
+		});
+	} */
+
 	async join(
-		entriesOrLog: (string | Entry<T>)[] | Log<T>,
+		entriesOrLog: (string | Entry<T> | EntryWithRefs<T>)[] | Log<T>,
 		options?: {
-			canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean;
-			onChange?: (change: Change2<T>) => void | Promise<void>;
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
 			timeout?: number;
-		}
+		} & CacheUpdateOptions
 	): Promise<void> {
-		const stack: string[] = [];
+		await this.load({ reload: false });
+		if (entriesOrLog.length === 0) {
+			return;
+		}
+		/* const joinLength = options?.length ?? Number.MAX_SAFE_INTEGER;  TODO */
 		const visited = new Set<string>();
 		const nextRefs: Map<string, Entry<T>[]> = new Map();
 		const entriesBottomUp: Entry<T>[] = [];
+		const stack: string[] = [];
 		const resolvedEntries: Map<string, Entry<T>> = new Map();
 		const entries = Array.isArray(entriesOrLog)
 			? entriesOrLog
@@ -633,20 +815,42 @@ export class Log<T> {
 
 		// Build a list of already resolved entries, and filter out already joined entries
 		for (const e of entries) {
+			// TODO, do this less ugly
 			let hash: string;
 			if (e instanceof Entry) {
 				hash = e.hash;
 				resolvedEntries.set(e.hash, e);
-			} else {
+				if (this.has(hash)) {
+					continue;
+				}
+				stack.push(hash);
+			} else if (typeof e === "string") {
 				hash = e;
+
+				if (this.has(hash)) {
+					continue;
+				}
+				stack.push(hash);
+			} else {
+				hash = e.entry.hash;
+				resolvedEntries.set(e.entry.hash, e.entry);
+				if (this.has(hash)) {
+					continue;
+				}
+				stack.push(hash);
+
+				for (const e2 of e.references) {
+					resolvedEntries.set(e2.hash, e2);
+					if (this.has(e2.hash)) {
+						continue;
+					}
+					stack.push(e2.hash);
+				}
 			}
-			if (this.has(hash)) {
-				continue;
-			}
-			stack.push(hash);
 		}
 
 		// Resolve missing entries
+		const removedHeads: Entry<T>[] = [];
 		for (const hash of stack) {
 			if (visited.has(hash) || this.has(hash)) {
 				continue;
@@ -673,7 +877,9 @@ export class Log<T> {
 						isRoot = false;
 					} else {
 						if (this._headsIndex.has(next)) {
-							this._headsIndex.del((await this.get(next, options))!);
+							const toRemove = (await this.get(next, options))!;
+							await this._headsIndex.del(toRemove);
+							removedHeads.push(toRemove);
 						}
 					}
 					let nextIndexSet = nextRefs.get(next);
@@ -699,24 +905,28 @@ export class Log<T> {
 		while (entriesBottomUp.length > 0) {
 			const e = entriesBottomUp.shift()!;
 			await this._joining.get(e.hash);
-			const p = this.joinEntry(e, nextRefs, entriesBottomUp, options).then(() =>
-				this._joining.delete(e.hash)
+			const p = this.joinEntry(e, nextRefs, entriesBottomUp, options).then(
+				() => this._joining.delete(e.hash) // TODO, if head we run into problems with concurrency here!, we add heads at line 929 but resolve here
 			);
 			this._joining.set(e.hash, p);
 			await p;
 		}
 	}
+
 	private async joinEntry(
 		e: Entry<T>,
 		nextRefs: Map<string, Entry<T>[]>,
 		stack: Entry<T>[],
 		options?: {
-			canAppend?: (entry: Entry<T>) => Promise<boolean> | boolean;
-			onChange?: (change: Change2<T>) => void | Promise<void>;
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
-		}
+			length?: number;
+		} & CacheUpdateOptions
 	): Promise<void> {
+		if (this.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
+			return;
+		}
+
 		if (!isDefined(e.hash)) {
 			throw new Error("Unexpected");
 		}
@@ -728,7 +938,7 @@ export class Log<T> {
 				}
 			}
 
-			if (options?.canAppend && !(await options.canAppend(e))) {
+			if (this?._canAppend && !(await this?._canAppend(e))) {
 				return;
 			}
 
@@ -763,20 +973,19 @@ export class Log<T> {
 				removed.push(entry);
 			}
 
-			options?.onChange &&
-				(await options.onChange({ added: e, removed: removed }));
+			await this?._onChange?.({ added: [e], removed: removed });
 		}
 
 		const forward = nextRefs.get(e.hash);
 		if (forward) {
 			if (this._headsIndex.has(e.hash)) {
-				this._headsIndex.del(e);
+				await this._headsIndex.del(e, options);
 			}
 			for (const en of forward) {
 				stack.push(en);
 			}
 		} else {
-			this.headsIndex.put(e);
+			await this.headsIndex.put(e, options);
 		}
 	}
 
@@ -799,7 +1008,7 @@ export class Log<T> {
 				this._trim.deleteFromCache(entry);
 				await this._values.delete(entry);
 				await this._entryIndex.delete(entry.hash);
-				this._headsIndex.del(entry);
+				await this._headsIndex.del(entry);
 				this._nextsIndex.delete(entry.hash);
 				deleted.push(entry);
 				promises.push(entry.delete(this._storage));
@@ -828,45 +1037,25 @@ export class Log<T> {
 		this._trim.deleteFromCache(entry);
 		await this._values.delete(entry);
 		await this._entryIndex.delete(entry.hash);
-		this._headsIndex.del(entry);
+		await this._headsIndex.del(entry);
 		this._nextsIndex.delete(entry.hash);
+		const newHeads: string[] = [];
 		for (const next of entry.next) {
 			const ne = await this.get(next);
 			if (ne) {
 				const nexts = this._nextsIndex.get(next)!;
 				nexts.delete(entry.hash);
 				if (nexts.size === 0) {
-					this._headsIndex.put(ne);
+					await this._headsIndex.put(ne);
+					newHeads.push(ne.hash);
 				}
 			}
 		}
+		await this._headsIndex.updateHeadsCache({
+			added: newHeads,
+			removed: [entry.hash],
+		});
 		return entry.delete(this._storage);
-	}
-
-	/**
-	 * Get the log in JSON format.
-	 * @returns {Object} An object with the id and heads properties
-	 */
-	async toJSON() {
-		return {
-			id: this._id,
-			heads: (await this.getHeads())
-				.sort(this._sortFn) // default sorting
-				.reverse() // we want the latest as the first element
-				.map(getHash), // return only the head hashes
-		};
-	}
-
-	/**
-	 * Get the log in JSON format as a snapshot.
-	 * @returns {Object} An object with the id, heads and value properties
-	 */
-	toSnapshot() {
-		return {
-			id: this._id,
-			heads: [...this.headsIndex.index.values()],
-			values: this.toArray(),
-		};
 	}
 
 	/**
@@ -906,157 +1095,79 @@ export class Log<T> {
 			)
 		).join("\n");
 	}
-
-	/**
-	 * Get the log's multihash.
-	 * @returns {Promise<string>} Multihash of the Log as Base58 encoded string.
-	 */
-	toMultihash(options?: { format?: string }) {
-		return LogIO.toMultihash(this._storage, this, options);
+	async idle() {
+		await this._headsIndex.headsCache?.idle();
 	}
 
-	static async fromMultihash<T>(
-		store: BlockStore,
-		identity: Identity,
-		hash: string,
-		options: { sortFn?: Sorting.ISortFunction } & EntryFetchAllOptions<T>
+	async close() {
+		await this._entryCache.clear();
+		await this._headsIndex.close();
+		await this._onClose?.();
+	}
+
+	async drop() {
+		await this.deleteRecursively(await this.getHeads()); // TODO can multiple store have exact same log entry? no because GIDs are generated randomly
+		await this._headsIndex.drop();
+		await this._entryCache.clear();
+		return;
+	}
+	async load(
+		opts: ({ fetchEntryTimeout?: number } & (
+			| {
+					/* amount?: number  TODO */
+			  }
+			| { heads?: true }
+		)) & { reload: boolean } = { reload: true }
 	) {
-		// TODO: need to verify the entries with 'key'
-		const { logId, entries, heads } = await LogIO.fromMultihash(store, hash, {
-			length: options?.length,
-			shouldFetch: options?.shouldFetch,
-			shouldQueue: options?.shouldQueue,
-			timeout: options?.timeout,
-			onFetched: options?.onFetched,
-			concurrency: options?.concurrency,
-			sortFn: options?.sortFn,
-			replicate: options?.replicate,
-		});
-		const log = new Log<T>(store, identity, {
-			encryption: options?.encryption,
-			encoding: options?.encoding,
-			logId,
-			sortFn: options?.sortFn,
-		});
-		await log.reset(entries, heads);
-		return log;
-	}
-
-	static async fromEntryHash<T>(
-		store: BlockStore,
-		identity: Identity,
-		hash: string | string[],
-		options: {
-			encoding?: Encoding<T>;
-			encryption?: PublicKeyEncryptionResolver;
-			logId?: string;
-			length?: number;
-			exclude?: any[];
-			shouldFetch?: (hash: string) => boolean;
-			timeout?: number;
-			concurrency?: number;
-			sortFn?: any;
-			onFetched?: any;
-			replicate?: boolean;
-		} = { length: -1, exclude: [] }
-	): Promise<Log<T>> {
-		// TODO: need to verify the entries with 'key'
-		const { entries } = await LogIO.fromEntryHash(store, hash, {
-			length: options.length,
-			encryption: options?.encryption,
-			encoding: options.encoding,
-			shouldFetch: options.shouldFetch,
-			timeout: options.timeout,
-			concurrency: options.concurrency,
-			onFetched: options.onFetched,
-			sortFn: options.sortFn,
-			replicate: options.replicate,
+		const heads = await this.headsIndex.load({
+			replicate: true,
+			timeout: opts.fetchEntryTimeout,
+			reload: opts.reload,
+			cache: { update: true, reset: true },
 		});
 
-		const log = new Log<T>(store, identity, {
-			encryption: options?.encryption,
-			encoding: options?.encoding,
-			logId: options.logId,
-			sortFn: options.sortFn,
-		});
-		await log.reset(entries);
-		return log;
-	}
+		if (heads) {
+			// Load the log
+			if ((opts as { heads?: true }).heads) {
+				await this.reset(heads);
+			} else {
+				const amount = (opts as { amount?: number }).amount;
+				if (amount != null && amount >= 0 && amount < heads.length) {
+					throw new Error(
+						"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
+							amount +
+							" entries"
+					);
+				}
 
-	/**
-	 * Create a log from a Log Snapshot JSON.
-	 * @param {IPFS} ipfs An IPFS instance
-	 * @param {Identity} identity The identity instance
-	 * @param {Object} json Log snapshot as JSON object
-	 * @param {Object} options
-	 * @param {AccessController} options.access The access controller instance
-	 * @param {number} options.length How many entries to include in the log
-	 * @param {function(hash, entry,  parent, depth)} [options.onFetched]
-	 * @param {Function} options.sortFn The sort function - by default LastWriteWins
-	 * @return {Promise<Log>} New Log
-	 */
-	static async fromJSON<T>(
-		store: BlockStore,
-		identity: Identity,
-		json: { id: string; heads: string[] },
-		options: {
-			encoding?: Encoding<T>;
-			encryption?: PublicKeyEncryptionResolver;
-			length?: number;
-			timeout?: number;
-			sortFn?: Sorting.ISortFunction;
-			onFetched?: (entry: Entry<T>) => void;
-			replicate?: boolean;
-		} = { encoding: JSON_ENCODING }
-	) {
-		// TODO: need to verify the entries with 'key'
-		const { logId, entries } = await LogIO.fromJSON(store, json, {
-			length: options?.length,
-			encryption: options?.encryption,
-			encoding: options.encoding,
-			timeout: options?.timeout,
-			onFetched: options?.onFetched,
-			replicate: options.replicate,
-		});
-		const log = new Log<T>(store, identity, {
-			encryption: options?.encryption,
-			encoding: options?.encoding,
-			logId,
-			sortFn: options?.sortFn,
-		});
-		await log.reset(entries);
-		return log;
+				await this.join(heads instanceof Entry ? [heads] : heads, {
+					/* length: amount, */
+					timeout: opts?.fetchEntryTimeout,
+					cache: {
+						update: false,
+					},
+				});
+			}
+		}
 	}
 
 	static async fromEntry<T>(
 		store: BlockStore,
 		identity: Identity,
-		sourceEntries: Entry<T>[] | Entry<T>,
-		options: EntryFetchOptions<T> & {
-			shouldFetch?: (hash: string) => boolean;
-			encryption?: PublicKeyEncryptionResolver;
-			sortFn?: Sorting.ISortFunction;
-		}
-	) {
-		// TODO: need to verify the entries with 'key'
-		options = strictFetchOptions(options);
-		const { entries } = await LogIO.fromEntry(store, sourceEntries, {
-			length: options.length,
-			encryption: options?.encryption,
-			encoding: options.encoding,
+		entryOrHash: string | string[] | Entry<T> | Entry<T>[],
+		options: {
+			id?: Uint8Array;
+			/* length?: number; TODO */
+			timeout?: number;
+		} & LogOptions<T> = { id: randomBytes(32) }
+	): Promise<Log<T>> {
+		const log = new Log<T>(options.id && { id: options.id });
+		await log.init(store, identity, options);
+		await log.join(!Array.isArray(entryOrHash) ? [entryOrHash] : entryOrHash, {
 			timeout: options.timeout,
-			concurrency: options.concurrency,
-			shouldFetch: options.shouldFetch,
-			onFetched: options.onFetched,
+			trim: options.trim,
+			verifySignatures: true,
 		});
-
-		const log = new Log<T>(store, identity, {
-			encryption: options?.encryption,
-			encoding: options?.encoding,
-			sortFn: options.sortFn,
-		});
-
-		await log.reset(entries);
 		return log;
 	}
 
@@ -1072,8 +1183,7 @@ export class Log<T> {
 	static findHeads<T>(entries: Entry<T>[]) {
 		const indexReducer = (
 			res: { [key: string]: string },
-			entry: Entry<any>,
-			idx: number
+			entry: Entry<any>
 		) => {
 			const addToResult = (e: string) => (res[e] = entry.hash);
 			entry.next.forEach(addToResult);

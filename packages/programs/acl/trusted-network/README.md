@@ -8,7 +8,7 @@ Distributing content among untrusted peers will be unreliable and not resilient 
 To do this, you only have to implement the "Network" interface: 
 ```typescript
 import { Peerbit, Network } from '@dao-xyz/peerbit'
-import { Store } from '@dao-xyz/peerbit-store'
+import { Log } from '@dao-xyz/peerbit-log'
 import { Program } from '@dao-xyz/peerbit-program' 
 import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network' 
 import { field, variant } from '@dao-xyz/borst-ts' 
@@ -18,16 +18,16 @@ import { field, variant } from '@dao-xyz/borst-ts'
 class StringStore extends Program
 {
     @field({type: Store})
-    store: Store<string>
+    log: Log<string>
 
     @field({type: TrustedNetwork}) 
     network: TrustedNetwork // this is a database storing all peers. Peers that are trusted can add new peers
 
-    constructor(properties?:{ store: Store<any>, network: TrustedNetwork }) {
-        if(properties)
-        {
-            this.store = properties.store
-        }
+    constructor(properties:{ log: Store<any>, network: TrustedNetwork }) {
+       
+		this.log = properties.store
+		this.network = properties.network;
+        
     }
 
     async setup() 
@@ -42,7 +42,7 @@ class StringStore extends Program
 const peer1 = await Peerbit.create(LIBP2P_CLIENT, {... options ...})
 const peer2 = await Peerbit.create(LIBP2P_CLIENT_2, {... options ...})
 
-const programPeer1 = await peer1.open(new StringStore({store: new Store(), network: new TrustedNetwork()}), {... options ...})
+const programPeer1 = await peer1.open(new StringStore({log: new Log(), network: new TrustedNetwork()}), {... options ...})
 
 // add trust to another peer
 await program.network.add(peer2.identity.publicKey) 

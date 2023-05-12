@@ -35,7 +35,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/peerbit-rpc": "^0.5.5",
-		"@dao-xyz/peerbit-store": "^0.5.5",
+		"@dao-xyz/peerbit-program": "^0.5.5",
 		"@libp2p/interfaces": "^3.3.1"
 	},
 	"devDependencies": {

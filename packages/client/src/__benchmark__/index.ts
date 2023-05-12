@@ -1,7 +1,6 @@
 import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
-import { LSession } from "@dao-xyz/peerbit-test-utils";
 import {
 	ObserverType,
 	Program,
@@ -13,7 +12,7 @@ import { createLibp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { tcp } from "@libp2p/tcp";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 1,185 ops/sec ±2.95% (77 runs sampled)
+// put x 1,216 ops/sec ±2.62% (81 runs sampled)
 
 @variant("document")
 class Document {
@@ -69,16 +68,19 @@ let address: string | undefined = undefined;
 const readerResolver: Map<string, () => void> = new Map();
 
 for (const [i, client] of peers.entries()) {
-	const store = await client.open(address || new TestStore(), {
-		onUpdate:
-			i === peers.length - 1
-				? (change) => {
-						change.added.forEach((e) => {
-							readerResolver.get(e.hash)?.();
-							readerResolver.delete(e.hash);
-						});
-				  }
-				: undefined,
+	const onChange =
+		i === peers.length - 1
+			? (_log, change) => {
+					change.added.forEach((e) => {
+						readerResolver.get(e.hash)?.();
+						readerResolver.delete(e.hash);
+					});
+			  }
+			: undefined;
+	const store: TestStore = await client.open(address || new TestStore(), {
+		log: {
+			onChange,
+		},
 		role: i === peers.length - 1 ? new ReplicatorType() : new ObserverType(),
 	});
 

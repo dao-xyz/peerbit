@@ -62,30 +62,21 @@ describe("Log - CRDT", function () {
 		let log1: Log<any>, log2: Log<any>, log3: Log<any>;
 
 		beforeEach(async () => {
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 		});
 
 		it("join is associative", async () => {
@@ -104,30 +95,21 @@ describe("Log - CRDT", function () {
 
 			const res1 = (await log1.toArray()).slice();
 
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -161,22 +143,17 @@ describe("Log - CRDT", function () {
 			await log2.join(log1);
 			const res1 = (await log2.toArray()).slice();
 
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -196,22 +173,7 @@ describe("Log - CRDT", function () {
 
 		it("multiple joins are commutative", async () => {
 			// b + a == a + b
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -219,22 +181,21 @@ describe("Log - CRDT", function () {
 			await log2.join(log1);
 			const resA1 = log2.toString();
 
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -245,22 +206,17 @@ describe("Log - CRDT", function () {
 			expect(resA1).toEqual(resA2);
 
 			// a + b == b + a
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -268,22 +224,17 @@ describe("Log - CRDT", function () {
 			await log1.join(log2);
 			const resB1 = log1.toString();
 
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -294,22 +245,17 @@ describe("Log - CRDT", function () {
 			expect(resB1).toEqual(resB2);
 
 			// a + c == c + a
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "A" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "A" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
@@ -317,22 +263,17 @@ describe("Log - CRDT", function () {
 			await log3.join(log1);
 			const resC1 = log3.toString();
 
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
@@ -343,22 +284,17 @@ describe("Log - CRDT", function () {
 			expect(resC1).toEqual(resC2);
 
 			// c + b == b + c
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
@@ -367,22 +303,16 @@ describe("Log - CRDT", function () {
 			await log3.join(log2);
 			const resD1 = log3.toString();
 
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
@@ -393,30 +323,21 @@ describe("Log - CRDT", function () {
 			expect(resD1).toEqual(resD2);
 
 			// a + b + c == c + b + a
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -426,31 +347,21 @@ describe("Log - CRDT", function () {
 			await log1.join(log2);
 			await log1.join(log3);
 			const logLeft = log1.toString();
-
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -467,21 +378,13 @@ describe("Log - CRDT", function () {
 		it("join is idempotent", async () => {
 			const expectedElementsCount = 3;
 
-			const logA = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			await logA.append("helloA1");
-			await logA.append("helloA2");
-			await logA.append("helloA3");
+			await log1.append("helloA1");
+			await log1.append("helloA2");
+			await log1.append("helloA3");
 
 			// idempotence: a + a = a
-			await logA.join(logA);
-			expect(logA.length).toEqual(expectedElementsCount);
+			await log1.join(log1);
+			expect(log1.length).toEqual(expectedElementsCount);
 		});
 	});
 });

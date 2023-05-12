@@ -1,10 +1,12 @@
 export * from "./log.js";
 export * from "./log-sorting.js";
 export * from "./log-errors.js";
-export * from "./log-io.js";
+export * from "./snapshot.js";
 export * from "./entry.js";
 export * from "./utils.js";
 export * from "./clock.js";
 export * from "./encoding.js";
 export * from "./identity.js";
+export * from "./trim.js";
+export * from "./change.js";
 export type { TrimToByteLengthOption, TrimToLengthOption } from "./trim.js";

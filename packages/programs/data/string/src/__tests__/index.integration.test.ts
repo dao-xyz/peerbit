@@ -1,3 +1,15 @@
+import {
+	createStore,
+	LSession,
+	waitForPeers,
+} from "@dao-xyz/peerbit-test-utils";
+import Cache from "@dao-xyz/lazy-level";
+import { Identity } from "@dao-xyz/peerbit-log";
+import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
+
 import { DString } from "../string-store.js";
 import {
 	StringQueryRequest,
@@ -7,18 +19,6 @@ import {
 	RangeMetadata,
 } from "../index.js";
 import { Range } from "../range.js";
-import {
-	createStore,
-	LSession,
-	waitForPeers,
-} from "@dao-xyz/peerbit-test-utils";
-import Cache from "@dao-xyz/lazy-level";
-import { Identity } from "@dao-xyz/peerbit-log";
-import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { DefaultOptions } from "@dao-xyz/peerbit-store";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -47,13 +47,12 @@ describe("query", () => {
 		await writeStore.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
 			replicators: () => [],
-			store: {
-				...DefaultOptions,
+			log: {
 				encryption: {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
 					getEncryptionKeypair: () => Ed25519Keypair.create(),
 				},
-				resolveCache: () => new Cache(createStore()),
+				cache: () => new Cache(createStore()),
 			},
 		});
 
@@ -65,9 +64,8 @@ describe("query", () => {
 		await observerStore.init(observer, await createIdentity(), {
 			role: new ObserverType(),
 			replicators: () => [],
-			store: {
-				...DefaultOptions,
-				resolveCache: () => new Cache(createStore()),
+			log: {
+				cache: () => new Cache(createStore()),
 			},
 		});
 
@@ -196,13 +194,12 @@ describe("query", () => {
 		await store.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
 			replicators: () => [],
-			store: {
-				...DefaultOptions,
+			log: {
 				encryption: {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
 					getEncryptionKeypair: () => Ed25519Keypair.create(),
 				},
-				resolveCache: () => new Cache(createStore()),
+				cache: () => new Cache(createStore()),
 			},
 		});
 
@@ -221,7 +218,7 @@ describe("query", () => {
 		await store.close();
 		await delay(1000); // TODO store is async?
 		await store.load();
-		await waitFor(() => store.store.oplog.values.length === 1);
+		await waitFor(() => store._log.values.length === 1);
 		await store.close();
 	});
 });

@@ -1,8 +1,8 @@
 import { v4 as uuid } from "uuid";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { RPC, RPCMessage, RPCResponse } from "../";
+import { RPC, RPCResponse } from "../index.js";
 import { Ed25519Identity } from "@dao-xyz/peerbit-log";
 import {
 	ObserverType,
@@ -10,7 +10,6 @@ import {
 	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -68,7 +67,7 @@ describe("rpc", () => {
 		responder.setup(topic); // set topic manually because we are not going to have a parent program with address
 		await responder.init(session.peers[0], await createIdentity(), {
 			role: new ReplicatorType(),
-			store: {} as any,
+			log: {} as any,
 			replicators: () => [],
 		});
 		reader = deserialize(serialize(responder), RPCTest);
@@ -76,7 +75,7 @@ describe("rpc", () => {
 
 		await reader.init(session.peers[1], await createIdentity(), {
 			role: new ObserverType(),
-			store: {} as any,
+			log: {} as any,
 			replicators: () => [],
 		});
 

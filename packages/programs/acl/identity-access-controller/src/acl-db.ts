@@ -24,7 +24,7 @@ export class IdentityAccessController extends Program {
 	trustedNetwork: TrustedNetwork;
 
 	constructor(opts?: {
-		id?: string;
+		id?: Uint8Array;
 		rootTrust?: PublicSignKey;
 		trustedNetwork?: TrustedNetwork;
 	}) {

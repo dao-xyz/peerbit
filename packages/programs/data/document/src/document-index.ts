@@ -30,7 +30,7 @@ import {
 } from "@dao-xyz/peerbit-rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { Store } from "@dao-xyz/peerbit-store";
+import { Log } from "@dao-xyz/peerbit-log";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -131,7 +131,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
-	private _store: Store<Operation<T>>;
+	private _log: Log<Operation<T>>;
 	private _replicators: () => string[][] | undefined;
 	private _toIndex: Indexable<T>;
 
@@ -161,13 +161,13 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	async setup(properties: {
 		type: AbstractType<T>;
-		store: Store<Operation<T>>;
+		log: Log<Operation<T>>;
 		canRead: CanRead;
 		fields: Indexable<T>;
 		sync: (result: Results<T>) => Promise<void>;
 	}) {
 		this._index = new Map();
-		this._store = properties.store;
+		this._log = properties.log;
 		this.type = properties.type;
 		this._sync = properties.sync;
 		this._toIndex = properties.fields;
@@ -228,7 +228,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	}
 
 	async getDocument(value: { context: { head: string } }): Promise<T> {
-		const payloadValue = await (await this._store.oplog.get(
+		const payloadValue = await (await this._log.get(
 			value.context.head
 		))!.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
@@ -414,7 +414,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				const resultsObject = new Results<T>({
 					results: await Promise.all(
 						results.map(async (r) => {
-							const payloadValue = await this._store.oplog
+							const payloadValue = await this._log
 								.get(r.context.head)
 								.then((x) => x?.getPayloadValue());
 							if (payloadValue instanceof PutOperation) {

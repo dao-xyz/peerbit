@@ -10,7 +10,7 @@ import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
-import { Store } from "@dao-xyz/peerbit-store";
+import { Log } from "@dao-xyz/peerbit-log";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { TransportMessage } from "./message.js";
 import { v4 as uuid } from "uuid";
@@ -62,8 +62,8 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: option("u32") })
 	programIndex?: number;
 
-	@field({ type: "u32" })
-	storeIndex: number;
+	@field({ type: fixedArray("u8", 32) })
+	logId: Uint8Array;
 
 	@field({ type: vec(EntryWithRefs) })
 	heads: EntryWithRefs<T>[];
@@ -77,13 +77,13 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	constructor(props: {
 		programIndex?: number;
 		programAddress: string;
-		storeIndex: number;
+		logId: Uint8Array;
 		heads: EntryWithRefs<T>[];
 		minReplicas?: MinReplicas;
 	}) {
 		super();
 		this.id = uuid();
-		this.storeIndex = props.storeIndex;
+		this.logId = props.logId;
 		this.programIndex = props.programIndex;
 		this.programAddress = props.programAddress;
 		this.heads = props.heads;
@@ -105,7 +105,7 @@ export class RequestHeadsMessage extends TransportMessage {
 }
 
 export const createExchangeHeadsMessage = async (
-	store: Store<any>,
+	log: Log<any>,
 	program: Program,
 	heads: Entry<any>[],
 	includeReferences: boolean,
@@ -117,7 +117,7 @@ export const createExchangeHeadsMessage = async (
 			const refs = !includeReferences
 				? []
 				: (
-						await store.oplog.getReferenceSamples(head, {
+						await log.getReferenceSamples(head, {
 							pointerCount: 8,
 							memoryLimit: 1e6 / heads.length,
 						})
@@ -129,9 +129,9 @@ export const createExchangeHeadsMessage = async (
 			});
 		})
 	);
-	logger.debug(`Send latest heads of '${store._storeIndex}'`);
+	logger.debug(`Send latest heads of '${log.id}'`);
 	const message = new ExchangeHeadsMessage({
-		storeIndex: store._storeIndex,
+		logId: log.id,
 		programIndex: program._programIndex,
 		programAddress: (program.address ||
 			program.parentProgram.address)!.toString(),

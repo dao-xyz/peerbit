@@ -20,6 +20,7 @@ describe("server", () => {
 
 	afterAll(async () => {
 		await session.stop();
+		await peer.stop();
 	});
 	it("_", () => {
 		expect(1).toEqual(1);

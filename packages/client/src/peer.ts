@@ -1,4 +1,3 @@
-import { IStoreOptions, Store } from "@dao-xyz/peerbit-store";
 import LazyLevel from "@dao-xyz/lazy-level";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
@@ -13,7 +12,7 @@ import {
 	EntryWithRefs,
 	MinReplicas,
 } from "./exchange-heads.js";
-import { Entry, Identity } from "@dao-xyz/peerbit-log";
+import { Entry, Identity, Log, LogOptions } from "@dao-xyz/peerbit-log";
 import {
 	serialize,
 	deserialize,
@@ -41,11 +40,10 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { encryptionWithRequestKey } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { Program, Address } from "@dao-xyz/peerbit-program";
+import { Program, Address, LogCallbackOptions } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import {
 	PubSubData,
 	Subscription,
@@ -79,14 +77,9 @@ interface ProgramWithMetadata {
 	minReplicas: MinReplicas;
 }
 
-export type StoreOperations = "write" | "all";
-export type Storage = {
-	createStore: (string?: string) => AbstractLevel<any, string, Uint8Array>;
-};
 export type OptionalCreateOptions = {
 	limitSigning?: boolean;
 	minReplicas?: number;
-	store?: BlockStore;
 	refreshIntreval?: number;
 };
 export type CreateOptions = {
@@ -94,7 +87,6 @@ export type CreateOptions = {
 	identity: Identity;
 	directory?: string;
 	peerId: Ed25519PeerId;
-	storage: Storage;
 	cache: LazyLevel;
 	localNetwork: boolean;
 } & OptionalCreateOptions;
@@ -104,7 +96,6 @@ export type CreateInstanceOptions = (
 	| { libp2p?: Libp2pExtended }
 	| CreateLibp2pExtendedOptions
 ) & {
-	storage?: Storage;
 	directory?: string;
 	keystore?: Keystore;
 	peerId?: Ed25519PeerId;
@@ -117,12 +108,11 @@ export type OpenOptions = {
 	entryToReplicate?: Entry<any>;
 	role?: SubscriptionType;
 	sync?: SyncFilter;
-	directory?: string;
 	timeout?: number;
 	minReplicas?: MinReplicas | number;
 	trim?: TrimToByteLengthOption | TrimToLengthOption;
 	reset?: boolean;
-} & IStoreOptions<any>;
+} & { log?: LogCallbackOptions };
 
 const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 	entries: T[]
@@ -142,6 +132,43 @@ const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 	return groupByGid;
 };
 
+const createLevel = (path?: string): AbstractLevel<any, string, Uint8Array> => {
+	return path
+		? new Level(path, { valueEncoding: "view" })
+		: new MemoryLevel({ valueEncoding: "view" });
+};
+
+const createCache = async (
+	directory: string | undefined,
+	options?: { reset?: boolean }
+) => {
+	const cache = await new LazyLevel(createLevel(directory));
+
+	// "Wake up" the caches if they need it
+	if (cache) await cache.open();
+	if (options?.reset) {
+		await cache._store.clear();
+	}
+
+	return cache;
+};
+
+const createSubCache = async (
+	from: LazyLevel,
+	name: string,
+	options?: { reset?: boolean }
+) => {
+	const cache = await new LazyLevel(from._store.sublevel(name));
+
+	// "Wake up" the caches if they need it
+	if (cache) await cache.open();
+	if (options?.reset) {
+		await cache._store.clear();
+	}
+
+	return cache;
+};
+
 export class Peerbit {
 	_libp2p: Libp2pExtended;
 
@@ -155,8 +182,6 @@ export class Peerbit {
 	idIdentity: Identity;
 
 	directory?: string;
-	storage: Storage;
-	caches: { [key: string]: { cache: LazyLevel; handlers: Set<string> } };
 	keystore: Keystore;
 	_minReplicas: number;
 	/// program address => Program metadata
@@ -172,6 +197,7 @@ export class Peerbit {
 	private _encryption: PublicKeyEncryptionResolver;
 	private _refreshInterval: any;
 	private _lastSubscriptionMessageId = "";
+	private _cache: LazyLevel;
 
 	constructor(
 		libp2p: Libp2pExtended,
@@ -212,18 +238,12 @@ export class Peerbit {
 			sign: (data) => this.idKey.sign(data, PreHash.SHA_256),
 		};
 
-		this.directory = options.directory || "./peerbit/data";
-		this.storage = options.storage;
+		this.directory = options.directory;
 		this.programs = new Map();
-		this.caches = {};
 		this._minReplicas = options.minReplicas || MIN_REPLICAS;
 		this.limitSigning = options.limitSigning || false;
 		this.localNetwork = options.localNetwork;
-
-		this.caches[this.directory] = {
-			cache: options.cache,
-			handlers: new Set(),
-		};
+		this._cache = options.cache;
 
 		this.keystore = options.keystore;
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
@@ -287,13 +307,6 @@ export class Peerbit {
 		}
 
 		const directory = options.directory;
-		const storage = options.storage || {
-			createStore: (path?: string): AbstractLevel<any, string, Uint8Array> => {
-				return path
-					? new Level(path, { valueEncoding: "view" })
-					: new MemoryLevel({ valueEncoding: "view" });
-			},
-		};
 
 		let keystore: Keystore;
 		if (options.keystore) {
@@ -307,7 +320,7 @@ export class Peerbit {
 					? "Creating keystore at path: " + keyStorePath
 					: "Creating an in memory keystore"
 			);
-			keystore = new Keystore(await storage.createStore(keyStorePath));
+			keystore = new Keystore(createLevel(keyStorePath));
 		}
 
 		let identity: Identity;
@@ -331,18 +344,16 @@ export class Peerbit {
 
 		const cache =
 			options.cache ||
-			new LazyLevel(
-				await storage.createStore(
-					directory ? path.join(directory, "/cache") : undefined
-				)
-			);
+			(await createCache(
+				directory ? path.join(directory, "/cache") : undefined
+			));
+
 		const localNetwork = options.localNetwork || false;
 		const finalOptions = Object.assign({}, options, {
 			peerId: id,
 			keystore,
 			identity,
 			directory,
-			storage,
 			cache,
 			localNetwork,
 		});
@@ -355,12 +366,8 @@ export class Peerbit {
 		return this._libp2p;
 	}
 
-	get cacheDir() {
-		return this.directory || "./cache";
-	}
-
 	get cache() {
-		return this.caches[this.cacheDir].cache;
+		return this._cache;
 	}
 
 	get encryption() {
@@ -454,13 +461,7 @@ export class Peerbit {
 			[...this.programs.values()].map((program) => program.program.close())
 		);
 
-		const caches = Object.keys(this.caches);
-		for (const directory of caches) {
-			await this.caches[directory].cache.close();
-			delete this.caches[directory];
-		}
-
-		/* await this._store.close(); */
+		await this._cache.close();
 
 		// Remove all databases from the state
 		this.programs = new Map();
@@ -473,15 +474,10 @@ export class Peerbit {
 		await this.disconnect();
 	}
 
-	async _createCache(directory: string) {
-		const cacheStorage = await this.storage.createStore(directory);
-		return new LazyLevel(cacheStorage);
-	}
-
 	// Callback for local writes to the database. We the update to pubsub.
 	onWrite<T>(
 		program: Program,
-		store: Store<any>,
+		log: Log<any>,
 		entry: Entry<T>,
 		address?: Address | string
 	): void {
@@ -491,14 +487,15 @@ export class Peerbit {
 		const writeAddress = address?.toString() || programAddress;
 		const storeInfo = this.programs
 			.get(programAddress)
-			?.program.allStoresMap.get(store._storeIndex);
+			?.program.allLogsMap.get(log.idString);
+
 		if (!storeInfo) {
 			throw new Error("Missing store info");
 		}
 
 		// TODO Should we also do gidHashhistory update here?
 		createExchangeHeadsMessage(
-			store,
+			log,
 			program,
 			[entry],
 			true,
@@ -557,16 +554,16 @@ export class Peerbit {
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
 
-				const { storeIndex, programAddress } = msg;
+				const { logId, programAddress } = msg;
 				const { heads } = msg;
 				// replication topic === trustedNetwork address
 
 				const programAddressObject = Address.parse(programAddress);
-
+				const idString = Log.createIdString(logId);
 				logger.debug(
 					`${this.id}: Recieved heads: ${
 						heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
-					}, storeIndex: ${storeIndex}`
+					}, logId: ${idString}`
 				);
 				if (heads) {
 					const programInfo = this.programs.get(programAddress)!;
@@ -575,23 +572,23 @@ export class Peerbit {
 						return;
 					}
 
-					const storeInfo = programInfo.program.allStoresMap.get(storeIndex);
-					if (!storeInfo) {
+					const logInfo = programInfo.program.allLogsMap.get(idString);
+					if (!logInfo) {
 						logger.error(
 							"Missing store info, which was expected to exist for " +
 								programAddressObject +
 								", " +
-								storeIndex
+								idString
 						);
 						return;
 					}
 
 					const filteredHeads = heads
-						.filter((head) => !storeInfo.oplog.has(head.entry.hash))
+						.filter((head) => !logInfo.has(head.entry.hash))
 						.map((head) => {
 							head.entry.init({
-								encryption: storeInfo.oplog.encryption,
-								encoding: storeInfo.oplog.encoding,
+								encryption: logInfo.encryption,
+								encoding: logInfo.encoding,
 							});
 							return head;
 						}); // we need to init because we perhaps need to decrypt gid
@@ -623,12 +620,12 @@ export class Peerbit {
 					}
 
 					if (toMerge.length > 0) {
-						const store = programInfo.program.allStoresMap.get(storeIndex);
+						const store = programInfo.program.allLogsMap.get(idString);
 						if (!store) {
 							throw new Error("Unexpected, missing store on sync");
 						}
 
-						await store.sync(toMerge);
+						await store.join(toMerge);
 
 						/*  TODO does this debug affect performance?
 						
@@ -754,8 +751,8 @@ export class Peerbit {
 		for (const address of changedProgarms) {
 			const programInfo = this.programs.get(address);
 			if (programInfo) {
-				for (const [_, store] of programInfo.program.allStoresMap) {
-					const heads = await store.oplog.getHeads();
+				for (const [_, log] of programInfo.program.allLogsMap) {
+					const heads = await log.getHeads();
 					const groupedByGid = await groupByGid(heads);
 					let storeChanged = false;
 					for (const [gid, entries] of groupedByGid) {
@@ -824,7 +821,7 @@ export class Peerbit {
 							// delete entries since we are not suppose to replicate this anymore
 							// TODO add delay? freeze time? (to ensure resiliance for bad io)
 							if (entriesToDelete.length > 0) {
-								await store.remove(entriesToDelete, {
+								await log.remove(entriesToDelete, {
 									recursively: true,
 								});
 							}
@@ -837,7 +834,7 @@ export class Peerbit {
 							continue;
 						}
 						const bytes = await createExchangeHeadsMessage(
-							store,
+							log,
 							programInfo.program,
 							[...toSend.values()], // TODO send to peers directly
 							true,
@@ -852,7 +849,7 @@ export class Peerbit {
 						});
 					}
 					if (storeChanged) {
-						await store.oplog.trim(); // because for entries createdLocally,we can have trim options that still allow us to delete them
+						await log.trim(); // because for entries createdLocally,we can have trim options that still allow us to delete them
 					}
 					changed = storeChanged || changed;
 				}
@@ -875,26 +872,14 @@ export class Peerbit {
 	} */
 
 	// Callback when a store was closed
-	async _onClose(program: Program, store: Store<any>) {
+	async _onClose(program: Program, log: Log<any>) {
 		// TODO Can we really close a this.programs, either we close all stores in the replication topic or none
-
 		const programAddress = program.address?.toString();
-
-		logger.debug(`Close ${programAddress}/${store.id}`);
-
-		const dir =
-			store && store.options.directory
-				? store.options.directory
-				: this.cacheDir;
-		const cache = this.caches[dir];
-		if (cache && cache.handlers.has(store.id)) {
-			cache.handlers.delete(store.id);
-			if (!cache.handlers.size) {
-				await cache.cache.close();
-			}
-		}
+		logger.debug(`Close ${programAddress}/${log.idString}`);
 	}
-	async _onProgamClose(program: Program) {
+
+	async _onProgamClose(program: Program, programCache: LazyLevel) {
+		await programCache.close();
 		const programAddress = program.address?.toString();
 		if (programAddress) {
 			const deleted = this.programs.delete(programAddress);
@@ -903,10 +888,6 @@ export class Peerbit {
 			}
 		}
 		this._sortedPeersCache.delete(programAddress);
-	}
-
-	_onDrop(db: Store<any>) {
-		logger.debug("Dropped store: " + db.id);
 	}
 
 	addProgram(
@@ -1069,28 +1050,6 @@ export class Peerbit {
 		return this.programs.has(topic);
 	}
 
-	async _requestCache(
-		address: string,
-		directory: string,
-		options?: { existingCache?: LazyLevel; reset?: boolean }
-	) {
-		const dir = directory || this.cacheDir;
-		if (!this.caches[dir]) {
-			const newCache = options?.existingCache || (await this._createCache(dir));
-			this.caches[dir] = { cache: newCache, handlers: new Set() };
-		}
-		this.caches[dir].handlers.add(address);
-		const cache = this.caches[dir].cache;
-
-		// "Wake up" the caches if they need it
-		if (cache) await cache.open();
-		if (options?.reset) {
-			await cache._store.clear();
-		}
-
-		return cache;
-	}
-
 	/**
 	 * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
 	 * and to replicate heads (and updates) which is requested by another peer
@@ -1160,17 +1119,11 @@ export class Peerbit {
 				}
 			}
 
-			logger.debug("open()");
-
-			options = Object.assign({ localOnly: false, create: false }, options);
 			logger.debug(`Open database '${program.constructor.name}`);
 
-			if (!options.encryption) {
-				options.encryption = await encryptionWithRequestKey(
-					this.identity,
-					this.keystore
-				);
-			}
+			const encryption =
+				/* 	options.log?.encryption ||  TODO  */
+				await encryptionWithRequestKey(this.identity, this.keystore);
 			const role = options.role || new ReplicatorType();
 
 			const minReplicas =
@@ -1189,9 +1142,12 @@ export class Peerbit {
 				return value;
 			};
 
+			let programCache: LazyLevel | undefined = undefined;
 			await program.init(this.libp2p, options.identity || this.identity, {
-				onClose: () => this._onProgamClose(program),
-				onDrop: () => this._onProgamClose(program),
+				onClose: async () => {
+					return this._onProgamClose(program, programCache!);
+				},
+				onDrop: () => this._onProgamClose(program, programCache!),
 				role,
 				replicators: () => {
 					// TODO Optimize this so we don't have to recreate the array all the time!
@@ -1213,71 +1169,53 @@ export class Peerbit {
 				},
 				// If the program opens more programs
 				open: (program) => this.open(program, options),
+				onSave: async (address) => {
+					programCache = await createSubCache(this._cache, address.toString(), {
+						reset: options.reset,
+					});
+				},
+				replicator: (gid) =>
+					this.isLeader(program.address, gid, resolveMinReplicas()),
 
-				store: {
-					...options,
-					cacheId: programAddress,
-					replicator: (gid: string) =>
-						this.isLeader(program.address, gid, resolveMinReplicas()),
-					replicatorsCacheId: () => this._lastSubscriptionMessageId,
-					resolveCache: async (store) => {
-						const programAddress = program.address?.toString();
-						if (!programAddress) {
-							throw new Error("Unexpected");
-						}
-						const sublevel = this.cache._store.sublevel(
-							path.join(programAddress, "store", store.id)
+				log: {
+					encryption,
+					trim: options.trim && {
+						...options.trim,
+						filter: {
+							canTrim: async (gid) =>
+								!(await this.isLeader(
+									program.address,
+									gid,
+									resolveMinReplicas()
+								)),
+							cacheId: () => this._lastSubscriptionMessageId,
+						},
+					},
+					cache: async (name: string) => {
+						return createSubCache(
+							programCache!, // TODO types
+							path.join("log", name)
 						);
-						return new LazyLevel(sublevel);
 					},
-					onClose: async (store) => {
-						await this._onClose(program, store);
-						if (options.onClose) {
-							return options.onClose(store);
-						}
-						return;
-					},
-					onDrop: async (store) => {
-						await this._onDrop(store);
-						if (options.onDrop) {
-							return options.onDrop(store);
-						}
-						return;
-					},
-					onLoad: async (store) => {
-						/*  await this._onLoad(store) */
-						if (options.onLoad) {
-							return options.onLoad(store);
-						}
-						return;
-					},
-					onWrite: async (store, entry) => {
-						await this.onWrite(program, store, entry, program.address);
-						if (options.onWrite) {
-							return options.onWrite(store, entry);
-						}
-						return;
+					onClose: async (log) => {
+						//	CLOSED IS NOT CALLED ON DROP!
+						await this._onClose(program, log);
+						return options.log?.onClose?.(log);
 					},
 
-					onOpen: async (store) => {
-						if (options.onOpen) {
-							return options.onOpen(store);
-						}
-						return;
+					onWrite: async (log, entry) => {
+						await this.onWrite(program, log, entry, program.address);
+						return options.log?.onWrite?.(log, entry);
+					},
+
+					onChange: async (log, change) => {
+						return options?.log?.onChange?.(log, change);
 					},
 				},
 			});
 
-			await this._requestCache(
-				program.address.toString(),
-				options.directory || this.cacheDir,
-				{
-					reset: options.reset,
-				}
-			);
-
+			// Address will not always exist
 			const pm = await this.addProgram(program, minReplicas, options.sync);
-
 			await this.subscribeToProgram(program.address.toString(), role);
 
 			/// TODO encryption

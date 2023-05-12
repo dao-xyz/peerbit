@@ -1,3 +1,10 @@
+import { field, variant } from "@dao-xyz/borsh";
+import { AppendOptions, CanAppend, Entry, Log } from "@dao-xyz/peerbit-log";
+import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { Program } from "@dao-xyz/peerbit-program";
+import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";
+import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
 	RangeMetadata,
@@ -8,14 +15,7 @@ import {
 } from "./query.js";
 
 import { Range } from "./range.js";
-import { field, variant } from "@dao-xyz/borsh";
-import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
-import { CanAppend, Entry } from "@dao-xyz/peerbit-log";
-import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { Program } from "@dao-xyz/peerbit-program";
-import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 const logger = loggerFn({ module: "string" });
 
 export const STRING_STORE_TYPE = "string_store";
@@ -39,8 +39,8 @@ export type StringStoreOptions = {
 
 @variant("dstring")
 export class DString extends Program {
-	@field({ type: Store })
-	store: Store<StringOperation>;
+	@field({ type: Log })
+	_log: Log<StringOperation>;
 
 	@field({ type: RPC })
 	query: RPC<StringQueryRequest, StringResult>;
@@ -54,7 +54,7 @@ export class DString extends Program {
 		super();
 		if (properties) {
 			this.query = properties.query || new RPC();
-			this.store = new Store();
+			this._log = new Log();
 			this._index = new StringIndex();
 		}
 	}
@@ -64,16 +64,13 @@ export class DString extends Program {
 		canAppend?: CanAppend<StringOperation>;
 	}) {
 		this._optionCanAppend = options?.canAppend;
-		this.store.setup({
+		this._log.setup({
 			encoding,
 			canAppend: this.canAppend.bind(this),
-			onUpdate: this._index.updateIndex.bind(this._index),
+			onChange: this._index.updateIndex.bind(this._index),
 		});
-		if (options?.canAppend) {
-			this.store.canAppend = options.canAppend;
-		}
 
-		await this._index.setup(this.store);
+		await this._index.setup(this._log);
 		await this.query.setup({
 			...options,
 			context: () => this.address,
@@ -95,11 +92,11 @@ export class DString extends Program {
 	}
 
 	async _canAppend(entry: Entry<StringOperation>): Promise<boolean> {
-		if (this.store.oplog.length === 0) {
+		if (this._log.length === 0) {
 			return true;
 		} else {
 			for (const next of entry.next) {
-				if (this.store.oplog.has(next)) {
+				if (this._log.has(next)) {
 					return true;
 				}
 			}
@@ -110,23 +107,23 @@ export class DString extends Program {
 	async add(
 		value: string,
 		index: Range,
-		options?: AddOperationOptions<StringOperation>
+		options?: AppendOptions<StringOperation>
 	) {
-		return this.store.append(
+		return this._log.append(
 			new StringOperation({
 				index,
 				value,
 			}),
-			{ nexts: await this.store.oplog.getHeads(), ...options }
+			{ nexts: await this._log.getHeads(), ...options }
 		);
 	}
 
-	async del(index: Range, options?: AddOperationOptions<StringOperation>) {
+	async del(index: Range, options?: AppendOptions<StringOperation>) {
 		const operation = {
 			index,
 		} as StringOperation;
-		return this.store.append(operation, {
-			nexts: await this.store.oplog.getHeads(),
+		return this._log.append(operation, {
+			nexts: await this._log.getHeads(),
 			...options,
 		});
 	}

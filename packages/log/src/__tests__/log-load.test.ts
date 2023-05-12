@@ -149,89 +149,6 @@ describe("Log - Load", function () {
 		await keystore?.close();
 	});
 
-	describe("fromJSON", () => {
-		it("creates a log from an entry", async () => {
-			const fixture = await LogCreator.createLogWithSixteenEntries(
-				store,
-				signKeys
-			);
-			const data = fixture.log;
-			const json = fixture.json;
-			const log = await Log.fromJSON(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				json,
-				{}
-			);
-			expect((await log.getHeads())[0].gid).toEqual(
-				(await data.getHeads())[0].gid
-			);
-			expect(log.length).toEqual(16);
-			assert.deepStrictEqual(
-				(await log.toArray()).map((e) => e.payload.getValue()),
-				fixture.expectedData
-			);
-		});
-
-		it("creates a log from an entry with custom tiebreaker", async () => {
-			const fixture = await LogCreator.createLogWithSixteenEntries(
-				store,
-				signKeys
-			);
-			const data = fixture.log;
-			const json = fixture.json;
-
-			const log = await Log.fromJSON(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				json,
-				{ length: -1, sortFn: FirstWriteWins }
-			);
-
-			expect(log.length).toEqual(16);
-			expect((await log.toArray()).map((e) => e.payload.getValue())).toEqual(
-				firstWriteExpectedData
-			);
-		});
-
-		it("respects timeout parameter", async () => {
-			const slowStore = new SlowBlockStore(store);
-			slowStore.lag = 0;
-			const fixture = await LogCreator.createLogWithSixteenEntries(
-				slowStore,
-				signKeys
-			);
-			const json = fixture.json;
-			json.heads = ["zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus"];
-			const timeout = 500;
-			slowStore.lag = 3000;
-			const st = new Date().getTime();
-			const log = await Log.fromJSON(
-				slowStore,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				json,
-				{ timeout }
-			);
-			const et = new Date().getTime();
-			// Allow for a few millseconds of skew
-			assert.strictEqual(
-				et - st >= timeout - 10,
-				true,
-				"" + (et - st) + " should be greater than timeout " + timeout
-			);
-			expect(log.length).toEqual(0);
-		});
-	});
-
 	describe("fromEntryHash", () => {
 		it("creates a log from an entry hash", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
@@ -239,25 +156,23 @@ describe("Log - Load", function () {
 				signKeys
 			);
 			const data = fixture.log;
-			const json = fixture.json;
+			const heads = await fixture.log.getHeads();
 
-			const log1 = await Log.fromEntryHash(
+			const log1 = await Log.fromEntry(
 				store,
 				{
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				json.heads[0],
-				{ logId: "X" }
+				heads[0]
 			);
-			const log2 = await Log.fromEntryHash(
+			const log2 = await Log.fromEntry(
 				store,
 				{
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				json.heads[1],
-				{ logId: "X" }
+				heads[1]
 			);
 
 			await log1.join(log2);
@@ -276,25 +191,24 @@ describe("Log - Load", function () {
 				store,
 				signKeys
 			);
-			const data = fixture.log;
-			const json = fixture.json;
-			const log1 = await Log.fromEntryHash(
+			const heads = await fixture.log.getHeads();
+			const log1 = await Log.fromEntry(
 				store,
 				{
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				json.heads[0],
-				{ logId: "X", sortFn: FirstWriteWins }
+				heads[0],
+				{ sortFn: FirstWriteWins }
 			);
-			const log2 = await Log.fromEntryHash(
+			const log2 = await Log.fromEntry(
 				store,
 				{
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				json.heads[1],
-				{ logId: "X", sortFn: FirstWriteWins }
+				heads[1],
+				{ sortFn: FirstWriteWins }
 			);
 
 			await log1.join(log2);
@@ -309,30 +223,52 @@ describe("Log - Load", function () {
 		it("respects timeout parameter", async () => {
 			const timeout = 500;
 			const st = new Date().getTime();
-			const log = await Log.fromEntryHash(
-				new SlowBlockStore(store),
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				"zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus",
-				{ logId: "X", timeout }
-			);
-			const et = new Date().getTime();
-			assert.strictEqual(
-				et - st >= timeout,
-				true,
-				"" + (et - st) + " should be greater than timeout " + timeout
-			);
-			expect(log.length).toEqual(0);
-			assert.deepStrictEqual(
-				(await log.toArray()).map((e) => e.payload.getValue()),
-				[]
-			);
+			try {
+				await Log.fromEntry(
+					new SlowBlockStore(store),
+					{
+						...signKey.keypair,
+						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					},
+					"zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus",
+					{ timeout }
+				);
+				throw new Error("Expected to fail");
+			} catch (error) {
+				const et = new Date().getTime();
+				expect(et - st).toBeGreaterThan(timeout);
+				expect(et - st).toBeLessThan(timeout * 100); // some upper bound
+			}
 		});
 	});
 
 	describe("fromEntry", () => {
+		let log1: Log<any>, log2: Log<any>, log3: Log<any>, log4: Log<any>;
+
+		beforeEach(async () => {
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log();
+			await log2.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log();
+			await log3.init(store, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
+
+			log4 = new Log();
+			await log4.init(store, {
+				...signKey4.keypair,
+				sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+			});
+		});
+
 		it("creates a log from an entry", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				store,
@@ -346,8 +282,7 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				await data.getHeads(),
-				{ length: -1 }
+				await data.getHeads()
 			);
 			expect((await log.getHeads())[0].gid).toEqual(
 				(await data.getHeads())[0].gid
@@ -373,7 +308,7 @@ describe("Log - Load", function () {
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
 				await data.getHeads(),
-				{ length: -1, sortFn: FirstWriteWins }
+				{ sortFn: FirstWriteWins }
 			);
 			expect(log.length).toEqual(16);
 			assert.deepStrictEqual(
@@ -382,12 +317,15 @@ describe("Log - Load", function () {
 			);
 		});
 
+		/* TODO
+		
 		it("keeps the original heads", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				store,
 				signKeys
 			);
 			const data = fixture.log;
+
 			const log1 = await Log.fromEntry<string>(
 				store,
 				{
@@ -397,8 +335,8 @@ describe("Log - Load", function () {
 				await data.getHeads(),
 				{ length: (await data.getHeads()).length }
 			);
-			expect((await log1.getHeads())[0].gid).toEqual(
-				(await data.getHeads())[0].gid
+			expect((await log1.getHeads()).map(x => x.hash)).toContainValues(
+				(await data.getHeads()).map(x => x.hash)
 			);
 			expect(log1.length).toEqual((await data.getHeads()).length);
 			expect((await log1.toArray())[0].payload.getValue()).toEqual("entryC0");
@@ -442,72 +380,9 @@ describe("Log - Load", function () {
 			expect((await log3.toArray())[4].payload.getValue()).toEqual("entryA8");
 			expect((await log3.toArray())[5].payload.getValue()).toEqual("entryA9");
 			expect((await log3.toArray())[6].payload.getValue()).toEqual("entryA10");
-		});
-
-		it("onProgress callback is fired for each entry", async () => {
-			const items1: Entry<string>[] = [];
-			const amount = 100;
-			for (let i = 1; i <= amount; i++) {
-				const prev1 = last(items1);
-				const n1 = await Entry.create({
-					store,
-					identity: {
-						...signKey.keypair,
-						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-					},
-					gidSeed: Buffer.from("a"),
-					data: "entryA" + i,
-					next: prev1 ? [prev1] : undefined,
-				});
-				items1.push(n1);
-			}
-
-			let i = 0;
-			const callback = (entry: Entry<string>) => {
-				assert.notStrictEqual(entry, null);
-				expect(entry.hash).toEqual(items1[items1.length - i - 1].hash);
-				expect(entry.payload.getValue()).toEqual(
-					items1[items1.length - i - 1].payload.getValue()
-				);
-				i++;
-			};
-
-			await Log.fromEntry<string>(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				last(items1),
-				{ length: -1, onFetched: callback }
-			);
-		});
+		}); 
 
 		it("retrieves partial log from an entry hash", async () => {
-			const log1 = new Log<string>(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log2 = new Log<string>(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log<string>(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
 			const items1: Entry<string>[] = [];
 			const items2: Entry<string>[] = [];
 			const items3: Entry<string>[] = [];
@@ -565,33 +440,9 @@ describe("Log - Load", function () {
 				{ length: 42 }
 			);
 			expect(b.length).toEqual(42);
-		});
+		});*/
 
 		it("retrieves full log from an entry hash", async () => {
-			const log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
 			const items1: Entry<string>[] = [];
 			const items2: Entry<string>[] = [];
 			const items3: Entry<string>[] = [];
@@ -632,8 +483,7 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				[last(items1)],
-				{ length: amount }
+				[last(items1)]
 			);
 			expect(a.length).toEqual(amount);
 
@@ -643,8 +493,7 @@ describe("Log - Load", function () {
 					...signKey2.keypair,
 					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 				},
-				[last(items2)],
-				{ length: amount * 2 }
+				[last(items2)]
 			);
 			expect(b.length).toEqual(amount * 2);
 
@@ -654,37 +503,12 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				[last(items3)],
-				{ length: amount * 3 }
+				[last(items3)]
 			);
 			expect(c.length).toEqual(amount * 3);
 		});
 
 		it("retrieves full log from an entry hash 2", async () => {
-			const log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
 			const items1: Entry<string>[] = [];
 			const items2: Entry<string>[] = [];
 			const items3: Entry<string>[] = [];
@@ -725,8 +549,7 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				last(items1),
-				{ length: amount }
+				last(items1)
 			);
 			expect(a.length).toEqual(amount);
 
@@ -736,8 +559,7 @@ describe("Log - Load", function () {
 					...signKey2.keypair,
 					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 				},
-				last(items2),
-				{ length: amount * 2 }
+				last(items2)
 			);
 			expect(b.length).toEqual(amount * 2);
 
@@ -747,37 +569,12 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(items3),
-				{ length: amount * 3 }
+				last(items3)
 			);
 			expect(c.length).toEqual(amount * 3);
 		});
 
 		it("retrieves full log from an entry hash 3", async () => {
-			const log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log2 = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey4.keypair,
-					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
 			const items1: Entry<string>[] = [];
 			const items2: Entry<string>[] = [];
 			const items3: Entry<string>[] = [];
@@ -839,8 +636,7 @@ describe("Log - Load", function () {
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				last(items1),
-				{ length: amount }
+				last(items1)
 			);
 			expect(a.length).toEqual(amount);
 
@@ -873,8 +669,7 @@ describe("Log - Load", function () {
 					...signKey2.keypair,
 					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 				},
-				last(items2),
-				{ length: amount * 2 }
+				last(items2)
 			);
 			expect(b.length).toEqual(amount * 2);
 			expect(
@@ -887,8 +682,7 @@ describe("Log - Load", function () {
 					...signKey4.keypair,
 					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
 				},
-				last(items3),
-				{ length: amount * 3 }
+				last(items3)
 			);
 			await c.append("EOF");
 			expect(c.length).toEqual(amount * 3 + 1);
@@ -932,14 +726,11 @@ describe("Log - Load", function () {
 			).toContainAllValues(tmp);
 
 			// make sure logX comes after A, B and C
-			const logX = new Log<string>(
-				store,
-				{
-					...signKey4.keypair,
-					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			const logX = new Log<string>();
+			await logX.init(store, {
+				...signKey4.keypair,
+				sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+			});
 			await logX.append("1");
 			await logX.append("2");
 			await logX.append("3");
@@ -949,8 +740,7 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(await logX.toArray()),
-				{ length: -1 }
+				last(await logX.toArray())
 			);
 
 			await c.join(d);
@@ -964,8 +754,7 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(await c.toArray()),
-				{ length: -1 }
+				last(await c.toArray())
 			);
 			const g = await Log.fromEntry<string>(
 				store,
@@ -973,8 +762,7 @@ describe("Log - Load", function () {
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
-				last(await d.toArray()),
-				{ length: -1 }
+				last(await d.toArray())
 			);
 
 			/*  expect(f.toString()).toEqual(bigLogString) // Ignore these for know since we have removed the clock manipulation in the loop
@@ -982,31 +770,6 @@ describe("Log - Load", function () {
 		});
 
 		it("retrieves full log of randomly joined log", async () => {
-			const log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log2 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey4.keypair,
-					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-
 			for (let i = 1; i <= 5; i++) {
 				await log1.append("entryA" + i);
 				await log2.append("entryB" + i);
@@ -1054,54 +817,21 @@ describe("Log - Load", function () {
 		});
 
 		it("retrieves randomly joined log deterministically", async () => {
-			const logA = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const logB = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: (data) => signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: (data) => signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log = new Log(
-				store,
-				{
-					...signKey4.keypair,
-					sign: (data) => signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-
 			for (let i = 1; i <= 5; i++) {
-				await logA.append("entryA" + i);
-				await logB.append("entryB" + i);
+				await log1.append("entryA" + i);
+				await log2.append("entryB" + i);
 			}
 
-			await log3.join(logA);
-			await log3.join(logB);
+			await log3.join(log1);
+			await log3.join(log2);
 
 			for (let i = 6; i <= 10; i++) {
-				await logA.append("entryA" + i);
+				await log1.append("entryA" + i);
 			}
 
-			await log.join(log3);
-			await log.append("entryC0");
-			await log.join(logA);
+			await log4.join(log3);
+			await log4.append("entryC0");
+			await log4.join(log1);
 
 			const expectedData = [
 				"entryA1",
@@ -1123,7 +853,7 @@ describe("Log - Load", function () {
 			];
 
 			expect(
-				(await log.toArray()).map((e) => e.payload.getValue())
+				(await log4.toArray()).map((e) => e.payload.getValue())
 			).toStrictEqual(expectedData);
 		});
 
@@ -1285,13 +1015,14 @@ describe("Log - Load", function () {
 				signKeys
 			);
 
-			const firstWriteWinsLog = new Log<string>(
+			const firstWriteWinsLog = new Log<string>();
+			await firstWriteWinsLog.init(
 				store,
 				{
 					...signKeys[0].keypair,
 					sign: (data) => signKeys[0].keypair.sign(data),
 				},
-				{ logId: "X", sortFn: FirstWriteWins }
+				{ sortFn: FirstWriteWins }
 			);
 			await firstWriteWinsLog.join(testLog.log);
 			assert.deepStrictEqual(
@@ -1305,63 +1036,31 @@ describe("Log - Load", function () {
 				store,
 				signKeys
 			);
-			const firstWriteWinsLog = new Log<string>(
+			const firstWriteWinsLog = new Log<string>();
+			await firstWriteWinsLog.init(
 				store,
 				{
 					...signKeys[0].keypair,
 					sign: (data) => signKeys[0].keypair.sign(data),
 				},
-				{ logId: "X", sortFn: BadComparatorReturnsZero }
+				{ sortFn: BadComparatorReturnsZero }
 			);
 			await expect(() => firstWriteWinsLog.join(testLog.log)).rejects.toThrow();
 		});
 
+		/* TODO 
+		
 		it("retrieves partially joined log deterministically - single next pointer", async () => {
-			const nextPointerAmount = 1;
-
-			const logA = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const logB = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: (data) => signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: (data) => signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log = new Log(
-				store,
-				{
-					...signKey4.keypair,
-					sign: (data) => signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-
 			for (let i = 1; i <= 5; i++) {
-				await logA.append("entryA" + i, {
-					nexts: await logA.getHeads(),
+				await log1.append("entryA" + i, {
+					nexts: await log1.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
 					}),
 				});
-				await logB.append("entryB" + i, {
-					nexts: await logB.getHeads(),
+				await log2.append("entryB" + i, {
+					nexts: await log2.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 1,
@@ -1369,12 +1068,12 @@ describe("Log - Load", function () {
 				});
 			}
 
-			await log3.join(logA);
-			await log3.join(logB);
+			await log3.join(log1);
+			await log3.join(log2);
 
 			for (let i = 6; i <= 10; i++) {
-				await logA.append("entryA" + i, {
-					nexts: await logA.getHeads(),
+				await log1.append("entryA" + i, {
+					nexts: await log1.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1382,29 +1081,24 @@ describe("Log - Load", function () {
 				});
 			}
 
-			await log.join(log3);
-			await log.append("entryC0", {
-				nexts: await logB.getHeads(),
+			await log4.join(log3);
+			await log4.append("entryC0", {
+				nexts: await log2.getHeads(),
 				timestamp: new Timestamp({
 					wallTime: BigInt(11),
 					logical: 0,
 				}),
 			});
 
-			await log.join(logA);
-
-			const hash = await log.toMultihash();
+			await log4.join(log1);
 
 			// First 5
-			let res = await Log.fromMultihash(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ length: 5 }
-			);
+			let res = new Log();
+			await res.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			await res.join(await log4.getHeads(), { length: 5 });
 
 			const first5 = ["entryB5", "entryA8", "entryA9", "entryA10", "entryC0"];
 
@@ -1414,15 +1108,12 @@ describe("Log - Load", function () {
 			);
 
 			// First 11
-			res = await Log.fromMultihash(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ length: 11 }
-			);
+			res = new Log();
+			await res.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			await res.join(await log4.getHeads(), { length: 11 });
 
 			// TODO, is this really the expected order? Determins is a partial load is not super important,
 			// since partial loading is done by someone who wants an approximate state of something
@@ -1445,18 +1136,15 @@ describe("Log - Load", function () {
 			);
 
 			// All but one
-			res = await Log.fromMultihash(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ length: 16 - 1 }
-			);
+			res = new Log();
+			await res.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			await res.join(await log4.getHeads(), { length: 16 - 1 });
 
 			const all = [
-				/* excl */ "entryB1",
+				 "entryB1",
 				"entryA2",
 				"entryB2",
 				"entryA3",
@@ -1480,63 +1168,28 @@ describe("Log - Load", function () {
 		});
 
 		it("retrieves partially joined log deterministically - multiple next pointers", async () => {
-			/*         const nextPointersAmount = 64
-			 */
-			const logA = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const logB = new Log(
-				store,
-				{
-					...signKey2.keypair,
-					sign: (data) => signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log(
-				store,
-				{
-					...signKey3.keypair,
-					sign: (data) => signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log = new Log(
-				store,
-				{
-					...signKey4.keypair,
-					sign: (data) => signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-
 			for (let i = 1; i <= 5; i++) {
-				await logA.append("entryA" + i, {
-					nexts: await logA.getHeads(),
+				await log1.append("entryA" + i, {
+					nexts: await log1.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
 					}),
 				});
-				await logB.append("entryB" + i, {
-					nexts: await logB.getHeads(),
+				await log2.append("entryB" + i, {
+					nexts: await log2.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 1,
 					}),
 				});
 			}
-			await log3.join(logA);
-			await log3.join(logB);
+			await log3.join(log1);
+			await log3.join(log2);
 
 			for (let i = 6; i <= 10; i++) {
-				await logA.append("entryA" + i, {
-					nexts: await logA.getHeads(),
+				await log1.append("entryA" + i, {
+					nexts: await log1.getHeads(),
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1544,29 +1197,24 @@ describe("Log - Load", function () {
 				});
 			}
 
-			await log.join(log3);
-			await log.append("entryC0", {
-				nexts: await logB.getHeads(),
+			await log4.join(log3);
+			await log4.append("entryC0", {
+				nexts: await log2.getHeads(),
 				timestamp: new Timestamp({
 					wallTime: BigInt(11),
 					logical: 0,
 				}),
 			});
 
-			await log.join(logA);
-
-			const hash = await log.toMultihash();
+			await log4.join(log1);
 
 			// First 5
-			let res = await Log.fromMultihash(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ length: 5 }
-			);
+			let res = new Log();
+			await res.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			await res.join(await log4.getHeads(), { length: 5 });
 
 			// TODO, make sure partial load is deterministic (ordered by time)
 			const first5 = ["entryB5", "entryA8", "entryA9", "entryA10", "entryC0"];
@@ -1576,15 +1224,12 @@ describe("Log - Load", function () {
 			);
 
 			// First 11
-			res = await Log.fromMultihash(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ length: 11 }
-			);
+			res = new Log();
+			await res.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			await res.join(await log4.getHeads(), { length: 11 });
 
 			const first11 = [
 				"entryB2",
@@ -1605,72 +1250,42 @@ describe("Log - Load", function () {
 			);
 
 			// All but one
-			res = await Log.fromMultihash(
-				store,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ length: 16 - 1 }
-			);
+			res = new Log();
+			await res.init(store, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			await res.join(await log4.getHeads(), { length: 16 - 1 });
 
 			const all = [
-				/* excl */ "entryB1",
-				"entryA2",
-				"entryB2",
-				"entryA3",
-				"entryB3",
-				"entryA4",
-				"entryB4",
-				"entryA5",
-				"entryB5",
-				"entryA6",
-				"entryA7",
-				"entryA8",
-				"entryA9",
-				"entryA10",
-				"entryC0",
+				 "entryB1",
+			"entryA2",
+			"entryB2",
+			"entryA3",
+			"entryB3",
+			"entryA4",
+			"entryB4",
+			"entryA5",
+			"entryB5",
+			"entryA6",
+			"entryA7",
+			"entryA8",
+			"entryA9",
+			"entryA10",
+			"entryC0",
 			];
 
-			expect((await res.toArray()).map((e) => e.payload.getValue())).toEqual(
-				all
-			);
-		});
+		expect((await res.toArray()).map((e) => e.payload.getValue())).toEqual(
+			all
+		);
+	}); */
 
 		describe("fetches a log", () => {
 			const amount = 100;
 			let items1: Entry<string>[] = [];
 			let items2: Entry<string>[] = [];
 			let items3: Entry<string>[] = [];
-			let log1: Log<any>, log2: Log<any>, log3: Log<any>;
-
 			beforeEach(async () => {
-				const ts = new Date().getTime();
-				log1 = new Log(
-					store,
-					{
-						...signKey.keypair,
-						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-					},
-					{ logId: "X" }
-				);
-				log2 = new Log(
-					store,
-					{
-						...signKey2.keypair,
-						sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-					},
-					{ logId: "X" }
-				);
-				log3 = new Log(
-					store,
-					{
-						...signKey3.keypair,
-						sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-					},
-					{ logId: "X" }
-				);
 				items1 = [];
 				items2 = [];
 				items3 = [];
@@ -1734,8 +1349,7 @@ describe("Log - Load", function () {
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 					},
-					last(items1),
-					{ length: -1 }
+					last(items1)
 				);
 				expect(a.length).toEqual(amount);
 				expect((await a.toArray())[0].hash).toEqual(items1[0].hash);

@@ -5,7 +5,6 @@ import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import {
 	Ed25519Keypair,
 	PublicKeyEncryptionResolver,
-	SignatureWithKey,
 	X25519Keypair,
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
@@ -82,7 +81,6 @@ describe("Log - Encryption", function () {
 
 		beforeEach(async () => {
 			const logOptions = {
-				gid: "X",
 				encryption: {
 					getEncryptionKeypair: () => senderKey.keypair,
 					getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -103,7 +101,8 @@ describe("Log - Encryption", function () {
 					},
 				} as PublicKeyEncryptionResolver,
 			};
-			log1 = new Log(
+			log1 = new Log();
+			await log1.init(
 				store,
 				{
 					...signKey.keypair,
@@ -111,7 +110,8 @@ describe("Log - Encryption", function () {
 				},
 				logOptions
 			);
-			log2 = new Log(
+			log2 = new Log();
+			await log2.init(
 				store,
 				{
 					...signKey2.keypair,

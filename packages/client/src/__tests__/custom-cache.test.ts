@@ -1,7 +1,7 @@
 import assert from "assert";
 import rmrf from "rimraf";
 import path from "path";
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { createStore } from "./storage.js";
 import CustomCache from "@dao-xyz/lazy-level";
 import { jest } from "@jest/globals";
@@ -45,7 +45,7 @@ describe(`Use a Custom Cache`, function () {
 						await database.getTestValue(db1),
 						database.expectedValue
 					);
-					await db1.store.close();
+					await db1.log.close();
 				} catch (error) {
 					const e = 123;
 				}

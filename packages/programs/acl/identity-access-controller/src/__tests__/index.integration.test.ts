@@ -1,13 +1,14 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import {
-	createStore,
-	LSession,
-	waitForPeers,
-} from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { waitFor } from "@dao-xyz/peerbit-time";
+import {
+	AccessError,
+	Ed25519Keypair,
+	randomBytes,
+	sha256Sync,
+} from "@dao-xyz/peerbit-crypto";
 import {
 	Documents,
 	DocumentIndex,
@@ -16,7 +17,6 @@ import {
 	Results,
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
-import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import Cache from "@dao-xyz/lazy-level";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import {
@@ -55,11 +55,7 @@ class TestStore extends Program {
 	@field({ type: IdentityAccessController })
 	accessController: IdentityAccessController;
 
-	constructor(properties: {
-		id?: string;
-		identity: Identity;
-		accessControllerName?: string;
-	}) {
+	constructor(properties: { id?: Uint8Array; identity: Identity }) {
 		super(properties);
 		if (properties) {
 			this.store = new Documents({
@@ -69,7 +65,7 @@ class TestStore extends Program {
 				}),
 			});
 			this.accessController = new IdentityAccessController({
-				id: properties.accessControllerName || "test-acl",
+				id: sha256Sync(this.id),
 				rootTrust: properties.identity?.publicKey,
 			});
 		}
@@ -95,7 +91,6 @@ describe("index", () => {
 		i: number,
 		options: {
 			role: SubscriptionType;
-			store: {};
 			canRead?: CanRead;
 			canAppend?: CanAppend<T>;
 		}
@@ -104,11 +99,6 @@ describe("index", () => {
 		const result = await store.init(session.peers[i], identites[i], {
 			...options,
 			replicators: () => replicators,
-			store: {
-				...DefaultOptions,
-				resolveCache: async () => new Cache(createStore()),
-				...options.store,
-			},
 		});
 		return result;
 	};
@@ -135,8 +125,9 @@ describe("index", () => {
 
 	it("can be deterministic", async () => {
 		const key = (await Ed25519Keypair.create()).publicKey;
-		const t1 = new IdentityAccessController({ id: "x", rootTrust: key });
-		const t2 = new IdentityAccessController({ id: "x", rootTrust: key });
+		let id = randomBytes(32);
+		const t1 = new IdentityAccessController({ id, rootTrust: key });
+		const t2 = new IdentityAccessController({ id, rootTrust: key });
 		t1.setupIndices();
 		t2.setupIndices();
 		expect(serialize(t1)).toEqual(serialize(t2));
@@ -146,7 +137,7 @@ describe("index", () => {
 		const s = new TestStore({ identity: identity(0) });
 		const options = {
 			role: new ReplicatorType(),
-			store: {},
+			log: {},
 		};
 		const l0a = await init(s, 0, options);
 
@@ -177,8 +168,8 @@ describe("index", () => {
 			session.peers[1].directblock.publicKey
 		);
 
-		await l0b.accessController.trustedNetwork.trustGraph.store.sync(
-			await l0a.accessController.trustedNetwork.trustGraph.store.oplog.getHeads()
+		await l0b.accessController.trustedNetwork.trustGraph.log.join(
+			await l0a.accessController.trustedNetwork.trustGraph.log.getHeads()
 		);
 
 		replicators = [
@@ -187,8 +178,7 @@ describe("index", () => {
 		];
 
 		await waitFor(
-			() =>
-				l0b.accessController.trustedNetwork.trustGraph.store.oplog.length === 2
+			() => l0b.accessController.trustedNetwork.trustGraph.log.length === 2
 		);
 		await l0b.store.put(
 			new Document({
@@ -196,8 +186,8 @@ describe("index", () => {
 			})
 		); // Now trusted
 
-		await l0a.store.store.sync(await l0b.store.store.oplog.getHeads());
-		await l0b.store.store.sync(await l0a.store.store.oplog.getHeads());
+		await l0a.store.log.join(await l0b.store.log.getHeads());
+		await l0b.store.log.join(await l0a.store.log.getHeads());
 
 		await waitFor(() => l0a.store.index.size === 2);
 		await waitFor(() => l0b.store.index.size === 2);
@@ -207,7 +197,7 @@ describe("index", () => {
 		it("publickey", async () => {
 			const options = {
 				role: new ReplicatorType(),
-				store: {},
+				log: {},
 			};
 
 			const l0a = await init(
@@ -228,7 +218,7 @@ describe("index", () => {
 				options
 			)) as TestStore;
 
-			await l0b.store.store.sync(await l0a.store.store.oplog.getHeads());
+			await l0b.store.log.join(await l0a.store.log.getHeads());
 
 			await waitFor(() => l0b.store.index.size === 1);
 			await expect(
@@ -257,8 +247,8 @@ describe("index", () => {
 				})
 			);
 
-			await l0b.accessController.access.store.sync(
-				await l0a.accessController.access.store.oplog.getHeads()
+			await l0b.accessController.access.log.join(
+				await l0a.accessController.access.log.getHeads()
 			);
 			await waitFor(() => l0b.accessController.access.index.size === 2);
 			await l0b.store.put(
@@ -271,7 +261,7 @@ describe("index", () => {
 		it("through trust chain", async () => {
 			const options = {
 				role: new ReplicatorType(),
-				store: {},
+				log: {},
 			};
 
 			const l0a = await init(
@@ -335,11 +325,11 @@ describe("index", () => {
 				})
 			);
 
-			await l0b.accessController.access.store.sync(
-				await l0a.accessController.access.store.oplog.getHeads()
+			await l0b.accessController.access.log.join(
+				await l0a.accessController.access.log.getHeads()
 			);
-			await l0c.accessController.access.store.sync(
-				await l0a.accessController.access.store.oplog.getHeads()
+			await l0c.accessController.access.log.join(
+				await l0a.accessController.access.log.getHeads()
 			);
 
 			await expect(
@@ -354,8 +344,8 @@ describe("index", () => {
 			await l0b.accessController.identityGraphController.addRelation(
 				identity(2).publicKey
 			);
-			await l0c.accessController.identityGraphController.relationGraph.store.sync(
-				await l0b.accessController.identityGraphController.relationGraph.store.oplog.getHeads()
+			await l0c.accessController.identityGraphController.relationGraph.log.join(
+				await l0b.accessController.identityGraphController.relationGraph.log.getHeads()
 			);
 
 			await waitFor(
@@ -373,7 +363,7 @@ describe("index", () => {
 		it("any access", async () => {
 			const options = {
 				role: new ReplicatorType(),
-				store: {},
+				log: {},
 			};
 
 			const l0a = await init(
@@ -412,8 +402,8 @@ describe("index", () => {
 			});
 			expect(access.id).toBeDefined();
 			await l0a.accessController.access.put(access);
-			await l0b.accessController.access.store.sync(
-				await l0a.accessController.access.store.oplog.getHeads()
+			await l0b.accessController.access.log.join(
+				await l0a.accessController.access.log.getHeads()
 			);
 
 			await waitFor(() => l0b.accessController.access.index.size === 1);
@@ -427,7 +417,7 @@ describe("index", () => {
 		it("read access", async () => {
 			const options = {
 				role: new ReplicatorType(),
-				store: {},
+				log: {},
 			};
 
 			const l0a = await init(
@@ -478,8 +468,8 @@ describe("index", () => {
 					accessTypes: [AccessType.Read],
 				}).initialize()
 			);
-			await l0b.accessController.access.store.sync(
-				await l0a.accessController.access.store.oplog.getHeads()
+			await l0b.accessController.access.log.join(
+				await l0a.accessController.access.log.getHeads()
 			);
 			await waitFor(() => l0b.accessController.access.index.size === 1);
 
@@ -491,7 +481,7 @@ describe("index", () => {
 	it("manifests are unique", async () => {
 		const options = {
 			role: new ReplicatorType(),
-			store: {},
+			log: {},
 		};
 
 		const l0a = await init(
@@ -510,7 +500,7 @@ describe("index", () => {
 	it("can query", async () => {
 		const options = {
 			role: new ReplicatorType(),
-			store: {},
+			log: {},
 		};
 
 		const l0a = await init(new TestStore({ identity: identity(0) }), 0, {
@@ -534,13 +524,12 @@ describe("index", () => {
 		const l0b = await init(dbb, 1, {
 			...options,
 			role: new ObserverType(),
-			store: {},
 			canRead: () => Promise.resolve(true),
 		});
 
 		// Allow all for easy query
-		l0b.accessController.access.store.sync(
-			await l0a.accessController.access.store.oplog.getHeads()
+		l0b.accessController.access.log.join(
+			await l0a.accessController.access.log.getHeads()
 		);
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);

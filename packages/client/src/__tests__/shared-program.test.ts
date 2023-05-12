@@ -1,7 +1,8 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { SimpleStoreContract } from "./utils/access";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`shared`, () => {
 	let session: LSession;
@@ -34,32 +35,33 @@ describe(`shared`, () => {
 	});
 
 	it("open same store twice will share instance", async () => {
+		let id = randomBytes(32);
 		db1 = await client1.open(
 			new SimpleStoreContract({
-				store: new EventStore({ id: "some db" }),
+				store: new EventStore({ id }),
 			})
 		);
 		const sameDb = await client1.open(
 			new SimpleStoreContract({
-				store: new EventStore({ id: "some db" }),
+				store: new EventStore({ id }),
 			})
 		);
 		expect(db1 === sameDb);
 	});
 
 	it("can share nested stores", async () => {
-		const topic = "topic";
+		let id = randomBytes(32);
 		db1 = await client1.open(
 			new SimpleStoreContract({
 				store: new EventStore<string>({
-					id: "event store",
+					id,
 				}),
 			})
 		);
 		db2 = await client1.open(
 			new SimpleStoreContract({
 				store: new EventStore<string>({
-					id: "event store",
+					id,
 				}),
 			})
 		);

@@ -50,14 +50,11 @@ describe("Log - Nexts", function () {
 	});
 	describe("Custom next", () => {
 		it("can fork explicitly", async () => {
-			const log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "A" }
-			);
+			const log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
 			const { entry: e0 } = await log1.append("0", { nexts: [] });
 			const { entry: e1 } = await log1.append("1", { nexts: [e0] });
 

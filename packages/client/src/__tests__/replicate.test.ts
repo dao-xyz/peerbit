@@ -2,7 +2,7 @@ import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 
@@ -57,8 +57,10 @@ describe(`Replication`, function () {
 				db1.address!
 			))!,
 			{
-				onUpdate: async () => {
-					updated += 1;
+				log: {
+					onChange: async () => {
+						updated += 1;
+					},
 				},
 			}
 		);
@@ -68,7 +70,11 @@ describe(`Replication`, function () {
 		const value = "hello";
 		await db1.add(value);
 
-		await waitFor(() => updated === 1);
+		try {
+			await waitFor(() => updated === 1);
+		} catch (error) {
+			const q = 123;
+		}
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(1);
 
 		const db1Entries: Entry<Operation<string>>[] = (
@@ -126,11 +132,11 @@ describe(`Replication`, function () {
 		// Once db2 has finished replication, make sure it has all elements
 		// and process to the asserts below
 		try {
-			await waitFor(() => db2.store.oplog.length === entryCount);
+			await waitFor(() => db2.log.length === entryCount);
 		} catch (error) {
 			console.error(
 				"Did not recieve all entries, missing: " +
-					(db2.store.oplog.length - entryCount),
+					(db2.log.length - entryCount),
 				"Fetch events: " +
 					fetchEvents +
 					", fetch hashes size: " +
@@ -190,7 +196,7 @@ describe(`Replication`, function () {
 		//await mapSeries(adds, (i) => db1.add("hello " + i));
 
 		// All entries should be in the database
-		await waitFor(() => db2.store.oplog.length === entryCount);
+		await waitFor(() => db2.log.length === entryCount);
 
 		// All entries should be in the database
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
@@ -226,7 +232,7 @@ describe(`Replication`, function () {
 		);
 
 		// All entries should be in the database
-		await waitFor(() => db2.store.oplog.length === entryCount);
+		await waitFor(() => db2.log.length === entryCount);
 
 		// progress events should (increase monotonically)
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
@@ -281,12 +287,10 @@ describe(`Replication`, function () {
 		// Database values should match
 
 		try {
-			await waitFor(
-				() => db1.store.oplog.values.length === db2.store.oplog.values.length
-			);
+			await waitFor(() => db1.log.values.length === db2.log.values.length);
 		} catch (error) {
 			throw new Error(
-				`${db1.store.oplog.values.length}  +" --- " + ${db2.store.oplog.values.length}`
+				`${db1.log.values.length}  +" --- " + ${db2.log.values.length}`
 			);
 		}
 

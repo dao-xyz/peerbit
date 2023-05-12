@@ -186,13 +186,10 @@ describe("Entry", function () {
 
 			// We can not have a hash check because nonce of encryption will always change
 			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
-			assert.deepStrictEqual(
-				entry.metadata.clock.id,
-				new Uint8Array(
-					new Ed25519PublicKey({
-						publicKey: signKey.keypair.publicKey.publicKey,
-					}).bytes
-				)
+			expect(entry.metadata.clock.id).toEqual(
+				new Ed25519PublicKey({
+					publicKey: signKey.keypair.publicKey.publicKey,
+				}).bytes
 			);
 			expect(entry.metadata.clock.timestamp.logical).toEqual(0);
 			expect(entry.next.length).toEqual(0);

@@ -4,7 +4,7 @@ import fs from "fs-extra";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "../entry.js";
-import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -56,63 +56,48 @@ describe("Signed Log", function () {
 		await keystore?.close();
 	});
 
-	it("has the correct identity", () => {
-		const log = new Log(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+	it("has the correct identity", async () => {
+		const log = new Log();
+		await log.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
 		expect(log.identity.publicKey).toMatchSnapshot();
 	});
 
-	it("has the correct public key", () => {
-		const log = new Log(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+	it("has the correct public key", async () => {
+		const log = new Log();
+		await log.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
 		expect(log.identity.publicKey).toEqual(signKey.keypair.publicKey);
 	});
 
-	it("has the correct pkSignature", () => {
-		const log = new Log(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+	it("has the correct pkSignature", async () => {
+		const log = new Log();
+		await log.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
 		expect(log.identity.publicKey).toEqual(signKey.keypair.publicKey);
 	});
 
-	it("has the correct signature", () => {
-		const log = new Log(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+	it("has the correct signature", async () => {
+		const log = new Log();
+		await log.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
 		expect(log.identity.publicKey).toEqual(signKey.keypair.publicKey);
 	});
 
 	it("entries contain an identity", async () => {
-		const log = new Log(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+		const log = new Log();
+		await log.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
 		await log.append("one");
 		assert.notStrictEqual((await log.toArray())[0].signatures, null);
 		expect(
@@ -123,14 +108,11 @@ describe("Signed Log", function () {
 	});
 
 	it("can sign with multiple identities", async () => {
-		const log = new Log(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+		const log = new Log();
+		await log.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
 		const signers = [
 			signKey.keypair.sign.bind(signKey.keypair),
 			signKey2.keypair.sign.bind(signKey2.keypair),
@@ -178,22 +160,16 @@ describe("Signed Log", function () {
 
 	// We dont check signatues during join anymore
 	it("throws an error if log is signed but the signature doesn't verify", async () => {
-		const log1 = new Log<string>(
-			store,
-			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
-		const log2 = new Log<string>(
-			store,
-			{
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-			},
-			{ logId: "A" }
-		);
+		const log1 = new Log<string>();
+		await log1.init(store, {
+			...signKey.keypair,
+			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+		});
+		const log2 = new Log<string>();
+		await log2.init(store, {
+			...signKey2.keypair,
+			sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+		});
 		let err;
 
 		try {

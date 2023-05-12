@@ -6,7 +6,7 @@ export type LevelBatchOptions = {
 	interval: number;
 	onError?: (error: any) => void;
 };
-export type LazyLevelOptions = { batch?: LevelBatchOptions | boolean };
+export type LazyLevelOptions = { batch?: LevelBatchOptions };
 
 const logger = loggerFn({ module: "cache" });
 
@@ -21,15 +21,17 @@ export default class LazyLevel {
 	_tempStore?: Map<string, Uint8Array>;
 	_tempDeleted?: Set<string>;
 	_txPromise?: Promise<void>;
-	_batchOptions?: { interval: number; onError?: (e: any) => void };
+	_opts?: LazyLevelOptions;
 
 	constructor(
 		store: AbstractLevel<any, any, any>,
-		opts: LazyLevelOptions = { batch: { interval: 300 } }
+		opts: LazyLevelOptions | { batch: boolean } = { batch: { interval: 300 } }
 	) {
 		this._store = store;
-		if (opts.batch) {
-			this._batchOptions = opts.batch === true ? { interval: 300 } : opts.batch;
+		if (typeof opts.batch === "boolean") {
+			if (opts.batch === true) this._opts = { batch: { interval: 300 } };
+		} else if (opts) {
+			this._opts = { batch: { interval: 300, ...opts.batch }, ...opts };
 		}
 	}
 
@@ -38,7 +40,7 @@ export default class LazyLevel {
 	}
 
 	async idle() {
-		if (this._batchOptions && this._txQueue) {
+		if (this._opts?.batch && this._txQueue) {
 			if (
 				this._store.status !== "open" &&
 				this._store.status !== "opening" &&
@@ -49,7 +51,7 @@ export default class LazyLevel {
 			}
 			await this._txPromise;
 			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
-				timeout: this._batchOptions.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
+				timeout: this._opts.batch.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
 				delayInterval: 100,
 				timeoutMessage: `Failed to wait for idling, got txQueue with ${
 					this._txQueue?.length
@@ -64,7 +66,7 @@ export default class LazyLevel {
 			return Promise.reject(new Error("No cache store found to close"));
 
 		await this.idle(); // idle after clear interval (because else txQueue might be filled with new things that are never removed)
-		if (this._batchOptions) {
+		if (this._opts?.batch) {
 			clearInterval(this._interval);
 			this._interval = undefined;
 			this._tempStore?.clear();
@@ -81,7 +83,7 @@ export default class LazyLevel {
 		if (!this._store)
 			return Promise.reject(new Error("No cache store found to open"));
 
-		if (this._batchOptions && !this._interval) {
+		if (this._opts?.batch && !this._interval) {
 			this._txQueue = [];
 			this._tempStore = new Map();
 			this._tempDeleted = new Set();
@@ -108,8 +110,8 @@ export default class LazyLevel {
 									});
 								})
 								.catch((error) => {
-									if (this._batchOptions?.onError) {
-										this._batchOptions.onError(error);
+									if (this._opts?.batch?.onError) {
+										this._opts?.batch.onError(error);
 									} else {
 										logger.error(error);
 									}
@@ -121,7 +123,7 @@ export default class LazyLevel {
 							.catch(next);
 					}
 				}
-			}, this._batchOptions.interval);
+			}, this._opts.batch.interval);
 		}
 
 		if (this.status !== "open") {
@@ -198,7 +200,7 @@ export default class LazyLevel {
 	}
 
 	set(key: string, value: Uint8Array) {
-		if (this._batchOptions) {
+		if (this._opts?.batch) {
 			this._tempDeleted!.delete(key);
 			this._tempStore!.set(key, value);
 			this._txQueue!.push({
@@ -217,7 +219,7 @@ export default class LazyLevel {
 			throw new Error("Cache store not open: " + this._store.status);
 		}
 
-		if (this._batchOptions) {
+		if (this._opts?.batch) {
 			this._tempDeleted!.add(key);
 			this._txQueue!.push({ type: "del", key: key });
 		} else {
@@ -244,5 +246,9 @@ export default class LazyLevel {
 		for (const key of keys) {
 			await this.del(key);
 		}
+	}
+
+	sublevel(name: string) {
+		return new LazyLevel(this._store.sublevel(name), this._opts);
 	}
 }

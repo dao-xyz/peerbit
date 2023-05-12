@@ -13,7 +13,6 @@ import {
 	ByteMatchQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import { DefaultOptions } from "@dao-xyz/peerbit-store";
 import { Identity } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
@@ -27,7 +26,7 @@ import {
 	Program,
 	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
@@ -62,7 +61,7 @@ class TestStore extends Program {
 	@field({ type: Documents })
 	docs: Documents<Document>;
 
-	constructor(properties?: { id?: string; docs: Documents<Document> }) {
+	constructor(properties?: { id?: Uint8Array; docs: Documents<Document> }) {
 		super(properties);
 		if (properties) {
 			this.docs = properties.docs;
@@ -117,9 +116,8 @@ describe("index", () => {
 					replicators: () => [
 						[session.peers[0].directsub.publicKey.hashcode()],
 					],
-					store: {
-						...DefaultOptions,
-						resolveCache: () => new Cache(createStore()),
+					log: {
+						cache: () => new Cache(createStore()),
 					},
 				});
 
@@ -165,8 +163,8 @@ describe("index", () => {
 				expect(changes[2].removed[0].id).toEqual(doc.id);
 
 				// try close and load
-				await store.docs.store.close();
-				await store.docs.store.load();
+				await store.docs.log.close();
+				await store.docs.log.load();
 			});
 
 			it("many chunks", async () => {
@@ -180,9 +178,8 @@ describe("index", () => {
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
 					replicators: () => [],
-					store: {
-						...DefaultOptions,
-						resolveCache: () => new Cache(createStore()),
+					log: {
+						cache: () => new Cache(createStore()),
 					},
 				});
 				const insertions = 100;
@@ -213,9 +210,8 @@ describe("index", () => {
 				await store.init(session.peers[0], await createIdentity(), {
 					replicators: () => [],
 					role: new ReplicatorType(),
-					store: {
-						...DefaultOptions,
-						resolveCache: () => new Cache(createStore()),
+					log: {
+						cache: () => new Cache(createStore()),
 					},
 				});
 
@@ -238,7 +234,7 @@ describe("index", () => {
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(store.docs.index.size).toEqual(0);
 				expect(
-					(await store.docs.store.oplog.values.toArray()).map((x) => x.hash)
+					(await store.docs.log.values.toArray()).map((x) => x.hash)
 				).toEqual([deleteOperation.hash]); // the delete operation
 			});
 		});
@@ -270,9 +266,8 @@ describe("index", () => {
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
 					replicators: () => [],
-					store: {
-						...DefaultOptions,
-						resolveCache: () => new Cache(createStore()),
+					log: {
+						cache: () => new Cache(createStore()),
 						trim: { type: "length", to: 1 },
 					},
 				});
@@ -298,7 +293,7 @@ describe("index", () => {
 				// put doc again and make sure it still exist in index with trim to 1 option
 				await store.docs.put(doc);
 				expect(store.docs.index.size).toEqual(1);
-				expect(store.docs.store.oplog.values.length).toEqual(1);
+				expect(store.docs.log.values.length).toEqual(1);
 				expect(changes.length).toEqual(2);
 				expect(changes[1].added).toHaveLength(1);
 				expect(changes[1].added[0].id).toEqual(doc.id);
@@ -318,9 +313,8 @@ describe("index", () => {
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
 					replicators: () => [],
-					store: {
-						...DefaultOptions,
-						resolveCache: () => new Cache(createStore()),
+					log: {
+						cache: () => new Cache(createStore()),
 						trim: { type: "length", to: 10 },
 					},
 				});
@@ -336,8 +330,8 @@ describe("index", () => {
 				}
 
 				expect(store.docs.index.size).toEqual(10);
-				expect(store.docs.store.oplog.values.length).toEqual(10);
-				expect(store.docs.store.oplog.headsIndex.index.size).toEqual(10);
+				expect(store.docs.log.values.length).toEqual(10);
+				expect(store.docs.log.headsIndex.index.size).toEqual(10);
 			});
 
 			describe("field extractor", () => {
@@ -372,9 +366,8 @@ describe("index", () => {
 						replicators: () => [
 							[session.peers[0].directsub.publicKey.hashcode()],
 						],
-						store: {
-							...DefaultOptions,
-							resolveCache: () => new Cache(createStore()),
+						log: {
+							cache: () => new Cache(createStore()),
 						},
 					});
 
@@ -404,9 +397,8 @@ describe("index", () => {
 						replicators: () => [
 							[session.peers[0].directsub.publicKey.hashcode()],
 						],
-						store: {
-							...DefaultOptions,
-							resolveCache: () => new Cache(createStore()),
+						log: {
+							cache: () => new Cache(createStore()),
 						},
 					});
 
@@ -446,8 +438,7 @@ describe("index", () => {
 						replicators: () => [
 							[session.peers[0].directsub.publicKey.hashcode()],
 						],
-						store: {
-							...DefaultOptions,
+						log: {
 							encryption: {
 								getEncryptionKeypair: () => keypair,
 								getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -464,7 +455,7 @@ describe("index", () => {
 								},
 							},
 
-							resolveCache: () => new Cache(createStore()),
+							cache: () => new Cache(createStore()),
 						},
 					});
 					stores.push(store);
@@ -576,9 +567,9 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1, sync: true } }
 					);
-
 					await waitFor(() => stores[1].docs.index.size === 4);
-					expect(canAppendEvents).toEqual(6); // 4 docuuments where 2 have been edited once (4 + 2)
+					expect(stores[1].docs.log.length).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
+					expect(canAppendEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
 					expect(syncEvents).toEqual(1);
 
 					await stores[1].docs.index.query(
@@ -938,7 +929,7 @@ describe("index", () => {
 			constructor(
 				properties?:
 					| {
-							id?: string | undefined;
+							id?: Uint8Array | undefined;
 					  }
 					| undefined
 			) {
@@ -1009,11 +1000,11 @@ describe("index", () => {
 						// we don't init, but in real use case we would init here
 						return program;
 					},
+					replicator: () => Promise.resolve(true),
 					replicators: () => [
 						[session.peers[0].directsub.publicKey.hashcode()],
 					],
-					store: {
-						...DefaultOptions,
+					log: {
 						encryption: {
 							getEncryptionKeypair: () => keypair,
 							getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -1029,8 +1020,7 @@ describe("index", () => {
 								}
 							},
 						},
-						replicator: () => Promise.resolve(true),
-						resolveCache: () => new Cache(createStore()),
+						cache: () => new Cache(createStore()),
 					},
 				});
 				stores.push({ store, openEvents });
@@ -1064,10 +1054,8 @@ describe("index", () => {
 			subProgram.init(session.peers[0], await createIdentity(), {
 				role: new ReplicatorType(),
 				replicators: () => [],
-				store: {
-					...DefaultOptions,
-					replicator: () => Promise.resolve(true),
-					resolveCache: () => new Cache(createStore()),
+				log: {
+					cache: () => new Cache(createStore()),
 				},
 			});
 			const _result = await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
@@ -1087,8 +1075,8 @@ describe("index", () => {
 		it("can open program when sync", async () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[1].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
-			await stores[0].store.docs.store.sync(
-				await stores[1].store.docs.store.oplog.values.toArray()
+			await stores[0].store.docs.log.join(
+				await stores[1].store.docs.log.values.toArray()
 			);
 			expect(stores[0].openEvents).toHaveLength(1);
 			expect(stores[1].openEvents).toHaveLength(0);
@@ -1148,8 +1136,7 @@ describe("index", () => {
 						replicators: () => [
 							session.peers.map((x) => x.directsub.publicKey.hashcode()),
 						],
-						store: {
-							...DefaultOptions,
+						log: {
 							encryption: {
 								getEncryptionKeypair: () => keypair,
 								getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -1166,7 +1153,7 @@ describe("index", () => {
 								},
 							},
 
-							resolveCache: () => new Cache(createStore()),
+							cache: () => new Cache(createStore()),
 						},
 					});
 					stores.push(store);

@@ -510,14 +510,12 @@ export abstract class DirectStream<
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
 
-			// let ok = false;
 			for (const existingStreams of conn.streams) {
 				if (
 					existingStreams.stat.protocol &&
 					this.multicodecs.includes(existingStreams.stat.protocol) &&
 					existingStreams.stat.direction === "outbound"
 				) {
-					console.log("RETURN!");
 					return;
 				}
 			}

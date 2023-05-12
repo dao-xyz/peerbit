@@ -43,7 +43,7 @@ describe("libp2p only", () => {
 });
 describe("server", () => {
 	let session: LSession, peer: Peerbit, address: Address, server: http.Server;
-	jest.setTimeout(60 * 1000);
+	let db: PermissionedString;
 
 	beforeAll(async () => {
 		session = await LSession.connected(1);
@@ -54,13 +54,13 @@ describe("server", () => {
 			libp2p: session.peers[0],
 			directory: "./peerbit/" + +new Date(),
 		});
-
-		address = (await peer.open(new PermissionedString({ trusted: [] })))
-			.address;
+		db = await peer.open(new PermissionedString({ trusted: [] }));
+		address = db.address;
 		server = await startServer(peer);
 	});
 	afterEach(async () => {
 		server.close();
+		await db.close();
 		await peer.disconnect();
 	});
 

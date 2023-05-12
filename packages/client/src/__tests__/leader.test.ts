@@ -1,9 +1,10 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { ObserverType } from "@dao-xyz/peerbit-program";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`leaders`, function () {
 	let session: LSession;
@@ -84,9 +85,7 @@ describe(`leaders`, function () {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await client1.open(
-			new EventStore<string>({ id: "replication-tests" })
-		);
+		db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }));
 
 		const isLeaderAOneLeader = await client1.isLeader(db1.address!, 123, 1);
 		expect(isLeaderAOneLeader);
@@ -127,12 +126,9 @@ describe(`leaders`, function () {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await client1.open(
-			new EventStore<string>({ id: "replication-tests" }),
-			{
-				role: new ObserverType(),
-			}
-		);
+		db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }), {
+			role: new ObserverType(),
+		});
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 
 		await delay(5000); // some delay so that if peers are to replicate, they would have had time to notify each other
@@ -152,12 +148,9 @@ describe(`leaders`, function () {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await client1.open(
-			new EventStore<string>({ id: "replication-tests" }),
-			{
-				role: new ObserverType(),
-			}
-		);
+		db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }), {
+			role: new ObserverType(),
+		});
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
@@ -185,7 +178,7 @@ describe(`leaders`, function () {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await client1.open(new EventStore<string>({ id: "three-peers" }));
+		db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }));
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
@@ -232,9 +225,7 @@ describe(`leaders`, function () {
 		]).toContainValues([true, true, true]);
 	});
 	it("evenly distributed", async () => {
-		db1 = await client1.open(
-			new EventStore<string>({ id: "evenly distirbuted" })
-		);
+		db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }));
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
@@ -268,7 +259,7 @@ describe(`leaders`, function () {
 	});
 
 	it("leader always defined", async () => {
-		db1 = await client1.open(new EventStore<string>({ id: "three-peers" }));
+		db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }));
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
@@ -297,9 +288,7 @@ describe(`leaders`, function () {
 			expect(sorted).toEqual(strings);
 		};
 		it("can handle peers leaving and joining", async () => {
-			db1 = await client1.open(
-				new EventStore<string>({ id: "leave-join-test" })
-			);
+			db1 = await client1.open(new EventStore<string>({ id: randomBytes(32) }));
 			db2 = await client2.open<EventStore<string>>(db1.address!);
 
 			await waitFor(

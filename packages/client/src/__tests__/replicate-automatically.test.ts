@@ -1,14 +1,14 @@
-import { Peerbit } from "../peer";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { waitForAsync } from "@dao-xyz/peerbit-time";
+import { ObserverType } from "@dao-xyz/peerbit-program";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { KeyBlocks } from "./utils/stores/key-value-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
-import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
-import { ObserverType } from "@dao-xyz/peerbit-program";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Automatic Replication`, function () {
-	/*  let ipfsd1: Controller, ipfsd2: Controller, ipfsd3: Controller, ipfsd4: Controller, ipfs1: IPFS, ipfs2: IPFS, ipfs3: IPFS, ipfs4: IPFS */
 	let client1: Peerbit, client2: Peerbit, client3: Peerbit, client4: Peerbit;
 	let session: LSession;
 	beforeEach(async () => {
@@ -39,12 +39,12 @@ describe(`Automatic Replication`, function () {
 		const entryArr: number[] = [];
 
 		const db1 = await client1.open(
-			new EventStore<string>({ id: "replicate-automatically-tests" })
+			new EventStore<string>({ id: randomBytes(32) })
 		);
 
 		const db3 = await client1.open(
 			new KeyBlocks<string>({
-				id: "replicate-automatically-tests-kv",
+				id: randomBytes(32),
 			})
 		);
 
@@ -81,15 +81,15 @@ describe(`Automatic Replication`, function () {
 			assert(result1[i].equals(result2[i]));
 		}
 
-		expect(db3.store.oplog.length).toEqual(0);
-		expect(db4.store.oplog.length).toEqual(0);
+		expect(db3.log.length).toEqual(0);
+		expect(db4.log.length).toEqual(0);
 	});
 
 	it("starts replicating the database when peers connect in write mode", async () => {
 		const entryCount = 1;
 		const entryArr: number[] = [];
 		const db1 = await client1.open(
-			new EventStore<string>({ id: "replicate-automatically-tests" }),
+			new EventStore<string>({ id: randomBytes(32) }),
 			{ role: new ObserverType() }
 		);
 

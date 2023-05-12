@@ -1,7 +1,7 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { EventStore } from "./utils/stores";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair, randomBytes } from "@dao-xyz/peerbit-crypto";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
@@ -44,17 +44,17 @@ describe(`Set identities`, function () {
 	it("sets identity", async () => {
 		const db = await client.open(
 			new EventStore<string>({
-				id: "abc",
+				id: randomBytes(32),
 			}),
 			options
 		);
-		expect(db.store.identity.publicKey.equals(client.identity.publicKey));
-		db.store.setIdentity({
+		expect(db.log.identity.publicKey.equals(client.identity.publicKey));
+		db.log.setIdentity({
 			publicKey: signKey1.keypair.publicKey,
 			privateKey: signKey1.keypair.privateKey,
 			sign: (data) => signKey1.keypair.sign(data),
 		});
-		expect(db.store.identity.publicKey.equals(signKey1.keypair.publicKey));
+		expect(db.log.identity.publicKey.equals(signKey1.keypair.publicKey));
 		await db.close();
 	});
 });

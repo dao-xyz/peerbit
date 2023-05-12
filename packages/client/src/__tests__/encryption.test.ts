@@ -1,5 +1,5 @@
 import { Entry } from "@dao-xyz/peerbit-log";
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
@@ -85,7 +85,7 @@ describe(`encryption`, function () {
 		).toBeDefined();
 
 		await addHello(db1, recieverKey.keypair.publicKey);
-		await waitFor(() => db2.store.oplog.length === 1);
+		await waitFor(() => db2.log.length === 1);
 		await checkHello(db2);
 	});
 });

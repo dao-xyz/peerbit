@@ -1,4 +1,4 @@
-import { Entry } from "@dao-xyz/peerbit-log";
+import { Entry } from "./entry.js";
 
 export interface EntryWithRefs<T> {
 	entry: Entry<T>;

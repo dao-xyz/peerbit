@@ -51,14 +51,11 @@ describe("Log - GetPow2Refs", function () {
 		let log1: Log<string>;
 
 		beforeEach(async () => {
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
 
 			for (let i = 0; i <= 100; i++) {
 				await log1.append("entry" + i);
@@ -133,14 +130,11 @@ describe("Log - GetPow2Refs", function () {
 		let log1: Log<string>;
 
 		beforeEach(async () => {
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
 
 			for (let i = 0; i <= 10; i++) {
 				await log1.append("entry" + i, { nexts: [] });
