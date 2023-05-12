@@ -182,6 +182,31 @@ export class Signatures {
 	}
 }
 
+const maybeEncrypt = <Q>(
+	thing: Q,
+	encryption?: EntryEncryption,
+	reciever?: MaybeEncryptionPublicKey
+): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
+	const recievers = reciever
+		? Array.isArray(reciever)
+			? reciever
+			: [reciever]
+		: undefined;
+	if (recievers?.length && recievers?.length > 0) {
+		if (!encryption) {
+			throw new Error("Encrpryption config not initialized");
+		}
+		return new DecryptedThing<Q>({
+			data: serialize(thing),
+			value: thing,
+		}).encrypt(encryption.options.getEncryptionKeypair, ...recievers);
+	}
+	return new DecryptedThing<Q>({
+		data: serialize(thing),
+		value: thing,
+	});
+};
+
 @variant(0)
 export class Entry<T>
 	implements
@@ -200,9 +225,6 @@ export class Entry<T>
 
 	@field({ type: MaybeEncrypted })
 	_next: MaybeEncrypted<StringArray>; // Array of hashes (the tree)
-
-	@field({ type: MaybeEncrypted })
-	_fork: MaybeEncrypted<StringArray>;
 
 	@field({ type: fixedArray("u8", 4) })
 	_reserved: Uint8Array;
@@ -223,7 +245,6 @@ export class Entry<T>
 		signatures?: Signatures;
 		metadata: MaybeEncrypted<Metadata>;
 		next: MaybeEncrypted<StringArray>;
-		fork?: MaybeEncrypted<StringArray>; //  (not used)
 		reserved?: Uint8Array; // intentational type 0  (not used)h
 		hash?: string;
 		createdLocally?: boolean;
@@ -232,11 +253,6 @@ export class Entry<T>
 		this._payload = obj.payload;
 		this._signatures = obj.signatures;
 		this._next = obj.next;
-		this._fork =
-			obj.fork ||
-			new DecryptedThing({
-				data: serialize(new StringArray({ arr: [] })),
-			});
 		this._reserved = obj.reserved || new Uint8Array([0, 0, 0, 0]);
 		this.createdLocally = obj.createdLocally;
 	}
@@ -402,7 +418,6 @@ export class Entry<T>
 			next: entry._next,
 			payload: entry._payload,
 			reserved: entry._reserved,
-			fork: entry._fork,
 			signatures: undefined,
 			hash: undefined,
 		});
@@ -426,7 +441,6 @@ export class Entry<T>
 			this._metadata.equals(other._metadata) &&
 			this._signatures!.equals(other._signatures!) &&
 			this._next.equals(other._next) &&
-			this._fork.equals(other._fork) &&
 			this._payload.equals(other._payload)
 		); // dont compare hashes because the hash is a function of the other properties
 	}
@@ -438,8 +452,8 @@ export class Entry<T>
 		await store.rm(this.hash);
 	}
 
-	static createGid(seed?: Uint8Array): string {
-		return sha256Base64Sync(seed || randomBytes(32));
+	static createGid(seed?: Uint8Array): Promise<string> {
+		return sha256Base64(seed || randomBytes(32));
 	}
 
 	static async create<T>(properties: {
@@ -480,39 +494,12 @@ export class Entry<T>
 			value: properties.data,
 		});
 
-		const maybeEncrypt = <Q>(
-			thing: Q,
-			reciever?: MaybeEncryptionPublicKey
-		): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
-			const recievers = reciever
-				? Array.isArray(reciever)
-					? reciever
-					: [reciever]
-				: undefined;
-			if (recievers?.length && recievers?.length > 0) {
-				if (!properties.encryption) {
-					throw new Error("Encrpryption config not initialized");
-				}
-				return new DecryptedThing<Q>({
-					data: serialize(thing),
-					value: thing,
-				}).encrypt(
-					properties.encryption.options.getEncryptionKeypair,
-					...recievers
-				);
-			}
-			return new DecryptedThing<Q>({
-				data: serialize(thing),
-				value: thing,
-			});
-		};
-
 		let clock: Clock | undefined = properties.clock;
 		if (!clock) {
 			const hlc = new HLC();
-			nexts.forEach((next) => {
+			for (const next of nexts) {
 				hlc.update(next.metadata.clock.timestamp);
-			});
+			}
 
 			if (
 				properties.encryption?.reciever.signatures &&
@@ -523,13 +510,13 @@ export class Entry<T>
 				);
 			}
 			clock = new Clock({
-				id: new Uint8Array(serialize(properties.identity.publicKey)),
+				id: properties.identity.publicKey.bytes,
 				timestamp: hlc.now(),
 			});
 		} else {
 			const cv = clock;
 			// check if nexts, that all nexts are happening BEFORE this clock value (else clock make no sense)
-			nexts.forEach((n) => {
+			for (const n of nexts) {
 				if (Timestamp.compare(n.metadata.clock.timestamp, cv.timestamp) >= 0) {
 					throw new Error(
 						"Expecting next(s) to happen before entry, got: " +
@@ -538,11 +525,12 @@ export class Entry<T>
 							cv.timestamp
 					);
 				}
-			});
+			}
 		}
 
 		const payload = await maybeEncrypt(
 			payloadToSave,
+			properties.encryption,
 			properties.encryption?.reciever.payload
 		);
 
@@ -552,7 +540,7 @@ export class Entry<T>
 		const maxClock = new Timestamp({ wallTime: 0n, logical: 0 });
 		if (nexts?.length > 0) {
 			// take min gid as our gid
-			nexts.forEach((n) => {
+			for (const n of nexts) {
 				if (!n.hash) {
 					throw new Error("Expecting hash to be defined to next entries");
 				}
@@ -564,7 +552,7 @@ export class Entry<T>
 					maxChainLength = n.maxChainLength;
 					if (!gid) {
 						gid = n.metadata.gid;
-						return;
+						continue;
 					}
 					// replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
 					else if (
@@ -575,12 +563,12 @@ export class Entry<T>
 						gid = n.metadata.gid;
 					}
 				}
-			});
+			}
 			if (!gid) {
 				throw new Error("Unexpected behaviour, could not find gid");
 			}
 		} else {
-			gid = properties.gid || Entry.createGid(properties.gidSeed);
+			gid = properties.gid || (await Entry.createGid(properties.gidSeed));
 		}
 
 		maxChainLength += 1n; // include this
@@ -592,6 +580,7 @@ export class Entry<T>
 				gid,
 				type: properties.type ?? EntryType.APPEND,
 			}),
+			properties.encryption,
 			properties.encryption?.reciever.metadata
 		);
 
@@ -606,19 +595,15 @@ export class Entry<T>
 			new StringArray({
 				arr: next,
 			}),
+			properties.encryption,
 			properties.encryption?.reciever.next
 		);
-
-		const forks = new DecryptedThing<StringArray>({
-			data: serialize(new StringArray({ arr: [] })),
-		});
 
 		// Sign id, encrypted payload, clock, nexts, refs
 		const entry: Entry<T> = new Entry<T>({
 			payload,
 			metadata: metadataEncrypted,
 			signatures: undefined,
-			fork: forks,
 			createdLocally: true,
 			next: nextEncrypted, // Array of hashes
 			/* refs: properties.refs, */
@@ -638,12 +623,16 @@ export class Entry<T>
 			properties.encryption?.reciever?.signatures
 		);
 		for (const signature of signatures) {
-			const encryption = encryptAllSignaturesWithSameKey
+			const encryptionRecievers = encryptAllSignaturesWithSameKey
 				? properties.encryption?.reciever?.signatures
 				: properties.encryption?.reciever?.signatures?.[
 						signature.publicKey.hashcode()
 				  ];
-			const signatureEncrypted = await maybeEncrypt(signature, encryption);
+			const signatureEncrypted = await maybeEncrypt(
+				signature,
+				properties.encryption,
+				encryptionRecievers
+			);
 			encryptedSignatures.push(signatureEncrypted);
 		}
 
@@ -656,11 +645,10 @@ export class Entry<T>
 			encoding: properties.encoding,
 		});
 
-		if (properties.canAppend) {
-			if (!(await properties.canAppend(entry))) {
-				throw new AccessError();
-			}
+		if (properties.canAppend && !(await properties.canAppend(entry))) {
+			throw new AccessError();
 		}
+
 		// Append hash and signature
 		entry.hash = await Entry.toMultihash(properties.store, entry);
 		return entry;

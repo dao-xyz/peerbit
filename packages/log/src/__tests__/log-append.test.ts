@@ -1,9 +1,5 @@
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
@@ -37,14 +33,11 @@ describe("Log - Append", function () {
 		let log: Log<string>;
 
 		beforeEach(async () => {
-			log = new Log(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				{ logId: "A" }
-			);
+			log = new Log();
+			await log.init(store, {
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
+			});
 			await log.append("hello1");
 		});
 
@@ -72,9 +65,7 @@ describe("Log - Append", function () {
 
 		it("updated the clocks correctly", async () => {
 			(await log.toArray()).forEach((entry) => {
-				expect(entry.metadata.clock.id).toEqual(
-					new Uint8Array(signKey.publicKey.bytes)
-				);
+				expect(entry.metadata.clock.id).toEqual(signKey.publicKey.bytes);
 				expect(entry.metadata.clock.timestamp.logical).toEqual(0);
 			});
 		});
@@ -82,14 +73,11 @@ describe("Log - Append", function () {
 
 	describe("reset", () => {
 		it("append", async () => {
-			const log = new Log<string>(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				{ logId: "A" }
-			);
+			const log = new Log();
+			await log.init(store, {
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
+			});
 			const { entry: e1 } = await log.append("hello1");
 			const { entry: e2 } = await log.append("hello2");
 			expect(await blockExists(e1.hash)).toBeTrue();
@@ -103,22 +91,19 @@ describe("Log - Append", function () {
 			expect(await blockExists(e3.hash)).toBeTrue();
 		});
 	});
+
 	describe("append 100 items to a log", () => {
 		const amount = 100;
-		const nextPointerAmount = 64;
 
 		let log: Log<string>;
 
 		beforeAll(async () => {
 			// Do sign function really need to returnr publcikey
-			log = new Log(
-				store,
-				{
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
-				{ logId: "A" }
-			);
+			log = new Log();
+			await log.init(store, {
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
+			});
 			let prev: any = undefined;
 			for (let i = 0; i < amount; i++) {
 				prev = (
@@ -154,9 +139,7 @@ describe("Log - Append", function () {
 						)
 					).toBeGreaterThan(0);
 				}
-				expect(entry.metadata.clock.id).toEqual(
-					new Uint8Array(signKey.publicKey.bytes)
-				);
+				expect(entry.metadata.clock.id).toEqual(signKey.publicKey.bytes);
 			}
 		});
 

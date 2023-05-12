@@ -1,5 +1,4 @@
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
-import { sha256 } from "./hash.js";
 import sodium from "libsodium-wrappers";
 import { PreHash, prehashFn } from "./prehash.js";
 import { SignatureWithKey } from "./signature.js";

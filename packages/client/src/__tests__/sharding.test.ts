@@ -1,12 +1,12 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { v4 as uuid } from "uuid";
 import { AbsolutMinReplicas } from "../exchange-heads";
+import { tcp } from "@libp2p/tcp";
 
 describe(`sharding`, () => {
 	let session: LSession;
@@ -18,11 +18,10 @@ describe(`sharding`, () => {
 		db3: PermissionedEventStore;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3);
+		session = await LSession.connected(3, { transports: [tcp()] });
 	});
 
 	beforeEach(async () => {
-		const topic = uuid();
 		client1 = await Peerbit.create({ libp2p: session.peers[0] });
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
 		client3 = await Peerbit.create({ libp2p: session.peers[2] });
@@ -58,8 +57,8 @@ describe(`sharding`, () => {
 	) => {
 		const map = new Map<string, number>();
 		for (const db of dbs) {
-			for (const value of await db.store.store.oplog.values.toArray()) {
-				expect(await db.store.store.oplog.storage.has(value.hash)).toBeTrue();
+			for (const value of await db.store.log.values.toArray()) {
+				expect(await db.store.log.storage.has(value.hash)).toBeTrue();
 				map.set(value.hash, (map.get(value.hash) || 0) + 1);
 			}
 		}
@@ -91,7 +90,6 @@ describe(`sharding`, () => {
 		);
 
 		const entryCount = sampleSize;
-		//await delay(5000);
 
 		// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 		const promises: Promise<any>[] = [];
@@ -104,24 +102,24 @@ describe(`sharding`, () => {
 
 		await waitFor(
 			() =>
-				db1.store.store.oplog.values.length > entryCount * 0.5 &&
-				db1.store.store.oplog.values.length < entryCount * 0.85
+				db1.store.log.values.length > entryCount * 0.5 &&
+				db1.store.log.values.length < entryCount * 0.85
 		);
 		await waitFor(
 			() =>
-				db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+				db2.store.log.values.length > entryCount * 0.5 &&
+				db2.store.log.values.length < entryCount * 0.85
 		);
 		await waitFor(
 			() =>
-				db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		);
 
 		const checkConverged = async (db: EventStore<any>) => {
-			const a = db.store.oplog.values.length;
+			const a = db.log.values.length;
 			await delay(2500); // arb delay
-			return a === db.store.oplog.values.length;
+			return a === db.log.values.length;
 		};
 
 		await waitForAsync(() => checkConverged(db2.store), {
@@ -134,12 +132,12 @@ describe(`sharding`, () => {
 		});
 
 		expect(
-			db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+			db2.store.log.values.length > entryCount * 0.5 &&
+				db2.store.log.values.length < entryCount * 0.85
 		).toBeTrue();
 		expect(
-			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+			db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		).toBeTrue();
 
 		await checkReplicas(
@@ -171,8 +169,8 @@ describe(`sharding`, () => {
 		}
 
 		await Promise.all(promises);
-		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
-		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db1.store.log.values.length === entryCount);
+		await waitFor(() => db2.store.log.values.length === entryCount);
 
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		// client 3 will subscribe and start to recive heads before recieving subscription info about other peers
@@ -189,14 +187,14 @@ describe(`sharding`, () => {
 
 		await waitFor(
 			() =>
-				db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		);
 
 		const checkConverged = async (db: EventStore<any>) => {
-			const a = db.store.oplog.values.length;
+			const a = db.log.values.length;
 			await delay(2500); // arb delay
-			return a === db.store.oplog.values.length;
+			return a === db.log.values.length;
 		};
 
 		await waitForAsync(() => checkConverged(db2.store), {
@@ -209,15 +207,15 @@ describe(`sharding`, () => {
 		});
 		try {
 			expect(
-				db2.store.store.oplog.values.length > entryCount * 0.5 &&
-					db2.store.store.oplog.values.length < entryCount * 0.85
+				db2.store.log.values.length > entryCount * 0.5 &&
+					db2.store.log.values.length < entryCount * 0.85
 			).toBeTrue();
 		} catch (error) {
 			const x = 123;
 		}
 		expect(
-			db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+			db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		).toBeTrue();
 
 		await checkReplicas(
@@ -250,17 +248,17 @@ describe(`sharding`, () => {
 		}
 
 		await Promise.all(promises);
-		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db1.store.log.values.length === entryCount);
 
 		await waitFor(
 			() =>
-				db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+				db2.store.log.values.length > entryCount * 0.5 &&
+				db2.store.log.values.length < entryCount * 0.85
 		);
 		await waitFor(
 			() =>
-				db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		);
 
 		await checkReplicas(
@@ -272,7 +270,7 @@ describe(`sharding`, () => {
 
 		await db3.close();
 
-		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db2.store.log.values.length === entryCount);
 
 		await checkReplicas(
 			[db1, db2],
@@ -318,26 +316,26 @@ describe(`sharding`, () => {
 
 		await waitFor(
 			() =>
-				db1.store.store.oplog.values.length > entryCount * 0.5 &&
-				db1.store.store.oplog.values.length < entryCount * 0.85
+				db1.store.log.values.length > entryCount * 0.5 &&
+				db1.store.log.values.length < entryCount * 0.85
 		);
 
 		await waitFor(
 			() =>
-				db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
+				db2.store.log.values.length > entryCount * 0.5 &&
+				db2.store.log.values.length < entryCount * 0.85
 		);
 
 		await waitFor(
 			() =>
-				db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		);
 
 		const checkConverged = async (db: EventStore<any>) => {
-			const a = db.store.oplog.values.length;
+			const a = db.log.values.length;
 			await delay(2500); // arb delay
-			return a === db.store.oplog.values.length;
+			return a === db.log.values.length;
 		};
 
 		await waitForAsync(() => checkConverged(db1.store), {
@@ -361,8 +359,8 @@ describe(`sharding`, () => {
 			true
 		);
 		await db3.close();
-		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
-		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db2.store.log.values.length === entryCount);
+		await waitFor(() => db1.store.log.values.length === entryCount);
 		await checkReplicas(
 			[db1, db2],
 			client1.programs.get(db1.address.toString())!.minReplicas.value,
@@ -401,8 +399,8 @@ describe(`sharding`, () => {
 		}
 
 		await Promise.all(promises);
-		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
-		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db1.store.log.values.length === entryCount);
+		await waitFor(() => db2.store.log.values.length === entryCount);
 
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 
@@ -417,26 +415,24 @@ describe(`sharding`, () => {
 			() => client3.getReplicators(db1.address!.toString())?.length === 3
 		);
 
+		await waitFor(() => db1.store.log.values.length === client1WantedDbSize);
+
 		await waitFor(
-			() => db1.store.store.oplog.values.length === client1WantedDbSize
+			() =>
+				db2.store.log.values.length > entryCount * 0.5 &&
+				db2.store.log.values.length < entryCount * 0.85
 		);
 
 		await waitFor(
 			() =>
-				db2.store.store.oplog.values.length > entryCount * 0.5 &&
-				db2.store.store.oplog.values.length < entryCount * 0.85
-		);
-
-		await waitFor(
-			() =>
-				db3.store.store.oplog.values.length > entryCount * 0.5 &&
-				db3.store.store.oplog.values.length < entryCount * 0.85
+				db3.store.log.values.length > entryCount * 0.5 &&
+				db3.store.log.values.length < entryCount * 0.85
 		);
 
 		const checkConverged = async (db: EventStore<any>) => {
-			const a = db.store.oplog.values.length;
+			const a = db.log.values.length;
 			await delay(2500); // arb delay
-			return a === db.store.oplog.values.length;
+			return a === db.log.values.length;
 		};
 
 		await waitForAsync(() => checkConverged(db1.store), {
@@ -460,8 +456,8 @@ describe(`sharding`, () => {
 			false
 		);
 		await db3.close();
-		await waitFor(() => db2.store.store.oplog.values.length === entryCount);
-		await waitFor(() => db1.store.store.oplog.values.length === entryCount);
+		await waitFor(() => db2.store.log.values.length === entryCount);
+		await waitFor(() => db1.store.log.values.length === entryCount);
 
 		await checkReplicas(
 			[db1, db2],

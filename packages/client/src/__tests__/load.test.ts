@@ -1,12 +1,10 @@
-import assert from "assert";
 import mapSeries from "p-map-series";
 import { Address, Program } from "@dao-xyz/peerbit-program";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store.js";
 import { jest } from "@jest/globals";
-import { v4 as uuid } from "uuid";
-import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { field, variant } from "@dao-xyz/borsh";
 
 const dbPath = "./tmp/tests/persistency";
@@ -30,11 +28,11 @@ describe(`load`, () => {
 
 		beforeEach(async () => {
 			client1 = await Peerbit.create({
-				libp2p: session.peers[0],
+				libp2p: session.peers[0] /* ,
 				directory: dbPath + "/" + uuid(),
 				storage: {
 					createStore: () => createStore(),
-				},
+				}, */,
 			}); // We do custom store to prevent sideeffects when writing to disc
 
 			const entryArr: number[] = [];
@@ -73,6 +71,8 @@ describe(`load`, () => {
 			);
 		});
 
+		/*  TODO
+		
 		it("loads database partially", async () => {
 			const amount = 3;
 			db = await client1.open(
@@ -81,7 +81,7 @@ describe(`load`, () => {
 					Address.parse(address)
 				))!
 			);
-			await db.store.load({ amount: 3 });
+			await db.log.load({ amount: 3 });
 			await waitForAsync(
 				async () =>
 					(await db.iterator({ limit: -1 })).collect().length === amount
@@ -97,7 +97,7 @@ describe(`load`, () => {
 			expect(items[items.length - 1].payload.getValue().value).toEqual(
 				"hello" + (entryCount - 1)
 			);
-		});
+		}); */
 
 		it("load and close several times", async () => {
 			const amount = 8;
@@ -171,31 +171,6 @@ describe(`load`, () => {
 				await db.close();
 			}
 		});
-
-		it("loading a database emits 'load.progress' event", async () => {
-			let count = 0;
-			let done = false;
-			db = await client1.open(
-				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				))!,
-				{
-					onLoadProgress: (store, entry) => {
-						count++;
-						expect(address).toEqual(db.address!.toString());
-
-						assert.notEqual(entry.hash, null);
-						assert.notEqual(entry, null);
-						if (count === entryCount) {
-							done = true;
-						}
-					},
-				}
-			);
-			await db.load();
-			await waitFor(() => done);
-		});
 	});
 	describe("load multiple", function () {
 		@variant("multiple")
@@ -232,11 +207,11 @@ describe(`load`, () => {
 
 		beforeEach(async () => {
 			client1 = await Peerbit.create({
-				libp2p: session.peers[0],
+				libp2p: session.peers[0] /* ,
 				directory: dbPath + "/" + uuid(),
 				storage: {
 					createStore: () => createStore(),
-				},
+				}, */,
 			}); // We do custom store to prevent sideeffects when writing to disc
 
 			const entryArr: number[] = [];
@@ -447,204 +422,4 @@ describe(`load`, () => {
 			 await waitFor(() => done);
 		 }); */
 	});
-
-	describe("load from empty snapshot", function () {
-		let db: EventStore<string>,
-			address: string,
-			client1: Peerbit,
-			session: LSession;
-
-		beforeAll(async () => {
-			session = await LSession.connected(1);
-		});
-
-		afterAll(async () => {
-			if (session) await session.stop();
-		});
-
-		beforeEach(async () => {
-			client1 = await Peerbit.create({
-				libp2p: session.peers[0],
-				directory: dbPath + "/" + uuid(),
-			});
-		});
-		afterEach(async () => {
-			await db.drop();
-			if (client1) await client1.stop();
-		});
-
-		it("loads database from an empty snapshot", async () => {
-			db = await client1.open(new EventStore<string>({}));
-			address = db.address!.toString();
-			await db.saveSnapshot();
-			await db.close();
-
-			db = await client1.open(
-				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				))!
-			);
-			await db.loadFromSnapshot();
-			const items = (await db.iterator({ limit: -1 })).collect();
-			expect(items.length).toEqual(0);
-		});
-	});
-
-	describe("load from snapshot", function () {
-		let db: EventStore<string>,
-			address: string,
-			client1: Peerbit,
-			session: LSession;
-
-		beforeAll(async () => {
-			session = await LSession.connected(1);
-		});
-
-		afterAll(async () => {
-			if (session) await session.stop();
-		});
-
-		beforeEach(async () => {
-			client1 = await Peerbit.create({
-				libp2p: session.peers[0],
-				directory: dbPath + "/" + uuid(),
-				storage: {
-					createStore: () => createStore(),
-				},
-			});
-
-			const entryArr: number[] = [];
-
-			for (let i = 0; i < entryCount; i++) entryArr.push(i);
-
-			db = await client1.open(new EventStore<string>({}));
-			address = db.address!.toString();
-			await mapSeries(entryArr, (i) => db.add("hello" + i));
-			await db.saveSnapshot();
-			await db.close();
-		});
-
-		afterEach(async () => {
-			await db?.drop();
-
-			if (client1) await client1.stop();
-		});
-
-		it("loads database from snapshot", async () => {
-			db = await client1.open(
-				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				))!
-			);
-			await db.loadFromSnapshot();
-			const items = (await db.iterator({ limit: -1 })).collect();
-			expect(items.length).toEqual(entryCount);
-			expect(items[0].payload.getValue().value).toEqual("hello0");
-			expect(items[entryCount - 1].payload.getValue().value).toEqual(
-				"hello" + (entryCount - 1)
-			);
-		});
-
-		it("load, add one and save snapshot several times", async () => {
-			const amount = 4;
-			for (let i = 0; i < amount; i++) {
-				db = await client1.open(
-					(await EventStore.load<EventStore<string>>(
-						client1.libp2p.directblock,
-						Address.parse(address)
-					))!
-				);
-				await db.loadFromSnapshot();
-				const expectedCount = entryCount + i;
-				await waitForAsync(
-					async () =>
-						(await db.iterator({ limit: -1 })).collect().length ===
-						expectedCount
-				);
-				await db.add("hello" + (entryCount + i));
-				const items = (await db.iterator({ limit: -1 })).collect();
-				expect(items.length).toEqual(expectedCount + 1);
-				expect(items[0].payload.getValue().value).toEqual("hello0");
-				expect(items[items.length - 1].payload.getValue().value).toEqual(
-					"hello" + (entryCount + i)
-				);
-				await db.saveSnapshot();
-				await db.close();
-			}
-		});
-
-		/* 	 TODO this test should be on the store
-		
-		it("throws an error when trying to load a missing snapshot", async () => {
-				db = await client1.open(
-					await EventStore.load<EventStore<string>>(
-						client1.libp2p.directblock,
-						Address.parse(address)
-					)
-				);
-				await db.drop();
-				db = null as any;
-				db = await client1.open(
-					await EventStore.load<EventStore<string>>(
-						client1.libp2p.directblock,
-						Address.parse(address)
-					)
-				);
-	
-				let err;
-				try {
-					await db.loadFromSnapshot();
-				} catch (e: any) {
-					err = e.toString();
-				}
-				expect(err).toEqual(`Error: Snapshot for ${db.store.id} not found!`);
-			});
-	 */
-		it("loading a database emits 'ready' event", async () => {
-			db = await client1.open(
-				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				))!
-			);
-			await db.loadFromSnapshot();
-			expect((await db.iterator({ limit: -1 })).collect().length).toEqual(
-				entryCount
-			);
-			const items = (await db.iterator({ limit: -1 })).collect();
-			expect(items.length).toEqual(entryCount);
-			expect(items[0].payload.getValue().value).toEqual("hello0");
-			expect(items[entryCount - 1].payload.getValue().value).toEqual(
-				"hello" + (entryCount - 1)
-			);
-		});
-
-		it("loading a database emits 'load.progress' event", async () => {
-			let done = false;
-			let count = 0;
-			db = await client1.open(
-				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.directblock,
-					Address.parse(address)
-				))!,
-				{
-					onLoadProgress: (store, entry) => {
-						count++;
-						expect(address).toEqual(db.address!.toString());
-
-						assert.notEqual(entry.hash, null);
-						assert.notEqual(entry, null);
-						if (count === entryCount) {
-							done = true;
-						}
-					},
-				}
-			);
-			await db.loadFromSnapshot();
-			await waitFor(() => done);
-		});
-	});
 });
-/* }) */

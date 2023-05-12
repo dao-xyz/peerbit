@@ -3,7 +3,6 @@ import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { LogCreator } from "./utils/log-creator.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -63,14 +62,11 @@ describe("Log - Iterator", function () {
 		let entries: Entry<any>[];
 		beforeEach(async () => {
 			entries = [];
-			log1 = new Log(
-				store,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			log1 = new Log();
+			await log1.init(store, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
 
 			for (let i = 0; i <= 100; i++) {
 				entries.push((await log1.append("entry" + i)).entry);

@@ -1,4 +1,4 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities

@@ -1,6 +1,6 @@
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { variant, field } from "@dao-xyz/borsh";
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import {
 	Documents,
@@ -13,6 +13,7 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
 import { Entry } from "@dao-xyz/peerbit-log";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Subprogram`, () => {
 	let session: LSession;
@@ -90,13 +91,13 @@ describe(`Subprogram`, () => {
 
 		await client2.open(program.address);
 
-		const eventStoreToPut = new EventStore<string>({ id: "store 1" });
+		const eventStoreToPut = new EventStore<string>({ id: randomBytes(32) });
 		const { entry: eventStore } = await store.eventStore.put(eventStoreToPut);
 
 		const _eventStore2 = await store.eventStore.put(
-			new EventStore({ id: "store 2" })
+			new EventStore({ id: randomBytes(32) })
 		);
-		expect(await store.eventStore.store.oplog.getHeads()).toHaveLength(2); // two independent documents
+		expect(await store.eventStore.log.getHeads()).toHaveLength(2); // two independent documents
 		await waitFor(() => client2.programs.size == 3);
 		expect(program.accessRequests).toHaveLength(2);
 
@@ -114,6 +115,6 @@ describe(`Subprogram`, () => {
 			eventStoreToPut.address!.toString()
 		)!.program as EventStore<string>;
 		await eventStoreString.add("hello"); // This will exchange an head that will make client 1 open the store
-		await waitFor(() => eventStore2.store.oplog.values.length === 1);
+		await waitFor(() => eventStore2.log.values.length === 1);
 	});
 });

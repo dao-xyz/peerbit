@@ -1,9 +1,10 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import mapSeries from "p-each-series";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Replicate and Load`, function () {
 	let session: LSession;
@@ -31,7 +32,7 @@ describe(`Replicate and Load`, function () {
 			// Set write access for both clients
 			db1 = await client1.open(
 				new EventStore<string>({
-					id: "events",
+					id: randomBytes(32),
 				})
 			);
 			db2 = await client2.open<EventStore<string>>(
@@ -80,7 +81,7 @@ describe(`Replicate and Load`, function () {
 
 			return new Promise((resolve, reject) => {
 				timer = setInterval(async () => {
-					if (db2.store.oplog.length === entryCount) {
+					if (db2.log.length === entryCount) {
 						clearInterval(timer);
 
 						const items = (await db2.iterator({ limit: -1 })).collect();

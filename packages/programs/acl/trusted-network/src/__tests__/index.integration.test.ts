@@ -9,14 +9,15 @@ import {
 	IdentityGraph,
 } from "..";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import {
+	AccessError,
+	Ed25519Keypair,
+	randomBytes,
+} from "@dao-xyz/peerbit-crypto";
 import { Secp256k1Keccak256PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Entry, Identity } from "@dao-xyz/peerbit-log";
+import { Entry, Identity, LogOptions } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
-import { createStore } from "@dao-xyz/peerbit-test-utils";
 import { AbstractLevel } from "abstract-level";
-import { DefaultOptions, IStoreOptions } from "@dao-xyz/peerbit-store";
-import Cache from "@dao-xyz/lazy-level";
 import { serialize, variant } from "@dao-xyz/borsh";
 import {
 	Program,
@@ -31,7 +32,6 @@ import {
 } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
-import { tcp } from "@libp2p/tcp";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -44,7 +44,7 @@ const createIdentity = async () => {
 @variant("any_identity_graph")
 class AnyCanAppendIdentityGraph extends IdentityGraph {
 	constructor(props?: {
-		id?: string;
+		id?: Uint8Array;
 		relationGraph?: Documents<IdentityRelation>;
 	}) {
 		super(props);
@@ -63,7 +63,6 @@ describe("index", () => {
 			options: {
 				topic: string;
 				role?: SubscriptionType;
-				store?: IStoreOptions<any>;
 			}
 		) => {
 			store.init &&
@@ -71,11 +70,6 @@ describe("index", () => {
 					...options,
 					replicators: () => [],
 					role: options.role || new ReplicatorType(),
-					store: {
-						...DefaultOptions,
-						resolveCache: async () => new Cache(createStore()),
-						...options.store,
-					},
 				}));
 			programs.push(store);
 			return store;
@@ -107,7 +101,7 @@ describe("index", () => {
 
 			const store = new AnyCanAppendIdentityGraph({
 				relationGraph: createIdentityGraphStore({
-					id: session.peers[0].peerId.toString(),
+					id: randomBytes(32), // session.peers[0].peerId.toString(),
 				}),
 			});
 			await init(store, 0, { topic: uuid() });
@@ -174,7 +168,7 @@ describe("index", () => {
 
 			const store = new AnyCanAppendIdentityGraph({
 				relationGraph: createIdentityGraphStore({
-					id: session.peers[0].peerId.toString(),
+					id: randomBytes(32), // session.peers[0].peerId.toString(),
 				}),
 			});
 			const topic = uuid();
@@ -198,10 +192,7 @@ describe("index", () => {
 	});
 
 	describe("TrustedNetwork", () => {
-		let session: LSession,
-			identites: Identity[],
-			cacheStore: AbstractLevel<any, string, Uint8Array>[],
-			programs: Program[];
+		let session: LSession, identites: Identity[], programs: Program[];
 
 		let replicators: string[][];
 
@@ -212,7 +203,6 @@ describe("index", () => {
 			options: {
 				topic: string;
 				role?: SubscriptionType;
-				store?: IStoreOptions<any>;
 			}
 		) => {
 			store.init &&
@@ -220,11 +210,6 @@ describe("index", () => {
 					...options,
 					replicators: () => replicators,
 					role: options.role ?? new ReplicatorType(),
-					store: {
-						...DefaultOptions,
-						resolveCache: async () => new Cache(cacheStore[i]),
-						...options.store,
-					},
 				}));
 			programs.push(store);
 			return store;
@@ -236,11 +221,9 @@ describe("index", () => {
 		});
 		beforeEach(async () => {
 			identites = [];
-			cacheStore = [];
 			programs = [];
 			for (let i = 0; i < session.peers.length; i++) {
 				identites.push(await createIdentity());
-				cacheStore.push(await createStore());
 			}
 
 			replicators = session.peers.map((x) => [
@@ -250,7 +233,6 @@ describe("index", () => {
 
 		afterEach(async () => {
 			await Promise.all(programs.map((p) => p.close()));
-			await Promise.all(cacheStore?.map((c) => c.close()));
 		});
 
 		afterAll(async () => {
@@ -259,8 +241,9 @@ describe("index", () => {
 
 		it("can be deterministic", async () => {
 			const key = (await Ed25519Keypair.create()).publicKey;
-			const t1 = new TrustedNetwork({ id: "x", rootTrust: key });
-			const t2 = new TrustedNetwork({ id: "x", rootTrust: key });
+			let id = randomBytes(32);
+			const t1 = new TrustedNetwork({ id, rootTrust: key });
+			const t2 = new TrustedNetwork({ id, rootTrust: key });
 			t1.setupIndices();
 			t2.setupIndices();
 			expect(serialize(t1)).toEqual(serialize(t2));
@@ -301,17 +284,13 @@ describe("index", () => {
 
 			await l0a.add(identity(1).publicKey);
 
-			await l0b.trustGraph.store.sync(
-				await l0a.trustGraph.store.oplog.getHeads()
-			);
+			await l0b.trustGraph.log.join(await l0a.trustGraph.log.getHeads());
 
 			await waitFor(() => l0b.trustGraph.index.size == 1);
 
 			await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
 
-			await l0a.trustGraph.store.sync(
-				await l0b.trustGraph.store.oplog.getHeads()
-			);
+			await l0a.trustGraph.log.join(await l0b.trustGraph.log.getHeads());
 
 			await waitFor(() => l0b.trustGraph.index.size == 2);
 			await waitFor(() => l0a.trustGraph.index.size == 2);

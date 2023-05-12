@@ -26,7 +26,6 @@
 			"packages/utils/crypto",
 			"packages/programs/data/document",
 			"packages/programs/data/string",
-			"packages/store",
 			"packages/utils/test-utils",
 			"packages/utils/lazy-level",
 			"packages/utils/uint8arrays",

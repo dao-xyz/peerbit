@@ -34,6 +34,7 @@
 		"@dao-xyz/libp2p-direct-sub": "^0.2.5",
 		"@dao-xyz/peerbit-crypto": "^0.1.13",
 		"@dao-xyz/peerbit-libp2p": "^0.2.5",
-		"@dao-xyz/peerbit-store": "^0.5.5"
+		"@dao-xyz/peerbit-log": "^0.5.5",
+		"@dao-xyz/peerbit-test-utils": "^0.2.5"
 	}
 }

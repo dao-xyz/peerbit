@@ -1,8 +1,9 @@
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { ObserverType } from "@dao-xyz/peerbit-program";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Write-only`, () => {
 	let session: LSession;
@@ -31,7 +32,7 @@ describe(`Write-only`, () => {
 		}); // limitSigning = dont sign exchange heads request
 		db1 = await client1.open(
 			new EventStore<string>({
-				id: "abc",
+				id: randomBytes(32),
 			})
 		);
 	});
@@ -54,13 +55,11 @@ describe(`Write-only`, () => {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
+		await waitFor(() => db1.log.values.length === 2); // db2 can write ...
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.store.oplog.values.length).toEqual(1); // ... but will not recieve entries
+		expect(db2.log.values.length).toEqual(1); // ... but will not recieve entries
 	});
 
 	it("none", async () => {
@@ -76,13 +75,11 @@ describe(`Write-only`, () => {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
+		await waitFor(() => db1.log.values.length === 2); // db2 can write ...
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.store.oplog.values.length).toEqual(1); // ... but will not recieve entries
+		expect(db2.log.values.length).toEqual(1); // ... but will not recieve entries
 	});
 
 	it("sync", async () => {
@@ -100,17 +97,15 @@ describe(`Write-only`, () => {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.store.oplog.values.length === 2); // db2 can write ...
+		await waitFor(() => db1.log.values.length === 2); // db2 can write ...
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
 
-		await waitFor(() => db2.store.oplog.values.length === 2); // ... since syncAll: true
+		await waitFor(() => db2.log.values.length === 2); // ... since syncAll: true
 
 		await client2.replicationReorganization([...client2.programs.keys()]);
-		expect(db2.store.oplog.values.length).toEqual(2);
+		expect(db2.log.values.length).toEqual(2);
 	});
 });
 

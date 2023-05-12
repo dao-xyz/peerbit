@@ -1,16 +1,19 @@
 import rmrf from "rimraf";
 import fs from "fs-extra";
-import { Log } from "../log.js";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { Log } from "../log.js";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { Entry } from "../entry.js";
 import path from "path";
 import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { createStore } from "./utils.js";
-import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { StringArray } from "../types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __filenameBase = path.parse(__filename).base;
@@ -61,37 +64,27 @@ describe("ipfs-log - Replication", function () {
 	describe("replicates logs deterministically", function () {
 		const amount = 10 + 1;
 		const channel = "XXX";
-		const logId = "A";
+		const logId = randomBytes(32);
 
 		let log1: Log<string>,
 			log2: Log<string>,
 			input1: Log<string>,
 			input2: Log<string>;
-		const buffer1: string[] = [];
-		const buffer2: string[] = [];
+		const buffer1: Uint8Array[] = [];
+		const buffer2: Uint8Array[] = [];
 		let processing = 0;
 
 		const handleMessage = async (message: PubSubData, topic: string) => {
 			if (!message.topics.includes(topic)) {
 				return;
 			}
-			const hash = Buffer.from(message.data).toString();
-			buffer1.push(hash);
+			buffer1.push(message.data);
 			processing++;
 			process.stdout.write("\r");
 			process.stdout.write(
 				`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`
 			);
-			const log = await Log.fromMultihash<string>(
-				session.peers[0].directblock,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				hash,
-				{ timeout: 1000, replicate: true }
-			);
-			await log1.join(log);
+			await log1.join(deserialize(message.data, StringArray).arr);
 			processing--;
 		};
 
@@ -99,59 +92,38 @@ describe("ipfs-log - Replication", function () {
 			if (!message.topics.includes(topic)) {
 				return;
 			}
-			const hash = Buffer.from(message.data).toString();
-			buffer2.push(hash);
+			buffer2.push(message.data);
 			processing++;
 			process.stdout.write("\r");
 			process.stdout.write(
 				`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`
 			);
-			const log = await Log.fromMultihash<string>(
-				session.peers[1].directblock,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				hash,
-				{ timeout: 1000, replicate: true }
-			);
-			await log2.join(log);
+			await log2.join(deserialize(message.data, StringArray).arr);
 			processing--;
 		};
 
 		beforeEach(async () => {
-			log1 = new Log(
-				session.peers[0].directblock,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId }
-			);
-			log2 = new Log(
-				session.peers[1].directblock,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId }
-			);
-			input1 = new Log(
-				session.peers[0].directblock,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId }
-			);
-			input2 = new Log(
-				session.peers[1].directblock,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId }
-			);
+			log1 = new Log({ id: logId });
+			await log1.init(session.peers[0].directblock, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log({ id: logId });
+			await log2.init(session.peers[1].directblock, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+
+			input1 = new Log({ id: logId });
+			await input1.init(session.peers[0].directblock, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			input2 = new Log({ id: logId });
+			await input2.init(session.peers[1].directblock, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
 			session.peers[0].directsub.subscribe(channel);
 			session.peers[1].directsub.subscribe(channel);
 
@@ -183,14 +155,24 @@ describe("ipfs-log - Replication", function () {
 						nexts: prev2 ? [prev2] : undefined,
 					})
 				).entry;
-				const hash1 = await input1.toMultihash();
-				const hash2 = await input2.toMultihash();
-				await session.peers[0].directsub.publish(Buffer.from(hash1), {
-					topics: [channel],
-				});
-				await session.peers[1].directsub.publish(Buffer.from(hash2), {
-					topics: [channel],
-				});
+				const hashes1 = await input1.getHeads();
+				const hashes2 = await input2.getHeads();
+				await session.peers[0].directsub.publish(
+					Buffer.from(
+						serialize(new StringArray({ arr: hashes1.map((x) => x.hash) }))
+					),
+					{
+						topics: [channel],
+					}
+				);
+				await session.peers[1].directsub.publish(
+					Buffer.from(
+						serialize(new StringArray({ arr: hashes2.map((x) => x.hash) }))
+					),
+					{
+						topics: [channel],
+					}
+				);
 			}
 
 			const whileProcessingMessages = (timeoutMs: number) => {
@@ -214,14 +196,12 @@ describe("ipfs-log - Replication", function () {
 
 			await whileProcessingMessages(5000);
 
-			const result = new Log<string>(
-				session.peers[0].directblock,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId }
-			);
+			const result = new Log<string>({ id: logId });
+			result.init(session.peers[0].directblock, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+
 			await result.join(log1);
 			await result.join(log2);
 

@@ -179,7 +179,7 @@ export const getRelation = async (
 };
 
 export const createIdentityGraphStore = (props: {
-	id: string;
+	id: Uint8Array;
 	rpcRegion?: string;
 }) =>
 	new Documents<IdentityRelation>({

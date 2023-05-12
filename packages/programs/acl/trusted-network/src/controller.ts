@@ -5,7 +5,7 @@ import {
 	Operation,
 	PutOperation,
 } from "@dao-xyz/peerbit-document";
-import { Entry } from "@dao-xyz/peerbit-log";
+import { AppendOptions, Entry } from "@dao-xyz/peerbit-log";
 import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
@@ -21,7 +21,6 @@ import {
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
-import { AddOperationOptions } from "@dao-xyz/peerbit-store";
 import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
 const canAppendByRelation = async (
@@ -79,7 +78,7 @@ export class IdentityGraph extends Program {
 	relationGraph: Documents<IdentityRelation>;
 
 	constructor(props?: {
-		id?: string;
+		id?: Uint8Array;
 		relationGraph?: Documents<IdentityRelation>;
 	}) {
 		super(props);
@@ -115,7 +114,7 @@ export class IdentityGraph extends Program {
 
 	async addRelation(
 		to: PublicSignKey,
-		options?: AddOperationOptions<Operation<IdentityRelation>>
+		options?: AppendOptions<Operation<IdentityRelation>>
 	) {
 		/*  trustee = PublicKey.from(trustee); */
 		await this.relationGraph.put(
@@ -123,7 +122,7 @@ export class IdentityGraph extends Program {
 				to: to,
 				from:
 					options?.identity?.publicKey ||
-					this.relationGraph.store.identity.publicKey,
+					this.relationGraph.log.identity.publicKey,
 			}),
 			options
 		);
@@ -142,7 +141,7 @@ export class TrustedNetwork extends Program {
 	@field({ type: Documents })
 	trustGraph: Documents<IdentityRelation>;
 
-	constructor(props?: { id?: string; rootTrust: PublicSignKey }) {
+	constructor(props?: { id?: Uint8Array; rootTrust: PublicSignKey }) {
 		super(props);
 		if (props) {
 			this.trustGraph = createIdentityGraphStore({
@@ -192,12 +191,12 @@ export class TrustedNetwork extends Program {
 
 		const existingRelation = await this.getRelation(
 			key,
-			this.trustGraph.store.identity.publicKey
+			this.trustGraph.log.identity.publicKey
 		);
 		if (!existingRelation) {
 			const relation = new IdentityRelation({
 				to: key,
-				from: this.trustGraph.store.identity.publicKey,
+				from: this.trustGraph.log.identity.publicKey,
 			});
 			await this.trustGraph.put(relation);
 			return relation;
@@ -233,8 +232,7 @@ export class TrustedNetwork extends Program {
 	 */
 	async isTrusted(
 		trustee: PublicSignKey | PeerIdAddress,
-		truster: PublicSignKey = this.rootTrust,
-		options?: { timeout: number }
+		truster: PublicSignKey = this.rootTrust
 	): Promise<boolean> {
 		if (trustee.equals(this.rootTrust)) {
 			return true;

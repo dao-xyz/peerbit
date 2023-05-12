@@ -52,21 +52,23 @@ describe("Log - Join Concurrent Entries", function () {
 		let log1: Log<string>, log2: Log<string>;
 
 		beforeAll(async () => {
-			log1 = new Log(
+			log1 = new Log();
+			await log1.init(
 				store,
 				{
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				{ logId: "A", sortFn: SortByEntryHash }
+				{ sortFn: SortByEntryHash }
 			);
-			log2 = new Log(
+			log2 = new Log();
+			await log2.init(
 				store,
 				{
 					...signKey.keypair,
 					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 				},
-				{ logId: "A", sortFn: SortByEntryHash }
+				{ sortFn: SortByEntryHash }
 			);
 		});
 
@@ -80,10 +82,6 @@ describe("Log - Join Concurrent Entries", function () {
 			await log1.join(log2);
 			await log2.join(log1);
 
-			const hash1 = await log1.toMultihash();
-			const hash2 = await log2.toMultihash();
-
-			expect(hash1).toEqual(hash2);
 			expect(log1.length).toEqual(20);
 			assert.deepStrictEqual(
 				(await log1.toArray()).map((e) => e.payload.getValue()),

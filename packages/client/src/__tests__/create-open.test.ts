@@ -1,8 +1,7 @@
 import assert from "assert";
 import fs from "fs-extra";
 import path from "path";
-// @ts-ignore
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { KeyBlocks } from "./utils/stores/key-value-store";
 
 import { EventStore } from "./utils/stores";
@@ -15,6 +14,7 @@ import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
@@ -36,11 +36,12 @@ describe(`Create & Open`, function () {
 	describe("Create", function () {
 		describe("Success", function () {
 			let db: KeyBlocks<string>;
-			let localDataPath: string, client: Peerbit;
-
+			let client: Peerbit;
+			let clientDirectory: string;
 			beforeAll(async () => {
+				clientDirectory = dbPath + uuid();
 				client = await Peerbit.create({
-					directory: dbPath + uuid(),
+					directory: clientDirectory,
 					libp2p: session.peers[0],
 				});
 			});
@@ -51,19 +52,19 @@ describe(`Create & Open`, function () {
 			});
 
 			beforeEach(async () => {
-				localDataPath = path.join(dbPath, client.id.toString(), "cache");
-
-				db = await client.open(new KeyBlocks<string>({ id: "second" }), {
-					directory: localDataPath,
+				db = await client.open(new KeyBlocks<string>({ id: randomBytes(32) }), {
 					role: new ObserverType(),
 				});
 			});
 			afterEach(async () => {
 				await db.drop();
 			});
+			it("directory exist", async () => {
+				expect(client.directory).toEqual(clientDirectory);
+			});
 
 			it("creates a feed database", async () => {
-				assert.notEqual(db, null);
+				expect(db).toBeDefined();
 			});
 
 			it("block storage exist at path", async () => {
@@ -76,7 +77,7 @@ describe(`Create & Open`, function () {
 			});
 
 			it("saves the database locally", async () => {
-				expect(fs.existsSync(localDataPath)).toEqual(true);
+				expect(fs.existsSync(clientDirectory)).toEqual(true);
 			});
 
 			it("saves database manifest file locally", async () => {
@@ -85,17 +86,19 @@ describe(`Create & Open`, function () {
 					db.address!
 				)) as KeyBlocks<string>;
 				expect(loaded).toBeDefined();
-				expect(loaded.store).toBeDefined();
+				expect(loaded.log).toBeDefined();
 			});
 
+			/* 
+			TODO feat
 			it("can pass local database directory as an option", async () => {
 				const dir = "./peerbit/tests/another-feed-" + uuid();
-				const db2 = await client.open(new EventStore({ id: "third" }), {
+				const db2 = await client.open(new EventStore({ id: randomBytes(32) }), {
 					directory: dir,
 				});
 				expect(fs.existsSync(dir)).toEqual(true);
 				await db2.close();
-			});
+			}); */
 		});
 	});
 
@@ -134,7 +137,7 @@ describe(`Create & Open`, function () {
 			});
 			assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db.address!.toString().indexOf("zb"), 9);
-			expect(db.store.identity.publicKey.equals(signKey.keypair.publicKey));
+			expect(db.log.identity.publicKey.equals(signKey.keypair.publicKey));
 			await db.drop();
 		});
 
@@ -185,9 +188,7 @@ describe(`Create & Open`, function () {
 	 }) */
 
 		it("open the database and it has the added entries", async () => {
-			const db = await client.open(new EventStore({ id: uuid() }), {
-				directory: dbPath + uuid(),
-			});
+			const db = await client.open(new EventStore());
 			await db.add("hello1");
 			await db.add("hello2");
 			await db.close();
@@ -204,17 +205,14 @@ describe(`Create & Open`, function () {
 
 		it("opens and resets", async () => {
 			const path = dbPath + uuid();
-			let db = await client.open(new EventStore({ id: uuid() }), {
-				directory: path,
-			});
+			let db = await client.open(new EventStore());
 			await db.add("hello1");
 			await db.add("hello2");
 			await db.close();
 			await db.load();
 			expect((await db.iterator({ limit: -1 })).collect().length).toEqual(2);
 			await db.close();
-			db = await client.open(new EventStore({ id: uuid() }), {
-				directory: path,
+			db = await client.open(new EventStore(), {
 				reset: true,
 			});
 			await db.load();
@@ -239,12 +237,11 @@ describe(`Create & Open`, function () {
 		});
 
 		it("closes a custom store", async () => {
-			const directory = path.join(dbPath, "custom-store");
-			const db = await client.open(new EventStore({}), {
-				directory,
-			});
+			const db = await client.open(new EventStore({}));
 			await db.close();
-			expect(db.store.cache._store.status).toEqual("closed");
+			expect(db.log.headsIndex.headsCache?.cache._store.status).toEqual(
+				"closed"
+			);
 		});
 
 		/* TODO fix
@@ -258,45 +255,47 @@ describe(`Create & Open`, function () {
 	  expect(db.store._cache._store.status).toEqual('closed')
 	})
  */
+		/* 
+			TODO feat:
 		it("successfully manages multiple caches", async () => {
 			// Cleaning up cruft from other tests
 			const directory = path.join(dbPath, "custom-store");
 			const directory2 = path.join(dbPath, "custom-store2");
 
-			const db1 = await client.open(new EventStore({ id: "xyz1" }));
-			const db2 = await client.open(new EventStore({ id: "xyz2" }), {
+			const db1 = await client.open(new EventStore());
+			const db2 = await client.open(new EventStore(), {
 				directory,
 			});
-			const db3 = await client.open(new EventStore({ id: "xyz3" }), {
+			const db3 = await client.open(new EventStore(), {
 				directory,
 			});
-			const db4 = await client.open(new EventStore({ id: "xyz4" }), {
+			const db4 = await client.open(new EventStore(), {
 				directory: directory2,
 			});
-			const db5 = await client.open(new EventStore({ id: "xyz5" }));
+			const db5 = await client.open(new EventStore());
 
-			expect(db1.store.cache.status).toEqual("open");
-			expect(db2.store.cache.status).toEqual("open");
-			expect(db3.store.cache.status).toEqual("open");
-			expect(db4.store.cache.status).toEqual("open");
+			expect(db1.log.headsIndex.headsCache?.cache.status).toEqual("open");
+			expect(db2.log.headsIndex.headsCache?.cache.status).toEqual("open");
+			expect(db3.log.headsIndex.headsCache?.cache.status).toEqual("open");
+			expect(db4.log.headsIndex.headsCache?.cache.status).toEqual("open");
 
 			await db1.close();
 			await db2.close();
 			await db4.close();
 
 			expect(client.cache._store.status).toEqual("open");
-			expect(db2.store.cache.status).toEqual("closed");
-			expect(db3.store.cache.status).toEqual("open");
-			expect(db4.store.cache.status).toEqual("closed");
+			expect(db2.log.headsIndex.headsCache?.cache.status).toEqual("closed");
+			expect(db3.log.headsIndex.headsCache?.cache.status).toEqual("open");
+			expect(db4.log.headsIndex.headsCache?.cache.status).toEqual("closed");
 
 			await db3.close();
 			await db5.close();
 
 			expect(client.cache.status).toEqual("open"); // TODO should this be open or closed now? Assume open, no-op is prefered if not certain
-			expect(db2.store.cache.status).toEqual("closed");
-			expect(db3.store.cache.status).toEqual("closed");
-			expect(db4.store.cache.status).toEqual("closed");
-			expect(db5.store.cache.status).toEqual("closed");
-		});
+			expect(db2.log.headsIndex.headsCache?.cache.status).toEqual("closed");
+			expect(db3.log.headsIndex.headsCache?.cache.status).toEqual("closed");
+			expect(db4.log.headsIndex.headsCache?.cache.status).toEqual("closed");
+			expect(db5.log.headsIndex.headsCache?.cache.status).toEqual("closed");
+		}); */
 	});
 });

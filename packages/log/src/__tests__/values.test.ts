@@ -14,7 +14,6 @@ import { Cache } from "@dao-xyz/cache";
 describe("values", () => {
 	let e1: Entry<string>, e2: Entry<string>, e3: Entry<string>;
 	let store: BlockStore;
-	let storage: (h: string) => Entry<string> | undefined;
 	let entryIndex: EntryIndex<string>;
 	beforeEach(async () => {
 		const identity = identityFromSignKey(

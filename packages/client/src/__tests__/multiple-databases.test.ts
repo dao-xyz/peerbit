@@ -1,8 +1,8 @@
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores";
-import { jest } from "@jest/globals";
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay } from "@dao-xyz/peerbit-time";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Multiple Databases`, function () {
 	let session: LSession;
@@ -44,7 +44,7 @@ describe(`Multiple Databases`, function () {
 		// Open the databases on the first node
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client1.open(
-				new EventStore<string>({ id: "local-" + i }),
+				new EventStore<string>({ id: randomBytes(32) }),
 				{ ...options }
 			);
 			localDatabases.push(db);
@@ -106,8 +106,8 @@ describe(`Multiple Databases`, function () {
 		// Function to check if all databases have been replicated
 		const allReplicated = () => {
 			return (
-				remoteDatabasesA.every((db) => db.store.oplog.length === entryCount) &&
-				remoteDatabasesB.every((db) => db.store.oplog.length === entryCount)
+				remoteDatabasesA.every((db) => db.log.length === entryCount) &&
+				remoteDatabasesB.every((db) => db.log.length === entryCount)
 			);
 		};
 
@@ -125,7 +125,7 @@ describe(`Multiple Databases`, function () {
 							const result = (await db.iterator({ limit: -1 })).collect()
 								.length;
 							expect(result).toEqual(entryCount);
-							expect(db.store.oplog.length).toEqual(entryCount);
+							expect(db.log.length).toEqual(entryCount);
 						} catch (error) {
 							reject(error);
 						}
@@ -136,7 +136,7 @@ describe(`Multiple Databases`, function () {
 							const result = (await db.iterator({ limit: -1 })).collect()
 								.length;
 							expect(result).toEqual(entryCount);
-							expect(db.store.oplog.length).toEqual(entryCount);
+							expect(db.log.length).toEqual(entryCount);
 						} catch (error) {
 							reject(error);
 						}

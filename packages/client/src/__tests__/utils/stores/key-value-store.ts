@@ -1,5 +1,5 @@
 import { JSON_ENCODING } from "@dao-xyz/peerbit-log";
-import { Store } from "@dao-xyz/peerbit-store";
+import { Log } from "@dao-xyz/peerbit-log";
 import { EncryptionTemplateMaybeEncrypted } from "@dao-xyz/peerbit-log";
 import { variant, field } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
@@ -7,7 +7,7 @@ import { Operation } from "@dao-xyz/peerbit-document";
 
 export class KeyValueIndex {
 	_index: any;
-	_store: Store<any>;
+	_log: Log<any>;
 	constructor() {
 		this._index = {};
 	}
@@ -16,12 +16,12 @@ export class KeyValueIndex {
 		return this._index[key];
 	}
 
-	setup(store: Store<any>) {
-		this._store = store;
+	setup(log: Log<any>) {
+		this._log = log;
 	}
 
 	async updateIndex() {
-		const values = await this._store.oplog.values.toArray();
+		const values = await this._log.values.toArray();
 		const handled: { [key: string]: boolean } = {};
 		for (let i = values.length - 1; i >= 0; i--) {
 			const item = values[i];
@@ -48,18 +48,18 @@ const encoding = JSON_ENCODING;
 export class KeyBlocks<T> extends Program {
 	_index: KeyValueIndex;
 
-	@field({ type: Store })
-	store: Store<Operation<T>>;
+	@field({ type: Log })
+	log: Log<Operation<T>>;
 
-	constructor(properties: { id: string }) {
+	constructor(properties: { id: Uint8Array }) {
 		super(properties);
-		this.store = new Store();
+		this.log = new Log();
 	}
 	async setup() {
 		this._index = new KeyValueIndex();
 
-		this.store.setup({
-			onUpdate: this._index.updateIndex.bind(this._index),
+		this.log.setup({
+			onChange: this._index.updateIndex.bind(this._index),
 			encoding,
 			canAppend: () => Promise.resolve(true),
 		});
@@ -92,7 +92,7 @@ export class KeyBlocks<T> extends Program {
 			reciever?: EncryptionTemplateMaybeEncrypted;
 		}
 	) {
-		return this.store.append(
+		return this.log.append(
 			{
 				op: "PUT",
 				key: key,
@@ -109,7 +109,7 @@ export class KeyBlocks<T> extends Program {
 			reciever?: EncryptionTemplateMaybeEncrypted;
 		}
 	) {
-		return this.store.append(
+		return this.log.append(
 			{
 				op: "DEL",
 				key: key,

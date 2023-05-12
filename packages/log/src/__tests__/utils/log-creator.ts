@@ -1,8 +1,8 @@
 import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair, randomBytes } from "@dao-xyz/peerbit-crypto";
+import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Log } from "../../log.js";
 import { Timestamp } from "../../clock.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 
 export class LogCreator {
 	static async createLogWithSixteenEntries(
@@ -29,39 +29,27 @@ export class LogCreator {
 		];
 
 		const create = async (): Promise<Log<string>> => {
-			const logA = new Log<string>(
-				store,
-				{
-					...signKeys[0].keypair,
-					sign: (data) => signKeys[0].keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const logB = new Log<string>(
-				store,
-				{
-					...signKeys[1].keypair,
-					sign: (data) => signKeys[1].keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log3 = new Log<string>(
-				store,
-				{
-					...signKeys[2].keypair,
-					sign: (data) => signKeys[2].keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const log = new Log<string>(
-				store,
-				{
-					...signKeys[3].keypair,
-					sign: (data) => signKeys[3].keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-
+			const id = randomBytes(32);
+			const logA = new Log<string>({ id });
+			await logA.init(store, {
+				...signKeys[0].keypair,
+				sign: (data) => signKeys[0].keypair.sign(data),
+			});
+			const logB = new Log<string>({ id });
+			await logB.init(store, {
+				...signKeys[1].keypair,
+				sign: (data) => signKeys[1].keypair.sign(data),
+			});
+			const log3 = new Log<string>({ id });
+			await log3.init(store, {
+				...signKeys[2].keypair,
+				sign: (data) => signKeys[2].keypair.sign(data),
+			});
+			const log4 = new Log<string>({ id });
+			await log4.init(store, {
+				...signKeys[3].keypair,
+				sign: (data) => signKeys[3].keypair.sign(data),
+			});
 			for (let i = 1; i <= 5; i++) {
 				await logA.append("entryA" + i);
 				await logB.append("entryB" + i);
@@ -72,23 +60,23 @@ export class LogCreator {
 			for (let i = 6; i <= 10; i++) {
 				await logA.append("entryA" + i);
 			}
-			await log.join(log3);
-			await log.append("entryC0", {
+
+			await log4.join(log3);
+			await log4.append("entryC0", {
 				timestamp: new Timestamp({
 					wallTime: (await logA.toArray())[5].metadata.clock.timestamp.wallTime,
 					logical:
 						(await logA.toArray())[5].metadata.clock.timestamp.logical + 1,
 				}),
 			});
-			await log.join(logA);
+			await log4.join(logA);
 			expect(
-				(await log.toArray()).map((h) => h.payload.getValue())
+				(await log4.toArray()).map((h) => h.payload.getValue())
 			).toStrictEqual(expectedData);
-			return log;
+			return log4;
 		};
 
-		const log = await create();
-		return { log: log, expectedData: expectedData, json: await log.toJSON() };
+		return { log: await create(), expectedData: expectedData };
 	}
 
 	static async createLogWithTwoHundredEntries(
@@ -98,24 +86,19 @@ export class LogCreator {
 		const amount = 100;
 
 		const expectedData: string[] = [];
+		const id = randomBytes(32);
 
 		const create = async (): Promise<Log<string>> => {
-			const logA = new Log<string>(
-				store,
-				{
-					...signKeys[0].keypair,
-					sign: (data) => signKeys[0].keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			const logB = new Log<string>(
-				store,
-				{
-					...signKeys[1].keypair,
-					sign: (data) => signKeys[1].keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
+			const logA = new Log<string>({ id });
+			await logA.init(store, {
+				...signKeys[0].keypair,
+				sign: (data) => signKeys[0].keypair.sign(data),
+			});
+			const logB = new Log<string>({ id });
+			await logB.init(store, {
+				...signKeys[1].keypair,
+				sign: (data) => signKeys[1].keypair.sign(data),
+			});
 			for (let i = 1; i <= amount; i++) {
 				await logA.append("entryA" + i);
 				await logB.join(logA);

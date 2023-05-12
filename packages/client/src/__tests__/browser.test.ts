@@ -1,7 +1,6 @@
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { Peerbit } from "../peer";
+import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
-import { v4 as uuid } from "uuid";
 
 // Include test utilities
 import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
@@ -41,12 +40,9 @@ describe(`browser`, function () {
 			libp2p: session.peers[1],
 		});
 
-		db1 = await client1.open(
-			new EventStore<string>({
-				id: uuid(),
-			}),
-			{ role: new ReplicatorType() }
-		);
+		db1 = await client1.open(new EventStore<string>(), {
+			role: new ReplicatorType(),
+		});
 		await waitForPeersBlock(
 			session.peers[0].directblock,
 			session.peers[1].directblock
@@ -67,13 +63,11 @@ describe(`browser`, function () {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.store.oplog.values.length === 2);
+		await waitFor(() => db1.log.values.length === 2);
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.store.oplog.values.length).toEqual(2);
+		expect(db2.log.values.length).toEqual(2);
 	});
 
 	it("can replicate entries through relay", async () => {
@@ -100,12 +94,9 @@ describe(`browser`, function () {
 			session.peers[2].directblock
 		);
 
-		db1 = await client1.open(
-			new EventStore<string>({
-				id: uuid(),
-			}),
-			{ role: new ReplicatorType() }
-		);
+		db1 = await client1.open(new EventStore<string>(), {
+			role: new ReplicatorType(),
+		});
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
@@ -121,13 +112,11 @@ describe(`browser`, function () {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.store.oplog.values.length === 2);
+		await waitFor(() => db1.log.values.length === 2);
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.store.oplog.values.length).toEqual(2);
+		expect(db2.log.values.length).toEqual(2);
 	});
 
 	it("will share entries as replicator on peer connect", async () => {
@@ -144,12 +133,9 @@ describe(`browser`, function () {
 			session.peers[1].directblock
 		);
 
-		db1 = await client1.open(
-			new EventStore<string>({
-				id: uuid(),
-			}),
-			{ role: new ReplicatorType() }
-		);
+		db1 = await client1.open(new EventStore<string>(), {
+			role: new ReplicatorType(),
+		});
 
 		await db1.add("hello");
 		await db1.add("world");
@@ -167,13 +153,11 @@ describe(`browser`, function () {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
 
-		await waitFor(() => db1.store.oplog.values.length === 2);
+		await waitFor(() => db1.log.values.length === 2);
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		await waitFor(() => db2.store.oplog.values.length === 2);
+		await waitFor(() => db2.log.values.length === 2);
 	});
 
 	it("will share entries as observer on peer connect", async () => {
@@ -191,12 +175,9 @@ describe(`browser`, function () {
 			session.peers[1].directblock
 		);
 
-		db1 = await client1.open(
-			new EventStore<string>({
-				id: uuid(),
-			}),
-			{ role: new ObserverType() }
-		);
+		db1 = await client1.open(new EventStore<string>(), {
+			role: new ObserverType(),
+		});
 
 		await db1.add("hello");
 		await db1.add("world");
@@ -216,12 +197,10 @@ describe(`browser`, function () {
 			true
 		);
 
-		await waitFor(() => db1.store.oplog.values.length === 2);
+		await waitFor(() => db1.log.values.length === 2);
 		expect(
-			(await db1.store.oplog.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.values.toArray()).map((x) => x.payload.getValue().value)
 		).toContainAllValues(["hello", "world"]);
-		await waitFor(() => db2.store.oplog.values.length === 2);
+		await waitFor(() => db2.log.values.length === 2);
 	});
 });

@@ -1,6 +1,5 @@
 import { Cache } from "@dao-xyz/cache";
 import PQueue from "p-queue";
-import Yallist from "yallist";
 import { Entry } from "./entry.js";
 import { EntryNode, Values } from "./values.js";
 
@@ -114,9 +113,7 @@ export class Trim<T> {
 		if (!option) {
 			return [];
 		}
-
 		///  TODO Make this method less ugly
-
 		const deleted: Entry<T>[] = [];
 
 		let done: () => Promise<boolean> | boolean;
@@ -188,13 +185,14 @@ export class Trim<T> {
 			}
 		}
 
-		let node: EntryNode | undefined | null = this._canTrimCacheLastNode || tail;
-		let lastNode = node;
+		let node: EntryNode | undefined | null = this._canTrimCacheLastNode || tail; // TODO should we do this._canTrimCacheLastNode?.prev instead ?
+		let lastNode: EntryNode | undefined | null = node;
 		let looped = false;
 		const startNode = node;
-		const canTrimByGid = new Map();
+		let canTrimByGid: Map<string, boolean> | undefined = undefined;
 
 		// TODO only go through heads?
+		//console.log("START TRIM", await done(), option.filter?.canTrim)
 		while (
 			node &&
 			!(await done()) &&
@@ -202,20 +200,9 @@ export class Trim<T> {
 			node &&
 			(!looped || node !== startNode)
 		) {
-			const breakpoint =
-				cacheProgress && this._canTrimCacheHashBreakpoint.get(node.value.hash);
-			if (breakpoint && node !== tail) {
-				// never break on the tail
-				break;
-			}
-
-			if (!looped || (looped && node !== tail)) {
-				lastNode = node;
-			}
-
-			let deleteAble = true;
-
+			let deleteAble: boolean | undefined = true;
 			if (option.filter?.canTrim) {
+				canTrimByGid = canTrimByGid || new Map();
 				deleteAble = canTrimByGid.get(node.value.gid);
 				if (deleteAble === undefined) {
 					deleteAble = await option.filter?.canTrim(node.value.gid);
@@ -227,26 +214,34 @@ export class Trim<T> {
 					this._canTrimCacheHashBreakpoint.add(node.value.hash, true);
 				}
 			}
-			const prev = node.prev;
 
+			// Delete, and update current node
 			if (deleteAble) {
-				// TODO, under some concurrency condition the node can already be removed by another trim process
+				// Do this before deleteNode, else prev/next might be gone!
+				const prev = node.prev;
+				const next = node.next;
+
 				const entry = await this._log.deleteNode(node);
 				if (entry) {
 					deleted.push(entry);
 				}
+
+				node = prev;
+				// If we don't do this, we might, next time start to iterate from a node that does not exist
+				// we do prev 'or' next because next time we want to start as close as possible to where we left of
+				lastNode = prev || next;
+			} else {
+				lastNode = node;
+				node = node?.prev;
 			}
 
-			if (!prev) {
-				if (!looped && changed) {
-					// pointless to loop around if there are no changes
+			if (!node) {
+				if (!looped && changed && !cacheProgress) {
 					node = tail;
 					looped = true;
 				} else {
 					break;
 				}
-			} else {
-				node = prev;
 			}
 		}
 

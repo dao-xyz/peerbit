@@ -1,9 +1,7 @@
-import assert from "assert";
-import { Peerbit } from "../peer";
-import { databases } from "./utils";
+import { Peerbit } from "../peer.js";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 
 describe(`dial`, function () {
 	let session: LSession, client1: Peerbit, client2: Peerbit;

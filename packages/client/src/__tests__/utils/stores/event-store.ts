@@ -1,6 +1,6 @@
 import { JSON_ENCODING } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { Store } from "@dao-xyz/peerbit-store";
+import { Log } from "@dao-xyz/peerbit-log";
 import { EncryptionTemplateMaybeEncrypted } from "@dao-xyz/peerbit-log";
 import { variant, field } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
@@ -15,32 +15,32 @@ export interface Operation<T> {
 const encoding = JSON_ENCODING;
 
 export class EventIndex<T> {
-	_store: Store<Operation<T>>;
-	constructor(store: Store<Operation<T>>) {
-		this._store = store;
+	_log: Log<Operation<T>>;
+	constructor(log: Log<Operation<T>>) {
+		this._log = log;
 	}
 
 	async get() {
-		return this._store ? this._store.oplog.values.toArray() : [];
+		return this._log ? this._log.values.toArray() : [];
 	}
 }
 
-@variant("eventstore")
+@variant("event_store")
 export class EventStore<T> extends Program {
+	@field({ type: Log })
+	log: Log<Operation<T>>;
+
 	_index: EventIndex<T>;
 
-	@field({ type: Store })
-	store: Store<Operation<T>>;
-
-	constructor(properties?: { id?: string }) {
+	constructor(properties?: { id?: Uint8Array }) {
 		super(properties);
-		this.store = new Store();
+		this.log = new Log();
 	}
 
 	async setup() {
-		this._index = new EventIndex(this.store);
-		this.store.setup({
-			onUpdate: () => undefined,
+		this._index = new EventIndex(this.log);
+		await this.log.setup({
+			onChange: () => undefined,
 			encoding,
 			canAppend: () => Promise.resolve(true),
 		});
@@ -54,7 +54,7 @@ export class EventStore<T> extends Program {
 			nexts?: Entry<any>[];
 		}
 	) {
-		return this.store.append(
+		return this.log.append(
 			{
 				op: "ADD",
 				value: data,
@@ -97,7 +97,7 @@ export class EventStore<T> extends Program {
 		const amount = opts.limit
 			? opts.limit > -1
 				? opts.limit
-				: this.store.oplog.length
+				: this.log.length
 			: 1; // Return 1 if no limit is provided
 
 		const events = (await this._index.get()).slice();

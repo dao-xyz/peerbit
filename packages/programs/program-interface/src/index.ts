@@ -1,8 +1,19 @@
-import { field, option, variant } from "@dao-xyz/borsh";
-import { Identity } from "@dao-xyz/peerbit-log";
-import { IInitializationOptions, Store } from "@dao-xyz/peerbit-store";
+import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
+import {
+	CanAppend,
+	Change,
+	Entry,
+	Identity,
+	Log,
+	LogOptions,
+	TrimOptions,
+} from "@dao-xyz/peerbit-log";
 import { v4 as uuid } from "uuid";
-import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import {
+	PublicKeyEncryptionResolver,
+	randomBytes,
+	sha256Sync,
+} from "@dao-xyz/peerbit-crypto";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
@@ -15,6 +26,9 @@ import {
 	ReplicatorType,
 	SubscriptionType,
 } from "./role.js";
+import { Encoding } from "@dao-xyz/peerbit-log";
+import LazyLevel from "@dao-xyz/lazy-level";
+import { LogProperties } from "@dao-xyz/peerbit-log";
 
 export * from "./protocol-message.js";
 export * from "./role.js";
@@ -199,15 +213,22 @@ export interface Saveable {
 }
 
 export type OpenProgram = (program: Program) => Promise<Program>;
+export type LogCallbackOptions = {
+	onWrite?: (log: Log<any>, change: Entry<any>) => void;
+	onChange?: (log: Log<any>, change: Change<any>) => void;
+	onClose?: (log: Log<any>) => void;
+};
 export type ProgramInitializationOptions = {
-	store: IInitializationOptions<any>;
+	log?: LogProperties<any> & LogCallbackOptions;
 	role: ReplicatorType | ObserverType | NoType;
 	replicators: () => string[][] | undefined; // array of replicators in each shard
 	parent?: AbstractProgram;
-	onClose?: () => void;
-	onDrop?: () => void;
+	onClose?: () => Promise<void> | void;
+	onDrop?: () => Promise<void> | void;
+	onSave?: (address: Address) => Promise<void> | void;
 	open?: OpenProgram;
 	openedBy?: AbstractProgram;
+	replicator?: (gid: string) => Promise<boolean>;
 };
 
 @variant(0)
@@ -218,10 +239,15 @@ export abstract class AbstractProgram {
 	private _libp2p: Libp2pExtended;
 	private _identity: Identity;
 	private _encryption?: PublicKeyEncryptionResolver;
-	private _onClose?: () => void;
-	private _onDrop?: () => void;
+	private _onClose?: () => Promise<void> | void;
+	private _onDrop?: () => Promise<void> | void;
 	private _initialized?: boolean;
 	private _role: SubscriptionType;
+	private _logs: Log<any>[] | undefined;
+	private _allLogs: Log<any>[] | undefined;
+	private _allLogsMap: Map<string, Log<any>> | undefined;
+	private _allPrograms: AbstractProgram[] | undefined;
+	private _subprogramMap: Map<number, AbstractProgram> | undefined;
 
 	open?: (program: Program) => Promise<Program>;
 	programsOpened: Program[];
@@ -249,7 +275,7 @@ export abstract class AbstractProgram {
 		}
 		this._libp2p = libp2p;
 		this._identity = identity;
-		this._encryption = options.store.encryption;
+		this._encryption = options.log?.encryption;
 		this._onClose = options.onClose;
 		this._onDrop = options.onDrop;
 		this._role = options.role;
@@ -276,8 +302,25 @@ export abstract class AbstractProgram {
 		}
 
 		await Promise.all(
-			this.stores.map((s) =>
-				s.init(libp2p.directblock, identity, options.store)
+			this.logs.map((s) =>
+				s.init(libp2p.directblock, identity, {
+					cache: options.log?.cache,
+					canAppend: options.log?.canAppend,
+					clock: options.log?.clock,
+					encoding: options.log?.encoding,
+					encryption: options.log?.encryption,
+					sortFn: options.log?.sortFn,
+					trim: options.log?.trim,
+					onChange: (change) => {
+						return options.log?.onChange?.(s, change);
+					},
+					onClose: () => {
+						return options.log?.onClose?.(s);
+					},
+					onWrite: (change) => {
+						return options.log?.onWrite?.(s, change);
+					},
+				})
 			)
 		);
 
@@ -285,49 +328,49 @@ export abstract class AbstractProgram {
 		return this;
 	}
 
-	async close(): Promise<boolean> {
-		if (!this.initialized) {
-			return false;
-		}
-		const promises: Promise<void | boolean>[] = [];
-		for (const store of this.stores.values()) {
-			promises.push(store.close());
-		}
-		for (const program of this.programs.values()) {
-			promises.push(program.close());
-		}
-		if (this.programsOpened) {
-			for (const program of this.programsOpened) {
-				promises.push(program.close(this));
+	private _clear() {
+		this._logs = undefined;
+		this._allLogs = undefined;
+		this._allLogsMap = undefined;
+		this._allPrograms = undefined;
+		this._subprogramMap = undefined;
+	}
+
+	private async _end(
+		type: "drop" | "close",
+		onEvent?: () => void | Promise<void>
+	) {
+		if (this.initialized) {
+			await onEvent?.();
+			const promises: Promise<void | boolean>[] = [];
+			for (const store of this.logs.values()) {
+				promises.push(store[type]());
 			}
-			this.programsOpened = [];
+			for (const program of this.programs.values()) {
+				promises.push(program[type]());
+			}
+			if (this.programsOpened) {
+				for (const program of this.programsOpened) {
+					promises.push(program[type](this));
+				}
+				this.programsOpened = [];
+			}
+			await Promise.all(promises);
+
+			this._clear();
+			return true;
+		} else {
+			this._clear();
+			return true;
 		}
-		await Promise.all(promises);
-		this._onClose && this._onClose();
-		return true;
+	}
+
+	async close(): Promise<boolean> {
+		return this._end("close", this._onClose);
 	}
 
 	async drop(): Promise<void> {
-		if (!this.initialized) {
-			return;
-		}
-		this._onDrop && this._onDrop();
-		const promises: Promise<void>[] = [];
-		for (const store of this.stores.values()) {
-			promises.push(store.drop());
-		}
-		for (const program of this.programs.values()) {
-			promises.push(program.drop());
-		}
-		if (this.programsOpened) {
-			for (const program of this.programsOpened) {
-				if (program.initialized) {
-					promises.push(program.drop());
-				}
-			}
-			this.programsOpened = [];
-		}
-		await Promise.all(promises);
+		await this._end("drop", this._onDrop);
 		this._initialized = false;
 	}
 
@@ -343,36 +386,32 @@ export abstract class AbstractProgram {
 		return this._encryption;
 	}
 
-	_stores: Store<any>[];
-	get stores(): Store<any>[] {
-		if (this._stores) {
-			return this._stores;
+	get logs(): Log<any>[] {
+		if (this._logs) {
+			return this._logs;
 		}
-		this._stores = getValuesWithType(this, Store, AbstractProgram);
-		return this._stores;
+		this._logs = getValuesWithType(this, Log, AbstractProgram);
+		return this._logs;
 	}
 
-	_allStores: Store<any>[];
-	get allStores(): Store<any>[] {
-		if (this._allStores) {
-			return this._allStores;
+	get allLogs(): Log<any>[] {
+		if (this._allLogs) {
+			return this._allLogs;
 		}
-		this._allStores = getValuesWithType(this, Store);
-		return this._allStores;
+		this._allLogs = getValuesWithType(this, Log);
+		return this._allLogs;
 	}
 
-	_allStoresMap: Map<number, Store<any>>;
-	get allStoresMap(): Map<number, Store<any>> {
-		if (this._allStoresMap) {
-			return this._allStoresMap;
+	get allLogsMap(): Map<string, Log<any>> {
+		if (this._allLogsMap) {
+			return this._allLogsMap;
 		}
-		const map = new Map<number, Store<any>>();
-		getValuesWithType(this, Store).map((s) => map.set(s._storeIndex, s));
-		this._allStoresMap = map;
-		return this._allStoresMap;
+		const map = new Map<string, Log<any>>();
+		getValuesWithType(this, Log).map((s) => map.set(s.idString, s));
+		this._allLogsMap = map;
+		return this._allLogsMap;
 	}
 
-	_allPrograms: AbstractProgram[];
 	get allPrograms(): AbstractProgram[] {
 		if (this._allPrograms) {
 			return this._allPrograms;
@@ -386,7 +425,6 @@ export abstract class AbstractProgram {
 		return this._allPrograms;
 	}
 
-	_subprogramMap: Map<number, AbstractProgram>;
 	get subprogramsMap(): Map<number, AbstractProgram> {
 		if (this._subprogramMap) {
 			// is static, so we cache naively
@@ -409,7 +447,7 @@ export abstract class AbstractProgram {
 	}
 
 	get programs(): AbstractProgram[] {
-		return getValuesWithType(this, AbstractProgram, Store);
+		return getValuesWithType(this, AbstractProgram, Log);
 	}
 
 	get address() {
@@ -436,8 +474,8 @@ export abstract class Program
 	extends AbstractProgram
 	implements Addressable, Saveable
 {
-	@field({ type: "string" })
-	id: string;
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array;
 
 	private _address?: Address;
 
@@ -445,12 +483,12 @@ export abstract class Program
 
 	openedByPrograms: (AbstractProgram | undefined)[];
 
-	constructor(properties?: { id?: string }) {
+	constructor(properties?: { id?: Uint8Array }) {
 		super();
 		if (properties) {
-			this.id = properties.id || uuid();
+			this.id = properties.id || randomBytes(32);
 		} else {
-			this.id = uuid();
+			this.id = randomBytes(32);
 		}
 	}
 
@@ -476,8 +514,10 @@ export abstract class Program
 	abstract setup(): Promise<void>;
 
 	setupIndices(): void {
-		for (const [ix, store] of this.allStores.entries()) {
-			store._storeIndex = ix;
+		let prev = this.id;
+		for (const [_ix, log] of this.allLogs.entries()) {
+			log.id = sha256Sync(prev);
+			prev = log.id;
 		}
 		// post setup
 		// set parents of subprograms to this
@@ -504,11 +544,12 @@ export abstract class Program
 
 		// TODO, determine whether setup should be called before or after save
 		if (this.parentProgram === undefined) {
-			await this.save(libp2p.directblock);
+			const address = await this.save(libp2p.directblock);
+			await options?.onSave?.(address);
 		}
+		await super.init(libp2p, identity, options);
 
 		await this.setup();
-		await super.init(libp2p, identity, options);
 
 		if (this.parentProgram != undefined && this._address) {
 			throw new Error(
@@ -519,17 +560,9 @@ export abstract class Program
 		return this;
 	}
 
-	async saveSnapshot() {
-		await Promise.all(this.allStores.map((store) => store.saveSnapshot()));
-	}
-
-	async loadFromSnapshot() {
-		await Promise.all(this.allStores.map((store) => store.loadFromSnapshot()));
-	}
-
 	async load() {
 		this._closed = false;
-		await Promise.all(this.allStores.map((store) => store.load()));
+		await Promise.all(this.allLogs.map((store) => store.load()));
 	}
 
 	async save(

@@ -1,21 +1,11 @@
 import {
-	Indexable,
-	BORSH_ENCODING_OPERATION,
-	DeleteOperation,
-	DocumentIndex,
-	Operation,
-	PutOperation,
-} from "./document-index.js";
-import {
 	AbstractType,
 	deserialize,
 	field,
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { asString, checkKeyable, Keyable } from "./utils.js";
-import { AddOperationOptions, Store } from "@dao-xyz/peerbit-store";
-import { CanAppend, Change, Entry, EntryType } from "@dao-xyz/peerbit-log";
+import { CanAppend, Change, Entry, EntryType, Log } from "@dao-xyz/peerbit-log";
 import {
 	ComposableProgram,
 	Program,
@@ -23,10 +13,21 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { Context, Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { ReplicatorType } from "@dao-xyz/peerbit-program";
+import { AppendOptions } from "@dao-xyz/peerbit-log";
 import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
+
+import {
+	Indexable,
+	BORSH_ENCODING_OPERATION,
+	DeleteOperation,
+	DocumentIndex,
+	Operation,
+	PutOperation,
+} from "./document-index.js";
+import { asString, checkKeyable, Keyable } from "./utils.js";
+import { Context, Results } from "./query.js";
 
 const logger = loggerFn({ module: "document" });
 
@@ -47,8 +48,8 @@ export interface DocumentEvents<T> {
 export class Documents<
 	T extends Record<string, any>
 > extends ComposableProgram {
-	@field({ type: Store })
-	store: Store<Operation<T>>;
+	@field({ type: Log })
+	log: Log<Operation<T>>;
 
 	@field({ type: "bool" })
 	immutable: boolean; // "Can I overwrite a document?"
@@ -61,14 +62,13 @@ export class Documents<
 	private _optionCanAppend?: CanAppend<Operation<T>>;
 	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
 	private _events: EventEmitter<DocumentEvents<T>>;
-
+	private _replicator?: (gid: string) => Promise<boolean>;
 	constructor(properties: { immutable?: boolean; index: DocumentIndex<T> }) {
 		super();
-		if (properties) {
-			this.store = new Store();
-			this.immutable = properties.immutable ?? false;
-			this._index = properties.index;
-		}
+
+		this.log = new Log();
+		this.immutable = properties.immutable ?? false;
+		this._index = properties.index;
 	}
 
 	get index(): DocumentIndex<T> {
@@ -84,6 +84,7 @@ export class Documents<
 
 	async init(_, __, options: ProgramInitializationOptions) {
 		this._index.replicators = options.replicators;
+		this._replicator = options.replicator;
 		return super.init(_, __, options);
 	}
 	async setup(options: {
@@ -110,29 +111,26 @@ export class Documents<
 		if (options.canAppend) {
 			this._optionCanAppend = options.canAppend;
 		}
-		await this.store.setup({
+		await this.log.setup({
 			encoding: BORSH_ENCODING_OPERATION,
 			canAppend: this.canAppend.bind(this),
-			onUpdate: this.handleChanges.bind(this),
+			onChange: this.handleChanges.bind(this),
 		});
 
 		await this._index.setup({
 			type: this._clazz,
-			store: this.store,
+			log: this.log,
 			canRead: options.canRead || (() => Promise.resolve(true)),
 			fields: options.index?.fields || ((obj) => obj),
 			sync: async (result: Results<T>) =>
-				this.store.sync(result.results.map((x) => x.context.head)),
+				this.log.join(result.results.map((x) => x.context.head)),
 		});
 	}
 
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
-			? (await this.store.oplog.get(history)) ||
-					(await Entry.fromMultihash<Operation<T>>(
-						this.store.oplog.storage,
-						history
-					))
+			? (await this.log.get(history)) ||
+					(await Entry.fromMultihash<Operation<T>>(this.log.storage, history))
 			: history;
 	}
 
@@ -151,8 +149,8 @@ export class Documents<
 	async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
-				? this.store.oplog.get(history) ||
-						(await Entry.fromMultihash(this.store.oplog.storage, history))
+				? this.log.get(history) ||
+						(await Entry.fromMultihash(this.log.storage, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
@@ -165,7 +163,7 @@ export class Documents<
 				next !== current?.hash &&
 				current.next.length > 0
 			) {
-				current = await this.store.oplog.get(current.next[0])!;
+				current = await this.log.get(current.next[0])!;
 			}
 			if (current?.hash === next) {
 				return true; // Ok, we are pointing this new edit to some exising point in time of the old document
@@ -175,8 +173,8 @@ export class Documents<
 
 		try {
 			entry.init({
-				encoding: this.store.oplog.encoding,
-				encryption: this.store.oplog.encryption,
+				encoding: this.log.encoding,
+				encryption: this.log.encryption,
 			});
 			const operation =
 				entry._payload instanceof DecryptedThing
@@ -202,7 +200,7 @@ export class Documents<
 					if (entry.next.length !== 1) {
 						return false;
 					}
-					let doc = await this.store.oplog.get(existingDocument.context.head);
+					let doc = await this.log.get(existingDocument.context.head);
 					if (!doc) {
 						logger.error("Failed to find Document from head");
 						return false;
@@ -222,7 +220,7 @@ export class Documents<
 					// already deleted
 					return false;
 				}
-				let doc = await this.store.oplog.get(existingDocument.context.head);
+				let doc = await this.log.get(existingDocument.context.head);
 				if (!doc) {
 					logger.error("Failed to find Document from head");
 					return false;
@@ -240,7 +238,7 @@ export class Documents<
 
 	public async put(
 		doc: T,
-		options?: AddOperationOptions<Operation<T>> & { unique?: boolean }
+		options?: AppendOptions<Operation<T>> & { unique?: boolean }
 	) {
 		if (doc instanceof Program) {
 			if (this.parentProgram == null) {
@@ -258,7 +256,8 @@ export class Documents<
 			? undefined
 			: (await this._index.get(key, { local: true, remote: { sync: true } }))
 					?.results[0];
-		return this.store.append(
+
+		return this.log.append(
 			new PutOperation({
 				key: asString((doc as any)[this._index.indexBy]),
 				data: ser,
@@ -273,7 +272,7 @@ export class Documents<
 		);
 	}
 
-	async del(key: Keyable, options?: AddOperationOptions<Operation<T>>) {
+	async del(key: Keyable, options?: AppendOptions<Operation<T>>) {
 		const existing = (
 			await this._index.get(key, { local: true, remote: { sync: true } })
 		)?.results[0];
@@ -281,7 +280,7 @@ export class Documents<
 			throw new Error(`No entry with key '${key}' in the database`);
 		}
 
-		return this.store.append(
+		return this.log.append(
 			new DeleteOperation({
 				key: asString(key),
 			}),
@@ -300,7 +299,7 @@ export class Documents<
 			removedSet.set(r.hash, r);
 		}
 		const entries = [...change.added, ...(removed || [])]
-			.sort(this.store.oplog.sortFn)
+			.sort(this.log.sortFn)
 			.reverse(); // sort so we get newest to oldest
 
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
@@ -372,7 +371,7 @@ export class Documents<
 						if (
 							(await this.canOpen!(value, item)) &&
 							this.role instanceof ReplicatorType &&
-							(await this.store.options.replicator!(item.gid))
+							(await this._replicator!(item.gid))
 						) {
 							await this.open!(value);
 						}

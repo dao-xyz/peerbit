@@ -1,7 +1,4 @@
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
@@ -34,14 +31,11 @@ describe("Log - Delete", function () {
 
 	describe("deleteRecursively", () => {
 		it("deleted unreferences", async () => {
-			const log = new Log<string>(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				{ logId: "A" }
-			);
+			const log = new Log();
+			await log.init(store, {
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
+			});
 			const { entry: e1 } = await log.append("hello1");
 			const { entry: e2 } = await log.append("hello2");
 			const { entry: e3 } = await log.append("hello3");
@@ -64,14 +58,11 @@ describe("Log - Delete", function () {
 		});
 
 		it("processes as long as alowed", async () => {
-			const log = new Log<string>(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				{ logId: "A" }
-			);
+			const log = new Log();
+			await log.init(store, {
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
+			});
 			const { entry: e1 } = await log.append("hello1");
 			const { entry: e2 } = await log.append("hello2a");
 			const { entry: e2b } = await log.append("hello2b", { nexts: [e2] });
@@ -99,14 +90,11 @@ describe("Log - Delete", function () {
 		});
 
 		it("keeps references", async () => {
-			const log = new Log<string>(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				{ logId: "A" }
-			);
+			const log = new Log();
+			await log.init(store, {
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
+			});
 			const { entry: e1 } = await log.append("hello1");
 			const { entry: e2a } = await log.append("hello2a", { nexts: [e1] });
 			const { entry: e2b } = await log.append("hello2b", { nexts: [e1] });

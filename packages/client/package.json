@@ -36,7 +36,6 @@
 		"@dao-xyz/peerbit-keystore": "^0.2.5",
 		"@dao-xyz/peerbit-logger": "^0.0.6",
 		"@dao-xyz/peerbit-program": "^0.5.5",
-		"@dao-xyz/peerbit-store": "^0.5.5",
 		"@dao-xyz/uint8arrays": "^0.0.3",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",

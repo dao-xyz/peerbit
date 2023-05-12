@@ -90,37 +90,28 @@ describe("Log - Join", function () {
 			log4: Log<string>;
 
 		beforeEach(async () => {
-			log1 = new Log(
-				session.peers[0].directblock,
-				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log2 = new Log(
-				session.peers[1].directblock,
-				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log3 = new Log(
-				session.peers[2].directblock,
-				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
-				},
-				{ logId: "X" }
-			);
-			log4 = new Log(
-				session.peers[2].directblock,
+			log1 = new Log<string>();
+			await log1.init(session.peers[0].directblock, {
+				...signKey.keypair,
+				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			});
+			log2 = new Log<string>();
+			await log2.init(session.peers[1].directblock, {
+				...signKey2.keypair,
+				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			});
+			log3 = new Log<string>();
+			await log3.init(session.peers[2].directblock, {
+				...signKey3.keypair,
+				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			});
+			log4 = new Log<string>();
+			await log4.init(
+				session.peers[2].directblock, // [2] because we cannot create more than 3 peers when running tests in CI
 				{
 					...signKey4.keypair,
 					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
-				},
-				{ logId: "X" }
+				}
 			);
 		});
 
@@ -177,7 +168,7 @@ describe("Log - Join", function () {
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
 				last(items2),
-				{ length: -1, timeout: 3000 }
+				{ timeout: 3000 }
 			);
 
 			// Here we're creating a log from entries signed by peer A, B and C
@@ -189,7 +180,7 @@ describe("Log - Join", function () {
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 				},
 				last(items3),
-				{ length: -1, timeout: 3000 }
+				{ timeout: 3000 }
 			);
 			expect(logA.length).toEqual(items2.length + items1.length);
 			expect(logB.length).toEqual(
@@ -584,12 +575,8 @@ describe("Log - Join", function () {
 			const { entry: a2 } = await log1.append("helloA2");
 			const { entry: b2 } = await log2.append("helloB2");
 
-			expect(a2.metadata.clock.id).toEqual(
-				new Uint8Array(signKey.keypair.publicKey.bytes)
-			);
-			expect(b2.metadata.clock.id).toEqual(
-				new Uint8Array(signKey2.keypair.publicKey.bytes)
-			);
+			expect(a2.metadata.clock.id).toEqual(signKey.keypair.publicKey.bytes);
+			expect(b2.metadata.clock.id).toEqual(signKey2.keypair.publicKey.bytes);
 			expect(
 				a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
 			).toBeGreaterThan(0);
@@ -704,9 +691,7 @@ describe("Log - Join", function () {
 			expect(
 				(await log1.getHeads())[(await log1.getHeads()).length - 1].gid
 			).toEqual(a1.gid);
-			expect(a2.metadata.clock.id).toEqual(
-				new Uint8Array(signKey.keypair.publicKey.bytes)
-			);
+			expect(a2.metadata.clock.id).toEqual(signKey.keypair.publicKey.bytes);
 			expect(
 				a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
 			).toBeGreaterThan(0);
@@ -728,9 +713,7 @@ describe("Log - Join", function () {
 			await log4.append("helloD3");
 			const { entry: d4 } = await log4.append("helloD4");
 
-			expect(d4.metadata.clock.id).toEqual(
-				new Uint8Array(signKey4.keypair.publicKey.bytes)
-			);
+			expect(d4.metadata.clock.id).toEqual(signKey4.keypair.publicKey.bytes);
 
 			const expectedData = [
 				"helloA1",
@@ -815,6 +798,40 @@ describe("Log - Join", function () {
 			});
 		});
 
+		describe("entry-with-references", () => {
+			let fetchCounter = 0;
+			let joinEntryCounter = 0;
+			let fromMultihashOrg: any;
+			beforeAll(() => {
+				fromMultihashOrg = Entry.fromMultihash;
+				Entry.fromMultihash = (s, h, o) => {
+					fetchCounter += 1;
+					return fromMultihashOrg(s, h, o);
+				};
+			});
+			afterAll(() => {
+				Entry.fromMultihash = fromMultihashOrg;
+			});
+
+			beforeEach(() => {
+				const joinEntryFn = log2["joinEntry"].bind(log2);
+				log2["joinEntry"] = (e, n, s, o) => {
+					joinEntryCounter += 1;
+					return joinEntryFn(e, n, s, o);
+				};
+				fetchCounter = 0;
+				joinEntryCounter = 0;
+			});
+
+			it("joins with references", async () => {
+				const { entry: a1 } = await log1.append("helloA1");
+				const { entry: a2 } = await log1.append("helloA2", { nexts: [a1] });
+				await log2.join([{ entry: a2, references: [a1] }]);
+				expect(log2.values.length).toEqual(2);
+				expect(fetchCounter).toEqual(0); // no fetches since all entries where passed
+				expect(joinEntryCounter).toEqual(2);
+			});
+		});
 		// TODO move this into the prune test file
 		describe("join and prune", () => {
 			beforeEach(async () => {

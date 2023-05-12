@@ -1,13 +1,12 @@
 import { delay } from "@dao-xyz/peerbit-time";
 import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
-import { Ed25519Keypair, SignatureWithKey } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Ed25519Identity, Entry } from "@dao-xyz/peerbit-log";
 import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
 import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/lazy-level";
-import { v4 as uuid } from "uuid";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 
 const createIdentity = async () => {
@@ -52,9 +51,8 @@ describe("clock", () => {
 		await responder.init(session.peers[0], responderIdentity, {
 			role: new ReplicatorType(),
 			replicators: () => [],
-			store: {
-				cacheId: "id",
-				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),
+			log: {
+				cache: () => Promise.resolve(new Cache(new MemoryLevel())),
 			},
 		});
 
@@ -63,9 +61,9 @@ describe("clock", () => {
 		reader = deserialize(serialize(responder), P);
 		await reader.init(session.peers[1], await createIdentity(), {
 			replicators: () => [],
-			store: {
+			log: {
 				cacheId: "id",
-				resolveCache: () => Promise.resolve(new Cache(new MemoryLevel())),
+				cache: () => Promise.resolve(new Cache(new MemoryLevel())),
 			} as any,
 		} as any);
 
