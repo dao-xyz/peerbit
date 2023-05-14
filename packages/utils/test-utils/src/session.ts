@@ -2,7 +2,11 @@ import {
 	LSession as SSession,
 	LibP2POptions as SLibP2POptions,
 } from "@dao-xyz/libp2p-test-utils";
-import { Libp2pExtended, Libp2pExtendServices } from "@dao-xyz/peerbit-libp2p";
+import {
+	CreateOptionsWithServices,
+	Libp2pExtended,
+	Libp2pExtendServices,
+} from "@dao-xyz/peerbit-libp2p";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 import { CreateOptions } from "@dao-xyz/peerbit-libp2p";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
@@ -28,15 +32,7 @@ export class LSession {
 		return this.session.stop();
 	}
 
-	static async connected(
-		n: number,
-		options: CreateOptions = {
-			services: {
-				directblock: (c) => new DirectBlock(c),
-				directsub: (c) => new DirectSub(c, { canRelayMessage: true }),
-			},
-		}
-	) {
+	static async connected(n: number, options?: CreateOptions) {
 		const session = await LSession.disconnected(n, options);
 		await session.connect();
 		await waitForPeersStreams(
@@ -45,16 +41,16 @@ export class LSession {
 		return session;
 	}
 
-	static async disconnected(
-		n: number,
-		options: CreateOptions = {
+	static async disconnected(n: number, options?: CreateOptions) {
+		let optionsWithServices: CreateOptionsWithServices = {
+			...options,
 			services: {
 				directblock: (c) => new DirectBlock(c),
 				directsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+				...options?.services,
 			},
-		}
-	) {
-		const session = await SSession.disconnected(n, options);
+		};
+		const session = await SSession.disconnected(n, optionsWithServices);
 		return new LSession(session);
 	}
 }

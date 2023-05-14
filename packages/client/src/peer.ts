@@ -66,12 +66,8 @@ import { TrimToByteLengthOption } from "@dao-xyz/peerbit-log";
 import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
 import { startsWith } from "@dao-xyz/uint8arrays";
 import { v4 as uuid } from "uuid";
-import { CreateLibp2pExtendedOptions } from "@dao-xyz/peerbit-libp2p";
-import {
-	DirectBlock,
-	LevelBlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { CreateOptions as ClientCreateOptions } from "@dao-xyz/peerbit-libp2p";
+import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
@@ -100,7 +96,7 @@ export type CreateOptions = {
 
 export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
 export type CreateInstanceOptions = {
-	libp2p?: Libp2pExtended | CreateLibp2pExtendedOptions;
+	libp2p?: Libp2pExtended | ClientCreateOptions;
 	directory?: string;
 	keystore?: Keystore;
 	peerId?: Ed25519PeerId;
@@ -119,9 +115,8 @@ export type OpenOptions = {
 	reset?: boolean;
 } & { log?: LogCallbackOptions };
 
-const isLibp2pInstance = (
-	libp2p: Libp2pExtended | CreateLibp2pExtendedOptions
-) => !!(libp2p as Libp2p).getMultiaddrs;
+const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
+	!!(libp2p as Libp2p).getMultiaddrs;
 
 const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 	entries: T[]
@@ -293,8 +288,7 @@ export class Peerbit {
 			if (isLibp2pInstance(libp2pExtended)) {
 				libp2pExternal = true; // libp2p was created outside
 			} else {
-				const extendedOptions = (libp2pExtended as CreateLibp2pExtendedOptions)
-					.libp2p;
+				const extendedOptions = libp2pExtended as any as ClientCreateOptions;
 				libp2pExtended = await createLibp2pExtended({
 					services: {
 						directblock:

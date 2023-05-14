@@ -1,4 +1,4 @@
-import { createLibp2p, Libp2p } from "libp2p";
+import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
 import type { Components } from "libp2p/components";
 import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
@@ -20,36 +20,34 @@ export type Libp2pExtendServices = {
 export type Libp2pExtended = Libp2p<
 	{ relay: CircuitRelayService; identify: any } & Libp2pExtendServices
 >;
-export type ExtendedServicesOptions = {
-	directsub: (components) => DirectSub;
-	directblock: (components) => DirectBlock;
-};
-export type CreateOptions = {
-	transports?: RecursivePartial<(components: Components) => Transport>[];
-	addresses?: RecursivePartial<AddressManagerInit>;
-	peerId?: RecursivePartial<PeerId>;
-	connectionManager?: RecursivePartial<ConnectionManagerInit>;
-	directory?: string;
-	services?: ExtendedServicesOptions;
+
+export type CreateOptions = Libp2pOptions<
+	Libp2pExtendServices & { relay: CircuitRelayService; identify: any }
+>;
+
+export type CreateOptionsWithServices = CreateOptions & {
+	services: ServiceFactoryMap<Libp2pExtendServices>;
 };
 
-export type CreateLibp2pExtendedOptions = {
-	libp2p?: CreateOptions;
-};
 export const createLibp2pExtended = (
-	opts: CreateOptions = {}
+	opts: CreateOptions = {
+		services: {
+			directblock: (c) => new DirectBlock(c),
+			directsub: (c) => new DirectSub(c),
+		},
+	}
 ): Promise<Libp2pExtended> =>
 	createLibp2p({
-		peerId: opts?.peerId,
-		connectionManager: opts?.connectionManager || {
+		connectionManager: {
 			minConnections: 0,
 		},
-		addresses: opts?.addresses || {
+		addresses: {
 			listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
 		},
-		transports: opts?.transports || transports(),
+		transports: transports(),
 		connectionEncryption: [noise()],
 		streamMuxers: [mplex()],
+		...opts,
 		services: {
 			relay: relay(),
 			identify: identifyService(),
@@ -64,5 +62,6 @@ export const createLibp2pExtended = (
 						},
 					})),
 			directblock: opts.services?.directblock || ((c) => new DirectBlock(c)),
+			...opts.services,
 		},
 	});

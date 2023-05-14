@@ -1,4 +1,4 @@
-import { LSession } from "../session";
+import { LSession } from "../session.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { logger } from "@dao-xyz/libp2p-direct-sub";
 logger.level = "trace";
