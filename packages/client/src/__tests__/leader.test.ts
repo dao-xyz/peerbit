@@ -319,19 +319,30 @@ describe(`leaders`, function () {
 
 			await delay(3000);
 			await db2.close();
+			await delay(3000);
 
 			await waitFor(
 				() =>
 					client1.getReplicatorsSorted(db1.address!.toString())?.length === 2
 			);
 
-			expect(
-				client1.getReplicatorsSorted(db1.address!.toString())
-			).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
-			]);
-
+			try {
+				expect(
+					client1.getReplicatorsSorted(db1.address!.toString())
+				).toContainAllValues([
+					client1.idKey.publicKey.hashcode(),
+					client3.idKey.publicKey.hashcode(),
+				]);
+			} catch (error) {
+				console.error(
+					"???",
+					client1.getReplicatorsSorted(db1.address!.toString()),
+					client1
+						.getReplicatorsSorted(db1.address!.toString())
+						?.find((x) => x === client2.idKey.publicKey.hashcode())
+				);
+				throw error;
+			}
 			expect(() =>
 				client2.getReplicatorsSorted(db1.address!.toString())
 			).toThrowError();
