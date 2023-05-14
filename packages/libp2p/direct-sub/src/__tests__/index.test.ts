@@ -16,7 +16,7 @@ import { equals } from "uint8arrays";
 
 describe("pubsub", function () {
 	describe("topic", () => {
-		let session: LSession;
+		let session: LSession<{ directsub: DirectSub }>;
 		let peers: {
 			stream: DirectSub;
 			messages: Message[];
@@ -25,20 +25,23 @@ describe("pubsub", function () {
 
 		beforeEach(async () => {
 			peers = [];
-			session = await LSession.disconnected(3);
+			session = await LSession.disconnected(3, {
+				services: {
+					directsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: { autoDial: false },
+						}),
+				},
+			});
 		});
 		afterEach(async () => {
-			await Promise.all(peers.map((peer) => peer.stream.stop()));
 			await session.stop();
 		});
 
 		it("can share topics when connecting after subscribe, 2 peers", async () => {
 			let streams: DirectSub[] = [];
 			for (const peer of session.peers.slice(0, 2)) {
-				const stream = new DirectSub(peer, {
-					canRelayMessage: true,
-					connectionManager: { autoDial: false },
-				});
 				const client: {
 					stream: DirectSub;
 					messages: Message[];
@@ -46,18 +49,17 @@ describe("pubsub", function () {
 				} = {
 					messages: [],
 					recieved: [],
-					stream,
+					stream: peer.services.directsub,
 				};
 
 				peers.push(client);
-				stream.addEventListener("message", (msg) => {
+				peer.services.directsub.addEventListener("message", (msg) => {
 					client.messages.push(msg.detail);
 				});
-				stream.addEventListener("data", (msg) => {
+				peer.services.directsub.addEventListener("data", (msg) => {
 					client.recieved.push(msg.detail);
 				});
-				await stream.start();
-				streams.push(stream);
+				streams.push(peer.services.directsub);
 			}
 
 			const TOPIC = "world";
@@ -88,10 +90,6 @@ describe("pubsub", function () {
 				recieved: PubSubData[];
 			}[] = [];
 			for (const peer of session.peers) {
-				const stream = new DirectSub(peer, {
-					canRelayMessage: true,
-					connectionManager: { autoDial: false },
-				});
 				const client: {
 					stream: DirectSub;
 					messages: Message[];
@@ -99,17 +97,17 @@ describe("pubsub", function () {
 				} = {
 					messages: [],
 					recieved: [],
-					stream,
+					stream: peer.services.directsub,
 				};
 
 				peers.push(client);
-				stream.addEventListener("message", (msg) => {
+				peer.services.directsub.addEventListener("message", (msg) => {
 					client.messages.push(msg.detail);
 				});
-				stream.addEventListener("data", (msg) => {
+				peer.services.directsub.addEventListener("data", (msg) => {
 					client.recieved.push(msg.detail);
 				});
-				await stream.start();
+				await peer.services.directsub.start();
 			}
 
 			const TOPIC = "world";
@@ -138,7 +136,7 @@ describe("pubsub", function () {
 	});
 
 	describe("publish", () => {
-		let session: LSession;
+		let session: LSession<{ directsub: DirectSub }>;
 		let peers: {
 			stream: DirectSub;
 			messages: Message[];
@@ -149,7 +147,15 @@ describe("pubsub", function () {
 
 		beforeEach(async () => {
 			// 0 and 2 not connected
-			session = await LSession.disconnected(3);
+			session = await LSession.disconnected(3, {
+				services: {
+					directsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: { autoDial: false },
+						}),
+				},
+			});
 
 			/* 
 			┌─┐
@@ -169,10 +175,6 @@ describe("pubsub", function () {
 			]);
 			peers = [];
 			for (const peer of session.peers) {
-				const stream = new DirectSub(peer, {
-					canRelayMessage: true,
-					connectionManager: { autoDial: false },
-				});
 				const client: {
 					stream: DirectSub;
 					messages: Message[];
@@ -180,16 +182,15 @@ describe("pubsub", function () {
 				} = {
 					messages: [],
 					recieved: [],
-					stream,
+					stream: peer.services.directsub,
 				};
 				peers.push(client);
-				stream.addEventListener("message", (msg) => {
+				peer.services.directsub.addEventListener("message", (msg) => {
 					client.messages.push(msg.detail);
 				});
-				stream.addEventListener("data", (msg) => {
+				peer.services.directsub.addEventListener("data", (msg) => {
 					client.recieved.push(msg.detail);
 				});
-				await stream.start();
 			}
 			await waitForPeers(peers[0].stream, peers[1].stream);
 			await waitForPeers(peers[1].stream, peers[2].stream);
@@ -256,7 +257,7 @@ describe("pubsub", function () {
 
 		it("send without topic directly", async () => {
 			await peers[0].stream.publish(data, {
-				to: [peers[1].stream.libp2p.peerId],
+				to: [peers[1].stream.components.peerId],
 			});
 			await waitFor(() => peers[1].recieved.length === 1);
 			expect(new Uint8Array(peers[1].recieved[0].data)).toEqual(data);
@@ -267,7 +268,7 @@ describe("pubsub", function () {
 
 		it("send without topic over relay", async () => {
 			await peers[0].stream.publish(data, {
-				to: [peers[2].stream.libp2p.peerId],
+				to: [peers[2].stream.components.peerId],
 			});
 			await waitFor(() => peers[2].recieved.length === 1);
 			expect(new Uint8Array(peers[2].recieved[0].data)).toEqual(data);
@@ -305,7 +306,7 @@ describe("pubsub", function () {
 			
 			*/
 
-			let session: LSession;
+			let session: LSession<{ directsub: DirectSub }>;
 			let peers: {
 				stream: DirectSub;
 				messages: Message[];
@@ -316,13 +317,18 @@ describe("pubsub", function () {
 			const TOPIC = "world";
 			beforeAll(async () => {});
 			beforeEach(async () => {
-				session = await LSession.disconnected(5);
+				session = await LSession.disconnected(5, {
+					services: {
+						directsub: (c) =>
+							new DirectSub(c, {
+								canRelayMessage: true,
+								connectionManager: { autoDial: false },
+							}),
+					},
+				});
+
 				peers = [];
 				for (const [i, peer] of session.peers.entries()) {
-					const stream = new DirectSub(peer, {
-						canRelayMessage: true,
-						connectionManager: { autoDial: false },
-					});
 					const client: {
 						stream: DirectSub;
 						messages: Message[];
@@ -330,19 +336,18 @@ describe("pubsub", function () {
 					} = {
 						messages: [],
 						recieved: [],
-						stream,
+						stream: peer.services.directsub,
 					};
 					peers.push(client);
-					stream.addEventListener("message", (msg) => {
+					peer.services.directsub.addEventListener("message", (msg) => {
 						client.messages.push(msg.detail);
 					});
-					stream.addEventListener("data", (msg) => {
+					peer.services.directsub.addEventListener("data", (msg) => {
 						client.recieved.push(msg.detail);
 					});
-					await stream.start();
 
 					if (i === 3) {
-						stream.subscribe(TOPIC);
+						peer.services.directsub.subscribe(TOPIC);
 					}
 				}
 
@@ -401,7 +406,7 @@ describe("pubsub", function () {
 			└─┘  
 			*/
 
-			let session: LSession;
+			let session: LSession<{ directsub: DirectSub }>;
 			let peers: {
 				stream: DirectSub;
 				messages: Message[];
@@ -412,13 +417,17 @@ describe("pubsub", function () {
 			const TOPIC = "world";
 			beforeAll(async () => {});
 			beforeEach(async () => {
-				session = await LSession.disconnected(3);
+				session = await LSession.disconnected(3, {
+					services: {
+						directsub: (c) =>
+							new DirectSub(c, {
+								canRelayMessage: true,
+								connectionManager: { autoDial: false },
+							}),
+					},
+				});
 				peers = [];
 				for (const [i, peer] of session.peers.entries()) {
-					const stream = new DirectSub(peer, {
-						canRelayMessage: true,
-						connectionManager: { autoDial: false },
-					});
 					const client: {
 						stream: DirectSub;
 						messages: Message[];
@@ -426,19 +435,18 @@ describe("pubsub", function () {
 					} = {
 						messages: [],
 						recieved: [],
-						stream,
+						stream: peer.services.directsub,
 					};
 					peers.push(client);
-					stream.addEventListener("message", (msg) => {
+					peer.services.directsub.addEventListener("message", (msg) => {
 						client.messages.push(msg.detail);
 					});
-					stream.addEventListener("data", (msg) => {
+					peer.services.directsub.addEventListener("data", (msg) => {
 						client.recieved.push(msg.detail);
 					});
-					await stream.start();
 
 					if (i === 1) {
-						stream.subscribe(TOPIC);
+						peer.services.directsub.subscribe(TOPIC);
 					}
 				}
 
@@ -495,12 +503,12 @@ describe("pubsub", function () {
 	┌▽──▽┐
 	│3   │
 	└────┘
-
+	
 	*/
 	// test sending "0" to "3" only 1 message should appear even though not in strict mode
 
 	describe("join/leave", () => {
-		let session: LSession;
+		let session: LSession<{ directsub: DirectSub }>;
 		let peers: {
 			stream: DirectSub;
 			messages: Message[];
@@ -514,7 +522,15 @@ describe("pubsub", function () {
 
 		beforeEach(async () => {
 			// 0 and 2 not connected
-			session = await LSession.disconnected(3);
+			session = await LSession.disconnected(3, {
+				services: {
+					directsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: { autoDial: false },
+						}),
+				},
+			});
 
 			/* 
 			┌─┐
@@ -534,10 +550,6 @@ describe("pubsub", function () {
 			]);
 			peers = [];
 			for (const peer of session.peers) {
-				const stream = new DirectSub(peer, {
-					canRelayMessage: true,
-					connectionManager: { autoDial: false },
-				});
 				const client: {
 					stream: DirectSub;
 					messages: Message[];
@@ -547,35 +559,26 @@ describe("pubsub", function () {
 				} = {
 					messages: [],
 					recieved: [],
-					stream,
+					stream: peer.services.directsub,
 					subscriptionEvents: [],
 					unsubscriptionEvents: [],
 				};
 				peers.push(client);
-				stream.addEventListener("message", (msg) => {
+				peer.services.directsub.addEventListener("message", (msg) => {
 					client.messages.push(msg.detail);
 				});
-				stream.addEventListener("data", (msg) => {
+				peer.services.directsub.addEventListener("data", (msg) => {
 					client.recieved.push(msg.detail);
 				});
-				stream.addEventListener("subscribe", (msg) => {
+				peer.services.directsub.addEventListener("subscribe", (msg) => {
 					client.subscriptionEvents.push(msg.detail);
 				});
-				stream.addEventListener("unsubscribe", (msg) => {
+				peer.services.directsub.addEventListener("unsubscribe", (msg) => {
 					client.unsubscriptionEvents.push(msg.detail);
 				});
-				await stream.start();
 			}
 			await waitForPeers(peers[0].stream, peers[1].stream);
 			await waitForPeers(peers[1].stream, peers[2].stream);
-			await delay(1000);
-			for (let i = 0; i < peers.length; i++) {
-				for (let j = 0; j < peers.length; j++) {
-					if (i == j) {
-						continue;
-					}
-				}
-			}
 		});
 
 		afterEach(async () => {

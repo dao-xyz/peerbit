@@ -10,7 +10,16 @@ export type LazyLevelOptions = { batch?: LevelBatchOptions };
 
 const logger = loggerFn({ module: "cache" });
 
-export default class LazyLevel {
+// TODO make SimpleLevel = AbstractLevel
+export interface SimpleLevel {
+	get status(): "opening" | "open" | "closing" | "closed";
+	close(): Promise<void>;
+	open(): Promise<void>;
+	get(key: string): Promise<Uint8Array | undefined>;
+	put(key: string, value: Uint8Array);
+	del(key): Promise<void>;
+}
+export default class LazyLevel implements SimpleLevel {
 	_store: AbstractLevel<any, any, any>;
 	_interval: any;
 	_txQueue?: AbstractBatchOperation<
@@ -130,7 +139,6 @@ export default class LazyLevel {
 			await this._store.open();
 			return Promise.resolve();
 		}
-		return this;
 	}
 
 	async get(key: string): Promise<Uint8Array | undefined> {
@@ -211,6 +219,10 @@ export default class LazyLevel {
 		} else {
 			return this._store.put(key, value, { valueEncoding: "view" });
 		}
+	}
+
+	put(key: string, value: Uint8Array) {
+		return this.set(key, value);
 	}
 
 	// Remove a value and key from the cache

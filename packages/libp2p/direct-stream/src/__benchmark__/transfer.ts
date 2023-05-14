@@ -1,15 +1,34 @@
 import B from "benchmark";
 import { LSession } from "@dao-xyz/libp2p-test-utils";
-import { Libp2p } from "libp2p";
-import { DirectStream, waitForPeers } from "../index.js";
+import {
+	DirectStreamComponents,
+	DirectStream,
+	waitForPeers,
+} from "../index.js";
 import { delay } from "@dao-xyz/peerbit-time";
+import { tcp } from "@libp2p/tcp";
 import crypto from "crypto";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
 
-// * size: 1kb x 1,797 ops/sec ±3.15% (77 runs sampled)
-// * size: 1000kb x 106 ops/sec ±2.26% (72 runs sampled)
-const session: LSession = await LSession.disconnected(4);
+// size: 1kb x 1,727 ops/sec ±2.61% (83 runs sampled)
+// size: 1000kb x 104 ops/sec ±2.46% (83 runs sampled)
+
+class TestStreamImpl extends DirectStream {
+	constructor(c: DirectStreamComponents) {
+		super(c, ["bench/0.0.0"], {
+			canRelayMessage: true,
+			emitSelf: true,
+			connectionManager: {
+				autoDial: false,
+			},
+		});
+	}
+}
+const session = await LSession.disconnected(4, {
+	transports: [tcp()],
+	services: { directstream: (c) => new TestStreamImpl(c) },
+});
 
 /* 
 ┌─┐
@@ -32,25 +51,12 @@ await session.connect([
 	[session.peers[2], session.peers[3]],
 ]);
 
-class TestStreamImpl extends DirectStream {
-	constructor(libp2p: Libp2p) {
-		super(libp2p, ["bench/0.0.0"], {
-			canRelayMessage: true,
-			emitSelf: true,
-		});
-	}
-}
-const streams: TestStreamImpl[] = await Promise.all(
-	session.peers.map(async (peer) => {
-		const stream = new TestStreamImpl(peer);
-		await stream.start();
-		return stream;
-	})
-);
+const stream = (i: number): TestStreamImpl =>
+	session.peers[i].services.directstream;
 
-await waitForPeers(streams[0], streams[1]);
-await waitForPeers(streams[1], streams[2]);
-await waitForPeers(streams[2], streams[3]);
+await waitForPeers(stream(0), stream(1));
+await waitForPeers(stream(1), stream(2));
+await waitForPeers(stream(2), stream(3));
 await delay(6000);
 
 let suite = new B.Suite();
@@ -67,8 +73,8 @@ for (const size of sizes) {
 		fn: (deferred) => {
 			const small = crypto.randomBytes(size); // 1kb
 			msgMap.set(msgIdFn(small), deferred);
-			streams[0].publish(small, {
-				to: [streams[streams.length - 1].publicKey],
+			stream(0).publish(small, {
+				to: [stream(session.peers.length - 1).publicKey],
 			});
 		},
 		setup: () => {
@@ -76,11 +82,11 @@ for (const size of sizes) {
 				msgMap.get(msgIdFn(msg.detail.data))!.resolve();
 			};
 
-			streams[streams.length - 1].addEventListener("data", listener);
+			stream(session.peers.length - 1).addEventListener("data", listener);
 			msgMap.clear();
 		},
 		teardown: () => {
-			streams[streams.length - 1].removeEventListener("data", listener);
+			stream(session.peers.length - 1).removeEventListener("data", listener);
 		},
 	});
 }
@@ -89,7 +95,6 @@ suite
 		console.log(String(event.target));
 	})
 	.on("complete", function (this: any, ...args: any[]) {
-		streams.forEach((stream) => stream.stop());
 		session.stop();
 	})
 	.run({ async: true });

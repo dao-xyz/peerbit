@@ -44,12 +44,12 @@ describe(`browser`, function () {
 			role: new ReplicatorType(),
 		});
 		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
+			session.peers[0].services.directblock,
+			session.peers[1].services.directblock
 		);
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ReplicatorType() }
@@ -86,12 +86,12 @@ describe(`browser`, function () {
 		});
 
 		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[2].directblock
+			session.peers[0].services.directblock,
+			session.peers[2].services.directblock
 		);
 		await waitForPeersBlock(
-			session.peers[1].directblock,
-			session.peers[2].directblock
+			session.peers[1].services.directblock,
+			session.peers[2].services.directblock
 		);
 
 		db1 = await client1.open(new EventStore<string>(), {
@@ -100,7 +100,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ReplicatorType() }
@@ -129,8 +129,8 @@ describe(`browser`, function () {
 			libp2p: session.peers[1],
 		});
 		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
+			session.peers[0].services.directblock,
+			session.peers[1].services.directblock
 		);
 
 		db1 = await client1.open(new EventStore<string>(), {
@@ -142,7 +142,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ReplicatorType() }
@@ -171,8 +171,8 @@ describe(`browser`, function () {
 		});
 
 		await waitForPeersBlock(
-			session.peers[0].directblock,
-			session.peers[1].directblock
+			session.peers[0].services.directblock,
+			session.peers[1].services.directblock
 		);
 
 		db1 = await client1.open(new EventStore<string>(), {
@@ -184,7 +184,7 @@ describe(`browser`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ReplicatorType() }
@@ -193,9 +193,9 @@ describe(`browser`, function () {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
 		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
-		expect(client1.libp2p.directsub.topics.has(db1.address.toString())).toEqual(
-			true
-		);
+		expect(
+			client1.libp2p.services.directsub.topics.has(db1.address.toString())
+		).toEqual(true);
 
 		await waitFor(() => db1.log.values.length === 2);
 		expect(

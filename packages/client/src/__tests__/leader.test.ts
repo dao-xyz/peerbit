@@ -5,6 +5,8 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { ObserverType } from "@dao-xyz/peerbit-program";
 import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
+import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 
 describe(`leaders`, function () {
 	let session: LSession;
@@ -16,7 +18,16 @@ describe(`leaders`, function () {
 		db3: EventStore<string>;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3, { pubsub: { autoDial: false } });
+		session = await LSession.connected(3, {
+			services: {
+				directblock: (c) => new DirectBlock(c),
+				directsub: (c) =>
+					new DirectSub(c, {
+						canRelayMessage: true,
+						connectionManager: { autoDial: false },
+					}),
+			},
+		});
 	});
 
 	afterAll(async () => {
@@ -308,19 +319,30 @@ describe(`leaders`, function () {
 
 			await delay(3000);
 			await db2.close();
+			await delay(3000);
 
 			await waitFor(
 				() =>
 					client1.getReplicatorsSorted(db1.address!.toString())?.length === 2
 			);
 
-			expect(
-				client1.getReplicatorsSorted(db1.address!.toString())
-			).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
-			]);
-
+			try {
+				expect(
+					client1.getReplicatorsSorted(db1.address!.toString())
+				).toContainAllValues([
+					client1.idKey.publicKey.hashcode(),
+					client3.idKey.publicKey.hashcode(),
+				]);
+			} catch (error) {
+				console.error(
+					"???",
+					client1.getReplicatorsSorted(db1.address!.toString()),
+					client1
+						.getReplicatorsSorted(db1.address!.toString())
+						?.find((x) => x === client2.idKey.publicKey.hashcode())
+				);
+				throw error;
+			}
 			expect(() =>
 				client2.getReplicatorsSorted(db1.address!.toString())
 			).toThrowError();

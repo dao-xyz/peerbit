@@ -53,7 +53,7 @@ describe(`Replication`, function () {
 		let updated = 0;
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{
@@ -113,7 +113,7 @@ describe(`Replication`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!
 		);
@@ -177,7 +177,7 @@ describe(`Replication`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!
 		);
@@ -226,7 +226,7 @@ describe(`Replication`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!
 		);
@@ -266,7 +266,7 @@ describe(`Replication`, function () {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!
 		);

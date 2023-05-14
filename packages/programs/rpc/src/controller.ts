@@ -94,8 +94,8 @@ export class RPC<Q, R> extends ComposableProgram {
 
 	public async close(): Promise<boolean> {
 		if (this._subscribedResponses) {
-			await this.libp2p.directsub.unsubscribe(this.rpcTopic);
-			await this.libp2p.directsub.removeEventListener(
+			await this.libp2p.services.directsub.unsubscribe(this.rpcTopic);
+			await this.libp2p.services.directsub.removeEventListener(
 				"data",
 				this._onRequestBinded
 			);
@@ -104,8 +104,8 @@ export class RPC<Q, R> extends ComposableProgram {
 
 		if (this._subscribedRequests) {
 			this._responseResolver = undefined as any;
-			await this.libp2p.directsub.unsubscribe(this.rpcTopic);
-			await this.libp2p.directsub.removeEventListener(
+			await this.libp2p.services.directsub.unsubscribe(this.rpcTopic);
+			await this.libp2p.services.directsub.removeEventListener(
 				"data",
 				this._onResponseBinded
 			);
@@ -120,8 +120,11 @@ export class RPC<Q, R> extends ComposableProgram {
 		}
 
 		this._onRequestBinded = this._onRequest.bind(this);
-		this.libp2p.directsub.addEventListener("data", this._onRequestBinded);
-		await this.libp2p.directsub.subscribe(this.rpcTopic);
+		this.libp2p.services.directsub.addEventListener(
+			"data",
+			this._onRequestBinded
+		);
+		await this.libp2p.services.directsub.subscribe(this.rpcTopic);
 		logger.debug("subscribing to query topic (requests): " + this.rpcTopic);
 		this._subscribedRequests = true;
 	}
@@ -132,8 +135,11 @@ export class RPC<Q, R> extends ComposableProgram {
 		}
 
 		this._onResponseBinded = this._onResponse.bind(this);
-		this.libp2p.directsub.addEventListener("data", this._onResponseBinded);
-		await this.libp2p.directsub.subscribe(this.rpcTopic);
+		this.libp2p.services.directsub.addEventListener(
+			"data",
+			this._onResponseBinded
+		);
+		await this.libp2p.services.directsub.subscribe(this.rpcTopic);
 		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 		this._subscribedResponses = true;
 	}
@@ -189,7 +195,9 @@ export class RPC<Q, R> extends ComposableProgram {
 						// that is now known in the .directsub network, hence the message might not be delivired if we
 						// send with { to: [RECIEVER] } param
 						maybeSignedMessage = await maybeSignedMessage.sign(
-							this.libp2p.directsub.sign.bind(this.libp2p.directsub)
+							this.libp2p.services.directsub.sign.bind(
+								this.libp2p.services.directsub
+							)
 						);
 
 						const decryptedMessage = new DecryptedThing<
@@ -205,7 +213,7 @@ export class RPC<Q, R> extends ComposableProgram {
 							request.respondTo
 						);
 
-						await this.libp2p.directsub.publish(
+						await this.libp2p.services.directsub.publish(
 							serialize(
 								new ResponseV0({
 									response: serialize(maybeEncryptedMessage),
@@ -277,7 +285,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		let timeoutFn: any = undefined;
 		let maybeSignedMessage = new MaybeSigned<any>({ data: requestData });
 		maybeSignedMessage = await maybeSignedMessage.sign(
-			this.libp2p.directsub.sign.bind(this.libp2p.directsub)
+			this.libp2p.services.directsub.sign.bind(this.libp2p.services.directsub)
 		);
 
 		const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
@@ -387,7 +395,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			}, timeout);
 		});
 
-		await this.libp2p.directsub.publish(requestBytes, publicOptions);
+		await this.libp2p.services.directsub.publish(requestBytes, publicOptions);
 		await responsePromise;
 		this._responseResolver.delete(requetsMessageIdString);
 		return allResults;

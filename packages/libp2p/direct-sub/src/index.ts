@@ -4,6 +4,7 @@ import { Libp2p } from "libp2p";
 import {
 	DataMessage,
 	DirectStream,
+	DirectStreamComponents,
 	DirectStreamOptions,
 	Message,
 	PeerStreams,
@@ -65,14 +66,15 @@ export type DirectSubOptions = {
 
 export type SubscriptionData = { timestamp: bigint; data?: Uint8Array };
 
+export type DirectSubComponents = DirectStreamComponents;
 export class DirectSub extends DirectStream<PubSubEvents> {
 	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest recieved)
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
 	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
 	public subscriptions: Map<string, { counter: number; data?: Uint8Array }>; // topic -> subscription ids
 
-	constructor(libp2p: Libp2p, props?: DirectStreamOptions) {
-		super(libp2p, ["directsub/0.0.0"], props);
+	constructor(components: DirectSubComponents, props?: DirectStreamOptions) {
+		super(components, ["directsub/0.0.0"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
 		this.topicsToPeers = new Map();
@@ -158,7 +160,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			});
 
 			await this.publishMessage(
-				this.libp2p.peerId,
+				this.components.peerId,
 				await message.sign(this.sign)
 			);
 		}
@@ -193,7 +195,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			this.topics.delete(topic);
 			this.topicsToPeers.delete(topic);
 			await this.publishMessage(
-				this.libp2p.peerId,
+				this.components.peerId,
 				await new DataMessage({
 					data: toUint8Array(new Unsubscribe({ topics: [topic] }).serialize()),
 				}).sign(this.sign)
@@ -264,7 +266,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		}
 
 		return this.publishMessage(
-			this.libp2p.peerId,
+			this.components.peerId,
 			await new DataMessage({
 				to: from ? [from.hashcode()] : [],
 				data: toUint8Array(new GetSubscribers({ topics }).serialize()),
@@ -385,7 +387,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			 */
 			let verified: boolean | undefined = undefined;
 
-			const isFromSelf = this.libp2p.peerId.equals(from);
+			const isFromSelf = this.components.peerId.equals(from);
 			if (!isFromSelf || this.emitSelf) {
 				//	const isForAll = message.to.length === 0;
 				let isForMe: boolean;
@@ -567,7 +569,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					}
 				}
 				this.publishMessage(
-					this.libp2p.peerId,
+					this.components.peerId,
 					await new DataMessage({
 						data: toUint8Array(
 							new Subscribe({

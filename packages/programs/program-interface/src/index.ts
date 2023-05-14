@@ -1,14 +1,5 @@
 import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
-import {
-	CanAppend,
-	Change,
-	Entry,
-	Identity,
-	Log,
-	LogOptions,
-	TrimOptions,
-} from "@dao-xyz/peerbit-log";
-import { v4 as uuid } from "uuid";
+import { Change, Entry, Identity, Log } from "@dao-xyz/peerbit-log";
 import {
 	PublicKeyEncryptionResolver,
 	randomBytes,
@@ -26,8 +17,6 @@ import {
 	ReplicatorType,
 	SubscriptionType,
 } from "./role.js";
-import { Encoding } from "@dao-xyz/peerbit-log";
-import LazyLevel from "@dao-xyz/lazy-level";
 import { LogProperties } from "@dao-xyz/peerbit-log";
 
 export * from "./protocol-message.js";
@@ -303,7 +292,7 @@ export abstract class AbstractProgram {
 
 		await Promise.all(
 			this.logs.map((s) =>
-				s.init(libp2p.directblock, identity, {
+				s.init(libp2p.services.directblock, identity, {
 					cache: options.log?.cache,
 					canAppend: options.log?.canAppend,
 					clock: options.log?.clock,
@@ -544,7 +533,7 @@ export abstract class Program
 
 		// TODO, determine whether setup should be called before or after save
 		if (this.parentProgram === undefined) {
-			const address = await this.save(libp2p.directblock);
+			const address = await this.save(libp2p.services.directblock);
 			await options?.onSave?.(address);
 		}
 		await super.init(libp2p, identity, options);
@@ -597,7 +586,7 @@ export abstract class Program
 		if (!this.address?.cid) {
 			throw new Error("Can not delete, missing address");
 		}
-		return this.libp2p.directblock.rm(this.address.cid);
+		return this.libp2p.services.directblock.rm(this.address.cid);
 	}
 
 	static async load<S extends Program>(

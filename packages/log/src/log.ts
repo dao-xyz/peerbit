@@ -611,7 +611,6 @@ export class Log<T> {
 
 		const trimmed = await this.trim(options?.trim);
 
-		//console.log("APPEND TRIMMED", trimmed.length)
 		for (const entry of trimmed) {
 			removed.push(entry);
 		}
@@ -1004,7 +1003,8 @@ export class Log<T> {
 		const deleted: Entry<T>[] = [];
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
-			if (counter > 0 || !skipFirst) {
+			if ((counter > 0 || !skipFirst) && this.has(entry.hash)) {
+				// TODO test last argument: It is for when multiple heads point to the same entry, hence we might visit it multiple times? or a concurrent delete process is doing it before us.
 				this._trim.deleteFromCache(entry);
 				await this._values.delete(entry);
 				await this._entryIndex.delete(entry.hash);

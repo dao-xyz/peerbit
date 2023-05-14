@@ -217,7 +217,9 @@ describe("index", () => {
 
 		beforeAll(async () => {
 			session = await LSession.connected(4);
-			await waitForPeersBlock(...session.peers.map((x) => x.directblock));
+			await waitForPeersBlock(
+				...session.peers.map((x) => x.services.directblock)
+			);
 		});
 		beforeEach(async () => {
 			identites = [];
@@ -227,7 +229,7 @@ describe("index", () => {
 			}
 
 			replicators = session.peers.map((x) => [
-				x.directsub.publicKey.hashcode(),
+				x.services.directsub.publicKey.hashcode(),
 			]);
 		});
 
@@ -259,19 +261,19 @@ describe("index", () => {
 			await init(l0a, 0, { topic });
 
 			let l0b: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[1].directblock,
+				session.peers[1].services.directblock,
 				l0a.address!
 			)) as any;
 			await init(l0b, 1, { topic });
 
 			let l0c: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[2].directblock,
+				session.peers[2].services.directblock,
 				l0a.address!
 			)) as any;
 			await init(l0c, 2, { topic });
 
 			let l0d: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[3].directblock,
+				session.peers[3].services.directblock,
 				l0a.address!
 			)) as any;
 			await init(l0d, 3, { topic });
@@ -388,14 +390,14 @@ describe("index", () => {
 			await init(l0a, 0, { topic });
 
 			let l0b: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[1].directblock,
+				session.peers[1].services.directblock,
 				l0a.address!
 			)) as any;
 			await init(l0b, 1, { topic });
 
 			replicators = [
-				[session.peers[0].directsub.publicKey.hashcode()],
-				[session.peers[1].directsub.publicKey.hashcode()],
+				[session.peers[0].services.directsub.publicKey.hashcode()],
+				[session.peers[1].services.directsub.publicKey.hashcode()],
 			];
 
 			// Can not append peer3Key since its not trusted by the root

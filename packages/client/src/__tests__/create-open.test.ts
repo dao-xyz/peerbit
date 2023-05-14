@@ -10,7 +10,6 @@ import { EventStore } from "./utils/stores";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
-import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
@@ -19,20 +18,6 @@ import { randomBytes } from "@dao-xyz/peerbit-crypto";
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
 describe(`Create & Open`, function () {
-	//   jest.retryTimes(1); // TODO Side effects may cause failures
-
-	let session: LSession;
-
-	beforeAll(async () => {
-		session = await LSession.connected(1);
-	});
-
-	afterAll(async () => {
-		if (session) {
-			await session.stop();
-		}
-	});
-
 	describe("Create", function () {
 		describe("Success", function () {
 			let db: KeyBlocks<string>;
@@ -42,13 +27,10 @@ describe(`Create & Open`, function () {
 				clientDirectory = dbPath + uuid();
 				client = await Peerbit.create({
 					directory: clientDirectory,
-					libp2p: session.peers[0],
 				});
 			});
 			afterAll(async () => {
-				if (client) {
-					await client.stop();
-				}
+				await client.stop();
 			});
 
 			beforeEach(async () => {
@@ -69,7 +51,7 @@ describe(`Create & Open`, function () {
 
 			it("block storage exist at path", async () => {
 				const location = (
-					client.libp2p.directblock._localStore as LevelBlockStore
+					client.libp2p.services.directblock._localStore as LevelBlockStore
 				)._level._store["location"];
 				expect(location).toEndWith(
 					path.join(client.directory!, "blocks").toString()
@@ -82,7 +64,7 @@ describe(`Create & Open`, function () {
 
 			it("saves database manifest file locally", async () => {
 				const loaded = (await Program.load(
-					client.libp2p.directblock,
+					client.libp2p.services.directblock,
 					db.address!
 				)) as KeyBlocks<string>;
 				expect(loaded).toBeDefined();
@@ -109,7 +91,6 @@ describe(`Create & Open`, function () {
 		beforeAll(async () => {
 			client = await Peerbit.create({
 				directory: dbPath + uuid(),
-				libp2p: session.peers[0],
 			});
 		});
 		afterAll(async () => {
@@ -119,7 +100,6 @@ describe(`Create & Open`, function () {
 		});
 
 		it("opens a database - name only", async () => {
-			const topic = uuid();
 			const db = await client.open(new EventStore({}));
 			assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db.address!.toString().indexOf("zb"), 9);
@@ -151,7 +131,7 @@ describe(`Create & Open`, function () {
 				},
 			});
 			const db2 = await client.open(
-				(await Program.load(client.libp2p.directblock, db.address!))!
+				(await Program.load(client.libp2p.services.directblock, db.address!))!
 			);
 			assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db2.address!.toString().indexOf("zb"), 9);
@@ -165,9 +145,11 @@ describe(`Create & Open`, function () {
 		it("doesn't open a database if we don't have it locally", async () => {
 			const db = await client.open(new EventStore({}));
 			await db.drop();
-			await (client.libp2p.directblock._localStore as LevelBlockStore).idle();
+			await (
+				client.libp2p.services.directblock._localStore as LevelBlockStore
+			).idle();
 			const dbToLoad = await Program.load(
-				client.libp2p.directblock,
+				client.libp2p.services.directblock,
 				db.address,
 				{ timeout: 3000 }
 			);
@@ -227,7 +209,6 @@ describe(`Create & Open`, function () {
 		beforeAll(async () => {
 			client = await Peerbit.create({
 				directory: dbPath + uuid(),
-				libp2p: session.peers[0],
 			});
 		});
 		afterAll(async () => {

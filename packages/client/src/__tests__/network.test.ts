@@ -1,8 +1,10 @@
+import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 
 describe(`network`, function () {
 	let session: LSession;
@@ -14,7 +16,16 @@ describe(`network`, function () {
 		db3: EventStore<string>;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3, { pubsub: { autoDial: false } });
+		session = await LSession.connected(3, {
+			services: {
+				directblock: (c) => new DirectBlock(c),
+				directsub: (c) =>
+					new DirectSub(c, {
+						canRelayMessage: true,
+						connectionManager: { autoDial: true },
+					}),
+			},
+		});
 	});
 
 	afterAll(async () => {
