@@ -686,34 +686,22 @@ describe("streams", function () {
 				}
 
 				// slowly connect to that the route maps are deterministic
-				try {
-					await session.connect([[session.peers[0], session.peers[1]]]);
-					await waitFor(() => peers[0].stream.routes.linksCount === 1);
-					await waitFor(() => peers[1].stream.routes.linksCount === 1);
-					await session.connect([[session.peers[1], session.peers[2]]]);
-					await waitFor(() => peers[0].stream.routes.linksCount === 2);
-					await waitFor(() => peers[1].stream.routes.linksCount === 2);
-					await waitFor(() => peers[2].stream.routes.linksCount === 2);
-					await session.connect([[session.peers[0], session.peers[3]]]);
-					await waitFor(() => peers[0].stream.routes.linksCount === 3);
-					await waitFor(() => peers[1].stream.routes.linksCount === 3);
-					await waitFor(() => peers[2].stream.routes.linksCount === 3);
-					await waitFor(() => peers[3].stream.routes.linksCount === 3);
-					await waitForPeerStreams(peers[0].stream, peers[1].stream);
-					await waitForPeerStreams(peers[1].stream, peers[2].stream);
-					await waitForPeerStreams(peers[0].stream, peers[3].stream);
-				} catch (error) {
-					console.log(
-						[peers.map((x) => x.stream.peerIdStr)],
-						[...peers[0].stream.multiaddrsMap.values()],
-						peers[0].stream.routes.linksCount,
-						peers[1].stream.routes.linksCount,
-						peers[2].stream.routes.linksCount,
-						peers[3].stream.routes.linksCount
-					);
-					console.log([...peers[0].stream.multiaddrsMap.values()]);
-					throw error;
-				}
+				await session.connect([[session.peers[0], session.peers[1]]]);
+				await waitFor(() => peers[0].stream.routes.linksCount === 1);
+				await waitFor(() => peers[1].stream.routes.linksCount === 1);
+				await session.connect([[session.peers[1], session.peers[2]]]);
+				await waitFor(() => peers[0].stream.routes.linksCount === 2);
+				await waitFor(() => peers[1].stream.routes.linksCount === 2);
+				await waitFor(() => peers[2].stream.routes.linksCount === 2);
+				await session.connect([[session.peers[0], session.peers[3]]]);
+				await waitFor(() => peers[0].stream.routes.linksCount === 3);
+				await waitFor(() => peers[1].stream.routes.linksCount === 3);
+				await waitFor(() => peers[2].stream.routes.linksCount === 3);
+				await waitFor(() => peers[3].stream.routes.linksCount === 3);
+				await waitForPeerStreams(peers[0].stream, peers[1].stream);
+				await waitForPeerStreams(peers[1].stream, peers[2].stream);
+				await waitForPeerStreams(peers[0].stream, peers[3].stream);
+
 				for (const peer of peers) {
 					await waitFor(() => peer.reachable.length === 3);
 					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
@@ -735,6 +723,7 @@ describe("streams", function () {
 
 			it("will emit unreachable events on shutdown", async () => {
 				/** Shut down slowly and check that all unreachable events are fired */
+
 				let reachableBeforeStop = peers[2].reachable.length;
 				await peers[0].stream.stop();
 				const hasAll = (arr: PublicSignKey[], cmp: PublicSignKey[]) => {
@@ -760,12 +749,30 @@ describe("streams", function () {
 				expect(reachableBeforeStop).toEqual(peers[0].reachable.length);
 
 				expect(peers[0].unrechable).toHaveLength(0);
-				await waitFor(() =>
-					hasAll(peers[1].unrechable, [
-						peers[0].stream.publicKey,
-						peers[3].stream.publicKey,
-					])
-				);
+				try {
+					await waitFor(() =>
+						hasAll(peers[1].unrechable, [
+							peers[0].stream.publicKey,
+							peers[3].stream.publicKey,
+						])
+					);
+				} catch (error) {
+					console.error(
+						"IDS",
+						peers.map((x) => x.stream.publicKeyHash)
+					);
+					console.error("UNREACBABLE", peers[1].unrechable);
+					console.error("PEERS", [...peers[1].stream.peers.keys()]);
+					console.error(
+						"RW?",
+						[...peers[1].stream.peers.values()].map(
+							(x) => x.isWritable + "-" + x.isReadable
+						)
+					);
+
+					throw error;
+				}
+
 				await peers[1].stream.stop();
 				await waitFor(() =>
 					hasAll(peers[2].unrechable, [
