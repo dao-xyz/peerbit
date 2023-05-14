@@ -206,15 +206,23 @@ describe(`Create & Open`, function () {
 	describe("Close", function () {
 		let client: Peerbit;
 
-		beforeAll(async () => {
+		beforeEach(async () => {
 			client = await Peerbit.create({
 				directory: dbPath + uuid(),
 			});
 		});
-		afterAll(async () => {
+		afterEach(async () => {
 			if (client) {
 				await client.stop();
 			}
+		});
+
+		it("closes when disconnecting", async () => {
+			const db = await client.open(new EventStore({}));
+			await client.stop();
+			expect(db.log.headsIndex.headsCache?.cache._store.status).toEqual(
+				"closed"
+			);
 		});
 
 		it("closes a custom store", async () => {

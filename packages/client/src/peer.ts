@@ -461,18 +461,18 @@ export class Peerbit {
 		// close keystore
 		await this.keystore.close();
 
-		// Close libp2p
-		if (!this._libp2pExternal) {
-			// only close it if we created it
-			await this.libp2p.stop();
-		}
-
 		// Close all open databases
 		await Promise.all(
 			[...this.programs.values()].map((program) => program.program.close())
 		);
 
 		await this._cache.close();
+
+		// Close libp2p (after above)
+		if (!this._libp2pExternal) {
+			// only close it if we created it
+			await this.libp2p.stop();
+		}
 
 		// Remove all databases from the state
 		this.programs = new Map();
