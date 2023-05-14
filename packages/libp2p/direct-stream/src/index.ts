@@ -755,8 +755,13 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
+		const connections = this.components.connectionManager
+			.getConnectionsMap()
+			.get(peerId);
 		if (
 			conn?.id &&
+			connections &&
+			connections.length > 0 &&
 			!this.components.connectionManager
 				.getConnectionsMap()
 				.get(peerId)
@@ -767,9 +772,8 @@ export abstract class DirectStream<
 			return;
 		}
 
-		this._removePeer(peerKey);
-
 		if (!this.publicKey.equals(peerKey)) {
+			this._removePeer(peerKey);
 			this.removeRouteConnection(this.publicKey, peerKey);
 
 			// Notify network
