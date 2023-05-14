@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/lazy-level",
-	"version": "0.0.5",
+	"version": "0.0.6",
 	"description": "Level with lazy transactions",
 	"type": "module",
 	"publishConfig": {
