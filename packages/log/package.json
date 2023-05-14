@@ -37,7 +37,7 @@
 		"@dao-xyz/peerbit-crypto": "^0.1.13",
 		"@dao-xyz/peerbit-logger": "^0.0.6",
 		"json-stringify-deterministic": "^1.0.7",
-		"libp2p": "^0.44.0",
+		"libp2p": "^0.45.0",
 		"p-do-whilst": "^1.1.0",
 		"p-map": "^5.5.0",
 		"p-queue": "^7.3.3",

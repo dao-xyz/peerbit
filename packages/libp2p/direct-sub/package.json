@@ -58,7 +58,7 @@
 		"@dao-xyz/uint8arrays": "^0.0.3",
 		"@libp2p/interfaces": "^3.3.1",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.44.0",
+		"libp2p": "^0.45.0",
 		"memory-level": "^1.0.0"
 	}
 }

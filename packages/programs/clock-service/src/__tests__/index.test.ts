@@ -83,7 +83,7 @@ describe("clock", () => {
 		const entry = await Entry.create({
 			data: "hello world",
 			identity: reader.identity,
-			store: session.peers[1].directblock,
+			store: session.peers[1].services.directblock,
 			signers: [
 				reader.identity.sign.bind(reader.identity),
 				reader.clock.sign.bind(reader.clock),
@@ -105,7 +105,7 @@ describe("clock", () => {
 			Entry.create({
 				data: "hello world",
 				identity: reader.identity,
-				store: session.peers[1].directblock,
+				store: session.peers[1].services.directblock,
 				signers: [
 					async (data: Uint8Array) => reader.identity.sign(data),
 					async (data: Uint8Array) => {

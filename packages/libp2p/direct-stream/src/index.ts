@@ -1,9 +1,7 @@
 import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
 import { pipe } from "it-pipe";
 import Queue from "p-queue";
-import { createTopology } from "@libp2p/topology";
 import type { PeerId } from "@libp2p/interface-peer-id";
-import type { IncomingStreamData } from "@libp2p/interface-registrar";
 import type { Connection } from "@libp2p/interface-connection";
 import type { Pushable } from "it-pushable";
 import { pushable } from "it-pushable";
@@ -12,10 +10,16 @@ import { Uint8ArrayList } from "uint8arraylist";
 import type { PeerStreamEvents } from "@libp2p/interface-pubsub";
 import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
-import { Libp2p } from "@libp2p/interface-libp2p";
 import { Routes } from "./routes.js";
 import { multiaddr } from "@multiformats/multiaddr";
 import { PeerMap } from "./peer-map.js";
+import type {
+	IncomingStreamData,
+	Registrar,
+} from "@libp2p/interface-registrar";
+import { ConnectionManager } from "@libp2p/interface-connection-manager";
+import { PeerStore } from "@libp2p/interface-peer-store";
+
 import {
 	Hello,
 	DataMessage,
@@ -41,16 +45,19 @@ export {
 	MessageHeader,
 } from "./messages.js";
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
+import type { AddressManager } from "@libp2p/interface-address-manager";
 
 import { sha256Base64 } from "@dao-xyz/peerbit-crypto";
 import { logger } from "./logger.js";
 import { Cache } from "@dao-xyz/cache";
+import { TopologyImpl, createTopology } from "./topology.js";
 export { logger };
-
+import type { Libp2pEvents } from "@libp2p/interface-libp2p";
 export interface PeerStreamsInit {
 	peerId: PeerId;
 	publicKey: PublicSignKey;
 	protocol: string;
+	connId: string;
 }
 
 const isWebsocketConnection = (c: Connection) =>
@@ -60,6 +67,7 @@ const isWebsocketConnection = (c: Connection) =>
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
 export class PeerStreams extends EventEmitter<PeerStreamEvents> {
+	public counter = 0;
 	public readonly peerId: PeerId;
 	public readonly publicKey: PublicSignKey;
 	public readonly protocol: string;
@@ -89,6 +97,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	public pingJob: { resolve: () => void; abort: () => void };
 	public pingLatency: number | undefined;
 
+	public connId: string;
 	constructor(init: PeerStreamsInit) {
 		super();
 
@@ -97,6 +106,8 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.protocol = init.protocol;
 		this.inboundAbortController = new AbortController();
 		this.closed = false;
+		this.connId = init.connId;
+		this.counter = 1;
 	}
 
 	/**
@@ -137,7 +148,9 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		// - transformed with length-prefix transform
 		this._rawInboundStream = stream;
 		this.inboundStream = abortableSource(
-			pipe(this._rawInboundStream, lp.decode({ maxDataLength: 100001000 })),
+			pipe(this._rawInboundStream, (source) =>
+				lp.decode(source, { maxDataLength: 100001000 })
+			),
 			this.inboundAbortController.signal,
 			{
 				returnOnAbort: true,
@@ -173,11 +186,13 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 			},
 		});
 
-		pipe(this.outboundStream, lp.encode(), this._rawOutboundStream).catch(
-			(err: Error) => {
-				logger.error(err);
-			}
-		);
+		pipe(
+			this.outboundStream,
+			(source) => lp.encode(source),
+			this._rawOutboundStream
+		).catch((err: Error) => {
+			logger.error(err);
+		});
 
 		// Emit if the connection is new
 		this.dispatchEvent(new CustomEvent("stream:outbound"));
@@ -249,10 +264,18 @@ export type DirectStreamOptions = {
 	connectionManager?: ConnectionManagerOptions;
 };
 
+export interface DirectStreamComponents {
+	peerId: PeerId;
+	addressManager: AddressManager;
+	registrar: Registrar;
+	connectionManager: ConnectionManager;
+	peerStore: PeerStore;
+	events: EventEmitter<Libp2pEvents>;
+}
+
 export abstract class DirectStream<
 	Events extends { [s: string]: any } = StreamEvents
 > extends EventEmitter<Events> {
-	public libp2p: Libp2p;
 	public peerIdStr: string;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
@@ -284,8 +307,8 @@ export abstract class DirectStream<
 	public helloMap: Map<string, Map<string, Hello>>; // key is hash of publicKey, value is map whey key is hash of signature bytes, and value is latest Hello
 	public multiaddrsMap: Map<string, string[]>;
 	private _registrarTopologyIds: string[] | undefined;
-	private readonly maxInboundStreams: number;
-	private readonly maxOutboundStreams: number;
+	private readonly maxInboundStreams?: number;
+	private readonly maxOutboundStreams?: number;
 	private topology: any;
 	private pingJobPromise: any;
 	private pingJob: any;
@@ -294,9 +317,9 @@ export abstract class DirectStream<
 	private recentDials: Cache<string>;
 
 	constructor(
-		libp2p: Libp2p,
+		readonly components: DirectStreamComponents,
 		multicodecs: string[],
-		props?: DirectStreamOptions
+		options?: DirectStreamOptions
 	) {
 		super();
 		const {
@@ -304,16 +327,15 @@ export abstract class DirectStream<
 			emitSelf = false,
 			messageProcessingConcurrency = 10,
 			pingInterval = 10 * 1000,
-			maxInboundStreams = Math.max(libp2p.getMultiaddrs().length, 2), // TODO, should this be 1, why can't this be one (tests fail)
-			maxOutboundStreams = Math.max(libp2p.getMultiaddrs().length, 2), // TODO, should this be 1, why can't this be one (tests fail)
+			maxInboundStreams,
+			maxOutboundStreams,
 			signaturePolicy = "StictSign",
 			connectionManager = { autoDial: true },
-		} = props || {};
+		} = options || {};
 
-		this.libp2p = libp2p;
-		const signKey = getKeypairFromPeerId(this.libp2p.peerId);
+		const signKey = getKeypairFromPeerId(components.peerId);
 		this.sign = signKey.sign.bind(signKey);
-		this.peerIdStr = libp2p.peerId.toString();
+		this.peerIdStr = components.peerId.toString();
 		this.publicKey = signKey.publicKey;
 		this.publicKeyHash = signKey.publicKey.hashcode();
 		this.multicodecs = multicodecs;
@@ -349,7 +371,6 @@ export abstract class DirectStream<
 		}
 
 		logger.debug("starting");
-		this.started = true;
 
 		this.topology = createTopology({
 			onConnect: this.onPeerConnected.bind(this),
@@ -358,9 +379,51 @@ export abstract class DirectStream<
 
 		// register protocol with topology
 		// Topology callbacks called on connection manager changes
+
+		// TODO remove when https://github.com/libp2p/js-libp2p/issues/1755 fixed
+		this.components.events.removeEventListener(
+			"connection:close",
+			this.components.registrar["_onDisconnect"]
+		);
+		this.components.registrar["_onDisconnect"] = (
+			evt: CustomEvent<Connection>
+		): void => {
+			const connection = evt.detail;
+			void this.components.peerStore
+				.get(connection.remotePeer)
+				.then((peer) => {
+					for (const protocol of peer.protocols) {
+						const topologies =
+							this.components.registrar.getTopologies(protocol);
+						if (topologies == null) {
+							// no topologies are interested in this protocol
+							continue;
+						}
+
+						for (const topology of topologies.values()) {
+							(topology as TopologyImpl).onDisconnect(
+								connection.remotePeer,
+								connection
+							);
+						}
+					}
+				})
+				.catch((err) => {
+					console.error(
+						"could not inform topologies of disconnecting peer %p",
+						connection.remotePeer,
+						err
+					);
+				});
+		};
+		this.components.events.addEventListener(
+			"connection:close",
+			this.components.registrar["_onDisconnect"]
+		);
+
 		this._registrarTopologyIds = await Promise.all(
 			this.multicodecs.map((multicodec) =>
-				this.libp2p.register(multicodec, this.topology)
+				this.components.registrar.register(multicodec, this.topology)
 			)
 		);
 
@@ -368,31 +431,26 @@ export abstract class DirectStream<
 		// Called after a peer dials us
 		await Promise.all(
 			this.multicodecs.map((multicodec) =>
-				this.libp2p.handle(multicodec, this._onIncomingStream, {
+				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
 					maxOutboundStreams: this.maxOutboundStreams,
 				})
 			)
 		);
 
-		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
-		const multicodecsSet = new Set(this.multicodecs);
-		const peerToConnections: Map<string, Connection[]> = new Map();
-		const connections = this.libp2p.getConnections();
-		for (const conn of connections) {
-			const has = (
-				await this.libp2p.peerStore.get(conn.remotePeer)
-			).protocols.find((x) => multicodecsSet.has(x));
-			if (has) {
-				let arr = peerToConnections.get(conn.remotePeer.toString());
-				if (!arr) {
-					arr = [];
-					peerToConnections.set(conn.remotePeer.toString(), arr);
-				}
-				arr.push(conn);
-			}
-		}
+		this.started = true;
 
+		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
+		const peerToConnections: Map<string, Connection[]> = new Map();
+		const connections = this.components.connectionManager.getConnections();
+		for (const conn of connections) {
+			let arr = peerToConnections.get(conn.remotePeer.toString());
+			if (!arr) {
+				arr = [];
+				peerToConnections.set(conn.remotePeer.toString(), arr);
+			}
+			arr.push(conn);
+		}
 		for (const [_peer, arr] of peerToConnections) {
 			let conn = arr[0]; // TODO choose TCP when both websocket and tcp exist
 			for (const c of arr) {
@@ -449,7 +507,9 @@ export abstract class DirectStream<
 		clearTimeout(this.pingJob);
 		await this.pingJobPromise;
 
-		await this.libp2p.unhandle(this.multicodecs);
+		await Promise.all(
+			this.multicodecs.map((x) => this.components.registrar.unhandle(x))
+		);
 
 		logger.debug("stopping");
 		for (const peerStreams of this.peers.values()) {
@@ -458,7 +518,9 @@ export abstract class DirectStream<
 
 		// unregister protocol and handlers
 		if (this._registrarTopologyIds != null) {
-			this._registrarTopologyIds?.map((id) => this.libp2p.unregister(id));
+			this._registrarTopologyIds?.map((id) =>
+				this.components.registrar.unregister(id)
+			);
 		}
 
 		this.queue.clear();
@@ -482,16 +544,24 @@ export abstract class DirectStream<
 	 */
 
 	protected async _onIncomingStream(data: IncomingStreamData) {
+		if (!this.isStarted()) {
+			return;
+		}
+
 		const { stream, connection } = data;
 		const peerId = connection.remotePeer;
 		if (stream.stat.protocol == null) {
 			stream.abort(new Error("Stream was not multiplexed"));
-			console.error("Recieved non multiplexed stream");
 			return;
 		}
 
 		const publicKey = getPublicKeyFromPeerId(peerId);
-		const peer = this.addPeer(peerId, publicKey, stream.stat.protocol);
+		const peer = this.addPeer(
+			peerId,
+			publicKey,
+			stream.stat.protocol,
+			connection.id
+		);
 		const inboundStream = peer.attachInboundStream(stream);
 		this.processMessages(peerId, inboundStream, peer).catch((err) => {
 			logger.error(err);
@@ -506,6 +576,9 @@ export abstract class DirectStream<
 		conn: Connection,
 		fromExisting?: boolean
 	) {
+		if (!this.isStarted() || conn.stat.status !== "OPEN") {
+			return;
+		}
 		try {
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
@@ -539,7 +612,7 @@ export abstract class DirectStream<
 						stream.abort(new Error("Stream was not multiplexed"));
 						return;
 					}
-					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!); // TODO types
+					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!, conn.id); // TODO types
 					await peer.attachOutboundStream(stream);
 
 					// TODO do we want to do this?
@@ -600,9 +673,11 @@ export abstract class DirectStream<
 				// Say hello
 				promises.push(
 					this.publishMessage(
-						this.libp2p.peerId,
+						this.components.peerId,
 						await new Hello({
-							multiaddrs: this.libp2p.getMultiaddrs().map((x) => x.toString()),
+							multiaddrs: this.components.addressManager
+								.getAddresses()
+								.map((x) => x.toString()),
 						}).sign(this.sign),
 						[peer]
 					)
@@ -611,7 +686,7 @@ export abstract class DirectStream<
 				// TODO add custom condition fn for doing below
 				promises.push(
 					this.publishMessage(
-						this.libp2p.peerId,
+						this.components.peerId,
 						await new Goodbye({ early: true }).sign(this.sign),
 						[peer]
 					)
@@ -629,12 +704,11 @@ export abstract class DirectStream<
 						}
 
 						promises.push(
-							this.publishMessage(this.libp2p.peerId, hello, [peer])
+							this.publishMessage(this.components.peerId, hello, [peer])
 						);
 					}
 				}
 			}
-
 			const resolved = await Promise.all(promises);
 			return resolved;
 		} catch (err: any) {
@@ -677,10 +751,22 @@ export abstract class DirectStream<
 	/**
 	 * Registrar notifies a closing connection with pubsub protocol
 	 */
-	protected async onPeerDisconnected(peerId: PeerId) {
+	protected async onPeerDisconnected(peerId: PeerId, conn?: Connection) {
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
+		if (
+			conn?.id &&
+			!this.components.connectionManager
+				.getConnectionsMap()
+				.get(peerId)
+				?.find(
+					(x) => x.id === conn.id
+				) /* TODO this should work but does not? peer?.connId !== conn.id */
+		) {
+			return;
+		}
+
 		this._removePeer(peerKey);
 
 		if (!this.publicKey.equals(peerKey)) {
@@ -691,12 +777,12 @@ export abstract class DirectStream<
 			if (earlyGoodBye) {
 				earlyGoodBye.early = false;
 				await earlyGoodBye.sign(this.sign);
-				await this.publishMessage(this.libp2p.peerId, earlyGoodBye);
+				await this.publishMessage(this.components.peerId, earlyGoodBye);
 				this.earlyGoodbyes.delete(peerKeyHash);
 			}
+			this.peerIdToPublicKey.delete(peerId.toString());
 		}
 
-		this.peerIdToPublicKey.delete(peerId.toString());
 		logger.debug("connection ended:" + peerKey.toString());
 	}
 
@@ -731,13 +817,16 @@ export abstract class DirectStream<
 	addPeer(
 		peerId: PeerId,
 		publicKey: PublicSignKey,
-		protocol: string
+		protocol: string,
+		connId: string
 	): PeerStreams {
 		const publicKeyHash = publicKey.hashcode();
 		const existing = this.peers.get(publicKeyHash);
 
 		// If peer streams already exists, do nothing
 		if (existing != null) {
+			existing.counter += 1;
+			existing.connId = connId;
 			return existing;
 		}
 
@@ -749,6 +838,7 @@ export abstract class DirectStream<
 			peerId,
 			publicKey,
 			protocol,
+			connId,
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
@@ -878,7 +968,7 @@ export abstract class DirectStream<
 			return;
 		}
 
-		if (this.libp2p.peerId.equals(from) && !this.emitSelf) {
+		if (this.components.peerId.equals(from) && !this.emitSelf) {
 			return;
 		}
 
@@ -909,7 +999,7 @@ export abstract class DirectStream<
 		peerStream: PeerStreams,
 		message: DataMessage
 	) {
-		const isFromSelf = this.libp2p.peerId.equals(from);
+		const isFromSelf = this.components.peerId.equals(from);
 		if (!isFromSelf || this.emitSelf) {
 			const isForAll = message.to.length === 0;
 			const isForMe =
@@ -1059,7 +1149,7 @@ export abstract class DirectStream<
 		if (message instanceof Ping) {
 			// respond with pong
 			await this.publishMessage(
-				this.libp2p.peerId,
+				this.components.peerId,
 				new Pong(message.pingBytes),
 				[peerStream]
 			);
@@ -1096,10 +1186,12 @@ export abstract class DirectStream<
 					resolve(undefined);
 				},
 			};
-			this.publishMessage(this.libp2p.peerId, ping, [stream]).catch((err) => {
-				clearTimeout(timeout);
-				reject(err);
-			});
+			this.publishMessage(this.components.peerId, ping, [stream]).catch(
+				(err) => {
+					clearTimeout(timeout);
+					reject(err);
+				}
+			);
 		});
 	}
 
@@ -1172,7 +1264,7 @@ export abstract class DirectStream<
 		}
 
 		// send to all the other peers
-		await this.publishMessage(this.libp2p.peerId, message, undefined);
+		await this.publishMessage(this.components.peerId, message, undefined);
 	}
 
 	public async hello(data?: Uint8Array): Promise<void> {
@@ -1182,9 +1274,11 @@ export abstract class DirectStream<
 
 		// send to all the other peers
 		await this.publishMessage(
-			this.libp2p.peerId,
+			this.components.peerId,
 			await new Hello({
-				multiaddrs: this.libp2p.getMultiaddrs().map((x) => x.toString()),
+				multiaddrs: this.components.addressManager
+					.getAddresses()
+					.map((x) => x.toString()),
 				data,
 			}).sign(this.sign.bind(this))
 		);
@@ -1218,7 +1312,7 @@ export abstract class DirectStream<
 						continue;
 					} else {
 						const path = this.routes.getPath(this.publicKeyHash, to, {
-							block: !from.equals(this.libp2p.peerId)
+							block: !from.equals(this.components.peerId)
 								? this.peerIdToPublicKey.get(from.toString())?.hashcode()
 								: undefined, // prevent send message backwards
 						});
@@ -1272,7 +1366,7 @@ export abstract class DirectStream<
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
 
-			if (this.libp2p.peerId.equals(id.peerId)) {
+			if (this.components.peerId.equals(id.peerId)) {
 				logger.trace("not sending message to myself");
 				continue;
 			}
@@ -1348,7 +1442,9 @@ export abstract class DirectStream<
 			const addrs = this.multiaddrsMap.get(toHash);
 			try {
 				if (addrs && addrs.length > 0) {
-					await this.libp2p.dial(addrs.map((x) => multiaddr(x)));
+					await this.components.connectionManager.openConnection(
+						addrs.map((x) => multiaddr(x))
+					);
 					return;
 				}
 			} catch (error) {
@@ -1389,7 +1485,9 @@ export abstract class DirectStream<
 						addr + "/p2p-circuit/webrtc/p2p/" + toPeerId.toString()
 					);
 					try {
-						await this.libp2p.dial(circuitAddress);
+						await this.components.connectionManager.openConnection(
+							circuitAddress
+						);
 						return;
 					} catch (error: any) {
 						logger.error(

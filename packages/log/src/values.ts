@@ -132,7 +132,13 @@ export class Values<T> {
 			}
 			walker = walker.prev; // prev will be undefined if you do removeNode(walker)
 		}
-		throw new Error("Failed to delete, entry does not exist");
+		throw new Error(
+			"Failed to delete, entry does not exist" +
+				" ??? " +
+				this.length +
+				" ??? " +
+				hash
+		);
 	}
 
 	deleteNode(node: EntryNode) {

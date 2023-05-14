@@ -14,7 +14,8 @@ export const queryAll = <Q, R>(
 ) => {
 	// In each shard/group only query a subset
 	groups = [...groups].filter(
-		(x) => !x.find((x) => x === rpc.libp2p.directsub.publicKey.hashcode())
+		(x) =>
+			!x.find((x) => x === rpc.libp2p.services.directsub.publicKey.hashcode())
 	);
 
 	let rng = Math.round(Math.random() * groups.length);

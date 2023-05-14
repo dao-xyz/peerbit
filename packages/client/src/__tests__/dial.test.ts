@@ -23,26 +23,26 @@ describe(`dial`, function () {
 	});
 
 	it("waits for directblock", async () => {
-		const cid = await client2.libp2p.directblock.put(
+		const cid = await client2.libp2p.services.directblock.put(
 			await createBlock(new Uint8Array([1]), "raw")
 		);
 		await client1.dial(client2.libp2p.getMultiaddrs()[0]);
 		expect(
 			await getBlockValue<Uint8Array>(
-				(await client1.libp2p.directblock.get(cid))!
+				(await client1.libp2p.services.directblock.get(cid))!
 			)
 		).toEqual(new Uint8Array([1]));
 	});
 
 	it("waits for directsub", async () => {
 		let topic = "topic";
-		await client2.libp2p.directsub.subscribe(topic);
+		await client2.libp2p.services.directsub.subscribe(topic);
 		let data: Uint8Array | undefined = undefined;
-		client2.libp2p.directsub.addEventListener("data", (d) => {
+		client2.libp2p.services.directsub.addEventListener("data", (d) => {
 			data = d.detail.data;
 		});
 		await client1.dial(client2.libp2p.getMultiaddrs()[0]);
-		await client1.libp2p.directsub.publish(new Uint8Array([1]), {
+		await client1.libp2p.services.directsub.publish(new Uint8Array([1]), {
 			topics: [topic],
 		});
 		await waitFor(() => !!data);
@@ -51,10 +51,10 @@ describe(`dial`, function () {
 
 	it("autodials by default", async () => {
 		expect(
-			client1.libp2p.directsub["connectionManagerOptions"].autoDial
+			client1.libp2p.services.directsub["connectionManagerOptions"].autoDial
 		).toBeTrue();
 		expect(
-			client2.libp2p.directsub["connectionManagerOptions"].autoDial
+			client2.libp2p.services.directsub["connectionManagerOptions"].autoDial
 		).toBeTrue();
 	});
 });

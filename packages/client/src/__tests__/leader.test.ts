@@ -5,6 +5,8 @@ import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { ObserverType } from "@dao-xyz/peerbit-program";
 import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
+import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 
 describe(`leaders`, function () {
 	let session: LSession;
@@ -16,7 +18,16 @@ describe(`leaders`, function () {
 		db3: EventStore<string>;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3, { pubsub: { autoDial: false } });
+		session = await LSession.connected(3, {
+			services: {
+				directblock: (c) => new DirectBlock(c),
+				directsub: (c) =>
+					new DirectSub(c, {
+						canRelayMessage: true,
+						connectionManager: { autoDial: false },
+					}),
+			},
+		});
 	});
 
 	afterAll(async () => {

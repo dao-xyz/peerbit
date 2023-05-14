@@ -23,7 +23,6 @@ const FirstWriteWins = (a: any, b: any) => LastWriteWins(a, b) * -1;
 const BadComparatorReturnsZero = (a: any, b: any) => 0;
 
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Timestamp } from "../clock.js";
 import {
 	BlockStore,
 	GetOptions,

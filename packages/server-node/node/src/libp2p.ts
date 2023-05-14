@@ -60,15 +60,13 @@ export const createNode = async () => {
 	); // marshalPublicKey({ bytes: keypair.publicKey.bytes }, 'ed25519'), marshalPrivateKey({ bytes: keypair.privateKey.bytes }, 'ed25519')
 
 	const node = await createLibp2pExtended({
-		libp2p: {
-			peerId,
-			addresses: {
-				listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
-			},
-			connectionManager: {
-				maxConnections: Infinity,
-				minConnections: 0,
-			},
+		peerId,
+		addresses: {
+			listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
+		},
+		connectionManager: {
+			maxConnections: Infinity,
+			minConnections: 0,
 		},
 	});
 	await node.start();

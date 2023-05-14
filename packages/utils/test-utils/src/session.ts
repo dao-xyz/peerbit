@@ -2,18 +2,17 @@ import {
 	LSession as SSession,
 	LibP2POptions as SLibP2POptions,
 } from "@dao-xyz/libp2p-test-utils";
-import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { Libp2pExtended, Libp2pExtendServices } from "@dao-xyz/peerbit-libp2p";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
+import { CreateOptions } from "@dao-xyz/peerbit-libp2p";
+import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
+import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 
-export type LibP2POptions = {
-	pubsub?: {
-		autoDial: boolean;
-	};
-} & SLibP2POptions;
+export type LibP2POptions = SLibP2POptions<Libp2pExtendServices>;
 
 export class LSession {
-	private session: SSession<Libp2pExtended>;
-	constructor(session: SSession<Libp2pExtended>) {
+	private session: SSession<Libp2pExtendServices>;
+	constructor(session: SSession<Libp2pExtendServices>) {
 		this.session = session;
 	}
 
@@ -29,28 +28,33 @@ export class LSession {
 		return this.session.stop();
 	}
 
-	static async connected(n: number, options?: LibP2POptions) {
+	static async connected(
+		n: number,
+		options: CreateOptions = {
+			services: {
+				directblock: (c) => new DirectBlock(c),
+				directsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+			},
+		}
+	) {
 		const session = await LSession.disconnected(n, options);
 		await session.connect();
-		await waitForPeersStreams(...session.peers.map((x) => x.directblock));
+		await waitForPeersStreams(
+			...session.peers.map((x) => x.services.directblock)
+		);
 		return session;
 	}
 
-	static async disconnected(n: number, options?: LibP2POptions) {
-		const session: SSession<Libp2pExtended> =
-			await SSession.disconnected<Libp2pExtended>(n, options);
-		const peers = await Promise.all(
-			session.peers.map(async (peer) => {
-				const extended = await createLibp2pExtended({
-					libp2p: peer,
-					pubsub: options?.pubsub,
-				});
-				await extended.start();
-				return extended;
-			})
-		);
-		session.peers = peers;
-
+	static async disconnected(
+		n: number,
+		options: CreateOptions = {
+			services: {
+				directblock: (c) => new DirectBlock(c),
+				directsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+			},
+		}
+	) {
+		const session = await SSession.disconnected(n, options);
 		return new LSession(session);
 	}
 }

@@ -46,7 +46,7 @@ describe(`Write-only`, () => {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ObserverType() }
@@ -66,7 +66,7 @@ describe(`Write-only`, () => {
 		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ObserverType() }
@@ -87,7 +87,7 @@ describe(`Write-only`, () => {
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.directblock,
+				client2.libp2p.services.directblock,
 				db1.address!
 			))!,
 			{ role: new ObserverType(), sync: () => true }
@@ -117,7 +117,7 @@ describe(`Write-only`, () => {
 	});
 	db2 = await client2.open<EventStore<string>>(
 		await EventStore.load<EventStore<string>>(
-			client2.libp2p.directblock,
+			client2.libp2p.services.directblock,
 			db1.address!
 		),
 		{ replicate: false }

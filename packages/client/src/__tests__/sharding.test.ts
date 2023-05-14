@@ -6,7 +6,6 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { AbsolutMinReplicas } from "../exchange-heads";
-import { tcp } from "@libp2p/tcp";
 
 describe(`sharding`, () => {
 	let session: LSession;
@@ -18,7 +17,7 @@ describe(`sharding`, () => {
 		db3: PermissionedEventStore;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3, { transports: [tcp()] });
+		session = await LSession.connected(3);
 	});
 
 	beforeEach(async () => {

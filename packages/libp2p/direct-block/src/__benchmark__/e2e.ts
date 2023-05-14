@@ -3,7 +3,7 @@ import { LSession } from "@dao-xyz/libp2p-test-utils";
 import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 import { delay } from "@dao-xyz/peerbit-time";
 import crypto from "crypto";
-import { DirectBlock, MemoryLevelBlockStore, stringifyCid } from "../index.js";
+import { DirectBlock, stringifyCid } from "../index.js";
 import { createBlock, getBlockValue } from "../block.js";
 import { tcp } from "@libp2p/tcp";
 
@@ -11,9 +11,13 @@ import { tcp } from "@libp2p/tcp";
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)
 // size: 1000kb x 40.51 ops/sec ±4.09% (62 runs sampled)
 
-const session: LSession = await LSession.disconnected(4, {
-	transports: [tcp()],
-});
+const session: LSession<{ directblock: DirectBlock }> =
+	await LSession.disconnected(4, {
+		transports: [tcp()],
+		services: {
+			directblock: (c) => new DirectBlock(c),
+		},
+	});
 
 /* 
 ┌─┐
@@ -36,18 +40,20 @@ await session.connect([
 	[session.peers[1], session.peers[2]],
 	[session.peers[2], session.peers[3]],
 ]);
-const stores: DirectBlock[] = await Promise.all(
-	session.peers.map(async (peer) => {
-		const stream = new DirectBlock(peer, new MemoryLevelBlockStore());
-		await stream.open();
-		return stream;
-	})
-);
 
 await session.connect();
-await waitForPeers(stores[0], stores[1]);
-await waitForPeers(stores[1], stores[2]);
-await waitForPeers(stores[2], stores[3]);
+await waitForPeers(
+	session.peers[0].services.directblock,
+	session.peers[1].services.directblock
+);
+await waitForPeers(
+	session.peers[1].services.directblock,
+	session.peers[2].services.directblock
+);
+await waitForPeers(
+	session.peers[2].services.directblock,
+	session.peers[3].services.directblock
+);
 await delay(3000);
 
 const largeRandom: Uint8Array[] = [];
@@ -70,9 +76,13 @@ for (const size of sizes) {
 		fn: async (deferred) => {
 			{
 				const rng = crypto.randomBytes(size);
-				const cid = await stores[0].put(await createBlock(rng, "raw"));
+				const cid = await session.peers[0].services.directblock.put(
+					await createBlock(rng, "raw")
+				);
 				await getBlockValue(
-					(await stores[stores.length - 1].get<Uint8Array>(stringifyCid(cid)))!
+					(await session.peers[
+						session.peers.length - 1
+					].services.directblock.get<Uint8Array>(stringifyCid(cid)))!
 				);
 				deferred.resolve();
 			}
@@ -84,7 +94,6 @@ suite
 		console.log(String(event.target));
 	})
 	.on("complete", function (this: any, ...args: any[]) {
-		stores.forEach((stream) => stream.close());
 		session.stop();
 	})
 	.run({ async: true });

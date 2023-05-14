@@ -12,7 +12,7 @@ import { createLibp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { tcp } from "@libp2p/tcp";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 1,216 ops/sec ±2.62% (81 runs sampled)
+// put x 1,114 ops/sec ±2.71% (79 runs sampled)
 
 @variant("document")
 class Document {
@@ -51,9 +51,9 @@ class TestStore extends Program {
 
 const peers = await Promise.all(
 	[
-		await createLibp2pExtended({ libp2p: { transports: [tcp()] } }),
-		await createLibp2pExtended({ libp2p: { transports: [tcp()] } }),
-		await createLibp2pExtended({ libp2p: { transports: [tcp()] } }),
+		await createLibp2pExtended({ transports: [tcp()] }),
+		await createLibp2pExtended({ transports: [tcp()] }),
+		await createLibp2pExtended({ transports: [tcp()] }),
 	].map((x) => Peerbit.create({ libp2p: x }))
 );
 

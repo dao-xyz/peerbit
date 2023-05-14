@@ -114,7 +114,7 @@ describe("index", () => {
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
 					replicators: () => [
-						[session.peers[0].directsub.publicKey.hashcode()],
+						[session.peers[0].services.directsub.publicKey.hashcode()],
 					],
 					log: {
 						cache: () => new Cache(createStore()),
@@ -364,7 +364,7 @@ describe("index", () => {
 					await store.init(session.peers[0], await createIdentity(), {
 						role: new ReplicatorType(),
 						replicators: () => [
-							[session.peers[0].directsub.publicKey.hashcode()],
+							[session.peers[0].services.directsub.publicKey.hashcode()],
 						],
 						log: {
 							cache: () => new Cache(createStore()),
@@ -385,17 +385,17 @@ describe("index", () => {
 					});
 
 					await waitForPeersStreams(
-						session.peers[0].directblock,
-						session.peers[1].directblock
+						session.peers[0].services.directblock,
+						session.peers[1].services.directblock
 					);
 					store2 = (await FilteredStore.load<FilteredStore>(
-						session.peers[1].directblock,
+						session.peers[1].services.directblock,
 						store.address
 					))!;
 					await store2.init(session.peers[1], await createIdentity(), {
 						role: new ReplicatorType(),
 						replicators: () => [
-							[session.peers[0].directsub.publicKey.hashcode()],
+							[session.peers[0].services.directsub.publicKey.hashcode()],
 						],
 						log: {
 							cache: () => new Cache(createStore()),
@@ -421,7 +421,7 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-									session.peers[i].directblock,
+									session.peers[i].services.directblock,
 									stores[0].address!
 							  ))!
 							: new TestStore({
@@ -436,7 +436,7 @@ describe("index", () => {
 					await store.init(session.peers[i], await createIdentity(), {
 						role: i === 0 ? new ReplicatorType() : new ObserverType(),
 						replicators: () => [
-							[session.peers[0].directsub.publicKey.hashcode()],
+							[session.peers[0].services.directsub.publicKey.hashcode()],
 						],
 						log: {
 							encryption: {
@@ -970,15 +970,15 @@ describe("index", () => {
 			for (let i = 0; i < peersCount; i++) {
 				if (i > 0) {
 					await waitForPeersStreams(
-						session.peers[i].directblock,
-						session.peers[0].directblock
+						session.peers[i].services.directblock,
+						session.peers[0].services.directblock
 					);
 				}
 				const openEvents: Program[] = [];
 				const store =
 					i > 0
 						? (await TestStore.load<TestStore>(
-								session.peers[i].directblock,
+								session.peers[i].services.directblock,
 								stores[0].store.address!
 						  ))!
 						: new TestStore({
@@ -1002,7 +1002,7 @@ describe("index", () => {
 					},
 					replicator: () => Promise.resolve(true),
 					replicators: () => [
-						[session.peers[0].directsub.publicKey.hashcode()],
+						[session.peers[0].services.directsub.publicKey.hashcode()],
 					],
 					log: {
 						encryption: {
@@ -1119,7 +1119,7 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-									session.peers[i].directblock,
+									session.peers[i].services.directblock,
 									stores[0].address!
 							  ))!
 							: new TestStore({
@@ -1134,7 +1134,9 @@ describe("index", () => {
 					await store.init(session.peers[i], await createIdentity(), {
 						role: new ReplicatorType(),
 						replicators: () => [
-							session.peers.map((x) => x.directsub.publicKey.hashcode()),
+							session.peers.map((x) =>
+								x.services.directsub.publicKey.hashcode()
+							),
 						],
 						log: {
 							encryption: {
@@ -1191,8 +1193,8 @@ describe("index", () => {
 
 			it("all", async () => {
 				stores[0].docs.index.replicators = () => [
-					[stores[1].libp2p.directsub.publicKey.hashcode()],
-					[stores[2].libp2p.directsub.publicKey.hashcode()],
+					[stores[1].libp2p.services.directsub.publicKey.hashcode()],
+					[stores[2].libp2p.services.directsub.publicKey.hashcode()],
 				];
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
@@ -1210,7 +1212,7 @@ describe("index", () => {
 
 			it("one", async () => {
 				stores[0].docs.index.replicators = () => [
-					[stores[1].libp2p.directsub.publicKey.hashcode()],
+					[stores[1].libp2p.services.directsub.publicKey.hashcode()],
 				];
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
@@ -1220,8 +1222,8 @@ describe("index", () => {
 
 			it("non-local", async () => {
 				stores[0].docs.index.replicators = () => [
-					[stores[1].libp2p.directsub.publicKey.hashcode()],
-					[stores[2].libp2p.directsub.publicKey.hashcode()],
+					[stores[1].libp2p.services.directsub.publicKey.hashcode()],
+					[stores[2].libp2p.services.directsub.publicKey.hashcode()],
 				];
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }), {
 					local: false,
@@ -1233,8 +1235,8 @@ describe("index", () => {
 			it("ignore shard if I am replicator", async () => {
 				stores[0].docs.index.replicators = () => [
 					[
-						stores[0].libp2p.directsub.publicKey.hashcode(),
-						stores[1].libp2p.directsub.publicKey.hashcode(),
+						stores[0].libp2p.services.directsub.publicKey.hashcode(),
+						stores[1].libp2p.services.directsub.publicKey.hashcode(),
 					],
 				];
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
@@ -1259,8 +1261,8 @@ describe("index", () => {
 				it("will iterate on shard until response", async () => {
 					stores[0].docs.index.replicators = () => [
 						[
-							stores[1].libp2p.directsub.publicKey.hashcode(),
-							stores[2].libp2p.directsub.publicKey.hashcode(),
+							stores[1].libp2p.services.directsub.publicKey.hashcode(),
+							stores[2].libp2p.services.directsub.publicKey.hashcode(),
 						],
 					];
 
@@ -1290,8 +1292,8 @@ describe("index", () => {
 				it("will fail silently if can not reach all shards", async () => {
 					stores[0].docs.index.replicators = () => [
 						[
-							stores[1].libp2p.directsub.publicKey.hashcode(),
-							stores[2].libp2p.directsub.publicKey.hashcode(),
+							stores[1].libp2p.services.directsub.publicKey.hashcode(),
+							stores[2].libp2p.services.directsub.publicKey.hashcode(),
 						],
 					];
 					for (let i = 1; i < stores.length; i++) {

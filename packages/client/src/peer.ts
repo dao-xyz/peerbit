@@ -4,7 +4,7 @@ import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
 import { multiaddr, Multiaddr } from "@multiformats/multiaddr";
-
+import type { Libp2p } from "libp2p";
 import {
 	createExchangeHeadsMessage,
 	ExchangeHeadsMessage,
@@ -45,6 +45,7 @@ import PQueue from "p-queue";
 import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import {
+	DirectSub,
 	PubSubData,
 	Subscription,
 	SubscriptionEvent,
@@ -66,6 +67,11 @@ import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
 import { startsWith } from "@dao-xyz/uint8arrays";
 import { v4 as uuid } from "uuid";
 import { CreateLibp2pExtendedOptions } from "@dao-xyz/peerbit-libp2p";
+import {
+	DirectBlock,
+	LevelBlockStore,
+	MemoryLevelBlockStore,
+} from "@dao-xyz/libp2p-direct-block";
 export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
@@ -81,6 +87,7 @@ export type OptionalCreateOptions = {
 	limitSigning?: boolean;
 	minReplicas?: number;
 	refreshIntreval?: number;
+	libp2pExternal?: boolean;
 };
 export type CreateOptions = {
 	keystore: Keystore;
@@ -92,10 +99,8 @@ export type CreateOptions = {
 } & OptionalCreateOptions;
 
 export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
-export type CreateInstanceOptions = (
-	| { libp2p?: Libp2pExtended }
-	| CreateLibp2pExtendedOptions
-) & {
+export type CreateInstanceOptions = {
+	libp2p?: Libp2pExtended | CreateLibp2pExtendedOptions;
 	directory?: string;
 	keystore?: Keystore;
 	peerId?: Ed25519PeerId;
@@ -113,6 +118,10 @@ export type OpenOptions = {
 	trim?: TrimToByteLengthOption | TrimToLengthOption;
 	reset?: boolean;
 } & { log?: LogCallbackOptions };
+
+const isLibp2pInstance = (
+	libp2p: Libp2pExtended | CreateLibp2pExtendedOptions
+) => !!(libp2p as Libp2p).getMultiaddrs;
 
 const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 	entries: T[]
@@ -198,6 +207,7 @@ export class Peerbit {
 	private _refreshInterval: any;
 	private _lastSubscriptionMessageId = "";
 	private _cache: LazyLevel;
+	private _libp2pExternal?: boolean = false;
 
 	constructor(
 		libp2p: Libp2pExtended,
@@ -244,16 +254,19 @@ export class Peerbit {
 		this.limitSigning = options.limitSigning || false;
 		this.localNetwork = options.localNetwork;
 		this._cache = options.cache;
-
+		this._libp2pExternal = options.libp2pExternal;
 		this.keystore = options.keystore;
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
 
-		this.libp2p.directsub.addEventListener("data", this._onMessage.bind(this));
-		this.libp2p.directsub.addEventListener(
+		this.libp2p.services.directsub.addEventListener(
+			"data",
+			this._onMessage.bind(this)
+		);
+		this.libp2p.services.directsub.addEventListener(
 			"subscribe",
 			this._onSubscription.bind(this)
 		);
-		this.libp2p.directsub.addEventListener(
+		this.libp2p.services.directsub.addEventListener(
 			"unsubscribe",
 			this._onUnsubscription.bind(this)
 		);
@@ -263,41 +276,39 @@ export class Peerbit {
 		await sodium.ready; // Some of the modules depends on sodium to be readyy
 
 		let libp2pExtended: Libp2pExtended = options.libp2p as Libp2pExtended;
+		const blocksDirectory =
+			options.directory != null
+				? path.join(options.directory, "/blocks").toString()
+				: undefined;
+		let libp2pExternal = false;
 		if (!libp2pExtended) {
-			libp2pExtended = await createLibp2pExtended();
+			libp2pExtended = await createLibp2pExtended({
+				services: {
+					directblock: (c) =>
+						new DirectBlock(c, { directory: blocksDirectory }),
+					directsub: (c) => new DirectSub(c),
+				},
+			});
 		} else {
-			if (
-				!!(libp2pExtended as Libp2pExtended).directblock !=
-				!!(libp2pExtended as Libp2pExtended).directsub
-			) {
-				throw new Error(
-					"Expecting libp2p argument to either be of type Libp2p or Libp2pExtended"
-				);
-			}
-			const extendedOptions = options as CreateLibp2pExtendedOptions;
-			if (
-				!(options.libp2p as Libp2pExtended).directblock &&
-				!(options.libp2p as Libp2pExtended).directsub
-			) {
-				libp2pExtended = await createLibp2pExtended({
-					libp2p: options.libp2p,
-					blocks: {
-						directory:
-							options.directory &&
-							path.join(options.directory, "/blocks").toString(),
-					},
-					pubsub: extendedOptions.pubsub,
-				});
+			if (isLibp2pInstance(libp2pExtended)) {
+				libp2pExternal = true; // libp2p was created outside
 			} else {
-				if (extendedOptions.pubsub) {
-					throw new Error(
-						"libp2p client is already initialized as Libp2pExtended, 'pubsub' argument is unexpected"
-					);
-				}
+				const extendedOptions = (libp2pExtended as CreateLibp2pExtendedOptions)
+					.libp2p;
+				libp2pExtended = await createLibp2pExtended({
+					services: {
+						directblock:
+							extendedOptions?.services?.directblock ||
+							((c) => new DirectBlock(c, { directory: blocksDirectory })),
+						directsub:
+							extendedOptions?.services?.directsub || ((c) => new DirectSub(c)),
+					},
+				});
 			}
 		}
-
-		await libp2pExtended.start();
+		if (!libp2pExtended.isStarted()) {
+			await libp2pExtended.start();
+		}
 
 		const id: Ed25519PeerId = libp2pExtended.peerId as Ed25519PeerId;
 		if (id.type !== "Ed25519") {
@@ -348,17 +359,18 @@ export class Peerbit {
 				directory ? path.join(directory, "/cache") : undefined
 			));
 
-		const localNetwork = options.localNetwork || false;
-		const finalOptions = Object.assign({}, options, {
+		const peer = new Peerbit(libp2pExtended, identity, {
 			peerId: id,
 			keystore,
 			identity,
 			directory,
 			cache,
-			localNetwork,
+			localNetwork: options.localNetwork || false,
+			libp2pExternal,
+			limitSigning: options.limitSigning,
+			minReplicas: options.minReplicas,
+			refreshIntreval: options.refreshIntreval,
 		});
-
-		const peer = new Peerbit(libp2pExtended, identity, finalOptions);
 		await peer.getEncryption();
 		return peer;
 	}
@@ -442,8 +454,8 @@ export class Peerbit {
 		// TODO, do this as a promise instead using the onPeerConnected vents in directsub and directblock
 		return waitFor(
 			() =>
-				this.libp2p.directsub.peers.has(publicKey.hashcode()) &&
-				this.libp2p.directblock.peers.has(publicKey.hashcode())
+				this.libp2p.services.directsub.peers.has(publicKey.hashcode()) &&
+				this.libp2p.services.directblock.peers.has(publicKey.hashcode())
 		);
 	}
 
@@ -455,6 +467,12 @@ export class Peerbit {
 
 		// close keystore
 		await this.keystore.close();
+
+		// Close libp2p
+		if (!this._libp2pExternal) {
+			// only close it if we created it
+			await this.libp2p.stop();
+		}
 
 		// Close all open databases
 		await Promise.all(
@@ -501,7 +519,7 @@ export class Peerbit {
 			true,
 			this.limitSigning ? undefined : this.idIdentity
 		).then((bytes) => {
-			this.libp2p.directsub.publish(bytes, { topics: [writeAddress] });
+			this.libp2p.services.directsub.publish(bytes, { topics: [writeAddress] });
 		});
 	}
 
@@ -842,7 +860,7 @@ export class Peerbit {
 						);
 
 						// TODO perhaps send less messages to more recievers for performance reasons?
-						await this._libp2p.directsub.publish(bytes, {
+						await this._libp2p.services.directsub.publish(bytes, {
 							to: newPeers,
 							strict: true,
 							topics: [address],
@@ -884,7 +902,7 @@ export class Peerbit {
 		if (programAddress) {
 			const deleted = this.programs.delete(programAddress);
 			if (deleted) {
-				this.libp2p.directsub.unsubscribe(programAddress);
+				this.libp2p.services.directsub.unsubscribe(programAddress);
 			}
 		}
 		this._sortedPeersCache.delete(programAddress);
@@ -926,7 +944,7 @@ export class Peerbit {
 	 */
 
 	getReplicators(address: string): string[] | undefined {
-		let replicators = this.libp2p.directsub.getSubscribersWithData(
+		let replicators = this.libp2p.services.directsub.getSubscribersWithData(
 			address,
 			REPLICATOR_TYPE_VARIANT,
 			{ prefix: true }
@@ -957,7 +975,7 @@ export class Peerbit {
 	}
 
 	getObservers(address: Address): string[] | undefined {
-		return this.libp2p.directsub.getSubscribersWithData(
+		return this.libp2p.services.directsub.getSubscribersWithData(
 			address.toString(),
 			OBSERVER_TYPE_VARIANT,
 			{ prefix: true }
@@ -1040,10 +1058,10 @@ export class Peerbit {
 			throw new Error("Disconnected");
 		}
 		const topic = typeof address === "string" ? address : address.toString();
-		this.libp2p.directsub.subscribe(topic, {
+		this.libp2p.services.directsub.subscribe(topic, {
 			data: serialize(role),
 		});
-		await this.libp2p.directsub.requestSubscribers(topic); // get up to date with who are subscribing to this topic
+		await this.libp2p.services.directsub.requestSubscribers(topic); // get up to date with who are subscribing to this topic
 	}
 
 	hasSubscribedToTopic(topic: string): boolean {
@@ -1091,7 +1109,7 @@ export class Peerbit {
 			) {
 				try {
 					program = (await Program.load(
-						this._libp2p.directblock,
+						this._libp2p.services.directblock,
 						storeOrAddress,
 						options
 					)) as S; // TODO fix typings
@@ -1108,7 +1126,7 @@ export class Peerbit {
 				}
 			}
 
-			await program.save(this._libp2p.directblock);
+			await program.save(this._libp2p.services.directblock);
 			const programAddress = program.address!.toString()!;
 
 			if (programAddress) {

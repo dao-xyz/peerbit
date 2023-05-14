@@ -11,6 +11,9 @@ import { CID } from "multiformats/cid";
 import { DirectStream, DataMessage } from "@dao-xyz/libp2p-direct-stream";
 import * as Block from "multiformats/block";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { DirectStreamComponents } from "@dao-xyz/libp2p-direct-stream";
+import { LevelBlockStore, MemoryLevelBlockStore } from "./level.js";
+import { Level } from "level";
 
 export class BlockMessage {}
 
@@ -40,8 +43,8 @@ export class BlockResponse extends BlockMessage {
 	}
 }
 
+export type DirectBlockComponents = DirectStreamComponents;
 export class DirectBlock extends DirectStream implements BlockStore {
-	_libp2p: Libp2p;
 	_localStore: BlockStore;
 	_responseHandler?: (evt: CustomEvent<DataMessage>) => any;
 	_resolvers: Map<string, (data: Uint8Array) => void>;
@@ -53,23 +56,25 @@ export class DirectBlock extends DirectStream implements BlockStore {
 	_open = false;
 
 	constructor(
-		libp2p: Libp2p,
-		localStore: BlockStore,
+		components: DirectBlockComponents,
 		options?: {
+			directory?: string;
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 		}
 	) {
-		super(libp2p, ["direct-block/1.0.0"], {
+		super(components, ["direct-block/1.0.0"], {
 			emitSelf: false,
 			signaturePolicy: "StrictNoSign",
 			messageProcessingConcurrency: 10,
 			canRelayMessage: options?.canRelayMessage ?? true,
 		});
 
-		this._libp2p = libp2p;
 		const localTimeout = options?.localTimeout || 1000;
-		this._localStore = localStore;
+		this._localStore =
+			options?.directory != null
+				? new LevelBlockStore(new Level(options.directory))
+				: new MemoryLevelBlockStore();
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
 		this._responseHandler = async (evt: CustomEvent<DataMessage>) => {
@@ -225,10 +230,7 @@ export class DirectBlock extends DirectStream implements BlockStore {
 
 	get status() {
 		if (this._open) {
-			return (
-				this._localStore?.status ||
-				(this._libp2p.isStarted() ? "open" : "closed")
-			);
+			return this._localStore?.status || this.started;
 		} else {
 			return "closed";
 		}
