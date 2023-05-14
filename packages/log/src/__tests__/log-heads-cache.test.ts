@@ -190,6 +190,7 @@ describe(`load`, function () {
 			headsPath,
 			new Uint8Array([255])
 		);
+		await log.headsIndex.headsCache?.cache.idle();
 		await expect(() => log.load()).rejects.toThrowError();
 	});
 
