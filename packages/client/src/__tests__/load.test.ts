@@ -54,7 +54,7 @@ describe(`load`, () => {
 		it("loads database from local cache", async () => {
 			db = await client1.open(
 				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.services.directblock,
+					client1.libp2p.services.blocks,
 					Address.parse(address)
 				))!
 			);
@@ -77,7 +77,7 @@ describe(`load`, () => {
 			const amount = 3;
 			db = await client1.open(
 				(await EventStore.load<EventStore<string>>(
-					client1.libp2p.services.directblock,
+					client1.libp2p.services.blocks,
 					Address.parse(address)
 				))!
 			);
@@ -104,7 +104,7 @@ describe(`load`, () => {
 			for (let i = 0; i < amount; i++) {
 				db = await client1.open(
 					(await EventStore.load<EventStore<string>>(
-						client1.libp2p.services.directblock,
+						client1.libp2p.services.blocks,
 						Address.parse(address)
 					))!
 				);
@@ -147,7 +147,7 @@ describe(`load`, () => {
 			for (let i = 0; i < amount; i++) {
 				db = await client1.open(
 					(await EventStore.load<EventStore<string>>(
-						client1.libp2p.services.directblock,
+						client1.libp2p.services.blocks,
 						Address.parse(address)
 					))!
 				);
@@ -234,7 +234,7 @@ describe(`load`, () => {
 		it("loads database from local cache", async () => {
 			db = await client1.open(
 				(await MultipleStores.load<MultipleStores>(
-					client1.libp2p.services.directblock,
+					client1.libp2p.services.blocks,
 					Address.parse(address)
 				))!
 			);

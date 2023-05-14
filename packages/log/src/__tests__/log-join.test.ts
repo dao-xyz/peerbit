@@ -70,9 +70,9 @@ describe("Log - Join", function () {
 		signKey4 = keys[3];
 		session = await LSession.connected(3);
 		await waitForPeers(
-			session.peers[0].services.directblock,
-			session.peers[1].services.directblock,
-			session.peers[2].services.directblock
+			session.peers[0].services.blocks,
+			session.peers[1].services.blocks,
+			session.peers[2].services.blocks
 		);
 	});
 
@@ -91,23 +91,23 @@ describe("Log - Join", function () {
 
 		beforeEach(async () => {
 			log1 = new Log<string>();
-			await log1.init(session.peers[0].services.directblock, {
+			await log1.init(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			log2 = new Log<string>();
-			await log2.init(session.peers[1].services.directblock, {
+			await log2.init(session.peers[1].services.blocks, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
 			log3 = new Log<string>();
-			await log3.init(session.peers[2].services.directblock, {
+			await log3.init(session.peers[2].services.blocks, {
 				...signKey3.keypair,
 				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 			});
 			log4 = new Log<string>();
 			await log4.init(
-				session.peers[2].services.directblock, // [2] because we cannot create more than 3 peers when running tests in CI
+				session.peers[2].services.blocks, // [2] because we cannot create more than 3 peers when running tests in CI
 				{
 					...signKey4.keypair,
 					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
@@ -126,7 +126,7 @@ describe("Log - Join", function () {
 				const prev2 = last(items2);
 				const prev3 = last(items3);
 				const n1 = await Entry.create({
-					store: session.peers[0].services.directblock,
+					store: session.peers[0].services.blocks,
 					identity: {
 						...signKey.keypair,
 						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
@@ -136,7 +136,7 @@ describe("Log - Join", function () {
 					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
-					store: session.peers[0].services.directblock,
+					store: session.peers[0].services.blocks,
 					identity: {
 						...signKey2.keypair,
 						sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
@@ -145,7 +145,7 @@ describe("Log - Join", function () {
 					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
-					store: session.peers[1].services.directblock,
+					store: session.peers[1].services.blocks,
 					identity: {
 						...signKey3.keypair,
 						sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
@@ -162,7 +162,7 @@ describe("Log - Join", function () {
 			// Here we're creating a log from entries signed by A and B
 			// but we accept entries from C too
 			const logA = await Log.fromEntry(
-				session.peers[0].services.directblock,
+				session.peers[0].services.blocks,
 				{
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
@@ -174,7 +174,7 @@ describe("Log - Join", function () {
 			// Here we're creating a log from entries signed by peer A, B and C
 			// "logA" accepts entries from peer C so we can join logs A and B
 			const logB = await Log.fromEntry(
-				session.peers[1].services.directblock,
+				session.peers[1].services.blocks,
 				{
 					...signKey3.keypair,
 					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),

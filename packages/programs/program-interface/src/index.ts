@@ -292,7 +292,7 @@ export abstract class AbstractProgram {
 
 		await Promise.all(
 			this.logs.map((s) =>
-				s.init(libp2p.services.directblock, identity, {
+				s.init(libp2p.services.blocks, identity, {
 					cache: options.log?.cache,
 					canAppend: options.log?.canAppend,
 					clock: options.log?.clock,
@@ -533,7 +533,7 @@ export abstract class Program
 
 		// TODO, determine whether setup should be called before or after save
 		if (this.parentProgram === undefined) {
-			const address = await this.save(libp2p.services.directblock);
+			const address = await this.save(libp2p.services.blocks);
 			await options?.onSave?.(address);
 		}
 		await super.init(libp2p, identity, options);
@@ -586,7 +586,7 @@ export abstract class Program
 		if (!this.address?.cid) {
 			throw new Error("Can not delete, missing address");
 		}
-		return this.libp2p.services.directblock.rm(this.address.cid);
+		return this.libp2p.services.blocks.rm(this.address.cid);
 	}
 
 	static async load<S extends Program>(

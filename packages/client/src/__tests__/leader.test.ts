@@ -20,8 +20,8 @@ describe(`leaders`, function () {
 	beforeAll(async () => {
 		session = await LSession.connected(3, {
 			services: {
-				directblock: (c) => new DirectBlock(c),
-				directsub: (c) =>
+				blocks: (c) => new DirectBlock(c),
+				pubsub: (c) =>
 					new DirectSub(c, {
 						canRelayMessage: true,
 						connectionManager: { autoDial: false },

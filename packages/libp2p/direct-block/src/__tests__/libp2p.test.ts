@@ -4,11 +4,11 @@ import { createBlock, getBlockValue, stringifyCid } from "../block.js";
 import { DirectBlock } from "..";
 import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 
-const store = (s: LSession<{ directblock: DirectBlock }>, i: number) =>
-	s.peers[i].services.directblock;
+const store = (s: LSession<{ blocks: DirectBlock }>, i: number) =>
+	s.peers[i].services.blocks;
 
 describe("transport", function () {
-	let session: LSession<{ directblock: DirectBlock }>;
+	let session: LSession<{ blocks: DirectBlock }>;
 
 	afterEach(async () => {
 		await session.stop();
@@ -16,7 +16,7 @@ describe("transport", function () {
 
 	it("can restart", async () => {
 		session = await LSession.connected(2, {
-			services: { directblock: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 		await waitForPeers(store(session, 0), store(session, 1));
 		await store(session, 0).close();
@@ -29,7 +29,7 @@ describe("transport", function () {
 
 	it("rw", async () => {
 		session = await LSession.connected(2, {
-			services: { directblock: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 		expect(store(session, 0)._gossip).toBeFalse();
 
@@ -50,7 +50,7 @@ describe("transport", function () {
 
 	it("read concurrently", async () => {
 		session = await LSession.connected(2, {
-			services: { directblock: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		expect(store(session, 0)._gossip).toBeFalse();
@@ -85,7 +85,7 @@ describe("transport", function () {
 
 	it("reads from joining peer", async () => {
 		session = await LSession.disconnected(2, {
-			services: { directblock: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		expect(store(session, 0)._gossip).toBeFalse();
@@ -108,7 +108,7 @@ describe("transport", function () {
 
 	it("timeout", async () => {
 		session = await LSession.connected(2, {
-			services: { directblock: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 		await waitForPeers(store(session, 0), store(session, 1));
 

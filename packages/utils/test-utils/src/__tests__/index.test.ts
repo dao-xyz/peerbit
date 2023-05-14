@@ -16,20 +16,20 @@ describe("session", () => {
 	});
 	it("pubsub", async () => {
 		let result: any = undefined;
-		session.peers[0].services.directsub.listenForSubscribers("x");
-		session.peers[1].services.directsub.listenForSubscribers("x");
-		await session.peers[2].services.directsub.subscribe("x");
-		session.peers[2].services.directsub.addEventListener("data", (evt) => {
+		session.peers[0].services.pubsub.listenForSubscribers("x");
+		session.peers[1].services.pubsub.listenForSubscribers("x");
+		await session.peers[2].services.pubsub.subscribe("x");
+		session.peers[2].services.pubsub.addEventListener("data", (evt) => {
 			result = evt.detail;
 		});
 		await waitFor(
-			() => session.peers[0].services.directsub.getSubscribers("x")?.size === 1
+			() => session.peers[0].services.pubsub.getSubscribers("x")?.size === 1
 		);
 		await waitFor(
-			() => session.peers[1].services.directsub.getSubscribers("x")?.size === 1
+			() => session.peers[1].services.pubsub.getSubscribers("x")?.size === 1
 		);
 
-		session.peers[0].services.directsub.publish(new Uint8Array([1, 2, 3]), {
+		session.peers[0].services.pubsub.publish(new Uint8Array([1, 2, 3]), {
 			topics: ["x"],
 		});
 		await waitFor(() => !!result);

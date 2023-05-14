@@ -35,9 +35,7 @@ export class LSession {
 	static async connected(n: number, options?: CreateOptions) {
 		const session = await LSession.disconnected(n, options);
 		await session.connect();
-		await waitForPeersStreams(
-			...session.peers.map((x) => x.services.directblock)
-		);
+		await waitForPeersStreams(...session.peers.map((x) => x.services.blocks));
 		return session;
 	}
 
@@ -45,8 +43,8 @@ export class LSession {
 		let optionsWithServices: CreateOptionsWithServices = {
 			...options,
 			services: {
-				directblock: (c) => new DirectBlock(c),
-				directsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+				blocks: (c) => new DirectBlock(c),
+				pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
 				...options?.services,
 			},
 		};

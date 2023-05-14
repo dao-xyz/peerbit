@@ -99,7 +99,7 @@ describe("rpc", () => {
 
 		await waitFor(() => results.length === 1);
 		expect(results[0].from?.hashcode()).toEqual(
-			responder.libp2p.services.directsub.publicKey.hashcode()
+			responder.libp2p.services.pubsub.publicKey.hashcode()
 		);
 	});
 
@@ -136,7 +136,7 @@ describe("rpc", () => {
 				new Body({
 					arr: new Uint8Array([0, 1, 2]),
 				}),
-				{ to: [responder.libp2p.services.directsub.publicKey] }
+				{ to: [responder.libp2p.services.pubsub.publicKey] }
 			)
 		).map((x) => x.response);
 		await waitFor(() => results.length === 1);
@@ -215,8 +215,8 @@ describe("rpc", () => {
 		const kp = await X25519Keypair.create();
 
 		for (let i = 1; i < 3; i++) {
-			session.peers[i].services.directsub.subscribe(topic);
-			session.peers[i].services.directsub.addEventListener(
+			session.peers[i].services.pubsub.subscribe(topic);
+			session.peers[i].services.pubsub.addEventListener(
 				"data",
 				async (evt: CustomEvent<PubSubData>) => {
 					const message = evt.detail;
@@ -292,8 +292,8 @@ describe("rpc", () => {
 		const responder = await createIdentity();
 		const topic = uuid();
 		let x = false;
-		await session.peers[1].services.directsub.subscribe(topic);
-		session.peers[1].services.directsub.addEventListener(
+		await session.peers[1].services.pubsub.subscribe(topic);
+		session.peers[1].services.pubsub.addEventListener(
 			"data",
 			async (evt: CustomEvent<PubSubData>) => {
 				const message = evt.detail;
@@ -387,8 +387,8 @@ describe("rpc", () => {
 		const responder = await createIdentity();
 		const requester = await createIdentity();
 		const topic = uuid();
-		await session.peers[1].services.directsub.subscribe(topic);
-		session.peers[1].services.directsub.addEventListener(
+		await session.peers[1].services.pubsub.subscribe(topic);
+		session.peers[1].services.pubsub.addEventListener(
 			"data",
 			async (evt: CustomEvent<PubSubData>) => {
 				//  if (evt.detail.type === "signed")

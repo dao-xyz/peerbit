@@ -18,7 +18,7 @@ const waitForPeers = async (
 			: getPublicKeyFromPeerId(peer as PeerId).hashcode()
 	);
 
-	await libp2p.services.directsub.requestSubscribers(topic);
+	await libp2p.services.pubsub.requestSubscribers(topic);
 	return new Promise<void>((resolve, reject) => {
 		let counter = 0;
 		const interval = setInterval(async () => {
@@ -30,7 +30,7 @@ const waitForPeers = async (
 				);
 			}
 			try {
-				const peers = libp2p.services.directsub.getSubscribers(topic);
+				const peers = libp2p.services.pubsub.getSubscribers(topic);
 				const hasAllPeers =
 					peerIdsToWait
 						.map((e) => peers && peers.has(e))

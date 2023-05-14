@@ -262,7 +262,7 @@ export const startServer = async (
 									} else {
 										res.write(
 											JSON.stringify([
-												...libp2p.services.directsub.subscriptions.keys(),
+												...libp2p.services.pubsub.subscriptions.keys(),
 											])
 										);
 										res.end();

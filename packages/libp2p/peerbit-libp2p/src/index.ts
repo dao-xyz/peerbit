@@ -14,8 +14,8 @@ import { identifyService } from "libp2p/identify";
 import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
 
 export type Libp2pExtendServices = {
-	directsub: DirectSub;
-	directblock: DirectBlock;
+	pubsub: DirectSub;
+	blocks: DirectBlock;
 };
 export type Libp2pExtended = Libp2p<
 	{ relay: CircuitRelayService; identify: any } & Libp2pExtendServices
@@ -32,8 +32,8 @@ export type CreateOptionsWithServices = CreateOptions & {
 export const createLibp2pExtended = (
 	opts: CreateOptions = {
 		services: {
-			directblock: (c) => new DirectBlock(c),
-			directsub: (c) => new DirectSub(c),
+			blocks: (c) => new DirectBlock(c),
+			pubsub: (c) => new DirectSub(c),
 		},
 	}
 ): Promise<Libp2pExtended> =>
@@ -51,8 +51,8 @@ export const createLibp2pExtended = (
 		services: {
 			relay: relay(),
 			identify: identifyService(),
-			directsub:
-				opts.services?.directsub ||
+			pubsub:
+				opts.services?.pubsub ||
 				((c) =>
 					new DirectSub(c, {
 						canRelayMessage: true,
@@ -61,7 +61,7 @@ export const createLibp2pExtended = (
 							autoDial: true,
 						},
 					})),
-			directblock: opts.services?.directblock || ((c) => new DirectBlock(c)),
+			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
 			...opts.services,
 		},
 	});

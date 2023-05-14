@@ -74,7 +74,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 	public subscriptions: Map<string, { counter: number; data?: Uint8Array }>; // topic -> subscription ids
 
 	constructor(components: DirectSubComponents, props?: DirectStreamOptions) {
-		super(components, ["directsub/0.0.0"], props);
+		super(components, ["pubsub/0.0.0"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
 		this.topicsToPeers = new Map();

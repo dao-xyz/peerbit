@@ -51,7 +51,7 @@ describe(`Create & Open`, function () {
 
 			it("block storage exist at path", async () => {
 				const location = (
-					client.libp2p.services.directblock._localStore as LevelBlockStore
+					client.libp2p.services.blocks._localStore as LevelBlockStore
 				)._level._store["location"];
 				expect(location).toEndWith(
 					path.join(client.directory!, "blocks").toString()
@@ -64,7 +64,7 @@ describe(`Create & Open`, function () {
 
 			it("saves database manifest file locally", async () => {
 				const loaded = (await Program.load(
-					client.libp2p.services.directblock,
+					client.libp2p.services.blocks,
 					db.address!
 				)) as KeyBlocks<string>;
 				expect(loaded).toBeDefined();
@@ -131,7 +131,7 @@ describe(`Create & Open`, function () {
 				},
 			});
 			const db2 = await client.open(
-				(await Program.load(client.libp2p.services.directblock, db.address!))!
+				(await Program.load(client.libp2p.services.blocks, db.address!))!
 			);
 			assert.equal(db2.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db2.address!.toString().indexOf("zb"), 9);
@@ -146,10 +146,10 @@ describe(`Create & Open`, function () {
 			const db = await client.open(new EventStore({}));
 			await db.drop();
 			await (
-				client.libp2p.services.directblock._localStore as LevelBlockStore
+				client.libp2p.services.blocks._localStore as LevelBlockStore
 			).idle();
 			const dbToLoad = await Program.load(
-				client.libp2p.services.directblock,
+				client.libp2p.services.blocks,
 				db.address,
 				{ timeout: 3000 }
 			);

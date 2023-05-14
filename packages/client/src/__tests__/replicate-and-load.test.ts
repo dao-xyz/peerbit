@@ -37,7 +37,7 @@ describe(`Replicate and Load`, function () {
 			);
 			db2 = await client2.open<EventStore<string>>(
 				(await EventStore.load<EventStore<string>>(
-					client2.libp2p.services.directblock,
+					client2.libp2p.services.blocks,
 					db1.address!
 				))!
 			);

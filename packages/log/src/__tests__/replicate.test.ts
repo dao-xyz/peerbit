@@ -104,46 +104,40 @@ describe("ipfs-log - Replication", function () {
 
 		beforeEach(async () => {
 			log1 = new Log({ id: logId });
-			await log1.init(session.peers[0].services.directblock, {
+			await log1.init(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			log2 = new Log({ id: logId });
-			await log2.init(session.peers[1].services.directblock, {
+			await log2.init(session.peers[1].services.blocks, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
 
 			input1 = new Log({ id: logId });
-			await input1.init(session.peers[0].services.directblock, {
+			await input1.init(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			input2 = new Log({ id: logId });
-			await input2.init(session.peers[1].services.directblock, {
+			await input2.init(session.peers[1].services.blocks, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
-			session.peers[0].services.directsub.subscribe(channel);
-			session.peers[1].services.directsub.subscribe(channel);
+			session.peers[0].services.pubsub.subscribe(channel);
+			session.peers[1].services.pubsub.subscribe(channel);
 
-			await session.peers[0].services.directsub.addEventListener(
-				"data",
-				(evt) => {
-					handleMessage(evt.detail, channel);
-				}
-			);
-			await session.peers[1].services.directsub.addEventListener(
-				"data",
-				(evt) => {
-					handleMessage2(evt.detail, channel);
-				}
-			);
+			await session.peers[0].services.pubsub.addEventListener("data", (evt) => {
+				handleMessage(evt.detail, channel);
+			});
+			await session.peers[1].services.pubsub.addEventListener("data", (evt) => {
+				handleMessage2(evt.detail, channel);
+			});
 		});
 
 		afterEach(async () => {
-			await session.peers[0].services.directsub.unsubscribe(channel);
-			await session.peers[1].services.directsub.unsubscribe(channel);
+			await session.peers[0].services.pubsub.unsubscribe(channel);
+			await session.peers[1].services.pubsub.unsubscribe(channel);
 		});
 		// TODO why is this test doing a lot of unchaught rejections? (Reproduce in VSCODE tick `Uncaught exceptions`)
 		it("replicates logs", async () => {
@@ -163,7 +157,7 @@ describe("ipfs-log - Replication", function () {
 				).entry;
 				const hashes1 = await input1.getHeads();
 				const hashes2 = await input2.getHeads();
-				await session.peers[0].services.directsub.publish(
+				await session.peers[0].services.pubsub.publish(
 					Buffer.from(
 						serialize(new StringArray({ arr: hashes1.map((x) => x.hash) }))
 					),
@@ -171,7 +165,7 @@ describe("ipfs-log - Replication", function () {
 						topics: [channel],
 					}
 				);
-				await session.peers[1].services.directsub.publish(
+				await session.peers[1].services.pubsub.publish(
 					Buffer.from(
 						serialize(new StringArray({ arr: hashes2.map((x) => x.hash) }))
 					),
@@ -203,7 +197,7 @@ describe("ipfs-log - Replication", function () {
 			await whileProcessingMessages(5000);
 
 			const result = new Log<string>({ id: logId });
-			result.init(session.peers[0].services.directblock, {
+			result.init(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});

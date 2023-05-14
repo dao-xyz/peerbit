@@ -58,14 +58,14 @@ describe(`Automatic Replication`, function () {
 		// Open the second database
 		const db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.services.directblock,
+				client2.libp2p.services.blocks,
 				db1.address!
 			))!
 		);
 
 		const db4 = await client2.open<KeyBlocks<string>>(
 			(await KeyBlocks.load<KeyBlocks<string>>(
-				client2.libp2p.services.directblock,
+				client2.libp2p.services.blocks,
 				db3.address!
 			))!
 		);
@@ -103,7 +103,7 @@ describe(`Automatic Replication`, function () {
 		// Open the second database
 		const db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
-				client2.libp2p.services.directblock,
+				client2.libp2p.services.blocks,
 				db1.address!
 			))!
 		);

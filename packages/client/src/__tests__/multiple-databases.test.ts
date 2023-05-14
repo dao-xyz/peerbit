@@ -52,7 +52,7 @@ describe(`Multiple Databases`, function () {
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client2.open<EventStore<string>>(
 				(await EventStore.load<EventStore<string>>(
-					client2.libp2p.services.directblock,
+					client2.libp2p.services.blocks,
 					localDatabases[i].address!
 				))!,
 				{ ...options }
@@ -63,7 +63,7 @@ describe(`Multiple Databases`, function () {
 		for (let i = 0; i < dbCount; i++) {
 			const db = await client3.open<EventStore<string>>(
 				(await EventStore.load<EventStore<string>>(
-					client3.libp2p.services.directblock,
+					client3.libp2p.services.blocks,
 					localDatabases[i].address!
 				))!,
 				{ ...options }
@@ -147,12 +147,12 @@ describe(`Multiple Databases`, function () {
 		});
 
 		// check gracefully shut down (with no leak)
-		const subscriptions = client3.libp2p.services.directsub.topics;
+		const subscriptions = client3.libp2p.services.pubsub.topics;
 		expect(subscriptions.size).toEqual(dbCount);
 		for (let i = 0; i < dbCount; i++) {
 			await remoteDatabasesB[i].drop();
 			await delay(3000);
-			expect(client3.libp2p.services.directsub.topics.size).toEqual(
+			expect(client3.libp2p.services.pubsub.topics.size).toEqual(
 				dbCount - i - 1
 			);
 		}

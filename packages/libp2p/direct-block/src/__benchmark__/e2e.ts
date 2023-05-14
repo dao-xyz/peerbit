@@ -11,13 +11,15 @@ import { tcp } from "@libp2p/tcp";
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)
 // size: 1000kb x 40.51 ops/sec ±4.09% (62 runs sampled)
 
-const session: LSession<{ directblock: DirectBlock }> =
-	await LSession.disconnected(4, {
+const session: LSession<{ blocks: DirectBlock }> = await LSession.disconnected(
+	4,
+	{
 		transports: [tcp()],
 		services: {
-			directblock: (c) => new DirectBlock(c),
+			blocks: (c) => new DirectBlock(c),
 		},
-	});
+	}
+);
 
 /* 
 ┌─┐
@@ -43,16 +45,16 @@ await session.connect([
 
 await session.connect();
 await waitForPeers(
-	session.peers[0].services.directblock,
-	session.peers[1].services.directblock
+	session.peers[0].services.blocks,
+	session.peers[1].services.blocks
 );
 await waitForPeers(
-	session.peers[1].services.directblock,
-	session.peers[2].services.directblock
+	session.peers[1].services.blocks,
+	session.peers[2].services.blocks
 );
 await waitForPeers(
-	session.peers[2].services.directblock,
-	session.peers[3].services.directblock
+	session.peers[2].services.blocks,
+	session.peers[3].services.blocks
 );
 await delay(3000);
 
@@ -76,13 +78,13 @@ for (const size of sizes) {
 		fn: async (deferred) => {
 			{
 				const rng = crypto.randomBytes(size);
-				const cid = await session.peers[0].services.directblock.put(
+				const cid = await session.peers[0].services.blocks.put(
 					await createBlock(rng, "raw")
 				);
 				await getBlockValue(
 					(await session.peers[
 						session.peers.length - 1
-					].services.directblock.get<Uint8Array>(stringifyCid(cid)))!
+					].services.blocks.get<Uint8Array>(stringifyCid(cid)))!
 				);
 				deferred.resolve();
 			}

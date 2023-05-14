@@ -142,10 +142,7 @@ describe("index", () => {
 		const l0a = await init(s, 0, options);
 
 		const l0b = (await init(
-			(await TestStore.load(
-				session.peers[1].services.directblock,
-				l0a.address!
-			))!,
+			(await TestStore.load(session.peers[1].services.blocks, l0a.address!))!,
 			1,
 			options
 		)) as TestStore;
@@ -168,7 +165,7 @@ describe("index", () => {
 
 		await l0a.accessController.trustedNetwork.add(identity(1).publicKey);
 		await l0a.accessController.trustedNetwork.add(
-			session.peers[1].services.directblock.publicKey
+			session.peers[1].services.blocks.publicKey
 		);
 
 		await l0b.accessController.trustedNetwork.trustGraph.log.join(
@@ -176,8 +173,8 @@ describe("index", () => {
 		);
 
 		replicators = [
-			[session.peers[0].services.directblock.publicKeyHash],
-			[session.peers[1].services.directblock.publicKeyHash],
+			[session.peers[0].services.blocks.publicKeyHash],
+			[session.peers[1].services.blocks.publicKeyHash],
 		];
 
 		await waitFor(
@@ -216,10 +213,7 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				(await TestStore.load(
-					session.peers[1].services.directblock,
-					l0a.address!
-				))!,
+				(await TestStore.load(session.peers[1].services.blocks, l0a.address!))!,
 				1,
 				options
 			)) as TestStore;
@@ -247,7 +241,7 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new PublicKeyAccessCondition({
-						key: session.peers[1].services.directblock.publicKey,
+						key: session.peers[1].services.blocks.publicKey,
 					}),
 					accessTypes: [AccessType.Any],
 				})
@@ -283,20 +277,14 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				(await TestStore.load(
-					session.peers[1].services.directblock,
-					l0a.address!
-				))!,
+				(await TestStore.load(session.peers[1].services.blocks, l0a.address!))!,
 				1,
 				options
 			)) as TestStore;
 			programs.push(l0a);
 
 			const l0c = (await init(
-				(await TestStore.load(
-					session.peers[2].services.directblock,
-					l0a.address!
-				))!,
+				(await TestStore.load(session.peers[2].services.blocks, l0a.address!))!,
 				2,
 				options
 			)) as TestStore;
@@ -331,7 +319,7 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new PublicKeyAccessCondition({
-						key: session.peers[1].services.directblock.publicKey,
+						key: session.peers[1].services.blocks.publicKey,
 					}),
 					accessTypes: [AccessType.Any],
 				})
@@ -390,10 +378,7 @@ describe("index", () => {
 			);
 
 			const l0b = (await init(
-				(await TestStore.load(
-					session.peers[1].services.directblock,
-					l0a.address!
-				))!,
+				(await TestStore.load(session.peers[1].services.blocks, l0a.address!))!,
 				1,
 				options
 			)) as TestStore;
@@ -452,7 +437,7 @@ describe("index", () => {
 				options
 			);
 
-			replicators = [[session.peers[0].services.directblock.publicKeyHash]];
+			replicators = [[session.peers[0].services.blocks.publicKeyHash]];
 
 			const q = async (): Promise<Results<Document>> => {
 				let results: Results<Document>[] = await l0b.store.index.query(
@@ -529,10 +514,10 @@ describe("index", () => {
 			}).initialize()
 		);
 
-		replicators = [[session.peers[0].services.directsub.publicKeyHash]];
+		replicators = [[session.peers[0].services.pubsub.publicKeyHash]];
 
 		const dbb = (await TestStore.load(
-			session.peers[0].services.directblock,
+			session.peers[0].services.blocks,
 			l0a.address!
 		)) as TestStore;
 

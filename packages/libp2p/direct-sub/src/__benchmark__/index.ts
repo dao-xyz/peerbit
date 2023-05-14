@@ -12,7 +12,7 @@ import { tcp } from "@libp2p/tcp";
 const session = await LSession.disconnected(4, {
 	transports: [tcp()],
 	services: {
-		directsub: (c) =>
+		pubsub: (c) =>
 			new DirectSub(c, {
 				canRelayMessage: true,
 				emitSelf: true,
@@ -46,18 +46,18 @@ await session.connect([
  */
 
 const TOPIC = "world";
-session.peers[session.peers.length - 1].services.directsub.subscribe(TOPIC);
+session.peers[session.peers.length - 1].services.pubsub.subscribe(TOPIC);
 await waitForPeers(
-	session.peers[0].services.directsub,
-	session.peers[1].services.directsub
+	session.peers[0].services.pubsub,
+	session.peers[1].services.pubsub
 );
 await waitForPeers(
-	session.peers[1].services.directsub,
-	session.peers[2].services.directsub
+	session.peers[1].services.pubsub,
+	session.peers[2].services.pubsub
 );
 await waitForPeers(
-	session.peers[2].services.directsub,
-	session.peers[3].services.directsub
+	session.peers[2].services.pubsub,
+	session.peers[3].services.pubsub
 );
 let suite = new B.Suite();
 let listener: ((msg: any) => any) | undefined = undefined;
@@ -72,22 +72,23 @@ for (const size of sizes) {
 		fn: (deferred) => {
 			const small = crypto.randomBytes(size); // 1kb
 			msgMap.set(msgIdFn(small), deferred);
-			session.peers[0].services.directsub.publish(small, { topics: [TOPIC] });
+			session.peers[0].services.pubsub.publish(small, { topics: [TOPIC] });
 		},
 		setup: () => {
 			listener = (msg) => {
 				msgMap.get(msgIdFn(msg.detail.data))!.resolve();
 			};
 
-			session.peers[
-				session.peers.length - 1
-			].services.directsub.addEventListener("data", listener);
+			session.peers[session.peers.length - 1].services.pubsub.addEventListener(
+				"data",
+				listener
+			);
 			msgMap.clear();
 		},
 		teardown: () => {
 			session.peers[
 				session.peers.length - 1
-			].services.directsub.removeEventListener("data", listener);
+			].services.pubsub.removeEventListener("data", listener);
 		},
 	});
 }

@@ -17,13 +17,13 @@ describe("libp2p only", () => {
 	});
 
 	beforeEach(async () => {
-		session.peers[0].services.directsub.subscribe("1", {
+		session.peers[0].services.pubsub.subscribe("1", {
 			data: new Uint8Array([1]),
 		});
-		session.peers[0].services.directsub.subscribe("2", {
+		session.peers[0].services.pubsub.subscribe("2", {
 			data: new Uint8Array([2]),
 		});
-		session.peers[0].services.directsub.subscribe("3", {
+		session.peers[0].services.pubsub.subscribe("3", {
 			data: new Uint8Array([3]),
 		});
 		server = await startServer(session.peers[0], 7676);

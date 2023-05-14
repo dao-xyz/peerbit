@@ -57,7 +57,7 @@ describe("query", () => {
 		});
 
 		observerStore = (await DString.load(
-			writer.services.directblock,
+			writer.services.blocks,
 			writeStore.address!
 		)) as DString;
 
