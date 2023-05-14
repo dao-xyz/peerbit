@@ -702,6 +702,21 @@ describe("streams", function () {
 				await waitForPeerStreams(peers[1].stream, peers[2].stream);
 				await waitForPeerStreams(peers[0].stream, peers[3].stream);
 
+				expect([...peers[0].stream.peers.keys()]).toEqual([
+					peers[1].stream.publicKeyHash,
+					peers[3].stream.publicKeyHash,
+				]);
+				expect([...peers[1].stream.peers.keys()]).toEqual([
+					peers[0].stream.publicKeyHash,
+					peers[2].stream.publicKeyHash,
+				]);
+				expect([...peers[2].stream.peers.keys()]).toEqual([
+					peers[1].stream.publicKeyHash,
+				]);
+				expect([...peers[3].stream.peers.keys()]).toEqual([
+					peers[0].stream.publicKeyHash,
+				]);
+
 				for (const peer of peers) {
 					await waitFor(() => peer.reachable.length === 3);
 					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
@@ -717,7 +732,6 @@ describe("streams", function () {
 			});
 
 			afterEach(async () => {
-				await Promise.all(peers.map((peer) => peer.stream.stop()));
 				await session.stop();
 			});
 
@@ -725,15 +739,11 @@ describe("streams", function () {
 				/** Shut down slowly and check that all unreachable events are fired */
 
 				let reachableBeforeStop = peers[2].reachable.length;
-				await peers[0].stream.stop();
+				await session.peers[0].stop();
 				const hasAll = (arr: PublicSignKey[], cmp: PublicSignKey[]) => {
 					let a = new Set(arr.map((x) => x.hashcode()));
 					let b = new Set(cmp.map((x) => x.hashcode()));
-					if (
-						a.size === b.size &&
-						a.size === arr.length &&
-						arr.length === cmp.length
-					) {
+					if (a.size === b.size) {
 						for (const key of cmp) {
 							if (!arr.find((x) => x.equals(key))) {
 								return false;
@@ -749,31 +759,14 @@ describe("streams", function () {
 				expect(reachableBeforeStop).toEqual(peers[0].reachable.length);
 
 				expect(peers[0].unrechable).toHaveLength(0);
-				try {
-					await waitFor(() =>
-						hasAll(peers[1].unrechable, [
-							peers[0].stream.publicKey,
-							peers[3].stream.publicKey,
-						])
-					);
-				} catch (error) {
-					console.error(
-						"IDS",
-						peers.map((x) => x.stream.publicKeyHash)
-					);
-					console.error("UNREACBABLE", peers[1].unrechable);
-					console.error("PEERS", [...peers[1].stream.peers.keys()]);
-					console.error(
-						"RW?",
-						[...peers[1].stream.peers.values()].map(
-							(x) => x.isWritable + "-" + x.isReadable
-						)
-					);
+				await waitFor(() =>
+					hasAll(peers[1].unrechable, [
+						peers[0].stream.publicKey,
+						peers[3].stream.publicKey,
+					])
+				);
 
-					throw error;
-				}
-
-				await peers[1].stream.stop();
+				await session.peers[1].stop();
 				await waitFor(() =>
 					hasAll(peers[2].unrechable, [
 						peers[0].stream.publicKey,
@@ -782,7 +775,7 @@ describe("streams", function () {
 					])
 				);
 
-				await peers[2].stream.stop();
+				await session.peers[2].stop();
 				await waitFor(() =>
 					hasAll(peers[3].unrechable, [
 						peers[0].stream.publicKey,
@@ -790,7 +783,7 @@ describe("streams", function () {
 						peers[2].stream.publicKey,
 					])
 				);
-				await peers[3].stream.stop();
+				await session.peers[3].stop();
 			});
 
 			it("will publish on routes", async () => {
@@ -854,7 +847,7 @@ describe("streams", function () {
 				expect(peers[1].stream.earlyGoodbyes.size).toEqual(2);
 				expect(peers[3].stream.earlyGoodbyes.size).toEqual(1);
 
-				await peers[0].stream.stop();
+				await session.peers[0].stop();
 				await waitFor(() => peers[3].stream.routes.linksCount === 0); // because 1, 2 are now disconnected
 				await delay(1000); // make sure nothing get readded
 				expect(peers[3].stream.routes.linksCount).toEqual(0);
@@ -944,7 +937,6 @@ describe("streams", function () {
 			});
 
 			afterAll(async () => {
-				await Promise.all(peers.map((peer) => peer.stream.stop()));
 				await session.stop();
 			});
 			it("will replay on connect", async () => {
