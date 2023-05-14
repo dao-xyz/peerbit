@@ -145,7 +145,7 @@ class MyDocumentStore extends Program {
 }
 
 // later 
-const peer = await Peerbit.create ({libp2p: your_libp2p_instance})
+const peer = await Peerbit.create()
 const store = peer.open(new MyDocumentStore());
 console.log(store.address) /// this address can be opened by another peer 
 
@@ -174,7 +174,11 @@ await store.docs.put(doc3);
 
 
 // search for documents from another peer
-const peer2 = await Peerbit.create ({libp2: another_libp2p_instance})
+const peer2 = await Peerbit.creat ()
+
+// Connec to the first peer
+await peer2.dial(peer) 
+
 const store2 = peer2.open(store.address);
 
 let responses: Results<Document>[] =  await store2.docs.index.query(
@@ -233,7 +237,7 @@ class CollaborativeText extends Program {
 
 // ... 
 
-const peer = await Peerbit.create(...options...)
+const peer = await Peerbit.create()
 const document = peer.open(new CollaborativeText());
 console.log(document.address) /// this address can be opened by another peer 
 
@@ -259,8 +263,7 @@ npm install @dao-xyz/peerbit
 ```typescript
 import { Peerbit } from '@dao-xyz/peerbit'
 
-// Create a peer from an libp2p instance
-const peer = await Peerbit.create({libp2p: SOME_LIBP2P_INSTANCE })
+const peer = await Peerbit.create()
 
 // Open a program 
 const program = await peer.open(PRORGAM ADDRESS or PRORGAM)
@@ -299,7 +302,7 @@ class StringStore extends Program  // Needs to extend Program if you are going t
 
 // Later 
 
-const peer = await Peerbit.create({libp2p: ANOTHER_LIBP2P_INSTANCE })
+const peer = await Peerbit.create()
 
 const program = await peer.open(new StringStore(), ... options ...)
  
