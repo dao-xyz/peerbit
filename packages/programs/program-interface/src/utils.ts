@@ -49,7 +49,7 @@ export const getValuesWithType = <T>(
 			}
 			const p = (element) => {
 				if (element && element instanceof type) {
-					values.push(element);
+					values.push(element as T);
 				} else if (typeof element === "object") {
 					if (stopAtType && element instanceof stopAtType) {
 						return;
