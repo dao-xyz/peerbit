@@ -18,6 +18,7 @@ import {
 	LogicalQuery,
 	And,
 	Or,
+	BoolQuery,
 } from "./query.js";
 import {
 	CanRead,
@@ -335,6 +336,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 				return compare(value, f.compare, f.value.value);
 			} else if (f instanceof MissingField) {
 				return fv == null; // null or undefined
+			} else if (f instanceof BoolQuery) {
+				return fv === f.value; // true/false
 			}
 		} else if (f instanceof LogicalQuery) {
 			if (f instanceof And) {

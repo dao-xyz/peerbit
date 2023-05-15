@@ -1,4 +1,11 @@
-import { field, option, serialize, variant, vec } from "@dao-xyz/borsh";
+import {
+	deserialize,
+	field,
+	option,
+	serialize,
+	variant,
+	vec,
+} from "@dao-xyz/borsh";
 import { Documents, DocumentsChange } from "../document-store";
 import {
 	IntegerCompare,
@@ -11,6 +18,7 @@ import {
 	StringMatchMethod,
 	Or,
 	ByteMatchQuery,
+	BoolQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { Identity } from "@dao-xyz/peerbit-log";
@@ -46,13 +54,15 @@ class Document {
 	@field({ type: option(vec("string")) })
 	tags?: string[];
 
+	@field({ type: option("bool") })
+	bool?: boolean;
+
 	constructor(opts: Document) {
-		if (opts) {
-			this.id = opts.id;
-			this.name = opts.name;
-			this.number = opts.number;
-			this.tags = opts.tags;
-		}
+		this.id = opts.id;
+		this.name = opts.name;
+		this.number = opts.number;
+		this.tags = opts.tags;
+		this.bool = opts.bool;
 	}
 }
 
@@ -468,10 +478,12 @@ describe("index", () => {
 					name: "hello",
 					number: 1n,
 				});
+
 				let docEdit = new Document({
 					id: Buffer.from("1"),
 					name: "hello world",
 					number: 1n,
+					bool: true,
 				});
 
 				let doc2 = new Document({
@@ -768,6 +780,27 @@ describe("index", () => {
 					)
 				).toEqual(["4"]);
 			});
+
+			it("bool", async () => {
+				let responses: Results<Document>[] = await stores[1].docs.index.query(
+					new DocumentQuery({
+						queries: [
+							new BoolQuery({
+								key: "bool",
+								value: true,
+							}),
+						],
+					}),
+					{ remote: { amount: 1 } }
+				);
+				expect(responses[0].results).toHaveLength(1);
+				expect(
+					responses[0].results.map((x) =>
+						Buffer.from(x.value.id).toString("utf8")
+					)
+				).toEqual(["1"]);
+			});
+
 			describe("logical", () => {
 				it("and", async () => {
 					let responses: Results<Document>[] = await stores[1].docs.index.query(

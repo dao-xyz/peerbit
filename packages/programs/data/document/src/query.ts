@@ -272,6 +272,17 @@ export class MissingField extends StateFieldQuery {
 	}
 }
 
+@variant(5)
+export class BoolQuery extends StateFieldQuery {
+	@field({ type: "bool" })
+	value: boolean;
+
+	constructor(props: { key: string[] | string; value: boolean }) {
+		super(props);
+		this.value = props.value;
+	}
+}
+
 // TODO MemoryCompareQuery can be replaces with ByteMatchQuery? Or Nesteed Queries + ByteMatchQuery?
 /* @variant(0)
 export class MemoryCompare {
