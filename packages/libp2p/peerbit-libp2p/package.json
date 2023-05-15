@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-libp2p",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "libp2p node for Peerbit",
 	"type": "module",
 	"sideEffects": false,
