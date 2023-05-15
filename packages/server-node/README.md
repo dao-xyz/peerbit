@@ -36,6 +36,7 @@ or if you just want a node as a relay in a separate process
 ```
 peerbit start --relay  > log.txt 2>&1 &
 ```
+Starting a node as a non-relay allows you to open databases and store content, while the relays only help with transmitting data to other peers.
 
 3.
 Setup a test domain (so can access the node)
