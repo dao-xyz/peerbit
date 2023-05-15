@@ -36,8 +36,20 @@ export const createLibp2pExtended = (
 			pubsub: (c) => new DirectSub(c),
 		},
 	}
-): Promise<Libp2pExtended> =>
-	createLibp2p({
+): Promise<Libp2pExtended> => {
+	const relayIdentify = {
+		relay: relay(),
+		identify: identifyService(),
+	};
+
+	// https://github.com/libp2p/js-libp2p/issues/1757
+	Object.keys(relayIdentify).forEach((key) => {
+		if (relayIdentify[key] === undefined) {
+			delete relayIdentify[key];
+		}
+	});
+
+	return createLibp2p({
 		connectionManager: {
 			minConnections: 0,
 		},
@@ -49,8 +61,7 @@ export const createLibp2pExtended = (
 		streamMuxers: [mplex()],
 		...opts,
 		services: {
-			relay: relay(),
-			identify: identifyService(),
+			...relayIdentify,
 			pubsub:
 				opts.services?.pubsub ||
 				((c) =>
@@ -65,3 +76,4 @@ export const createLibp2pExtended = (
 			...opts.services,
 		},
 	});
+};
