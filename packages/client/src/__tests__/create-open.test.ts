@@ -14,12 +14,13 @@ import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { createEd25519PeerId } from "@libp2p/peer-id-factory";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
 describe(`Create & Open`, function () {
 	describe("Create", function () {
-		describe("Success", function () {
+		describe("with db", function () {
 			let db: KeyBlocks<string>;
 			let client: Peerbit;
 			let clientDirectory: string;
@@ -81,6 +82,15 @@ describe(`Create & Open`, function () {
 				expect(fs.existsSync(dir)).toEqual(true);
 				await db2.close();
 			}); */
+		});
+
+		it("can create with peerId", async () => {
+			const peerId = await createEd25519PeerId();
+			const client = await Peerbit.create({
+				libp2p: { peerId },
+			});
+			expect(client.libp2p.peerId.equals(peerId)).toBeTrue();
+			await client.stop();
 		});
 	});
 

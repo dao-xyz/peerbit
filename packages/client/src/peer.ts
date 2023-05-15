@@ -99,7 +99,6 @@ export type CreateInstanceOptions = {
 	libp2p?: Libp2pExtended | ClientCreateOptions;
 	directory?: string;
 	keystore?: Keystore;
-	peerId?: Ed25519PeerId;
 	identity?: Identity;
 	cache?: LazyLevel;
 	localNetwork?: boolean;
@@ -289,12 +288,11 @@ export class Peerbit {
 			} else {
 				const extendedOptions = libp2pExtended as any as ClientCreateOptions;
 				libp2pExtended = await createLibp2pExtended({
+					...extendedOptions,
 					services: {
-						blocks:
-							extendedOptions?.services?.blocks ||
-							((c) => new DirectBlock(c, { directory: blocksDirectory })),
-						pubsub:
-							extendedOptions?.services?.pubsub || ((c) => new DirectSub(c)),
+						blocks: (c) => new DirectBlock(c, { directory: blocksDirectory }),
+						pubsub: (c) => new DirectSub(c),
+						...extendedOptions?.services,
 					},
 				});
 			}
