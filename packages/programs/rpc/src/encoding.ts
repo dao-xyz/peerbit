@@ -1,6 +1,5 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { X25519PublicKey, randomBytes } from "@dao-xyz/peerbit-crypto";
-import { startsWith } from "@dao-xyz/uint8arrays";
 
 @variant(0)
 export abstract class RPCMessage {}

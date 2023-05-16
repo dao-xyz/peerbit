@@ -126,19 +126,24 @@ export class RPC<Q, R> extends ComposableProgram {
 		this._subscribedRequests = true;
 	}
 
+	private _subscribing: Promise<void>;
 	private async _subscribeResponses(): Promise<void> {
+		await this._subscribing;
 		if (this._subscribedResponses) {
 			return;
 		}
-
-		this._onResponseBinded = this._onResponse.bind(this);
-		this.libp2p.services.pubsub.addEventListener(
-			"data",
-			this._onResponseBinded
-		);
-		await this.libp2p.services.pubsub.subscribe(this.rpcTopic);
-		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 		this._subscribedResponses = true;
+		this._subscribing = this.libp2p.services.pubsub
+			.subscribe(this.rpcTopic)
+			.then(() => {
+				this._onResponseBinded = this._onResponse.bind(this);
+				this.libp2p.services.pubsub.addEventListener(
+					"data",
+					this._onResponseBinded
+				);
+			});
+		await this._subscribing;
+		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 	}
 
 	async _onRequest(evt: CustomEvent<PubSubData>): Promise<void> {
@@ -171,6 +176,7 @@ export class RPC<Q, R> extends ComposableProgram {
 									maybeSigned.data,
 									this._requestType as AbstractType<Q>
 							  );
+
 					const response = await this._responseHandler(requestData, {
 						address: this.contextAddress.toString(),
 						from: maybeSigned.signature!.publicKey,
@@ -244,9 +250,11 @@ export class RPC<Q, R> extends ComposableProgram {
 	}
 	async _onResponse(evt: CustomEvent<PubSubData>): Promise<void> {
 		const message = evt.detail;
+
 		if (message?.topics.find((x) => x === this.rpcTopic) != null) {
 			try {
 				const rpcMessage = deserialize(message.data, RPCMessage);
+
 				if (rpcMessage instanceof ResponseV0) {
 					this._responseResolver.get(toBase64(rpcMessage.requestId))?.(
 						rpcMessage

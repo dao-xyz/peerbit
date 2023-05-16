@@ -150,6 +150,26 @@ describe("rpc", () => {
 		expect(reader.closed).toBeTrue();
 	});
 
+	it("concurrency", async () => {
+		let promises: Promise<RPCResponse<Body>[]>[] = [];
+		let concurrency = 100;
+		for (let i = 0; i < concurrency; i++) {
+			promises.push(
+				reader.query.send(
+					new Body({
+						arr: new Uint8Array([i]),
+					}),
+					{ amount: 1 }
+				)
+			);
+		}
+		const results = await Promise.all(promises);
+		for (let i = 0; i < concurrency; i++) {
+			expect(results[i]).toHaveLength(1);
+			expect(results[i][0].response.arr).toEqual(new Uint8Array([i]));
+		}
+	});
+
 	/* it("context", async () => {
 		let results: Body[] = [];
 		// Unknown context (expect no results)
