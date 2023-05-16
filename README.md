@@ -181,7 +181,7 @@ await peer2.dial(peer)
 
 const store2 = peer2.open(store.address);
 
-let responses: Results<Document>[] =  await store2.docs.index.query(
+let responses: Document[] =  await store2.docs.index.query(
     new DocumentQuery({
         queries: [
             new StringMatch({
@@ -192,8 +192,8 @@ let responses: Results<Document>[] =  await store2.docs.index.query(
         ],
     })
 );
-expect(responses[0].results).toHaveLength(2);
-expect(responses[0].results.map((x) => x.value.id)).toEqual(["1", "2"]);
+expect(responses).toHaveLength(2);
+expect(responses.map((x) => x.value.id)).toEqual(["1", "2"]);
 ```
 
 
