@@ -198,17 +198,24 @@ export class DocumentIndex<T> extends ComposableProgram {
 	public async get(
 		key: Keyable,
 		options?: QueryOptions<T>
-	): Promise<Results<T> | undefined> {
+	): Promise<T | undefined> {
+		return (await this.getDetailed(key, options))?.[0]?.results[0]?.value;
+	}
+
+	public async getDetailed(
+		key: Keyable,
+		options?: QueryOptions<T>
+	): Promise<Results<T>[] | undefined> {
 		let results: Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
-			results = await this.query(
+			results = await this.queryDetailed(
 				new DocumentQuery({
 					queries: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
 				})
 			);
 		} else {
 			const stringValue = asString(key);
-			results = await this.query(
+			results = await this.queryDetailed(
 				new DocumentQuery({
 					queries: [
 						new StringMatch({
@@ -221,7 +228,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			);
 		}
 
-		return results?.[0];
+		return results;
 	}
 
 	get size(): number {
@@ -383,12 +390,17 @@ export class DocumentIndex<T> extends ComposableProgram {
 		throw new Error("Unsupported");
 	}
 
-	public async query(
+	/**
+	 * Query and retrieve results with most details
+	 * @param queryRequest
+	 * @param options
+	 * @returns
+	 */
+	public async queryDetailed(
 		queryRequest: DocumentQuery,
 		options?: QueryOptions<T>
 	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
-
 		let remote: RemoteQueryOptions<Results<T>> | undefined = undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
@@ -484,7 +496,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 				);
 			}
 		}
-
 		const resolved = await Promise.all(promises);
 		for (const r of resolved) {
 			if (r) {
@@ -496,5 +507,33 @@ export class DocumentIndex<T> extends ComposableProgram {
 			}
 		}
 		return allResults;
+	}
+
+	/**
+	 * Query and retrieve deduplicated results
+	 * @param queryRequest
+	 * @param options
+	 * @returns
+	 */
+	public async query(
+		queryRequest: DocumentQuery,
+		options?: QueryOptions<T>
+	): Promise<T[]> {
+		const allResult = await this.queryDetailed(queryRequest, options);
+
+		// Deduplicate and return values directly
+		const unique: Set<Keyable> = new Set();
+		const dedup: T[] = [];
+		for (const result of allResult) {
+			for (const innerResult of result.results) {
+				const key = asString(innerResult.value[this.indexBy]);
+				if (unique.has(key)) {
+					continue;
+				}
+				unique.add(key);
+				dedup.push(innerResult.value);
+			}
+		}
+		return dedup;
 	}
 }

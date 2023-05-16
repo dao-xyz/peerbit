@@ -17,7 +17,6 @@ import {
 	Results,
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
-import Cache from "@dao-xyz/lazy-level";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import {
 	ObserverType,
@@ -439,8 +438,8 @@ describe("index", () => {
 
 			replicators = [[session.peers[0].services.blocks.publicKeyHash]];
 
-			const q = async (): Promise<Results<Document>> => {
-				let results: Results<Document>[] = await l0b.store.index.query(
+			const q = async (): Promise<Document[]> => {
+				return l0b.store.index.query(
 					new DocumentQuery({
 						queries: [
 							new StringMatch({
@@ -457,7 +456,6 @@ describe("index", () => {
 						local: false,
 					}
 				);
-				return results[0];
 			};
 
 			//expect(await q()).toBeUndefined(); // Because no read access
@@ -474,7 +472,7 @@ describe("index", () => {
 			await waitFor(() => l0b.accessController.access.index.size === 1);
 
 			const result = await q();
-			expect(result).toBeDefined(); // Because read access
+			expect(result.length).toBeGreaterThan(0); // Because read access
 		});
 	});
 
@@ -534,18 +532,17 @@ describe("index", () => {
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);
 
-		let results: Results<Document>[] =
-			await l0b.accessController.access.index.query(
-				new DocumentQuery({
-					queries: [],
-				}),
-				{
-					remote: {
-						amount: 1,
-					},
-					local: false,
-				}
-			);
+		let results: Document[] = await l0b.accessController.access.index.query(
+			new DocumentQuery({
+				queries: [],
+			}),
+			{
+				remote: {
+					amount: 1,
+				},
+				local: false,
+			}
+		);
 
 		await waitFor(() => results.length > 0);
 

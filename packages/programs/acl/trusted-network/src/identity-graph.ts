@@ -174,8 +174,7 @@ export const getRelation = async (
 	to: PublicSignKey,
 	db: Documents<IdentityRelation>
 ): Promise<IdentityRelation | undefined> => {
-	return (await db.index.get(new IdentityRelation({ from, to }).id))
-		?.results?.[0]?.value;
+	return db.index.get(new IdentityRelation({ from, to }).id);
 };
 
 export const createIdentityGraphStore = (props: {

@@ -528,31 +528,30 @@ describe("index", () => {
 			});
 
 			it("no-args", async () => {
-				let response: Results<Document>[] = await stores[0].docs.index.query(
+				let results: Document[] = await stores[0].docs.index.query(
 					new DocumentQuery({ queries: [] })
 				);
-				expect(response[0].results).toHaveLength(4);
+				expect(results).toHaveLength(4);
 			});
 
 			it("match locally", async () => {
-				let response: Results<Document>[] = await stores[0].docs.index.query(
+				let results: Document[] = await stores[0].docs.index.query(
 					new DocumentQuery({
 						queries: [],
 					}),
 					{ remote: false }
 				);
-				expect(response[0].results).toHaveLength(4);
+				expect(results).toHaveLength(4);
 			});
 
 			it("match all", async () => {
-				let responses: Results<Document>[] = await stores[1].docs.index.query(
+				let results: Document[] = await stores[1].docs.index.query(
 					new DocumentQuery({
 						queries: [],
 					}),
 					{ remote: { amount: 1 } }
 				);
-				expect(responses).toHaveLength(1);
-				expect(responses[0].results).toHaveLength(4);
+				expect(results).toHaveLength(4);
 			});
 
 			describe("sync", () => {
@@ -598,7 +597,7 @@ describe("index", () => {
 
 			describe("string", () => {
 				it("exact", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new StringMatch({
@@ -609,16 +608,13 @@ describe("index", () => {
 							],
 						})
 					);
-					expect(responses[0].results).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1", "2"]);
 				});
 
 				it("exact-case-insensitive", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new StringMatch({
@@ -629,16 +625,14 @@ describe("index", () => {
 							],
 						})
 					);
-					expect(responses[0].results).toHaveLength(2);
+					expect(responses).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1", "2"]);
 				});
 
 				it("exact case sensitive", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new StringMatch({
@@ -649,11 +643,9 @@ describe("index", () => {
 							],
 						})
 					);
-					expect(responses[0].results).toHaveLength(1);
+					expect(responses).toHaveLength(1);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["2"]);
 					responses = await stores[1].docs.index.query(
 						new DocumentQuery({
@@ -666,15 +658,12 @@ describe("index", () => {
 							],
 						})
 					);
-					expect(responses[0].results).toHaveLength(1);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1"]);
 				});
 				it("prefix", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new StringMatch({
@@ -687,16 +676,14 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(responses[0].results).toHaveLength(2);
+					expect(responses).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1", "2"]);
 				});
 
 				it("contains", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new StringMatch({
@@ -708,11 +695,9 @@ describe("index", () => {
 							],
 						})
 					);
-					expect(responses[0].results).toHaveLength(2);
+					expect(responses).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1", "2"]);
 				});
 
@@ -739,31 +724,28 @@ describe("index", () => {
 						await writeStore.docs.del(docArray2.id);
 					});
 					it("arr", async () => {
-						let responses: Results<Document>[] =
-							await stores[1].docs.index.query(
-								new DocumentQuery({
-									queries: [
-										new StringMatch({
-											key: "tags",
-											value: "world",
-											method: StringMatchMethod.contains,
-											caseInsensitive: true,
-										}),
-									],
-								})
-							);
-						expect(responses[0].results).toHaveLength(1);
+						let responses: Document[] = await stores[1].docs.index.query(
+							new DocumentQuery({
+								queries: [
+									new StringMatch({
+										key: "tags",
+										value: "world",
+										method: StringMatchMethod.contains,
+										caseInsensitive: true,
+									}),
+								],
+							})
+						);
+						expect(responses).toHaveLength(1);
 						expect(
-							responses[0].results.map((x) =>
-								Buffer.from(x.value.id).toString("utf8")
-							)
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
 						).toContainAllValues(["a"]);
 					});
 				});
 			});
 
 			it("missing", async () => {
-				let responses: Results<Document>[] = await stores[1].docs.index.query(
+				let responses: Document[] = await stores[1].docs.index.query(
 					new DocumentQuery({
 						queries: [
 							new MissingField({
@@ -773,16 +755,14 @@ describe("index", () => {
 					}),
 					{ remote: { amount: 1 } }
 				);
-				expect(responses[0].results).toHaveLength(1);
+				expect(responses).toHaveLength(1);
 				expect(
-					responses[0].results.map((x) =>
-						Buffer.from(x.value.id).toString("utf8")
-					)
+					responses.map((x) => Buffer.from(x.id).toString("utf8"))
 				).toEqual(["4"]);
 			});
 
 			it("bool", async () => {
-				let responses: Results<Document>[] = await stores[1].docs.index.query(
+				let responses: Document[] = await stores[1].docs.index.query(
 					new DocumentQuery({
 						queries: [
 							new BoolQuery({
@@ -793,17 +773,15 @@ describe("index", () => {
 					}),
 					{ remote: { amount: 1 } }
 				);
-				expect(responses[0].results).toHaveLength(1);
+				expect(responses).toHaveLength(1);
 				expect(
-					responses[0].results.map((x) =>
-						Buffer.from(x.value.id).toString("utf8")
-					)
+					responses.map((x) => Buffer.from(x.id).toString("utf8"))
 				).toEqual(["1"]);
 			});
 
 			describe("logical", () => {
 				it("and", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new And([
@@ -824,16 +802,14 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(responses[0].results).toHaveLength(2);
+					expect(responses).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1", "2"]);
 				});
 
 				it("or", async () => {
-					let responses: Results<Document>[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new Or([
@@ -850,18 +826,16 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(responses[0].results).toHaveLength(2);
+					expect(responses).toHaveLength(2);
 					expect(
-						responses[0].results.map((x) =>
-							Buffer.from(x.value.id).toString("utf8")
-						)
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["1", "2"]);
 				});
 			});
 
 			describe("number", () => {
 				it("equal", async () => {
-					let response: Results<Document>[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new IntegerCompare({
@@ -873,12 +847,12 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(response[0].results).toHaveLength(1);
-					expect(response[0].results[0].value.number).toEqual(2n);
+					expect(response).toHaveLength(1);
+					expect(response[0].number).toEqual(2n);
 				});
 
 				it("gt", async () => {
-					let response: Results<Document>[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new IntegerCompare({
@@ -890,12 +864,12 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(response[0].results).toHaveLength(1);
-					expect(response[0].results[0].value.number).toEqual(3n);
+					expect(response).toHaveLength(1);
+					expect(response[0].number).toEqual(3n);
 				});
 
 				it("gte", async () => {
-					let response: Results<Document>[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new IntegerCompare({
@@ -907,16 +881,16 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					response[0].results.sort((a, b) =>
-						bigIntSort(a.value.number as bigint, b.value.number as bigint)
+					response.sort((a, b) =>
+						bigIntSort(a.number as bigint, b.number as bigint)
 					);
-					expect(response[0].results).toHaveLength(2);
-					expect(response[0].results[0].value.number).toEqual(2n);
-					expect(response[0].results[1].value.number).toEqual(3n);
+					expect(response).toHaveLength(2);
+					expect(response[0].number).toEqual(2n);
+					expect(response[1].number).toEqual(3n);
 				});
 
 				it("lt", async () => {
-					let response: Results<Document>[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new IntegerCompare({
@@ -928,12 +902,12 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(response[0].results).toHaveLength(1);
-					expect(response[0].results[0].value.number).toEqual(1n);
+					expect(response).toHaveLength(1);
+					expect(response[0].number).toEqual(1n);
 				});
 
 				it("lte", async () => {
-					let response: Results<Document>[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.query(
 						new DocumentQuery({
 							queries: [
 								new IntegerCompare({
@@ -945,12 +919,68 @@ describe("index", () => {
 						}),
 						{ remote: { amount: 1 } }
 					);
-					response[0].results.sort((a, b) =>
-						bigIntSort(a.value.number as bigint, b.value.number as bigint)
+					response.sort((a, b) =>
+						bigIntSort(a.number as bigint, b.number as bigint)
 					);
-					expect(response[0].results).toHaveLength(2);
-					expect(response[0].results[0].value.number).toEqual(1n);
-					expect(response[0].results[1].value.number).toEqual(2n);
+					expect(response).toHaveLength(2);
+					expect(response[0].number).toEqual(1n);
+					expect(response[1].number).toEqual(2n);
+				});
+			});
+
+			describe("concurrently", () => {
+				it("can query concurrently", async () => {
+					// TODO add more concurrency
+					let promises: Promise<Document[]>[] = [];
+					let concurrency = 100;
+					for (let i = 0; i < concurrency; i++) {
+						if (i % 2 === 0) {
+							promises.push(
+								stores[1].docs.index.query(
+									new DocumentQuery({
+										queries: [
+											new IntegerCompare({
+												key: "number",
+												compare: Compare.GreaterOrEqual,
+												value: 2n,
+											}),
+										],
+									}),
+									{ remote: { amount: 1 } }
+								)
+							);
+						} else {
+							promises.push(
+								stores[1].docs.index.query(
+									new DocumentQuery({
+										queries: [
+											new IntegerCompare({
+												key: "number",
+												compare: Compare.Less,
+												value: 2n,
+											}),
+										],
+									}),
+									{ remote: { amount: 1 } }
+								)
+							);
+						}
+					}
+
+					let results = await Promise.all(promises);
+					for (let i = 0; i < concurrency; i++) {
+						if (i % 2 === 0) {
+							// query1
+							expect(results[i]).toHaveLength(2);
+							results[i].sort((a, b) => Number(a.number! - b.number!));
+							expect(results[i][0].number === 2n).toBeTrue(); // Jest can't seem to output BN if error, so we do equals manually
+							expect(results[i][1].number === 3n).toBeTrue(); // Jest can't seem to output BN if error, so we do equals manually
+						} else {
+							// query2
+							expect(results[i]).toHaveLength(1);
+							expect(results[i][0].number === 1n).toBeTrue();
+						}
+					}
 				});
 			});
 		});

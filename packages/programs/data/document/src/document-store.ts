@@ -254,8 +254,12 @@ export class Documents<
 		const ser = serialize(doc);
 		const existingDocument = options?.unique
 			? undefined
-			: (await this._index.get(key, { local: true, remote: { sync: true } }))
-					?.results[0];
+			: (
+					await this._index.getDetailed(key, {
+						local: true,
+						remote: { sync: true },
+					})
+			  )?.[0]?.results[0];
 
 		return this.log.append(
 			new PutOperation({
@@ -274,8 +278,11 @@ export class Documents<
 
 	async del(key: Keyable, options?: AppendOptions<Operation<T>>) {
 		const existing = (
-			await this._index.get(key, { local: true, remote: { sync: true } })
-		)?.results[0];
+			await this._index.getDetailed(key, {
+				local: true,
+				remote: { sync: true },
+			})
+		)?.[0]?.results[0];
 		if (!existing) {
 			throw new Error(`No entry with key '${key}' in the database`);
 		}

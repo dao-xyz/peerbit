@@ -17,7 +17,6 @@ import {
 import { Secp256k1Keccak256PublicKey } from "@dao-xyz/peerbit-crypto";
 import { Entry, Identity, LogOptions } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
-import { AbstractLevel } from "abstract-level";
 import { serialize, variant } from "@dao-xyz/borsh";
 import {
 	Program,
@@ -296,22 +295,24 @@ describe("index", () => {
 			await waitFor(() => l0a.trustGraph.index.size == 2);
 
 			// Try query with trusted
-			// await delay(3000); // with github ci this fails for some reason, hence this delay. TODO identify what proecss to wait for
-			let responses: Results<IdentityRelation>[] =
-				await l0c.trustGraph.index.query(
-					new DocumentQuery({
-						queries: [],
-					}),
-					{
-						remote: {
-							timeout: 20000,
+			let responseCount = 0;
+			let responses: IdentityRelation[] = await l0c.trustGraph.index.query(
+				new DocumentQuery({
+					queries: [],
+				}),
+				{
+					remote: {
+						onResponse: () => {
+							responseCount++;
 						},
-						local: false,
-					}
-				);
+						timeout: 20000,
+					},
+					local: false,
+				}
+			);
 
-			expect(responses.length).toEqual(3);
-			expect(responses.filter((x) => x.results.length >= 2)).toHaveLength(2);
+			expect(responseCount).toEqual(3);
+			expect(responses).toHaveLength(2);
 
 			// Try query with untrusted
 			// TODO we are not using read access control on the trust graph anymore, but should we?
