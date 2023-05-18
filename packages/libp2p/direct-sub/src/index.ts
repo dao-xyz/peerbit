@@ -22,9 +22,7 @@ import {
 import { Uint8ArrayList } from "uint8arraylist";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CustomEvent } from "@libp2p/interfaces/events";
-import type { Connection } from "@libp2p/interface-connection";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { Goodbye } from "@dao-xyz/libp2p-direct-stream";
 import { PeerEvents } from "@dao-xyz/libp2p-direct-stream";
 export {
 	PubSubMessage,
@@ -587,3 +585,52 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return true;
 	}
 }
+
+export const waitForSubscribers = async (
+	libp2p: { services: { pubsub: DirectSub } },
+	peersToWait:
+		| (PeerId | { peerId: PeerId; services: { pubsub: DirectStream } })[]
+		| PeerId
+		| { peerId: PeerId; services: { pubsub: DirectStream } },
+	topic: string
+) => {
+	const peersToWaitArr = Array.isArray(peersToWait)
+		? peersToWait
+		: [peersToWait];
+
+	const peerIdsToWait = peersToWaitArr.map((peer) =>
+		peer["peerId"]
+			? getPublicKeyFromPeerId(peer["peerId"]).hashcode()
+			: getPublicKeyFromPeerId(peer as PeerId).hashcode()
+	);
+
+	await libp2p.services.pubsub.requestSubscribers(topic);
+	return new Promise<void>((resolve, reject) => {
+		let counter = 0;
+		const interval = setInterval(async () => {
+			counter += 1;
+			if (counter > 100) {
+				clearInterval(interval);
+				reject(
+					new Error("Failed to find expected subscribers for topic: " + topic)
+				);
+			}
+			try {
+				const peers = libp2p.services.pubsub.getSubscribers(topic);
+				const hasAllPeers =
+					peerIdsToWait
+						.map((e) => peers && peers.has(e))
+						.filter((e) => e === false).length === 0;
+
+				// FIXME: Does not fail on timeout, not easily fixable
+				if (hasAllPeers) {
+					clearInterval(interval);
+					resolve();
+				}
+			} catch (e) {
+				clearInterval(interval);
+				reject(e);
+			}
+		}, 200);
+	});
+};

@@ -42,23 +42,6 @@ describe("Parse Address", () => {
 		assert.equal(result.toString().indexOf("/peerbit"), 0);
 		assert.equal(result.toString().indexOf("Qm"), 9);
 	});
-
-	it("parse address with type and index correctly", () => {
-		const address =
-			"/peerbit/zdpuAuK3BHpS7NvMBivynypqciYCuy2UW77XYBPUYRnLjnw13/123";
-		const result = Address.parse(address);
-
-		const isInstanceOf = result instanceof Address;
-		expect(isInstanceOf).toEqual(true);
-
-		expect(result.cid).toEqual(
-			"zdpuAuK3BHpS7NvMBivynypqciYCuy2UW77XYBPUYRnLjnw13"
-		);
-
-		assert.equal(result.toString().indexOf("/peerbit"), 0);
-		assert.equal(result.toString().indexOf("zd"), 9);
-		assert.equal(result.toString().indexOf("123"), 59);
-	});
 });
 
 describe("isValid Address", () => {

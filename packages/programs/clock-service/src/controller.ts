@@ -5,7 +5,6 @@ import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Entry, HLC } from "@dao-xyz/peerbit-log";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
@@ -48,15 +47,13 @@ export class ClockService extends Program {
 	_hlc: HLC = new HLC();
 	_maxError: bigint; // 10 seconds
 
-	constructor(properties?: {
+	constructor(properties: {
 		trustedNetwork: TrustedNetwork;
 		remoteSigner?: RPC<Uint8Array, Result>;
 	}) {
 		super();
-		if (properties) {
-			this._remoteSigner = properties.remoteSigner || new RPC();
-			this._trustedNetwork = properties.trustedNetwork;
-		}
+		this._remoteSigner = properties.remoteSigner || new RPC();
+		this._trustedNetwork = properties.trustedNetwork;
 	}
 
 	/**
@@ -66,7 +63,7 @@ export class ClockService extends Program {
 		this._maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
 		await this._trustedNetwork.setup();
 		await this._remoteSigner.setup({
-			context: this,
+			topic: this._trustedNetwork.trustGraph.log.idString + "/clock", // TODO do better
 			queryType: Uint8Array,
 			responseType: Result,
 			responseHandler: async (arr, context) => {

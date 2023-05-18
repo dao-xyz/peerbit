@@ -1,4 +1,4 @@
-import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import {
 	IdentityRelation,
 	createIdentityGraphStore,
@@ -9,13 +9,9 @@ import {
 	IdentityGraph,
 } from "..";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import {
-	AccessError,
-	Ed25519Keypair,
-	randomBytes,
-} from "@dao-xyz/peerbit-crypto";
+import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Secp256k1Keccak256PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Entry, Identity, LogOptions } from "@dao-xyz/peerbit-log";
+import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import {
@@ -23,14 +19,10 @@ import {
 	ReplicatorType,
 	SubscriptionType,
 } from "@dao-xyz/peerbit-program";
-import {
-	Documents,
-	DocumentQuery,
-	Results,
-	Operation,
-} from "@dao-xyz/peerbit-document";
+import { Documents, DocumentQuery, Operation } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
+import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -67,7 +59,11 @@ describe("index", () => {
 			store.init &&
 				(await store.init(session.peers[i], identites[i], {
 					...options,
-					replicators: () => [],
+					log: {
+						replication: {
+							replicators: () => [],
+						},
+					},
 					role: options.role || new ReplicatorType(),
 				}));
 			programs.push(store);
@@ -99,9 +95,7 @@ describe("index", () => {
 			const c = (await Ed25519Keypair.create()).publicKey;
 
 			const store = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore({
-					id: randomBytes(32), // session.peers[0].peerId.toString(),
-				}),
+				relationGraph: createIdentityGraphStore(),
 			});
 			await init(store, 0, { topic: uuid() });
 
@@ -166,9 +160,7 @@ describe("index", () => {
 			});
 
 			const store = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore({
-					id: randomBytes(32), // session.peers[0].peerId.toString(),
-				}),
+				relationGraph: createIdentityGraphStore(),
 			});
 			const topic = uuid();
 			await init(store, 0, { topic });
@@ -207,7 +199,11 @@ describe("index", () => {
 			store.init &&
 				(await store.init(session.peers[i], identites[i], {
 					...options,
-					replicators: () => replicators,
+					log: {
+						replication: {
+							replicators: () => replicators,
+						},
+					},
 					role: options.role ?? new ReplicatorType(),
 				}));
 			programs.push(store);
@@ -240,11 +236,10 @@ describe("index", () => {
 
 		it("can be deterministic", async () => {
 			const key = (await Ed25519Keypair.create()).publicKey;
-			let id = randomBytes(32);
-			const t1 = new TrustedNetwork({ id, rootTrust: key });
-			const t2 = new TrustedNetwork({ id, rootTrust: key });
-			t1.setupIndices();
-			t2.setupIndices();
+			const t1 = new TrustedNetwork({ rootTrust: key });
+			const t2 = new TrustedNetwork({ rootTrust: key });
+			await t1.initializeIds();
+			await t2.initializeIds();
 			expect(serialize(t1)).toEqual(serialize(t2));
 		});
 
@@ -275,7 +270,7 @@ describe("index", () => {
 			)) as any;
 			await init(l0d, 3, { topic });
 
-			await waitForPeers(
+			await waitForSubscribers(
 				session.peers[2],
 				[session.peers[0], session.peers[1]],
 				l0b.trustGraph.index._query.rpcTopic

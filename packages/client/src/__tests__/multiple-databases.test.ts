@@ -1,8 +1,7 @@
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores";
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay } from "@dao-xyz/peerbit-time";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Multiple Databases`, function () {
 	let session: LSession;
@@ -43,10 +42,7 @@ describe(`Multiple Databases`, function () {
 
 		// Open the databases on the first node
 		for (let i = 0; i < dbCount; i++) {
-			const db = await client1.open(
-				new EventStore<string>({ id: randomBytes(32) }),
-				{ ...options }
-			);
+			const db = await client1.open(new EventStore<string>(), { ...options });
 			localDatabases.push(db);
 		}
 		for (let i = 0; i < dbCount; i++) {
@@ -73,9 +69,9 @@ describe(`Multiple Databases`, function () {
 
 		// Wait for the peers to connect
 		for (const db of localDatabases) {
-			await waitForPeers(session.peers[0], [client2.id], db.address.toString());
-			await waitForPeers(session.peers[1], [client1.id], db.address.toString());
-			await waitForPeers(session.peers[2], [client1.id], db.address.toString());
+			await client1.waitForPeer(client3, db);
+			await client2.waitForPeer(client1, db);
+			await client3.waitForPeer(client1, db);
 		}
 	});
 
@@ -151,7 +147,6 @@ describe(`Multiple Databases`, function () {
 		expect(subscriptions.size).toEqual(dbCount);
 		for (let i = 0; i < dbCount; i++) {
 			await remoteDatabasesB[i].drop();
-			await delay(3000);
 			expect(client3.libp2p.services.pubsub.topics.size).toEqual(
 				dbCount - i - 1
 			);

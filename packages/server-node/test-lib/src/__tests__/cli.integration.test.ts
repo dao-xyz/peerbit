@@ -32,7 +32,7 @@ describe("server", () => {
 			store: new DString({}),
 			trusted: [peer.identity.publicKey],
 		});
-		program.setupIndices();
+		await program.initializeIds();
 		const base54 = Buffer.from(serialize(program)).toString("base64");
 		const pr = deserialize(Buffer.from(base54, "base64"), Program);
 	});

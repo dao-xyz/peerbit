@@ -1,4 +1,4 @@
-import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 it("_", () => {});
 /* import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";

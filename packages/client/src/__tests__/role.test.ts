@@ -1,9 +1,8 @@
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { ObserverType } from "@dao-xyz/peerbit-program";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Write-only`, () => {
 	let session: LSession;
@@ -30,11 +29,7 @@ describe(`Write-only`, () => {
 			libp2p: session.peers[2],
 			limitSigning: true,
 		}); // limitSigning = dont sign exchange heads request
-		db1 = await client1.open(
-			new EventStore<string>({
-				id: randomBytes(32),
-			})
-		);
+		db1 = await client1.open(new EventStore<string>());
 	});
 
 	afterEach(async () => {
@@ -43,7 +38,8 @@ describe(`Write-only`, () => {
 	});
 
 	it("observer", async () => {
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
+		await client2.waitForPeer(client1, db1);
+
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -63,7 +59,8 @@ describe(`Write-only`, () => {
 	});
 
 	it("none", async () => {
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
+		await client2.waitForPeer(client1, db1);
+
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -83,7 +80,7 @@ describe(`Write-only`, () => {
 	});
 
 	it("sync", async () => {
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
+		await client2.waitForPeer(client1, db1);
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(

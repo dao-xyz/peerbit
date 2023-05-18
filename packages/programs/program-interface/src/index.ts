@@ -1,23 +1,21 @@
-import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
-import { Change, Entry, Identity, Log } from "@dao-xyz/peerbit-log";
-import {
-	PublicKeyEncryptionResolver,
-	randomBytes,
-	sha256Sync,
-} from "@dao-xyz/peerbit-crypto";
-import { getValuesWithType } from "./utils.js";
-import { serialize, deserialize } from "@dao-xyz/borsh";
-import { CID } from "multiformats/cid";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock } from "@dao-xyz/libp2p-direct-block";
+import { Change, Entry, Identity, Log, LogOptions } from "@dao-xyz/peerbit-log";
+import { sha256 } from "@dao-xyz/peerbit-crypto";
+
+import { field, variant } from "@dao-xyz/borsh";
+import { getValuesWithType } from "./utils.js";
+import { serialize, deserialize } from "@dao-xyz/borsh";
+import { CID } from "multiformats/cid";
+
 import {
 	NoType,
 	ObserverType,
 	ReplicatorType,
 	SubscriptionType,
 } from "./role.js";
-import { LogProperties } from "@dao-xyz/peerbit-log";
+import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 
 export * from "./protocol-message.js";
 export * from "./role.js";
@@ -28,29 +26,6 @@ export interface Addressable {
 	address?: Address | undefined;
 }
 
-export class ProgramPath {
-	@field({ type: "u32" })
-	index: number;
-
-	constructor(properties: { index: number }) {
-		if (properties) {
-			this.index = properties.index;
-		}
-	}
-
-	static from(obj: { index: number } | AbstractProgram) {
-		if (obj instanceof AbstractProgram) {
-			if (obj.programIndex == undefined) {
-				throw new Error("Path can be created from a program without an index");
-			}
-			return new ProgramPath({
-				index: obj.programIndex,
-			});
-		} else {
-			return new ProgramPath(obj);
-		}
-	}
-}
 const ADDRESS_PREFIXES = ["zb", "zd", "Qm", "ba", "k5"];
 
 @variant(0)
@@ -58,21 +33,13 @@ export class Address {
 	@field({ type: "string" })
 	private _cid: string;
 
-	@field({ type: option(ProgramPath) })
-	private _path?: ProgramPath;
-
-	constructor(properties: { cid: string; path?: ProgramPath }) {
+	constructor(properties: { cid: string }) {
 		if (properties) {
 			this._cid = properties.cid;
-			this._path = properties.path;
 		}
 	}
 	get cid(): string {
 		return this._cid;
-	}
-
-	get path(): ProgramPath | undefined {
-		return this._path;
 	}
 
 	get bytes(): Uint8Array {
@@ -82,20 +49,11 @@ export class Address {
 	private _toString: string;
 
 	toString() {
-		return (
-			this._toString || (this._toString = Address.join(this.cid, this.path))
-		);
+		return this._toString || (this._toString = Address.join(this.cid));
 	}
 
 	equals(other: Address) {
 		return this.cid === other.cid;
-	}
-
-	withPath(path: ProgramPath | { index: number }): Address {
-		return new Address({
-			cid: this.cid,
-			path: path instanceof ProgramPath ? path : ProgramPath.from(path),
-		});
 	}
 
 	root(): Address {
@@ -163,16 +121,13 @@ export class Address {
 			)
 			.filter((e) => e !== "" && e !== " ");
 
-		return new Address({
-			cid: parts[0],
-			path:
-				parts.length == 2
-					? new ProgramPath({ index: Number(parts[1]) })
-					: undefined,
-		});
+		if (parts.length > 1) {
+			throw new Error("Expecting parts to have length 1");
+		}
+		return new Address({ cid: parts[0] });
 	}
 
-	static join(cid: string, addressPath?: ProgramPath) {
+	static join(cid: string) {
 		if (
 			cid.startsWith("/") ||
 			cid.startsWith(" ") ||
@@ -181,11 +136,7 @@ export class Address {
 		) {
 			throw new Error("Malformed CID");
 		}
-		if (!addressPath) {
-			return "/peerbit/" + cid;
-		}
-
-		return "/peerbit/" + cid + "/" + addressPath.index.toString();
+		return "/peerbit/" + cid;
 	}
 }
 
@@ -208,26 +159,21 @@ export type LogCallbackOptions = {
 	onClose?: (log: Log<any>) => void;
 };
 export type ProgramInitializationOptions = {
-	log?: LogProperties<any> & LogCallbackOptions;
+	log?: LogOptions<any> | ((log: Log<any>) => LogOptions<any>);
 	role: ReplicatorType | ObserverType | NoType;
-	replicators: () => string[][] | undefined; // array of replicators in each shard
 	parent?: AbstractProgram;
 	onClose?: () => Promise<void> | void;
 	onDrop?: () => Promise<void> | void;
 	onSave?: (address: Address) => Promise<void> | void;
 	open?: OpenProgram;
 	openedBy?: AbstractProgram;
-	replicator?: (gid: string) => Promise<boolean>;
+	encryption?: PublicKeyEncryptionResolver;
 };
 
 @variant(0)
 export abstract class AbstractProgram {
-	@field({ type: option("u32") })
-	_programIndex?: number; // Prevent duplicates for subprograms
-
 	private _libp2p: Libp2pExtended;
 	private _identity: Identity;
-	private _encryption?: PublicKeyEncryptionResolver;
 	private _onClose?: () => Promise<void> | void;
 	private _onDrop?: () => Promise<void> | void;
 	private _initialized?: boolean;
@@ -236,7 +182,7 @@ export abstract class AbstractProgram {
 	private _allLogs: Log<any>[] | undefined;
 	private _allLogsMap: Map<string, Log<any>> | undefined;
 	private _allPrograms: AbstractProgram[] | undefined;
-	private _subprogramMap: Map<number, AbstractProgram> | undefined;
+	private _encryption?: PublicKeyEncryptionResolver;
 
 	open?: (program: Program) => Promise<Program>;
 	programsOpened: Program[];
@@ -246,12 +192,15 @@ export abstract class AbstractProgram {
 		return this._initialized;
 	}
 
-	get programIndex(): number | undefined {
-		return this._programIndex;
+	get role() {
+		if (!this._role) {
+			throw new Error("Role not defined");
+		}
+		return this._role;
 	}
 
-	get role() {
-		return this._role;
+	get encryption() {
+		return this._encryption;
 	}
 
 	async init(
@@ -264,10 +213,10 @@ export abstract class AbstractProgram {
 		}
 		this._libp2p = libp2p;
 		this._identity = identity;
-		this._encryption = options.log?.encryption;
 		this._onClose = options.onClose;
 		this._onDrop = options.onDrop;
 		this._role = options.role;
+		this._encryption = options.encryption;
 		if (options.open) {
 			this.programsOpened = [];
 			this.open = async (program) => {
@@ -292,27 +241,13 @@ export abstract class AbstractProgram {
 
 		await Promise.all(
 			this.logs.map((s) =>
-				s.init(libp2p.services.blocks, identity, {
-					cache: options.log?.cache,
-					canAppend: options.log?.canAppend,
-					clock: options.log?.clock,
-					encoding: options.log?.encoding,
-					encryption: options.log?.encryption,
-					sortFn: options.log?.sortFn,
-					trim: options.log?.trim,
-					onChange: (change) => {
-						return options.log?.onChange?.(s, change);
-					},
-					onClose: () => {
-						return options.log?.onClose?.(s);
-					},
-					onWrite: (change) => {
-						return options.log?.onWrite?.(s, change);
-					},
-				})
+				s.open(
+					libp2p.services.blocks,
+					identity,
+					typeof options?.log === "function" ? options?.log(s) : options?.log
+				)
 			)
 		);
-
 		this._initialized = true;
 		return this;
 	}
@@ -322,7 +257,6 @@ export abstract class AbstractProgram {
 		this._allLogs = undefined;
 		this._allLogsMap = undefined;
 		this._allPrograms = undefined;
-		this._subprogramMap = undefined;
 	}
 
 	private async _end(
@@ -371,10 +305,6 @@ export abstract class AbstractProgram {
 		return this._identity;
 	}
 
-	get encryption(): PublicKeyEncryptionResolver | undefined {
-		return this._encryption;
-	}
-
 	get logs(): Log<any>[] {
 		if (this._logs) {
 			return this._logs;
@@ -414,43 +344,8 @@ export abstract class AbstractProgram {
 		return this._allPrograms;
 	}
 
-	get subprogramsMap(): Map<number, AbstractProgram> {
-		if (this._subprogramMap) {
-			// is static, so we cache naively
-			return this._subprogramMap;
-		}
-		const map = new Map<number, AbstractProgram>();
-		this.programs.map((s) => map.set(s._programIndex!, s));
-		const nexts = this.programs;
-		for (const next of nexts) {
-			const submap = next.subprogramsMap;
-			submap.forEach((program, address) => {
-				if (map.has(address)) {
-					throw new Error("Store duplicates detected");
-				}
-				map.set(address, program);
-			});
-		}
-		this._subprogramMap = map;
-		return this._subprogramMap;
-	}
-
 	get programs(): AbstractProgram[] {
 		return getValuesWithType(this, AbstractProgram, Log);
-	}
-
-	get address() {
-		if (this.parentProgram) {
-			if (this.programIndex == undefined) {
-				throw new Error("Program index not defined");
-			}
-			return this.parentProgram.address.withPath({
-				index: this.programIndex!,
-			});
-		}
-		throw new Error(
-			"ComposableProgram does not have an address and `parentProgram` is undefined"
-		);
 	}
 }
 
@@ -461,35 +356,24 @@ export interface CanTrust {
 @variant(0)
 export abstract class Program
 	extends AbstractProgram
-	implements Addressable, Saveable
-{
-	@field({ type: fixedArray("u8", 32) })
-	id: Uint8Array;
-
-	private _address?: Address;
+	implements Addressable, Saveable {
+	private _address: Address;
 
 	private _closed: boolean;
 
 	openedByPrograms: (AbstractProgram | undefined)[];
 
-	constructor(properties?: { id?: Uint8Array }) {
+	private ___seed: Uint8Array;
+	constructor() {
 		super();
-		if (properties) {
-			this.id = properties.id || randomBytes(32);
-		} else {
-			this.id = randomBytes(32);
-		}
 	}
 
 	get closed() {
 		return this._closed !== false;
 	}
 
-	get address() {
-		if (this._address) {
-			return this._address;
-		}
-		return super.address;
+	get address(): Address {
+		return this._address;
 	}
 
 	set address(address: Address) {
@@ -502,18 +386,23 @@ export abstract class Program
 	 */
 	abstract setup(): Promise<void>;
 
-	setupIndices(): void {
-		let prev = this.id;
+	async initializeIds(): Promise<void> {
+		let prev = await this.prehash();
 		for (const [_ix, log] of this.allLogs.entries()) {
-			log.id = sha256Sync(prev);
+			log.id = await sha256(prev);
 			prev = log.id;
 		}
 		// post setup
 		// set parents of subprograms to this
-		for (const [ix, program] of this.allPrograms.entries()) {
-			program._programIndex = ix;
+		for (const [_ix, program] of this.allPrograms.entries()) {
 			program.parentProgram = this.parentProgram || this;
 		}
+	}
+	private prehash(): Promise<Uint8Array> {
+		for (const [_ix, log] of this.allLogs.entries()) {
+			log.id = undefined;
+		}
+		return sha256(serialize(this));
 	}
 
 	async init(
@@ -536,9 +425,11 @@ export abstract class Program
 			const address = await this.save(libp2p.services.blocks);
 			await options?.onSave?.(address);
 		}
-		await super.init(libp2p, identity, options);
 
+		// call setup before init, because init means "open" while "setup" is rather something we do to make everything ready for start
 		await this.setup();
+
+		await super.init(libp2p, identity, options);
 
 		if (this.parentProgram != undefined && this._address) {
 			throw new Error(
@@ -561,7 +452,8 @@ export abstract class Program
 			timeout?: number;
 		}
 	): Promise<Address> {
-		this.setupIndices();
+		await this.initializeIds();
+
 		const existingAddress = this._address;
 		const hash = await store.put(
 			await createBlock(serialize(this), "raw"),
@@ -583,10 +475,10 @@ export abstract class Program
 	}
 
 	async delete(): Promise<void> {
-		if (!this.address?.cid) {
-			throw new Error("Can not delete, missing address");
+		if (this.address?.cid) {
+			return this.libp2p.services.blocks.rm(this.address.cid);
 		}
-		return this.libp2p.services.blocks.rm(this.address.cid);
+		// Not saved
 	}
 
 	static async load<S extends Program>(
@@ -644,4 +536,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram {}
+export abstract class ComposableProgram extends AbstractProgram { }

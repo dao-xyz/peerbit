@@ -38,12 +38,12 @@ describe(`shared`, () => {
 		let id = randomBytes(32);
 		db1 = await client1.open(
 			new SimpleStoreContract({
-				store: new EventStore({ id }),
+				store: new EventStore(),
 			})
 		);
 		const sameDb = await client1.open(
 			new SimpleStoreContract({
-				store: new EventStore({ id }),
+				store: new EventStore(),
 			})
 		);
 		expect(db1 === sameDb);
@@ -53,16 +53,12 @@ describe(`shared`, () => {
 		let id = randomBytes(32);
 		db1 = await client1.open(
 			new SimpleStoreContract({
-				store: new EventStore<string>({
-					id,
-				}),
+				store: new EventStore<string>(),
 			})
 		);
 		db2 = await client1.open(
 			new SimpleStoreContract({
-				store: new EventStore<string>({
-					id,
-				}),
+				store: new EventStore<string>(),
 			})
 		);
 		expect(db1 !== db2);

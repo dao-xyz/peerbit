@@ -246,23 +246,23 @@ describe("Log - Load", function () {
 
 		beforeEach(async () => {
 			log1 = new Log();
-			await log1.init(store, {
+			await log1.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			log2 = new Log();
-			await log2.init(store, {
+			await log2.open(store, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
 			log3 = new Log();
-			await log3.init(store, {
+			await log3.open(store, {
 				...signKey3.keypair,
 				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 			});
 
 			log4 = new Log();
-			await log4.init(store, {
+			await log4.open(store, {
 				...signKey4.keypair,
 				sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
 			});
@@ -726,7 +726,7 @@ describe("Log - Load", function () {
 
 			// make sure logX comes after A, B and C
 			const logX = new Log<string>();
-			await logX.init(store, {
+			await logX.open(store, {
 				...signKey4.keypair,
 				sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
 			});
@@ -1015,7 +1015,7 @@ describe("Log - Load", function () {
 			);
 
 			const firstWriteWinsLog = new Log<string>();
-			await firstWriteWinsLog.init(
+			await firstWriteWinsLog.open(
 				store,
 				{
 					...signKeys[0].keypair,
@@ -1036,7 +1036,7 @@ describe("Log - Load", function () {
 				signKeys
 			);
 			const firstWriteWinsLog = new Log<string>();
-			await firstWriteWinsLog.init(
+			await firstWriteWinsLog.open(
 				store,
 				{
 					...signKeys[0].keypair,

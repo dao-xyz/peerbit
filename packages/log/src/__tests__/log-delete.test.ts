@@ -32,7 +32,7 @@ describe("Log - Delete", function () {
 	describe("deleteRecursively", () => {
 		it("deleted unreferences", async () => {
 			const log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey,
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
@@ -59,7 +59,7 @@ describe("Log - Delete", function () {
 
 		it("processes as long as alowed", async () => {
 			const log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey,
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
@@ -91,7 +91,7 @@ describe("Log - Delete", function () {
 
 		it("keeps references", async () => {
 			const log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey,
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});

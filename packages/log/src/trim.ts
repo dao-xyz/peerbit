@@ -71,7 +71,7 @@ export type TrimCondition =
 export type TrimCanAppendOption = {
 	filter?: {
 		canTrim: (gid: string) => Promise<boolean> | boolean;
-		cacheId?: () => string;
+		cacheId?: () => string | number;
 	};
 };
 export type TrimOptions = TrimCanAppendOption & TrimCondition;
@@ -86,7 +86,7 @@ export class Trim<T> {
 	private _trimLastHead: EntryNode | undefined | null;
 	private _trimLastTail: EntryNode | undefined | null;
 	private _trimLastOptions: TrimOptions;
-	private _trimLastSeed: string | undefined;
+	private _trimLastSeed: string | number | undefined;
 	private _canTrimCacheHashBreakpoint: Cache<boolean>;
 	private _log: Log<T>;
 	private _queue: PQueue;

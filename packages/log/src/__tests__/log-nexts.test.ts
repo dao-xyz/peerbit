@@ -51,7 +51,7 @@ describe("Log - Nexts", function () {
 	describe("Custom next", () => {
 		it("can fork explicitly", async () => {
 			const log1 = new Log();
-			await log1.init(store, {
+			await log1.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});

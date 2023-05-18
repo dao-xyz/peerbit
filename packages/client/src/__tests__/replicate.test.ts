@@ -1,10 +1,10 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer.js";
 import { EventStore, Operation } from "./utils/stores/event-store";
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 
 describe(`Replication`, function () {
 	let session: LSession;
@@ -51,6 +51,7 @@ describe(`Replication`, function () {
 
 	it("replicates database of 1 entry", async () => {
 		let updated = 0;
+
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -64,17 +65,16 @@ describe(`Replication`, function () {
 				},
 			}
 		);
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
+		await client1.waitForPeer(client2, db1);
+		await client2.waitForPeer(client1, db1);
 
+		await delay(3000);
 		const value = "hello";
+
 		await db1.add(value);
 
-		try {
-			await waitFor(() => updated === 1);
-		} catch (error) {
-			const q = 123;
-		}
+		await waitFor(() => updated === 1);
+
 		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(1);
 
 		const db1Entries: Entry<Operation<string>>[] = (
@@ -83,7 +83,7 @@ describe(`Replication`, function () {
 		expect(db1Entries.length).toEqual(1);
 		expect(
 			await client1.findLeaders(
-				db1.address,
+				db1.log,
 				db1Entries[0].gid,
 				client1._minReplicas
 			)
@@ -98,7 +98,7 @@ describe(`Replication`, function () {
 		expect(db2Entries.length).toEqual(1);
 		expect(
 			await client2.findLeaders(
-				db1.address,
+				db1.log,
 				db2Entries[0].gid,
 				client1._minReplicas
 			)
@@ -109,7 +109,7 @@ describe(`Replication`, function () {
 	});
 
 	it("replicates database of 100 entries", async () => {
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
+		await client2.waitForPeer(client1, db1);
 
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
@@ -168,7 +168,7 @@ describe(`Replication`, function () {
 	});
 
 	it("emits correct replication info", async () => {
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
+		await client2.waitForPeer(client1, db1);
 
 		client1.replicationReorganization = async (_changed: any) => {
 			return true; // do a noop becaus in this test we want to make sure that writes are only treated once
@@ -243,7 +243,7 @@ describe(`Replication`, function () {
 	});
 
 	it("emits correct replication info in two-way replication", async () => {
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
+		await client2.waitForPeer(client1, db1);
 
 		const entryCount = 15;
 

@@ -1,10 +1,6 @@
 import { LSession } from "../session.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { logger } from "@dao-xyz/libp2p-direct-sub";
-logger.level = "trace";
-import { logger as logger2 } from "@dao-xyz/libp2p-direct-stream";
 
-logger2.level = "trace";
 describe("session", () => {
 	let session: LSession;
 	beforeAll(async () => {

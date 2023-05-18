@@ -83,22 +83,22 @@ describe("Log - Heads and Tails", function () {
 
 	beforeEach(async () => {
 		log1 = new Log<string>();
-		await log1.init(store, {
+		await log1.open(store, {
 			...signKey.keypair,
 			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 		});
 		log2 = new Log<string>();
-		await log2.init(store, {
+		await log2.open(store, {
 			...signKey2.keypair,
 			sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 		});
 		log3 = new Log<string>();
-		await log3.init(store, {
+		await log3.open(store, {
 			...signKey3.keypair,
 			sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 		});
 		log4 = new Log<string>();
-		await log4.init(store, {
+		await log4.open(store, {
 			...signKey4.keypair,
 			sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
 		});
@@ -258,7 +258,7 @@ describe("Log - Heads and Tails", function () {
 
 		it("returns tail hashes", async () => {
 			log1 = new Log();
-			await log1.init(
+			await log1.open(
 				store,
 				{
 					...signKey.keypair,
@@ -267,7 +267,7 @@ describe("Log - Heads and Tails", function () {
 				{ trim: { type: "length", to: 2 } }
 			);
 			log2 = new Log();
-			await log2.init(
+			await log2.open(
 				store,
 				{
 					...signKey.keypair,

@@ -4,6 +4,7 @@ import { EncryptionTemplateMaybeEncrypted } from "@dao-xyz/peerbit-log";
 import { variant, field } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
 import { Operation } from "@dao-xyz/peerbit-document";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 export class KeyValueIndex {
 	_index: any;
@@ -48,12 +49,16 @@ const encoding = JSON_ENCODING;
 export class KeyBlocks<T> extends Program {
 	_index: KeyValueIndex;
 
+	@field({ type: Uint8Array })
+	id: Uint8Array;
+
 	@field({ type: Log })
 	log: Log<Operation<T>>;
 
-	constructor(properties: { id: Uint8Array }) {
-		super(properties);
+	constructor(properties?: { id: Uint8Array }) {
+		super();
 		this.log = new Log();
+		this.id = properties?.id || randomBytes(32);
 	}
 	async setup() {
 		this._index = new KeyValueIndex();

@@ -10,6 +10,7 @@ import {
 	DirectSub,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
+	waitForSubscribers,
 } from "./../index.js";
 import { deserialize } from "@dao-xyz/borsh";
 import { equals } from "uint8arrays";
@@ -69,16 +70,8 @@ describe("pubsub", function () {
 			await delay(1000); // wait for subscription message to propagate (if any)
 			// now connect peers and make sure that subscription information is passed on as they connect
 			await session.connect([[session.peers[0], session.peers[1]]]);
-			await waitFor(() =>
-				peers[0].stream
-					.getSubscribers(TOPIC)
-					?.has(peers[1].stream.publicKeyHash)
-			);
-			await waitFor(() =>
-				peers[1].stream
-					.getSubscribers(TOPIC)
-					?.has(peers[0].stream.publicKeyHash)
-			);
+			await waitForSubscribers(session.peers[0], [session.peers[1]], TOPIC);
+			await waitForSubscribers(session.peers[1], [session.peers[0]], TOPIC);
 
 			await Promise.all(streams.map((s) => s.stop()));
 		});
@@ -121,16 +114,8 @@ describe("pubsub", function () {
 				[session.peers[0], session.peers[1]],
 				[session.peers[1], session.peers[2]],
 			]);
-			await waitFor(() =>
-				peers[0].stream
-					.getSubscribers(TOPIC)
-					?.has(peers[2].stream.publicKeyHash)
-			);
-			await waitFor(() =>
-				peers[2].stream
-					.getSubscribers(TOPIC)
-					?.has(peers[0].stream.publicKeyHash)
-			);
+			await waitForSubscribers(session.peers[0], [session.peers[2]], TOPIC);
+			await waitForSubscribers(session.peers[2], [session.peers[0]], TOPIC);
 			await Promise.all(peers.map((x) => x.stream.stop()));
 		});
 	});
@@ -205,11 +190,7 @@ describe("pubsub", function () {
 					if (i == j) {
 						continue;
 					}
-					await waitFor(() =>
-						peers[i].stream
-							.getSubscribers(TOPIC)
-							?.has(peers[j].stream.publicKeyHash)
-					);
+					await waitForSubscribers(session.peers[i], [session.peers[j]], TOPIC);
 				}
 			}
 		});

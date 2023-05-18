@@ -6,7 +6,7 @@ import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 
 // Include test utilities
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 
 const addHello = async (db: EventStore<string>, receiver: X25519PublicKey) => {
 	await db.add("hello", {
@@ -74,11 +74,9 @@ describe(`encryption`, function () {
 		let done = false;
 
 		db2 = await client2.open<EventStore<string>>(db1.address);
-		await waitForPeers(
-			session.peers[1],
-			session.peers[0],
-			db1.address.toString()!
-		);
+
+		await client2.waitForPeer(client1, db1);
+
 		await client2.keystore.saveKey(recieverKey);
 		expect(
 			await client2.keystore.getKey(recieverKey.keypair.publicKey)

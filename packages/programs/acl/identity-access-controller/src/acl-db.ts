@@ -24,11 +24,10 @@ export class IdentityAccessController extends Program {
 	trustedNetwork: TrustedNetwork;
 
 	constructor(opts?: {
-		id?: Uint8Array;
 		rootTrust?: PublicSignKey;
 		trustedNetwork?: TrustedNetwork;
 	}) {
-		super(opts);
+		super();
 		if (opts) {
 			if (!opts.trustedNetwork && !opts.rootTrust) {
 				throw new Error("Expecting either TrustedNetwork or rootTrust");
@@ -43,12 +42,9 @@ export class IdentityAccessController extends Program {
 			this.trustedNetwork = opts.trustedNetwork
 				? opts.trustedNetwork
 				: new TrustedNetwork({
-						id: this.id,
 						rootTrust: opts.rootTrust as PublicSignKey,
 				  });
-			this.identityGraphController = new IdentityGraph({
-				id: this.id,
-			});
+			this.identityGraphController = new IdentityGraph({});
 		}
 	}
 

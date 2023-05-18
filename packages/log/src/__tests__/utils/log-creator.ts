@@ -31,22 +31,22 @@ export class LogCreator {
 		const create = async (): Promise<Log<string>> => {
 			const id = randomBytes(32);
 			const logA = new Log<string>({ id });
-			await logA.init(store, {
+			await logA.open(store, {
 				...signKeys[0].keypair,
 				sign: (data) => signKeys[0].keypair.sign(data),
 			});
 			const logB = new Log<string>({ id });
-			await logB.init(store, {
+			await logB.open(store, {
 				...signKeys[1].keypair,
 				sign: (data) => signKeys[1].keypair.sign(data),
 			});
 			const log3 = new Log<string>({ id });
-			await log3.init(store, {
+			await log3.open(store, {
 				...signKeys[2].keypair,
 				sign: (data) => signKeys[2].keypair.sign(data),
 			});
 			const log4 = new Log<string>({ id });
-			await log4.init(store, {
+			await log4.open(store, {
 				...signKeys[3].keypair,
 				sign: (data) => signKeys[3].keypair.sign(data),
 			});
@@ -90,12 +90,12 @@ export class LogCreator {
 
 		const create = async (): Promise<Log<string>> => {
 			const logA = new Log<string>({ id });
-			await logA.init(store, {
+			await logA.open(store, {
 				...signKeys[0].keypair,
 				sign: (data) => signKeys[0].keypair.sign(data),
 			});
 			const logB = new Log<string>({ id });
-			await logB.init(store, {
+			await logB.open(store, {
 				...signKeys[1].keypair,
 				sign: (data) => signKeys[1].keypair.sign(data),
 			});

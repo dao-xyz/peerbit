@@ -6,6 +6,7 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { AbsolutMinReplicas } from "../exchange-heads";
+import { Log, LogOptions } from "@dao-xyz/peerbit-log";
 
 describe(`sharding`, () => {
 	let session: LSession;
@@ -82,10 +83,10 @@ describe(`sharding`, () => {
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 3
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 3
+			() => client3.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		const entryCount = sampleSize;
@@ -141,7 +142,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			false
 		);
@@ -158,7 +159,7 @@ describe(`sharding`, () => {
 
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 2
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 2
 		);
 
 		const entryCount = sampleSize;
@@ -175,13 +176,13 @@ describe(`sharding`, () => {
 		// client 3 will subscribe and start to recive heads before recieving subscription info about other peers
 
 		await waitFor(
-			() => client1.getReplicators(db1.address!.toString())?.length === 3
+			() => client1.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 3
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 3
+			() => client3.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		await waitFor(
@@ -204,14 +205,12 @@ describe(`sharding`, () => {
 			timeout: 20000,
 			delayInterval: 500,
 		});
-		try {
-			expect(
-				db2.store.log.values.length > entryCount * 0.5 &&
-					db2.store.log.values.length < entryCount * 0.85
-			).toBeTrue();
-		} catch (error) {
-			const x = 123;
-		}
+
+		expect(
+			db2.store.log.values.length > entryCount * 0.5 &&
+				db2.store.log.values.length < entryCount * 0.85
+		).toBeTrue();
+
 		expect(
 			db3.store.log.values.length > entryCount * 0.5 &&
 				db3.store.log.values.length < entryCount * 0.85
@@ -219,7 +218,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			false
 		);
@@ -234,10 +233,10 @@ describe(`sharding`, () => {
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 3
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 3
+			() => client3.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		const entryCount = sampleSize;
@@ -262,7 +261,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			false
 		);
@@ -273,7 +272,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			false
 		);
@@ -298,11 +297,11 @@ describe(`sharding`, () => {
 		});
 
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 3
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 3
+			() => client3.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		const entryCount = sampleSize;
@@ -353,7 +352,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			true
 		);
@@ -362,7 +361,7 @@ describe(`sharding`, () => {
 		await waitFor(() => db1.store.log.values.length === entryCount);
 		await checkReplicas(
 			[db1, db2],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			true
 		);
@@ -385,11 +384,11 @@ describe(`sharding`, () => {
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
 
 		await waitFor(
-			() => client1.getReplicators(db1.address!.toString())?.length === 2
+			() => client1.getReplicatorsSorted(db1.store.log)?.length === 2
 		);
 
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 2
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 2
 		);
 
 		const promises: Promise<any>[] = [];
@@ -404,14 +403,14 @@ describe(`sharding`, () => {
 		db3 = await client3.open<PermissionedEventStore>(db1.address!);
 
 		await waitFor(
-			() => client1.getReplicators(db1.address!.toString())?.length === 3
+			() => client1.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		await waitFor(
-			() => client2.getReplicators(db1.address!.toString())?.length === 3
+			() => client2.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 		await waitFor(
-			() => client3.getReplicators(db1.address!.toString())?.length === 3
+			() => client3.getReplicatorsSorted(db1.store.log)?.length === 3
 		);
 
 		await waitFor(() => db1.store.log.values.length === client1WantedDbSize);
@@ -450,7 +449,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			false
 		);
@@ -460,7 +459,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			client1.programs.get(db1.address.toString())!.minReplicas.value,
+			client1.logs.get(db1.store.log.idString)!.minReplicas.value,
 			entryCount,
 			true
 		);
@@ -470,26 +469,22 @@ describe(`sharding`, () => {
 		const store = new PermissionedEventStore({
 			trusted: [client1.id, client2.id, client3.id],
 		});
-		const init = store.init.bind(store);
-		let replicatorsFn: any = undefined;
-		store.init = (a, b, options) => {
-			replicatorsFn = options.replicators;
-			return init(a, b, options);
-		};
+
 		db1 = await client1.open<PermissionedEventStore>(store, { minReplicas: 1 });
+		const replicatorsFn = store.store.log.replication!.replicators!;
 
 		client1.getReplicatorsSorted = () => ["a", "b", "c", "d", "e"];
 		expect(replicatorsFn()).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
-		client1.programs.get(db1.address.toString())!.minReplicas =
+		client1.logs.get(db1.store.log.idString)!.minReplicas =
 			new AbsolutMinReplicas(2);
 		expect(replicatorsFn()).toEqual([["a", "d"], ["b", "e"], ["c"]]);
-		client1.programs.get(db1.address.toString())!.minReplicas =
+		client1.logs.get(db1.store.log.idString)!.minReplicas =
 			new AbsolutMinReplicas(3);
 		expect(replicatorsFn()).toEqual([
 			["a", "c", "e"],
 			["b", "d"],
 		]);
-		client1.programs.get(db1.address.toString())!.minReplicas =
+		client1.logs.get(db1.store.log.idString)!.minReplicas =
 			new AbsolutMinReplicas(5);
 		expect(replicatorsFn()).toEqual([["a", "b", "c", "d", "e"]]);
 	});

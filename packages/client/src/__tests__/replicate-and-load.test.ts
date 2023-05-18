@@ -3,8 +3,7 @@ import { EventStore } from "./utils/stores/event-store";
 import mapSeries from "p-each-series";
 
 // Include test utilities
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 
 describe(`Replicate and Load`, function () {
 	let session: LSession;
@@ -30,11 +29,7 @@ describe(`Replicate and Load`, function () {
 
 		const openDatabases = async () => {
 			// Set write access for both clients
-			db1 = await client1.open(
-				new EventStore<string>({
-					id: randomBytes(32),
-				})
-			);
+			db1 = await client1.open(new EventStore<string>());
 			db2 = await client2.open<EventStore<string>>(
 				(await EventStore.load<EventStore<string>>(
 					client2.libp2p.services.blocks,
@@ -48,16 +43,8 @@ describe(`Replicate and Load`, function () {
 
 			expect(db1.address!.toString()).toEqual(db2.address!.toString());
 
-			await waitForPeers(
-				session.peers[0],
-				[client2.id],
-				db1.address!.toString()
-			);
-			await waitForPeers(
-				session.peers[1],
-				[client1.id],
-				db1.address!.toString()
-			);
+			await client1.waitForPeer(client2, db1);
+			await client2.waitForPeer(client1, db1);
 		});
 
 		afterAll(async () => {

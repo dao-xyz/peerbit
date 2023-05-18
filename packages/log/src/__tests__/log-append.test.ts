@@ -34,7 +34,7 @@ describe("Log - Append", function () {
 
 		beforeEach(async () => {
 			log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey,
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
@@ -74,7 +74,7 @@ describe("Log - Append", function () {
 	describe("reset", () => {
 		it("append", async () => {
 			const log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey,
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
@@ -100,7 +100,7 @@ describe("Log - Append", function () {
 		beforeAll(async () => {
 			// Do sign function really need to returnr publcikey
 			log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey,
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
