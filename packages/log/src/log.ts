@@ -218,9 +218,9 @@ export class Log<T> {
 					if (a === b) {
 						throw new Error(
 							"UNexpected: " +
-							this.values.length +
-							"_-- " +
-							this.entryIndex._index.size
+								this.values.length +
+								"_-- " +
+								this.entryIndex._index.size
 						);
 					}
 					return entry;
@@ -284,7 +284,6 @@ export class Log<T> {
 		this._idString = undefined;
 		this._id = id;
 	}
-
 
 	/**
 	 * Returns the length of the log.
@@ -593,11 +592,11 @@ export class Log<T> {
 			gidSeed: options.gidSeed,
 			encryption: options.reciever
 				? {
-					options: this._encryption as PublicKeyEncryptionResolver,
-					reciever: {
-						...options.reciever,
-					},
-				}
+						options: this._encryption as PublicKeyEncryptionResolver,
+						reciever: {
+							...options.reciever,
+						},
+				  }
 				: undefined,
 			canAppend: this._canAppend,
 		});
@@ -695,15 +694,15 @@ export class Log<T> {
 		// Set heads if not passed as an argument
 		const foundHeads = heads
 			? ((await Promise.all(
-				heads.map((x) => {
-					if (x instanceof Entry) return x;
-					const resolved = this._entryIndex.get(x);
-					if (!resolved) {
-						throw new Error("Missing head with cid: " + x);
-					}
-					return resolved;
-				})
-			)) as Entry<T>[])
+					heads.map((x) => {
+						if (x instanceof Entry) return x;
+						const resolved = this._entryIndex.get(x);
+						if (!resolved) {
+							throw new Error("Missing head with cid: " + x);
+						}
+						return resolved;
+					})
+			  )) as Entry<T>[])
 			: Log.findHeads(uniqueEntries);
 
 		await this._headsIndex.reset(foundHeads);
@@ -1156,8 +1155,8 @@ export class Log<T> {
 	async load(
 		opts: ({ fetchEntryTimeout?: number } & (
 			| {
-				/* amount?: number  TODO */
-			}
+					/* amount?: number  TODO */
+			  }
 			| { heads?: true }
 		)) & { reload: boolean } = { reload: true }
 	) {
@@ -1177,8 +1176,8 @@ export class Log<T> {
 				if (amount != null && amount >= 0 && amount < heads.length) {
 					throw new Error(
 						"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
-						amount +
-						" entries"
+							amount +
+							" entries"
 					);
 				}
 

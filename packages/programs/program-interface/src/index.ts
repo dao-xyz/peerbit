@@ -356,7 +356,8 @@ export interface CanTrust {
 @variant(0)
 export abstract class Program
 	extends AbstractProgram
-	implements Addressable, Saveable {
+	implements Addressable, Saveable
+{
 	private _address: Address;
 
 	private _closed: boolean;
@@ -536,4 +537,4 @@ export abstract class Program
  * Building block, but not something you use as a standalone
  */
 @variant(1)
-export abstract class ComposableProgram extends AbstractProgram { }
+export abstract class ComposableProgram extends AbstractProgram {}
