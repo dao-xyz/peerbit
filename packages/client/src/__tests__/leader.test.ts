@@ -46,7 +46,6 @@ describe(`leaders`, function () {
 	});
 
 	afterEach(async () => {
-		console.log("DROP!");
 		if (db1) await db1.drop();
 		if (db2) await db2.drop();
 		if (db3) await db3.drop();
