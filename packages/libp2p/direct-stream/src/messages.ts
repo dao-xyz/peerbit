@@ -18,6 +18,18 @@ import {
 	sha256,
 } from "@dao-xyz/peerbit-crypto";
 
+/**
+ * The default msgID implementation
+ * Child class can override this.
+ */
+export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
+	// first bytes is discriminator,
+	// next 32 bytes should be an id
+	//return  Buffer.from(msg.slice(0, 33)).toString('base64');
+
+	return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
+};
+
 let concatBytes: (arr: Uint8Array[], totalLength: number) => Uint8Array;
 if ((globalThis as any).Buffer) {
 	concatBytes = (globalThis as any).Buffer.concat;
@@ -217,7 +229,7 @@ const DATA_VARIANT = 0;
 @variant(DATA_VARIANT)
 export class DataMessage extends Message {
 	@field({ type: MessageHeader })
-	_header: MessageHeader;
+	private _header: MessageHeader;
 
 	@field({ type: vec("string") })
 	private _to: string[]; // not signed! TODO should we sign this?
