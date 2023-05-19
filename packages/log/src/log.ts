@@ -1139,18 +1139,18 @@ export class Log<T> {
 	}
 
 	async close() {
+		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		await this._entryCache.clear();
 		await this._headsIndex.close();
 		await this._onClose?.();
-		this._closed = true;
 	}
 
 	async drop() {
+		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		await this.deleteRecursively(await this.getHeads()); // TODO can multiple store have exact same log entry? no because GIDs are generated randomly
 		await this._headsIndex.drop();
 		await this._entryCache.clear();
 		await this._onDrop?.();
-		this._closed = true;
 	}
 	async load(
 		opts: ({ fetchEntryTimeout?: number } & (
