@@ -1,10 +1,9 @@
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor, waitForResolved } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { ObserverType } from "@dao-xyz/peerbit-program";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
 import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 
@@ -47,6 +46,7 @@ describe(`leaders`, function () {
 	});
 
 	afterEach(async () => {
+		console.log("DROP!");
 		if (db1) await db1.drop();
 		if (db2) await db2.drop();
 		if (db3) await db3.drop();
@@ -104,8 +104,12 @@ describe(`leaders`, function () {
 
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 
-		await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 2);
-		await waitFor(() => client2.getReplicatorsSorted(db1.log)?.length === 2);
+		await waitForResolved(() =>
+			expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(2)
+		);
+		await waitForResolved(() =>
+			expect(client2.getReplicatorsSorted(db1.log)).toHaveLength(2)
+		);
 
 		// leader rotation is kind of random, so we do a sequence of tests
 		for (let slot = 0; slot < 3; slot++) {
@@ -184,9 +188,15 @@ describe(`leaders`, function () {
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
-		await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 3);
-		await waitFor(() => client2.getReplicatorsSorted(db1.log)?.length === 3);
-		await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 3);
+		await waitForResolved(() =>
+			expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(client2.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(client3.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
 
 		// One leader
 		const slot = 0;
@@ -225,9 +235,16 @@ describe(`leaders`, function () {
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
-		await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 3);
-		await waitFor(() => client2.getReplicatorsSorted(db1.log)?.length === 3);
-		await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 3);
+		await waitForResolved(() =>
+			expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(client2.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(client3.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+
 		let a = 0,
 			b = 0,
 			c = 0;
@@ -253,9 +270,15 @@ describe(`leaders`, function () {
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);
 
-		await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 3);
-		await waitFor(() => client2.getReplicatorsSorted(db1.log)?.length === 3);
-		await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 3);
+		await waitForResolved(() =>
+			expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(client2.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(client3.getReplicatorsSorted(db1.log)).toHaveLength(3)
+		);
 
 		for (let i = 0; i < 100; i++) {
 			const leaders: Set<string | undefined> = new Set(
@@ -275,17 +298,25 @@ describe(`leaders`, function () {
 			db1 = await client1.open(new EventStore<string>());
 			db2 = await client2.open<EventStore<string>>(db1.address!);
 
-			await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 2);
+			await waitForResolved(() =>
+				expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(2)
+			);
 
-			await waitFor(() => client2.getReplicatorsSorted(db1.log)?.length === 2);
+			await waitForResolved(() =>
+				expect(client2.getReplicatorsSorted(db1.log)).toHaveLength(2)
+			);
 
 			db3 = await client3.open<EventStore<string>>(db1.address!);
 
-			await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 3);
+			await waitForResolved(() =>
+				expect(client3.getReplicatorsSorted(db1.log)).toHaveLength(3)
+			);
 
 			await db2.close();
 
-			await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 2);
+			await waitForResolved(() =>
+				expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(2)
+			);
 
 			expect(client1.getReplicatorsSorted(db1.log)).toContainAllValues([
 				client1.idKey.publicKey.hashcode(),
@@ -299,15 +330,25 @@ describe(`leaders`, function () {
 				client3.idKey.publicKey.hashcode(),
 			]);
 
-			await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 2);
-			await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 2);
+			await waitForResolved(() =>
+				expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(2)
+			);
+			await waitForResolved(() =>
+				expect(client3.getReplicatorsSorted(db1.log)).toHaveLength(2)
+			);
 			///	await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 2);
 
 			db2 = await client2.open<EventStore<string>>(db1.address!);
 
-			await waitFor(() => client1.getReplicatorsSorted(db1.log)?.length === 3);
-			await waitFor(() => client2.getReplicatorsSorted(db1.log)?.length === 3);
-			await waitFor(() => client3.getReplicatorsSorted(db1.log)?.length === 3);
+			await waitForResolved(() =>
+				expect(client1.getReplicatorsSorted(db1.log)).toHaveLength(3)
+			);
+			await waitForResolved(() =>
+				expect(client2.getReplicatorsSorted(db1.log)).toHaveLength(3)
+			);
+			await waitForResolved(() =>
+				expect(client3.getReplicatorsSorted(db1.log)).toHaveLength(3)
+			);
 
 			expect(client1.getReplicatorsSorted(db1.log)).toContainAllValues([
 				client1.idKey.publicKey.hashcode(),

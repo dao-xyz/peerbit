@@ -714,6 +714,7 @@ export class Peerbit {
 				return;
 			}
 			this._lastSubscriptionMessageId += 1;
+
 			this.modifySortedSubscriptionCache(c.topic, subscribed, from);
 		}
 

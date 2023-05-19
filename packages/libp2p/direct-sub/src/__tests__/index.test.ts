@@ -4,8 +4,14 @@ import {
 	waitForPeers,
 } from "@dao-xyz/libp2p-direct-stream";
 import { LSession } from "@dao-xyz/libp2p-test-utils";
-import { waitFor, delay } from "@dao-xyz/peerbit-time";
-import { PubSubMessage, PubSubData } from "../messages.js";
+import { waitFor, delay, waitForResolved } from "@dao-xyz/peerbit-time";
+import {
+	PubSubMessage,
+	PubSubData,
+	Subscribe,
+	Unsubscribe,
+	GetSubscribers,
+} from "../messages.js";
 import {
 	DirectSub,
 	SubscriptionEvent,
@@ -14,6 +20,29 @@ import {
 } from "./../index.js";
 import { deserialize } from "@dao-xyz/borsh";
 import { equals } from "uint8arrays";
+
+const metrics = (pubsub: DirectSub) => {
+	let m: {
+		subscriptions: DataMessage[];
+		unsubscriptions: DataMessage[];
+		getSubscriptions: DataMessage[];
+	} = { getSubscriptions: [], subscriptions: [], unsubscriptions: [] };
+	const onDataMessage = pubsub.onDataMessage.bind(pubsub);
+	pubsub.onDataMessage = async (f, s, message) => {
+		const result = await onDataMessage(f, s, message);
+		const pubsubMessage = PubSubMessage.deserialize(message.data);
+		if (pubsubMessage instanceof Subscribe) {
+			m.subscriptions.push(message);
+		} else if (pubsubMessage instanceof Unsubscribe) {
+			m.unsubscriptions.push(message);
+		} else if (pubsubMessage instanceof GetSubscribers) {
+			m.getSubscriptions.push(message);
+		}
+		return result;
+	};
+
+	return m;
+};
 
 describe("pubsub", function () {
 	describe("topic", () => {
@@ -746,6 +775,7 @@ describe("pubsub", function () {
 			peers[0].stream.subscribe(TOPIC_1); // 1
 			peers[0].stream.subscribe(TOPIC_1); // 2
 			peers[0].stream.subscribe(TOPIC_1); // 3
+
 			await waitFor(() =>
 				peers[2].stream
 					.getSubscribers(TOPIC_1)
@@ -1069,12 +1099,7 @@ describe("pubsub", function () {
 			// Subscribe with some metadata
 			const data1 = new Uint8Array([1, 2, 3]);
 			await peers[0].stream.subscribe(TOPIC_1, { data: data1 });
-			let equalsDefined = (a: Uint8Array | undefined, b: Uint8Array) => {
-				if (!a) {
-					return false;
-				}
-				return equals(a, b);
-			};
+
 			await waitFor(
 				() =>
 					peers[2].stream.getSubscribersWithData(TOPIC_1, data, {
@@ -1115,6 +1140,83 @@ describe("pubsub", function () {
 					{ prefix: true }
 				)
 			).toHaveLength(0);
+		});
+
+		describe("invalidation", () => {
+			it("uses timestamp to ignore old events", async () => {
+				const metrics0 = metrics(peers[0].stream);
+				const metrics1 = metrics(peers[1].stream);
+				await peers[1].stream.requestSubscribers(TOPIC_1);
+
+				await waitForResolved(() =>
+					expect(metrics0.getSubscriptions).toHaveLength(1)
+				);
+
+				metrics1.subscriptions = [];
+
+				await peers[0].stream.subscribe(TOPIC_1);
+				await waitForResolved(() =>
+					expect(metrics1.subscriptions).toHaveLength(1)
+				);
+
+				expect(peers[1].stream.getSubscribers(TOPIC_1)!.size).toEqual(1);
+
+				await peers[0].stream.unsubscribe(TOPIC_1);
+				await waitForResolved(() =>
+					expect(metrics1.unsubscriptions).toHaveLength(1)
+				);
+
+				expect(peers[1].stream.getSubscribers(TOPIC_1)!.size).toEqual(0);
+
+				// reprocess first subscription message and make sure its ignored
+				await peers[1].stream.onDataMessage(
+					session.peers[0].peerId,
+					[...peers[1].stream.peers.values()][0],
+					metrics1.subscriptions[0]
+				);
+
+				expect(peers[1].stream.getSubscribers(TOPIC_1)!.size).toEqual(0);
+
+				// resubscribe again and try to send old unsubscription
+				metrics1.subscriptions = [];
+				await peers[0].stream.subscribe(TOPIC_1);
+				await waitForResolved(() =>
+					expect(metrics1.subscriptions).toHaveLength(1)
+				);
+				expect(peers[1].stream.getSubscribers(TOPIC_1)!.size).toEqual(1);
+
+				await peers[1].stream.onDataMessage(
+					session.peers[0].peerId,
+					[...peers[1].stream.peers.values()][0],
+					metrics1.unsubscriptions[0]
+				);
+				expect(peers[1].stream.getSubscribers(TOPIC_1)!.size).toEqual(1); // No change, since message was old
+
+				expect(peers[1].stream.lastSubscriptionMessages.size).toEqual(1);
+				await session.peers[0].stop();
+				await waitForResolved(() =>
+					expect(peers[1].stream.lastSubscriptionMessages.size).toEqual(0)
+				);
+			});
+
+			it("will clear lastSubscriptionMessages on unsubscribe", async () => {
+				await peers[1].stream.requestSubscribers(TOPIC_1);
+
+				await peers[0].stream.subscribe(TOPIC_1);
+				await waitForResolved(() =>
+					expect(peers[1].stream.getSubscribers(TOPIC_1)!.size).toEqual(1)
+				);
+				expect(peers[1].stream.lastSubscriptionMessages.size).toEqual(1);
+				let dummyPeer = "x";
+				peers[1].stream.lastSubscriptionMessages.set(dummyPeer, new Map());
+				expect(peers[1].stream.lastSubscriptionMessages.size).toEqual(2);
+
+				await peers[1].stream.unsubscribe(TOPIC_1);
+				expect(peers[1].stream.lastSubscriptionMessages.size).toEqual(1);
+
+				peers[1].stream.lastSubscriptionMessages.delete(dummyPeer);
+				expect(peers[1].stream.lastSubscriptionMessages.size).toEqual(0);
+			});
 		});
 	});
 });
