@@ -192,7 +192,6 @@ export class Trim<T> {
 		let canTrimByGid: Map<string, boolean> | undefined = undefined;
 
 		// TODO only go through heads?
-		//console.log("START TRIM", await done(), option.filter?.canTrim)
 		while (
 			node &&
 			!(await done()) &&

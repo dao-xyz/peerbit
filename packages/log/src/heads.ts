@@ -41,6 +41,7 @@ export class HeadsIndex<T> {
 			return;
 		}
 
+		// TODO make below into a promise that concurrenct caklls can wait on?
 		const heads = await this._headsCache?.load();
 		if (!heads) {
 			return;
