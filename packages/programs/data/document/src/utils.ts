@@ -6,7 +6,7 @@ export const asString = (obj: Keyable) =>
 export const checkKeyable = (obj: Keyable) => {
 	if (obj == null) {
 		throw new Error(
-			`The provided key valuue is null or undefined, expecting string or Uint8array`
+			`The provided key value is null or undefined, expecting string or Uint8array`
 		);
 	}
 	if (typeof obj === "string" || obj instanceof Uint8Array) {
