@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-time",
-	"version": "0.0.22",
+	"version": "0.0.23",
 	"description": "Time utils",
 	"type": "module",
 	"sideEffects": false,

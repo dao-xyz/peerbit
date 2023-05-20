@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-test-utils",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "Test utils for Peerbit",
 	"type": "module",
 	"private": false,
@@ -46,7 +46,7 @@
 		"memory-level": "^1.0.0"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-time": "^0.0.22"
+		"@dao-xyz/peerbit-time": "^0.0.23"
 	},
 	"localMaintainers": [
 		"dao.xyz"

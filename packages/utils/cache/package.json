@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/cache",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "Simple cache",
 	"type": "module",
 	"publishConfig": {
@@ -35,7 +35,7 @@
 	},
 	"license": "MIT",
 	"devDependencies": {
-		"@dao-xyz/peerbit-time": "^0.0.22",
+		"@dao-xyz/peerbit-time": "^0.0.23",
 		"@types/yallist": "^4.0.1"
 	},
 	"dependencies": {
