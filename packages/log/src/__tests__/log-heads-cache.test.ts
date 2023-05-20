@@ -24,7 +24,7 @@ const checkHashes = async (
 ) => {
 	await log.idle();
 	let cachePath = await log.headsIndex.headsCache?.cache
-		.get(headsPath)
+		?.get(headsPath)
 		.then((bytes) => bytes && deserialize(bytes, CachePath).path);
 	let nextPath = cachePath!;
 	let ret: string[] = [];
@@ -32,7 +32,7 @@ const checkHashes = async (
 		for (let i = 0; i < hashes.length; i++) {
 			ret.push(nextPath);
 			let headCache = await log.headsIndex.headsCache?.cache
-				.get(nextPath!)
+				?.get(nextPath!)
 				.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize));
 			expect(headCache?.heads).toContainAllValues(hashes[i]);
 			if (i === hashes.length - 1) {
@@ -46,7 +46,7 @@ const checkHashes = async (
 		if (cachePath) {
 			expect(
 				await log.headsIndex.headsCache?.cache
-					.get(cachePath)
+					?.get(cachePath)
 					.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize))
 			).toBeUndefined();
 		}
@@ -183,14 +183,14 @@ describe(`load`, function () {
 		await log.idle();
 		const headsPath = (
 			await log.headsIndex.headsCache?.cache
-				.get(log.headsIndex.headsCache.headsPath)
+				?.get(log.headsIndex.headsCache?.headsPath)
 				.then((bytes) => bytes && deserialize(bytes, CachePath))
 		)?.path!;
-		await log.headsIndex.headsCache?.cache.set(
+		await log.headsIndex.headsCache?.cache?.set(
 			headsPath,
 			new Uint8Array([255])
 		);
-		await log.headsIndex.headsCache?.cache.idle();
+		await log.headsIndex.headsCache?.cache?.idle();
 		await expect(() => log.load()).rejects.toThrowError();
 	});
 
@@ -257,7 +257,7 @@ describe(`load`, function () {
 		for (const key of [...addedCacheKeys, ...removedCacheKeys]) {
 			expect(
 				await log.headsIndex.headsCache?.cache
-					.get(key)
+					?.get(key)
 					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
 			).toBeUndefined();
 		}

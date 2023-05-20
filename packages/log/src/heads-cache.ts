@@ -76,8 +76,8 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 	private _lastRemovedHeadsPath?: string;
 	private _lastRemovedHeadsCount = 0n;
 
-	private _cache: LocalStore;
-	private _cacheWriteQueue: PQueue<any, any>;
+	private _cache?: LocalStore;
+	private _cacheWriteQueue?: PQueue<any, any>;
 
 	private _loaded = false;
 	private _index: HeadsIndex;
@@ -156,11 +156,11 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			);
 			const counter = lastCounter + BigInt(hashes.length);
 			await Promise.all([
-				this._cache.set(
+				this._cache?.set(
 					headsPath,
 					serialize(new CachePath(newHeadsPath.toString()))
 				),
-				this._cache.set(
+				this._cache?.set(
 					newHeadsPath,
 					serialize(new HeadsCacheToSerialize(hashes, counter, lastCid))
 				),
@@ -175,7 +175,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 				path.join(this.removedHeadsPath, String(this._headsPathCounter)),
 			];
 			for (const p of paths) {
-				await this._cache.deleteByPrefix(p + "/");
+				await this._cache?.deleteByPrefix(p + "/");
 			}
 
 			this._lastHeadsPath = undefined;
@@ -247,7 +247,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			let next = start;
 			while (next) {
 				const cache = await this._cache
-					.get(next)
+					?.get(next)
 					.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize));
 				next = cache?.last;
 				cache?.heads.forEach((head) => {
@@ -281,35 +281,30 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		};
 	} */
 
-	get cache(): LocalStore {
+	get cache(): LocalStore | undefined {
 		return this._cache;
 	}
 
 	get closed() {
-		return this._cache.status === "closed";
+		return !this._cache || this._cache.status === "closed";
 	}
 
 	async close() {
-		if (!this.initialized) {
-			return;
-		}
-
 		await this.idle();
-		await this._cache.close();
+		await this._cache?.close();
 		this._loaded = false;
 		this._lastHeadsPath = undefined;
 		this._lastRemovedHeadsPath = undefined;
 		this._lastRemovedHeadsCount = 0n;
 		this._lastHeadsCount = 0n;
-
-		// Database is now closed
-		return Promise.resolve();
 	}
 
 	/**
 	 * Drops a database and removes local data
 	 */
 	async drop() {
+		this.initialized = false;
+
 		if (!this._cache) {
 			return; // already dropped
 		}
@@ -321,10 +316,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		await this._cache.del(this.removedHeadsPath);
 		await this.close();
 
-		// Reset
-		// TODO fix types
-		this._cache = undefined as any;
-		this.initialized = false; // call this last because (close() expect initialized to be able to function)
+		delete this._cache;
 	}
 
 	private async _loadHeads(): Promise<string[]> {
@@ -332,8 +324,8 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			throw new Error("Store needs to be initialized before loaded");
 		}
 
-		if (this._cache.status !== "open") {
-			await this._cache.open();
+		if (this._cache!.status !== "open") {
+			await this._cache!.open();
 		}
 
 		await this.loadLastHeadsPath();
@@ -345,8 +337,8 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			throw new Error("Needs to be initialized before loaded");
 		}
 
-		if (this._cache.status !== "open") {
-			await this._cache.open();
+		if (this._cache!.status !== "open") {
+			await this._cache!.open();
 		}
 
 		const heads = await this._loadHeads();
@@ -356,10 +348,10 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 
 	async loadLastHeadsPath() {
 		this._lastHeadsPath = await this._cache
-			.get(this.headsPath)
+			?.get(this.headsPath)
 			.then((bytes) => bytes && deserialize(bytes, CachePath).path);
 		this._lastRemovedHeadsPath = await this._cache
-			.get(this.removedHeadsPath)
+			?.get(this.removedHeadsPath)
 			.then((bytes) => bytes && deserialize(bytes, CachePath).path);
 		this._lastHeadsCount = this._lastHeadsPath
 			? await this.getCachedHeadsCount(this._lastHeadsPath)
@@ -376,7 +368,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		return (
 			(
 				await this._cache
-					.get(headPath)
+					?.get(headPath)
 					.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize))
 			)?.counter || 0n
 		);
@@ -387,7 +379,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			throw new Error("Store is closed");
 		}
 		if (!this._loaded) {
-			return this._cacheWriteQueue.add(async () => {
+			return this._cacheWriteQueue?.add(async () => {
 				if (this._loaded) {
 					return;
 				}
@@ -403,7 +395,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		},
 		reset?: boolean
 	) {
-		return this._cacheWriteQueue.add(() =>
+		return this._cacheWriteQueue?.add(() =>
 			this._updateCachedHeads(changes, reset)
 		);
 	}

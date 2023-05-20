@@ -229,7 +229,7 @@ describe(`Create & Open`, function () {
 		it("closes when disconnecting", async () => {
 			const db = await client.open(new EventStore());
 			await client.stop();
-			expect(db.log.headsIndex.headsCache?.cache._store.status).toEqual(
+			expect(db.log.headsIndex.headsCache?.cache?._store.status).toEqual(
 				"closed"
 			);
 		});
@@ -237,7 +237,7 @@ describe(`Create & Open`, function () {
 		it("closes a custom store", async () => {
 			const db = await client.open(new EventStore());
 			await db.close();
-			expect(db.log.headsIndex.headsCache?.cache._store.status).toEqual(
+			expect(db.log.headsIndex.headsCache?.cache?._store.status).toEqual(
 				"closed"
 			);
 		});
