@@ -11,7 +11,6 @@ import { Documents, DocumentsChange } from "../document-store";
 import {
 	IntegerCompare,
 	StringMatch,
-	Results,
 	Compare,
 	MissingField,
 	And,
@@ -271,6 +270,29 @@ describe("index", () => {
 
 			afterAll(async () => {
 				await session.stop();
+			});
+
+			it("it will throw error if indexBy does not exist in document", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex({
+							indexBy: "__missing__",
+						}),
+					}),
+				});
+				await store.init(session.peers[0], await createIdentity(), {
+					role: new ReplicatorType(),
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				// put doc
+				await expect(store.docs.put(doc)).rejects.toThrowError(
+					"The provided key value is null or undefined, expecting string or Uint8array"
+				);
 			});
 
 			it("trim deduplicate changes", async () => {
