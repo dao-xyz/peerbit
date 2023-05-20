@@ -39,7 +39,6 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
-import crypto from "crypto";
 
 @variant("document")
 class Document {
@@ -69,14 +68,17 @@ class Document {
 
 @variant("test_documents")
 class TestStore extends Program {
+	@field({ type: Uint8Array })
+	id: Uint8Array;
+
 	@field({ type: Documents })
 	docs: Documents<Document>;
 
-	constructor(properties?: { docs: Documents<Document> }) {
+	constructor(properties: { docs: Documents<Document> }) {
 		super();
-		if (properties) {
-			this.docs = properties.docs;
-		}
+
+		this.id = randomBytes(32);
+		this.docs = properties.docs;
 	}
 	async setup(): Promise<void> {
 		await this.docs.setup({ type: Document });
@@ -201,7 +203,7 @@ describe("index", () => {
 				const insertions = 100;
 				const rngs: string[] = [];
 				for (let i = 0; i < insertions; i++) {
-					rngs.push(Buffer.from(crypto.randomBytes(1e5)).toString("base64"));
+					rngs.push(Buffer.from(randomBytes(1e5)).toString("base64"));
 				}
 				for (let i = 0; i < 20000; i++) {
 					await store.docs.put(
