@@ -53,7 +53,7 @@ describe("Log - Join Concurrent Entries", function () {
 
 		beforeAll(async () => {
 			log1 = new Log();
-			await log1.init(
+			await log1.open(
 				store,
 				{
 					...signKey.keypair,
@@ -62,7 +62,7 @@ describe("Log - Join Concurrent Entries", function () {
 				{ sortFn: SortByEntryHash }
 			);
 			log2 = new Log();
-			await log2.init(
+			await log2.open(
 				store,
 				{
 					...signKey.keypair,

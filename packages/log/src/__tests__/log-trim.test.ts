@@ -55,7 +55,7 @@ describe("Append trim", function () {
 	let log: Log<string>;
 	beforeEach(async () => {
 		log = new Log<string>();
-		await log.init(store, {
+		await log.open(store, {
 			...signKey.keypair,
 			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 		});
@@ -63,7 +63,7 @@ describe("Append trim", function () {
 
 	it("cut back to max oplog length", async () => {
 		const log = new Log<string>();
-		await log.init(
+		await log.open(
 			store,
 			{
 				...signKey.keypair,
@@ -132,7 +132,7 @@ describe("Append trim", function () {
 
 	it("cut back to cut length", async () => {
 		const log = new Log<string>();
-		await log.init(
+		await log.open(
 			store,
 			{
 				...signKey.keypair,
@@ -162,7 +162,7 @@ describe("Append trim", function () {
 		 */
 		let canTrimInvocations = 0;
 		const log = new Log<string>();
-		await log.init(
+		await log.open(
 			store,
 			{
 				...signKey.keypair,
@@ -197,7 +197,7 @@ describe("Append trim", function () {
 
 	it("cut back to bytelength", async () => {
 		const log = new Log<string>();
-		await log.init(
+		await log.open(
 			store,
 			{
 				...signKey.keypair,
@@ -240,7 +240,7 @@ describe("Append trim", function () {
 	it("trim to time", async () => {
 		const maxAge = 3000;
 		const log = new Log<string>();
-		await log.init(
+		await log.open(
 			store,
 			{
 				...signKey.keypair,

@@ -39,7 +39,7 @@ describe(`load`, () => {
 
 			for (let i = 0; i < entryCount; i++) entryArr.push(i);
 
-			db = await client1.open(new EventStore<string>({}));
+			db = await client1.open(new EventStore<string>());
 			address = db.address!.toString();
 			await mapSeries(entryArr, (i) => db.add("hello" + i));
 			await db.close();

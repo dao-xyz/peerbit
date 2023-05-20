@@ -1,8 +1,4 @@
-import {
-	createStore,
-	LSession,
-	waitForPeers,
-} from "@dao-xyz/peerbit-test-utils";
+import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
 import Cache from "@dao-xyz/lazy-level";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
@@ -46,8 +42,10 @@ describe("query", () => {
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
-			replicators: () => [],
 			log: {
+				replication: {
+					replicators: () => [],
+				},
 				encryption: {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
 					getEncryptionKeypair: () => Ed25519Keypair.create(),
@@ -63,18 +61,15 @@ describe("query", () => {
 
 		await observerStore.init(observer, await createIdentity(), {
 			role: new ObserverType(),
-			replicators: () => [],
 			log: {
+				replication: {
+					replicators: () => [],
+				},
 				cache: () => new Cache(createStore()),
 			},
 		});
-
-		await waitForPeers(
-			session.peers[0],
-			[session.peers[1]],
-			writeStore.query.rpcTopic
-		);
 	});
+
 	afterEach(async () => {
 		await writeStore.close();
 		await observerStore.close();
@@ -193,8 +188,10 @@ describe("query", () => {
 		const store = new DString({});
 		await store.init(writer, await createIdentity(), {
 			role: new ReplicatorType(),
-			replicators: () => [],
 			log: {
+				replication: {
+					replicators: () => [],
+				},
 				encryption: {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
 					getEncryptionKeypair: () => Ed25519Keypair.create(),

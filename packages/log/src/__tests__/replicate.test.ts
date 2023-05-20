@@ -1,9 +1,9 @@
 import rmrf from "rimraf";
 import fs from "fs-extra";
 import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import { PubSubData, waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 import { randomBytes } from "@dao-xyz/peerbit-crypto";
 import { Log } from "../log.js";
 import { dirname } from "path";
@@ -104,23 +104,23 @@ describe("ipfs-log - Replication", function () {
 
 		beforeEach(async () => {
 			log1 = new Log({ id: logId });
-			await log1.init(session.peers[0].services.blocks, {
+			await log1.open(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			log2 = new Log({ id: logId });
-			await log2.init(session.peers[1].services.blocks, {
+			await log2.open(session.peers[1].services.blocks, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
 
 			input1 = new Log({ id: logId });
-			await input1.init(session.peers[0].services.blocks, {
+			await input1.open(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			input2 = new Log({ id: logId });
-			await input2.init(session.peers[1].services.blocks, {
+			await input2.open(session.peers[1].services.blocks, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
@@ -141,7 +141,12 @@ describe("ipfs-log - Replication", function () {
 		});
 		// TODO why is this test doing a lot of unchaught rejections? (Reproduce in VSCODE tick `Uncaught exceptions`)
 		it("replicates logs", async () => {
-			await waitForPeers(session.peers[0], [session.peers[1].peerId], channel);
+			await waitForSubscribers(
+				session.peers[0],
+				[session.peers[1].peerId],
+				channel
+			);
+
 			let prev1: Entry<any> = undefined as any;
 			let prev2: Entry<any> = undefined as any;
 			for (let i = 1; i <= amount; i++) {
@@ -197,7 +202,7 @@ describe("ipfs-log - Replication", function () {
 			await whileProcessingMessages(5000);
 
 			const result = new Log<string>({ id: logId });
-			result.init(session.peers[0].services.blocks, {
+			result.open(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});

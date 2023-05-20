@@ -27,7 +27,7 @@ import {
 	Timestamp,
 } from "./clock.js";
 
-import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, option, serialize, variant } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import type { Identity } from "./identity.js";
 import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
@@ -40,7 +40,10 @@ import { EntryWithRefs } from "./entry-with-refs.js";
 const { LastWriteWins, NoZeroes } = Sorting;
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T>;
-
+export type ReplicationOptions = {
+	replicator?: (gid: string) => Promise<boolean>;
+	replicators?: () => string[][]; // array of replicators in each shard
+};
 export type LogProperties<T> = {
 	encryption?: PublicKeyEncryptionResolver;
 	encoding?: Encoding<T>;
@@ -49,12 +52,15 @@ export type LogProperties<T> = {
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
 	cache?: (name: string) => Promise<LocalStore> | LocalStore;
+	replication?: ReplicationOptions;
 };
 
 export type LogEvents<T> = {
 	onWrite?: (change: Entry<T>) => void;
 	onChange?: (change: Change<T>) => void;
+	onOpen?: () => void;
 	onClose?: () => void;
+	onDrop?: () => void;
 };
 
 const ENTRY_CACHE_MAX = 1000; // TODO as param
@@ -73,8 +79,8 @@ export type AppendOptions<T> = {
 
 @variant(0)
 export class Log<T> {
-	@field({ type: fixedArray("u8", 32) })
-	private _id: Uint8Array;
+	@field({ type: option(fixedArray("u8", 32)) })
+	private _id?: Uint8Array;
 
 	private _sortFn: Sorting.ISortFunction;
 	private _storage: BlockStore;
@@ -95,19 +101,39 @@ export class Log<T> {
 	private _trim: Trim<T>;
 	private _entryCache: Cache<Entry<T>>;
 
-	private _canAppendInit?: CanAppend<T>;
+	private _replication?: ReplicationOptions;
+
+	private _canAppendSetup?: CanAppend<T>;
 	private _canAppend?: CanAppend<T>;
-	private _onChangeInit?: (change: Change<T>) => void;
+	private _onChangeSetup?: (change: Change<T>) => void;
 	private _onChange?: (change: Change<T>) => void;
 	private _onWrite?: (entry: Entry<T>) => void;
 	private _onClose?: () => void;
+	private _onDrop?: () => void;
+	private _onOpen?: () => void;
+	private _closed = true;
+
 	private _joining: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 
 	constructor(properties: { id: Uint8Array } = { id: randomBytes(32) }) {
 		this._id = properties.id;
 	}
 
-	async init(
+	async setup(options?: {
+		encoding?: Encoding<T>;
+		canAppend?: CanAppend<T>;
+		onChange?: (change: Change<T>) => void;
+	}) {
+		if (this.initialized) {
+			throw new Error("Can not setup after open");
+		}
+
+		this._encoding = options?.encoding || JSON_ENCODING;
+		this._canAppendSetup = options?.canAppend;
+		this._onChangeSetup = options?.onChange;
+	}
+
+	async open(
 		store: BlockStore,
 		identity: Identity,
 		options: LogOptions<T> = {}
@@ -120,13 +146,23 @@ export class Log<T> {
 			throw new Error("Identity is required");
 		}
 		//
-		const { encoding, trim, encryption, onChange, cache, onWrite, onClose } =
-			options;
+		const {
+			encoding,
+			trim,
+			encryption,
+			cache,
+			onWrite,
+			onClose,
+			onOpen,
+			onDrop,
+			replication,
+		} = options;
 		let { sortFn } = options;
 
-		this._onChangeInit = onChange;
 		this._onWrite = onWrite;
+		this._onOpen = onOpen;
 		this._onClose = onClose;
+		this._onDrop = onDrop;
 
 		if (!isDefined(sortFn)) {
 			sortFn = LastWriteWins;
@@ -136,7 +172,7 @@ export class Log<T> {
 		this._sortFn = NoZeroes(sortFn);
 		this._storage = store;
 
-		this._encoding = encoding || JSON_ENCODING;
+		this._encoding = this._encoding || encoding;
 		this._joining = new Map();
 
 		// Identity
@@ -145,15 +181,17 @@ export class Log<T> {
 		// encoder/decoder
 		this._encryption = encryption;
 
-		// Add entries to the internal cache
-
-		// Index of all next pointers in this log
+		this._replication = replication;
 
 		// Clock
 		this._hlc = new HLC();
 
 		this._nextsIndex = new Map();
-		this._headsIndex = new HeadsIndex(this._id);
+		const id = this.id;
+		if (!id) {
+			throw new Error("Id not set");
+		}
+		this._headsIndex = new HeadsIndex(id);
 		await this._headsIndex.init(store, cache);
 		this._entryCache = new Cache({ max: ENTRY_CACHE_MAX });
 		this._entryIndex = new EntryIndex({
@@ -191,22 +229,15 @@ export class Log<T> {
 			},
 			trim
 		);
-	}
 
-	async setup(options?: {
-		encoding?: Encoding<T>;
-		canAppend?: CanAppend<T>;
-		onChange?: (change: Change<T>) => void;
-	}) {
-		this._encoding = options?.encoding || this._encoding;
 		this._canAppend = async (entry) => {
-			if (this._canAppendInit) {
-				if (!(await this._canAppendInit(entry))) {
+			if (options?.canAppend) {
+				if (!(await options.canAppend(entry))) {
 					return false;
 				}
 			}
-			if (options?.canAppend) {
-				if (!(await options.canAppend(entry))) {
+			if (this._canAppendSetup) {
+				if (!(await this._canAppendSetup(entry))) {
 					return false;
 				}
 			}
@@ -214,17 +245,28 @@ export class Log<T> {
 		};
 
 		this._onChange = async (change) => {
-			await this._onChangeInit?.(change);
 			await options?.onChange?.(change);
+			await this._onChangeSetup?.(change);
 		};
+
+		await this._onOpen?.();
+		this._closed = false;
 	}
+
 	get initialized() {
 		return !!this._storage;
+	}
+
+	get replication() {
+		return this._replication;
 	}
 
 	private _idString: string | undefined;
 
 	get idString() {
+		if (!this.id) {
+			throw new Error("Id not set");
+		}
 		return this._idString || (this._idString = Log.createIdString(this.id));
 	}
 
@@ -235,20 +277,13 @@ export class Log<T> {
 	get id() {
 		return this._id;
 	}
-	set id(id: Uint8Array) {
+	set id(id: Uint8Array | undefined) {
 		if (this.initialized) {
 			throw new Error("Can not change id after initialization");
 		}
 		this._idString = undefined;
 		this._id = id;
 	}
-
-	/* set canAppend(canAppend: CanAppend<T> | undefined) {
-		this._canAppendOption = canAppend;
-	}
-	get canAppend(): CanAppend<T> | undefined {
-		return this._canAppend;
-	} */
 
 	/**
 	 * Returns the length of the log.
@@ -355,6 +390,10 @@ export class Log<T> {
 
 	get sortFn() {
 		return this._sortFn;
+	}
+
+	get closed() {
+		return this._closed;
 	}
 
 	/**
@@ -1100,16 +1139,18 @@ export class Log<T> {
 	}
 
 	async close() {
+		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		await this._entryCache.clear();
 		await this._headsIndex.close();
 		await this._onClose?.();
 	}
 
 	async drop() {
+		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		await this.deleteRecursively(await this.getHeads()); // TODO can multiple store have exact same log entry? no because GIDs are generated randomly
 		await this._headsIndex.drop();
 		await this._entryCache.clear();
-		return;
+		await this._onDrop?.();
 	}
 	async load(
 		opts: ({ fetchEntryTimeout?: number } & (
@@ -1120,7 +1161,7 @@ export class Log<T> {
 		)) & { reload: boolean } = { reload: true }
 	) {
 		const heads = await this.headsIndex.load({
-			replicate: true,
+			replicate: true, // TODO this.replication.replicate(x) => true/false
 			timeout: opts.fetchEntryTimeout,
 			reload: opts.reload,
 			cache: { update: true, reset: true },
@@ -1162,7 +1203,7 @@ export class Log<T> {
 		} & LogOptions<T> = { id: randomBytes(32) }
 	): Promise<Log<T>> {
 		const log = new Log<T>(options.id && { id: options.id });
-		await log.init(store, identity, options);
+		await log.open(store, identity, options);
 		await log.join(!Array.isArray(entryOrHash) ? [entryOrHash] : entryOrHash, {
 			timeout: options.timeout,
 			trim: options.trim,

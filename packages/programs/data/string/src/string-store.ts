@@ -4,7 +4,6 @@ import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
 	RangeMetadata,
@@ -52,11 +51,9 @@ export class DString extends Program {
 
 	constructor(properties: { query?: RPC<StringQueryRequest, StringResult> }) {
 		super();
-		if (properties) {
-			this.query = properties.query || new RPC();
-			this._log = new Log();
-			this._index = new StringIndex();
-		}
+		this.query = properties.query || new RPC();
+		this._log = new Log();
+		this._index = new StringIndex();
 	}
 
 	async setup(options?: {
@@ -73,7 +70,7 @@ export class DString extends Program {
 		await this._index.setup(this._log);
 		await this.query.setup({
 			...options,
-			context: () => this.address,
+			topic: this._log.idString + "/" + "dstring",
 			canRead: options?.canRead,
 			responseHandler: this.queryHandler.bind(this),
 			queryType: StringQueryRequest,

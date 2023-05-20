@@ -6,7 +6,6 @@ import { EventStore } from "./utils/stores/event-store";
 import { KeyBlocks } from "./utils/stores/key-value-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 describe(`Automatic Replication`, function () {
 	let client1: Peerbit, client2: Peerbit, client3: Peerbit, client4: Peerbit;
@@ -38,15 +37,9 @@ describe(`Automatic Replication`, function () {
 		const entryCount = 33;
 		const entryArr: number[] = [];
 
-		const db1 = await client1.open(
-			new EventStore<string>({ id: randomBytes(32) })
-		);
+		const db1 = await client1.open(new EventStore<string>());
 
-		const db3 = await client1.open(
-			new KeyBlocks<string>({
-				id: randomBytes(32),
-			})
-		);
+		const db3 = await client1.open(new KeyBlocks<string>());
 
 		// Create the entries in the first database
 		for (let i = 0; i < entryCount; i++) {
@@ -88,10 +81,9 @@ describe(`Automatic Replication`, function () {
 	it("starts replicating the database when peers connect in write mode", async () => {
 		const entryCount = 1;
 		const entryArr: number[] = [];
-		const db1 = await client1.open(
-			new EventStore<string>({ id: randomBytes(32) }),
-			{ role: new ObserverType() }
-		);
+		const db1 = await client1.open(new EventStore<string>(), {
+			role: new ObserverType(),
+		});
 
 		// Create the entries in the first database
 		for (let i = 0; i < entryCount; i++) {

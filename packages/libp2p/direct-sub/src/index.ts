@@ -19,12 +19,9 @@ import {
 	GetSubscribers,
 	Subscription,
 } from "./messages.js";
-import { Uint8ArrayList } from "uint8arraylist";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CustomEvent } from "@libp2p/interfaces/events";
-import type { Connection } from "@libp2p/interface-connection";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { Goodbye } from "@dao-xyz/libp2p-direct-stream";
 import { PeerEvents } from "@dao-xyz/libp2p-direct-stream";
 export {
 	PubSubMessage,
@@ -72,6 +69,8 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
 	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
 	public subscriptions: Map<string, { counter: number; data?: Uint8Array }>; // topic -> subscription ids
+	public lastSubscriptionMessages: Map<string, Map<string, DataMessage>> =
+		new Map();
 
 	constructor(components: DirectSubComponents, props?: DirectStreamOptions) {
 		super(components, ["pubsub/0.0.0"], props);
@@ -122,6 +121,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		if (!this.started) {
 			throw new Error("Pubsub has not started");
 		}
+
 		topic = typeof topic === "string" ? [topic] : topic;
 
 		const newTopicsForTopicData: string[] = [];
@@ -190,6 +190,12 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			subscriptions.counter -= 1;
 		}
 
+		const peersOnTopic = this.topicsToPeers.get(topic);
+		if (peersOnTopic) {
+			for (const peer of peersOnTopic) {
+				this.lastSubscriptionMessages.delete(peer);
+			}
+		}
 		if (!subscriptions?.counter || options?.force) {
 			this.subscriptions.delete(topic);
 			this.topics.delete(topic);
@@ -260,6 +266,11 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		if (topic == null) {
 			throw new CodeError("topic is required", "ERR_NOT_VALID_TOPIC");
 		}
+
+		if (topic.length === 0) {
+			return;
+		}
+
 		const topics = typeof topic === "string" ? [topic] : topic;
 		for (const topic of topics) {
 			this.listenForSubscribers(topic);
@@ -366,6 +377,8 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				}
 			}
 		}
+		this.lastSubscriptionMessages.delete(publicKeyHash);
+
 		if (changed.length > 0) {
 			this.dispatchEvent(
 				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
@@ -375,12 +388,33 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		}
 	}
 
+	private subscriptionMessageIsLatest(
+		message: DataMessage,
+		pubsubMessage: Subscribe | Unsubscribe
+	) {
+		const subscriber = message.signatures.signatures[0].publicKey!;
+		const subscriberKey = subscriber.hashcode(); // Assume first signature is the one who is signing
+
+		for (const topic of pubsubMessage.topics) {
+			const lastTimestamp = this.lastSubscriptionMessages
+				.get(subscriberKey)
+				?.get(topic)?.header.timetamp;
+			if (lastTimestamp != null && lastTimestamp > message.header.timetamp) {
+				return false; // message is old
+			}
+		}
+
+		for (const topic of pubsubMessage.topics) {
+			if (!this.lastSubscriptionMessages.has(subscriberKey)) {
+				this.lastSubscriptionMessages.set(subscriberKey, new Map());
+			}
+			this.lastSubscriptionMessages.get(subscriberKey)?.set(topic, message);
+		}
+		return true;
+	}
+
 	async onDataMessage(from: PeerId, stream: PeerStreams, message: DataMessage) {
-		const pubsubMessage = PubSubMessage.deserialize(
-			message.data instanceof Uint8Array
-				? new Uint8ArrayList(message.data)
-				: message.data
-		);
+		const pubsubMessage = PubSubMessage.deserialize(message.data);
 		if (pubsubMessage instanceof PubSubData) {
 			/**
 			 * See if we know more subscribers of the message topics. If so, add aditional end recievers of the message
@@ -457,10 +491,14 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				return false;
 			}
 
+			if (!this.subscriptionMessageIsLatest(message, pubsubMessage)) {
+				logger.trace("Recieved old subscription message");
+				return false;
+			}
+
 			const subscriber = message.signatures.signatures[0].publicKey!;
 			const subscriberKey = subscriber.hashcode(); // Assume first signature is the one who is signing
 
-			const fromPublic = getPublicKeyFromPeerId(from);
 			this.initializePeer(subscriber);
 
 			const changed: Subscription[] = [];
@@ -499,6 +537,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					from: subscriber,
 					subscriptions: changed,
 				};
+
 				this.dispatchEvent(
 					new CustomEvent<SubscriptionEvent>("subscribe", {
 						detail: subscriptionEvent,
@@ -518,11 +557,17 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				logger.warn("Recieved subscription message with no signers");
 				return false;
 			}
+
+			if (!this.subscriptionMessageIsLatest(message, pubsubMessage)) {
+				logger.trace("Recieved old subscription message");
+				return false;
+			}
+
 			const changed: Subscription[] = [];
 			const subscriber = message.signatures.signatures[0].publicKey!;
 			const subscriberKey = subscriber.hashcode(); // Assume first signature is the one who is signing
 
-			pubsubMessage.unsubscriptions.forEach((unsubscription) => {
+			for (const unsubscription of pubsubMessage.unsubscriptions) {
 				const change = this.deletePeerFromTopic(
 					unsubscription.topic,
 					subscriberKey
@@ -530,7 +575,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 				if (change) {
 					changed.push(new Subscription(unsubscription.topic, change.data));
 				}
-			});
+			}
 
 			if (changed.length > 0) {
 				this.dispatchEvent(
@@ -587,3 +632,52 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return true;
 	}
 }
+
+export const waitForSubscribers = async (
+	libp2p: { services: { pubsub: DirectSub } },
+	peersToWait:
+		| (PeerId | { peerId: PeerId; services: { pubsub: DirectStream } })[]
+		| PeerId
+		| { peerId: PeerId; services: { pubsub: DirectStream } },
+	topic: string
+) => {
+	const peersToWaitArr = Array.isArray(peersToWait)
+		? peersToWait
+		: [peersToWait];
+
+	const peerIdsToWait = peersToWaitArr.map((peer) =>
+		peer["peerId"]
+			? getPublicKeyFromPeerId(peer["peerId"]).hashcode()
+			: getPublicKeyFromPeerId(peer as PeerId).hashcode()
+	);
+
+	await libp2p.services.pubsub.requestSubscribers(topic);
+	return new Promise<void>((resolve, reject) => {
+		let counter = 0;
+		const interval = setInterval(async () => {
+			counter += 1;
+			if (counter > 100) {
+				clearInterval(interval);
+				reject(
+					new Error("Failed to find expected subscribers for topic: " + topic)
+				);
+			}
+			try {
+				const peers = libp2p.services.pubsub.getSubscribers(topic);
+				const hasAllPeers =
+					peerIdsToWait
+						.map((e) => peers && peers.has(e))
+						.filter((e) => e === false).length === 0;
+
+				// FIXME: Does not fail on timeout, not easily fixable
+				if (hasAllPeers) {
+					clearInterval(interval);
+					resolve();
+				}
+			} catch (e) {
+				clearInterval(interval);
+				reject(e);
+			}
+		}, 200);
+	});
+};

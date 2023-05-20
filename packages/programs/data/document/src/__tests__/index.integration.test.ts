@@ -1,6 +1,7 @@
 import {
 	deserialize,
 	field,
+	fixedArray,
 	option,
 	serialize,
 	variant,
@@ -26,6 +27,7 @@ import {
 	Ed25519Keypair,
 	X25519Keypair,
 	X25519PublicKey,
+	randomBytes,
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
@@ -71,8 +73,8 @@ class TestStore extends Program {
 	@field({ type: Documents })
 	docs: Documents<Document>;
 
-	constructor(properties?: { id?: Uint8Array; docs: Documents<Document> }) {
-		super(properties);
+	constructor(properties?: { docs: Documents<Document> }) {
+		super();
 		if (properties) {
 			this.docs = properties.docs;
 		}
@@ -123,10 +125,13 @@ describe("index", () => {
 				});
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => [
-						[session.peers[0].services.pubsub.publicKey.hashcode()],
-					],
+
 					log: {
+						replication: {
+							replicators: () => [
+								[session.peers[0].services.pubsub.publicKey.hashcode()],
+							],
+						},
 						cache: () => new Cache(createStore()),
 					},
 				});
@@ -187,8 +192,10 @@ describe("index", () => {
 				});
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => [],
 					log: {
+						replication: {
+							replicators: () => [],
+						},
 						cache: () => new Cache(createStore()),
 					},
 				});
@@ -218,9 +225,11 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					replicators: () => [],
 					role: new ReplicatorType(),
 					log: {
+						replication: {
+							replicators: () => [],
+						},
 						cache: () => new Cache(createStore()),
 					},
 				});
@@ -275,8 +284,10 @@ describe("index", () => {
 
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => [],
 					log: {
+						replication: {
+							replicators: () => [],
+						},
 						cache: () => new Cache(createStore()),
 						trim: { type: "length", to: 1 },
 					},
@@ -322,8 +333,11 @@ describe("index", () => {
 
 				await store.init(session.peers[0], await createIdentity(), {
 					role: new ReplicatorType(),
-					replicators: () => [],
+
 					log: {
+						replication: {
+							replicators: () => [],
+						},
 						cache: () => new Cache(createStore()),
 						trim: { type: "length", to: 10 },
 					},
@@ -373,10 +387,13 @@ describe("index", () => {
 
 					await store.init(session.peers[0], await createIdentity(), {
 						role: new ReplicatorType(),
-						replicators: () => [
-							[session.peers[0].services.pubsub.publicKey.hashcode()],
-						],
 						log: {
+							replication: {
+								replicators: () => [
+									[session.peers[0].services.pubsub.publicKey.hashcode()],
+								],
+							},
+
 							cache: () => new Cache(createStore()),
 						},
 					});
@@ -389,7 +406,9 @@ describe("index", () => {
 					await store.docs.put(doc);
 
 					let indexedValues = [...store.docs.index.index.values()];
+
 					expect(indexedValues).toHaveLength(1);
+
 					expect(indexedValues[0].value).toEqual({
 						[indexedNameField]: doc.name,
 					});
@@ -398,16 +417,20 @@ describe("index", () => {
 						session.peers[0].services.blocks,
 						session.peers[1].services.blocks
 					);
+
 					store2 = (await FilteredStore.load<FilteredStore>(
 						session.peers[1].services.blocks,
 						store.address
 					))!;
+
 					await store2.init(session.peers[1], await createIdentity(), {
 						role: new ReplicatorType(),
-						replicators: () => [
-							[session.peers[0].services.pubsub.publicKey.hashcode()],
-						],
 						log: {
+							replication: {
+								replicators: () => [
+									[session.peers[0].services.pubsub.publicKey.hashcode()],
+								],
+							},
 							cache: () => new Cache(createStore()),
 						},
 					});
@@ -445,10 +468,12 @@ describe("index", () => {
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
 						role: i === 0 ? new ReplicatorType() : new ObserverType(),
-						replicators: () => [
-							[session.peers[0].services.pubsub.publicKey.hashcode()],
-						],
 						log: {
+							replication: {
+								replicators: () => [
+									[session.peers[0].services.pubsub.publicKey.hashcode()],
+								],
+							},
 							encryption: {
 								getEncryptionKeypair: () => keypair,
 								getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -989,14 +1014,11 @@ describe("index", () => {
 	describe("program as value", () => {
 		@variant("subprogram")
 		class SubProgram extends Program {
-			constructor(
-				properties?:
-					| {
-							id?: Uint8Array | undefined;
-					  }
-					| undefined
-			) {
-				super(properties);
+			@field({ type: fixedArray("u8", 32) })
+			id: Uint8Array;
+			constructor() {
+				super();
+				this.id = randomBytes(32);
 			}
 			async setup() {}
 		}
@@ -1063,11 +1085,14 @@ describe("index", () => {
 						// we don't init, but in real use case we would init here
 						return program;
 					},
-					replicator: () => Promise.resolve(true),
-					replicators: () => [
-						[session.peers[0].services.pubsub.publicKey.hashcode()],
-					],
+
 					log: {
+						replication: {
+							replicator: () => Promise.resolve(true),
+							replicators: () => [
+								[session.peers[0].services.pubsub.publicKey.hashcode()],
+							],
+						},
 						encryption: {
 							getEncryptionKeypair: () => keypair,
 							getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -1116,8 +1141,10 @@ describe("index", () => {
 			const subProgram = new SubProgram();
 			subProgram.init(session.peers[0], await createIdentity(), {
 				role: new ReplicatorType(),
-				replicators: () => [],
 				log: {
+					replication: {
+						replicators: () => [],
+					},
 					cache: () => new Cache(createStore()),
 				},
 			});
@@ -1196,10 +1223,14 @@ describe("index", () => {
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
 						role: new ReplicatorType(),
-						replicators: () => [
-							session.peers.map((x) => x.services.pubsub.publicKey.hashcode()),
-						],
 						log: {
+							replication: {
+								replicators: () => [
+									session.peers.map((x) =>
+										x.services.pubsub.publicKey.hashcode()
+									),
+								],
+							},
 							encryption: {
 								getEncryptionKeypair: () => keypair,
 								getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
@@ -1226,9 +1257,9 @@ describe("index", () => {
 					const fn = stores[i].docs.index.queryHandler.bind(
 						stores[i].docs.index
 					);
-					stores[i].docs.index.queryHandler = (a, b) => {
+					stores[i].docs.index.queryHandler = (a) => {
 						counters[i] += 1;
-						return fn(a, b);
+						return fn(a);
 					};
 				}
 			});
@@ -1243,7 +1274,7 @@ describe("index", () => {
 			});
 
 			it("queries all if undefined", async () => {
-				stores[0].docs.index.replicators = () => undefined;
+				stores[0].docs.log["_replication"].replicators = () => undefined;
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }), {
 					remote: { amount: 2 },
 				});
@@ -1253,7 +1284,7 @@ describe("index", () => {
 			});
 
 			it("all", async () => {
-				stores[0].docs.index.replicators = () => [
+				stores[0].docs.log["_replication"].replicators = () => [
 					[stores[1].libp2p.services.pubsub.publicKey.hashcode()],
 					[stores[2].libp2p.services.pubsub.publicKey.hashcode()],
 				];
@@ -1264,7 +1295,7 @@ describe("index", () => {
 			});
 
 			it("will always query locally", async () => {
-				stores[0].docs.index.replicators = () => [];
+				stores[0].docs.log["_replication"].replicators = () => [];
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
@@ -1272,7 +1303,7 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs.index.replicators = () => [
+				stores[0].docs.log["_replication"].replicators = () => [
 					[stores[1].libp2p.services.pubsub.publicKey.hashcode()],
 				];
 				await stores[0].docs.index.query(new DocumentQuery({ queries: [] }));
@@ -1282,7 +1313,7 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs.index.replicators = () => [
+				stores[0].docs.log["_replication"].replicators = () => [
 					[stores[1].libp2p.services.pubsub.publicKey.hashcode()],
 					[stores[2].libp2p.services.pubsub.publicKey.hashcode()],
 				];
@@ -1294,7 +1325,7 @@ describe("index", () => {
 				expect(counters[2]).toEqual(1);
 			});
 			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.index.replicators = () => [
+				stores[0].docs.log["_replication"].replicators = () => [
 					[
 						stores[0].libp2p.services.pubsub.publicKey.hashcode(),
 						stores[1].libp2p.services.pubsub.publicKey.hashcode(),
@@ -1320,7 +1351,7 @@ describe("index", () => {
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs.index.replicators = () => [
+					stores[0].docs.log["_replication"].replicators = () => [
 						[
 							stores[1].libp2p.services.pubsub.publicKey.hashcode(),
 							stores[2].libp2p.services.pubsub.publicKey.hashcode(),
@@ -1332,12 +1363,12 @@ describe("index", () => {
 						const fn = stores[i].docs.index.queryHandler.bind(
 							stores[1].docs.index
 						);
-						stores[i].docs.index.queryHandler = (a, b) => {
+						stores[i].docs.index.queryHandler = (a) => {
 							if (!failedOnce) {
 								failedOnce = true;
 								throw new Error("Expected error");
 							}
-							return fn(a, b);
+							return fn(a);
 						};
 					}
 					let timeout = 1000;
@@ -1351,14 +1382,14 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs.index.replicators = () => [
+					stores[0].docs.log["_replication"].replicators = () => [
 						[
 							stores[1].libp2p.services.pubsub.publicKey.hashcode(),
 							stores[2].libp2p.services.pubsub.publicKey.hashcode(),
 						],
 					];
 					for (let i = 1; i < stores.length; i++) {
-						stores[i].docs.index.queryHandler = (a, b) => {
+						stores[i].docs.index.queryHandler = (a) => {
 							throw new Error("Expected error");
 						};
 					}

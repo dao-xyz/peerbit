@@ -1,4 +1,4 @@
-import { field, variant, vec, option } from "@dao-xyz/borsh";
+import { field, variant, vec, option, serialize } from "@dao-xyz/borsh";
 import { ComposableProgram, Program } from "..";
 import { getValuesWithType } from "../utils.js";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
@@ -47,6 +47,21 @@ class P2 extends Program {
 class P3 extends Program {
 	constructor() {
 		super();
+	}
+
+	async setup(): Promise<void> {
+		return;
+	}
+}
+
+@variant("p4")
+class P4 extends Program {
+	@field({ type: P2 })
+	program: P2;
+
+	constructor() {
+		super();
+		this.program = new P2(new Log());
 	}
 
 	async setup(): Promise<void> {
@@ -158,33 +173,39 @@ describe("program", () => {
 				return pSetup();
 			};
 
-			let initializedLog = false;
 			let setupLog = false;
-			const lInit = log.init.bind(log);
-			p.log![0]!.log.init = (a, b, c): any => {
-				initializedLog = true;
-				return lInit(a, b, c);
-			};
+			let openLog = false;
 
 			const lSetup = log.setup.bind(log);
 			p.log![0]!.log.setup = (o): any => {
-				if (!initializedLog) {
-					throw new Error("Not initialized");
+				if (openLog) {
+					throw new Error("Already open!");
 				} else {
 					setupLog = true;
 				}
 				return lSetup(o);
 			};
+
+			const lInit = log.open.bind(log);
+			p.log![0]!.log.open = (a, b, c): any => {
+				openLog = true;
+				if (!setupLog) {
+					throw new Error("Not setup");
+				}
+				return lInit(a, b, c);
+			};
+
 			let open = async (open: Program): Promise<Program> => {
 				return open;
 			};
+
 			await p.init(session.peers[0], await Ed25519Keypair.create(), {
 				open,
 				log: {},
 			} as any);
 
-			expect(initializedLog).toBeTrue();
 			expect(initializedProgram).toBeTrue();
+			expect(openLog).toBeTrue();
 			expect(setupLog).toBeTrue();
 			expect(setupProgram).toBeTrue();
 		});
@@ -198,18 +219,15 @@ describe("program", () => {
 			p.allLogs;
 			p.allLogsMap;
 			p.allPrograms;
-			p.subprogramsMap;
 			expect(p["_logs"]).toBeDefined();
 			expect(p["_allLogs"]).toBeDefined();
 			expect(p["_allLogsMap"]).toBeDefined();
 			expect(p["_allPrograms"]).toBeDefined();
-			expect(p["_subprogramMap"]).toBeDefined();
 			await p["_clear"]();
 			expect(p["_logs"]).toBeUndefined();
 			expect(p["_allLogs"]).toBeUndefined();
 			expect(p["_allLogsMap"]).toBeUndefined();
 			expect(p["_allPrograms"]).toBeUndefined();
-			expect(p["_subprogramMap"]).toBeUndefined();
 		});
 
 		it("invokes clear on close", async () => {
@@ -282,159 +300,173 @@ describe("program", () => {
 		});
 	});
 
-	it("create subprogram address", async () => {
-		const log = new Log();
-		const p = new P2(log);
-		const mem = await new MemoryLevelBlockStore().open();
-		await p.save(mem);
-		expect(p.program.address.toString()).toEndWith("/0");
-		await mem.close();
-	});
+	describe("subprogram", () => {
+		it("subprogram will not close if opened outside a program", async () => {
+			const p = new P3();
+			const p2 = new P3();
 
-	it("subprogram will not close if opened outside a program", async () => {
-		const p = new P3();
-		const p2 = new P3();
-
-		let open = async (open: Program): Promise<Program> => {
-			return open;
-		};
-		await p.init(session.peers[0], await Ed25519Keypair.create(), {
-			open,
-			log: {},
-		} as any);
-		await p2.init(session.peers[0], await Ed25519Keypair.create(), {
-			open,
-			log: {},
-		} as any);
-
-		let p3 = await p.open!(new P3());
-		let closeCounter = 0;
-
-		// Open it outside a program (call init on p3)
-		await p3.init(session.peers[0], await Ed25519Keypair.create(), {
-			onClose: () => {
-				closeCounter++;
-			},
-			log: {},
-		} as any);
-
-		expect(p.programsOpened).toHaveLength(1);
-		expect(p3.programsOpened).toBeUndefined();
-		expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
-
-		await p2.open!(p3);
-		expect(p.programsOpened).toHaveLength(1);
-		expect(p2.programsOpened).toHaveLength(1);
-		expect(p3.programsOpened).toBeUndefined();
-		expect(p3.openedByPrograms).toContainAllValues([undefined, p, p2]);
-
-		await p2.close();
-		expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
-		expect(closeCounter).toEqual(0);
-		expect(p3.closed).toBeFalse();
-		await p.close();
-		expect(p3.openedByPrograms).toContainAllValues([undefined]);
-		expect(closeCounter).toEqual(0);
-		expect(p3.closed).toBeFalse();
-	});
-
-	it("subprogram will close if no dependency", async () => {
-		const p = new P3();
-		const p2 = new P3();
-
-		let closeCounter = 0;
-
-		let open = async (open: Program): Promise<Program> => {
-			open["_onClose"] = () => {
-				closeCounter += 1;
+			let open = async (open: Program): Promise<Program> => {
+				return open;
 			};
-			open["_closed"] = false;
-			open["_initialized"] = true;
-			return open;
-		};
+			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+				open,
+				log: {},
+			} as any);
+			await p2.init(session.peers[0], await Ed25519Keypair.create(), {
+				open,
+				log: {},
+			} as any);
 
-		await p.init(session.peers[0], await Ed25519Keypair.create(), {
-			open,
-			log: {},
-		} as any);
-		await p2.init(session.peers[0], await Ed25519Keypair.create(), {
-			open,
-			log: {},
-		} as any);
+			let p3 = await p.open!(new P3());
+			let closeCounter = 0;
 
-		let p3 = await p.open!(new P3());
+			// Open it outside a program (call init on p3)
+			await p3.init(session.peers[0], await Ed25519Keypair.create(), {
+				onClose: () => {
+					closeCounter++;
+				},
+				log: {},
+			} as any);
 
-		expect(p.programsOpened).toHaveLength(1);
-		expect(p3.programsOpened).toBeUndefined();
-		expect(p3.openedByPrograms).toContainAllValues([p]);
-		expect(p3.closed).toBeFalse();
+			expect(p.programsOpened).toHaveLength(1);
+			expect(p3.programsOpened).toBeUndefined();
+			expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
 
-		await p2.open!(p3);
-		expect(p.programsOpened).toHaveLength(1);
-		expect(p2.programsOpened).toHaveLength(1);
-		expect(p3.programsOpened).toBeUndefined();
-		expect(p3.openedByPrograms).toContainAllValues([p, p2]);
-		expect(p3.closed).toBeFalse();
+			await p2.open!(p3);
+			expect(p.programsOpened).toHaveLength(1);
+			expect(p2.programsOpened).toHaveLength(1);
+			expect(p3.programsOpened).toBeUndefined();
+			expect(p3.openedByPrograms).toContainAllValues([undefined, p, p2]);
 
-		await p2.close();
-		expect(p3.openedByPrograms).toContainAllValues([p]);
-		expect(closeCounter).toEqual(0);
-		expect(p3.closed).toBeFalse();
+			await p2.close();
+			expect(p3.openedByPrograms).toContainAllValues([undefined, p]);
+			expect(closeCounter).toEqual(0);
+			expect(p3.closed).toBeFalse();
+			await p.close();
+			expect(p3.openedByPrograms).toContainAllValues([undefined]);
+			expect(closeCounter).toEqual(0);
+			expect(p3.closed).toBeFalse();
+		});
 
-		await p.close();
-		expect(p3.openedByPrograms).toContainAllValues([]);
-		expect(closeCounter).toEqual(1);
-		expect(p3.closed).toBeTrue();
-	});
+		it("subprogram will close if no dependency", async () => {
+			const p = new P3();
+			const p2 = new P3();
 
-	it("will create indices", async () => {
-		@variant("pa")
-		class ProgramA extends ComposableProgram {
-			@field({ type: Log })
-			logA: Log<any> = new Log();
-		}
+			let closeCounter = 0;
 
-		@variant("pb")
-		class ProgramB extends ComposableProgram {
-			@field({ type: Log })
-			logB: Log<any> = new Log();
+			let open = async (open: Program): Promise<Program> => {
+				open["_onClose"] = () => {
+					closeCounter += 1;
+				};
+				open["_closed"] = false;
+				open["_initialized"] = true;
+				return open;
+			};
 
-			@field({ type: ProgramA })
-			programA = new ProgramA();
-		}
+			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+				open,
+				log: {},
+			} as any);
+			await p2.init(session.peers[0], await Ed25519Keypair.create(), {
+				open,
+				log: {},
+			} as any);
 
-		@variant("pc")
-		class ProgramC extends Program {
-			@field({ type: ProgramA })
-			programA = new ProgramA();
+			let p3 = await p.open!(new P3());
 
-			@field({ type: ProgramB })
-			programB = new ProgramB();
+			expect(p.programsOpened).toHaveLength(1);
+			expect(p3.programsOpened).toBeUndefined();
+			expect(p3.openedByPrograms).toContainAllValues([p]);
+			expect(p3.closed).toBeFalse();
 
-			@field({ type: Log })
-			logC = new Log();
+			await p2.open!(p3);
+			expect(p.programsOpened).toHaveLength(1);
+			expect(p2.programsOpened).toHaveLength(1);
+			expect(p3.programsOpened).toBeUndefined();
+			expect(p3.openedByPrograms).toContainAllValues([p, p2]);
+			expect(p3.closed).toBeFalse();
 
-			async setup(): Promise<void> {}
-		}
+			await p2.close();
+			expect(p3.openedByPrograms).toContainAllValues([p]);
+			expect(closeCounter).toEqual(0);
+			expect(p3.closed).toBeFalse();
 
-		const pr = new ProgramC();
-		const mem = await new MemoryLevelBlockStore().open();
-		await pr.save(mem);
+			await p.close();
+			expect(p3.openedByPrograms).toContainAllValues([]);
+			expect(closeCounter).toEqual(1);
+			expect(p3.closed).toBeTrue();
+		});
 
-		expect(pr._programIndex).toBeUndefined();
-		expect(pr.programA._programIndex).toEqual(0);
-		expect(pr.programB._programIndex).toEqual(1);
-		expect(pr.programB.programA._programIndex).toEqual(2);
-		let logAId = sha256Sync(pr.id);
-		let logBId = sha256Sync(logAId);
-		let logA2Id = sha256Sync(logBId);
-		let logCId = sha256Sync(logA2Id);
+		it("will create indices", async () => {
+			@variant("pa")
+			class ProgramA extends ComposableProgram {
+				@field({ type: Log })
+				logA: Log<any> = new Log();
+			}
 
-		expect(pr.programA.logA.id).toEqual(logAId);
-		expect(pr.programB.logB.id).toEqual(logBId);
-		expect(pr.programB.programA.logA.id).toEqual(logA2Id);
-		expect(pr.logC.id).toEqual(logCId);
+			@variant("pb")
+			class ProgramB extends ComposableProgram {
+				@field({ type: Log })
+				logB: Log<any> = new Log();
 
-		await mem.close();
+				@field({ type: ProgramA })
+				programA = new ProgramA();
+			}
+
+			@variant("pc")
+			class ProgramC extends Program {
+				@field({ type: ProgramA })
+				programA = new ProgramA();
+
+				@field({ type: ProgramB })
+				programB = new ProgramB();
+
+				@field({ type: Log })
+				logC = new Log();
+
+				async setup(): Promise<void> {}
+			}
+
+			const pr = new ProgramC();
+			const mem = await new MemoryLevelBlockStore().open();
+			await pr.save(mem);
+
+			let ids: (Uint8Array | undefined)[] = [];
+			for (const [_ix, log] of pr.allLogs.entries()) {
+				ids.push(log.id);
+				log.id = undefined;
+			}
+			const prehash = sha256Sync(serialize(pr));
+
+			for (const [ix, log] of pr.allLogs.entries()) {
+				log.id = ids[ix];
+			}
+
+			let logAId = sha256Sync(prehash);
+			let logBId = sha256Sync(logAId);
+			let logA2Id = sha256Sync(logBId);
+			let logCId = sha256Sync(logA2Id);
+
+			expect(pr.programA.logA.id).toEqual(logAId);
+			expect(pr.programB.logB.id).toEqual(logBId);
+			expect(pr.programB.programA.logA.id).toEqual(logA2Id);
+			expect(pr.logC.id).toEqual(logCId);
+
+			await mem.close();
+		});
+
+		it("can drop", async () => {
+			let p = new P4();
+
+			let open = async (open: Program): Promise<Program> => {
+				return open;
+			};
+			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+				open,
+				log: {},
+			} as any);
+
+			await p.drop();
+		});
 	});
 });

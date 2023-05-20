@@ -77,7 +77,7 @@ describe(`load`, function () {
 
 	const init = async (cache: LazyLevel, onWrite: () => void) => {
 		log = new Log();
-		await log.init(
+		await log.open(
 			blockStore,
 			{
 				...signKey.keypair,
@@ -266,7 +266,7 @@ describe(`load`, function () {
 	it("resets heads eventually", async () => {
 		const cache = new LazyLevel(await createStore());
 		log = new Log();
-		await log.init(
+		await log.open(
 			blockStore,
 			{
 				...signKey.keypair,

@@ -1,6 +1,5 @@
 import {
 	AbstractType,
-	BinaryWriter,
 	BorshError,
 	deserialize,
 	serialize,
@@ -30,15 +29,12 @@ import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 
 export type SearchContext = (() => Address) | AbstractProgram;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
-/* export type RPCTopicOption =
-	| { queryAddressSuffix: string }
-	| { rpcRegion: string }; */
+
 export type RPCSetupOptions<Q, R> = {
-	topic?: string;
+	topic: string;
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
 	canRead?: CanRead;
-	context: SearchContext;
 	responseHandler: ResponseHandler<Q, R>;
 };
 export type QueryContext = {
@@ -63,17 +59,6 @@ export class RPC<Q, R> extends ComposableProgram {
 	private _requestType: AbstractType<Q> | Uint8ArrayConstructor;
 	private _responseType: AbstractType<R>;
 	private _rpcTopic: string | undefined;
-	private _context: SearchContext;
-
-	public setup(options: RPCSetupOptions<Q, R>) {
-		this._rpcTopic = options.topic ?? this._rpcTopic;
-		this._context = options.context;
-		this._responseHandler = options.responseHandler;
-		this._requestType = options.queryType;
-		this._responseType = options.responseType;
-		this._responseResolver = new Map();
-		this.canRead = options.canRead || (() => Promise.resolve(true));
-	}
 
 	async init(
 		libp2p: Libp2pExtended,
@@ -81,15 +66,19 @@ export class RPC<Q, R> extends ComposableProgram {
 		options: ProgramInitializationOptions
 	): Promise<this> {
 		await super.init(libp2p, identity, options);
-		this._rpcTopic =
-			this._rpcTopic ||
-			this.parentProgram.address
-				.withPath({ index: this._programIndex! })
-				.toString();
-		if (options.role instanceof ReplicatorType) {
+		if (this.role instanceof ReplicatorType) {
 			await this._subscribeRequests();
 		}
 		return this;
+	}
+
+	public async setup(options: RPCSetupOptions<Q, R>) {
+		this._rpcTopic = options.topic ?? this._rpcTopic;
+		this._responseHandler = options.responseHandler;
+		this._requestType = options.queryType;
+		this._responseType = options.responseType;
+		this._responseResolver = new Map();
+		this.canRead = options.canRead || (() => Promise.resolve(true));
 	}
 
 	public async close(): Promise<boolean> {
@@ -178,7 +167,7 @@ export class RPC<Q, R> extends ComposableProgram {
 							  );
 
 					const response = await this._responseHandler(requestData, {
-						address: this.contextAddress.toString(),
+						address: this.rpcTopic,
 						from: maybeSigned.signature!.publicKey,
 					});
 
@@ -404,29 +393,10 @@ export class RPC<Q, R> extends ComposableProgram {
 		return allResults;
 	}
 
-	get contextAddress(): Address {
-		if (typeof this._context === "string") {
-			return this._context;
-		}
-		return this._context instanceof AbstractProgram
-			? this._context.address
-			: this._context();
-	}
-
 	public get rpcTopic(): string {
 		if (!this._rpcTopic) {
 			throw new Error("Not initialized");
 		}
-		/* 	if (this.rpcRegion) {
-				if (!this.parentProgram.address) {
-					throw new Error("Not initialized");
-				}
-				return this.rpcRegion.from(this.parentProgram.address);
-			} */
 		return this._rpcTopic;
-	}
-
-	public getRpcResponseTopic(_request: RequestV0): string {
-		return this.rpcTopic;
 	}
 }

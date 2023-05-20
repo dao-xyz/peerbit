@@ -92,7 +92,7 @@ describe(`Subprogram`, () => {
 		await client2.open(program.address);
 
 		const eventStoreToPut = new EventStore<string>({ id: randomBytes(32) });
-		const { entry: eventStore } = await store.eventStore.put(eventStoreToPut);
+		const { entry: eventStore } = await program.eventStore.put(eventStoreToPut);
 
 		const _eventStore2 = await store.eventStore.put(
 			new EventStore({ id: randomBytes(32) })

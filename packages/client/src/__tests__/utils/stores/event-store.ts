@@ -2,8 +2,9 @@ import { JSON_ENCODING } from "@dao-xyz/peerbit-log";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { Log } from "@dao-xyz/peerbit-log";
 import { EncryptionTemplateMaybeEncrypted } from "@dao-xyz/peerbit-log";
-import { variant, field } from "@dao-xyz/borsh";
+import { variant, field, option } from "@dao-xyz/borsh";
 import { Program } from "@dao-xyz/peerbit-program";
+import { randomBytes } from "@dao-xyz/peerbit-crypto";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -30,10 +31,14 @@ export class EventStore<T> extends Program {
 	@field({ type: Log })
 	log: Log<Operation<T>>;
 
+	@field({ type: Uint8Array })
+	id: Uint8Array;
+
 	_index: EventIndex<T>;
 
-	constructor(properties?: { id?: Uint8Array }) {
-		super(properties);
+	constructor(properties?: { id: Uint8Array }) {
+		super();
+		this.id = properties?.id || randomBytes(32);
 		this.log = new Log();
 	}
 

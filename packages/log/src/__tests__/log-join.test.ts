@@ -91,22 +91,22 @@ describe("Log - Join", function () {
 
 		beforeEach(async () => {
 			log1 = new Log<string>();
-			await log1.init(session.peers[0].services.blocks, {
+			await log1.open(session.peers[0].services.blocks, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
 			log2 = new Log<string>();
-			await log2.init(session.peers[1].services.blocks, {
+			await log2.open(session.peers[1].services.blocks, {
 				...signKey2.keypair,
 				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
 			});
 			log3 = new Log<string>();
-			await log3.init(session.peers[2].services.blocks, {
+			await log3.open(session.peers[2].services.blocks, {
 				...signKey3.keypair,
 				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
 			});
 			log4 = new Log<string>();
-			await log4.init(
+			await log4.open(
 				session.peers[2].services.blocks, // [2] because we cannot create more than 3 peers when running tests in CI
 				{
 					...signKey4.keypair,

@@ -92,7 +92,7 @@ describe("server", () => {
 			store: new DString({}),
 			trusted: [],
 		});
-		program.setupIndices();
+		await program.initializeIds();
 		const address = await c.program.put(program);
 		const programInstance = await c.program.get(address);
 		expect(programInstance).toBeInstanceOf(PermissionedString);

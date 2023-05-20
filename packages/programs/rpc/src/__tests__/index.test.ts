@@ -1,6 +1,6 @@
 import { v4 as uuid } from "uuid";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { RPC, RPCResponse } from "../index.js";
 import { Ed25519Identity } from "@dao-xyz/peerbit-log";
@@ -10,6 +10,7 @@ import {
 	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -40,12 +41,11 @@ class RPCTest extends Program {
 		super();
 	}
 
-	async setup(topic?: string): Promise<void> {
+	async setup(): Promise<void> {
 		await this.query.setup({
-			topic,
+			topic: "topic",
 			responseType: Body,
 			queryType: Body,
-			context: this,
 			responseHandler: (query, from) => {
 				const resp = query;
 				return resp;
@@ -64,22 +64,19 @@ describe("rpc", () => {
 		responder = new RPCTest();
 		responder.query = new RPC();
 
-		responder.setup(topic); // set topic manually because we are not going to have a parent program with address
 		await responder.init(session.peers[0], await createIdentity(), {
 			role: new ReplicatorType(),
-			log: {} as any,
-			replicators: () => [],
 		});
+		await responder.setup();
+
 		reader = deserialize(serialize(responder), RPCTest);
-		reader.setup(topic); // set topic manually because we are not going to have a parent program with address
 
 		await reader.init(session.peers[1], await createIdentity(), {
 			role: new ObserverType(),
-			log: {} as any,
-			replicators: () => [],
 		});
+		await reader.setup();
 
-		await waitForPeers(
+		await waitForSubscribers(
 			session.peers[1],
 			[session.peers[0].peerId],
 			responder.query.rpcTopic

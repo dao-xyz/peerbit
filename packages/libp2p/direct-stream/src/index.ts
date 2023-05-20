@@ -28,6 +28,7 @@ import {
 	Ping,
 	PingPong,
 	Pong,
+	getMsgId,
 } from "./messages.js";
 import { delay, TimeoutError, waitFor } from "@dao-xyz/peerbit-time";
 import {
@@ -136,6 +137,55 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.outboundStream.push(
 			data instanceof Uint8Array ? new Uint8ArrayList(data) : data
 		);
+	}
+
+	async waitForWrite(bytes: Uint8Array | Uint8ArrayList) {
+		if (!this.isWritable) {
+			// Catch the event where the outbound stream is attach, but also abort if we shut down
+			const outboundPromise = new Promise<void>((rs, rj) => {
+				const resolve = () => {
+					this.removeEventListener("stream:outbound", listener);
+					clearTimeout(timer);
+					rs();
+				};
+				const reject = (err: Error) => {
+					this.removeEventListener("stream:outbound", listener);
+					clearTimeout(timer);
+					rj(err);
+				};
+				const timer = setTimeout(() => {
+					reject(new Error("Timed out"));
+				}, 3 * 1000); // TODO if this timeout > 10s we run into issues in the tests when running in CI
+				const abortHandler = () => {
+					this.removeEventListener("close", abortHandler);
+					reject(new Error("Aborted"));
+				};
+				this.addEventListener("close", abortHandler);
+
+				const listener = () => {
+					resolve();
+				};
+				this.addEventListener("stream:outbound", listener);
+				if (this.isWritable) {
+					resolve();
+				}
+			});
+
+			await outboundPromise
+				.then(() => {
+					this.write(bytes);
+				})
+				.catch((error) => {
+					logger.error(
+						"Failed to send to stream: " +
+							this.peerId +
+							". " +
+							(error?.message || error?.toString())
+					);
+				});
+		} else {
+			this.write(bytes);
+		}
 	}
 
 	/**
@@ -885,7 +935,7 @@ export abstract class DirectStream<
 		try {
 			await pipe(stream, async (source) => {
 				for await (const data of source) {
-					const msgId = await this.getMsgId(data);
+					const msgId = await getMsgId(data);
 					if (this.seenCache.has(msgId)) {
 						// we got message that WE sent?
 
@@ -1200,18 +1250,6 @@ export abstract class DirectStream<
 	}
 
 	/**
-	 * The default msgID implementation
-	 * Child class can override this.
-	 */
-	public async getMsgId(msg: Uint8ArrayList | Uint8Array) {
-		// first bytes is discriminator,
-		// next 32 bytes should be an id
-		//return  Buffer.from(msg.slice(0, 33)).toString('base64');
-
-		return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
-	}
-
-	/**
 	 * Whether to accept a message from a peer
 	 * Override to create a graylist
 	 */
@@ -1294,7 +1332,7 @@ export abstract class DirectStream<
 		to?: PeerStreams[] | PeerMap<PeerStreams>
 	) {
 		if (this.canRelayMessage) {
-			return this.publishMessage(from, message, to);
+			return this.publishMessage(from, message, to, true);
 		} else {
 			logger.debug("received message we didn't subscribe to. Dropping.");
 		}
@@ -1302,60 +1340,86 @@ export abstract class DirectStream<
 	public async publishMessage(
 		from: PeerId,
 		message: Message,
-		to?: PeerStreams[] | PeerMap<PeerStreams>
+		to?: PeerStreams[] | PeerMap<PeerStreams>,
+		relayed?: boolean
 	): Promise<void> {
-		let peers: PeerStreams[] | PeerMap<PeerStreams>;
-		if (!to) {
-			if (message instanceof DataMessage && message.to.length > 0) {
-				peers = [];
-				for (const to of message.to) {
-					const directStream = this.peers.get(to);
-					if (directStream) {
-						// always favor direct stream, even path seems longer
-						peers.push(directStream);
-						continue;
-					} else {
-						const path = this.routes.getPath(this.publicKeyHash, to, {
-							block: !from.equals(this.components.peerId)
-								? this.peerIdToPublicKey.get(from.toString())?.hashcode()
-								: undefined, // prevent send message backwards
-						});
-						if (path && path.length > 0) {
-							const stream = this.peers.get(path[1]);
-							if (this.connectionManagerOptions.autoDial && path.length >= 3) {
-								await this.maybeConnectDirectly(path).catch((e) => {
-									logger.error(
-										"Failed to request direct connection: " + e.message
-									);
-								});
-							}
-
-							if (stream) {
-								peers.push(stream);
-								continue;
-							}
-						}
-					}
-					// we can't find path, send message to all peers
-					peers = this.peers;
-					break;
-				}
-			} else {
-				peers = this.peers;
-			}
-		} else {
-			peers = to;
-		}
-
-		if (message instanceof DataMessage) {
+		if (message instanceof DataMessage && !to) {
 			const meTo = message.to.findIndex(
 				(value) => value === this.publicKeyHash
 			);
 			if (meTo >= 0) {
 				message.to.splice(meTo, 1); // Delete me from to list
 			}
+
+			const fanoutMap = new Map<string, string[]>();
+			if (message.to.length > 0) {
+				for (const to of message.to) {
+					const directStream = this.peers.get(to);
+					if (directStream) {
+						// always favor direct stream, even path seems longer
+						const fanout = fanoutMap.get(to);
+						if (!fanout) {
+							fanoutMap.set(to, [to]);
+						} else {
+							fanout.push(to);
+						}
+						continue;
+					} else {
+						const fromMe = from.equals(this.components.peerId);
+						const block = !fromMe
+							? this.peerIdToPublicKey.get(from.toString())?.hashcode()
+							: undefined;
+						const path = this.routes.getPath(this.publicKeyHash, to, {
+							block, // prevent send message backwards
+						});
+
+						if (path && path.length > 0) {
+							const fanout = fanoutMap.get(path[1]);
+							if (!fanout) {
+								fanoutMap.set(path[1], [to]);
+								if (
+									this.connectionManagerOptions.autoDial &&
+									path.length >= 3
+								) {
+									await this.maybeConnectDirectly(path).catch((e) => {
+										logger.error(
+											"Failed to request direct connection: " + e.message
+										);
+									});
+								}
+								continue;
+							} else {
+								fanout.push(to);
+								continue;
+							}
+						}
+					}
+
+					// we can't find path, send message to all peers
+					fanoutMap.clear();
+					break;
+				}
+			}
+
+			// update to's
+			let first = true;
+			if (fanoutMap.size > 0) {
+				for (const [neighbour, distantPeers] of fanoutMap) {
+					message.to = distantPeers;
+					const bytes = message.serialize();
+					if (first && !relayed) {
+						this.seenCache.add(await getMsgId(bytes));
+						first = false;
+					}
+					const stream = this.peers.get(neighbour);
+					await stream?.waitForWrite(bytes);
+				}
+				return; // we are done sending the message in all direction with updates 'to' lists
+			}
 		}
 
+		// We fils to send the message directly, instead fallback to floodsub
+		const peers: PeerStreams[] | PeerMap<PeerStreams> = to || this.peers;
 		if (
 			peers == null ||
 			(Array.isArray(peers) && peers.length === 0) ||
@@ -1366,66 +1430,13 @@ export abstract class DirectStream<
 		}
 
 		const bytes = message.serialize();
-		this.seenCache.add(await this.getMsgId(bytes));
+		if (!relayed) {
+			this.seenCache.add(await getMsgId(bytes));
+		}
+
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
-
-			if (this.components.peerId.equals(id.peerId)) {
-				logger.trace("not sending message to myself");
-				continue;
-			}
-
-			if (id.peerId.equals(from)) {
-				continue;
-			}
-
-			//logger.debug("publish msgs on: " + id.peerId + " from " + this.peerIdStr);
-			if (!id.isWritable) {
-				// Catch the event where the outbound stream is attach, but also abort if we shut down
-				const outboundPromise = new Promise<void>((rs, rj) => {
-					const resolve = () => {
-						id.removeEventListener("stream:outbound", listener);
-						clearTimeout(timer);
-						rs();
-					};
-					const reject = (err: Error) => {
-						id.removeEventListener("stream:outbound", listener);
-						clearTimeout(timer);
-						rj(err);
-					};
-					const timer = setTimeout(() => {
-						reject(new Error("Timed out"));
-					}, 3 * 1000); // TODO if this timeout > 10s we run into issues in the tests when running in CI
-					const abortHandler = () => {
-						id.removeEventListener("close", abortHandler);
-						reject(new Error("Aborted"));
-					};
-					id.addEventListener("close", abortHandler);
-
-					const listener = () => {
-						resolve();
-					};
-					id.addEventListener("stream:outbound", listener);
-					if (id.isWritable) {
-						resolve();
-					}
-				});
-
-				await outboundPromise
-					.then(() => {
-						id.write(bytes);
-					})
-					.catch((error) => {
-						logger.error(
-							"Failed to send to stream: " +
-								id.peerId +
-								". " +
-								(error?.message || error?.toString())
-						);
-					});
-			} else {
-				id.write(bytes);
-			}
+			await id.waitForWrite(bytes);
 		}
 	}
 

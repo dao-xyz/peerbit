@@ -3,7 +3,7 @@ import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities
-import { waitForPeers, LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
 
@@ -55,10 +55,8 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await waitForPeers(session.peers[1], [client1.id], db1.address!.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address!.toString());
-		await waitForPeers(session.peers[1], [client1.id], db1.address!.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address!.toString());
+		await client2.waitForPeer(client1, db1);
+		await client1.waitForPeer(client2, db1);
 
 		await db1.add("hello");
 		await db2.add("world");
@@ -106,9 +104,6 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await waitForPeers(session.peers[2], [client1.id], db1.address!.toString()); // TODO is this needed?
-		await waitForPeers(session.peers[2], [client2.id], db1.address!.toString()); // TODO is this needed?
-
 		await db1.add("hello");
 		await db2.add("world");
 
@@ -148,10 +143,8 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
+		await client1.waitForPeer(client2, db1);
+		await client2.waitForPeer(client1, db1);
 
 		await waitFor(() => db1.log.values.length === 2);
 		expect(
@@ -190,12 +183,8 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
-		await waitForPeers(session.peers[0], [client2.id], db1.address.toString());
-		expect(
-			client1.libp2p.services.pubsub.topics.has(db1.address.toString())
-		).toEqual(true);
+		await client1.waitForPeer(client2, db1);
+		await client2.waitForPeer(client1, db1);
 
 		await waitFor(() => db1.log.values.length === 2);
 		expect(

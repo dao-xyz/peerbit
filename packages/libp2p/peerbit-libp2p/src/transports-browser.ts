@@ -1,6 +1,6 @@
 import { webSockets } from "@libp2p/websockets";
 import { circuitRelayTransport } from "libp2p/circuit-relay";
-import { webRTC } from "@dao-xyz/libp2p-webrtc";
+import { webRTC } from "@libp2p/webrtc";
 import { all } from "@libp2p/websockets/filters";
 
 export const transports = () => [

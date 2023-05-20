@@ -6,11 +6,7 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import { CanAppend, Change, Entry, EntryType, Log } from "@dao-xyz/peerbit-log";
-import {
-	ComposableProgram,
-	Program,
-	ProgramInitializationOptions,
-} from "@dao-xyz/peerbit-program";
+import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
@@ -62,7 +58,6 @@ export class Documents<
 	private _optionCanAppend?: CanAppend<Operation<T>>;
 	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
 	private _events: EventEmitter<DocumentEvents<T>>;
-	private _replicator?: (gid: string) => Promise<boolean>;
 	constructor(properties: { immutable?: boolean; index: DocumentIndex<T> }) {
 		super();
 
@@ -82,11 +77,6 @@ export class Documents<
 		return this._events;
 	}
 
-	async init(_, __, options: ProgramInitializationOptions) {
-		this._index.replicators = options.replicators;
-		this._replicator = options.replicator;
-		return super.init(_, __, options);
-	}
 	async setup(options: {
 		type: AbstractType<T>;
 		canRead?: CanRead;
@@ -246,7 +236,7 @@ export class Documents<
 					`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`
 				);
 			}
-			doc.setupIndices();
+			await doc.initializeIds();
 		}
 
 		const key = (doc as any)[this._index.indexBy] as Keyable;
@@ -378,7 +368,7 @@ export class Documents<
 						if (
 							(await this.canOpen!(value, item)) &&
 							this.role instanceof ReplicatorType &&
-							(await this._replicator!(item.gid))
+							(await this.log.replication!.replicator!(item.gid)) // TODO types, throw runtime error if replicator is not provided
 						) {
 							await this.open!(value);
 						}

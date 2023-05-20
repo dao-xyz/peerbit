@@ -51,6 +51,31 @@ export const waitFor = async <T>(
 	);
 };
 
+export const waitForResolved = async <T>(
+	fn: () => T,
+	options: {
+		timeout: number;
+		delayInterval: number;
+		timeoutMessage?: string;
+	} = { timeout: 10 * 1000, delayInterval: 50 }
+): Promise<T | undefined> => {
+	const startTime = +new Date();
+	const stop = false;
+	let lastError: Error | undefined;
+	while (+new Date() - startTime < options.timeout) {
+		if (stop) {
+			return;
+		}
+		try {
+			return fn();
+		} catch (error: any) {
+			lastError = error;
+		}
+		await delay(options.delayInterval);
+	}
+	throw lastError;
+};
+
 export const waitForAsync = async <T>(
 	fn: () => Promise<T>,
 	options: {

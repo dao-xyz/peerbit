@@ -102,7 +102,7 @@ describe("Log - Encryption", function () {
 				} as PublicKeyEncryptionResolver,
 			};
 			log1 = new Log();
-			await log1.init(
+			await log1.open(
 				store,
 				{
 					...signKey.keypair,
@@ -111,7 +111,7 @@ describe("Log - Encryption", function () {
 				logOptions
 			);
 			log2 = new Log();
-			await log2.init(
+			await log2.open(
 				store,
 				{
 					...signKey2.keypair,

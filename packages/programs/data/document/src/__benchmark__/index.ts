@@ -84,8 +84,11 @@ const store = new TestStore({
 const keypair = await X25519Keypair.create();
 await store.init(session.peers[0], await createIdentity(), {
 	role: new ReplicatorType(),
-	replicators: () => [],
+
 	log: {
+		replication: {
+			replicators: () => [],
+		},
 		encryption: {
 			getEncryptionKeypair: () => keypair,
 			getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {

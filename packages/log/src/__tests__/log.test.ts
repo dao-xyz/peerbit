@@ -74,7 +74,7 @@ describe("Log", function () {
 	describe("constructor", () => {
 		it("creates an empty log with default params", async () => {
 			const log = new Log();
-			await log.init(
+			await log.open(
 				store,
 				{
 					...signKey.keypair,
@@ -94,9 +94,21 @@ describe("Log", function () {
 			assert.deepStrictEqual(await log.getTailHashes(), []);
 		});
 
+		it("can not setup after open", async () => {
+			const log = new Log();
+			await log.open(
+				store,
+				{
+					...signKey.keypair,
+					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				},
+				undefined
+			);
+			await expect(() => log.setup()).rejects.toThrow();
+		});
 		it("sets an id", async () => {
 			const log = new Log({ id: new Uint8Array(1) });
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -105,7 +117,7 @@ describe("Log", function () {
 
 		it("generates if id is not passed as an argument", async () => {
 			const log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -147,7 +159,7 @@ describe("Log", function () {
 				clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
 			});
 			const log = new Log<string>();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -191,7 +203,7 @@ describe("Log", function () {
 				next: [],
 			});
 			const log = new Log<string>();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -233,7 +245,7 @@ describe("Log", function () {
 				next: [],
 			});
 			const log = new Log<string>();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -253,7 +265,7 @@ describe("Log", function () {
 
 		beforeEach(async () => {
 			log = new Log<string>();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -276,7 +288,7 @@ describe("Log", function () {
 
 		beforeEach(async () => {
 			log = new Log<string>();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -304,7 +316,7 @@ describe("Log", function () {
 
 		beforeEach(async () => {
 			log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -341,7 +353,7 @@ describe("Log", function () {
 
 		beforeEach(async () => {
 			log = new Log();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -366,7 +378,7 @@ describe("Log", function () {
 	describe("values", () => {
 		it("returns all entries in the log", async () => {
 			const log = new Log<string>();
-			await log.init(store, {
+			await log.open(store, {
 				...signKey.keypair,
 				sign: (data) => signKey.keypair.sign(data),
 			});

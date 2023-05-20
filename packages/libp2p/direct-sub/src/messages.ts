@@ -9,8 +9,8 @@ import {
 } from "@dao-xyz/borsh";
 export abstract class PubSubMessage {
 	abstract serialize(): Uint8Array | Uint8ArrayList;
-	static deserialize(bytes: Uint8ArrayList | Uint8Array) {
-		const first = bytes instanceof Uint8Array ? bytes[0] : bytes.get(0);
+	static deserialize(bytes: Uint8Array) {
+		const first = bytes[0];
 		if (first === 0) {
 			return PubSubData.deserialize(bytes);
 		}
@@ -119,6 +119,10 @@ export class Subscribe extends PubSubMessage {
 		}
 		return ret;
 	}
+
+	get topics() {
+		return this.subscriptions.map((x) => x.topic);
+	}
 }
 
 @variant(0)
@@ -158,6 +162,9 @@ export class Unsubscribe extends PubSubMessage {
 			ret._serialized = bytes;
 		}
 		return ret;
+	}
+	get topics() {
+		return this.unsubscriptions.map((x) => x.topic);
 	}
 }
 

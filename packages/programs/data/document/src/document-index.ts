@@ -23,7 +23,6 @@ import {
 import {
 	CanRead,
 	RPC,
-	QueryContext,
 	RPCOptions,
 	RPCResponse,
 	queryAll,
@@ -32,6 +31,7 @@ import {
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { Log } from "@dao-xyz/peerbit-log";
+import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -133,7 +133,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
 	private _log: Log<Operation<T>>;
-	private _replicators: () => string[][] | undefined;
 	private _toIndex: Indexable<T>;
 
 	constructor(properties: {
@@ -156,9 +155,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 	get toIndex(): Indexable<T> {
 		return this._toIndex;
 	}
-	set replicators(replicators: () => string[][] | undefined) {
-		this._replicators = replicators;
-	}
 
 	async setup(properties: {
 		type: AbstractType<T>;
@@ -175,10 +171,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 		this._valueEncoding = BORSH_ENCODING(this.type);
 
 		await this._query.setup({
-			context: this,
+			topic: this._log.idString + "/document",
 			canRead: properties.canRead,
-			responseHandler: async (query, context) => {
-				const results = await this.queryHandler(query, context);
+			responseHandler: async (query) => {
+				const results = await this.queryHandler(query);
 				return new Results({
 					// Even if results might have length 0, respond, because then we now at least there are no matching results
 					results: results.map(
@@ -262,8 +258,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	}
 
 	async queryHandler(
-		query: DocumentQuery,
-		context?: QueryContext // TODO needed?
+		query: DocumentQuery
 	): Promise<{ context: Context; value: T }[]> {
 		const queries: Query[] = query.queries;
 		if (
@@ -421,17 +416,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 		const allResults: Results<T>[] = [];
 
 		if (local) {
-			const results = await this.queryHandler(queryRequest, {
-				address: this.address.toString(),
-				from: this.identity.publicKey,
-			});
+			const results = await this.queryHandler(queryRequest);
 			if (results.length > 0) {
 				const resultsObject = new Results<T>({
 					results: await Promise.all(
 						results.map(async (r) => {
-							const payloadValue = await this._log
-								.get(r.context.head)
-								.then((x) => x?.getPayloadValue());
+							const payloadValue = await (
+								await this._log.get(r.context.head)
+							)?.getPayloadValue();
 							if (payloadValue instanceof PutOperation) {
 								return new ResultWithSource({
 									context: r.context,
@@ -462,7 +454,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				);
 			};
 
-			const replicatorGroups = await this._replicators();
+			const replicatorGroups = await this._log.replication?.replicators?.();
 			if (replicatorGroups) {
 				const fn = async () => {
 					const rs: Results<T>[] = [];

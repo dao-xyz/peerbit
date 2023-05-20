@@ -19,7 +19,7 @@ export class PermissionedEventStore extends Program implements CanTrust {
 		trusted: (PublicSignKey | PeerId)[];
 	}) {
 		super();
-		this._store = properties.store || new EventStore({ id: this.id });
+		this._store = properties.store || new EventStore();
 		this.trusted = properties.trusted.map((x) =>
 			x instanceof PublicSignKey ? x : Ed25519PublicKey.from(x)
 		);

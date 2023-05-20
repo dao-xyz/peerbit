@@ -52,7 +52,7 @@ describe("Log - GetPow2Refs", function () {
 
 		beforeEach(async () => {
 			log1 = new Log();
-			await log1.init(store, {
+			await log1.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});
@@ -131,7 +131,7 @@ describe("Log - GetPow2Refs", function () {
 
 		beforeEach(async () => {
 			log1 = new Log();
-			await log1.init(store, {
+			await log1.open(store, {
 				...signKey.keypair,
 				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
 			});

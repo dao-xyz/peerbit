@@ -9,7 +9,6 @@ import {
 import { Entry, Identity } from "@dao-xyz/peerbit-log";
 import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
-import { Program } from "@dao-xyz/peerbit-program";
 import { Log } from "@dao-xyz/peerbit-log";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { TransportMessage } from "./message.js";
@@ -56,12 +55,6 @@ export class EntryWithRefs<T> {
 
 @variant([0, 0])
 export class ExchangeHeadsMessage<T> extends TransportMessage {
-	@field({ type: "string" })
-	programAddress: string; //  TODO do we need this really? (since topics are already addresses, which this message is sent on)
-
-	@field({ type: option("u32") })
-	programIndex?: number;
-
 	@field({ type: fixedArray("u8", 32) })
 	logId: Uint8Array;
 
@@ -75,8 +68,6 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	reserved: Uint8Array = new Uint8Array(4);
 
 	constructor(props: {
-		programIndex?: number;
-		programAddress: string;
 		logId: Uint8Array;
 		heads: EntryWithRefs<T>[];
 		minReplicas?: MinReplicas;
@@ -84,8 +75,6 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 		super();
 		this.id = uuid();
 		this.logId = props.logId;
-		this.programIndex = props.programIndex;
-		this.programAddress = props.programAddress;
 		this.heads = props.heads;
 		this.minReplicas = props.minReplicas;
 	}
@@ -106,7 +95,6 @@ export class RequestHeadsMessage extends TransportMessage {
 
 export const createExchangeHeadsMessage = async (
 	log: Log<any>,
-	program: Program,
 	heads: Entry<any>[],
 	includeReferences: boolean,
 	identity: Identity | undefined
@@ -131,10 +119,7 @@ export const createExchangeHeadsMessage = async (
 	);
 	logger.debug(`Send latest heads of '${log.id}'`);
 	const message = new ExchangeHeadsMessage({
-		logId: log.id,
-		programIndex: program._programIndex,
-		programAddress: (program.address ||
-			program.parentProgram.address)!.toString(),
+		logId: log.id!,
 		heads: headsWithRefs,
 	});
 	const maybeSigned = new MaybeSigned({ data: serialize(message) });

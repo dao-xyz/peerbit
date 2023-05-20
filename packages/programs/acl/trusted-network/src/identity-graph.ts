@@ -177,10 +177,7 @@ export const getRelation = async (
 	return db.index.get(new IdentityRelation({ from, to }).id);
 };
 
-export const createIdentityGraphStore = (props: {
-	id: Uint8Array;
-	rpcRegion?: string;
-}) =>
+export const createIdentityGraphStore = () =>
 	new Documents<IdentityRelation>({
 		index: new DocumentIndex({
 			indexBy: "id",

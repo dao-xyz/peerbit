@@ -77,18 +77,10 @@ export class IdentityGraph extends Program {
 	@field({ type: Documents })
 	relationGraph: Documents<IdentityRelation>;
 
-	constructor(props?: {
-		id?: Uint8Array;
-		relationGraph?: Documents<IdentityRelation>;
-	}) {
-		super(props);
+	constructor(props?: { relationGraph?: Documents<IdentityRelation> }) {
+		super();
 		if (props) {
-			this.relationGraph =
-				props.relationGraph ||
-				createIdentityGraphStore({
-					...props,
-					id: this.id,
-				});
+			this.relationGraph = props.relationGraph || createIdentityGraphStore();
 		}
 	}
 
@@ -141,13 +133,10 @@ export class TrustedNetwork extends Program {
 	@field({ type: Documents })
 	trustGraph: Documents<IdentityRelation>;
 
-	constructor(props?: { id?: Uint8Array; rootTrust: PublicSignKey }) {
-		super(props);
+	constructor(props: { rootTrust: PublicSignKey }) {
+		super();
 		if (props) {
-			this.trustGraph = createIdentityGraphStore({
-				...props,
-				id: this.id,
-			});
+			this.trustGraph = createIdentityGraphStore();
 			this.rootTrust = props.rootTrust;
 		}
 	}

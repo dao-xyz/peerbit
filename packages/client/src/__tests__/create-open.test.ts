@@ -13,7 +13,6 @@ import { v4 as uuid } from "uuid";
 import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
@@ -35,7 +34,7 @@ describe(`Create & Open`, function () {
 			});
 
 			beforeEach(async () => {
-				db = await client.open(new KeyBlocks<string>({ id: randomBytes(32) }), {
+				db = await client.open(new KeyBlocks<string>(), {
 					role: new ObserverType(),
 				});
 			});
@@ -110,7 +109,7 @@ describe(`Create & Open`, function () {
 		});
 
 		it("opens a database - name only", async () => {
-			const db = await client.open(new EventStore({}));
+			const db = await client.open(new EventStore());
 			assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db.address!.toString().indexOf("zb"), 9);
 			await db.drop();
@@ -119,7 +118,7 @@ describe(`Create & Open`, function () {
 		it("opens a database - with a different identity", async () => {
 			const signKey = await client.keystore.createEd25519Key();
 			const topic = uuid();
-			const db = await client.open(new EventStore({}), {
+			const db = await client.open(new EventStore(), {
 				identity: {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
@@ -134,7 +133,7 @@ describe(`Create & Open`, function () {
 		it("opens the same database - from an address", async () => {
 			const signKey = await client.keystore.createEd25519Key();
 			const topic = uuid();
-			const db = await client.open(new EventStore({}), {
+			const db = await client.open(new EventStore(), {
 				identity: {
 					...signKey.keypair,
 					sign: (data) => signKey.keypair.sign(data),
@@ -153,7 +152,7 @@ describe(`Create & Open`, function () {
 				cid: "zdpuAnmza2vimH3drqNJji1rckA7x8jUfvi7miWzpePDtvHKJ" // a random cid
 			}); */
 		it("doesn't open a database if we don't have it locally", async () => {
-			const db = await client.open(new EventStore({}));
+			const db = await client.open(new EventStore());
 			await db.drop();
 			await (
 				client.libp2p.services.blocks._localStore as LevelBlockStore
@@ -228,7 +227,7 @@ describe(`Create & Open`, function () {
 		});
 
 		it("closes when disconnecting", async () => {
-			const db = await client.open(new EventStore({}));
+			const db = await client.open(new EventStore());
 			await client.stop();
 			expect(db.log.headsIndex.headsCache?.cache._store.status).toEqual(
 				"closed"
@@ -236,7 +235,7 @@ describe(`Create & Open`, function () {
 		});
 
 		it("closes a custom store", async () => {
-			const db = await client.open(new EventStore({}));
+			const db = await client.open(new EventStore());
 			await db.close();
 			expect(db.log.headsIndex.headsCache?.cache._store.status).toEqual(
 				"closed"
@@ -247,7 +246,7 @@ describe(`Create & Open`, function () {
     
 	it("close load close sets status to 'closed'", async () => {
 	  const directory = path.join(dbPath, "custom-store")
-	  const db = await client.open(new EventStore({}), { replicationTopic, directory })
+	  const db = await client.open(new EventStore(), { replicationTopic, directory })
 	  await db.close()
 	  await db.load()
 	  await db.close()

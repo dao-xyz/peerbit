@@ -54,8 +54,8 @@ class TestStore extends Program {
 	@field({ type: IdentityAccessController })
 	accessController: IdentityAccessController;
 
-	constructor(properties: { id?: Uint8Array; identity: Identity }) {
-		super(properties);
+	constructor(properties: { identity: Identity }) {
+		super();
 		if (properties) {
 			this.store = new Documents({
 				index: new DocumentIndex({
@@ -64,7 +64,6 @@ class TestStore extends Program {
 				}),
 			});
 			this.accessController = new IdentityAccessController({
-				id: sha256Sync(this.id),
 				rootTrust: properties.identity?.publicKey,
 			});
 		}
@@ -97,7 +96,11 @@ describe("index", () => {
 		programs.push(store);
 		const result = await store.init(session.peers[i], identites[i], {
 			...options,
-			replicators: () => replicators,
+			log: {
+				replication: {
+					replicators: () => replicators,
+				},
+			},
 		});
 		return result;
 	};
@@ -125,10 +128,10 @@ describe("index", () => {
 	it("can be deterministic", async () => {
 		const key = (await Ed25519Keypair.create()).publicKey;
 		let id = randomBytes(32);
-		const t1 = new IdentityAccessController({ id, rootTrust: key });
-		const t2 = new IdentityAccessController({ id, rootTrust: key });
-		t1.setupIndices();
-		t2.setupIndices();
+		const t1 = new IdentityAccessController({ rootTrust: key });
+		const t2 = new IdentityAccessController({ rootTrust: key });
+		await t1.initializeIds();
+		await t2.initializeIds();
 		expect(serialize(t1)).toEqual(serialize(t2));
 	});
 
@@ -476,7 +479,7 @@ describe("index", () => {
 		});
 	});
 
-	it("manifests are unique", async () => {
+	it("manifests are not unique", async () => {
 		const options = {
 			role: new ReplicatorType(),
 			log: {},
@@ -492,7 +495,7 @@ describe("index", () => {
 			0,
 			options
 		);
-		expect(l0a.address).not.toEqual(l0b.address);
+		expect(l0a.address).toEqual(l0b.address);
 	});
 
 	it("can query", async () => {

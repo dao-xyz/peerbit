@@ -1,13 +1,18 @@
 import { delay } from "@dao-xyz/peerbit-time";
-import { LSession, waitForPeers } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Ed25519Identity, Entry } from "@dao-xyz/peerbit-log";
-import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
+import {
+	ObserverType,
+	Program,
+	ReplicatorType,
+} from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
 import { MemoryLevel } from "memory-level";
 import { default as Cache } from "@dao-xyz/lazy-level";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
+import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -50,8 +55,11 @@ describe("clock", () => {
 		});
 		await responder.init(session.peers[0], responderIdentity, {
 			role: new ReplicatorType(),
-			replicators: () => [],
+
 			log: {
+				replication: {
+					replicators: () => [],
+				},
 				cache: () => Promise.resolve(new Cache(new MemoryLevel())),
 			},
 		});
@@ -60,6 +68,7 @@ describe("clock", () => {
 
 		reader = deserialize(serialize(responder), P);
 		await reader.init(session.peers[1], await createIdentity(), {
+			role: new ObserverType(),
 			replicators: () => [],
 			log: {
 				cacheId: "id",
@@ -71,7 +80,7 @@ describe("clock", () => {
 		if (!topic) {
 			throw new Error("Expecting topic");
 		}
-		await waitForPeers(session.peers[1], [session.peers[0]], topic);
+		await waitForSubscribers(session.peers[1], [session.peers[0]], topic);
 	});
 	afterEach(async () => {
 		await reader.drop();

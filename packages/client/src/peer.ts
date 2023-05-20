@@ -50,6 +50,7 @@ import {
 	Subscription,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
+	waitForSubscribers,
 } from "@dao-xyz/libp2p-direct-sub";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
@@ -68,6 +69,7 @@ import { startsWith } from "@dao-xyz/uint8arrays";
 import { v4 as uuid } from "uuid";
 import { CreateOptions as ClientCreateOptions } from "@dao-xyz/peerbit-libp2p";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
+
 export const logger = loggerFn({ module: "peer" });
 
 const MIN_REPLICAS = 2;
@@ -75,10 +77,14 @@ const MIN_REPLICAS = 2;
 interface ProgramWithMetadata {
 	program: Program;
 	openCounter: number;
+}
+
+interface LogWithMetaata {
+	open: number;
+	log: Log<any>;
 	sync?: SyncFilter;
 	minReplicas: MinReplicas;
 }
-
 export type OptionalCreateOptions = {
 	limitSigning?: boolean;
 	minReplicas?: number;
@@ -191,6 +197,7 @@ export class Peerbit {
 	programs: Map<string, ProgramWithMetadata>;
 	limitSigning: boolean;
 	localNetwork: boolean;
+	logs: Map<string, LogWithMetaata> = new Map();
 
 	private _sortedPeersCache: Map<string, string[]> = new Map();
 	private _gidPeersHistory: Map<string, Set<string>> = new Map();
@@ -199,7 +206,7 @@ export class Peerbit {
 	private _disconnecting = false;
 	private _encryption: PublicKeyEncryptionResolver;
 	private _refreshInterval: any;
-	private _lastSubscriptionMessageId = "";
+	private _lastSubscriptionMessageId = 0;
 	private _cache: LazyLevel;
 	private _libp2pExternal?: boolean = false;
 
@@ -450,6 +457,14 @@ export class Peerbit {
 		);
 	}
 
+	waitForPeer(other: Peerbit, db: Program) {
+		return Promise.all(
+			db.logs.map((x) =>
+				waitForSubscribers(this.libp2p, other.libp2p, x.idString)
+			)
+		);
+	}
+
 	async disconnect() {
 		this._disconnecting = true;
 		// Close a direct connection and remove it from internal state
@@ -484,33 +499,15 @@ export class Peerbit {
 	}
 
 	// Callback for local writes to the database. We the update to pubsub.
-	onWrite<T>(
-		program: Program,
-		log: Log<any>,
-		entry: Entry<T>,
-		address?: Address | string
-	): void {
-		const programAddress = (
-			program.address || program.parentProgram.address
-		).toString();
-		const writeAddress = address?.toString() || programAddress;
-		const storeInfo = this.programs
-			.get(programAddress)
-			?.program.allLogsMap.get(log.idString);
-
-		if (!storeInfo) {
-			throw new Error("Missing store info");
-		}
-
+	onWrite<T>(_program: Program, log: Log<any>, entry: Entry<T>): void {
 		// TODO Should we also do gidHashhistory update here?
 		createExchangeHeadsMessage(
 			log,
-			program,
 			[entry],
 			true,
 			this.limitSigning ? undefined : this.idIdentity
 		).then((bytes) => {
-			this.libp2p.services.pubsub.publish(bytes, { topics: [writeAddress] });
+			this.libp2p.services.pubsub.publish(bytes, { topics: [log.idString] });
 		});
 	}
 
@@ -526,7 +523,7 @@ export class Peerbit {
 			} ${message.data.length}`
 		); */
 
-		if (message.topics.find((x) => this.programs.has(x)) == null) {
+		if (message.topics.find((x) => this.logs.has(x)) == null) {
 			return; // not for me
 		}
 
@@ -563,11 +560,10 @@ export class Peerbit {
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
 
-				const { logId, programAddress } = msg;
+				const { logId } = msg;
 				const { heads } = msg;
 				// replication topic === trustedNetwork address
 
-				const programAddressObject = Address.parse(programAddress);
 				const idString = Log.createIdString(logId);
 				logger.debug(
 					`${this.id}: Recieved heads: ${
@@ -575,66 +571,52 @@ export class Peerbit {
 					}, logId: ${idString}`
 				);
 				if (heads) {
-					const programInfo = this.programs.get(programAddress)!;
-
-					if (!programInfo) {
-						return;
-					}
-
-					const logInfo = programInfo.program.allLogsMap.get(idString);
+					const logInfo = this.logs.get(idString);
 					if (!logInfo) {
 						logger.error(
-							"Missing store info, which was expected to exist for " +
-								programAddressObject +
-								", " +
-								idString
+							"Missing log info, which was expected to exist for " + idString
 						);
 						return;
 					}
 
 					const filteredHeads = heads
-						.filter((head) => !logInfo.has(head.entry.hash))
+						.filter((head) => !logInfo.log.has(head.entry.hash))
 						.map((head) => {
 							head.entry.init({
-								encryption: logInfo.encryption,
-								encoding: logInfo.encoding,
+								encryption: logInfo.log.encryption,
+								encoding: logInfo.log.encoding,
 							});
 							return head;
 						}); // we need to init because we perhaps need to decrypt gid
 
 					let toMerge: EntryWithRefs<any>[];
-					if (!programInfo.sync) {
+					if (!logInfo.sync) {
 						toMerge = [];
 						for (const [gid, value] of await groupByGid(filteredHeads)) {
 							if (
 								!(await this.isLeader(
-									programAddressObject,
+									logInfo.log,
 									gid,
-									programInfo.minReplicas.value
+									logInfo.minReplicas.value
 								))
 							) {
 								logger.debug(
-									`${this.id}: Dropping heads with gid: ${gid}. Because not leader`
+									`${this.id.toString()}: Dropping heads with gid: ${gid}. Because not leader`
 								);
 								continue;
 							}
-							value.forEach((head) => {
+							for (const head of value) {
 								toMerge.push(head);
-							});
+							}
 						}
 					} else {
 						toMerge = await Promise.all(
-							filteredHeads.map((x) => programInfo.sync!(x.entry))
+							filteredHeads.map((x) => logInfo.sync!(x.entry))
 						).then((filter) => filteredHeads.filter((v, ix) => filter[ix]));
 					}
 
 					if (toMerge.length > 0) {
-						const store = programInfo.program.allLogsMap.get(idString);
-						if (!store) {
-							throw new Error("Unexpected, missing store on sync");
-						}
-
-						await store.join(toMerge);
+						await logInfo.log.join(toMerge);
 
 						/*  TODO does this debug affect performance?
 						
@@ -699,43 +681,51 @@ export class Peerbit {
 		);
 	}
 
+	private modifySortedSubscriptionCache(
+		topic: string,
+		subscribed: boolean,
+		from: PublicSignKey
+	) {
+		const sortedPeer = this._sortedPeersCache.get(topic);
+		if (sortedPeer) {
+			const code = from.hashcode();
+			if (subscribed) {
+				// TODO use Set + list for fast lookup
+				if (!sortedPeer.find((x) => x === code)) {
+					sortedPeer.push(code);
+					sortedPeer.sort((a, b) => a.localeCompare(b));
+				}
+			} else {
+				const deleteIndex = sortedPeer.findIndex((x) => x === code);
+				sortedPeer.splice(deleteIndex, 1);
+			}
+		} else if (subscribed) {
+			this._sortedPeersCache.set(topic, [from.hashcode()]);
+		}
+	}
+
 	async handleSubscriptionChange(
 		from: PublicSignKey,
 		changes: Subscription[],
 		subscribed: boolean
 	) {
-		changes.forEach((c) => {
+		for (const c of changes) {
 			if (!c.data || !startsWith(c.data, REPLICATOR_TYPE_VARIANT)) {
 				return;
 			}
-			this._lastSubscriptionMessageId = uuid();
+			this._lastSubscriptionMessageId += 1;
 
-			const sortedPeer = this._sortedPeersCache.get(c.topic);
-			if (sortedPeer) {
-				const code = from.hashcode();
-				if (subscribed) {
-					// TODO use Set + list for fast lookup
-					if (!sortedPeer.find((x) => x === code)) {
-						sortedPeer.push(code);
-						sortedPeer.sort((a, b) => a.localeCompare(b));
-					}
-				} else {
-					const deleteIndex = sortedPeer.findIndex((x) => x === code);
-					sortedPeer.splice(deleteIndex, 1);
-				}
-			}
-		});
+			this.modifySortedSubscriptionCache(c.topic, subscribed, from);
+		}
 
 		for (const subscription of changes) {
 			if (subscription.data) {
 				try {
 					const type = deserialize(subscription.data, SubscriptionType);
 					if (type instanceof ReplicatorType) {
-						const p = this.programs.get(subscription.topic);
+						const p = this.logs.get(subscription.topic);
 						if (p) {
-							await this.replicationReorganization([
-								p.program.address.toString(),
-							]);
+							await this.replicationReorganization([p.log.idString]);
 						}
 					}
 				} catch (error: any) {
@@ -755,114 +745,108 @@ export class Peerbit {
 	 * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
 	 * @param channel
 	 */
-	async replicationReorganization(changedProgarms: Set<string> | string[]) {
+	async replicationReorganization(changedLogs: Set<string> | string[]) {
 		let changed = false;
-		for (const address of changedProgarms) {
-			const programInfo = this.programs.get(address);
-			if (programInfo) {
-				for (const [_, log] of programInfo.program.allLogsMap) {
-					const heads = await log.getHeads();
-					const groupedByGid = await groupByGid(heads);
-					let storeChanged = false;
-					for (const [gid, entries] of groupedByGid) {
-						const toSend: Map<string, Entry<any>> = new Map();
-						const newPeers: string[] = [];
+		for (const logId of changedLogs) {
+			const logInfo = this.logs.get(logId);
+			if (!logInfo || logInfo.log.closed) {
+				continue;
+			}
 
-						if (entries.length === 0) {
-							continue; // TODO maybe close store?
-						}
+			const heads = await logInfo.log.getHeads();
+			const groupedByGid = await groupByGid(heads);
+			let storeChanged = false;
+			for (const [gid, entries] of groupedByGid) {
+				const toSend: Map<string, Entry<any>> = new Map();
+				const newPeers: string[] = [];
 
-						const oldPeersSet = this._gidPeersHistory.get(gid);
+				if (entries.length === 0) {
+					continue; // TODO maybe close store?
+				}
 
-						const currentPeers = await this.findLeaders(
-							programInfo.program.address,
-							gid,
-							programInfo.minReplicas.value
-						);
-						for (const currentPeer of currentPeers) {
-							if (
-								!oldPeersSet?.has(currentPeer) &&
-								currentPeer !== this.idKeyHash
-							) {
-								storeChanged = true;
-								// second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
-								newPeers.push(currentPeer);
+				const oldPeersSet = this._gidPeersHistory.get(gid);
+				const currentPeers = await this.findLeaders(
+					logInfo.log,
+					gid,
+					logInfo.minReplicas.value
+				);
+				for (const currentPeer of currentPeers) {
+					if (
+						!oldPeersSet?.has(currentPeer) &&
+						currentPeer !== this.idKeyHash
+					) {
+						storeChanged = true;
+						// second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
+						newPeers.push(currentPeer);
 
-								// send heads to the new peer
-								// console.log('new gid for peer', newPeers.length, this.id.toString(), newPeer, gid, entries.length, newPeers)
-								try {
-									logger.debug(
-										`${this.id}: Exchange heads ${
-											entries.length === 1
-												? entries[0].hash
-												: "#" + entries.length
-										}  on rebalance`
-									);
-									for (const entry of entries) {
-										toSend.set(entry.hash, entry);
-									}
-								} catch (error) {
-									if (error instanceof TimeoutError) {
-										logger.error(
-											"Missing channel when reorg to peer: " +
-												currentPeer.toString()
-										);
-										continue;
-									}
-									throw error;
-								}
+						// send heads to the new peer
+						// console.log('new gid for peer', newPeers.length, this.id.toString(), newPeer, gid, entries.length, newPeers)
+						try {
+							logger.debug(
+								`${this.id}: Exchange heads ${
+									entries.length === 1 ? entries[0].hash : "#" + entries.length
+								}  on rebalance`
+							);
+							for (const entry of entries) {
+								toSend.set(entry.hash, entry);
 							}
-						}
-
-						// We don't need this clause anymore because we got the trim option!
-						if (!currentPeers.find((x) => x === this.idKeyHash)) {
-							let entriesToDelete = entries.filter((e) => !e.createdLocally);
-
-							if (programInfo.sync) {
-								// dont delete entries which we wish to keep
-								entriesToDelete = await Promise.all(
-									entriesToDelete.map((x) => programInfo.sync!(x))
-								).then((filter) =>
-									entriesToDelete.filter((v, ix) => !filter[ix])
+						} catch (error) {
+							if (error instanceof TimeoutError) {
+								logger.error(
+									"Missing channel when reorg to peer: " +
+										currentPeer.toString()
 								);
+								continue;
 							}
-
-							// delete entries since we are not suppose to replicate this anymore
-							// TODO add delay? freeze time? (to ensure resiliance for bad io)
-							if (entriesToDelete.length > 0) {
-								await log.remove(entriesToDelete, {
-									recursively: true,
-								});
-							}
-
-							// TODO if length === 0 maybe close store?
+							throw error;
 						}
-						this._gidPeersHistory.set(gid, new Set(currentPeers));
+					}
+				}
 
-						if (toSend.size === 0) {
-							continue;
-						}
-						const bytes = await createExchangeHeadsMessage(
-							log,
-							programInfo.program,
-							[...toSend.values()], // TODO send to peers directly
-							true,
-							this.limitSigning ? undefined : this.idIdentity
-						);
+				// We don't need this clause anymore because we got the trim option!
+				if (!currentPeers.find((x) => x === this.idKeyHash)) {
+					let entriesToDelete = entries.filter((e) => !e.createdLocally);
 
-						// TODO perhaps send less messages to more recievers for performance reasons?
-						await this._libp2p.services.pubsub.publish(bytes, {
-							to: newPeers,
-							strict: true,
-							topics: [address],
+					if (logInfo.sync) {
+						// dont delete entries which we wish to keep
+						entriesToDelete = await Promise.all(
+							entriesToDelete.map((x) => logInfo.sync!(x))
+						).then((filter) => entriesToDelete.filter((v, ix) => !filter[ix]));
+					}
+
+					// delete entries since we are not suppose to replicate this anymore
+					// TODO add delay? freeze time? (to ensure resiliance for bad io)
+					if (entriesToDelete.length > 0) {
+						await logInfo.log.remove(entriesToDelete, {
+							recursively: true,
 						});
 					}
-					if (storeChanged) {
-						await log.trim(); // because for entries createdLocally,we can have trim options that still allow us to delete them
-					}
-					changed = storeChanged || changed;
+
+					// TODO if length === 0 maybe close store?
 				}
+				this._gidPeersHistory.set(gid, new Set(currentPeers));
+
+				if (toSend.size === 0) {
+					continue;
+				}
+				const bytes = await createExchangeHeadsMessage(
+					logInfo.log,
+					[...toSend.values()], // TODO send to peers directly
+					true,
+					this.limitSigning ? undefined : this.idIdentity
+				);
+
+				// TODO perhaps send less messages to more recievers for performance reasons?
+				await this._libp2p.services.pubsub.publish(bytes, {
+					to: newPeers,
+					strict: true,
+					topics: [logInfo.log.idString],
+				});
 			}
+			if (storeChanged) {
+				await logInfo.log.trim(); // because for entries createdLocally,we can have trim options that still allow us to delete them
+			}
+			changed = storeChanged || changed;
 		}
 		return changed;
 	}
@@ -885,25 +869,27 @@ export class Peerbit {
 		// TODO Can we really close a this.programs, either we close all stores in the replication topic or none
 		const programAddress = program.address?.toString();
 		logger.debug(`Close ${programAddress}/${log.idString}`);
+
+		const logid = log.idString;
+		const lookup = this.logs.get(logid);
+		if (lookup) {
+			lookup.open -= 1;
+			if (lookup.open === 0) {
+				this.logs.delete(logid);
+				await this.unsubscribeToProgram(log as Log<any>); // TODO unsubscribe with 1 role but maybe have another role left?
+			}
+		}
 	}
 
 	async _onProgamClose(program: Program, programCache: LazyLevel) {
 		await programCache.close();
 		const programAddress = program.address?.toString();
 		if (programAddress) {
-			const deleted = this.programs.delete(programAddress);
-			if (deleted) {
-				this.libp2p.services.pubsub.unsubscribe(programAddress);
-			}
+			this.programs.delete(programAddress);
 		}
-		this._sortedPeersCache.delete(programAddress);
 	}
 
-	addProgram(
-		program: Program,
-		minReplicas: MinReplicas,
-		sync?: SyncFilter
-	): ProgramWithMetadata {
+	addProgram(program: Program): ProgramWithMetadata {
 		const programAddress = program.address?.toString();
 		if (!programAddress) {
 			throw new Error("Missing program address");
@@ -918,8 +904,6 @@ export class Peerbit {
 		}
 		const p = {
 			program,
-			minReplicas,
-			sync,
 			openCounter: 1,
 			replicators: new Set<string>(),
 		};
@@ -928,41 +912,24 @@ export class Peerbit {
 		return p;
 	}
 
-	/**
-	 * An intentionally imperfect leader rotation routine
-	 * @param slot, some time measure
-	 * @returns
-	 */
-
-	getReplicators(address: string): string[] | undefined {
+	/* getReplicators(log: Log<any>): string[] | undefined {
 		let replicators = this.libp2p.services.pubsub.getSubscribersWithData(
-			address,
+			log.idString,
 			REPLICATOR_TYPE_VARIANT,
 			{ prefix: true }
 		);
 
-		const iAmReplicating =
-			this.programs.get(address.toString())?.program?.role instanceof
-			ReplicatorType; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
+		const iAmReplicating = this._logsById.get(log.idString)?.log.replication.replicating; // TODO add conditional whether this represents a network (I am not replicating if I am not trusted (pointless))
 
 		if (iAmReplicating) {
 			replicators = replicators || [];
 			replicators.push(this.idKeyHash.toString());
 		}
 		return replicators;
-	}
+	} */
 
-	getReplicatorsSorted(address: string): string[] | undefined {
-		const replicators = this._sortedPeersCache.get(address);
-		if (replicators) {
-			return replicators;
-		}
-		throw new Error(
-			"Missing sorted peer list of address: " +
-				address +
-				". Unexpected error. " +
-				this.programs.get(address)?.program
-		);
+	getReplicatorsSorted(log: Log<any>): string[] | undefined {
+		return this._sortedPeersCache.get(log.idString);
 	}
 
 	getObservers(address: Address): string[] | undefined {
@@ -974,24 +941,24 @@ export class Peerbit {
 	}
 
 	async isLeader(
-		address: Address,
+		log: Log<any>,
 		slot: { toString(): string },
 		numberOfLeaders: number
 	): Promise<boolean> {
-		const isLeader = (
-			await this.findLeaders(address, slot, numberOfLeaders)
-		).find((l) => l === this.idKeyHash);
+		const isLeader = (await this.findLeaders(log, slot, numberOfLeaders)).find(
+			(l) => l === this.idKeyHash
+		);
 		return !!isLeader;
 	}
 
 	async findLeaders(
-		address: Address,
+		log: Log<any>,
 		subject: { toString(): string },
 		numberOfLeaders: number
 	): Promise<string[]> {
 		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
 		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
-		const peers: string[] = this.getReplicatorsSorted(address.toString()) || [];
+		const peers: string[] = this.getReplicatorsSorted(log) || [];
 
 		// Assumption: Network specification is accurate
 		// Replication topic is not an address we assume that the network allows all participants
@@ -1042,17 +1009,34 @@ export class Peerbit {
 	}
 
 	private async subscribeToProgram(
-		address: string | Address,
+		log: Log<any>,
 		role: SubscriptionType
 	): Promise<void> {
 		if (this._disconnected || this._disconnecting) {
 			throw new Error("Disconnected");
 		}
-		const topic = typeof address === "string" ? address : address.toString();
-		this.libp2p.services.pubsub.subscribe(topic, {
+
+		if (role instanceof ReplicatorType) {
+			this.modifySortedSubscriptionCache(
+				log.idString,
+				true,
+				this.idKey.publicKey
+			);
+		}
+
+		this.libp2p.services.pubsub.subscribe(log.idString, {
 			data: serialize(role),
 		});
-		await this.libp2p.services.pubsub.requestSubscribers(topic); // get up to date with who are subscribing to this topic
+
+		return this.libp2p.services.pubsub.requestSubscribers(log.idString); // get up to date with who are subscribing to this topic
+	}
+
+	private async unsubscribeToProgram(id: Log<any>): Promise<void> {
+		if (this._disconnected) {
+			throw new Error("Disconnected");
+		}
+		this._sortedPeersCache.delete(id.idString);
+		await this.libp2p.services.pubsub.unsubscribe(id.idString);
 	}
 
 	hasSubscribedToTopic(topic: string): boolean {
@@ -1085,12 +1069,6 @@ export class Peerbit {
 					storeOrAddress instanceof Address
 						? storeOrAddress
 						: Address.parse(storeOrAddress);
-
-				if (storeOrAddress.path) {
-					throw new Error(
-						"Opening programs by subprogram addresses is currently unsupported"
-					);
-				}
 			}
 			let program = storeOrAddress as S;
 
@@ -1142,40 +1120,16 @@ export class Peerbit {
 						: options.minReplicas
 					: new AbsolutMinReplicas(this._minReplicas);
 
-			const resolveMinReplicas = () => {
-				const value = this.programs.get(program.address.toString())?.minReplicas
-					.value;
-				if (value == null) {
-					throw new Error("Missing minReplica value, unexpected");
-				}
-				return value;
-			};
-
 			let programCache: LazyLevel | undefined = undefined;
+			const resolveMinReplicas = (log: Log<any>) =>
+				this.logs.get(log.idString)!.minReplicas.value;
 			await program.init(this.libp2p, options.identity || this.identity, {
 				onClose: async () => {
 					return this._onProgamClose(program, programCache!);
 				},
 				onDrop: () => this._onProgamClose(program, programCache!),
 				role,
-				replicators: () => {
-					// TODO Optimize this so we don't have to recreate the array all the time!
-					const minReplicas = resolveMinReplicas();
-					const replicators = this.getReplicatorsSorted(
-						program.address.toString()
-					);
-					const numberOfGroups = Math.min(
-						Math.ceil(replicators!.length / minReplicas)
-					);
-					const groups = new Array<string[]>(numberOfGroups);
-					for (let i = 0; i < groups.length; i++) {
-						groups[i] = [];
-					}
-					for (let i = 0; i < replicators!.length; i++) {
-						groups[i % numberOfGroups].push(replicators![i]);
-					}
-					return groups;
-				},
+
 				// If the program opens more programs
 				open: (program) => this.open(program, options),
 				onSave: async (address) => {
@@ -1183,57 +1137,83 @@ export class Peerbit {
 						reset: options.reset,
 					});
 				},
-				replicator: (gid) =>
-					this.isLeader(program.address, gid, resolveMinReplicas()),
-
-				log: {
-					encryption,
-					trim: options.trim && {
-						...options.trim,
-						filter: {
-							canTrim: async (gid) =>
-								!(await this.isLeader(
-									program.address,
-									gid,
-									resolveMinReplicas()
-								)),
-							cacheId: () => this._lastSubscriptionMessageId,
+				encryption,
+				log: (log) => {
+					const cfg: LogOptions<any> = {
+						encryption,
+						trim: options.trim && {
+							...options.trim,
+							filter: {
+								canTrim: async (gid) =>
+									!(await this.isLeader(log, gid, resolveMinReplicas(log))), // TODO types
+								cacheId: () => this._lastSubscriptionMessageId,
+							},
 						},
-					},
-					cache: async (name: string) => {
-						return createSubCache(
-							programCache!, // TODO types
-							path.join("log", name)
-						);
-					},
-					onClose: async (log) => {
-						//	CLOSED IS NOT CALLED ON DROP!
-						await this._onClose(program, log);
-						return options.log?.onClose?.(log);
-					},
+						cache: async (name: string) => {
+							return createSubCache(
+								programCache!, // TODO types
+								path.join("log", name)
+							);
+						},
+						onClose: async () => {
+							await this._onClose(program, log);
+							return options.log?.onClose?.(log);
+						},
+						onDrop: async () => {
+							await this._onClose(program, log);
+							return options.log?.onClose?.(log);
+						},
+						replication: {
+							replicators: () => {
+								// TODO Optimize this so we don't have to recreate the array all the time!
+								const minReplicas = resolveMinReplicas(log);
+								const replicators = this.getReplicatorsSorted(log);
+								if (!replicators) {
+									return []; // No subscribers and we are not replicating
+								}
+								const numberOfGroups = Math.min(
+									Math.ceil(replicators!.length / minReplicas)
+								);
+								const groups = new Array<string[]>(numberOfGroups);
+								for (let i = 0; i < groups.length; i++) {
+									groups[i] = [];
+								}
+								for (let i = 0; i < replicators!.length; i++) {
+									groups[i % numberOfGroups].push(replicators![i]);
+								}
+								return groups;
+							},
+							replicator: (gid) =>
+								this.isLeader(log, gid, resolveMinReplicas(log)),
+						},
+						onOpen: async () => {
+							const logid = (log as Log<any>).idString;
+							const lookup = this.logs.get(logid);
+							if (lookup) {
+								lookup.open += 1;
+							} else {
+								await this.subscribeToProgram(log as Log<any>, role);
+								this.logs.set(logid, {
+									log,
+									open: 1,
+									sync: options.sync,
+									minReplicas,
+								});
+							}
+						},
+						onWrite: async (entry) => {
+							await this.onWrite(program, log, entry);
+							return options.log?.onWrite?.(log, entry);
+						},
 
-					onWrite: async (log, entry) => {
-						await this.onWrite(program, log, entry, program.address);
-						return options.log?.onWrite?.(log, entry);
-					},
-
-					onChange: async (log, change) => {
-						return options?.log?.onChange?.(log, change);
-					},
+						onChange: async (change) => {
+							return options?.log?.onChange?.(log, change);
+						},
+					};
+					return cfg;
 				},
 			});
-
-			// Address will not always exist
-			const pm = await this.addProgram(program, minReplicas, options.sync);
-			await this.subscribeToProgram(program.address.toString(), role);
-
-			/// TODO encryption
-			this._sortedPeersCache.set(
-				program.address.toString(),
-				role instanceof ReplicatorType ? [this.idKeyHash] : []
-			);
-
-			return pm;
+			return this.addProgram(program);
 		};
 		const openStore = await this._openProgramQueue.add(fn);
 		if (!openStore?.program.address) {
