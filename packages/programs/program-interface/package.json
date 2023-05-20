@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-program",
-	"version": "0.8.0",
+	"version": "0.8.1",
 	"description": "Program interface",
 	"type": "module",
 	"sideEffects": false,
@@ -34,7 +34,7 @@
 		"@dao-xyz/libp2p-direct-sub": "^0.5.0",
 		"@dao-xyz/peerbit-crypto": "^0.1.14",
 		"@dao-xyz/peerbit-libp2p": "^0.5.0",
-		"@dao-xyz/peerbit-log": "^0.8.0",
+		"@dao-xyz/peerbit-log": "^0.8.1",
 		"@dao-xyz/peerbit-test-utils": "^0.4.0"
 	}
 }
