@@ -21,7 +21,7 @@ import {
 	BoolQuery,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import { Identity } from "@dao-xyz/peerbit-log";
+import { Identity, Log } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
 	X25519Keypair,
@@ -1038,11 +1038,17 @@ describe("index", () => {
 		class SubProgram extends Program {
 			@field({ type: fixedArray("u8", 32) })
 			id: Uint8Array;
+			@field({ type: Log })
+			log: Log<any>;
+
 			constructor() {
 				super();
 				this.id = randomBytes(32);
+				this.log = new Log();
 			}
-			async setup() {}
+			async setup() {
+				return this.log.setup();
+			}
 		}
 
 		@variant("test_program_documents")
@@ -1056,10 +1062,10 @@ describe("index", () => {
 					this.docs = properties.docs;
 				}
 			}
-			async setup(): Promise<void> {
+			async setup(canOpen = () => Promise.resolve(true)): Promise<void> {
 				await this.docs.setup({
 					type: SubProgram,
-					canOpen: () => Promise.resolve(true),
+					canOpen,
 				});
 			}
 		}
@@ -1150,6 +1156,18 @@ describe("index", () => {
 			expect(stores[0].openEvents).toHaveLength(1);
 			expect(stores[0].openEvents[0]).toEqual(subProgram);
 		});
+
+		it("can put after open", async () => {
+			const subProgram = new SubProgram();
+			await subProgram.init(session.peers[0], await createIdentity(), {
+				role: new ReplicatorType(),
+			});
+			await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
+			expect(stores[0].openEvents).toHaveLength(1);
+			expect(stores[0].openEvents[0]).toEqual(subProgram);
+		});
+
+		// TODO test can open after put (?)
 
 		it("will close subprogram after put", async () => {
 			const subProgram = new SubProgram();

@@ -236,7 +236,9 @@ export class Documents<
 					`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`
 				);
 			}
-			await doc.initializeIds();
+			if (!doc.initialized) {
+				await doc.initializeIds();
+			}
 		}
 
 		const key = (doc as any)[this._index.indexBy] as Keyable;
