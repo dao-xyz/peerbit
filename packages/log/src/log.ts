@@ -124,7 +124,7 @@ export class Log<T> {
 		canAppend?: CanAppend<T>;
 		onChange?: (change: Change<T>) => void;
 	}) {
-		if (this.initialized) {
+		if (this.closed === false) {
 			throw new Error("Can not setup after open");
 		}
 
@@ -253,10 +253,6 @@ export class Log<T> {
 		this._closed = false;
 	}
 
-	get initialized() {
-		return !!this._storage;
-	}
-
 	get replication() {
 		return this._replication;
 	}
@@ -278,8 +274,8 @@ export class Log<T> {
 		return this._id;
 	}
 	set id(id: Uint8Array | undefined) {
-		if (this.initialized) {
-			throw new Error("Can not change id after initialization");
+		if (this.closed === false) {
+			throw new Error("Can not change id after open");
 		}
 		this._idString = undefined;
 		this._id = id;
@@ -1139,23 +1135,19 @@ export class Log<T> {
 	}
 
 	async close() {
-		if (this._closed) {
-			return;
-		}
+		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-		await this._entryCache.clear();
-		await this._headsIndex.close();
+		await this._entryCache?.clear();
+		await this._headsIndex?.close();
 		await this._onClose?.();
 	}
 
 	async drop() {
-		if (this._closed) {
-			return;
-		}
+		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		await this.deleteRecursively(await this.getHeads()); // TODO can multiple store have exact same log entry? no because GIDs are generated randomly
-		await this._headsIndex.drop();
-		await this._entryCache.clear();
+		await this._headsIndex?.drop();
+		await this._entryCache?.clear();
 		await this._onDrop?.();
 	}
 	async load(

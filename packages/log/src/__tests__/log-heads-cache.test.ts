@@ -132,14 +132,14 @@ describe(`load`, function () {
 		});
 
 		await waitFor(() => done);
-		expect(log.initialized).toBeTrue();
+		expect(log.closed).toBeFalse();
 		await log.close();
 		await init(level, () => {
 			done = true;
 		});
-		expect(log.initialized).toBeTrue();
+		expect(log.closed).toBeFalse();
 		await log.load();
-		expect(log.initialized).toBeTrue();
+		expect(log.closed).toBeFalse();
 		expect(log.values.length).toEqual(1);
 	});
 

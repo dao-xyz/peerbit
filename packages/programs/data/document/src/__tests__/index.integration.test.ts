@@ -35,7 +35,7 @@ import {
 	Program,
 	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
@@ -182,6 +182,7 @@ describe("index", () => {
 				// try close and load
 				await store.docs.log.close();
 				await store.docs.log.load();
+				await store.docs.log.close();
 			});
 
 			it("many chunks", async () => {
