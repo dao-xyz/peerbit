@@ -115,6 +115,14 @@ describe(`Create & Open`, function () {
 			await db.drop();
 		});
 
+		it("can open multiple times", async () => {
+			const db = await client.open(new EventStore());
+			db.save = () => {
+				throw new Error("Did not expect resave");
+			};
+			await client.open(db.address!);
+		});
+
 		it("opens a database - with a different identity", async () => {
 			const signKey = await client.keystore.createEd25519Key();
 			const topic = uuid();

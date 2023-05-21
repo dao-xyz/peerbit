@@ -1071,21 +1071,28 @@ export class Peerbit {
 						: Address.parse(storeOrAddress);
 			}
 			let program = storeOrAddress as S;
-
+			let existing = false;
 			if (
 				storeOrAddress instanceof Address ||
 				typeof storeOrAddress === "string"
 			) {
 				try {
-					program = (await Program.load(
-						this._libp2p.services.blocks,
-						storeOrAddress,
-						options
-					)) as S; // TODO fix typings
-					if (program instanceof Program === false) {
-						throw new Error(
-							`Failed to open program because program is of type ${program?.constructor.name} and not ${Program.name}`
-						);
+					const fromExisting = this.programs?.get(storeOrAddress.toString())
+						?.program as S;
+					if (fromExisting) {
+						program = fromExisting;
+						existing = true;
+					} else {
+						program = (await Program.load(
+							this._libp2p.services.blocks,
+							storeOrAddress,
+							options
+						)) as S; // TODO fix typings
+						if (program instanceof Program === false) {
+							throw new Error(
+								`Failed to open program because program is of type ${program?.constructor.name} and not ${Program.name}`
+							);
+						}
 					}
 				} catch (error) {
 					logger.error(
@@ -1094,10 +1101,11 @@ export class Peerbit {
 					throw error;
 				}
 			}
+			if (!program.address && !existing) {
+				await program.save(this._libp2p.services.blocks);
+			}
 
-			await program.save(this._libp2p.services.blocks);
 			const programAddress = program.address!.toString()!;
-
 			if (programAddress) {
 				const existingProgram = this.programs?.get(programAddress);
 				if (existingProgram) {
