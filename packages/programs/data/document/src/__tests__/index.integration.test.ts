@@ -39,6 +39,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
+import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
 @variant("document")
 class Document {
@@ -1303,6 +1304,11 @@ describe("index", () => {
 						counters[i] += 1;
 						return fn(a);
 					};
+					await waitForSubscribers(
+						session.peers[i],
+						session.peers.filter((_v, ix) => ix !== i),
+						stores[i].docs.index._query.rpcTopic
+					);
 				}
 			});
 
