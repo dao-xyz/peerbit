@@ -51,7 +51,7 @@
 		"@libp2p/webrtc": "^2.0.4",
 		"@libp2p/websockets": "^6.0.1",
 		"level": "^8.0.0",
-		"libp2p": "^0.45.1"
+		"libp2p": "^0.45.3"
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-time": "^0.0.23"

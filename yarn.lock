@@ -2751,6 +2751,24 @@
     "@libp2p/interfaces" "^3.0.0"
     "@multiformats/multiaddr" "^12.0.0"
 
+"@libp2p/interface-libp2p@^3.2.0":
+  version "3.2.0"
+  resolved "https://registry.yarnpkg.com/@libp2p/interface-libp2p/-/interface-libp2p-3.2.0.tgz#875df729edcb43aee7f8b91191b7fc16d83cb912"
+  integrity sha512-Vow6xNdjpQ0M/Kt3EDz1qE/Os5OZUyhFt0YTPU5Fp3/kXw/6ocsxYq/Bzird/96gjUjU5/i+Vukn4WgctJf55Q==
+  dependencies:
+    "@libp2p/interface-connection" "^5.0.0"
+    "@libp2p/interface-content-routing" "^2.0.0"
+    "@libp2p/interface-keychain" "^2.0.0"
+    "@libp2p/interface-metrics" "^4.0.0"
+    "@libp2p/interface-peer-id" "^2.0.0"
+    "@libp2p/interface-peer-info" "^1.0.0"
+    "@libp2p/interface-peer-routing" "^1.0.0"
+    "@libp2p/interface-peer-store" "^2.0.0"
+    "@libp2p/interface-registrar" "^2.0.0"
+    "@libp2p/interface-transport" "^4.0.0"
+    "@libp2p/interfaces" "^3.0.0"
+    "@multiformats/multiaddr" "^12.0.0"
+
 "@libp2p/interface-metrics@^4.0.0", "@libp2p/interface-metrics@^4.0.4", "@libp2p/interface-metrics@^4.0.8":
   version "4.0.8"
   resolved "https://registry.yarnpkg.com/@libp2p/interface-metrics/-/interface-metrics-4.0.8.tgz#06eb45588737d72f074c70df8d1ef067a2d7cf71"
@@ -7607,10 +7625,10 @@ libnpmpublish@^6.0.4:
     semver "^7.3.7"
     ssri "^9.0.0"
 
-libp2p@^0.45.1:
-  version "0.45.1"
-  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.45.1.tgz#24a825bd5a08dfb43b46b00dd364ab228d56d9fb"
-  integrity sha512-6qa9YnCLs539oYxQUXoQTMM6prItp4pU57LCauCi/1iH6JJijimn+E0ovBu2rA0vLgWV38dWrg3MQTrKLB6HkA==
+libp2p@^0.45.3:
+  version "0.45.3"
+  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.45.3.tgz#7eb225222985ffa0cd38046f037910c5f4991fc6"
+  integrity sha512-rIeT5noHOI8jo9mY6UopQSEvZPgcQKCSJJH/F6T8TpDJclfyu2VsB/C3xttXKRwDY6n6KaXJJUwOEqiRDv8fnQ==
   dependencies:
     "@achingbrain/nat-port-mapper" "^1.0.3"
     "@libp2p/crypto" "^1.0.4"
@@ -7621,7 +7639,7 @@ libp2p@^0.45.1:
     "@libp2p/interface-connection-manager" "^3.0.0"
     "@libp2p/interface-content-routing" "^2.1.0"
     "@libp2p/interface-keychain" "^2.0.4"
-    "@libp2p/interface-libp2p" "^3.1.0"
+    "@libp2p/interface-libp2p" "^3.2.0"
     "@libp2p/interface-metrics" "^4.0.0"
     "@libp2p/interface-peer-discovery" "^2.0.0"
     "@libp2p/interface-peer-id" "^2.0.1"
