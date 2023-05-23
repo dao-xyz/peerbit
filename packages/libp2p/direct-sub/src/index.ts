@@ -23,6 +23,7 @@ import { getPublicKeyFromPeerId, PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CustomEvent } from "@libp2p/interfaces/events";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { PeerEvents } from "@dao-xyz/libp2p-direct-stream";
+import { Connection } from "@libp2p/interface-connection";
 export {
 	PubSubMessage,
 	PubSubData,
@@ -95,9 +96,8 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 		return super.onPeerReachable(publicKey);
 	}
 
-	public async onPeerDisconnected(peerId: PeerId) {
-		const ret = await super.onPeerDisconnected(peerId);
-		return ret;
+	public async onPeerDisconnected(peerId: PeerId, conn?: Connection) {
+		return super.onPeerDisconnected(peerId, conn);
 	}
 
 	private initializeTopic(topic: string) {

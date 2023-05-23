@@ -20,6 +20,9 @@ import {
 } from "./../index.js";
 import { deserialize } from "@dao-xyz/borsh";
 import { equals } from "uint8arrays";
+import { tcp } from "@libp2p/tcp";
+import { webSockets } from "@libp2p/websockets";
+import * as filters from "@libp2p/websockets/filters";
 
 const createSubscriptionMetrics = (pubsub: DirectSub) => {
 	let m: {
@@ -455,6 +458,7 @@ describe("pubsub", function () {
 		beforeEach(async () => {
 			// 0 and 2 not connected
 			session = await LSession.disconnected(3, {
+				transports: [tcp(), webSockets({ filter: filters.all })],
 				services: {
 					pubsub: (c) =>
 						new DirectSub(c, {
@@ -492,6 +496,7 @@ describe("pubsub", function () {
 			await Promise.all(peers.map((peer) => peer.stream.stop()));
 			await session.stop();
 		});
+
 		it("it can track subscriptions across peers", async () => {
 			for (const peer of peers) {
 				await peer.stream.requestSubscribers(TOPIC_1);
