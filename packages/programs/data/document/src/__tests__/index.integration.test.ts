@@ -1,12 +1,4 @@
-import {
-	deserialize,
-	field,
-	fixedArray,
-	option,
-	serialize,
-	variant,
-	vec,
-} from "@dao-xyz/borsh";
+import { field, fixedArray, option, variant, vec } from "@dao-xyz/borsh";
 import { Documents, DocumentsChange } from "../document-store";
 import {
 	IntegerCompare,
@@ -58,12 +50,16 @@ class Document {
 	@field({ type: option("bool") })
 	bool?: boolean;
 
+	@field({ type: option(Uint8Array) })
+	data?: Uint8Array;
+
 	constructor(opts: Document) {
 		this.id = opts.id;
 		this.name = opts.name;
 		this.number = opts.number;
 		this.tags = opts.tags;
 		this.bool = opts.bool;
+		this.data = opts.data;
 	}
 }
 
@@ -260,6 +256,180 @@ describe("index", () => {
 				).toEqual([deleteOperation.hash]); // the delete operation
 			});
 		});
+
+		describe("indexBy", () => {
+			let store: Program;
+			let store2: Program;
+
+			beforeAll(async () => {
+				session = await LSession.connected(2);
+			});
+			afterEach(async () => {
+				await store?.close();
+				await store2?.close();
+			});
+
+			afterAll(async () => {
+				await session.stop();
+			});
+
+			describe("string", () => {
+				class SimpleDocument {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "string" })
+					value: string;
+
+					constructor(properties: { id: string; value: string }) {
+						this.id = properties.id;
+						this.value = properties.value;
+					}
+				}
+
+				@variant("test_index_documents")
+				class TestSimpleStore extends Program {
+					@field({ type: Uint8Array })
+					id: Uint8Array;
+
+					@field({ type: Documents })
+					docs: Documents<SimpleDocument>;
+
+					constructor(properties: { docs: Documents<SimpleDocument> }) {
+						super();
+
+						this.id = randomBytes(32);
+						this.docs = properties.docs;
+					}
+					async setup(): Promise<void> {
+						await this.docs.setup({ type: SimpleDocument });
+					}
+				}
+				it("it will throw error if indexBy does not exist in document", async () => {
+					store = new TestSimpleStore({
+						docs: new Documents<SimpleDocument>({
+							index: new DocumentIndex({
+								indexBy: "__missing__",
+							}),
+						}),
+					});
+					await store.init(session.peers[0], await createIdentity(), {
+						role: new ReplicatorType(),
+					});
+
+					let doc = new SimpleDocument({
+						id: "abc 123",
+						value: "Hello world",
+					});
+
+					// put doc
+					await expect(
+						(store as TestSimpleStore).docs.put(doc)
+					).rejects.toThrowError(
+						"The provided key value is null or undefined, expecting string or Uint8array"
+					);
+				});
+
+				it("can StringQuery index", async () => {
+					store = new TestSimpleStore({
+						docs: new Documents<SimpleDocument>({
+							index: new DocumentIndex({
+								indexBy: "id",
+							}),
+						}),
+					});
+					await store.init(session.peers[0], await createIdentity(), {
+						role: new ReplicatorType(),
+					});
+
+					let doc = new SimpleDocument({
+						id: "abc 123",
+						value: "Hello world",
+					});
+					await (store as TestSimpleStore).docs.put(doc);
+					const results = await (store as TestSimpleStore).docs.index.query(
+						new DocumentQuery({
+							queries: [
+								new StringMatch({
+									key: "id",
+									value: "123",
+									caseInsensitive: false,
+									method: StringMatchMethod.contains,
+								}),
+							],
+						})
+					);
+					expect(results).toHaveLength(1);
+				});
+			});
+
+			describe("bytes", () => {
+				class SimpleDocument {
+					@field({ type: Uint8Array })
+					id: Uint8Array;
+
+					@field({ type: "string" })
+					value: string;
+
+					constructor(properties: { id: Uint8Array; value: string }) {
+						this.id = properties.id;
+						this.value = properties.value;
+					}
+				}
+
+				@variant("test_index_documents")
+				class TestSimpleStore extends Program {
+					@field({ type: Uint8Array })
+					id: Uint8Array;
+
+					@field({ type: Documents })
+					docs: Documents<SimpleDocument>;
+
+					constructor(properties: { docs: Documents<SimpleDocument> }) {
+						super();
+
+						this.id = randomBytes(32);
+						this.docs = properties.docs;
+					}
+					async setup(): Promise<void> {
+						await this.docs.setup({ type: SimpleDocument });
+					}
+				}
+
+				it("index as Uint8array", async () => {
+					store = new TestSimpleStore({
+						docs: new Documents<SimpleDocument>({
+							index: new DocumentIndex({
+								indexBy: "id",
+							}),
+						}),
+					});
+					await store.init(session.peers[0], await createIdentity(), {
+						role: new ReplicatorType(),
+					});
+
+					const id = new Uint8Array([1, 2, 3]);
+					let doc = new SimpleDocument({
+						id,
+						value: "Hello world",
+					});
+
+					await (store as TestSimpleStore).docs.put(doc);
+					const results = await (store as TestSimpleStore).docs.index.query(
+						new DocumentQuery({
+							queries: [
+								new ByteMatchQuery({
+									key: "id",
+									value: id,
+								}),
+							],
+						})
+					);
+					expect(results).toHaveLength(1);
+				});
+			});
+		});
+
 		describe("index", () => {
 			let store: TestStore;
 			let store2: TestStore;
@@ -274,29 +444,6 @@ describe("index", () => {
 
 			afterAll(async () => {
 				await session.stop();
-			});
-
-			it("it will throw error if indexBy does not exist in document", async () => {
-				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "__missing__",
-						}),
-					}),
-				});
-				await store.init(session.peers[0], await createIdentity(), {
-					role: new ReplicatorType(),
-				});
-
-				let doc = new Document({
-					id: uuid(),
-					name: "Hello world",
-				});
-
-				// put doc
-				await expect(store.docs.put(doc)).rejects.toThrowError(
-					"The provided key value is null or undefined, expecting string or Uint8array"
-				);
 			});
 
 			it("trim deduplicate changes", async () => {
@@ -535,6 +682,7 @@ describe("index", () => {
 					name: "hello world",
 					number: 1n,
 					bool: true,
+					data: new Uint8Array([1]),
 				});
 
 				let doc2 = new Document({
@@ -547,12 +695,14 @@ describe("index", () => {
 					id: Buffer.from("2"),
 					name: "Hello World",
 					number: 2n,
+					data: new Uint8Array([2]),
 				});
 
 				let doc3 = new Document({
 					id: Buffer.from("3"),
 					name: "foo",
 					number: 3n,
+					data: new Uint8Array([3]),
 				});
 
 				let doc4 = new Document({
@@ -810,6 +960,23 @@ describe("index", () => {
 				expect(
 					responses.map((x) => Buffer.from(x.id).toString("utf8"))
 				).toEqual(["4"]);
+			});
+
+			it("bytes", async () => {
+				let responses: Document[] = await stores[1].docs.index.query(
+					new DocumentQuery({
+						queries: [
+							new ByteMatchQuery({
+								key: "data",
+								value: Buffer.from([1]),
+							}),
+						],
+					})
+				);
+				expect(responses).toHaveLength(1);
+				expect(
+					responses.map((x) => Buffer.from(x.id).toString("utf8"))
+				).toEqual(["1"]);
 			});
 
 			it("bool", async () => {
