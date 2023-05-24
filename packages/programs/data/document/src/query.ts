@@ -1,6 +1,5 @@
 import { AbstractType, deserialize, field, variant, vec } from "@dao-xyz/borsh";
-import { PublicSignKey, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { EntryEncryptionTemplate } from "@dao-xyz/peerbit-log";
+import { asString } from "./utils";
 
 export enum Compare {
 	Equal = 0,
@@ -59,6 +58,8 @@ export class DocumentQuery {
 	constructor(props?: { queries: Query[] }) {
 		if (props) {
 			this.queries = props.queries;
+		} else {
+			this.queries = [];
 		}
 	}
 }
@@ -204,6 +205,14 @@ export class ByteMatchQuery extends StateFieldQuery {
 		super(props);
 		this.value = props.value;
 		this._reserved = 0;
+	}
+
+	_valueString: string;
+	/**
+	 * value `asString`
+	 */
+	get valueString() {
+		return this._valueString ?? (this._valueString = asString(this.value));
 	}
 }
 
