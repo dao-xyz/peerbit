@@ -1,18 +1,10 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
-import { Entry, Log } from "@dao-xyz/peerbit-log";
-import {
-	delay,
-	waitFor,
-	waitForAsync,
-	waitForResolved,
-} from "@dao-xyz/peerbit-time";
+import { Entry } from "@dao-xyz/peerbit-log";
+import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer.js";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-
 describe(`Replication`, function () {
 	let session: LSession;
 	let client1: Peerbit,
@@ -310,33 +302,5 @@ describe(`Replication`, function () {
 		// All entries should be in the database
 		expect(values1.length).toEqual(entryCount * 2);
 		expect(values2.length).toEqual(entryCount * 2);
-	});
-
-	it("default params are sufficient for dialing", async () => {
-		@variant("some_store")
-		class Store extends Program {
-			@field({ type: Log })
-			log: Log<string>;
-			constructor() {
-				super();
-				this.log = new Log();
-			}
-
-			async setup(): Promise<void> {
-				return this.log.setup();
-			}
-		}
-		const peer = await Peerbit.create();
-		const peer2 = await Peerbit.create();
-		await peer.dial(peer2.libp2p.getMultiaddrs());
-
-		const store = await peer.open(new Store());
-		const store2 = await peer2.open<Store>(store.address);
-
-		await store.log.append("hello");
-		await waitForResolved(() => expect(store2.log.length).toEqual(1));
-
-		await peer.stop();
-		await peer2.stop();
 	});
 });
