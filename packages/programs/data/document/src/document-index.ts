@@ -260,7 +260,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	async queryHandler(
 		query: DocumentQuery
 	): Promise<{ context: Context; value: T }[]> {
-		const queries: Query[] = query.queries;
+		// We do special case for querying the id as we can do it faster than iterating
 		if (
 			query.queries.length === 1 &&
 			(query.queries[0] instanceof ByteMatchQuery ||
@@ -268,11 +268,23 @@ export class DocumentIndex<T> extends ComposableProgram {
 			query.queries[0].key.length === 1 &&
 			query.queries[0].key[0] === this.indexBy
 		) {
-			if (
-				query.queries[0] instanceof StringMatch ||
-				query.queries[0] instanceof ByteMatchQuery
+			const firstQuery = query.queries[0];
+			if (firstQuery instanceof ByteMatchQuery) {
+				const doc = this._index.get(asString(firstQuery.value)); // TODO could there be a issue with types here?
+				return doc
+					? [
+							{
+								value: await this.getDocument(doc),
+								context: doc.context,
+							},
+					  ]
+					: [];
+			} else if (
+				firstQuery instanceof StringMatch &&
+				firstQuery.method === StringMatchMethod.exact &&
+				firstQuery.caseInsensitive === false
 			) {
-				const doc = this._index.get(asString(query.queries[0].value)); // TODO could there be a issue with types here?
+				const doc = this._index.get(firstQuery.value); // TODO could there be a issue with types here?
 				return doc
 					? [
 							{
@@ -284,18 +296,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 			}
 		}
 
-		const results = await this._queryDocuments((doc) =>
-			queries?.length > 0
-				? queries
-						.map((f) => {
-							const nested = this.handleQueryObject(f, doc);
-							return nested;
-						})
-						.reduce((prev, current) => prev && current)
-				: true
-		);
-
-		return results;
+		return this._queryDocuments((doc) => {
+			for (const f of query.queries) {
+				if (!this.handleQueryObject(f, doc)) {
+					return false;
+				}
+			}
+			return true;
+		});
 	}
 
 	private handleQueryObject(f: Query, doc: IndexedValue<T>) {
@@ -326,6 +334,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 				}
 			} else if (f instanceof ByteMatchQuery) {
 				if (fv instanceof Uint8Array === false) {
+					if (f.key[f.key.length - 1] === this.indexBy) {
+						return f.valueString === fv;
+					}
 					return false;
 				}
 				return equals(fv, f.value);
