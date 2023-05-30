@@ -60,7 +60,6 @@ The goal of this project is to create a  <span style="color:coral;">cheaper</spa
 
 ### Timeline and progress
 - 🚧 Documentation and examples
-- 🚧 Easy Webtransport/WebRTC setup for device to device networks
 - Performant indexation capabilities with WASM search modules
 - Improved sharding algorithm that respects device capabilities
 - [ZK group access controller](https://vitalik.ca/general/2022/06/15/using_snarks.html)
