@@ -103,7 +103,7 @@ import { Peerbit } from "@dao-xyz/peerbit";
 import {
 	Documents,
 	DocumentIndex,
-	DocumentQuery,
+	SearchRequest,
 	StringMatch,
 	StringMatchMethod,
 	Results,
@@ -182,7 +182,7 @@ await peer2.dial(peer)
 const store2 = peer2.open(store.address);
 
 let responses: Document[] =  await store2.docs.index.query(
-    new DocumentQuery({
+    new SearchRequest({
         queries: [
             new StringMatch({
                 key: "name",
