@@ -1,5 +1,17 @@
-import { AbstractType, deserialize, field, variant, vec } from "@dao-xyz/borsh";
-import { asString } from "./utils";
+import {
+	AbstractType,
+	deserialize,
+	field,
+	fixedArray,
+	variant,
+	vec,
+} from "@dao-xyz/borsh";
+import { asString } from "./utils.js";
+import {
+	randomBytes,
+	sha256Base64,
+	sha256Base64Sync,
+} from "@dao-xyz/peerbit-crypto";
 
 export enum Compare {
 	Equal = 0,
@@ -50,17 +62,100 @@ export class U64Compare {
 
 export abstract class Query {}
 
+export enum SortDirection {
+	ASC = 0,
+	DESC = 1,
+}
+
 @variant(0)
-export class DocumentQuery {
+export class Sort {
+	@field({ type: vec("string") })
+	key: string[];
+
+	@field({ type: "u8" })
+	direction: SortDirection;
+
+	constructor(properties: {
+		key: string[] | string;
+		direction: SortDirection;
+	}) {
+		this.key = Array.isArray(properties.key)
+			? properties.key
+			: [properties.key];
+		this.direction = properties.direction;
+	}
+}
+
+export abstract class AbstractSearchRequest {}
+
+/**
+ * Search with queries and collect with sort conditionss
+ */
+@variant(0)
+export class SearchRequest extends AbstractSearchRequest {
 	@field({ type: vec(Query) })
 	queries!: Query[];
 
 	constructor(props?: { queries: Query[] }) {
+		super();
 		if (props) {
 			this.queries = props.queries;
 		} else {
 			this.queries = [];
 		}
+	}
+}
+/**
+ * Search with queries and collect with sort conditionss
+ */
+@variant(1)
+export class SearchSortedRequest extends AbstractSearchRequest {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array; // Session id
+
+	@field({ type: vec(Query) })
+	queries!: Query[];
+
+	@field({ type: vec(Sort) })
+	sort: Sort[];
+
+	@field({ type: "u32" })
+	initialAmount: number;
+
+	constructor(props: { queries: Query[]; sort: Sort[] }) {
+		super();
+		this.queries = props.queries;
+		this.id = randomBytes(32);
+		this.sort = props.sort;
+		this.initialAmount = 1;
+	}
+
+	private _idString: string;
+	get idString(): string {
+		return this._idString || (this._idString = sha256Base64Sync(this.id));
+	}
+}
+
+/**
+ * Collect documents from peers using 'collect' session ids. This is used for distributed sorting internally
+ */
+@variant(2)
+export class CollectNextRequest extends AbstractSearchRequest {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array; // collect with id
+
+	@field({ type: "u32" })
+	amount: number; // number of documents to ask for
+
+	constructor(properties: { id: Uint8Array; amount: number }) {
+		super();
+		this.id = properties.id;
+		this.amount = properties.amount;
+	}
+
+	private _idString: string;
+	get idString(): string {
+		return this._idString || (this._idString = sha256Base64Sync(this.id));
 	}
 }
 
@@ -388,10 +483,12 @@ export class Results<T> {
 	@field({ type: vec(ResultWithSource) })
 	results: ResultWithSource<T>[];
 
-	constructor(properties?: { results: ResultWithSource<T>[] }) {
-		if (properties) {
-			this.results = properties.results;
-		}
+	@field({ type: "u64" })
+	kept: bigint; // how many results that were not sent, but can be collected later
+
+	constructor(properties: { results: ResultWithSource<T>[]; kept: bigint }) {
+		this.kept = properties.kept;
+		this.results = properties.results;
 	}
 }
 
