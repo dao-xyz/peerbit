@@ -46,35 +46,35 @@ export const verifySignatureEd25519 = async (
 	return res;
 };
 
+const DER_PREFIX = Buffer.from([
+	48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32,
+]);
+const ED25519_OID = Buffer.from([0x06, 0x03, 0x2b, 0x65, 0x70]);
+const SEQUENCE_TAG = Buffer.from([0x30]); // Sequence tag
+const BIT_TAG = Buffer.from([0x03]); // Bit tag
+const ZERO_BIT_TAG = Buffer.from([0x00]); // Zero bit
 function toDER(key: Uint8Array, p = false) {
 	if (p) {
-		return Buffer.concat([
-			Buffer.from([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32]),
-			key,
-		]);
+		return Buffer.concat([DER_PREFIX, key]);
 	}
 
 	// Ed25519's OID
-	const oid = Buffer.from([0x06, 0x03, 0x2b, 0x65, 0x70]);
+	const oid = ED25519_OID;
 
 	// Create a byte sequence containing the OID and key
 	const elements = Buffer.concat([
-		Buffer.concat([
-			Buffer.from([0x30]), // Sequence tag
-			Buffer.from([oid.length]),
-			oid,
-		]),
-		Buffer.concat([
-			Buffer.from([0x03]), // Bit tag
-			Buffer.from([key.length + 1]),
-			Buffer.from([0x00]), // Zero bit
-			key,
-		]),
+		SEQUENCE_TAG,
+		Buffer.from([oid.length]),
+		oid,
+		BIT_TAG,
+		Buffer.from([key.length + 1]),
+		ZERO_BIT_TAG,
+		key,
 	]);
 
 	// Wrap up by creating a sequence of elements
 	const der = Buffer.concat([
-		Buffer.from([0x30]), // Sequence tag
+		SEQUENCE_TAG,
 		Buffer.from([elements.length]),
 		elements,
 	]);
