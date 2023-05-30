@@ -16,7 +16,7 @@ import { Peerbit } from "@dao-xyz/peerbit";
 import {
 	Documents,
 	DocumentIndex,
-	DocumentQuery,
+	SearchRequest,
 	StringMatch,
 	StringMatchMethod,
 	Results,
@@ -96,7 +96,7 @@ const peer2 = await Peerbit.create ({libp2: another_libp2p_instance})
 const store2 = peer2.open(store.address);
 
 let responses: Document[] = await store2.docs.index.query(
-    new DocumentQuery({
+    new SearchRequest({
         queries: [
           new StringMatch({
                 key: "name",
