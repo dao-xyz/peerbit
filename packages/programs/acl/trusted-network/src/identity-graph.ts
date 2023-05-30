@@ -2,7 +2,7 @@ import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
 	DocumentIndex,
-	DocumentQuery,
+	SearchRequest,
 	StringMatch,
 } from "@dao-xyz/peerbit-document";
 import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
@@ -24,7 +24,7 @@ export const getFromByTo: RelationResolver = {
 		return Promise.all(
 			(
 				await db.index.queryHandler(
-					new DocumentQuery({
+					new SearchRequest({
 						queries: [
 							new StringMatch({
 								key: "to",
@@ -33,7 +33,7 @@ export const getFromByTo: RelationResolver = {
 						],
 					})
 				)
-			).map((x) => x.value)
+			).results.map((x) => x.value)
 		);
 	},
 	next: (relation) => relation.from,
@@ -44,7 +44,7 @@ export const getToByFrom: RelationResolver = {
 		return Promise.all(
 			(
 				await db.index.queryHandler(
-					new DocumentQuery({
+					new SearchRequest({
 						queries: [
 							new StringMatch({
 								key: "from",
@@ -53,7 +53,7 @@ export const getToByFrom: RelationResolver = {
 						],
 					})
 				)
-			).map((x) => x.value)
+			).results.map((x) => x.value)
 		);
 	},
 	next: (relation) => relation.to,
