@@ -115,6 +115,5 @@ suite
 	.on("complete", async function (this: any, ...args: any[]) {
 		await Promise.all(peers.map((x) => x.disconnect()));
 		await Promise.all(peers.map((n) => n.libp2p.stop()));
-		console.log("DISCONNECTED!");
 	})
 	.run();
