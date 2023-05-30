@@ -2,6 +2,7 @@ import type { JestConfigWithTsJest } from "ts-jest";
 
 const jestConfig: JestConfigWithTsJest = {
 	preset: "ts-jest",
+	workerThreads: true,
 	testEnvironment: "node",
 	roots: ["./packages/"],
 	transform: {
