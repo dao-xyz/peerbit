@@ -48,6 +48,6 @@
 		"@ethersproject/wallet": "^5.7.0",
 		"@libp2p/crypto": "^1.0.14",
 		"@libp2p/peer-id": "^2.0.1",
-		"libsodium-wrappers": "^0.7.10"
+		"libsodium-wrappers": "^0.7.11"
 	}
 }

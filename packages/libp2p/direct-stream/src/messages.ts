@@ -454,11 +454,7 @@ export class Hello extends Message {
 			this,
 			this.signatures.signatures.length
 		).next().value!;
-		try {
-			this.signatures.signatures.push(await sign(toSign));
-		} catch (error) {
-			const q = 123;
-		}
+		this.signatures.signatures.push(await sign(toSign));
 		return this;
 	}
 

@@ -7625,10 +7625,10 @@ libnpmpublish@^6.0.4:
     semver "^7.3.7"
     ssri "^9.0.0"
 
-libp2p@^0.45.3:
-  version "0.45.3"
-  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.45.3.tgz#7eb225222985ffa0cd38046f037910c5f4991fc6"
-  integrity sha512-rIeT5noHOI8jo9mY6UopQSEvZPgcQKCSJJH/F6T8TpDJclfyu2VsB/C3xttXKRwDY6n6KaXJJUwOEqiRDv8fnQ==
+libp2p@^0.45.4:
+  version "0.45.4"
+  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.45.4.tgz#1e1b85431a82ddc678f2f62b3d2b73bc3956578c"
+  integrity sha512-cbmiDxrUL3q3yYn9M3QwTVNrpHxhisVfy+ObV9c/HmnDguZzEezZY7gQUVkN+DxCpAR/lbaDPwnu7PucTuhcnA==
   dependencies:
     "@achingbrain/nat-port-mapper" "^1.0.3"
     "@libp2p/crypto" "^1.0.4"
@@ -7695,7 +7695,7 @@ libp2p@^0.45.3:
     wherearewe "^2.0.0"
     xsalsa20 "^1.1.0"
 
-libsodium-wrappers@^0.7.10, libsodium-wrappers@^0.7.11:
+libsodium-wrappers@^0.7.11:
   version "0.7.11"
   resolved "https://registry.yarnpkg.com/libsodium-wrappers/-/libsodium-wrappers-0.7.11.tgz#53bd20606dffcc54ea2122133c7da38218f575f7"
   integrity sha512-SrcLtXj7BM19vUKtQuyQKiQCRJPgbpauzl3s0rSwD+60wtHqSUuqcoawlMDheCJga85nKOQwxNYQxf/CKAvs6Q==

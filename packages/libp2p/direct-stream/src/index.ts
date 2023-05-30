@@ -429,48 +429,6 @@ export abstract class DirectStream<
 
 		// register protocol with topology
 		// Topology callbacks called on connection manager changes
-
-		// TODO remove when https://github.com/libp2p/js-libp2p/issues/1755 fixed
-		this.components.events.removeEventListener(
-			"connection:close",
-			this.components.registrar["_onDisconnect"]
-		);
-		this.components.registrar["_onDisconnect"] = (
-			evt: CustomEvent<Connection>
-		): void => {
-			const connection = evt.detail;
-			void this.components.peerStore
-				.get(connection.remotePeer)
-				.then((peer) => {
-					for (const protocol of peer.protocols) {
-						const topologies =
-							this.components.registrar.getTopologies(protocol);
-						if (topologies == null) {
-							// no topologies are interested in this protocol
-							continue;
-						}
-
-						for (const topology of topologies.values()) {
-							(topology as TopologyImpl).onDisconnect(
-								connection.remotePeer,
-								connection
-							);
-						}
-					}
-				})
-				.catch((err) => {
-					console.error(
-						"could not inform topologies of disconnecting peer %p",
-						connection.remotePeer,
-						err
-					);
-				});
-		};
-		this.components.events.addEventListener(
-			"connection:close",
-			this.components.registrar["_onDisconnect"]
-		);
-
 		this._registrarTopologyIds = await Promise.all(
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.register(multicodec, this.topology)
