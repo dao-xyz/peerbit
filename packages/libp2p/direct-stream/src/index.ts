@@ -48,10 +48,9 @@ export {
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 import type { AddressManager } from "@libp2p/interface-address-manager";
 
-import { sha256Base64 } from "@dao-xyz/peerbit-crypto";
 import { logger } from "./logger.js";
 import { Cache } from "@dao-xyz/cache";
-import { TopologyImpl, createTopology } from "./topology.js";
+import { createTopology } from "./topology.js";
 export { logger };
 import type { Libp2pEvents } from "@libp2p/interface-libp2p";
 export interface PeerStreamsInit {
@@ -1019,9 +1018,7 @@ export abstract class DirectStream<
 			if (isForAll || isForMe) {
 				if (
 					this.signaturePolicy === "StictSign" &&
-					(!(await message.verify(this.signaturePolicy === "StictSign"))
-						? true
-						: false)
+					!(await message.verify(this.signaturePolicy === "StictSign"))
 				) {
 					// we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
 					logger.warn("Recieved message with invalid signature or timestamp");
@@ -1302,16 +1299,19 @@ export abstract class DirectStream<
 		relayed?: boolean
 	): Promise<void> {
 		if (message instanceof DataMessage && !to) {
-			const meTo = message.to.findIndex(
-				(value) => value === this.publicKeyHash
-			);
-			if (meTo >= 0) {
-				message.to.splice(meTo, 1); // Delete me from to list
-			}
-
+			// message.to can be distant peers, but "to" are neighbours
 			const fanoutMap = new Map<string, string[]>();
+
+			// Message to > 0
 			if (message.to.length > 0) {
 				for (const to of message.to) {
+					const fromKey = this.peerIdToPublicKey
+						.get(from.toString())
+						?.hashcode();
+					if (to === this.publicKeyHash || fromKey === to) {
+						continue; // don't send to me or backwards
+					}
+
 					const directStream = this.peers.get(to);
 					if (directStream) {
 						// always favor direct stream, even path seems longer
@@ -1324,9 +1324,7 @@ export abstract class DirectStream<
 						continue;
 					} else {
 						const fromMe = from.equals(this.components.peerId);
-						const block = !fromMe
-							? this.peerIdToPublicKey.get(from.toString())?.hashcode()
-							: undefined;
+						const block = !fromMe ? fromKey : undefined;
 						const path = this.routes.getPath(this.publicKeyHash, to, {
 							block, // prevent send message backwards
 						});
@@ -1357,23 +1355,30 @@ export abstract class DirectStream<
 					fanoutMap.clear();
 					break;
 				}
+
+				// update to's
+				let sentOnce = false;
+				if (fanoutMap.size > 0) {
+					for (const [neighbour, distantPeers] of fanoutMap) {
+						message.to = distantPeers;
+						const bytes = message.serialize();
+						if (!sentOnce) {
+							// if relayed = true, we have already added it to seenCache
+							if (!relayed) {
+								this.seenCache.add(await getMsgId(bytes));
+							}
+							sentOnce = true;
+						}
+
+						const stream = this.peers.get(neighbour);
+						await stream!.waitForWrite(bytes);
+					}
+					return; // we are done sending the message in all direction with updates 'to' lists
+				}
+				return;
 			}
 
-			// update to's
-			let first = true;
-			if (fanoutMap.size > 0) {
-				for (const [neighbour, distantPeers] of fanoutMap) {
-					message.to = distantPeers;
-					const bytes = message.serialize();
-					if (first && !relayed) {
-						this.seenCache.add(await getMsgId(bytes));
-						first = false;
-					}
-					const stream = this.peers.get(neighbour);
-					await stream?.waitForWrite(bytes);
-				}
-				return; // we are done sending the message in all direction with updates 'to' lists
-			}
+			// send to all
 		}
 
 		// We fils to send the message directly, instead fallback to floodsub
@@ -1388,13 +1393,25 @@ export abstract class DirectStream<
 		}
 
 		const bytes = message.serialize();
-		if (!relayed) {
-			this.seenCache.add(await getMsgId(bytes));
-		}
-
+		let sentOnce = false;
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
+			if (id.peerId.equals(from)) {
+				continue;
+			}
+
+			if (!sentOnce) {
+				sentOnce = true;
+				if (!relayed) {
+					// if relayed = true, we have already added it to seenCache
+					const msgId = await getMsgId(bytes);
+					this.seenCache.add(msgId);
+				}
+			}
 			await id.waitForWrite(bytes);
+		}
+		if (!sentOnce && !relayed) {
+			throw new Error("Message did not have any valid recievers. ");
 		}
 	}
 
