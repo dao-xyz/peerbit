@@ -30,7 +30,7 @@ import {
 	Program,
 	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
