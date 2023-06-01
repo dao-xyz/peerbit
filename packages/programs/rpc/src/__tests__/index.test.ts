@@ -2,7 +2,7 @@ import { v4 as uuid } from "uuid";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { RPC, RPCResponse } from "../index.js";
+import { RPC, RPCResponse, queryAll } from "../index.js";
 import { Ed25519Identity } from "@dao-xyz/peerbit-log";
 import {
 	ObserverType,
@@ -222,6 +222,118 @@ describe("rpc", () => {
 		const t1 = +new Date();
 		expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
 		expect(results).toHaveLength(1);
+	});
+
+	describe("queryAll", () => {
+		let session: LSession, clients: RPCTest[];
+
+		beforeEach(async () => {
+			session = await LSession.connected(3);
+
+			const t = new RPCTest();
+			t.query = new RPC();
+
+			clients = [];
+			for (let i = 0; i < session.peers.length; i++) {
+				const c = deserialize(serialize(t), RPCTest);
+				await c.init(session.peers[i], await createIdentity(), {
+					role: new ReplicatorType(),
+				});
+				await c.setup();
+				clients.push(c);
+			}
+
+			for (let i = 0; i < session.peers.length; i++) {
+				await waitForSubscribers(
+					session.peers[i],
+					session.peers.filter((p, ix) => i !== ix).map((x) => x.peerId),
+					responder.query.rpcTopic
+				);
+			}
+		});
+
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("none", async () => {
+			let r: RPCResponse<Body>[][] = [];
+
+			// groups = [[me, 1, 2]]
+			await queryAll(
+				clients[0].query,
+				[session.peers.map((x) => x.services.pubsub.publicKeyHash)],
+				new Body({ arr: new Uint8Array([1]) }),
+				(e) => {
+					r.push(e);
+				}
+			);
+			expect(r).toHaveLength(0); // because I am in the group, and it does not make sense then to query someone else
+		});
+
+		it("one of", async () => {
+			let r: RPCResponse<Body>[][] = [];
+			await queryAll(
+				clients[0].query,
+				[
+					session.peers
+						.filter((x, ix) => ix !== 0)
+						.map((x) => x.services.pubsub.publicKeyHash),
+				],
+				new Body({ arr: new Uint8Array([1]) }),
+				(e) => {
+					r.push(e);
+				}
+			);
+			expect(r).toHaveLength(1);
+			expect(r[0]).toHaveLength(1);
+		});
+
+		it("series", async () => {
+			const fn = async (i: number) => {
+				let r: RPCResponse<Body>[][] = [];
+				await queryAll(
+					clients[i].query,
+					session.peers.map((x) => [x.services.pubsub.publicKeyHash]),
+					new Body({ arr: new Uint8Array([1]) }),
+					(e) => {
+						r.push(e);
+					}
+				);
+				expect(r).toHaveLength(1);
+				expect(r[0]).toHaveLength(2);
+			};
+			for (let i = 0; i < 100; i++) {
+				await fn(i % session.peers.length);
+			}
+		});
+
+		it("concurrently", async () => {
+			let promises: Promise<any>[] = [];
+			for (let i = 0; i < 100; i++) {
+				const fn = async () => {
+					let r: RPCResponse<Body>[][] = [];
+					try {
+						await queryAll(
+							clients[i % session.peers.length].query,
+							session.peers.map((x) => [x.services.pubsub.publicKeyHash]),
+							new Body({ arr: new Uint8Array([1]) }),
+							(e) => {
+								r.push(e);
+							}
+						);
+
+						expect(r).toHaveLength(1);
+						expect(r[0]).toHaveLength(2);
+					} catch (error) {
+						console.error(i);
+						throw error;
+					}
+				};
+				promises.push(fn());
+			}
+			await Promise.all(promises);
+		});
 	});
 
 	/* it("amount", async () => {
