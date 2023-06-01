@@ -779,12 +779,12 @@ export class DocumentIndex<T> extends ComposableProgram {
 							this._query
 								.send(collectRequest, {
 									...options,
-									stopper: (s) => stopperFns.push(s),
+									stopper: (fn) => stopperFns.push(fn),
 									to: [peer],
 								})
 								.then((response) =>
 									introduceEntries(response, this.type, this._sync, options)
-										.then((responses) =>
+										.then((responses) => {
 											responses.map((response) => {
 												resultsLeft += Number(response.response.kept);
 												if (!response.from) {
@@ -812,8 +812,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 															})
 													);
 												}
-											})
-										)
+											});
+										})
 										.catch((e) => {
 											logger.error(
 												"Failed to collect sorted results from: " +
