@@ -423,7 +423,6 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 
 			const isFromSelf = this.components.peerId.equals(from);
 			if (!isFromSelf || this.emitSelf) {
-				//	const isForAll = message.to.length === 0;
 				let isForMe: boolean;
 				if (pubsubMessage.strict) {
 					isForMe =
