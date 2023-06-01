@@ -286,7 +286,9 @@ describe("streams", function () {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[2].stream.components.peerId],
 				});
-				await waitFor(() => metrics[2].recieved.length === 1);
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
 				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(metrics[2].recieved).toHaveLength(1);
@@ -298,10 +300,11 @@ describe("streams", function () {
 				await metrics[0].stream.publish(bigData, {
 					to: [metrics[2].stream.components.peerId],
 				});
-				await waitFor(() => metrics[2].recieved.length === 1, {
-					delayInterval: 10,
-					timeout: 10 * 1000,
-				});
+
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
+
 				expect(new Uint8Array(metrics[2].recieved[0].data)).toHaveLength(
 					bigData.length
 				);
@@ -325,10 +328,10 @@ describe("streams", function () {
 					to: [metrics[2].stream.components.peerId],
 				});
 				metrics[1].messages = [];
-				await waitFor(() => metrics[2].recieved.length === 1, {
-					delayInterval: 10,
-					timeout: 10 * 1000,
-				});
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
+
 				expect(
 					metrics[1].messages.filter((x) => x instanceof DataMessage)
 				).toHaveLength(0);
