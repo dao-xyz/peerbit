@@ -602,25 +602,6 @@ describe("streams", function () {
 					await waitForPeerStreams(metrics[2].stream, metrics[4].stream);
 
 					await waitForResolved(() =>
-						expect(metrics[0].stream.routes.nodeCount).toEqual(4)
-					);
-					await waitForResolved(() =>
-						expect(metrics[1].stream.routes.nodeCount).toEqual(4)
-					);
-					await waitForResolved(() =>
-						expect(metrics[2].stream.routes.nodeCount).toEqual(4)
-					);
-					await waitForResolved(() =>
-						expect(metrics[3].stream.routes.nodeCount).toEqual(4)
-					);
-				});
-
-				afterEach(async () => {
-					await session.stop();
-				});
-
-				it("messages are only sent once to each peer", async () => {
-					await waitForResolved(() =>
 						expect(metrics[0].stream.routes.nodeCount).toEqual(5)
 					);
 					await waitForResolved(() =>
@@ -635,7 +616,13 @@ describe("streams", function () {
 					await waitForResolved(() =>
 						expect(metrics[4].stream.routes.nodeCount).toEqual(5)
 					);
+				});
 
+				afterEach(async () => {
+					await session.stop();
+				});
+
+				it("messages are only sent once to each peer", async () => {
 					metrics[0].stream.publish(data, {
 						to: [
 							metrics[3].stream.publicKeyHash,
