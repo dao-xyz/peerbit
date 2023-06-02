@@ -1,6 +1,6 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import {
-	DocumentQuery,
+	SearchRequest,
 	Documents,
 	Operation,
 	PutOperation,
@@ -229,7 +229,7 @@ export class TrustedNetwork extends Program {
 		if (this.trustGraph.role instanceof ReplicatorType) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
-			this.trustGraph.index.query(new DocumentQuery({ queries: [] }), {
+			this.trustGraph.index.query(new SearchRequest({ queries: [] }), {
 				remote: { sync: true },
 			});
 			return this._isTrustedLocal(trustee, truster);

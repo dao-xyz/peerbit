@@ -155,6 +155,7 @@ describe("streams", function () {
 						?.pingLatency! < 1000
 			);
 		});
+		// TODO add test to make sure Hello's are not resent uneccessary amount of times
 
 		it("ping interval", async () => {
 			// 0 and 2 not connected
@@ -255,21 +256,39 @@ describe("streams", function () {
 			});
 
 			it("1->2", async () => {
+				metrics[0].seen.clear();
+				metrics[1].seen.clear();
+				metrics[2].seen.clear();
+
 				await metrics[0].stream.publish(data, {
 					to: [metrics[1].stream.components.peerId],
 				});
 				await waitFor(() => metrics[1].recieved.length === 1);
-				expect(new Uint8Array(metrics[1].recieved[0].data)).toEqual(data);
+				let recievedMessage = metrics[1].recieved[0];
+				expect(new Uint8Array(recievedMessage.data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(metrics[1].recieved).toHaveLength(1);
 				expect(metrics[2].recieved).toHaveLength(0);
+
+				// Never seen a message twice
+				expect(
+					[...metrics[0].seen.values()].find((x) => x > 1)
+				).toBeUndefined();
+				expect(
+					[...metrics[1].seen.values()].find((x) => x > 1)
+				).toBeUndefined();
+				expect(
+					[...metrics[2].seen.values()].find((x) => x > 1)
+				).toBeUndefined();
 			});
 
 			it("1->3", async () => {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[2].stream.components.peerId],
 				});
-				await waitFor(() => metrics[2].recieved.length === 1);
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
 				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(metrics[2].recieved).toHaveLength(1);
@@ -281,16 +300,33 @@ describe("streams", function () {
 				await metrics[0].stream.publish(bigData, {
 					to: [metrics[2].stream.components.peerId],
 				});
-				await waitFor(() => metrics[2].recieved.length === 1, {
-					delayInterval: 10,
-					timeout: 10 * 1000,
-				});
+
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
+
 				expect(new Uint8Array(metrics[2].recieved[0].data)).toHaveLength(
 					bigData.length
 				);
 				expect(metrics[2].recieved).toHaveLength(1);
 				expect(metrics[1].recieved).toHaveLength(0);
 			});
+
+			it("1->3 still works even if routing is missing", async () => {
+				metrics[0].stream.routes.clear();
+				metrics[1].stream.routes.clear();
+				await metrics[0].stream.publish(data, {
+					to: [metrics[2].stream.components.peerId],
+				});
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
+				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				await delay(1000); // wait some more time to make sure we dont get more messages
+				expect(metrics[2].recieved).toHaveLength(1);
+				expect(metrics[1].recieved).toHaveLength(0);
+			});
+
 			it("publishes on direct stream, even path is longer", async () => {
 				await session.connect([[session.peers[0], session.peers[2]]]);
 				await waitForPeerStreams(metrics[0].stream, metrics[2].stream);
@@ -308,10 +344,10 @@ describe("streams", function () {
 					to: [metrics[2].stream.components.peerId],
 				});
 				metrics[1].messages = [];
-				await waitFor(() => metrics[2].recieved.length === 1, {
-					delayInterval: 10,
-					timeout: 10 * 1000,
-				});
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
+
 				expect(
 					metrics[1].messages.filter((x) => x instanceof DataMessage)
 				).toHaveLength(0);
@@ -341,12 +377,17 @@ describe("streams", function () {
 						metrics[0].stream.routes.graph
 					);
 
+				let link02 = metrics[0].stream.routes.getLink(
+					metrics[0].stream.publicKeyHash,
+					metrics[2].stream.publicKeyHash
+				);
+
 				// make path long
 				metrics[0].stream.routes.graph.getEdgeAttribute = (
 					edge: unknown,
 					name: any
 				) => {
-					if (edge === link) {
+					if (edge === link02) {
 						return 1e5;
 					}
 					return defaultEdgeWeightFnPeer0(edge, name);
@@ -358,25 +399,23 @@ describe("streams", function () {
 
 				metrics[1].messages = [];
 
-				await waitFor(
-					() =>
+				await waitForResolved(() =>
+					expect(
 						metrics[1].messages.filter((x) => x instanceof DataMessage)
-							.length === 1
+					).toHaveLength(1)
 				); // will send through peer [1] since path [0] -> [2] -> [3] directly is currently longer
-				await waitFor(() => metrics[3].recieved.length === 1);
+				await waitForResolved(() =>
+					expect(metrics[3].recieved).toHaveLength(1)
+				);
 
 				metrics[1].messages = [];
 
 				// Make [0] -> [2] path short
-				let link = metrics[0].stream.routes.getLink(
-					metrics[0].stream.publicKeyHash,
-					metrics[2].stream.publicKeyHash
-				);
 				metrics[0].stream.routes.graph.getEdgeAttribute = (
 					edge: unknown,
 					name: any
 				) => {
-					if (edge === link) {
+					if (edge === link02) {
 						return 0;
 					}
 					return defaultEdgeWeightFnPeer0(edge, name);
@@ -401,7 +440,112 @@ describe("streams", function () {
 		});
 
 		describe("fanout", () => {
-			/** 
+			describe("basic", () => {
+				let session: TestSession;
+				let metrics: ReturnType<typeof createMetrics>[];
+
+				beforeAll(async () => {});
+
+				beforeEach(async () => {
+					session = await connected(3, {
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { autoDial: false },
+								}),
+						},
+					});
+					metrics = [];
+					for (const peer of session.peers) {
+						metrics.push(createMetrics(peer.services.directstream));
+					}
+
+					await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
+				});
+
+				afterEach(async () => {
+					await session.stop();
+				});
+
+				/**
+				 * If tests below fails, dead-locks can apphear in unpredictable ways
+				 */
+				it("will not publish to from when explicitly providing to", async () => {
+					const msg = new DataMessage({ data: new Uint8Array([0]) });
+					await msg.sign(metrics[1].stream.sign);
+					metrics[2].stream.canRelayMessage = false; // so that 2 does not relay to 0
+					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg, [
+						metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!,
+						metrics[1].stream.peers.get(metrics[2].stream.publicKeyHash)!,
+					]);
+					const msgId = await getMsgId(msg.serialize());
+					await waitForResolved(() =>
+						expect(metrics[2].seen.get(msgId)).toEqual(1)
+					);
+
+					await delay(1000); // wait for more messages eventually propagate
+					expect(metrics[0].seen.get(msgId)).toBeUndefined();
+					expect(metrics[1].seen.get(msgId)).toBeUndefined();
+				});
+
+				it("to in message will not send back", async () => {
+					const msg = new DataMessage({
+						data: new Uint8Array([0]),
+						to: [
+							metrics[0].stream.publicKeyHash,
+							metrics[2].stream.publicKeyHash,
+						],
+					});
+					await msg.sign(metrics[1].stream.sign);
+					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg);
+					await delay(1000);
+					const msgId = await getMsgId(msg.serialize());
+					expect(metrics[0].seen.get(msgId)).toBeUndefined();
+					expect(metrics[1].seen.get(msgId)).toBeUndefined();
+					expect(metrics[2].seen.get(msgId)).toEqual(1);
+				});
+
+				it("rejects when to peers is from", async () => {
+					const msg = new DataMessage({ data: new Uint8Array([0]) });
+					await msg.sign(metrics[1].stream.sign);
+					await expect(
+						metrics[1].stream.publishMessage(session.peers[0].peerId, msg, [
+							metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!,
+						])
+					).rejects.toThrowError("Message did not have any valid recievers");
+				});
+				it("rejects when only to is from", async () => {
+					const msg = new DataMessage({
+						data: new Uint8Array([0]),
+						to: [metrics[1].stream.publicKeyHash],
+					});
+					await msg.sign(metrics[1].stream.sign);
+					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg);
+					const msgId = await getMsgId(msg.serialize());
+					await delay(1000);
+					expect(metrics[0].seen.get(msgId)).toBeUndefined();
+					expect(metrics[1].seen.get(msgId)).toBeUndefined();
+					expect(metrics[2].seen.get(msgId)).toBeUndefined();
+				});
+
+				it("will send through peer", async () => {
+					await session.peers[0].hangUp(session.peers[1].peerId);
+
+					// send a message with to=[2]
+					// make sure message is received
+					const msg = new DataMessage({
+						data: new Uint8Array([0]),
+						to: [metrics[2].stream.publicKeyHash],
+					});
+					await msg.sign(metrics[1].stream.sign);
+					await metrics[0].stream.publishMessage(session.peers[0].peerId, msg);
+					await waitForResolved(() =>
+						expect(metrics[2].recieved).toHaveLength(1)
+					);
+				});
+			});
+			describe("1->2->2", () => {
+				/** 
 			┌─────┐ 
 			│0    │ 
 			└┬───┬┘ 
@@ -419,85 +563,86 @@ describe("streams", function () {
 			└──┘└──┘
 			*/
 
-			let session: TestSession;
-			let metrics: ReturnType<typeof createMetrics>[];
-			const data = new Uint8Array([1, 2, 3]);
+				let session: TestSession;
+				let metrics: ReturnType<typeof createMetrics>[];
+				const data = new Uint8Array([1, 2, 3]);
 
-			beforeAll(async () => {});
+				beforeAll(async () => {});
 
-			beforeEach(async () => {
-				session = await disconnected(5, {
-					services: {
-						directstream: (c) =>
-							new TestDirectStream(c, {
-								connectionManager: { autoDial: false },
-							}),
-					},
+				beforeEach(async () => {
+					session = await disconnected(5, {
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { autoDial: false },
+								}),
+						},
+					});
+					metrics = [];
+					for (const peer of session.peers) {
+						metrics.push(createMetrics(peer.services.directstream));
+					}
+					await session.connect([
+						// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+						[session.peers[0], session.peers[1]],
+						[session.peers[0], session.peers[2]],
+
+						[session.peers[1], session.peers[3]],
+						[session.peers[1], session.peers[4]],
+
+						[session.peers[2], session.peers[3]],
+						[session.peers[2], session.peers[4]],
+					]);
+
+					await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
+					await waitForPeerStreams(metrics[0].stream, metrics[2].stream);
+					await waitForPeerStreams(metrics[1].stream, metrics[3].stream);
+					await waitForPeerStreams(metrics[1].stream, metrics[4].stream);
+					await waitForPeerStreams(metrics[2].stream, metrics[3].stream);
+					await waitForPeerStreams(metrics[2].stream, metrics[4].stream);
+
+					await waitForResolved(() =>
+						expect(metrics[0].stream.routes.nodeCount).toEqual(5)
+					);
+					await waitForResolved(() =>
+						expect(metrics[1].stream.routes.nodeCount).toEqual(5)
+					);
+					await waitForResolved(() =>
+						expect(metrics[2].stream.routes.nodeCount).toEqual(5)
+					);
+					await waitForResolved(() =>
+						expect(metrics[3].stream.routes.nodeCount).toEqual(5)
+					);
+					await waitForResolved(() =>
+						expect(metrics[4].stream.routes.nodeCount).toEqual(5)
+					);
 				});
-				metrics = [];
-				for (const peer of session.peers) {
-					metrics.push(createMetrics(peer.services.directstream));
-				}
-				await session.connect([
-					// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
-					[session.peers[0], session.peers[1]],
-					[session.peers[0], session.peers[2]],
 
-					[session.peers[1], session.peers[3]],
-					[session.peers[1], session.peers[4]],
-
-					[session.peers[2], session.peers[3]],
-					[session.peers[2], session.peers[4]],
-				]);
-
-				await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
-				await waitForPeerStreams(metrics[0].stream, metrics[2].stream);
-				await waitForPeerStreams(metrics[1].stream, metrics[3].stream);
-				await waitForPeerStreams(metrics[1].stream, metrics[4].stream);
-				await waitForPeerStreams(metrics[2].stream, metrics[3].stream);
-				await waitForPeerStreams(metrics[2].stream, metrics[4].stream);
-			});
-
-			afterEach(async () => {
-				await session.stop();
-			});
-
-			it("messages are only sent once to each peer", async () => {
-				await waitForResolved(() =>
-					expect(metrics[0].stream.routes.nodeCount).toEqual(5)
-				);
-				await waitForResolved(() =>
-					expect(metrics[1].stream.routes.nodeCount).toEqual(5)
-				);
-				await waitForResolved(() =>
-					expect(metrics[2].stream.routes.nodeCount).toEqual(5)
-				);
-				await waitForResolved(() =>
-					expect(metrics[3].stream.routes.nodeCount).toEqual(5)
-				);
-				await waitForResolved(() =>
-					expect(metrics[4].stream.routes.nodeCount).toEqual(5)
-				);
-
-				metrics[0].stream.publish(data, {
-					to: [
-						metrics[3].stream.publicKeyHash,
-						metrics[4].stream.publicKeyHash,
-					],
+				afterEach(async () => {
+					await session.stop();
 				});
-				await waitForResolved(() =>
-					expect(metrics[3].recieved).toHaveLength(1)
-				);
-				await waitForResolved(() =>
-					expect(metrics[4].recieved).toHaveLength(1)
-				);
 
-				const id1 = await getMsgId(serialize(metrics[3].recieved[0]));
+				it("messages are only sent once to each peer", async () => {
+					metrics[0].stream.publish(data, {
+						to: [
+							metrics[3].stream.publicKeyHash,
+							metrics[4].stream.publicKeyHash,
+						],
+					});
+					await waitForResolved(() =>
+						expect(metrics[3].recieved).toHaveLength(1)
+					);
+					await waitForResolved(() =>
+						expect(metrics[4].recieved).toHaveLength(1)
+					);
 
-				await delay(3000); // Wait some extra time if additional messages are propagating throughß
+					const id1 = await getMsgId(serialize(metrics[3].recieved[0]));
 
-				expect(metrics[3].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
-				expect(metrics[4].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
+					await delay(3000); // Wait some extra time if additional messages are propagating throughß
+
+					expect(metrics[3].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
+					expect(metrics[4].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
+				});
 			});
 		});
 	});
@@ -929,9 +1074,9 @@ describe("streams", function () {
 			┌▽┐
 			│2│
 			└─┘
-	
+		
 			< 2 connects with 3 >
-	
+		
 			┌─┐
 			│3│
 			└△┘

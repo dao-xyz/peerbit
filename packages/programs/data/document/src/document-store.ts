@@ -249,7 +249,7 @@ export class Documents<
 			: (
 					await this._index.getDetailed(key, {
 						local: true,
-						remote: { sync: true },
+						remote: { sync: true }, // only query remote if we know they exist
 					})
 			  )?.[0]?.results[0];
 

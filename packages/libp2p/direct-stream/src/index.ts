@@ -48,10 +48,9 @@ export {
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 import type { AddressManager } from "@libp2p/interface-address-manager";
 
-import { sha256Base64 } from "@dao-xyz/peerbit-crypto";
 import { logger } from "./logger.js";
 import { Cache } from "@dao-xyz/cache";
-import { TopologyImpl, createTopology } from "./topology.js";
+import { createTopology } from "./topology.js";
 export { logger };
 import type { Libp2pEvents } from "@libp2p/interface-libp2p";
 export interface PeerStreamsInit {
@@ -429,48 +428,6 @@ export abstract class DirectStream<
 
 		// register protocol with topology
 		// Topology callbacks called on connection manager changes
-
-		// TODO remove when https://github.com/libp2p/js-libp2p/issues/1755 fixed
-		this.components.events.removeEventListener(
-			"connection:close",
-			this.components.registrar["_onDisconnect"]
-		);
-		this.components.registrar["_onDisconnect"] = (
-			evt: CustomEvent<Connection>
-		): void => {
-			const connection = evt.detail;
-			void this.components.peerStore
-				.get(connection.remotePeer)
-				.then((peer) => {
-					for (const protocol of peer.protocols) {
-						const topologies =
-							this.components.registrar.getTopologies(protocol);
-						if (topologies == null) {
-							// no topologies are interested in this protocol
-							continue;
-						}
-
-						for (const topology of topologies.values()) {
-							(topology as TopologyImpl).onDisconnect(
-								connection.remotePeer,
-								connection
-							);
-						}
-					}
-				})
-				.catch((err) => {
-					console.error(
-						"could not inform topologies of disconnecting peer %p",
-						connection.remotePeer,
-						err
-					);
-				});
-		};
-		this.components.events.addEventListener(
-			"connection:close",
-			this.components.registrar["_onDisconnect"]
-		);
-
 		this._registrarTopologyIds = await Promise.all(
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.register(multicodec, this.topology)
@@ -1061,9 +1018,7 @@ export abstract class DirectStream<
 			if (isForAll || isForMe) {
 				if (
 					this.signaturePolicy === "StictSign" &&
-					(!(await message.verify(this.signaturePolicy === "StictSign"))
-						? true
-						: false)
+					!(await message.verify(this.signaturePolicy === "StictSign"))
 				) {
 					// we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
 					logger.warn("Recieved message with invalid signature or timestamp");
@@ -1344,16 +1299,20 @@ export abstract class DirectStream<
 		relayed?: boolean
 	): Promise<void> {
 		if (message instanceof DataMessage && !to) {
-			const meTo = message.to.findIndex(
-				(value) => value === this.publicKeyHash
-			);
-			if (meTo >= 0) {
-				message.to.splice(meTo, 1); // Delete me from to list
-			}
-
+			// message.to can be distant peers, but "to" are neighbours
 			const fanoutMap = new Map<string, string[]>();
+
+			// Message to > 0
 			if (message.to.length > 0) {
+				const missingPathsFor: string[] = [];
 				for (const to of message.to) {
+					const fromKey = this.peerIdToPublicKey
+						.get(from.toString())
+						?.hashcode();
+					if (to === this.publicKeyHash || fromKey === to) {
+						continue; // don't send to me or backwards
+					}
+
 					const directStream = this.peers.get(to);
 					if (directStream) {
 						// always favor direct stream, even path seems longer
@@ -1366,9 +1325,7 @@ export abstract class DirectStream<
 						continue;
 					} else {
 						const fromMe = from.equals(this.components.peerId);
-						const block = !fromMe
-							? this.peerIdToPublicKey.get(from.toString())?.hashcode()
-							: undefined;
+						const block = !fromMe ? fromKey : undefined;
 						const path = this.routes.getPath(this.publicKeyHash, to, {
 							block, // prevent send message backwards
 						});
@@ -1392,6 +1349,8 @@ export abstract class DirectStream<
 								fanout.push(to);
 								continue;
 							}
+						} else {
+							missingPathsFor.push(to);
 						}
 					}
 
@@ -1399,22 +1358,31 @@ export abstract class DirectStream<
 					fanoutMap.clear();
 					break;
 				}
-			}
 
-			// update to's
-			let first = true;
-			if (fanoutMap.size > 0) {
-				for (const [neighbour, distantPeers] of fanoutMap) {
-					message.to = distantPeers;
-					const bytes = message.serialize();
-					if (first && !relayed) {
-						this.seenCache.add(await getMsgId(bytes));
-						first = false;
+				// update to's
+				let sentOnce = false;
+				if (missingPathsFor.length === 0) {
+					if (fanoutMap.size > 0) {
+						for (const [neighbour, distantPeers] of fanoutMap) {
+							message.to = distantPeers;
+							const bytes = message.serialize();
+							if (!sentOnce) {
+								// if relayed = true, we have already added it to seenCache
+								if (!relayed) {
+									this.seenCache.add(await getMsgId(bytes));
+								}
+								sentOnce = true;
+							}
+
+							const stream = this.peers.get(neighbour);
+							await stream!.waitForWrite(bytes);
+						}
+						return; // we are done sending the message in all direction with updates 'to' lists
 					}
-					const stream = this.peers.get(neighbour);
-					await stream?.waitForWrite(bytes);
+					return;
 				}
-				return; // we are done sending the message in all direction with updates 'to' lists
+
+				// else send to all (fallthrough to code below)
 			}
 		}
 
@@ -1430,13 +1398,25 @@ export abstract class DirectStream<
 		}
 
 		const bytes = message.serialize();
-		if (!relayed) {
-			this.seenCache.add(await getMsgId(bytes));
-		}
-
+		let sentOnce = false;
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
+			if (id.peerId.equals(from)) {
+				continue;
+			}
+
+			if (!sentOnce) {
+				sentOnce = true;
+				if (!relayed) {
+					// if relayed = true, we have already added it to seenCache
+					const msgId = await getMsgId(bytes);
+					this.seenCache.add(msgId);
+				}
+			}
 			await id.waitForWrite(bytes);
+		}
+		if (!sentOnce && !relayed) {
+			throw new Error("Message did not have any valid recievers. ");
 		}
 	}
 

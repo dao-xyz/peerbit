@@ -7,14 +7,12 @@ import {
 	AccessError,
 	Ed25519Keypair,
 	randomBytes,
-	sha256Sync,
 } from "@dao-xyz/peerbit-crypto";
 import {
 	Documents,
 	DocumentIndex,
-	DocumentQuery,
+	SearchRequest,
 	StringMatch,
-	Results,
 } from "@dao-xyz/peerbit-document";
 import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
@@ -443,7 +441,7 @@ describe("index", () => {
 
 			const q = async (): Promise<Document[]> => {
 				return l0b.store.index.query(
-					new DocumentQuery({
+					new SearchRequest({
 						queries: [
 							new StringMatch({
 								key: "id",
@@ -536,7 +534,7 @@ describe("index", () => {
 		await waitFor(() => l0b.accessController.access.index.size === 1);
 
 		let results: Document[] = await l0b.accessController.access.index.query(
-			new DocumentQuery({
+			new SearchRequest({
 				queries: [],
 			}),
 			{

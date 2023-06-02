@@ -31,13 +31,13 @@ describe("query", () => {
 		writeStore: DString,
 		observerStore: DString;
 
-	beforeAll(async () => {
+	beforeEach(async () => {
+		// we reinit sesion for every test since DString does always have same address
+		// and that might lead to sideeffects running all tests in one go
 		session = await LSession.connected(2);
 		observer = session.peers[0];
 		writer = session.peers[1];
-	});
 
-	beforeEach(async () => {
 		// Create store
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
@@ -71,14 +71,10 @@ describe("query", () => {
 	});
 
 	afterEach(async () => {
-		await writeStore.close();
-		await observerStore.close();
-	});
-
-	afterAll(async () => {
+		await writeStore.drop();
+		await observerStore.drop();
 		await session.stop();
 	});
-
 	it("match all", async () => {
 		await writeStore.add(
 			"hello",
@@ -176,7 +172,9 @@ describe("query", () => {
 		let callbackValues: string[] = [];
 		const string = await observerStore.toString({
 			remote: {
-				callback: (s) => callbackValues.push(s),
+				callback: (s) => {
+					callbackValues.push(s);
+				},
 				queryOptions: { amount: 1 },
 			},
 		});

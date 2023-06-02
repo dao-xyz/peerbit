@@ -7,7 +7,7 @@ import {
 	IntegerCompare,
 	ByteMatchQuery,
 	StringMatch,
-	DocumentQuery,
+	SearchRequest,
 	Query,
 	ResultWithSource,
 	StateFieldQuery,
@@ -19,6 +19,11 @@ import {
 	And,
 	Or,
 	BoolQuery,
+	Sort,
+	CollectNextRequest,
+	AbstractSearchRequest,
+	SearchSortedRequest,
+	SortDirection,
 } from "./query.js";
 import {
 	CanRead,
@@ -31,7 +36,8 @@ import {
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import { Log } from "@dao-xyz/peerbit-log";
-import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
+import { Cache } from "@dao-xyz/cache";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -109,7 +115,7 @@ export interface IndexedValue<T> {
 
 export type RemoteQueryOptions<R> = RPCOptions<R> & { sync?: boolean };
 export type QueryOptions<R> = {
-	onResponse?: (response: Results<R>) => void;
+	onResponse?: (response: Results<R>, from?: PublicSignKey) => void;
 	remote?: boolean | RemoteQueryOptions<Results<R>>;
 	local?: boolean;
 };
@@ -119,10 +125,84 @@ export type Indexable<T> = (
 	entry: Entry<Operation<T>>
 ) => Record<string, any>;
 
+const extractFieldValue = <T>(doc: any, path: string[]): T => {
+	for (let i = 0; i < path.length; i++) {
+		doc = doc[path[i]];
+	}
+	return doc;
+};
+
+export type ResultsIterator<T> = {
+	return: () => void;
+	next: (number: number) => Promise<T[]>;
+	done: () => boolean;
+};
+
+const sortCompare = (av: any, bv: any) => {
+	if (typeof av === "string" && typeof bv === "string") {
+		return av.localeCompare(bv);
+	}
+	if (av < bv) {
+		return -1;
+	} else if (av > bv) {
+		return 1;
+	}
+	return 0;
+};
+const extractSortCompare = (a: any, b: any, sorts: Sort[]) => {
+	for (const sort of sorts) {
+		const av = extractFieldValue(a, sort.key);
+		const bv = extractFieldValue(b, sort.key);
+		const cmp = sortCompare(av, bv);
+		if (cmp != 0) {
+			if (sort.direction === SortDirection.ASC) {
+				return cmp;
+			} else {
+				return -cmp;
+			}
+		}
+	}
+	return 0;
+};
+const introduceEntries = async <T>(
+	responses: RPCResponse<Results<T>>[],
+	type: AbstractType<T>,
+	sync: (result: Results<T>) => Promise<void>,
+	options?: QueryOptions<T>
+): Promise<RPCResponse<Results<T>>[]> => {
+	return Promise.all(
+		responses.map(async (x) => {
+			x.response.results.forEach((r) => r.init(type));
+			if (typeof options?.remote !== "boolean" && options?.remote?.sync) {
+				await sync(x.response);
+			}
+			if (!x.from) {
+				logger.error("Missing from for response");
+			}
+			options?.onResponse && options.onResponse(x.response, x.from!);
+			return x;
+		})
+	);
+};
+
+const dedup = <T>(allResult: T[], dedupBy: string) => {
+	const unique: Set<Keyable> = new Set();
+	const dedup: T[] = [];
+	for (const result of allResult) {
+		const key = asString(result[dedupBy]);
+		if (unique.has(key)) {
+			continue;
+		}
+		unique.add(key);
+		dedup.push(result);
+	}
+	return dedup;
+};
+
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
 	@field({ type: RPC })
-	_query: RPC<DocumentQuery, Results<T>>;
+	_query: RPC<AbstractSearchRequest, Results<T>>;
 
 	@field({ type: "string" })
 	indexBy: string;
@@ -135,8 +215,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 	private _log: Log<Operation<T>>;
 	private _toIndex: Indexable<T>;
 
+	private _resultsCollectQueue: Cache<{ value: T; context: Context }[]>;
+
 	constructor(properties: {
-		query?: RPC<DocumentQuery, Results<T>>;
+		query?: RPC<SearchRequest, Results<T>>;
 		indexBy: string;
 	}) {
 		super();
@@ -169,6 +251,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		this._sync = properties.sync;
 		this._toIndex = properties.fields;
 		this._valueEncoding = BORSH_ENCODING(this.type);
+		this._resultsCollectQueue = new Cache({ max: 10000 }); // TODO choose limit better
 
 		await this._query.setup({
 			topic: this._log.idString + "/document",
@@ -177,17 +260,18 @@ export class DocumentIndex<T> extends ComposableProgram {
 				const results = await this.queryHandler(query);
 				return new Results({
 					// Even if results might have length 0, respond, because then we now at least there are no matching results
-					results: results.map(
+					results: results.results.map(
 						(r) =>
 							new ResultWithSource({
 								source: serialize(r.value),
 								context: r.context,
 							})
 					),
+					kept: BigInt(results.kept),
 				});
 			},
 			responseType: Results,
-			queryType: DocumentQuery,
+			queryType: AbstractSearchRequest,
 		});
 	}
 
@@ -205,14 +289,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 		let results: Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
-				new DocumentQuery({
+				new SearchRequest({
 					queries: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
-				})
+				}),
+				options
 			);
 		} else {
 			const stringValue = asString(key);
 			results = await this.queryDetailed(
-				new DocumentQuery({
+				new SearchRequest({
 					queries: [
 						new StringMatch({
 							key: [this.indexBy],
@@ -258,60 +343,104 @@ export class DocumentIndex<T> extends ComposableProgram {
 	}
 
 	async queryHandler(
-		query: DocumentQuery
-	): Promise<{ context: Context; value: T }[]> {
+		query: AbstractSearchRequest
+	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
 		if (
-			query.queries.length === 1 &&
-			(query.queries[0] instanceof ByteMatchQuery ||
-				query.queries[0] instanceof StringMatch) &&
-			query.queries[0].key.length === 1 &&
-			query.queries[0].key[0] === this.indexBy
+			query instanceof SearchRequest ||
+			query instanceof SearchSortedRequest
 		) {
-			const firstQuery = query.queries[0];
-			if (firstQuery instanceof ByteMatchQuery) {
-				const doc = this._index.get(asString(firstQuery.value)); // TODO could there be a issue with types here?
-				return doc
-					? [
-							{
-								value: await this.getDocument(doc),
-								context: doc.context,
-							},
-					  ]
-					: [];
-			} else if (
-				firstQuery instanceof StringMatch &&
-				firstQuery.method === StringMatchMethod.exact &&
-				firstQuery.caseInsensitive === false
+			if (
+				query.queries.length === 1 &&
+				(query.queries[0] instanceof ByteMatchQuery ||
+					query.queries[0] instanceof StringMatch) &&
+				query.queries[0].key.length === 1 &&
+				query.queries[0].key[0] === this.indexBy
 			) {
-				const doc = this._index.get(firstQuery.value); // TODO could there be a issue with types here?
-				return doc
-					? [
-							{
-								value: await this.getDocument(doc),
-								context: doc.context,
-							},
-					  ]
-					: [];
-			}
-		}
-
-		return this._queryDocuments((doc) => {
-			for (const f of query.queries) {
-				if (!this.handleQueryObject(f, doc)) {
-					return false;
+				const firstQuery = query.queries[0];
+				if (firstQuery instanceof ByteMatchQuery) {
+					const doc = this._index.get(asString(firstQuery.value)); // TODO could there be a issue with types here?
+					return doc
+						? {
+								results: [
+									{
+										value: await this.getDocument(doc),
+										context: doc.context,
+									},
+								],
+								kept: 0,
+						  }
+						: { results: [], kept: 0 };
+				} else if (
+					firstQuery instanceof StringMatch &&
+					firstQuery.method === StringMatchMethod.exact &&
+					firstQuery.caseInsensitive === false
+				) {
+					const doc = this._index.get(firstQuery.value); // TODO could there be a issue with types here?
+					return doc
+						? {
+								results: [
+									{
+										value: await this.getDocument(doc),
+										context: doc.context,
+									},
+								],
+								kept: 0,
+						  }
+						: { results: [], kept: 0 };
 				}
 			}
-			return true;
-		});
+
+			const results = await this._queryDocuments((doc) => {
+				for (const f of query.queries) {
+					if (!this.handleQueryObject(f, doc)) {
+						return false;
+					}
+				}
+				return true;
+			});
+
+			if (query instanceof SearchSortedRequest) {
+				if (query.sort.length === 0) {
+					query.sort = [
+						new Sort({ key: this.indexBy, direction: SortDirection.ASC }),
+					];
+				}
+
+				// Sort?
+				results.sort((a, b) =>
+					extractSortCompare(a.value, b.value, query.sort)
+				);
+				const batch = results.splice(0, query.initialAmount);
+				this._resultsCollectQueue.add(query.idString, results);
+				return { results: batch, kept: results.length }; // Only return 1 result since we are doing distributed sort, TODO buffer more initially
+			}
+			return { results, kept: 0 };
+		} else if (query instanceof CollectNextRequest) {
+			const results = this._resultsCollectQueue.get(query.idString);
+
+			if (!results) {
+				return {
+					results: [],
+					kept: 0,
+				};
+			}
+
+			if (results.length === 0) {
+				this._resultsCollectQueue.del(query.idString); // TODO add tests for proper cleanup/timeouts
+			}
+
+			const batch = results.splice(0, query.amount);
+
+			return { results: batch, kept: results.length };
+		}
+
+		throw new Error("Unsupported");
 	}
 
 	private handleQueryObject(f: Query, doc: IndexedValue<T>) {
 		if (f instanceof StateFieldQuery) {
-			let fv: any = doc.value;
-			for (let i = 0; i < f.key.length; i++) {
-				fv = fv[f.key[i]];
-			}
+			const fv: any = extractFieldValue(doc.value, f.key);
 
 			if (f instanceof StringMatch) {
 				let compare = f.value;
@@ -403,7 +532,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	 * @returns
 	 */
 	public async queryDetailed(
-		queryRequest: DocumentQuery,
+		queryRequest: SearchRequest | SearchSortedRequest,
 		options?: QueryOptions<T>
 	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
@@ -428,10 +557,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 		if (local) {
 			const results = await this.queryHandler(queryRequest);
-			if (results.length > 0) {
+			if (results.results.length > 0) {
 				const resultsObject = new Results<T>({
 					results: await Promise.all(
-						results.map(async (r) => {
+						results.results.map(async (r) => {
 							const payloadValue = await (
 								await this._log.get(r.context.head)
 							)?.getPayloadValue();
@@ -445,26 +574,18 @@ export class DocumentIndex<T> extends ComposableProgram {
 							throw new Error("Unexpected");
 						})
 					),
+					kept: BigInt(results.kept),
 				});
-				options?.onResponse && options.onResponse(resultsObject);
+				options?.onResponse &&
+					options.onResponse(
+						resultsObject,
+						this.libp2p.services.pubsub.publicKey
+					);
 				allResults.push(resultsObject);
 			}
 		}
 
 		if (remote) {
-			const initFn = async (responses: RPCResponse<Results<T>>[]) => {
-				return Promise.all(
-					responses.map(async (x) => {
-						x.response.results.forEach((r) => r.init(this.type));
-						if (typeof options?.remote !== "boolean" && options?.remote?.sync) {
-							await this._sync(x.response);
-						}
-						options?.onResponse && options.onResponse(x.response);
-						return x.response;
-					})
-				);
-			};
-
 			const replicatorGroups = await this._log.replication?.replicators?.();
 			if (replicatorGroups) {
 				const fn = async () => {
@@ -472,8 +593,12 @@ export class DocumentIndex<T> extends ComposableProgram {
 					const responseHandler = async (
 						results: RPCResponse<Results<T>>[]
 					) => {
-						const resultsInitialized = await initFn(results);
-						rs.push(...resultsInitialized);
+						await introduceEntries(
+							results,
+							this.type,
+							this._sync,
+							options
+						).then((x) => x.forEach((y) => rs.push(y.response)));
 					};
 					try {
 						await queryAll(
@@ -492,11 +617,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 				};
 				promises.push(fn());
 			} else {
-				promises.push(
-					this._query
-						.send(queryRequest, remote)
-						.then((response) => initFn(response))
-				);
+				// TODO send without direction out to the world? or just assume we can insert?
+				/* 	promises.push(
+						this._query
+							.send(queryRequest, remote)
+							.then((results) => introduceEntries(results, this.type, this._sync, options).then(x => x.map(y => y.response)))
+					); */
+				/* throw new Error(
+					"Missing remote replicator info for performing distributed document query"
+				); */
 			}
 		}
 		const resolved = await Promise.all(promises);
@@ -519,24 +648,240 @@ export class DocumentIndex<T> extends ComposableProgram {
 	 * @returns
 	 */
 	public async query(
-		queryRequest: DocumentQuery,
+		queryRequest: SearchRequest,
 		options?: QueryOptions<T>
 	): Promise<T[]> {
 		const allResult = await this.queryDetailed(queryRequest, options);
 
 		// Deduplicate and return values directly
-		const unique: Set<Keyable> = new Set();
-		const dedup: T[] = [];
-		for (const result of allResult) {
-			for (const innerResult of result.results) {
-				const key = asString(innerResult.value[this.indexBy]);
-				if (unique.has(key)) {
+		return dedup(
+			allResult.map((x) => x.results.map((y) => y.value)).flat(),
+			this.indexBy
+		);
+	}
+
+	/**
+	 * Query and retrieve deduplicated results with sorting
+	 * @param queryRequest
+	 * @param options
+	 * @returns
+	 */
+	public async iterate(
+		queryRequest: SearchSortedRequest,
+		options?: QueryOptions<T>
+	): Promise<ResultsIterator<T>> {
+		let fetchPromise: Promise<any> | undefined = undefined;
+		const peerBufferMap: Map<
+			string,
+			{ kept: number; buffer: { value: T; from: PublicSignKey }[] }
+		> = new Map();
+		const visited = new Set<string>();
+
+		let done = true;
+
+		await this.queryDetailed(queryRequest, {
+			...options,
+			onResponse: (response, from) => {
+				if (!from) {
+					logger.error("Missing from for sorted query");
+					return;
+				}
+
+				if (response.kept === 0n && response.results.length === 0) {
+					return;
+				}
+
+				done = false;
+				peerBufferMap.set(from.hashcode(), {
+					buffer: response.results
+						.filter((x) => !visited.has(asString(x.value[this.indexBy])))
+						.map((x) => {
+							visited.add(asString(x.value[this.indexBy]));
+							return { from, value: x.value };
+						}),
+					kept: Number(response.kept),
+				});
+			},
+		});
+
+		// TODO handle join/leave while iterating
+		let stopperFns: (() => void)[] = [];
+
+		const peerBuffers = (): { value: T; from: PublicSignKey }[] => {
+			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
+		};
+
+		const fetchAtLeast = async (n: number) => {
+			if (done) {
+				return;
+			}
+
+			await fetchPromise;
+			const newPromises: Promise<any>[] = [];
+
+			stopperFns = [];
+
+			let resultsLeft = 0;
+
+			for (const [peer, buffer] of peerBufferMap) {
+				if (buffer.buffer.length < n) {
+					if (buffer.kept === 0) {
+						peerBufferMap.delete(peer);
+						continue;
+					}
+
+					// TODO buffer more than deleted?
+					// TODO batch to multiple 'to's
+					const collectRequest = new CollectNextRequest({
+						id: queryRequest.id,
+						amount: n - buffer.buffer.length,
+					});
+					// Fetch locally?
+					if (peer === this.libp2p.services.pubsub.publicKeyHash) {
+						newPromises.push(
+							this.queryHandler(collectRequest)
+								.then((results) => {
+									resultsLeft += results.kept;
+
+									if (results.results.length === 0) {
+										peerBufferMap.delete(peer); // No more results
+									} else {
+										const peerBuffer = peerBufferMap.get(peer);
+										if (!peerBuffer) {
+											return;
+										}
+										peerBuffer.kept = results.kept;
+										peerBuffer.buffer.push(
+											...results.results
+												.filter(
+													(x) => !visited.has(asString(x.value[this.indexBy]))
+												)
+												.map((x) => {
+													visited.add(asString(x.value[this.indexBy]));
+													return {
+														value: x.value,
+														from: this.libp2p.services.pubsub.publicKey,
+													};
+												})
+										);
+									}
+								})
+								.catch((e) => {
+									logger.error(
+										"Failed to collect sorted results self. " + e?.message
+									);
+									peerBufferMap.delete(peer);
+								})
+						);
+					} else {
+						// Fetch remotely
+						newPromises.push(
+							this._query
+								.send(collectRequest, {
+									...options,
+									stopper: (fn) => stopperFns.push(fn),
+									to: [peer],
+								})
+								.then((response) =>
+									introduceEntries(response, this.type, this._sync, options)
+										.then((responses) => {
+											responses.map((response) => {
+												resultsLeft += Number(response.response.kept);
+												if (!response.from) {
+													logger.error("Missing from for sorted query");
+													return;
+												}
+
+												if (response.response.results.length === 0) {
+													peerBufferMap.delete(peer); // No more results
+												} else {
+													const peerBuffer = peerBufferMap.get(peer);
+													if (!peerBuffer) {
+														return;
+													}
+													peerBuffer.kept = Number(response.response.kept);
+													peerBuffer.buffer.push(
+														...response.response.results
+															.filter(
+																(x) =>
+																	!visited.has(asString(x.value[this.indexBy]))
+															)
+															.map((x) => {
+																visited.add(asString(x.value[this.indexBy]));
+																return { value: x.value, from: response.from! };
+															})
+													);
+												}
+											});
+										})
+										.catch((e) => {
+											logger.error(
+												"Failed to collect sorted results from: " +
+													peer +
+													". " +
+													e?.message
+											);
+											peerBufferMap.delete(peer);
+										})
+								)
+						);
+					}
+				} else {
+					resultsLeft += peerBufferMap.get(peer)?.kept || 0;
+				}
+			}
+			return (fetchPromise = Promise.all(newPromises).then(() => {
+				return resultsLeft === 0; // 0 results left to fetch and 0 pending results
+			}));
+		};
+
+		const next = async (n: number) => {
+			if (n < 0) {
+				throw new Error("Expecting to fetch a positive amount of element");
+			}
+
+			if (n === 0) {
+				return [];
+			}
+
+			// TODO everything below is not very optimized
+			const fetchedAll = await fetchAtLeast(n);
+
+			// get n next top entries, shift and pull more results
+			const results = peerBuffers().sort((a, b) =>
+				extractSortCompare(a.value, b.value, queryRequest.sort)
+			);
+			const pendingMoreResults = n < results.length;
+			const batch = results.splice(0, n);
+			for (const result of batch) {
+				const arr = peerBufferMap.get(result.from.hashcode());
+				if (!arr) {
+					logger.error("Unexpected empty result buffer");
 					continue;
 				}
-				unique.add(key);
-				dedup.push(innerResult.value);
+				const idx = arr.buffer.findIndex((x) => x == result);
+				if (idx >= 0) {
+					arr.buffer.splice(idx, 1);
+				}
 			}
-		}
-		return dedup;
+
+			done = fetchedAll && !pendingMoreResults;
+			return dedup(
+				batch.map((x) => x.value),
+				this.indexBy
+			);
+		};
+
+		const close = () => {
+			for (const fn of stopperFns) {
+				fn();
+			}
+		};
+
+		return {
+			return: close,
+			next,
+			done: () => done,
+		};
 	}
 }

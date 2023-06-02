@@ -19,7 +19,7 @@ import {
 	ReplicatorType,
 	SubscriptionType,
 } from "@dao-xyz/peerbit-program";
-import { Documents, DocumentQuery, Operation } from "@dao-xyz/peerbit-document";
+import { Documents, SearchRequest, Operation } from "@dao-xyz/peerbit-document";
 import { v4 as uuid } from "uuid";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
 import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
@@ -292,7 +292,7 @@ describe("index", () => {
 			// Try query with trusted
 			let responseCount = 0;
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.query(
-				new DocumentQuery({
+				new SearchRequest({
 					queries: [],
 				}),
 				{
@@ -313,7 +313,7 @@ describe("index", () => {
 			// TODO we are not using read access control on the trust graph anymore, but should we?
 			/* let untrustedResponse: Results<IdentityRelation>[] =
 				await l0d.trustGraph.index.query(
-					new DocumentQuery({
+					new SearchRequest({
 						queries: [],
 					}),
 					{
