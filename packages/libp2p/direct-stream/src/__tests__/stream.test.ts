@@ -311,6 +311,22 @@ describe("streams", function () {
 				expect(metrics[2].recieved).toHaveLength(1);
 				expect(metrics[1].recieved).toHaveLength(0);
 			});
+
+			it("1->3 still works even if routing is missing", async () => {
+				metrics[0].stream.routes.clear();
+				metrics[1].stream.routes.clear();
+				await metrics[0].stream.publish(data, {
+					to: [metrics[2].stream.components.peerId],
+				});
+				await waitForResolved(() =>
+					expect(metrics[2].recieved).toHaveLength(1)
+				);
+				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				await delay(1000); // wait some more time to make sure we dont get more messages
+				expect(metrics[2].recieved).toHaveLength(1);
+				expect(metrics[1].recieved).toHaveLength(0);
+			});
+
 			it("publishes on direct stream, even path is longer", async () => {
 				await session.connect([[session.peers[0], session.peers[2]]]);
 				await waitForPeerStreams(metrics[0].stream, metrics[2].stream);
@@ -584,6 +600,19 @@ describe("streams", function () {
 					await waitForPeerStreams(metrics[1].stream, metrics[4].stream);
 					await waitForPeerStreams(metrics[2].stream, metrics[3].stream);
 					await waitForPeerStreams(metrics[2].stream, metrics[4].stream);
+
+					await waitForResolved(() =>
+						expect(metrics[0].stream.routes.nodeCount).toEqual(4)
+					);
+					await waitForResolved(() =>
+						expect(metrics[1].stream.routes.nodeCount).toEqual(4)
+					);
+					await waitForResolved(() =>
+						expect(metrics[2].stream.routes.nodeCount).toEqual(4)
+					);
+					await waitForResolved(() =>
+						expect(metrics[3].stream.routes.nodeCount).toEqual(4)
+					);
 				});
 
 				afterEach(async () => {

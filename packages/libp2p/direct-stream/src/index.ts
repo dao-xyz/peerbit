@@ -1304,6 +1304,7 @@ export abstract class DirectStream<
 
 			// Message to > 0
 			if (message.to.length > 0) {
+				const missingPathsFor: string[] = [];
 				for (const to of message.to) {
 					const fromKey = this.peerIdToPublicKey
 						.get(from.toString())
@@ -1348,6 +1349,8 @@ export abstract class DirectStream<
 								fanout.push(to);
 								continue;
 							}
+						} else {
+							missingPathsFor.push(to);
 						}
 					}
 
@@ -1358,27 +1361,29 @@ export abstract class DirectStream<
 
 				// update to's
 				let sentOnce = false;
-				if (fanoutMap.size > 0) {
-					for (const [neighbour, distantPeers] of fanoutMap) {
-						message.to = distantPeers;
-						const bytes = message.serialize();
-						if (!sentOnce) {
-							// if relayed = true, we have already added it to seenCache
-							if (!relayed) {
-								this.seenCache.add(await getMsgId(bytes));
+				if (missingPathsFor.length === 0) {
+					if (fanoutMap.size > 0) {
+						for (const [neighbour, distantPeers] of fanoutMap) {
+							message.to = distantPeers;
+							const bytes = message.serialize();
+							if (!sentOnce) {
+								// if relayed = true, we have already added it to seenCache
+								if (!relayed) {
+									this.seenCache.add(await getMsgId(bytes));
+								}
+								sentOnce = true;
 							}
-							sentOnce = true;
+
+							const stream = this.peers.get(neighbour);
+							await stream!.waitForWrite(bytes);
 						}
-
-						const stream = this.peers.get(neighbour);
-						await stream!.waitForWrite(bytes);
+						return; // we are done sending the message in all direction with updates 'to' lists
 					}
-					return; // we are done sending the message in all direction with updates 'to' lists
+					return;
 				}
-				return;
-			}
 
-			// send to all
+				// else send to all (fallthrough to code below)
+			}
 		}
 
 		// We fils to send the message directly, instead fallback to floodsub
