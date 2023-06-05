@@ -1,28 +1,145 @@
-on:
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - '**.md'
-  pull_request:
-    types: ['opened', 'edited', 'reopened']
-
-name: Check, Tests, Lints
+# This is a Github Workflow that runs tests on any push or pull request.
+# If the tests pass and this is a push to the master branch it also runs Semantic Release.
+name: CI
+on: [push, pull_request]
 jobs:
-    buildLintTest:
-        timeout-minutes: 30
-        runs-on: ubuntu-latest
+  lint:
+    name: lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install deps
+        run: yarn
+      - name: Lint
+        run: yarn lint
 
-        strategy:
-            matrix:
-                node-version: [18.x]
-                # Each app folder test will be run in parallel using the matrix
-                folder: [./packages/client,./packages/log ./packages/programs,./packages/libp2p/direct-block ./packages/libp2p/direct-stream ./packages/libp2p/direct-sub ./packages/libp2p/libp2p-test-utils ./packages/libp2p/peerbit-libp2p ./packages/utils ./packages/server-node]
+  build:
+    name: build
+    needs: lint
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
-        steps:
-            - uses: actions/checkout@v3
-            - run: yarn install
-            - run: yarn lerna bootstrap
-            - run: yarn build
-            - run: yarn lint
-            - run: yarn test --roots ${{matrix.folder}}  --w 2
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install deps
+        run: yarn
+
+      - name: Build
+        run: yarn build
+
+      - name: Save target (artifact)
+        uses: actions/upload-artifact@v3
+        with:
+          name: target
+          retention-days: 1
+          # If a wildcard pattern is used, the path hierarchy will be preserved after the first wildcard pattern.
+          # https://github.com/actions/upload-artifact#upload-using-multiple-paths-and-exclusions
+          path: |
+            !packages/*/node_modules
+            !packages/*/src
+            packages
+
+  test_push:
+    needs: build
+    strategy:
+       matrix:
+        node-version: [18.x]
+        folder: [./packages/client,./packages/log ./packages/programs,./packages/libp2p/direct-block ./packages/libp2p/direct-stream ./packages/libp2p/direct-sub ./packages/libp2p/libp2p-test-utils ./packages/libp2p/peerbit-libp2p ./packages/utils ./packages/server-node]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Restore target
+        uses: actions/download-artifact@v3
+        with:
+          name: target
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install deps
+        run: |
+          yarn
+
+      - name: Tests
+        run: yarn test --roots ${{matrix.folder}}  --w 2
+
+      - name: Push coverage
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v3
+        with:
+          name: target
+          retention-days: 1
+          path: coverage
+
+  test_pr:
+    if: github.event_name == 'pull_request'
+    needs: build
+    strategy:
+        matrix:
+            os: [ ubuntu-22.04 ]
+            node-version: [18.x]
+            folder: [./packages/client,./packages/log ./packages/programs,./packages/libp2p/direct-block ./packages/libp2p/direct-stream ./packages/libp2p/direct-sub ./packages/libp2p/libp2p-test-utils ./packages/libp2p/peerbit-libp2p ./packages/utils ./packages/server-node]
+    name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Restore target
+        uses: actions/download-artifact@v3
+        with:
+          name: target
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install deps
+        run: |
+          yarn
+      - name: Tests
+        run: yarn test --roots ${{matrix.folder}}  --w 2
+
+  release:
+    name: Release
+    # https://github.community/t/trigger-job-on-tag-push-only/18076
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: test_push
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+      - name: Restore target
+        uses: actions/download-artifact@v3
+        with:
+          name: target
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install deps
+        run: |
+          npm i -g npm@latest
+          npm -v
+          yarn -v
+          yarn
+
+      - name: Multi-semantic-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_USER: 'dao-xyz'
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GIT_AUTHOR_EMAIL: 'marcus.pousette@live.com'
+          GIT_COMMITTER_EMAIL: 'marcus.pousette@live.com'
+          GIT_AUTHOR_NAME: '@dao-xyz'
+          GIT_COMMITTER_NAME: '@dao-xyz'
+        run: multi-semantic-release
+
