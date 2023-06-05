@@ -1426,6 +1426,37 @@ describe("index", () => {
 				expect(iterator.done()).toBeTrue();
 			});
 
+			it("uses indexed fields", async () => {
+				const KEY = "ABC";
+				await stores[0].docs.index.setup({
+					fields: (obj) => {
+						return { [KEY]: obj.number };
+					},
+					canRead: () => true,
+					log: stores[0].docs.log,
+					sync: () => undefined as any,
+					type: Document,
+				});
+
+				await put(0, 0);
+				await put(0, 1);
+				await put(0, 2);
+
+				const iterator = await stores[0].docs.index.iterate(
+					new SearchSortedRequest({
+						queries: [],
+						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
+					}),
+					{
+						local: true,
+						remote: false,
+					}
+				);
+				const next = await iterator.next(3);
+				expect(next.map((x) => x.name)).toEqual(["2", "1", "0"]);
+				expect(iterator.done()).toBeTrue();
+			});
+
 			// TODO test iterator.return() to stop pending promises
 
 			// TODO deletion while sort

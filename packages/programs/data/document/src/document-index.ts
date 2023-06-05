@@ -120,10 +120,7 @@ export type QueryOptions<R> = {
 	local?: boolean;
 };
 
-export type Indexable<T> = (
-	obj: T,
-	entry: Entry<Operation<T>>
-) => Record<string, any>;
+export type Indexable<T> = (obj: T, context: Context) => Record<string, any>;
 
 const extractFieldValue = <T>(doc: any, path: string[]): T => {
 	for (let i = 0; i < path.length; i++) {
@@ -407,9 +404,13 @@ export class DocumentIndex<T> extends ComposableProgram {
 					];
 				}
 
-				// Sort?
+				// Sort
 				results.sort((a, b) =>
-					extractSortCompare(a.value, b.value, query.sort)
+					extractSortCompare(
+						this._toIndex(a.value, a.context),
+						this._toIndex(b.value, b.context),
+						query.sort
+					)
 				);
 				const batch = results.splice(0, query.initialAmount);
 				this._resultsCollectQueue.add(query.idString, results);
@@ -673,7 +674,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<
 			string,
-			{ kept: number; buffer: { value: T; from: PublicSignKey }[] }
+			{
+				kept: number;
+				buffer: { value: T; context: Context; from: PublicSignKey }[];
+			}
 		> = new Map();
 		const visited = new Set<string>();
 
@@ -697,7 +701,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 						.filter((x) => !visited.has(asString(x.value[this.indexBy])))
 						.map((x) => {
 							visited.add(asString(x.value[this.indexBy]));
-							return { from, value: x.value };
+							return { from, value: x.value, context: x.context };
 						}),
 					kept: Number(response.kept),
 				});
@@ -707,7 +711,11 @@ export class DocumentIndex<T> extends ComposableProgram {
 		// TODO handle join/leave while iterating
 		let stopperFns: (() => void)[] = [];
 
-		const peerBuffers = (): { value: T; from: PublicSignKey }[] => {
+		const peerBuffers = (): {
+			value: T;
+			from: PublicSignKey;
+			context: Context;
+		}[] => {
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
 		};
 
@@ -760,6 +768,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 													visited.add(asString(x.value[this.indexBy]));
 													return {
 														value: x.value,
+														context: x.context,
 														from: this.libp2p.services.pubsub.publicKey,
 													};
 												})
@@ -808,7 +817,11 @@ export class DocumentIndex<T> extends ComposableProgram {
 															)
 															.map((x) => {
 																visited.add(asString(x.value[this.indexBy]));
-																return { value: x.value, from: response.from! };
+																return {
+																	value: x.value,
+																	context: x.context,
+																	from: response.from!,
+																};
 															})
 													);
 												}
@@ -849,7 +862,11 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 			// get n next top entries, shift and pull more results
 			const results = peerBuffers().sort((a, b) =>
-				extractSortCompare(a.value, b.value, queryRequest.sort)
+				extractSortCompare(
+					this._toIndex(a.value, a.context),
+					this._toIndex(b.value, b.context),
+					queryRequest.sort
+				)
 			);
 			const pendingMoreResults = n < results.length;
 			const batch = results.splice(0, n);

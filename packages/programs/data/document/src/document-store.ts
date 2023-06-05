@@ -346,16 +346,17 @@ export class Documents<
 
 					documentsChanged.added.push(value);
 
+					const context = new Context({
+						created:
+							this._index.index.get(key)?.context.created ||
+							item.metadata.clock.timestamp.wallTime,
+						modified: item.metadata.clock.timestamp.wallTime,
+						head: item.hash,
+					});
 					this._index.index.set(key, {
 						key: payload.key,
-						value: this._index.toIndex(value, item),
-						context: new Context({
-							created:
-								this._index.index.get(key)?.context.created ||
-								item.metadata.clock.timestamp.wallTime,
-							modified: item.metadata.clock.timestamp.wallTime,
-							head: item.hash,
-						}),
+						value: this._index.toIndex(value, context),
+						context,
 					});
 
 					// Program specific
