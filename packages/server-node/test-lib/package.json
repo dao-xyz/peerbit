@@ -10,9 +10,6 @@
 	"type": "module",
 	"private": true,
 	"sideEffects": false,
-	"bin": {
-		"peerbit": "./lib/esm/bin.js"
-	},
 	"module": "lib/esm/index.js",
 	"types": "lib/esm/index.d.ts",
 	"exports": {
