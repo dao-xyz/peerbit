@@ -14,13 +14,13 @@
     Develop for a distributed web with Peerbit
 </h3>
 
-<h3 align="center">🤫 E2EE &nbsp; &nbsp; 👯 P2P &nbsp; &nbsp; ⚖️ Auto-sharding  &nbsp; &nbsp;  🔍 Searchable</h3>
+<h3 align="center" >E2EE &nbsp; &nbsp; P2P &nbsp; &nbsp; Auto-sharding  &nbsp; &nbsp;  Searchable</h3>
 
-<p align="center">
-<img src="https://github.com/dao-xyz/peerbit/actions/workflows/ci.yml/badge.svg" alt="Tests")
-</p>
+<h3 align="center"><a href="https://peerbit.org">Documentation</a> - <a href="https://github.com/dao-xyz/peerbit-examples">Examples</a></h3>
+
 
 # A building block for the decentralized web
+
 Peerbit is as easy-to-use as Firebase and provide P2P functionality like OrbitDB or GunJS yet with performance for data-intensive applications like live-streaming and cloud-gaming. It's built on top of Libp2p (and works with IPFS) supporting encryption, sharding and discoverability (searching). 
 
 Your database schema can remain very simple but still utilize P2P networks, auto-scaling, E2E-encryption, discoverability and all other features you'd expect from a database. 
@@ -89,7 +89,11 @@ expect(responses.map((x) => x.value.message)).toEqual(["hello world"]);
 
 
 ## Documentation
+
 [Documentation](https://peerbit.org)
+
+[Examples](https://github.com/dao-xyz/peerbit-examples)
+
 
 ## Contribute
 Feel free to contribute!
