@@ -110,9 +110,7 @@ jobs:
     needs: test_push
     runs-on: ubuntu-22.04
     permissions:
-        contents: read
-        pages: write
-        id-token: write
+        contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v3
