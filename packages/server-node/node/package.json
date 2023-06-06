@@ -2,7 +2,7 @@
 	"name": "@dao-xyz/peerbit-node",
 	"version": "0.9.0",
 	"author": "dao.xyz",
-	"repository": "https://github.com/@dao-xyz/peerbit-node",
+	"repository": "https://github.com/@dao-xyz/peerbit",
 	"license": "Apache-2.0",
 	"type": "module",
 	"sideEffects": false,
