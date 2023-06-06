@@ -4,8 +4,6 @@ import { client, startServerWithNode } from "./api.js";
 import { createRecord } from "./aws.js";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
 
-const KEY_EXAMPLE =
-	'E.g. [CHAIN TYPE]/[PUBLICKEY]. e.g. if ethereum: "ethereum/0x4e54fD83..."';
 export const cli = async (args?: string[]) => {
 	const yargs = await import("yargs");
 
