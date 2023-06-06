@@ -41,11 +41,13 @@ jobs:
           name: target
           retention-days: 1
           # If a wildcard pattern is used, the path hierarchy will be preserved after the first wildcard pattern.
+          # Dummy file CODOWNERS is also added to preserve paths
           # https://github.com/actions/upload-artifact#upload-using-multiple-paths-and-exclusions
           path: |
             !packages/*/node_modules
             !packages/*/src
             packages
+            CODEOWNERS 
 
   test_push:
     needs: build
@@ -68,7 +70,6 @@ jobs:
           node-version: 18
       - name: Install deps
         run: |
-          ls
           yarn
           yarn lerna bootstrap
       - name: Tests
@@ -97,7 +98,6 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - name: Install deps
         run: |
-          ls
           yarn
           yarn lerna bootstrap
       - name: Tests
