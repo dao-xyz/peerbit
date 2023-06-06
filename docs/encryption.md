@@ -1,4 +1,4 @@
-# Encryption
+## Encryption
 Peerbit supports a simple form of E2EE encryption. 
 Every commit that is made can be encrypted with public key encryption with multiple receivers. Peerbit does not *currently* support forward secrecy 
 

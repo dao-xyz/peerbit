@@ -1,4 +1,23 @@
-# How Peerbit differs from OrbitDB
+
+# How Peerbit differs in general with other technologies
+## Comparison table
+The table below briefly outlines the major difference between related frameworks.
+
+||<sub>Peerbit</sub>|<sub>OrbitDB</sub>|<sub>gunJS</sub>|<sub>IPFS</sub>|<sub>Arweave</sub>|
+| ------------ | ------------ | ------------ | ------------ | ------------ | ------------ |
+|<sub>**Performance**</sub>|<sub>Highly performant. E.g. video-streaming, real-time editing & cloud-gaming</sub>|<sub>Chat-rooms, document store</sub>|<sub>Performant applications</sub>|<sub>File-storage</sub>|<sub>File-storage</sub>|
+|<sub>**Search**</sub>|<sub>X</sub>|   |<sub>X</sub>|   |   |
+|<sub>**Browser-friendly**</sub>|<sub>X</sub>|   |<sub>X</sub>|<sub>X</sub>|   |
+|<sub>**CID**</sub>|<sub>X</sub>|<sub>X</sub>|   |<sub>X</sub>|<sub>X</sub>|
+|<sub>**Sharding**</sub>|<sub>X</sub>|   |   |   |   |
+|<sub>**Built-in encryption**</sub>|<sub>X</sub>|   |   |   |   |
+|<sub>**Supports multiple key-types**</sub>|<sub>X</sub>|   |   |<sub>X</sub>|   |
+|<sub>**Discovery algorithm**</sub>|<sub>Automatic based on content</sub>|<sub>KAD DHT</sub>|<sub>Custom solution</sub>|<sub>KAD DHT</sub>|<sub>KAD DHT</sub>|
+|<sub>**Client language**</sub>|<sub>Typescript</sub>|<sub>Javascript</sub>|<sub>Javascript</sub>|<sub>Typescript, Go, Rust</sub>|<sub>Typescript/Javascript, PHP</sub>|
+|<sub>**Intended usage**</sub>|<sub>High-performance applications & storage|<sub>Databases on IPFS</sub>|<sub>Performant applications</sub>|<sub>Granular control of individual files</sub>|<sub>?Permanent? storage</sub>|
+
+
+## How Peerbit differs from OrbitDB
  
 Peerbit started as a fork of OrbitDB in order to support some key features that are important for building applications for the modern web. Along the way, many changes have been made improve various aspects of the project.
  
