@@ -1,7 +1,13 @@
 # This is a Github Workflow that runs tests on any push or pull request.
 # If the tests pass and this is a push to the master branch it also runs Semantic Release.
 name: CI
-on: [push, pull_request]
+on: 
+  push:
+    paths-ignore:
+      - '**.md'
+      - '/docs/*'
+  pull_request:
+    types: ['opened', 'edited', 'reopened', 'synchronize']
 jobs:
   lint:
     name: lint
