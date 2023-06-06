@@ -64,7 +64,6 @@
 		"nuke": "shx rm -rf {.,packages/*/*}/{node_modules,yarn.lock}"
 	},
 	"devDependencies": {
-		"@qiwi/multi-semantic-release": "^6.7.0",
 		"@types/benchmark": "^2.1.2",
 		"@types/eslint": "^8.37.0",
 		"@types/eslint-plugin-prettier": "^3.1.0",

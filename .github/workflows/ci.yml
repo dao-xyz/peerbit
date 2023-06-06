@@ -139,5 +139,5 @@ jobs:
           GIT_COMMITTER_EMAIL: 'marcus.pousette@live.com'
           GIT_AUTHOR_NAME: '@dao-xyz'
           GIT_COMMITTER_NAME: '@dao-xyz'
-        run: multi-semantic-release
+        run: npx -p @qiwi/multi-semantic-release multi-semantic-release
 
