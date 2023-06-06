@@ -68,8 +68,10 @@ jobs:
           node-version: 18
       - name: Install deps
         run: |
+          ls ./packages/client
           yarn
           yarn lerna bootstrap
+          yarn build
 
       - name: Tests
         run: yarn test --roots ${{matrix.folder}}  --w 2
@@ -105,6 +107,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - name: Install deps
         run: |
+          ls ./packages/client
           yarn
           yarn lerna bootstrap
           yarn build
