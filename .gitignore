@@ -13,3 +13,4 @@ keystore-test
 /tmp
 nginx_secrets
 nginx
+coverage
