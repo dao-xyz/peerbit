@@ -68,21 +68,13 @@ jobs:
           node-version: 18
       - name: Install deps
         run: |
-          ls ./packages/client
+          ls
           yarn
           yarn lerna bootstrap
           yarn build
 
       - name: Tests
         run: yarn test --roots ${{matrix.folder}}  --w 2
-
-      - name: Push coverage
-        if: github.ref == 'refs/heads/master'
-        uses: actions/upload-artifact@v3
-        with:
-          name: target
-          retention-days: 1
-          path: coverage
 
   test_pr:
     if: github.event_name == 'pull_request'
@@ -107,7 +99,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - name: Install deps
         run: |
-          ls ./packages/client
+          ls
           yarn
           yarn lerna bootstrap
           yarn build
