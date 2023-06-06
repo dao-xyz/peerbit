@@ -71,8 +71,6 @@ jobs:
           ls
           yarn
           yarn lerna bootstrap
-          yarn build
-
       - name: Tests
         run: yarn test --roots ${{matrix.folder}}  --w 2
 
@@ -102,7 +100,6 @@ jobs:
           ls
           yarn
           yarn lerna bootstrap
-          yarn build
       - name: Tests
         run: yarn test --roots ${{matrix.folder}}  --w 2
 
