@@ -54,7 +54,7 @@
 		"yargs": "^17.6.2"
 	},
 	"dependencies": {
-		"@aws-sdk/client-route-53": "^3.216.0",
+		"@aws-sdk/client-route-53": "^3.345.0",
 		"@dao-xyz/libp2p-noise": "^12.0.1",
 		"@dao-xyz/peerbit": "^0.9.0",
 		"@dao-xyz/peerbit-libp2p": "^0.5.2"
