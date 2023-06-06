@@ -28,7 +28,9 @@ jobs:
         with:
           node-version: 18
       - name: Install deps
-        run: yarn
+        run: |
+          yarn
+          yarn lerna bootstrap
 
       - name: Build
         run: yarn build
@@ -67,6 +69,7 @@ jobs:
       - name: Install deps
         run: |
           yarn
+          yarn lerna bootstrap
 
       - name: Tests
         run: yarn test --roots ${{matrix.folder}}  --w 2
@@ -103,6 +106,7 @@ jobs:
       - name: Install deps
         run: |
           yarn
+          yarn lerna bootstrap
       - name: Tests
         run: yarn test --roots ${{matrix.folder}}  --w 2
 
@@ -131,6 +135,7 @@ jobs:
           npm -v
           yarn -v
           yarn
+          yarn lerna bootstrap
 
       - name: Multi-semantic-release
         env:
