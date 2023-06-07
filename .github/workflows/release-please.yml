@@ -1,0 +1,21 @@
+on:
+  push:
+    branches:
+      - master
+permissions:
+    contents: write
+    pull-requests: write
+name: release-please
+jobs:
+  release-please:
+    name: "Release PR"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/release-please-action@v3
+        with:
+          command: release-pr
+          skip-labeling: true
+          skip-github-release: true
+          labels: "autorelease-pending"
+                    

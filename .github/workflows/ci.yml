@@ -112,7 +112,7 @@ jobs:
   release:
     name: Release
     # https://github.community/t/trigger-job-on-tag-push-only/18076
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: contains(github.event.pull_request.labels.*.name, 'autorelease-pending')
     needs: test_push
     runs-on: ubuntu-22.04
     permissions:
