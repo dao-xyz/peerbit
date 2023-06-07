@@ -4,7 +4,7 @@ const jestConfig: JestConfigWithTsJest = {
 	preset: "ts-jest",
 	workerThreads: true,
 	testEnvironment: "node",
-	roots: ["./packages/"],
+	roots: ["./packages/", "./docs/examples/"],
 	transform: {
 		"^.+\\.tsx?$": [
 			"ts-jest",
@@ -23,8 +23,8 @@ const jestConfig: JestConfigWithTsJest = {
 	// forceExit: true,
 	/*  useESM: true, */
 	testRegex: [
-		"/__tests__/[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
-		"/test/[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
+		"[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
+		"[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
 	],
 	moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
 	testTimeout: 60000,
