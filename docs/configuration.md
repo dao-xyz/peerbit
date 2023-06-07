@@ -16,3 +16,7 @@ const peer = await Peerbit.create()
 const program = await peer.open(PRORGAM ADDRESS or PROGRAM)
 program.doThings()
 ```
+
+
+# Server client 
+[server-node](./server-node.md ':include')

@@ -1,6 +1,6 @@
 
 Documentation
-- [Introduction](README.md)
+- [Introduction](/)
 - [Getting started](getting-started.md)
 - [Examples](examples.md)
 - [Configuration](configuration.md)
