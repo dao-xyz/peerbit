@@ -18,8 +18,11 @@ jobs:
           release-type: node
           skip-labeling: true
           skip-github-release: true
+          monorepo-tags: true
+          include-v-in-tag: false
           labels: "autorelease-pending"
-  release:
+          title: "chore${scope}: release"
+  release:  
     name: Release
     # https://github.community/t/trigger-job-on-tag-push-only/18076
     if: contains(github.event.pull_request.labels.*.name, 'autorelease-pending')
