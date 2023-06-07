@@ -102,5 +102,6 @@
 		"typedoc": "^0.24.8",
 		"typescript": "^5.0.4",
 		"why-is-node-running": "^2.2.2"
-	}
+	},
+	"version": "1.0.0"
 }
