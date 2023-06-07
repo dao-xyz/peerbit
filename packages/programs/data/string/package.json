@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-string",
-	"version": "0.9.0",
+	"version": "0.9.1",
 	"description": "String store",
 	"type": "module",
 	"sideEffects": false,
@@ -32,9 +32,9 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@dao-xyz/peerbit-logger": "^0.0.6",
-		"@dao-xyz/peerbit-program": "^0.9.0",
-		"@dao-xyz/peerbit-rpc": "^0.9.0",
-		"@dao-xyz/peerbit-time": "^0.0.23"
+		"@dao-xyz/peerbit-logger": "0.0.7",
+		"@dao-xyz/peerbit-program": "0.9.1",
+		"@dao-xyz/peerbit-rpc": "0.9.1",
+		"@dao-xyz/peerbit-time": "0.0.24"
 	}
 }
