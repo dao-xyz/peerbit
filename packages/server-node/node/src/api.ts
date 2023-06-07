@@ -11,8 +11,8 @@ import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { createNode } from "./libp2p.js";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-export const LOCAL_PORT = 8082;
 export const SSL_PORT = 9002;
+export const LOCAL_PORT = 8082;
 
 export const getPort = (protocol: string) => {
 	if (protocol === "https:") {

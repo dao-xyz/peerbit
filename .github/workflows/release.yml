@@ -8,7 +8,7 @@ permissions:
 name: release
 jobs:
   release-please:
-    name: "Release PR"
+    name: "Release please PR"
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +24,7 @@ jobs:
           pull-request-title-pattern: "chore${scope}: release"
           bootstrap-sha: "4b5601dc3fe61f82d86132562c3e41948634c85a"
   release:  
-    name: Release
+    name: Publish release
     # https://github.community/t/trigger-job-on-tag-push-only/18076
     if: contains(github.event.pull_request.labels.*.name, 'autorelease-pending')
     runs-on: ubuntu-22.04
