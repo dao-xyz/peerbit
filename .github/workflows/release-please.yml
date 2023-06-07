@@ -15,7 +15,45 @@ jobs:
       - uses: google-github-actions/release-please-action@v3
         with:
           command: release-pr
+          release-type: node
           skip-labeling: true
           skip-github-release: true
           labels: "autorelease-pending"
-                    
+  release:
+    name: Release
+    # https://github.community/t/trigger-job-on-tag-push-only/18076
+    if: contains(github.event.pull_request.labels.*.name, 'autorelease-pending')
+    runs-on: ubuntu-22.04
+    permissions:
+        contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+      - name: Restore target
+        uses: actions/download-artifact@v3
+        with:
+          name: target
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install deps
+        run: |
+          npm i -g npm@latest
+          npm -v
+          yarn -v
+          yarn
+          yarn lerna bootstrap
+          yarn build
+
+      - name: Multi-semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GIT_AUTHOR_EMAIL: 'marcus.pousette@live.com'
+          GIT_COMMITTER_EMAIL: 'marcus.pousette@live.com'
+          GIT_AUTHOR_NAME: '@dao-xyz'
+          GIT_COMMITTER_NAME: '@dao-xyz'
+        run: yarn multi-semantic-release               
