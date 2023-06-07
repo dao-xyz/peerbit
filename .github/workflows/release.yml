@@ -22,6 +22,7 @@ jobs:
           include-v-in-tag: false
           labels: "autorelease-pending"
           pull-request-title-pattern: "chore${scope}: release"
+          bootstrap-sha: "4b5601dc3fe61f82d86132562c3e41948634c85a"
   release:  
     name: Release
     # https://github.community/t/trigger-job-on-tag-push-only/18076
