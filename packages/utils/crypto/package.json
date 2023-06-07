@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-crypto",
-	"version": "0.1.15",
+	"version": "0.1.16",
 	"description": "Crypto fn",
 	"type": "module",
 	"sideEffects": false,
@@ -44,7 +44,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@dao-xyz/uint8arrays": "^0.0.3",
+		"@dao-xyz/uint8arrays": "0.0.4",
 		"@ethersproject/wallet": "^5.7.0",
 		"@libp2p/crypto": "^1.0.14",
 		"@libp2p/peer-id": "^2.0.1",

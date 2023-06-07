@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-test-utils",
-	"version": "0.4.2",
+	"version": "0.4.3",
 	"description": "Test utils for Peerbit",
 	"type": "module",
 	"sideEffects": false,
@@ -34,13 +34,13 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/libp2p-test-utils": "^0.5.2",
-		"@dao-xyz/peerbit-libp2p": "^0.5.2",
+		"@dao-xyz/libp2p-test-utils": "0.5.3",
+		"@dao-xyz/peerbit-libp2p": "0.5.3",
 		"datastore-level": "^9.0.4",
 		"memory-level": "^1.0.0"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-time": "^0.0.23"
+		"@dao-xyz/peerbit-time": "0.0.24"
 	},
 	"localMaintainers": [
 		"dao.xyz"
