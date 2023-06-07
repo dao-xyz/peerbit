@@ -16,7 +16,6 @@ jobs:
         with:
           command: release-pr
           release-type: node
-          skip-labeling: true
           skip-github-release: true
           monorepo-tags: true
           include-v-in-tag: false
