@@ -6,3 +6,4 @@ coverage
 **/.hg
 **/node_modules
 **/frontend/dist
+.release-please-manifest.json
