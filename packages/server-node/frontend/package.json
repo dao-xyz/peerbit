@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"type": "module",
 	"scripts": {
 		"dev": "vite",
@@ -15,7 +15,7 @@
 		"@emotion/react": "^11.10.5",
 		"@emotion/styled": "^11.10.5",
 		"@mui/material": "^5.10.13",
-		"@dao-xyz/peerbit-node": "1.0.0"
+		"@dao-xyz/peerbit-node": "1.0.1"
 	},
 	"devDependencies": {
 		"@types/react": "^18.0.26",
