@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.0...peerbit-node-v1.0.1) (2023-06-08)
+
+
+### Bug Fixes
+
+* test commit ([212579e](https://github.com/dao-xyz/peerbit/commit/212579e891ca13b4cea651c0030a9fc369d00f49))
+
 ## 1.0.0 (2023-06-08)
 
 
