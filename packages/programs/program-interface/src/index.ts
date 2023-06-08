@@ -3,7 +3,6 @@ import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock } from "@dao-xyz/libp2p-direct-block";
 import { Change, Entry, Identity, Log, LogOptions } from "@dao-xyz/peerbit-log";
 import { sha256 } from "@dao-xyz/peerbit-crypto";
-
 import { field, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
@@ -16,6 +15,7 @@ import {
 	SubscriptionType,
 } from "./role.js";
 import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import { PeerIds } from "@dao-xyz/libp2p-direct-sub";
 
 export * from "./protocol-message.js";
 export * from "./role.js";
@@ -165,6 +165,7 @@ export type ProgramInitializationOptions = {
 	onClose?: () => Promise<void> | void;
 	onDrop?: () => Promise<void> | void;
 	onSave?: (address: Address) => Promise<void> | void;
+	waitFor?: (other: PeerIds) => Promise<void>;
 	open?: OpenProgram;
 	openedBy?: AbstractProgram;
 	encryption?: PublicKeyEncryptionResolver;
@@ -183,6 +184,7 @@ export abstract class AbstractProgram {
 	private _allLogsMap: Map<string, Log<any>> | undefined;
 	private _allPrograms: AbstractProgram[] | undefined;
 	private _encryption?: PublicKeyEncryptionResolver;
+	private _waitForPeer?: (other: PeerIds) => Promise<void>;
 
 	open?: (program: Program) => Promise<Program>;
 	programsOpened: Program[];
@@ -217,6 +219,7 @@ export abstract class AbstractProgram {
 		this._onDrop = options.onDrop;
 		this._role = options.role;
 		this._encryption = options.encryption;
+		this._waitForPeer = options.waitFor;
 		if (options.open) {
 			this.programsOpened = [];
 			this.open = async (program) => {
@@ -346,6 +349,15 @@ export abstract class AbstractProgram {
 
 	get programs(): AbstractProgram[] {
 		return getValuesWithType(this, AbstractProgram, Log);
+	}
+
+	/**
+	 * Wait for another peer to be 'ready' to talk with you for this particular program
+	 * @param other
+	 */
+	async waitFor(other: PeerIds): Promise<void> {
+		await this._waitForPeer?.(other);
+		await Promise.all(this.programs.map((x) => x.waitFor(other)));
 	}
 }
 

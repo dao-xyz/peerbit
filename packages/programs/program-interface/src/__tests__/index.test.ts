@@ -469,4 +469,42 @@ describe("program", () => {
 			await p.drop();
 		});
 	});
+
+	describe("waitFor", () => {
+		it("invokes waitFor on all components", async () => {
+			const p = new P2(new Log());
+
+			let open = async (open: Program): Promise<Program> => {
+				return open;
+			};
+			let fromInit = false;
+			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+				open,
+				log: {},
+				waitFor: async () => {
+					fromInit = true;
+				},
+			} as any);
+
+			let outer = false;
+			let waitForPeerFn = p.waitFor.bind(p);
+			p.waitFor = async (o) => {
+				outer = true;
+				return waitForPeerFn(o);
+			};
+
+			let inner = false;
+			let waitForPeerFn2 = p.program.waitFor.bind(p.program);
+
+			p.program.waitFor = async (o) => {
+				inner = true;
+				return waitForPeerFn2(o);
+			};
+
+			await p.waitFor(undefined as any);
+			expect(outer).toBeTrue();
+			expect(inner).toBeTrue();
+			expect(fromInit).toBeTrue();
+		});
+	});
 });

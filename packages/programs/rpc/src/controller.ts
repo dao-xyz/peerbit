@@ -24,7 +24,11 @@ import {
 } from "@dao-xyz/peerbit-program";
 import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { PubSubData } from "@dao-xyz/libp2p-direct-sub";
+import {
+	PeerIds,
+	PubSubData,
+	waitForSubscribers,
+} from "@dao-xyz/libp2p-direct-sub";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 
 export type SearchContext = (() => Address) | AbstractProgram;
@@ -398,5 +402,9 @@ export class RPC<Q, R> extends ComposableProgram {
 			throw new Error("Not initialized");
 		}
 		return this._rpcTopic;
+	}
+
+	async waitFor(other: PeerIds) {
+		await waitForSubscribers(this.libp2p, other, this.rpcTopic);
 	}
 }

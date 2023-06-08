@@ -5,66 +5,11 @@ Your database schema can remain very simple but still utilize P2P networks, auto
 
 Peerbit values simplicitly. Below is an example how to create a document store, that store posts, that can be modified by anyone.
 
-```typescript 
-import { field, option, serialize, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import { Documents } from "@dao-xyz/peerbit-document";
-import { v4 as uuid } from "uuid";
+[data](./examples/document-store.ts ':include :type=code :fragment=data')
 
+Later 
 
-@variant(0) // version 0
-class Post {
-    @field({ type: "string" })
-    id: string;
-
-    @field({ type: "string" })
-    message: string;
-
-    constructor(message: string) {
-        this.id = uuid();
-		this.message = message;
-    }
-}
-
-@variant("posts")
-class PostsDB extends Program {
-
-    @field({ type: Documents })
-    posts: Documents<Post>;
-
-    constructor() {
-        super();
-        this.posts = new Documents()
-    }
-    async setup(): Promise<void> {
-        await this.posts.setup({ type: Post });
-    }
-}
-
-// later 
-const peer = await Peerbit.create()
-
-// insert
-await store.posts.put(new Post("hello world"));
-
-// search for documents from another peer
-const peer2 = await Peerbit.create()
-
-// Connec to the first peer
-await peer2.dial(peer) 
-
-const store2 = peer2.open(store.address);
-
-let responses: Document[] =  await store2.docs.index.query(
-    new SearchRequest({
-        queries: [], // query all
-    })
-);
-expect(responses).toHaveLength(1);
-expect(responses.map((x) => x.value.message)).toEqual(["hello world"]);
-```
-
+[data](./examples/document-store.ts ':include :type=code :fragment=insert')
 
 # Scalability
 
