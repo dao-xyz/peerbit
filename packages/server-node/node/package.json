@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-node",
-	"version": "0.9.2",
+	"version": "1.0.0",
 	"author": "dao.xyz",
 	"repository": {
 		"type": "git",
