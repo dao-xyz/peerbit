@@ -18,6 +18,7 @@ jobs:
           command: manifest
           token: ${{secrets.GITHUB_TOKEN}}
           default-branch: master
+          monorepo-tags: true
 
     # The logic below handles the npm publication:
       - name: Checkout Repository
