@@ -43,8 +43,8 @@ describe(`Replicate and Load`, function () {
 
 			expect(db1.address!.toString()).toEqual(db2.address!.toString());
 
-			await client1.waitForPeer(client2, db1);
-			await client2.waitForPeer(client1, db1);
+			await db1.waitFor(client2.libp2p);
+			await db2.waitFor(client1.libp2p);
 		});
 
 		afterAll(async () => {

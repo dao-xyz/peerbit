@@ -1300,10 +1300,8 @@ describe("index", () => {
 
 				// Wait for ack that everone can connect to each outher through the rpc topic
 				for (let i = 0; i < session.peers.length; i++) {
-					await waitForSubscribers(
-						session.peers[i],
-						session.peers.filter((_v, ix) => ix !== i),
-						stores[i].docs.index._query.rpcTopic
+					await stores[i].docs.waitFor(
+						session.peers.filter((_v, ix) => ix !== i)
 					);
 				}
 			});
@@ -1733,10 +1731,8 @@ describe("index", () => {
 						counters[i] += 1;
 						return fn(a);
 					};
-					await waitForSubscribers(
-						session.peers[i],
-						session.peers.filter((_v, ix) => ix !== i),
-						stores[i].docs.index._query.rpcTopic
+					await stores[i].docs.waitFor(
+						session.peers.filter((_v, ix) => ix !== i)
 					);
 				}
 			});

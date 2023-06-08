@@ -5,6 +5,7 @@ import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer.js";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
+
 describe(`Replication`, function () {
 	let session: LSession;
 	let client1: Peerbit,
@@ -64,8 +65,8 @@ describe(`Replication`, function () {
 				},
 			}
 		);
-		await client1.waitForPeer(client2, db1);
-		await client2.waitForPeer(client1, db1);
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
 
 		await delay(3000);
 		const value = "hello";
@@ -108,8 +109,6 @@ describe(`Replication`, function () {
 	});
 
 	it("replicates database of 100 entries", async () => {
-		await client2.waitForPeer(client1, db1);
-
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -117,8 +116,10 @@ describe(`Replication`, function () {
 			))!
 		);
 
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
+
 		const entryCount = 100;
-		const entryArr: number[] = [];
 
 		for (let i = 0; i < entryCount; i++) {
 			//	entryArr.push(i);
@@ -167,8 +168,6 @@ describe(`Replication`, function () {
 	});
 
 	it("emits correct replication info", async () => {
-		await client2.waitForPeer(client1, db1);
-
 		client1.replicationReorganization = async (_changed: any) => {
 			return true; // do a noop becaus in this test we want to make sure that writes are only treated once
 			// and we don't want extra replication events
@@ -180,6 +179,9 @@ describe(`Replication`, function () {
 				db1.address!
 			))!
 		);
+
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
 
 		const entryCount = 99;
 
@@ -242,8 +244,6 @@ describe(`Replication`, function () {
 	});
 
 	it("emits correct replication info in two-way replication", async () => {
-		await client2.waitForPeer(client1, db1);
-
 		const entryCount = 15;
 
 		// Trigger replication
@@ -269,6 +269,9 @@ describe(`Replication`, function () {
 				db1.address!
 			))!
 		);
+
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
 
 		expect(db1.address).toBeDefined();
 		expect(db2.address).toBeDefined();

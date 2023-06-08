@@ -69,9 +69,8 @@ describe(`Multiple Databases`, function () {
 
 		// Wait for the peers to connect
 		for (const db of localDatabases) {
-			await client1.waitForPeer(client3, db);
-			await client2.waitForPeer(client1, db);
-			await client3.waitForPeer(client1, db);
+			await db.waitFor(client2.libp2p);
+			await db.waitFor(client3.libp2p);
 		}
 	});
 

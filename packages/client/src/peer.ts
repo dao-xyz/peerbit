@@ -457,14 +457,6 @@ export class Peerbit {
 		);
 	}
 
-	waitForPeer(other: Peerbit, db: Program) {
-		return Promise.all(
-			db.logs.map((x) =>
-				waitForSubscribers(this.libp2p, other.libp2p, x.idString)
-			)
-		);
-	}
-
 	async disconnect() {
 		this._disconnecting = true;
 		// Close a direct connection and remove it from internal state
@@ -1146,6 +1138,13 @@ export class Peerbit {
 					});
 				},
 				encryption,
+				waitFor: async (other) => {
+					await Promise.all(
+						program.logs.map((x) =>
+							waitForSubscribers(this.libp2p, other, x.idString)
+						)
+					);
+				},
 				log: (log) => {
 					const cfg: LogOptions<any> = {
 						encryption,
