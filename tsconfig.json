@@ -1,5 +1,5 @@
 {
-	"include": ["docs/examples/*", "packages/*/src", "packages/*/*/src"],
+	"include": ["docs/**/*", "packages/*/src", "packages/*/*/src"],
 	"exclude": [
 		"node_modules",
 		"packages/*/node_modules",

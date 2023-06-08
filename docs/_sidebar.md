@@ -3,12 +3,14 @@ Documentation
 - [Introduction](/)
 - [Getting started](getting-started.md)
 - [Examples](examples.md)
-- [Configuration](configuration.md)
-- [Components](components.md)
+
+Modules
+- [Client](/components/client/client.md)
+- [Program](/components/program/program.md)
 
 Topics
-- [Framework comparison](difference.md)
-- [Sharding with Peerbit](sharding/sharding.md)
+- [Peerbit vs [?]](difference.md)
+- [Sharding](sharding/sharding.md)
 - [Encryption scheme](encryption.md)
 
 

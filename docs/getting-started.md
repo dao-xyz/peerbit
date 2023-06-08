@@ -14,11 +14,11 @@ npm install @dao-xyz/peerbit
 ### Imports
 [import](./examples/document-store.ts ':include :type=code :fragment=imports')
 
-### Defining a p2p database
+### Defining a database
 [data](./examples/document-store.ts ':include :type=code :fragment=data')
 
 ### Inserting the first document
-[data](./examples/document-store.ts ':include :type=code :fragment=data')
+[insert](./examples/document-store.ts ':include :type=code :fragment=insert')
 
 ### Seaching for the document from another peer
 [another-client](./examples/document-store.ts ':include :type=code :fragment=another-client')
