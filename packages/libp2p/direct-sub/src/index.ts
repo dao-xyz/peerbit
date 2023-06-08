@@ -1,6 +1,6 @@
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { logger as logFn } from "@dao-xyz/peerbit-logger";
-import { Libp2p } from "libp2p";
+
 import {
 	DataMessage,
 	DirectStream,
@@ -632,12 +632,13 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 	}
 }
 
+export type PeerIds =
+	| (PeerId | { peerId: PeerId })[]
+	| PeerId
+	| { peerId: PeerId };
 export const waitForSubscribers = async (
 	libp2p: { services: { pubsub: DirectSub } },
-	peersToWait:
-		| (PeerId | { peerId: PeerId; services: { pubsub: DirectStream } })[]
-		| PeerId
-		| { peerId: PeerId; services: { pubsub: DirectStream } },
+	peersToWait: PeerIds,
 	topic: string
 ) => {
 	const peersToWaitArr = Array.isArray(peersToWait)
