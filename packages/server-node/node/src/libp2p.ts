@@ -4,8 +4,8 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { supportedKeys } from "@libp2p/crypto/keys";
 import { getConfigDir, getKeysPath, NotFoundError } from "./config.js";
 import { checkExistPath } from "./api.js";
-import { serialize, deserialize } from "@dao-xyz/borsh";
 import { createLibp2pExtended } from "@dao-xyz/peerbit-libp2p";
+import { serialize, deserialize } from "@dao-xyz/borsh";
 
 export const saveKeys = async (keypair: Ed25519Keypair): Promise<void> => {
 	const fs = await import("fs");
