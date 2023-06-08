@@ -55,8 +55,8 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await client2.waitForPeer(client1, db1);
-		await client1.waitForPeer(client2, db1);
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
 
 		await db1.add("hello");
 		await db2.add("world");
@@ -143,8 +143,8 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await client1.waitForPeer(client2, db1);
-		await client2.waitForPeer(client1, db1);
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
 
 		await waitFor(() => db1.log.values.length === 2);
 		expect(
@@ -183,8 +183,8 @@ describe(`browser`, function () {
 			{ role: new ReplicatorType() }
 		);
 
-		await client1.waitForPeer(client2, db1);
-		await client2.waitForPeer(client1, db1);
+		await db1.waitFor(client2.libp2p);
+		await db2.waitFor(client1.libp2p);
 
 		await waitFor(() => db1.log.values.length === 2);
 		expect(

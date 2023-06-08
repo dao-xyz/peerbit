@@ -1,8 +1,9 @@
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { ObserverType } from "@dao-xyz/peerbit-program";
+import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 
 describe(`Write-only`, () => {
 	let session: LSession;
@@ -17,6 +18,12 @@ describe(`Write-only`, () => {
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]],
 		]);
+		await waitForPeers(
+			...session.peers.slice(0, 2).map((x) => x.services.blocks)
+		);
+		await waitForPeers(
+			...session.peers.slice(1, 3).map((x) => x.services.blocks)
+		);
 	});
 
 	afterAll(async () => {
@@ -38,8 +45,6 @@ describe(`Write-only`, () => {
 	});
 
 	it("observer", async () => {
-		await client2.waitForPeer(client1, db1);
-
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -47,6 +52,8 @@ describe(`Write-only`, () => {
 			))!,
 			{ role: new ObserverType() }
 		);
+
+		await db1.waitFor(client2.libp2p);
 
 		await db1.add("hello");
 		await db2.add("world");
@@ -59,8 +66,6 @@ describe(`Write-only`, () => {
 	});
 
 	it("none", async () => {
-		await client2.waitForPeer(client1, db1);
-
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -68,6 +73,7 @@ describe(`Write-only`, () => {
 			))!,
 			{ role: new ObserverType() }
 		);
+		await db1.waitFor(client2.libp2p);
 
 		await db1.add("hello");
 		await db2.add("world");
@@ -80,8 +86,6 @@ describe(`Write-only`, () => {
 	});
 
 	it("sync", async () => {
-		await client2.waitForPeer(client1, db1);
-
 		db2 = await client2.open<EventStore<string>>(
 			(await EventStore.load<EventStore<string>>(
 				client2.libp2p.services.blocks,
@@ -90,7 +94,8 @@ describe(`Write-only`, () => {
 			{ role: new ObserverType(), sync: () => true }
 		);
 
-		await delay(2000);
+		await db1.waitFor(client2.libp2p);
+
 		await db1.add("hello");
 		await db2.add("world");
 

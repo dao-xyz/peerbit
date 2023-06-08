@@ -71,11 +71,8 @@ describe(`encryption`, function () {
 	afterAll(async () => {});
 
 	it("replicates database of 1 entry known keys", async () => {
-		let done = false;
-
 		db2 = await client2.open<EventStore<string>>(db1.address);
-
-		await client2.waitForPeer(client1, db1);
+		await db1.waitFor(client2.libp2p);
 
 		await client2.keystore.saveKey(recieverKey);
 		expect(
