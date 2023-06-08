@@ -1,4 +1,5 @@
 {
+	"bootstrap-sha": "2ba9a2a2db4e9bdf8b51e644b536e16af8629b7b",
 	"packages": {
 		"packages/libp2p/direct-block": {},
 		"packages/libp2p/direct-stream": {},
