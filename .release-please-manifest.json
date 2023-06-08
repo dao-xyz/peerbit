@@ -1,0 +1,28 @@
+{
+	"packages": {
+		"packages/libp2p/direct-block": {},
+		"packages/libp2p/direct-stream": {},
+		"packages/libp2p/direct-sub": {},
+		"packages/libp2p/libp2p-test-utils": {},
+		"packages/libp2p/peerbit-libp2p": {},
+		"packages/log": {},
+		"packages/client": {},
+		"packages/server-node/frontend": {},
+		"packages/server-node/node": {},
+		"packages/programs/rpc": {},
+		"packages/programs/acl/identity-access-controller": {},
+		"packages/programs/acl/trusted-network": {},
+		"packages/programs/program-interface": {},
+		"packages/programs/clock-service": {},
+		"packages/utils/keystore": {},
+		"packages/utils/crypto": {},
+		"packages/programs/data/document": {},
+		"packages/programs/data/string": {},
+		"packages/utils/test-utils": {},
+		"packages/utils/lazy-level": {},
+		"packages/utils/uint8arrays": {},
+		"packages/utils/cache": {},
+		"packages/utils/time": {},
+		"packages/utils/logger": {}
+	}
+}

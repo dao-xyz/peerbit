@@ -1,62 +1,45 @@
 on:
-  push:
-    branches:
-      - master
+    push:
+      branches:
+        - main
+  
 permissions:
-    contents: write
-    pull-requests: write
-name: release
+  contents: write
+  pull-requests: write
+
+name: Run Release Please
 jobs:
   release-please:
-    name: "Release please PR"
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: google-github-actions/release-please-action@v3
+        id: release
         with:
-          command: release-pr
-          release-type: node
-          skip-github-release: true
-          monorepo-tags: true
-          include-v-in-tag: false
-          labels: "autorelease-pending"
-          pull-request-title-pattern: "chore${scope}: release"
-          bootstrap-sha: "4b5601dc3fe61f82d86132562c3e41948634c85a"
-  release:  
-    name: Publish release
-    # https://github.community/t/trigger-job-on-tag-push-only/18076
-    if: contains(github.event.pull_request.labels.*.name, 'autorelease-pending')
-    runs-on: ubuntu-22.04
-    permissions:
-        contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          persist-credentials: false
-      - name: Restore target
-        uses: actions/download-artifact@v3
-        with:
-          name: target
-      - uses: actions/setup-node@v3
+          command: manifest
+          token: ${{secrets.GITHUB_TOKEN}}
+          default-branch: master
+
+    # The logic below handles the npm publication:
+      - name: Checkout Repository
+        if: ${{ steps.release.outputs.releases_created }}
+        uses: actions/checkout@v2
+      - name: Setup Node
+        uses: actions/setup-node@v1
+        if: ${{ steps.release.outputs.releases_created }}
         with:
           node-version: 18
-
-      - name: Install deps
+          registry-url: 'https://registry.npmjs.org'
+      - name: Build Packages
+        if: ${{ steps.release.outputs.releases_created }}
         run: |
-          npm i -g npm@latest
-          npm -v
-          yarn -v
-          yarn
-          yarn lerna bootstrap
-          yarn build
+          npm install
+          npx lerna bootstrap
 
-      - name: Multi-semantic-release
+    # Release Please has already incremented versions and published tags, so we just
+    # need to publish all unpublished versions to NPM here
+    # See: https://github.com/lerna/lerna/tree/main/commands/publish#bump-from-package
+      - name: Publish to NPM
+        if: ${{ steps.release.outputs.releases_created }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GIT_AUTHOR_EMAIL: 'marcus.pousette@live.com'
-          GIT_COMMITTER_EMAIL: 'marcus.pousette@live.com'
-          GIT_AUTHOR_NAME: '@dao-xyz'
-          GIT_COMMITTER_NAME: '@dao-xyz'
-        run: yarn multi-semantic-release               
+          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+        run: npx lerna publish from-package --no-push --no-private --yes
