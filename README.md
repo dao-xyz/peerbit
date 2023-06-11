@@ -19,81 +19,32 @@
 <h3 align="center"><a href="https://peerbit.org">Documentation</a> - <a href="https://github.com/dao-xyz/peerbit-examples">Examples</a></h3>
 
 
-# A building block for the decentralized web
+# Peerbit:  A building block for the decentralized web
 
-Peerbit is as easy-to-use as Firebase and provide P2P functionality like OrbitDB or GunJS yet with performance for data-intensive applications like live-streaming and cloud-gaming. It's built on top of Libp2p (and works with IPFS) supporting encryption, sharding and discoverability (searching). 
+Welcome to Peerbit, the platform that will ignite your coding passion and unlock a world of endless possibilities!
 
-Your database schema can remain very simple but still utilize P2P networks, auto-scaling, E2E-encryption, discoverability and all other features you'd expect from a database. 
+## Why Peerbit?
 
-Peerbit values simplicitly. Below is an example how to create a document store, that store posts, that can be modified by anyone.
+- **Simplicity meets power**: Enjoy the ease-of-use of Firebase while harnessing the P2P functionality of OrbitDB and GunJS. Peerbit offers exceptional performance for data-intensive applications like live-streaming and cloud-gaming.
 
-```typescript 
-import { field, option, serialize, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import { Documents } from "@dao-xyz/peerbit-document";
-import { v4 as uuid } from "uuid";
+- **Built on cutting-edge technology**: Peerbit is built on top of Libp2p and seamlessly integrated with IPFS. It supports encryption, sharding, and discoverability, providing you with a solid foundation for your projects.
 
+- **Revolutionize your database**: Say goodbye to complex database schemas! With Peerbit, you can keep it simple while utilizing P2P networks, auto-scaling, end-to-end encryption, and discoverability. Create a document store effortlessly, allowing anyone to modify dynamic posts.
 
-@variant(0) // version 0
-class Post {
-    @field({ type: "string" })
-    id: string;
+## Get Started
 
-    @field({ type: "string" })
-    message: string;
+1. Install Peerbit by following the simple setup instructions in our [Installation Guide](https://www.peerbit.org/getting-started).
 
-    constructor(message: string) {
-        this.id = uuid();
-		this.message = message;
-    }
-}
+2. Dive into our comprehensive [Documentation](https://www.peerbit.org/components/client/client) or checkout the [Example repository](https://github.com/dao-xyz/peerbit-examples)  to explore the powerful features and learn how to leverage Peerbit to its fullest potential.
 
-@variant("posts")
-class PostsDB extends Program {
-
-    @field({ type: Documents })
-    posts: Documents<Post>;
-
-    constructor() {
-        super();
-        this.posts = new Documents()
-    }
-    async setup(): Promise<void> {
-        await this.posts.setup({ type: Post });
-    }
-}
-
-// later 
-const peer = await Peerbit.create()
-
-// insert
-await store.posts.put(new Post("hello world"));
-
-// search for documents from another peer
-const peer2 = await Peerbit.create()
-
-// Connec to the first peer
-await peer2.dial(peer) 
-
-const store2 = peer2.open(store.address);
-
-let responses: Document[] =  await store2.docs.index.query(
-    new SearchRequest({
-        queries: [], // query all
-    })
-);
-expect(responses).toHaveLength(1);
-expect(responses.map((x) => x.value.message)).toEqual(["hello world"]);
-```
-
-
-## Documentation
-
-[Documentation](https://peerbit.org)
-
-[Examples](https://github.com/dao-xyz/peerbit-examples)
-
+3. Join the [Peerbit room](https://matrix.to/#/#peerbit:matrix.org) to connect, share ideas, and collaborate with like-minded individuals.
 
 ## Contribute
-Feel free to contribute!
+
+Peerbit is an open-source project, and we welcome contributions from developers like you! Fell free to contribute code, report issues, and submit feature requests. Together, let's shape the future of Peerbit.
+
+
+## Let's Get Coding!
+
+[peerbit.org](https://peerbit.org)
+

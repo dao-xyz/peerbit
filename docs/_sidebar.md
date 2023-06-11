@@ -7,6 +7,7 @@ Documentation
 Modules
 - [Client](/components/client/client.md)
 - [Program](/components/program/program.md)
+- [Encoding](/components/encoding/encoding.md)
 
 Topics
 - [Peerbit vs [?]](difference.md)

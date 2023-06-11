@@ -50,8 +50,6 @@ class PostsDB extends Program {
 
 	constructor() {
 		super();
-
-		// Initialize in the constructor
 		this.posts = new Documents({ index: new DocumentIndex({ indexBy: "id" }) });
 	}
 
@@ -77,7 +75,7 @@ await peer2.dial(peer);
 
 const store2 = await peer2.open<PostsDB>(store.address);
 
-// Wait for peer1 to be reachable for queries
+// Wait for peer1 to be reachable for queries. This line only necessary when testing locally
 await store.waitFor(peer2.libp2p);
 
 const responses: Post[] = await store2.posts.index.query(

@@ -56,7 +56,10 @@ export class Documents<
 	private _clazz?: AbstractType<T>;
 
 	private _optionCanAppend?: CanAppend<Operation<T>>;
-	canOpen?: (program: Program, entry: Entry<Operation<T>>) => Promise<boolean>;
+	canOpen?: (
+		program: T,
+		entry: Entry<Operation<T>>
+	) => Promise<boolean> | boolean;
 	private _events: EventEmitter<DocumentEvents<T>>;
 	constructor(properties: { immutable?: boolean; index: DocumentIndex<T> }) {
 		super();
@@ -81,7 +84,7 @@ export class Documents<
 		type: AbstractType<T>;
 		canRead?: CanRead;
 		canAppend?: CanAppend<Operation<T>>;
-		canOpen?: (program: Program) => Promise<boolean>;
+		canOpen?: (program: T) => Promise<boolean> | boolean;
 		index?: {
 			fields: Indexable<T>;
 		};
