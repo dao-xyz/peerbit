@@ -25,20 +25,25 @@ Peerbit is as easy-to-use as Firebase and provide P2P functionality like OrbitDB
 
 Your database schema can remain very simple but still utilize P2P networks, auto-scaling, E2E-encryption, discoverability and all other features you’d expect from a database.
 
+Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 MB/s. 
+
+![Dogestream](/docs/videostream.gif)
+
 ## Get Started
 
 1. Install Peerbit by following the simple setup instructions in our [Installation Guide](https://www.peerbit.org/getting-started).
 
 2. Dive into our comprehensive [Documentation](https://www.peerbit.org/components/client/client) or checkout the [Example repository](https://github.com/dao-xyz/peerbit-examples)  to explore the powerful features and learn how to leverage Peerbit to its fullest potential.
 
-3. Join the [Peerbit room](https://matrix.to/#/#peerbit:matrix.org) to connect, share ideas, and collaborate with like-minded individuals.
+3. Join us on [Matrix](https://matrix.to/#/#peerbit:matrix.org) to connect, share ideas, and collaborate with like-minded individuals.
 
 ## Contribute
 
-Peerbit is an open-source project, and we welcome contributions from developers like you! Fell free to contribute code, report issues, and submit feature requests. Together, let's shape the future of Peerbit.
+Peerbit is an open-source project, and we welcome contributions from developers like you! Feel free to contribute code, report issues, and submit feature requests. Together, let's shape the future of Peerbit.
 
 
 ## Let's Get Coding!
 
 [peerbit.org](https://peerbit.org)
 
+ 
