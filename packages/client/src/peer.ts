@@ -29,7 +29,6 @@ import {
 	MaybeEncrypted,
 	PublicKeyEncryptionResolver,
 	Ed25519PublicKey,
-	getKeypairFromPeerId,
 	sha256,
 	Identity,
 } from "@dao-xyz/peerbit-crypto";
@@ -987,6 +986,7 @@ export class Peerbit {
 		if (this._disconnected || this._disconnecting) {
 			throw new Error("Can not open a store while disconnected");
 		}
+
 		const fn = async (): Promise<ProgramWithMetadata> => {
 			// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
 
@@ -1030,6 +1030,7 @@ export class Peerbit {
 					throw error;
 				}
 			}
+
 			if (!program.address && !existing) {
 				await program.save(this._libp2p.services.blocks);
 			}
