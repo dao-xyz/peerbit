@@ -21,15 +21,11 @@
 
 # A building block for the decentralized web
 
-Welcome to Peerbit, the platform that will ignite your coding passion and unlock a world of endless possibilities!
+Peerbit is as easy-to-use as Firebase and provide P2P functionality like OrbitDB or GunJS yet with performance for data-intensive applications like live-streaming and cloud-gaming. It’s built on top of Libp2p (and works with IPFS) supporting encryption, sharding and discoverability (searching).
 
-## Why Peerbit?
+Your database schema can remain very simple but still utilize P2P networks, auto-scaling, E2E-encryption, discoverability and all other features you’d expect from a database.
 
-- **Simplicity meets power**: Enjoy the ease-of-use of Firebase while harnessing the P2P functionality of OrbitDB and GunJS. Peerbit offers exceptional performance for data-intensive applications like live-streaming and cloud-gaming.
-
-- **Built on cutting-edge technology**: Peerbit is built on top of Libp2p and seamlessly integrated with IPFS. It supports encryption, sharding, and discoverability, providing you with a solid foundation for your projects.
-
-- **Revolutionize your database**: Say goodbye to complex database schemas! With Peerbit, you can keep it simple while utilizing P2P networks, auto-scaling, end-to-end encryption, and discoverability. Create a document store effortlessly, allowing anyone to modify dynamic posts.
+Peerbit values simplicitly. Below is an example how to create a document store, that store posts, that can be modified by anyone.
 
 ## Get Started
 
