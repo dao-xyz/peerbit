@@ -25,8 +25,6 @@ Peerbit is as easy-to-use as Firebase and provide P2P functionality like OrbitDB
 
 Your database schema can remain very simple but still utilize P2P networks, auto-scaling, E2E-encryption, discoverability and all other features you’d expect from a database.
 
-Peerbit values simplicitly. Below is an example how to create a document store, that store posts, that can be modified by anyone.
-
 ## Get Started
 
 1. Install Peerbit by following the simple setup instructions in our [Installation Guide](https://www.peerbit.org/getting-started).
