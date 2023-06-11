@@ -57,7 +57,7 @@ import "@libp2p/peer-id";
 import { createLibp2pExtended, Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import {
 	OBSERVER_TYPE_VARIANT,
-	ReplicatorType,
+	Replicator,
 	REPLICATOR_TYPE_VARIANT,
 	SubscriptionType,
 } from "@dao-xyz/peerbit-program";
@@ -655,7 +655,7 @@ export class Peerbit {
 			if (subscription.data) {
 				try {
 					const type = deserialize(subscription.data, SubscriptionType);
-					if (type instanceof ReplicatorType) {
+					if (type instanceof Replicator) {
 						const p = this.logs.get(subscription.topic);
 						if (p) {
 							await this.replicationReorganization([p.log.idString]);
@@ -949,7 +949,7 @@ export class Peerbit {
 			throw new Error("Disconnected");
 		}
 
-		if (role instanceof ReplicatorType) {
+		if (role instanceof Replicator) {
 			this.modifySortedSubscriptionCache(log.idString, true, this.identityHash);
 		}
 
@@ -1048,7 +1048,7 @@ export class Peerbit {
 			const encryption =
 				/* 	options.log?.encryption ||  TODO  */
 				await encryptionWithRequestKey(this.libp2p.keychain);
-			const role = options.role || new ReplicatorType();
+			const role = options.role || new Replicator();
 
 			const minReplicas =
 				options.minReplicas != null

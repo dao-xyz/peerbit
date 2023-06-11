@@ -3,11 +3,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { RPC, RPCResponse, queryAll } from "../index.js";
-import {
-	ObserverType,
-	Program,
-	ReplicatorType,
-} from "@dao-xyz/peerbit-program";
+import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 
 const createIdentity = async () => {
@@ -63,14 +59,14 @@ describe("rpc", () => {
 		responder.query = new RPC();
 
 		await responder.init(session.peers[0], await createIdentity(), {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 		});
 		await responder.setup();
 
 		reader = deserialize(serialize(responder), RPCTest);
 
 		await reader.init(session.peers[1], await createIdentity(), {
-			role: new ObserverType(),
+			role: new Observer(),
 		});
 		await reader.setup();
 		await reader.waitFor(session.peers[0]);
@@ -230,7 +226,7 @@ describe("queryAll", () => {
 		for (let i = 0; i < session.peers.length; i++) {
 			const c = deserialize(serialize(t), RPCTest);
 			await c.init(session.peers[i], await createIdentity(), {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 			});
 			await c.setup();
 			clients.push(c);

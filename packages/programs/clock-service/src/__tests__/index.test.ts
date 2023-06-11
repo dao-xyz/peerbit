@@ -2,11 +2,7 @@ import { delay } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Entry } from "@dao-xyz/peerbit-log";
-import {
-	ObserverType,
-	Program,
-	ReplicatorType,
-} from "@dao-xyz/peerbit-program";
+import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
 import { MemoryLevel } from "memory-level";
@@ -46,7 +42,7 @@ describe("clock", () => {
 			}),
 		});
 		await responder.init(session.peers[0], responderIdentity, {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 
 			log: {
 				replication: {
@@ -60,7 +56,7 @@ describe("clock", () => {
 
 		reader = deserialize(serialize(responder), P);
 		await reader.init(session.peers[1], await createIdentity(), {
-			role: new ObserverType(),
+			role: new Observer(),
 			replicators: () => [],
 			log: {
 				cacheId: "id",

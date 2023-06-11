@@ -1,6 +1,6 @@
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
-import { ObserverType } from "@dao-xyz/peerbit-program";
+import { Observer } from "@dao-xyz/peerbit-program";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { KeyBlocks } from "./utils/stores/key-value-store";
@@ -82,7 +82,7 @@ describe(`Automatic Replication`, function () {
 		const entryCount = 1;
 		const entryArr: number[] = [];
 		const db1 = await client1.open(new EventStore<string>(), {
-			role: new ObserverType(),
+			role: new Observer(),
 		});
 
 		// Create the entries in the first database

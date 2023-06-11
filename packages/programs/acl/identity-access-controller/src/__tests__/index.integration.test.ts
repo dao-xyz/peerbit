@@ -18,9 +18,9 @@ import {
 import type { CanAppend } from "@dao-xyz/peerbit-log";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import {
-	ObserverType,
+	Observer,
 	Program,
-	ReplicatorType,
+	Replicator,
 	SubscriptionType,
 } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
@@ -137,7 +137,7 @@ describe("index", () => {
 	it("can write from trust web", async () => {
 		const s = new TestStore({ identity: identity(0) });
 		const options = {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 			log: {},
 		};
 		const l0a = await init(s, 0, options);
@@ -197,7 +197,7 @@ describe("index", () => {
 	describe("conditions", () => {
 		it("publickey", async () => {
 			const options = {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 				log: {},
 			};
 
@@ -261,7 +261,7 @@ describe("index", () => {
 
 		it("through trust chain", async () => {
 			const options = {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 				log: {},
 			};
 
@@ -363,7 +363,7 @@ describe("index", () => {
 
 		it("any access", async () => {
 			const options = {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 				log: {},
 			};
 
@@ -417,7 +417,7 @@ describe("index", () => {
 
 		it("read access", async () => {
 			const options = {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 				log: {},
 			};
 
@@ -480,7 +480,7 @@ describe("index", () => {
 
 	it("manifests are not unique", async () => {
 		const options = {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 			log: {},
 		};
 
@@ -499,7 +499,7 @@ describe("index", () => {
 
 	it("can query", async () => {
 		const options = {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 			log: {},
 		};
 
@@ -523,7 +523,7 @@ describe("index", () => {
 
 		const l0b = await init(dbb, 1, {
 			...options,
-			role: new ObserverType(),
+			role: new Observer(),
 			canRead: () => Promise.resolve(true),
 		});
 

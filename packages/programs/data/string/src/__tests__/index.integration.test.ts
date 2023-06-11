@@ -7,7 +7,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
+import { Observer, Replicator } from "@dao-xyz/peerbit-program";
 
 import { DString } from "../string-store.js";
 import {
@@ -44,7 +44,7 @@ describe("query", () => {
 		// Create store
 		writeStore = new DString({});
 		await writeStore.init(writer, await createIdentity(), {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 			log: {
 				replication: {
 					replicators: () => [],
@@ -63,7 +63,7 @@ describe("query", () => {
 		)) as DString;
 
 		await observerStore.init(observer, await createIdentity(), {
-			role: new ObserverType(),
+			role: new Observer(),
 			log: {
 				replication: {
 					replicators: () => [],
@@ -188,7 +188,7 @@ describe("query", () => {
 	it("handles AccessError gracefully", async () => {
 		const store = new DString({});
 		await store.init(writer, await createIdentity(), {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 			log: {
 				replication: {
 					replicators: () => [],

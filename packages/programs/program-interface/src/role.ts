@@ -9,12 +9,12 @@ export class NoType extends SubscriptionType {}
 
 export const OBSERVER_TYPE_VARIANT = new Uint8Array([1]);
 @variant(1)
-export class ObserverType extends SubscriptionType {}
+export class Observer extends SubscriptionType {}
 
 export const REPLICATOR_TYPE_VARIANT = new Uint8Array([2]);
 
 @variant(2)
-export class ReplicatorType extends SubscriptionType {
+export class Replicator extends SubscriptionType {
 	@field({ type: "u32" })
 	multiplier: number; // 1 means I do the same amount of work as anyone else, 2 means double
 

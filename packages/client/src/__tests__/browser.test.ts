@@ -5,7 +5,7 @@ import { EventStore } from "./utils/stores/event-store";
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
-import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
+import { Observer, Replicator } from "@dao-xyz/peerbit-program";
 
 /**
  * Tests that are relavent for browser environments
@@ -41,7 +41,7 @@ describe(`browser`, function () {
 		});
 
 		db1 = await client1.open(new EventStore<string>(), {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 		});
 		await waitForPeersBlock(
 			session.peers[0].services.blocks,
@@ -52,7 +52,7 @@ describe(`browser`, function () {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ReplicatorType() }
+			{ role: new Replicator() }
 		);
 
 		await db1.waitFor(client2.libp2p);
@@ -93,7 +93,7 @@ describe(`browser`, function () {
 		);
 
 		db1 = await client1.open(new EventStore<string>(), {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 		});
 
 		db2 = await client2.open<EventStore<string>>(
@@ -101,7 +101,7 @@ describe(`browser`, function () {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ReplicatorType() }
+			{ role: new Replicator() }
 		);
 
 		await db1.add("hello");
@@ -129,7 +129,7 @@ describe(`browser`, function () {
 		);
 
 		db1 = await client1.open(new EventStore<string>(), {
-			role: new ReplicatorType(),
+			role: new Replicator(),
 		});
 
 		await db1.add("hello");
@@ -140,7 +140,7 @@ describe(`browser`, function () {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ReplicatorType() }
+			{ role: new Replicator() }
 		);
 
 		await db1.waitFor(client2.libp2p);
@@ -169,7 +169,7 @@ describe(`browser`, function () {
 		);
 
 		db1 = await client1.open(new EventStore<string>(), {
-			role: new ObserverType(),
+			role: new Observer(),
 		});
 
 		await db1.add("hello");
@@ -180,7 +180,7 @@ describe(`browser`, function () {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ReplicatorType() }
+			{ role: new Replicator() }
 		);
 
 		await db1.waitFor(client2.libp2p);

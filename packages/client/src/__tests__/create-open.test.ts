@@ -10,7 +10,7 @@ import { EventStore } from "./utils/stores";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
-import { ObserverType, Program } from "@dao-xyz/peerbit-program";
+import { Observer, Program } from "@dao-xyz/peerbit-program";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
@@ -36,7 +36,7 @@ describe(`Create & Open`, function () {
 
 			beforeEach(async () => {
 				db = await client.open(new KeyBlocks<string>(), {
-					role: new ObserverType(),
+					role: new Observer(),
 				});
 			});
 			afterEach(async () => {

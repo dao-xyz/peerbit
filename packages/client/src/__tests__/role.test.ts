@@ -2,7 +2,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { Peerbit } from "../peer.js";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { ObserverType } from "@dao-xyz/peerbit-program";
+import { Observer } from "@dao-xyz/peerbit-program";
 import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
 
 describe(`Write-only`, () => {
@@ -50,7 +50,7 @@ describe(`Write-only`, () => {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ObserverType() }
+			{ role: new Observer() }
 		);
 
 		await db1.waitFor(client2.libp2p);
@@ -71,7 +71,7 @@ describe(`Write-only`, () => {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ObserverType() }
+			{ role: new Observer() }
 		);
 		await db1.waitFor(client2.libp2p);
 
@@ -91,7 +91,7 @@ describe(`Write-only`, () => {
 				client2.libp2p.services.blocks,
 				db1.address!
 			))!,
-			{ role: new ObserverType(), sync: () => true }
+			{ role: new Observer(), sync: () => true }
 		);
 
 		await db1.waitFor(client2.libp2p);

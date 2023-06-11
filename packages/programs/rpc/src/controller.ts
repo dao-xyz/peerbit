@@ -21,7 +21,7 @@ import {
 	Address,
 	ComposableProgram,
 	ProgramInitializationOptions,
-	ReplicatorType,
+	Replicator,
 } from "@dao-xyz/peerbit-program";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
@@ -70,7 +70,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		options: ProgramInitializationOptions
 	): Promise<this> {
 		await super.init(libp2p, identity, options);
-		if (this.role instanceof ReplicatorType) {
+		if (this.role instanceof Replicator) {
 			await this._subscribeRequests();
 		}
 		return this;

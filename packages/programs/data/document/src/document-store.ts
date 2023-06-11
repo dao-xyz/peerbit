@@ -10,7 +10,7 @@ import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { ReplicatorType } from "@dao-xyz/peerbit-program";
+import { Replicator } from "@dao-xyz/peerbit-program";
 import { AppendOptions } from "@dao-xyz/peerbit-log";
 import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
 
@@ -370,7 +370,7 @@ export class Documents<
 						// if replicator, then open
 						if (
 							(await this.canOpen!(value, item)) &&
-							this.role instanceof ReplicatorType &&
+							this.role instanceof Replicator &&
 							(await this.log.replication!.replicator!(item.gid)) // TODO types, throw runtime error if replicator is not provided
 						) {
 							await this.open!(value);

@@ -3,7 +3,7 @@ import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForResolved } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { ObserverType } from "@dao-xyz/peerbit-program";
+import { Observer } from "@dao-xyz/peerbit-program";
 import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 
@@ -136,7 +136,7 @@ describe(`leaders`, function () {
 		// perhaps do an event based get peers using the pubsub peers api
 
 		db1 = await client1.open(new EventStore<string>(), {
-			role: new ObserverType(),
+			role: new Observer(),
 		});
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 
@@ -158,7 +158,7 @@ describe(`leaders`, function () {
 		// perhaps do an event based get peers using the pubsub peers api
 
 		db1 = await client1.open(new EventStore<string>(), {
-			role: new ObserverType(),
+			role: new Observer(),
 		});
 		db2 = await client2.open<EventStore<string>>(db1.address!);
 		db3 = await client3.open<EventStore<string>>(db1.address!);

@@ -25,11 +25,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
-import {
-	ObserverType,
-	Program,
-	ReplicatorType,
-} from "@dao-xyz/peerbit-program";
+import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
@@ -127,7 +123,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					role: new ReplicatorType(),
+					role: new Replicator(),
 
 					log: {
 						replication: {
@@ -195,7 +191,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					role: new ReplicatorType(),
+					role: new Replicator(),
 					log: {
 						replication: {
 							replicators: () => [],
@@ -229,7 +225,7 @@ describe("index", () => {
 					}),
 				});
 				await store.init(session.peers[0], await createIdentity(), {
-					role: new ReplicatorType(),
+					role: new Replicator(),
 					log: {
 						replication: {
 							replicators: () => [],
@@ -319,7 +315,7 @@ describe("index", () => {
 						}),
 					});
 					await store.init(session.peers[0], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 					});
 
 					let doc = new SimpleDocument({
@@ -344,7 +340,7 @@ describe("index", () => {
 						}),
 					});
 					await store.init(session.peers[0], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 					});
 
 					let doc = new SimpleDocument({
@@ -413,7 +409,7 @@ describe("index", () => {
 						}),
 					});
 					await store.init(session.peers[0], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 					});
 
 					const id = new Uint8Array([1, 2, 3]);
@@ -464,7 +460,7 @@ describe("index", () => {
 				});
 
 				await store.init(session.peers[0], await createIdentity(), {
-					role: new ReplicatorType(),
+					role: new Replicator(),
 					log: {
 						replication: {
 							replicators: () => [],
@@ -513,7 +509,7 @@ describe("index", () => {
 				});
 
 				await store.init(session.peers[0], await createIdentity(), {
-					role: new ReplicatorType(),
+					role: new Replicator(),
 
 					log: {
 						replication: {
@@ -567,7 +563,7 @@ describe("index", () => {
 					});
 
 					await store.init(session.peers[0], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 						log: {
 							replication: {
 								replicators: () => [
@@ -605,7 +601,7 @@ describe("index", () => {
 					))!;
 
 					await store2.init(session.peers[1], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 						log: {
 							replication: {
 								replicators: () => [
@@ -648,7 +644,7 @@ describe("index", () => {
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
-						role: i === 0 ? new ReplicatorType() : new ObserverType(),
+						role: i === 0 ? new Replicator() : new Observer(),
 						log: {
 							replication: {
 								replicators: () => [
@@ -1268,7 +1264,7 @@ describe("index", () => {
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 						log: {
 							replication: {
 								replicators: () =>
@@ -1534,7 +1530,7 @@ describe("index", () => {
 
 				const keypair = await X25519Keypair.create();
 				await store.init(session.peers[i], await createIdentity(), {
-					role: i === 0 ? new ReplicatorType() : new ObserverType(),
+					role: i === 0 ? new Replicator() : new Observer(),
 					open: async (program) => {
 						openEvents.push(program);
 						program["_initialized"] = true;
@@ -1589,7 +1585,7 @@ describe("index", () => {
 		it("can put after open", async () => {
 			const subProgram = new SubProgram();
 			await subProgram.init(session.peers[0], await createIdentity(), {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 			});
 			await stores[0].store.docs.put(subProgram); // open by default, why or why not? Yes because replicate = true
 			expect(stores[0].openEvents).toHaveLength(1);
@@ -1609,7 +1605,7 @@ describe("index", () => {
 		it("will not close subprogram that is opened before put", async () => {
 			const subProgram = new SubProgram();
 			subProgram.init(session.peers[0], await createIdentity(), {
-				role: new ReplicatorType(),
+				role: new Replicator(),
 				log: {
 					replication: {
 						replicators: () => [],
@@ -1691,7 +1687,7 @@ describe("index", () => {
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], await createIdentity(), {
-						role: new ReplicatorType(),
+						role: new Replicator(),
 						log: {
 							replication: {
 								replicators: () => [

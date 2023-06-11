@@ -18,7 +18,7 @@ import {
 	getRelation,
 	AbstractRelation,
 } from "./identity-graph.js";
-import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
+import { Program, Replicator } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
@@ -206,7 +206,7 @@ export class TrustedNetwork extends Program {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		if (this.trustGraph.role instanceof ReplicatorType) {
+		if (this.trustGraph.role instanceof Replicator) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			this.trustGraph.index.query(new SearchRequest({ queries: [] }), {

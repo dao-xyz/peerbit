@@ -16,7 +16,7 @@ import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import {
 	Program,
-	ReplicatorType,
+	Replicator,
 	SubscriptionType,
 } from "@dao-xyz/peerbit-program";
 import { Documents, SearchRequest, Operation } from "@dao-xyz/peerbit-document";
@@ -64,7 +64,7 @@ describe("index", () => {
 							replicators: () => [],
 						},
 					},
-					role: options.role || new ReplicatorType(),
+					role: options.role || new Replicator(),
 				}));
 			programs.push(store);
 			return store;
@@ -200,7 +200,7 @@ describe("index", () => {
 							replicators: () => replicators,
 						},
 					},
-					role: options.role ?? new ReplicatorType(),
+					role: options.role ?? new Replicator(),
 				}));
 			programs.push(store);
 			return store;

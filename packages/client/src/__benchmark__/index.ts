@@ -1,11 +1,7 @@
 import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
-import {
-	ObserverType,
-	Program,
-	ReplicatorType,
-} from "@dao-xyz/peerbit-program";
+import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
 import { v4 as uuid } from "uuid";
 import { Peerbit } from "../peer.js";
 import { createLibp2pExtended } from "@dao-xyz/peerbit-libp2p";
@@ -81,7 +77,7 @@ for (const [i, client] of peers.entries()) {
 		log: {
 			onChange,
 		},
-		role: i === peers.length - 1 ? new ReplicatorType() : new ObserverType(),
+		role: i === peers.length - 1 ? new Replicator() : new Observer(),
 	});
 
 	await store.load();

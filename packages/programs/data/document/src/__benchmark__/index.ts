@@ -9,7 +9,7 @@ import {
 } from "@dao-xyz/peerbit-crypto";
 import Cache from "@dao-xyz/lazy-level";
 import { AbstractLevel } from "abstract-level";
-import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
+import { Program, Replicator } from "@dao-xyz/peerbit-program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
@@ -76,7 +76,7 @@ const store = new TestStore({
 });
 const keypair = await X25519Keypair.create();
 await store.init(session.peers[0], await createIdentity(), {
-	role: new ReplicatorType(),
+	role: new Replicator(),
 
 	log: {
 		replication: {

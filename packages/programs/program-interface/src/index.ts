@@ -8,12 +8,7 @@ import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
 
-import {
-	NoType,
-	ObserverType,
-	ReplicatorType,
-	SubscriptionType,
-} from "./role.js";
+import { NoType, Observer, Replicator, SubscriptionType } from "./role.js";
 import { Identity, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { PeerIds } from "@dao-xyz/libp2p-direct-sub";
 
@@ -160,7 +155,7 @@ export type LogCallbackOptions = {
 };
 export type ProgramInitializationOptions = {
 	log?: LogOptions<any> | ((log: Log<any>) => LogOptions<any>);
-	role: ReplicatorType | ObserverType | NoType;
+	role: Replicator | Observer | NoType;
 	parent?: AbstractProgram;
 	onClose?: () => Promise<void> | void;
 	onDrop?: () => Promise<void> | void;
