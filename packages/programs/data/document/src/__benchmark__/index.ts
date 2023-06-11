@@ -2,7 +2,6 @@ import B from "benchmark";
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
 import { Documents } from "../document-store.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import { Identity } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
 	X25519Keypair,
@@ -65,13 +64,7 @@ const session = await LSession.connected(peersCount);
 for (let i = 0; i < peersCount; i++) {
 	cacheStores.push(await createStore());
 }
-const createIdentity = async () => {
-	const ed = await Ed25519Keypair.create();
-	return {
-		publicKey: ed.publicKey,
-		sign: (data) => ed.sign(data),
-	} as Identity;
-};
+const createIdentity = Ed25519Keypair.create;
 
 // Create store
 const store = new TestStore({
@@ -96,7 +89,7 @@ await store.init(session.peers[0], await createIdentity(), {
 					if (publicKeys[i].equals((keypair as X25519Keypair).publicKey)) {
 						return {
 							index: i,
-							keypair: keypair as Ed25519Keypair | X25519Keypair,
+							keypair: keypair as X25519Keypair,
 						};
 					}
 				}

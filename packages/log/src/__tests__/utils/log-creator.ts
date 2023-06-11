@@ -1,4 +1,3 @@
-import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Ed25519Keypair, randomBytes } from "@dao-xyz/peerbit-crypto";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Log } from "../../log.js";
@@ -7,7 +6,7 @@ import { Timestamp } from "../../clock.js";
 export class LogCreator {
 	static async createLogWithSixteenEntries(
 		store: BlockStore,
-		signKeys: KeyWithMeta<Ed25519Keypair>[]
+		signKeys: Ed25519Keypair[]
 	) {
 		const expectedData = [
 			"entryA1",
@@ -32,23 +31,23 @@ export class LogCreator {
 			const id = randomBytes(32);
 			const logA = new Log<string>({ id });
 			await logA.open(store, {
-				...signKeys[0].keypair,
-				sign: (data) => signKeys[0].keypair.sign(data),
+				...signKeys[0],
+				sign: (data) => signKeys[0].sign(data),
 			});
 			const logB = new Log<string>({ id });
 			await logB.open(store, {
-				...signKeys[1].keypair,
-				sign: (data) => signKeys[1].keypair.sign(data),
+				...signKeys[1],
+				sign: (data) => signKeys[1].sign(data),
 			});
 			const log3 = new Log<string>({ id });
 			await log3.open(store, {
-				...signKeys[2].keypair,
-				sign: (data) => signKeys[2].keypair.sign(data),
+				...signKeys[2],
+				sign: (data) => signKeys[2].sign(data),
 			});
 			const log4 = new Log<string>({ id });
 			await log4.open(store, {
-				...signKeys[3].keypair,
-				sign: (data) => signKeys[3].keypair.sign(data),
+				...signKeys[3],
+				sign: (data) => signKeys[3].sign(data),
 			});
 			for (let i = 1; i <= 5; i++) {
 				await logA.append("entryA" + i);
@@ -81,7 +80,7 @@ export class LogCreator {
 
 	static async createLogWithTwoHundredEntries(
 		store: BlockStore,
-		signKeys: KeyWithMeta<Ed25519Keypair>[]
+		signKeys: Ed25519Keypair[]
 	) {
 		const amount = 100;
 
@@ -91,13 +90,13 @@ export class LogCreator {
 		const create = async (): Promise<Log<string>> => {
 			const logA = new Log<string>({ id });
 			await logA.open(store, {
-				...signKeys[0].keypair,
-				sign: (data) => signKeys[0].keypair.sign(data),
+				...signKeys[0],
+				sign: (data) => signKeys[0].sign(data),
 			});
 			const logB = new Log<string>({ id });
 			await logB.open(store, {
-				...signKeys[1].keypair,
-				sign: (data) => signKeys[1].keypair.sign(data),
+				...signKeys[1],
+				sign: (data) => signKeys[1].sign(data),
 			});
 			for (let i = 1; i <= amount; i++) {
 				await logA.append("entryA" + i);

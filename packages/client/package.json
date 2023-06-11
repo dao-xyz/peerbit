@@ -33,7 +33,6 @@
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/lazy-level": "0.0.8",
 		"@dao-xyz/peerbit-crypto": "0.1.16",
-		"@dao-xyz/peerbit-keystore": "0.2.12",
 		"@dao-xyz/peerbit-logger": "0.0.7",
 		"@dao-xyz/peerbit-program": "0.9.1",
 		"@dao-xyz/uint8arrays": "0.0.4",

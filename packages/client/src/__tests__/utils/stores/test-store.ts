@@ -3,7 +3,6 @@ import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { CanTrust, Program } from "@dao-xyz/peerbit-program";
 import { EventStore } from "./event-store";
 import type { PeerId } from "@libp2p/interface-peer-id";
-import {} from "@libp2p/peer-id";
 import { Ed25519PublicKey } from "@dao-xyz/peerbit-crypto";
 
 @variant("permissioned_program")
@@ -21,7 +20,7 @@ export class PermissionedEventStore extends Program implements CanTrust {
 		super();
 		this._store = properties.store || new EventStore();
 		this.trusted = properties.trusted.map((x) =>
-			x instanceof PublicSignKey ? x : Ed25519PublicKey.from(x)
+			x instanceof PublicSignKey ? x : Ed25519PublicKey.fromPeerId(x)
 		);
 	}
 

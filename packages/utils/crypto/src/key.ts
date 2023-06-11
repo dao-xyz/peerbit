@@ -1,5 +1,6 @@
 import { serialize } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "./hash.js";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 interface Key {
 	equals(other: Key): boolean;
@@ -13,6 +14,10 @@ export abstract class Keypair {
 	abstract get publicKey(): PublicSignKey | PublicKeyEncryptionKey;
 
 	equals(other: Keypair): boolean {
+		throw new Error("Not implemented");
+	}
+
+	toPeerId(): Promise<PeerId> {
 		throw new Error("Not implemented");
 	}
 }

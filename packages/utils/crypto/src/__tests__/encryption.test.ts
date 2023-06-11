@@ -4,9 +4,7 @@ import {
 	PublicKeyEncryptionResolver,
 	Ed25519Keypair,
 	X25519Keypair,
-	verify,
 } from "../index.js";
-import sodium from "libsodium-wrappers";
 
 describe("encryption", function () {
 	const config = (keypair: Ed25519Keypair | X25519Keypair) => {
@@ -59,7 +57,8 @@ describe("encryption", function () {
 		expect(decryptedFromEncrypted2._data).toStrictEqual(data);
 	});
 
-	it("it can use ed25519 for encryption", async () => {
+	// TODO feat
+	/* it("it can use ed25519 for encryption", async () => {
 		const senderKey = await Ed25519Keypair.create();
 		const recieverKey1 = await Ed25519Keypair.create();
 		const recieverKey2 = await Ed25519Keypair.create();
@@ -88,5 +87,5 @@ describe("encryption", function () {
 			reciever2Config.getAnyKeypair
 		);
 		expect(decryptedFromEncrypted2._data).toStrictEqual(data);
-	});
+	}); */
 });

@@ -6,8 +6,8 @@ import {
 	serialize,
 	fixedArray,
 } from "@dao-xyz/borsh";
-import { Entry, Identity } from "@dao-xyz/peerbit-log";
-import { DecryptedThing } from "@dao-xyz/peerbit-crypto";
+import { Entry } from "@dao-xyz/peerbit-log";
+import { DecryptedThing, Identity } from "@dao-xyz/peerbit-crypto";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { Log } from "@dao-xyz/peerbit-log";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";

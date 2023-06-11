@@ -56,9 +56,9 @@
 		"@dao-xyz/libp2p-direct-stream": "0.5.3",
 		"@dao-xyz/peerbit-logger": "0.0.7",
 		"@dao-xyz/uint8arrays": "0.0.4",
-		"@libp2p/interfaces": "^3.3.1",
+		"@libp2p/interfaces": "^3.3.2",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.45.4",
+		"libp2p": "^0.45.5",
 		"memory-level": "^1.0.0"
 	}
 }

@@ -2,8 +2,8 @@ import { Entry } from "@dao-xyz/peerbit-log";
 import { Peerbit } from "../peer.js";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
-import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
+import { base58btc } from "multiformats/bases/base58";
 
 // Include test utilities
 import { LSession } from "@dao-xyz/peerbit-test-utils";
@@ -38,7 +38,7 @@ describe(`encryption`, function () {
 		client2: Peerbit,
 		db1: EventStore<string>,
 		db2: EventStore<string>;
-	let recieverKey: KeyWithMeta<Ed25519Keypair>;
+	let recieverKey: Ed25519Keypair;
 
 	beforeAll(async () => {});
 	beforeEach(async () => {
@@ -49,8 +49,10 @@ describe(`encryption`, function () {
 		// Trusted client 2
 		client2 = await Peerbit.create({ libp2p: session.peers[1] });
 
-		recieverKey = await client2.keystore.createEd25519Key();
-
+		await client2.libp2p.keychain.createKey("receiver", "Ed25519");
+		recieverKey = await Ed25519Keypair.fromPeerId(
+			await client2.libp2p.keychain.exportPeerId("receiver")
+		);
 		db1 = await client1.open(new EventStore());
 	});
 
@@ -74,12 +76,24 @@ describe(`encryption`, function () {
 		db2 = await client2.open<EventStore<string>>(db1.address);
 		await db1.waitFor(client2.libp2p);
 
-		await client2.keystore.saveKey(recieverKey);
+		await client2.importKeypair(recieverKey);
 		expect(
-			await client2.keystore.getKey(recieverKey.keypair.publicKey)
+			await client2.libp2p.keychain.exportPeerId(
+				base58btc.encode(recieverKey.publicKey.bytes)
+			)
 		).toBeDefined();
 
-		await addHello(db1, recieverKey.keypair.publicKey);
+		expect(
+			await client2.libp2p.keychain.exportPeerId(
+				base58btc.encode(
+					(
+						await X25519PublicKey.from(recieverKey.publicKey)
+					).bytes
+				)
+			)
+		).toBeDefined();
+
+		await addHello(db1, recieverKey.publicKey);
 		await waitFor(() => db2.log.length === 1);
 		await checkHello(db2);
 	});

@@ -4,8 +4,6 @@ import {
 	HeadsCacheToSerialize,
 } from "../heads-cache.js";
 import { default as LazyLevel } from "@dao-xyz/lazy-level";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
 import { deserialize } from "@dao-xyz/borsh";
@@ -16,6 +14,7 @@ import {
 } from "@dao-xyz/libp2p-direct-block";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
+import { signKey } from "./fixtures/privateKey.js";
 
 const checkHashes = async (
 	log: Log<any>,
@@ -57,14 +56,11 @@ const checkHashes = async (
 
 describe(`load`, function () {
 	let blockStore: BlockStore,
-		signKey: KeyWithMeta<Ed25519Keypair>,
 		identityStore: AbstractLevel<any, string, Uint8Array>,
 		log: Log<any>;
 
 	beforeEach(async () => {
 		identityStore = await createStore();
-		const keystore = new Keystore(identityStore);
-		signKey = await keystore.createEd25519Key();
 		blockStore = new MemoryLevelBlockStore();
 		await blockStore.open();
 	});
@@ -80,8 +76,8 @@ describe(`load`, function () {
 		await log.open(
 			blockStore,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
 				cache: () => Promise.resolve(cache),
@@ -269,8 +265,8 @@ describe(`load`, function () {
 		await log.open(
 			blockStore,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
 				cache: () => Promise.resolve(cache),

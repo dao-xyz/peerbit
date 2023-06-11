@@ -15,7 +15,6 @@
 		"packages/programs/acl/trusted-network",
 		"packages/programs/program-interface",
 		"packages/programs/clock-service",
-		"packages/utils/keystore",
 		"packages/utils/crypto",
 		"packages/programs/data/document",
 		"packages/programs/data/string",

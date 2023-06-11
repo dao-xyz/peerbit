@@ -59,9 +59,9 @@ describe(`leaders`, function () {
 			// dont trust client 3
 			new PermissionedEventStore({
 				trusted: [
-					client1.id,
+					client1.libp2p.peerId,
 					client1.identity.publicKey,
-					client2.id,
+					client2.libp2p.peerId,
 					client2.identity.publicKey,
 				],
 			})
@@ -86,8 +86,8 @@ describe(`leaders`, function () {
 		expect(leadersFrom1).toEqual(leadersFrom2);
 		expect(leadersFrom1).toHaveLength(2);
 		expect(leadersFrom1).toContainAllValues([
-			client1.idKeyHash,
-			client2.idKeyHash,
+			client1.identityHash,
+			client2.identityHash,
 		]);
 	});
 
@@ -318,15 +318,15 @@ describe(`leaders`, function () {
 			);
 
 			expect(client1.getReplicatorsSorted(db1.log)).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
+				client1.identityHash,
+				client3.identityHash,
 			]);
 
 			expect(client2.getReplicatorsSorted(db1.log)).toBeUndefined();
 
 			expect(client3.getReplicatorsSorted(db1.log)).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
+				client1.identityHash,
+				client3.identityHash,
 			]);
 
 			await waitForResolved(() =>
@@ -350,19 +350,19 @@ describe(`leaders`, function () {
 			);
 
 			expect(client1.getReplicatorsSorted(db1.log)).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client2.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
+				client1.identityHash,
+				client2.identityHash,
+				client3.identityHash,
 			]);
 			expect(client2.getReplicatorsSorted(db1.log)).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client2.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
+				client1.identityHash,
+				client2.identityHash,
+				client3.identityHash,
 			]);
 			expect(client3.getReplicatorsSorted(db1.log)).toContainAllValues([
-				client1.idKey.publicKey.hashcode(),
-				client2.idKey.publicKey.hashcode(),
-				client3.idKey.publicKey.hashcode(),
+				client1.identityHash,
+				client2.identityHash,
+				client3.identityHash,
 			]);
 
 			checkSorted(client1.getReplicatorsSorted(db1.log)!);

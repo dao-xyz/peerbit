@@ -15,7 +15,7 @@ export const sign = async (
 		keypair.privateKey.keyObject = crypto.createPrivateKey({
 			format: "der",
 			type: "pkcs8",
-			key: toDER(keypair.privateKey.privateKey, true),
+			key: toDER(keypair.privateKeyPublicKey, true),
 		});
 	}
 	return new SignatureWithKey({

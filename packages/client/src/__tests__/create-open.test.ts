@@ -14,6 +14,7 @@ import { ObserverType, Program } from "@dao-xyz/peerbit-program";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { LevelBlockStore } from "@dao-xyz/libp2p-direct-block";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
+import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 
 const dbPath = path.join("./peerbit", "tests", "create-open");
 
@@ -124,27 +125,23 @@ describe(`Create & Open`, function () {
 		});
 
 		it("opens a database - with a different identity", async () => {
-			const signKey = await client.keystore.createEd25519Key();
+			const signKey = await Ed25519Keypair.create();
 			const topic = uuid();
 			const db = await client.open(new EventStore(), {
-				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
-				},
+				identity: signKey,
 			});
 			assert.equal(db.address!.toString().indexOf("/peerbit"), 0);
 			assert.equal(db.address!.toString().indexOf("zb"), 9);
-			expect(db.log.identity.publicKey.equals(signKey.keypair.publicKey));
+			expect(db.log.identity.publicKey.equals(signKey.publicKey));
 			await db.drop();
 		});
 
 		it("opens the same database - from an address", async () => {
-			const signKey = await client.keystore.createEd25519Key();
-			const topic = uuid();
+			const signKey = await Ed25519Keypair.create();
 			const db = await client.open(new EventStore(), {
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 			});
 			const db2 = await client.open(

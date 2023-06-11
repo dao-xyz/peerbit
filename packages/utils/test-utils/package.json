@@ -36,7 +36,7 @@
 	"dependencies": {
 		"@dao-xyz/libp2p-test-utils": "0.5.3",
 		"@dao-xyz/peerbit-libp2p": "0.5.3",
-		"datastore-level": "^9.0.4",
+		"datastore-level": "^10.1.2",
 		"memory-level": "^1.0.0"
 	},
 	"devDependencies": {

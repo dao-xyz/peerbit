@@ -1,8 +1,5 @@
 import assert from "assert";
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Entry, Payload } from "../entry.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import {
 	Ed25519Keypair,
@@ -11,70 +8,32 @@ import {
 	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import sodium from "libsodium-wrappers";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
 import { LamportClock, Timestamp } from "../clock.js";
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-import {
-	identityFromSignKey,
-	signingKeysFixturesPath,
-	testKeyStorePath,
-} from "./utils.js";
-import { createStore } from "./utils.js";
+
 import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-const API = "js-ipfs";
+import { signKey } from "./fixtures/privateKey.js";
 
 describe("Entry", function () {
 	let store: BlockStore;
 
-	let keystore: Keystore, signKey: KeyWithMeta<Ed25519Keypair>;
-
 	beforeAll(async () => {
 		await sodium.ready;
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-		await keystore.waitForOpen();
-
-		signKey = (await keystore.getKey(
-			new Uint8Array([0])
-		)) as KeyWithMeta<Ed25519Keypair>;
-
 		store = new MemoryLevelBlockStore();
 		await store.open();
 	});
 
 	afterAll(async () => {
 		await store.close();
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		rmrf.sync(testKeyStorePath(__filenameBase));
-		await keystore?.close();
 	});
 	describe("endocing", () => {
 		it("can serialize and deserialialize", async () => {
 			const entry = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello",
 			});
@@ -91,7 +50,7 @@ describe("Entry", function () {
 
 			const entry = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello",
 				clock,
@@ -112,7 +71,7 @@ describe("Entry", function () {
 			});
 			const entry = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload,
 				next: [],
@@ -127,17 +86,11 @@ describe("Entry", function () {
 
 		it("creates a encrypted entry with payload", async () => {
 			const payload = "hello world";
-			const senderKey = await keystore.createX25519Key({
-				id: "sender",
-				overwrite: true,
-			});
-			const receiverKey = await keystore.createX25519Key({
-				id: "reciever",
-				overwrite: true,
-			});
+			const senderKey = await X25519Keypair.create();
+			const receiverKey = await X25519Keypair.create();
 			const entry = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload,
 				next: [],
@@ -145,35 +98,27 @@ describe("Entry", function () {
 					reciever: {
 						metadata: undefined,
 						signatures: undefined,
-						payload: receiverKey.keypair.publicKey,
+						payload: receiverKey.publicKey,
 						next: undefined,
 					},
 					options: {
-						getEncryptionKeypair: () => senderKey.keypair,
+						getEncryptionKeypair: () => senderKey,
 						getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
 							for (let i = 0; i < publicKeys.length; i++) {
 								if (
-									publicKeys[i].equals(
-										(senderKey.keypair as X25519Keypair).publicKey
-									)
+									publicKeys[i].equals((senderKey as X25519Keypair).publicKey)
 								) {
 									return {
 										index: i,
-										keypair: senderKey.keypair as
-											| Ed25519Keypair
-											| X25519Keypair,
+										keypair: senderKey as X25519Keypair,
 									};
 								}
 								if (
-									publicKeys[i].equals(
-										(receiverKey.keypair as X25519Keypair).publicKey
-									)
+									publicKeys[i].equals((receiverKey as X25519Keypair).publicKey)
 								) {
 									return {
 										index: i,
-										keypair: receiverKey.keypair as
-											| Ed25519Keypair
-											| X25519Keypair,
+										keypair: receiverKey as X25519Keypair,
 									};
 								}
 							}
@@ -188,7 +133,7 @@ describe("Entry", function () {
 			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
 			expect(entry.metadata.clock.id).toEqual(
 				new Ed25519PublicKey({
-					publicKey: signKey.keypair.publicKey.publicKey,
+					publicKey: signKey.publicKey.publicKey,
 				}).bytes
 			);
 			expect(entry.metadata.clock.timestamp.logical).toEqual(0);
@@ -200,7 +145,7 @@ describe("Entry", function () {
 			const payload2 = "hello again";
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
@@ -211,7 +156,7 @@ describe("Entry", function () {
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry1],
@@ -229,14 +174,14 @@ describe("Entry", function () {
 		it("`next` parameter can be an array of strings", async () => {
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello2",
 				next: [entry1],
@@ -247,14 +192,14 @@ describe("Entry", function () {
 		it("`next` parameter can be an array of Entry instances", async () => {
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello2",
 				next: [entry1],
@@ -265,7 +210,7 @@ describe("Entry", function () {
 		it("can calculate join gid from `next` max chain length", async () => {
 			const entry0A = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
@@ -273,7 +218,7 @@ describe("Entry", function () {
 
 			const entry1A = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [entry0A],
@@ -281,7 +226,7 @@ describe("Entry", function () {
 
 			const entry1B = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("b"),
 				clock: entry1A.metadata.clock,
 				data: "hello1",
@@ -295,7 +240,7 @@ describe("Entry", function () {
 
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
@@ -306,7 +251,7 @@ describe("Entry", function () {
 		it("can calculate join gid from `next` max clock", async () => {
 			const entry1A = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("b"),
 				data: "hello1",
 				next: [],
@@ -314,7 +259,7 @@ describe("Entry", function () {
 
 			const entry1B = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				clock: entry1A.metadata.clock.advance(),
 				data: "hello1",
@@ -331,7 +276,7 @@ describe("Entry", function () {
 
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
@@ -342,7 +287,7 @@ describe("Entry", function () {
 		it("can calculate join gid from `next` gid comparison", async () => {
 			const entry1A = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
@@ -350,7 +295,7 @@ describe("Entry", function () {
 
 			const entry1B = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("b"),
 				clock: entry1A.metadata.clock,
 				data: "hello1",
@@ -365,7 +310,7 @@ describe("Entry", function () {
 
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
@@ -376,7 +321,7 @@ describe("Entry", function () {
 		it("can calculate reuse gid from `next`", async () => {
 			const entry1A = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
@@ -384,7 +329,7 @@ describe("Entry", function () {
 
 			const entry1B = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gid: entry1A.gid,
 				data: "hello1",
 				next: [],
@@ -392,7 +337,7 @@ describe("Entry", function () {
 
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1A, entry1B],
@@ -404,7 +349,7 @@ describe("Entry", function () {
 		it("will use next for gid instaed of gidSeed", async () => {
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello1",
 				next: [],
@@ -412,7 +357,7 @@ describe("Entry", function () {
 
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("Should not be used"),
 				data: "hello2",
 				next: [entry1],
@@ -425,7 +370,7 @@ describe("Entry", function () {
 			try {
 				await Entry.create({
 					store,
-					identity: identityFromSignKey(signKey),
+					identity: signKey,
 					gidSeed: Buffer.from("a"),
 					data: null,
 					next: [],
@@ -441,7 +386,7 @@ describe("Entry", function () {
 			try {
 				await Entry.create({
 					store,
-					identity: identityFromSignKey(signKey),
+					identity: signKey,
 					gidSeed: Buffer.from("a"),
 					data: "hello",
 					next: {} as any,
@@ -457,7 +402,7 @@ describe("Entry", function () {
 		it("returns an ipfs multihash", async () => {
 			const entry = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "hello",
 				next: [],
@@ -478,7 +423,7 @@ describe("Entry", function () {
 	it('throws an error if the object being passed is invalid', async () => {
 	  let err
 	  try {
-		const entry = await Entry.create({ store, identity: identityFromSignKey(signKey), gidSeed:   'A', data: 'hello', next: [] })
+		const entry = await Entry.create({ store, identity: signKey, gidSeed:   'A', data: 'hello', next: [] })
 		delete ((entry.metadata as MetadataSecure)._metadata as DecryptedThing<Metadata>)
 		await Entry.toMultihash(store, entry)
 	  } catch (e: any) {
@@ -494,7 +439,7 @@ describe("Entry", function () {
 			const payload2 = "hello again";
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
@@ -505,7 +450,7 @@ describe("Entry", function () {
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry1],
@@ -531,14 +476,14 @@ describe("Entry", function () {
 			const payload2 = "hello again";
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry1],
@@ -551,21 +496,21 @@ describe("Entry", function () {
 			const payload2 = "hello again";
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [],
 			});
 			const entry3 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [entry2],
@@ -581,7 +526,7 @@ describe("Entry", function () {
 			const payload1 = "hello world";
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				clock: new LamportClock({
@@ -592,7 +537,7 @@ describe("Entry", function () {
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				clock: new LamportClock({
@@ -609,14 +554,14 @@ describe("Entry", function () {
 			const payload2 = "hello world2";
 			const entry1 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
-				identity: identityFromSignKey(signKey),
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: payload2,
 				next: [],

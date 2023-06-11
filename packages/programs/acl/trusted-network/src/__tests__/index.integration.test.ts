@@ -9,9 +9,9 @@ import {
 	IdentityGraph,
 } from "..";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { AccessError, Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Secp256k1Keccak256PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Entry, Identity } from "@dao-xyz/peerbit-log";
+import { AccessError, Ed25519Keypair, Identity } from "@dao-xyz/peerbit-crypto";
+import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
+import { Entry } from "@dao-xyz/peerbit-log";
 import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import {
@@ -29,7 +29,7 @@ const createIdentity = async () => {
 	return {
 		publicKey: ed.publicKey,
 		sign: (data) => ed.sign(data),
-	} as Identity;
+	};
 };
 
 @variant("any_identity_graph")
@@ -89,9 +89,7 @@ describe("index", () => {
 
 		it("path", async () => {
 			const a = (await Ed25519Keypair.create()).publicKey;
-			const b = new Secp256k1Keccak256PublicKey({
-				address: await Wallet.createRandom().getAddress(),
-			});
+			const b = await Secp256k1PublicKey.recover(await Wallet.createRandom());
 			const c = (await Ed25519Keypair.create()).publicKey;
 
 			const store = new AnyCanAppendIdentityGraph({
@@ -155,9 +153,7 @@ describe("index", () => {
 
 		it("can revoke", async () => {
 			const a = (await Ed25519Keypair.create()).publicKey;
-			const b = new Secp256k1Keccak256PublicKey({
-				address: await Wallet.createRandom().getAddress(),
-			});
+			const b = await Secp256k1PublicKey.recover(await Wallet.createRandom());
 
 			const store = new AnyCanAppendIdentityGraph({
 				relationGraph: createIdentityGraphStore(),
@@ -364,12 +360,8 @@ describe("index", () => {
 			expect(
 				l0a.trustGraph.put(
 					new IdentityRelation({
-						to: new Secp256k1Keccak256PublicKey({
-							address: await Wallet.createRandom().getAddress(),
-						}),
-						from: new Secp256k1Keccak256PublicKey({
-							address: await Wallet.createRandom().getAddress(),
-						}),
+						to: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+						from: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
 					})
 				)
 			).rejects.toBeInstanceOf(AccessError);

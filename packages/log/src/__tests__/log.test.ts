@@ -1,74 +1,24 @@
 import assert from "assert";
-import rmrf from "rimraf";
-import { Entry, Payload } from "../entry.js";
+import { Entry } from "../entry.js";
 import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import fs from "fs-extra";
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
-
-import { LastWriteWins } from "../log-sorting.js";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
 import { compare } from "@dao-xyz/uint8arrays";
-import { createStore } from "./utils.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-// For tiebreaker testing
-const FirstWriteWins = (a: any, b: any) => LastWriteWins(a, b) * -1;
-
-let signKey: KeyWithMeta<Ed25519Keypair>,
-	signKey2: KeyWithMeta<Ed25519Keypair>,
-	signKey3: KeyWithMeta<Ed25519Keypair>;
+import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 
 describe("Log", function () {
-	let keystore: Keystore;
 	let store: BlockStore;
 	beforeAll(async () => {
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-		const signKeys: KeyWithMeta<Ed25519Keypair>[] = [];
-		for (let i = 0; i < 3; i++) {
-			signKeys.push(
-				(await keystore.getKey(
-					new Uint8Array([i])
-				)) as KeyWithMeta<Ed25519Keypair>
-			);
-		}
-		signKeys.sort((a, b) =>
-			compare(a.keypair.publicKey.publicKey, b.keypair.publicKey.publicKey)
-		);
-		// @ts-ignore
-		signKey = signKeys[0];
-		// @ts-ignore
-		signKey2 = signKeys[1];
-		// @ts-ignore
-		signKey3 = signKeys[2];
 		store = new MemoryLevelBlockStore();
 		await store.open();
 	});
 
 	afterAll(async () => {
 		await store.close();
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await keystore?.close();
 	});
 
 	describe("constructor", () => {
@@ -77,8 +27,8 @@ describe("Log", function () {
 			await log.open(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				undefined
 			);
@@ -99,8 +49,8 @@ describe("Log", function () {
 			await log.open(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				undefined
 			);
@@ -109,8 +59,8 @@ describe("Log", function () {
 		it("sets an id", async () => {
 			const log = new Log({ id: new Uint8Array(1) });
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			expect(log.id).toEqual(new Uint8Array(1));
 		});
@@ -118,8 +68,8 @@ describe("Log", function () {
 		it("generates if id is not passed as an argument", async () => {
 			const log = new Log();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			expect(log.id).toBeInstanceOf(Uint8Array);
 		});
@@ -128,8 +78,8 @@ describe("Log", function () {
 			const one = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryA",
@@ -139,8 +89,8 @@ describe("Log", function () {
 			const two = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryB",
@@ -150,8 +100,8 @@ describe("Log", function () {
 			const three = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryC",
@@ -160,8 +110,8 @@ describe("Log", function () {
 			});
 			const log = new Log<string>();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.reset([one, two, three]);
 
@@ -175,8 +125,8 @@ describe("Log", function () {
 			const one = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryA",
@@ -185,8 +135,8 @@ describe("Log", function () {
 			const two = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryB",
@@ -195,8 +145,8 @@ describe("Log", function () {
 			const three = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryC",
@@ -204,8 +154,8 @@ describe("Log", function () {
 			});
 			const log = new Log<string>();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.reset([one, two, three], [three]);
 
@@ -217,8 +167,8 @@ describe("Log", function () {
 			const one = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryA",
@@ -227,8 +177,8 @@ describe("Log", function () {
 			const two = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryB",
@@ -237,8 +187,8 @@ describe("Log", function () {
 			const three = await Entry.create({
 				store,
 				identity: {
-					...signKey.keypair,
-					sign: (data) => signKey.keypair.sign(data),
+					...signKey,
+					sign: (data) => signKey.sign(data),
 				},
 				gidSeed: Buffer.from("a"),
 				data: "entryC",
@@ -246,8 +196,8 @@ describe("Log", function () {
 			});
 			const log = new Log<string>();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.reset([one, two, three]);
 			expect((await log.getHeads()).map((x) => x.hash)).toContainAllValues([
@@ -266,8 +216,8 @@ describe("Log", function () {
 		beforeEach(async () => {
 			log = new Log<string>();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.append("one", { gidSeed: Buffer.from("a") });
 			await log.append("two", { gidSeed: Buffer.from("a") });
@@ -289,8 +239,8 @@ describe("Log", function () {
 		beforeEach(async () => {
 			log = new Log<string>();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.append("one", {
 				gidSeed: Buffer.from("a"),
@@ -317,33 +267,27 @@ describe("Log", function () {
 		beforeEach(async () => {
 			log = new Log();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.append("one", { gidSeed: Buffer.from("a") });
 		});
 
 		it("changes identity", async () => {
 			expect((await log.toArray())[0].metadata.clock.id).toEqual(
-				signKey.keypair.publicKey.bytes
+				signKey.publicKey.bytes
 			);
-			log.setIdentity({
-				...signKey2.keypair,
-				sign: signKey2.keypair.sign,
-			});
+			log.setIdentity(signKey2);
 			await log.append("two", { gidSeed: Buffer.from("a") });
 			assert.deepStrictEqual(
 				(await log.toArray())[1].metadata.clock.id,
-				signKey2.keypair.publicKey.bytes
+				signKey2.publicKey.bytes
 			);
-			log.setIdentity({
-				...signKey3.keypair,
-				sign: signKey3.keypair.sign,
-			});
+			log.setIdentity(signKey3);
 			await log.append("three", { gidSeed: Buffer.from("a") });
 			assert.deepStrictEqual(
 				(await log.toArray())[2].metadata.clock.id,
-				signKey3.keypair.publicKey.bytes
+				signKey3.publicKey.bytes
 			);
 		});
 	});
@@ -354,8 +298,8 @@ describe("Log", function () {
 		beforeEach(async () => {
 			log = new Log();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			await log.append("one", { gidSeed: Buffer.from("a") });
 		});
@@ -379,8 +323,8 @@ describe("Log", function () {
 		it("returns all entries in the log", async () => {
 			const log = new Log<string>();
 			await log.open(store, {
-				...signKey.keypair,
-				sign: (data) => signKey.keypair.sign(data),
+				...signKey,
+				sign: (data) => signKey.sign(data),
 			});
 			expect((await log.toArray()) instanceof Array).toEqual(true);
 			expect(log.length).toEqual(0);

@@ -88,7 +88,7 @@ describe(`Replication`, function () {
 				client1._minReplicas
 			)
 		).toContainAllValues(
-			[client1.idKeyHash, client2.idKeyHash].map((p) => p.toString())
+			[client1.identityHash, client2.identityHash].map((p) => p.toString())
 		);
 		expect(db1Entries[0].payload.getValue().value).toEqual(value);
 
@@ -103,7 +103,7 @@ describe(`Replication`, function () {
 				client1._minReplicas
 			)
 		).toContainValues(
-			[client1.idKeyHash, client2.idKeyHash].map((p) => p.toString())
+			[client1.identityHash, client2.identityHash].map((p) => p.toString())
 		);
 		expect(db2Entries[0].payload.getValue().value).toEqual(value);
 	});

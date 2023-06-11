@@ -1,55 +1,27 @@
-import { field, variant } from "@dao-xyz/borsh";
-import { PlainKey } from "./key.js";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
-import {
-	Sec256k1Keccak256Keypair,
-	Secp256k1Keccak256PublicKey,
-} from "./sepc256k1keccak256.js";
-
-@variant(0)
-export class PeerIdAddress extends PlainKey {
-	@field({ type: "string" })
-	address: string;
-
-	constructor(properties?: { address: string }) {
-		super();
-		if (properties) {
-			this.address = properties.address;
-		}
-	}
-
-	equals(other: any): boolean {
-		if (other instanceof PeerIdAddress) {
-			return this.address === other.address;
-		}
-		return false;
-	}
-	toString(): string {
-		return "ipfs/" + this.address;
-	}
-}
+import { Secp256k1Keypair, Secp256k1PublicKey } from "./sepc256k1.js";
 
 export const getKeypairFromPeerId = (
 	peerId: PeerId
-): Ed25519Keypair | Sec256k1Keccak256Keypair => {
+): Ed25519Keypair | Secp256k1Keypair => {
 	if (peerId.type === "Ed25519") {
-		return Ed25519Keypair.from(peerId);
+		return Ed25519Keypair.fromPeerId(peerId);
 	}
 	if (peerId.type === "secp256k1") {
-		return Sec256k1Keccak256Keypair.from(peerId);
+		return Secp256k1Keypair.fromPeerId(peerId);
 	}
 	throw new Error("Unsupported key type");
 };
 
 export const getPublicKeyFromPeerId = (
 	peerId: PeerId
-): Ed25519PublicKey | Secp256k1Keccak256PublicKey => {
+): Ed25519PublicKey | Secp256k1PublicKey => {
 	if (peerId.type === "Ed25519") {
-		return Ed25519PublicKey.from(peerId);
+		return Ed25519PublicKey.fromPeerId(peerId);
 	}
 	if (peerId.type === "secp256k1") {
-		return Secp256k1Keccak256PublicKey.from(peerId);
+		return Secp256k1PublicKey.from(peerId);
 	}
 	throw new Error("Unsupported key type");
 };

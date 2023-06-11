@@ -6,6 +6,7 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import {
 	AccessError,
 	Ed25519Keypair,
+	Identity,
 	randomBytes,
 } from "@dao-xyz/peerbit-crypto";
 import {
@@ -14,7 +15,7 @@ import {
 	SearchRequest,
 	StringMatch,
 } from "@dao-xyz/peerbit-document";
-import type { CanAppend, Identity } from "@dao-xyz/peerbit-log";
+import type { CanAppend } from "@dao-xyz/peerbit-log";
 import { CanRead, RPC } from "@dao-xyz/peerbit-rpc";
 import {
 	ObserverType,

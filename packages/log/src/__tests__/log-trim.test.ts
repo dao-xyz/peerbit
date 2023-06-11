@@ -1,63 +1,29 @@
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Log } from "../log.js";
-
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
-import { createStore } from "./utils.js";
 import { waitFor } from "@dao-xyz/peerbit-time";
-import { Entry } from "../entry.js";
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-let signKey: KeyWithMeta<Ed25519Keypair>;
+import { signKey } from "./fixtures/privateKey.js";
 
 describe("Append trim", function () {
-	let keystore: Keystore, store: BlockStore;
+	let store: BlockStore;
 
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		//@ts-ignore
-		signKey = await keystore.getKey(new Uint8Array([0]));
-
 		store = new MemoryLevelBlockStore();
 		await store.open();
 	});
 
 	afterAll(async () => {
 		await store.close();
-
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await keystore?.close();
 	});
 
 	let log: Log<string>;
 	beforeEach(async () => {
 		log = new Log<string>();
 		await log.open(store, {
-			...signKey.keypair,
-			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			...signKey,
+			sign: async (data: Uint8Array) => await signKey.sign(data),
 		});
 	});
 
@@ -66,8 +32,8 @@ describe("Append trim", function () {
 		await log.open(
 			store,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
 				trim: {
@@ -135,8 +101,8 @@ describe("Append trim", function () {
 		await log.open(
 			store,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{ trim: { type: "length", from: 3, to: 1 } } // when length > 3 cut back to 1
 		);
@@ -165,8 +131,8 @@ describe("Append trim", function () {
 		await log.open(
 			store,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
 				trim: {
@@ -200,8 +166,8 @@ describe("Append trim", function () {
 		await log.open(
 			store,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
 				trim: { type: "bytelength", to: 15, filter: { canTrim: () => true } },
@@ -243,8 +209,8 @@ describe("Append trim", function () {
 		await log.open(
 			store,
 			{
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
 				trim: { type: "time", maxAge },

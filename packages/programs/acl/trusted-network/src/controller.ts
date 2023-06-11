@@ -6,7 +6,7 @@ import {
 	PutOperation,
 } from "@dao-xyz/peerbit-document";
 import { AppendOptions, Entry } from "@dao-xyz/peerbit-log";
-import { PeerIdAddress, PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
 	IdentityRelation,
@@ -18,7 +18,6 @@ import {
 	getRelation,
 	AbstractRelation,
 } from "./identity-graph.js";
-import type { PeerId } from "@libp2p/interface-peer-id";
 import { Program, ReplicatorType } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
@@ -165,18 +164,8 @@ export class TrustedNetwork extends Program {
 		return true; // TODO should we have read access control?
 	}
 
-	async add(
-		trustee: PublicSignKey | PeerIdAddress | PeerId
-	): Promise<IdentityRelation | undefined> {
-		let key: PublicSignKey | PeerIdAddress;
-		if (
-			trustee instanceof PublicSignKey === false &&
-			trustee instanceof PeerIdAddress === false
-		) {
-			key = new PeerIdAddress({ address: trustee.toString() });
-		} else {
-			key = trustee as PublicSignKey | PeerIdAddress;
-		}
+	async add(trustee: PublicSignKey): Promise<IdentityRelation | undefined> {
+		const key = trustee as PublicSignKey;
 
 		const existingRelation = await this.getRelation(
 			key,
@@ -196,17 +185,8 @@ export class TrustedNetwork extends Program {
 	async hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
 		return !!(await this.getRelation(trustee, truster));
 	}
-	getRelation(
-		trustee: PublicSignKey | PeerIdAddress,
-		truster = this.rootTrust
-	) {
-		return getRelation(
-			truster,
-			trustee instanceof PublicSignKey
-				? trustee
-				: new PeerIdAddress({ address: trustee.toString() }),
-			this.trustGraph
-		);
+	getRelation(trustee: PublicSignKey, truster = this.rootTrust) {
+		return getRelation(truster, trustee, this.trustGraph);
 	}
 
 	/**
@@ -220,7 +200,7 @@ export class TrustedNetwork extends Program {
 	 * @returns true, if trusted
 	 */
 	async isTrusted(
-		trustee: PublicSignKey | PeerIdAddress,
+		trustee: PublicSignKey,
 		truster: PublicSignKey = this.rootTrust
 	): Promise<boolean> {
 		if (trustee.equals(this.rootTrust)) {
@@ -237,7 +217,7 @@ export class TrustedNetwork extends Program {
 	}
 
 	async _isTrustedLocal(
-		trustee: PublicSignKey | PeerIdAddress,
+		trustee: PublicSignKey,
 		truster: PublicSignKey = this.rootTrust
 	): Promise<boolean> {
 		const trustPath = await hasPath(

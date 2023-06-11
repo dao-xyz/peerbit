@@ -7,8 +7,6 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { waitForAsync } from "@dao-xyz/peerbit-time";
 import { field, variant } from "@dao-xyz/borsh";
 
-const dbPath = "./tmp/tests/persistency";
-
 describe(`load`, () => {
 	jest.retryTimes(1); // TODO Side effects may cause failures
 
