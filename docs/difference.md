@@ -22,7 +22,7 @@ The table below briefly outlines the major difference between related frameworks
 Peerbit started as a fork of OrbitDB in order to support some key features that are important for building applications for the modern web. Along the way, many changes have been made improve various aspects of the project.
  
  
-## Coding experience
+### Coding experience
 - All modules have been rewritten in TypeScript. There are many benifits of this, one is that we can omit a large amount of type checking code.
 - Monorepo. OrbitDB is scattered around many repositories which slows down development speed. Peerbit has collected all modules in one repo with [lerna](https://github.com/lerna/lerna).
 - **ESM-only** because we need to be compatible with the latest vestions if `js-ipfs` and `libp2p`
@@ -30,9 +30,7 @@ Peerbit started as a fork of OrbitDB in order to support some key features that 
 - Type safety. Messages are encoded with [Borsh](https://github.com/near/borsh) serialization format. This format allows one to have a strict type checks during serialization/deserialization and enables message polymorphism which JSON does not (in a easy way) support and provides a much more compact data representation.
 - Performance critical modules are written with the mindset that they might be ported to Rust/WASM at some point.
 - In OrbitDB it was assumed that a store always has an access controller, here, we don't make that assumption. In fact every "program" that is allowed to update a state needs to define checks ```canAppend```, ```canRead``` or delagate these checks to some "access controller", there are a few predefined ACLs [here](../packages/programs/acl). This way, you have more freedom when creating "programs" as you can pick, choose and combine programs to build the functionality you want to achieve. 
- 
-## Features
- 
+  
 ### Encryption
 - OrbitDB did not support read access control, this feature is much more complicated to achieve in comparison to write access as one also needs to gatekeep data in some way (encrypted storage). In addition to this, one needs to build a framework around managing encryption keys, relaying encrypted messages (1-N encryption) and a query/search framework compatible with encrypted content and metadata. Peerbit supports this, and does so at a granular level.
  
