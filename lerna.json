@@ -7,7 +7,6 @@
 		"packages/libp2p/peerbit-libp2p",
 		"packages/log",
 		"packages/client",
-		"packages/server-node/frontend",
 		"packages/server-node/node",
 		"packages/server-node/test-lib",
 		"packages/programs/rpc",
