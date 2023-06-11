@@ -4,7 +4,7 @@ const jestConfig: JestConfigWithTsJest = {
 	preset: "ts-jest",
 	workerThreads: true,
 	testEnvironment: "node",
-	roots: ["./packages/", "./docs/ß"],
+	roots: ["./packages/", "./docs/"],
 	transform: {
 		"^.+\\.tsx?$": [
 			"ts-jest",

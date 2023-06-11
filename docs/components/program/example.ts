@@ -2,8 +2,9 @@
 /// [definition]
 import { Log } from "@dao-xyz/peerbit-log";
 import { Program } from "@dao-xyz/peerbit-program";
-import { field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 
+@variant("my-database") // it is required your program with a "seed". The database address will depend on this
 class MyDatabase extends Program {
 	@field({ type: Log })
 	log: Log<string>;
