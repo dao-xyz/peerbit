@@ -7,6 +7,7 @@ import {
 	AccessError,
 	Ed25519Keypair,
 	Identity,
+	PublicSignKey,
 	randomBytes,
 } from "@dao-xyz/peerbit-crypto";
 import {
@@ -24,6 +25,7 @@ import {
 	SubscriptionType,
 } from "@dao-xyz/peerbit-program";
 import { IdentityAccessController } from "../acl-db";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 @variant("document")
 class Document {
@@ -53,7 +55,7 @@ class TestStore extends Program {
 	@field({ type: IdentityAccessController })
 	accessController: IdentityAccessController;
 
-	constructor(properties: { identity: Identity }) {
+	constructor(properties: { publicKey: PublicSignKey | PeerId }) {
 		super();
 		if (properties) {
 			this.store = new Documents({
@@ -63,7 +65,7 @@ class TestStore extends Program {
 				}),
 			});
 			this.accessController = new IdentityAccessController({
-				rootTrust: properties.identity?.publicKey,
+				rootTrust: properties.publicKey,
 			});
 		}
 	}
@@ -79,10 +81,9 @@ class TestStore extends Program {
 }
 
 describe("index", () => {
-	let session: LSession, programs: Program[], identites: Identity[];
+	let session: LSession, programs: Program[];
 	let replicators: string[][];
 
-	const identity = (i: number) => identites[i];
 	const init = async <T extends Program>(
 		store: T,
 		i: number,
@@ -93,7 +94,7 @@ describe("index", () => {
 		}
 	) => {
 		programs.push(store);
-		const result = await store.init(session.peers[i], identites[i], {
+		const result = await store.init(session.peers[i], {
 			...options,
 			log: {
 				replication: {
@@ -106,12 +107,9 @@ describe("index", () => {
 
 	beforeAll(async () => {
 		session = await LSession.connected(3);
-		identites = [];
 		programs = [];
-		for (let i = 0; i < session.peers.length; i++) {
-			identites.push(await createIdentity());
-		}
 	});
+
 	beforeEach(() => {
 		replicators = [];
 	});
@@ -135,7 +133,7 @@ describe("index", () => {
 	});
 
 	it("can write from trust web", async () => {
-		const s = new TestStore({ identity: identity(0) });
+		const s = new TestStore({ publicKey: session.peers[0].peerId });
 		const options = {
 			role: new Replicator(),
 			log: {},
@@ -164,10 +162,7 @@ describe("index", () => {
 			)
 		).rejects.toBeInstanceOf(AccessError); // Not trusted
 
-		await l0a.accessController.trustedNetwork.add(identity(1).publicKey);
-		await l0a.accessController.trustedNetwork.add(
-			session.peers[1].services.blocks.publicKey
-		);
+		await l0a.accessController.trustedNetwork.add(session.peers[1].peerId);
 
 		await l0b.accessController.trustedNetwork.trustGraph.log.join(
 			await l0a.accessController.trustedNetwork.trustGraph.log.getHeads()
@@ -179,7 +174,7 @@ describe("index", () => {
 		];
 
 		await waitFor(
-			() => l0b.accessController.trustedNetwork.trustGraph.log.length === 2
+			() => l0b.accessController.trustedNetwork.trustGraph.log.length === 1
 		);
 		await l0b.store.put(
 			new Document({
@@ -202,7 +197,7 @@ describe("index", () => {
 			};
 
 			const l0a = await init(
-				new TestStore({ identity: identity(0) }),
+				new TestStore({ publicKey: session.peers[0].peerId }),
 				0,
 				options
 			);
@@ -233,16 +228,7 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new PublicKeyAccessCondition({
-						key: identity(1).publicKey,
-					}),
-					accessTypes: [AccessType.Any],
-				})
-			);
-
-			await l0a.accessController.access.put(
-				new Access({
-					accessCondition: new PublicKeyAccessCondition({
-						key: session.peers[1].services.blocks.publicKey,
+						key: session.peers[1].peerId,
 					}),
 					accessTypes: [AccessType.Any],
 				})
@@ -251,7 +237,7 @@ describe("index", () => {
 			await l0b.accessController.access.log.join(
 				await l0a.accessController.access.log.getHeads()
 			);
-			await waitFor(() => l0b.accessController.access.index.size === 2);
+			await waitFor(() => l0b.accessController.access.index.size === 1);
 			await l0b.store.put(
 				new Document({
 					id: "2",
@@ -266,7 +252,7 @@ describe("index", () => {
 			};
 
 			const l0a = await init(
-				new TestStore({ identity: identity(0) }),
+				new TestStore({ publicKey: session.peers[0].peerId }),
 				0,
 				options
 			);
@@ -311,16 +297,7 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new PublicKeyAccessCondition({
-						key: identity(1).publicKey,
-					}),
-					accessTypes: [AccessType.Any],
-				})
-			);
-
-			await l0a.accessController.access.put(
-				new Access({
-					accessCondition: new PublicKeyAccessCondition({
-						key: session.peers[1].services.blocks.publicKey,
+						key: session.peers[1].peerId,
 					}),
 					accessTypes: [AccessType.Any],
 				})
@@ -341,9 +318,9 @@ describe("index", () => {
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
 
-			await waitFor(() => l0b.accessController.access.index.size == 2);
+			await waitFor(() => l0b.accessController.access.index.size == 1);
 			await l0b.accessController.identityGraphController.addRelation(
-				identity(2).publicKey
+				session.peers[2].peerId
 			);
 			await l0c.accessController.identityGraphController.relationGraph.log.join(
 				await l0b.accessController.identityGraphController.relationGraph.log.getHeads()
@@ -368,7 +345,7 @@ describe("index", () => {
 			};
 
 			const l0a = await init(
-				new TestStore({ identity: identity(0) }),
+				new TestStore({ publicKey: session.peers[0].peerId }),
 				0,
 				options
 			);
@@ -422,7 +399,7 @@ describe("index", () => {
 			};
 
 			const l0a = await init(
-				new TestStore({ identity: identity(0) }),
+				new TestStore({ publicKey: session.peers[0].peerId }),
 				0,
 				options
 			);
@@ -485,12 +462,12 @@ describe("index", () => {
 		};
 
 		const l0a = await init(
-			new TestStore({ identity: identity(0) }),
+			new TestStore({ publicKey: session.peers[0].peerId }),
 			0,
 			options
 		);
 		const l0b = await init(
-			new TestStore({ identity: identity(0) }),
+			new TestStore({ publicKey: session.peers[0].peerId }),
 			0,
 			options
 		);
@@ -503,10 +480,14 @@ describe("index", () => {
 			log: {},
 		};
 
-		const l0a = await init(new TestStore({ identity: identity(0) }), 0, {
-			...options,
-			canRead: () => Promise.resolve(true),
-		});
+		const l0a = await init(
+			new TestStore({ publicKey: session.peers[0].peerId }),
+			0,
+			{
+				...options,
+				canRead: () => Promise.resolve(true),
+			}
+		);
 		await l0a.accessController.access.put(
 			new Access({
 				accessCondition: new AnyAccessCondition(),

@@ -100,7 +100,6 @@ export type CreateInstanceOptions = {
 	cache?: LazyLevel;
 } & OptionalCreateOptions;
 export type OpenOptions = {
-	identity?: Identity;
 	entryToReplicate?: Entry<any>;
 	role?: SubscriptionType;
 	sync?: SyncFilter;
@@ -1061,7 +1060,7 @@ export class Peerbit {
 			let programCache: LazyLevel | undefined = undefined;
 			const resolveMinReplicas = (log: Log<any>) =>
 				this.logs.get(log.idString)!.minReplicas.value;
-			await program.init(this.libp2p, options.identity || this.identity, {
+			await program.init(this.libp2p, {
 				onClose: async () => {
 					return this._onProgamClose(program, programCache!);
 				},

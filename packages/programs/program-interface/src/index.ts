@@ -2,7 +2,7 @@ import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock } from "@dao-xyz/libp2p-direct-block";
 import { Change, Entry, Log, LogOptions } from "@dao-xyz/peerbit-log";
-import { sha256 } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair, sha256 } from "@dao-xyz/peerbit-crypto";
 import { field, getSchema, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
@@ -202,14 +202,13 @@ export abstract class AbstractProgram {
 
 	async init(
 		libp2p: Libp2pExtended,
-		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
 		if (this.initialized) {
 			throw new Error("Already initialized");
 		}
 		this._libp2p = libp2p;
-		this._identity = identity;
+		this._identity = await Ed25519Keypair.fromPeerId(libp2p.peerId);
 		this._onClose = options.onClose;
 		this._onDrop = options.onDrop;
 		this._role = options.role;
@@ -231,7 +230,7 @@ export abstract class AbstractProgram {
 
 		const nexts = this.programs;
 		for (const next of nexts) {
-			await next.init(libp2p, identity, {
+			await next.init(libp2p, {
 				...options,
 				parent: this,
 			});
@@ -241,7 +240,7 @@ export abstract class AbstractProgram {
 			this.logs.map((s) =>
 				s.open(
 					libp2p.services.blocks,
-					identity,
+					this._identity,
 					typeof options?.log === "function" ? options?.log(s) : options?.log
 				)
 			)
@@ -415,7 +414,6 @@ export abstract class Program
 
 	async init(
 		libp2p: Libp2pExtended,
-		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
 		// check that a  discriminator exist
@@ -445,7 +443,7 @@ export abstract class Program
 		// call setup before init, because init means "open" while "setup" is rather something we do to make everything ready for start
 		await this.setup();
 
-		await super.init(libp2p, identity, options);
+		await super.init(libp2p, options);
 
 		if (this.parentProgram != undefined && this._address) {
 			throw new Error(

@@ -19,14 +19,6 @@ import {
 } from "../index.js";
 import { Range } from "../range.js";
 
-const createIdentity = async () => {
-	const ed = await Ed25519Keypair.create();
-	return {
-		publicKey: ed.publicKey,
-		sign: (data) => ed.sign(data),
-	};
-};
-
 describe("query", () => {
 	let session: LSession,
 		observer: Libp2pExtended,
@@ -43,7 +35,7 @@ describe("query", () => {
 
 		// Create store
 		writeStore = new DString({});
-		await writeStore.init(writer, await createIdentity(), {
+		await writeStore.init(writer, {
 			role: new Replicator(),
 			log: {
 				replication: {
@@ -62,7 +54,7 @@ describe("query", () => {
 			writeStore.address!
 		)) as DString;
 
-		await observerStore.init(observer, await createIdentity(), {
+		await observerStore.init(observer, {
 			role: new Observer(),
 			log: {
 				replication: {
@@ -187,7 +179,7 @@ describe("query", () => {
 
 	it("handles AccessError gracefully", async () => {
 		const store = new DString({});
-		await store.init(writer, await createIdentity(), {
+		await store.init(writer, {
 			role: new Replicator(),
 			log: {
 				replication: {

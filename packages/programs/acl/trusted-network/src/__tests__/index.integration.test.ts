@@ -57,7 +57,7 @@ describe("index", () => {
 			}
 		) => {
 			store.init &&
-				(await store.init(session.peers[i], identites[i], {
+				(await store.init(session.peers[i], {
 					...options,
 					log: {
 						replication: {
@@ -179,11 +179,10 @@ describe("index", () => {
 	});
 
 	describe("TrustedNetwork", () => {
-		let session: LSession, identites: Identity[], programs: Program[];
+		let session: LSession, programs: Program[];
 
 		let replicators: string[][];
 
-		const identity = (i: number) => identites[i];
 		const init = async (
 			store: Program,
 			i: number,
@@ -193,7 +192,7 @@ describe("index", () => {
 			}
 		) => {
 			store.init &&
-				(await store.init(session.peers[i], identites[i], {
+				(await store.init(session.peers[i], {
 					...options,
 					log: {
 						replication: {
@@ -211,11 +210,7 @@ describe("index", () => {
 			await waitForPeersBlock(...session.peers.map((x) => x.services.blocks));
 		});
 		beforeEach(async () => {
-			identites = [];
 			programs = [];
-			for (let i = 0; i < session.peers.length; i++) {
-				identites.push(await createIdentity());
-			}
 
 			replicators = session.peers.map((x) => [
 				x.services.pubsub.publicKey.hashcode(),
@@ -244,7 +239,7 @@ describe("index", () => {
 			const topic = uuid();
 
 			const l0a = new TrustedNetwork({
-				rootTrust: identity(0).publicKey,
+				rootTrust: session.peers[0].peerId,
 			});
 			await init(l0a, 0, { topic });
 
@@ -272,13 +267,13 @@ describe("index", () => {
 				l0b.trustGraph.index._query.rpcTopic
 			);
 
-			await l0a.add(identity(1).publicKey);
+			await l0a.add(session.peers[1].peerId);
 
 			await l0b.trustGraph.log.join(await l0a.trustGraph.log.getHeads());
 
 			await waitFor(() => l0b.trustGraph.index.size == 1);
 
-			await l0b.add(identity(2).publicKey); // Will only work if peer2 is trusted
+			await l0b.add(session.peers[2].peerId); // Will only work if peer2 is trusted
 
 			await l0a.trustGraph.log.join(await l0b.trustGraph.log.getHeads());
 
@@ -336,23 +331,23 @@ describe("index", () => {
 
 		it("has relation", async () => {
 			const l0a = new TrustedNetwork({
-				rootTrust: identity(0).publicKey,
+				rootTrust: session.peers[0].peerId,
 			});
 			await init(l0a, 0, { topic: uuid() });
 			replicators = [];
 
-			await l0a.add(identity(1).publicKey);
+			await l0a.add(session.peers[1].peerId);
 			expect(
-				await l0a.hasRelation(identity(0).publicKey, identity(1).publicKey)
+				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId)
 			).toBeFalse();
 			expect(
-				await l0a.hasRelation(identity(1).publicKey, identity(0).publicKey)
+				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId)
 			).toBeTrue();
 		});
 
 		it("can not append with wrong truster", async () => {
 			let l0a = new TrustedNetwork({
-				rootTrust: identity(0).publicKey,
+				rootTrust: session.peers[0].peerId,
 			});
 			await init(l0a, 0, { topic: uuid() });
 			replicators = [];
@@ -369,7 +364,7 @@ describe("index", () => {
 
 		it("untrusteed by chain", async () => {
 			let l0a = new TrustedNetwork({
-				rootTrust: identity(0).publicKey,
+				rootTrust: session.peers[0].peerId,
 			});
 			const topic = uuid();
 
@@ -387,7 +382,7 @@ describe("index", () => {
 			];
 
 			// Can not append peer3Key since its not trusted by the root
-			await expect(l0b.add(identity(2).publicKey)).rejects.toBeInstanceOf(
+			await expect(l0b.add(session.peers[2].peerId)).rejects.toBeInstanceOf(
 				AccessError
 			);
 		});

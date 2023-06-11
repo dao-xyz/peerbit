@@ -1,6 +1,5 @@
 import { delay } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { Entry } from "@dao-xyz/peerbit-log";
 import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
@@ -10,7 +9,6 @@ import { default as Cache } from "@dao-xyz/lazy-level";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
-const createIdentity = Ed25519Keypair.create;
 const maxTimeError = 3000;
 @variant("clock-test")
 class P extends Program {
@@ -33,15 +31,14 @@ describe("clock", () => {
 	let session: LSession, responder: P, reader: P;
 	beforeEach(async () => {
 		session = await LSession.connected(3);
-		const responderIdentity = await createIdentity();
 		responder = new P({
 			clock: new ClockService({
 				trustedNetwork: new TrustedNetwork({
-					rootTrust: responderIdentity.publicKey,
+					rootTrust: session.peers[0].peerId,
 				}),
 			}),
 		});
-		await responder.init(session.peers[0], responderIdentity, {
+		await responder.init(session.peers[0], {
 			role: new Replicator(),
 
 			log: {
@@ -55,7 +52,7 @@ describe("clock", () => {
 		responder.clock._maxError = BigInt(maxTimeError * 1e6);
 
 		reader = deserialize(serialize(responder), P);
-		await reader.init(session.peers[1], await createIdentity(), {
+		await reader.init(session.peers[1], {
 			role: new Observer(),
 			replicators: () => [],
 			log: {

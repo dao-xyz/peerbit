@@ -8,9 +8,10 @@ import {
 } from "@dao-xyz/peerbit-trusted-network";
 import { Access, AccessType } from "./access";
 import { Entry } from "@dao-xyz/peerbit-log";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
 import { Program } from "@dao-xyz/peerbit-program";
 import { RPC } from "@dao-xyz/peerbit-rpc";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -23,29 +24,27 @@ export class IdentityAccessController extends Program {
 	@field({ type: TrustedNetwork })
 	trustedNetwork: TrustedNetwork;
 
-	constructor(opts?: {
-		rootTrust?: PublicSignKey;
+	constructor(opts: {
+		rootTrust: PublicSignKey | PeerId;
 		trustedNetwork?: TrustedNetwork;
 	}) {
 		super();
-		if (opts) {
-			if (!opts.trustedNetwork && !opts.rootTrust) {
-				throw new Error("Expecting either TrustedNetwork or rootTrust");
-			}
-			this.access = new Documents({
-				index: new DocumentIndex({
-					indexBy: "id",
-					query: new RPC(),
-				}),
-			});
-
-			this.trustedNetwork = opts.trustedNetwork
-				? opts.trustedNetwork
-				: new TrustedNetwork({
-						rootTrust: opts.rootTrust as PublicSignKey,
-				  });
-			this.identityGraphController = new IdentityGraph({});
+		if (!opts.trustedNetwork && !opts.rootTrust) {
+			throw new Error("Expecting either TrustedNetwork or rootTrust");
 		}
+		this.access = new Documents({
+			index: new DocumentIndex({
+				indexBy: "id",
+				query: new RPC(),
+			}),
+		});
+
+		this.trustedNetwork = opts.trustedNetwork
+			? opts.trustedNetwork
+			: new TrustedNetwork({
+					rootTrust: opts.rootTrust,
+			  });
+		this.identityGraphController = new IdentityGraph({});
 	}
 
 	// allow anyone write to the ACL db, but assume entry is invalid until a verifier verifies

@@ -6,7 +6,7 @@ import {
 	PutOperation,
 } from "@dao-xyz/peerbit-document";
 import { AppendOptions, Entry } from "@dao-xyz/peerbit-log";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
 import { DeleteOperation } from "@dao-xyz/peerbit-document";
 import {
 	IdentityRelation,
@@ -21,7 +21,13 @@ import {
 import { Program, Replicator } from "@dao-xyz/peerbit-program";
 import { CanRead } from "@dao-xyz/peerbit-rpc";
 import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
+import { PeerId } from "@libp2p/interface-peer-id";
 
+const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
+	return publicKey instanceof PublicSignKey
+		? publicKey
+		: getPublicKeyFromPeerId(publicKey);
+};
 const canAppendByRelation = async (
 	entry: Entry<Operation<IdentityRelation>>,
 	isTrusted?: (key: PublicSignKey) => Promise<boolean>
@@ -104,13 +110,13 @@ export class IdentityGraph extends Program {
 	}
 
 	async addRelation(
-		to: PublicSignKey,
+		to: PublicSignKey | PeerId,
 		options?: AppendOptions<Operation<IdentityRelation>>
 	) {
 		/*  trustee = PublicKey.from(trustee); */
 		await this.relationGraph.put(
 			new IdentityRelation({
-				to: to,
+				to: coercePublicKey(to),
 				from:
 					options?.identity?.publicKey ||
 					this.relationGraph.log.identity.publicKey,
@@ -132,12 +138,10 @@ export class TrustedNetwork extends Program {
 	@field({ type: Documents })
 	trustGraph: Documents<IdentityRelation>;
 
-	constructor(props: { rootTrust: PublicSignKey }) {
+	constructor(props: { rootTrust: PublicSignKey | PeerId }) {
 		super();
-		if (props) {
-			this.trustGraph = createIdentityGraphStore();
-			this.rootTrust = props.rootTrust;
-		}
+		this.trustGraph = createIdentityGraphStore();
+		this.rootTrust = coercePublicKey(props.rootTrust);
 	}
 
 	async setup() {
@@ -164,8 +168,13 @@ export class TrustedNetwork extends Program {
 		return true; // TODO should we have read access control?
 	}
 
-	async add(trustee: PublicSignKey): Promise<IdentityRelation | undefined> {
-		const key = trustee as PublicSignKey;
+	async add(
+		trustee: PublicSignKey | PeerId
+	): Promise<IdentityRelation | undefined> {
+		const key =
+			trustee instanceof PublicSignKey
+				? trustee
+				: getPublicKeyFromPeerId(trustee);
 
 		const existingRelation = await this.getRelation(
 			key,
@@ -182,11 +191,21 @@ export class TrustedNetwork extends Program {
 		return existingRelation;
 	}
 
-	async hasRelation(trustee: PublicSignKey, truster = this.rootTrust) {
+	async hasRelation(
+		trustee: PublicSignKey | PeerId,
+		truster: PublicSignKey | PeerId = this.rootTrust
+	) {
 		return !!(await this.getRelation(trustee, truster));
 	}
-	getRelation(trustee: PublicSignKey, truster = this.rootTrust) {
-		return getRelation(truster, trustee, this.trustGraph);
+	getRelation(
+		trustee: PublicSignKey | PeerId,
+		truster: PublicSignKey | PeerId = this.rootTrust
+	) {
+		return getRelation(
+			coercePublicKey(truster),
+			coercePublicKey(trustee),
+			this.trustGraph
+		);
 	}
 
 	/**

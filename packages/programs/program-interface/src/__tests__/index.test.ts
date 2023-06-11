@@ -95,7 +95,7 @@ describe("program", () => {
 		let open = async (open: Program): Promise<Program> => {
 			return open;
 		};
-		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+		await p.init(session.peers[0], {
 			open,
 			log: {},
 		} as any);
@@ -105,7 +105,7 @@ describe("program", () => {
 		await p.close();
 		expect(p.closed).toBeTrue();
 		expect(p.initialized).toBeTrue();
-		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+		await p.init(session.peers[0], {
 			open,
 			log: {},
 		} as any);
@@ -118,7 +118,7 @@ describe("program", () => {
 		let open = async (open: Program): Promise<Program> => {
 			return open;
 		};
-		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+		await p.init(session.peers[0], {
 			open,
 			log: {},
 		} as any);
@@ -128,7 +128,7 @@ describe("program", () => {
 		await p.drop();
 		expect(p.closed).toBeTrue();
 		expect(p.initialized).toBeFalse();
-		await p.init(session.peers[0], await Ed25519Keypair.create(), {
+		await p.init(session.peers[0], {
 			open,
 			log: {},
 		} as any);
@@ -159,11 +159,7 @@ describe("program", () => {
 				async setup(): Promise<void> {}
 			}
 			await expect(
-				new NoVariant().init(
-					session.peers[0],
-					await Ed25519Keypair.create(),
-					{} as any
-				)
+				new NoVariant().init(session.peers[0], {} as any)
 			).rejects.toThrowError(
 				'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...'
 			);
@@ -181,11 +177,7 @@ describe("program", () => {
 				async setup(): Promise<void> {}
 			}
 			await expect(
-				new NoVariant().init(
-					session.peers[0],
-					await Ed25519Keypair.create(),
-					{} as any
-				)
+				new NoVariant().init(session.peers[0], {} as any)
 			).rejects.toThrowError(
 				'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...'
 			);
@@ -198,9 +190,9 @@ describe("program", () => {
 			let initializedProgram = false;
 			let setupProgram = false;
 			let pInit = p.init.bind(p);
-			p.init = (a, b, c): any => {
+			p.init = (a, b): any => {
 				initializedProgram = true;
-				return pInit(a, b, c);
+				return pInit(a, b);
 			};
 
 			let pSetup = p.setup.bind(p);
@@ -239,7 +231,7 @@ describe("program", () => {
 				return open;
 			};
 
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
@@ -277,7 +269,7 @@ describe("program", () => {
 			let open = async (open: Program): Promise<Program> => {
 				return open;
 			};
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
@@ -309,7 +301,7 @@ describe("program", () => {
 			let open = async (open: Program): Promise<Program> => {
 				return open;
 			};
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
@@ -348,11 +340,11 @@ describe("program", () => {
 			let open = async (open: Program): Promise<Program> => {
 				return open;
 			};
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
-			await p2.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p2.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
@@ -361,7 +353,7 @@ describe("program", () => {
 			let closeCounter = 0;
 
 			// Open it outside a program (call init on p3)
-			await p3.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p3.init(session.peers[0], {
 				onClose: () => {
 					closeCounter++;
 				},
@@ -403,11 +395,11 @@ describe("program", () => {
 				return open;
 			};
 
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
-			await p2.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p2.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
@@ -501,7 +493,7 @@ describe("program", () => {
 			let open = async (open: Program): Promise<Program> => {
 				return open;
 			};
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 			} as any);
@@ -518,7 +510,7 @@ describe("program", () => {
 				return open;
 			};
 			let fromInit = false;
-			await p.init(session.peers[0], await Ed25519Keypair.create(), {
+			await p.init(session.peers[0], {
 				open,
 				log: {},
 				waitFor: async () => {

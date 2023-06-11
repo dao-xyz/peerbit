@@ -66,10 +66,9 @@ export class RPC<Q, R> extends ComposableProgram {
 
 	async init(
 		libp2p: Libp2pExtended,
-		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
-		await super.init(libp2p, identity, options);
+		await super.init(libp2p, options);
 		if (this.role instanceof Replicator) {
 			await this._subscribeRequests();
 		}

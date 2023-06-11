@@ -1,19 +1,9 @@
 import { v4 as uuid } from "uuid";
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { RPC, RPCResponse, queryAll } from "../index.js";
 import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-
-const createIdentity = async () => {
-	const ed = await Ed25519Keypair.create();
-	return {
-		publicKey: ed.publicKey,
-		privateKey: ed.privateKey,
-		sign: (data) => ed.sign(data),
-	};
-};
 
 @variant("payload")
 class Body {
@@ -58,14 +48,14 @@ describe("rpc", () => {
 		responder = new RPCTest();
 		responder.query = new RPC();
 
-		await responder.init(session.peers[0], await createIdentity(), {
+		await responder.init(session.peers[0], {
 			role: new Replicator(),
 		});
 		await responder.setup();
 
 		reader = deserialize(serialize(responder), RPCTest);
 
-		await reader.init(session.peers[1], await createIdentity(), {
+		await reader.init(session.peers[1], {
 			role: new Observer(),
 		});
 		await reader.setup();
@@ -225,7 +215,7 @@ describe("queryAll", () => {
 		clients = [];
 		for (let i = 0; i < session.peers.length; i++) {
 			const c = deserialize(serialize(t), RPCTest);
-			await c.init(session.peers[i], await createIdentity(), {
+			await c.init(session.peers[i], {
 				role: new Replicator(),
 			});
 			await c.setup();

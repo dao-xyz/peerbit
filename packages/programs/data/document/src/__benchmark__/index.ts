@@ -64,7 +64,6 @@ const session = await LSession.connected(peersCount);
 for (let i = 0; i < peersCount; i++) {
 	cacheStores.push(await createStore());
 }
-const createIdentity = Ed25519Keypair.create;
 
 // Create store
 const store = new TestStore({
@@ -75,7 +74,7 @@ const store = new TestStore({
 	}),
 });
 const keypair = await X25519Keypair.create();
-await store.init(session.peers[0], await createIdentity(), {
+await store.init(session.peers[0], {
 	role: new Replicator(),
 
 	log: {

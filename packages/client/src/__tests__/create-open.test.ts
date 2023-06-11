@@ -124,6 +124,7 @@ describe(`Create & Open`, function () {
 			await client.open(db.address!);
 		});
 
+		/* TODO feat 
 		it("opens a database - with a different identity", async () => {
 			const signKey = await Ed25519Keypair.create();
 			const topic = uuid();
@@ -134,16 +135,10 @@ describe(`Create & Open`, function () {
 			assert.equal(db.address!.toString().indexOf("zb"), 9);
 			expect(db.log.identity.publicKey.equals(signKey.publicKey));
 			await db.drop();
-		});
+		}); */
 
 		it("opens the same database - from an address", async () => {
-			const signKey = await Ed25519Keypair.create();
-			const db = await client.open(new EventStore(), {
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
-			});
+			const db = await client.open(new EventStore());
 			const db2 = await client.open(
 				(await Program.load(client.libp2p.services.blocks, db.address!))!
 			);
