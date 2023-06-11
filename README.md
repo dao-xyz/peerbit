@@ -19,7 +19,7 @@
 <h3 align="center"><a href="https://peerbit.org">Documentation</a> - <a href="https://github.com/dao-xyz/peerbit-examples">Examples</a></h3>
 
 
-# Peerbit:  A building block for the decentralized web
+# A building block for the decentralized web
 
 Welcome to Peerbit, the platform that will ignite your coding passion and unlock a world of endless possibilities!
 
