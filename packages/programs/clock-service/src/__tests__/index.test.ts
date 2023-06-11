@@ -1,7 +1,7 @@
 import { delay } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { Ed25519Identity, Entry } from "@dao-xyz/peerbit-log";
+import { Entry } from "@dao-xyz/peerbit-log";
 import {
 	ObserverType,
 	Program,
@@ -14,15 +14,7 @@ import { default as Cache } from "@dao-xyz/lazy-level";
 import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
 import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
-const createIdentity = async () => {
-	const ed = await Ed25519Keypair.create();
-	return {
-		publicKey: ed.publicKey,
-		privateKey: ed.privateKey,
-		sign: (data) => ed.sign(data),
-	} as Ed25519Identity;
-};
-
+const createIdentity = Ed25519Keypair.create;
 const maxTimeError = 3000;
 @variant("clock-test")
 class P extends Program {

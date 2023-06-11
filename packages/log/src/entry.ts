@@ -22,12 +22,12 @@ import {
 	sha256Base64,
 	randomBytes,
 	sha256Base64Sync,
+	Identity,
 } from "@dao-xyz/peerbit-crypto";
 import { verify } from "@dao-xyz/peerbit-crypto";
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { compare, equals } from "@dao-xyz/uint8arrays";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
-import { Identity } from "./identity.js";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
 import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
@@ -468,7 +468,9 @@ export class Entry<T>
 		clock?: Clock;
 		encryption?: EntryEncryption;
 		identity: Identity;
-		signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
+		signers?: ((
+			data: Uint8Array
+		) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	}): Promise<Entry<T>> {
 		if (!properties.encoding || !properties.next) {
 			properties = {

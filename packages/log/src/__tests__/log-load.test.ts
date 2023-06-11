@@ -1,22 +1,12 @@
 import assert from "assert";
-import rmrf from "rimraf";
-import fs from "fs-extra";
+
 import { LastWriteWins } from "../log-sorting.js";
 import { Entry } from "../entry.js";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LogCreator } from "./utils/log-creator.js";
 import { compare } from "@dao-xyz/uint8arrays";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
 import { delay } from "@dao-xyz/peerbit-time";
-import path from "path";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
 import * as Block from "multiformats/block";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
 
 // Alternate tiebreaker. Always does the opposite of LastWriteWins
 const FirstWriteWins = (a: any, b: any) => LastWriteWins(a, b) * -1;
@@ -30,12 +20,6 @@ import {
 	PutOptions,
 	StoreStatus,
 } from "@dao-xyz/libp2p-direct-block";
-import { createStore } from "./utils.js";
-
-let signKey: KeyWithMeta<Ed25519Keypair>,
-	signKey2: KeyWithMeta<Ed25519Keypair>,
-	signKey3: KeyWithMeta<Ed25519Keypair>,
-	signKey4: KeyWithMeta<Ed25519Keypair>;
 
 const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
@@ -99,36 +83,21 @@ describe("Log - Load", function () {
 		"entryA1",
 	];
 
-	let keystore: Keystore;
-	let signKeys: KeyWithMeta<Ed25519Keypair>[];
 	let store: BlockStore;
-
+	let signKey: Ed25519Keypair,
+		signKey2: Ed25519Keypair,
+		signKey3: Ed25519Keypair,
+		signKey4: Ed25519Keypair;
+	let signKeys: Ed25519Keypair[];
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		signKeys = [];
-		for (let i = 0; i < 4; i++) {
-			signKeys.push(
-				await keystore.createKey(await Ed25519Keypair.create(), {
-					id: new Uint8Array([i]),
-					overwrite: true,
-				})
-			);
-		}
+		signKeys = [
+			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create(),
+		];
 		signKeys.sort((a, b) => {
-			return compare(
-				a.keypair.publicKey.publicKey,
-				b.keypair.publicKey.publicKey
-			);
+			return compare(a.publicKey.publicKey, b.publicKey.publicKey);
 		});
 
 		signKey = signKeys[0];
@@ -144,8 +113,6 @@ describe("Log - Load", function () {
 
 	afterAll(async () => {
 		await store.close();
-		rmrf.sync(testKeyStorePath(__filenameBase));
-		await keystore?.close();
 	});
 
 	describe("fromEntryHash", () => {
@@ -160,16 +127,16 @@ describe("Log - Load", function () {
 			const log1 = await Log.fromEntry(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				heads[0]
 			);
 			const log2 = await Log.fromEntry(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				heads[1]
 			);
@@ -194,8 +161,8 @@ describe("Log - Load", function () {
 			const log1 = await Log.fromEntry(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				heads[0],
 				{ sortFn: FirstWriteWins }
@@ -203,8 +170,8 @@ describe("Log - Load", function () {
 			const log2 = await Log.fromEntry(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				heads[1],
 				{ sortFn: FirstWriteWins }
@@ -226,8 +193,8 @@ describe("Log - Load", function () {
 				await Log.fromEntry(
 					new SlowBlockStore(store),
 					{
-						...signKey.keypair,
-						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+						...signKey,
+						sign: async (data: Uint8Array) => await signKey.sign(data),
 					},
 					"zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus",
 					{ timeout }
@@ -247,24 +214,24 @@ describe("Log - Load", function () {
 		beforeEach(async () => {
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 
 			log4 = new Log();
 			await log4.open(store, {
-				...signKey4.keypair,
-				sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+				...signKey4,
+				sign: async (data: Uint8Array) => await signKey4.sign(data),
 			});
 		});
 
@@ -278,8 +245,8 @@ describe("Log - Load", function () {
 			const log = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				await data.getHeads()
 			);
@@ -303,8 +270,8 @@ describe("Log - Load", function () {
 			const log = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				await data.getHeads(),
 				{ sortFn: FirstWriteWins }
@@ -328,8 +295,8 @@ describe("Log - Load", function () {
 			const log1 = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				await data.getHeads(),
 				{ length: (await data.getHeads()).length }
@@ -344,8 +311,8 @@ describe("Log - Load", function () {
 			const log2 = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				await data.getHeads(),
 				{ length: 4 }
@@ -362,8 +329,8 @@ describe("Log - Load", function () {
 			const log3 = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				await data.getHeads(),
 				{ length: 7 }
@@ -420,8 +387,8 @@ describe("Log - Load", function () {
 			const a = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				last(items1),
 				{ length: 10 }
@@ -432,8 +399,8 @@ describe("Log - Load", function () {
 			const b = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				last(items1),
 				{ length: 42 }
@@ -479,8 +446,8 @@ describe("Log - Load", function () {
 			const a = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				[last(items1)]
 			);
@@ -489,8 +456,8 @@ describe("Log - Load", function () {
 			const b = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+					...signKey2,
+					sign: async (data: Uint8Array) => await signKey2.sign(data),
 				},
 				[last(items2)]
 			);
@@ -499,8 +466,8 @@ describe("Log - Load", function () {
 			const c = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				[last(items3)]
 			);
@@ -545,8 +512,8 @@ describe("Log - Load", function () {
 			const a = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				last(items1)
 			);
@@ -555,8 +522,8 @@ describe("Log - Load", function () {
 			const b = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+					...signKey2,
+					sign: async (data: Uint8Array) => await signKey2.sign(data),
 				},
 				last(items2)
 			);
@@ -565,8 +532,8 @@ describe("Log - Load", function () {
 			const c = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				last(items3)
 			);
@@ -632,8 +599,8 @@ describe("Log - Load", function () {
 			const a = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				last(items1)
 			);
@@ -665,8 +632,8 @@ describe("Log - Load", function () {
 			const b = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey2.keypair,
-					sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+					...signKey2,
+					sign: async (data: Uint8Array) => await signKey2.sign(data),
 				},
 				last(items2)
 			);
@@ -678,8 +645,8 @@ describe("Log - Load", function () {
 			const c = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey4.keypair,
-					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+					...signKey4,
+					sign: async (data: Uint8Array) => await signKey4.sign(data),
 				},
 				last(items3)
 			);
@@ -727,8 +694,8 @@ describe("Log - Load", function () {
 			// make sure logX comes after A, B and C
 			const logX = new Log<string>();
 			await logX.open(store, {
-				...signKey4.keypair,
-				sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+				...signKey4,
+				sign: async (data: Uint8Array) => await signKey4.sign(data),
 			});
 			await logX.append("1");
 			await logX.append("2");
@@ -736,8 +703,8 @@ describe("Log - Load", function () {
 			const d = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				last(await logX.toArray())
 			);
@@ -750,16 +717,16 @@ describe("Log - Load", function () {
 			const f = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				last(await c.toArray())
 			);
 			const g = await Log.fromEntry<string>(
 				store,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				last(await d.toArray())
 			);
@@ -1018,8 +985,8 @@ describe("Log - Load", function () {
 			await firstWriteWinsLog.open(
 				store,
 				{
-					...signKeys[0].keypair,
-					sign: (data) => signKeys[0].keypair.sign(data),
+					...signKeys[0],
+					sign: (data) => signKeys[0].sign(data),
 				},
 				{ sortFn: FirstWriteWins }
 			);
@@ -1039,8 +1006,8 @@ describe("Log - Load", function () {
 			await firstWriteWinsLog.open(
 				store,
 				{
-					...signKeys[0].keypair,
-					sign: (data) => signKeys[0].keypair.sign(data),
+					...signKeys[0],
+					sign: (data) => signKeys[0].sign(data),
 				},
 				{ sortFn: BadComparatorReturnsZero }
 			);
@@ -1094,8 +1061,8 @@ describe("Log - Load", function () {
 			// First 5
 			let res = new Log();
 			await res.init(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			await res.join(await log4.getHeads(), { length: 5 });
 
@@ -1109,8 +1076,8 @@ describe("Log - Load", function () {
 			// First 11
 			res = new Log();
 			await res.init(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			await res.join(await log4.getHeads(), { length: 11 });
 
@@ -1137,8 +1104,8 @@ describe("Log - Load", function () {
 			// All but one
 			res = new Log();
 			await res.init(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			await res.join(await log4.getHeads(), { length: 16 - 1 });
 
@@ -1210,8 +1177,8 @@ describe("Log - Load", function () {
 			// First 5
 			let res = new Log();
 			await res.init(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			await res.join(await log4.getHeads(), { length: 5 });
 
@@ -1225,8 +1192,8 @@ describe("Log - Load", function () {
 			// First 11
 			res = new Log();
 			await res.init(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			await res.join(await log4.getHeads(), { length: 11 });
 
@@ -1251,8 +1218,8 @@ describe("Log - Load", function () {
 			// All but one
 			res = new Log();
 			await res.init(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			await res.join(await log4.getHeads(), { length: 16 - 1 });
 
@@ -1345,8 +1312,8 @@ describe("Log - Load", function () {
 				const a = await Log.fromEntry<string>(
 					store,
 					{
-						...signKey.keypair,
-						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+						...signKey,
+						sign: async (data: Uint8Array) => await signKey.sign(data),
 					},
 					last(items1)
 				);

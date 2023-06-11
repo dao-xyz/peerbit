@@ -59,7 +59,7 @@
 		"@dao-xyz/peerbit-crypto": "0.1.16",
 		"@ipld/dag-cbor": "^9.0.0",
 		"abstract-level": "^1.0.3",
-		"libp2p": "^0.45.4",
+		"libp2p": "^0.45.5",
 		"memory-level": "^1.0.0"
 	}
 }

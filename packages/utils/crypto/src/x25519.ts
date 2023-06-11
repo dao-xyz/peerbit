@@ -13,17 +13,18 @@ import {
 	Ed25519PrivateKey,
 } from "./ed25519.js";
 import { toHexString } from "./utils.js";
-
+import { PeerId } from "@libp2p/interface-peer-id";
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
 	@field({ type: fixedArray("u8", 32) })
 	publicKey: Uint8Array;
 
-	constructor(properties?: { publicKey: Uint8Array }) {
+	constructor(properties: { publicKey: Uint8Array }) {
 		super();
-		if (properties) {
-			this.publicKey = properties.publicKey;
+		if (properties.publicKey.length !== 32) {
+			throw new Error("Expecting key to have length 32");
 		}
+		this.publicKey = properties.publicKey;
 	}
 
 	equals(other: PublicKeyEncryptionKey): boolean {
@@ -47,6 +48,12 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 		});
 	}
 
+	static async fromPeerId(peerId: PeerId): Promise<X25519PublicKey> {
+		await sodium.ready;
+		const ed = await Ed25519PublicKey.fromPeerId(peerId);
+		return X25519PublicKey.from(ed);
+	}
+
 	static async create(): Promise<X25519PublicKey> {
 		await sodium.ready;
 		return new X25519PublicKey({
@@ -60,11 +67,12 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 	@field({ type: fixedArray("u8", 32) })
 	secretKey: Uint8Array;
 
-	constructor(properties?: { secretKey: Uint8Array }) {
+	constructor(properties: { secretKey: Uint8Array }) {
 		super();
-		if (properties) {
-			this.secretKey = properties.secretKey;
+		if (properties.secretKey.length !== 32) {
+			throw new Error("Expecting key to have length 32");
 		}
+		this.secretKey = properties.secretKey;
 	}
 
 	equals(other: PublicKeyEncryptionKey): boolean {
@@ -84,13 +92,11 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 			publicKey: sodium.crypto_scalarmult_base(this.secretKey),
 		});
 	}
-	static async from(
-		ed25119SecretKey: Ed25519PrivateKey
-	): Promise<X25519SecretKey> {
+	static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519SecretKey> {
 		await sodium.ready;
 		return new X25519SecretKey({
 			secretKey: sodium.crypto_sign_ed25519_sk_to_curve25519(
-				ed25119SecretKey.privateKey
+				ed25119Keypair.privateKeyPublicKey
 			),
 		});
 	}
@@ -111,28 +117,42 @@ export class X25519Keypair extends Keypair {
 	@field({ type: X25519SecretKey })
 	secretKey: X25519SecretKey;
 
+	constructor(properties: {
+		publicKey: X25519PublicKey;
+		secretKey: X25519SecretKey;
+	}) {
+		super();
+		this.publicKey = properties.publicKey;
+		this.secretKey = properties.secretKey;
+	}
+
 	static async create(): Promise<X25519Keypair> {
 		await sodium.ready;
 		const generated = sodium.crypto_box_keypair();
-		const kp = new X25519Keypair();
-		kp.publicKey = new X25519PublicKey({
-			publicKey: generated.publicKey,
+		const kp = new X25519Keypair({
+			publicKey: new X25519PublicKey({
+				publicKey: generated.publicKey,
+			}),
+			secretKey: new X25519SecretKey({
+				secretKey: generated.privateKey,
+			}),
 		});
-		kp.secretKey = new X25519SecretKey({
-			secretKey: generated.privateKey,
-		});
+
 		return kp;
 	}
 
 	static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519Keypair> {
-		const pk = await X25519PublicKey.from(ed25119Keypair.publicKey);
-		const sk = await X25519SecretKey.from(ed25119Keypair.privateKey);
-		const kp = new X25519Keypair();
-		kp.publicKey = pk;
-		kp.secretKey = sk;
+		const kp = new X25519Keypair({
+			publicKey: await X25519PublicKey.from(ed25119Keypair.publicKey),
+			secretKey: await X25519SecretKey.from(ed25119Keypair),
+		});
 		return kp;
 	}
 
+	static fromPeerId(peerId: PeerId) {
+		const ed = Ed25519Keypair.fromPeerId(peerId);
+		return X25519Keypair.from(ed);
+	}
 	equals(other: Keypair) {
 		if (other instanceof X25519Keypair) {
 			return (

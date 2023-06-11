@@ -1,64 +1,21 @@
-import rmrf from "rimraf";
-import fs from "fs-extra";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { PubSubData, waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 import { randomBytes } from "@dao-xyz/peerbit-crypto";
 import { Log } from "../log.js";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
 import { Entry } from "../entry.js";
-import path from "path";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
-import { createStore } from "./utils.js";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { StringArray } from "../types.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
+import { signKey, signKey2 } from "./fixtures/privateKey.js";
 
 describe("ipfs-log - Replication", function () {
-	let session: LSession,
-		signKey: KeyWithMeta<Ed25519Keypair>,
-		signKey2: KeyWithMeta<Ed25519Keypair>;
-
-	let keystore: Keystore;
+	let session: LSession;
 
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		// Start two connected IPFS instances
 		session = await LSession.connected(2);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		// Create an identity for each peers
-		// @ts-ignore
-		signKey = await keystore.getKey(new Uint8Array([0]));
-		// @ts-ignore
-		signKey2 = await keystore.getKey(new Uint8Array([1]));
-
-		// sort keys so that the output becomes deterministic
-		if (
-			signKey.keypair.publicKey.publicKey > signKey2.keypair.publicKey.publicKey
-		) {
-			signKey = [signKey2, (signKey2 = signKey)][0];
-		}
 	});
 
 	afterAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
 		await session.stop();
-		await keystore?.close();
 	});
 
 	describe("replicates logs deterministically", function () {
@@ -105,24 +62,24 @@ describe("ipfs-log - Replication", function () {
 		beforeEach(async () => {
 			log1 = new Log({ id: logId });
 			await log1.open(session.peers[0].services.blocks, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log({ id: logId });
 			await log2.open(session.peers[1].services.blocks, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 
 			input1 = new Log({ id: logId });
 			await input1.open(session.peers[0].services.blocks, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			input2 = new Log({ id: logId });
 			await input2.open(session.peers[1].services.blocks, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			session.peers[0].services.pubsub.subscribe(channel);
 			session.peers[1].services.pubsub.subscribe(channel);
@@ -203,8 +160,8 @@ describe("ipfs-log - Replication", function () {
 
 			const result = new Log<string>({ id: logId });
 			result.open(session.peers[0].services.blocks, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 
 			await result.join(log1);

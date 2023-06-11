@@ -3,7 +3,6 @@ import { waitFor } from "@dao-xyz/peerbit-time";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { RPC, RPCResponse, queryAll } from "../index.js";
-import { Ed25519Identity } from "@dao-xyz/peerbit-log";
 import {
 	ObserverType,
 	Program,
@@ -17,7 +16,7 @@ const createIdentity = async () => {
 		publicKey: ed.publicKey,
 		privateKey: ed.privateKey,
 		sign: (data) => ed.sign(data),
-	} as Ed25519Identity;
+	};
 };
 
 @variant("payload")

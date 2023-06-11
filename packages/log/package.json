@@ -37,7 +37,7 @@
 		"@dao-xyz/peerbit-crypto": "0.1.16",
 		"@dao-xyz/peerbit-logger": "0.0.7",
 		"json-stringify-deterministic": "^1.0.7",
-		"libp2p": "^0.45.4",
+		"libp2p": "^0.45.5",
 		"p-do-whilst": "^1.1.0",
 		"p-map": "^5.5.0",
 		"p-queue": "^7.3.3",
@@ -45,7 +45,6 @@
 		"yallist": "^4.0.0"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-keystore": "0.2.12",
 		"@dao-xyz/peerbit-test-utils": "0.4.3",
 		"@types/yallist": "^4.0.1",
 		"assert": "^2.0.0",

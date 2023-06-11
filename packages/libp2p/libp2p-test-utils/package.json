@@ -41,8 +41,8 @@
 		"@dao-xyz/libp2p-noise": "^12.0.1",
 		"@libp2p/mplex": "^8.0.3",
 		"@libp2p/tcp": "^7.0.1",
-		"datastore-level": "^9.0.4",
-		"libp2p": "^0.45.4",
+		"datastore-level": "^10.1.2",
+		"libp2p": "^0.45.5",
 		"memory-level": "^1.0.0"
 	},
 	"devDependencies": {

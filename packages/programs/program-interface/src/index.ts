@@ -1,7 +1,7 @@
 import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock } from "@dao-xyz/libp2p-direct-block";
-import { Change, Entry, Identity, Log, LogOptions } from "@dao-xyz/peerbit-log";
+import { Change, Entry, Log, LogOptions } from "@dao-xyz/peerbit-log";
 import { sha256 } from "@dao-xyz/peerbit-crypto";
 import { field, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
@@ -14,7 +14,7 @@ import {
 	ReplicatorType,
 	SubscriptionType,
 } from "./role.js";
-import { PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
+import { Identity, PublicKeyEncryptionResolver } from "@dao-xyz/peerbit-crypto";
 import { PeerIds } from "@dao-xyz/libp2p-direct-sub";
 
 export * from "./protocol-message.js";

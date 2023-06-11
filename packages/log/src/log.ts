@@ -3,6 +3,7 @@ import {
 	SignatureWithKey,
 	randomBytes,
 	sha256Base64Sync,
+	Identity,
 } from "@dao-xyz/peerbit-crypto";
 import type { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Cache } from "@dao-xyz/cache";
@@ -27,9 +28,8 @@ import {
 	Timestamp,
 } from "./clock.js";
 
-import { field, fixedArray, option, serialize, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
-import type { Identity } from "./identity.js";
 import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
 import { EntryNode, Values } from "./values.js";
 import { Trim, TrimOptions } from "./trim.js";
@@ -70,7 +70,9 @@ export type AppendOptions<T> = {
 	gidSeed?: Uint8Array;
 	nexts?: Entry<any>[];
 	identity?: Identity;
-	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
+	signers?: ((
+		data: Uint8Array
+	) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	reciever?: EncryptionTemplateMaybeEncrypted;
 	onGidsShadowed?: (gids: string[]) => void;
 	trim?: TrimOptions;

@@ -2,27 +2,19 @@ import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-import { Ed25519Keypair, Keypair } from "@dao-xyz/peerbit-crypto";
-import { KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { Entry } from "../entry";
 import { EntryIndex } from "../entry-index";
 import { LastWriteWins } from "../log-sorting";
 import { Values } from "../values";
-import { identityFromSignKey } from "./utils";
 import { Cache } from "@dao-xyz/cache";
+import { signKey } from "./fixtures/privateKey";
 
 describe("values", () => {
 	let e1: Entry<string>, e2: Entry<string>, e3: Entry<string>;
 	let store: BlockStore;
 	let entryIndex: EntryIndex<string>;
 	beforeEach(async () => {
-		const identity = identityFromSignKey(
-			new KeyWithMeta({
-				group: "",
-				keypair: await Ed25519Keypair.create(),
-				timestamp: 0n,
-			})
-		);
+		const identity = signKey;
 		store = new MemoryLevelBlockStore();
 		await store.open();
 		e1 = await Entry.create({

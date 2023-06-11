@@ -3,16 +3,14 @@ import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { EntryType } from "../entry.js";
+import { signKey } from "./fixtures/privateKey.js";
 
 describe("Log - Delete", function () {
 	let store: BlockStore;
-	let signKey: Ed25519Keypair;
 
 	beforeEach(async () => {
 		store = new MemoryLevelBlockStore();
-		signKey = await Ed25519Keypair.create();
 		await store.open();
 	});
 

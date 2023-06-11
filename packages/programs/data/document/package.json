@@ -36,7 +36,7 @@
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/peerbit-program": "0.9.1",
 		"@dao-xyz/peerbit-rpc": "0.9.1",
-		"@libp2p/interfaces": "^3.3.1"
+		"@libp2p/interfaces": "^3.3.2"
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-test-utils": "0.4.3",

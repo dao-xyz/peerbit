@@ -1,61 +1,16 @@
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
-import { createStore } from "./utils.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-let signKey: KeyWithMeta<Ed25519Keypair>,
-	signKey2: KeyWithMeta<Ed25519Keypair>,
-	signKey3: KeyWithMeta<Ed25519Keypair>;
+import { MemoryLevelBlockStore } from "@dao-xyz/libp2p-direct-block";
+import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 
 describe("Log - CRDT", function () {
-	let keystore: Keystore, store: BlockStore;
-
+	let store: MemoryLevelBlockStore;
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		signKey = (await keystore.getKey(
-			new Uint8Array([0])
-		)) as KeyWithMeta<Ed25519Keypair>;
-		signKey2 = (await await keystore.getKey(
-			new Uint8Array([2])
-		)) as KeyWithMeta<Ed25519Keypair>;
-		signKey3 = (await await keystore.getKey(
-			new Uint8Array([3])
-		)) as KeyWithMeta<Ed25519Keypair>;
-
 		store = new MemoryLevelBlockStore();
 		await store.open();
 	});
 
 	afterAll(async () => {
 		await store.close();
-
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await keystore?.close();
 	});
 
 	describe("is a CRDT", () => {
@@ -64,18 +19,18 @@ describe("Log - CRDT", function () {
 		beforeEach(async () => {
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 		});
 
@@ -97,18 +52,18 @@ describe("Log - CRDT", function () {
 
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -145,13 +100,13 @@ describe("Log - CRDT", function () {
 
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
@@ -183,18 +138,18 @@ describe("Log - CRDT", function () {
 
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -208,13 +163,13 @@ describe("Log - CRDT", function () {
 			// a + b == b + a
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
@@ -226,13 +181,13 @@ describe("Log - CRDT", function () {
 
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
@@ -247,14 +202,14 @@ describe("Log - CRDT", function () {
 			// a + c == c + a
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -265,14 +220,14 @@ describe("Log - CRDT", function () {
 
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -287,13 +242,13 @@ describe("Log - CRDT", function () {
 
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -305,13 +260,13 @@ describe("Log - CRDT", function () {
 
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
@@ -325,18 +280,18 @@ describe("Log - CRDT", function () {
 			// a + b + c == c + b + a
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -349,18 +304,18 @@ describe("Log - CRDT", function () {
 			const logLeft = log1.toString();
 			log1 = new Log();
 			await log1.open(store, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log();
 			await log2.open(store, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log();
 			await log3.open(store, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });

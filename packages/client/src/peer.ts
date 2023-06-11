@@ -1,5 +1,4 @@
 import LazyLevel from "@dao-xyz/lazy-level";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
@@ -12,7 +11,7 @@ import {
 	EntryWithRefs,
 	MinReplicas,
 } from "./exchange-heads.js";
-import { Entry, Identity, Log, LogOptions } from "@dao-xyz/peerbit-log";
+import { Entry, Log, LogOptions } from "@dao-xyz/peerbit-log";
 import {
 	serialize,
 	deserialize,
@@ -29,20 +28,19 @@ import {
 	EncryptedThing,
 	MaybeEncrypted,
 	PublicKeyEncryptionResolver,
-	X25519Keypair,
 	Ed25519PublicKey,
-	Ed25519PrivateKey,
 	getKeypairFromPeerId,
-	Sec256k1Keccak256Keypair,
-	PreHash,
 	sha256,
-	PublicSignKey,
+	Identity,
 } from "@dao-xyz/peerbit-crypto";
-import { encryptionWithRequestKey } from "./encryption.js";
+import {
+	encryptionWithRequestKey,
+	exportKeypair,
+	importKeypair,
+} from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { Program, Address, LogCallbackOptions } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
-import type { Ed25519PeerId } from "@libp2p/interface-peer-id";
 import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
 import {
 	DirectSub,
@@ -66,9 +64,9 @@ import {
 import { TrimToByteLengthOption } from "@dao-xyz/peerbit-log";
 import { TrimToLengthOption } from "@dao-xyz/peerbit-log";
 import { startsWith } from "@dao-xyz/uint8arrays";
-import { v4 as uuid } from "uuid";
 import { CreateOptions as ClientCreateOptions } from "@dao-xyz/peerbit-libp2p";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
+import { LevelDatastore } from "datastore-level";
 
 export const logger = loggerFn({ module: "peer" });
 
@@ -92,22 +90,15 @@ export type OptionalCreateOptions = {
 	libp2pExternal?: boolean;
 };
 export type CreateOptions = {
-	keystore: Keystore;
-	identity: Identity;
 	directory?: string;
-	peerId: Ed25519PeerId;
 	cache: LazyLevel;
-	localNetwork: boolean;
 } & OptionalCreateOptions;
 
 export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
 export type CreateInstanceOptions = {
 	libp2p?: Libp2pExtended | ClientCreateOptions;
 	directory?: string;
-	keystore?: Keystore;
-	identity?: Identity;
 	cache?: LazyLevel;
-	localNetwork?: boolean;
 } & OptionalCreateOptions;
 export type OpenOptions = {
 	identity?: Identity;
@@ -181,22 +172,12 @@ const createSubCache = async (
 export class Peerbit {
 	_libp2p: Libp2pExtended;
 
-	// User id
-	identity: Identity;
-
-	// Node id
-	id: Ed25519PeerId;
-	idKey: Ed25519Keypair;
-	idKeyHash: string;
-	idIdentity: Identity;
-
 	directory?: string;
-	keystore: Keystore;
 	_minReplicas: number;
+
 	/// program address => Program metadata
 	programs: Map<string, ProgramWithMetadata>;
 	limitSigning: boolean;
-	localNetwork: boolean;
 	logs: Map<string, LogWithMetaata> = new Map();
 
 	private _sortedPeersCache: Map<string, string[]> = new Map();
@@ -210,53 +191,30 @@ export class Peerbit {
 	private _cache: LazyLevel;
 	private _libp2pExternal?: boolean = false;
 
-	constructor(
-		libp2p: Libp2pExtended,
-		identity: Identity,
-		options: CreateOptions
-	) {
+	// Libp2p peerid in Identity form
+	private _identityHash: string;
+	private _identity: Identity;
+
+	constructor(libp2p: Libp2pExtended, options: CreateOptions) {
 		if (libp2p == null) {
 			throw new Error("Libp2p required");
 		}
-		if (identity == null) {
-			throw new Error("identity key required");
-		}
-
 		this._libp2p = libp2p;
-		this.identity = identity;
-		this.id = options.peerId;
-
-		if (this.id.type !== "Ed25519") {
+		if (this.libp2p.peerId.type !== "Ed25519") {
 			throw new Error(
-				"Unsupported id type, expecting Ed25519 but got " + this.id.type
+				"Unsupported id type, expecting Ed25519 but got " +
+					this.libp2p.peerId.type
 			);
 		}
-
-		if (!this.id.privateKey) {
-			throw new Error("Expecting private key to be defined");
-		}
-		this.idKey = new Ed25519Keypair({
-			privateKey: new Ed25519PrivateKey({
-				privateKey: this.id.privateKey.slice(4),
-			}),
-			publicKey: new Ed25519PublicKey({
-				publicKey: this.id.publicKey.slice(4),
-			}),
-		});
-		this.idKeyHash = this.idKey.publicKey.hashcode();
-		this.idIdentity = {
-			...this.idKey,
-			sign: (data) => this.idKey.sign(data, PreHash.SHA_256),
-		};
+		this._identity = Ed25519Keypair.fromPeerId(this.libp2p.peerId);
+		this._identityHash = this._identity.publicKey.hashcode();
 
 		this.directory = options.directory;
 		this.programs = new Map();
 		this._minReplicas = options.minReplicas || MIN_REPLICAS;
 		this.limitSigning = options.limitSigning || false;
-		this.localNetwork = options.localNetwork;
 		this._cache = options.cache;
 		this._libp2pExternal = options.libp2pExternal;
-		this.keystore = options.keystore;
 		this._openProgramQueue = new PQueue({ concurrency: 1 });
 
 		this.libp2p.services.pubsub.addEventListener(
@@ -282,12 +240,23 @@ export class Peerbit {
 				? path.join(options.directory, "/blocks").toString()
 				: undefined;
 		let libp2pExternal = false;
+
+		const datastore =
+			options.directory != null
+				? new LevelDatastore(path.join(options.directory, "/libp2p").toString())
+				: undefined;
+		if (datastore) {
+			await datastore.open();
+		}
+
 		if (!libp2pExtended) {
 			libp2pExtended = await createLibp2pExtended({
 				services: {
 					blocks: (c) => new DirectBlock(c, { directory: blocksDirectory }),
 					pubsub: (c) => new DirectSub(c),
 				},
+				// If directory is passed, we store keys within that directory, else we will use memory datastore (which is the default behaviour)
+				datastore,
 			});
 		} else {
 			if (isLibp2pInstance(libp2pExtended)) {
@@ -301,69 +270,39 @@ export class Peerbit {
 						pubsub: (c) => new DirectSub(c),
 						...extendedOptions?.services,
 					},
+					datastore,
 				});
 			}
 		}
+		if (datastore) {
+			const stopFn = libp2pExtended.stop.bind(libp2pExtended);
+			libp2pExtended.stop = async () => {
+				await stopFn();
+				await datastore?.close();
+			};
+		}
+
 		if (!libp2pExtended.isStarted()) {
 			await libp2pExtended.start();
 		}
 
-		const id: Ed25519PeerId = libp2pExtended.peerId as Ed25519PeerId;
-		if (id.type !== "Ed25519") {
+		if (libp2pExtended.peerId.type !== "Ed25519") {
 			throw new Error(
-				"Unsupported id type, expecting Ed25519 but got " + id.type
+				"Unsupported id type, expecting Ed25519 but got " +
+					libp2pExtended.peerId.type
 			);
 		}
 
 		const directory = options.directory;
-
-		let keystore: Keystore;
-		if (options.keystore) {
-			keystore = options.keystore;
-		} else {
-			const keyStorePath = directory
-				? path.join(directory, "/keystore")
-				: undefined;
-			logger.debug(
-				keyStorePath
-					? "Creating keystore at path: " + keyStorePath
-					: "Creating an in memory keystore"
-			);
-			keystore = new Keystore(createLevel(keyStorePath));
-		}
-
-		let identity: Identity;
-		if (options.identity) {
-			identity = options.identity;
-		} else {
-			const keypair = getKeypairFromPeerId(id);
-			if (keypair instanceof Sec256k1Keccak256Keypair) {
-				identity = {
-					publicKey: keypair.publicKey,
-					sign: (data) => keypair.sign(data),
-				};
-			} else {
-				identity = {
-					privateKey: keypair.privateKey,
-					publicKey: keypair.publicKey,
-					sign: (data) => keypair.sign(data),
-				};
-			}
-		}
-
 		const cache =
 			options.cache ||
 			(await createCache(
 				directory ? path.join(directory, "/cache") : undefined
 			));
 
-		const peer = new Peerbit(libp2pExtended, identity, {
-			peerId: id,
-			keystore,
-			identity,
+		const peer = new Peerbit(libp2pExtended, {
 			directory,
 			cache,
-			localNetwork: options.localNetwork || false,
 			libp2pExternal,
 			limitSigning: options.limitSigning,
 			minReplicas: options.minReplicas,
@@ -395,24 +334,34 @@ export class Peerbit {
 		return this._disconnecting;
 	}
 
+	get identityHash() {
+		return this._identityHash;
+	}
+
+	get identity(): Identity {
+		return this._identity;
+	}
+
 	async getEncryption(): Promise<PublicKeyEncryptionResolver> {
-		this._encryption = await encryptionWithRequestKey(
-			this.identity,
-			this.keystore
-		);
+		this._encryption = await encryptionWithRequestKey(this.libp2p.keychain);
 		return this._encryption;
 	}
 
+	async importKeypair(keypair: Ed25519Keypair) {
+		return importKeypair(this.libp2p.keychain, keypair);
+	}
+
+	async exportKeypair<T extends Ed25519PublicKey | X25519PublicKey>(
+		publicKey: T
+	) {
+		return exportKeypair<T>(this.libp2p.keychain, publicKey);
+	}
+
 	async decryptedSignedThing(
-		data: Uint8Array,
-		options?: {
-			signWithPeerId: boolean;
-		}
+		data: Uint8Array
 	): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
 		const signedMessage = await new MaybeSigned({ data }).sign(async (data) => {
-			return options?.signWithPeerId
-				? this.idKey.sign(data)
-				: this.identity.sign(data);
+			return this.identity.sign(data);
 		});
 		return new DecryptedThing({
 			data: serialize(signedMessage),
@@ -421,15 +370,10 @@ export class Peerbit {
 
 	async enryptedSignedThing(
 		data: Uint8Array,
-		reciever: X25519PublicKey,
-		options?: {
-			signWithPeerId: boolean;
-		}
+		reciever: X25519PublicKey
 	): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
 		const signedMessage = await new MaybeSigned({ data }).sign(async (data) => {
-			return options?.signWithPeerId
-				? this.idKey.sign(data)
-				: this.identity.sign(data);
+			return this.identity.sign(data);
 		});
 		return new DecryptedThing<MaybeSigned<Uint8Array>>({
 			data: serialize(signedMessage),
@@ -447,7 +391,7 @@ export class Peerbit {
 				? address.libp2p.getMultiaddrs()
 				: address;
 		const connection = await this.libp2p.dial(maddress);
-		const publicKey = Ed25519PublicKey.from(connection.remotePeer);
+		const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 
 		// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
 		return waitFor(
@@ -462,9 +406,6 @@ export class Peerbit {
 		// Close a direct connection and remove it from internal state
 
 		this._refreshInterval && clearInterval(this._refreshInterval);
-
-		// close keystore
-		await this.keystore.close();
 
 		// Close all open databases
 		await Promise.all(
@@ -497,7 +438,7 @@ export class Peerbit {
 			log,
 			[entry],
 			true,
-			this.limitSigning ? undefined : this.idIdentity
+			this.limitSigning ? undefined : this.identity
 		).then((bytes) => {
 			this.libp2p.services.pubsub.publish(bytes, { topics: [log.idString] });
 		});
@@ -558,7 +499,7 @@ export class Peerbit {
 
 				const idString = Log.createIdString(logId);
 				logger.debug(
-					`${this.id}: Recieved heads: ${
+					`${this.identity.publicKey.hashcode()}: Recieved heads: ${
 						heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
 					}, logId: ${idString}`
 				);
@@ -593,7 +534,7 @@ export class Peerbit {
 								))
 							) {
 								logger.debug(
-									`${this.id.toString()}: Dropping heads with gid: ${gid}. Because not leader`
+									`${this.identity.publicKey.hashcode()}: Dropping heads with gid: ${gid}. Because not leader`
 								);
 								continue;
 							}
@@ -628,7 +569,7 @@ export class Peerbit {
 		} catch (e: any) {
 			if (e instanceof BorshError) {
 				logger.trace(
-					`${this.id}: Failed to handle message on topic: ${JSON.stringify(
+					`${this.identity.publicKey.hashcode()}: Failed to handle message on topic: ${JSON.stringify(
 						message.topics
 					)} ${message.data.length}: Got message for a different namespace`
 				);
@@ -636,7 +577,7 @@ export class Peerbit {
 			}
 			if (e instanceof AccessError) {
 				logger.trace(
-					`${this.id}: Failed to handle message on topic: ${JSON.stringify(
+					`${this.identity.publicKey.hashcode()}: Failed to handle message on topic: ${JSON.stringify(
 						message.topics
 					)} ${message.data.length}: Got message I could not decrypt`
 				);
@@ -654,7 +595,7 @@ export class Peerbit {
 		);
 
 		return this.handleSubscriptionChange(
-			evt.detail.from,
+			evt.detail.from.hashcode(),
 			evt.detail.unsubscriptions,
 			false
 		);
@@ -667,7 +608,7 @@ export class Peerbit {
 			)}'`
 		);
 		return this.handleSubscriptionChange(
-			evt.detail.from,
+			evt.detail.from.hashcode(),
 			evt.detail.subscriptions,
 			true
 		);
@@ -676,11 +617,11 @@ export class Peerbit {
 	private modifySortedSubscriptionCache(
 		topic: string,
 		subscribed: boolean,
-		from: PublicSignKey
+		fromHash: string
 	) {
 		const sortedPeer = this._sortedPeersCache.get(topic);
 		if (sortedPeer) {
-			const code = from.hashcode();
+			const code = fromHash;
 			if (subscribed) {
 				// TODO use Set + list for fast lookup
 				if (!sortedPeer.find((x) => x === code)) {
@@ -692,12 +633,12 @@ export class Peerbit {
 				sortedPeer.splice(deleteIndex, 1);
 			}
 		} else if (subscribed) {
-			this._sortedPeersCache.set(topic, [from.hashcode()]);
+			this._sortedPeersCache.set(topic, [fromHash]);
 		}
 	}
 
 	async handleSubscriptionChange(
-		from: PublicSignKey,
+		fromHash: string,
 		changes: Subscription[],
 		subscribed: boolean
 	) {
@@ -707,7 +648,7 @@ export class Peerbit {
 			}
 			this._lastSubscriptionMessageId += 1;
 
-			this.modifySortedSubscriptionCache(c.topic, subscribed, from);
+			this.modifySortedSubscriptionCache(c.topic, subscribed, fromHash);
 		}
 
 		for (const subscription of changes) {
@@ -765,7 +706,7 @@ export class Peerbit {
 				for (const currentPeer of currentPeers) {
 					if (
 						!oldPeersSet?.has(currentPeer) &&
-						currentPeer !== this.idKeyHash
+						currentPeer !== this.identityHash
 					) {
 						storeChanged = true;
 						// second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
@@ -775,7 +716,7 @@ export class Peerbit {
 						// console.log('new gid for peer', newPeers.length, this.id.toString(), newPeer, gid, entries.length, newPeers)
 						try {
 							logger.debug(
-								`${this.id}: Exchange heads ${
+								`${this.identity.publicKey.hashcode()}: Exchange heads ${
 									entries.length === 1 ? entries[0].hash : "#" + entries.length
 								}  on rebalance`
 							);
@@ -796,7 +737,7 @@ export class Peerbit {
 				}
 
 				// We don't need this clause anymore because we got the trim option!
-				if (!currentPeers.find((x) => x === this.idKeyHash)) {
+				if (!currentPeers.find((x) => x === this.identityHash)) {
 					let entriesToDelete = entries.filter((e) => !e.createdLocally);
 
 					if (logInfo.sync) {
@@ -825,7 +766,7 @@ export class Peerbit {
 					logInfo.log,
 					[...toSend.values()], // TODO send to peers directly
 					true,
-					this.limitSigning ? undefined : this.idIdentity
+					this.limitSigning ? undefined : this.identity
 				);
 
 				// TODO perhaps send less messages to more recievers for performance reasons?
@@ -938,7 +879,7 @@ export class Peerbit {
 		numberOfLeaders: number
 	): Promise<boolean> {
 		const isLeader = (await this.findLeaders(log, slot, numberOfLeaders)).find(
-			(l) => l === this.idKeyHash
+			(l) => l === this.identityHash
 		);
 		return !!isLeader;
 	}
@@ -1009,11 +950,7 @@ export class Peerbit {
 		}
 
 		if (role instanceof ReplicatorType) {
-			this.modifySortedSubscriptionCache(
-				log.idString,
-				true,
-				this.idKey.publicKey
-			);
+			this.modifySortedSubscriptionCache(log.idString, true, this.identityHash);
 		}
 
 		this.libp2p.services.pubsub.subscribe(log.idString, {
@@ -1110,7 +1047,7 @@ export class Peerbit {
 
 			const encryption =
 				/* 	options.log?.encryption ||  TODO  */
-				await encryptionWithRequestKey(this.identity, this.keystore);
+				await encryptionWithRequestKey(this.libp2p.keychain);
 			const role = options.role || new ReplicatorType();
 
 			const minReplicas =
@@ -1228,18 +1165,8 @@ export class Peerbit {
 		}
 		return openStore.program as S;
 	}
-
-	async getEncryptionKey(
-		address: string
-	): Promise<KeyWithMeta<Ed25519Keypair | X25519Keypair> | undefined> {
-		// v0 take some recent
-		const keys = await this.keystore.getKeys<Ed25519Keypair | X25519Keypair>(
-			address
-		);
-		const key = keys?.[0];
-		return key;
-	}
 }
+
 const areWeTestingWithJest = (): boolean => {
 	return process.env.JEST_WORKER_ID !== undefined;
 };

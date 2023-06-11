@@ -16,7 +16,7 @@ import {
 	SearchSortedRequest,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import { Identity, Log } from "@dao-xyz/peerbit-log";
+import { Log } from "@dao-xyz/peerbit-log";
 import {
 	Ed25519Keypair,
 	X25519Keypair,
@@ -33,7 +33,6 @@ import {
 import { waitFor } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
-import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
 
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();
@@ -99,7 +98,7 @@ describe("index", () => {
 		return {
 			publicKey: ed.publicKey,
 			sign: (data) => ed.sign(data),
-		} as Identity;
+		};
 	};
 
 	describe("operations", () => {
@@ -665,7 +664,7 @@ describe("index", () => {
 										) {
 											return {
 												index: i,
-												keypair: keypair as Ed25519Keypair | X25519Keypair,
+												keypair: keypair as X25519Keypair,
 											};
 										}
 									}
@@ -1284,7 +1283,7 @@ describe("index", () => {
 										) {
 											return {
 												index: i,
-												keypair: keypair as Ed25519Keypair | X25519Keypair,
+												keypair: keypair as X25519Keypair,
 											};
 										}
 									}
@@ -1560,7 +1559,7 @@ describe("index", () => {
 									) {
 										return {
 											index: i,
-											keypair: keypair as Ed25519Keypair | X25519Keypair,
+											keypair: keypair as X25519Keypair,
 										};
 									}
 								}
@@ -1710,7 +1709,7 @@ describe("index", () => {
 										) {
 											return {
 												index: i,
-												keypair: keypair as Ed25519Keypair | X25519Keypair,
+												keypair: keypair as X25519Keypair,
 											};
 										}
 									}

@@ -1,7 +1,7 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
 import { equals } from "@dao-xyz/uint8arrays";
-import { Signer, SignWithKey } from "./signer.js";
+import { Identity, Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";
 import { peerIdFromKeys } from "@libp2p/peer-id";
@@ -11,16 +11,18 @@ import sodium from "libsodium-wrappers";
 import type { Ed25519PeerId, PeerId } from "@libp2p/interface-peer-id";
 import { sign } from "./ed25519-sign.js";
 import { PreHash } from "./prehash.js";
+import { concat } from "uint8arrays";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
 	@field({ type: fixedArray("u8", 32) })
 	publicKey: Uint8Array;
 
-	constructor(properties?: { publicKey: Uint8Array }) {
+	constructor(properties: { publicKey: Uint8Array }) {
 		super();
-		if (properties) {
-			this.publicKey = properties.publicKey;
+		this.publicKey = properties.publicKey;
+		if (properties.publicKey.length !== 32) {
+			throw new Error("Expecting key to have length 32");
 		}
 	}
 
@@ -52,7 +54,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 			}))
 		);
 	} */
-	static from(id: PeerId) {
+	static fromPeerId(id: PeerId) {
 		if (!id.publicKey) {
 			throw new Error("Missing public key");
 		}
@@ -67,14 +69,17 @@ export class Ed25519PublicKey extends PublicSignKey {
 
 @variant(0)
 export class Ed25519PrivateKey extends PrivateSignKey {
-	@field({ type: fixedArray("u8", 64) })
+	@field({ type: fixedArray("u8", 32) })
 	privateKey: Uint8Array;
 
-	constructor(properties?: { privateKey: Uint8Array }) {
+	constructor(properties: { privateKey: Uint8Array }) {
 		super();
-		if (properties) {
-			this.privateKey = properties.privateKey;
+
+		if (properties.privateKey.length !== 32) {
+			throw new Error("Expecting key to have length 32");
 		}
+
+		this.privateKey = properties.privateKey;
 	}
 
 	equals(other: Ed25519PrivateKey): boolean {
@@ -90,13 +95,13 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 
 	keyObject: any; // crypto.KeyObject;
 
-	static from(id: PeerId) {
+	static fromPeerID(id: PeerId) {
 		if (!id.privateKey) {
 			throw new Error("Missing privateKey key");
 		}
 		if (id.type === "Ed25519") {
 			return new Ed25519PrivateKey({
-				privateKey: coerce(id.privateKey!.slice(4)),
+				privateKey: coerce(id.privateKey!.slice(4, 36)),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -104,34 +109,34 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 }
 
 @variant(0)
-export class Ed25519Keypair extends Keypair implements Signer {
+export class Ed25519Keypair extends Keypair implements Identity {
 	@field({ type: Ed25519PublicKey })
 	publicKey: Ed25519PublicKey;
 
 	@field({ type: Ed25519PrivateKey })
 	privateKey: Ed25519PrivateKey;
 
-	constructor(properties?: {
+	constructor(properties: {
 		publicKey: Ed25519PublicKey;
 		privateKey: Ed25519PrivateKey;
 	}) {
 		super();
-		if (properties) {
-			this.privateKey = properties.privateKey;
-			this.publicKey = properties.publicKey;
-		}
+		this.privateKey = properties.privateKey;
+		this.publicKey = properties.publicKey;
 	}
 
 	static async create(): Promise<Ed25519Keypair> {
 		await sodium.ready;
 		const generated = sodium.crypto_sign_keypair();
-		const kp = new Ed25519Keypair();
-		kp.publicKey = new Ed25519PublicKey({
-			publicKey: generated.publicKey,
+		const kp = new Ed25519Keypair({
+			publicKey: new Ed25519PublicKey({
+				publicKey: generated.publicKey,
+			}),
+			privateKey: new Ed25519PrivateKey({
+				privateKey: generated.privateKey.slice(0, 32), // Only the private key part (?)
+			}),
 		});
-		kp.privateKey = new Ed25519PrivateKey({
-			privateKey: generated.privateKey,
-		});
+
 		return kp;
 	}
 
@@ -158,10 +163,32 @@ export class Ed25519Keypair extends Keypair implements Signer {
 		return false;
 	}
 
-	static from(peerId: PeerId | Ed25519PeerId) {
+	static fromPeerId(peerId: PeerId | Ed25519PeerId) {
 		return new Ed25519Keypair({
-			privateKey: Ed25519PrivateKey.from(peerId),
-			publicKey: Ed25519PublicKey.from(peerId),
+			privateKey: Ed25519PrivateKey.fromPeerID(peerId),
+			publicKey: Ed25519PublicKey.fromPeerId(peerId),
 		});
+	}
+
+	_privateKeyPublicKey: Uint8Array; // length 64
+	get privateKeyPublicKey(): Uint8Array {
+		return (
+			this._privateKeyPublicKey ||
+			(this._privateKeyPublicKey = concat([
+				this.privateKey.privateKey,
+				this.publicKey.publicKey,
+			]))
+		);
+	}
+
+	toPeerId(): Promise<PeerId> {
+		return peerIdFromKeys(
+			new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey.publicKey)
+				.bytes,
+			new supportedKeys["ed25519"].Ed25519PrivateKey(
+				this.privateKeyPublicKey,
+				this.publicKey.publicKey
+			).bytes
+		);
 	}
 }

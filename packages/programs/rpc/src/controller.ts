@@ -11,6 +11,7 @@ import {
 	MaybeSigned,
 	PublicSignKey,
 	toBase64,
+	Identity,
 } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
@@ -22,7 +23,6 @@ import {
 	ProgramInitializationOptions,
 	ReplicatorType,
 } from "@dao-xyz/peerbit-program";
-import { Identity } from "@dao-xyz/peerbit-log";
 import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
 import {
 	PeerIds,

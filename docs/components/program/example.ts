@@ -33,7 +33,12 @@ const client = await Peerbit.create();
 await client.open(new MyDatabase(), { role: ReplicatorType });
 
 // Open a program with the intention of not doing any work
-await client.open(new MyDatabase(), { role: ObserverType });
+const store = await client.open(new MyDatabase(), { role: ObserverType });
 /// [role]
+
+/// [append]
+const { entry } = await store.log.append("Hello world!");
+expect(entry.payload.getValue()).toEqual("Hello world");
+/// [append]
 
 await client.stop();

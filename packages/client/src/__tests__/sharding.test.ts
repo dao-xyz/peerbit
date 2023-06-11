@@ -6,7 +6,6 @@ import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { delay, waitFor, waitForAsync } from "@dao-xyz/peerbit-time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
 import { AbsolutMinReplicas } from "../exchange-heads";
-import { Log, LogOptions } from "@dao-xyz/peerbit-log";
 
 describe(`sharding`, () => {
 	let session: LSession;
@@ -76,7 +75,11 @@ describe(`sharding`, () => {
 	it("can distribute evenly among peers", async () => {
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
-				trusted: [client1.id, client2.id, client3.id],
+				trusted: [
+					client1.identity.publicKey,
+					client2.identity.publicKey,
+					client3.identity.publicKey,
+				],
 			}),
 			{ trim: { to: 0, from: 1, type: "length" } }
 		);
@@ -153,7 +156,11 @@ describe(`sharding`, () => {
 	it("distributes to joining peers", async () => {
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
-				trusted: [client1.id, client2.id, client3.id],
+				trusted: [
+					client1.identity.publicKey,
+					client2.identity.publicKey,
+					client3.identity.publicKey,
+				],
 			})
 		);
 
@@ -227,7 +234,11 @@ describe(`sharding`, () => {
 	it("distributes to leaving peers", async () => {
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
-				trusted: [client1.id, client2.id, client3.id],
+				trusted: [
+					client1.identity.publicKey,
+					client2.identity.publicKey,
+					client3.identity.publicKey,
+				],
 			})
 		);
 		db2 = await client2.open<PermissionedEventStore>(db1.address!);
@@ -284,7 +295,11 @@ describe(`sharding`, () => {
 
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
-				trusted: [client1.id, client2.id, client3.id],
+				trusted: [
+					client1.identity.publicKey,
+					client2.identity.publicKey,
+					client3.identity.publicKey,
+				],
 			}),
 			{ trim: { to: 0, from: 1, type: "length" } }
 		);
@@ -376,7 +391,11 @@ describe(`sharding`, () => {
 		const client1WantedDbSize = Math.round(0.95 * entryCount);
 		db1 = await client1.open<PermissionedEventStore>(
 			new PermissionedEventStore({
-				trusted: [client1.id, client2.id, client3.id],
+				trusted: [
+					client1.identity.publicKey,
+					client2.identity.publicKey,
+					client3.identity.publicKey,
+				],
 			}),
 			{ trim: { to: client1WantedDbSize, type: "length" } }
 		);
@@ -467,7 +486,11 @@ describe(`sharding`, () => {
 
 	it("sets replicators groups correctly", async () => {
 		const store = new PermissionedEventStore({
-			trusted: [client1.id, client2.id, client3.id],
+			trusted: [
+				client1.identity.publicKey,
+				client2.identity.publicKey,
+				client3.identity.publicKey,
+			],
 		});
 
 		db1 = await client1.open<PermissionedEventStore>(store, { minReplicas: 1 });
@@ -488,4 +511,6 @@ describe(`sharding`, () => {
 			new AbsolutMinReplicas(5);
 		expect(replicatorsFn()).toEqual([["a", "b", "c", "d", "e"]]);
 	});
+
+	// TODO test untrusted filtering
 });

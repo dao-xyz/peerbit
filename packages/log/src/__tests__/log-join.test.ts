@@ -1,27 +1,10 @@
 import assert from "assert";
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
 import { compare } from "@dao-xyz/uint8arrays";
 import { LSession } from "@dao-xyz/peerbit-test-utils";
 import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
 import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
-import { createStore } from "./utils.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-let signKey: KeyWithMeta<Ed25519Keypair>,
-	signKey2: KeyWithMeta<Ed25519Keypair>,
-	signKey3: KeyWithMeta<Ed25519Keypair>,
-	signKey4: KeyWithMeta<Ed25519Keypair>;
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -34,35 +17,21 @@ const checkedStorage = async (log: Log<any>) => {
 };
 
 describe("Log - Join", function () {
-	let keystore: Keystore;
 	let session: LSession;
 
+	let signKey: Ed25519Keypair,
+		signKey2: Ed25519Keypair,
+		signKey3: Ed25519Keypair,
+		signKey4: Ed25519Keypair;
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		// The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the signKey suffix
-		const keys: KeyWithMeta<Ed25519Keypair>[] = [];
-		for (let i = 0; i < 4; i++) {
-			keys.push(
-				(await keystore.getKey(
-					new Uint8Array([i])
-				)) as KeyWithMeta<Ed25519Keypair>
-			);
-		}
+		const keys: Ed25519Keypair[] = [
+			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create(),
+		];
 		keys.sort((a, b) => {
-			return compare(
-				a.keypair.publicKey.publicKey,
-				b.keypair.publicKey.publicKey
-			);
+			return compare(a.publicKey.publicKey, b.publicKey.publicKey);
 		});
 		signKey = keys[0];
 		signKey2 = keys[1];
@@ -78,9 +47,6 @@ describe("Log - Join", function () {
 
 	afterAll(async () => {
 		await session.stop();
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await keystore?.close();
 	});
 
 	describe("join", () => {
@@ -92,25 +58,25 @@ describe("Log - Join", function () {
 		beforeEach(async () => {
 			log1 = new Log<string>();
 			await log1.open(session.peers[0].services.blocks, {
-				...signKey.keypair,
-				sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+				...signKey,
+				sign: async (data: Uint8Array) => await signKey.sign(data),
 			});
 			log2 = new Log<string>();
 			await log2.open(session.peers[1].services.blocks, {
-				...signKey2.keypair,
-				sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+				...signKey2,
+				sign: async (data: Uint8Array) => await signKey2.sign(data),
 			});
 			log3 = new Log<string>();
 			await log3.open(session.peers[2].services.blocks, {
-				...signKey3.keypair,
-				sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+				...signKey3,
+				sign: async (data: Uint8Array) => await signKey3.sign(data),
 			});
 			log4 = new Log<string>();
 			await log4.open(
 				session.peers[2].services.blocks, // [2] because we cannot create more than 3 peers when running tests in CI
 				{
-					...signKey4.keypair,
-					sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+					...signKey4,
+					sign: async (data: Uint8Array) => await signKey4.sign(data),
 				}
 			);
 		});
@@ -128,8 +94,8 @@ describe("Log - Join", function () {
 				const n1 = await Entry.create({
 					store: session.peers[0].services.blocks,
 					identity: {
-						...signKey.keypair,
-						sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+						...signKey,
+						sign: async (data: Uint8Array) => await signKey.sign(data),
 					},
 					gidSeed: Buffer.from("X" + i),
 					data: "entryA" + i,
@@ -138,8 +104,8 @@ describe("Log - Join", function () {
 				const n2 = await Entry.create({
 					store: session.peers[0].services.blocks,
 					identity: {
-						...signKey2.keypair,
-						sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+						...signKey2,
+						sign: async (data: Uint8Array) => await signKey2.sign(data),
 					},
 					data: "entryB" + i,
 					next: prev2 ? [prev2, n1] : [n1],
@@ -147,8 +113,8 @@ describe("Log - Join", function () {
 				const n3 = await Entry.create({
 					store: session.peers[1].services.blocks,
 					identity: {
-						...signKey3.keypair,
-						sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+						...signKey3,
+						sign: async (data: Uint8Array) => await signKey3.sign(data),
 					},
 					data: "entryC" + i,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
@@ -164,8 +130,8 @@ describe("Log - Join", function () {
 			const logA = await Log.fromEntry(
 				session.peers[0].services.blocks,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				last(items2),
 				{ timeout: 3000 }
@@ -176,8 +142,8 @@ describe("Log - Join", function () {
 			const logB = await Log.fromEntry(
 				session.peers[1].services.blocks,
 				{
-					...signKey3.keypair,
-					sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+					...signKey3,
+					sign: async (data: Uint8Array) => await signKey3.sign(data),
 				},
 				last(items3),
 				{ timeout: 3000 }
@@ -575,8 +541,8 @@ describe("Log - Join", function () {
 			const { entry: a2 } = await log1.append("helloA2");
 			const { entry: b2 } = await log2.append("helloB2");
 
-			expect(a2.metadata.clock.id).toEqual(signKey.keypair.publicKey.bytes);
-			expect(b2.metadata.clock.id).toEqual(signKey2.keypair.publicKey.bytes);
+			expect(a2.metadata.clock.id).toEqual(signKey.publicKey.bytes);
+			expect(b2.metadata.clock.id).toEqual(signKey2.publicKey.bytes);
 			expect(
 				a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
 			).toBeGreaterThan(0);
@@ -691,7 +657,7 @@ describe("Log - Join", function () {
 			expect(
 				(await log1.getHeads())[(await log1.getHeads()).length - 1].gid
 			).toEqual(a1.gid);
-			expect(a2.metadata.clock.id).toEqual(signKey.keypair.publicKey.bytes);
+			expect(a2.metadata.clock.id).toEqual(signKey.publicKey.bytes);
 			expect(
 				a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
 			).toBeGreaterThan(0);
@@ -713,7 +679,7 @@ describe("Log - Join", function () {
 			await log4.append("helloD3");
 			const { entry: d4 } = await log4.append("helloD4");
 
-			expect(d4.metadata.clock.id).toEqual(signKey4.keypair.publicKey.bytes);
+			expect(d4.metadata.clock.id).toEqual(signKey4.publicKey.bytes);
 
 			const expectedData = [
 				"helloA1",

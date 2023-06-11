@@ -1,7 +1,10 @@
 import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
 import Cache from "@dao-xyz/lazy-level";
-import { Identity } from "@dao-xyz/peerbit-log";
-import { Ed25519Keypair, X25519PublicKey } from "@dao-xyz/peerbit-crypto";
+import {
+	Ed25519Keypair,
+	X25519Keypair,
+	X25519PublicKey,
+} from "@dao-xyz/peerbit-crypto";
 import { delay, waitFor } from "@dao-xyz/peerbit-time";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { ObserverType, ReplicatorType } from "@dao-xyz/peerbit-program";
@@ -21,7 +24,7 @@ const createIdentity = async () => {
 	return {
 		publicKey: ed.publicKey,
 		sign: (data) => ed.sign(data),
-	} as Identity;
+	};
 };
 
 describe("query", () => {
@@ -48,7 +51,7 @@ describe("query", () => {
 				},
 				encryption: {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
-					getEncryptionKeypair: () => Ed25519Keypair.create(),
+					getEncryptionKeypair: () => X25519Keypair.create(),
 				},
 				cache: () => new Cache(createStore()),
 			},
@@ -192,7 +195,7 @@ describe("query", () => {
 				},
 				encryption: {
 					getAnyKeypair: (_) => Promise.resolve(undefined),
-					getEncryptionKeypair: () => Ed25519Keypair.create(),
+					getEncryptionKeypair: () => X25519Keypair.create(),
 				},
 				cache: () => new Cache(createStore()),
 			},

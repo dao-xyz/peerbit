@@ -20,7 +20,7 @@ export class PermissionedString extends Program implements CanTrust {
 		if (properties) {
 			this._store = properties.store || new DString({});
 			this.trusted = properties.trusted.map((x) =>
-				x instanceof PublicSignKey ? x : Ed25519PublicKey.from(x)
+				x instanceof PublicSignKey ? x : Ed25519PublicKey.fromPeerId(x)
 			);
 		}
 	}

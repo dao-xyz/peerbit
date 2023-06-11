@@ -2,11 +2,12 @@ import {
 	Ed25519Keypair,
 	X25519Keypair,
 	verifySignatureSecp256k1,
-	Secp256k1Keccak256PublicKey,
-	Sec256k1Keccak256Keypair,
+	Secp256k1PublicKey,
+	Secp256k1Keypair,
 	verify,
 	Ed25519PublicKey,
 	SignatureWithKey,
+	Ed25519PrivateKey,
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
@@ -30,6 +31,17 @@ describe("Ed25519", () => {
 		expect(new Uint8Array(derser.publicKey.publicKey)).toEqual(
 			keypair.publicKey.publicKey
 		);
+	});
+
+	it("PeerId", async () => {
+		const kp = await Ed25519Keypair.create();
+		const peerId = await kp.toPeerId();
+		const privateKeyFromPeerId = Ed25519PrivateKey.fromPeerID(peerId);
+		const keyPairFromPeerId = Ed25519Keypair.fromPeerId(peerId);
+		expect(keyPairFromPeerId.equals(kp)).toBeTrue();
+		expect(
+			privateKeyFromPeerId.equals(keyPairFromPeerId.privateKey)
+		).toBeTrue();
 	});
 
 	describe("native", () => {
@@ -167,18 +179,17 @@ describe("X25519", () => {
 	});
 });
 
-describe("Sepck2561k1Keccak256", () => {
+describe("Sepck2561k1", () => {
 	const data = new Uint8Array([1, 2, 3]);
 
-	it("verify", async () => {
+	it("wallet sign", async () => {
 		const wallet = Wallet.createRandom();
-		const pk = new Secp256k1Keccak256PublicKey({
-			address: wallet.address,
-		});
+		const pk = await Secp256k1PublicKey.recover(wallet);
 		const signature = await wallet.signMessage(data);
 		let signatureBytes = Buffer.from(signature);
+
 		const signatureWithKey = new SignatureWithKey({
-			prehash: PreHash.NONE,
+			prehash: PreHash.ETH_KECCAK_256,
 			publicKey: pk,
 			signature: signatureBytes,
 		});
@@ -188,29 +199,32 @@ describe("Sepck2561k1Keccak256", () => {
 
 		const isNotVerified = await verifySignatureSecp256k1(
 			signatureWithKey,
-			data.reverse()
+			new Uint8Array(data).reverse()
 		);
 		expect(isNotVerified).toBeFalse();
 	});
-	it("from PeerId", async () => {
+	it("keypair sign", async () => {
 		const peerId = await createSecp256k1PeerId();
-		const keypair = Sec256k1Keccak256Keypair.from(peerId);
+		const keypair = Secp256k1Keypair.fromPeerId(peerId);
 		const privateKey = new supportedKeys["secp256k1"].Secp256k1PrivateKey(
 			peerId.privateKey!.slice(4)
 		);
 		const publicKeyComputed = privateKey.public;
 		expect(publicKeyComputed.bytes).toEqual(peerId.publicKey);
-		const wallet = new Wallet(peerId.privateKey!.slice(4));
-		const signature = await keypair.sign(data);
+		const signature = await keypair.sign(data, PreHash.ETH_KECCAK_256);
 		expect(await verifySignatureSecp256k1(signature, data)).toBeTrue();
+	});
+
+	it("PeerId", async () => {
+		const kp = await Secp256k1Keypair.create();
+		const peerId = await kp.toPeerId();
+		expect(Secp256k1Keypair.fromPeerId(peerId).equals(kp));
 	});
 
 	it("ser/der", async () => {
 		const wallet = await Wallet.createRandom();
-		const pk = new Secp256k1Keccak256PublicKey({
-			address: wallet.address,
-		});
-		const derser = deserialize(serialize(pk), Secp256k1Keccak256PublicKey);
-		expect(new Uint8Array(derser.address)).toEqual(pk.address);
+		const pk = await Secp256k1PublicKey.recover(wallet);
+		const derser = deserialize(serialize(pk), Secp256k1PublicKey);
+		expect(derser.equals(pk)).toBeTrue();
 	});
 });

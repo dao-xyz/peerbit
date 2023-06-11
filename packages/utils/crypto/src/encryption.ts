@@ -22,16 +22,13 @@ export interface PublicKeyEncryptionResolver {
 }
 export type GetAnyKeypair =
 	| ((
-			publicKey: (X25519PublicKey | Ed25519PublicKey)[]
-	  ) => Promise<
-			{ index: number; keypair: X25519Keypair | Ed25519Keypair } | undefined
-	  >)
+			publicKey: X25519PublicKey[]
+	  ) => Promise<{ index: number; keypair: X25519Keypair } | undefined>)
 	| X25519Keypair;
 export type GetEncryptionKeypair =
-	| (() => X25519Keypair | Ed25519Keypair)
-	| (() => Promise<X25519Keypair> | Promise<Ed25519Keypair>)
-	| X25519Keypair
-	| Ed25519Keypair;
+	| (() => X25519Keypair)
+	| (() => Promise<X25519Keypair>)
+	| X25519Keypair;
 
 @variant(0)
 export abstract class MaybeEncrypted<T> {
@@ -322,7 +319,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 			if (key.keypair instanceof X25519Keypair) {
 				secretKey = key.keypair.secretKey;
 			} else {
-				secretKey = await X25519SecretKey.from(key.keypair.privateKey);
+				secretKey = await X25519SecretKey.from(key.keypair);
 			}
 			let epheremalKey: Uint8Array;
 			try {

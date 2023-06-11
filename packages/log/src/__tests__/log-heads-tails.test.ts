@@ -1,79 +1,30 @@
 import assert from "assert";
-import rmrf from "rimraf";
-import fs from "fs-extra";
 import { Log } from "../log.js";
-import { Keystore, KeyWithMeta } from "@dao-xyz/peerbit-keystore";
-import { compare } from "@dao-xyz/uint8arrays";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import path from "path";
 import {
 	BlockStore,
 	MemoryLevelBlockStore,
 } from "@dao-xyz/libp2p-direct-block";
-import { signingKeysFixturesPath, testKeyStorePath } from "./utils.js";
-import { createStore } from "./utils.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __filenameBase = path.parse(__filename).base;
-const __dirname = dirname(__filename);
-
-let signKey: KeyWithMeta<Ed25519Keypair>,
-	signKey2: KeyWithMeta<Ed25519Keypair>,
-	signKey3: KeyWithMeta<Ed25519Keypair>,
-	signKey4: KeyWithMeta<Ed25519Keypair>;
+import {
+	signKey,
+	signKey2,
+	signKey3,
+	signKey4,
+} from "./fixtures/privateKey.js";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
 };
 
 describe("Log - Heads and Tails", function () {
-	let keystore: Keystore, store: BlockStore;
+	let store: BlockStore;
 
 	beforeAll(async () => {
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await fs.copy(
-			signingKeysFixturesPath(__dirname),
-			testKeyStorePath(__filenameBase)
-		);
-
-		keystore = new Keystore(
-			await createStore(testKeyStorePath(__filenameBase))
-		);
-
-		const keys: KeyWithMeta<Ed25519Keypair>[] = [];
-		for (let i = 0; i < 4; i++) {
-			keys.push(
-				(await keystore.getKey(
-					new Uint8Array([i])
-				)) as KeyWithMeta<Ed25519Keypair>
-			);
-		}
-		keys.sort((a, b) =>
-			compare(a.keypair.publicKey.publicKey, b.keypair.publicKey.publicKey)
-		);
-
-		// @ts-ignore
-		signKey = keys[0];
-		// @ts-ignore
-		signKey2 = keys[1];
-		// @ts-ignore
-		signKey3 = keys[2];
-		// @ts-ignore
-		signKey4 = keys[3];
-
 		store = new MemoryLevelBlockStore();
 		await store.open();
 	});
 
 	afterAll(async () => {
 		await store.close();
-
-		rmrf.sync(testKeyStorePath(__filenameBase));
-
-		await keystore?.close();
 	});
 
 	let log1: Log<string>,
@@ -84,23 +35,23 @@ describe("Log - Heads and Tails", function () {
 	beforeEach(async () => {
 		log1 = new Log<string>();
 		await log1.open(store, {
-			...signKey.keypair,
-			sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+			...signKey,
+			sign: async (data: Uint8Array) => await signKey.sign(data),
 		});
 		log2 = new Log<string>();
 		await log2.open(store, {
-			...signKey2.keypair,
-			sign: async (data: Uint8Array) => await signKey2.keypair.sign(data),
+			...signKey2,
+			sign: async (data: Uint8Array) => await signKey2.sign(data),
 		});
 		log3 = new Log<string>();
 		await log3.open(store, {
-			...signKey3.keypair,
-			sign: async (data: Uint8Array) => await signKey3.keypair.sign(data),
+			...signKey3,
+			sign: async (data: Uint8Array) => await signKey3.sign(data),
 		});
 		log4 = new Log<string>();
 		await log4.open(store, {
-			...signKey4.keypair,
-			sign: async (data: Uint8Array) => await signKey4.keypair.sign(data),
+			...signKey4,
+			sign: async (data: Uint8Array) => await signKey4.sign(data),
 		});
 	});
 	afterEach(async () => {
@@ -261,8 +212,8 @@ describe("Log - Heads and Tails", function () {
 			await log1.open(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				{ trim: { type: "length", to: 2 } }
 			);
@@ -270,8 +221,8 @@ describe("Log - Heads and Tails", function () {
 			await log2.open(
 				store,
 				{
-					...signKey.keypair,
-					sign: async (data: Uint8Array) => await signKey.keypair.sign(data),
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data),
 				},
 				{ trim: { type: "length", to: 2 } }
 			);
@@ -325,13 +276,13 @@ describe("Log - Heads and Tails", function () {
 			expect((await log4.getTails()).length).toEqual(3);
 
 			expect((await log4.getTails())[0].metadata.clock.id).toEqual(
-				signKey.keypair.publicKey.bytes
+				signKey.publicKey.bytes
 			);
 			expect((await log4.getTails())[1].metadata.clock.id).toEqual(
-				signKey2.keypair.publicKey.bytes
+				signKey2.publicKey.bytes
 			);
 			expect((await log4.getTails())[2].metadata.clock.id).toEqual(
-				signKey3.keypair.publicKey.bytes
+				signKey3.publicKey.bytes
 			);
 		});
 	});

@@ -9,13 +9,15 @@ export const sign = async (
 	prehash: PreHash
 ) => {
 	const hashedData = await prehashFn(data, prehash);
-
+	/* const init = sodium.crypto_sign_init()
+	sodium.crypto_sign_update(init, hashedData)
+	const signature = sodium.crypto_sign_final_create(init, keypair.privateKey.privateKey, 'uint8array') */
 	return new SignatureWithKey({
 		prehash,
 		publicKey: keypair.publicKey,
 		signature: sodium.crypto_sign_detached(
 			hashedData,
-			keypair.privateKey.privateKey
+			keypair.privateKeyPublicKey
 		),
 	});
 };
@@ -27,6 +29,7 @@ export const verifySignatureEd25519 = async (
 	let res = false;
 	try {
 		const hashedData = await prehashFn(data, signature.prehash);
+
 		const verified = sodium.crypto_sign_verify_detached(
 			signature.signature,
 			hashedData,
