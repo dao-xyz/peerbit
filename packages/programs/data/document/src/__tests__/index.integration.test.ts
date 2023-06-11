@@ -538,10 +538,22 @@ describe("index", () => {
 			describe("field extractor", () => {
 				it("filters field", async () => {
 					let indexedNameField = "xyz";
-					class FilteredStore extends TestStore {
+
+					@variant("filtered-store")
+					class FilteredStore extends Program {
+						@field({ type: Uint8Array })
+						id: Uint8Array;
+
+						@field({ type: Documents })
+						docs: Documents<Document>;
+
 						constructor(properties: { docs: Documents<Document> }) {
-							super({ ...properties });
+							super();
+
+							this.id = randomBytes(32);
+							this.docs = properties.docs;
 						}
+
 						async setup(): Promise<void> {
 							await this.docs.setup({
 								type: Document,

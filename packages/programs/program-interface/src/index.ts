@@ -3,7 +3,7 @@ import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 import { createBlock } from "@dao-xyz/libp2p-direct-block";
 import { Change, Entry, Log, LogOptions } from "@dao-xyz/peerbit-log";
 import { sha256 } from "@dao-xyz/peerbit-crypto";
-import { field, variant } from "@dao-xyz/borsh";
+import { field, getSchema, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
@@ -418,6 +418,14 @@ export abstract class Program
 		identity: Identity,
 		options: ProgramInitializationOptions
 	): Promise<this> {
+		// check that a  discriminator exist
+		const schema = getSchema(this.constructor);
+		if (!schema || typeof schema.variant !== "string") {
+			throw new Error(
+				`Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass ${this.constructor.name} { ...`
+			);
+		}
+
 		(this.openedByPrograms || (this.openedByPrograms = [])).push(
 			options.openedBy
 		);

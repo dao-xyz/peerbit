@@ -151,6 +151,46 @@ describe("program", () => {
 	});
 
 	describe("init", () => {
+		it("fails to init without schema", async () => {
+			class NoVariant extends Program {
+				constructor() {
+					super();
+				}
+				async setup(): Promise<void> {}
+			}
+			await expect(
+				new NoVariant().init(
+					session.peers[0],
+					await Ed25519Keypair.create(),
+					{} as any
+				)
+			).rejects.toThrowError(
+				'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...'
+			);
+		});
+
+		it("fails to init without variant", async () => {
+			class NoVariant extends Program {
+				@field({ type: "u8" })
+				number: number;
+
+				constructor() {
+					super();
+					this.number = 123;
+				}
+				async setup(): Promise<void> {}
+			}
+			await expect(
+				new NoVariant().init(
+					session.peers[0],
+					await Ed25519Keypair.create(),
+					{} as any
+				)
+			).rejects.toThrowError(
+				'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...'
+			);
+		});
+
 		it("inits before setup", async () => {
 			const log = new Log();
 			const p = new P2(log);
