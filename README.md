@@ -16,8 +16,7 @@
 
 <h3 align="center" >E2EE &nbsp; &nbsp; P2P &nbsp; &nbsp; Auto-sharding  &nbsp; &nbsp;  Searchable</h3>
 
-<h3 align="center"><a href="https://peerbit.org">Documentation</a> - <a href="https://github.com/dao-xyz/peerbit-examples">Examples</a></h3>
-
+<h3 align="center"><a href="https://peerbit.org">Documentation</a> - <a href="https://github.com/dao-xyz/peerbit-examples">Examples</a> - <a href="https://matrix.to/#/#peerbit:matrix.org">Chat on Matrix</a></h3>
 
 ## A building block for the decentralized web
 
@@ -35,7 +34,7 @@ Peerbit is performant, so performant in fact you can use it for [streaming video
 
 1. Install Peerbit by following the simple setup instructions in our [Installation Guide](https://www.peerbit.org/#/getting-started).
 
-2. Dive into our comprehensive [Documentation](https://www.peerbit.org/#/components/client/client) or checkout the [Example repository](https://github.com/dao-xyz/peerbit-examples)  to explore the powerful features and learn how to leverage Peerbit to its fullest potential.
+2. Dive into our comprehensive [Documentation](https://www.peerbit.org/#/modules/client/client) or checkout the [Example repository](https://github.com/dao-xyz/peerbit-examples)  to explore the powerful features and learn how to leverage Peerbit to its fullest potential.
 
 3. Join us on [Matrix](https://matrix.to/#/#peerbit:matrix.org) to connect, share ideas, and collaborate with like-minded individuals.
 
