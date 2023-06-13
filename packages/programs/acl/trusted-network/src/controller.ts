@@ -228,7 +228,7 @@ export class TrustedNetwork extends Program {
 		if (this.trustGraph.role instanceof Replicator) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
-			this.trustGraph.index.query(new SearchRequest({ queries: [] }), {
+			this.trustGraph.index.search(new SearchRequest({ query: [] }), {
 				remote: { sync: true },
 			});
 			return this._isTrustedLocal(trustee, truster);

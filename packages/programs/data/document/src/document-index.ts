@@ -7,7 +7,6 @@ import {
 	IntegerCompare,
 	ByteMatchQuery,
 	StringMatch,
-	SearchRequest,
 	Query,
 	ResultWithSource,
 	StateFieldQuery,
@@ -22,8 +21,9 @@ import {
 	Sort,
 	CollectNextRequest,
 	AbstractSearchRequest,
-	SearchSortedRequest,
+	SearchRequest,
 	SortDirection,
+	CloseIteratorRequest,
 } from "./query.js";
 import {
 	CanRead,
@@ -119,8 +119,11 @@ export type QueryOptions<R> = {
 	remote?: boolean | RemoteQueryOptions<Results<R>>;
 	local?: boolean;
 };
-
-export type Indexable<T> = (obj: T, context: Context) => Record<string, any>;
+export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
+export type Indexable<T> = (
+	obj: T,
+	context: Context
+) => Record<string, any> | Promise<Record<string, any>>;
 
 const extractFieldValue = <T>(doc: any, path: string[]): T => {
 	for (let i = 0; i < path.length; i++) {
@@ -130,7 +133,7 @@ const extractFieldValue = <T>(doc: any, path: string[]): T => {
 };
 
 export type ResultsIterator<T> = {
-	return: () => void;
+	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
 };
@@ -146,7 +149,11 @@ const sortCompare = (av: any, bv: any) => {
 	}
 	return 0;
 };
-const extractSortCompare = (a: any, b: any, sorts: Sort[]) => {
+const extractSortCompare = (
+	a: Record<string, any>,
+	b: Record<string, any>,
+	sorts: Sort[]
+) => {
 	for (const sort of sorts) {
 		const av = extractFieldValue(a, sort.key);
 		const bv = extractFieldValue(b, sort.key);
@@ -161,6 +168,35 @@ const extractSortCompare = (a: any, b: any, sorts: Sort[]) => {
 	}
 	return 0;
 };
+
+const resolvedSort = async <T, Q extends { value: T; context: Context }>(
+	arr: Q[],
+	index: Indexable<T>,
+	sorts: Sort[]
+) => {
+	await Promise.all(
+		arr.map(
+			async (result) =>
+				(result[SORT_TMP_KEY] = await index(result.value, result.context))
+		)
+	);
+	arr.sort((a, b) =>
+		extractSortCompare(a[SORT_TMP_KEY], b[SORT_TMP_KEY], sorts)
+	);
+	return arr;
+};
+/* 
+const sortValueWithContext = async<T>(arr: {
+	value: T;
+	context: Context;
+}[], index: Indexable<T>) => {
+
+	
+}
+ */
+
+const SORT_TMP_KEY = "__sort_ref";
+
 const introduceEntries = async <T>(
 	responses: RPCResponse<Results<T>>[],
 	type: AbstractType<T>,
@@ -254,18 +290,24 @@ export class DocumentIndex<T> extends ComposableProgram {
 			topic: this._log.idString + "/document",
 			canRead: properties.canRead,
 			responseHandler: async (query) => {
-				const results = await this.queryHandler(query);
-				return new Results({
-					// Even if results might have length 0, respond, because then we now at least there are no matching results
-					results: results.results.map(
-						(r) =>
-							new ResultWithSource({
-								source: serialize(r.value),
-								context: r.context,
-							})
-					),
-					kept: BigInt(results.kept),
-				});
+				if (query instanceof CloseIteratorRequest) {
+					this.processCloseIteratorRequest(query);
+				} else {
+					const results = await this.processFetchRequest(
+						query as SearchRequest | SearchRequest | CollectNextRequest
+					);
+					return new Results({
+						// Even if results might have length 0, respond, because then we now at least there are no matching results
+						results: results.results.map(
+							(r) =>
+								new ResultWithSource({
+									source: serialize(r.value),
+									context: r.context,
+								})
+						),
+						kept: BigInt(results.kept),
+					});
+				}
 			},
 			responseType: Results,
 			queryType: AbstractSearchRequest,
@@ -287,7 +329,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
 				new SearchRequest({
-					queries: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
+					query: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
 				}),
 				options
 			);
@@ -295,7 +337,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			const stringValue = asString(key);
 			results = await this.queryDetailed(
 				new SearchRequest({
-					queries: [
+					query: [
 						new StringMatch({
 							key: [this.indexBy],
 							value: stringValue,
@@ -339,22 +381,19 @@ export class DocumentIndex<T> extends ComposableProgram {
 		return results;
 	}
 
-	async queryHandler(
-		query: AbstractSearchRequest
+	async processFetchRequest(
+		query: SearchRequest | CollectNextRequest
 	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
-		if (
-			query instanceof SearchRequest ||
-			query instanceof SearchSortedRequest
-		) {
+		if (query instanceof SearchRequest) {
 			if (
-				query.queries.length === 1 &&
-				(query.queries[0] instanceof ByteMatchQuery ||
-					query.queries[0] instanceof StringMatch) &&
-				query.queries[0].key.length === 1 &&
-				query.queries[0].key[0] === this.indexBy
+				query.query.length === 1 &&
+				(query.query[0] instanceof ByteMatchQuery ||
+					query.query[0] instanceof StringMatch) &&
+				query.query[0].key.length === 1 &&
+				query.query[0].key[0] === this.indexBy
 			) {
-				const firstQuery = query.queries[0];
+				const firstQuery = query.query[0];
 				if (firstQuery instanceof ByteMatchQuery) {
 					const doc = this._index.get(asString(firstQuery.value)); // TODO could there be a issue with types here?
 					return doc
@@ -389,7 +428,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			}
 
 			const results = await this._queryDocuments((doc) => {
-				for (const f of query.queries) {
+				for (const f of query.query) {
 					if (!this.handleQueryObject(f, doc)) {
 						return false;
 					}
@@ -397,26 +436,15 @@ export class DocumentIndex<T> extends ComposableProgram {
 				return true;
 			});
 
-			if (query instanceof SearchSortedRequest) {
-				if (query.sort.length === 0) {
-					query.sort = [
-						new Sort({ key: this.indexBy, direction: SortDirection.ASC }),
-					];
-				}
+			// Sort
+			await resolvedSort(results, this._toIndex, query.sort);
 
-				// Sort
-				results.sort((a, b) =>
-					extractSortCompare(
-						this._toIndex(a.value, a.context),
-						this._toIndex(b.value, b.context),
-						query.sort
-					)
-				);
-				const batch = results.splice(0, query.initialAmount);
-				this._resultsCollectQueue.add(query.idString, results);
-				return { results: batch, kept: results.length }; // Only return 1 result since we are doing distributed sort, TODO buffer more initially
+			const batch = results.splice(0, query.fetch);
+			if (results.length > 0) {
+				this._resultsCollectQueue.add(query.idString, results); // cache resulst not returned
 			}
-			return { results, kept: 0 };
+
+			return { results: batch, kept: results.length }; // Only return 1 result since we are doing distributed sort, TODO buffer more initially
 		} else if (query instanceof CollectNextRequest) {
 			const results = this._resultsCollectQueue.get(query.idString);
 
@@ -427,16 +455,21 @@ export class DocumentIndex<T> extends ComposableProgram {
 				};
 			}
 
+			const batch = results.splice(0, query.amount);
+
 			if (results.length === 0) {
 				this._resultsCollectQueue.del(query.idString); // TODO add tests for proper cleanup/timeouts
 			}
 
-			const batch = results.splice(0, query.amount);
-
 			return { results: batch, kept: results.length };
 		}
-
 		throw new Error("Unsupported");
+	}
+
+	async processCloseIteratorRequest(
+		query: CloseIteratorRequest
+	): Promise<void> {
+		this._resultsCollectQueue.del(query.idString);
 	}
 
 	private handleQueryObject(f: Query, doc: IndexedValue<T>) {
@@ -533,7 +566,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	 * @returns
 	 */
 	public async queryDetailed(
-		queryRequest: SearchRequest | SearchSortedRequest,
+		queryRequest: SearchRequest,
 		options?: QueryOptions<T>
 	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
@@ -557,7 +590,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		const allResults: Results<T>[] = [];
 
 		if (local) {
-			const results = await this.queryHandler(queryRequest);
+			const results = await this.processFetchRequest(queryRequest);
 			if (results.results.length > 0) {
 				const resultsObject = new Results<T>({
 					results: await Promise.all(
@@ -602,13 +635,18 @@ export class DocumentIndex<T> extends ComposableProgram {
 						).then((x) => x.forEach((y) => rs.push(y.response)));
 					};
 					try {
-						await queryAll(
-							this._query,
-							replicatorGroups,
-							queryRequest,
-							responseHandler,
-							remote
-						);
+						if (queryRequest instanceof CloseIteratorRequest) {
+							// don't wait for responses
+							await this._query.request(queryRequest, { to: remote!.to });
+						} else {
+							await queryAll(
+								this._query,
+								replicatorGroups,
+								queryRequest,
+								responseHandler,
+								remote
+							);
+						}
 					} catch (error) {
 						if (error instanceof MissingResponsesError) {
 							logger.error("Did not reciveve responses from all shard");
@@ -621,7 +659,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				// TODO send without direction out to the world? or just assume we can insert?
 				/* 	promises.push(
 						this._query
-							.send(queryRequest, remote)
+							.request(queryRequest, remote)
 							.then((results) => introduceEntries(results, this.type, this._sync, options).then(x => x.map(y => y.response)))
 					); */
 				/* throw new Error(
@@ -648,17 +686,23 @@ export class DocumentIndex<T> extends ComposableProgram {
 	 * @param options
 	 * @returns
 	 */
-	public async query(
+	public async search(
 		queryRequest: SearchRequest,
-		options?: QueryOptions<T>
+		options?: SearchOptions<T>
 	): Promise<T[]> {
-		const allResult = await this.queryDetailed(queryRequest, options);
+		// Set fetch to search size, or max value (default to max u32 (4294967295))
+		queryRequest.fetch = options?.size ?? 0xffffffff;
 
-		// Deduplicate and return values directly
-		return dedup(
-			allResult.map((x) => x.results.map((y) => y.value)).flat(),
-			this.indexBy
-		);
+		// So that the iterator is pre-fetching the right amount of entries
+		const iterator = this.iterate(queryRequest, options);
+
+		// So that this call will not do any remote requests
+		const allResult = await iterator.next(queryRequest.fetch);
+
+		await iterator.close();
+
+		//s Deduplicate and return values directly
+		return dedup(allResult, this.indexBy);
 	}
 
 	/**
@@ -667,10 +711,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 	 * @param options
 	 * @returns
 	 */
-	public async iterate(
-		queryRequest: SearchSortedRequest,
+	public iterate(
+		queryRequest: SearchRequest,
 		options?: QueryOptions<T>
-	): Promise<ResultsIterator<T>> {
+	): ResultsIterator<T> {
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<
 			string,
@@ -681,32 +725,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 		> = new Map();
 		const visited = new Set<string>();
 
-		let done = true;
-
-		await this.queryDetailed(queryRequest, {
-			...options,
-			onResponse: (response, from) => {
-				if (!from) {
-					logger.error("Missing from for sorted query");
-					return;
-				}
-
-				if (response.kept === 0n && response.results.length === 0) {
-					return;
-				}
-
-				done = false;
-				peerBufferMap.set(from.hashcode(), {
-					buffer: response.results
-						.filter((x) => !visited.has(asString(x.value[this.indexBy])))
-						.map((x) => {
-							visited.add(asString(x.value[this.indexBy]));
-							return { from, value: x.value, context: x.context };
-						}),
-					kept: Number(response.kept),
-				});
-			},
-		});
+		let done = false;
+		let first = false;
 
 		// TODO handle join/leave while iterating
 		let stopperFns: (() => void)[] = [];
@@ -719,18 +739,56 @@ export class DocumentIndex<T> extends ComposableProgram {
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
 		};
 
+		const fetchFirst = async (n: number): Promise<boolean> => {
+			done = true; // Assume we are donne
+			queryRequest.fetch = n;
+			await this.queryDetailed(queryRequest, {
+				...options,
+				onResponse: (response, from) => {
+					if (!from) {
+						logger.error("Missing from for sorted query");
+						return;
+					}
+
+					if (response.kept === 0n && response.results.length === 0) {
+						return;
+					}
+
+					if (response.kept > 0n) {
+						done = false; // we have more to do later!
+					}
+
+					peerBufferMap.set(from.hashcode(), {
+						buffer: response.results
+							.filter((x) => !visited.has(asString(x.value[this.indexBy])))
+							.map((x) => {
+								visited.add(asString(x.value[this.indexBy]));
+								return { from, value: x.value, context: x.context };
+							}),
+						kept: Number(response.kept),
+					});
+				},
+			});
+
+			return done;
+		};
+
 		const fetchAtLeast = async (n: number) => {
-			if (done) {
+			if (done && first) {
 				return;
 			}
 
 			await fetchPromise;
-			const newPromises: Promise<any>[] = [];
 
+			if (!first) {
+				first = true;
+				fetchPromise = fetchFirst(n);
+				return fetchPromise;
+			}
+
+			const promises: Promise<any>[] = [];
 			stopperFns = [];
-
 			let resultsLeft = 0;
-
 			for (const [peer, buffer] of peerBufferMap) {
 				if (buffer.buffer.length < n) {
 					if (buffer.kept === 0) {
@@ -746,8 +804,8 @@ export class DocumentIndex<T> extends ComposableProgram {
 					});
 					// Fetch locally?
 					if (peer === this.libp2p.services.pubsub.publicKeyHash) {
-						newPromises.push(
-							this.queryHandler(collectRequest)
+						promises.push(
+							this.processFetchRequest(collectRequest)
 								.then((results) => {
 									resultsLeft += results.kept;
 
@@ -784,9 +842,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 						);
 					} else {
 						// Fetch remotely
-						newPromises.push(
+						promises.push(
 							this._query
-								.send(collectRequest, {
+								.request(collectRequest, {
 									...options,
 									stopper: (fn) => stopperFns.push(fn),
 									to: [peer],
@@ -843,7 +901,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 					resultsLeft += peerBufferMap.get(peer)?.kept || 0;
 				}
 			}
-			return (fetchPromise = Promise.all(newPromises).then(() => {
+			return (fetchPromise = Promise.all(promises).then(() => {
 				return resultsLeft === 0; // 0 results left to fetch and 0 pending results
 			}));
 		};
@@ -861,12 +919,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 			const fetchedAll = await fetchAtLeast(n);
 
 			// get n next top entries, shift and pull more results
-			const results = peerBuffers().sort((a, b) =>
-				extractSortCompare(
-					this._toIndex(a.value, a.context),
-					this._toIndex(b.value, b.context),
-					queryRequest.sort
-				)
+			const results = await resolvedSort(
+				peerBuffers(),
+				this._toIndex,
+				queryRequest.sort
 			);
 			const pendingMoreResults = n < results.length;
 			const batch = results.splice(0, n);
@@ -889,14 +945,36 @@ export class DocumentIndex<T> extends ComposableProgram {
 			);
 		};
 
-		const close = () => {
+		const close = async () => {
 			for (const fn of stopperFns) {
 				fn();
 			}
+
+			const closeRequest = new CloseIteratorRequest({ id: queryRequest.id });
+			const promises: Promise<any>[] = [];
+			for (const [peer, buffer] of peerBufferMap) {
+				if (buffer.kept === 0) {
+					peerBufferMap.delete(peer);
+					continue;
+				}
+				// Fetch locally?
+				if (peer === this.libp2p.services.pubsub.publicKeyHash) {
+					promises.push(this.processCloseIteratorRequest(closeRequest));
+				} else {
+					// Fetch remotely
+					promises.push(
+						this._query.send(closeRequest, {
+							...options,
+							to: [peer],
+						})
+					);
+				}
+			}
+			await Promise.all(promises);
 		};
 
 		return {
-			return: close,
+			close,
 			next,
 			done: () => done,
 		};

@@ -84,9 +84,9 @@ describe("query", () => {
 		);
 
 		let responses: StringResult[] = (
-			await observerStore.query.send(
+			await observerStore.query.request(
 				new StringQueryRequest({
-					queries: [],
+					query: [],
 				}),
 
 				{ amount: 1 }
@@ -115,9 +115,9 @@ describe("query", () => {
 		);
 
 		let response: StringResult[] = (
-			await observerStore.query.send(
+			await observerStore.query.request(
 				new StringQueryRequest({
-					queries: [
+					query: [
 						new StringMatch({
 							exactMatch: true,
 							value: "o w",

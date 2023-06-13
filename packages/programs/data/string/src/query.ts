@@ -53,11 +53,11 @@ export class StringMatch {
 @variant(0)
 export class StringQueryRequest {
 	@field({ type: vec(StringMatch) })
-	queries!: StringMatch[];
+	query!: StringMatch[];
 
-	constructor(properties?: { queries: StringMatch[] }) {
+	constructor(properties?: { query: StringMatch[] }) {
 		if (properties) {
-			this.queries = properties.queries;
+			this.query = properties.query;
 		}
 	}
 }

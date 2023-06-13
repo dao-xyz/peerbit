@@ -356,9 +356,11 @@ export class Documents<
 						modified: item.metadata.clock.timestamp.wallTime,
 						head: item.hash,
 					});
+
+					const valueToIndex = this._index.toIndex(value, context);
 					this._index.index.set(key, {
 						key: payload.key,
-						value: this._index.toIndex(value, context),
+						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
 						context,
 					});
 
@@ -438,4 +440,8 @@ export class Documents<
 			return value._value!;
 		}
 	}
+}
+
+function isPromise(value) {
+	return Boolean(value && typeof value.then === "function");
 }

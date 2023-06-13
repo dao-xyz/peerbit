@@ -12,10 +12,11 @@ import {
 	PublicSignKey,
 	toBase64,
 	Identity,
+	X25519PublicKey,
 } from "@dao-xyz/peerbit-crypto";
 import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
-import { RPCOptions, logger, RPCResponse } from "./io.js";
+import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
 import {
 	AbstractProgram,
 	Address,
@@ -174,7 +175,7 @@ export class RPC<Q, R> extends ComposableProgram {
 						from: maybeSigned.signature!.publicKey,
 					});
 
-					if (response) {
+					if (response && request.respondTo) {
 						const encryption = this.encryption || {
 							getEncryptionKeypair: () => X25519Keypair.create(),
 						};
@@ -262,22 +263,16 @@ export class RPC<Q, R> extends ComposableProgram {
 		}
 	}
 
-	public async send(
+	private async seal(
 		request: Q,
-		options?: RPCOptions<R>
-	): Promise<RPCResponse<R>[]> {
-		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
-		// this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
-		const keypair = await X25519Keypair.create();
+		respondTo?: X25519PublicKey,
+		options?: PublishOptions
+	) {
 		const requestData =
 			(this._requestType as any) === Uint8Array
 				? (request as Uint8Array)
 				: serialize(request);
 
-		const timeout = options?.timeout || 10 * 1000;
-
-		// send query and wait for replies in a generator like behaviour
-		let timeoutFn: any = undefined;
 		let maybeSignedMessage = new MaybeSigned<any>({ data: requestData });
 		maybeSignedMessage = await maybeSignedMessage.sign(
 			this.libp2p.services.pubsub.sign.bind(this.libp2p.services.pubsub)
@@ -301,17 +296,53 @@ export class RPC<Q, R> extends ComposableProgram {
 
 		const requestMessage = new RequestV0({
 			request: serialize(maybeEncryptedMessage),
-			respondTo: keypair.publicKey,
+			respondTo,
 		});
-		const requestBytes = serialize(requestMessage);
-		const requetsMessageIdString = toBase64(requestMessage.id);
-		const allResults: RPCResponse<R>[] = [];
 
-		await this._subscribeResponses();
+		return requestMessage;
+	}
 
-		const publicOptions = options?.to
+	private getPublishOptions(options?: PublishOptions) {
+		return options?.to
 			? { to: options.to, strict: true, topics: [this.rpcTopic] }
 			: { topics: [this.rpcTopic] };
+	}
+
+	/**
+	 * Send message and don't expect any response
+	 * @param message
+	 * @param options
+	 */
+	public async send(message: Q, options?: PublishOptions): Promise<void> {
+		await this.libp2p.services.pubsub.publish(
+			serialize(await this.seal(message, undefined, options)),
+			this.getPublishOptions(options)
+		);
+	}
+
+	/**
+	 * Send a request and expect a response
+	 * @param request
+	 * @param options
+	 * @returns
+	 */
+	public async request(
+		request: Q,
+		options?: RPCOptions<R>
+	): Promise<RPCResponse<R>[]> {
+		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
+		// this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
+		const keypair = await X25519Keypair.create();
+
+		// send query and wait for replies in a generator like behaviour
+		let timeoutFn: any = undefined;
+
+		const requestMessage = await this.seal(request, keypair.publicKey, options);
+		const requetsMessageIdString = toBase64(requestMessage.id);
+		const requestBytes = serialize(requestMessage);
+
+		const allResults: RPCResponse<R>[] = [];
+		await this._subscribeResponses();
 
 		const responsePromise = new Promise<void>((rs, rj) => {
 			const resolve = () => {
@@ -387,10 +418,13 @@ export class RPC<Q, R> extends ComposableProgram {
 			}
 			timeoutFn = setTimeout(() => {
 				resolve();
-			}, timeout);
+			}, options?.timeout || 10 * 1000);
 		});
 
-		await this.libp2p.services.pubsub.publish(requestBytes, publicOptions);
+		await this.libp2p.services.pubsub.publish(
+			requestBytes,
+			this.getPublishOptions(options)
+		);
 		await responsePromise;
 		this._responseResolver.delete(requetsMessageIdString);
 		return allResults;

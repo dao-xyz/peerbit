@@ -22,18 +22,20 @@ export const getFromByTo: RelationResolver = {
 	resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
 		const ser = serialize(to);
 		return Promise.all(
-			(
-				await db.index.queryHandler(
-					new SearchRequest({
-						queries: [
-							new StringMatch({
-								key: "to",
-								value: to.hashcode(),
-							}),
-						],
-					})
-				)
-			).results.map((x) => x.value)
+			await db.index.search(
+				new SearchRequest({
+					query: [
+						new StringMatch({
+							key: "to",
+							value: to.hashcode(),
+						}),
+					],
+				}),
+				{
+					local: true,
+					remote: false,
+				}
+			)
 		);
 	},
 	next: (relation) => relation.from,
@@ -42,18 +44,20 @@ export const getFromByTo: RelationResolver = {
 export const getToByFrom: RelationResolver = {
 	resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
 		return Promise.all(
-			(
-				await db.index.queryHandler(
-					new SearchRequest({
-						queries: [
-							new StringMatch({
-								key: "from",
-								value: from.hashcode(),
-							}),
-						],
-					})
-				)
-			).results.map((x) => x.value)
+			await db.index.search(
+				new SearchRequest({
+					query: [
+						new StringMatch({
+							key: "from",
+							value: from.hashcode(),
+						}),
+					],
+				}),
+				{
+					local: true,
+					remote: false,
+				}
+			)
 		);
 	},
 	next: (relation) => relation.to,

@@ -66,7 +66,7 @@ describe("rpc", () => {
 	});
 
 	it("any", async () => {
-		let results: RPCResponse<Body>[] = await reader.query.send(
+		let results: RPCResponse<Body>[] = await reader.query.request(
 			new Body({
 				arr: new Uint8Array([0, 1, 2]),
 			}),
@@ -81,7 +81,7 @@ describe("rpc", () => {
 
 	it("onResponse", async () => {
 		let results: Body[] = [];
-		await reader.query.send(
+		await reader.query.request(
 			new Body({
 				arr: new Uint8Array([0, 1, 2]),
 			}),
@@ -99,7 +99,7 @@ describe("rpc", () => {
 
 	it("to", async () => {
 		let results: Body[] = (
-			await reader.query.send(
+			await reader.query.request(
 				new Body({
 					arr: new Uint8Array([0, 1, 2]),
 				}),
@@ -108,7 +108,7 @@ describe("rpc", () => {
 		).map((x) => x.response);
 		expect(results.length).toEqual(0);
 		results = (
-			await reader.query.send(
+			await reader.query.request(
 				new Body({
 					arr: new Uint8Array([0, 1, 2]),
 				}),
@@ -131,7 +131,7 @@ describe("rpc", () => {
 		let concurrency = 100;
 		for (let i = 0; i < concurrency; i++) {
 			promises.push(
-				reader.query.send(
+				reader.query.request(
 					new Body({
 						arr: new Uint8Array([i]),
 					}),
@@ -150,7 +150,7 @@ describe("rpc", () => {
 		let results: Body[] = [];
 		// Unknown context (expect no results)
 			let results: Body[] = (
-				await reader.query.send(
+				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2]),
 					}),
@@ -161,7 +161,7 @@ describe("rpc", () => {
 	
 			// Explicit
 			results = (
-				await reader.query.send(
+				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2]),
 					}),
@@ -173,7 +173,7 @@ describe("rpc", () => {
 		// Implicit
 		results.push(
 			...(
-				await reader.query.send(
+				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2]),
 					}),
@@ -189,7 +189,7 @@ describe("rpc", () => {
 
 		const t0 = +new Date();
 		let results: Body[] = (
-			await reader.query.send(
+			await reader.query.request(
 				new Body({
 					arr: new Uint8Array([0, 1, 2]),
 				}),

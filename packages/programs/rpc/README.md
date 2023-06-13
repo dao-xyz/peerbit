@@ -47,7 +47,7 @@ class RPCTest extends Program {
 const peer = await Peerbit.create ()
 const rpcTest = peer.open(new RPCTest());
 
-await rpcTest.rpc.send( new Hello(), (resp) => { console.log(resp)  })
+await rpcTest.rpc.request( new Hello(), (resp) => { console.log(resp)  })
 ```
 
 ### Visualized 

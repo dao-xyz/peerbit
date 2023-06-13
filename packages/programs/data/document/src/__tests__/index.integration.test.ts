@@ -13,12 +13,10 @@ import {
 	BoolQuery,
 	Sort,
 	SortDirection,
-	SearchSortedRequest,
 } from "../query.js";
 import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
 import { Log } from "@dao-xyz/peerbit-log";
 import {
-	Ed25519Keypair,
 	X25519Keypair,
 	X25519PublicKey,
 	randomBytes,
@@ -26,7 +24,7 @@ import {
 import Cache from "@dao-xyz/lazy-level";
 import { v4 as uuid } from "uuid";
 import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { waitFor, waitForResolved } from "@dao-xyz/peerbit-time";
 import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@dao-xyz/libp2p-direct-stream";
 
@@ -342,9 +340,9 @@ describe("index", () => {
 
 					await (store as TestSimpleStore).docs.put(doc);
 
-					const results = await (store as TestSimpleStore).docs.index.query(
+					const results = await (store as TestSimpleStore).docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "id",
 									value: "123",
@@ -411,9 +409,9 @@ describe("index", () => {
 					});
 
 					await (store as TestSimpleStore).docs.put(doc);
-					const results = await (store as TestSimpleStore).docs.index.query(
+					const results = await (store as TestSimpleStore).docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new ByteMatchQuery({
 									key: "id",
 									value: id,
@@ -550,7 +548,7 @@ describe("index", () => {
 							await this.docs.setup({
 								type: Document,
 								index: {
-									fields: (obj) => {
+									fields: async (obj) => {
 										return { [indexedNameField]: obj.name };
 									},
 								},
@@ -616,8 +614,8 @@ describe("index", () => {
 						},
 					});
 
-					let results = await store2.docs.index.query(
-						new SearchRequest({ queries: [] })
+					let results = await store2.docs.index.search(
+						new SearchRequest({ query: [] })
 					);
 					expect(results).toHaveLength(1);
 				});
@@ -736,16 +734,16 @@ describe("index", () => {
 			});
 
 			it("no-args", async () => {
-				let results: Document[] = await stores[0].docs.index.query(
-					new SearchRequest({ queries: [] })
+				let results: Document[] = await stores[0].docs.index.search(
+					new SearchRequest({ query: [] })
 				);
 				expect(results).toHaveLength(4);
 			});
 
 			it("match locally", async () => {
-				let results: Document[] = await stores[0].docs.index.query(
+				let results: Document[] = await stores[0].docs.index.search(
 					new SearchRequest({
-						queries: [],
+						query: [],
 					}),
 					{ remote: false }
 				);
@@ -753,9 +751,9 @@ describe("index", () => {
 			});
 
 			it("match all", async () => {
-				let results: Document[] = await stores[1].docs.index.query(
+				let results: Document[] = await stores[1].docs.index.search(
 					new SearchRequest({
-						queries: [],
+						query: [],
 					}),
 					{ remote: { amount: 1 } }
 				);
@@ -780,9 +778,9 @@ describe("index", () => {
 						return !canAppend || canAppend(e);
 					};
 
-					await stores[1].docs.index.query(
+					await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [],
+							query: [],
 						}),
 						{ remote: { amount: 1, sync: true } }
 					);
@@ -791,9 +789,9 @@ describe("index", () => {
 					expect(canAppendEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
 					expect(syncEvents).toEqual(1);
 
-					await stores[1].docs.index.query(
+					await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [],
+							query: [],
 						}),
 						{ remote: { amount: 1, sync: true } }
 					);
@@ -805,9 +803,9 @@ describe("index", () => {
 
 			describe("string", () => {
 				it("exact", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "name",
 									value: "hello world",
@@ -822,9 +820,9 @@ describe("index", () => {
 				});
 
 				it("exact-case-insensitive", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "name",
 									value: "Hello World",
@@ -840,9 +838,9 @@ describe("index", () => {
 				});
 
 				it("exact case sensitive", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "name",
 									value: "Hello World",
@@ -855,9 +853,9 @@ describe("index", () => {
 					expect(
 						responses.map((x) => Buffer.from(x.id).toString("utf8"))
 					).toContainAllValues(["2"]);
-					responses = await stores[1].docs.index.query(
+					responses = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "name",
 									value: "hello world",
@@ -871,9 +869,9 @@ describe("index", () => {
 					).toContainAllValues(["1"]);
 				});
 				it("prefix", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "name",
 									value: "hel",
@@ -891,9 +889,9 @@ describe("index", () => {
 				});
 
 				it("contains", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new StringMatch({
 									key: "name",
 									value: "ello",
@@ -932,9 +930,9 @@ describe("index", () => {
 						await writeStore.docs.del(docArray2.id);
 					});
 					it("arr", async () => {
-						let responses: Document[] = await stores[1].docs.index.query(
+						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
-								queries: [
+								query: [
 									new StringMatch({
 										key: "tags",
 										value: "world",
@@ -953,9 +951,9 @@ describe("index", () => {
 			});
 
 			it("missing", async () => {
-				let responses: Document[] = await stores[1].docs.index.query(
+				let responses: Document[] = await stores[1].docs.index.search(
 					new SearchRequest({
-						queries: [
+						query: [
 							new MissingField({
 								key: "name",
 							}),
@@ -970,9 +968,9 @@ describe("index", () => {
 			});
 
 			it("bytes", async () => {
-				let responses: Document[] = await stores[1].docs.index.query(
+				let responses: Document[] = await stores[1].docs.index.search(
 					new SearchRequest({
-						queries: [
+						query: [
 							new ByteMatchQuery({
 								key: "data",
 								value: Buffer.from([1]),
@@ -987,9 +985,9 @@ describe("index", () => {
 			});
 
 			it("bool", async () => {
-				let responses: Document[] = await stores[1].docs.index.query(
+				let responses: Document[] = await stores[1].docs.index.search(
 					new SearchRequest({
-						queries: [
+						query: [
 							new BoolQuery({
 								key: "bool",
 								value: true,
@@ -1006,9 +1004,9 @@ describe("index", () => {
 
 			describe("logical", () => {
 				it("and", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new And([
 									new StringMatch({
 										key: "name",
@@ -1034,9 +1032,9 @@ describe("index", () => {
 				});
 
 				it("or", async () => {
-					let responses: Document[] = await stores[1].docs.index.query(
+					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new Or([
 									new ByteMatchQuery({
 										key: "id",
@@ -1060,9 +1058,9 @@ describe("index", () => {
 
 			describe("number", () => {
 				it("equal", async () => {
-					let response: Document[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.Equal,
@@ -1077,9 +1075,9 @@ describe("index", () => {
 				});
 
 				it("gt", async () => {
-					let response: Document[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.Greater,
@@ -1094,9 +1092,9 @@ describe("index", () => {
 				});
 
 				it("gte", async () => {
-					let response: Document[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.GreaterOrEqual,
@@ -1115,9 +1113,9 @@ describe("index", () => {
 				});
 
 				it("lt", async () => {
-					let response: Document[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.Less,
@@ -1132,9 +1130,9 @@ describe("index", () => {
 				});
 
 				it("lte", async () => {
-					let response: Document[] = await stores[1].docs.index.query(
+					let response: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							queries: [
+							query: [
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.LessOrEqual,
@@ -1161,9 +1159,9 @@ describe("index", () => {
 					for (let i = 0; i < concurrency; i++) {
 						if (i % 2 === 0) {
 							promises.push(
-								stores[1].docs.index.query(
+								stores[1].docs.index.search(
 									new SearchRequest({
-										queries: [
+										query: [
 											new IntegerCompare({
 												key: "number",
 												compare: Compare.GreaterOrEqual,
@@ -1176,9 +1174,9 @@ describe("index", () => {
 							);
 						} else {
 							promises.push(
-								stores[1].docs.index.query(
+								stores[1].docs.index.search(
 									new SearchRequest({
-										queries: [
+										query: [
 											new IntegerCompare({
 												key: "number",
 												compare: Compare.Less,
@@ -1232,17 +1230,23 @@ describe("index", () => {
 					value: 0n,
 				})
 			) => {
-				const req = new SearchSortedRequest({
-					queries: [query],
+				const req = new SearchRequest({
+					query: [query],
 					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
 				});
-				const iterator = await stores[fromStoreIndex].docs.index.iterate(req);
-				for (const batch of batches) {
+				const iterator = stores[fromStoreIndex].docs.index.iterate(req);
+
+				if (batches.length === 0) {
+					// No fetches has been made, so we don't know whether we are done yetß
 					expect(iterator.done()).toBeFalse();
-					const next = await iterator.next(batch.length);
-					expect(next.map((x) => x.number)).toEqual(batch);
+				} else {
+					for (const batch of batches) {
+						expect(iterator.done()).toBeFalse();
+						const next = await iterator.next(batch.length);
+						expect(next.map((x) => x.number)).toEqual(batch);
+					}
+					expect(iterator.done()).toBeTrue();
 				}
-				expect(iterator.done()).toBeTrue();
 			};
 
 			beforeAll(async () => {
@@ -1382,8 +1386,8 @@ describe("index", () => {
 				await put(0, 2);
 				{
 					const iterator = await stores[0].docs.index.iterate(
-						new SearchSortedRequest({
-							queries: [],
+						new SearchRequest({
+							query: [],
 							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
 						})
 					);
@@ -1394,8 +1398,8 @@ describe("index", () => {
 				}
 				{
 					const iterator = await stores[0].docs.index.iterate(
-						new SearchSortedRequest({
-							queries: [],
+						new SearchRequest({
+							query: [],
 							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
 						})
 					);
@@ -1412,8 +1416,8 @@ describe("index", () => {
 				await put(0, 2);
 
 				const iterator = await stores[0].docs.index.iterate(
-					new SearchSortedRequest({
-						queries: [],
+					new SearchRequest({
+						query: [],
 						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
 					})
 				);
@@ -1426,7 +1430,7 @@ describe("index", () => {
 			it("uses indexed fields", async () => {
 				const KEY = "ABC";
 				await stores[0].docs.index.setup({
-					fields: (obj) => {
+					fields: async (obj) => {
 						return { [KEY]: obj.number };
 					},
 					canRead: () => true,
@@ -1440,8 +1444,8 @@ describe("index", () => {
 				await put(0, 2);
 
 				const iterator = await stores[0].docs.index.iterate(
-					new SearchSortedRequest({
-						queries: [],
+					new SearchRequest({
+						query: [],
 						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
 					}),
 					{
@@ -1454,7 +1458,77 @@ describe("index", () => {
 				expect(iterator.done()).toBeTrue();
 			});
 
-			// TODO test iterator.return() to stop pending promises
+			describe("close", () => {
+				it("by invoking close()", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					const request = new SearchRequest({
+						query: [],
+					});
+					const iterator = await stores[1].docs.index.iterate(request);
+					expect(iterator.done()).toBeFalse();
+					await iterator.next(2); // fetch some, but not all
+					expect(
+						stores[0].docs.index["_resultsCollectQueue"].get(request.idString)
+					).toHaveLength(1);
+					await iterator.close();
+					await waitForResolved(
+						() =>
+							expect(
+								stores[0].docs.index["_resultsCollectQueue"].get(
+									request.idString
+								)
+							).toBeUndefined(),
+						{ timeout: 3000, delayInterval: 50 }
+					);
+				});
+
+				it("end of iterator", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					const request = new SearchRequest({
+						query: [],
+					});
+					const iterator = await stores[1].docs.index.iterate(request);
+					expect(iterator.done()).toBeFalse();
+					await iterator.next(3); // fetch some, but not all
+					await waitForResolved(
+						() =>
+							expect(
+								stores[0].docs.index["_resultsCollectQueue"].get(
+									request.idString
+								)
+							).toBeUndefined(),
+						{ timeout: 3000, delayInterval: 50 }
+					);
+				});
+
+				it("end of iterator, multiple nexts", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					const request = new SearchRequest({
+						query: [],
+					});
+					const iterator = await stores[1].docs.index.iterate(request);
+					await iterator.next(2);
+					await iterator.next(1);
+					expect(iterator.done()).toBeTrue();
+					await waitForResolved(
+						() =>
+							expect(
+								stores[0].docs.index["_resultsCollectQueue"].get(
+									request.idString
+								)
+							).toBeUndefined(),
+						{ timeout: 3000, delayInterval: 50 }
+					);
+				});
+			});
+
+			// TODO test iterator.close() to stop pending promises
 
 			// TODO deletion while sort
 
@@ -1723,10 +1797,10 @@ describe("index", () => {
 				}
 
 				for (let i = 0; i < stores.length; i++) {
-					const fn = stores[i].docs.index.queryHandler.bind(
+					const fn = stores[i].docs.index.processFetchRequest.bind(
 						stores[i].docs.index
 					);
-					stores[i].docs.index.queryHandler = (a) => {
+					stores[i].docs.index.processFetchRequest = (a) => {
 						counters[i] += 1;
 						return fn(a);
 					};
@@ -1747,9 +1821,9 @@ describe("index", () => {
 
 			/*  TODO query all if undefined?
 			
-			it("queries all if undefined", async () => {
+			it("query all if undefined", async () => {
 				stores[0].docs.log["_replication"].replicators = () => undefined;
-				await stores[0].docs.index.query(new SearchRequest({ queries: [] }), {
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 					remote: { amount: 2 },
 				});
 				expect(counters[0]).toEqual(1);
@@ -1762,7 +1836,7 @@ describe("index", () => {
 					[stores[1].libp2p.services.pubsub.publicKey.hashcode()],
 					[stores[2].libp2p.services.pubsub.publicKey.hashcode()],
 				];
-				await stores[0].docs.index.query(new SearchRequest({ queries: [] }));
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(1);
@@ -1770,7 +1844,7 @@ describe("index", () => {
 
 			it("will always query locally", async () => {
 				stores[0].docs.log["_replication"].replicators = () => [];
-				await stores[0].docs.index.query(new SearchRequest({ queries: [] }));
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
 				expect(counters[2]).toEqual(0);
@@ -1780,7 +1854,7 @@ describe("index", () => {
 				stores[0].docs.log["_replication"].replicators = () => [
 					[stores[1].libp2p.services.pubsub.publicKey.hashcode()],
 				];
-				await stores[0].docs.index.query(new SearchRequest({ queries: [] }));
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(0);
@@ -1791,7 +1865,7 @@ describe("index", () => {
 					[stores[1].libp2p.services.pubsub.publicKey.hashcode()],
 					[stores[2].libp2p.services.pubsub.publicKey.hashcode()],
 				];
-				await stores[0].docs.index.query(new SearchRequest({ queries: [] }), {
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 					local: false,
 				});
 				expect(counters[0]).toEqual(0);
@@ -1805,7 +1879,7 @@ describe("index", () => {
 						stores[1].libp2p.services.pubsub.publicKey.hashcode(),
 					],
 				];
-				await stores[0].docs.index.query(new SearchRequest({ queries: [] }));
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
 				expect(counters[2]).toEqual(0);
@@ -1815,12 +1889,14 @@ describe("index", () => {
 				let fns: any[];
 
 				beforeEach(() => {
-					fns = stores.map((x) => x.docs.index.queryHandler.bind(x.docs.index));
+					fns = stores.map((x) =>
+						x.docs.index.processFetchRequest.bind(x.docs.index)
+					);
 				});
 
 				afterEach(() => {
 					stores.forEach((x, ix) => {
-						x.docs.index.queryHandler = fns[ix];
+						x.docs.index.processFetchRequest = fns[ix];
 					});
 				});
 
@@ -1834,10 +1910,10 @@ describe("index", () => {
 
 					let failedOnce = false;
 					for (let i = 1; i < stores.length; i++) {
-						const fn = stores[i].docs.index.queryHandler.bind(
+						const fn = stores[i].docs.index.processFetchRequest.bind(
 							stores[1].docs.index
 						);
-						stores[i].docs.index.queryHandler = (a) => {
+						stores[i].docs.index.processFetchRequest = (a) => {
 							if (!failedOnce) {
 								failedOnce = true;
 								throw new Error("Expected error");
@@ -1846,7 +1922,7 @@ describe("index", () => {
 						};
 					}
 					let timeout = 1000;
-					await stores[0].docs.index.query(new SearchRequest({ queries: [] }), {
+					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 						remote: { timeout },
 					});
 					expect(failedOnce).toBeTrue();
@@ -1863,14 +1939,14 @@ describe("index", () => {
 						],
 					];
 					for (let i = 1; i < stores.length; i++) {
-						stores[i].docs.index.queryHandler = (a) => {
+						stores[i].docs.index.processFetchRequest = (a) => {
 							throw new Error("Expected error");
 						};
 					}
 
 					let timeout = 1000;
 
-					await stores[0].docs.index.query(new SearchRequest({ queries: [] }), {
+					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 						remote: { timeout },
 					});
 					expect(counters[0]).toEqual(1);

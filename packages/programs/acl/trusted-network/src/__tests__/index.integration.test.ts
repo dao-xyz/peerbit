@@ -282,9 +282,9 @@ describe("index", () => {
 
 			// Try query with trusted
 			let responseCount = 0;
-			let responses: IdentityRelation[] = await l0c.trustGraph.index.query(
+			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
 				new SearchRequest({
-					queries: [],
+					query: [],
 				}),
 				{
 					remote: {
@@ -303,9 +303,9 @@ describe("index", () => {
 			// Try query with untrusted
 			// TODO we are not using read access control on the trust graph anymore, but should we?
 			/* let untrustedResponse: Results<IdentityRelation>[] =
-				await l0d.trustGraph.index.query(
+				await l0d.trustGraph.index.search(
 					new SearchRequest({
-						queries: [],
+						query: [],
 					}),
 					{
 						remote: { timeout: 10 * 1000, signer: identity(3) },

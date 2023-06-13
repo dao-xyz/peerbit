@@ -7,11 +7,7 @@ import {
 	vec,
 } from "@dao-xyz/borsh";
 import { asString } from "./utils.js";
-import {
-	randomBytes,
-	sha256Base64,
-	sha256Base64Sync,
-} from "@dao-xyz/peerbit-crypto";
+import { randomBytes, sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
 
 export enum Compare {
 	Equal = 0,
@@ -42,22 +38,6 @@ export const compare = (
 	}
 };
 
-@variant(0)
-export class U64Compare {
-	@field({ type: "u8" })
-	compare: Compare;
-
-	@field({ type: "u64" })
-	value: bigint;
-
-	constructor(props?: { value: bigint; compare: Compare }) {
-		if (props) {
-			this.compare = props.compare;
-			this.value = props.value;
-		}
-	}
-}
-
 /// ----- QUERY -----
 
 export abstract class Query {}
@@ -77,57 +57,44 @@ export class Sort {
 
 	constructor(properties: {
 		key: string[] | string;
-		direction: SortDirection;
+		direction?: SortDirection;
 	}) {
 		this.key = Array.isArray(properties.key)
 			? properties.key
 			: [properties.key];
-		this.direction = properties.direction;
+		this.direction = properties.direction || SortDirection.ASC;
 	}
 }
 
 export abstract class AbstractSearchRequest {}
 
 /**
- * Search with queries and collect with sort conditionss
+ * Search with query and collect with sort conditionss
  */
+
+const toArray = <T>(arr: T | T[] | undefined) =>
+	(arr ? (Array.isArray(arr) ? arr : [arr]) : undefined) || [];
+
 @variant(0)
 export class SearchRequest extends AbstractSearchRequest {
-	@field({ type: vec(Query) })
-	queries!: Query[];
-
-	constructor(props?: { queries: Query[] }) {
-		super();
-		if (props) {
-			this.queries = props.queries;
-		} else {
-			this.queries = [];
-		}
-	}
-}
-/**
- * Search with queries and collect with sort conditionss
- */
-@variant(1)
-export class SearchSortedRequest extends AbstractSearchRequest {
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array; // Session id
 
 	@field({ type: vec(Query) })
-	queries!: Query[];
+	query: Query[];
 
 	@field({ type: vec(Sort) })
 	sort: Sort[];
 
 	@field({ type: "u32" })
-	initialAmount: number;
+	fetch: number;
 
-	constructor(props: { queries: Query[]; sort: Sort[] }) {
+	constructor(props?: { query?: Query[] | Query; sort?: Sort[] | Sort }) {
 		super();
-		this.queries = props.queries;
 		this.id = randomBytes(32);
-		this.sort = props.sort;
-		this.initialAmount = 1;
+		this.query = toArray(props?.query);
+		this.sort = toArray(props?.sort);
+		this.fetch = 1;
 	}
 
 	private _idString: string;
@@ -159,35 +126,21 @@ export class CollectNextRequest extends AbstractSearchRequest {
 	}
 }
 
-/* @variant(1)
-export abstract class ContextQuery extends Query { }
+@variant(3)
+export class CloseIteratorRequest extends AbstractSearchRequest {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array; // collect with id
 
-@variant(0)
-export class CreatedAtQuery extends ContextQuery {
-	@field({ type: vec(U64Compare) })
-	created: U64Compare[];
-
-	constructor(props?: { created: U64Compare[] }) {
+	constructor(properties: { id: Uint8Array }) {
 		super();
-		if (props) {
-			this.created = props.created;
-		}
+		this.id = properties.id;
+	}
+
+	private _idString: string;
+	get idString(): string {
+		return this._idString || (this._idString = sha256Base64Sync(this.id));
 	}
 }
-
-@variant(1)
-export class ModifiedAtQuery extends ContextQuery {
-	@field({ type: vec(U64Compare) })
-	modified: U64Compare[];
-
-	constructor(props?: { modified: U64Compare[] }) {
-		super();
-		if (props) {
-			this.modified = props.modified;
-		}
-	}
-}
- */
 
 @variant(1)
 export abstract class LogicalQuery extends Query {}

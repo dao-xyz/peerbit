@@ -1,4 +1,4 @@
-import { field, fixedArray, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
 import { X25519PublicKey, randomBytes } from "@dao-xyz/peerbit-crypto";
 
 @variant(0)
@@ -9,13 +9,16 @@ export class RequestV0 extends RPCMessage {
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array;
 
-	@field({ type: X25519PublicKey })
-	respondTo: X25519PublicKey;
+	@field({ type: option(X25519PublicKey) })
+	respondTo?: X25519PublicKey;
 
 	@field({ type: Uint8Array })
 	request: Uint8Array;
 
-	constructor(properties: { request: Uint8Array; respondTo: X25519PublicKey }) {
+	constructor(properties: {
+		request: Uint8Array;
+		respondTo?: X25519PublicKey;
+	}) {
 		super();
 		this.id = randomBytes(32);
 		this.respondTo = properties.respondTo;

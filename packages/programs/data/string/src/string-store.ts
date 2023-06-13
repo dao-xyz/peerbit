@@ -136,7 +136,7 @@ export class DString extends Program {
 		const stringQuery = query as StringQueryRequest;
 
 		const content = this._index.string;
-		const relaventQueries = stringQuery.queries.filter(
+		const relaventQueries = stringQuery.query.filter(
 			(x) => x instanceof StringMatch
 		) as StringMatch[];
 		if (relaventQueries.length == 0) {
@@ -181,9 +181,9 @@ export class DString extends Program {
 	}): Promise<string | undefined> {
 		if (options?.remote) {
 			const counter: Map<string, number> = new Map();
-			const responses = await this.query.send(
+			const responses = await this.query.request(
 				new StringQueryRequest({
-					queries: [],
+					query: [],
 				}),
 				options.remote.queryOptions
 			);

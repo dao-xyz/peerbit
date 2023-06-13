@@ -418,9 +418,9 @@ describe("index", () => {
 			replicators = [[session.peers[0].services.blocks.publicKeyHash]];
 
 			const q = async (): Promise<Document[]> => {
-				return l0b.store.index.query(
+				return l0b.store.index.search(
 					new SearchRequest({
-						queries: [
+						query: [
 							new StringMatch({
 								key: "id",
 								value: "1",
@@ -515,9 +515,9 @@ describe("index", () => {
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);
 
-		let results: Document[] = await l0b.accessController.access.index.query(
+		let results: Document[] = await l0b.accessController.access.index.search(
 			new SearchRequest({
-				queries: [],
+				query: [],
 			}),
 			{
 				remote: {

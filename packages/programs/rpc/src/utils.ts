@@ -32,7 +32,7 @@ export const queryAll = <Q, R>(
 				counter++;
 			}
 			if (peersToQuery.length > 0) {
-				const results = await rpc.send(request, {
+				const results = await rpc.request(request, {
 					...options,
 					to: peersToQuery,
 				});

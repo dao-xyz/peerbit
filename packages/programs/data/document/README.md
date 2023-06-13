@@ -95,9 +95,9 @@ await store.docs.put(doc3);
 const peer2 = await Peerbit.create ({libp2: another_libp2p_instance})
 const store2 = peer2.open(store.address);
 
-let responses: Document[] = await store2.docs.index.query(
+let responses: Document[] = await store2.docs.index.search(
     new SearchRequest({
-        queries: [
+        query: [
           new StringMatch({
                 key: "name",
                 value: "ello",
