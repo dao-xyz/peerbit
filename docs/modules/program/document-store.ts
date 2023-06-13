@@ -98,10 +98,12 @@ class Channel extends Program {
 			type: Post,
 			canAppend: () => true,
 
-			// You can tailor what fields should be indexed,
-			// everything else will be stored on disc (if you use disc storage with the client)
 			index: {
+				// Primary key is default 'id', but we can assign it manually here
 				key: POST_ID_PROPERTY,
+
+				// You can tailor what fields should be indexed,
+				// everything else will be stored on disc (if you use disc storage with the client)
 				fields: async (post, context) => {
 					return {
 						[POST_ID_PROPERTY]: post.message,
@@ -119,6 +121,7 @@ class Channel extends Program {
 			type: Reaction,
 			canAppend: () => true,
 			index: {
+				// Primary key is default 'id', but we can assign it manually here
 				key: REACTION_ID_PROPERTY,
 			},
 			// we don't provide an index here, which means we will index all fields of Reaction
