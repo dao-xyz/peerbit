@@ -41,7 +41,7 @@ Peerbit started as a fork of OrbitDB in order to support some key features that 
  
  
 ### Discoverability
-- Storing data is half the purpose of a database. If data is hard to discover, the storage is meaningless. In a distributed setting we need to make sure different participants can get involved based on their capabilities, some peers might be able to answer very complicated queries, some peers might just support some basic filtering. Peerbit supports composability for queryable programs. For example, there is a generic RPC program [RPC](../packages/programs/discovery/any-search/) that allows you to build query functionality around peers' data (like an ordinary REST service).
+- Storing data is half the purpose of a database. If data is hard to discover, the storage is meaningless. In a distributed setting we need to make sure different participants can get involved based on their capabilities, some peers might be able to answer very complicated query, some peers might just support some basic filtering. Peerbit supports composability for queryable programs. For example, there is a generic RPC program [RPC](../packages/programs/discovery/any-search/) that allows you to build query functionality around peers' data (like an ordinary REST service).
  
 
  

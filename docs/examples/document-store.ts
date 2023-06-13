@@ -53,6 +53,9 @@ class PostsDB extends Program {
 		this.posts = new Documents({ index: new DocumentIndex({ indexBy: "id" }) });
 	}
 
+	/**
+	 * Setup will be called on 'open'
+	 */
 	async setup(): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
@@ -75,12 +78,12 @@ await peer2.dial(peer);
 
 const store2 = await peer2.open<PostsDB>(store.address);
 
-// Wait for peer1 to be reachable for queries. This line only necessary when testing locally
+// Wait for peer1 to be reachable for query. This line only necessary when testing locally
 await store.waitFor(peer2.libp2p);
 
-const responses: Post[] = await store2.posts.index.query(
+const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({
-		queries: [], // query all
+		query: [], // query all
 	})
 );
 expect(responses).toHaveLength(1);

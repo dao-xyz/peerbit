@@ -21,6 +21,8 @@
 		</a></nav>
 	<div id="app"></div>
 
+
+
 	<script>
 		window.$docsify = {
 			name: 'Peerbit',
@@ -33,7 +35,7 @@
 			loadSidebar: true,
 			loadNavbar: true,
 			mergeNavbar: true,
-			/* 	relativePath: true, */
+			relativePath: true,
 			maxLevel: 5,
 			subMaxLevel: 3,
 			search: {
@@ -59,7 +61,16 @@
 	<script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
 	<script src="//cdn.jsdelivr.net/npm/docsify-copy-code/dist/docsify-copy-code.min.js"></script>
 
+
+
+
 </body>
 
+<style>
+	html {
+		/*  Without this, code comments look dull */
+		--code-theme-comment: #00b5ff !important
+	}
+</style>
 
 </html>
