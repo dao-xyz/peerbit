@@ -50,7 +50,7 @@ class PostsDB extends Program {
 
 	constructor() {
 		super();
-		this.posts = new Documents({ index: new DocumentIndex({ indexBy: "id" }) });
+		this.posts = new Documents();
 	}
 
 	/**
@@ -59,7 +59,10 @@ class PostsDB extends Program {
 	async setup(): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
-		await this.posts.setup({ type: Post /* canAppend: (entry) => true */ });
+		await this.posts.setup({
+			type: Post,
+			index: { key: "id" } /* canAppend: (entry) => true */,
+		});
 	}
 }
 /// [data]

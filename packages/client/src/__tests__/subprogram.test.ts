@@ -78,7 +78,6 @@ describe(`Subprogram`, () => {
 		const store = new ProgramWithSubprogram(
 			new Documents<EventStore<string>>({
 				index: new DocumentIndex({
-					indexBy: "id",
 					query: new RPC(),
 				}),
 			})

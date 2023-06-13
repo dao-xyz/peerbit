@@ -39,7 +39,7 @@ class TestStore extends Program {
 
 	constructor() {
 		super();
-		this.docs = new Documents({ index: new DocumentIndex({ indexBy: "id" }) });
+		this.docs = new Documents();
 	}
 
 	async setup(): Promise<void> {

@@ -34,7 +34,6 @@ export class IdentityAccessController extends Program {
 		}
 		this.access = new Documents({
 			index: new DocumentIndex({
-				indexBy: "id",
 				query: new RPC(),
 			}),
 		});

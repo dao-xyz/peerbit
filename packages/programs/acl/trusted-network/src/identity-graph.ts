@@ -184,7 +184,6 @@ export const getRelation = async (
 export const createIdentityGraphStore = () =>
 	new Documents<IdentityRelation>({
 		index: new DocumentIndex({
-			indexBy: "id",
 			query: new RPC(),
 		}),
 	});

@@ -80,11 +80,11 @@ class Channel extends Program {
 	constructor() {
 		super();
 		this.posts = new Documents({
-			index: new DocumentIndex({ indexBy: POST_ID_PROPERTY }),
+			index: new DocumentIndex(),
 		});
 
 		this.reactions = new Documents({
-			index: new DocumentIndex({ indexBy: POST_ID_PROPERTY }),
+			index: new DocumentIndex(),
 		});
 	}
 
@@ -101,6 +101,7 @@ class Channel extends Program {
 			// You can tailor what fields should be indexed,
 			// everything else will be stored on disc (if you use disc storage with the client)
 			index: {
+				key: POST_ID_PROPERTY,
 				fields: async (post, context) => {
 					return {
 						[POST_ID_PROPERTY]: post.message,
@@ -117,7 +118,9 @@ class Channel extends Program {
 		await this.reactions.setup({
 			type: Reaction,
 			canAppend: () => true,
-
+			index: {
+				key: REACTION_ID_PROPERTY,
+			},
 			// we don't provide an index here, which means we will index all fields of Reaction
 		});
 	}

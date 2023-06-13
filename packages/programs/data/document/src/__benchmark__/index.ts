@@ -53,7 +53,7 @@ class TestStore extends Program {
 		}
 	}
 	async setup(): Promise<void> {
-		await this.docs.setup({ type: Document });
+		await this.docs.setup({ type: Document, index: { key: "id" } });
 	}
 }
 
@@ -68,9 +68,7 @@ for (let i = 0; i < peersCount; i++) {
 // Create store
 const store = new TestStore({
 	docs: new Documents<Document>({
-		index: new DocumentIndex({
-			indexBy: "id",
-		}),
+		index: new DocumentIndex(),
 	}),
 });
 const keypair = await X25519Keypair.create();

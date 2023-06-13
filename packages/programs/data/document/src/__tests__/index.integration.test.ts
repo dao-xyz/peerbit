@@ -76,8 +76,9 @@ class TestStore extends Program {
 		this.id = randomBytes(32);
 		this.docs = properties.docs;
 	}
+
 	async setup(): Promise<void> {
-		await this.docs.setup({ type: Document });
+		await this.docs.setup({ type: Document, index: { key: "id" } });
 	}
 }
 
@@ -107,9 +108,7 @@ describe("index", () => {
 			it("can add and delete", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
+						index: new DocumentIndex(),
 					}),
 				});
 				await store.init(session.peers[0], {
@@ -175,9 +174,7 @@ describe("index", () => {
 			it("many chunks", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
+						index: new DocumentIndex(),
 					}),
 				});
 				await store.init(session.peers[0], {
@@ -208,9 +205,7 @@ describe("index", () => {
 			it("delete permanently", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
+						index: new DocumentIndex(),
 						immutable: false,
 					}),
 				});
@@ -286,24 +281,32 @@ describe("index", () => {
 					@field({ type: Documents })
 					docs: Documents<SimpleDocument>;
 
-					constructor(properties: { docs: Documents<SimpleDocument> }) {
+					constructor(
+						properties: { docs: Documents<SimpleDocument> },
+						readonly indexBy: string = "id"
+					) {
 						super();
 
 						this.id = randomBytes(32);
 						this.docs = properties.docs;
 					}
 					async setup(): Promise<void> {
-						await this.docs.setup({ type: SimpleDocument });
+						await this.docs.setup({
+							type: SimpleDocument,
+							index: { key: this.indexBy },
+						});
 					}
 				}
-				it("it will throw error if indexBy does not exist in document", async () => {
-					store = new TestSimpleStore({
-						docs: new Documents<SimpleDocument>({
-							index: new DocumentIndex({
-								indexBy: "__missing__",
+				it("will throw error if indexBy does not exist in document", async () => {
+					store = new TestSimpleStore(
+						{
+							docs: new Documents<SimpleDocument>({
+								index: new DocumentIndex(),
 							}),
-						}),
-					});
+						},
+						"__missing__"
+					);
+
 					await store.init(session.peers[0], {
 						role: new Replicator(),
 					});
@@ -321,13 +324,37 @@ describe("index", () => {
 					);
 				});
 
+				it("index by another property", async () => {
+					store = new TestSimpleStore(
+						{
+							docs: new Documents<SimpleDocument>({
+								index: new DocumentIndex(),
+							}),
+						},
+						"value"
+					);
+
+					await store.init(session.peers[0], {
+						role: new Replicator(),
+					});
+
+					let helloWorld = "Hello world";
+					let doc = new SimpleDocument({
+						id: "abc 123",
+						value: helloWorld,
+					});
+
+					// put doc
+					await (store as TestSimpleStore).docs.put(doc);
+
+					expect(
+						(await (store as TestSimpleStore).docs.index.get(helloWorld))?.value
+					).toEqual(helloWorld);
+				});
+
 				it("can StringQuery index", async () => {
 					store = new TestSimpleStore({
-						docs: new Documents<SimpleDocument>({
-							index: new DocumentIndex({
-								indexBy: "id",
-							}),
-						}),
+						docs: new Documents<SimpleDocument>(),
 					});
 					await store.init(session.peers[0], {
 						role: new Replicator(),
@@ -386,17 +413,16 @@ describe("index", () => {
 						this.docs = properties.docs;
 					}
 					async setup(): Promise<void> {
-						await this.docs.setup({ type: SimpleDocument });
+						await this.docs.setup({
+							type: SimpleDocument,
+							index: { key: "id" },
+						});
 					}
 				}
 
 				it("index as Uint8array", async () => {
 					store = new TestSimpleStore({
-						docs: new Documents<SimpleDocument>({
-							index: new DocumentIndex({
-								indexBy: "id",
-							}),
-						}),
+						docs: new Documents<SimpleDocument>(),
 					});
 					await store.init(session.peers[0], {
 						role: new Replicator(),
@@ -443,9 +469,7 @@ describe("index", () => {
 			it("trim deduplicate changes", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
+						index: new DocumentIndex(),
 					}),
 				});
 
@@ -491,9 +515,7 @@ describe("index", () => {
 			it("trim and update index", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex({
-							indexBy: "id",
-						}),
+						index: new DocumentIndex(),
 						immutable: false,
 					}),
 				});
@@ -548,6 +570,7 @@ describe("index", () => {
 							await this.docs.setup({
 								type: Document,
 								index: {
+									key: "id",
 									fields: async (obj) => {
 										return { [indexedNameField]: obj.name };
 									},
@@ -557,11 +580,7 @@ describe("index", () => {
 					}
 
 					store = new FilteredStore({
-						docs: new Documents<Document>({
-							index: new DocumentIndex({
-								indexBy: "id",
-							}),
-						}),
+						docs: new Documents<Document>(),
 					});
 
 					await store.init(session.peers[0], {
@@ -637,12 +656,7 @@ describe("index", () => {
 									stores[0].address!
 							  ))!
 							: new TestStore({
-									docs: new Documents<Document>({
-										index: new DocumentIndex({
-											indexBy: "id",
-										}),
-										immutable: false,
-									}),
+									docs: new Documents<Document>(),
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], {
@@ -1263,12 +1277,7 @@ describe("index", () => {
 									stores[0].address!
 							  ))!
 							: new TestStore({
-									docs: new Documents<Document>({
-										index: new DocumentIndex({
-											indexBy: "id",
-										}),
-										immutable: false,
-									}),
+									docs: new Documents<Document>(),
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], {
@@ -1437,6 +1446,7 @@ describe("index", () => {
 					log: stores[0].docs.log,
 					sync: () => undefined as any,
 					type: Document,
+					indexBy: ["id"],
 				});
 
 				await put(0, 0);
@@ -1569,6 +1579,9 @@ describe("index", () => {
 				await this.docs.setup({
 					type: SubProgram,
 					canOpen,
+					index: {
+						key: ["id"],
+					},
 				});
 			}
 		}
@@ -1598,12 +1611,7 @@ describe("index", () => {
 								stores[0].store.address!
 						  ))!
 						: new TestStore({
-								docs: new Documents<SubProgram>({
-									index: new DocumentIndex({
-										indexBy: "id",
-									}),
-									immutable: false,
-								}),
+								docs: new Documents<SubProgram>(),
 						  });
 
 				const keypair = await X25519Keypair.create();
@@ -1756,12 +1764,7 @@ describe("index", () => {
 									stores[0].address!
 							  ))!
 							: new TestStore({
-									docs: new Documents<Document>({
-										index: new DocumentIndex({
-											indexBy: "id",
-										}),
-										immutable: false,
-									}),
+									docs: new Documents<Document>(),
 							  });
 					const keypair = await X25519Keypair.create();
 					await store.init(session.peers[i], {

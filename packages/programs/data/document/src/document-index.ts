@@ -41,6 +41,18 @@ import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
 
 const logger = loggerFn({ module: "document-index" });
 
+const stringArraysEquals = (a: string[] | string, b: string[] | string) => {
+	if (a.length !== b.length) {
+		return false;
+	}
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i]) {
+			return false;
+		}
+	}
+	return true;
+};
+
 @variant(0)
 export class Operation<T> {}
 
@@ -218,11 +230,14 @@ const introduceEntries = async <T>(
 	);
 };
 
-const dedup = <T>(allResult: T[], dedupBy: string) => {
+const dedup = <T>(
+	allResult: T[],
+	dedupBy: (obj: any) => string | Uint8Array
+) => {
 	const unique: Set<Keyable> = new Set();
 	const dedup: T[] = [];
 	for (const result of allResult) {
-		const key = asString(result[dedupBy]);
+		const key = asString(dedupBy(result));
 		if (unique.has(key)) {
 			continue;
 		}
@@ -232,31 +247,36 @@ const dedup = <T>(allResult: T[], dedupBy: string) => {
 	return dedup;
 };
 
+const DEFAULT_INDEX_BY = "id";
+
 @variant("documents_index")
 export class DocumentIndex<T> extends ComposableProgram {
 	@field({ type: RPC })
 	_query: RPC<AbstractSearchRequest, Results<T>>;
 
-	@field({ type: "string" })
-	indexBy: string;
-
 	type: AbstractType<T>;
+
+	// Index key
+	private _indexBy: string | string[];
+	private _indexByArr: string[];
+
+	// Resolve doc value by index key
+	indexByResolver: (obj: any) => string | Uint8Array;
+
+	// Indexed (transforms an docuemnt into an obj with fields that ought to be indexed)
+	private _toIndex: Indexable<T>;
+
 	private _valueEncoding: Encoding<T>;
 
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
 	private _log: Log<Operation<T>>;
-	private _toIndex: Indexable<T>;
 
 	private _resultsCollectQueue: Cache<{ value: T; context: Context }[]>;
 
-	constructor(properties: {
-		query?: RPC<SearchRequest, Results<T>>;
-		indexBy: string;
-	}) {
+	constructor(properties?: { query?: RPC<SearchRequest, Results<T>> }) {
 		super();
-		this._query = properties.query || new RPC();
-		this.indexBy = properties.indexBy;
+		this._query = properties?.query || new RPC();
 	}
 
 	get index(): Map<string, IndexedValue<T>> {
@@ -277,12 +297,22 @@ export class DocumentIndex<T> extends ComposableProgram {
 		canRead: CanRead;
 		fields: Indexable<T>;
 		sync: (result: Results<T>) => Promise<void>;
+		indexBy?: string | string[];
 	}) {
 		this._index = new Map();
 		this._log = properties.log;
 		this.type = properties.type;
 		this._sync = properties.sync;
 		this._toIndex = properties.fields;
+		this._indexBy = properties.indexBy || DEFAULT_INDEX_BY;
+		this._indexByArr = Array.isArray(this._indexBy)
+			? this._indexBy
+			: [this._indexBy];
+
+		this.indexByResolver =
+			typeof this._indexBy === "string"
+				? (obj) => obj[this._indexBy as string]
+				: (obj: any) => extractFieldValue(obj, this._indexBy as string[]);
 		this._valueEncoding = BORSH_ENCODING(this.type);
 		this._resultsCollectQueue = new Cache({ max: 10000 }); // TODO choose limit better
 
@@ -329,7 +359,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
 				new SearchRequest({
-					query: [new ByteMatchQuery({ key: [this.indexBy], value: key })],
+					query: [new ByteMatchQuery({ key: this._indexByArr, value: key })],
 				}),
 				options
 			);
@@ -339,7 +369,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				new SearchRequest({
 					query: [
 						new StringMatch({
-							key: [this.indexBy],
+							key: this._indexByArr,
 							value: stringValue,
 						}),
 					],
@@ -390,8 +420,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				query.query.length === 1 &&
 				(query.query[0] instanceof ByteMatchQuery ||
 					query.query[0] instanceof StringMatch) &&
-				query.query[0].key.length === 1 &&
-				query.query[0].key[0] === this.indexBy
+				stringArraysEquals(query.query[0].key, this._indexByArr)
 			) {
 				const firstQuery = query.query[0];
 				if (firstQuery instanceof ByteMatchQuery) {
@@ -497,7 +526,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				}
 			} else if (f instanceof ByteMatchQuery) {
 				if (fv instanceof Uint8Array === false) {
-					if (f.key[f.key.length - 1] === this.indexBy) {
+					if (stringArraysEquals(f.key, this._indexByArr)) {
 						return f.valueString === fv;
 					}
 					return false;
@@ -702,7 +731,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		await iterator.close();
 
 		//s Deduplicate and return values directly
-		return dedup(allResult, this.indexBy);
+		return dedup(allResult, this.indexByResolver);
 	}
 
 	/**
@@ -760,9 +789,11 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 					peerBufferMap.set(from.hashcode(), {
 						buffer: response.results
-							.filter((x) => !visited.has(asString(x.value[this.indexBy])))
+							.filter(
+								(x) => !visited.has(asString(this.indexByResolver(x.value)))
+							)
 							.map((x) => {
-								visited.add(asString(x.value[this.indexBy]));
+								visited.add(asString(this.indexByResolver(x.value)));
 								return { from, value: x.value, context: x.context };
 							}),
 						kept: Number(response.kept),
@@ -820,10 +851,13 @@ export class DocumentIndex<T> extends ComposableProgram {
 										peerBuffer.buffer.push(
 											...results.results
 												.filter(
-													(x) => !visited.has(asString(x.value[this.indexBy]))
+													(x) =>
+														!visited.has(
+															asString(this.indexByResolver(x.value))
+														)
 												)
 												.map((x) => {
-													visited.add(asString(x.value[this.indexBy]));
+													visited.add(asString(this.indexByResolver(x.value)));
 													return {
 														value: x.value,
 														context: x.context,
@@ -871,10 +905,14 @@ export class DocumentIndex<T> extends ComposableProgram {
 														...response.response.results
 															.filter(
 																(x) =>
-																	!visited.has(asString(x.value[this.indexBy]))
+																	!visited.has(
+																		asString(this.indexByResolver(x.value))
+																	)
 															)
 															.map((x) => {
-																visited.add(asString(x.value[this.indexBy]));
+																visited.add(
+																	asString(this.indexByResolver(x.value))
+																);
 																return {
 																	value: x.value,
 																	context: x.context,
@@ -941,7 +979,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 			done = fetchedAll && !pendingMoreResults;
 			return dedup(
 				batch.map((x) => x.value),
-				this.indexBy
+				this.indexByResolver
 			);
 		};
 

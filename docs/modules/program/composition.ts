@@ -30,7 +30,7 @@ class PostsDB extends Program {
 
 	constructor() {
 		super();
-		this.posts = new Documents({ index: new DocumentIndex({ indexBy: "id" }) });
+		this.posts = new Documents();
 	}
 
 	async setup(): Promise<void> {
@@ -63,11 +63,13 @@ class Channel extends Program {
 	}
 }
 
+const NAME_PROPERTY = "name";
+
 @variant("forum")
 class Forum extends Program {
 	// Name of channel
 	@field({ type: "string" })
-	name: string;
+	[NAME_PROPERTY]: string;
 
 	// Posts within channel
 	@field({ type: Documents })
@@ -76,9 +78,9 @@ class Forum extends Program {
 	constructor(name: string) {
 		super();
 
-		this.name = name;
+		this[NAME_PROPERTY] = name;
 		this.channels = new Documents({
-			index: new DocumentIndex({ indexBy: "name" }),
+			index: new DocumentIndex(),
 		});
 	}
 
@@ -87,6 +89,9 @@ class Forum extends Program {
 			type: Channel,
 			canAppend: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
+			index: {
+				key: NAME_PROPERTY,
+			},
 		});
 	}
 }

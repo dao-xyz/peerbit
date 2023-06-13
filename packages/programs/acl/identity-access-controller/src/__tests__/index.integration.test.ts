@@ -60,7 +60,6 @@ class TestStore extends Program {
 		if (properties) {
 			this.store = new Documents({
 				index: new DocumentIndex({
-					indexBy: "id",
 					query: new RPC(),
 				}),
 			});

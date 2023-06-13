@@ -30,7 +30,7 @@ class PostsDB extends Program {
 
 	constructor() {
 		super();
-		this.posts = new Documents({ index: new DocumentIndex({ indexBy: "id" }) });
+		this.posts = new Documents();
 	}
 
 	async setup(): Promise<void> {
@@ -78,7 +78,7 @@ class Forum extends Program {
 
 		this.name = name;
 		this.channels = new Documents({
-			index: new DocumentIndex({ indexBy: "name" }),
+			index: new DocumentIndex(),
 		});
 	}
 
@@ -87,6 +87,9 @@ class Forum extends Program {
 			type: Channel,
 			canAppend: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
+			index: {
+				key: "name",
+			},
 		});
 	}
 }

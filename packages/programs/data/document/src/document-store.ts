@@ -60,13 +60,15 @@ export class Documents<
 		program: T,
 		entry: Entry<Operation<T>>
 	) => Promise<boolean> | boolean;
+
 	private _events: EventEmitter<DocumentEvents<T>>;
-	constructor(properties: { immutable?: boolean; index: DocumentIndex<T> }) {
+
+	constructor(properties?: { immutable?: boolean; index?: DocumentIndex<T> }) {
 		super();
 
 		this.log = new Log();
-		this.immutable = properties.immutable ?? false;
-		this._index = properties.index;
+		this.immutable = properties?.immutable ?? false;
+		this._index = properties?.index || new DocumentIndex();
 	}
 
 	get index(): DocumentIndex<T> {
@@ -86,7 +88,8 @@ export class Documents<
 		canAppend?: CanAppend<Operation<T>>;
 		canOpen?: (program: T) => Promise<boolean> | boolean;
 		index?: {
-			fields: Indexable<T>;
+			key?: string | string[];
+			fields?: Indexable<T>;
 		};
 	}) {
 		this._clazz = options.type;
@@ -115,6 +118,7 @@ export class Documents<
 			log: this.log,
 			canRead: options.canRead || (() => Promise.resolve(true)),
 			fields: options.index?.fields || ((obj) => obj),
+			indexBy: options.index?.key,
 			sync: async (result: Results<T>) =>
 				this.log.join(result.results.map((x) => x.context.head)),
 		});
@@ -177,9 +181,9 @@ export class Documents<
 				// check nexts
 				const putOperation = operation as PutOperation<T>;
 
-				const key = putOperation.getValue(this.index.valueEncoding)[
-					this._index.indexBy
-				] as Keyable;
+				const key = this._index.indexByResolver(
+					putOperation.getValue(this.index.valueEncoding)
+				) as Keyable;
 
 				checkKeyable(key);
 
@@ -244,7 +248,7 @@ export class Documents<
 			}
 		}
 
-		const key = (doc as any)[this._index.indexBy] as Keyable;
+		const key = this._index.indexByResolver(doc as any as Keyable);
 		checkKeyable(key);
 		const ser = serialize(doc);
 		const existingDocument = options?.unique
@@ -258,7 +262,7 @@ export class Documents<
 
 		return this.log.append(
 			new PutOperation({
-				key: asString((doc as any)[this._index.indexBy]),
+				key: asString(key),
 				data: ser,
 				value: doc,
 			}),
