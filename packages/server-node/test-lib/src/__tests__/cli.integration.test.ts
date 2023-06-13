@@ -23,7 +23,7 @@ describe("server", () => {
 	});
 
 	afterAll(async () => {
-		await peer.disconnect();
+		await peer.stop();
 		await session.stop();
 	});
 

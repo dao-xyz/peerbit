@@ -399,7 +399,7 @@ export class Peerbit {
 		);
 	}
 
-	async disconnect() {
+	async stop() {
 		this._disconnecting = true;
 		// Close a direct connection and remove it from internal state
 
@@ -422,11 +422,6 @@ export class Peerbit {
 		this.programs = new Map();
 		this._disconnecting = false;
 		this._disconnected = true;
-	}
-
-	// Alias for disconnect()
-	async stop() {
-		await this.disconnect();
 	}
 
 	// Callback for local writes to the database. We the update to pubsub.

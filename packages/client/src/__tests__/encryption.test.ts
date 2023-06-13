@@ -61,10 +61,10 @@ describe(`encryption`, function () {
 		if (db2) await db2.drop();
 
 		if (client1) {
-			await client1.disconnect();
+			await client1.stop();
 		}
 		if (client2) {
-			await client2.disconnect();
+			await client2.stop();
 		}
 
 		await session.stop();

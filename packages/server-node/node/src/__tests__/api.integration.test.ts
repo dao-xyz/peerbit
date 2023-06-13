@@ -61,7 +61,7 @@ describe("server", () => {
 	afterEach(async () => {
 		server.close();
 		await db.close();
-		await peer.disconnect();
+		await peer.stop();
 	});
 
 	afterAll(async () => {

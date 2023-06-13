@@ -109,7 +109,7 @@ suite
 		throw err;
 	})
 	.on("complete", async function (this: any, ...args: any[]) {
-		await Promise.all(peers.map((x) => x.disconnect()));
+		await Promise.all(peers.map((x) => x.stop()));
 		await Promise.all(peers.map((n) => n.libp2p.stop()));
 	})
 	.run();

@@ -95,7 +95,7 @@ describe("profile", () => {
 	});
 
 	afterEach(async () => {
-		await Promise.all(peers.map((x) => x.disconnect()));
+		await Promise.all(peers.map((x) => x.stop()));
 		await Promise.all(peers.map((n) => n.libp2p.stop()));
 	});
 	it("puts", async () => {
