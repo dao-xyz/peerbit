@@ -191,7 +191,7 @@ export class Peerbit {
 
 	// Libp2p peerid in Identity form
 	private _identityHash: string;
-	private _identity: Identity;
+	private _identity: Identity<Ed25519PublicKey>;
 
 	constructor(libp2p: Libp2pExtended, options: CreateOptions) {
 		if (libp2p == null) {
@@ -204,6 +204,11 @@ export class Peerbit {
 					this.libp2p.peerId.type
 			);
 		}
+
+		if (this.libp2p.peerId.type !== "Ed25519") {
+			throw new Error("Only Ed25519 peerIds are supported");
+		}
+
 		this._identity = Ed25519Keypair.fromPeerId(this.libp2p.peerId);
 		this._identityHash = this._identity.publicKey.hashcode();
 
@@ -336,7 +341,7 @@ export class Peerbit {
 		return this._identityHash;
 	}
 
-	get identity(): Identity {
+	get identity(): Identity<Ed25519PublicKey> {
 		return this._identity;
 	}
 

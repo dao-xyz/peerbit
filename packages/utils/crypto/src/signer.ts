@@ -13,4 +13,6 @@ export type SignWithKey = (
 	bytes: Uint8Array
 ) => Promise<SignatureWithKey> | SignatureWithKey;
 
-export type Identity = Signer & { publicKey: PublicSignKey };
+export type Identity<T extends PublicSignKey = PublicSignKey> = Signer & {
+	publicKey: T;
+};
