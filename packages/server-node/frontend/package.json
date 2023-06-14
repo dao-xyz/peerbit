@@ -15,7 +15,7 @@
 		"@emotion/react": "^11.10.5",
 		"@emotion/styled": "^11.10.5",
 		"@mui/material": "^5.10.13",
-		"@dao-xyz/peerbit-node": "1.0.2-alpha1"
+		"@dao-xyz/peerbit-node": "1.0.2-alpha"
 	},
 	"devDependencies": {
 		"@types/react": "^18.0.26",
