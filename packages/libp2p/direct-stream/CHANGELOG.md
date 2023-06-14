@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-stream-v1.0.0-alpha1...libp2p-direct-stream-v1.0.1) (2023-06-14)
+
+
+### Bug Fixes
+
+* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @dao-xyz/libp2p-test-utils bumped from 1.0.0-alpha1 to 1.0.1
+
 ## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-stream-v1.0.0-alpha1...libp2p-direct-stream-v1.0.0-alpha1) (2023-06-14)
 
 

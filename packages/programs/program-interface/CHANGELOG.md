@@ -6,6 +6,15 @@
   * dependencies
     * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/libp2p-direct-sub bumped from 1.0.0-alpha1 to 1.0.1
+    * @dao-xyz/peerbit-libp2p bumped from 1.0.0-alpha1 to 1.0.1
+    * @dao-xyz/peerbit-log bumped from 1.0.0-alpha1 to 1.0.1
+    * @dao-xyz/peerbit-test-utils bumped from 1.0.1-alpha1 to 1.0.2-alpha1
+
 ## 1.0.0-alpha1 (2023-06-14)
 
 
