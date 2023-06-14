@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-libp2p-v1.0.0-alpha1...peerbit-libp2p-v1.0.3) (2023-06-14)
+
+
+### Bug Fixes
+
+* rm unused imports ([dc8b3ff](https://github.com/dao-xyz/peerbit/commit/dc8b3ffc4543c5606fe11120931074631c06ed55))
+* update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
+* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/libp2p-direct-block bumped from 1.0.2 to 1.0.3
+    * @dao-xyz/libp2p-direct-sub bumped from 1.0.2 to 1.0.3
+
 ## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/peerbit-libp2p-v1.0.0-alpha1...peerbit-libp2p-v1.0.0-alpha1) (2023-06-14)
 
 
