@@ -481,15 +481,17 @@ export class Peerbit {
 						return;
 					}
 
-					const filteredHeads = heads
-						.filter((head) => !logInfo.log.has(head.entry.hash))
-						.map((head) => {
+					const filteredHeads: EntryWithRefs<any>[] = [];
+					for (const head of heads) {
+						if (!logInfo.log.has(head.entry.hash)) {
 							head.entry.init({
+								// we need to init because we perhaps need to decrypt gid
 								encryption: logInfo.log.encryption,
 								encoding: logInfo.log.encoding,
 							});
-							return head;
-						}); // we need to init because we perhaps need to decrypt gid
+							filteredHeads.push(head);
+						}
+					}
 
 					let toMerge: EntryWithRefs<any>[];
 					if (!logInfo.sync) {
