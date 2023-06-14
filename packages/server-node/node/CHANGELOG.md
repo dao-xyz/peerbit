@@ -1,5 +1,14 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+  * devDependencies
+    * @dao-xyz/peerbit-string bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+
 ## [1.0.2-alpha](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.1-alpha1...peerbit-node-v1.0.2-alpha) (2023-06-14)
 
 

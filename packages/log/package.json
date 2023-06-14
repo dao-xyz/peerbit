@@ -45,7 +45,7 @@
 		"yallist": "^4.0.0"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-test-utils": "1.0.0-alpha1",
+		"@dao-xyz/peerbit-test-utils": "1.0.1-alpha1",
 		"@types/yallist": "^4.0.1",
 		"assert": "^2.0.0",
 		"fs-extra": "^10.0.1"

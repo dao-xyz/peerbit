@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.0-alpha1...libp2p-test-utils-v1.0.0-alpha1) (2023-06-14)
+
+
+### Bug Fixes
+
+* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+
 ## 1.0.0-alpha1 (2023-06-14)
 
 
