@@ -1,3 +1,16 @@
+# Changelog
+
+## 1.0.0 (2023-06-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* simplified identity handling
+
+### Features
+
+* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
+
 ## @dao-xyz/libp2p-test-utils [0.5.3](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/libp2p-test-utils@0.5.2...@dao-xyz/libp2p-test-utils@0.5.3) (2023-06-07)
 
 
