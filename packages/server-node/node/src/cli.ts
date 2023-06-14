@@ -3,6 +3,7 @@ import { serialize } from "@dao-xyz/borsh";
 import { client, startServerWithNode } from "./api.js";
 import { createRecord } from "./aws.js";
 import { toBase64 } from "@dao-xyz/peerbit-crypto";
+import { getConfigDir } from "./config.js";
 
 export const cli = async (args?: string[]) => {
 	const yargs = await import("yargs");
@@ -18,14 +19,15 @@ export const cli = async (args?: string[]) => {
 			command: "start",
 			describe: "Start node",
 			builder: {
-				relay: {
-					describe: "Relay only. No replication functionality",
-					type: "boolean",
-					default: false,
+				directory: {
+					describe: "Directory for all data created by the node",
+					defaultDescription: "~.peerbit",
+					type: "string",
+					default: await getConfigDir(),
 				},
 			},
 			handler: async (args) => {
-				await startServerWithNode(args.relay);
+				await startServerWithNode(args.directory);
 			},
 		})
 		.command("domain", "Setup a domain and certificate", (yargs) => {

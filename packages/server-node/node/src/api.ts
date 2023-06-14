@@ -9,7 +9,6 @@ import { v4 as uuid } from "uuid";
 import { Libp2p } from "libp2p";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
-import { createNode } from "./libp2p.js";
 import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
 export const SSL_PORT = 9002;
 export const LOCAL_PORT = 8082;
@@ -99,18 +98,20 @@ export const loadOrCreatePassword = async (): Promise<string> => {
 		throw error;
 	}
 };
-export const startServerWithNode = async (relay: boolean) => {
-	const node = await createNode();
-	const controller = {
-		api: node,
-		stop: () => node.stop(),
-	};
-	const peer = relay
-		? controller.api
-		: await Peerbit.create({
-				libp2p: controller.api,
-				directory: ".peerbit/data",
-		  });
+export const startServerWithNode = async (directory: string) => {
+	const peer = await Peerbit.create({
+		libp2p: {
+			addresses: {
+				listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
+			},
+			connectionManager: {
+				maxConnections: Infinity,
+				minConnections: 0,
+			},
+		},
+		directory,
+	});
+
 	const server = await startServer(peer);
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
@@ -137,7 +138,7 @@ export const startServerWithNode = async (relay: boolean) => {
 			exit();
 		});
 	};
-	await shutDownHook(controller, server);
+	await shutDownHook(peer, server);
 };
 export const startServer = async (
 	client: Peerbit | Libp2pExtended,
