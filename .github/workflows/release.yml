@@ -36,6 +36,7 @@ jobs:
         run: |
           yarn
           yarn lerna bootstrap
+          yarn build
 
     # Release Please has already incremented versions and published tags, so we just
     # need to publish all unpublished versions to NPM here
