@@ -1,5 +1,12 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-document bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @dao-xyz/peerbit-trusted-network bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+
 ## 1.0.0-alpha1 (2023-06-14)
 
 
