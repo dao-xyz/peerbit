@@ -72,7 +72,15 @@ describe(`encryption`, function () {
 
 	afterAll(async () => {});
 
-	it("replicates database of 1 entry known keys", async () => {
+	it("can encrypt by peerId", async () => {
+		db2 = await client2.open<EventStore<string>>(db1.address);
+		await db1.waitFor(client2.libp2p);
+		await addHello(db1, client2.identity.publicKey);
+		await waitFor(() => db2.log.length === 1);
+		await checkHello(db2);
+	});
+
+	it("can encrypt with custom key", async () => {
 		db2 = await client2.open<EventStore<string>>(db1.address);
 		await db1.waitFor(client2.libp2p);
 

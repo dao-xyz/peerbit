@@ -32,11 +32,7 @@ import {
 	sha256,
 	Identity,
 } from "@dao-xyz/peerbit-crypto";
-import {
-	encryptionWithRequestKey,
-	exportKeypair,
-	importKeypair,
-} from "./encryption.js";
+import { FastKeychain } from "./encryption.js";
 import { MaybeSigned } from "@dao-xyz/peerbit-crypto";
 import { Program, Address, LogCallbackOptions } from "@dao-xyz/peerbit-program";
 import PQueue from "p-queue";
@@ -91,6 +87,8 @@ export type OptionalCreateOptions = {
 export type CreateOptions = {
 	directory?: string;
 	cache: LazyLevel;
+	identity: Ed25519Keypair;
+	keychain: FastKeychain;
 } & OptionalCreateOptions;
 
 export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
@@ -183,7 +181,6 @@ export class Peerbit {
 	private _openProgramQueue: PQueue;
 	private _disconnected = false;
 	private _disconnecting = false;
-	private _encryption: PublicKeyEncryptionResolver;
 	private _refreshInterval: any;
 	private _lastSubscriptionMessageId = 0;
 	private _cache: LazyLevel;
@@ -191,7 +188,9 @@ export class Peerbit {
 
 	// Libp2p peerid in Identity form
 	private _identityHash: string;
-	private _identity: Identity<Ed25519PublicKey>;
+	private _identity: Ed25519Keypair;
+
+	private _keychain: FastKeychain; // Keychain + Caching + X25519 keys
 
 	constructor(libp2p: Libp2pExtended, options: CreateOptions) {
 		if (libp2p == null) {
@@ -209,9 +208,10 @@ export class Peerbit {
 			throw new Error("Only Ed25519 peerIds are supported");
 		}
 
-		this._identity = Ed25519Keypair.fromPeerId(this.libp2p.peerId);
-		this._identityHash = this._identity.publicKey.hashcode();
+		this._identity = options.identity;
+		this._keychain = options.keychain;
 
+		this._identityHash = this._identity.publicKey.hashcode();
 		this.directory = options.directory;
 		this.programs = new Map();
 		this._minReplicas = options.minReplicas || MIN_REPLICAS;
@@ -303,6 +303,7 @@ export class Peerbit {
 				directory ? path.join(directory, "/cache") : undefined
 			));
 
+		const identity = Ed25519Keypair.fromPeerId(libp2pExtended.peerId);
 		const peer = new Peerbit(libp2pExtended, {
 			directory,
 			cache,
@@ -310,8 +311,9 @@ export class Peerbit {
 			limitSigning: options.limitSigning,
 			minReplicas: options.minReplicas,
 			refreshIntreval: options.refreshIntreval,
+			identity,
+			keychain: await FastKeychain.create(identity, libp2pExtended.keychain),
 		});
-		await peer.getEncryption();
 		return peer;
 	}
 	get libp2p(): Libp2pExtended {
@@ -322,11 +324,8 @@ export class Peerbit {
 		return this._cache;
 	}
 
-	get encryption() {
-		if (!this._encryption) {
-			throw new Error("Unexpected");
-		}
-		return this._encryption;
+	get encryption(): PublicKeyEncryptionResolver {
+		return this._keychain;
 	}
 
 	get disconnected() {
@@ -341,46 +340,18 @@ export class Peerbit {
 		return this._identityHash;
 	}
 
-	get identity(): Identity<Ed25519PublicKey> {
+	get identity(): Ed25519Keypair {
 		return this._identity;
 	}
 
-	async getEncryption(): Promise<PublicKeyEncryptionResolver> {
-		this._encryption = await encryptionWithRequestKey(this.libp2p.keychain);
-		return this._encryption;
-	}
-
 	async importKeypair(keypair: Ed25519Keypair) {
-		return importKeypair(this.libp2p.keychain, keypair);
+		return this._keychain.importKeypair(keypair);
 	}
 
 	async exportKeypair<T extends Ed25519PublicKey | X25519PublicKey>(
 		publicKey: T
 	) {
-		return exportKeypair<T>(this.libp2p.keychain, publicKey);
-	}
-
-	async decryptedSignedThing(
-		data: Uint8Array
-	): Promise<DecryptedThing<MaybeSigned<Uint8Array>>> {
-		const signedMessage = await new MaybeSigned({ data }).sign(async (data) => {
-			return this.identity.sign(data);
-		});
-		return new DecryptedThing({
-			data: serialize(signedMessage),
-		});
-	}
-
-	async enryptedSignedThing(
-		data: Uint8Array,
-		reciever: X25519PublicKey
-	): Promise<EncryptedThing<MaybeSigned<Uint8Array>>> {
-		const signedMessage = await new MaybeSigned({ data }).sign(async (data) => {
-			return this.identity.sign(data);
-		});
-		return new DecryptedThing<MaybeSigned<Uint8Array>>({
-			data: serialize(signedMessage),
-		}).encrypt(this.encryption.getEncryptionKeypair, reciever);
+		return this._keychain.exportKeypair<T>(publicKey);
 	}
 
 	/**
@@ -1045,9 +1016,6 @@ export class Peerbit {
 
 			logger.debug(`Open database '${program.constructor.name}`);
 
-			const encryption =
-				/* 	options.log?.encryption ||  TODO  */
-				await encryptionWithRequestKey(this.libp2p.keychain);
 			const role = options.role || new Replicator();
 
 			const minReplicas =
@@ -1074,7 +1042,7 @@ export class Peerbit {
 						reset: options.reset,
 					});
 				},
-				encryption,
+				encryption: this.encryption,
 				waitFor: async (other) => {
 					await Promise.all(
 						program.logs.map((x) =>
@@ -1084,7 +1052,7 @@ export class Peerbit {
 				},
 				log: (log) => {
 					const cfg: LogOptions<any> = {
-						encryption,
+						encryption: this.encryption,
 						trim: options.trim && {
 							...options.trim,
 							filter: {
