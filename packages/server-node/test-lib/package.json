@@ -35,12 +35,12 @@
 		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-test-utils": "^1.0.0-alpha1",
+		"@dao-xyz/peerbit-test-utils": "^1.0.1-alpha1",
 		"libp2p": "^0.45.9"
 	},
 	"dependencies": {
-		"@dao-xyz/peerbit-string": "^1.0.0-alpha1",
-		"@dao-xyz/peerbit-trusted-network": "^1.0.0-alpha1",
-		"@dao-xyz/peerbit": "^1.0.0-alpha1"
+		"@dao-xyz/peerbit-string": "^1.0.1-alpha1",
+		"@dao-xyz/peerbit-trusted-network": "^1.0.1-alpha1",
+		"@dao-xyz/peerbit": "^1.0.1-alpha1"
 	}
 }
