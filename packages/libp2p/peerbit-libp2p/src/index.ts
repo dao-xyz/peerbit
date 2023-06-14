@@ -1,14 +1,8 @@
 import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
-import type { Components } from "libp2p/components";
 import { DirectSub } from "@dao-xyz/libp2p-direct-sub";
 import { DirectBlock } from "@dao-xyz/libp2p-direct-block";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
-import type { RecursivePartial } from "@libp2p/interfaces";
-import type { Transport } from "@libp2p/interface-transport";
-import { AddressManagerInit } from "libp2p/address-manager";
-import { PeerId } from "@libp2p/interface-peer-id";
-import { ConnectionManagerInit } from "libp2p/connection-manager";
 import { transports, relay } from "./transports.js";
 import { identifyService } from "libp2p/identify";
 import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
