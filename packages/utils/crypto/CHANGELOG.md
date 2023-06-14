@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-crypto-v1.0.0-alpha1...peerbit-crypto-v1.0.3) (2023-06-14)
+
+
+### Bug Fixes
+
+* update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
+
 ## 1.0.0-alpha1 (2023-06-14)
 
 
