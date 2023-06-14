@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/libp2p-direct-stream",
-	"version": "1.0.0-alpha1",
+	"version": "1.0.2",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"sideEffects": false,
@@ -51,14 +51,14 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@dao-xyz/libp2p-test-utils": "1.0.0-alpha1",
+		"@dao-xyz/libp2p-test-utils": "1.0.2",
 		"@types/yallist": "^4.0.1",
 		"graphology-types": "^0.24.7"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/cache": "0.0.6",
-		"@dao-xyz/peerbit-crypto": "1.0.0-alpha1",
+		"@dao-xyz/peerbit-crypto": "1.0.2",
 		"@libp2p/topology": "^4.0.1",
 		"abstract-level": "^1.0.3",
 		"graphology": "^0.25.1",
