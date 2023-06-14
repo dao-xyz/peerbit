@@ -7,6 +7,21 @@
     * @dao-xyz/peerbit-rpc bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @dao-xyz/peerbit-trusted-network bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-clock-service-v1.0.1-alpha1...peerbit-clock-service-v1.0.3) (2023-06-14)
+
+
+### Bug Fixes
+
+* update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-rpc bumped from 1.0.2 to 1.0.3
+    * @dao-xyz/peerbit-trusted-network bumped from 1.0.2 to 1.0.3
+
 ## 1.0.0-alpha1 (2023-06-14)
 
 
