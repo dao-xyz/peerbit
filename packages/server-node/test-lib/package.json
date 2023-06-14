@@ -36,7 +36,7 @@
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-test-utils": "^1.0.0-alpha1",
-		"libp2p": "^0.45.5"
+		"libp2p": "^0.45.9"
 	},
 	"dependencies": {
 		"@dao-xyz/peerbit-string": "^1.0.0-alpha1",

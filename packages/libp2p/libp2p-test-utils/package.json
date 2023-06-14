@@ -42,7 +42,7 @@
 		"@libp2p/mplex": "^8.0.3",
 		"@libp2p/tcp": "^7.0.1",
 		"datastore-level": "^10.1.2",
-		"libp2p": "^0.45.5",
+		"libp2p": "^0.45.9",
 		"memory-level": "^1.0.0"
 	},
 	"devDependencies": {
