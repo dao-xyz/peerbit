@@ -2,6 +2,7 @@
 	"bootstrap-sha": "2ba9a2a2db4e9bdf8b51e644b536e16af8629b7b",
 	"bump-minor-pre-major": true,
 	"bump-patch-for-minor-pre-major": true,
+	"prerelease": true,
 	"plugins": ["node-workspace"],
 	"packages": {
 		"packages/libp2p/direct-block": {},
