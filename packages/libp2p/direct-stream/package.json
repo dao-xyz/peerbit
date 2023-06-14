@@ -1,7 +1,7 @@
 {
 	"name": "@dao-xyz/libp2p-direct-stream",
 	"version": "1.0.3",
-	"description": "Direct streaming for libp2p",
+	"description": "A building block for direct streaming protocols",
 	"type": "module",
 	"sideEffects": false,
 	"private": false,
@@ -62,7 +62,7 @@
 		"@libp2p/topology": "^4.0.1",
 		"abstract-level": "^1.0.3",
 		"graphology": "^0.25.1",
-		"graphology-shortest-path": "^2.0.1",
+		"graphology-shortest-path": "^2.0.2",
 		"libp2p": "^0.45.9",
 		"memory-level": "^1.0.0",
 		"yallist": "^4.0.0"

@@ -38,16 +38,14 @@
 		"@dao-xyz/uint8arrays": "0.0.4",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",
-		"p-queue": "^7.3.3"
+		"p-queue": "^7.3.4"
 	},
 	"devDependencies": {
 		"@dao-xyz/peerbit-document": "1.0.3",
 		"@dao-xyz/peerbit-test-utils": "1.0.3",
 		"fs-extra": "^10.1.0",
-		"mkdirp": "^1.0.4",
 		"p-each-series": "^3.0.0",
-		"p-map-series": "^3.0.0",
-		"p-whilst": "^3.0.0"
+		"p-map-series": "^3.0.0"
 	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",

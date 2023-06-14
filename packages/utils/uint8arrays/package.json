@@ -1,7 +1,7 @@
 {
 	"name": "@dao-xyz/uint8arrays",
 	"version": "0.0.4",
-	"description": "Utility methods for 8int8arrays",
+	"description": "Utility methods for uint8arrays",
 	"type": "module",
 	"sideEffects": false,
 	"module": "lib/esm/index.js",
@@ -31,6 +31,6 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"uint8arrays": "^4.0.3"
+		"uint8arrays": "^4.0.4"
 	}
 }

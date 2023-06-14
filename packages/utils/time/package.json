@@ -1,7 +1,7 @@
 {
 	"name": "@dao-xyz/peerbit-time",
 	"version": "0.0.24",
-	"description": "Time utils",
+	"description": "Utility functions for time",
 	"type": "module",
 	"sideEffects": false,
 	"module": "lib/esm/index.js",

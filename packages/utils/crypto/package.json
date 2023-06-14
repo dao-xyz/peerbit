@@ -40,14 +40,14 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.10",
-		"uint8arrays": "^4.0.2"
+		"uint8arrays": "^4.0.4"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@dao-xyz/uint8arrays": "0.0.4",
 		"@ethersproject/wallet": "^5.7.0",
-		"@libp2p/crypto": "^1.0.14",
-		"@libp2p/peer-id": "^2.0.1",
+		"@libp2p/crypto": "^1.0.17",
+		"@libp2p/peer-id": "^2.0.3",
 		"libsodium-wrappers": "^0.7.11"
 	}
 }
