@@ -1,3 +1,45 @@
+# Changelog
+
+## 1.0.0-alpha1 (2023-06-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* Default encryption keypair is the same the libp2p PeerId
+* only allow Ed25519 PeerIds
+* remove disconnect fn
+* indexBy as dynamic property of document store
+* program identity derived from libp2p
+* simplify role names
+* simplified identity handling
+
+### Features
+
+* Default encryption keypair is the same the libp2p PeerId ([43a3711](https://github.com/dao-xyz/peerbit/commit/43a3711525ceb1f24c10e1d8924c15cddb5928bc))
+* indexBy as dynamic property of document store ([b239d70](https://github.com/dao-xyz/peerbit/commit/b239d70bae1f6fd004ce9154238f58b8face1ad6))
+* only allow Ed25519 PeerIds ([532c8b3](https://github.com/dao-xyz/peerbit/commit/532c8b35bc4e85719669db47639ec5ffd11c8eab))
+* program identity derived from libp2p ([e7802f8](https://github.com/dao-xyz/peerbit/commit/e7802f816eb3e06c14cc57b193d2bde2b5005cef))
+* remove disconnect fn ([58e0cea](https://github.com/dao-xyz/peerbit/commit/58e0cea6df27c1d14a7edeb9b05050b1036e1db4))
+* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
+
+
+### Bug Fixes
+
+* refactor loop ([cf25045](https://github.com/dao-xyz/peerbit/commit/cf250453dbfe4dd64dbabe9ed922bdde12b92864))
+* rm import ([ddfc873](https://github.com/dao-xyz/peerbit/commit/ddfc873b532ea8bb32b482f40916d0f2f0e2c9a2))
+* simplify role names ([f2bfd65](https://github.com/dao-xyz/peerbit/commit/f2bfd65422d0d7066cbc34693bfeafecb508004d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-crypto bumped from 0.1.16 to 1.0.0-alpha1
+    * @dao-xyz/peerbit-program bumped from 0.9.1 to 1.0.0-alpha1
+  * devDependencies
+    * @dao-xyz/peerbit-document bumped from 0.9.1 to 1.0.0-alpha1
+    * @dao-xyz/peerbit-test-utils bumped from 0.4.3 to 1.0.0-alpha1
+
 ## @dao-xyz/peerbit [0.9.1](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit@0.9.0...@dao-xyz/peerbit@0.9.1) (2023-06-07)
 
 

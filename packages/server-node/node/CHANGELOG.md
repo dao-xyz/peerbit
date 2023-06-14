@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.0.1-alpha1](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.1...peerbit-node-v1.0.1-alpha1) (2023-06-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* use libp2p keychain for keyhandling
+* remove disconnect fn
+* simplify role names
+* simplified identity handling
+
+### Features
+
+* remove disconnect fn ([58e0cea](https://github.com/dao-xyz/peerbit/commit/58e0cea6df27c1d14a7edeb9b05050b1036e1db4))
+* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
+* use libp2p keychain for keyhandling ([08804a4](https://github.com/dao-xyz/peerbit/commit/08804a4d19db413a01284b7a8a6a8c8fd20e284f))
+
+
+### Bug Fixes
+
+* simplify role names ([f2bfd65](https://github.com/dao-xyz/peerbit/commit/f2bfd65422d0d7066cbc34693bfeafecb508004d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit bumped from 0.9.1 to 1.0.0-alpha1
+    * @dao-xyz/peerbit-libp2p bumped from 0.5.3 to 1.0.0-alpha1
+  * devDependencies
+    * @dao-xyz/peerbit-string bumped from 0.9.1 to 1.0.0-alpha1
+    * @dao-xyz/peerbit-test-utils bumped from 0.4.3 to 1.0.0-alpha1
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.0...peerbit-node-v1.0.1) (2023-06-08)
 
 
