@@ -1,3 +1,24 @@
+# Changelog
+
+## 1.0.0-alpha1 (2023-06-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* simplified identity handling
+
+### Features
+
+* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/libp2p-direct-block bumped from 0.5.3 to 1.0.0-alpha1
+    * @dao-xyz/libp2p-direct-sub bumped from 0.5.3 to 1.0.0-alpha1
+
 ## @dao-xyz/peerbit-libp2p [0.5.3](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-libp2p@0.5.2...@dao-xyz/peerbit-libp2p@0.5.3) (2023-06-07)
 
 
