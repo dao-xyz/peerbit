@@ -380,6 +380,18 @@ expect(iterator.done()).toBeFalse(); // There should be 3 posts in total and we 
 await iterator.close();
 /// [iterator-detailed]
 
+/// [sync]
+const iterateAndSync = channelFromClient2.posts.index.iterate(
+	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
+	{ local: true, remote: { sync: true } }
+);
+
+const searchAndSync = channelFromClient2.posts.index.search(
+	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
+	{ local: true, remote: { sync: true } }
+);
+/// [sync]
+
 /// [disconnecting]
 await peer.stop();
 await peer2.stop();

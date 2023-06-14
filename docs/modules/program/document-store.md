@@ -71,9 +71,12 @@ You can apply one or more sort criterias. This will be evaluated in order, if th
 
 ## Iterator
 
-The iterator is a recommmended way of collecting and iterating over documents as this provides the finest amount of control on how and when to fetch more documents from peers 
-
+The iterator is a recommmended way of collecting and iterating over documents as this provides the finest amount of control on how and when to fetch more documents from peers. The difference between search and iterate, is that the search api creates an iterator under the hood and performs ```iterator.next()``` and tries to collect as many documents as possible, while an iterator allow you to call next yourself.
 
 [iterator-detailed](./document-store.ts ':include :fragment=iterator-detailed')
 
+## Syncing 
+You can sync documents to you local store while iterating or searching. 
+
+[sync](./document-store.ts ':include :fragment=sync')
 
