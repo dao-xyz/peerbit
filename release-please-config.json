@@ -4,71 +4,27 @@
 	"bump-patch-for-minor-pre-major": true,
 	"plugins": ["node-workspace"],
 	"packages": {
-		"packages/libp2p/direct-block": {
-			"release-as": "1.0.3"
-		},
-		"packages/libp2p/direct-stream": {
-			"release-as": "1.0.3"
-		},
-		"packages/libp2p/direct-sub": {
-			"release-as": "1.0.3"
-		},
-		"packages/libp2p/libp2p-test-utils": {
-			"release-as": "1.0.3"
-		},
-		"packages/libp2p/peerbit-libp2p": {
-			"release-as": "1.0.3"
-		},
-		"packages/log": {
-			"release-as": "1.0.3"
-		},
-		"packages/client": {
-			"release-as": "1.0.3"
-		},
-		"packages/server-node/node": {
-			"release-as": "1.0.4"
-		},
-		"packages/programs/rpc": {
-			"release-as": "1.0.3"
-		},
-		"packages/programs/acl/identity-access-controller": {
-			"release-as": "1.0.3"
-		},
-		"packages/programs/acl/trusted-network": {
-			"release-as": "1.0.3"
-		},
-		"packages/programs/program-interface": {
-			"release-as": "1.0.3"
-		},
-		"packages/programs/clock-service": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/crypto": {
-			"release-as": "1.0.3"
-		},
-		"packages/programs/data/document": {
-			"release-as": "1.0.3"
-		},
-		"packages/programs/data/string": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/test-utils": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/lazy-level": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/uint8arrays": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/cache": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/time": {
-			"release-as": "1.0.3"
-		},
-		"packages/utils/logger": {
-			"release-as": "1.0.3"
-		}
+		"packages/libp2p/direct-block": {},
+		"packages/libp2p/direct-stream": {},
+		"packages/libp2p/direct-sub": {},
+		"packages/libp2p/libp2p-test-utils": {},
+		"packages/libp2p/peerbit-libp2p": {},
+		"packages/log": {},
+		"packages/client": {},
+		"packages/server-node/node": {},
+		"packages/programs/rpc": {},
+		"packages/programs/acl/identity-access-controller": {},
+		"packages/programs/acl/trusted-network": {},
+		"packages/programs/program-interface": {},
+		"packages/programs/clock-service": {},
+		"packages/utils/crypto": {},
+		"packages/programs/data/document": {},
+		"packages/programs/data/string": {},
+		"packages/utils/test-utils": {},
+		"packages/utils/lazy-level": {},
+		"packages/utils/uint8arrays": {},
+		"packages/utils/cache": {},
+		"packages/utils/time": {},
+		"packages/utils/logger": {}
 	}
 }
