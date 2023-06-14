@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2-alpha](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.1-alpha1...peerbit-node-v1.0.2-alpha) (2023-06-14)
+
+
+### Bug Fixes
+
+* remove redundant config file ([6b82d5b](https://github.com/dao-xyz/peerbit/commit/6b82d5b1201469c30dfb061396f11661e6f2d79e))
+
 ## [1.0.1-alpha1](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.1...peerbit-node-v1.0.1-alpha1) (2023-06-14)
 
 
