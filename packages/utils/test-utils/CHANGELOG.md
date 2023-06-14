@@ -4,6 +4,13 @@
 
 
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/libp2p-test-utils bumped from 1.0.0-alpha1 to 1.0.5
+    * @dao-xyz/peerbit-libp2p bumped from 1.0.0-alpha1 to 1.0.5
+
 ## 1.0.0-alpha1 (2023-06-14)
 
 
