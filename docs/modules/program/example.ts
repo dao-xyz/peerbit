@@ -4,7 +4,10 @@ import { Log } from "@dao-xyz/peerbit-log";
 import { Program } from "@dao-xyz/peerbit-program";
 import { field, variant } from "@dao-xyz/borsh";
 
-@variant("my-database") // it is required your program with a "seed". The database address will depend on this
+// The line below will make sure that every time the database manifest
+// gets seriaized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
+// who open the database (who recieve the database manifest in serialized bytes) can decode into this particular class.
+@variant("my-database") // required
 class MyDatabase extends Program {
 	@field({ type: Log })
 	log: Log<string>;
