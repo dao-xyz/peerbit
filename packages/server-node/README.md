@@ -1,4 +1,4 @@
-# Peerbit node
+# Running a server node 
 A non-browser node with a CLI and server API so you can manage your non-browser node with easy
 
 ## Features
@@ -32,14 +32,12 @@ Start the node in a background process
 ```sh
 peerbit start > log.txt 2>&1 &
 ```
-or if you just want a node as a relay in a separate process
-```
-peerbit start --relay  > log.txt 2>&1 &
-```
+
+
 Starting a node as a non-relay allows you to open databases and store content, while the relays only help with transmitting data to other peers.
 
 3.
-Setup a test domain (so can access the node)
+Setup a test domain (so can access the node). The command below might take a while to run.
 
 ```sh
 sudo peerbit domain test --email YOUR_EMAIL 
@@ -66,4 +64,11 @@ disown -ah
 Run
 ```sh
 peerbit --help
+```
+
+Or for a specific command, e.g. 
+
+Run
+```sh
+peerbit start --help
 ```

@@ -19,7 +19,9 @@ console.log(multaddrs.map((x) => x.toString()));
 
 await peer.dial(multaddrs);
 
-// or dial an address directly from a string. This one below is malformed and will fail
+// Connected!
+
+// We can dial an address directly from a string. This one below is malformed and will fail
 await expect(peer.dial("/ip4/123.4.5...")).rejects.toThrowError(
 	"invalid ip address"
 );
