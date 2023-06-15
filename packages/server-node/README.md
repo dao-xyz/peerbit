@@ -3,8 +3,6 @@ A non-browser node with a CLI and server API so you can manage your non-browser 
 
 ## Features
 - Request SSL certificate and setup NGINX config so that your node can be accessed from a browser
-- Manage topics
-- Manage VPC/Networks (add/revoke trust)
 
 **This CLI does not work in Windows at the moment. As of now this CLI have only tested with Ubuntu 22.04.**
 
@@ -33,8 +31,7 @@ Start the node in a background process
 peerbit start > log.txt 2>&1 &
 ```
 
-
-Starting a node as a non-relay allows you to open databases and store content, while the relays only help with transmitting data to other peers.
+This will start a peerbit client
 
 3.
 Setup a test domain (so can access the node). The command below might take a while to run.
