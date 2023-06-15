@@ -127,7 +127,6 @@ export interface IndexedValue<T> {
 
 export type RemoteQueryOptions<R> = RPCOptions<R> & { sync?: boolean };
 export type QueryOptions<R> = {
-	onResponse?: (response: Results<R>, from?: PublicSignKey) => void;
 	remote?: boolean | RemoteQueryOptions<Results<R>>;
 	local?: boolean;
 };
@@ -209,11 +208,14 @@ const sortValueWithContext = async<T>(arr: {
 
 const SORT_TMP_KEY = "__sort_ref";
 
+type QueryDetailedOptions<T> = QueryOptions<T> & {
+	onResponse?: (response: Results<T>, from?: PublicSignKey) => void;
+};
 const introduceEntries = async <T>(
 	responses: RPCResponse<Results<T>>[],
 	type: AbstractType<T>,
 	sync: (result: Results<T>) => Promise<void>,
-	options?: QueryOptions<T>
+	options?: QueryDetailedOptions<T>
 ): Promise<RPCResponse<Results<T>>[]> => {
 	return Promise.all(
 		responses.map(async (x) => {
@@ -596,7 +598,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	 */
 	public async queryDetailed(
 		queryRequest: SearchRequest,
-		options?: QueryOptions<T>
+		options?: QueryDetailedOptions<T>
 	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
 		let remote: RemoteQueryOptions<Results<T>> | undefined = undefined;
@@ -775,7 +777,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 				...options,
 				onResponse: (response, from) => {
 					if (!from) {
-						logger.error("Missing from for sorted query");
+						logger.error("Missing response from");
 						return;
 					}
 
