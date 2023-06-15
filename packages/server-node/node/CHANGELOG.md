@@ -9,6 +9,24 @@
     * @dao-xyz/peerbit-string bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.4...peerbit-node-v1.0.5) (2023-06-15)
+
+
+### Bug Fixes
+
+* bump dependencies ([8a8fd44](https://github.com/dao-xyz/peerbit/commit/8a8fd440149a966337382db77afe1071141e5c74))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-libp2p bumped from 1.0.3 to 1.0.4
+  * devDependencies
+    * @dao-xyz/peerbit-string bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.3-alpha...peerbit-node-v1.0.4) (2023-06-14)
 
 

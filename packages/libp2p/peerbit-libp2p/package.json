@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit-libp2p",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "libp2p node for Peerbit",
 	"type": "module",
 	"sideEffects": false,
@@ -43,8 +43,8 @@
 		"./transports.js": "./lib/esm/transports-browser.js"
 	},
 	"dependencies": {
-		"@dao-xyz/libp2p-direct-block": "1.0.3",
-		"@dao-xyz/libp2p-direct-sub": "1.0.3",
+		"@dao-xyz/libp2p-direct-block": "1.0.4",
+		"@dao-xyz/libp2p-direct-sub": "1.0.4",
 		"@dao-xyz/libp2p-noise": "^12.0.1",
 		"@libp2p/mplex": "^8.0.3",
 		"@libp2p/tcp": "^7.0.1",
@@ -54,7 +54,7 @@
 		"libp2p": "^0.45.9"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-time": "0.0.24"
+		"@dao-xyz/peerbit-time": "1.0.0"
 	},
 	"localMaintainers": [
 		"dao.xyz"

@@ -1,3 +1,12 @@
+# Changelog
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
+    * @dao-xyz/peerbit-time bumped from 0.0.24 to 1.0.0
+
 ## @dao-xyz/lazy-level [0.0.8](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/lazy-level@0.0.7...@dao-xyz/lazy-level@0.0.8) (2023-06-07)
 
 

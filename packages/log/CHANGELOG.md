@@ -1,5 +1,16 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/cache bumped from 0.0.6 to 0.0.7
+    * @dao-xyz/libp2p-direct-block bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-crypto bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
+  * devDependencies
+    * @dao-xyz/peerbit-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-log-v1.0.0-alpha1...peerbit-log-v1.0.3) (2023-06-14)
 
 

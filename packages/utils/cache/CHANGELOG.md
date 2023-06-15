@@ -1,3 +1,11 @@
+# Changelog
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @dao-xyz/peerbit-time bumped from 0.0.24 to 1.0.0
+
 ## @dao-xyz/cache [0.0.6](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/cache@0.0.5...@dao-xyz/cache@0.0.6) (2023-06-07)
 
 

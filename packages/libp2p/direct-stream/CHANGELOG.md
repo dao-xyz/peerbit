@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-stream-v1.0.3...libp2p-direct-stream-v1.0.4) (2023-06-15)
+
+
+### Bug Fixes
+
+* bump dependencies ([8a8fd44](https://github.com/dao-xyz/peerbit/commit/8a8fd440149a966337382db77afe1071141e5c74))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/cache bumped from 0.0.6 to 0.0.7
+    * @dao-xyz/peerbit-crypto bumped from 1.0.3 to 1.0.4
+  * devDependencies
+    * @dao-xyz/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-stream-v1.0.0-alpha1...libp2p-direct-stream-v1.0.3) (2023-06-14)
 
 

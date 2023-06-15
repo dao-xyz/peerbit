@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-crypto-v1.0.3...peerbit-crypto-v1.0.4) (2023-06-15)
+
+
+### Bug Fixes
+
+* bump dependencies ([8a8fd44](https://github.com/dao-xyz/peerbit/commit/8a8fd440149a966337382db77afe1071141e5c74))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/uint8arrays bumped from 0.0.4 to 1.0.0
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-crypto-v1.0.0-alpha1...peerbit-crypto-v1.0.3) (2023-06-14)
 
 

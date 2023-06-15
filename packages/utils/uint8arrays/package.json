@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/uint8arrays",
-	"version": "0.0.4",
+	"version": "1.0.0",
 	"description": "Utility methods for uint8arrays",
 	"type": "module",
 	"sideEffects": false,
