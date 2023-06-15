@@ -1,5 +1,14 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/libp2p-direct-block bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/libp2p-direct-sub bumped from 1.0.3 to 1.0.4
+  * devDependencies
+    * @dao-xyz/peerbit-time bumped from 0.0.24 to 1.0.0
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-libp2p-v1.0.0-alpha1...peerbit-libp2p-v1.0.3) (2023-06-14)
 
 

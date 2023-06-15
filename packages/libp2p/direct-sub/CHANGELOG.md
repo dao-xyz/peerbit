@@ -1,5 +1,15 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/libp2p-direct-stream bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
+    * @dao-xyz/uint8arrays bumped from 0.0.4 to 1.0.0
+  * devDependencies
+    * @dao-xyz/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-sub-v1.0.0-alpha1...libp2p-direct-sub-v1.0.3) (2023-06-14)
 
 

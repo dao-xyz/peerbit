@@ -9,6 +9,27 @@
     * @dao-xyz/peerbit-document bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.3...peerbit-v1.0.4) (2023-06-15)
+
+
+### Bug Fixes
+
+* bump dependencies ([8a8fd44](https://github.com/dao-xyz/peerbit/commit/8a8fd440149a966337382db77afe1071141e5c74))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/lazy-level bumped from 0.0.8 to 0.0.9
+    * @dao-xyz/peerbit-crypto bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
+    * @dao-xyz/peerbit-program bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/uint8arrays bumped from 0.0.4 to 1.0.0
+  * devDependencies
+    * @dao-xyz/peerbit-document bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.1-alpha1...peerbit-v1.0.3) (2023-06-14)
 
 

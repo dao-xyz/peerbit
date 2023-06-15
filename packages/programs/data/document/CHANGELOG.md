@@ -9,6 +9,16 @@
   * devDependencies
     * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-program bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-rpc bumped from 1.0.3 to 1.0.4
+  * devDependencies
+    * @dao-xyz/peerbit-test-utils bumped from 1.0.3 to 1.0.4
+    * @dao-xyz/peerbit-time bumped from 0.0.24 to 1.0.0
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-document-v1.0.1-alpha1...peerbit-document-v1.0.3) (2023-06-14)
 
 
