@@ -1,15 +1,15 @@
 import { Peerbit } from "@dao-xyz/peerbit";
 import type { Multiaddr } from "@multiformats/multiaddr";
 
-const peer = await Peerbit.create();
-const peer2 = await Peerbit.create();
+const peerA = await Peerbit.create();
+const peerB = await Peerbit.create();
 
 // When testing locally you can do
-await peer.dial(peer2);
+await peerA.dial(peerB);
 
 // In "real" scenarios you only have the other peers address
 // , you can do
-const multaddrs: Multiaddr[] = peer2.libp2p.getMultiaddrs();
+const multaddrs: Multiaddr[] = peerB.libp2p.getMultiaddrs();
 
 /* [
 '/ip4/127.0.0.1/tcp/62991/ws/p2p/12D3KooWDebLLpnJJQvUo5LEkEURtLUGJwkiH5cAgS1mnSLfup7N',
@@ -17,14 +17,14 @@ const multaddrs: Multiaddr[] = peer2.libp2p.getMultiaddrs();
 ] */
 console.log(multaddrs.map((x) => x.toString()));
 
-await peer.dial(multaddrs);
+await peerA.dial(multaddrs);
 
 // Connected!
 
 // We can dial an address directly from a string. This one below is malformed and will fail
-await expect(peer.dial("/ip4/123.4.5...")).rejects.toThrowError(
+await expect(peerA.dial("/ip4/123.4.5...")).rejects.toThrowError(
 	"invalid ip address"
 );
 
-await peer.stop();
-await peer2.stop();
+await peerA.stop();
+await peerB.stop();
