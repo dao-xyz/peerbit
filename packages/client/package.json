@@ -1,6 +1,6 @@
 {
 	"name": "@dao-xyz/peerbit",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"description": "Distributed p2p database on IPFS",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -41,7 +41,7 @@
 		"p-queue": "^7.3.4"
 	},
 	"devDependencies": {
-		"@dao-xyz/peerbit-document": "1.0.4",
+		"@dao-xyz/peerbit-document": "1.0.5",
 		"@dao-xyz/peerbit-test-utils": "1.0.4",
 		"fs-extra": "^10.1.0",
 		"p-each-series": "^3.0.0",

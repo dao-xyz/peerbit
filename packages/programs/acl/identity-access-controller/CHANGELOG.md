@@ -14,6 +14,13 @@
     * @dao-xyz/peerbit-document bumped from 1.0.3 to 1.0.4
     * @dao-xyz/peerbit-trusted-network bumped from 1.0.3 to 1.0.4
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-document bumped from 1.0.4 to 1.0.5
+    * @dao-xyz/peerbit-trusted-network bumped from 1.0.4 to 1.0.5
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-identity-access-controller-v1.0.1-alpha1...peerbit-identity-access-controller-v1.0.3) (2023-06-14)
 
 
