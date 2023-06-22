@@ -9,6 +9,20 @@
     * @peerbit/document bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @peerbit/test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.4...peerbit-v1.0.5) (2023-06-16)
+
+
+### Bug Fixes
+
+* refactor tests ([9b989ad](https://github.com/dao-xyz/peerbit/commit/9b989ad5bba963c62f59cb24d0b4718199748719))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @dao-xyz/peerbit-document bumped from 1.0.4 to 1.0.5
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.3...peerbit-v1.0.4) (2023-06-15)
 
 

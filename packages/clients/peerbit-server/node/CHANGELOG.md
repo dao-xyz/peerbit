@@ -9,6 +9,21 @@
     * @peerbit/string bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @peerbit/test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.5...peerbit-node-v1.0.6) (2023-06-16)
+
+
+### Bug Fixes
+
+* relay messages by default ([4c6319f](https://github.com/dao-xyz/peerbit/commit/4c6319fa8faa7a97a7599f720a67723eded16857))
+* remove reduntant config file ([86dabe1](https://github.com/dao-xyz/peerbit/commit/86dabe116c86862b2fb84b60b49dfa9c115c28b4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit bumped from 1.0.4 to 1.0.5
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.4...peerbit-node-v1.0.5) (2023-06-15)
 
 

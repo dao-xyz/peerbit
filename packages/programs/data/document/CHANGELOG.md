@@ -19,7 +19,14 @@
     * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
     * @peerbit/time bumped from 0.0.24 to 1.0.0
 
-## [1.0.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/document-v1.0.1-alpha1...@peerbit/document-v1.0.3) (2023-06-14)
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-document-v1.0.4...peerbit-document-v1.0.5) (2023-06-16)
+
+
+### Bug Fixes
+
+* rm  redudan onResponse callback for search and iterator ([41a6098](https://github.com/dao-xyz/peerbit/commit/41a6098f3b031a89b85777856337d38f1ae66434))
+
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-document-v1.0.1-alpha1...peerbit-document-v1.0.3) (2023-06-14)
 
 
 ### Bug Fixes

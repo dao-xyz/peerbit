@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/clock-service",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"description": "Clock signing",
 	"type": "module",
 	"sideEffects": false,
@@ -33,7 +33,7 @@
 	"dependencies": {
 		"@peerbit/logger": "1.0.0",
 		"@peerbit/rpc": "1.0.4",
-		"@peerbit/trusted-network": "1.0.4"
+		"@peerbit/trusted-network": "1.0.5"
 	},
 	"devDependencies": {
 		"memory-level": "^1.0.0"
