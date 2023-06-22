@@ -15,7 +15,9 @@ describe("server", () => {
 	jest.setTimeout(60 * 1000);
 
 	beforeAll(async () => {
-		session = await LSession.connected(1, { directory: "./tmp/peerbit/" + +new Date() });
+		session = await LSession.connected(1, {
+			directory: "./tmp/peerbit/" + +new Date(),
+		});
 		peer = session.peers[0];
 	});
 

@@ -125,9 +125,9 @@ export const cli = async (args?: string[]) => {
 							region: args.region,
 							credentials: args.accessKeyId
 								? {
-									accessKeyId: args.accessKeyId,
-									secretAccessKey: args.secretAccessKey,
-								}
+										accessKeyId: args.accessKeyId,
+										secretAccessKey: args.secretAccessKey,
+								  }
 								: undefined,
 						});
 						await startCertbot(args.domain, args.email, args.outdir, args.wait);
@@ -164,7 +164,7 @@ export const cli = async (args?: string[]) => {
 						} else {
 							console.log("Not subscribed to any topics");
 						} */
-						console.error("Not implemented")
+						console.error("Not implemented");
 					},
 				})
 				.strict()

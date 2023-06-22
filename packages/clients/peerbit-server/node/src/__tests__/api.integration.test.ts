@@ -38,7 +38,7 @@ describe("libp2p only", () => {
 
 	it("use cli as libp2p cli", async () => {
 		const c = await client("http://localhost:" + 7676);
-		expect(await c.peer.id.get()).toBeDefined()
+		expect(await c.peer.id.get()).toBeDefined();
 	});
 });
 
@@ -47,12 +47,14 @@ describe("server", () => {
 	let db: PermissionedString;
 
 	beforeAll(async () => {
-		session = await LSession.connected(1, { directory: "./peerbit/" + +new Date() });
-		peer = session.peers[0]
+		session = await LSession.connected(1, {
+			directory: "./peerbit/" + +new Date(),
+		});
+		peer = session.peers[0];
 	});
 
 	beforeEach(async () => {
-		db = await new PermissionedString({ trusted: [] }).open(peer)
+		db = await new PermissionedString({ trusted: [] }).open(peer);
 		address = db.address!;
 		server = await startServer(peer);
 	});

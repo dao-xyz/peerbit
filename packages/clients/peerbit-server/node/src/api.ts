@@ -9,7 +9,6 @@ import { Libp2p } from "libp2p";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./client.js";
-import { Libp2pExtended } from "peerbit";
 import { Peerbit } from "@peerbit/interface";
 
 export const SSL_PORT = 9002;
@@ -135,7 +134,7 @@ export const startServer = async (
 ): Promise<http.Server> => {
 	const notPeerBitError =
 		"Client is just a Libp2p node, not a full Peerbit client. The command is not supported for this node type";
-	const notSupportedError = "Not implemted"
+	const notSupportedError = "Not implemted";
 
 	const password = await loadOrCreatePassword();
 
@@ -176,7 +175,7 @@ export const startServer = async (
 		}  
 		return;
 		*/
-		throw new Error("Not supported")
+		throw new Error("Not supported");
 	};
 	const getBody = (
 		req: http.IncomingMessage,
@@ -214,7 +213,7 @@ export const startServer = async (
 						res.end("Not authorized");
 						return;
 					} else if (req.url.startsWith(PROGRAM_PATH)) {
-						if (true /* client instanceof Peerbit === false */) {
+						if (true as any /* client instanceof Peerbit === false */) {
 							res.writeHead(400);
 							res.write(notSupportedError);
 							res.end();
@@ -394,9 +393,9 @@ export const client = async (
 				const result = getBodyByStatus<string, any>(
 					await axios.get(
 						endpoint +
-						PROGRAM_PATH +
-						"/" +
-						encodeURIComponent(address.toString()),
+							PROGRAM_PATH +
+							"/" +
+							encodeURIComponent(address.toString()),
 						{ validateStatus, headers: await getHeaders() }
 					)
 				);

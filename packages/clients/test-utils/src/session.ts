@@ -38,7 +38,10 @@ export class LSession {
 		await Promise.all(this._peers.map((x) => x.stop()));
 	}
 
-	static async connected(n: number, options?: { libp2p?: Libp2pCreateOptions, directory?: string }) {
+	static async connected(
+		n: number,
+		options?: { libp2p?: Libp2pCreateOptions; directory?: string }
+	) {
 		const session = await LSession.disconnected(n, options);
 		await session.connect();
 		// TODO types
@@ -48,7 +51,10 @@ export class LSession {
 		return session;
 	}
 
-	static async disconnected(n: number, options?: { libp2p?: Libp2pCreateOptions, directory?: string }) {
+	static async disconnected(
+		n: number,
+		options?: { libp2p?: Libp2pCreateOptions; directory?: string }
+	) {
 		let optionsWithServices: Libp2pCreateOptionsWithServices = {
 			...options?.libp2p,
 			services: {
@@ -60,7 +66,11 @@ export class LSession {
 		const session = await SSession.disconnected(n, optionsWithServices);
 		return new LSession(
 			session,
-			await Promise.all(session.peers.map((x) => Peerbit.create({ libp2p: x, directory: options?.directory })))
+			await Promise.all(
+				session.peers.map((x) =>
+					Peerbit.create({ libp2p: x, directory: options?.directory })
+				)
+			)
 		);
 	}
 }

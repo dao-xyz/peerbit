@@ -10,8 +10,10 @@ describe("ssl", () => {
 	let session: LSession, peer: Peerbit, server: http.Server;
 
 	beforeAll(async () => {
-		session = await LSession.connected(1, { directory: "./peerbit/tmp/" + +new Date() });
-		peer = session.peers[0]
+		session = await LSession.connected(1, {
+			directory: "./peerbit/tmp/" + +new Date(),
+		});
+		peer = session.peers[0];
 		server = await startServer(peer, 12345);
 	});
 
@@ -20,7 +22,7 @@ describe("ssl", () => {
 		await session.stop();
 		await server.close();
 	});
-	it("_", () => { });
+	it("_", () => {});
 	/* These test are flaky, or have side effects, and should not be running in ci yet
 	it("certbot", async () => {
 		const { exec } = await import("child_process");

@@ -1,4 +1,4 @@
-import { client as api, getPort } from "peerbit-node";
+import { client as api, getPort } from "@peerbit/server";
 import { useEffect, useState } from "react";
 import { Box, Grid, Paper, Typography } from "@mui/material";
 import {

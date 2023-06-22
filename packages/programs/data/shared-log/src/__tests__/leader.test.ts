@@ -22,7 +22,7 @@ describe(`leaders`, function () {
 							connectionManager: { autoDial: false },
 						}),
 				},
-			}
+			},
 		});
 	});
 
@@ -30,7 +30,7 @@ describe(`leaders`, function () {
 		await session.stop();
 	});
 
-	beforeEach(async () => { });
+	beforeEach(async () => {});
 
 	afterEach(async () => {
 		if (db1) await db1.drop();

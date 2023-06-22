@@ -35,7 +35,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/libp2p-test-utils": "1.0.4",
-		"peerbit": "1.0.4"
+		"peerbit": "1.0.5"
 	},
 	"devDependencies": {
 		"@peerbit/time": "1.0.0"
