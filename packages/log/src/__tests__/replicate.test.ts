@@ -1,11 +1,11 @@
-import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { PubSubData, waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { LSession } from "@peerbit/test-utils";
+import { randomBytes } from "@peerbit/crypto";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { StringArray } from "../types.js";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
+import { PubSubData } from "@peerbit/pubsub-interface";
 
 describe("ipfs-log - Replication", function () {
 	let session: LSession;
@@ -85,10 +85,10 @@ describe("ipfs-log - Replication", function () {
 			session.peers[1].services.pubsub.subscribe(channel);
 
 			await session.peers[0].services.pubsub.addEventListener("data", (evt) => {
-				handleMessage(evt.detail, channel);
+				handleMessage(evt.detail.data, channel);
 			});
 			await session.peers[1].services.pubsub.addEventListener("data", (evt) => {
-				handleMessage2(evt.detail, channel);
+				handleMessage2(evt.detail.data, channel);
 			});
 		});
 
@@ -98,11 +98,7 @@ describe("ipfs-log - Replication", function () {
 		});
 		// TODO why is this test doing a lot of unchaught rejections? (Reproduce in VSCODE tick `Uncaught exceptions`)
 		it("replicates logs", async () => {
-			await waitForSubscribers(
-				session.peers[0],
-				[session.peers[1].peerId],
-				channel
-			);
+			await session.peers[0].services.pubsub.waitFor(session.peers[1].peerId);
 
 			let prev1: Entry<any> = undefined as any;
 			let prev2: Entry<any> = undefined as any;

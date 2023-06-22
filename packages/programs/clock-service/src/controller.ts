@@ -1,10 +1,11 @@
 import { field, deserialize, variant, option } from "@dao-xyz/borsh";
-import { RPC } from "@dao-xyz/peerbit-rpc";
-import { Program } from "@dao-xyz/peerbit-program";
-import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { Entry, HLC } from "@dao-xyz/peerbit-log";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { RPC } from "@peerbit/rpc";
+import { Program } from "@peerbit/program";
+import { SignatureWithKey } from "@peerbit/crypto";
+import { Entry, HLC } from "@peerbit/log";
+import { TrustedNetwork } from "@peerbit/trusted-network";
+import { logger as loggerFn } from "@peerbit/logger";
+import { Replicator, SubscriptionType } from "@peerbit/shared-log";
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
@@ -59,34 +60,39 @@ export class ClockService extends Program {
 	/**
 	 * @param maxError, in ms, defaults to 10 seconds
 	 */
-	async setup(properties?: { maxTimeError: number }) {
+	async setup(properties?: { role?: SubscriptionType; maxTimeError?: number }) {
 		this._maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
 		await this._trustedNetwork.setup();
 		await this._remoteSigner.setup({
-			topic: this._trustedNetwork.trustGraph.log.idString + "/clock", // TODO do better
+			topic: this._trustedNetwork.trustGraph.log.log.idString + "/clock", // TODO do better
 			queryType: Uint8Array,
 			responseType: Result,
-			responseHandler: async (arr, context) => {
-				const entry = deserialize(arr, Entry);
-				if (entry.hash) {
-					logger.warn("Recieved entry with hash, unexpected");
-				}
+			responseHandler:
+				properties?.role instanceof Replicator
+					? async (arr, context) => {
+							const entry = deserialize(arr, Entry);
+							if (entry.hash) {
+								logger.warn("Recieved entry with hash, unexpected");
+							}
 
-				entry._signatures = undefined; // because we dont want to sign signatures
+							entry._signatures = undefined; // because we dont want to sign signatures
 
-				const now = this._hlc.now().wallTime;
-				const cmp = (await entry.getClock()).timestamp.wallTime;
-				if (abs(now - cmp) > this._maxError) {
-					logger.info("Recieved an entry with an invalid timestamp");
-					return new SignError({
-						message: "Recieved an entry with an invalid timestamp",
-					});
-				}
-				const signature = await this.identity.sign(entry.toSignable());
-				return new Ok({
-					signature,
-				});
-			},
+							const now = this._hlc.now().wallTime;
+							const cmp = (await entry.getClock()).timestamp.wallTime;
+							if (abs(now - cmp) > this._maxError) {
+								logger.info("Recieved an entry with an invalid timestamp");
+								return new SignError({
+									message: "Recieved an entry with an invalid timestamp",
+								});
+							}
+							const signature = await this.node.identity.sign(
+								entry.toSignable()
+							);
+							return new Ok({
+								signature,
+							});
+					  }
+					: undefined,
 		});
 	}
 

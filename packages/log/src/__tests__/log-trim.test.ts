@@ -1,9 +1,6 @@
 import { Log } from "../log.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { waitFor } from "@peerbit/time";
 import { signKey } from "./fixtures/privateKey.js";
 
 describe("Append trim", function () {
@@ -11,11 +8,11 @@ describe("Append trim", function () {
 
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	let log: Log<string>;

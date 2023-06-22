@@ -1,9 +1,10 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { AppendOptions, CanAppend, Entry, Log } from "@dao-xyz/peerbit-log";
-import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { Program } from "@dao-xyz/peerbit-program";
-import { RPCOptions, CanRead, RPC } from "@dao-xyz/peerbit-rpc";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { AppendOptions, CanAppend, Entry } from "@peerbit/log";
+import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
+import { SignatureWithKey } from "@peerbit/crypto";
+import { Program } from "@peerbit/program";
+import { RPCOptions, CanRead, RPC } from "@peerbit/rpc";
+import { logger as loggerFn } from "@peerbit/logger";
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
 	RangeMetadata,
@@ -38,8 +39,8 @@ export type StringStoreOptions = {
 
 @variant("dstring")
 export class DString extends Program {
-	@field({ type: Log })
-	_log: Log<StringOperation>;
+	@field({ type: SharedLog })
+	_log: SharedLog<StringOperation>;
 
 	@field({ type: RPC })
 	query: RPC<StringQueryRequest, StringResult>;
@@ -52,25 +53,26 @@ export class DString extends Program {
 	constructor(properties: { query?: RPC<StringQueryRequest, StringResult> }) {
 		super();
 		this.query = properties.query || new RPC();
-		this._log = new Log();
+		this._log = new SharedLog();
 		this._index = new StringIndex();
 	}
 
 	async setup(options?: {
 		canRead?: CanRead;
 		canAppend?: CanAppend<StringOperation>;
+		log?: SharedLogOptions;
 	}) {
 		this._optionCanAppend = options?.canAppend;
-		this._log.setup({
+		await this._log.setup({
 			encoding,
 			canAppend: this.canAppend.bind(this),
 			onChange: this._index.updateIndex.bind(this._index),
 		});
 
-		await this._index.setup(this._log);
+		await this._index.setup(this._log.log);
 		await this.query.setup({
 			...options,
-			topic: this._log.idString + "/" + "dstring",
+			topic: this._log.log.idString + "/" + "dstring",
 			canRead: options?.canRead,
 			responseHandler: this.queryHandler.bind(this),
 			queryType: StringQueryRequest,
@@ -89,11 +91,11 @@ export class DString extends Program {
 	}
 
 	async _canAppend(entry: Entry<StringOperation>): Promise<boolean> {
-		if (this._log.length === 0) {
+		if (this._log.log.length === 0) {
 			return true;
 		} else {
 			for (const next of entry.next) {
-				if (this._log.has(next)) {
+				if (this._log.log.has(next)) {
 					return true;
 				}
 			}
@@ -111,7 +113,7 @@ export class DString extends Program {
 				index,
 				value,
 			}),
-			{ nexts: await this._log.getHeads(), ...options }
+			{ nexts: await this._log.log.getHeads(), ...options }
 		);
 	}
 
@@ -120,7 +122,7 @@ export class DString extends Program {
 			index,
 		} as StringOperation;
 		return this._log.append(operation, {
-			nexts: await this._log.getHeads(),
+			nexts: await this._log.log.getHeads(),
 			...options,
 		});
 	}
@@ -173,7 +175,7 @@ export class DString extends Program {
 		});
 	}
 
-	async toString(options?: {
+	async getValue(options?: {
 		remote: {
 			callback: (string: string) => any;
 			queryOptions: RPCOptions<StringResult>;

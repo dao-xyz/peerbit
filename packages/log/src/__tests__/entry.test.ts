@@ -6,15 +6,12 @@ import {
 	Ed25519PublicKey,
 	X25519Keypair,
 	X25519PublicKey,
-} from "@dao-xyz/peerbit-crypto";
+} from "@peerbit/crypto";
 import sodium from "libsodium-wrappers";
 import { LamportClock, Timestamp } from "../clock.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 
-import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
+import { sha256Base64Sync } from "@peerbit/crypto";
 import { signKey } from "./fixtures/privateKey.js";
 
 describe("Entry", function () {
@@ -23,11 +20,11 @@ describe("Entry", function () {
 	beforeAll(async () => {
 		await sodium.ready;
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 	describe("endocing", () => {
 		it("can serialize and deserialialize", async () => {
@@ -101,29 +98,7 @@ describe("Entry", function () {
 						payload: receiverKey.publicKey,
 						next: undefined,
 					},
-					options: {
-						getEncryptionKeypair: () => senderKey,
-						getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-							for (let i = 0; i < publicKeys.length; i++) {
-								if (
-									publicKeys[i].equals((senderKey as X25519Keypair).publicKey)
-								) {
-									return {
-										index: i,
-										keypair: senderKey as X25519Keypair,
-									};
-								}
-								if (
-									publicKeys[i].equals((receiverKey as X25519Keypair).publicKey)
-								) {
-									return {
-										index: i,
-										keypair: receiverKey as X25519Keypair,
-									};
-								}
-							}
-						},
-					},
+					keypair: senderKey,
 				},
 			});
 			assert(entry.payload instanceof Payload);

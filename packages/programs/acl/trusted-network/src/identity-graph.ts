@@ -4,11 +4,11 @@ import {
 	DocumentIndex,
 	SearchRequest,
 	StringMatch,
-} from "@dao-xyz/peerbit-document";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+} from "@peerbit/document";
+import { PublicSignKey } from "@peerbit/crypto";
 import { concat } from "uint8arrays";
-import { RPC } from "@dao-xyz/peerbit-rpc";
-import { sha256Sync } from "@dao-xyz/peerbit-crypto";
+import { RPC } from "@peerbit/rpc";
+import { sha256Sync } from "@peerbit/crypto";
 
 export type RelationResolver = {
 	resolve: (

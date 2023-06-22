@@ -1,8 +1,8 @@
 import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
-import { BORSH_ENCODING, Encoding, Entry } from "@dao-xyz/peerbit-log";
+import { BORSH_ENCODING, Encoding, Entry } from "@peerbit/log";
 import { equals } from "@dao-xyz/uint8arrays";
-import { ComposableProgram } from "@dao-xyz/peerbit-program";
+import { ComposableProgram } from "@peerbit/program";
 import {
 	IntegerCompare,
 	ByteMatchQuery,
@@ -32,12 +32,12 @@ import {
 	RPCResponse,
 	queryAll,
 	MissingResponsesError,
-} from "@dao-xyz/peerbit-rpc";
+} from "@peerbit/rpc";
 import { Results } from "./query.js";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { Log } from "@dao-xyz/peerbit-log";
+import { logger as loggerFn } from "@peerbit/logger";
 import { Cache } from "@dao-xyz/cache";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey } from "@peerbit/crypto";
+import { SharedLog } from "@peerbit/shared-log";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -272,9 +272,10 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
-	private _log: Log<Operation<T>>;
 
 	private _resultsCollectQueue: Cache<{ value: T; context: Context }[]>;
+
+	private _log: SharedLog<Operation<T>>;
 
 	constructor(properties?: { query?: RPC<SearchRequest, Results<T>> }) {
 		super();
@@ -295,7 +296,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 
 	async setup(properties: {
 		type: AbstractType<T>;
-		log: Log<Operation<T>>;
+		log: SharedLog<Operation<T>>;
 		canRead: CanRead;
 		fields: Indexable<T>;
 		sync: (result: Results<T>) => Promise<void>;
@@ -319,7 +320,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 		this._resultsCollectQueue = new Cache({ max: 10000 }); // TODO choose limit better
 
 		await this._query.setup({
-			topic: this._log.idString + "/document",
+			topic: this._log.log.idString + "/document",
 			canRead: properties.canRead,
 			responseHandler: async (query) => {
 				if (query instanceof CloseIteratorRequest) {
@@ -388,7 +389,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 	}
 
 	async getDocument(value: { context: { head: string } }): Promise<T> {
-		const payloadValue = await (await this._log.get(
+		const payloadValue = await (await this._log.log.get(
 			value.context.head
 		))!.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
@@ -478,7 +479,6 @@ export class DocumentIndex<T> extends ComposableProgram {
 			return { results: batch, kept: results.length }; // Only return 1 result since we are doing distributed sort, TODO buffer more initially
 		} else if (query instanceof CollectNextRequest) {
 			const results = this._resultsCollectQueue.get(query.idString);
-
 			if (!results) {
 				return {
 					results: [],
@@ -627,7 +627,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 					results: await Promise.all(
 						results.results.map(async (r) => {
 							const payloadValue = await (
-								await this._log.get(r.context.head)
+								await this._log.log.get(r.context.head)
 							)?.getPayloadValue();
 							if (payloadValue instanceof PutOperation) {
 								return new ResultWithSource({
@@ -642,16 +642,13 @@ export class DocumentIndex<T> extends ComposableProgram {
 					kept: BigInt(results.kept),
 				});
 				options?.onResponse &&
-					options.onResponse(
-						resultsObject,
-						this.libp2p.services.pubsub.publicKey
-					);
+					options.onResponse(resultsObject, this.node.identity.publicKey);
 				allResults.push(resultsObject);
 			}
 		}
 
 		if (remote) {
-			const replicatorGroups = await this._log.replication?.replicators?.();
+			const replicatorGroups = await this._log.replicators?.();
 			if (replicatorGroups) {
 				const fn = async () => {
 					const rs: Results<T>[] = [];
@@ -825,7 +822,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 			for (const [peer, buffer] of peerBufferMap) {
 				if (buffer.buffer.length < n) {
 					if (buffer.kept === 0) {
-						peerBufferMap.delete(peer);
+						if (peerBufferMap.get(peer)?.buffer.length === 0) {
+							peerBufferMap.delete(peer); // No more results
+						}
 						continue;
 					}
 
@@ -833,17 +832,19 @@ export class DocumentIndex<T> extends ComposableProgram {
 					// TODO batch to multiple 'to's
 					const collectRequest = new CollectNextRequest({
 						id: queryRequest.id,
-						amount: n - buffer.buffer.length,
+						amount: 10, //n - buffer.buffer.length,
 					});
 					// Fetch locally?
-					if (peer === this.libp2p.services.pubsub.publicKeyHash) {
+					if (peer === this.node.identity.publicKey.hashcode()) {
 						promises.push(
 							this.processFetchRequest(collectRequest)
 								.then((results) => {
 									resultsLeft += results.kept;
 
 									if (results.results.length === 0) {
-										peerBufferMap.delete(peer); // No more results
+										if (peerBufferMap.get(peer)?.buffer.length === 0) {
+											peerBufferMap.delete(peer); // No more results
+										}
 									} else {
 										const peerBuffer = peerBufferMap.get(peer);
 										if (!peerBuffer) {
@@ -863,7 +864,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 													return {
 														value: x.value,
 														context: x.context,
-														from: this.libp2p.services.pubsub.publicKey,
+														from: this.node.identity.publicKey,
 													};
 												})
 										);
@@ -896,7 +897,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 												}
 
 												if (response.response.results.length === 0) {
-													peerBufferMap.delete(peer); // No more results
+													if (peerBufferMap.get(peer)?.buffer.length === 0) {
+														peerBufferMap.delete(peer); // No more results
+													}
 												} else {
 													const peerBuffer = peerBufferMap.get(peer);
 													if (!peerBuffer) {
@@ -965,7 +968,9 @@ export class DocumentIndex<T> extends ComposableProgram {
 				queryRequest.sort
 			);
 			const pendingMoreResults = n < results.length;
+
 			const batch = results.splice(0, n);
+
 			for (const result of batch) {
 				const arr = peerBufferMap.get(result.from.hashcode());
 				if (!arr) {
@@ -998,7 +1003,7 @@ export class DocumentIndex<T> extends ComposableProgram {
 					continue;
 				}
 				// Fetch locally?
-				if (peer === this.libp2p.services.pubsub.publicKeyHash) {
+				if (peer === this.node.identity.publicKey.hashcode()) {
 					promises.push(this.processCloseIteratorRequest(closeRequest));
 				} else {
 					// Fetch remotely

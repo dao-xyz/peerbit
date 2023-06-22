@@ -1,14 +1,12 @@
 import { Log } from "../log.js";
 import {
 	Ed25519Keypair,
-	PublicKeyEncryptionResolver,
+	Ed25519PublicKey,
+	Keychain,
 	X25519Keypair,
 	X25519PublicKey,
-} from "@dao-xyz/peerbit-crypto";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+} from "@peerbit/crypto";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 
 const last = <T>(arr: T[]): T => {
@@ -24,11 +22,11 @@ describe("Log - Encryption", function () {
 
 		// The ids are choosen so that the tests plays out "nicely", specifically the logs clock id sort will reflect the signKey suffix
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("join", () => {
@@ -36,26 +34,30 @@ describe("Log - Encryption", function () {
 
 		beforeEach(async () => {
 			const logOptions = {
-				encryption: {
-					getEncryptionKeypair: () => senderKey,
-					getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-						for (let i = 0; i < publicKeys.length; i++) {
-							if (publicKeys[i].equals(senderKey.publicKey)) {
-								return {
-									index: i,
-									keypair: senderKey,
-								};
-							}
-							if (publicKeys[i].equals(recieverKey.publicKey)) {
-								return {
-									index: i,
-									keypair: recieverKey,
-								};
-							}
-						}
+				keychain: {
+					exportById: () => {
+						throw new Error("Not implemented");
 					},
-				} as PublicKeyEncryptionResolver,
+					exportByKey: <T extends Ed25519PublicKey | X25519PublicKey, Q>(
+						key: T
+					) => {
+						if (key.equals(signKey.publicKey)) {
+							return signKey as Q;
+						}
+						if (key.equals(senderKey.publicKey)) {
+							return senderKey as Q;
+						}
+						if (key.equals(recieverKey.publicKey)) {
+							return recieverKey as Q;
+						}
+						throw new Error("Not implemented");
+					},
+					import: () => {
+						throw new Error("Not implemented");
+					},
+				} as Keychain,
 			};
+
 			log1 = new Log();
 			await log1.open(
 				store,
@@ -82,20 +84,23 @@ describe("Log - Encryption", function () {
 			const extraSigner2 = await Ed25519Keypair.create();
 
 			await log2.append("helloA1", {
-				reciever: {
-					metadata: undefined,
-					signatures: {
-						[await log2.identity.publicKey.hashcode()]: recieverKey.publicKey, // reciever 1
-						[await extraSigner.publicKey.hashcode()]: [
-							recieverKey.publicKey,
-							(await X25519Keypair.create()).publicKey,
-						], // reciever 1 again and 1 unknown reciever
-						[await extraSigner2.publicKey.hashcode()]: (
-							await X25519Keypair.create()
-						).publicKey, // unknown reciever
+				encryption: {
+					keypair: await X25519Keypair.create(),
+					reciever: {
+						metadata: undefined,
+						signatures: {
+							[await log2.identity.publicKey.hashcode()]: recieverKey.publicKey, // reciever 1
+							[await extraSigner.publicKey.hashcode()]: [
+								recieverKey.publicKey,
+								(await X25519Keypair.create()).publicKey,
+							], // reciever 1 again and 1 unknown reciever
+							[await extraSigner2.publicKey.hashcode()]: (
+								await X25519Keypair.create()
+							).publicKey, // unknown reciever
+						},
+						payload: recieverKey.publicKey,
+						next: recieverKey.publicKey,
 					},
-					payload: recieverKey.publicKey,
-					next: recieverKey.publicKey,
 				},
 				signers: [
 					log2.identity.sign.bind(log2.identity),
@@ -126,35 +131,49 @@ describe("Log - Encryption", function () {
 
 		it("joins encrypted identities only with knowledge of id and clock", async () => {
 			await log1.append("helloA1", {
-				reciever: {
-					metadata: undefined,
-					signatures: recieverKey.publicKey,
-					payload: recieverKey.publicKey,
-					next: recieverKey.publicKey,
+				encryption: {
+					keypair: await X25519Keypair.create(),
+					reciever: {
+						metadata: undefined,
+						signatures: recieverKey.publicKey,
+						payload: recieverKey.publicKey,
+						next: recieverKey.publicKey,
+					},
 				},
 			});
 			await log1.append("helloA2", {
-				reciever: {
-					metadata: undefined,
-					signatures: recieverKey.publicKey,
-					payload: recieverKey.publicKey,
-					next: recieverKey.publicKey,
+				encryption: {
+					keypair: await X25519Keypair.create(),
+					reciever: {
+						metadata: undefined,
+						signatures: recieverKey.publicKey,
+						payload: recieverKey.publicKey,
+						next: recieverKey.publicKey,
+					},
 				},
 			});
 			await log2.append("helloB1", {
-				reciever: {
-					metadata: undefined,
-					signatures: recieverKey.publicKey,
-					payload: recieverKey.publicKey,
-					next: recieverKey.publicKey,
+				encryption: {
+					keypair: await X25519Keypair.create(),
+
+					reciever: {
+						metadata: undefined,
+						signatures: recieverKey.publicKey,
+						payload: recieverKey.publicKey,
+						next: recieverKey.publicKey,
+					},
 				},
 			});
 			await log2.append("helloB2", {
-				reciever: {
-					metadata: undefined,
-					signatures: recieverKey.publicKey,
-					payload: recieverKey.publicKey,
-					next: recieverKey.publicKey,
+				encryption: {
+					keypair: await X25519Keypair.create(),
+
+					reciever: {
+						metadata: undefined,
+						signatures: recieverKey.publicKey,
+						payload: recieverKey.publicKey,
+						next: recieverKey.publicKey,
+					},
 				},
 			});
 

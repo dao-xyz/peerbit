@@ -1,7 +1,7 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { serialize } from "@dao-xyz/borsh";
 import { AccessCondition } from "./condition";
-import { toBase64 } from "@dao-xyz/peerbit-crypto";
+import { toBase64 } from "@peerbit/crypto";
 
 export enum AccessType {
 	Any = 0,

@@ -1,9 +1,6 @@
 import assert from "assert";
 import { Log } from "../log.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { Entry } from "../entry.js";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 
@@ -12,11 +9,11 @@ describe("Log - Iterator", function () {
 
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("Basic iterator functionality", () => {

@@ -1,4 +1,4 @@
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
+import { TrustedNetwork } from "@peerbit/trusted-network";
 
 export const getNetwork = (object: any): TrustedNetwork | undefined => {
 	return (

@@ -67,7 +67,7 @@ export const waitForResolved = async <T>(
 			return;
 		}
 		try {
-			return fn();
+			return await fn();
 		} catch (error: any) {
 			lastError = error;
 		}

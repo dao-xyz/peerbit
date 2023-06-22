@@ -2,9 +2,9 @@ import assert from "assert";
 import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
 import { compare } from "@dao-xyz/uint8arrays";
-import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { waitForPeers } from "@dao-xyz/libp2p-direct-stream";
+import { LSession } from "@peerbit/test-utils";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import { waitForPeers } from "@peerbit/stream";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -38,11 +38,9 @@ describe("Log - Join", function () {
 		signKey3 = keys[2];
 		signKey4 = keys[3];
 		session = await LSession.connected(3);
-		await waitForPeers(
-			session.peers[0].services.blocks,
-			session.peers[1].services.blocks,
-			session.peers[2].services.blocks
-		);
+		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
+		await session.peers[2].services.blocks.waitFor(session.peers[0].peerId);
+		await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);
 	});
 
 	afterAll(async () => {

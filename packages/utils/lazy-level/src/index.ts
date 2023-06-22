@@ -1,5 +1,5 @@
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { waitFor } from "@dao-xyz/peerbit-time";
+import { logger as loggerFn } from "@peerbit/logger";
+import { waitFor } from "@peerbit/time";
 import { AbstractBatchOperation, AbstractLevel } from "abstract-level";
 
 export type LevelBatchOptions = {
@@ -18,19 +18,24 @@ export interface SimpleLevel {
 	get(key: string): Promise<Uint8Array | undefined>;
 	put(key: string, value: Uint8Array);
 	del(key): Promise<void>;
+	sublevel(name: string): SimpleLevel;
+	clear(): Promise<void>;
+	idle?(): Promise<void>;
 }
+
 export default class LazyLevel implements SimpleLevel {
-	_store: AbstractLevel<any, any, any>;
-	_interval: any;
-	_txQueue?: AbstractBatchOperation<
+	private _store: AbstractLevel<any, any, any>;
+	private _interval: any;
+	private _txQueue?: AbstractBatchOperation<
 		AbstractLevel<any, string, Uint8Array>,
 		string,
 		Uint8Array
 	>[];
-	_tempStore?: Map<string, Uint8Array>;
-	_tempDeleted?: Set<string>;
-	_txPromise?: Promise<void>;
-	_opts?: LazyLevelOptions;
+	private _tempStore?: Map<string, Uint8Array>;
+	private _tempDeleted?: Set<string>;
+	private _txPromise?: Promise<void>;
+	private _opts?: LazyLevelOptions;
+	private _sublevels: LazyLevel[] = [];
 
 	constructor(
 		store: AbstractLevel<any, any, any>,
@@ -81,6 +86,7 @@ export default class LazyLevel implements SimpleLevel {
 			this._tempStore?.clear();
 			this._tempDeleted?.clear();
 		}
+		await Promise.all(this._sublevels.map((l) => l.close()));
 
 		if (this.status !== "closed" && this.status !== "closing") {
 			await this._store.close();
@@ -186,28 +192,34 @@ export default class LazyLevel implements SimpleLevel {
 		return ret;
 	}
 
-	async deleteByPrefix(prefix: string): Promise<void> {
-		const iterator = this._store.iterator<any, Uint8Array>({
-			gte: prefix,
-			lte: prefix + "\xFF",
-			valueEncoding: "view",
-		});
-		const keys: string[] = [];
-		for await (const [key, _value] of iterator) {
-			keys.push(key);
-		}
-
-		if (this._tempStore) {
-			for (const key of this._tempStore.keys()) {
-				if (key.startsWith(prefix)) {
-					keys.push(key);
-				}
-			}
-		}
-		return this.delAll(keys);
+	async clear(): Promise<void> {
+		this._tempStore?.clear();
+		this._tempDeleted?.clear();
+		return this._store.clear();
 	}
 
-	set(key: string, value: Uint8Array) {
+	/* 	async deleteByPrefix(prefix: string): Promise<void> {
+			const iterator = this._store.iterator<any, Uint8Array>({
+				gte: prefix,
+				lte: prefix + "\xFF",
+				valueEncoding: "view",
+			});
+			const keys: string[] = [];
+			for await (const [key, _value] of iterator) {
+				keys.push(key);
+			}
+	
+			if (this._tempStore) {
+				for (const key of this._tempStore.keys()) {
+					if (key.startsWith(prefix)) {
+						keys.push(key);
+					}
+				}
+			}
+			return this.delAll(keys);
+		} */
+
+	put(key: string, value: Uint8Array) {
 		if (this._opts?.batch) {
 			this._tempDeleted!.delete(key);
 			this._tempStore!.set(key, value);
@@ -219,10 +231,6 @@ export default class LazyLevel implements SimpleLevel {
 		} else {
 			return this._store.put(key, value, { valueEncoding: "view" });
 		}
-	}
-
-	put(key: string, value: Uint8Array) {
-		return this.set(key, value);
 	}
 
 	// Remove a value and key from the cache
@@ -261,6 +269,8 @@ export default class LazyLevel implements SimpleLevel {
 	}
 
 	sublevel(name: string) {
-		return new LazyLevel(this._store.sublevel(name), this._opts);
+		const l = new LazyLevel(this._store.sublevel(name), this._opts);
+		this._sublevels.push(l);
+		return l;
 	}
 }

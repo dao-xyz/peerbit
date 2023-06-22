@@ -1,8 +1,5 @@
 import { Log } from "../log.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { EntryType } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
 
@@ -11,11 +8,11 @@ describe("Log - Delete", function () {
 
 	beforeEach(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterEach(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	const blockExists = async (hash: string): Promise<boolean> => {

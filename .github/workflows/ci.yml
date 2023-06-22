@@ -60,7 +60,7 @@ jobs:
     strategy:
        matrix:
         node-version: [18.x]
-        folder: [./packages/client,./packages/log ./packages/programs,./packages/libp2p/direct-block ./packages/libp2p/direct-stream ./packages/libp2p/direct-sub ./packages/libp2p/libp2p-test-utils ./packages/libp2p/peerbit-libp2p ./packages/utils ./packages/server-node]
+        folder: [./packages/client,./packages/log ./packages/programs,./packages/transport/direct-block ./packages/transport/direct-stream ./packages/transport/direct-sub ./packages/transport/libp2p-test-utils ./packages/transport/peerbit-libp2p ./packages/utils ./packages/server-node]
     if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     steps:
@@ -88,7 +88,7 @@ jobs:
         matrix:
             os: [ ubuntu-22.04 ]
             node-version: [18.x]
-            folder: [./packages/client,./packages/log ./packages/programs,./packages/libp2p/direct-block ./packages/libp2p/direct-stream ./packages/libp2p/direct-sub ./packages/libp2p/libp2p-test-utils ./packages/libp2p/peerbit-libp2p ./packages/utils ./packages/server-node]
+            folder: [./packages/client,./packages/log ./packages/programs,./packages/transport/direct-block ./packages/transport/direct-stream ./packages/transport/direct-sub ./packages/transport/libp2p-test-utils ./packages/transport/peerbit-libp2p ./packages/utils ./packages/server-node]
     name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     steps:

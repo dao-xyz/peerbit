@@ -1,7 +1,7 @@
 /// [imports]
 import { field, variant, option } from "@dao-xyz/borsh";
-import { Observer, Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Observer, Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
 import {
@@ -11,7 +11,7 @@ import {
 	MissingField,
 	SearchRequest,
 	Sort,
-} from "@dao-xyz/peerbit-document";
+} from "@peerbit/document";
 /// [imports]
 
 /// [definition]
@@ -131,7 +131,7 @@ class Channel extends Program {
 /// [definition]
 
 /// [insert]
-import { waitForResolved } from "@dao-xyz/peerbit-time";
+import { waitForResolved } from "@peerbit/time";
 
 // Start two clients that ought to talk to each other
 const peer = await Peerbit.create();
@@ -149,8 +149,8 @@ const channelFromClient2 = await peer2.open<Channel>(
 	}
 );
 
-// Wait for peer1 to be reachable for query. This line only necessary when testing locally
-await channelFromClient2.waitFor(peer.libp2p);
+// Wait for peer1 to be reachable for query
+await channelFromClient2.waitFor(peer.libp2p.peerId);
 
 // Lets write some things
 const message1 = new Post("hello world");
@@ -279,7 +279,7 @@ import {
 	SortDirection,
 	Or,
 	And,
-} from "@dao-xyz/peerbit-document";
+} from "@peerbit/document";
 
 new SearchRequest({
 	query: [

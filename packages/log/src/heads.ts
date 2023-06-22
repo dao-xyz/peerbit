@@ -1,7 +1,7 @@
 import { Entry } from "./entry.js";
-import LocalStore from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@dao-xyz/lazy-level";
 import { HeadsCache } from "./heads-cache.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import { Blocks } from "@peerbit/blocks-interface";
 
 export type CacheUpdateOptions = {
 	cache?: { update?: false; reset?: false } | { update: true; reset?: boolean };
@@ -11,22 +11,22 @@ export class HeadsIndex<T> {
 	private _index: Set<string> = new Set();
 	private _gids: Map<string, number>;
 	private _headsCache: HeadsCache<T> | undefined;
-	private _blockstore: BlockStore;
+	private _blockstore: Blocks;
 	constructor(id: Uint8Array) {
 		this._gids = new Map();
 		this._id = id;
 	}
 
 	async init(
-		blockstore: BlockStore,
-		cache?: (name: string) => Promise<LocalStore> | LocalStore,
+		blockstore: Blocks,
+		cache?: SimpleLevel,
 		options: { entries?: Entry<T>[] } = {}
 	) {
 		this._blockstore = blockstore;
 		await this.reset(options?.entries || []);
 		if (cache) {
 			this._headsCache = new HeadsCache(this);
-			return this._headsCache.init(cache);
+			return this._headsCache.init(await cache.sublevel("heads"));
 		}
 	}
 

@@ -1,4 +1,4 @@
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Peerbit } from "peerbit";
 
 const peerA = await Peerbit.create();
 const peerB = await Peerbit.create();

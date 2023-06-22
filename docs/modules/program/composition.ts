@@ -1,11 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Observer, Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import {
-	DocumentIndex,
-	Documents,
-	SearchRequest,
-} from "@dao-xyz/peerbit-document";
+import { Observer, Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
+import { DocumentIndex, Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 
 @variant(0) // version 0
@@ -111,7 +107,7 @@ const forum2 = await client2.open<Forum>(forum.address, {
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
-await forum2.waitFor(client.libp2p);
+await forum2.waitFor(client.libp2p.peerId);
 
 // find channels from the forum from client2 perspective
 const channels = await forum2.channels.index.search(new SearchRequest());
@@ -122,7 +118,7 @@ expect(channels[0].name).toEqual("general");
 const channel2 = await client2.open<Channel>(channels[0]);
 
 // Wait for client 1 to be available (only needed for testing locally)
-await channel2.waitFor(client.libp2p);
+await channel2.waitFor(client.libp2p.peerId);
 
 // find messages
 const messages = await channel2.db.posts.index.search(new SearchRequest());

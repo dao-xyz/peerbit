@@ -5,27 +5,27 @@ import { Entry } from "../entry.js";
 import { Log } from "../log.js";
 import { LogCreator } from "./utils/log-creator.js";
 import { compare } from "@dao-xyz/uint8arrays";
-import { delay } from "@dao-xyz/peerbit-time";
+import { delay } from "@peerbit/time";
 import * as Block from "multiformats/block";
 
 // Alternate tiebreaker. Always does the opposite of LastWriteWins
 const FirstWriteWins = (a: any, b: any) => LastWriteWins(a, b) * -1;
 const BadComparatorReturnsZero = (a: any, b: any) => 0;
 
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import {
 	BlockStore,
-	GetOptions,
 	MemoryLevelBlockStore,
-	PutOptions,
 	StoreStatus,
-} from "@dao-xyz/libp2p-direct-block";
+} from "@peerbit/blocks";
+import { Blocks, GetOptions, PutOptions } from "@peerbit/blocks-interface";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
 };
 
-class SlowBlockStore implements BlockStore {
+class SlowBlockStore implements Blocks {
 	_store: BlockStore;
 	lag: number = 3000;
 	constructor(store: BlockStore) {
@@ -34,32 +34,37 @@ class SlowBlockStore implements BlockStore {
 	async get<T>(
 		cid: string,
 		options?: GetOptions | undefined
-	): Promise<Block.Block<T, any, any, any> | undefined> {
+	): Promise<Uint8Array | undefined> {
 		await delay(this.lag);
 		return this._store.get(cid, options);
 	}
 	put(
-		value: Block.Block<any, any, any, any>,
+		value: Uint8Array,
 		options?: PutOptions | undefined
-	): Promise<string> {
+	): Promise<string> | string {
 		return this._store.put(value, options);
 	}
 
 	has(cid: string) {
 		return this._store.has(cid);
 	}
-	rm(cid: string): Promise<void> {
+
+	rm(cid: string): Promise<void> | void {
 		return this._store.rm(cid);
 	}
-	async open(): Promise<this> {
-		await this._store.open();
-		return this;
+
+	async start(): Promise<void> {
+		await this._store.start();
 	}
-	close(): Promise<void> {
-		return this._store.close();
+	stop(): Promise<void> {
+		return this._store.stop();
 	}
 	get status(): StoreStatus {
 		return this._store.status;
+	}
+
+	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
+		return this._store.waitFor(peer);
 	}
 }
 
@@ -105,14 +110,14 @@ describe("Log - Load", function () {
 		signKey3 = signKeys[2];
 		signKey4 = signKeys[3];
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 		/*  const memstore = new MemStore();
 		 (ipfs.object as any).put = memstore.put.bind(memstore);
 		 (ipfs.object as any).get = memstore.get.bind(memstore) as any; */
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("fromEntryHash", () => {

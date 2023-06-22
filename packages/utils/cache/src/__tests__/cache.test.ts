@@ -1,4 +1,4 @@
-import { delay } from "@dao-xyz/peerbit-time";
+import { delay } from "@peerbit/time";
 import { Cache } from "../index.js";
 
 describe("cache", () => {

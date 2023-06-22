@@ -7,10 +7,10 @@ Distributing content among untrusted peers will be unreliable and not resilient 
 
 To do this, you only have to implement the "Network" interface: 
 ```typescript
-import { Peerbit, Network } from '@dao-xyz/peerbit'
-import { Log } from '@dao-xyz/peerbit-log'
-import { Program } from '@dao-xyz/peerbit-program' 
-import { TrustedNetwork } from '@dao-xyz/peerbit-trusted-network' 
+import { Peerbit, Network } from 'peerbit'
+import { Log } from '@peerbit/log'
+import { Program } from '@peerbit/program' 
+import { TrustedNetwork } from '@peerbit/trusted-network' 
 import { field, variant } from '@dao-xyz/borst-ts' 
 
 @variant("string_store") 

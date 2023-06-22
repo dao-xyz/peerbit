@@ -36,8 +36,8 @@
 	},
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/peerbit-logger": "1.0.0",
-		"@dao-xyz/peerbit-time": "1.0.0",
+		"@peerbit/logger": "1.0.0",
+		"@peerbit/time": "1.0.0",
 		"level": "^8.0.0"
 	},
 	"localMaintainers": [

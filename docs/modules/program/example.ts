@@ -1,7 +1,7 @@
 /// [program]
 /// [definition]
-import { Log } from "@dao-xyz/peerbit-log";
-import { Program } from "@dao-xyz/peerbit-program";
+import { Log } from "@peerbit/log";
+import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
 
 // The line below will make sure that every time the database manifest
@@ -27,8 +27,8 @@ class MyDatabase extends Program {
 
 /// [definition]
 
-import { Observer, Replicator } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Observer, Replicator } from "@peerbit/program";
+import { Peerbit } from "peerbit";
 
 const client = await Peerbit.create();
 

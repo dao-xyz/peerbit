@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
-/* import { Program } from "@dao-xyz/peerbit-program";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
+/* import { Program } from "@peerbit/program";
+import { TrustedNetwork } from "@peerbit/trusted-network";
 import { EventStore } from "./event-store.js";
 
 import { network } from "./../../network";

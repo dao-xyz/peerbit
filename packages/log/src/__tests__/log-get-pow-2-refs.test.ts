@@ -1,17 +1,17 @@
 import rmrf from "rimraf";
 import { Log } from "../log.js";
-import { MemoryLevelBlockStore } from "@dao-xyz/libp2p-direct-block";
+import { MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey } from "./fixtures/privateKey.js";
 
 describe("Log - GetPow2Refs", function () {
 	let store: MemoryLevelBlockStore;
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("Single log", () => {

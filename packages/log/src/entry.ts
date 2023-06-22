@@ -15,22 +15,21 @@ import {
 	MaybeEncrypted,
 	PublicSignKey,
 	X25519PublicKey,
-	PublicKeyEncryptionResolver,
 	SignatureWithKey,
 	AccessError,
 	Ed25519PublicKey,
 	sha256Base64,
 	randomBytes,
-	sha256Base64Sync,
 	Identity,
-} from "@dao-xyz/peerbit-crypto";
-import { verify } from "@dao-xyz/peerbit-crypto";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+	Keychain,
+	X25519Keypair,
+} from "@peerbit/crypto";
+import { verify } from "@peerbit/crypto";
 import { compare, equals } from "@dao-xyz/uint8arrays";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
-import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
+import { Blocks } from "@peerbit/blocks-interface";
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -60,7 +59,7 @@ export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<
 >;
 export interface EntryEncryption {
 	reciever: EncryptionTemplateMaybeEncrypted;
-	options: PublicKeyEncryptionResolver;
+	keypair: X25519Keypair;
 }
 
 function arrayToHex(arr: Uint8Array): string {
@@ -184,7 +183,7 @@ export class Signatures {
 
 const maybeEncrypt = <Q>(
 	thing: Q,
-	encryption?: EntryEncryption,
+	keypair?: X25519Keypair,
 	reciever?: MaybeEncryptionPublicKey
 ): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
 	const recievers = reciever
@@ -193,13 +192,13 @@ const maybeEncrypt = <Q>(
 			: [reciever]
 		: undefined;
 	if (recievers?.length && recievers?.length > 0) {
-		if (!encryption) {
-			throw new Error("Encrpryption config not initialized");
+		if (!keypair) {
+			throw new Error("Keypair not provided");
 		}
 		return new DecryptedThing<Q>({
 			data: serialize(thing),
 			value: thing,
-		}).encrypt(encryption.options.getEncryptionKeypair, ...recievers);
+		}).encrypt(keypair, ...recievers);
 	}
 	return new DecryptedThing<Q>({
 		data: serialize(thing),
@@ -237,7 +236,7 @@ export class Entry<T>
 
 	createdLocally?: boolean;
 
-	private _encryption?: PublicKeyEncryptionResolver;
+	private _keychain?: Keychain;
 	private _encoding?: Encoding<T>;
 
 	constructor(obj: {
@@ -260,14 +259,12 @@ export class Entry<T>
 	init(
 		props:
 			| {
-					encryption?: PublicKeyEncryptionResolver;
+					keychain?: Keychain;
 					encoding: Encoding<T>;
 			  }
 			| Entry<T>
 	): Entry<T> {
-		const encryption =
-			props instanceof Entry ? props._encryption : props.encryption;
-		this._encryption = encryption;
+		this._keychain = props instanceof Entry ? props._keychain : props.keychain;
 		this._encoding = props instanceof Entry ? props._encoding : props.encoding;
 		return this;
 	}
@@ -284,9 +281,7 @@ export class Entry<T>
 	}
 
 	async getMetadata(): Promise<Metadata> {
-		await this._metadata.decrypt(
-			this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined))
-		);
+		await this._metadata.decrypt(this._keychain);
 		return this.metadata;
 	}
 
@@ -319,9 +314,7 @@ export class Entry<T>
 			return this.payload;
 		}
 
-		await this._payload.decrypt(
-			this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined))
-		);
+		await this._payload.decrypt(this._keychain);
 		return this.payload;
 	}
 
@@ -344,9 +337,7 @@ export class Entry<T>
 	}
 
 	async getNext(): Promise<string[]> {
-		await this._next.decrypt(
-			this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined))
-		);
+		await this._next.decrypt(this._keychain);
 		return this.next;
 	}
 
@@ -375,11 +366,7 @@ export class Entry<T>
 	 */
 	async getSignatures(): Promise<SignatureWithKey[]> {
 		const results = await Promise.allSettled(
-			this._signatures!.signatures.map((x) =>
-				x.decrypt(
-					this._encryption?.getAnyKeypair || (() => Promise.resolve(undefined))
-				)
-			)
+			this._signatures!.signatures.map((x) => x.decrypt(this._keychain))
 		);
 
 		if (logger.level === "debug" || logger.level === "trace") {
@@ -445,7 +432,7 @@ export class Entry<T>
 		); // dont compare hashes because the hash is a function of the other properties
 	}
 
-	async delete(store: BlockStore): Promise<void> {
+	async delete(store: Blocks): Promise<void> {
 		if (!this.hash) {
 			throw new Error("Missing hash");
 		}
@@ -457,7 +444,7 @@ export class Entry<T>
 	}
 
 	static async create<T>(properties: {
-		store: BlockStore;
+		store: Blocks;
 		gid?: string;
 		type?: EntryType;
 		gidSeed?: Uint8Array;
@@ -532,7 +519,7 @@ export class Entry<T>
 
 		const payload = await maybeEncrypt(
 			payloadToSave,
-			properties.encryption,
+			properties.encryption?.keypair,
 			properties.encryption?.reciever.payload
 		);
 
@@ -582,7 +569,7 @@ export class Entry<T>
 				gid,
 				type: properties.type ?? EntryType.APPEND,
 			}),
-			properties.encryption,
+			properties.encryption?.keypair,
 			properties.encryption?.reciever.metadata
 		);
 
@@ -597,7 +584,7 @@ export class Entry<T>
 			new StringArray({
 				arr: next,
 			}),
-			properties.encryption,
+			properties.encryption?.keypair,
 			properties.encryption?.reciever.next
 		);
 
@@ -632,7 +619,7 @@ export class Entry<T>
 				  ];
 			const signatureEncrypted = await maybeEncrypt(
 				signature,
-				properties.encryption,
+				properties.encryption?.keypair,
 				encryptionRecievers
 			);
 			encryptedSignatures.push(signatureEncrypted);
@@ -640,11 +627,6 @@ export class Entry<T>
 
 		entry._signatures = new Signatures({
 			signatures: encryptedSignatures,
-		});
-
-		entry.init({
-			encryption: properties.encryption?.options,
-			encoding: properties.encoding,
 		});
 
 		if (properties.canAppend && !(await properties.canAppend(entry))) {
@@ -663,15 +645,12 @@ export class Entry<T>
 	 * console.log(multihash)
 	 * // "Qm...Foo"
 	 */
-	static async toMultihash<T>(
-		store: BlockStore,
-		entry: Entry<T>
-	): Promise<string> {
+	static async toMultihash<T>(store: Blocks, entry: Entry<T>): Promise<string> {
 		if (entry.hash) {
 			throw new Error("Expected hash to be missing");
 		}
 
-		const result = store.put(await createBlock(serialize(entry), "raw"));
+		const result = store.put(serialize(entry));
 		return result;
 	}
 
@@ -683,16 +662,16 @@ export class Entry<T>
 	 * // { hash: "Zd...Foo", payload: "hello", next: [] }
 	 */
 	static async fromMultihash<T>(
-		store: BlockStore,
+		store: Blocks,
 		hash: string,
 		options?: { timeout?: number; replicate?: boolean }
 	) {
 		if (!hash) throw new Error(`Invalid hash: ${hash}`);
-		const bytes = await store.get<Uint8Array>(hash, options);
+		const bytes = await store.get(hash, options);
 		if (!bytes) {
 			throw new Error("Failed to resolve block: " + hash);
 		}
-		const entry = deserialize(await getBlockValue(bytes), Entry);
+		const entry = deserialize(bytes, Entry);
 		entry.hash = hash;
 		return entry as Entry<T>;
 	}

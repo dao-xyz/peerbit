@@ -1,9 +1,6 @@
 import assert from "assert";
 import { Log } from "../log.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import {
 	signKey,
 	signKey2,
@@ -20,11 +17,11 @@ describe("Log - Heads and Tails", function () {
 
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	let log1: Log<string>,

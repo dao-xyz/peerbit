@@ -1,13 +1,13 @@
 import {
-	PublicKeyEncryptionResolver,
 	SignatureWithKey,
 	randomBytes,
 	sha256Base64Sync,
 	Identity,
-} from "@dao-xyz/peerbit-crypto";
-import type { BlockStore } from "@dao-xyz/libp2p-direct-block";
+	Keychain,
+	X25519Keypair,
+} from "@peerbit/crypto";
 import { Cache } from "@dao-xyz/cache";
-import LocalStore from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@dao-xyz/lazy-level";
 
 import { EntryIndex } from "./entry-index.js";
 import * as LogError from "./log-errors.js";
@@ -28,7 +28,7 @@ import {
 	Timestamp,
 } from "./clock.js";
 
-import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { Encoding, JSON_ENCODING } from "./encoding.js";
 import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
 import { EntryNode, Values } from "./values.js";
@@ -36,32 +36,28 @@ import { Trim, TrimOptions } from "./trim.js";
 import { logger } from "./logger.js";
 import { Change } from "./change.js";
 import { EntryWithRefs } from "./entry-with-refs.js";
+import { Blocks } from "@peerbit/blocks-interface";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 
-export type LogOptions<T> = LogProperties<T> & LogEvents<T>;
-export type ReplicationOptions = {
-	replicator?: (gid: string) => Promise<boolean>;
-	replicators?: () => string[][]; // array of replicators in each shard
+export type LogEvents<T> = {
+	onChange?: (change: Change<T>) => void;
 };
+
+export type MemoryProperties = {
+	cache?: SimpleLevel;
+};
+
 export type LogProperties<T> = {
-	encryption?: PublicKeyEncryptionResolver;
+	keychain?: Keychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
 	sortFn?: Sorting.ISortFunction;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
-	cache?: (name: string) => Promise<LocalStore> | LocalStore;
-	replication?: ReplicationOptions;
 };
 
-export type LogEvents<T> = {
-	onWrite?: (change: Entry<T>) => void;
-	onChange?: (change: Change<T>) => void;
-	onOpen?: () => void;
-	onClose?: () => void;
-	onDrop?: () => void;
-};
+export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 
 const ENTRY_CACHE_MAX = 1000; // TODO as param
 
@@ -73,19 +69,22 @@ export type AppendOptions<T> = {
 	signers?: ((
 		data: Uint8Array
 	) => Promise<SignatureWithKey> | SignatureWithKey)[];
-	reciever?: EncryptionTemplateMaybeEncrypted;
 	onGidsShadowed?: (gids: string[]) => void;
 	trim?: TrimOptions;
 	timestamp?: Timestamp;
+	encryption?: {
+		keypair: X25519Keypair;
+		reciever: EncryptionTemplateMaybeEncrypted;
+	};
 };
 
 @variant(0)
 export class Log<T> {
-	@field({ type: option(fixedArray("u8", 32)) })
-	private _id?: Uint8Array;
+	@field({ type: fixedArray("u8", 32) })
+	private _id: Uint8Array;
 
 	private _sortFn: Sorting.ISortFunction;
-	private _storage: BlockStore;
+	private _storage: Blocks;
 	private _hlc: HLC;
 
 	// Identity
@@ -98,27 +97,21 @@ export class Log<T> {
 
 	// Index of all next pointers in this log
 	private _nextsIndex: Map<string, Set<string>>;
-	private _encryption?: PublicKeyEncryptionResolver;
+	private _keychain?: Keychain;
 	private _encoding: Encoding<T>;
 	private _trim: Trim<T>;
 	private _entryCache: Cache<Entry<T>>;
-
-	private _replication?: ReplicationOptions;
 
 	private _canAppendSetup?: CanAppend<T>;
 	private _canAppend?: CanAppend<T>;
 	private _onChangeSetup?: (change: Change<T>) => void;
 	private _onChange?: (change: Change<T>) => void;
-	private _onWrite?: (entry: Entry<T>) => void;
-	private _onClose?: () => void;
-	private _onDrop?: () => void;
-	private _onOpen?: () => void;
 	private _closed = true;
 
 	private _joining: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 
-	constructor(properties: { id: Uint8Array } = { id: randomBytes(32) }) {
-		this._id = properties.id;
+	constructor(properties?: { id?: Uint8Array }) {
+		this._id = properties?.id || randomBytes(32);
 	}
 
 	async setup(options?: {
@@ -135,11 +128,7 @@ export class Log<T> {
 		this._onChangeSetup = options?.onChange;
 	}
 
-	async open(
-		store: BlockStore,
-		identity: Identity,
-		options: LogOptions<T> = {}
-	) {
+	async open(store: Blocks, identity: Identity, options: LogOptions<T> = {}) {
 		if (!isDefined(store)) {
 			throw LogError.BlockStoreNotDefinedError();
 		}
@@ -148,23 +137,8 @@ export class Log<T> {
 			throw new Error("Identity is required");
 		}
 		//
-		const {
-			encoding,
-			trim,
-			encryption,
-			cache,
-			onWrite,
-			onClose,
-			onOpen,
-			onDrop,
-			replication,
-		} = options;
+		const { encoding, trim, keychain, cache } = options;
 		let { sortFn } = options;
-
-		this._onWrite = onWrite;
-		this._onOpen = onOpen;
-		this._onClose = onClose;
-		this._onDrop = onDrop;
 
 		if (!isDefined(sortFn)) {
 			sortFn = LastWriteWins;
@@ -181,9 +155,7 @@ export class Log<T> {
 		this._identity = identity;
 
 		// encoder/decoder
-		this._encryption = encryption;
-
-		this._replication = replication;
+		this._keychain = keychain;
 
 		// Clock
 		this._hlc = new HLC();
@@ -251,12 +223,7 @@ export class Log<T> {
 			await this._onChangeSetup?.(change);
 		};
 
-		await this._onOpen?.();
 		this._closed = false;
-	}
-
-	get replication() {
-		return this._replication;
 	}
 
 	private _idString: string | undefined;
@@ -275,7 +242,7 @@ export class Log<T> {
 	get id() {
 		return this._id;
 	}
-	set id(id: Uint8Array | undefined) {
+	set id(id: Uint8Array) {
 		if (this.closed === false) {
 			throw new Error("Can not change id after open");
 		}
@@ -366,7 +333,7 @@ export class Log<T> {
 		return this._identity;
 	}
 
-	get storage(): BlockStore {
+	get storage(): Blocks {
 		return this._storage;
 	}
 
@@ -378,8 +345,8 @@ export class Log<T> {
 		return this._entryIndex;
 	}
 
-	get encryption() {
-		return this._encryption;
+	get keychain() {
+		return this._keychain;
 	}
 
 	get encoding() {
@@ -551,12 +518,6 @@ export class Log<T> {
 		data: T,
 		options: AppendOptions<T> = {}
 	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
-		if (options.reciever && !this._encryption) {
-			throw new Error(
-				"Message is intended to be encrypted but no encryption methods are provided for the log"
-			);
-		}
-
 		// Update the clock (find the latest clock)
 		if (options.nexts) {
 			for (const n of options.nexts) {
@@ -588,11 +549,11 @@ export class Log<T> {
 			encoding: this._encoding,
 			next: nexts,
 			gidSeed: options.gidSeed,
-			encryption: options.reciever
+			encryption: options.encryption
 				? {
-						options: this._encryption as PublicKeyEncryptionResolver,
+						keypair: options.encryption.keypair,
 						reciever: {
-							...options.reciever,
+							...options.encryption.reciever,
 						},
 				  }
 				: undefined,
@@ -643,7 +604,7 @@ export class Log<T> {
 			options.onGidsShadowed([...removedGids]);
 		}
 
-		entry.init({ encoding: this._encoding, encryption: this._encryption });
+		entry.init({ encoding: this._encoding, keychain: this._keychain });
 		//	console.log('put entry', entry.hash, (await this._entryIndex._index.size));
 
 		const trimmed = await this.trim(options?.trim);
@@ -658,7 +619,6 @@ export class Log<T> {
 		};
 
 		await this._headsIndex.updateHeadsCache(changes); // * here
-		await this._onWrite?.(entry);
 		await this._onChange?.(changes);
 		return { entry, removed };
 	}
@@ -1141,7 +1101,6 @@ export class Log<T> {
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		await this._entryCache?.clear();
 		await this._headsIndex?.close();
-		await this._onClose?.();
 	}
 
 	async drop() {
@@ -1150,7 +1109,6 @@ export class Log<T> {
 		await this.deleteRecursively(await this.getHeads()); // TODO can multiple store have exact same log entry? no because GIDs are generated randomly
 		await this._headsIndex?.drop();
 		await this._entryCache?.clear();
-		await this._onDrop?.();
 	}
 	async load(
 		opts: ({ fetchEntryTimeout?: number } & (
@@ -1193,7 +1151,7 @@ export class Log<T> {
 	}
 
 	static async fromEntry<T>(
-		store: BlockStore,
+		store: Blocks,
 		identity: Identity,
 		entryOrHash: string | string[] | Entry<T> | Entry<T>[],
 		options: {

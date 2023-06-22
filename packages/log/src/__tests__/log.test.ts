@@ -2,11 +2,8 @@ import assert from "assert";
 import { Entry } from "../entry.js";
 import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { compare } from "@dao-xyz/uint8arrays";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 
@@ -14,11 +11,11 @@ describe("Log", function () {
 	let store: BlockStore;
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("constructor", () => {

@@ -13,22 +13,9 @@ import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import { randomBytes } from "./random.js";
+import { Keychain } from "./keychain.js";
 
 const NONCE_LENGTH = 24;
-
-export interface PublicKeyEncryptionResolver {
-	getEncryptionKeypair: GetEncryptionKeypair;
-	getAnyKeypair: GetAnyKeypair;
-}
-export type GetAnyKeypair =
-	| ((
-			publicKey: X25519PublicKey[]
-	  ) => Promise<{ index: number; keypair: X25519Keypair } | undefined>)
-	| X25519Keypair;
-export type GetEncryptionKeypair =
-	| (() => X25519Keypair)
-	| (() => Promise<X25519Keypair>)
-	| X25519Keypair;
 
 @variant(0)
 export abstract class MaybeEncrypted<T> {
@@ -40,7 +27,7 @@ export abstract class MaybeEncrypted<T> {
 	}
 
 	decrypt(
-		keyResolver?: GetAnyKeypair
+		keyOrKeychain?: Keychain | X25519Keypair
 	): Promise<DecryptedThing<T>> | DecryptedThing<T> {
 		throw new Error("Not implemented");
 	}
@@ -83,7 +70,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 	}
 
 	async encrypt(
-		keyResolver: GetEncryptionKeypair,
+		x25519Keypair: X25519Keypair,
 		...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
 	): Promise<EncryptedThing<T>> {
 		const bytes = serialize(this);
@@ -91,12 +78,6 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 		const nonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
 		const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
-		let encryptionKeypair =
-			typeof keyResolver === "function" ? await keyResolver() : keyResolver;
-		if (encryptionKeypair instanceof Ed25519Keypair) {
-			encryptionKeypair = await X25519Keypair.from(encryptionKeypair);
-		}
-		const x25519Keypair = encryptionKeypair as X25519Keypair;
 		const recieverX25519PublicKeys = await Promise.all(
 			recieverPublicKeys.map((key) => {
 				if (key instanceof Ed25519PublicKey) {
@@ -285,7 +266,9 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 		return this._decrypted;
 	}
 
-	async decrypt(keyResolver?: GetAnyKeypair): Promise<DecryptedThing<T>> {
+	async decrypt(
+		keyResolver?: Keychain | X25519Keypair
+	): Promise<DecryptedThing<T>> {
 		if (this._decrypted) {
 			return this._decrypted;
 		}
@@ -295,9 +278,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 		}
 
 		// We only need to open with one of the keys
-		let key:
-			| { index: number; keypair: X25519Keypair | Ed25519Keypair }
-			| undefined;
+		let key: { index: number; keypair: X25519Keypair } | undefined;
 		if (keyResolver instanceof X25519Keypair) {
 			for (const [i, k] of this._envelope._ks.entries()) {
 				if (k._recieverPublicKey.equals(keyResolver.publicKey)) {
@@ -308,9 +289,16 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 				}
 			}
 		} else {
-			key = await keyResolver(
-				this._envelope._ks.map((k) => k._recieverPublicKey)
-			);
+			for (const [i, k] of this._envelope._ks.entries()) {
+				const exported = await keyResolver.exportByKey(k._recieverPublicKey);
+				if (exported) {
+					key = {
+						index: i,
+						keypair: exported,
+					};
+					break;
+				}
+			}
 		}
 
 		if (key) {

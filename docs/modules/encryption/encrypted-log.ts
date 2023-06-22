@@ -1,11 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { Log } from "@dao-xyz/peerbit-log";
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Program } from "@peerbit/program";
+import { Log } from "@peerbit/log";
+import { Peerbit } from "peerbit";
 import { waitForResolved } from "../../../packages/utils/time/src";
 
 // This class extends Program which allows it to be replicated amongst peers
-@variant("xxxsstore")
+@variant("simple_store")
 class SimpleStore extends Program {
 	@field({ type: Log })
 	log: Log<string>; // Documents<?> provide document store functionality around your Posts

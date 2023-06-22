@@ -1,5 +1,5 @@
 {
-	"name": "@dao-xyz/peerbit-logger",
+	"name": "@peerbit/logger",
 	"version": "1.0.0",
 	"description": "Logging utils",
 	"type": "module",

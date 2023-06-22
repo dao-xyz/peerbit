@@ -1,7 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Observer, Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import { Documents } from "@dao-xyz/peerbit-document";
+import { Observer, Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
+import { Documents } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 
 class Message {
@@ -83,7 +83,7 @@ await store.messages.put(message, {
 const store2 = await client2.open<DocumentStore>(store.address, {
 	role: new Observer(),
 });
-await store2.waitFor(client.libp2p);
+await store2.waitFor(client.libp2p.peerId);
 
 const messageRetrieved = await store2.messages.index.get(message.id);
 

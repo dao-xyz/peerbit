@@ -1,4 +1,4 @@
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Peerbit } from "peerbit";
 import type { Multiaddr } from "@multiformats/multiaddr";
 
 const peerA = await Peerbit.create();

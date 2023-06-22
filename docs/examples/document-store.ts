@@ -12,13 +12,9 @@
 
 /// [imports]
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import {
-	DocumentIndex,
-	Documents,
-	SearchRequest,
-} from "@dao-xyz/peerbit-document";
+import { Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 /// [imports]
 
@@ -81,8 +77,8 @@ await peer2.dial(peer);
 
 const store2 = await peer2.open<PostsDB>(store.address);
 
-// Wait for peer1 to be reachable for query. This line only necessary when testing locally
-await store.waitFor(peer2.libp2p);
+// Wait for peer1 to be reachable for query
+await store.waitFor(peer2.libp2p.peerId);
 
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({

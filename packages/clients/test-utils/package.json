@@ -1,0 +1,46 @@
+{
+	"name": "@peerbit/test-utils",
+	"version": "1.0.4",
+	"description": "Test utils for Peerbit",
+	"type": "module",
+	"sideEffects": false,
+	"module": "./lib/esm/index.js",
+	"types": "./lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json",
+		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"LICENSE"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"@peerbit/libp2p-test-utils": "1.0.4",
+		"peerbit": "1.0.4"
+	},
+	"devDependencies": {
+		"@peerbit/time": "1.0.0"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	]
+}

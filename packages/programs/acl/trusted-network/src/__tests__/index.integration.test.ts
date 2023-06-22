@@ -1,4 +1,4 @@
-import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@peerbit/test-utils";
 import {
 	IdentityRelation,
 	createIdentityGraphStore,
@@ -8,21 +8,16 @@ import {
 	TrustedNetwork,
 	IdentityGraph,
 } from "..";
-import { waitFor } from "@dao-xyz/peerbit-time";
-import { AccessError, Ed25519Keypair, Identity } from "@dao-xyz/peerbit-crypto";
-import { Secp256k1PublicKey } from "@dao-xyz/peerbit-crypto";
-import { Entry } from "@dao-xyz/peerbit-log";
+import { waitFor, waitForResolved } from "@peerbit/time";
+import { AccessError, Ed25519Keypair, Identity } from "@peerbit/crypto";
+import { Secp256k1PublicKey } from "@peerbit/crypto";
+import { Entry } from "@peerbit/log";
 import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
-import {
-	Program,
-	Replicator,
-	SubscriptionType,
-} from "@dao-xyz/peerbit-program";
-import { Documents, SearchRequest, Operation } from "@dao-xyz/peerbit-document";
-import { v4 as uuid } from "uuid";
-import { waitForPeers as waitForPeersBlock } from "@dao-xyz/libp2p-direct-stream";
-import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
+import { Program } from "@peerbit/program";
+import { Documents, SearchRequest, Operation } from "@peerbit/document";
+import { waitForPeers as waitForPeersBlock } from "@peerbit/stream";
+import { waitForSubscribers } from "@peerbit/pubsub";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -48,27 +43,6 @@ describe("index", () => {
 	describe("identity-graph", () => {
 		let session: LSession, identites: Identity[], programs: Program[];
 
-		const init = async (
-			store: Program,
-			i: number,
-			options: {
-				topic: string;
-				role?: SubscriptionType;
-			}
-		) => {
-			store.init &&
-				(await store.init(session.peers[i], {
-					...options,
-					log: {
-						replication: {
-							replicators: () => [],
-						},
-					},
-					role: options.role || new Replicator(),
-				}));
-			programs.push(store);
-			return store;
-		};
 		beforeAll(async () => {
 			session = await LSession.connected(1);
 			identites = [];
@@ -95,7 +69,7 @@ describe("index", () => {
 			const store = new AnyCanAppendIdentityGraph({
 				relationGraph: createIdentityGraphStore(),
 			});
-			await init(store, 0, { topic: uuid() });
+			await store.open(session.peers[0]);
 
 			const ab = new IdentityRelation({
 				to: b,
@@ -158,8 +132,7 @@ describe("index", () => {
 			const store = new AnyCanAppendIdentityGraph({
 				relationGraph: createIdentityGraphStore(),
 			});
-			const topic = uuid();
-			await init(store, 0, { topic });
+			await store.open(session.peers[0]);
 
 			const ab = new IdentityRelation({
 				to: b,
@@ -179,47 +152,13 @@ describe("index", () => {
 	});
 
 	describe("TrustedNetwork", () => {
-		let session: LSession, programs: Program[];
-
-		let replicators: string[][];
-
-		const init = async (
-			store: Program,
-			i: number,
-			options: {
-				topic: string;
-				role?: SubscriptionType;
-			}
-		) => {
-			store.init &&
-				(await store.init(session.peers[i], {
-					...options,
-					log: {
-						replication: {
-							replicators: () => replicators,
-						},
-					},
-					role: options.role ?? new Replicator(),
-				}));
-			programs.push(store);
-			return store;
-		};
-
+		let session: LSession;
 		beforeAll(async () => {
 			session = await LSession.connected(4);
-			await waitForPeersBlock(...session.peers.map((x) => x.services.blocks));
 		});
-		beforeEach(async () => {
-			programs = [];
+		beforeEach(async () => {});
 
-			replicators = session.peers.map((x) => [
-				x.services.pubsub.publicKey.hashcode(),
-			]);
-		});
-
-		afterEach(async () => {
-			await Promise.all(programs.map((p) => p.close()));
-		});
+		afterEach(async () => {});
 
 		afterAll(async () => {
 			await session.stop();
@@ -229,53 +168,49 @@ describe("index", () => {
 			const key = (await Ed25519Keypair.create()).publicKey;
 			const t1 = new TrustedNetwork({ rootTrust: key });
 			const t2 = new TrustedNetwork({ rootTrust: key });
-			await t1.initializeIds();
-			await t2.initializeIds();
+
 			expect(serialize(t1)).toEqual(serialize(t2));
 		});
 
 		it("trusted by chain", async () => {
-			// TODO make this test in parts instead (very bloaty atm)
-			const topic = uuid();
-
 			const l0a = new TrustedNetwork({
 				rootTrust: session.peers[0].peerId,
 			});
-			await init(l0a, 0, { topic });
+			await l0a.open(session.peers[0]);
 
-			let l0b: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[1].services.blocks,
-				l0a.address!
-			)) as any;
-			await init(l0b, 1, { topic });
-
-			let l0c: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[2].services.blocks,
-				l0a.address!
-			)) as any;
-			await init(l0c, 2, { topic });
-
-			let l0d: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[3].services.blocks,
-				l0a.address!
-			)) as any;
-			await init(l0d, 3, { topic });
-
-			await waitForSubscribers(
-				session.peers[2],
-				[session.peers[0], session.peers[1]],
-				l0b.trustGraph.index._query.rpcTopic
+			await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
+			let l0b: TrustedNetwork = await TrustedNetwork.open(
+				l0a.address!,
+				session.peers[1]
 			);
+
+			await session.peers[2].services.blocks.waitFor(session.peers[0].peerId);
+			let l0c: TrustedNetwork = await TrustedNetwork.open(
+				l0a.address!,
+				session.peers[2]
+			);
+
+			await session.peers[3].services.blocks.waitFor(session.peers[0].peerId);
+			let l0d: TrustedNetwork = await TrustedNetwork.open(
+				l0a.address!,
+				session.peers[3]
+			);
+
+			await l0c.waitFor(session.peers[0].peerId, session.peers[1].peerId);
 
 			await l0a.add(session.peers[1].peerId);
 
-			await l0b.trustGraph.log.join(await l0a.trustGraph.log.getHeads());
+			await l0b.trustGraph.log.log.join(
+				await l0a.trustGraph.log.log.getHeads()
+			);
 
-			await waitFor(() => l0b.trustGraph.index.size == 1);
+			await waitForResolved(() => expect(l0b.trustGraph.index.size).toEqual(1));
 
 			await l0b.add(session.peers[2].peerId); // Will only work if peer2 is trusted
 
-			await l0a.trustGraph.log.join(await l0b.trustGraph.log.getHeads());
+			await l0a.trustGraph.log.log.join(
+				await l0b.trustGraph.log.log.getHeads()
+			);
 
 			await waitFor(() => l0b.trustGraph.index.size == 2);
 			await waitFor(() => l0a.trustGraph.index.size == 2);
@@ -333,8 +268,7 @@ describe("index", () => {
 			const l0a = new TrustedNetwork({
 				rootTrust: session.peers[0].peerId,
 			});
-			await init(l0a, 0, { topic: uuid() });
-			replicators = [];
+			await l0a.open(session.peers[0]);
 
 			await l0a.add(session.peers[1].peerId);
 			expect(
@@ -349,8 +283,7 @@ describe("index", () => {
 			let l0a = new TrustedNetwork({
 				rootTrust: session.peers[0].peerId,
 			});
-			await init(l0a, 0, { topic: uuid() });
-			replicators = [];
+			await l0a.open(session.peers[0]);
 
 			expect(
 				l0a.trustGraph.put(
@@ -366,21 +299,13 @@ describe("index", () => {
 			let l0a = new TrustedNetwork({
 				rootTrust: session.peers[0].peerId,
 			});
-			const topic = uuid();
 
-			await init(l0a, 0, { topic });
+			await l0a.open(session.peers[0]);
 
-			let l0b: TrustedNetwork = (await TrustedNetwork.load(
-				session.peers[1].services.blocks,
-				l0a.address!
-			)) as any;
-			await init(l0b, 1, { topic });
-
-			replicators = [
-				[session.peers[0].services.pubsub.publicKey.hashcode()],
-				[session.peers[1].services.pubsub.publicKey.hashcode()],
-			];
-
+			let l0b: TrustedNetwork = await TrustedNetwork.open(
+				l0a.address!,
+				session.peers[1]
+			);
 			// Can not append peer3Key since its not trusted by the root
 			await expect(l0b.add(session.peers[2].peerId)).rejects.toBeInstanceOf(
 				AccessError

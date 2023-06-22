@@ -1,9 +1,6 @@
 import { Log } from "../log.js";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { EntryType } from "../entry.js";
 
 describe("Log - Append", function () {
@@ -22,11 +19,11 @@ describe("Log - Append", function () {
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
 		signKey = await Ed25519Keypair.create();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("append one", () => {

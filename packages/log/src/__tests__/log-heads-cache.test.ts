@@ -4,14 +4,10 @@ import {
 	HeadsCacheToSerialize,
 } from "../heads-cache.js";
 import { default as LazyLevel } from "@dao-xyz/lazy-level";
-import { waitFor } from "@dao-xyz/peerbit-time";
 import { AbstractLevel } from "abstract-level";
 import { deserialize } from "@dao-xyz/borsh";
-import { createStore } from "@dao-xyz/peerbit-test-utils";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { createStore } from "@peerbit/test-utils";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
@@ -62,16 +58,16 @@ describe(`load`, function () {
 	beforeEach(async () => {
 		identityStore = await createStore();
 		blockStore = new MemoryLevelBlockStore();
-		await blockStore.open();
+		await blockStore.start();
 	});
 
 	afterEach(async () => {
 		await log?.close();
-		await blockStore?.close();
+		await blockStore?.stop();
 		await identityStore?.close();
 	});
 
-	const init = async (cache: LazyLevel, onWrite: () => void) => {
+	const init = async (cache: LazyLevel) => {
 		log = new Log();
 		await log.open(
 			blockStore,
@@ -80,15 +76,14 @@ describe(`load`, function () {
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
-				cache: () => Promise.resolve(cache),
-				onWrite: onWrite,
+				cache: cache,
 			}
 		);
 	};
 
 	it("updates cached heads on write one head", async () => {
 		const level = new LazyLevel(await createStore());
-		await init(level, () => {});
+		await init(level);
 		const data = { data: 12345 };
 		const { entry: e1 } = await log.append(data);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [[e1.hash]]);
@@ -101,7 +96,7 @@ describe(`load`, function () {
 
 	it("updates cached heads on write multiple heads", async () => {
 		const level = new LazyLevel(await createStore());
-		await init(level, () => {});
+		await init(level);
 		const data = { data: 12345 };
 		const { entry: e1 } = await log.append(data);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [[e1.hash]]);
@@ -116,23 +111,17 @@ describe(`load`, function () {
 	});
 
 	it("closes and loads", async () => {
-		let done = false;
 		const level = new LazyLevel(await createStore());
-		await init(level, () => {
-			done = true;
-		});
+		await init(level);
 
 		const data = { data: 12345 };
 		await log.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
 
-		await waitFor(() => done);
 		expect(log.closed).toBeFalse();
 		await log.close();
-		await init(level, () => {
-			done = true;
-		});
+		await init(level);
 		expect(log.closed).toBeFalse();
 		await log.load();
 		expect(log.closed).toBeFalse();
@@ -142,39 +131,28 @@ describe(`load`, function () {
 	it("loads when missing cache", async () => {
 		const level = await createStore();
 		const cache = new LazyLevel(level);
-		let done = false;
-		await init(cache, () => {
-			done = true;
-		});
+		await init(cache);
 
 		const data = { data: 12345 };
 		await log.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
 
-		await waitFor(() => done);
 		await log.close();
 		await cache.open();
 		await cache.del(log.headsIndex.headsCache!.headsPath); // delete head from cache, so with next load, it should not exist
-		await init(cache, () => {
-			done = true;
-		});
+		await init(cache);
 		await log.load();
 		expect(log.values.length).toEqual(0);
 	});
 
 	it("loads when corrupt cache", async () => {
 		const cache = new LazyLevel(await createStore());
-		let done = false;
-		await init(cache, () => {
-			done = true;
-		});
+		await init(cache);
 		const data = { data: 12345 };
 		await log.append(data).then((entry) => {
 			expect(entry.entry).toBeInstanceOf(Entry);
 		});
-
-		await waitFor(() => done);
 
 		await log.idle();
 		const headsPath = (
@@ -182,21 +160,18 @@ describe(`load`, function () {
 				?.get(log.headsIndex.headsCache?.headsPath)
 				.then((bytes) => bytes && deserialize(bytes, CachePath))
 		)?.path!;
-		await log.headsIndex.headsCache?.cache?.set(
+		await log.headsIndex.headsCache?.cache?.put(
 			headsPath,
 			new Uint8Array([255])
 		);
-		await log.headsIndex.headsCache?.cache?.idle();
+		await log.headsIndex.headsCache?.cache?.idle?.();
 		await expect(() => log.load()).rejects.toThrowError();
 	});
 
 	it("will respect deleted heads", async () => {
 		const cache = new LazyLevel(await createStore());
-		let done = false;
 
-		await init(cache, () => {
-			done = true;
-		});
+		await init(cache);
 
 		const { entry: e1 } = await log.append({ data: 1 }, { nexts: [] });
 		const { entry: e2 } = await log.append({ data: 2 }, { nexts: [] });
@@ -269,7 +244,7 @@ describe(`load`, function () {
 				sign: async (data: Uint8Array) => await signKey.sign(data),
 			},
 			{
-				cache: () => Promise.resolve(cache),
+				cache,
 				trim: {
 					type: "length",
 					to: 3,
@@ -295,7 +270,7 @@ describe(`load`, function () {
 
 	it("resets heads on load", async () => {
 		const cache = new LazyLevel(await createStore());
-		await init(cache, () => {});
+		await init(cache);
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
 			entries.push((await log.append({ data: i }, { nexts: [] })).entry);
@@ -311,7 +286,7 @@ describe(`load`, function () {
 		);
 
 		await log.close();
-		await init(cache, () => {});
+		await init(cache);
 		await log.load();
 
 		// Make sure that all hashes are in the first "file", since its reseted
@@ -322,7 +297,7 @@ describe(`load`, function () {
 
 	it("can cache heads concurrently", async () => {
 		const cache = new LazyLevel(await createStore());
-		await init(cache, () => {});
+		await init(cache);
 		await log.load();
 		const entries: Promise<Entry<any>>[] = [];
 		let entryCount = 100;
@@ -338,10 +313,7 @@ describe(`load`, function () {
 
 	it("resets heads when referencing all", async () => {
 		const cache = new LazyLevel(await createStore());
-		let done = false;
-		await init(cache, () => {
-			done = true;
-		});
+		await init(cache);
 
 		await log.load();
 		const entries: Entry<any>[] = [];
@@ -357,13 +329,13 @@ describe(`load`, function () {
 
 	it("will load heads on write", async () => {
 		const cache = new LazyLevel(await createStore());
-		await init(cache, () => {});
+		await init(cache);
 
 		await log.append({ data: 1 });
 		expect(log.values.length).toEqual(1);
 		await log.close();
 
-		await init(cache, () => {});
+		await init(cache);
 		expect(log.values.length).toEqual(0);
 		await log.append({ data: 2 });
 		expect(log.values.length).toEqual(2);

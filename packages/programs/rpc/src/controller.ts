@@ -8,29 +8,25 @@ import {
 import {
 	DecryptedThing,
 	MaybeEncrypted,
-	MaybeSigned,
 	PublicSignKey,
 	toBase64,
-	Identity,
 	X25519PublicKey,
-} from "@dao-xyz/peerbit-crypto";
-import { AccessError, decryptVerifyInto } from "@dao-xyz/peerbit-crypto";
+} from "@peerbit/crypto";
+import { AccessError } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
 import {
 	AbstractProgram,
 	Address,
-	ComposableProgram,
 	ProgramInitializationOptions,
-	Replicator,
-} from "@dao-xyz/peerbit-program";
-import { X25519Keypair } from "@dao-xyz/peerbit-crypto";
-import {
-	PeerIds,
-	PubSubData,
-	waitForSubscribers,
-} from "@dao-xyz/libp2p-direct-sub";
-import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
+} from "@peerbit/program";
+
+import { X25519Keypair } from "@peerbit/crypto";
+import { PubSubData } from "@peerbit/pubsub-interface";
+import { Peerbit } from "@peerbit/interface";
+import { ComposableProgram } from "@peerbit/program";
+import { DataMessage } from "@peerbit/stream-interface";
+import { PublishOptions as PubSubPublishOptions } from "@peerbit/pubsub-interface";
 
 export type SearchContext = (() => Address) | AbstractProgram;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
@@ -40,7 +36,8 @@ export type RPCSetupOptions<Q, R> = {
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
 	canRead?: CanRead;
-	responseHandler: ResponseHandler<Q, R>;
+	responseHandler?: ResponseHandler<Q, R>;
+	subscriptionData?: Uint8Array;
 };
 export type QueryContext = {
 	from?: PublicSignKey;
@@ -55,174 +52,138 @@ export type ResponseHandler<Q, R> = (
 export class RPC<Q, R> extends ComposableProgram {
 	canRead: CanRead;
 
-	private _subscribedResponses = false;
-	private _subscribedRequests = false;
-	private _onRequestBinded: (evt: CustomEvent<PubSubData>) => any;
-	private _onResponseBinded: (evt: CustomEvent<PubSubData>) => any;
-	private _responseHandler: ResponseHandler<Q, (R | undefined) | R>;
-	private _responseResolver: Map<string, (request: ResponseV0) => any>;
+	private _subscribed = false;
+	private _responseHandler?: ResponseHandler<Q, (R | undefined) | R>;
+	private _responseResolver: Map<
+		string,
+		(properties: { response: ResponseV0; message: DataMessage }) => any
+	>;
 	private _requestType: AbstractType<Q> | Uint8ArrayConstructor;
 	private _responseType: AbstractType<R>;
 	private _rpcTopic: string | undefined;
+	private _onMessageBinded: ((arg: any) => any) | undefined = undefined;
+	private _subscriptionMetaData: Uint8Array | undefined;
 
-	async init(
-		libp2p: Libp2pExtended,
-		options: ProgramInitializationOptions
-	): Promise<this> {
-		await super.init(libp2p, options);
-		if (this.role instanceof Replicator) {
-			await this._subscribeRequests();
-		}
-		return this;
-	}
-
+	private _keypair: X25519Keypair;
 	public async setup(options: RPCSetupOptions<Q, R>) {
 		this._rpcTopic = options.topic ?? this._rpcTopic;
 		this._responseHandler = options.responseHandler;
 		this._requestType = options.queryType;
 		this._responseType = options.responseType;
 		this._responseResolver = new Map();
+		this._subscriptionMetaData = options.subscriptionData;
 		this.canRead = options.canRead || (() => Promise.resolve(true));
 	}
 
+	async open(
+		transport: Peerbit,
+		options: ProgramInitializationOptions
+	): Promise<this> {
+		this._keypair = await X25519Keypair.create();
+		await super.open(transport, options);
+		await this._subscribe();
+		return this;
+	}
+
 	public async close(): Promise<boolean> {
-		if (this._subscribedResponses) {
-			await this.libp2p.services.pubsub.unsubscribe(this.rpcTopic);
-			await this.libp2p.services.pubsub.removeEventListener(
+		if (this._subscribed) {
+			await this.node.services.pubsub.unsubscribe(this.rpcTopic);
+			await this.node.services.pubsub.removeEventListener(
 				"data",
-				this._onRequestBinded
+				this._onMessage
 			);
-			this._subscribedResponses = false;
+			this._subscribed = false;
 		}
 
-		if (this._subscribedRequests) {
-			this._responseResolver = undefined as any;
-			await this.libp2p.services.pubsub.unsubscribe(this.rpcTopic);
-			await this.libp2p.services.pubsub.removeEventListener(
-				"data",
-				this._onResponseBinded
-			);
-			this._subscribedRequests = false;
-		}
 		return super.close();
 	}
 
-	private async _subscribeRequests(): Promise<void> {
-		if (this._subscribedRequests) {
-			return;
-		}
-
-		this._onRequestBinded = this._onRequest.bind(this);
-		this.libp2p.services.pubsub.addEventListener("data", this._onRequestBinded);
-		await this.libp2p.services.pubsub.subscribe(this.rpcTopic);
-		logger.debug("subscribing to query topic (requests): " + this.rpcTopic);
-		this._subscribedRequests = true;
-	}
-
 	private _subscribing: Promise<void>;
-	private async _subscribeResponses(): Promise<void> {
+	private async _subscribe(): Promise<void> {
 		await this._subscribing;
-		if (this._subscribedResponses) {
+		if (this._subscribed) {
 			return;
 		}
-		this._subscribedResponses = true;
-		this._subscribing = this.libp2p.services.pubsub
-			.subscribe(this.rpcTopic)
+		this._subscribed = true;
+		this._onMessageBinded = this._onMessageBinded || this._onMessage.bind(this);
+		this._subscribing = this.node.services.pubsub
+			.subscribe(this.rpcTopic, { data: this._subscriptionMetaData })
 			.then(() => {
-				this._onResponseBinded = this._onResponse.bind(this);
-				this.libp2p.services.pubsub.addEventListener(
+				this.node.services.pubsub.addEventListener(
 					"data",
-					this._onResponseBinded
+					this._onMessageBinded!
 				);
 			});
+
+		await this.node.services.pubsub.requestSubscribers(this.rpcTopic);
+
 		await this._subscribing;
 		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 	}
 
-	async _onRequest(evt: CustomEvent<PubSubData>): Promise<void> {
-		const message = evt.detail;
+	async _onMessage(
+		evt: CustomEvent<{ data: PubSubData; message: DataMessage }>
+	): Promise<void> {
+		const { data, message } = evt.detail;
 
-		if (message?.topics.find((x) => x === this.rpcTopic) != null) {
+		if (data?.topics.find((x) => x === this.rpcTopic) != null) {
 			try {
-				const request = deserialize(message.data, RPCMessage);
-				if (request instanceof RequestV0) {
-					const maybeEncrypted = deserialize<MaybeEncrypted<MaybeSigned<any>>>(
-						request.request,
-						MaybeEncrypted
-					);
-					const decrypted = await maybeEncrypted.decrypt(
-						this.encryption?.getAnyKeypair
-					);
-					const maybeSigned = decrypted.getValue(MaybeSigned);
-					if (!(await maybeSigned.verify())) {
+				const rpcMessage = deserialize(data.data, RPCMessage);
+				if (rpcMessage instanceof RequestV0 && this._responseHandler) {
+					const maybeEncrypted = rpcMessage.request;
+					const decrypted = await maybeEncrypted.decrypt(this.node.keychain);
+
+					if (!(await this.canRead(message.sender))) {
 						throw new AccessError();
 					}
 
-					if (!(await this.canRead(maybeSigned.signature?.publicKey))) {
-						throw new AccessError();
-					}
+					const response = await this._responseHandler(
+						decrypted.getValue(this._requestType),
+						{
+							address: this.rpcTopic,
+							from: message.sender,
+						}
+					);
 
-					const requestData =
-						this._requestType === Uint8Array
-							? (maybeSigned.data as Q)
-							: deserialize(
-									maybeSigned.data,
-									this._requestType as AbstractType<Q>
-							  );
-
-					const response = await this._responseHandler(requestData, {
-						address: this.rpcTopic,
-						from: maybeSigned.signature!.publicKey,
-					});
-
-					if (response && request.respondTo) {
-						const encryption = this.encryption || {
-							getEncryptionKeypair: () => X25519Keypair.create(),
-						};
-
+					if (response && rpcMessage.respondTo) {
 						// send query and wait for replies in a generator like behaviour
 						const serializedResponse = serialize(response);
-						let maybeSignedMessage = new MaybeSigned({
-							data: serializedResponse,
-						});
 
 						// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
 						// with pubsub with a certain reciever. If we use (this.identity) we are going to use an identity
 						// that is now known in the .pubsub network, hence the message might not be delivired if we
 						// send with { to: [RECIEVER] } param
-						maybeSignedMessage = await maybeSignedMessage.sign(
-							this.libp2p.services.pubsub.sign.bind(this.libp2p.services.pubsub)
-						);
 
-						const decryptedMessage = new DecryptedThing<
-							MaybeSigned<Uint8Array>
-						>({
-							data: serialize(maybeSignedMessage),
+						const decryptedMessage = new DecryptedThing<Uint8Array>({
+							data: serializedResponse,
 						});
-						let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> =
+						let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> =
 							decryptedMessage;
 
 						maybeEncryptedMessage = await decryptedMessage.encrypt(
-							encryption.getEncryptionKeypair,
-							request.respondTo
+							this._keypair,
+							rpcMessage.respondTo
 						);
 
-						await this.libp2p.services.pubsub.publish(
+						await this.node.services.pubsub.publish(
 							serialize(
 								new ResponseV0({
-									response: serialize(maybeEncryptedMessage),
-									requestId: request.id,
+									response: maybeEncryptedMessage,
+									requestId: rpcMessage.id,
 								})
 							),
 							{
 								topics: [this.rpcTopic],
-								to: [maybeSigned.signature!.publicKey.hashcode()],
+								to: [message.sender],
 								strict: true,
 							}
 						);
 					}
-				} else {
-					return;
+				} else if (rpcMessage instanceof ResponseV0) {
+					this._responseResolver.get(toBase64(rpcMessage.requestId))?.({
+						message,
+						response: rpcMessage,
+					});
 				}
 			} catch (error: any) {
 				if (error instanceof AccessError) {
@@ -241,27 +202,6 @@ export class RPC<Q, R> extends ComposableProgram {
 			}
 		}
 	}
-	async _onResponse(evt: CustomEvent<PubSubData>): Promise<void> {
-		const message = evt.detail;
-
-		if (message?.topics.find((x) => x === this.rpcTopic) != null) {
-			try {
-				const rpcMessage = deserialize(message.data, RPCMessage);
-
-				if (rpcMessage instanceof ResponseV0) {
-					this._responseResolver.get(toBase64(rpcMessage.requestId))?.(
-						rpcMessage
-					);
-				}
-			} catch (error) {
-				if (error instanceof BorshError) {
-					logger.debug("Namespace error");
-					return; // Name space conflict most likely
-				}
-				logger.error("failed ot deserialize query response", error);
-			}
-		}
-	}
 
 	private async seal(
 		request: Q,
@@ -273,17 +213,11 @@ export class RPC<Q, R> extends ComposableProgram {
 				? (request as Uint8Array)
 				: serialize(request);
 
-		let maybeSignedMessage = new MaybeSigned<any>({ data: requestData });
-		maybeSignedMessage = await maybeSignedMessage.sign(
-			this.libp2p.services.pubsub.sign.bind(this.libp2p.services.pubsub)
-		);
-
-		const decryptedMessage = new DecryptedThing<MaybeSigned<Uint8Array>>({
-			data: serialize(maybeSignedMessage),
+		const decryptedMessage = new DecryptedThing<Uint8Array>({
+			data: requestData,
 		});
+		let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
 
-		let maybeEncryptedMessage: MaybeEncrypted<MaybeSigned<Uint8Array>> =
-			decryptedMessage;
 		if (
 			options?.encryption?.responders &&
 			options?.encryption?.responders.length > 0
@@ -295,14 +229,14 @@ export class RPC<Q, R> extends ComposableProgram {
 		}
 
 		const requestMessage = new RequestV0({
-			request: serialize(maybeEncryptedMessage),
+			request: maybeEncryptedMessage,
 			respondTo,
 		});
 
 		return requestMessage;
 	}
 
-	private getPublishOptions(options?: PublishOptions) {
+	private getPublishOptions(options?: PublishOptions): PubSubPublishOptions {
 		return options?.to
 			? { to: options.to, strict: true, topics: [this.rpcTopic] }
 			: { topics: [this.rpcTopic] };
@@ -314,7 +248,7 @@ export class RPC<Q, R> extends ComposableProgram {
 	 * @param options
 	 */
 	public async send(message: Q, options?: PublishOptions): Promise<void> {
-		await this.libp2p.services.pubsub.publish(
+		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
 			this.getPublishOptions(options)
 		);
@@ -342,7 +276,6 @@ export class RPC<Q, R> extends ComposableProgram {
 		const requestBytes = serialize(requestMessage);
 
 		const allResults: RPCResponse<R>[] = [];
-		await this._subscribeResponses();
 
 		const responsePromise = new Promise<void>((rs, rj) => {
 			const resolve = () => {
@@ -362,16 +295,30 @@ export class RPC<Q, R> extends ComposableProgram {
 					  )
 					: undefined;
 			const responders = new Set<string>();
-			const _responseHandler = async (response: ResponseV0) => {
+			const _responseHandler = async (properties: {
+				response: ResponseV0;
+				message: DataMessage;
+			}) => {
 				try {
-					const { result: resultData, from } = await decryptVerifyInto(
-						response.response,
-						this._responseType,
-						keypair,
-						{
-							isTrusted: options?.isTrusted,
-						}
-					);
+					const { response, message } = properties;
+					/* 		const { result: resultData, from } = await decryptVerifyInto(
+								response.response,
+								,
+								keypair,
+								{
+									,
+								}
+							);
+		 */
+					const from = message.sender;
+
+					if (options?.isTrusted && !(await options.isTrusted(from))) {
+						return;
+					}
+
+					const maybeEncrypted = response.response;
+					const decrypted = await maybeEncrypted.decrypt(keypair);
+					const resultData = decrypted.getValue(this._responseType);
 
 					if (expectedResponders) {
 						if (from && expectedResponders?.has(from.hashcode())) {
@@ -421,7 +368,7 @@ export class RPC<Q, R> extends ComposableProgram {
 			}, options?.timeout || 10 * 1000);
 		});
 
-		await this.libp2p.services.pubsub.publish(
+		await this.node.services.pubsub.publish(
 			requestBytes,
 			this.getPublishOptions(options)
 		);
@@ -437,7 +384,7 @@ export class RPC<Q, R> extends ComposableProgram {
 		return this._rpcTopic;
 	}
 
-	async waitFor(other: PeerIds) {
-		await waitForSubscribers(this.libp2p, other, this.rpcTopic);
+	getTopics(): string[] {
+		return [this.rpcTopic];
 	}
 }

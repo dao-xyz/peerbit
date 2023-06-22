@@ -1,0 +1,53 @@
+{
+	"name": "@peerbit/proxy",
+	"version": "1.0.0",
+	"description": "Peerbit proxy client",
+	"author": "dao.xyz",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"dependencies": {
+		"@peerbit/interface": "^1.0.0"
+	},
+	"devDependencies": {
+		"@peerbit/test-utils": "1.0.4",
+		"fs-extra": "^10.1.0",
+		"p-each-series": "^3.0.0",
+		"p-map-series": "^3.0.0"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"keywords": [
+		"peerbit",
+		"iframe"
+	]
+}

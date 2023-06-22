@@ -1,7 +1,7 @@
-import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { LSession } from "@peerbit/test-utils";
 it("_", () => {});
-/* import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
+/* import { TrustedNetwork } from "@peerbit/trusted-network";
+import { delay, waitFor } from "@peerbit/time";
 import { PermissionedEventStore } from "./test-store.js";
 import { jest } from "@jest/globals";
 

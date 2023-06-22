@@ -2,21 +2,18 @@ import assert from "assert";
 import { Log } from "../log.js";
 import { SortByEntryHash } from "../log-sorting.js";
 
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey } from "./fixtures/privateKey.js";
 
 describe("Log - Join Concurrent Entries", function () {
 	let store: BlockStore;
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("join ", () => {

@@ -4,17 +4,17 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-document bumped from 1.0.0-alpha1 to 1.0.1-alpha1
-    * @dao-xyz/peerbit-trusted-network bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/document bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/trusted-network bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
 ### Dependencies
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-document bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-trusted-network bumped from 1.0.3 to 1.0.4
+    * @peerbit/document bumped from 1.0.3 to 1.0.4
+    * @peerbit/trusted-network bumped from 1.0.3 to 1.0.4
 
-## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-identity-access-controller-v1.0.1-alpha1...peerbit-identity-access-controller-v1.0.3) (2023-06-14)
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/identity-access-controller-v1.0.1-alpha1...@peerbit/identity-access-controller-v1.0.3) (2023-06-14)
 
 
 ### Bug Fixes
@@ -26,8 +26,8 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-document bumped from 1.0.2 to 1.0.3
-    * @dao-xyz/peerbit-trusted-network bumped from 1.0.2 to 1.0.3
+    * @peerbit/document bumped from 1.0.2 to 1.0.3
+    * @peerbit/trusted-network bumped from 1.0.2 to 1.0.3
 
 ## 1.0.0-alpha1 (2023-06-14)
 
@@ -57,10 +57,10 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-document bumped from 0.9.1 to 1.0.0-alpha1
-    * @dao-xyz/peerbit-trusted-network bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/document bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/trusted-network bumped from 0.9.1 to 1.0.0-alpha1
 
-## @dao-xyz/peerbit-identity-access-controller [0.9.1](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-identity-access-controller@0.9.0...@dao-xyz/peerbit-identity-access-controller@0.9.1) (2023-06-07)
+## @peerbit/identity-access-controller [0.9.1](https://github.com/dao-xyz/peerbit/compare/@peerbit/identity-access-controller@0.9.0...@peerbit/identity-access-controller@0.9.1) (2023-06-07)
 
 
 ### Bug Fixes
@@ -73,5 +73,5 @@
 
 ### Dependencies
 
-* **@dao-xyz/peerbit-document:** upgraded to 0.9.1
-* **@dao-xyz/peerbit-trusted-network:** upgraded to 0.9.1
+* **@peerbit/document:** upgraded to 0.9.1
+* **@peerbit/trusted-network:** upgraded to 0.9.1

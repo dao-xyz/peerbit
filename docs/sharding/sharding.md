@@ -38,7 +38,7 @@ Imagine the commit above is made, so that the merged graph gets the label "DOG",
 
 
 ### 1. 
-The first thing we need to do is to hash the labels of the peers (IPFS IDs) and the DOG label with a hash function (more details on this function later)
+The first thing we need to do is to hash the labels of the peers (PeerIds) and the DOG label with a hash function (more details on this function later)
 
 <p align="center">
     <img width="400" src="./p2.png"  alt="p2">
