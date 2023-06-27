@@ -1,6 +1,6 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`Signed Log has the correct identity 1`] = `
+exports[`signature has the correct identity 1`] = `
 Ed25519PublicKey {
   "publicKey": Uint8Array [
     5,

@@ -11,9 +11,9 @@
 [Get Started](introduction)
 [Demo Sandbox](https://codesandbox.io/s/xv36w4695o)
 [GitHub](https://github.com/jhildenbiddle/docsify-themeable) -->
-<!-- ![logo](./peerbit-logo.png) -->
+<!-- ![logo](./@peerbit/logo.png) -->
 <p align="center">
-    <img width="200" src="./peerbit-logo.png"  alt="Peerbit icon Icon">
+    <img width="200" src="./@peerbit/logo.png"  alt="Peerbit icon Icon">
 </p> 
 
 # Peerbit 
@@ -27,7 +27,7 @@
 
 <!-- <br>
  <p align="center">
-    <img width="200" src="./peerbit-logo.png"  alt="Peerbit icon Icon">
+    <img width="200" src="./@peerbit/logo.png"  alt="Peerbit icon Icon">
 </p> 
 
 <h1 align="center" style="font-size: 5vmin;">

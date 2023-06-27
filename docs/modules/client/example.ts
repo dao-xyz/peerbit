@@ -1,5 +1,5 @@
 /// [imports]
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Peerbit } from "peerbit";
 /// [imports]
 
 /// [memory]

@@ -4,10 +4,10 @@ import {
 	Documents,
 	Operation,
 	PutOperation,
-} from "@dao-xyz/peerbit-document";
-import { AppendOptions, Entry } from "@dao-xyz/peerbit-log";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
-import { DeleteOperation } from "@dao-xyz/peerbit-document";
+} from "@peerbit/document";
+import { AppendOptions, Entry } from "@peerbit/log";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { DeleteOperation } from "@peerbit/document";
 import {
 	IdentityRelation,
 	createIdentityGraphStore,
@@ -18,10 +18,11 @@ import {
 	getRelation,
 	AbstractRelation,
 } from "./identity-graph.js";
-import { Program, Replicator } from "@dao-xyz/peerbit-program";
-import { CanRead } from "@dao-xyz/peerbit-rpc";
-import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
+import { Program } from "@peerbit/program";
+import { CanRead } from "@peerbit/rpc";
+import { sha256Base64Sync } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface-peer-id";
+import { Replicator, SubscriptionType } from "@peerbit/shared-log";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey
@@ -77,15 +78,20 @@ const canAppendByRelation = async (
 	}
 };
 
+type IdentityGraphArgs = { canRead?: CanRead; role?: SubscriptionType };
 @variant("relations")
-export class IdentityGraph extends Program {
+export class IdentityGraph extends Program<IdentityGraphArgs> {
 	@field({ type: Documents })
 	relationGraph: Documents<IdentityRelation>;
 
-	constructor(props?: { relationGraph?: Documents<IdentityRelation> }) {
+	constructor(props?: {
+		id?: Uint8Array;
+		relationGraph?: Documents<IdentityRelation>;
+	}) {
 		super();
 		if (props) {
-			this.relationGraph = props.relationGraph || createIdentityGraphStore();
+			this.relationGraph =
+				props.relationGraph || createIdentityGraphStore(props?.id);
 		}
 	}
 
@@ -93,8 +99,8 @@ export class IdentityGraph extends Program {
 		return canAppendByRelation(entry);
 	}
 
-	async setup(options?: { canRead?: CanRead }) {
-		await this.relationGraph.setup({
+	async open(options?: IdentityGraphArgs) {
+		await this.relationGraph.open({
 			type: IdentityRelation,
 			canAppend: this.canAppend.bind(this),
 			canRead: options?.canRead,
@@ -106,6 +112,7 @@ export class IdentityGraph extends Program {
 					};
 				},
 			},
+			role: options?.role,
 		}); // self referencing access controller
 	}
 
@@ -117,9 +124,7 @@ export class IdentityGraph extends Program {
 		await this.relationGraph.put(
 			new IdentityRelation({
 				to: coercePublicKey(to),
-				from:
-					options?.identity?.publicKey ||
-					this.relationGraph.log.identity.publicKey,
+				from: options?.identity?.publicKey || this.node.identity.publicKey,
 			}),
 			options
 		);
@@ -130,25 +135,27 @@ export class IdentityGraph extends Program {
  * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
  */
 
+type TrustedNetworkArgs = { role?: SubscriptionType };
 @variant("trusted_network")
-export class TrustedNetwork extends Program {
+export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	@field({ type: PublicSignKey })
 	rootTrust: PublicSignKey;
 
 	@field({ type: Documents })
 	trustGraph: Documents<IdentityRelation>;
 
-	constructor(props: { rootTrust: PublicSignKey | PeerId }) {
+	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
-		this.trustGraph = createIdentityGraphStore();
+		this.trustGraph = createIdentityGraphStore(props.id);
 		this.rootTrust = coercePublicKey(props.rootTrust);
 	}
 
-	async setup() {
-		await this.trustGraph.setup({
+	async open(options?: TrustedNetworkArgs) {
+		await this.trustGraph.open({
 			type: IdentityRelation,
 			canAppend: this.canAppend.bind(this),
 			canRead: this.canRead.bind(this),
+			role: options?.role,
 			index: {
 				fields: (obj, _entry) => {
 					return {
@@ -178,12 +185,12 @@ export class TrustedNetwork extends Program {
 
 		const existingRelation = await this.getRelation(
 			key,
-			this.trustGraph.log.identity.publicKey
+			this.node.identity.publicKey
 		);
 		if (!existingRelation) {
 			const relation = new IdentityRelation({
 				to: key,
-				from: this.trustGraph.log.identity.publicKey,
+				from: this.node.identity.publicKey,
 			});
 			await this.trustGraph.put(relation);
 			return relation;
@@ -225,7 +232,7 @@ export class TrustedNetwork extends Program {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		if (this.trustGraph.role instanceof Replicator) {
+		if (this.trustGraph.log.role instanceof Replicator) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			this.trustGraph.index.search(new SearchRequest({ query: [] }), {

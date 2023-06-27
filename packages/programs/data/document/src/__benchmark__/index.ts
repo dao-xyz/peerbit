@@ -1,18 +1,13 @@
 import B from "benchmark";
-import { field, option, serialize, variant } from "@dao-xyz/borsh";
-import { Documents } from "../document-store.js";
-import { LSession, createStore } from "@dao-xyz/peerbit-test-utils";
-import {
-	Ed25519Keypair,
-	X25519Keypair,
-	X25519PublicKey,
-} from "@dao-xyz/peerbit-crypto";
-import Cache from "@dao-xyz/lazy-level";
-import { AbstractLevel } from "abstract-level";
-import { Program, Replicator } from "@dao-xyz/peerbit-program";
+import { field, option, variant } from "@dao-xyz/borsh";
+import { Documents, SetupOptions } from "../document-store.js";
+import { LSession } from "@peerbit/test-utils";
+import { Program } from "@peerbit/program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
+import { Replicator } from "@peerbit/shared-log";
+import { Peerbit } from "@peerbit/interface";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))
@@ -42,7 +37,7 @@ class Document {
 }
 
 @variant("test_documents")
-class TestStore extends Program {
+class TestStore extends Program<Partial<SetupOptions<Document>>> {
 	@field({ type: Documents })
 	docs: Documents<Document>;
 
@@ -52,51 +47,27 @@ class TestStore extends Program {
 			this.docs = properties.docs;
 		}
 	}
-	async setup(): Promise<void> {
-		await this.docs.setup({ type: Document, index: { key: "id" } });
+	async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
+		await this.docs.open({ ...options, type: Document, index: { key: "id" } });
 	}
 }
 
-const cacheStores: AbstractLevel<any, string, Uint8Array>[] = [];
 const peersCount = 1;
 const session = await LSession.connected(peersCount);
 
-for (let i = 0; i < peersCount; i++) {
-	cacheStores.push(await createStore());
-}
-
-// Create store
 const store = new TestStore({
 	docs: new Documents<Document>({
 		index: new DocumentIndex(),
 	}),
 });
-const keypair = await X25519Keypair.create();
-await store.init(session.peers[0], {
-	role: new Replicator(),
 
-	log: {
-		replication: {
-			replicators: () => [],
-		},
-		encryption: {
-			getEncryptionKeypair: () => keypair,
-			getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-				for (let i = 0; i < publicKeys.length; i++) {
-					if (publicKeys[i].equals((keypair as X25519Keypair).publicKey)) {
-						return {
-							index: i,
-							keypair: keypair as X25519Keypair,
-						};
-					}
-				}
-			},
-		},
-		trim: { type: "length", to: 100 },
-		cache: () => new Cache(cacheStores[0], { batch: { interval: 100 } }),
+const client: Peerbit = session.peers[0];
+await client.open(store, {
+	args: {
+		role: new Replicator(),
+		trim: { type: "length" as const, to: 100 },
 	},
 });
-await store.setup();
 
 const resolver: Map<string, () => void> = new Map();
 store.docs.events.addEventListener("change", (change) => {
@@ -131,7 +102,12 @@ suite
 		throw err;
 	})
 	.on("complete", async function (this: any, ...args: any[]) {
+		console.log("DORP!");
 		await store.drop();
+
+		console.log("STOP!");
+
 		await session.stop();
+		console.log(store.closed, store.docs.closed);
 	})
 	.run();

@@ -1,0 +1,68 @@
+{
+	"name": "peerbit",
+	"version": "1.0.5",
+	"description": "Peerbit client",
+	"author": "dao.xyz",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"dependencies": {
+		"@dao-xyz/borsh": "^5.1.5",
+		"@dao-xyz/lazy-level": "0.0.9",
+		"@peerbit/crypto": "1.0.4",
+		"@peerbit/logger": "1.0.0",
+		"@peerbit/program": "1.0.4",
+		"@peerbit/pubsub": "^1.0.4",
+		"@peerbit/blocks": "^1.0.4",
+		"@peerbit/interface": "1.0.0",
+		"@dao-xyz/uint8arrays": "1.0.0",
+		"level": "^8.0.0",
+		"memory-level": "^1.0.0",
+		"p-queue": "^7.3.4"
+	},
+	"devDependencies": {
+		"p-each-series": "^3.0.0",
+		"p-map-series": "^3.0.0"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"keywords": [
+		"crdt",
+		"database",
+		"distributed",
+		"decentralised",
+		"distributed",
+		"ipfs",
+		"p2p",
+		"peer-to-peer"
+	]
+}

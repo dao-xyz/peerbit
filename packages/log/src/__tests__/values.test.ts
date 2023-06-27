@@ -1,7 +1,4 @@
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { Entry } from "../entry";
 import { EntryIndex } from "../entry-index";
 import { LastWriteWins } from "../log-sorting";
@@ -16,7 +13,7 @@ describe("values", () => {
 	beforeEach(async () => {
 		const identity = signKey;
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 		e1 = await Entry.create({
 			store,
 			identity,
@@ -50,7 +47,7 @@ describe("values", () => {
 		await entryIndex.set(e3);
 	});
 	afterEach(async () => {
-		await store.close();
+		await store.stop();
 	});
 	it("put last", async () => {
 		const values = new Values<string>(entryIndex, LastWriteWins, []);

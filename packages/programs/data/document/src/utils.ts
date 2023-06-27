@@ -1,4 +1,4 @@
-import { toBase64 } from "@dao-xyz/peerbit-crypto";
+import { toBase64 } from "@peerbit/crypto";
 
 export type Keyable = string | Uint8Array;
 export const asString = (obj: Keyable) =>

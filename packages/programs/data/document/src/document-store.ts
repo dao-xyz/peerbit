@@ -5,15 +5,14 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { CanAppend, Change, Entry, EntryType, Log } from "@dao-xyz/peerbit-log";
-import { ComposableProgram, Program } from "@dao-xyz/peerbit-program";
-import { CanRead } from "@dao-xyz/peerbit-rpc";
-import { AccessError, DecryptedThing } from "@dao-xyz/peerbit-crypto";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
-import { Replicator } from "@dao-xyz/peerbit-program";
-import { AppendOptions } from "@dao-xyz/peerbit-log";
-import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
-
+import { CanAppend, Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
+import { ComposableProgram, Program, ProgramEvents } from "@peerbit/program";
+import { CanRead } from "@peerbit/rpc";
+import { AccessError, DecryptedThing } from "@peerbit/crypto";
+import { logger as loggerFn } from "@peerbit/logger";
+import { AppendOptions } from "@peerbit/log";
+import { CustomEvent } from "@libp2p/interfaces/events";
+import { Replicator, SharedLog, SharedLogOptions } from "@peerbit/shared-log";
 import {
 	Indexable,
 	BORSH_ENCODING_OPERATION,
@@ -40,12 +39,25 @@ export interface DocumentEvents<T> {
 	change: CustomEvent<DocumentsChange<T>>;
 }
 
+export type SetupOptions<T> = {
+	type: AbstractType<T>;
+	canRead?: CanRead;
+	canAppend?: CanAppend<Operation<T>>;
+	canOpen?: (program: T) => Promise<boolean> | boolean;
+	index?: {
+		key?: string | string[];
+		fields?: Indexable<T>;
+	};
+	trim?: TrimOptions;
+} & SharedLogOptions;
+
 @variant("documents")
-export class Documents<
-	T extends Record<string, any>
-> extends ComposableProgram {
-	@field({ type: Log })
-	log: Log<Operation<T>>;
+export class Documents<T extends Record<string, any>> extends ComposableProgram<
+	SetupOptions<T>,
+	DocumentEvents<T> & ProgramEvents
+> {
+	@field({ type: SharedLog })
+	log: SharedLog<Operation<T>>;
 
 	@field({ type: "bool" })
 	immutable: boolean; // "Can I overwrite a document?"
@@ -61,12 +73,14 @@ export class Documents<
 		entry: Entry<Operation<T>>
 	) => Promise<boolean> | boolean;
 
-	private _events: EventEmitter<DocumentEvents<T>>;
-
-	constructor(properties?: { immutable?: boolean; index?: DocumentIndex<T> }) {
+	constructor(properties?: {
+		id?: Uint8Array;
+		immutable?: boolean;
+		index?: DocumentIndex<T>;
+	}) {
 		super();
 
-		this.log = new Log();
+		this.log = new SharedLog(properties);
 		this.immutable = properties?.immutable ?? false;
 		this._index = properties?.index || new DocumentIndex();
 	}
@@ -75,26 +89,9 @@ export class Documents<
 		return this._index;
 	}
 
-	get events(): EventEmitter<DocumentEvents<T>> {
-		if (!this._events) {
-			throw new Error("Program not open");
-		}
-		return this._events;
-	}
-
-	async setup(options: {
-		type: AbstractType<T>;
-		canRead?: CanRead;
-		canAppend?: CanAppend<Operation<T>>;
-		canOpen?: (program: T) => Promise<boolean> | boolean;
-		index?: {
-			key?: string | string[];
-			fields?: Indexable<T>;
-		};
-	}) {
+	async open(options: SetupOptions<T>) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
-		this._events = new EventEmitter();
 
 		/* eslint-disable */
 		if (Program.isPrototypeOf(this._clazz)) {
@@ -107,27 +104,35 @@ export class Documents<
 		if (options.canAppend) {
 			this._optionCanAppend = options.canAppend;
 		}
-		await this.log.setup({
-			encoding: BORSH_ENCODING_OPERATION,
-			canAppend: this.canAppend.bind(this),
-			onChange: this.handleChanges.bind(this),
-		});
 
-		await this._index.setup({
+		await this._index.open({
 			type: this._clazz,
 			log: this.log,
 			canRead: options.canRead || (() => Promise.resolve(true)),
 			fields: options.index?.fields || ((obj) => obj),
 			indexBy: options.index?.key,
 			sync: async (result: Results<T>) =>
-				this.log.join(result.results.map((x) => x.context.head)),
+				this.log.log.join(result.results.map((x) => x.context.head)),
+		});
+
+		await this.log.open({
+			encoding: BORSH_ENCODING_OPERATION,
+			canAppend: this.canAppend.bind(this),
+			onChange: this.handleChanges.bind(this),
+			trim: options?.trim,
+			sync: options?.sync,
+			role: options?.role,
+			minReplicas: options?.minReplicas,
 		});
 	}
 
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
-			? (await this.log.get(history)) ||
-					(await Entry.fromMultihash<Operation<T>>(this.log.storage, history))
+			? (await this.log.log.get(history)) ||
+					(await Entry.fromMultihash<Operation<T>>(
+						this.log.log.storage,
+						history
+					))
 			: history;
 	}
 
@@ -146,8 +151,8 @@ export class Documents<
 	async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
-				? this.log.get(history) ||
-						(await Entry.fromMultihash(this.log.storage, history))
+				? this.log.log.get(history) ||
+						(await Entry.fromMultihash(this.log.log.storage, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
@@ -160,7 +165,7 @@ export class Documents<
 				next !== current?.hash &&
 				current.next.length > 0
 			) {
-				current = await this.log.get(current.next[0])!;
+				current = await this.log.log.get(current.next[0])!;
 			}
 			if (current?.hash === next) {
 				return true; // Ok, we are pointing this new edit to some exising point in time of the old document
@@ -170,8 +175,8 @@ export class Documents<
 
 		try {
 			entry.init({
-				encoding: this.log.encoding,
-				encryption: this.log.encryption,
+				encoding: this.log.log.encoding,
+				keychain: this.node.keychain,
 			});
 			const operation =
 				entry._payload instanceof DecryptedThing
@@ -197,7 +202,7 @@ export class Documents<
 					if (entry.next.length !== 1) {
 						return false;
 					}
-					let doc = await this.log.get(existingDocument.context.head);
+					let doc = await this.log.log.get(existingDocument.context.head);
 					if (!doc) {
 						logger.error("Failed to find Document from head");
 						return false;
@@ -217,7 +222,7 @@ export class Documents<
 					// already deleted
 					return false;
 				}
-				let doc = await this.log.get(existingDocument.context.head);
+				let doc = await this.log.log.get(existingDocument.context.head);
 				if (!doc) {
 					logger.error("Failed to find Document from head");
 					return false;
@@ -237,17 +242,6 @@ export class Documents<
 		doc: T,
 		options?: AppendOptions<Operation<T>> & { unique?: boolean }
 	) {
-		if (doc instanceof Program) {
-			if (this.parentProgram == null) {
-				throw new Error(
-					`Program ${this.constructor.name} have not been opened, as 'parentProgram' property is missing`
-				);
-			}
-			if (!doc.initialized) {
-				await doc.initializeIds();
-			}
-		}
-
 		const key = this._index.indexByResolver(doc as any as Keyable);
 		checkKeyable(key);
 		const ser = serialize(doc);
@@ -305,7 +299,7 @@ export class Documents<
 			removedSet.set(r.hash, r);
 		}
 		const entries = [...change.added, ...(removed || [])]
-			.sort(this.log.sortFn)
+			.sort(this.log.log.sortFn)
 			.reverse(); // sort so we get newest to oldest
 
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
@@ -370,19 +364,13 @@ export class Documents<
 
 					// Program specific
 					if (value instanceof Program) {
-						if (!this.open) {
-							throw new Error(
-								"Documents have not been initialized with the open function, which is required for types that extends Program"
-							);
-						}
-
 						// if replicator, then open
 						if (
 							(await this.canOpen!(value, item)) &&
-							this.role instanceof Replicator &&
-							(await this.log.replication!.replicator!(item.gid)) // TODO types, throw runtime error if replicator is not provided
+							this.log.role instanceof Replicator &&
+							(await this.log.replicator(item.gid)) // TODO types, throw runtime error if replicator is not provided
 						) {
-							await this.open!(value);
+							await this.node.open(value, { parent: this });
 						}
 					}
 				} else if (

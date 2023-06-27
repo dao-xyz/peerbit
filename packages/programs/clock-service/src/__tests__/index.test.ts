@@ -1,13 +1,11 @@
-import { delay } from "@dao-xyz/peerbit-time";
-import { LSession } from "@dao-xyz/peerbit-test-utils";
-import { Entry } from "@dao-xyz/peerbit-log";
-import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
+import { delay } from "@peerbit/time";
+import { LSession } from "@peerbit/test-utils";
+import { Entry } from "@peerbit/log";
+import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
-import { MemoryLevel } from "memory-level";
-import { default as Cache } from "@dao-xyz/lazy-level";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { waitForSubscribers } from "@dao-xyz/libp2p-direct-sub";
+import { TrustedNetwork } from "@peerbit/trusted-network";
+import { Observer } from "@peerbit/shared-log";
 
 const maxTimeError = 3000;
 @variant("clock-test")
@@ -22,8 +20,8 @@ class P extends Program {
 		}
 	}
 
-	async setup(): Promise<void> {
-		await this.clock.setup({ maxTimeError });
+	async open(): Promise<void> {
+		await this.clock.open({ maxTimeError });
 	}
 }
 
@@ -38,34 +36,13 @@ describe("clock", () => {
 				}),
 			}),
 		});
-		await responder.init(session.peers[0], {
-			role: new Replicator(),
 
-			log: {
-				replication: {
-					replicators: () => [],
-				},
-				cache: () => Promise.resolve(new Cache(new MemoryLevel())),
-			},
-		});
-
+		await session.peers[0].open(responder);
 		responder.clock._maxError = BigInt(maxTimeError * 1e6);
 
 		reader = deserialize(serialize(responder), P);
-		await reader.init(session.peers[1], {
-			role: new Observer(),
-			replicators: () => [],
-			log: {
-				cacheId: "id",
-				cache: () => Promise.resolve(new Cache(new MemoryLevel())),
-			} as any,
-		} as any);
-
-		const topic = responder.clock._remoteSigner.rpcTopic;
-		if (!topic) {
-			throw new Error("Expecting topic");
-		}
-		await waitForSubscribers(session.peers[1], [session.peers[0]], topic);
+		await session.peers[1].open(reader, { args: { role: new Observer() } });
+		await reader.waitFor(session.peers[0].peerId);
 	});
 	afterEach(async () => {
 		await reader.drop();
@@ -76,10 +53,10 @@ describe("clock", () => {
 	it("signs and verifies", async () => {
 		const entry = await Entry.create({
 			data: "hello world",
-			identity: reader.identity,
+			identity: reader.node.identity,
 			store: session.peers[1].services.blocks,
 			signers: [
-				reader.identity.sign.bind(reader.identity),
+				reader.node.identity.sign.bind(reader.node.identity),
 				reader.clock.sign.bind(reader.clock),
 			],
 		});
@@ -87,8 +64,8 @@ describe("clock", () => {
 			await Promise.all(entry.signatures.map((x) => x.publicKey.hashcode()))
 		).toContainAllValues(
 			await Promise.all([
-				reader.identity.publicKey.hashcode(),
-				responder.identity.publicKey.hashcode(),
+				reader.node.identity.publicKey.hashcode(),
+				responder.node.identity.publicKey.hashcode(),
 			])
 		);
 		expect(await reader.clock.verify(entry)).toBeTrue();
@@ -98,10 +75,10 @@ describe("clock", () => {
 		await expect(
 			Entry.create({
 				data: "hello world",
-				identity: reader.identity,
+				identity: reader.node.identity,
 				store: session.peers[1].services.blocks,
 				signers: [
-					async (data: Uint8Array) => reader.identity.sign(data),
+					async (data: Uint8Array) => reader.node.identity.sign(data),
 					async (data: Uint8Array) => {
 						await delay(maxTimeError + 1000);
 						return reader.clock.sign(data);

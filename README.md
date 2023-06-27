@@ -1,7 +1,7 @@
 
 <br>
 <p align="center">
-    <img width="140" src="./docs/peerbit-logo.png"  alt="Peerbit icon Icon">
+    <img width="140" src="./docs/@peerbit/logo.png"  alt="Peerbit icon Icon">
 </p>
 
 <h1 align="center" style="font-size: 5vmin;">
