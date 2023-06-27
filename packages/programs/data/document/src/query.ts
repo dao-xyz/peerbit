@@ -7,7 +7,7 @@ import {
 	vec,
 } from "@dao-xyz/borsh";
 import { asString } from "./utils.js";
-import { randomBytes, sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
+import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
 
 export enum Compare {
 	Equal = 0,

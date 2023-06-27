@@ -1,30 +1,20 @@
 import {
 	DecryptedThing,
-	X25519PublicKey,
-	PublicKeyEncryptionResolver,
-	Ed25519Keypair,
 	X25519Keypair,
+	Keychain,
+	PublicSignKey,
 } from "../index.js";
 
 describe("encryption", function () {
-	const config = (keypair: Ed25519Keypair | X25519Keypair) => {
+	const keychain = (keypair: X25519Keypair): Keychain => {
 		return {
-			getEncryptionKeypair: () => keypair,
-			getAnyKeypair: async (publicKeys: X25519PublicKey[]) => {
-				const pk =
-					keypair.publicKey instanceof X25519PublicKey
-						? keypair.publicKey
-						: await X25519PublicKey.from(keypair.publicKey);
-				for (let i = 0; i < publicKeys.length; i++) {
-					if (publicKeys[i].equals(pk)) {
-						return {
-							index: i,
-							keypair,
-						};
-					}
-				}
+			exportById: async (id: Uint8Array) => undefined,
+			exportByKey: async <T extends PublicSignKey, Q>(publicKey: T) =>
+				publicKey.equals(keypair.publicKey) ? (keypair as Q) : undefined,
+			import: (keypair: any, id: Uint8Array) => {
+				throw new Error("No implemented+");
 			},
-		} as PublicKeyEncryptionResolver;
+		};
 	};
 	it("encrypt", async () => {
 		const senderKey = await X25519Keypair.create();
@@ -36,8 +26,8 @@ describe("encryption", function () {
 			data,
 		});
 
-		const reciever1Config = config(recieverKey1);
-		const reciever2Config = config(recieverKey2);
+		const reciever1Config = keychain(recieverKey1);
+		const reciever2Config = keychain(recieverKey2);
 
 		const encrypted = await decrypted.encrypt(
 			senderKey,
@@ -46,14 +36,10 @@ describe("encryption", function () {
 		);
 		encrypted._decrypted = undefined;
 
-		const decryptedFromEncrypted1 = await encrypted.decrypt(
-			reciever1Config.getAnyKeypair
-		);
+		const decryptedFromEncrypted1 = await encrypted.decrypt(reciever1Config);
 		expect(decryptedFromEncrypted1._data).toStrictEqual(data);
 
-		const decryptedFromEncrypted2 = await encrypted.decrypt(
-			reciever2Config.getAnyKeypair
-		);
+		const decryptedFromEncrypted2 = await encrypted.decrypt(reciever2Config);
 		expect(decryptedFromEncrypted2._data).toStrictEqual(data);
 	});
 
@@ -62,27 +48,27 @@ describe("encryption", function () {
 		const senderKey = await Ed25519Keypair.create();
 		const recieverKey1 = await Ed25519Keypair.create();
 		const recieverKey2 = await Ed25519Keypair.create();
-
+	
 		const reciever1Config = config(recieverKey1);
 		const reciever2Config = config(recieverKey2);
-
+	
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
 			data,
 		});
-
+	
 		const encrypted = await decrypted.encrypt(
 			senderKey,
 			recieverKey1.publicKey,
 			recieverKey2.publicKey
 		);
 		encrypted._decrypted = undefined;
-
+	
 		const decryptedFromEncrypted1 = await encrypted.decrypt(
 			reciever1Config.getAnyKeypair
 		);
 		expect(decryptedFromEncrypted1._data).toStrictEqual(data);
-
+	
 		const decryptedFromEncrypted2 = await encrypted.decrypt(
 			reciever2Config.getAnyKeypair
 		);

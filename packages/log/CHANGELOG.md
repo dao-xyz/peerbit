@@ -5,13 +5,13 @@
 * The following workspace dependencies were updated
   * dependencies
     * @dao-xyz/cache bumped from 0.0.6 to 0.0.7
-    * @dao-xyz/libp2p-direct-block bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-crypto bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
+    * @peerbit/blocks bumped from 1.0.3 to 1.0.4
+    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
+    * @peerbit/logger bumped from 0.0.7 to 1.0.0
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 1.0.3 to 1.0.4
+    * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
 
-## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-log-v1.0.0-alpha1...peerbit-log-v1.0.3) (2023-06-14)
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/log-v1.0.0-alpha1...@peerbit/log-v1.0.3) (2023-06-14)
 
 
 ### Bug Fixes
@@ -24,12 +24,12 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/libp2p-direct-block bumped from 1.0.2 to 1.0.3
-    * @dao-xyz/peerbit-crypto bumped from 1.0.2 to 1.0.3
+    * @peerbit/blocks bumped from 1.0.2 to 1.0.3
+    * @peerbit/crypto bumped from 1.0.2 to 1.0.3
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 1.0.2 to 1.0.3
+    * @peerbit/test-utils bumped from 1.0.2 to 1.0.3
 
-## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/peerbit-log-v1.0.0-alpha1...peerbit-log-v1.0.0-alpha1) (2023-06-14)
+## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/@peerbit/log-v1.0.0-alpha1...@peerbit/log-v1.0.0-alpha1) (2023-06-14)
 
 
 ### Bug Fixes
@@ -41,7 +41,7 @@
 
 * The following workspace dependencies were updated
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
 ## 1.0.0-alpha1 (2023-06-14)
 
@@ -59,12 +59,12 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/libp2p-direct-block bumped from 0.5.3 to 1.0.0-alpha1
-    * @dao-xyz/peerbit-crypto bumped from 0.1.16 to 1.0.0-alpha1
+    * @peerbit/blocks bumped from 0.5.3 to 1.0.0-alpha1
+    * @peerbit/crypto bumped from 0.1.16 to 1.0.0-alpha1
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 0.4.3 to 1.0.0-alpha1
+    * @peerbit/test-utils bumped from 0.4.3 to 1.0.0-alpha1
 
-## @dao-xyz/peerbit-log [0.8.6](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-log@0.8.5...@dao-xyz/peerbit-log@0.8.6) (2023-06-07)
+## @peerbit/log [0.8.6](https://github.com/dao-xyz/peerbit/compare/@peerbit/log@0.8.5...@peerbit/log@0.8.6) (2023-06-07)
 
 
 ### Bug Fixes
@@ -78,8 +78,8 @@
 ### Dependencies
 
 * **@dao-xyz/cache:** upgraded to 0.0.6
-* **@dao-xyz/libp2p-direct-block:** upgraded to 0.5.3
-* **@dao-xyz/peerbit-crypto:** upgraded to 0.1.16
-* **@dao-xyz/peerbit-logger:** upgraded to 0.0.7
-* **@dao-xyz/peerbit-keystore:** upgraded to 0.2.12
-* **@dao-xyz/peerbit-test-utils:** upgraded to 0.4.3
+* **@peerbit/blocks:** upgraded to 0.5.3
+* **@peerbit/crypto:** upgraded to 0.1.16
+* **@peerbit/logger:** upgraded to 0.0.7
+* **peerbit-keystore:** upgraded to 0.2.12
+* **@peerbit/test-utils:** upgraded to 0.4.3

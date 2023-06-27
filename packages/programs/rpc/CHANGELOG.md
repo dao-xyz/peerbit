@@ -4,18 +4,18 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-program bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/program bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
 ### Dependencies
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-crypto bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
-    * @dao-xyz/peerbit-program bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-time bumped from 0.0.24 to 1.0.0
+    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
+    * @peerbit/logger bumped from 0.0.7 to 1.0.0
+    * @peerbit/program bumped from 1.0.3 to 1.0.4
+    * @peerbit/time bumped from 0.0.24 to 1.0.0
 
-## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-rpc-v1.0.1-alpha1...peerbit-rpc-v1.0.3) (2023-06-14)
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/rpc-v1.0.1-alpha1...@peerbit/rpc-v1.0.3) (2023-06-14)
 
 
 ### Bug Fixes
@@ -27,8 +27,8 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-crypto bumped from 1.0.2 to 1.0.3
-    * @dao-xyz/peerbit-program bumped from 1.0.2 to 1.0.3
+    * @peerbit/crypto bumped from 1.0.2 to 1.0.3
+    * @peerbit/program bumped from 1.0.2 to 1.0.3
 
 ## 1.0.0-alpha1 (2023-06-14)
 
@@ -56,10 +56,10 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-crypto bumped from 0.1.16 to 1.0.0-alpha1
-    * @dao-xyz/peerbit-program bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/crypto bumped from 0.1.16 to 1.0.0-alpha1
+    * @peerbit/program bumped from 0.9.1 to 1.0.0-alpha1
 
-## @dao-xyz/peerbit-rpc [0.9.1](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-rpc@0.9.0...@dao-xyz/peerbit-rpc@0.9.1) (2023-06-07)
+## @peerbit/rpc [0.9.1](https://github.com/dao-xyz/peerbit/compare/@peerbit/rpc@0.9.0...@peerbit/rpc@0.9.1) (2023-06-07)
 
 
 ### Bug Fixes
@@ -72,7 +72,7 @@
 
 ### Dependencies
 
-* **@dao-xyz/peerbit-crypto:** upgraded to 0.1.16
-* **@dao-xyz/peerbit-logger:** upgraded to 0.0.7
-* **@dao-xyz/peerbit-program:** upgraded to 0.9.1
-* **@dao-xyz/peerbit-time:** upgraded to 0.0.24
+* **@peerbit/crypto:** upgraded to 0.1.16
+* **@peerbit/logger:** upgraded to 0.0.7
+* **@peerbit/program:** upgraded to 0.9.1
+* **@peerbit/time:** upgraded to 0.0.24

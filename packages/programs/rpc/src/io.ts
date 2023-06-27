@@ -1,17 +1,16 @@
 import {
-	MaybeSigned,
 	X25519PublicKey,
 	Ed25519PublicKey,
-	GetEncryptionKeypair,
 	PublicSignKey,
-} from "@dao-xyz/peerbit-crypto";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+	X25519Keypair,
+} from "@peerbit/crypto";
+import { logger as loggerFn } from "@peerbit/logger";
 
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions<R> = {
 	amount?: number;
 	timeout?: number;
-	isTrusted?: (publicKey: MaybeSigned<any>) => Promise<boolean>;
+	isTrusted?: (publicKey: PublicSignKey) => Promise<boolean>;
 	strict?: boolean;
 	onResponse?: (response: R, from?: PublicSignKey) => void;
 	stopper?: (stopper: () => void) => void;
@@ -19,7 +18,7 @@ export type RPCOptions<R> = {
 
 export type PublishOptions = {
 	encryption?: {
-		key: GetEncryptionKeypair;
+		key: X25519Keypair;
 		responders?: (X25519PublicKey | Ed25519PublicKey)[];
 	};
 	to?: PublicSignKey[] | string[];

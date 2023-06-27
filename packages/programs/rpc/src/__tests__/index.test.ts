@@ -1,9 +1,10 @@
-import { v4 as uuid } from "uuid";
-import { waitFor } from "@dao-xyz/peerbit-time";
-import { LSession } from "@dao-xyz/peerbit-test-utils";
+import { delay, waitFor } from "@peerbit/time";
+import { LSession } from "@peerbit/test-utils";
 import { RPC, RPCResponse, queryAll } from "../index.js";
-import { Observer, Program, Replicator } from "@dao-xyz/peerbit-program";
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { Program } from "@peerbit/program";
+import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { PeerId } from "@peerbit/pubsub";
 
 @variant("payload")
 class Body {
@@ -21,186 +22,184 @@ class RPCTest extends Program {
 	@field({ type: RPC })
 	query: RPC<Body, Body>;
 
-	constructor() {
+	@field({ type: vec(PublicSignKey) })
+	responders: PublicSignKey[];
+
+	constructor(responders: PeerId[]) {
 		super();
+		this.responders = responders.map((x) =>
+			x instanceof PublicSignKey ? x : getPublicKeyFromPeerId(x)
+		);
 	}
 
-	async setup(): Promise<void> {
-		await this.query.setup({
+	async open(): Promise<void> {
+		await this.query.open({
 			topic: "topic",
 			responseType: Body,
 			queryType: Body,
-			responseHandler: (query, from) => {
-				const resp = query;
-				return resp;
-			},
+			responseHandler: this.responders.find((x) =>
+				this.node.identity.publicKey.equals(x)
+			)
+				? (query, from) => {
+						const resp = query;
+						return resp;
+				  }
+				: undefined,
 		});
 	}
 }
 
 describe("rpc", () => {
-	let session: LSession, responder: RPCTest, reader: RPCTest;
-	beforeEach(async () => {
-		session = await LSession.connected(3);
+	describe("request", () => {
+		let session: LSession, responder: RPCTest, reader: RPCTest;
+		beforeEach(async () => {
+			session = await LSession.connected(3);
 
-		const topic = uuid();
+			responder = new RPCTest([session.peers[0].peerId]);
+			responder.query = new RPC();
 
-		responder = new RPCTest();
-		responder.query = new RPC();
+			await session.peers[0].open(responder);
 
-		await responder.init(session.peers[0], {
-			role: new Replicator(),
+			reader = deserialize(serialize(responder), RPCTest);
+			await session.peers[1].open(reader);
+
+			//await waitForSubscribers(reader.libp2p, responder.libp2p, reader.query.rpcTopic);
+			await reader.waitFor(session.peers[0].peerId);
 		});
-		await responder.setup();
-
-		reader = deserialize(serialize(responder), RPCTest);
-
-		await reader.init(session.peers[1], {
-			role: new Observer(),
+		afterEach(async () => {
+			await reader.close();
+			await responder.close();
+			await session.stop();
 		});
-		await reader.setup();
-		await reader.waitFor(session.peers[0]);
-	});
-	afterEach(async () => {
-		await session.stop();
-	});
 
-	it("any", async () => {
-		let results: RPCResponse<Body>[] = await reader.query.request(
-			new Body({
-				arr: new Uint8Array([0, 1, 2]),
-			}),
-			{ amount: 1 }
-		);
-
-		await waitFor(() => results.length === 1);
-		expect(results[0].from?.hashcode()).toEqual(
-			responder.libp2p.services.pubsub.publicKey.hashcode()
-		);
-	});
-
-	it("onResponse", async () => {
-		let results: Body[] = [];
-		await reader.query.request(
-			new Body({
-				arr: new Uint8Array([0, 1, 2]),
-			}),
-
-			{
-				amount: 1,
-				onResponse: (resp) => {
-					results.push(resp);
-				},
-			}
-		);
-
-		await waitFor(() => results.length === 1);
-	});
-
-	it("to", async () => {
-		let results: Body[] = (
-			await reader.query.request(
+		it("any", async () => {
+			let results: RPCResponse<Body>[] = await reader.query.request(
 				new Body({
 					arr: new Uint8Array([0, 1, 2]),
 				}),
-				{ timeout: 3000, amount: 1, to: [] }
-			)
-		).map((x) => x.response);
-		expect(results.length).toEqual(0);
-		results = (
-			await reader.query.request(
-				new Body({
-					arr: new Uint8Array([0, 1, 2]),
-				}),
-				{ to: [responder.libp2p.services.pubsub.publicKey] }
-			)
-		).map((x) => x.response);
-		await waitFor(() => results.length === 1);
-	});
-
-	it("close", async () => {
-		expect(reader.query.initialized).toBeTrue();
-		expect(reader.closed).toBeFalse();
-		await reader.close();
-		expect(reader.query.initialized).toBeTrue();
-		expect(reader.closed).toBeTrue();
-	});
-
-	it("concurrency", async () => {
-		let promises: Promise<RPCResponse<Body>[]>[] = [];
-		let concurrency = 100;
-		for (let i = 0; i < concurrency; i++) {
-			promises.push(
-				reader.query.request(
-					new Body({
-						arr: new Uint8Array([i]),
-					}),
-					{ amount: 1 }
-				)
+				{ amount: 1 }
 			);
-		}
-		const results = await Promise.all(promises);
-		for (let i = 0; i < concurrency; i++) {
-			expect(results[i]).toHaveLength(1);
-			expect(results[i][0].response.arr).toEqual(new Uint8Array([i]));
-		}
-	});
 
-	/* it("context", async () => {
-		let results: Body[] = [];
-		// Unknown context (expect no results)
+			await waitFor(() => results.length === 1);
+			expect(results[0].from?.hashcode()).toEqual(
+				responder.node.identity.publicKey.hashcode()
+			);
+		});
+
+		it("onResponse", async () => {
+			let results: Body[] = [];
+			await reader.query.request(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+
+				{
+					amount: 1,
+					onResponse: (resp) => {
+						results.push(resp);
+					},
+				}
+			);
+
+			await waitFor(() => results.length === 1);
+		});
+
+		it("to", async () => {
 			let results: Body[] = (
 				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2]),
 					}),
-					{ timeout: 3000, context: Buffer.from("wrong context") }
+					{ timeout: 3000, amount: 1, to: [] }
 				)
 			).map((x) => x.response);
-			expect(results).toHaveLength(0);
-	
-			// Explicit
+			expect(results.length).toEqual(0);
 			results = (
 				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2]),
 					}),
-					{ amount: 1, context: serialize(reader.address) }
+					{ to: [responder.node.identity.publicKey] }
 				)
 			).map((x) => x.response);
-			expect(results).toHaveLength(1);
+			await waitFor(() => results.length === 1);
+		});
 
-		// Implicit
-		results.push(
-			...(
+		it("close", async () => {
+			expect(reader.closed).toBeFalse();
+			await reader.close();
+			expect(reader.closed).toBeTrue();
+		});
+
+		it("concurrency", async () => {
+			let promises: Promise<RPCResponse<Body>[]>[] = [];
+			let concurrency = 100;
+			for (let i = 0; i < concurrency; i++) {
+				promises.push(
+					reader.query.request(
+						new Body({
+							arr: new Uint8Array([i]),
+						}),
+						{ amount: 1 }
+					)
+				);
+			}
+			const results = await Promise.all(promises);
+			for (let i = 0; i < concurrency; i++) {
+				expect(results[i]).toHaveLength(1);
+				expect(results[i][0].response.arr).toEqual(new Uint8Array([i]));
+			}
+		});
+
+		it("timeout", async () => {
+			let waitFor = 5000;
+
+			const t0 = +new Date();
+			let results: Body[] = (
 				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2]),
 					}),
-					{ amount: 1 }
+					{
+						timeout: waitFor,
+					}
 				)
-			).map((x) => x.response)
-		);
-		expect(results).toHaveLength(2);
-	}); */
+			).map((x) => x.response);
+			const t1 = +new Date();
+			expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
+			expect(results).toHaveLength(1);
+		});
+	});
 
-	it("timeout", async () => {
-		let waitFor = 5000;
+	describe("init", () => {
+		let session: LSession, rpcs: RPCTest[];
 
-		const t0 = +new Date();
-		let results: Body[] = (
-			await reader.query.request(
-				new Body({
-					arr: new Uint8Array([0, 1, 2]),
-				}),
-				{
-					timeout: waitFor,
+		beforeEach(async () => {
+			rpcs = [];
+			session = await LSession.connected(3);
+		});
+		afterEach(async () => {
+			await Promise.all(rpcs.map((x) => x.close()));
+			await session.stop();
+		});
+		it("will request subscribers on initialization", async () => {
+			for (const peer of session.peers) {
+				const rpc = new RPCTest(session.peers.map((x) => x.peerId));
+				rpc.query = new RPC();
+				await peer.open(rpc);
+				rpcs.push(rpc);
+				await delay(500); // add a little delay, so that new peers will not recieve old subscription events
+			}
+			for (let i = 0; i < rpcs.length; i++) {
+				for (let j = 0; j < rpcs.length; j++) {
+					if (j !== i) {
+						// Test that even if we did not recieve the old subsription events, we have requested subscribers
+						// Hence the line below will resolve
+						await rpcs[i].waitFor(session.peers[j].peerId);
+					}
 				}
-			)
-		).map((x) => x.response);
-		const t1 = +new Date();
-		expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
-		expect(results).toHaveLength(1);
+			}
+		});
 	});
 });
 describe("queryAll", () => {
@@ -209,21 +208,18 @@ describe("queryAll", () => {
 	beforeEach(async () => {
 		session = await LSession.connected(3);
 
-		const t = new RPCTest();
+		const t = new RPCTest(session.peers.map((x) => x.peerId));
 		t.query = new RPC();
 
 		clients = [];
 		for (let i = 0; i < session.peers.length; i++) {
 			const c = deserialize(serialize(t), RPCTest);
-			await c.init(session.peers[i], {
-				role: new Replicator(),
-			});
-			await c.setup();
+			await session.peers[i].open(c);
 			clients.push(c);
 		}
 		for (let i = 0; i < session.peers.length; i++) {
 			await clients[i].waitFor(
-				session.peers.filter((p, ix) => ix !== i).map((x) => x.peerId)
+				...session.peers.filter((p, ix) => ix !== i).map((x) => x.peerId)
 			);
 		}
 	});
@@ -238,7 +234,7 @@ describe("queryAll", () => {
 		// groups = [[me, 1, 2]]
 		await queryAll(
 			clients[0].query,
-			[session.peers.map((x) => x.services.pubsub.publicKeyHash)],
+			[session.peers.map((x) => x.identity.publicKey.hashcode())],
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {
 				r.push(e);
@@ -254,7 +250,7 @@ describe("queryAll", () => {
 			[
 				session.peers
 					.filter((x, ix) => ix !== 0)
-					.map((x) => x.services.pubsub.publicKeyHash),
+					.map((x) => x.identity.publicKey.hashcode()),
 			],
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {
@@ -270,7 +266,7 @@ describe("queryAll", () => {
 			let r: RPCResponse<Body>[][] = [];
 			await queryAll(
 				clients[i].query,
-				session.peers.map((x) => [x.services.pubsub.publicKeyHash]),
+				session.peers.map((x) => [x.identity.publicKey.hashcode()]),
 				new Body({ arr: new Uint8Array([1]) }),
 				(e) => {
 					r.push(e);
@@ -292,7 +288,7 @@ describe("queryAll", () => {
 				try {
 					await queryAll(
 						clients[i % session.peers.length].query,
-						session.peers.map((x) => [x.services.pubsub.publicKeyHash]),
+						session.peers.map((x) => [x.identity.publicKey.hashcode()]),
 						new Body({ arr: new Uint8Array([1]) }),
 						(e) => {
 							r.push(e);

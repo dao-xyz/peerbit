@@ -1,5 +1,5 @@
 import { field, fixedArray, option, variant } from "@dao-xyz/borsh";
-import { X25519PublicKey, randomBytes } from "@dao-xyz/peerbit-crypto";
+import { MaybeEncrypted, X25519PublicKey, randomBytes } from "@peerbit/crypto";
 
 @variant(0)
 export abstract class RPCMessage {}
@@ -12,11 +12,11 @@ export class RequestV0 extends RPCMessage {
 	@field({ type: option(X25519PublicKey) })
 	respondTo?: X25519PublicKey;
 
-	@field({ type: Uint8Array })
-	request: Uint8Array;
+	@field({ type: MaybeEncrypted })
+	request: MaybeEncrypted<any>;
 
 	constructor(properties: {
-		request: Uint8Array;
+		request: MaybeEncrypted<any>;
 		respondTo?: X25519PublicKey;
 	}) {
 		super();
@@ -31,10 +31,13 @@ export class ResponseV0 extends RPCMessage {
 	@field({ type: fixedArray("u8", 32) })
 	requestId: Uint8Array;
 
-	@field({ type: Uint8Array })
-	response: Uint8Array;
+	@field({ type: MaybeEncrypted })
+	response: MaybeEncrypted<any>;
 
-	constructor(properties: { response: Uint8Array; requestId: Uint8Array }) {
+	constructor(properties: {
+		response: MaybeEncrypted<any>;
+		requestId: Uint8Array;
+	}) {
 		super();
 		this.response = properties.response;
 		this.requestId = properties.requestId;

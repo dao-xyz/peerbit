@@ -1,6 +1,5 @@
 import { Entry } from "./entry.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
-import { createBlock, getBlockValue } from "@dao-xyz/libp2p-direct-block";
+import { Blocks } from "@peerbit/blocks-interface";
 import {
 	BinaryReader,
 	BinaryWriter,
@@ -11,7 +10,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { waitForAsync } from "@dao-xyz/peerbit-time";
+import { waitForAsync } from "@peerbit/time";
 import LocalStore from "@dao-xyz/lazy-level";
 import { logger } from "./logger.js";
 
@@ -46,7 +45,7 @@ export class Snapshot {
 
 export const save = async <T>(
 	snapshotPath: string,
-	blockstore: BlockStore,
+	blockstore: Blocks,
 	cache: LocalStore,
 	log: {
 		id: Uint8Array;
@@ -64,10 +63,10 @@ export const save = async <T>(
 		})
 	);
 
-	const snapshot = await blockstore.put(await createBlock(buf, "raw"));
+	const snapshot = await blockstore.put(buf);
 	const writer = new BinaryWriter();
 	writer.string(snapshot);
-	await cache.set(snapshotPath, writer.finalize());
+	await cache.put(snapshotPath, writer.finalize());
 
 	await waitForAsync(() => cache.get(snapshotPath).then((bytes) => !!bytes), {
 		delayInterval: 200,
@@ -80,18 +79,18 @@ export const save = async <T>(
 
 export const load = async (
 	hash: string,
-	blockstore: BlockStore
+	blockstore: Blocks
 ): Promise<Snapshot> => {
-	const block = await blockstore.get<Uint8Array>(hash);
+	const block = await blockstore.get(hash);
 	if (!block) {
 		throw new Error("Missing snapshot for CID: " + hash);
 	}
-	return deserialize(await getBlockValue<Uint8Array>(block), Snapshot);
+	return deserialize(block, Snapshot);
 };
 
 export const loadFromCache = async (
 	path: string,
-	blockstore: BlockStore,
+	blockstore: Blocks,
 	cache: LocalStore
 ) => {
 	const snapshotOrCID = await cache.get(path);

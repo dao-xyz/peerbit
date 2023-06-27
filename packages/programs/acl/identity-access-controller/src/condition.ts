@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface-peer-id";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {

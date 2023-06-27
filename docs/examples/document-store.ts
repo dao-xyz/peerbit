@@ -12,13 +12,9 @@
 
 /// [imports]
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import {
-	DocumentIndex,
-	Documents,
-	SearchRequest,
-} from "@dao-xyz/peerbit-document";
+import { Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 /// [imports]
 
@@ -54,12 +50,12 @@ class PostsDB extends Program {
 	}
 
 	/**
-	 * Setup will be called on 'open'
+	 * Implement open to control what things are to be done on 'open'
 	 */
-	async setup(): Promise<void> {
+	async open(): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
-		await this.posts.setup({
+		await this.posts.open({
 			type: Post,
 			index: { key: "id" } /* canAppend: (entry) => true */,
 		});
@@ -77,12 +73,12 @@ await store.posts.put(new Post("hello world"));
 const peer2 = await Peerbit.create();
 
 // Connect to the first peer
-await peer2.dial(peer);
+await peer2.dial(peer.getMultiaddrs());
 
-const store2 = await peer2.open<PostsDB>(store.address);
+const store2 = await peer2.open<PostsDB>(store.address!);
 
-// Wait for peer1 to be reachable for query. This line only necessary when testing locally
-await store.waitFor(peer2.libp2p);
+// Wait for peer1 to be reachable for query
+await store.waitFor(peer2.peerId);
 
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({

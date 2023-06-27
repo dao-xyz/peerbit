@@ -2,7 +2,7 @@ import {
 	Ed25519Keypair,
 	Ed25519PrivateKey,
 	Ed25519PublicKey,
-} from "@dao-xyz/peerbit-crypto";
+} from "@peerbit/crypto";
 
 export const signKey = new Ed25519Keypair({
 	publicKey: new Ed25519PublicKey({

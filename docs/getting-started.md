@@ -7,8 +7,14 @@ A cloneable boilerplate project can be found [here](https://github.com/dao-xyz/p
 ## Existing project
 
 ### Install
+The client
 ```sh
-npm install @dao-xyz/peerbit
+npm install peerbit
+```
+
+A store for documents
+```sh 
+npm install @peerbit/document
 ```
 
 ### Imports
@@ -22,6 +28,8 @@ npm install @dao-xyz/peerbit
 
 ### Seaching for the document from another peer
 [another-client](./examples/document-store.ts ':include :type=code :fragment=another-client')
+
+Read more about the Document store [here](./modules/program/document-store.md).
 
 
 

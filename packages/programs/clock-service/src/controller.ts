@@ -1,10 +1,11 @@
 import { field, deserialize, variant, option } from "@dao-xyz/borsh";
-import { RPC } from "@dao-xyz/peerbit-rpc";
-import { Program } from "@dao-xyz/peerbit-program";
-import { SignatureWithKey } from "@dao-xyz/peerbit-crypto";
-import { Entry, HLC } from "@dao-xyz/peerbit-log";
-import { TrustedNetwork } from "@dao-xyz/peerbit-trusted-network";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { RPC, RPCResponse } from "@peerbit/rpc";
+import { Program } from "@peerbit/program";
+import { SignatureWithKey } from "@peerbit/crypto";
+import { Entry, HLC } from "@peerbit/log";
+import { TrustedNetwork } from "@peerbit/trusted-network";
+import { logger as loggerFn } from "@peerbit/logger";
+import { Replicator, SubscriptionType } from "@peerbit/shared-log";
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
@@ -36,8 +37,10 @@ export class SignError extends Result {
 	}
 }
 
+type Args = { role?: SubscriptionType; maxTimeError?: number };
+
 @variant("clock_service")
-export class ClockService extends Program {
+export class ClockService extends Program<Args> {
 	@field({ type: RPC })
 	_remoteSigner: RPC<Uint8Array, Ok | SignError>;
 
@@ -59,54 +62,56 @@ export class ClockService extends Program {
 	/**
 	 * @param maxError, in ms, defaults to 10 seconds
 	 */
-	async setup(properties?: { maxTimeError: number }) {
+	async open(properties?: Args) {
 		this._maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
-		await this._trustedNetwork.setup();
-		await this._remoteSigner.setup({
-			topic: this._trustedNetwork.trustGraph.log.idString + "/clock", // TODO do better
+		await this._trustedNetwork.open({ role: properties?.role });
+		await this._remoteSigner.open({
+			topic: this._trustedNetwork.trustGraph.log.log.idString + "/clock", // TODO do better
 			queryType: Uint8Array,
 			responseType: Result,
-			responseHandler: async (arr, context) => {
-				const entry = deserialize(arr, Entry);
-				if (entry.hash) {
-					logger.warn("Recieved entry with hash, unexpected");
-				}
+			responseHandler:
+				!properties?.role || properties?.role instanceof Replicator
+					? async (arr, context) => {
+							const entry = deserialize(arr, Entry);
+							if (entry.hash) {
+								logger.warn("Recieved entry with hash, unexpected");
+							}
 
-				entry._signatures = undefined; // because we dont want to sign signatures
+							entry._signatures = undefined; // because we dont want to sign signatures
 
-				const now = this._hlc.now().wallTime;
-				const cmp = (await entry.getClock()).timestamp.wallTime;
-				if (abs(now - cmp) > this._maxError) {
-					logger.info("Recieved an entry with an invalid timestamp");
-					return new SignError({
-						message: "Recieved an entry with an invalid timestamp",
-					});
-				}
-				const signature = await this.identity.sign(entry.toSignable());
-				return new Ok({
-					signature,
-				});
-			},
+							const now = this._hlc.now().wallTime;
+							const cmp = (await entry.getClock()).timestamp.wallTime;
+							if (abs(now - cmp) > this._maxError) {
+								logger.info("Recieved an entry with an invalid timestamp");
+								return new SignError({
+									message: "Recieved an entry with an invalid timestamp",
+								});
+							}
+							const signature = await this.node.identity.sign(
+								entry.toSignable()
+							);
+							return new Ok({
+								signature,
+							});
+					  }
+					: undefined,
 		});
 	}
 
 	async sign(data: Uint8Array): Promise<SignatureWithKey> {
-		const signatures: SignatureWithKey[] = [];
-		let error: Error | undefined = undefined;
-		await this._remoteSigner.request(data, {
-			amount: 1,
-			onResponse: (response) => {
-				if (response instanceof Ok) {
-					signatures.push(response.signature);
-				} else {
-					error = new Error(response.message);
-				}
-			},
-		});
-		if (error) {
-			throw error;
+		const responses: RPCResponse<Ok | SignError>[] =
+			await this._remoteSigner.request(data, { amount: 1 });
+
+		if (responses.length === 0) {
+			throw new Error("Failed to retrieve signatures");
 		}
-		return signatures[0];
+		for (const response of responses) {
+			if (response.response instanceof SignError) {
+				throw new Error(response.response.message);
+			}
+		}
+
+		return (responses[0].response as Ok).signature;
 	}
 
 	async verify(entry: Entry<any>): Promise<boolean> {

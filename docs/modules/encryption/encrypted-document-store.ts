@@ -1,8 +1,10 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Observer, Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
-import { Documents } from "@dao-xyz/peerbit-document";
+import { Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
+import { Documents } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
+import { X25519Keypair } from "@peerbit/crypto";
+import { Observer, SubscriptionType } from "@peerbit/shared-log";
 
 class Message {
 	@field({ type: "string" })
@@ -16,10 +18,12 @@ class Message {
 		this.message = message;
 	}
 }
-// This class extends Program which allows it to be replicated amongst peers
 
+type Args = { role?: SubscriptionType };
+
+// This class extends Program which allows it to be replicated amongst peers
 @variant("encrypted-document-store")
-class DocumentStore extends Program {
+class DocumentStore extends Program<Args> {
 	@field({ type: Documents })
 	messages: Documents<Message>; // Documents<?> provide document store functionality around your Posts
 
@@ -28,11 +32,12 @@ class DocumentStore extends Program {
 		this.messages = new Documents();
 	}
 
-	async setup(): Promise<void> {
-		// We need to setup the store in the setup hook
+	async open(args?: Args): Promise<void> {
+		// We need to setup the store in the open hook
 		// we can also modify properties of our store here, for example set access control
-		await this.messages.setup({
+		await this.messages.open({
 			type: Message,
+			role: args?.role,
 		});
 	}
 }
@@ -40,50 +45,53 @@ class DocumentStore extends Program {
 const client = await Peerbit.create();
 
 const client2 = await Peerbit.create();
-await client2.dial(client);
+await client2.dial(client.getMultiaddrs());
 
 const client3 = await Peerbit.create();
-await client3.dial(client);
+await client3.dial(client.getMultiaddrs());
 
 const store = await client.open(new DocumentStore());
 
 const message = new Message("Hello world!");
 await store.messages.put(message, {
-	reciever: {
-		// Who can read the log entry metadata (e.g. timestamps)
-		metadata: [
-			client.identity.publicKey,
-			client2.identity.publicKey,
-			client3.identity.publicKey,
-		],
+	encryption: {
+		keypair: await X25519Keypair.create(),
+		reciever: {
+			// Who can read the log entry metadata (e.g. timestamps)
+			metadata: [
+				client.identity.publicKey,
+				client2.identity.publicKey,
+				client3.identity.publicKey,
+			],
 
-		// Who can read the references of the entry (next pointers)
-		next: [
-			client.identity.publicKey,
-			client2.identity.publicKey,
-			client3.identity.publicKey,
-		],
+			// Who can read the references of the entry (next pointers)
+			next: [
+				client.identity.publicKey,
+				client2.identity.publicKey,
+				client3.identity.publicKey,
+			],
 
-		// Who can read the message?
-		payload: [client.identity.publicKey, client2.identity.publicKey],
+			// Who can read the message?
+			payload: [client.identity.publicKey, client2.identity.publicKey],
 
-		// Who can read the signature ?
-		// (In order to validate entries you need to be able to read the signature)
-		signatures: [
-			client.identity.publicKey,
-			client2.identity.publicKey,
-			client3.identity.publicKey,
-		],
+			// Who can read the signature ?
+			// (In order to validate entries you need to be able to read the signature)
+			signatures: [
+				client.identity.publicKey,
+				client2.identity.publicKey,
+				client3.identity.publicKey,
+			],
 
-		// Omitting any of the fields below will make it unencrypted
+			// Omitting any of the fields below will make it unencrypted
+		},
 	},
 });
 
 // A peer that can open
-const store2 = await client2.open<DocumentStore>(store.address, {
-	role: new Observer(),
+const store2 = await client2.open<DocumentStore, Args>(store.address, {
+	args: { role: new Observer() },
 });
-await store2.waitFor(client.libp2p);
+await store2.waitFor(client.peerId);
 
 const messageRetrieved = await store2.messages.index.get(message.id);
 

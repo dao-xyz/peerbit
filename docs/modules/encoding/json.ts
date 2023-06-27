@@ -5,7 +5,7 @@ import {
 	serialize,
 	deserialize,
 } from "@dao-xyz/borsh";
-import { randomBytes } from "@dao-xyz/peerbit-crypto";
+import { randomBytes } from "@peerbit/crypto";
 
 interface Message {
 	title: string;

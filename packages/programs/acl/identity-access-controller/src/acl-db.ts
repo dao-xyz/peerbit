@@ -1,17 +1,20 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents, DocumentIndex } from "@dao-xyz/peerbit-document";
+import { Documents, DocumentIndex } from "@peerbit/document";
 import {
 	getPathGenerator,
 	TrustedNetwork,
 	getFromByTo,
 	IdentityGraph,
-} from "@dao-xyz/peerbit-trusted-network";
+	createIdentityGraphStore,
+} from "@peerbit/trusted-network";
 import { Access, AccessType } from "./access";
-import { Entry } from "@dao-xyz/peerbit-log";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@dao-xyz/peerbit-crypto";
-import { Program } from "@dao-xyz/peerbit-program";
-import { RPC } from "@dao-xyz/peerbit-rpc";
+import { Entry } from "@peerbit/log";
+import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
+import { Program } from "@peerbit/program";
+import { RPC } from "@peerbit/rpc";
 import { PeerId } from "@libp2p/interface-peer-id";
+import { concat } from "uint8arrays";
+import { SubscriptionType } from "@peerbit/shared-log";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -25,6 +28,7 @@ export class IdentityAccessController extends Program {
 	trustedNetwork: TrustedNetwork;
 
 	constructor(opts: {
+		id?: Uint8Array;
 		rootTrust: PublicSignKey | PeerId;
 		trustedNetwork?: TrustedNetwork;
 	}) {
@@ -33,6 +37,7 @@ export class IdentityAccessController extends Program {
 			throw new Error("Expecting either TrustedNetwork or rootTrust");
 		}
 		this.access = new Documents({
+			id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([0])])),
 			index: new DocumentIndex({
 				query: new RPC(),
 			}),
@@ -41,9 +46,14 @@ export class IdentityAccessController extends Program {
 		this.trustedNetwork = opts.trustedNetwork
 			? opts.trustedNetwork
 			: new TrustedNetwork({
+					id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
 					rootTrust: opts.rootTrust,
 			  });
-		this.identityGraphController = new IdentityGraph({});
+		this.identityGraphController = new IdentityGraph({
+			relationGraph: createIdentityGraphStore(
+				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])]))
+			),
+		});
 	}
 
 	// allow anyone write to the ACL db, but assume entry is invalid until a verifier verifies
@@ -152,15 +162,17 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async setup() {
-		await this.identityGraphController.setup({
+	async open(properties?: { role?: SubscriptionType }) {
+		await this.identityGraphController.open({
+			role: properties?.role,
 			canRead: this.canRead.bind(this),
 		});
-		await this.access.setup({
+		await this.access.open({
+			role: properties?.role,
 			type: Access,
 			canAppend: this.canAppend.bind(this),
 			canRead: this.canRead.bind(this),
 		});
-		await this.trustedNetwork.setup();
+		await this.trustedNetwork.open(properties);
 	}
 }

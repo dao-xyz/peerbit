@@ -1,17 +1,17 @@
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
 import { Cache } from "@dao-xyz/cache";
 import { Entry } from "./entry.js";
-import { deserialize, serialize } from "@dao-xyz/borsh";
+import { deserialize } from "@dao-xyz/borsh";
 import { logger } from "./logger.js";
+import { Blocks } from "@peerbit/blocks-interface";
 
 export class EntryIndex<T> {
 	_cache: Cache<Entry<T> | null>;
-	_store: BlockStore;
+	_store: Blocks;
 	_init: (entry: Entry<T>) => void;
 	_index: Set<string>;
 
 	constructor(properties: {
-		store: BlockStore;
+		store: Blocks;
 		init: (entry: Entry<T>) => void;
 		cache: Cache<Entry<T>>;
 	}) {
@@ -66,8 +66,8 @@ export class EntryIndex<T> {
 		k: string,
 		options?: { replicate?: boolean; timeout?: number }
 	): Promise<Entry<T> | null> {
-		const value = await this._store.get<Uint8Array>(k, options);
-		return value ? deserialize(value.value, Entry) : null;
+		const value = await this._store.get(k, options);
+		return value ? deserialize(value, Entry) : null;
 	}
 
 	async delete(k: string) {

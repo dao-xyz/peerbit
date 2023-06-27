@@ -4,20 +4,27 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-program bumped from 1.0.0-alpha1 to 1.0.1-alpha1
-    * @dao-xyz/peerbit-rpc bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/program bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/rpc bumped from 1.0.0-alpha1 to 1.0.1-alpha1
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
 ### Dependencies
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-program bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-rpc bumped from 1.0.3 to 1.0.4
+    * @peerbit/program bumped from 1.0.3 to 1.0.4
+    * @peerbit/rpc bumped from 1.0.3 to 1.0.4
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-time bumped from 0.0.24 to 1.0.0
+    * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
+    * @peerbit/time bumped from 0.0.24 to 1.0.0
+
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-document-v1.0.4...peerbit-document-v1.0.5) (2023-06-16)
+
+
+### Bug Fixes
+
+* rm  redudan onResponse callback for search and iterator ([41a6098](https://github.com/dao-xyz/peerbit/commit/41a6098f3b031a89b85777856337d38f1ae66434))
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-document-v1.0.4...peerbit-document-v1.0.5) (2023-06-16)
 
@@ -38,10 +45,10 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-program bumped from 1.0.2 to 1.0.3
-    * @dao-xyz/peerbit-rpc bumped from 1.0.2 to 1.0.3
+    * @peerbit/program bumped from 1.0.2 to 1.0.3
+    * @peerbit/rpc bumped from 1.0.2 to 1.0.3
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 1.0.2 to 1.0.3
+    * @peerbit/test-utils bumped from 1.0.2 to 1.0.3
 
 ## 1.0.0-alpha1 (2023-06-14)
 
@@ -74,12 +81,12 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-program bumped from 0.9.1 to 1.0.0-alpha1
-    * @dao-xyz/peerbit-rpc bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/program bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/rpc bumped from 0.9.1 to 1.0.0-alpha1
   * devDependencies
-    * @dao-xyz/peerbit-test-utils bumped from 0.4.3 to 1.0.0-alpha1
+    * @peerbit/test-utils bumped from 0.4.3 to 1.0.0-alpha1
 
-## @dao-xyz/peerbit-document [0.9.1](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-document@0.9.0...@dao-xyz/peerbit-document@0.9.1) (2023-06-07)
+## @peerbit/document [0.9.1](https://github.com/dao-xyz/peerbit/compare/@peerbit/document@0.9.0...@peerbit/document@0.9.1) (2023-06-07)
 
 
 ### Bug Fixes
@@ -92,7 +99,7 @@
 
 ### Dependencies
 
-* **@dao-xyz/peerbit-program:** upgraded to 0.9.1
-* **@dao-xyz/peerbit-rpc:** upgraded to 0.9.1
-* **@dao-xyz/peerbit-test-utils:** upgraded to 0.4.3
-* **@dao-xyz/peerbit-time:** upgraded to 0.0.24
+* **@peerbit/program:** upgraded to 0.9.1
+* **@peerbit/rpc:** upgraded to 0.9.1
+* **@peerbit/test-utils:** upgraded to 0.4.3
+* **@peerbit/time:** upgraded to 0.0.24

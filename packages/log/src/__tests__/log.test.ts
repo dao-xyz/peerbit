@@ -2,36 +2,24 @@ import assert from "assert";
 import { Entry } from "../entry.js";
 import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
-import { Ed25519Keypair } from "@dao-xyz/peerbit-crypto";
-import { compare } from "@dao-xyz/uint8arrays";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 
-describe("Log", function () {
+describe("properties", function () {
 	let store: BlockStore;
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	describe("constructor", () => {
 		it("creates an empty log with default params", async () => {
 			const log = new Log();
-			await log.open(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				undefined
-			);
+			await log.open(store, signKey, undefined);
 			assert.notStrictEqual(log.entryIndex, null);
 			assert.notStrictEqual(log.headsIndex, null);
 			assert.notStrictEqual(log.id, null);
@@ -44,17 +32,19 @@ describe("Log", function () {
 			assert.deepStrictEqual(await log.getTailHashes(), []);
 		});
 
-		it("can not setup after open", async () => {
+		it("can not open twice", async () => {
 			const log = new Log();
-			await log.open(
-				store,
-				{
-					...signKey,
-					sign: async (data: Uint8Array) => await signKey.sign(data),
-				},
-				undefined
-			);
-			await expect(() => log.setup()).rejects.toThrow();
+			await log.open(store, signKey, undefined);
+			await expect(() =>
+				log.open(
+					store,
+					{
+						...signKey,
+						sign: async (data: Uint8Array) => await signKey.sign(data),
+					},
+					undefined
+				)
+			).rejects.toThrow();
 		});
 		it("sets an id", async () => {
 			const log = new Log({ id: new Uint8Array(1) });

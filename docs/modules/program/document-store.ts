@@ -1,7 +1,7 @@
 /// [imports]
 import { field, variant, option } from "@dao-xyz/borsh";
-import { Observer, Program } from "@dao-xyz/peerbit-program";
-import { Peerbit } from "@dao-xyz/peerbit";
+import { Program } from "@peerbit/program";
+import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
 import {
@@ -11,7 +11,7 @@ import {
 	MissingField,
 	SearchRequest,
 	Sort,
-} from "@dao-xyz/peerbit-document";
+} from "@peerbit/document";
 /// [imports]
 
 /// [definition]
@@ -67,8 +67,9 @@ class Reaction {
 	}
 }
 
+type ChannelArgs = { role?: SubscriptionType };
 @variant("channel")
-class Channel extends Program {
+class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
 	@field({ type: Documents })
@@ -91,13 +92,13 @@ class Channel extends Program {
 	/**
 	 * Setup will be called on 'open'
 	 */
-	async setup(): Promise<void> {
+	async open(properties?: ChannelArgs): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
-		await this.posts.setup({
+		await this.posts.open({
 			type: Post,
 			canAppend: () => true,
-
+			role: properties?.role,
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
 				key: POST_ID_PROPERTY,
@@ -109,7 +110,7 @@ class Channel extends Program {
 						[POST_ID_PROPERTY]: post.message,
 						[POST_PARENT_POST_ID]: post.parentPostid,
 						[POST_MESSAGE_PROPERTY]: post.message,
-						[POST_FROM_PROPERTY]: (await this.posts.log.get(context.head))
+						[POST_FROM_PROPERTY]: (await this.posts.log.log.get(context.head))
 							?.signatures[0].publicKey.bytes,
 						[POST_TIMESTAMP_PROPERTY]: context.modified,
 					};
@@ -117,7 +118,7 @@ class Channel extends Program {
 			},
 		});
 
-		await this.reactions.setup({
+		await this.reactions.open({
 			type: Reaction,
 			canAppend: () => true,
 			index: {
@@ -131,26 +132,26 @@ class Channel extends Program {
 /// [definition]
 
 /// [insert]
-import { waitForResolved } from "@dao-xyz/peerbit-time";
+import { waitForResolved } from "@peerbit/time";
 
 // Start two clients that ought to talk to each other
 const peer = await Peerbit.create();
 const peer2 = await Peerbit.create();
 
 // Connect to the first peer
-await peer2.dial(peer);
+await peer2.dial(peer.getMultiaddrs());
 
 const channelFromClient1 = await peer.open(new Channel());
-const channelFromClient2 = await peer2.open<Channel>(
-	channelFromClient1.address,
+const channelFromClient2 = await peer2.open<Channel, ChannelArgs>(
+	channelFromClient1.address!,
 	{
 		// Observer will not store anything unless explicitly doing so
-		role: new Observer(), // or new Replicator() (default)
+		args: { role: new Observer() }, // or new Replicator() (default))
 	}
 );
 
-// Wait for peer1 to be reachable for query. This line only necessary when testing locally
-await channelFromClient2.waitFor(peer.libp2p);
+// Wait for peer1 to be reachable for query
+await channelFromClient2.waitFor(peer.peerId);
 
 // Lets write some things
 const message1 = new Post("hello world");
@@ -279,7 +280,8 @@ import {
 	SortDirection,
 	Or,
 	And,
-} from "@dao-xyz/peerbit-document";
+} from "@peerbit/document";
+import { Observer, SubscriptionType } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [
@@ -381,12 +383,12 @@ await iterator.close();
 /// [iterator-detailed]
 
 /// [sync]
-const iterateAndSync = channelFromClient2.posts.index.iterate(
+const iterateAndSync = await channelFromClient2.posts.index.iterate(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
 	{ local: true, remote: { sync: true } }
 );
 
-const searchAndSync = channelFromClient2.posts.index.search(
+const searchAndSync = await channelFromClient2.posts.index.search(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
 	{ local: true, remote: { sync: true } }
 );

@@ -4,16 +4,22 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-rpc bumped from 1.0.0-alpha1 to 1.0.1-alpha1
-    * @dao-xyz/peerbit-trusted-network bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/rpc bumped from 1.0.0-alpha1 to 1.0.1-alpha1
+    * @peerbit/trusted-network bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
 ### Dependencies
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-logger bumped from 0.0.7 to 1.0.0
-    * @dao-xyz/peerbit-rpc bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/peerbit-trusted-network bumped from 1.0.3 to 1.0.4
+    * @peerbit/logger bumped from 0.0.7 to 1.0.0
+    * @peerbit/rpc bumped from 1.0.3 to 1.0.4
+    * @peerbit/trusted-network bumped from 1.0.3 to 1.0.4
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @dao-xyz/peerbit-trusted-network bumped from 1.0.4 to 1.0.5
 
 ### Dependencies
 
@@ -33,8 +39,8 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-rpc bumped from 1.0.2 to 1.0.3
-    * @dao-xyz/peerbit-trusted-network bumped from 1.0.2 to 1.0.3
+    * @peerbit/rpc bumped from 1.0.2 to 1.0.3
+    * @peerbit/trusted-network bumped from 1.0.2 to 1.0.3
 
 ## 1.0.0-alpha1 (2023-06-14)
 
@@ -62,10 +68,10 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/peerbit-rpc bumped from 0.9.1 to 1.0.0-alpha1
-    * @dao-xyz/peerbit-trusted-network bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/rpc bumped from 0.9.1 to 1.0.0-alpha1
+    * @peerbit/trusted-network bumped from 0.9.1 to 1.0.0-alpha1
 
-## @dao-xyz/peerbit-clock-service [0.9.1](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-clock-service@0.9.0...@dao-xyz/peerbit-clock-service@0.9.1) (2023-06-07)
+## @peerbit/clock-service [0.9.1](https://github.com/dao-xyz/peerbit/compare/@peerbit/clock-service@0.9.0...@peerbit/clock-service@0.9.1) (2023-06-07)
 
 
 ### Bug Fixes
@@ -78,6 +84,6 @@
 
 ### Dependencies
 
-* **@dao-xyz/peerbit-logger:** upgraded to 0.0.7
-* **@dao-xyz/peerbit-rpc:** upgraded to 0.9.1
-* **@dao-xyz/peerbit-trusted-network:** upgraded to 0.9.1
+* **@peerbit/logger:** upgraded to 0.0.7
+* **@peerbit/rpc:** upgraded to 0.9.1
+* **@peerbit/trusted-network:** upgraded to 0.9.1

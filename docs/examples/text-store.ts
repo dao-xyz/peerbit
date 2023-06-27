@@ -1,9 +1,9 @@
-import { Peerbit } from "@dao-xyz/peerbit";
-import { Program } from "@dao-xyz/peerbit-program";
-import { PublicSignKey } from "@dao-xyz/peerbit-crypto";
-import { Range, DString, StringOperation } from "@dao-xyz/peerbit-string";
+import { Peerbit } from "peerbit";
+import { Program } from "@peerbit/program";
+import { PublicSignKey } from "@peerbit/crypto";
+import { Range, DString, StringOperation } from "@peerbit/string";
 import { field, variant } from "@dao-xyz/borsh";
-import { Entry } from "@dao-xyz/peerbit-log";
+import { Entry } from "@peerbit/log";
 
 @variant("collaborative_text") // You have to give the program a unique name
 class CollaborativeText extends Program {
@@ -15,8 +15,8 @@ class CollaborativeText extends Program {
 		this.string = new DString({});
 	}
 
-	async setup() {
-		await this.string.setup({
+	async open() {
+		await this.string.open({
 			canAppend: this.canAppend,
 			canRead: this.canRead,
 		});
@@ -37,12 +37,12 @@ class CollaborativeText extends Program {
 
 const peer = await Peerbit.create();
 const document = await peer.open(new CollaborativeText());
-console.log(document.address); /// this address can be opened by another peer
+console.log(document.address!.toString()); /// this address can be opened by another peer
 
 //  ...
 await document.string.add("hello", new Range({ offset: 0n, length: 5n }));
 await document.string.add("world", new Range({ offset: 6n, length: 5n }));
 
-expect(await document.string.toString()).toEqual("hello world");
+expect(await document.string.getValue()).toEqual("hello world");
 
 await peer.stop();

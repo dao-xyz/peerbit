@@ -4,7 +4,7 @@ The peer client
 
 ## Installation 
 ```sh
-npm install @dao-xyz/peerbit
+npm install peerbit
 ```
 
 ## Config

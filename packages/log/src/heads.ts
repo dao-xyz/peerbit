@@ -1,32 +1,37 @@
 import { Entry } from "./entry.js";
-import LocalStore from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@dao-xyz/lazy-level";
 import { HeadsCache } from "./heads-cache.js";
-import { BlockStore } from "@dao-xyz/libp2p-direct-block";
+import { Blocks } from "@peerbit/blocks-interface";
+import { Keychain } from "@peerbit/crypto";
+import { Encoding } from "./encoding.js";
 
 export type CacheUpdateOptions = {
 	cache?: { update?: false; reset?: false } | { update: true; reset?: boolean };
 };
+
+interface Config {
+	storage: Blocks;
+	keychain?: Keychain;
+	memory?: SimpleLevel;
+	encoding: Encoding<any>;
+}
 export class HeadsIndex<T> {
 	private _id: Uint8Array;
 	private _index: Set<string> = new Set();
 	private _gids: Map<string, number>;
 	private _headsCache: HeadsCache<T> | undefined;
-	private _blockstore: BlockStore;
+	private _config: Config;
 	constructor(id: Uint8Array) {
 		this._gids = new Map();
 		this._id = id;
 	}
 
-	async init(
-		blockstore: BlockStore,
-		cache?: (name: string) => Promise<LocalStore> | LocalStore,
-		options: { entries?: Entry<T>[] } = {}
-	) {
-		this._blockstore = blockstore;
+	async init(config: Config, options: { entries?: Entry<T>[] } = {}) {
+		this._config = config;
 		await this.reset(options?.entries || []);
-		if (cache) {
+		if (config.memory) {
 			this._headsCache = new HeadsCache(this);
-			return this._headsCache.init(cache);
+			return this._headsCache.init(await config.memory.sublevel("heads"));
 		}
 	}
 
@@ -46,11 +51,25 @@ export class HeadsIndex<T> {
 		if (!heads) {
 			return;
 		}
-		const entries = await Promise.all(
-			heads.map((x) => Entry.fromMultihash<T>(this._blockstore, x, options))
-		);
-		await this.reset(entries);
-		return entries;
+		try {
+			const entries = await Promise.all(
+				heads.map(async (x) => {
+					const entry = await Entry.fromMultihash<T>(
+						this._config.storage,
+						x,
+						options
+					);
+					entry.init(this._config);
+					await entry.getGid(); // decrypt gid
+					return entry;
+				})
+			);
+			await this.reset(entries);
+			return entries;
+		} catch (error) {
+			const q = 123;
+			throw error;
+		}
 	}
 
 	get headsCache(): HeadsCache<T> | undefined {

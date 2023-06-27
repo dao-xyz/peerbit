@@ -1,22 +1,19 @@
 import assert from "assert";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-} from "@dao-xyz/libp2p-direct-block";
+import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 
-describe("Signed Log", function () {
+describe("signature", function () {
 	let store: BlockStore;
 
 	beforeAll(async () => {
 		store = new MemoryLevelBlockStore();
-		await store.open();
+		await store.start();
 	});
 
 	afterAll(async () => {
-		await store.close();
+		await store.stop();
 	});
 
 	it("has the correct identity", async () => {

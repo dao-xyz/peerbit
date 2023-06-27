@@ -27,7 +27,7 @@ Every peer has an identity which is simply their public key, this key can *curre
 Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
 
 ## Scaling networks
-Peerbit is built on top of a [pubsub](./../packages/libp2p/direct-sub/) protocol that automatically optimizes the routing for packages so that the network stays overall healthy. If some path in the network gets congested, packages are routed with alternative routes, potentially over WebRTC, Websocket and TCP connections. 
+Peerbit is built on top of a [pubsub](./../packages/transport/direct-sub/) protocol that automatically optimizes the routing for packages so that the network stays overall healthy. If some path in the network gets congested, packages are routed with alternative routes, potentially over WebRTC, Websocket and TCP connections. 
 
 This is useful when you are building a app that requires streaming large amount of data, with a network consisting of peers with limited bandwidth. An example is a streaming service, where a streamer can write video stream chunks into a database and these chunks can propagage to thousands of peers without having to send to all of them directly.
 

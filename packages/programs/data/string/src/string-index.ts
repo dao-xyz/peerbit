@@ -1,7 +1,7 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, Change, Log } from "@dao-xyz/peerbit-log";
-import { Entry } from "@dao-xyz/peerbit-log";
-import { ComposableProgram } from "@dao-xyz/peerbit-program";
+import { BORSH_ENCODING, Change, Log } from "@peerbit/log";
+import { Entry } from "@peerbit/log";
+import { ComposableProgram } from "@peerbit/program";
 import { Range } from "./range.js";
 
 @variant(0)
@@ -33,7 +33,7 @@ export class StringIndex extends ComposableProgram {
 	get string(): string {
 		return this._string;
 	}
-	async setup(store: Log<StringOperation>) {
+	async open(store: Log<StringOperation>) {
 		this._log = store;
 	}
 

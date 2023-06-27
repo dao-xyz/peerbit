@@ -4,7 +4,7 @@ The document store is program/database you can use within your apps. The purpose
 The document store is a separate package and you can install it with 
 
 ```
-npm install @dao-xyz/peerbit-document
+npm install @peerbit/document
 ```
 
 

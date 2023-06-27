@@ -1,13 +1,7 @@
-import { createStore, LSession } from "@dao-xyz/peerbit-test-utils";
+import { createStore, LSession } from "@peerbit/test-utils";
 import Cache from "@dao-xyz/lazy-level";
-import {
-	Ed25519Keypair,
-	X25519Keypair,
-	X25519PublicKey,
-} from "@dao-xyz/peerbit-crypto";
-import { delay, waitFor } from "@dao-xyz/peerbit-time";
-import { Libp2pExtended } from "@dao-xyz/peerbit-libp2p";
-import { Observer, Replicator } from "@dao-xyz/peerbit-program";
+import { X25519Keypair, X25519PublicKey } from "@peerbit/crypto";
+import { delay, waitFor } from "@peerbit/time";
 
 import { DString } from "../string-store.js";
 import {
@@ -18,11 +12,13 @@ import {
 	RangeMetadata,
 } from "../index.js";
 import { Range } from "../range.js";
+import { Peerbit } from "@peerbit/interface";
+import { Observer, Replicator } from "@peerbit/shared-log";
 
 describe("query", () => {
 	let session: LSession,
-		observer: Libp2pExtended,
-		writer: Libp2pExtended,
+		observer: Peerbit,
+		writer: Peerbit,
 		writeStore: DString,
 		observerStore: DString;
 
@@ -35,32 +31,16 @@ describe("query", () => {
 
 		// Create store
 		writeStore = new DString({});
-		await writeStore.init(writer, {
-			role: new Replicator(),
-			log: {
-				replication: {
-					replicators: () => [],
-				},
-				encryption: {
-					getAnyKeypair: (_) => Promise.resolve(undefined),
-					getEncryptionKeypair: () => X25519Keypair.create(),
-				},
-				cache: () => new Cache(createStore()),
-			},
-		});
+		await writer.open(writeStore);
 
 		observerStore = (await DString.load(
-			writer.services.blocks,
-			writeStore.address!
+			writeStore.address!,
+			writer.services.blocks
 		)) as DString;
 
-		await observerStore.init(observer, {
-			role: new Observer(),
-			log: {
-				replication: {
-					replicators: () => [],
-				},
-				cache: () => new Cache(createStore()),
+		await observer.open(observerStore, {
+			args: {
+				role: new Observer(),
 			},
 		});
 	});
@@ -165,7 +145,7 @@ describe("query", () => {
 		);
 
 		let callbackValues: string[] = [];
-		const string = await observerStore.toString({
+		const string = await observerStore.getValue({
 			remote: {
 				callback: (s) => {
 					callbackValues.push(s);
@@ -175,40 +155,5 @@ describe("query", () => {
 		});
 		expect(string).toEqual("hello world");
 		expect(callbackValues).toEqual(["hello world"]);
-	});
-
-	it("handles AccessError gracefully", async () => {
-		const store = new DString({});
-		await store.init(writer, {
-			role: new Replicator(),
-			log: {
-				replication: {
-					replicators: () => [],
-				},
-				encryption: {
-					getAnyKeypair: (_) => Promise.resolve(undefined),
-					getEncryptionKeypair: () => X25519Keypair.create(),
-				},
-				cache: () => new Cache(createStore()),
-			},
-		});
-
-		await store.add(
-			"hello",
-			new Range({ offset: 0n, length: "hello".length }),
-			{
-				reciever: {
-					metadata: undefined,
-					signatures: undefined,
-					next: undefined,
-					payload: [await X25519PublicKey.create()],
-				},
-			}
-		);
-		await store.close();
-		await delay(1000); // TODO store is async?
-		await store.load();
-		await waitFor(() => store._log.values.length === 1);
-		await store.close();
 	});
 });

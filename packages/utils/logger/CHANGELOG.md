@@ -7,7 +7,7 @@
 
 * bump dependencies ([8a8fd44](https://github.com/dao-xyz/peerbit/commit/8a8fd440149a966337382db77afe1071141e5c74))
 
-## @dao-xyz/peerbit-logger [0.0.7](https://github.com/dao-xyz/peerbit/compare/@dao-xyz/peerbit-logger@0.0.6...@dao-xyz/peerbit-logger@0.0.7) (2023-06-07)
+## @peerbit/logger [0.0.7](https://github.com/dao-xyz/peerbit/compare/@peerbit/logger@0.0.6...@peerbit/logger@0.0.7) (2023-06-07)
 
 
 ### Bug Fixes

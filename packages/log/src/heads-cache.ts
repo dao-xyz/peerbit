@@ -1,11 +1,10 @@
 import PQueue from "p-queue";
 import { v4 as uuid } from "uuid";
 import { Entry } from "./entry";
-import { sha256Base64Sync } from "@dao-xyz/peerbit-crypto";
-import LocalStore from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@dao-xyz/lazy-level";
 import { variant, option, field, vec } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { logger as loggerFn } from "@dao-xyz/peerbit-logger";
+import { logger as loggerFn } from "@peerbit/logger";
 import path from "path-browserify";
 export const logger = loggerFn({ module: "heads-cache" });
 export class CachedValue {}
@@ -57,6 +56,32 @@ export class HeadsCacheToSerialize {
 	}
 }
 
+const updateHashes = async (
+	headCache: HeadsCache<any>,
+	headsPath: string,
+	lastCid: string | undefined,
+	lastCounter: bigint,
+	hashes: string[]
+): Promise<{ counter: bigint; newPath: string }> => {
+	const newHeadsPath = path.join(
+		headsPath,
+		String(headCache.headsPathCounter),
+		uuid()
+	);
+	const counter = lastCounter + BigInt(hashes.length);
+	await Promise.all([
+		headCache.cache?.put(
+			headsPath,
+			serialize(new CachePath(newHeadsPath.toString()))
+		),
+		headCache.cache?.put(
+			newHeadsPath,
+			serialize(new HeadsCacheToSerialize(hashes, counter, lastCid))
+		),
+	]);
+	return { counter, newPath: newHeadsPath };
+};
+
 interface HeadsIndex {
 	id: Uint8Array;
 	size: number;
@@ -76,7 +101,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 	private _lastRemovedHeadsPath?: string;
 	private _lastRemovedHeadsCount = 0n;
 
-	private _cache?: LocalStore;
+	private _cache?: SimpleLevel;
 	private _cacheWriteQueue?: PQueue<any, any>;
 
 	private _loaded = false;
@@ -86,17 +111,23 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		this._index = index;
 	}
 
-	async init(
-		cache: (name: string) => Promise<LocalStore> | LocalStore
-	): Promise<this> {
+	get cache(): SimpleLevel | undefined {
+		return this._cache;
+	}
+
+	get headsPathCounter(): number {
+		return this._headsPathCounter;
+	}
+
+	async init(cache?: SimpleLevel): Promise<this> {
 		if (this.initialized) {
 			throw new Error("Already initialized");
 		}
 
-		this._cache = await cache(sha256Base64Sync(this._index.id));
+		this._cache = cache;
 
 		// Set the options (we will use the topic property after thiis)
-		await this._cache.open();
+		await this._cache?.open();
 
 		this.headsPath = "heads";
 		this.removedHeadsPath = "heads_removed";
@@ -143,41 +174,10 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		}
 
 		// If 'reset' then dont keep references to old heads caches, assume new cache will fully describe all heads
-		const updateHashes = async (
-			headsPath: string,
-			lastCid: string | undefined,
-			lastCounter: bigint,
-			hashes: string[]
-		): Promise<{ counter: bigint; newPath: string }> => {
-			const newHeadsPath = path.join(
-				headsPath,
-				String(this._headsPathCounter),
-				uuid()
-			);
-			const counter = lastCounter + BigInt(hashes.length);
-			await Promise.all([
-				this._cache?.set(
-					headsPath,
-					serialize(new CachePath(newHeadsPath.toString()))
-				),
-				this._cache?.set(
-					newHeadsPath,
-					serialize(new HeadsCacheToSerialize(hashes, counter, lastCid))
-				),
-			]);
-			return { counter, newPath: newHeadsPath };
-		};
 
 		// TODO dont delete old before saving new
 		if (reset) {
-			const paths = [
-				path.join(this.headsPath, String(this._headsPathCounter)),
-				path.join(this.removedHeadsPath, String(this._headsPathCounter)),
-			];
-			for (const p of paths) {
-				await this._cache?.deleteByPrefix(p + "/");
-			}
-
+			await this.cache?.clear();
 			this._lastHeadsPath = undefined;
 			this._lastRemovedHeadsPath = undefined;
 			this._lastHeadsCount = 0n;
@@ -187,6 +187,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 
 		if (change.added && change.added.length > 0) {
 			const update = await updateHashes(
+				this,
 				this.headsPath,
 				this._lastHeadsPath,
 				this._lastHeadsCount,
@@ -200,6 +201,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			// only add removed heads if we actually have added heads, else these are pointless
 			if (change.removed && change.removed.length > 0) {
 				const update = await updateHashes(
+					this,
 					this.removedHeadsPath,
 					this._lastRemovedHeadsPath,
 					this._lastRemovedHeadsCount,
@@ -229,7 +231,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		// to make sure everything that all operations that have
 		// been queued will be written to disk
 		await this._cacheWriteQueue?.onIdle();
-		await this._cache?.idle();
+		await this._cache?.idle?.();
 	}
 
 	async getCachedHeads(
@@ -280,10 +282,6 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			},
 		};
 	} */
-
-	get cache(): LocalStore | undefined {
-		return this._cache;
-	}
 
 	get closed() {
 		return !this._cache || this._cache.status === "closed";
