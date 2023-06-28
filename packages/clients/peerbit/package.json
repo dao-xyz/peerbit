@@ -38,6 +38,7 @@
 		"@peerbit/pubsub": "^1.0.1",
 		"@peerbit/blocks": "^1.0.1",
 		"@peerbit/uint8arrays": "2.0.0",
+		"datastore-level": "^10.1.2",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",
 		"p-queue": "^7.3.4"
