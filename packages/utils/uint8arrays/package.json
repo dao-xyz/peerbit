@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/uint8arrays",
-	"version": "2.0.0",
+	"version": "3.0.0",
 	"description": "Utility methods for uint8arrays",
 	"type": "module",
 	"sideEffects": false,
