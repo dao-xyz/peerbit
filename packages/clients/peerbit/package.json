@@ -37,7 +37,6 @@
 		"@peerbit/program": "1.0.4",
 		"@peerbit/pubsub": "^1.0.4",
 		"@peerbit/blocks": "^1.0.4",
-		"@peerbit/interface": "1.0.0",
 		"@dao-xyz/uint8arrays": "1.0.0",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",

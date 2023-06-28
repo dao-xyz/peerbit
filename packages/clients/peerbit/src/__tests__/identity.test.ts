@@ -1,10 +1,10 @@
+import { ProgramClient } from "@peerbit/program";
 import { Peerbit } from "../peer.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { Peerbit as IPeerbit } from "@peerbit/interface";
 
 describe(`identity`, function () {
 	describe("restore", () => {
-		let client: IPeerbit;
+		let client: ProgramClient;
 
 		afterEach(async () => {
 			await client.stop();

@@ -1,8 +1,8 @@
+import { ProgramClient } from "@peerbit/program";
 import { create } from "../client";
-import { Peerbit as IPeerbit } from "@peerbit/interface";
 
 describe("client", () => {
-	let client: IPeerbit;
+	let client: ProgramClient;
 	afterEach(async () => {
 		await client?.stop();
 	});

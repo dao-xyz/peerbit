@@ -1,12 +1,9 @@
-import { Peerbit as IPeerbit } from "@peerbit/interface";
-import { DString } from "@peerbit/string";
 import { LSession } from "@peerbit/test-utils";
-import { Ed25519Keypair } from "@peerbit/crypto";
 import http from "http";
 import { client, startServer } from "../api.js";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "peerbit-node-test-lib";
-import { Address } from "@peerbit/program";
+import { Address, ProgramClient } from "@peerbit/program";
 
 describe("libp2p only", () => {
 	let session: LSession, server: http.Server;
@@ -43,7 +40,10 @@ describe("libp2p only", () => {
 });
 
 describe("server", () => {
-	let session: LSession, peer: IPeerbit, address: Address, server: http.Server;
+	let session: LSession,
+		peer: ProgramClient,
+		address: Address,
+		server: http.Server;
 	let db: PermissionedString;
 
 	beforeAll(async () => {});

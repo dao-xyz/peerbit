@@ -18,7 +18,6 @@
 			"packages/transport/pubsub-interface",
 			"packages/transport/libp2p-test-utils",
 			"packages/log",
-			"packages/clients/peerbit-interface",
 			"packages/clients/peerbit",
 			"packages/clients/peerbit-proxy",
 			"packages/clients/peerbit-server/node",

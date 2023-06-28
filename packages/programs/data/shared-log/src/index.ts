@@ -50,7 +50,7 @@ import {
 	Replicator,
 	SubscriptionType,
 } from "./role.js";
-import { Peerbit } from "@peerbit/interface";
+
 export { Observer, Replicator, SubscriptionType };
 
 export const logger = loggerFn({ module: "peer" });

@@ -14,7 +14,7 @@ import {
 import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
-import { Peerbit as IPeerbit } from "@peerbit/interface";
+import { ProgramClient } from "@peerbit/program";
 
 export type LibP2POptions = SLibP2POptions<Libp2pExtendServices>;
 
@@ -27,11 +27,11 @@ export class LSession {
 		this._peers = peers;
 	}
 
-	public get peers(): IPeerbit[] {
+	public get peers(): ProgramClient[] {
 		return this._peers;
 	}
 
-	async connect(groups?: IPeerbit[][]) {
+	async connect(groups?: ProgramClient[][]) {
 		await this.session.connect(groups?.map((x) => x.map((y) => y)));
 		return;
 	}

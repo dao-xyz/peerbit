@@ -3,15 +3,14 @@
 // But there are ways here to generate base64 string for programs
 
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { Peerbit } from "@peerbit/interface";
+import { Program, ProgramClient } from "@peerbit/program";
 import { DString } from "@peerbit/string";
 import { LSession } from "@peerbit/test-utils";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "..";
 
 describe("server", () => {
-	let session: LSession, peer: Peerbit;
+	let session: LSession, peer: ProgramClient;
 	jest.setTimeout(60 * 1000);
 
 	beforeAll(async () => {

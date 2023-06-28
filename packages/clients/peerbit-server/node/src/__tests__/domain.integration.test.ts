@@ -1,5 +1,5 @@
 import { LSession } from "@peerbit/test-utils";
-import { Peerbit } from "@peerbit/interface";
+import { ProgramClient } from "@peerbit/program";
 import http from "http";
 import { startServer } from "../api";
 import dotenv from "dotenv";
@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 describe("ssl", () => {
-	let session: LSession, peer: Peerbit, server: http.Server;
+	let session: LSession, peer: ProgramClient, server: http.Server;
 
 	beforeAll(async () => {
 		session = await LSession.connected(1, {

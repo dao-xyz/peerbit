@@ -1,8 +1,4 @@
-import { createStore, LSession } from "@peerbit/test-utils";
-import Cache from "@dao-xyz/lazy-level";
-import { X25519Keypair, X25519PublicKey } from "@peerbit/crypto";
-import { delay, waitFor } from "@peerbit/time";
-
+import { LSession } from "@peerbit/test-utils";
 import { DString } from "../string-store.js";
 import {
 	StringQueryRequest,
@@ -12,13 +8,13 @@ import {
 	RangeMetadata,
 } from "../index.js";
 import { Range } from "../range.js";
-import { Peerbit } from "@peerbit/interface";
-import { Observer, Replicator } from "@peerbit/shared-log";
+import { Observer } from "@peerbit/shared-log";
+import { ProgramClient } from "@peerbit/program";
 
 describe("query", () => {
 	let session: LSession,
-		observer: Peerbit,
-		writer: Peerbit,
+		observer: ProgramClient,
+		writer: ProgramClient,
 		writeStore: DString,
 		observerStore: DString;
 

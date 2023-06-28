@@ -1,7 +1,6 @@
-import { Program } from "@peerbit/program";
+import { Program, ProgramClient } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
 import { Peerbit } from "../peer.js";
-import { Peerbit as IPeerbit } from "@peerbit/interface";
 
 @variant("test-shared_nested")
 class TestNestedProgram extends Program {
@@ -33,7 +32,7 @@ class TestProgram extends Program {
 }
 
 describe(`shared`, () => {
-	let client: IPeerbit;
+	let client: ProgramClient;
 
 	beforeEach(async () => {
 		client = await Peerbit.create();

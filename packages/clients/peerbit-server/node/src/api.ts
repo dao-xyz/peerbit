@@ -1,7 +1,7 @@
 import http from "http";
 import { fromBase64, toBase64 } from "@peerbit/crypto";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { Program, Address } from "@peerbit/program";
+import { Program, Address, ProgramClient } from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
@@ -9,7 +9,6 @@ import { Libp2p } from "libp2p";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./client.js";
-import { Peerbit } from "@peerbit/interface";
 
 export const SSL_PORT = 9002;
 export const LOCAL_PORT = 8082;
@@ -129,7 +128,7 @@ export const startServerWithNode = async (directory: string) => {
 	await shutDownHook(peer, server);
 };
 export const startServer = async (
-	client: Peerbit,
+	client: ProgramClient,
 	port: number = LOCAL_PORT
 ): Promise<http.Server> => {
 	const notPeerBitError =
@@ -191,7 +190,7 @@ export const startServer = async (
 	};
 
 	const e404 = "404";
-	const endpoints = (client: Peerbit | Libp2p): http.RequestListener => {
+	const endpoints = (client: ProgramClient | Libp2p): http.RequestListener => {
 		return async (req, res) => {
 			res.setHeader("Access-Control-Allow-Origin", "*");
 			res.setHeader("Access-Control-Request-Method", "*");

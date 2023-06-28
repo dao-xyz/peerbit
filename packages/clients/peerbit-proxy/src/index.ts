@@ -12,12 +12,12 @@ import {
 	X25519PublicKey,
 	X25519Keypair,
 } from "@peerbit/crypto";
-import { Peerbit as IPeerbit } from "@peerbit/interface";
 import { PubSub, PublishOptions } from "@peerbit/pubsub-interface";
 
 import { field, variant, vec, option } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
-import { Address, Program } from "@peerbit/program";
+import { Address } from "@peerbit/program";
+import { ProgramClient } from "@peerbit/program";
 
 class WindowClientMessage {
 	type: "peerbit";
@@ -398,7 +398,7 @@ abstract class LifeCycleMessage extends Message {}
 @variant(0)
 class Stop extends LifeCycleMessage {}
 
-export class PeerbitProxy implements IPeerbit {
+export class PeerbitProxy implements ProgramClient {
 	peerId: PeerId;
 	identity: Identity<Ed25519PublicKey>;
 	getMultiaddrs: () => Multiaddr[];

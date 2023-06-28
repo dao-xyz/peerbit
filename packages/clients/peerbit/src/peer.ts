@@ -13,6 +13,7 @@ import {
 	Program,
 	Address,
 	ProgramInitializationOptions,
+	ProgramClient,
 } from "@peerbit/program";
 import { logger as loggerFn } from "@peerbit/logger";
 import { DirectSub } from "@peerbit/pubsub";
@@ -28,7 +29,6 @@ import {
 } from "./libp2p.js";
 import { DirectBlock } from "@peerbit/blocks";
 import { LevelDatastore } from "datastore-level";
-import { Peerbit as IPeerbit } from "@peerbit/interface";
 import { BinaryWriter } from "@dao-xyz/borsh";
 
 export const logger = loggerFn({ module: "client" });
@@ -81,7 +81,7 @@ const createCache = async (
 	return cache;
 };
 
-export class Peerbit implements IPeerbit {
+export class Peerbit implements ProgramClient {
 	_libp2p: Libp2pExtended;
 
 	directory?: string;
@@ -249,7 +249,7 @@ export class Peerbit implements IPeerbit {
 	 * Dial a peer with an Ed25519 peerId
 	 */
 	async dial(
-		address: string | Multiaddr | Multiaddr[] | IPeerbit
+		address: string | Multiaddr | Multiaddr[] | ProgramClient
 	): Promise<boolean> {
 		const maddress =
 			typeof address == "string"
