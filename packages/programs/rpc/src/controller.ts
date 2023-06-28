@@ -16,14 +16,15 @@ import {
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
-import { AbstractProgram, Address, ProgramClient } from "@peerbit/program";
+import { AbstractProgram, Address } from "@peerbit/program";
 import {
 	PubSubData,
 	PublishOptions as PubSubPublishOptions,
 } from "@peerbit/pubsub-interface";
 import { ComposableProgram } from "@peerbit/program";
 import { DataMessage } from "@peerbit/stream-interface";
-import { ProgramInitializationOptions } from "@peerbit/program";
+import pDefer, { DeferredPromise } from "p-defer";
+import { waitFor } from "@peerbit/time";
 
 export type SearchContext = (() => Address) | AbstractProgram;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
@@ -177,7 +178,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 								serialize(
 									new ResponseV0({
 										response: maybeEncryptedMessage,
-										requestId: rpcMessage.id,
+										requestId: message.id,
 									})
 								),
 								{
@@ -189,7 +190,12 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 						}
 					}
 				} else if (rpcMessage instanceof ResponseV0) {
-					this._responseResolver.get(toBase64(rpcMessage.requestId))?.({
+					const id = toBase64(rpcMessage.requestId);
+					let handler = this._responseResolver.get(id);
+					if (!handler) {
+						handler = await waitFor(() => this._responseResolver.get(id));
+					}
+					handler!({
 						message,
 						response: rpcMessage,
 					});
@@ -263,6 +269,65 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		);
 	}
 
+	private createResponseHandler(
+		promise: DeferredPromise<any>,
+		keypair: X25519Keypair,
+		allResults: RPCResponse<R>[],
+		responders: Set<string>,
+		expectedResponders?: Set<string>,
+		options?: RPCOptions<R>
+	) {
+		return async (properties: {
+			response: ResponseV0;
+			message: DataMessage;
+		}) => {
+			try {
+				const { response, message } = properties;
+				const from = message.sender;
+
+				if (options?.isTrusted && !(await options?.isTrusted(from))) {
+					return;
+				}
+
+				const maybeEncrypted = response.response;
+				const decrypted = await maybeEncrypted.decrypt(keypair);
+				const resultData = this._getResponseValueFn(decrypted);
+
+				if (expectedResponders) {
+					if (from && expectedResponders?.has(from.hashcode())) {
+						options?.onResponse && options?.onResponse(resultData, from);
+						allResults.push({ response: resultData, from });
+						responders.add(from.hashcode());
+						if (responders.size === expectedResponders.size) {
+							promise.resolve();
+						}
+					}
+				} else {
+					options?.onResponse && options?.onResponse(resultData, from);
+					allResults.push({ response: resultData, from });
+					if (
+						options?.amount != null &&
+						allResults.length >= (options?.amount as number)
+					) {
+						promise.resolve();
+					}
+				}
+			} catch (error) {
+				if (error instanceof AccessError) {
+					return; // Ignore things we can not open
+				}
+
+				if (error instanceof BorshError && !options?.strict) {
+					logger.debug("Namespace error");
+					return; // Name space conflict most likely
+				}
+
+				console.error("failed ot deserialize query response", error);
+				promise.reject(error);
+			}
+		};
+	}
+
 	/**
 	 * Send a request and expect a response
 	 * @param request
@@ -281,108 +346,57 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		let timeoutFn: any = undefined;
 
 		const requestMessage = await this.seal(request, keypair.publicKey, options);
-		const requetsMessageIdString = toBase64(requestMessage.id);
 		const requestBytes = serialize(requestMessage);
 
 		const allResults: RPCResponse<R>[] = [];
 
-		const responsePromise = new Promise<void>((rs, rj) => {
-			const resolve = () => {
-				timeoutFn && clearTimeout(timeoutFn);
-				rs();
-			};
-			options?.stopper && options.stopper(resolve);
-			const reject = (error) => {
-				logger.error(error?.message);
-				timeoutFn && clearTimeout(timeoutFn);
-				rs();
-			};
-			const expectedResponders =
-				options?.to && options.to.length > 0
-					? new Set(
-							options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
-					  )
-					: undefined;
-			const responders = new Set<string>();
-			const _responseHandler = async (properties: {
-				response: ResponseV0;
-				message: DataMessage;
-			}) => {
-				try {
-					const { response, message } = properties;
-					/* 		const { result: resultData, from } = await decryptVerifyInto(
-								response.response,
-								,
-								keypair,
-								{
-									,
-								}
-							);
-		 */
-					const from = message.sender;
+		const deferredPromise = pDefer();
+		options?.stopper && options.stopper(deferredPromise.resolve);
+		timeoutFn = setTimeout(() => {
+			deferredPromise.resolve();
+		}, options?.timeout || 10 * 1000);
 
-					if (options?.isTrusted && !(await options.isTrusted(from))) {
-						return;
-					}
+		const expectedResponders =
+			options?.to && options.to.length > 0
+				? new Set(
+						options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
+				  )
+				: undefined;
 
-					const maybeEncrypted = response.response;
-					const decrypted = await maybeEncrypted.decrypt(keypair);
-					const resultData = this._getResponseValueFn(decrypted);
+		const responders = new Set<string>();
 
-					if (expectedResponders) {
-						if (from && expectedResponders?.has(from.hashcode())) {
-							options?.onResponse && options.onResponse(resultData, from);
-							allResults.push({ response: resultData, from });
-							responders.add(from.hashcode());
-							if (responders.size === expectedResponders.size) {
-								resolve();
-							}
-						}
-					} else {
-						options?.onResponse && options.onResponse(resultData, from);
-						allResults.push({ response: resultData, from });
-						if (
-							options?.amount != null &&
-							allResults.length >= (options.amount as number)
-						) {
-							resolve!();
-						}
-					}
-				} catch (error) {
-					if (error instanceof AccessError) {
-						return; // Ignore things we can not open
-					}
-
-					if (error instanceof BorshError && !options?.strict) {
-						logger.debug("Namespace error");
-						return; // Name space conflict most likely
-					}
-
-					console.error("failed ot deserialize query response", error);
-					reject(error);
-				}
-			};
-			try {
-				this._responseResolver.set(requetsMessageIdString, _responseHandler);
-			} catch (error: any) {
-				// timeout
-				if (error.constructor.name != "TimeoutError") {
-					throw new Error(
-						"Got unexpected error when query: " + error.constructor.name
-					);
-				}
-			}
-			timeoutFn = setTimeout(() => {
-				resolve();
-			}, options?.timeout || 10 * 1000);
-		});
-
-		await this.node.services.pubsub.publish(
-			requestBytes,
-			this.getPublishOptions(options)
+		const id = toBase64(
+			await this.node.services.pubsub.publish(
+				requestBytes,
+				this.getPublishOptions(options)
+			)
 		);
-		await responsePromise;
-		this._responseResolver.delete(requetsMessageIdString);
+		this._responseResolver.set(
+			id,
+			this.createResponseHandler(
+				deferredPromise,
+				keypair,
+				allResults,
+				responders,
+				expectedResponders,
+				options
+			)
+		);
+
+		try {
+			await deferredPromise.promise;
+		} catch (error: any) {
+			// timeout
+			if (error.constructor.name != "TimeoutError") {
+				throw new Error(
+					"Got unexpected error when query: " + error.constructor.name
+				);
+			}
+		} finally {
+			clearTimeout(timeoutFn);
+		}
+
+		this._responseResolver.delete(id);
 		return allResults;
 	}
 

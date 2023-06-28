@@ -223,7 +223,7 @@ const createPeer = async (
 					return ret;
 				},
 
-				publish: (d, o) => Promise.resolve(),
+				publish: (d, o) => Promise.resolve(randomBytes(32)),
 
 				addEventListener: (type, fn) => {
 					const arr = state.pubsubEventHandlers.get(type) || [];

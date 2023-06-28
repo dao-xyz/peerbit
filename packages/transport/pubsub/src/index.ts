@@ -20,6 +20,7 @@ import {
 	Subscription,
 	UnsubcriptionEvent,
 	SubscriptionEvent,
+	PubSub,
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interfaces/events";
@@ -46,7 +47,7 @@ export type DirectSubComponents = DirectStreamComponents;
 
 export type PeerId = Libp2pPeerId | PublicSignKey;
 
-export class DirectSub extends DirectStream<PubSubEvents> {
+export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest recieved)
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
 	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
@@ -302,7 +303,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 					to: (string | PeerId)[];
 					strict: true;
 			  }
-	): Promise<void> {
+	): Promise<Uint8Array> {
 		const topics =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
 		const tos =
@@ -320,7 +321,7 @@ export class DirectSub extends DirectStream<PubSubEvents> {
 			strict: options.strict,
 		});
 		const bytes = message.serialize();
-		await super.publish(
+		return super.publish(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			{ to: options?.strict ? tos : this.getPeersWithTopics(topics, tos) }
 		);

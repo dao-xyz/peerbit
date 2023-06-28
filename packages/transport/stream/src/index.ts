@@ -1218,7 +1218,7 @@ export abstract class DirectStream<
 	async publish(
 		data: Uint8Array | Uint8ArrayList,
 		options?: { to?: (string | PublicSignKey | PeerId)[] | Set<string> }
-	): Promise<void> {
+	): Promise<Uint8Array> {
 		if (!this.started) {
 			throw new Error("Not started");
 		}
@@ -1262,6 +1262,7 @@ export abstract class DirectStream<
 
 		// send to all the other peers
 		await this.publishMessage(this.components.peerId, message, undefined);
+		return message.id;
 	}
 
 	public async hello(data?: Uint8Array): Promise<void> {

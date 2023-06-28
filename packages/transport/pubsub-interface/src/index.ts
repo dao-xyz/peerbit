@@ -80,7 +80,7 @@ export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
 		}
 	): Promise<boolean>;
 
-	publish(data: Uint8Array, options?: PublishOptions): Promise<void>;
+	publish(data: Uint8Array, options?: PublishOptions): Promise<Uint8Array>;
 }
 
 export * from "./messages.js";
