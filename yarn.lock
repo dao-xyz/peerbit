@@ -2945,6 +2945,26 @@
     uint8arrays "^4.0.2"
     varint "^6.0.0"
 
+"@libp2p/mplex@^8.0.4":
+  version "8.0.4"
+  resolved "https://registry.yarnpkg.com/@libp2p/mplex/-/mplex-8.0.4.tgz#86e86837bf456b2f92ff74ed5d005f0105f0dd1a"
+  integrity sha512-or3F5sGl8cw3TbnQgmkJ8z7/c97rwuzoy6f3b9gmkEVN8EzdxG2jOq+TEsgXzLz1GekRUR8nuDhliJ3UPhUnFw==
+  dependencies:
+    "@libp2p/interface-connection" "^5.0.0"
+    "@libp2p/interface-stream-muxer" "^4.1.2"
+    "@libp2p/interfaces" "^3.2.0"
+    "@libp2p/logger" "^2.0.0"
+    abortable-iterator "^5.0.0"
+    any-signal "^4.0.1"
+    benchmark "^2.1.4"
+    it-batched-bytes "^2.0.2"
+    it-pushable "^3.1.0"
+    it-stream-types "^2.0.1"
+    rate-limiter-flexible "^2.3.9"
+    uint8arraylist "^2.1.1"
+    uint8arrays "^4.0.2"
+    varint "^6.0.0"
+
 "@libp2p/multistream-select@^3.1.8":
   version "3.1.8"
   resolved "https://registry.yarnpkg.com/@libp2p/multistream-select/-/multistream-select-3.1.8.tgz#2071d18da5afd5b162adf427beb8b4c9a67211b8"
@@ -3051,6 +3071,22 @@
     "@multiformats/multiaddr" "^12.0.0"
     stream-to-it "^0.2.2"
 
+"@libp2p/tcp@^7.0.3":
+  version "7.0.3"
+  resolved "https://registry.yarnpkg.com/@libp2p/tcp/-/tcp-7.0.3.tgz#b657b0738f4703add5b75ca180af5f1c5e01d0c6"
+  integrity sha512-w1g5/BYDNpZKXrJZd1PW8kUS0GxHwFO6oql3rIizh5WaxmWtMa21LtKWIoHJyC8Wp4vshEUPeZthAIKECqUafg==
+  dependencies:
+    "@libp2p/interface-connection" "^5.0.0"
+    "@libp2p/interface-metrics" "^4.0.0"
+    "@libp2p/interface-transport" "^4.0.0"
+    "@libp2p/interfaces" "^3.2.0"
+    "@libp2p/logger" "^2.0.0"
+    "@libp2p/utils" "^3.0.2"
+    "@multiformats/mafmt" "^12.0.0"
+    "@multiformats/multiaddr" "^12.0.0"
+    "@types/sinon" "^10.0.15"
+    stream-to-it "^0.2.2"
+
 "@libp2p/topology@^4.0.1":
   version "4.0.1"
   resolved "https://registry.yarnpkg.com/@libp2p/topology/-/topology-4.0.1.tgz#8efab229ed32d30cfa6c4a371e8022011c0ff6f9"
@@ -3085,7 +3121,7 @@
     private-ip "^3.0.0"
     uint8arraylist "^2.3.2"
 
-"@libp2p/webrtc@2.0.11":
+"@libp2p/webrtc@2.0.11", "@libp2p/webrtc@^2.0.11":
   version "2.0.11"
   resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-2.0.11.tgz#e992d913d7078b28f4321f6f578564a37ddc31bb"
   integrity sha512-6lhlndCYxRrkbqldUFruxIzyyFcrgnyueYIpLXJP2phZf2P19zwhborae0raRyeRz7MwJ+uw+Ksql8D8Ry+KXg==
@@ -4049,6 +4085,18 @@
   version "7.5.0"
   resolved "https://registry.yarnpkg.com/@types/semver/-/semver-7.5.0.tgz#591c1ce3a702c45ee15f47a42ade72c2fd78978a"
   integrity sha512-G8hZ6XJiHnuhQKR7ZmysCeJWE08o8T0AXtk5darsCaTVsYZhhgUrq53jizaR2FvsoeCwJhlmwTjkXBY5Pn/ZHw==
+
+"@types/sinon@^10.0.15":
+  version "10.0.15"
+  resolved "https://registry.yarnpkg.com/@types/sinon/-/sinon-10.0.15.tgz#513fded9c3cf85e589bbfefbf02b2a0541186b48"
+  integrity sha512-3lrFNQG0Kr2LDzvjyjB6AMJk4ge+8iYhQfdnSwIwlG88FUOV43kPcQqDZkDa/h3WSZy6i8Fr0BSjfQtB1B3xuQ==
+  dependencies:
+    "@types/sinonjs__fake-timers" "*"
+
+"@types/sinonjs__fake-timers@*":
+  version "8.1.2"
+  resolved "https://registry.yarnpkg.com/@types/sinonjs__fake-timers/-/sinonjs__fake-timers-8.1.2.tgz#bf2e02a3dbd4aecaf95942ecd99b7402e03fad5e"
+  integrity sha512-9GcLXF0/v3t80caGs5p2rRfkB+a8VBGLJZVih6CNFkx8IZ994wiKKLSRs9nuFwk1HevWs/1mnUmkApGrSGsShA==
 
 "@types/stack-utils@^2.0.0":
   version "2.0.1"
