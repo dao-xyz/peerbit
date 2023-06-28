@@ -18,6 +18,13 @@
     * @peerbit/string bumped from 1.0.0 to 1.0.1
     * @peerbit/test-utils bumped from 1.0.0 to 1.0.1
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/server-v1.0.1...server-v1.0.2) (2023-06-28)
+
+
+### Bug Fixes
+
+* publish test-lib ([0b04391](https://github.com/dao-xyz/peerbit/commit/0b0439145bf5c35df8c3d45176dafc2617eeafa5))
+
 ## 1.0.0 (2023-06-28)
 
 
