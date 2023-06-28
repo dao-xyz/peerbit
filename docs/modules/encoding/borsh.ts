@@ -50,5 +50,5 @@ if (post instanceof PostV0) {
 	// To OLD behaviour
 } else post instanceof PostV1;
 {
-	// Do V1 behaviourß
+	// Do V1 behaviour
 }

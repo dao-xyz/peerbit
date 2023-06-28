@@ -9,7 +9,6 @@ Modules
 - [Programs](/modules/program/README.md)
 - [Encoding](/modules/encoding/encoding.md)
 - [Encryption](/modules/encryption/encryption.md)
-- [Deployment](/modules/deployment/deployment.md)
 
 Topics
 - [Peerbit vs [?]](difference.md)

@@ -57,7 +57,9 @@ class PostsDB extends Program {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			index: { key: "id" } /* canAppend: (entry) => true */,
+			index: { key: "id" },
+			// You can add more properties here, like
+			/* canAppend: (entry) => true */
 		});
 	}
 }

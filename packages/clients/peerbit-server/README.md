@@ -7,7 +7,7 @@ A non-browser node with a CLI and server API so you can manage your non-browser 
 **This CLI does not work in Windows at the moment. As of now this CLI have only tested with Ubuntu 22.04.**
 
 ## Run a node 
-Needs port forwarding on 80, 443 (for the console/frontend) and 4002 (for IPFS)
+Needs port forwarding on 80, 443 (for the console/frontend) and 4002 (for Libp2p)
 
 1. 
 [Install node version > v.16.15](https://nodejs.org/en/download/package-manager/#debian-and-ubuntu-based-linux-distributions)

@@ -8,7 +8,7 @@ const peerB = await Peerbit.create();
 await peerA.dial(peerB);
 
 // In "real" scenarios you only have the other peers address
-// , you can do
+// you can do
 const multaddrs: Multiaddr[] = peerB.libp2p.getMultiaddrs();
 
 /* [
