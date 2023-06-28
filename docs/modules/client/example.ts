@@ -1,8 +1,5 @@
-/// [imports]
-import { Peerbit } from "peerbit";
-/// [imports]
-
 /// [memory]
+import { Peerbit } from "peerbit";
 
 // Store only in memory
 const clientInMemory = await Peerbit.create();
