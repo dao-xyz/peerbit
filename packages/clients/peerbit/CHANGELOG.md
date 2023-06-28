@@ -19,6 +19,13 @@
     * @peerbit/blocks bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.2...peerbit-v1.0.3) (2023-06-28)
+
+
+### Bug Fixes
+
+* add missing libp2p dependencies ([bac7173](https://github.com/dao-xyz/peerbit/commit/bac7173c9d269f17c1ed1defa069f019a800e2d6))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.1...peerbit-v1.0.2) (2023-06-28)
 
 

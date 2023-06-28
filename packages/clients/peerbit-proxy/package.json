@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Peerbit proxy client",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -33,7 +33,7 @@
 		"@peerbit/program": "^1.0.1"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "1.0.3",
+		"@peerbit/test-utils": "1.0.4",
 		"p-each-series": "^3.0.0",
 		"p-map-series": "^3.0.0"
 	},
