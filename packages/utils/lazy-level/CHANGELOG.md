@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.0 (2023-06-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename org on utility modules
+* client abstraction
+
+### Features
+
+* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+
+
+### Bug Fixes
+
+* rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
+
+## Changelog
+
 ### Dependencies
 
 * The following workspace dependencies were updated

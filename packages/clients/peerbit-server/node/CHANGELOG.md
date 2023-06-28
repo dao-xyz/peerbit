@@ -9,6 +9,32 @@
     * @peerbit/string bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @peerbit/test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+## 1.0.0 (2023-06-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* client abstraction
+
+### Features
+
+* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+
+
+### Bug Fixes
+
+* remove uneccessary interface module ([1a24f62](https://github.com/dao-xyz/peerbit/commit/1a24f62f77fe6777628512fbb719bd78ad9080af))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.0.5 to 1.0.0
+  * devDependencies
+    * @peerbit/string bumped from 1.0.4 to 1.0.0
+    * @peerbit/test-utils bumped from 1.0.4 to 1.0.0
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-node-v1.0.5...peerbit-node-v1.0.6) (2023-06-16)
 
 

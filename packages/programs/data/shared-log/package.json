@@ -33,12 +33,12 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@peerbit/logger": "1.0.0",
-		"@peerbit/program": "1.0.4",
-		"@peerbit/log": "1.0.4",
-		"@peerbit/rpc": "1.0.4",
+		"@peerbit/program": "1.0.0",
+		"@peerbit/log": "1.0.0",
+		"@peerbit/rpc": "1.0.0",
 		"@peerbit/time": "1.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^1.0.4"
+		"@peerbit/test-utils": "^1.0.0"
 	}
 }

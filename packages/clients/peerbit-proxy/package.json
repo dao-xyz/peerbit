@@ -30,10 +30,10 @@
 		"import": "./lib/esm/index.js"
 	},
 	"dependencies": {
-		"@peerbit/program": "^1.0.4"
+		"@peerbit/program": "^1.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "1.0.4",
+		"@peerbit/test-utils": "1.0.0",
 		"p-each-series": "^3.0.0",
 		"p-map-series": "^3.0.0"
 	},
