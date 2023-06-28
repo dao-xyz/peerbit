@@ -4,6 +4,7 @@ import { SortByEntryHash } from "../log-sorting.js";
 
 import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("concurrency", function () {
 	let store: BlockStore;
@@ -21,9 +22,15 @@ describe("concurrency", function () {
 
 		beforeAll(async () => {
 			log1 = new Log();
-			await log1.open(store, signKey, { sortFn: SortByEntryHash });
+			await log1.open(store, signKey, {
+				sortFn: SortByEntryHash,
+				encoding: JSON_ENCODING,
+			});
 			log2 = new Log();
-			await log2.open(store, signKey, { sortFn: SortByEntryHash });
+			await log2.open(store, signKey, {
+				sortFn: SortByEntryHash,
+				encoding: JSON_ENCODING,
+			});
 		});
 
 		it("joins consistently", async () => {

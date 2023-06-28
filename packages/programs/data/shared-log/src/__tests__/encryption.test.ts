@@ -8,7 +8,7 @@ import { delay, waitFor, waitForResolved } from "@peerbit/time";
 @variant("encrypt_store")
 class SimpleStore extends Program {
 	@field({ type: SharedLog })
-	log: SharedLog<string>; // Documents<?> provide document store functionality around your Posts
+	log: SharedLog<Uint8Array>; // Documents<?> provide document store functionality around your Posts
 
 	constructor() {
 		super();
@@ -41,7 +41,7 @@ describe("encryption", () => {
 			const store = await client.open(new SimpleStore());
 			expect(store.log.log.keychain).toBeDefined();
 
-			await store.log.append("Hello world!", {
+			await store.log.append(new Uint8Array([1]), {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
@@ -81,7 +81,9 @@ describe("encryption", () => {
 			const entry = (await store2.log.log.values.toArray())[0];
 
 			// use .getPayload() instead of .payload to decrypt the payload
-			expect((await entry.getPayload()).getValue()).toEqual("Hello world!");
+			expect((await entry.getPayload()).getValue()).toEqual(
+				new Uint8Array([1])
+			);
 		});
 	});
 
@@ -105,7 +107,7 @@ describe("encryption", () => {
 			const [client] = session.peers;
 			let store = new SimpleStore();
 			await client.open(store);
-			await store.log.append("hello", {
+			await store.log.append(new Uint8Array([1]), {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
@@ -129,7 +131,7 @@ describe("encryption", () => {
 			const [client, client2] = session.peers;
 			let store = new SimpleStore();
 			await client.open(store);
-			await store.log.append("hello", {
+			await store.log.append(new Uint8Array([1]), {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {

@@ -6,6 +6,7 @@ import { deserialize, serialize } from "@dao-xyz/borsh";
 import { StringArray } from "../types.js";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { PubSubData } from "@peerbit/pubsub-interface";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("replication", function () {
 	let session: LSession;
@@ -61,25 +62,20 @@ describe("replication", function () {
 
 		beforeEach(async () => {
 			log1 = new Log({ id: logId });
-			await log1.open(session.peers[0].services.blocks, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(session.peers[0].services.blocks, signKey),
+				{ encoding: JSON_ENCODING };
 			log2 = new Log({ id: logId });
-			await log2.open(session.peers[1].services.blocks, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
+			await log2.open(session.peers[1].services.blocks, signKey2, {
+				encoding: JSON_ENCODING,
 			});
 
 			input1 = new Log({ id: logId });
-			await input1.open(session.peers[0].services.blocks, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
+			await input1.open(session.peers[0].services.blocks, signKey, {
+				encoding: JSON_ENCODING,
 			});
 			input2 = new Log({ id: logId });
-			await input2.open(session.peers[1].services.blocks, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
+			await input2.open(session.peers[1].services.blocks, signKey2, {
+				encoding: JSON_ENCODING,
 			});
 			session.peers[0].services.pubsub.subscribe(channel);
 			session.peers[1].services.pubsub.subscribe(channel);
@@ -155,9 +151,8 @@ describe("replication", function () {
 			await whileProcessingMessages(5000);
 
 			const result = new Log<string>({ id: logId });
-			result.open(session.peers[0].services.blocks, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
+			result.open(session.peers[0].services.blocks, signKey, {
+				encoding: JSON_ENCODING,
 			});
 
 			await result.join(log1);

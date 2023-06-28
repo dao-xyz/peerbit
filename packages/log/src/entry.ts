@@ -26,7 +26,7 @@ import {
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
 import { compare, equals } from "@dao-xyz/uint8arrays";
-import { Encoding, JSON_ENCODING } from "./encoding.js";
+import { Encoding, NO_ENCODING } from "./encoding.js";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
 import { Blocks } from "@peerbit/blocks-interface";
@@ -96,19 +96,21 @@ export class Payload<T> {
 	@field({ type: Uint8Array })
 	data: Uint8Array;
 
-	_value?: T;
-	constructor(props?: { data: Uint8Array; value?: T }) {
-		if (props) {
-			this.data = props.data;
-			this._value = props.value;
-		}
+	encoding: Encoding<T>;
+
+	private _value?: T;
+
+	constructor(props: { data: Uint8Array; value?: T; encoding: Encoding<T> }) {
+		this.data = props.data;
+		this._value = props.value;
+		this.encoding = props?.encoding;
 	}
 
 	equals(other: Payload<T>): boolean {
 		return equals(this.data, other.data);
 	}
 
-	getValue(encoding: Encoding<T> = JSON_ENCODING): T {
+	getValue(encoding: Encoding<T> = this.encoding || NO_ENCODING): T {
 		if (this._value != undefined) {
 			return this._value;
 		}
@@ -264,8 +266,13 @@ export class Entry<T>
 			  }
 			| Entry<T>
 	): Entry<T> {
-		this._keychain = props instanceof Entry ? props._keychain : props.keychain;
-		this._encoding = props instanceof Entry ? props._encoding : props.encoding;
+		if (props instanceof Entry) {
+			this._keychain = props._keychain;
+			this._encoding = props._encoding;
+		} else {
+			this._keychain = props.keychain;
+			this._encoding = props.encoding;
+		}
 		return this;
 	}
 
@@ -306,6 +313,7 @@ export class Entry<T>
 
 	get payload(): Payload<T> {
 		const payload = this._payload.decrypted.getValue(Payload);
+		payload.encoding = payload.encoding || this.encoding;
 		return payload;
 	}
 
@@ -463,7 +471,7 @@ export class Entry<T>
 			properties = {
 				...properties,
 				next: properties.next ? properties.next : [],
-				encoding: properties.encoding ? properties.encoding : JSON_ENCODING,
+				encoding: properties.encoding ? properties.encoding : NO_ENCODING,
 			};
 		}
 
@@ -481,6 +489,7 @@ export class Entry<T>
 		const payloadToSave = new Payload<T>({
 			data: properties.encoding.encoder(properties.data),
 			value: properties.data,
+			encoding: properties.encoding,
 		});
 
 		let clock: Clock | undefined = properties.clock;
@@ -635,6 +644,9 @@ export class Entry<T>
 
 		// Append hash and signature
 		entry.hash = await Entry.toMultihash(properties.store, entry);
+
+		entry.init({ encoding: properties.encoding });
+
 		return entry;
 	}
 

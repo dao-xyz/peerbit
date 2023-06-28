@@ -3,6 +3,7 @@ import { Log } from "../log.js";
 
 import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("Log - Nexts", function () {
 	let store: BlockStore;
@@ -18,10 +19,7 @@ describe("Log - Nexts", function () {
 	describe("Custom next", () => {
 		it("can fork explicitly", async () => {
 			const log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e0 } = await log1.append("0", { nexts: [] });
 			const { entry: e1 } = await log1.append("1", { nexts: [e0] });
 

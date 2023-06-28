@@ -1,12 +1,12 @@
-import { JSON_ENCODING, TrimOptions } from "@peerbit/log";
+import { Encoding, TrimOptions } from "@peerbit/log";
 import { Entry } from "@peerbit/log";
-import { Log } from "@peerbit/log";
 import { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
 import { variant, field, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { randomBytes } from "@peerbit/crypto";
 import { SharedLog, SyncFilter } from "../../..";
 import { SubscriptionType } from "../../../role";
+import { JSON_ENCODING } from "./encoding";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -14,8 +14,6 @@ export interface Operation<T> {
 	key?: string;
 	value?: T;
 }
-
-const encoding = JSON_ENCODING;
 
 export class EventIndex<T> {
 	_log: SharedLog<Operation<T>>;
@@ -28,14 +26,15 @@ export class EventIndex<T> {
 	}
 }
 
-type Args = {
+type Args<T> = {
 	role?: SubscriptionType;
 	trim?: TrimOptions;
 	minReplicas?: number;
 	sync?: SyncFilter;
+	encoding?: Encoding<Operation<T>>;
 };
 @variant("event_store")
-export class EventStore<T> extends Program<Args> {
+export class EventStore<T> extends Program<Args<T>> {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation<T>>;
 
@@ -50,16 +49,16 @@ export class EventStore<T> extends Program<Args> {
 		this.log = new SharedLog();
 	}
 
-	async open(properties?: Args) {
+	async open(properties?: Args<T>) {
 		this._index = new EventIndex(this.log);
 		await this.log.open({
 			onChange: () => undefined,
-			encoding,
 			canAppend: () => Promise.resolve(true),
 			role: properties?.role,
 			trim: properties?.trim,
 			minReplicas: properties?.minReplicas,
 			sync: properties?.sync,
+			encoding: properties?.encoding || JSON_ENCODING,
 		});
 	}
 

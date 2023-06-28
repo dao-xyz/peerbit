@@ -2,6 +2,7 @@ import { Ed25519Keypair, randomBytes } from "@peerbit/crypto";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Log } from "../../log.js";
 import { Timestamp } from "../../clock.js";
+import { JSON_ENCODING } from "./encoding.js";
 
 export class LogCreator {
 	static async createLogWithSixteenEntries(
@@ -29,26 +30,15 @@ export class LogCreator {
 
 		const create = async (): Promise<Log<string>> => {
 			const id = randomBytes(32);
+			const logOptions = { encoding: JSON_ENCODING };
 			const logA = new Log<string>({ id });
-			await logA.open(store, {
-				...signKeys[0],
-				sign: (data) => signKeys[0].sign(data),
-			});
+			await logA.open(store, signKeys[0], logOptions);
 			const logB = new Log<string>({ id });
-			await logB.open(store, {
-				...signKeys[1],
-				sign: (data) => signKeys[1].sign(data),
-			});
+			await logB.open(store, signKeys[1], logOptions);
 			const log3 = new Log<string>({ id });
-			await log3.open(store, {
-				...signKeys[2],
-				sign: (data) => signKeys[2].sign(data),
-			});
+			await log3.open(store, signKeys[2], logOptions);
 			const log4 = new Log<string>({ id });
-			await log4.open(store, {
-				...signKeys[3],
-				sign: (data) => signKeys[3].sign(data),
-			});
+			await log4.open(store, signKeys[3], logOptions);
 			for (let i = 1; i <= 5; i++) {
 				await logA.append("entryA" + i);
 				await logB.append("entryB" + i);
@@ -88,16 +78,12 @@ export class LogCreator {
 		const id = randomBytes(32);
 
 		const create = async (): Promise<Log<string>> => {
+			const logOptions = { encoding: JSON_ENCODING };
+
 			const logA = new Log<string>({ id });
-			await logA.open(store, {
-				...signKeys[0],
-				sign: (data) => signKeys[0].sign(data),
-			});
+			await logA.open(store, signKeys[0], logOptions);
 			const logB = new Log<string>({ id });
-			await logB.open(store, {
-				...signKeys[1],
-				sign: (data) => signKeys[1].sign(data),
-			});
+			await logB.open(store, signKeys[1], logOptions);
 			for (let i = 1; i <= amount; i++) {
 				await logA.append("entryA" + i);
 				await logB.join(logA);

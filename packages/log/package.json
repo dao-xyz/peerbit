@@ -36,10 +36,7 @@
 		"@peerbit/blocks-interface": "^1.0.0",
 		"@peerbit/crypto": "1.0.4",
 		"@peerbit/logger": "1.0.0",
-		"json-stringify-deterministic": "^1.0.7",
 		"libp2p": "^0.45.9",
-		"p-do-whilst": "^1.1.0",
-		"p-map": "^5.5.0",
 		"p-queue": "^7.3.3",
 		"path-browserify": "^1.0.1",
 		"yallist": "^4.0.0"
@@ -47,7 +44,8 @@
 	"devDependencies": {
 		"@peerbit/test-utils": "1.0.4",
 		"@types/yallist": "^4.0.1",
-		"assert": "^2.0.0"
+		"assert": "^2.0.0",
+		"json-stringify-deterministic": "^1.0.7"
 	},
 	"contributors": [
 		"haadcode",

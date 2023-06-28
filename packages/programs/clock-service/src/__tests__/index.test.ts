@@ -52,7 +52,7 @@ describe("clock", () => {
 
 	it("signs and verifies", async () => {
 		const entry = await Entry.create({
-			data: "hello world",
+			data: new Uint8Array([1]),
 			identity: reader.node.identity,
 			store: session.peers[1].services.blocks,
 			signers: [
@@ -74,7 +74,7 @@ describe("clock", () => {
 	it("reject old entry", async () => {
 		await expect(
 			Entry.create({
-				data: "hello world",
+				data: new Uint8Array([1]),
 				identity: reader.node.identity,
 				store: session.peers[1].services.blocks,
 				signers: [

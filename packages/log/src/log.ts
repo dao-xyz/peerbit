@@ -29,7 +29,7 @@ import {
 } from "./clock.js";
 
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { Encoding, JSON_ENCODING } from "./encoding.js";
+import { Encoding, NO_ENCODING } from "./encoding.js";
 import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
 import { EntryNode, Values } from "./values.js";
 import { Trim, TrimOptions } from "./trim.js";
@@ -140,7 +140,7 @@ export class Log<T> {
 			await this._memory.open();
 		}
 
-		this._encoding = encoding || JSON_ENCODING;
+		this._encoding = encoding || NO_ENCODING;
 		this._joining = new Map();
 
 		// Identity
@@ -1052,7 +1052,7 @@ export class Log<T> {
 	 */
 	async toString(
 		payloadMapper: (payload: Payload<T>) => string = (payload) =>
-			(payload.getValue() as any).toString()
+			(payload.getValue(this.encoding) as any).toString()
 	): Promise<string> {
 		return (
 			await Promise.all(

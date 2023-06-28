@@ -27,15 +27,12 @@ describe("append", function () {
 	});
 
 	describe("append one", () => {
-		let log: Log<string>;
+		let log: Log<Uint8Array>;
 
 		beforeEach(async () => {
 			log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
-			await log.append("hello1");
+			await log.open(store, signKey);
+			await log.append(new Uint8Array([1]));
 		});
 
 		it("added the correct amount of items", () => {
@@ -44,7 +41,7 @@ describe("append", function () {
 
 		it("added the correct values", async () => {
 			(await log.toArray()).forEach((entry) => {
-				expect(entry.payload.getValue()).toEqual("hello1");
+				expect(entry.payload.getValue()).toEqual(new Uint8Array([1]));
 			});
 		});
 
@@ -71,16 +68,15 @@ describe("append", function () {
 	describe("reset", () => {
 		it("append", async () => {
 			const log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
-			const { entry: e1 } = await log.append("hello1");
-			const { entry: e2 } = await log.append("hello2");
+			await log.open(store, signKey);
+			const { entry: e1 } = await log.append(new Uint8Array([1]));
+			const { entry: e2 } = await log.append(new Uint8Array([2]));
 			expect(await blockExists(e1.hash)).toBeTrue();
 			expect(await blockExists(e2.hash)).toBeTrue();
 			expect(log.nextsIndex.get(e1.hash)!.has(e2.hash)).toBeTrue();
-			const { entry: e3 } = await log.append("hello3", { type: EntryType.CUT });
+			const { entry: e3 } = await log.append(new Uint8Array([3]), {
+				type: EntryType.CUT,
+			});
 			// No forward pointers to next indices. We do this, so when we delete an entry, we can now whether an entry has a depenency of another entry which is not of type RESET
 			expect(log.nextsIndex.get(e2.hash)).toBeUndefined();
 			expect(await blockExists(e1.hash)).toBeFalse();
@@ -92,19 +88,16 @@ describe("append", function () {
 	describe("append 100 items to a log", () => {
 		const amount = 100;
 
-		let log: Log<string>;
+		let log: Log<Uint8Array>;
 
 		beforeAll(async () => {
 			// Do sign function really need to returnr publcikey
 			log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey);
 			let prev: any = undefined;
 			for (let i = 0; i < amount; i++) {
 				prev = (
-					await log.append("hello" + i, {
+					await log.append(new TextEncoder().encode("hello" + i), {
 						nexts: prev ? [prev] : undefined,
 					})
 				).entry;
@@ -123,7 +116,9 @@ describe("append", function () {
 
 		it("added the correct values", async () => {
 			(await log.toArray()).forEach((entry, index) => {
-				expect(entry.payload.getValue()).toEqual("hello" + index);
+				expect(entry.payload.getValue()).toEqual(
+					new TextEncoder().encode("hello" + index)
+				);
 			});
 		});
 

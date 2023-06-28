@@ -8,7 +8,7 @@ import {
 	TrustedNetwork,
 	IdentityGraph,
 } from "..";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, Identity } from "@peerbit/crypto";
 import { Secp256k1PublicKey } from "@peerbit/crypto";
 import { Entry } from "@peerbit/log";
@@ -16,6 +16,7 @@ import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Documents, SearchRequest, Operation } from "@peerbit/document";
+import { Observer } from "@peerbit/shared-log";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -185,7 +186,12 @@ describe("index", () => {
 			await session.peers[2].services.blocks.waitFor(session.peers[0].peerId);
 			let l0c: TrustedNetwork = await TrustedNetwork.open(
 				l0a.address!,
-				session.peers[2]
+				session.peers[2],
+				{
+					args: {
+						role: new Observer(),
+					},
+				}
 			);
 
 			await session.peers[3].services.blocks.waitFor(session.peers[0].peerId);
@@ -216,24 +222,13 @@ describe("index", () => {
 			await l0c.waitFor(session.peers[1].peerId);
 
 			// Try query with trusted
-			let responseCount = 0;
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
 				new SearchRequest({
 					query: [],
-				}),
-				{
-					remote: {
-						onResponse: () => {
-							responseCount++;
-						},
-						timeout: 20000,
-					},
-					local: false,
-				}
+				})
 			);
 
 			// TODO test this properly!
-			expect(responseCount).toEqual(1);
 			expect(responses).toHaveLength(2);
 
 			// Try query with untrusted

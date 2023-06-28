@@ -2,6 +2,7 @@ import { Log } from "../log.js";
 import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { EntryType } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("delete", function () {
 	let store: BlockStore;
@@ -27,13 +28,10 @@ describe("delete", function () {
 	describe("deleteRecursively", () => {
 		it("deleted unreferences", async () => {
 			const log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
-			const { entry: e1 } = await log.append("hello1");
-			const { entry: e2 } = await log.append("hello2");
-			const { entry: e3 } = await log.append("hello3");
+			await log.open(store, signKey);
+			const { entry: e1 } = await log.append(new Uint8Array([1]));
+			const { entry: e2 } = await log.append(new Uint8Array([2]));
+			const { entry: e3 } = await log.append(new Uint8Array([3]));
 
 			await log.deleteRecursively(e2);
 			expect(log.nextsIndex.size).toEqual(0);
@@ -54,14 +52,11 @@ describe("delete", function () {
 
 		it("processes as long as alowed", async () => {
 			const log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
-			const { entry: e1 } = await log.append("hello1");
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
+			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2 } = await log.append("hello2a");
 			const { entry: e2b } = await log.append("hello2b", { nexts: [e2] });
-			const { entry: e3 } = await log.append("hello3", {
+			const { entry: e3 } = await log.append(new Uint8Array([3]), {
 				nexts: [e2],
 				type: EntryType.CUT,
 			});
@@ -86,11 +81,8 @@ describe("delete", function () {
 
 		it("keeps references", async () => {
 			const log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
-			const { entry: e1 } = await log.append("hello1");
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
+			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2a } = await log.append("hello2a", { nexts: [e1] });
 			const { entry: e2b } = await log.append("hello2b", { nexts: [e1] });
 

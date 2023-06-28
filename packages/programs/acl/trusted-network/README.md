@@ -20,7 +20,7 @@ import { field, variant } from '@dao-xyz/borst-ts'
 class StringStore extends Program
 {
     @field({type: Store})
-    log: Log<string>
+    log: Log<Uint8Array>
 
     @field({type: TrustedNetwork}) 
     network: TrustedNetwork // this is a database storing all peers. Peers that are trusted can add new peers

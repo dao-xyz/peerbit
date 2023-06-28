@@ -11,6 +11,7 @@ import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 const checkHashes = async (
 	log: Log<any>,
@@ -69,16 +70,10 @@ describe(`head-cache`, function () {
 
 	const init = async (cache: LazyLevel) => {
 		log = new Log();
-		await log.open(
-			blockStore,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			},
-			{
-				cache: cache,
-			}
-		);
+		await log.open(blockStore, signKey, {
+			cache: cache,
+			encoding: JSON_ENCODING,
+		});
 	};
 
 	it("updates cached heads on write one head", async () => {
@@ -241,20 +236,14 @@ describe(`head-cache`, function () {
 	it("resets heads eventually", async () => {
 		const cache = new LazyLevel(await createStore());
 		log = new Log();
-		await log.open(
-			blockStore,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
+		await log.open(blockStore, signKey, {
+			cache,
+			trim: {
+				type: "length",
+				to: 3,
 			},
-			{
-				cache,
-				trim: {
-					type: "length",
-					to: 3,
-				},
-			}
-		);
+			encoding: JSON_ENCODING,
+		});
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
 			entries.push((await log.append({ data: i }, { nexts: [] })).entry);

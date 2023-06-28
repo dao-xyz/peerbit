@@ -9,7 +9,7 @@ import { X25519Keypair } from "@peerbit/crypto";
 @variant("simple_store")
 class SimpleStore extends Program {
 	@field({ type: SharedLog })
-	log: SharedLog<string>; // Documents<?> provide document store functionality around your Posts
+	log: SharedLog<Uint8Array>; // Documents<?> provide document store functionality around your Posts
 
 	constructor() {
 		super();
@@ -33,7 +33,8 @@ await client3.dial(client.getMultiaddrs());
 
 const store = await client.open(new SimpleStore());
 
-await store.log.append("Hello world!", {
+const payload = new Uint8Array([1, 2, 3]);
+await store.log.append(payload, {
 	encryption: {
 		keypair: await X25519Keypair.create(),
 		reciever: {
@@ -73,7 +74,7 @@ await waitForResolved(() => expect(store2.log.log.length).toEqual(1));
 const entry = (await store2.log.log.values.toArray())[0];
 
 // use .getPayload() instead of .payload to decrypt the payload
-expect((await entry.getPayload()).getValue()).toEqual("Hello world!");
+expect((await entry.getPayload()).getValue()).toEqual(payload);
 
 await client.stop();
 await client2.stop();

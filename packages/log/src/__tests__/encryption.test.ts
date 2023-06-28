@@ -14,6 +14,7 @@ import {
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { Level } from "level";
 import LazyLevel from "@dao-xyz/lazy-level";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
@@ -58,20 +59,14 @@ describe("encryption", function () {
 			const senderKey = await X25519Keypair.create();
 			recieverKey = await X25519Keypair.create();
 			const logOptions = {
+				encoding: JSON_ENCODING,
 				keychain: createKeychain([signKey, senderKey, recieverKey]),
 			};
 
 			log1 = new Log();
 			await log1.open(store, signKey, logOptions);
 			log2 = new Log();
-			await log2.open(
-				store,
-				{
-					...signKey2,
-					sign: async (data: Uint8Array) => await signKey2.sign(data),
-				},
-				logOptions
-			);
+			await log2.open(store, signKey2, logOptions);
 		});
 
 		it("can encrypt signatures with particular reciever", async () => {
@@ -217,6 +212,7 @@ describe("encryption", function () {
 			const logOptions = {
 				keychain: createKeychain([signingKey, encryptioKey]),
 				cache,
+				encoding: JSON_ENCODING,
 			};
 			await log.open(store, signKey, logOptions);
 

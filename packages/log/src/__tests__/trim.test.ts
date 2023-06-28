@@ -2,6 +2,7 @@ import { Log } from "../log.js";
 import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { waitFor } from "@peerbit/time";
 import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("trim", function () {
 	let store: BlockStore;
@@ -15,47 +16,39 @@ describe("trim", function () {
 		await store.stop();
 	});
 
-	let log: Log<string>;
+	let log: Log<Uint8Array>;
 	beforeEach(async () => {
-		log = new Log<string>();
-		await log.open(store, {
-			...signKey,
-			sign: async (data: Uint8Array) => await signKey.sign(data),
-		});
+		log = new Log<Uint8Array>();
+		await log.open(store, signKey);
 	});
 
 	it("cut back to max oplog length", async () => {
-		const log = new Log<string>();
-		await log.open(
-			store,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			trim: {
+				type: "length",
+				from: 1,
+				to: 1,
+				filter: { canTrim: () => true },
 			},
-			{
-				trim: {
-					type: "length",
-					from: 1,
-					to: 1,
-					filter: { canTrim: () => true },
-				},
-			}
-		);
-		await log.append("hello1");
+		});
+		await log.append(new Uint8Array([1]));
 		await log.trim();
-		await log.append("hello2");
+		await log.append(new Uint8Array([2]));
 		await log.trim();
-		await log.append("hello3");
+		await log.append(new Uint8Array([3]));
 		await log.trim();
 		expect(log.length).toEqual(1);
-		expect((await log.toArray())[0].payload.getValue()).toEqual("hello3");
+		expect((await log.toArray())[0].payload.getValue()).toEqual(
+			new Uint8Array([3])
+		);
 	});
 
 	it("respect canTrim for length type", async () => {
 		let canTrimInvocations = 0;
-		const e1 = await log.append("hello1", { nexts: [] }); // set nexts [] so all get unique gids
-		const e2 = await log.append("hello2", { nexts: [] }); // set nexts [] so all get unique gids
-		const e3 = await log.append("hello3", { nexts: [] }); // set nexts [] so all get unique gids
+		const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // set nexts [] so all get unique gids
+		const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // set nexts [] so all get unique gids
+		const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // set nexts [] so all get unique gids
 		await log.trim({
 			type: "length",
 			from: 2,
@@ -68,16 +61,20 @@ describe("trim", function () {
 			},
 		});
 		expect(log.length).toEqual(2);
-		expect((await log.toArray())[0].payload.getValue()).toEqual("hello1");
-		expect((await log.toArray())[1].payload.getValue()).toEqual("hello3");
+		expect((await log.toArray())[0].payload.getValue()).toEqual(
+			new Uint8Array([1])
+		);
+		expect((await log.toArray())[1].payload.getValue()).toEqual(
+			new Uint8Array([3])
+		);
 		expect(canTrimInvocations).toEqual(2);
 	});
 
 	it("not recheck untrimmable gid", async () => {
 		let canTrimInvocations = 0;
-		const e1 = await log.append("hello1");
-		const e2 = await log.append("hello2");
-		const e3 = await log.append("hello3");
+		const e1 = await log.append(new Uint8Array([1]));
+		const e2 = await log.append(new Uint8Array([2]));
+		const e3 = await log.append(new Uint8Array([3]));
 		await log.trim({
 			type: "length",
 			from: 2,
@@ -94,29 +91,28 @@ describe("trim", function () {
 	});
 
 	it("cut back to cut length", async () => {
-		const log = new Log<string>();
+		const log = new Log<Uint8Array>();
 		await log.open(
 			store,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			},
+			signKey,
 			{ trim: { type: "length", from: 3, to: 1 } } // when length > 3 cut back to 1
 		);
-		const { entry: a1 } = await log.append("hello1");
-		const { entry: a2 } = await log.append("hello2");
+		const { entry: a1 } = await log.append(new Uint8Array([1]));
+		const { entry: a2 } = await log.append(new Uint8Array([2]));
 		expect(await log.trim()).toHaveLength(0);
 		expect(await log.storage.get(a1.hash)).toBeDefined();
 		expect(await log.storage.get(a2.hash)).toBeDefined();
 		expect(log.length).toEqual(2);
-		const { entry: a3, removed } = await log.append("hello3");
+		const { entry: a3, removed } = await log.append(new Uint8Array([3]));
 		expect(removed.map((x) => x.hash)).toContainAllValues([a1.hash, a2.hash]);
 		expect(log.length).toEqual(1);
 		await (log.storage as MemoryLevelBlockStore).idle();
 		expect(await log.storage.get(a1.hash)).toBeUndefined();
 		expect(await log.storage.get(a2.hash)).toBeUndefined();
 		expect(await log.storage.get(a3.hash)).toBeDefined();
-		expect((await log.toArray())[0].payload.getValue()).toEqual("hello3");
+		expect((await log.toArray())[0].payload.getValue()).toEqual(
+			new Uint8Array([3])
+		);
 	});
 
 	it("trimming and concurrency", async () => {
@@ -127,10 +123,7 @@ describe("trim", function () {
 		const log = new Log<string>();
 		await log.open(
 			store,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			},
+			signKey,
 			{
 				trim: {
 					type: "length",
@@ -143,6 +136,7 @@ describe("trim", function () {
 						},
 					},
 				},
+				encoding: JSON_ENCODING,
 			} // when length > 3 cut back to 1
 		);
 		let size = 3;
@@ -159,39 +153,37 @@ describe("trim", function () {
 	});
 
 	it("cut back to bytelength", async () => {
-		const log = new Log<string>();
+		const log = new Log<Uint8Array>();
 		await log.open(
 			store,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			},
+			signKey,
 			{
 				trim: { type: "bytelength", to: 15, filter: { canTrim: () => true } },
+				encoding: JSON_ENCODING,
 			} // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
-		const { entry: a1, removed: r1 } = await log.append("hello1");
+		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).toHaveLength(0);
 		expect(await log.storage.get(a1.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
-			"hello1",
+			new Uint8Array([1]),
 		]);
-		const { entry: a2, removed: r2 } = await log.append("hello2");
+		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]));
 		expect(r2.map((x) => x.hash)).toContainAllValues([a1.hash]);
 		expect(await log.storage.get(a2.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
-			"hello2",
+			new Uint8Array([2]),
 		]);
-		const { entry: a3, removed: r3 } = await log.append("hello3");
+		const { entry: a3, removed: r3 } = await log.append(new Uint8Array([3]));
 		expect(r3.map((x) => x.hash)).toContainAllValues([a2.hash]);
 		expect(await log.storage.get(a3.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
-			"hello3",
+			new Uint8Array([3]),
 		]);
-		const { entry: a4, removed: r4 } = await log.append("hello4");
+		const { entry: a4, removed: r4 } = await log.append(new Uint8Array([4]));
 		expect(r4.map((x) => x.hash)).toContainAllValues([a3.hash]);
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
-			"hello4",
+			new Uint8Array([4]),
 		]);
 		await (log.storage as MemoryLevelBlockStore).idle();
 		expect(await log.storage.get(a1.hash)).toBeUndefined();
@@ -202,39 +194,36 @@ describe("trim", function () {
 
 	it("trim to time", async () => {
 		const maxAge = 3000;
-		const log = new Log<string>();
+		const log = new Log<Uint8Array>();
 		await log.open(
 			store,
-			{
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			},
+			signKey,
 			{
 				trim: { type: "time", maxAge },
 			} // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 
 		let t0 = +new Date();
-		const { entry: a1, removed: r1 } = await log.append("hello1");
+		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).toHaveLength(0);
 		expect(await log.storage.get(a1.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
-			"hello1",
+			new Uint8Array([1]),
 		]);
-		const { entry: a2, removed: r2 } = await log.append("hello2");
+		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]));
 		expect(r2.map((x) => x.hash)).toContainAllValues([]);
 
 		await waitFor(() => +new Date() - t0 > maxAge);
-		const { entry: a3, removed: r3 } = await log.append("hello2");
+		const { entry: a3, removed: r3 } = await log.append(new Uint8Array([2]));
 		expect(r3.map((x) => x.hash)).toContainAllValues([a1.hash, a2.hash]);
 	});
 
 	describe("cache", () => {
 		it("not recheck gid in cache", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 			const canTrim = (gid) => {
 				canTrimInvocations += 1;
 				return Promise.resolve(gid !== e1.entry.gid); // can not trim
@@ -268,10 +257,10 @@ describe("trim", function () {
 
 		it("ignores invalid trim cache", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
-			const e4 = await log.append("hello4", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
+			const e4 = await log.append(new Uint8Array([4]), { nexts: [] }); // nexts: [] means unique gid
 			const canTrim = (gid) => {
 				canTrimInvocations += 1;
 				return Promise.resolve(gid !== e1.entry.gid); // can not trim
@@ -307,9 +296,9 @@ describe("trim", function () {
 
 		it("uses trim cache cross sessions", async () => {
 			let canTrimInvocations: string[] = [];
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 			const canTrim = (gid) => {
 				canTrimInvocations.push(gid);
 				return Promise.resolve(false); // can not trim
@@ -345,7 +334,7 @@ describe("trim", function () {
 
 			expect(canTrimInvocations).toEqual([]); // no more checks since nothing has changed
 
-			const e4 = await log.append("hello4", { nexts: [] }); // nexts: [] means unique gid
+			const e4 = await log.append(new Uint8Array([4]), { nexts: [] }); // nexts: [] means unique gid
 			const result = await log.trim({
 				type: "length",
 				from: 0,
@@ -367,7 +356,7 @@ describe("trim", function () {
 				return trimmableGids.has(gid);
 			};
 
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
 
 			trimmableGids.add(e1.entry.gid);
 
@@ -389,7 +378,7 @@ describe("trim", function () {
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([]);
 
 			canTrimInvocations = [];
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
 			trimmableGids.add(e2.entry.gid);
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e2.entry.hash,
@@ -407,7 +396,7 @@ describe("trim", function () {
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([]);
 
 			canTrimInvocations = [];
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e3.entry.hash,
 			]);
@@ -428,7 +417,7 @@ describe("trim", function () {
 		it("can trim later new entries are added", async () => {
 			let canTrimInvocations: string[] = [];
 			let trimmableGids = new Set();
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
 			const canTrim = (gid) => {
 				canTrimInvocations.push(gid);
 				return trimmableGids.has(gid);
@@ -448,7 +437,7 @@ describe("trim", function () {
 			expect(canTrimInvocations).toEqual([e1.entry.gid]); // checks e1
 
 			canTrimInvocations = [];
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -465,7 +454,7 @@ describe("trim", function () {
 			]);
 
 			canTrimInvocations = [];
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -488,7 +477,7 @@ describe("trim", function () {
 			]);
 
 			canTrimInvocations = [];
-			const e4 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e4 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -513,9 +502,9 @@ describe("trim", function () {
 
 		it("drops cache if canTrim function changes", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -545,9 +534,9 @@ describe("trim", function () {
 
 		it("changing cacheId will reset cache", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append("hello1", { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append("hello2", { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append("hello3", { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
 
 			let trimGid: string | undefined = undefined;
 			const canTrim = (gid) => {

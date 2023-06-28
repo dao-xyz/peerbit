@@ -4,6 +4,7 @@ import { LamportClock as Clock, Timestamp } from "../clock.js";
 import { Log } from "../log.js";
 import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("properties", function () {
 	let store: BlockStore;
@@ -35,74 +36,50 @@ describe("properties", function () {
 		it("can not open twice", async () => {
 			const log = new Log();
 			await log.open(store, signKey, undefined);
-			await expect(() =>
-				log.open(
-					store,
-					{
-						...signKey,
-						sign: async (data: Uint8Array) => await signKey.sign(data),
-					},
-					undefined
-				)
-			).rejects.toThrow();
+			await expect(() => log.open(store, signKey, undefined)).rejects.toThrow();
 		});
 		it("sets an id", async () => {
 			const log = new Log({ id: new Uint8Array(1) });
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey);
 			expect(log.id).toEqual(new Uint8Array(1));
 		});
 
 		it("generates if id is not passed as an argument", async () => {
 			const log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey);
 			expect(log.id).toBeInstanceOf(Uint8Array);
 		});
 
 		it("sets items if given as params", async () => {
 			const one = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryA",
+				encoding: JSON_ENCODING,
 				next: [],
 				clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
 			});
 			const two = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryB",
+				encoding: JSON_ENCODING,
 				next: [],
 				clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
 			});
 			const three = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryC",
+				encoding: JSON_ENCODING,
 				next: [],
 				clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
 			});
 			const log = new Log<string>();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.reset([one, two, three]);
 
 			expect(log.length).toEqual(3);
@@ -114,39 +91,30 @@ describe("properties", function () {
 		it("sets heads if given as params", async () => {
 			const one = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryA",
+				encoding: JSON_ENCODING,
 				next: [],
 			});
 			const two = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryB",
+				encoding: JSON_ENCODING,
 				next: [],
 			});
 			const three = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryC",
+				encoding: JSON_ENCODING,
 				next: [],
 			});
 			const log = new Log<string>();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.reset([one, two, three], [three]);
 
 			expect((await log.getHeads()).length).toEqual(1);
@@ -156,39 +124,30 @@ describe("properties", function () {
 		it("finds heads if heads not given as params", async () => {
 			const one = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryA",
+				encoding: JSON_ENCODING,
 				next: [],
 			});
 			const two = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryB",
+				encoding: JSON_ENCODING,
 				next: [],
 			});
 			const three = await Entry.create({
 				store,
-				identity: {
-					...signKey,
-					sign: (data) => signKey.sign(data),
-				},
+				identity: signKey,
 				gidSeed: Buffer.from("a"),
 				data: "entryC",
+				encoding: JSON_ENCODING,
 				next: [],
 			});
 			const log = new Log<string>();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.reset([one, two, three]);
 			expect((await log.getHeads()).map((x) => x.hash)).toContainAllValues([
 				one.hash,
@@ -205,10 +164,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log<string>();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", { gidSeed: Buffer.from("a") });
 			await log.append("two", { gidSeed: Buffer.from("a") });
 			await log.append("three", { gidSeed: Buffer.from("a") });
@@ -227,11 +183,8 @@ describe("properties", function () {
 		let log: Log<any>;
 
 		beforeEach(async () => {
-			log = new Log<string>();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			log = new Log<Uint8Array>();
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", {
 				gidSeed: Buffer.from("a"),
 				timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
@@ -256,10 +209,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", { gidSeed: Buffer.from("a") });
 		});
 
@@ -287,10 +237,7 @@ describe("properties", function () {
 
 		beforeEach(async () => {
 			log = new Log();
-			await log.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", { gidSeed: Buffer.from("a") });
 		});
 
@@ -311,21 +258,24 @@ describe("properties", function () {
 
 	describe("values", () => {
 		it("returns all entries in the log", async () => {
-			const log = new Log<string>();
-			await log.open(store, {
-				...signKey,
-				sign: (data) => signKey.sign(data),
-			});
+			const log = new Log<Uint8Array>();
+			await log.open(store, signKey);
 			expect((await log.toArray()) instanceof Array).toEqual(true);
 			expect(log.length).toEqual(0);
-			await log.append("hello1");
-			await log.append("hello2");
-			await log.append("hello3");
+			await log.append(new Uint8Array([1]));
+			await log.append(new Uint8Array([2]));
+			await log.append(new Uint8Array([3]));
 			expect((await log.toArray()) instanceof Array).toEqual(true);
 			expect(log.length).toEqual(3);
-			expect((await log.toArray())[0].payload.getValue()).toEqual("hello1");
-			expect((await log.toArray())[1].payload.getValue()).toEqual("hello2");
-			expect((await log.toArray())[2].payload.getValue()).toEqual("hello3");
+			expect((await log.toArray())[0].payload.getValue()).toEqual(
+				new Uint8Array([1])
+			);
+			expect((await log.toArray())[1].payload.getValue()).toEqual(
+				new Uint8Array([2])
+			);
+			expect((await log.toArray())[2].payload.getValue()).toEqual(
+				new Uint8Array([3])
+			);
 		});
 	});
 });

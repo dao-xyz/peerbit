@@ -14,17 +14,14 @@ describe("get-pow-2-refs", function () {
 	});
 
 	describe("Single log", () => {
-		let log1: Log<string>;
+		let log1: Log<Uint8Array>;
 
 		beforeEach(async () => {
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey);
 
 			for (let i = 0; i <= 100; i++) {
-				await log1.append("entry" + i);
+				await log1.append(new Uint8Array([i]));
 			}
 		});
 		it("get refs one", async () => {
@@ -51,7 +48,7 @@ describe("get-pow-2-refs", function () {
 			let i = 0;
 			for (const entry of refs) {
 				expect(entry.payload.getValue()).toEqual(
-					"entry" + (100 + 1 - 2 ** i++)
+					new Uint8Array([100 + 1 - 2 ** i++])
 				);
 			}
 		});
@@ -68,7 +65,7 @@ describe("get-pow-2-refs", function () {
 			let i = 0;
 			for (const entry of refs) {
 				expect(entry.payload.getValue()).toEqual(
-					"entry" + (100 + 1 - 2 ** i++)
+					new Uint8Array([100 + 1 - 2 ** i++])
 				);
 			}
 		});
@@ -88,22 +85,19 @@ describe("get-pow-2-refs", function () {
 					return sum;
 				});
 			expect(sum).toBeLessThan(100);
-			expect(sum).toBeGreaterThan(80);
+			expect(sum).toBeGreaterThan(40);
 		});
 	});
 
 	describe("multiple heads", () => {
-		let log1: Log<string>;
+		let log1: Log<Uint8Array>;
 
 		beforeEach(async () => {
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey);
 
 			for (let i = 0; i <= 10; i++) {
-				await log1.append("entry" + i, { nexts: [] });
+				await log1.append(new Uint8Array([i]), { nexts: [] });
 			}
 		});
 

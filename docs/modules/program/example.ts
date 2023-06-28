@@ -18,7 +18,7 @@ type Args = { role: SubscriptionType };
 @variant("my-database") // required
 class MyDatabase extends Program<Args> {
 	@field({ type: SharedLog })
-	log: SharedLog<string>;
+	log: SharedLog<Uint8Array>;
 	constructor() {
 		super();
 	}
@@ -43,7 +43,7 @@ const store = await client.open(new MyDatabase(), { args: { role: Observer } });
 
 /// [append]
 const { entry } = await store.log.append("Hello world!");
-expect(entry.payload.getValue()).toEqual("Hello world");
+expect(entry.getPayloadValue()).toEqual("Hello world");
 /// [append]
 
 await client.stop();

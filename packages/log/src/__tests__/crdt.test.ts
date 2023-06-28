@@ -1,6 +1,7 @@
 import { Log } from "../log.js";
 import { MemoryLevelBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("crdt", function () {
 	let store: MemoryLevelBlockStore;
@@ -18,20 +19,11 @@ describe("crdt", function () {
 
 		beforeEach(async () => {
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 		});
 
 		it("join is associative", async () => {
@@ -51,20 +43,11 @@ describe("crdt", function () {
 			const res1 = (await log1.toArray()).slice();
 
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -99,15 +82,9 @@ describe("crdt", function () {
 			const res1 = (await log2.toArray()).slice();
 
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -137,20 +114,11 @@ describe("crdt", function () {
 			const resA1 = log2.toString();
 
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -162,15 +130,9 @@ describe("crdt", function () {
 
 			// a + b == b + a
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -180,15 +142,9 @@ describe("crdt", function () {
 			const resB1 = log1.toString();
 
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
@@ -201,16 +157,10 @@ describe("crdt", function () {
 
 			// a + c == c + a
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
@@ -219,16 +169,10 @@ describe("crdt", function () {
 			const resC1 = log3.toString();
 
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
@@ -241,15 +185,9 @@ describe("crdt", function () {
 			// c + b == b + c
 
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
@@ -259,15 +197,9 @@ describe("crdt", function () {
 			const resD1 = log3.toString();
 
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB2", { gidSeed: Buffer.from("a") });
 			await log3.append("helloC1", { gidSeed: Buffer.from("a") });
@@ -279,20 +211,11 @@ describe("crdt", function () {
 
 			// a + b + c == c + b + a
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });
@@ -303,20 +226,11 @@ describe("crdt", function () {
 			await log1.join(log3);
 			const logLeft = log1.toString();
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 			log2 = new Log();
-			await log2.open(store, {
-				...signKey2,
-				sign: async (data: Uint8Array) => await signKey2.sign(data),
-			});
+			await log2.open(store, signKey2, { encoding: JSON_ENCODING });
 			log3 = new Log();
-			await log3.open(store, {
-				...signKey3,
-				sign: async (data: Uint8Array) => await signKey3.sign(data),
-			});
+			await log3.open(store, signKey3, { encoding: JSON_ENCODING });
 			await log1.append("helloA1", { gidSeed: Buffer.from("a") });
 			await log1.append("helloA2", { gidSeed: Buffer.from("a") });
 			await log2.append("helloB1", { gidSeed: Buffer.from("a") });

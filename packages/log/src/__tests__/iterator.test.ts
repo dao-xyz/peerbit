@@ -3,6 +3,7 @@ import { Log } from "../log.js";
 import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { Entry } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("Iterator", function () {
 	let store: BlockStore;
@@ -23,10 +24,7 @@ describe("Iterator", function () {
 		beforeEach(async () => {
 			entries = [];
 			log1 = new Log();
-			await log1.open(store, {
-				...signKey,
-				sign: async (data: Uint8Array) => await signKey.sign(data),
-			});
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
 
 			for (let i = 0; i <= 100; i++) {
 				entries.push((await log1.append("entry" + i)).entry);

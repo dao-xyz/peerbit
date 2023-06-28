@@ -1,18 +1,21 @@
 import { AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
-import stringify from "json-stringify-deterministic";
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 export interface Encoding<T> {
 	encoder: (data: T) => Uint8Array;
 	decoder: (bytes: Uint8Array) => T;
 }
-export const JSON_ENCODING: Encoding<any> = {
-	encoder: (obj: any) => {
-		return new Uint8Array(encoder.encode(stringify(obj)));
+export const NO_ENCODING: Encoding<any> = {
+	encoder: (obj: Uint8Array) => {
+		if (obj instanceof Uint8Array === false) {
+			throw new Error(
+				"With NO_ENCODING only Uint8arrays are allowed, recieved: " +
+					(typeof obj === "object" ? obj.constructor.name : typeof obj)
+			);
+		}
+		return obj;
 	},
 	decoder: (bytes: Uint8Array) => {
-		return JSON.parse(decoder.decode(bytes).toString());
+		return bytes;
 	},
 };
 

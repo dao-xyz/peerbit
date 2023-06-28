@@ -7,9 +7,9 @@ import { Cache } from "@dao-xyz/cache";
 import { signKey } from "./fixtures/privateKey";
 
 describe("values", () => {
-	let e1: Entry<string>, e2: Entry<string>, e3: Entry<string>;
+	let e1: Entry<Uint8Array>, e2: Entry<Uint8Array>, e3: Entry<Uint8Array>;
 	let store: BlockStore;
-	let entryIndex: EntryIndex<string>;
+	let entryIndex: EntryIndex<Uint8Array>;
 	beforeEach(async () => {
 		const identity = signKey;
 		store = new MemoryLevelBlockStore();
@@ -18,7 +18,7 @@ describe("values", () => {
 			store,
 			identity,
 			gidSeed: Buffer.from("a"),
-			data: "1",
+			data: new Uint8Array([0]),
 			next: [],
 		});
 
@@ -26,7 +26,7 @@ describe("values", () => {
 			store,
 			identity,
 			gidSeed: Buffer.from("a"),
-			data: "2",
+			data: new Uint8Array([1]),
 			next: [e1],
 		});
 
@@ -34,7 +34,7 @@ describe("values", () => {
 			store,
 			identity,
 			gidSeed: Buffer.from("a"),
-			data: "3",
+			data: new Uint8Array([2]),
 			next: [e2],
 		});
 		entryIndex = new EntryIndex({
@@ -50,7 +50,7 @@ describe("values", () => {
 		await store.stop();
 	});
 	it("put last", async () => {
-		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
 		await values.put(e1);
 		await values.put(e2);
 		await values.put(e3);
@@ -63,7 +63,7 @@ describe("values", () => {
 	});
 
 	it("put middle", async () => {
-		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
 		await values.put(e1);
 		await values.put(e3);
 		await values.put(e2);
@@ -76,7 +76,7 @@ describe("values", () => {
 	});
 
 	it("put first", async () => {
-		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
 		await values.put(e2);
 		await values.put(e3);
 		await values.put(e1);
@@ -89,7 +89,7 @@ describe("values", () => {
 	});
 
 	it("put concurrently", async () => {
-		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
 		let promises: Promise<any>[] = [];
 		for (let i = 0; i < 100; i++) {
 			promises.push(values.put(e1));
@@ -100,7 +100,7 @@ describe("values", () => {
 		expect((await values.toArray()).length).toEqual(1);
 	});
 	it("delete", async () => {
-		const values = new Values<string>(entryIndex, LastWriteWins, []);
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
 		await values.put(e1);
 		await values.put(e2);
 		await values.put(e3);

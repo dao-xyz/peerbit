@@ -7,6 +7,7 @@ import {
 	signKey3,
 	signKey4,
 } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -31,25 +32,16 @@ describe("head-tails", function () {
 
 	beforeEach(async () => {
 		log1 = new Log<string>();
-		await log1.open(store, {
-			...signKey,
-			sign: async (data: Uint8Array) => await signKey.sign(data),
-		});
+		const logOptions = {
+			encoding: JSON_ENCODING,
+		};
+		await log1.open(store, signKey, logOptions);
 		log2 = new Log<string>();
-		await log2.open(store, {
-			...signKey2,
-			sign: async (data: Uint8Array) => await signKey2.sign(data),
-		});
+		await log2.open(store, signKey2, logOptions);
 		log3 = new Log<string>();
-		await log3.open(store, {
-			...signKey3,
-			sign: async (data: Uint8Array) => await signKey3.sign(data),
-		});
+		await log3.open(store, signKey3, logOptions);
 		log4 = new Log<string>();
-		await log4.open(store, {
-			...signKey4,
-			sign: async (data: Uint8Array) => await signKey4.sign(data),
-		});
+		await log4.open(store, signKey4, logOptions);
 	});
 	afterEach(async () => {
 		await log1.close();
@@ -206,9 +198,15 @@ describe("head-tails", function () {
 
 		it("returns tail hashes", async () => {
 			log1 = new Log();
-			await log1.open(store, signKey, { trim: { type: "length", to: 2 } });
+			await log1.open(store, signKey, {
+				trim: { type: "length", to: 2 },
+				encoding: JSON_ENCODING,
+			});
 			log2 = new Log();
-			await log2.open(store, signKey, { trim: { type: "length", to: 2 } });
+			await log2.open(store, signKey, {
+				trim: { type: "length", to: 2 },
+				encoding: JSON_ENCODING,
+			});
 			const { entry: a1 } = await log1.append("helloA1");
 			const { entry: b1 } = await log2.append("helloB1");
 			const { entry: a2 } = await log1.append("helloA2");
