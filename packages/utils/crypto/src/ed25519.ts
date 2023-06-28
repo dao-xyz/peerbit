@@ -1,6 +1,6 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
-import { equals } from "@dao-xyz/uint8arrays";
+import { equals } from "@peerbit/uint8arrays";
 import { Identity, Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";

@@ -2,7 +2,7 @@ import { KeyChain as InternalKeychain } from "@libp2p/interface-keychain";
 import { keysPBM } from "@libp2p/crypto/keys";
 import { identity } from "multiformats/hashes/identity";
 import { base58btc } from "multiformats/bases/base58";
-import { Cache } from "@dao-xyz/cache";
+import { Cache } from "@peerbit/cache";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import { Keypair, PublicSignKey } from "./key.js";
 

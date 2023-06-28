@@ -32,7 +32,7 @@
 	],
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@dao-xyz/cache": "0.0.7",
+		"@peerbit/cache": "0.0.7",
 		"@peerbit/blocks-interface": "^1.0.0",
 		"@peerbit/crypto": "1.0.4",
 		"@peerbit/logger": "1.0.0",

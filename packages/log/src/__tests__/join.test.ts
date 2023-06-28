@@ -1,7 +1,7 @@
 import assert from "assert";
 import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
-import { compare } from "@dao-xyz/uint8arrays";
+import { compare } from "@peerbit/uint8arrays";
 import { LSession } from "@peerbit/test-utils";
 import { Ed25519Keypair } from "@peerbit/crypto";
 

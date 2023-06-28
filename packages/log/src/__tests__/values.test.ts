@@ -3,7 +3,7 @@ import { Entry } from "../entry";
 import { EntryIndex } from "../entry-index";
 import { LastWriteWins } from "../log-sorting";
 import { Values } from "../values";
-import { Cache } from "@dao-xyz/cache";
+import { Cache } from "@peerbit/cache";
 import { signKey } from "./fixtures/privateKey";
 
 describe("values", () => {

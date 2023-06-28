@@ -27,7 +27,7 @@ import { CustomEvent } from "@libp2p/interfaces/events";
 import { waitFor } from "@peerbit/time";
 import { Connection } from "@libp2p/interface-connection";
 
-import { equals, startsWith } from "@dao-xyz/uint8arrays";
+import { equals, startsWith } from "@peerbit/uint8arrays";
 import { PubSubEvents } from "@peerbit/pubsub-interface";
 
 export const logger = logFn({ module: "direct-sub", level: "warn" });

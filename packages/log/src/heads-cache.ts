@@ -1,7 +1,7 @@
 import PQueue from "p-queue";
 import { v4 as uuid } from "uuid";
 import { Entry } from "./entry";
-import { SimpleLevel } from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@peerbit/lazy-level";
 import { variant, option, field, vec } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";

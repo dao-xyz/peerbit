@@ -32,7 +32,7 @@ export type SignaturePolicy = "StictSign" | "StrictNoSign";
 import type { AddressManager } from "@libp2p/interface-address-manager";
 
 import { logger } from "./logger.js";
-import { Cache } from "@dao-xyz/cache";
+import { Cache } from "@peerbit/cache";
 import { createTopology } from "./topology.js";
 export { logger };
 import type { Libp2pEvents } from "@libp2p/interface-libp2p";

@@ -6,8 +6,8 @@ import {
 	Keychain,
 	X25519Keypair,
 } from "@peerbit/crypto";
-import { Cache } from "@dao-xyz/cache";
-import { SimpleLevel } from "@dao-xyz/lazy-level";
+import { Cache } from "@peerbit/cache";
+import { SimpleLevel } from "@peerbit/lazy-level";
 
 import { EntryIndex } from "./entry-index.js";
 import * as LogError from "./log-errors.js";

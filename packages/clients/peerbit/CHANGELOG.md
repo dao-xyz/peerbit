@@ -49,11 +49,11 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/lazy-level bumped from 0.0.8 to 0.0.9
+    * @peerbit/lazy-level bumped from 0.0.8 to 0.0.9
     * @peerbit/crypto bumped from 1.0.3 to 1.0.4
     * @peerbit/logger bumped from 0.0.7 to 1.0.0
     * @peerbit/program bumped from 1.0.3 to 1.0.4
-    * @dao-xyz/uint8arrays bumped from 0.0.4 to 1.0.0
+    * @peerbit/uint8arrays bumped from 0.0.4 to 1.0.0
   * devDependencies
     * @peerbit/document bumped from 1.0.3 to 1.0.4
     * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
@@ -129,11 +129,11 @@
 
 ### Dependencies
 
-* **@dao-xyz/lazy-level:** upgraded to 0.0.8
+* **@peerbit/lazy-level:** upgraded to 0.0.8
 * **@peerbit/crypto:** upgraded to 0.1.16
 * **peerbit-keystore:** upgraded to 0.2.12
 * **@peerbit/logger:** upgraded to 0.0.7
 * **@peerbit/program:** upgraded to 0.9.1
-* **@dao-xyz/uint8arrays:** upgraded to 0.0.4
+* **@peerbit/uint8arrays:** upgraded to 0.0.4
 * **@peerbit/document:** upgraded to 0.9.1
 * **@peerbit/test-utils:** upgraded to 0.4.3

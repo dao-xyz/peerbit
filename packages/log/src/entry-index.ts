@@ -1,4 +1,4 @@
-import { Cache } from "@dao-xyz/cache";
+import { Cache } from "@peerbit/cache";
 import { Entry } from "./entry.js";
 import { deserialize } from "@dao-xyz/borsh";
 import { logger } from "./logger.js";

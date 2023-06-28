@@ -54,7 +54,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@dao-xyz/lazy-level": "0.0.9",
+		"@peerbit/lazy-level": "0.0.9",
 		"@peerbit/stream": "1.0.4",
 		"@peerbit/blocks-interface": "1.0.0",
 		"@peerbit/crypto": "1.0.4",

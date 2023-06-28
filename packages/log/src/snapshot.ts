@@ -11,7 +11,7 @@ import {
 	vec,
 } from "@dao-xyz/borsh";
 import { waitForAsync } from "@peerbit/time";
-import LocalStore from "@dao-xyz/lazy-level";
+import LocalStore from "@peerbit/lazy-level";
 import { logger } from "./logger.js";
 
 @variant(0)

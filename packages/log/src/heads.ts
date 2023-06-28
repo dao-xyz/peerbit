@@ -1,5 +1,5 @@
 import { Entry } from "./entry.js";
-import { SimpleLevel } from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@peerbit/lazy-level";
 import { HeadsCache } from "./heads-cache.js";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain } from "@peerbit/crypto";

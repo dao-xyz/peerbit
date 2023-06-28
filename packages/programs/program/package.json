@@ -34,6 +34,6 @@
 		"@peerbit/crypto": "1.0.4",
 		"@peerbit/blocks-interface": "^1.0.0",
 		"@peerbit/pubsub-interface": "^1.0.0",
-		"@dao-xyz/lazy-level": "^0.0.9"
+		"@peerbit/lazy-level": "^0.0.9"
 	}
 }

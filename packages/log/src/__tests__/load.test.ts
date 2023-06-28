@@ -4,7 +4,7 @@ import { LastWriteWins } from "../log-sorting.js";
 import { Entry } from "../entry.js";
 import { Log } from "../log.js";
 import { LogCreator } from "./utils/log-creator.js";
-import { compare } from "@dao-xyz/uint8arrays";
+import { compare } from "@peerbit/uint8arrays";
 import { delay } from "@peerbit/time";
 
 // Alternate tiebreaker. Always does the opposite of LastWriteWins

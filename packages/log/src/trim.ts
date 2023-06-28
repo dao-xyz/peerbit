@@ -1,4 +1,4 @@
-import { Cache } from "@dao-xyz/cache";
+import { Cache } from "@peerbit/cache";
 import PQueue from "p-queue";
 import { Entry } from "./entry.js";
 import { EntryNode, Values } from "./values.js";

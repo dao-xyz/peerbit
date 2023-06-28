@@ -38,7 +38,7 @@ import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@peerbit/stream";
 import { Program } from "@peerbit/program";
 import pDefer, { DeferredPromise } from "p-defer";
-import LazyLevel from "@dao-xyz/lazy-level";
+import LazyLevel from "@peerbit/lazy-level";
 import { Peerbit } from "peerbit";
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();

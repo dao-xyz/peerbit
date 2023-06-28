@@ -31,13 +31,13 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@dao-xyz/lazy-level": "0.0.9",
+		"@peerbit/lazy-level": "0.0.9",
 		"@peerbit/crypto": "1.0.4",
 		"@peerbit/logger": "1.0.0",
 		"@peerbit/program": "1.0.4",
 		"@peerbit/pubsub": "^1.0.4",
 		"@peerbit/blocks": "^1.0.4",
-		"@dao-xyz/uint8arrays": "1.0.0",
+		"@peerbit/uint8arrays": "1.0.0",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",
 		"p-queue": "^7.3.4"

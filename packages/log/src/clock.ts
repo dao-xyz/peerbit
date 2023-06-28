@@ -24,7 +24,7 @@ SOFTWARE.
  */
 
 import { field, variant } from "@dao-xyz/borsh";
-import { compare, equals } from "@dao-xyz/uint8arrays";
+import { compare, equals } from "@peerbit/uint8arrays";
 import hrtime from "./hrtime.js";
 
 const hrTimeNow = hrtime.bigint();

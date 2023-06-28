@@ -1,7 +1,7 @@
 import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
 import { BORSH_ENCODING, Encoding, Entry } from "@peerbit/log";
-import { equals } from "@dao-xyz/uint8arrays";
+import { equals } from "@peerbit/uint8arrays";
 import { ComposableProgram } from "@peerbit/program";
 import {
 	IntegerCompare,
@@ -35,7 +35,7 @@ import {
 } from "@peerbit/rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Cache } from "@dao-xyz/cache";
+import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
 import { SharedLog } from "@peerbit/shared-log";
 

@@ -12,7 +12,7 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/uint8arrays bumped from 0.0.4 to 1.0.0
+    * @peerbit/uint8arrays bumped from 0.0.4 to 1.0.0
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/crypto-v1.0.0-alpha1...@peerbit/crypto-v1.0.3) (2023-06-14)
 
@@ -47,4 +47,4 @@
 
 ### Dependencies
 
-* **@dao-xyz/uint8arrays:** upgraded to 0.0.4
+* **@peerbit/uint8arrays:** upgraded to 0.0.4

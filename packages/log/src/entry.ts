@@ -25,7 +25,7 @@ import {
 	X25519Keypair,
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
-import { compare, equals } from "@dao-xyz/uint8arrays";
+import { compare, equals } from "@peerbit/uint8arrays";
 import { Encoding, NO_ENCODING } from "./encoding.js";
 import { StringArray } from "./types.js";
 import { logger } from "./logger.js";

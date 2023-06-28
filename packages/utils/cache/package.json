@@ -1,5 +1,5 @@
 {
-	"name": "@dao-xyz/cache",
+	"name": "@peerbit/cache",
 	"version": "0.0.7",
 	"description": "Simple cache",
 	"type": "module",

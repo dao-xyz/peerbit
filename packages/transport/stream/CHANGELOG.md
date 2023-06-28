@@ -12,7 +12,7 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/cache bumped from 0.0.6 to 0.0.7
+    * @peerbit/cache bumped from 0.0.6 to 0.0.7
     * @peerbit/crypto bumped from 1.0.3 to 1.0.4
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
@@ -74,6 +74,6 @@
 
 ### Dependencies
 
-* **@dao-xyz/cache:** upgraded to 0.0.6
+* **@peerbit/cache:** upgraded to 0.0.6
 * **@peerbit/crypto:** upgraded to 0.1.16
 * **@peerbit/libp2p-test-utils:** upgraded to 0.5.3

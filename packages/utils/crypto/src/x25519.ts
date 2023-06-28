@@ -1,6 +1,6 @@
 export * from "./errors.js";
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { compare } from "@dao-xyz/uint8arrays";
+import { compare } from "@peerbit/uint8arrays";
 import sodium from "libsodium-wrappers";
 import {
 	Keypair,

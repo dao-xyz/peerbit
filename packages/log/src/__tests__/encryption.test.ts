@@ -13,7 +13,7 @@ import {
 } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { Level } from "level";
-import LazyLevel from "@dao-xyz/lazy-level";
+import LazyLevel from "@peerbit/lazy-level";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
 const last = <T>(arr: T[]): T => {

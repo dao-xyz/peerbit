@@ -1,5 +1,5 @@
 {
-	"name": "@dao-xyz/lazy-level",
+	"name": "@peerbit/lazy-level",
 	"version": "0.0.9",
 	"description": "Level with lazy transactions",
 	"type": "module",

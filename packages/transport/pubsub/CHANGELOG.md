@@ -6,7 +6,7 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.3 to 1.0.4
     * @peerbit/logger bumped from 0.0.7 to 1.0.0
-    * @dao-xyz/uint8arrays bumped from 0.0.4 to 1.0.0
+    * @peerbit/uint8arrays bumped from 0.0.4 to 1.0.0
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
 
@@ -69,5 +69,5 @@
 
 * **@peerbit/stream:** upgraded to 0.5.3
 * **@peerbit/logger:** upgraded to 0.0.7
-* **@dao-xyz/uint8arrays:** upgraded to 0.0.4
+* **@peerbit/uint8arrays:** upgraded to 0.0.4
 * **@peerbit/libp2p-test-utils:** upgraded to 0.5.3

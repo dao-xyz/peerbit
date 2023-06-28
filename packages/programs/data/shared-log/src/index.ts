@@ -42,7 +42,7 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
-import { startsWith } from "@dao-xyz/uint8arrays";
+import { startsWith } from "@peerbit/uint8arrays";
 import { TimeoutError } from "@peerbit/time";
 import {
 	REPLICATOR_TYPE_VARIANT,

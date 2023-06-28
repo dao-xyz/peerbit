@@ -3,7 +3,7 @@ import {
 	CachePath,
 	HeadsCacheToSerialize,
 } from "../heads-cache.js";
-import { default as LazyLevel } from "@dao-xyz/lazy-level";
+import { default as LazyLevel } from "@peerbit/lazy-level";
 import { AbstractLevel } from "abstract-level";
 import { deserialize } from "@dao-xyz/borsh";
 import { createStore } from "@peerbit/test-utils";

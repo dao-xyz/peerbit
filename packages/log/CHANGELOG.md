@@ -4,7 +4,7 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/cache bumped from 0.0.6 to 0.0.7
+    * @peerbit/cache bumped from 0.0.6 to 0.0.7
     * @peerbit/blocks bumped from 1.0.3 to 1.0.4
     * @peerbit/crypto bumped from 1.0.3 to 1.0.4
     * @peerbit/logger bumped from 0.0.7 to 1.0.0
@@ -77,7 +77,7 @@
 
 ### Dependencies
 
-* **@dao-xyz/cache:** upgraded to 0.0.6
+* **@peerbit/cache:** upgraded to 0.0.6
 * **@peerbit/blocks:** upgraded to 0.5.3
 * **@peerbit/crypto:** upgraded to 0.1.16
 * **@peerbit/logger:** upgraded to 0.0.7

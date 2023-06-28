@@ -6,7 +6,7 @@ import {
 	serialize,
 	AbstractType,
 } from "@dao-xyz/borsh";
-import { equals } from "@dao-xyz/uint8arrays";
+import { equals } from "@peerbit/uint8arrays";
 import { verifySignatureEd25519 } from "./ed25519-sign.js";
 import { Ed25519PublicKey } from "./ed25519.js";
 import { PublicSignKey } from "./key.js";

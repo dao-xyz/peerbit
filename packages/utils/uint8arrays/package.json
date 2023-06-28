@@ -1,5 +1,5 @@
 {
-	"name": "@dao-xyz/uint8arrays",
+	"name": "@peerbit/uint8arrays",
 	"version": "1.0.0",
 	"description": "Utility methods for uint8arrays",
 	"type": "module",

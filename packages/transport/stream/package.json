@@ -57,7 +57,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@dao-xyz/cache": "0.0.7",
+		"@peerbit/cache": "0.0.7",
 		"@peerbit/crypto": "1.0.4",
 		"@peerbit/stream-interface": "^1.0.0",
 		"@libp2p/topology": "^4.0.1",

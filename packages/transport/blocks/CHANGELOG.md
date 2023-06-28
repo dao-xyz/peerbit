@@ -12,7 +12,7 @@
 
 * The following workspace dependencies were updated
   * dependencies
-    * @dao-xyz/lazy-level bumped from 0.0.8 to 0.0.9
+    * @peerbit/lazy-level bumped from 0.0.8 to 0.0.9
     * @peerbit/stream bumped from 1.0.3 to 1.0.4
     * @peerbit/crypto bumped from 1.0.3 to 1.0.4
   * devDependencies
@@ -77,7 +77,7 @@
 
 ### Dependencies
 
-* **@dao-xyz/lazy-level:** upgraded to 0.0.8
+* **@peerbit/lazy-level:** upgraded to 0.0.8
 * **@peerbit/stream:** upgraded to 0.5.3
 * **@peerbit/crypto:** upgraded to 0.1.16
 * **@peerbit/libp2p-test-utils:** upgraded to 0.5.3

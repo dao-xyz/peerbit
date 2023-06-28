@@ -1,4 +1,4 @@
-import LazyLevel from "@dao-xyz/lazy-level";
+import LazyLevel from "@peerbit/lazy-level";
 import { AbstractLevel } from "abstract-level";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";

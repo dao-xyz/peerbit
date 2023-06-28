@@ -1,4 +1,4 @@
-import { SimpleLevel } from "@dao-xyz/lazy-level";
+import { SimpleLevel } from "@peerbit/lazy-level";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";

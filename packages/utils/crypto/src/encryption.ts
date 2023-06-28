@@ -7,7 +7,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { equals } from "@dao-xyz/uint8arrays";
+import { equals } from "@peerbit/uint8arrays";
 import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
