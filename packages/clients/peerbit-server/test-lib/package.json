@@ -8,12 +8,15 @@
 	},
 	"license": "Apache-2.0",
 	"type": "module",
-	"private": true,
 	"sideEffects": false,
 	"module": "lib/esm/index.js",
 	"types": "lib/esm/index.d.ts",
+	"private": false,
 	"exports": {
 		"import": "./lib/esm/index.js"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"files": [
 		"lib",
