@@ -19,6 +19,24 @@
     * @peerbit/blocks bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.2...peerbit-v1.0.3) (2023-06-28)
+
+
+### Bug Fixes
+
+* add missing libp2p dependencies ([8f201e8](https://github.com/dao-xyz/peerbit/commit/8f201e85ea40661c6bb00a9974f8312fb008811a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.1 to 1.0.2
+    * @peerbit/program bumped from 1.0.1 to 1.0.2
+    * @peerbit/pubsub bumped from ^1.0.1 to ^1.0.2
+    * @peerbit/blocks bumped from ^1.0.1 to ^1.0.2
+    * @peerbit/uint8arrays bumped from 2.0.0 to 3.0.0
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.1...peerbit-v1.0.2) (2023-06-28)
 
 
