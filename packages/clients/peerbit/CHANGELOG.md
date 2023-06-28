@@ -19,6 +19,26 @@
     * @peerbit/blocks bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.3...peerbit-v2.0.0) (2023-06-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename org on utility modules
+* client abstraction
+
+### Features
+
+* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+
+
+### Bug Fixes
+
+* add missing datastore-level dependency ([aec526d](https://github.com/dao-xyz/peerbit/commit/aec526d003a4f02bb4333e665f454ca5450db668))
+* add missing libp2p dependencies ([bac7173](https://github.com/dao-xyz/peerbit/commit/bac7173c9d269f17c1ed1defa069f019a800e2d6))
+* remove uneccessary interface module ([1a24f62](https://github.com/dao-xyz/peerbit/commit/1a24f62f77fe6777628512fbb719bd78ad9080af))
+* rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.2...peerbit-v1.0.3) (2023-06-28)
 
 
