@@ -43,6 +43,15 @@
     * @peerbit/string bumped from 1.0.3 to 1.0.4
     * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.0.3 to 2.0.0
+  * devDependencies
+    * @peerbit/string bumped from 1.0.4 to 1.0.5
+    * @peerbit/test-utils bumped from 1.0.4 to 1.0.5
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/server-v1.0.1...server-v1.0.2) (2023-06-28)
 
 
