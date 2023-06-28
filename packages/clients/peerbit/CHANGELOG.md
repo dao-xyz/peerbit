@@ -19,6 +19,13 @@
     * @peerbit/blocks bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.1...peerbit-v1.0.2) (2023-06-28)
+
+
+### Bug Fixes
+
+* add missing datastore-level dependency ([aec526d](https://github.com/dao-xyz/peerbit/commit/aec526d003a4f02bb4333e665f454ca5450db668))
+
 ## 1.0.0 (2023-06-28)
 
 
