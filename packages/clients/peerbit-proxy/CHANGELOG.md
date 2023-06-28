@@ -15,27 +15,14 @@
 
 ### Bug Fixes
 
+* remove uneccessary interface module ([1a24f62](https://github.com/dao-xyz/peerbit/commit/1a24f62f77fe6777628512fbb719bd78ad9080af))
 * rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
 
-## Changelog
 
 ### Dependencies
 
 * The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^1.0.4 to ^1.0.0
   * devDependencies
-    * @peerbit/time bumped from 0.0.24 to 1.0.0
-
-## @peerbit/cache [0.0.6](https://github.com/dao-xyz/peerbit/compare/@peerbit/cache@0.0.5...@peerbit/cache@0.0.6) (2023-06-07)
-
-
-### Bug Fixes
-
-* add release cfg ([de76654](https://github.com/dao-xyz/peerbit/commit/de766548f8106804d319e8b51e9607f2a3f60726))
-
-
-
-
-
-### Dependencies
-
-* **@peerbit/time:** upgraded to 0.0.24
+    * @peerbit/test-utils bumped from 1.0.4 to 1.0.0

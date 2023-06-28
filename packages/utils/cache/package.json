@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/cache",
-	"version": "0.0.7",
+	"version": "1.0.0",
 	"description": "Simple cache",
 	"type": "module",
 	"publishConfig": {
