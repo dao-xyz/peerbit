@@ -19,6 +19,13 @@
   * dependencies
     * peerbit bumped from 1.0.0 to 1.0.1
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.1...test-utils-v1.0.2) (2023-06-28)
+
+
+### Bug Fixes
+
+* publish public ([3da8918](https://github.com/dao-xyz/peerbit/commit/3da8918a851e5188dcb0dfb1a67e02389ab1927d))
+
 ## 1.0.0 (2023-06-28)
 
 
