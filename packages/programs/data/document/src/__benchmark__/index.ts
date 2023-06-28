@@ -2,12 +2,11 @@ import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Documents, SetupOptions } from "../document-store.js";
 import { LSession } from "@peerbit/test-utils";
-import { Program } from "@peerbit/program";
+import { Program, ProgramClient } from "@peerbit/program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 import { Replicator } from "@peerbit/shared-log";
-import { Peerbit } from "@peerbit/interface";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))
@@ -61,7 +60,7 @@ const store = new TestStore({
 	}),
 });
 
-const client: Peerbit = session.peers[0];
+const client: ProgramClient = session.peers[0];
 await client.open(store, {
 	args: {
 		role: new Replicator(),
@@ -102,12 +101,7 @@ suite
 		throw err;
 	})
 	.on("complete", async function (this: any, ...args: any[]) {
-		console.log("DORP!");
 		await store.drop();
-
-		console.log("STOP!");
-
 		await session.stop();
-		console.log(store.closed, store.docs.closed);
 	})
 	.run();
