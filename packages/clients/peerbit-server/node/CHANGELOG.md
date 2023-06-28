@@ -9,6 +9,15 @@
     * @peerbit/string bumped from 1.0.0-alpha1 to 1.0.1-alpha1
     * @peerbit/test-utils bumped from 1.0.0-alpha1 to 1.0.1-alpha1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.0.0 to 1.0.1
+  * devDependencies
+    * @peerbit/string bumped from 1.0.0 to 1.0.1
+    * @peerbit/test-utils bumped from 1.0.0 to 1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 

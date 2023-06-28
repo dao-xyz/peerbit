@@ -1,5 +1,13 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.0 to 1.0.1
+    * @peerbit/blocks-interface bumped from 1.0.0 to 1.0.1
+    * @peerbit/crypto bumped from 1.0.0 to 1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 

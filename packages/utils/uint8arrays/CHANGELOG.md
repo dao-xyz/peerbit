@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/uint8arrays-v1.0.0...uint8arrays-v2.0.0) (2023-06-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename org on utility modules
+
+### Bug Fixes
+
+* rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
+
 ## 1.0.0 (2023-06-28)
 
 

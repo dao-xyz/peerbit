@@ -15,6 +15,15 @@
     * @peerbit/program bumped from 1.0.3 to 1.0.4
     * @peerbit/time bumped from 0.0.24 to 1.0.0
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.0 to 1.0.1
+    * @peerbit/program bumped from 1.0.0 to 1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.0 to ^1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 
