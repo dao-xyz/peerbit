@@ -15,7 +15,7 @@
 		"@emotion/react": "^11.10.5",
 		"@emotion/styled": "^11.10.5",
 		"@mui/material": "^5.10.13",
-		"@peerbit/server": "^1.0.0"
+		"@peerbit/server": "*"
 	},
 	"devDependencies": {
 		"@types/react": "^18.2.12",

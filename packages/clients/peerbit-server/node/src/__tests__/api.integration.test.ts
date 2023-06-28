@@ -2,7 +2,7 @@ import { LSession } from "@peerbit/test-utils";
 import http from "http";
 import { client, startServer } from "../api.js";
 import { jest } from "@jest/globals";
-import { PermissionedString } from "peerbit-node-test-lib";
+import { PermissionedString } from "@peerbit/test-lib";
 import { Address, ProgramClient } from "@peerbit/program";
 
 describe("libp2p only", () => {
@@ -99,7 +99,7 @@ describe("server", () => {
 	});
 	it("library", async () => {
 		const c = await client();
-		await c.library.put("peerbit-node-test-lib");
+		await c.library.put("@peerbit/test-lib");
 	}); */
 
 	/*  TODO add network functionality

@@ -12,7 +12,6 @@
 		"packages/clients/peerbit-proxy",
 		"packages/clients/peerbit-server/node",
 		"packages/clients/peerbit-server/test-lib",
-		"packages/clients/peerbit-server/frontend",
 		"packages/clients/test-utils",
 		"packages/programs/rpc",
 		"packages/programs/acl/identity-access-controller",

@@ -43,9 +43,9 @@
 		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
 	},
 	"devDependencies": {
-		"peerbit-node-test-lib": "^0.0.1",
 		"@peerbit/string": "1.0.1",
 		"@peerbit/test-utils": "1.0.1",
+		"@peerbit/test-lib": "^0.0.1",
 		"@types/yargs": "^17.0.24",
 		"aws-sdk": "^2.1259.0",
 		"dotenv": "^16.1.4"
@@ -53,8 +53,8 @@
 	"dependencies": {
 		"@aws-sdk/client-route-53": "^3.345.0",
 		"@dao-xyz/libp2p-noise": "^12.0.1",
-		"peerbit": "1.0.1",
 		"axios": "^1.4.0",
+		"peerbit": "1.0.1",
 		"yargs": "^17.7.2"
 	}
 }
