@@ -27,6 +27,15 @@
   * dependencies
     * @dao-xyz/peerbit-document bumped from 1.0.4 to 1.0.5
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.0 to 1.0.1
+    * @peerbit/document bumped from 1.0.0 to 1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.0 to ^1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 

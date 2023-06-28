@@ -27,6 +27,15 @@
   * dependencies
     * @dao-xyz/peerbit-trusted-network bumped from 1.0.4 to 1.0.5
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 1.0.0 to 1.0.1
+    * @peerbit/trusted-network bumped from 1.0.0 to 1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.0 to ^1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 

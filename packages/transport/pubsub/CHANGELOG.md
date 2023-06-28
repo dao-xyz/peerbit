@@ -10,6 +10,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.0 to 1.0.1
+    * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
+
 ## 1.0.0 (2023-06-28)
 
 
