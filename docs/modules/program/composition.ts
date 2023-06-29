@@ -3,7 +3,7 @@ import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { DocumentIndex, Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
-import { Observer, SubscriptionType } from "@peerbit/shared-log";
+import { Observer, Role } from "@peerbit/shared-log";
 import { delay } from "@peerbit/time";
 
 @variant(0) // version 0
@@ -21,10 +21,10 @@ class Post {
 }
 
 // This class extends Program which allows it to be replicated amongst peers
-type PostDBArgs = { role: SubscriptionType };
+type Args = { role: Role };
 
 @variant("posts")
-class PostsDB extends Program<PostDBArgs> {
+class PostsDB extends Program<Args> {
 	@field({ type: Documents })
 	posts: Documents<Post>; // Documents<?> provide document store functionality around your Posts
 
@@ -33,7 +33,7 @@ class PostsDB extends Program<PostDBArgs> {
 		this.posts = new Documents();
 	}
 
-	async open(args?: PostDBArgs): Promise<void> {
+	async open(args?: Args): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
@@ -45,7 +45,7 @@ class PostsDB extends Program<PostDBArgs> {
 /// [data]
 
 @variant("channel")
-class Channel extends Program<PostDBArgs> {
+class Channel extends Program<Args> {
 	// Name of channel
 	@field({ type: "string" })
 	name: string;
@@ -61,7 +61,7 @@ class Channel extends Program<PostDBArgs> {
 		this.db = new PostsDB();
 	}
 
-	async open(args?: PostDBArgs): Promise<void> {
+	async open(args?: Args): Promise<void> {
 		await this.db.open(args);
 	}
 }
@@ -69,7 +69,7 @@ class Channel extends Program<PostDBArgs> {
 const NAME_PROPERTY = "name";
 
 @variant("forum")
-class Forum extends Program {
+class Forum extends Program<Args> {
 	// Name of channel
 	@field({ type: "string" })
 	[NAME_PROPERTY]: string;
@@ -87,7 +87,7 @@ class Forum extends Program {
 		});
 	}
 
-	async open(): Promise<void> {
+	async open(args?: Args): Promise<void> {
 		await this.channels.open({
 			type: Channel,
 			canAppend: (entry) => true, // who can create a channel?
@@ -95,6 +95,7 @@ class Forum extends Program {
 			index: {
 				key: NAME_PROPERTY,
 			},
+			role: args?.role,
 		});
 	}
 }
@@ -109,7 +110,11 @@ await channel.db.posts.put(new Post("Hello world!"));
 // Another peer
 const client2 = await Peerbit.create();
 await client2.dial(client.getMultiaddrs());
-const forum2 = await client2.open<Forum>(forum.address);
+
+// open the forum as a observer, i.e. not replication duties
+const forum2 = await client2.open<Forum>(forum.address, {
+	args: { role: new Observer() },
+});
 
 // Wait for client 1 to be available (only needed for testing locally)
 await forum2.waitFor(client.peerId);
@@ -119,14 +124,14 @@ const channels = await forum2.channels.index.search(new SearchRequest());
 expect(channels).toHaveLength(1);
 expect(channels[0].name).toEqual("general");
 
-// open this channel
+// open this channel (if we would open the forum with role: new Replicator(), this would already be done)
+expect(channels[0].closed).toBeTrue();
 const channel2 = await client2.open<Channel>(channels[0], {
 	args: { role: new Observer() },
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
 await channel2.waitFor(client.peerId);
-await delay(3000);
 
 // find messages
 const messages = await channel2.db.posts.index.search(new SearchRequest());
