@@ -21,6 +21,7 @@ import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { waitFor } from "@peerbit/time";
 import "@libp2p/peer-id";
+import { Cache } from "@peerbit/cache";
 
 import {
 	createLibp2pExtended,
@@ -194,9 +195,9 @@ export class Peerbit implements ProgramClient {
 			));
 
 		const identity = Ed25519Keypair.fromPeerId(libp2pExtended.peerId);
-		const keychain = new Libp2pKeychain(libp2pExtended.keychain);
-
-		// Import identity into keychain
+		const keychain = new Libp2pKeychain(libp2pExtended.keychain, {
+			cache: new Cache({ max: 1000 }),
+		});
 
 		try {
 			const writer = new BinaryWriter();
