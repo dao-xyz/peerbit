@@ -301,8 +301,8 @@ describe(`leaders`, function () {
 	});
 
 	describe("get replicators sorted", () => {
-		const checkSorted = (strings: string[]) => {
-			const sorted = [...strings].sort((a, b) => a.localeCompare(b));
+		const checkSorted = (strings: { hash: string }[]) => {
+			const sorted = [...strings].sort((a, b) => a.hash.localeCompare(b.hash));
 			expect(sorted).toEqual(strings);
 		};
 		it("can handle peers leaving and joining", async () => {
@@ -336,14 +336,18 @@ describe(`leaders`, function () {
 			);
 
 			await waitForResolved(() =>
-				expect(db1.log.getReplicatorsSorted()).toContainAllValues([
+				expect(
+					db1.log.getReplicatorsSorted()?.map((x) => x.hash)
+				).toContainAllValues([
 					getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 				])
 			);
 
 			await waitForResolved(() =>
-				expect(db3.log.getReplicatorsSorted()).toContainAllValues([
+				expect(
+					db3.log.getReplicatorsSorted()?.map((x) => x.hash)
+				).toContainAllValues([
 					getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 				])
@@ -366,17 +370,23 @@ describe(`leaders`, function () {
 				expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
 			);
 
-			expect(db1.log.getReplicatorsSorted()).toContainAllValues([
+			expect(
+				db1.log.getReplicatorsSorted()?.map((x) => x.hash)
+			).toContainAllValues([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 			]);
-			expect(db2.log.getReplicatorsSorted()).toContainAllValues([
+			expect(
+				db2.log.getReplicatorsSorted()?.map((x) => x.hash)
+			).toContainAllValues([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 			]);
-			expect(db3.log.getReplicatorsSorted()).toContainAllValues([
+			expect(
+				db3.log.getReplicatorsSorted()?.map((x) => x.hash)
+			).toContainAllValues([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),

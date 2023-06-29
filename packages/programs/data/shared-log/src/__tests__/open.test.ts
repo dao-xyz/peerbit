@@ -31,12 +31,12 @@ describe("replicators", () => {
 
 		const db2 = await session.peers[1].open(store.clone());
 		await waitForResolved(() =>
-			expect(db1.log.replicators()[0]).toContainAllValues(
+			expect(db1.log.replicators()[0].map((x) => x.hash)).toContainAllValues(
 				session.peers.map((x) => x.identity.publicKey.hashcode())
 			)
 		);
 		await waitForResolved(() =>
-			expect(db2.log.replicators()[0]).toContainAllValues(
+			expect(db2.log.replicators()[0].map((x) => x.hash)).toContainAllValues(
 				session.peers.map((x) => x.identity.publicKey.hashcode())
 			)
 		);

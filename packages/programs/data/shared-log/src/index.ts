@@ -38,7 +38,6 @@ import {
 	createExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import {
-	Subscription,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
@@ -92,7 +91,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 	private _sync?: SyncFilter;
 	private _role: Role;
 
-	private _sortedPeersCache: string[] | undefined;
+	private _sortedPeersCache: { hash: string; timestamp: number }[] | undefined;
 	private _lastSubscriptionMessageId: number;
 	private _gidPeersHistory: Map<string, Set<string>>;
 
@@ -327,7 +326,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		}
 	}
 
-	getReplicatorsSorted(): string[] | undefined {
+	getReplicatorsSorted(): { hash: string; timestamp: number }[] | undefined {
 		return this._sortedPeersCache;
 	}
 
@@ -347,7 +346,8 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 	): Promise<string[]> {
 		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
 		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
-		const peers: string[] = this.getReplicatorsSorted() || [];
+		const peers: { hash: string; timestamp: number }[] =
+			this.getReplicatorsSorted() || [];
 
 		if (peers.length === 0) {
 			return [];
@@ -372,7 +372,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		// same conclusion (are running the same leader selection algorithm)
 		const leaders = new Array(numberOfLeaders);
 		for (let i = 0; i < numberOfLeaders; i++) {
-			leaders[i] = peers[(i + startIndex) % peers.length];
+			leaders[i] = peers[(i + startIndex) % peers.length].hash;
 		}
 		return leaders;
 	}
@@ -388,12 +388,12 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		const code = fromHash;
 		if (subscribed) {
 			// TODO use Set + list for fast lookup
-			if (!sortedPeer.find((x) => x === code)) {
-				sortedPeer.push(code);
-				sortedPeer.sort((a, b) => a.localeCompare(b));
+			if (!sortedPeer.find((x) => x.hash === code)) {
+				sortedPeer.push({ hash: code, timestamp: +new Date() });
+				sortedPeer.sort((a, b) => a.hash.localeCompare(b.hash));
 			}
 		} else {
-			const deleteIndex = sortedPeer.findIndex((x) => x === code);
+			const deleteIndex = sortedPeer.findIndex((x) => x.hash === code);
 			sortedPeer.splice(deleteIndex, 1);
 		}
 	}
@@ -549,13 +549,16 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		const numberOfGroups = Math.min(
 			Math.ceil(replicators!.length / minReplicas)
 		);
-		const groups = new Array<string[]>(numberOfGroups);
+		const groups = new Array<{ hash: string; timestamp: number }[]>(
+			numberOfGroups
+		);
 		for (let i = 0; i < groups.length; i++) {
 			groups[i] = [];
 		}
 		for (let i = 0; i < replicators!.length; i++) {
 			groups[i % numberOfGroups].push(replicators![i]);
 		}
+
 		return groups;
 	}
 	async replicator(gid) {

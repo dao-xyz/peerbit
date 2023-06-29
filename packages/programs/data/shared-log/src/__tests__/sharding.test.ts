@@ -516,9 +516,15 @@ describe(`sharding`, () => {
 			args: { minReplicas: 1 },
 		});
 
-		const replicatorsFn = store.store.log.replicators.bind(store.store.log);
+		const replicatorsFn = () => {
+			const r = store.store.log.replicators();
+			return r.map((x) => x.map((y) => y.hash));
+		};
 
-		db1.store.log.getReplicatorsSorted = () => ["a", "b", "c", "d", "e"];
+		db1.store.log.getReplicatorsSorted = () =>
+			["a", "b", "c", "d", "e"].map((x) => {
+				return { hash: x, timestamp: +new Date() };
+			});
 		expect(replicatorsFn()).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
 		db1.store.log.minReplicas = new AbsolutMinReplicas(2);
 		expect(replicatorsFn()).toEqual([["a", "d"], ["b", "e"], ["c"]]);
