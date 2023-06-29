@@ -4,7 +4,7 @@ import { Peerbit } from "peerbit";
 import { Documents } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 import { X25519Keypair } from "@peerbit/crypto";
-import { Observer, SubscriptionType } from "@peerbit/shared-log";
+import { Observer, Role } from "@peerbit/shared-log";
 
 class Message {
 	@field({ type: "string" })
@@ -19,7 +19,7 @@ class Message {
 	}
 }
 
-type Args = { role?: SubscriptionType };
+type Args = { role?: Role };
 
 // This class extends Program which allows it to be replicated amongst peers
 @variant("encrypted-document-store")

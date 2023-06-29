@@ -67,7 +67,7 @@ class Reaction {
 	}
 }
 
-type ChannelArgs = { role?: SubscriptionType };
+type ChannelArgs = { role?: Role };
 @variant("channel")
 class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
@@ -281,7 +281,7 @@ import {
 	Or,
 	And,
 } from "@peerbit/document";
-import { Observer, SubscriptionType } from "@peerbit/shared-log";
+import { Observer, Role } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [

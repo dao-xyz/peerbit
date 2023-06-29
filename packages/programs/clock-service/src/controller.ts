@@ -5,7 +5,7 @@ import { SignatureWithKey } from "@peerbit/crypto";
 import { Entry, HLC } from "@peerbit/log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Replicator, SubscriptionType } from "@peerbit/shared-log";
+import { Replicator, Role } from "@peerbit/shared-log";
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
@@ -37,7 +37,7 @@ export class SignError extends Result {
 	}
 }
 
-type Args = { role?: SubscriptionType; maxTimeError?: number };
+type Args = { role?: Role; maxTimeError?: number };
 
 @variant("clock_service")
 export class ClockService extends Program<Args> {

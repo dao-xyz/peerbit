@@ -20,7 +20,7 @@ import { RPC } from "@peerbit/rpc";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
 import { PeerId } from "@libp2p/interface-peer-id";
-import { Observer, SubscriptionType } from "@peerbit/shared-log";
+import { Observer, Role } from "@peerbit/shared-log";
 
 @variant("document")
 class Document {
@@ -43,7 +43,7 @@ const createIdentity = async () => {
 };
 
 @variant("test_store")
-class TestStore extends Program<{ role: SubscriptionType }> {
+class TestStore extends Program<{ role: Role }> {
 	@field({ type: Documents })
 	store: Documents<Document>;
 
@@ -64,7 +64,7 @@ class TestStore extends Program<{ role: SubscriptionType }> {
 		}
 	}
 
-	async open(properties?: { role: SubscriptionType }) {
+	async open(properties?: { role: Role }) {
 		await this.accessController.open(properties);
 		await this.store.open({
 			type: Document,

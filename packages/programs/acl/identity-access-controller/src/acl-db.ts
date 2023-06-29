@@ -14,7 +14,7 @@ import { Program } from "@peerbit/program";
 import { RPC } from "@peerbit/rpc";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { concat } from "uint8arrays";
-import { SubscriptionType } from "@peerbit/shared-log";
+import { Role } from "@peerbit/shared-log";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -162,7 +162,7 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async open(properties?: { role?: SubscriptionType }) {
+	async open(properties?: { role?: Role }) {
 		await this.identityGraphController.open({
 			role: properties?.role,
 			canRead: this.canRead.bind(this),

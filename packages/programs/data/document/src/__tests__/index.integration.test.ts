@@ -32,7 +32,7 @@ import {
 	toBase64,
 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
-import { Observer, Replicator, SubscriptionType } from "@peerbit/shared-log";
+import { Observer, Replicator, Role } from "@peerbit/shared-log";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@peerbit/stream";

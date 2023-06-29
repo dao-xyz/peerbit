@@ -4,11 +4,11 @@ import { CanTrust, Program } from "@peerbit/program";
 import { EventStore } from "./event-store";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Ed25519PublicKey } from "@peerbit/crypto";
-import { SubscriptionType } from "../../../role";
+import { Role } from "../../../role.js";
 import { TrimOptions } from "@peerbit/log";
 
 export type SetupOptions = {
-	role?: SubscriptionType;
+	role?: Role;
 	trim?: TrimOptions;
 	minReplicas?: number;
 };

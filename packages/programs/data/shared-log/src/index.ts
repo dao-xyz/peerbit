@@ -44,14 +44,9 @@ import {
 } from "@peerbit/pubsub-interface";
 import { startsWith } from "@peerbit/uint8arrays";
 import { TimeoutError } from "@peerbit/time";
-import {
-	REPLICATOR_TYPE_VARIANT,
-	Observer,
-	Replicator,
-	SubscriptionType,
-} from "./role.js";
+import { REPLICATOR_TYPE_VARIANT, Observer, Replicator, Role } from "./role.js";
 
-export { Observer, Replicator, SubscriptionType };
+export { Observer, Replicator, Role };
 
 export const logger = loggerFn({ module: "peer" });
 
@@ -78,7 +73,7 @@ export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
 export interface SharedLogOptions {
 	minReplicas?: number;
 	sync?: SyncFilter;
-	role?: SubscriptionType;
+	role?: Role;
 }
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -95,7 +90,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 	// options
 	private _minReplicas: MinReplicas;
 	private _sync?: SyncFilter;
-	private _role: SubscriptionType;
+	private _role: Role;
 
 	private _sortedPeersCache: string[] | undefined;
 	private _lastSubscriptionMessageId: number;
@@ -118,7 +113,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 	set minReplicas(minReplicas: MinReplicas) {
 		this._minReplicas = minReplicas;
 	}
-	get role(): SubscriptionType {
+	get role(): Role {
 		return this._role;
 	}
 
@@ -430,7 +425,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 			}
 			if (subscription.data) {
 				try {
-					const type = deserialize(subscription.data, SubscriptionType);
+					const type = deserialize(subscription.data, Role);
 					if (type instanceof Replicator) {
 						await this.replicationReorganization();
 					}

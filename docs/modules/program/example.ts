@@ -2,18 +2,13 @@
 /// [definition]
 import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
-import {
-	Observer,
-	Replicator,
-	SharedLog,
-	SubscriptionType,
-} from "@peerbit/shared-log";
+import { Observer, Replicator, SharedLog, Role } from "@peerbit/shared-log";
 
 // The line below will make sure that every time the database manifest
 // gets seriaized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
 // who open the database (who recieve the database manifest in serialized bytes) can decode into this particular class.
 
-type Args = { role: SubscriptionType };
+type Args = { role: Role };
 
 @variant("my-database") // required
 class MyDatabase extends Program<Args> {

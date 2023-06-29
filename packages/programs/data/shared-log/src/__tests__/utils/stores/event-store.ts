@@ -5,7 +5,7 @@ import { variant, field, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { randomBytes } from "@peerbit/crypto";
 import { SharedLog, SyncFilter } from "../../..";
-import { SubscriptionType } from "../../../role";
+import { Role } from "../../../role";
 import { JSON_ENCODING } from "./encoding";
 
 // TODO: generalize the Iterator functions and spin to its own module
@@ -27,7 +27,7 @@ export class EventIndex<T> {
 }
 
 type Args<T> = {
-	role?: SubscriptionType;
+	role?: Role;
 	trim?: TrimOptions;
 	minReplicas?: number;
 	sync?: SyncFilter;
