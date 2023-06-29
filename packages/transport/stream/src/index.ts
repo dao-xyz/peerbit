@@ -37,7 +37,7 @@ import { createTopology } from "./topology.js";
 export { logger };
 import type { Libp2pEvents } from "@libp2p/interface-libp2p";
 import {
-	PeerStreamEvents,
+	PeerEvents,
 	Message as Message,
 	Goodbye,
 	Hello,
@@ -58,6 +58,11 @@ export interface PeerStreamsInit {
 const isWebsocketConnection = (c: Connection) =>
 	c.remoteAddr.protoNames().find((x) => x === "ws" || x === "wss");
 
+export interface PeerStreamEvents {
+	"stream:inbound": CustomEvent<never>;
+	"stream:outbound": CustomEvent<never>;
+	close: CustomEvent<never>;
+}
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
@@ -278,11 +283,6 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this._rawInboundStream = undefined;
 		this.inboundStream = undefined;
 	}
-}
-
-export interface PeerEvents {
-	"peer:reachable": CustomEvent<PublicSignKey>;
-	"peer:unreachable": CustomEvent<PublicSignKey>;
 }
 
 export interface MessageEvents {

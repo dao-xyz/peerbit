@@ -1,10 +1,9 @@
 import { PublicSignKey } from "@peerbit/crypto";
 import type { PeerId } from "@libp2p/interface-peer-id";
 
-export interface PeerStreamEvents {
-	"stream:inbound": CustomEvent<never>;
-	"stream:outbound": CustomEvent<never>;
-	close: CustomEvent<never>;
+export interface PeerEvents {
+	"peer:reachable": CustomEvent<PublicSignKey>;
+	"peer:unreachable": CustomEvent<PublicSignKey>;
 }
 
 export * from "./messages.js";

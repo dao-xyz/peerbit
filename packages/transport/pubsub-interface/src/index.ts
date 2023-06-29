@@ -1,13 +1,14 @@
 import { PublicSignKey } from "@peerbit/crypto";
 import { PubSubData, Subscription } from "./messages";
-import { Message, DataMessage, WaitForPeer } from "@peerbit/stream-interface";
+import {
+	Message,
+	DataMessage,
+	WaitForPeer,
+	PeerEvents,
+} from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interfaces/events";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface-peer-id";
-export interface PeerStreamEvents {
-	"stream:inbound": CustomEvent<never>;
-	"stream:outbound": CustomEvent<never>;
-	close: CustomEvent<never>;
-}
+
 interface From {
 	from: PublicSignKey;
 }
@@ -20,7 +21,7 @@ export interface UnsubcriptionEvent extends From {
 	unsubscriptions: Subscription[];
 }
 
-export interface PubSubEvents extends PeerStreamEvents {
+export interface PubSubEvents extends PeerEvents {
 	data: CustomEvent<{ data: PubSubData; message: DataMessage }>;
 	subscribe: CustomEvent<SubscriptionEvent>;
 	unsubscribe: CustomEvent<UnsubcriptionEvent>;
