@@ -1876,9 +1876,20 @@ describe("index", () => {
 
 			it("all", async () => {
 				stores[0].docs.log.replicators = () => [
-					[stores[1].node.identity.publicKey.hashcode()],
-					[stores[2].node.identity.publicKey.hashcode()],
+					[
+						{
+							hash: stores[1].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
+					],
+					[
+						{
+							hash: stores[2].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
+					],
 				];
+
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
@@ -1895,7 +1906,12 @@ describe("index", () => {
 
 			it("one", async () => {
 				stores[0].docs.log.replicators = () => [
-					[stores[1].node.identity.publicKey.hashcode()],
+					[
+						{
+							hash: stores[1].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
+					],
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
@@ -1905,8 +1921,18 @@ describe("index", () => {
 
 			it("non-local", async () => {
 				stores[0].docs.log.replicators = () => [
-					[stores[1].node.identity.publicKey.hashcode()],
-					[stores[2].node.identity.publicKey.hashcode()],
+					[
+						{
+							hash: stores[1].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
+					],
+					[
+						{
+							hash: stores[2].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
+					],
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 					local: false,
@@ -1918,13 +1944,52 @@ describe("index", () => {
 			it("ignore shard if I am replicator", async () => {
 				stores[0].docs.log.replicators = () => [
 					[
-						stores[0].node.identity.publicKey.hashcode(),
-						stores[1].node.identity.publicKey.hashcode(),
+						{
+							hash: stores[0].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
+						{
+							hash: stores[1].node.identity.publicKey.hashcode(),
+							timestamp: +new Date(),
+						},
 					],
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
+				expect(counters[2]).toEqual(0);
+			});
+
+			it("ignore myself if I am a new replicator", async () => {
+				// and the other peer has been around for longer
+				const now = +new Date();
+				stores[0].docs.log.replicators = () => [
+					[
+						{
+							hash: stores[0].node.identity.publicKey.hashcode(),
+							timestamp: now,
+						},
+						{
+							hash: stores[1].node.identity.publicKey.hashcode(),
+							timestamp: 0,
+						},
+					],
+				];
+				const t1 = +new Date();
+				const minAge = 1000;
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
+					remote: { minAge },
+				});
+				expect(counters[0]).toEqual(1); // will always query locally
+				expect(counters[1]).toEqual(1); // but now also remotely since we can not trust local only
+				expect(counters[2]).toEqual(0);
+				await waitFor(() => +new Date() - t1 > minAge + 100);
+
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
+					remote: { minAge },
+				});
+				expect(counters[0]).toEqual(2); // will always query locally
+				expect(counters[1]).toEqual(1); // we don't have to query remote since local will suffice since minAge time has passed
 				expect(counters[2]).toEqual(0);
 			});
 
@@ -1946,8 +2011,16 @@ describe("index", () => {
 				it("will iterate on shard until response", async () => {
 					stores[0].docs.log.replicators = () => [
 						[
-							stores[1].node.identity.publicKey.hashcode(),
-							stores[2].node.identity.publicKey.hashcode(),
+							{
+								hash: stores[1].node.identity.publicKey.hashcode(),
+								timestamp: +new Date(),
+							},
+						],
+						[
+							{
+								hash: stores[2].node.identity.publicKey.hashcode(),
+								timestamp: +new Date(),
+							},
 						],
 					];
 
@@ -1977,8 +2050,16 @@ describe("index", () => {
 				it("will fail silently if can not reach all shards", async () => {
 					stores[0].docs.log.replicators = () => [
 						[
-							stores[1].node.identity.publicKey.hashcode(),
-							stores[2].node.identity.publicKey.hashcode(),
+							{
+								hash: stores[1].node.identity.publicKey.hashcode(),
+								timestamp: +new Date(),
+							},
+						],
+						[
+							{
+								hash: stores[2].node.identity.publicKey.hashcode(),
+								timestamp: +new Date(),
+							},
 						],
 					];
 					for (let i = 1; i < stores.length; i++) {

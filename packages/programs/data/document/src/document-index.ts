@@ -126,7 +126,10 @@ export interface IndexedValue<T> {
 	reference?: T;
 }
 
-export type RemoteQueryOptions<R> = RPCOptions<R> & { sync?: boolean };
+export type RemoteQueryOptions<R> = RPCOptions<R> & {
+	sync?: boolean;
+	minAge?: number;
+};
 export type QueryOptions<R> = {
 	remote?: boolean | RemoteQueryOptions<Results<R>>;
 	local?: boolean;
@@ -211,6 +214,7 @@ const SORT_TMP_KEY = "__sort_ref";
 
 type QueryDetailedOptions<T> = QueryOptions<T> & {
 	onResponse?: (response: Results<T>, from?: PublicSignKey) => void;
+	excludePeerAgeThreshold?: number;
 };
 const introduceEntries = async <T>(
 	responses: RPCResponse<Results<T>>[],
@@ -251,6 +255,8 @@ const dedup = <T>(
 };
 
 const DEFAULT_INDEX_BY = "id";
+
+const DEFAULT_REPLICATOR_MIN_AGE = 10 * 1000; // how long, until we consider a peer unreliable
 
 export type OpenOptions<T> = {
 	type: AbstractType<T>;
@@ -658,8 +664,23 @@ export class DocumentIndex<T> extends ComposableProgram<OpenOptions<T>> {
 		}
 
 		if (remote) {
+			const peerMinAge = remote.minAge ?? DEFAULT_REPLICATOR_MIN_AGE;
 			const replicatorGroups = await this._log.replicators?.();
 			if (replicatorGroups) {
+				// Make sure we don't query peers that are "too" new
+				// TODO make this better
+				const date = +new Date();
+				const groupHashes: string[][] = [];
+				for (let i = 0; i < replicatorGroups.length; i++) {
+					const filteredGroup = replicatorGroups[i].filter(
+						(x) => date - x.timestamp > peerMinAge
+					);
+					if (filteredGroup.length > 0) {
+						groupHashes.push(filteredGroup.map((x) => x.hash));
+					} else {
+						groupHashes.push(replicatorGroups[i].map((x) => x.hash));
+					}
+				}
 				const fn = async () => {
 					const rs: Results<T>[] = [];
 					const responseHandler = async (
@@ -679,7 +700,7 @@ export class DocumentIndex<T> extends ComposableProgram<OpenOptions<T>> {
 						} else {
 							await queryAll(
 								this._query,
-								replicatorGroups,
+								groupHashes,
 								queryRequest,
 								responseHandler,
 								remote
