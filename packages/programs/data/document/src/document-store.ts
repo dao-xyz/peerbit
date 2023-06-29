@@ -97,7 +97,7 @@ export class Documents<T extends Record<string, any>> extends ComposableProgram<
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this.canOpen) {
 				throw new Error(
-					"setup needs to be called with the canOpen option when the document type is a Program"
+					"Document store needs to be opened with canOpen option when the document type is a Program"
 				);
 			}
 		}
@@ -356,14 +356,16 @@ export class Documents<T extends Record<string, any>> extends ComposableProgram<
 					});
 
 					const valueToIndex = this._index.toIndex(value, context);
+					const isProgram = value instanceof Program;
 					this._index.index.set(key, {
 						key: payload.key,
 						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
 						context,
+						reference: valueToIndex === value || isProgram ? value : undefined,
 					});
 
 					// Program specific
-					if (value instanceof Program) {
+					if (isProgram) {
 						// if replicator, then open
 						if (
 							(await this.canOpen!(value, item)) &&

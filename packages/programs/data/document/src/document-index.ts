@@ -1,6 +1,6 @@
 import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
-import { BORSH_ENCODING, Encoding, Entry } from "@peerbit/log";
+import { BORSH_ENCODING, Encoding } from "@peerbit/log";
 import { equals } from "@peerbit/uint8arrays";
 import { ComposableProgram } from "@peerbit/program";
 import {
@@ -123,6 +123,7 @@ export interface IndexedValue<T> {
 	key: string;
 	value: Record<string, any> | T; // decrypted, decoded
 	context: Context;
+	reference?: T;
 }
 
 export type RemoteQueryOptions<R> = RPCOptions<R> & { sync?: boolean };
@@ -390,7 +391,14 @@ export class DocumentIndex<T> extends ComposableProgram<OpenOptions<T>> {
 		return this._index.size;
 	}
 
-	async getDocument(value: { context: { head: string } }): Promise<T> {
+	async getDocument(value: {
+		reference?: T;
+		context: { head: string };
+	}): Promise<T> {
+		if (value.reference) {
+			return value.reference;
+		}
+
 		const payloadValue = await (await this._log.log.get(
 			value.context.head
 		))!.getPayloadValue();

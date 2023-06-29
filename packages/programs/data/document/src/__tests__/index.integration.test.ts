@@ -685,6 +685,7 @@ describe("index", () => {
 					expect(indexedValues[0].value).toEqual({
 						[indexedNameField]: doc.name,
 					});
+					expect(indexedValues[0].reference).toBeUndefined(); // Because we dont want to keep it in memory (by default)
 
 					await session.peers[1].services.blocks.waitFor(
 						session.peers[0].peerId
@@ -1758,6 +1759,55 @@ describe("index", () => {
 			const _result = await stores[0].store.docs.put(subProgram);
 			subProgram.parents = [undefined];
 			expect(subProgram.closed).toBeTrue();
+		});
+
+		describe("index", () => {
+			@variant("test_program_documents_custom_fields")
+			class TestStoreSubPrograms extends Program {
+				@field({ type: Documents })
+				docs: Documents<SubProgram>;
+
+				constructor() {
+					super();
+					this.docs = new Documents();
+				}
+				async open(): Promise<void> {
+					await this.docs.open({
+						canOpen: () => Promise.resolve(true),
+						type: SubProgram,
+						index: {
+							key: ["id"],
+							fields: (obj) => {
+								return { id: obj.id, custom: obj.id };
+							},
+						},
+					});
+				}
+			}
+			let store: TestStoreSubPrograms, store2: TestStoreSubPrograms;
+
+			afterEach(async () => {
+				store?.close();
+				store2?.close();
+			});
+			it("can index specific fields", async () => {
+				store = await session.peers[0].open(new TestStoreSubPrograms());
+				store2 = await session.peers[1].open(store.clone());
+				const subProgram = new SubProgram();
+				const _result = await store.docs.put(subProgram);
+				expect(subProgram.closed).toBeFalse();
+				await waitFor(() => store2.docs.index.size === 1);
+				const results = await store2.docs.index.search(
+					new SearchRequest({
+						query: [
+							new ByteMatchQuery({ key: "custom", value: subProgram.id }),
+						],
+					})
+				);
+				expect(results).toHaveLength(1);
+				expect(results[0].id).toEqual(subProgram.id);
+				expect(results[0].closed).toBeFalse();
+			});
 		});
 	});
 
