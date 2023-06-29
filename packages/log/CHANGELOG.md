@@ -41,6 +41,40 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/log-v1.0.4...log-v2.0.0) (2023-06-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename org on utility modules
+* Uint8array as default encoding for logs
+* client abstraction
+* simplified identity handling
+
+### Features
+
+* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
+* Uint8array as default encoding for logs ([f87f594](https://github.com/dao-xyz/peerbit/commit/f87f5940e1ae0406c4b2a715449b68079f50df5c))
+
+
+### Bug Fixes
+
+* add release cfg ([de76654](https://github.com/dao-xyz/peerbit/commit/de766548f8106804d319e8b51e9607f2a3f60726))
+* rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
+* update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
+* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+* use release-please for releases only ([ec3d6d8](https://github.com/dao-xyz/peerbit/commit/ec3d6d82e9e7e4c0b06d4c36ecc3a67763157819))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.0.2 to ^1.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.4 to 1.0.5
+
 ## 1.0.0 (2023-06-28)
 
 
