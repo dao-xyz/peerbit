@@ -63,6 +63,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.3 to ^1.0.4
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.5...clock-service-v1.0.6) (2023-06-29)
+
+
+### Bug Fixes
+
+* rn SubscriptionType to Role ([c92c83f](https://github.com/dao-xyz/peerbit/commit/c92c83f8a991995744401c56018d2a800d9b235e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 1.0.5 to 1.0.6
+    * @peerbit/trusted-network bumped from 1.0.5 to 1.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.5 to ^1.0.6
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.4...clock-service-v1.0.5) (2023-06-29)
 
 

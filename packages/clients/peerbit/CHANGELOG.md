@@ -19,6 +19,13 @@
     * @peerbit/blocks bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.4...peerbit-v1.0.5) (2023-06-29)
+
+
+### Bug Fixes
+
+* use keychain cache by default ([8609eca](https://github.com/dao-xyz/peerbit/commit/8609ecad4285bc85edc49a1e1290f1b15f76f649))
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.3...peerbit-v1.0.4) (2023-06-29)
 
 
