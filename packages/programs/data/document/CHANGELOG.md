@@ -57,6 +57,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.3 to 1.0.4
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/document-v1.0.5...document-v1.1.0) (2023-06-29)
+
+
+### Features
+
+* don't rely on replicator until minAge threshold ([a097bd0](https://github.com/dao-xyz/peerbit/commit/a097bd0ab97f132568042ee1af162077f1ce20bd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 1.0.5 to 1.1.0
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/document-v1.0.4...document-v1.0.5) (2023-06-29)
 
 
