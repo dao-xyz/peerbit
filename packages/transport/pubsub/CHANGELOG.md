@@ -24,6 +24,12 @@
     * @peerbit/stream bumped from 1.0.1 to 1.0.2
     * @peerbit/uint8arrays bumped from 2.0.0 to 3.0.0
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.2 to 1.0.3
+
 ## 1.0.0 (2023-06-28)
 
 

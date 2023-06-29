@@ -64,6 +64,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.3 to ^1.0.4
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v1.0.4...identity-access-controller-v1.0.5) (2023-06-29)
+
+
+### Bug Fixes
+
+* re-export Role in document store ([54ee879](https://github.com/dao-xyz/peerbit/commit/54ee879e22573e9426487900b451a2a33f8719e2))
+* rn SubscriptionType to Role ([c92c83f](https://github.com/dao-xyz/peerbit/commit/c92c83f8a991995744401c56018d2a800d9b235e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 1.0.4 to 1.0.5
+    * @peerbit/trusted-network bumped from 1.0.4 to 1.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.4 to ^1.0.5
+
 ## 1.0.0 (2023-06-28)
 
 

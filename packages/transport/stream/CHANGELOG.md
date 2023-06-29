@@ -14,6 +14,20 @@
     * @peerbit/crypto bumped from 1.0.1 to 1.0.2
     * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.2...stream-v1.0.3) (2023-06-29)
+
+
+### Bug Fixes
+
+* peer stream event types ([7607d7d](https://github.com/dao-xyz/peerbit/commit/7607d7de837813441a81f477b91ceeaba65a108f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^1.0.2 to ^1.0.3
+
 ## 1.0.0 (2023-06-28)
 
 

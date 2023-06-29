@@ -38,6 +38,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.3 to ^1.0.4
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.0.4...shared-log-v1.0.5) (2023-06-29)
+
+
+### Bug Fixes
+
+* rn SubscriptionType to Role ([c92c83f](https://github.com/dao-xyz/peerbit/commit/c92c83f8a991995744401c56018d2a800d9b235e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 1.0.2 to 1.0.3
+    * @peerbit/log bumped from 1.0.4 to 1.0.5
+    * @peerbit/rpc bumped from 1.0.4 to 1.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.4 to ^1.0.5
+
 ## 1.0.0 (2023-06-28)
 
 
