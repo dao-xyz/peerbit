@@ -12,8 +12,6 @@ import {
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
 import { Address } from "./address.js";
-import { setMaxListeners } from "events";
-setMaxListeners(Infinity);
 
 export type { Address };
 
