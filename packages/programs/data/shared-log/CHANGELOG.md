@@ -38,6 +38,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.3 to ^1.0.4
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.0.5...shared-log-v1.1.0) (2023-06-29)
+
+
+### Features
+
+* include age in replicator info ([2adf246](https://github.com/dao-xyz/peerbit/commit/2adf246637ea42c7ce4b21db6cd48a8e9d24faf3))
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.0.4...shared-log-v1.0.5) (2023-06-29)
 
 
