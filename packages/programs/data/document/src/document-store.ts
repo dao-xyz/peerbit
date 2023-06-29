@@ -12,7 +12,15 @@ import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
 import { CustomEvent } from "@libp2p/interfaces/events";
-import { Replicator, SharedLog, SharedLogOptions } from "@peerbit/shared-log";
+import {
+	Role,
+	Observer,
+	Replicator,
+	SharedLog,
+	SharedLogOptions,
+} from "@peerbit/shared-log";
+export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
+
 import {
 	Indexable,
 	BORSH_ENCODING_OPERATION,

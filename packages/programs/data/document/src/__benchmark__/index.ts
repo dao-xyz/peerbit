@@ -1,12 +1,11 @@
 import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, SetupOptions } from "../document-store.js";
+import { Documents, SetupOptions, Replicator } from "../document-store.js";
 import { LSession } from "@peerbit/test-utils";
 import { Program, ProgramClient } from "@peerbit/program";
 import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
-import { Replicator } from "@peerbit/shared-log";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))

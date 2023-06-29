@@ -1,10 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
-import { Documents } from "@peerbit/document";
+import { Observer, Role, Documents } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 import { X25519Keypair } from "@peerbit/crypto";
-import { Observer, Role } from "@peerbit/shared-log";
 
 class Message {
 	@field({ type: "string" })

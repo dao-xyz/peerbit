@@ -15,12 +15,13 @@ import {
 	DocumentIndex,
 	SearchRequest,
 	StringMatch,
+	Observer,
+	Role,
 } from "@peerbit/document";
 import { RPC } from "@peerbit/rpc";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
 import { PeerId } from "@libp2p/interface-peer-id";
-import { Observer, Role } from "@peerbit/shared-log";
 
 @variant("document")
 class Document {

@@ -280,8 +280,9 @@ import {
 	SortDirection,
 	Or,
 	And,
+	Observer,
+	Role,
 } from "@peerbit/document";
-import { Observer, Role } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [

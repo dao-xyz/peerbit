@@ -1,10 +1,14 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
-import { DocumentIndex, Documents, SearchRequest } from "@peerbit/document";
+import {
+	Observer,
+	Role,
+	DocumentIndex,
+	Documents,
+	SearchRequest,
+} from "@peerbit/document";
 import { v4 as uuid } from "uuid";
-import { Observer, Role } from "@peerbit/shared-log";
-import { delay } from "@peerbit/time";
 
 @variant(0) // version 0
 class Post {

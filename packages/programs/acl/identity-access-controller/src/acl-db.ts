@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents, DocumentIndex } from "@peerbit/document";
+import { Documents, DocumentIndex, Role } from "@peerbit/document";
 import {
 	getPathGenerator,
 	TrustedNetwork,
@@ -14,7 +14,6 @@ import { Program } from "@peerbit/program";
 import { RPC } from "@peerbit/rpc";
 import { PeerId } from "@libp2p/interface-peer-id";
 import { concat } from "uint8arrays";
-import { Role } from "@peerbit/shared-log";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
