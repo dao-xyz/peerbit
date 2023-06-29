@@ -32,6 +32,21 @@
     * @peerbit/blocks-interface bumped from ^1.0.1 to ^1.0.2
     * @peerbit/pubsub-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/program-v1.0.2...program-v1.0.3) (2023-06-29)
+
+
+### Bug Fixes
+
+* remove setMaxListeners call ([7331dd2](https://github.com/dao-xyz/peerbit/commit/7331dd26ec6c9d31229f30ca2d7524d78c79cb5f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.0.2 to ^1.0.3
+    * @peerbit/pubsub-interface bumped from ^1.0.2 to ^1.0.3
+
 ## 1.0.0 (2023-06-28)
 
 
