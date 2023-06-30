@@ -6,9 +6,9 @@ Documentation
 
 Modules
 - [Client](/modules/client/client.md)
-- [Programs](/modules/program/README.md)
-- [Encoding](/modules/encoding/encoding.md)
-- [Encryption](/modules/encryption/encryption.md)
+- [Programs](/modules/program/)
+- [Encoding](/modules/encoding/)
+- [Encryption](/modules/encryption/)
 
 Topics
 - [Peerbit vs [?]](difference.md)

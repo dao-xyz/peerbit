@@ -37,8 +37,8 @@ const store = await client.open(new MyDatabase(), { args: { role: Observer } });
 /// [role]
 
 /// [append]
-const { entry } = await store.log.append("Hello world!");
-expect(entry.getPayloadValue()).toEqual("Hello world");
+const { entry } = await store.log.append(new Uint8Array([1, 2, 3]));
+expect(entry.getPayloadValue()).toEqual(new Uint8Array([1, 2, 3]));
 /// [append]
 
 await client.stop();
