@@ -19,6 +19,13 @@
     * @peerbit/blocks bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub bumped from ^1.0.3 to ^1.0.4
+    * @peerbit/blocks bumped from ^1.0.3 to ^1.0.4
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.3...peerbit-v1.0.4) (2023-06-29)
 
 

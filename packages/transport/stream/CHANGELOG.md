@@ -14,6 +14,13 @@
     * @peerbit/crypto bumped from 1.0.1 to 1.0.2
     * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.3...stream-v1.0.4) (2023-06-30)
+
+
+### Bug Fixes
+
+* purge old hellos ([46da9dc](https://github.com/dao-xyz/peerbit/commit/46da9dc22e7c94d12c61cc0b5ffc4d1eff487300))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.2...stream-v1.0.3) (2023-06-29)
 
 
