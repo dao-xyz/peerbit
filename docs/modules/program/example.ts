@@ -8,6 +8,8 @@ import { Observer, Replicator, SharedLog, Role } from "@peerbit/shared-log";
 // gets seriaized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
 // who open the database (who recieve the database manifest in serialized bytes) can decode into this particular class.
 
+// We define an type here that is used as opening argument
+// role defines the responsibilities for replicating the data
 type Args = { role: Role };
 
 @variant("my-database") // required
@@ -29,7 +31,14 @@ import { Peerbit } from "peerbit";
 const client = await Peerbit.create();
 
 /// [role]
-// Open a program with the intention of replicating data and do services for data related tasks, as search (default behaviour)
+/*
+Open a program with the intention of replicating data and do services for data related tasks, as search (default behaviour)
+you can also do  
+
+await client.open(new MyDatabase(), { args: { role: new Observer } });
+	
+to not participate in replication work
+*/
 await client.open(new MyDatabase(), { args: { role: Replicator } });
 
 // Open a program with the intention of not doing any work
