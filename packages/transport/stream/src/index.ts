@@ -705,9 +705,17 @@ export abstract class DirectStream<
 						// Don't say hellos from sender to same sender (uneccessary)
 						continue;
 					}
-					for (const [key, hello] of hellos) {
+
+					outer: for (const [key, hello] of hellos) {
 						if (!hello.header.verify()) {
 							hellos.delete(key);
+						}
+						for (const signer of hello.signatures.publicKeys) {
+							if (!this.routes.hasNode(signer.hashcode())) {
+								// purge this hello since it has travelled a path that no longer exist
+								hellos.delete(key);
+								continue outer;
+							}
 						}
 
 						promises.push(

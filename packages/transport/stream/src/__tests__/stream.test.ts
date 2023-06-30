@@ -1137,6 +1137,38 @@ describe("streams", function () {
 				}
 			});
 		});
+
+		describe("invalidation", () => {
+			let extraSession: TestSession;
+			beforeEach(async () => {
+				session = await connected(3);
+			});
+			afterEach(async () => {
+				await session?.stop();
+				await extraSession?.stop();
+			});
+			it("old hellos are purged", async () => {
+				for (let i = 0; i < session.peers.length; i++) {
+					await waitForResolved(() =>
+						expect(
+							session.peers[i].services.directstream.routes.nodeCount
+						).toEqual(3)
+					);
+				}
+				session.peers[1].stop();
+				extraSession = await disconnected(1);
+				await extraSession.peers[0].dial(session.peers[2].getMultiaddrs());
+				await waitForResolved(() =>
+					expect(
+						extraSession.peers[0].services.directstream.routes.nodeCount
+					).toEqual(3)
+				);
+				await delay(3000);
+				expect(
+					extraSession.peers[0].services.directstream.routes.nodeCount
+				).toEqual(3);
+			});
+		});
 	});
 
 	describe("start/stop", () => {
