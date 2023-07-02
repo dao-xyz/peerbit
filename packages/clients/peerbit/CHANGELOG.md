@@ -26,6 +26,13 @@
     * @peerbit/pubsub bumped from ^1.0.3 to ^1.0.4
     * @peerbit/blocks bumped from ^1.0.3 to ^1.0.4
 
+## [1.1.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.1...peerbit-v1.1.2) (2023-07-02)
+
+
+### Bug Fixes
+
+* allow open to reuse existing program ([a953070](https://github.com/dao-xyz/peerbit/commit/a9530705bdfb69dc4c27c5b94b01ef7c34590636))
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.0...peerbit-v1.1.1) (2023-07-02)
 
 
