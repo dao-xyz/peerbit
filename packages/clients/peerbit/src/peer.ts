@@ -31,6 +31,7 @@ import {
 import { DirectBlock } from "@peerbit/blocks";
 import { LevelDatastore } from "datastore-level";
 import { BinaryWriter } from "@dao-xyz/borsh";
+import PQueue from "p-queue";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -52,8 +53,10 @@ export type CreateInstanceOptions = {
 	directory?: string;
 	cache?: LazyLevel;
 } & OptionalCreateOptions;
+type ProgramMergeStrategy = "replace" | "reject";
 export type OpenOptions<Args> = {
 	timeout?: number;
+	existing?: ProgramMergeStrategy;
 	/* 
 	reset?: boolean; */
 } & ProgramInitializationOptions<Args>;
@@ -99,6 +102,7 @@ export class Peerbit implements ProgramClient {
 
 	private _keychain: Libp2pKeychain; // Keychain + Caching + X25519 keys
 
+	private _openQueue: PQueue;
 	constructor(libp2p: Libp2pExtended, options: CreateOptions) {
 		if (libp2p == null) {
 			throw new Error("Libp2p required");
@@ -123,6 +127,7 @@ export class Peerbit implements ProgramClient {
 		this.limitSigning = options.limitSigning || false;
 		this._cache = options.cache;
 		this._libp2pExternal = options.libp2pExternal;
+		this._openQueue = new PQueue({ concurrency: 1 });
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
@@ -278,7 +283,8 @@ export class Peerbit implements ProgramClient {
 		}
 	}
 	async stop() {
-		// Close a direct connection and remove it from internal state
+		this._openQueue.clear();
+		await this._openQueue.onIdle();
 
 		// Close all open databases
 		await Promise.all(
@@ -301,17 +307,28 @@ export class Peerbit implements ProgramClient {
 		this.programs.delete(program.address!.toString());
 	}
 
-	private _onProgramOpen(program: Program) {
+	private async _onProgramOpen(
+		program: Program,
+		mergeSrategy: ProgramMergeStrategy = "reject"
+	) {
 		const programAddress = program.address?.toString();
 		if (!programAddress) {
 			throw new Error("Missing program address");
 		}
 		if (this.programs.has(programAddress)) {
 			// second condition only makes this throw error if we are to add a new instance with the same address
-			throw new Error(`Program at ${programAddress} is already open`);
+			if (mergeSrategy === "reject") {
+				throw new Error(`Program at ${programAddress} is already open`);
+			} else if (mergeSrategy === "replace") {
+				const prev = this.programs.get(programAddress);
+				if (prev && prev !== program) {
+					await prev.close(); // clouse previous
+				}
+				this.programs.set(programAddress, program);
+			}
+		} else {
+			this.programs.set(programAddress, program);
 		}
-
-		this.programs.set(programAddress, program);
 	}
 
 	/**
@@ -326,74 +343,77 @@ export class Peerbit implements ProgramClient {
 		storeOrAddress: S | Address | string,
 		options: OpenOptions<Args> = {}
 	): Promise<S> {
-		if (!this.libp2p.isStarted()) {
-			throw new Error("Can not open a store while disconnected");
-		}
+		const fn = async (): Promise<S> => {
+			if (!this.libp2p.isStarted()) {
+				throw new Error("Can not open a store while disconnected");
+			}
 
-		// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
+			// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
 
-		let program = storeOrAddress as S;
-		if (typeof storeOrAddress === "string") {
-			try {
-				if (this.programs?.has(storeOrAddress.toString())) {
-					throw new Error(
-						`Program at ${storeOrAddress.toString()} is already open`
-					);
-				} else {
-					program = (await Program.load(
-						storeOrAddress,
-						this._libp2p.services.blocks,
-						options
-					)) as S; // TODO fix typings
-					if (program instanceof Program === false) {
+			let program = storeOrAddress as S;
+			if (typeof storeOrAddress === "string") {
+				try {
+					if (this.programs?.has(storeOrAddress.toString())) {
 						throw new Error(
-							`Failed to open program because program is of type ${program?.constructor.name} and not ${Program.name}`
+							`Program at ${storeOrAddress.toString()} is already open`
 						);
+					} else {
+						program = (await Program.load(
+							storeOrAddress,
+							this._libp2p.services.blocks,
+							options
+						)) as S; // TODO fix typings
+						if (program instanceof Program === false) {
+							throw new Error(
+								`Failed to open program because program is of type ${program?.constructor.name} and not ${Program.name}`
+							);
+						}
 					}
+				} catch (error) {
+					logger.error(
+						"Failed to load store with address: " + storeOrAddress.toString()
+					);
+					throw error;
 				}
-			} catch (error) {
-				logger.error(
-					"Failed to load store with address: " + storeOrAddress.toString()
-				);
-				throw error;
+			} else if (!program.closed) {
+				const existing = this.programs.get(program.address);
+				if (existing === program) {
+					return program;
+				} else if (existing) {
+					throw new Error(
+						`Program at ${program.address} is already open, but is another instance`
+					);
+				}
 			}
-		} else if (!program.closed) {
-			const existing = this.programs.get(program.address);
-			if (existing === program) {
-				return program;
-			} else if (existing) {
-				throw new Error(
-					`Program at ${program.address} is already open, but is another instance`
-				);
-			}
-		}
 
-		logger.debug(`Open database '${program.constructor.name}`);
-		await program.beforeOpen(this, {
-			onOpen: (p) => {
-				if (p instanceof Program && p.parents.length === 1 && !p.parents[0]) {
-					return this._onProgramOpen(p);
-				}
-			},
-			onClose: (p) => {
-				if (p instanceof Program) {
-					return this._onProgamClose(p);
-				}
-			},
-			onDrop: (p) => {
-				if (p instanceof Program) {
-					return this._onProgamClose(p);
-				}
-			},
-			...options,
-			// If the program opens more programs
-			// reset: options.reset,
-		});
+			logger.debug(`Open database '${program.constructor.name}`);
+			await program.beforeOpen(this, {
+				onBeforeOpen: (p) => {
+					if (p instanceof Program && p.parents.length === 1 && !p.parents[0]) {
+						return this._onProgramOpen(p);
+					}
+				},
+				onClose: (p) => {
+					if (p instanceof Program) {
+						return this._onProgamClose(p);
+					}
+				},
+				onDrop: (p) => {
+					if (p instanceof Program) {
+						return this._onProgamClose(p);
+					}
+				},
+				...options,
+				// If the program opens more programs
+				// reset: options.reset,
+			});
 
-		await program.open(options.args);
-		await program.afterOpen();
+			await program.open(options.args);
+			await program.afterOpen();
 
-		return program as S;
+			return program as S;
+		};
+		return this._openQueue.add(fn) as any as S; // TODO p-queue seem to return void type ;
 	}
 
 	get memory() {

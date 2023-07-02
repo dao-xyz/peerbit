@@ -4,7 +4,9 @@ import { Peerbit } from "../peer.js";
 
 @variant("test-shared_nested")
 class TestNestedProgram extends Program {
+	openInvoked = false;
 	async open(): Promise<void> {
+		this.openInvoked = true;
 		return;
 	}
 }
@@ -27,12 +29,12 @@ class TestProgram extends Program {
 	}
 
 	async open(): Promise<void> {
-		return;
+		return this.nested.open();
 	}
 }
 
 describe(`shared`, () => {
-	let client: ProgramClient;
+	let client: Peerbit;
 
 	beforeEach(async () => {
 		client = await Peerbit.create();
@@ -52,6 +54,35 @@ describe(`shared`, () => {
 		await expect(() => client.open(db1.address)).rejects.toThrowError(
 			`Program at ${db1.address} is already open`
 		);
+	});
+
+	it("rejects duplicate", async () => {
+		const p1 = new TestProgram();
+		const p2 = p1.clone();
+		const db1Promise = client.open(p1);
+		const db2Promise = client.open(p2);
+
+		await db1Promise;
+		//await db2Promise;
+		await expect(db2Promise).rejects.toThrowError(
+			`Program at ${p1.address} is already open`
+		);
+		expect(p1.nested.openInvoked).toBeTruthy();
+		expect(p2.nested.openInvoked).toBeFalsy();
+	});
+	it("can replace duplicate", async () => {
+		const p1 = new TestProgram();
+		const p2 = p1.clone();
+		const db1Promise = client.open(p1);
+		const db2Promise = client.open(p2, { existing: "replace" });
+
+		await db1Promise;
+		//await db2Promise;
+		await expect(db2Promise).rejects.toThrowError(
+			`Program at ${p1.address} is already open`
+		);
+		expect(p1.nested.openInvoked).toBeTruthy();
+		expect(p2.nested.openInvoked).toBeFalsy();
 	});
 
 	// TODO add tests and define behaviour for cross topic programs
