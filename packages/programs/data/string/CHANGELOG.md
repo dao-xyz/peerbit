@@ -98,6 +98,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.7 to ^1.0.8
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from ^1.1.3 to ^1.1.4
+    * @peerbit/rpc bumped from 1.0.8 to 1.0.9
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.8 to ^1.0.9
+
 ## 1.0.0 (2023-06-28)
 
 
