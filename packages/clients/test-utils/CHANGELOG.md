@@ -43,6 +43,12 @@
   * dependencies
     * peerbit bumped from 1.0.4 to 1.0.5
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.0.5 to 1.1.0
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.1...test-utils-v1.0.2) (2023-06-28)
 
 

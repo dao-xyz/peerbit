@@ -32,6 +32,13 @@
     * @peerbit/blocks-interface bumped from ^1.0.1 to ^1.0.2
     * @peerbit/pubsub-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/program-v1.0.3...program-v1.0.4) (2023-07-02)
+
+
+### Bug Fixes
+
+* add onBeforeCallback ([1977eee](https://github.com/dao-xyz/peerbit/commit/1977eee8c0629fd3a9931a78c271009b40040426))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/program-v1.0.2...program-v1.0.3) (2023-06-29)
 
 
