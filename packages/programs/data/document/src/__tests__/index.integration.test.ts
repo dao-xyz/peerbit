@@ -1802,16 +1802,19 @@ describe("index", () => {
 				const _result = await store.docs.put(subProgram);
 				expect(subProgram.closed).toBeFalse();
 				await waitFor(() => store2.docs.index.size === 1);
-				const results = await store2.docs.index.search(
-					new SearchRequest({
-						query: [
-							new ByteMatchQuery({ key: "custom", value: subProgram.id }),
-						],
-					})
-				);
-				expect(results).toHaveLength(1);
-				expect(results[0].id).toEqual(subProgram.id);
-				expect(results[0].closed).toBeFalse();
+				const stores = [store, store2];
+				for (const s of stores) {
+					const results = await s.docs.index.search(
+						new SearchRequest({
+							query: [
+								new ByteMatchQuery({ key: "custom", value: subProgram.id }),
+							],
+						})
+					);
+					expect(results).toHaveLength(1);
+					expect(results[0].id).toEqual(subProgram.id);
+					expect(results[0].closed).toBeFalse();
+				}
 			});
 		});
 	});
