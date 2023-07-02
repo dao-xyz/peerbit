@@ -26,6 +26,13 @@
     * @peerbit/pubsub bumped from ^1.0.3 to ^1.0.4
     * @peerbit/blocks bumped from ^1.0.3 to ^1.0.4
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.0...peerbit-v1.1.1) (2023-07-02)
+
+
+### Bug Fixes
+
+* invalid program rejection on reopen ([fe0f634](https://github.com/dao-xyz/peerbit/commit/fe0f6345fd0012f817f6deab1edc0ac6e512d7ca))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.0.5...peerbit-v1.1.0) (2023-07-02)
 
 
