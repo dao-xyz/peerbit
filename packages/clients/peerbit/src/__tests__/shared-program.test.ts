@@ -56,7 +56,7 @@ describe(`shared`, () => {
 		);
 	});
 
-	it("rejects duplicate", async () => {
+	it("rejects duplicate concurrently", async () => {
 		const p1 = new TestProgram();
 		const p2 = p1.clone();
 		const db1Promise = client.open(p1);
@@ -70,19 +70,47 @@ describe(`shared`, () => {
 		expect(p1.nested.openInvoked).toBeTruthy();
 		expect(p2.nested.openInvoked).toBeFalsy();
 	});
-	it("can replace duplicate", async () => {
+
+	it("rejects duplicate sequentally", async () => {
 		const p1 = new TestProgram();
 		const p2 = p1.clone();
 		const db1Promise = client.open(p1);
-		const db2Promise = client.open(p2, { existing: "replace" });
 
 		await db1Promise;
+
+		const db2Promise = client.open(p2);
+
 		//await db2Promise;
 		await expect(db2Promise).rejects.toThrowError(
 			`Program at ${p1.address} is already open`
 		);
 		expect(p1.nested.openInvoked).toBeTruthy();
 		expect(p2.nested.openInvoked).toBeFalsy();
+	});
+
+	it("replaces duplicate concurrently", async () => {
+		const p1 = new TestProgram();
+		const p2 = p1.clone();
+		const db1Promise = client.open(p1);
+		const db2Promise = client.open(p2, { existing: "replace" });
+
+		await db1Promise;
+		await db2Promise;
+
+		expect(p1.nested.openInvoked).toBeTruthy();
+		expect(p2.nested.openInvoked).toBeTruthy();
+	});
+
+	it("replace duplicate sequentially", async () => {
+		const p1 = new TestProgram();
+		const p2 = p1.clone();
+		const db1Promise = client.open(p1);
+		await db1Promise;
+		const db2Promise = client.open(p2, { existing: "replace" });
+		await db2Promise;
+
+		expect(p1.nested.openInvoked).toBeTruthy();
+		expect(p2.nested.openInvoked).toBeTruthy();
 	});
 
 	// TODO add tests and define behaviour for cross topic programs

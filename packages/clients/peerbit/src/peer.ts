@@ -309,7 +309,7 @@ export class Peerbit implements ProgramClient {
 
 	private async _onProgramOpen(
 		program: Program,
-		mergeSrategy: ProgramMergeStrategy = "reject"
+		mergeSrategy?: ProgramMergeStrategy
 	) {
 		const programAddress = program.address?.toString();
 		if (!programAddress) {
@@ -317,20 +317,27 @@ export class Peerbit implements ProgramClient {
 		}
 		if (this.programs.has(programAddress)) {
 			// second condition only makes this throw error if we are to add a new instance with the same address
-			if (mergeSrategy === "reject") {
-				throw new Error(`Program at ${programAddress} is already open`);
-			} else if (mergeSrategy === "replace") {
-				const prev = this.programs.get(programAddress);
-				if (prev && prev !== program) {
-					await prev.close(); // clouse previous
-				}
-				this.programs.set(programAddress, program);
-			}
+			await this.checkProcessExisting(programAddress, program, mergeSrategy);
+			this.programs.set(programAddress, program);
 		} else {
 			this.programs.set(programAddress, program);
 		}
 	}
 
+	private async checkProcessExisting(
+		address: Address,
+		toOpen: Program,
+		mergeSrategy: ProgramMergeStrategy = "reject"
+	) {
+		if (mergeSrategy === "reject") {
+			throw new Error(`Program at ${address} is already open`);
+		} else if (mergeSrategy === "replace") {
+			const prev = this.programs.get(address);
+			if (prev && prev !== toOpen) {
+				await prev.close(); // clouse previous
+			}
+		}
+	}
 	/**
 	 * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
 	 * and to replicate heads (and updates) which is requested by another peer
@@ -354,8 +361,10 @@ export class Peerbit implements ProgramClient {
 			if (typeof storeOrAddress === "string") {
 				try {
 					if (this.programs?.has(storeOrAddress.toString())) {
-						throw new Error(
-							`Program at ${storeOrAddress.toString()} is already open`
+						await this.checkProcessExisting(
+							storeOrAddress.toString(),
+							program,
+							options?.existing
 						);
 					} else {
 						program = (await Program.load(
@@ -380,8 +389,10 @@ export class Peerbit implements ProgramClient {
 				if (existing === program) {
 					return program;
 				} else if (existing) {
-					throw new Error(
-						`Program at ${program.address} is already open, but is another instance`
+					await this.checkProcessExisting(
+						program.address,
+						program,
+						options?.existing
 					);
 				}
 			}
@@ -390,7 +401,7 @@ export class Peerbit implements ProgramClient {
 			await program.beforeOpen(this, {
 				onBeforeOpen: (p) => {
 					if (p instanceof Program && p.parents.length === 1 && !p.parents[0]) {
-						return this._onProgramOpen(p);
+						return this._onProgramOpen(p, options?.existing);
 					}
 				},
 				onClose: (p) => {
