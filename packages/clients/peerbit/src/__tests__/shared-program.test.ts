@@ -113,6 +113,30 @@ describe(`shared`, () => {
 		expect(p2.nested.openInvoked).toBeTruthy();
 	});
 
+	it("reuse duplicate concurrently", async () => {
+		const p1 = new TestProgram();
+		const p2 = p1.clone();
+		const db1Promise = client.open(p1);
+		const db2Promise = client.open(p2, { existing: "reuse" });
+
+		await db1Promise;
+		const db2Open = await db2Promise;
+		expect(db2Open == p1).toBeTrue();
+		expect(p1.nested.openInvoked).toBeTruthy();
+		expect(p2.nested.openInvoked).toBeFalsy();
+	});
+
+	it("reuse duplicate sequentially", async () => {
+		const p1 = new TestProgram();
+		const p2 = p1.clone();
+		const db1Promise = client.open(p1);
+		await db1Promise;
+		const db2Open = await client.open(p2, { existing: "reuse" });
+		expect(db2Open == p1).toBeTrue();
+		expect(p1.nested.openInvoked).toBeTruthy();
+		expect(p2.nested.openInvoked).toBeFalsy();
+	});
+
 	// TODO add tests and define behaviour for cross topic programs
 	// TODO add tests for shared subprogams
 	// TODO add tests for subprograms that is also open as root program

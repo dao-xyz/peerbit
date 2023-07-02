@@ -53,7 +53,7 @@ export type CreateInstanceOptions = {
 	directory?: string;
 	cache?: LazyLevel;
 } & OptionalCreateOptions;
-type ProgramMergeStrategy = "replace" | "reject";
+type ProgramMergeStrategy = "replace" | "reject" | "reuse";
 export type OpenOptions<Args> = {
 	timeout?: number;
 	existing?: ProgramMergeStrategy;
@@ -317,25 +317,36 @@ export class Peerbit implements ProgramClient {
 		}
 		if (this.programs.has(programAddress)) {
 			// second condition only makes this throw error if we are to add a new instance with the same address
-			await this.checkProcessExisting(programAddress, program, mergeSrategy);
+			const existing = await this.checkProcessExisting(
+				programAddress,
+				program,
+				mergeSrategy
+			);
+			if (!existing) {
+				throw new Error("Unexpected");
+			}
 			this.programs.set(programAddress, program);
 		} else {
 			this.programs.set(programAddress, program);
 		}
 	}
 
-	private async checkProcessExisting(
+	private async checkProcessExisting<S>(
 		address: Address,
-		toOpen: Program,
+		toOpen: S,
 		mergeSrategy: ProgramMergeStrategy = "reject"
-	) {
+	): Promise<S | undefined> {
+		const prev = this.programs.get(address);
 		if (mergeSrategy === "reject") {
-			throw new Error(`Program at ${address} is already open`);
+			if (prev) {
+				throw new Error(`Program at ${address} is already open`);
+			}
 		} else if (mergeSrategy === "replace") {
-			const prev = this.programs.get(address);
 			if (prev && prev !== toOpen) {
 				await prev.close(); // clouse previous
 			}
+		} else if (mergeSrategy === "reuse") {
+			return prev as S;
 		}
 	}
 	/**
@@ -361,11 +372,14 @@ export class Peerbit implements ProgramClient {
 			if (typeof storeOrAddress === "string") {
 				try {
 					if (this.programs?.has(storeOrAddress.toString())) {
-						await this.checkProcessExisting(
+						const existing = await this.checkProcessExisting(
 							storeOrAddress.toString(),
 							program,
 							options?.existing
 						);
+						if (existing) {
+							return existing;
+						}
 					} else {
 						program = (await Program.load(
 							storeOrAddress,
@@ -389,15 +403,28 @@ export class Peerbit implements ProgramClient {
 				if (existing === program) {
 					return program;
 				} else if (existing) {
-					await this.checkProcessExisting(
+					const existing = await this.checkProcessExisting(
 						program.address,
 						program,
 						options?.existing
 					);
+
+					if (existing) {
+						return existing;
+					}
 				}
 			}
 
 			logger.debug(`Open database '${program.constructor.name}`);
+			const address = await program.save(this.services.blocks);
+			const existing = await this.checkProcessExisting(
+				address,
+				program,
+				options?.existing
+			);
+			if (existing) {
+				return existing;
+			}
 			await program.beforeOpen(this, {
 				onBeforeOpen: (p) => {
 					if (p instanceof Program && p.parents.length === 1 && !p.parents[0]) {
