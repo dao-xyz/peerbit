@@ -60,6 +60,7 @@ export interface LifeCycleEvents {
 export interface ProgramEvents extends NetworkEvents, LifeCycleEvents {}
 
 type EventOptions = {
+	onBeforeOpen?: (program: AbstractProgram<any>) => Promise<void> | void;
 	onOpen?: (program: AbstractProgram<any>) => Promise<void> | void;
 	onDrop?: (program: AbstractProgram<any>) => Promise<void> | void;
 	onClose?: (program: AbstractProgram<any>) => Promise<void> | void;
@@ -171,12 +172,13 @@ export abstract class AbstractProgram<
 					!this.closed && this._emitLeaveNetworkEvents(s.detail))
 		);
 
+		await this._eventOptions?.onBeforeOpen?.(this);
 		return this;
 	}
 
 	async afterOpen() {
 		this.emitEvent(new CustomEvent("open", { detail: this }), true);
-		this._eventOptions?.onOpen?.(this);
+		await this._eventOptions?.onOpen?.(this);
 		this.closed = false;
 		const nexts = this.programs;
 		for (const next of nexts) {
