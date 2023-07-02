@@ -76,6 +76,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.6 to 1.0.7
 
+## [1.1.3](https://github.com/dao-xyz/peerbit/compare/document-v1.1.2...document-v1.1.3) (2023-07-02)
+
+
+### Bug Fixes
+
+* include test for program results for local queries ([4889c6e](https://github.com/dao-xyz/peerbit/commit/4889c6e77a398b0a09574c253b4430f7311cbd30))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 1.0.7 to 1.0.8
+    * @peerbit/shared-log bumped from 1.1.2 to 1.1.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.7 to 1.0.8
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/document-v1.0.5...document-v1.1.0) (2023-06-29)
 
 
