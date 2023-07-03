@@ -121,6 +121,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.10 to ^1.0.11
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 1.1.7 to 1.1.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/trusted-network-v1.0.4...trusted-network-v1.0.5) (2023-06-29)
 
 

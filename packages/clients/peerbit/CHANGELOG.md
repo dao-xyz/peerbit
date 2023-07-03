@@ -32,6 +32,13 @@
   * dependencies
     * @peerbit/program bumped from 1.0.4 to 1.0.5
 
+## [1.1.5](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.4...peerbit-v1.1.5) (2023-07-03)
+
+
+### Bug Fixes
+
+* add path-browserify dependency ([9e20ff1](https://github.com/dao-xyz/peerbit/commit/9e20ff11935428c687cadea538bd98211db43310))
+
 ## [1.1.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.3...peerbit-v1.1.4) (2023-07-03)
 
 
