@@ -451,6 +451,12 @@ export class Peerbit implements ProgramClient {
 
 			return program as S;
 		};
+
+		// Prevent deadlocks when a program is opened by another program
+		// TODO make proper deduplciation behaviour
+		if (options?.parent) {
+			return fn();
+		}
 		return this._openQueue.add(fn) as any as S; // TODO p-queue seem to return void type ;
 	}
 
