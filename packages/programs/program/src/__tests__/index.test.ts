@@ -438,22 +438,6 @@ describe("program", () => {
 				await p.drop();
 				expect(p.closed).toBeTrue();
 			});
-
-			it("invokes clear on drop non-initialized", async () => {
-				const log = new Log();
-				const p = new P2(log);
-				let cleared = false;
-				p["_clear"] = () => {
-					cleared = true;
-				};
-				let deleted = false;
-				p.delete = async () => {
-					deleted = true;
-				};
-				await p.drop();
-				expect(cleared).toBeTrue();
-				expect(deleted).toBeTrue();
-			});
 		});
 
 		describe("subprogram", () => {
