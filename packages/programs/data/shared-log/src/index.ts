@@ -229,20 +229,22 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 	}
 	async close(from?: AbstractProgram): Promise<boolean> {
 		const superClosed = await super.close(from);
-
 		if (!superClosed) {
 			return superClosed;
 		}
-
 		await this._close();
 		await this.log.close();
-		return superClosed;
+		return true;
 	}
 
-	async drop(): Promise<void> {
+	async drop(from?: AbstractProgram): Promise<boolean> {
+		const superDropped = await super.drop(from);
+		if (!superDropped) {
+			return superDropped;
+		}
 		await this._close();
 		await this.log.drop();
-		return super.drop();
+		return true;
 	}
 
 	// Callback for receiving a message from the network
