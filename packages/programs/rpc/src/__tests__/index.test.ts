@@ -135,6 +135,16 @@ describe("rpc", () => {
 			expect(listenerCount).toEqual(0);
 		});
 
+		it("drop", async () => {
+			let listenerCount = reader.node.services.pubsub["listenerCount"]("data");
+			expect(listenerCount).toEqual(1);
+			expect(reader.closed).toBeFalse();
+			await reader.drop();
+			expect(reader.closed).toBeTrue();
+			listenerCount = reader.node.services.pubsub["listenerCount"]("data");
+			expect(listenerCount).toEqual(0);
+		});
+
 		it("concurrency", async () => {
 			let promises: Promise<RPCResponse<Body>[]>[] = [];
 			let concurrency = 100;

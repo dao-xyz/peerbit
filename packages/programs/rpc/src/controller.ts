@@ -93,7 +93,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		await this._subscribe();
 	}
 
-	public async close(from?: AbstractProgram): Promise<boolean> {
+	private async _close(from?: AbstractProgram): Promise<void> {
 		if (this._subscribed) {
 			await this.node.services.pubsub.unsubscribe(this.rpcTopic);
 			await this.node.services.pubsub.removeEventListener(
@@ -102,8 +102,23 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 			);
 			this._subscribed = false;
 		}
+	}
+	public async close(from?: AbstractProgram): Promise<boolean> {
+		const superClosed = await super.close(from);
+		if (!superClosed) {
+			return false;
+		}
+		await this._close(from);
+		return true;
+	}
 
-		return super.close(from);
+	public async drop(from?: AbstractProgram): Promise<boolean> {
+		const superDropped = await super.drop(from);
+		if (!superDropped) {
+			return false;
+		}
+		await this._close(from);
+		return true;
 	}
 
 	private _subscribing: Promise<void>;
