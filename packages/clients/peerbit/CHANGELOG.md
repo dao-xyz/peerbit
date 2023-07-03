@@ -32,6 +32,13 @@
   * dependencies
     * @peerbit/program bumped from 1.0.4 to 1.0.5
 
+## [1.1.4](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.3...peerbit-v1.1.4) (2023-07-03)
+
+
+### Bug Fixes
+
+* prevent deadlock when program opens other programs ([91e6e8f](https://github.com/dao-xyz/peerbit/commit/91e6e8f69a086b2aea158fdddf6ef91e6198d1ea))
+
 ## [1.1.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.1...peerbit-v1.1.2) (2023-07-02)
 
 
