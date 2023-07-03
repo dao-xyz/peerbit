@@ -234,7 +234,7 @@ export abstract class AbstractProgram<
 		e: CustomEvent<UnsubcriptionEvent>
 	) => void;
 
-	private async _end(type: "drop" | "close") {
+	private async processEnd(type: "drop" | "close") {
 		if (!this.closed) {
 			this.emitEvent(new CustomEvent(type, { detail: this }), true);
 			if (type === "close") {
@@ -264,7 +264,10 @@ export abstract class AbstractProgram<
 		}
 	}
 
-	async close(from?: AbstractProgram): Promise<boolean> {
+	private async end(
+		type: "drop" | "close",
+		from?: AbstractProgram
+	): Promise<boolean> {
 		if (this.closed) {
 			return true;
 		}
@@ -285,7 +288,7 @@ export abstract class AbstractProgram<
 			}
 		}
 
-		const end = close && (await this._end("close"));
+		const end = close && (await this.processEnd(type));
 		if (end) {
 			this.node?.services.pubsub.removeEventListener(
 				"subscribe",
@@ -305,9 +308,12 @@ export abstract class AbstractProgram<
 
 		return end;
 	}
+	async close(from?: AbstractProgram): Promise<boolean> {
+		return this.end("close", from);
+	}
 
-	async drop(): Promise<void> {
-		await this._end("drop");
+	async drop(from?: AbstractProgram): Promise<boolean> {
+		return this.end("drop", from);
 	}
 
 	emitEvent(event: CustomEvent, parents = false) {
@@ -500,9 +506,13 @@ export abstract class Program<
 		return der as P;
 	}
 
-	async drop(): Promise<void> {
-		await super.drop();
-		return this.delete();
+	async drop(from?: AbstractProgram): Promise<boolean> {
+		const dropped = await super.drop(from);
+		if (!dropped) {
+			return dropped;
+		}
+		await this.delete();
+		return true;
 	}
 }
 
