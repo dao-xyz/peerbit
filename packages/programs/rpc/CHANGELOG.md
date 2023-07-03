@@ -79,6 +79,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.8 to ^1.0.9
 
+## [1.0.10](https://github.com/dao-xyz/peerbit/compare/rpc-v1.0.9...rpc-v1.0.10) (2023-07-03)
+
+
+### Bug Fixes
+
+* correctly unsubscribe to pubsub events on close ([1abe215](https://github.com/dao-xyz/peerbit/commit/1abe215c22fd2f8d67cd6373fa896ad9e8394859))
+
 ## 1.0.0 (2023-06-28)
 
 
