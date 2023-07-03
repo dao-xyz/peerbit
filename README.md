@@ -37,7 +37,7 @@ Peerbit is performant, so performant in fact you can use it for [streaming video
 [<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/one-chat-room/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/one-chat-room/)
 
 ### [Lobby + chat rooms](./packages/many-chat-rooms/)
-[<img src="https://raw.githubusercontent.com/dao-xyz/peerbit-examples/blob/master/packages/many-chat-rooms/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/one-chat-room/)
+[<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/many-chat-rooms/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/one-chat-room/)
 
 ### [Sync files](./packages/many-chat-rooms/)
 [<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/file-share/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
