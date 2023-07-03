@@ -98,7 +98,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 			await this.node.services.pubsub.unsubscribe(this.rpcTopic);
 			await this.node.services.pubsub.removeEventListener(
 				"data",
-				this._onMessage
+				this._onMessageBinded
 			);
 			this._subscribed = false;
 		}
