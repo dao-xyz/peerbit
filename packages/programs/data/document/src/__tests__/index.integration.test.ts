@@ -1750,12 +1750,20 @@ describe("index", () => {
 			).toBeFalse();
 		});
 
-		it("will close on delete", async () => {
+		it("will drop on delete", async () => {
 			const subProgram = new SubProgram();
 			const _result = await stores[0].store.docs.put(subProgram);
 			expect(subProgram.closed).toBeFalse();
+
+			let dropped = false;
+			const subprogramDropped = subProgram.drop.bind(subProgram);
+			subProgram.drop = (from) => {
+				dropped = true;
+				return subprogramDropped(from);
+			};
 			await stores[0].store.docs.del(subProgram.id);
 			await waitForResolved(() => expect(subProgram.closed).toBeTrue());
+			expect(dropped).toBeTrue();
 		});
 
 		it("can prevent subprograms to be opened", async () => {

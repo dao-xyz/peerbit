@@ -405,8 +405,7 @@ export class Documents<T extends Record<string, any>> extends ComposableProgram<
 					documentsChanged.removed.push(value);
 
 					if (value instanceof Program) {
-						// TODO is this tested?
-						await value.close(this);
+						await value.drop(this);
 					}
 
 					// update index
