@@ -81,6 +81,24 @@
   * dependencies
     * @peerbit/rpc bumped from 1.0.9 to 1.0.10
 
+## [1.1.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.5...shared-log-v1.1.6) (2023-07-03)
+
+
+### Bug Fixes
+
+* check super drop before dropping log ([2218b00](https://github.com/dao-xyz/peerbit/commit/2218b0041973aa1311477fb96f661ec94804e723))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 1.0.4 to 1.0.5
+    * @peerbit/log bumped from 1.0.9 to 1.0.10
+    * @peerbit/rpc bumped from 1.0.10 to 1.0.11
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.9 to ^1.0.10
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.0.5...shared-log-v1.1.0) (2023-06-29)
 
 

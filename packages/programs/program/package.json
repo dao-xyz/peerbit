@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program",
-	"version": "1.0.4",
+	"version": "1.0.5",
 	"description": "Program interface",
 	"type": "module",
 	"sideEffects": false,

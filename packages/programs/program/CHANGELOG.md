@@ -32,6 +32,14 @@
     * @peerbit/blocks-interface bumped from ^1.0.1 to ^1.0.2
     * @peerbit/pubsub-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/program-v1.0.4...program-v1.0.5) (2023-07-03)
+
+
+### Bug Fixes
+
+* make drop conditional if only no other dependencies exist ([ec2407e](https://github.com/dao-xyz/peerbit/commit/ec2407e4b4f89a8e268004094a5dcb008de7d9e2))
+* remove redundant test ([4fb24fa](https://github.com/dao-xyz/peerbit/commit/4fb24fab54eeff94ca4b081dd80ae5065d075eab))
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/program-v1.0.3...program-v1.0.4) (2023-07-02)
 
 

@@ -92,6 +92,24 @@
     * @peerbit/rpc bumped from 1.0.9 to 1.0.10
     * @peerbit/shared-log bumped from 1.1.4 to 1.1.5
 
+## [1.1.6](https://github.com/dao-xyz/peerbit/compare/document-v1.1.5...document-v1.1.6) (2023-07-03)
+
+
+### Bug Fixes
+
+* drop on delete subprogram ([6d8171e](https://github.com/dao-xyz/peerbit/commit/6d8171ef8d9ef4f2f1e246207157db973afc8b71))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 1.0.4 to 1.0.5
+    * @peerbit/rpc bumped from 1.0.10 to 1.0.11
+    * @peerbit/shared-log bumped from 1.1.5 to 1.1.6
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.9 to 1.0.10
+
 ## [1.1.3](https://github.com/dao-xyz/peerbit/compare/document-v1.1.2...document-v1.1.3) (2023-07-02)
 
 
