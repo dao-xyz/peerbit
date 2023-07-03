@@ -21,7 +21,7 @@ sudo apt-get install -y nodejs
 
 then install the CLI
 ```
-npm install -g peerbit-node    
+npm install -g @peerbit/server
 ```
 
 
