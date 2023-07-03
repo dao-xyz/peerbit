@@ -50,7 +50,8 @@
 		"@libp2p/tcp": "^7.0.3",
 		"level": "^8.0.0",
 		"memory-level": "^1.0.0",
-		"p-queue": "^7.3.4"
+		"p-queue": "^7.3.4",
+		"path-browserify": "^1.0.1"
 	},
 	"devDependencies": {
 		"p-each-series": "^3.0.0",
