@@ -79,6 +79,12 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.9 to 1.0.10
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.10 to 1.0.11
+
 ## 1.0.0 (2023-06-28)
 
 

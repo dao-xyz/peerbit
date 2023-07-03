@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/rpc",
-	"version": "1.0.11",
+	"version": "1.0.12",
 	"description": "RPC calls for peers",
 	"type": "module",
 	"sideEffects": false,
@@ -39,6 +39,6 @@
 		"@peerbit/time": "1.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^1.0.10"
+		"@peerbit/test-utils": "^1.0.11"
 	}
 }
