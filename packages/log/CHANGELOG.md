@@ -91,6 +91,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+## [1.0.13](https://github.com/dao-xyz/peerbit/compare/log-v1.0.12...log-v1.0.13) (2023-07-04)
+
+
+### Bug Fixes
+
+* add uuid dependency ([966ff2c](https://github.com/dao-xyz/peerbit/commit/966ff2cdac0c7be7197e510d303b81d09c1beab1))
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.0.0 to 1.0.1
+    * @peerbit/blocks-interface bumped from ^1.0.3 to ^1.0.4
+    * @peerbit/crypto bumped from 1.0.2 to 1.0.3
+    * @peerbit/logger bumped from 1.0.0 to 1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.12 to 1.0.13
+
 ## 1.0.0 (2023-06-28)
 
 

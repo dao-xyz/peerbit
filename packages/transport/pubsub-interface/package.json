@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub-interface",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Block store streaming",
 	"type": "module",
 	"sideEffects": false,
@@ -50,7 +50,7 @@
 	],
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
-		"@peerbit/crypto": "1.0.2",
-		"@peerbit/stream-interface": "^1.0.3"
+		"@peerbit/crypto": "1.0.3",
+		"@peerbit/stream-interface": "^1.0.4"
 	}
 }

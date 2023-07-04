@@ -127,6 +127,23 @@
     * @peerbit/string bumped from 1.0.13 to 1.0.14
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+## [1.0.16](https://github.com/dao-xyz/peerbit/compare/server-v1.0.15...server-v1.0.16) (2023-07-04)
+
+
+### Bug Fixes
+
+* announce dns4 when domain is available ([87ac8f3](https://github.com/dao-xyz/peerbit/commit/87ac8f36be6988a510cc65da9203a7559188e256))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.1.5 to 1.1.6
+  * devDependencies
+    * @peerbit/string bumped from 1.0.14 to 1.0.15
+    * @peerbit/test-utils bumped from 1.0.12 to 1.0.13
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/server-v1.0.1...server-v1.0.2) (2023-06-28)
 
 

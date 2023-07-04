@@ -110,6 +110,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+## [1.1.9](https://github.com/dao-xyz/peerbit/compare/document-v1.1.8...document-v1.1.9) (2023-07-04)
+
+
+### Bug Fixes
+
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 1.0.5 to 1.0.6
+    * @peerbit/rpc bumped from 1.0.13 to 1.0.14
+    * @peerbit/shared-log bumped from 1.1.8 to 1.1.9
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.12 to 1.0.13
+    * @peerbit/time bumped from 1.0.0 to 1.0.1
+
 ## [1.1.6](https://github.com/dao-xyz/peerbit/compare/document-v1.1.5...document-v1.1.6) (2023-07-03)
 
 

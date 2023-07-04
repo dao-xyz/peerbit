@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/dao-xyz/peerbit/compare/uint8arrays-v3.0.0...uint8arrays-v3.0.1) (2023-07-04)
+
+
+### Bug Fixes
+
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/uint8arrays-v2.0.0...uint8arrays-v3.0.0) (2023-06-28)
 
 

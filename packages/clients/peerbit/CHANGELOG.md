@@ -32,6 +32,26 @@
   * dependencies
     * @peerbit/program bumped from 1.0.4 to 1.0.5
 
+## [1.1.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.5...peerbit-v1.1.6) (2023-07-04)
+
+
+### Bug Fixes
+
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.0.0 to 1.0.1
+    * @peerbit/crypto bumped from 1.0.2 to 1.0.3
+    * @peerbit/logger bumped from 1.0.0 to 1.0.1
+    * @peerbit/program bumped from 1.0.5 to 1.0.6
+    * @peerbit/pubsub bumped from ^1.0.4 to ^1.0.5
+    * @peerbit/blocks bumped from ^1.0.4 to ^1.0.5
+    * @peerbit/uint8arrays bumped from 3.0.0 to 3.0.1
+
 ## [1.1.5](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.4...peerbit-v1.1.5) (2023-07-03)
 
 
