@@ -6,7 +6,7 @@ const peerB = await Peerbit.create();
 // this address was obtained by deploying a server node using the CLI
 
 const relayAddress =
-	"/dns4/8d2cc94505a712420a3e84cb56c4e15c7dc9eae6.peerchecker.com/tcp/4003/wss/p2p/12D3KooWERXVxavXvounVAyEETdGafASHKDNvWeeLCmALJ8esrqo";
+	"/dns4/b7bb11f066b285b3ac8cca2cc5030a0094293f05.peerchecker.com/tcp/4003/wss/p2p/12D3KooWBKx9dtKCSy2j1NpdFMSDQcQmRqTee8wSetuMZhSifAPs";
 
 /* 
 // To test locally can also do
