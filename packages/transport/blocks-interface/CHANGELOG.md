@@ -20,6 +20,23 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^1.0.2 to ^1.0.3
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.0.3...blocks-interface-v1.0.4) (2023-07-04)
+
+
+### Bug Fixes
+
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.2 to 1.0.3
+    * @peerbit/stream-interface bumped from ^1.0.3 to ^1.0.4
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.0 to 1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 

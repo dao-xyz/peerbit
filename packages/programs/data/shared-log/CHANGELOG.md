@@ -99,6 +99,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
 
+## [1.1.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.8...shared-log-v1.1.9) (2023-07-04)
+
+
+### Bug Fixes
+
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.0 to 1.0.1
+    * @peerbit/program bumped from 1.0.5 to 1.0.6
+    * @peerbit/log bumped from 1.0.12 to 1.0.13
+    * @peerbit/rpc bumped from 1.0.13 to 1.0.14
+    * @peerbit/time bumped from 1.0.0 to 1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.12 to ^1.0.13
+
 ## [1.1.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.5...shared-log-v1.1.6) (2023-07-03)
 
 

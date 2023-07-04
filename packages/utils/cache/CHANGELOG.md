@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/cache-v1.0.0...cache-v1.0.1) (2023-07-04)
+
+
+### Bug Fixes
+
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 1.0.0 to 1.0.1
+
 ## 1.0.0 (2023-06-28)
 
 
