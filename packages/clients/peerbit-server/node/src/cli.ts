@@ -25,9 +25,18 @@ export const cli = async (args?: string[]) => {
 					type: "string",
 					default: await getConfigDir(),
 				},
+				domain: {
+					describe: "Domain to use when announcing Libp2p multiaddress",
+					defaultDescription: "Test domain from public IP",
+					type: "string",
+					default: undefined,
+				},
 			},
 			handler: async (args) => {
-				await startServerWithNode(args.directory);
+				await startServerWithNode(
+					args.directory,
+					args.domain ? args.domain : await createTestDomain()
+				);
 			},
 		})
 		.command("domain", "Setup a domain and certificate", (yargs) => {

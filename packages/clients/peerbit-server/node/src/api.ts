@@ -9,6 +9,7 @@ import { Libp2p } from "libp2p";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./client.js";
+import { createTestDomain } from "./domain.js";
 
 export const SSL_PORT = 9002;
 export const LOCAL_PORT = 8082;
@@ -97,8 +98,11 @@ export const loadOrCreatePassword = async (): Promise<string> => {
 		throw error;
 	}
 };
-export const startServerWithNode = async (directory: string) => {
-	const peer = await create(directory);
+export const startServerWithNode = async (
+	directory: string,
+	domain?: string
+) => {
+	const peer = await create(directory, domain);
 	const server = await startServer(peer);
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
