@@ -59,8 +59,7 @@
 	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",
-		"build": "yarn clean && tsc -p tsconfig.json",
-		"postbuild": "echo '{\"type\":\"module\"} ' | node ../../../node_modules/.bin/json > lib/esm/package.json"
+		"build": "yarn clean && tsc -p tsconfig.json"
 	},
 	"localMaintainers": [
 		"dao.xyz"
