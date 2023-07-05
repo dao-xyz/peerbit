@@ -1384,7 +1384,7 @@ export abstract class DirectStream<
 							}
 
 							const stream = this.peers.get(neighbour);
-							await stream!.waitForWrite(bytes);
+							await stream?.waitForWrite(bytes);
 						}
 						return; // we are done sending the message in all direction with updates 'to' lists
 					}
