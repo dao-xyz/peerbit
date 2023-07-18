@@ -2,7 +2,7 @@ import LazyLevel from "../index.js";
 import assert from "assert";
 import { MemoryLevel } from "memory-level";
 import crypto from "crypto";
-import { waitFor } from "@peerbit/time";
+import { waitFor, waitForResolved } from "@peerbit/time";
 
 export const createStore = (): MemoryLevel => {
 	return new MemoryLevel({ valueEncoding: "view" });
@@ -128,7 +128,7 @@ describe(`LazyLevel - level`, function () {
 			}
 			expect(cache["_tempStore"]?.size).toEqual(100);
 			await cache.idle();
-			expect(cache["_tempStore"]?.size).toEqual(0);
+			await waitForResolved(() => expect(cache["_tempStore"]?.size).toEqual(0));
 			for (let i = 0; i < 100; i++) {
 				expect(await cache.get(String(i))).toBeDefined();
 			}
