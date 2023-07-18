@@ -38,11 +38,8 @@ class SlowBlockStore implements Blocks {
 		await delay(this.lag);
 		return this._store.get(cid, options);
 	}
-	put(
-		value: Uint8Array,
-		options?: PutOptions | undefined
-	): Promise<string> | string {
-		return this._store.put(value, options);
+	put(value: Uint8Array): Promise<string> | string {
+		return this._store.put(value);
 	}
 
 	has(cid: string) {
@@ -59,8 +56,8 @@ class SlowBlockStore implements Blocks {
 	stop(): Promise<void> {
 		return this._store.stop();
 	}
-	get status(): StoreStatus {
-		return this._store.status;
+	status(): StoreStatus {
+		return this._store.status();
 	}
 
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {

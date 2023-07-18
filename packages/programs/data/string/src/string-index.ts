@@ -1,7 +1,7 @@
 import { field, option, variant } from "@dao-xyz/borsh";
 import { BORSH_ENCODING, Change, Log } from "@peerbit/log";
 import { Entry } from "@peerbit/log";
-import { ComposableProgram } from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import { Range } from "./range.js";
 
 @variant(0)
@@ -22,7 +22,7 @@ export class StringOperation {
 export const encoding = BORSH_ENCODING(StringOperation);
 
 @variant("string_index")
-export class StringIndex extends ComposableProgram {
+export class StringIndex extends Program {
 	_string: string;
 	_log: Log<StringOperation>;
 	constructor() {

@@ -19,7 +19,11 @@
 			"packages/transport/libp2p-test-utils",
 			"packages/log",
 			"packages/clients/peerbit",
-			"packages/clients/peerbit-proxy",
+			"packages/clients/peerbit-proxy/interface",
+			"packages/clients/peerbit-proxy/window",
+			"packages/clients/peerbit-proxy/window/test/",
+			"packages/clients/peerbit-proxy/window/test/child",
+			"packages/clients/peerbit-proxy/window/test/parent",
 			"packages/clients/peerbit-server/frontend",
 			"packages/clients/peerbit-server/node",
 			"packages/clients/peerbit-server/test-lib",
@@ -39,14 +43,6 @@
 			"packages/utils/time",
 			"packages/utils/cache",
 			"packages/utils/logger"
-		],
-		"nohoist": [
-			"**/@babel/preset-env",
-			"**/@babel/preset-env/**",
-			"**/babel-loader",
-			"**/babel-loader/**",
-			"**/webpack",
-			"**/webpack/**"
 		]
 	},
 	"engines": {
@@ -60,8 +56,9 @@
 		"build": "lerna run build --reject-cycles",
 		"build-node": "cd ./packages/node/ && yarn build",
 		"pub": "lerna publish --no-private",
-		"test": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.unit.ts ",
-		"test:integration": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.integration.ts --forceExit  --detectOpenHandles",
+		"test": "yarn test:node && yarn test:browser",
+		"test:node": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.ts",
+		"test:browser": "yarn --cwd ./packages/clients/peerbit-proxy/window/test playwright test",
 		"deploy": "yarn deploy:docs && yarn deploy:example",
 		"deploy:docs": "yarn docs && gh-pages --dist docs --dotfiles",
 		"docs": "shx rm -rf docs && NODE_OPTIONS=--max_old_space_size=8192 typedoc && shx cp ./{.nojekyll} docs/",
@@ -97,7 +94,7 @@
 		"ts-node": "^10.9.1",
 		"tslib": "^2.4.1",
 		"typedoc": "^0.24.8",
-		"typescript": "^5.0.4",
+		"typescript": "^5.1.3",
 		"why-is-node-running": "^2.2.2"
 	},
 	"version": "0.0.0"

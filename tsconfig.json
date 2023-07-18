@@ -33,11 +33,5 @@
 		],
 		"skipLibCheck": true
 	},
-	"typedocOptions": {
-		"entryPoints": ".",
-		"entryPointStrategy": "packages",
-		"out": "docs",
-		"readme": "README.md"
-	},
 	"files": ["global.d.ts"]
 }

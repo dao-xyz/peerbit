@@ -3,7 +3,7 @@ import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
-import { transports, relay } from "./transports.js";
+import { transports, relay, listen } from "./transports.js";
 import { identifyService } from "libp2p/identify";
 import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
 
@@ -48,7 +48,7 @@ export const createLibp2pExtended = (
 			minConnections: 0,
 		},
 		addresses: {
-			listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
+			listen: listen(),
 		},
 		transports: transports(),
 		connectionEncryption: [noise()],

@@ -6,7 +6,7 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import { CanAppend, Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
-import { ComposableProgram, Program, ProgramEvents } from "@peerbit/program";
+import { Program, ProgramEvents } from "@peerbit/program";
 import { CanRead } from "@peerbit/rpc";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -60,7 +60,7 @@ export type SetupOptions<T> = {
 } & SharedLogOptions;
 
 @variant("documents")
-export class Documents<T extends Record<string, any>> extends ComposableProgram<
+export class Documents<T extends Record<string, any>> extends Program<
 	SetupOptions<T>,
 	DocumentEvents<T> & ProgramEvents
 > {
@@ -380,7 +380,9 @@ export class Documents<T extends Record<string, any>> extends ComposableProgram<
 							this.log.role instanceof Replicator &&
 							(await this.log.replicator(item.gid)) // TODO types, throw runtime error if replicator is not provided
 						) {
-							await this.node.open(value, { parent: this });
+							await this.node.open(value, {
+								parent: this as Program<any, any>,
+							}); // TODO types
 						}
 					}
 				} else if (

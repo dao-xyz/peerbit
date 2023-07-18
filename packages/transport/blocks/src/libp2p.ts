@@ -108,14 +108,11 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		};
 	}
 
-	async put(
-		bytes: Uint8Array,
-		options?: PutOptions | undefined
-	): Promise<string> {
+	async put(bytes: Uint8Array): Promise<string> {
 		if (!this._localStore) {
 			throw new Error("Local store not set");
 		}
-		return this._localStore!.put(bytes, options);
+		return this._localStore!.put(bytes);
 	}
 
 	async has(cid: string) {
@@ -134,7 +131,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			// try to get it remotelly
 			value = await this._readFromPeers(cid, cidObject, options);
 			if (options?.replicate && value) {
-				this._localStore!.put(value, options);
+				this._localStore!.put(value);
 			}
 		}
 		return value;
@@ -215,7 +212,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 
 	get status() {
 		if (this._open) {
-			return this._localStore?.status || this.started;
+			return this._localStore?.status() || this.started;
 		} else {
 			return "closed";
 		}

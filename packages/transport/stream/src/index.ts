@@ -992,7 +992,7 @@ export abstract class DirectStream<
 		}
 
 		// Ensure the message is valid before processing it
-		const message: Message | undefined = Message.deserialize(msg);
+		const message: Message | undefined = Message.from(msg);
 
 		this.dispatchEvent(
 			new CustomEvent("message", {
@@ -1220,17 +1220,10 @@ export abstract class DirectStream<
 		return true;
 	}
 
-	/**
-	 * Publishes messages to all peers
-	 */
-	async publish(
+	async createMessage(
 		data: Uint8Array | Uint8ArrayList,
 		options?: { to?: (string | PublicSignKey | PeerId)[] | Set<string> }
-	): Promise<Uint8Array> {
-		if (!this.started) {
-			throw new Error("Not started");
-		}
-
+	) {
 		// dispatch the event if we are interested
 		let toHashes: string[];
 		if (options?.to) {
@@ -1259,6 +1252,20 @@ export abstract class DirectStream<
 		if (this.signaturePolicy === "StictSign") {
 			await message.sign(this.sign);
 		}
+		return message;
+	}
+	/**
+	 * Publishes messages to all peers
+	 */
+	async publish(
+		data: Uint8Array | Uint8ArrayList,
+		options?: { to?: (string | PublicSignKey | PeerId)[] | Set<string> }
+	): Promise<Uint8Array> {
+		if (!this.started) {
+			throw new Error("Not started");
+		}
+
+		const message = await this.createMessage(data, options);
 
 		if (this.emitSelf) {
 			super.dispatchEvent(
@@ -1374,7 +1381,7 @@ export abstract class DirectStream<
 					if (fanoutMap.size > 0) {
 						for (const [neighbour, distantPeers] of fanoutMap) {
 							message.to = distantPeers;
-							const bytes = message.serialize();
+							const bytes = message.bytes();
 							if (!sentOnce) {
 								// if relayed = true, we have already added it to seenCache
 								if (!relayed) {
@@ -1406,7 +1413,7 @@ export abstract class DirectStream<
 			return;
 		}
 
-		const bytes = message.serialize();
+		const bytes = message.bytes();
 		let sentOnce = false;
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;

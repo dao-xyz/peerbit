@@ -17,11 +17,11 @@ describe("replicators", () => {
 		const store = new EventStore();
 		const db1 = await session.peers[0].open(store);
 		await session.peers[1].services.pubsub.requestSubscribers(db1.log.topic);
-		await waitForResolved(() =>
+		await waitForResolved(async () =>
 			expect(
-				session.peers[1].services.pubsub
-					.getSubscribers(db1.log.topic)!
-					.has(session.peers[0].identity.publicKey.hashcode())
+				(await session.peers[1].services.pubsub.getSubscribers(
+					db1.log.topic
+				))!.has(session.peers[0].identity.publicKey.hashcode())
 			)
 		);
 

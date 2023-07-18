@@ -8,21 +8,21 @@ import {
 	option,
 } from "@dao-xyz/borsh";
 export abstract class PubSubMessage {
-	abstract serialize(): Uint8Array | Uint8ArrayList;
-	static deserialize(bytes: Uint8Array) {
+	abstract bytes(): Uint8Array | Uint8ArrayList;
+	static from(bytes: Uint8Array) {
 		const first = bytes[0];
 		if (first === 0) {
-			return PubSubData.deserialize(bytes);
+			return PubSubData.from(bytes);
 		}
 		if (first === 1) {
-			return Subscribe.deserialize(bytes);
+			return Subscribe.from(bytes);
 		}
 		if (first === 2) {
-			return Unsubscribe.deserialize(bytes);
+			return Unsubscribe.from(bytes);
 		}
 
 		if (first === 3) {
-			return GetSubscribers.deserialize(bytes);
+			return GetSubscribers.from(bytes);
 		}
 		throw new Error("Unsupported");
 	}
@@ -58,14 +58,14 @@ export class PubSubData extends PubSubMessage {
 
 	_serialized: Uint8ArrayList;
 
-	serialize() {
+	bytes() {
 		if (this._serialized) {
 			return this._serialized;
 		}
 
 		return serialize(this);
 	}
-	static deserialize(bytes: Uint8Array | Uint8ArrayList): PubSubData {
+	static from(bytes: Uint8Array | Uint8ArrayList): PubSubData {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			PubSubData
@@ -103,13 +103,13 @@ export class Subscribe extends PubSubMessage {
 
 	_serialized: Uint8ArrayList;
 
-	serialize() {
+	bytes() {
 		if (this._serialized) {
 			return this._serialized;
 		}
 		return serialize(this);
 	}
-	static deserialize(bytes: Uint8Array | Uint8ArrayList): Subscribe {
+	static from(bytes: Uint8Array | Uint8ArrayList): Subscribe {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			Subscribe
@@ -146,14 +146,14 @@ export class Unsubscribe extends PubSubMessage {
 
 	_serialized: Uint8ArrayList;
 
-	serialize() {
+	bytes() {
 		if (this._serialized) {
 			return this._serialized;
 		}
 		return serialize(this);
 	}
 
-	static deserialize(bytes: Uint8Array | Uint8ArrayList): Unsubscribe {
+	static from(bytes: Uint8Array | Uint8ArrayList): Unsubscribe {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			Unsubscribe
@@ -163,6 +163,7 @@ export class Unsubscribe extends PubSubMessage {
 		}
 		return ret;
 	}
+
 	get topics() {
 		return this.unsubscriptions.map((x) => x.topic);
 	}
@@ -182,14 +183,14 @@ export class GetSubscribers extends PubSubMessage {
 
 	_serialized: Uint8ArrayList;
 
-	serialize() {
+	bytes() {
 		if (this._serialized) {
 			return this._serialized;
 		}
 		return serialize(this);
 	}
 
-	static deserialize(bytes: Uint8Array | Uint8ArrayList): GetSubscribers {
+	static from(bytes: Uint8Array | Uint8ArrayList): GetSubscribers {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
 			GetSubscribers

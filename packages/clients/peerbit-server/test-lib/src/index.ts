@@ -1,11 +1,11 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { Ed25519PublicKey, PublicSignKey } from "@peerbit/crypto";
-import { CanTrust, Program } from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import { DString } from "@peerbit/string";
 import { PeerId } from "@libp2p/interface-peer-id";
 
 @variant("permissioned_string")
-export class PermissionedString extends Program implements CanTrust {
+export class PermissionedString extends Program {
 	@field({ type: DString })
 	_store: DString;
 

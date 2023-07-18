@@ -17,7 +17,7 @@ module.exports = {
 	"plugins": [
 		"@typescript-eslint"
 	],
-	"ignorePatterns": ["**/*.test.ts", "/**/lib/", "/**/frontend/dist", "/**/test-utils/", ".release-please-manifest.json"],
+	"ignorePatterns": ["**/*.test.ts", "/**/lib/", "/**/dist/", "/**/test-utils/", ".release-please-manifest.json"],
 	"rules": {
 		"no-mixed-spaces-and-tabs": "off",
 		"@typescript-eslint/no-explicit-any": "off",

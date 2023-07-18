@@ -52,7 +52,7 @@ export const waitFor = async <T>(
 };
 
 export const waitForResolved = async <T>(
-	fn: () => T,
+	fn: () => T | Promise<T>,
 	options: {
 		timeout: number;
 		delayInterval: number;

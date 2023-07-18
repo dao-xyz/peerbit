@@ -10,6 +10,7 @@ import {
 	GetSubscribers,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
+	DataEvent,
 } from "@peerbit/pubsub-interface";
 import { DirectSub, waitForSubscribers } from "./../index.js";
 import { deserialize } from "@dao-xyz/borsh";
@@ -28,7 +29,7 @@ const createSubscriptionMetrics = (pubsub: DirectSub) => {
 	const onDataMessage = pubsub.onDataMessage.bind(pubsub);
 	pubsub.onDataMessage = async (f, s, message) => {
 		const result = await onDataMessage(f, s, message);
-		const pubsubMessage = PubSubMessage.deserialize(message.data);
+		const pubsubMessage = deserialize(message.data, PubSubMessage);
 		if (pubsubMessage instanceof Subscribe) {
 			m.subscriptions.push(message);
 		} else if (pubsubMessage instanceof Unsubscribe) {
@@ -356,6 +357,39 @@ describe("pubsub", function () {
 					p.push(fn(i));
 				}
 				await Promise.all(p);
+			});
+		});
+
+		describe("emitSelf", () => {
+			beforeEach(async () => {
+				session = await LSession.disconnected(2, {
+					services: {
+						pubsub: (c) =>
+							new DirectSub(c, {
+								emitSelf: true,
+								canRelayMessage: true,
+								connectionManager: { autoDial: false },
+							}),
+					},
+				});
+			});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+
+			it("publish", async () => {
+				const dataMessages: DataEvent[] = [];
+				session.peers[0].services.pubsub.addEventListener("data", (e) => {
+					dataMessages.push(e.detail);
+				});
+				await session.peers[0].services.pubsub.publish(
+					new Uint8Array([1, 2, 3]),
+					{ to: [session.peers[1].peerId] }
+				);
+				expect(dataMessages).toHaveLength(1);
+				expect(dataMessages[0]).toBeInstanceOf(DataEvent);
+				expect(dataMessages[0].data.data).toEqual(new Uint8Array([1, 2, 3]));
 			});
 		});
 	});

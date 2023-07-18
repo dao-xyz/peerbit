@@ -202,24 +202,24 @@ function* getMultiSigDataToSignHistory(
 }
 
 export abstract class Message {
-	static deserialize(bytes: Uint8ArrayList) {
+	static from(bytes: Uint8ArrayList) {
 		if (bytes.get(0) === DATA_VARIANT) {
 			// Data
-			return DataMessage.deserialize(bytes);
+			return DataMessage.from(bytes);
 		} else if (bytes.get(0) === HELLO_VARIANT) {
 			// heartbeat
-			return Hello.deserialize(bytes);
+			return Hello.from(bytes);
 		} else if (bytes.get(0) === GOODBYE_VARIANT) {
 			// heartbeat
-			return Goodbye.deserialize(bytes);
+			return Goodbye.from(bytes);
 		} else if (bytes.get(0) === PING_VARIANT) {
-			return PingPong.deserialize(bytes);
+			return PingPong.from(bytes);
 		}
 
 		throw new Error("Unsupported");
 	}
 
-	abstract serialize(): Uint8ArrayList | Uint8Array;
+	abstract bytes(): Uint8ArrayList | Uint8Array;
 	abstract equals(other: Message): boolean;
 	abstract verify(expectSignatures: boolean): Promise<boolean>;
 }
@@ -331,14 +331,14 @@ export class DataMessage extends Message {
 	}
 
 	/** Manually ser/der for performance gains */
-	serialize() {
+	bytes() {
 		if (this._serialized) {
 			return this._serialized;
 		}
 		return serialize(this);
 	}
 
-	static deserialize(bytes: Uint8ArrayList): DataMessage {
+	static from(bytes: Uint8ArrayList): DataMessage {
 		if (bytes.get(0) !== 0) {
 			throw new Error("Unsupported");
 		}
@@ -410,10 +410,10 @@ export class Hello extends Message {
 		return this.signatures.signatures[0].publicKey;
 	}
 
-	serialize() {
+	bytes() {
 		return serialize(this);
 	}
-	static deserialize(bytes: Uint8ArrayList): Hello {
+	static from(bytes: Uint8ArrayList): Hello {
 		const result = deserialize(bytes.subarray(), Hello);
 		if (result.signatures.signatures.length === 0) {
 			throw new Error("Missing sender on Hello");
@@ -522,10 +522,10 @@ export class Goodbye extends Message {
 		return this.signatures.signatures[0]!.publicKey;
 	}
 
-	serialize() {
+	bytes() {
 		return serialize(this);
 	}
-	static deserialize(bytes: Uint8ArrayList): Goodbye {
+	static from(bytes: Uint8ArrayList): Goodbye {
 		const result = deserialize(bytes.subarray(), Goodbye);
 		if (result.signatures.signatures.length === 0) {
 			throw new Error("Missing sender on Goodbye");
@@ -602,11 +602,11 @@ const PING_VARIANT = 3;
 
 @variant(PING_VARIANT)
 export abstract class PingPong extends Message {
-	static deserialize(bytes: Uint8ArrayList) {
+	static from(bytes: Uint8ArrayList) {
 		return deserialize(bytes.subarray(), PingPong);
 	}
 
-	serialize(): Uint8ArrayList | Uint8Array {
+	bytes(): Uint8ArrayList | Uint8Array {
 		return serialize(this);
 	}
 
@@ -736,7 +736,7 @@ export class NetworkInfo extends Message {
 	serialize() {
 		return serialize(this)
 	}
-	static deserialize(bytes: Uint8ArrayList): NetworkInfo {
+	static from(bytes: Uint8ArrayList): NetworkInfo {
 		return deserialize(bytes.subarray(), NetworkInfo)
 	}
 

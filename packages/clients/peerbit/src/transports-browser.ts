@@ -12,3 +12,5 @@ export const transports = () => [
 ];
 
 export const relay = () => undefined;
+
+export const listen: () => string[] | undefined = () => undefined;

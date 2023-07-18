@@ -1,7 +1,7 @@
 {
 	"name": "@peerbit/proxy",
-	"version": "1.0.13",
-	"description": "Peerbit proxy client",
+	"version": "1.0.12",
+	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
 	"type": "module",
@@ -30,12 +30,11 @@
 		"import": "./lib/esm/index.js"
 	},
 	"dependencies": {
-		"@peerbit/program": "^1.0.6"
+		"@peerbit/program": "^1.0.6",
+		"uuid": "^9.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "1.0.13",
-		"p-each-series": "^3.0.0",
-		"p-map-series": "^3.0.0"
+		"@peerbit/test-utils": "1.0.13"
 	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",

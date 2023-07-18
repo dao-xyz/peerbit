@@ -11,14 +11,15 @@ export type LazyLevelOptions = { batch?: LevelBatchOptions };
 const logger = loggerFn({ module: "cache" });
 
 // TODO make SimpleLevel = AbstractLevel
+type MaybePromise<T> = Promise<T> | T;
 export interface SimpleLevel {
-	get status(): "opening" | "open" | "closing" | "closed";
+	status(): MaybePromise<"opening" | "open" | "closing" | "closed">;
 	close(): Promise<void>;
 	open(): Promise<void>;
 	get(key: string): Promise<Uint8Array | undefined>;
 	put(key: string, value: Uint8Array);
 	del(key): Promise<void>;
-	sublevel(name: string): SimpleLevel;
+	sublevel(name: string): MaybePromise<SimpleLevel>;
 	clear(): Promise<void>;
 	idle?(): Promise<void>;
 }
@@ -49,7 +50,7 @@ export default class LazyLevel implements SimpleLevel {
 		}
 	}
 
-	get status() {
+	status() {
 		return this._store.status;
 	}
 
@@ -89,7 +90,7 @@ export default class LazyLevel implements SimpleLevel {
 		}
 		await Promise.all(this._sublevels.map((l) => l.close()));
 
-		if (this.status !== "closed" && this.status !== "closing") {
+		if (this.status() !== "closed" && this.status() !== "closing") {
 			await this._store.close();
 			return Promise.resolve();
 		}
@@ -142,7 +143,7 @@ export default class LazyLevel implements SimpleLevel {
 			}, this._opts.batch.interval);
 		}
 
-		if (this.status !== "open") {
+		if (this.status() !== "open") {
 			await this._store.open();
 			return Promise.resolve();
 		}
@@ -193,12 +194,15 @@ export default class LazyLevel implements SimpleLevel {
 		return ret;
 	}
 
-	async clear(): Promise<void> {
+	async clear(clearStore = true): Promise<void> {
 		this._txQueue = [];
 		await this.idle();
 		this._tempStore?.clear();
 		this._tempDeleted?.clear();
-		return this._store.clear();
+		if (clearStore) {
+			await this._store.clear(); // will also clear sublevels
+		}
+		await Promise.all(this._sublevels.map((x) => x.clear(false))); // so we pass false flag here
 	}
 
 	async deleteByPrefix(prefix: string): Promise<void> {
@@ -270,8 +274,11 @@ export default class LazyLevel implements SimpleLevel {
 		}
 	}
 
-	sublevel(name: string) {
+	async sublevel(name: string) {
 		const l = new LazyLevel(this._store.sublevel(name), this._opts);
+		if (this.status() === "open" || this.status() === "opening") {
+			await l.open();
+		}
 		this._sublevels.push(l);
 		return l;
 	}

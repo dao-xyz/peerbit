@@ -1,5 +1,5 @@
 import { PublicSignKey } from "@peerbit/crypto";
-import { PubSubData, Subscription } from "./messages";
+import { PubSubData, Subscription } from "./messages.js";
 import {
 	Message,
 	DataMessage,
@@ -8,21 +8,63 @@ import {
 } from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interfaces/events";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface-peer-id";
+import { field, option, vec } from "@dao-xyz/borsh";
 
-interface From {
+export class SubscriptionEvent {
+	@field({ type: PublicSignKey })
 	from: PublicSignKey;
-}
 
-export interface SubscriptionEvent extends From {
+	@field({ type: vec(Subscription) })
 	subscriptions: Subscription[];
+
+	constructor(from: PublicSignKey, subscriptions: Subscription[]) {
+		this.from = from;
+		this.subscriptions = subscriptions;
+	}
 }
 
-export interface UnsubcriptionEvent extends From {
+export class UnsubcriptionEvent {
+	@field({ type: PublicSignKey })
+	from: PublicSignKey;
+
+	@field({ type: vec(Subscription) })
 	unsubscriptions: Subscription[];
+
+	constructor(from: PublicSignKey, unsubscriptions: Subscription[]) {
+		this.from = from;
+		this.unsubscriptions = unsubscriptions;
+	}
+}
+
+export class DataEvent {
+	@field({ type: PubSubData })
+	data: PubSubData;
+
+	@field({ type: DataMessage })
+	message: DataMessage;
+	constructor(data: PubSubData, message: DataMessage) {
+		this.data = data;
+		this.message = message;
+	}
+}
+
+export class SubscriptionData {
+	@field({ type: "u64" })
+	timestamp: bigint;
+
+	@field({
+		type: option(Uint8Array),
+	})
+	data?: Uint8Array;
+
+	constructor(properties: { timestamp: bigint; data?: Uint8Array }) {
+		this.timestamp = properties.timestamp;
+		this.data = properties.data;
+	}
 }
 
 export interface PubSubEvents extends PeerEvents {
-	data: CustomEvent<{ data: PubSubData; message: DataMessage }>;
+	data: CustomEvent<DataEvent>;
 	subscribe: CustomEvent<SubscriptionEvent>;
 	unsubscribe: CustomEvent<UnsubcriptionEvent>;
 	message: CustomEvent<Message>;
@@ -32,15 +74,16 @@ export interface IEventEmitter<EventMap extends Record<string, any>> {
 		type: K,
 		listener: EventHandler<EventMap[K]> | null,
 		options?: boolean | AddEventListenerOptions
-	): void;
+	): MaybePromise<void>;
 	removeEventListener<K extends keyof EventMap>(
 		type: K,
 		listener?: EventHandler<EventMap[K]> | null,
 		options?: boolean | EventListenerOptions
-	): void;
-	dispatchEvent(event: Event): boolean;
+	): MaybePromise<void>;
+	dispatchEvent(event: Event): MaybePromise<boolean>;
 }
 
+type MaybePromise<T> = Promise<T> | T;
 export type PublishOptions =
 	| {
 			topics?: string[];
@@ -54,15 +97,11 @@ export type PublishOptions =
 	  };
 
 export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
-	getSubscribers(topic: string):
-		| Map<
-				string,
-				{
-					timestamp: bigint;
-					data?: Uint8Array;
-				}
-		  >
-		| undefined;
+	emitSelf: boolean;
+
+	getSubscribers(
+		topic: string
+	): MaybePromise<Map<string, SubscriptionData> | undefined>;
 
 	requestSubscribers(topic: string, from?: PublicSignKey): Promise<void>;
 
@@ -76,8 +115,8 @@ export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
 	unsubscribe(
 		topic: string,
 		options?: {
-			force: boolean;
-			data: Uint8Array;
+			force?: boolean;
+			data?: Uint8Array;
 		}
 	): Promise<boolean>;
 

@@ -1312,7 +1312,7 @@ describe("index", () => {
 					const iterator = stores[fromStoreIndex].docs.index.iterate(req);
 
 					if (batches.length === 0) {
-						// No fetches has been made, so we don't know whether we are done yetß
+						// No fetches has been made, so we don't know whether we are done yet
 						expect(iterator.done()).toBeFalse();
 					} else {
 						for (const batch of batches) {

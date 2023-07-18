@@ -136,7 +136,7 @@ export class Log<T> {
 		this._sortFn = NoZeroes(sortFn);
 		this._storage = store;
 		this._memory = cache;
-		if (this._memory && this._memory.status !== "open") {
+		if (this._memory && (await this._memory.status()) !== "open") {
 			await this._memory.open();
 		}
 

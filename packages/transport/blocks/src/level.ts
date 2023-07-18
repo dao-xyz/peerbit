@@ -60,7 +60,7 @@ export class LevelBlockStore implements Blocks {
 		}
 	}
 
-	async put(bytes: Uint8Array, options?: PutOptions): Promise<string> {
+	async put(bytes: Uint8Array): Promise<string> {
 		const block = await createBlock(bytes, "raw");
 		const cid = stringifyCid(block.cid);
 		const bbytes = block.bytes;
@@ -81,7 +81,7 @@ export class LevelBlockStore implements Blocks {
 		await this._level.open();
 
 		try {
-			this._opening = waitFor(() => this._level.status === "open", {
+			this._opening = waitFor(() => this._level.status() === "open", {
 				delayInterval: 100,
 				timeout: 10 * 1000,
 				stopperCallback: (fn) => {
@@ -105,11 +105,11 @@ export class LevelBlockStore implements Blocks {
 		await this._level.idle();
 	}
 
-	get status() {
-		return this._level.status;
+	status() {
+		return this._level.status();
 	}
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
-		return; // Offline storage // TODO ßthis feels off resolving
+		return; // Offline storage // TODO this feels off resolving
 	}
 }
 

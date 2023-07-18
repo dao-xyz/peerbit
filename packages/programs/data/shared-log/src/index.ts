@@ -7,12 +7,7 @@ import {
 	LogEvents,
 	LogProperties,
 } from "@peerbit/log";
-import {
-	AbstractProgram,
-	Address,
-	ComposableProgram,
-	ProgramInitializationOptions,
-} from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import {
 	BinaryReader,
 	BinaryWriter,
@@ -24,7 +19,6 @@ import {
 } from "@dao-xyz/borsh";
 import {
 	AccessError,
-	getKeypairFromPeerId,
 	getPublicKeyFromPeerId,
 	sha256,
 	sha256Base64Sync,
@@ -78,8 +72,9 @@ export interface SharedLogOptions {
 export const DEFAULT_MIN_REPLICAS = 2;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
+
 @variant("shared_log")
-export class SharedLog<T> extends ComposableProgram<Args<T>> {
+export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 	@field({ type: Log })
 	log: Log<T>;
 
@@ -142,13 +137,13 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		this._sortedPeersCache = [];
 		this._gidPeersHistory = new Map();
 
-		this.node.services.pubsub.addEventListener(
+		await this.node.services.pubsub.addEventListener(
 			"subscribe",
 			this._onSubscriptionFn
 		);
 
 		this._onUnsubscriptionFn = this._onUnsubscription.bind(this);
-		this.node.services.pubsub.addEventListener(
+		await this.node.services.pubsub.addEventListener(
 			"unsubscribe",
 			this._onUnsubscriptionFn
 		);
@@ -190,13 +185,15 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		}
 
 		// Take into account existing subscription
-		this.node.services.pubsub.getSubscribers(this.topic)?.forEach((v, k) => {
-			this.handleSubscriptionChange(
-				k,
-				[{ topic: this.topic, data: v.data }],
-				true
-			);
-		});
+		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
+			(v, k) => {
+				this.handleSubscriptionChange(
+					k,
+					[{ topic: this.topic, data: v.data }],
+					true
+				);
+			}
+		);
 
 		// Open for communcation
 		await this.rpc.open({
@@ -227,7 +224,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 			this._onUnsubscriptionFn
 		);
 	}
-	async close(from?: AbstractProgram): Promise<boolean> {
+	async close(from?: Program): Promise<boolean> {
 		const superClosed = await super.close(from);
 		if (!superClosed) {
 			return superClosed;
@@ -237,7 +234,7 @@ export class SharedLog<T> extends ComposableProgram<Args<T>> {
 		return true;
 	}
 
-	async drop(from?: AbstractProgram): Promise<boolean> {
+	async drop(from?: Program): Promise<boolean> {
 		const superDropped = await super.drop(from);
 		if (!superDropped) {
 			return superDropped;
