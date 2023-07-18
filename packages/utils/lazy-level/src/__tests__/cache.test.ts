@@ -124,7 +124,7 @@ describe(`LazyLevel - level`, function () {
 
 		it("put many", async () => {
 			for (let i = 0; i < 100; i++) {
-				cache.put(String(i), crypto.randomBytes(8));
+				await cache.put(String(i), crypto.randomBytes(8));
 			}
 			expect(cache["_tempStore"]?.size).toEqual(100);
 			await cache.idle();
