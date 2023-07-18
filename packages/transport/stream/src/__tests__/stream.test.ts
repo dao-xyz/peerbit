@@ -478,7 +478,7 @@ describe("streams", function () {
 						metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!,
 						metrics[1].stream.peers.get(metrics[2].stream.publicKeyHash)!,
 					]);
-					const msgId = await getMsgId(msg.serialize());
+					const msgId = await getMsgId(msg.bytes());
 					await waitForResolved(() =>
 						expect(metrics[2].seen.get(msgId)).toEqual(1)
 					);
@@ -499,7 +499,7 @@ describe("streams", function () {
 					await msg.sign(metrics[1].stream.sign);
 					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg);
 					await delay(1000);
-					const msgId = await getMsgId(msg.serialize());
+					const msgId = await getMsgId(msg.bytes());
 					expect(metrics[0].seen.get(msgId)).toBeUndefined();
 					expect(metrics[1].seen.get(msgId)).toBeUndefined();
 					expect(metrics[2].seen.get(msgId)).toEqual(1);
@@ -521,7 +521,7 @@ describe("streams", function () {
 					});
 					await msg.sign(metrics[1].stream.sign);
 					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg);
-					const msgId = await getMsgId(msg.serialize());
+					const msgId = await getMsgId(msg.bytes());
 					await delay(1000);
 					expect(metrics[0].seen.get(msgId)).toBeUndefined();
 					expect(metrics[1].seen.get(msgId)).toBeUndefined();
@@ -638,7 +638,7 @@ describe("streams", function () {
 
 					const id1 = await getMsgId(serialize(metrics[3].recieved[0]));
 
-					await delay(3000); // Wait some extra time if additional messages are propagating throughß
+					await delay(3000); // Wait some extra time if additional messages are propagating through
 
 					expect(metrics[3].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
 					expect(metrics[4].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
