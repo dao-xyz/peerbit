@@ -19,6 +19,12 @@
     * @peerbit/cache bumped from ^1.0.0 to ^1.0.1
     * @peerbit/uint8arrays bumped from 3.0.0 to 3.0.1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from ^1.0.1 to ^1.0.2
+
 ## 1.0.0 (2023-06-28)
 
 

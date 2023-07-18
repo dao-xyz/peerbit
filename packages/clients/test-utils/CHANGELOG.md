@@ -79,6 +79,23 @@
   * dependencies
     * peerbit bumped from 1.1.4 to 1.1.5
 
+## [1.0.14](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.13...test-utils-v1.0.14) (2023-07-18)
+
+
+### Bug Fixes
+
+* update for async getSubscribers ([d7312a8](https://github.com/dao-xyz/peerbit/commit/d7312a8db294bb23d00fa4a0755ff9235541aef1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.1 to 1.0.2
+    * peerbit bumped from 1.1.6 to 1.1.7
+  * devDependencies
+    * @peerbit/time bumped from 1.0.1 to 1.0.2
+
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.12...test-utils-v1.0.13) (2023-07-04)
 
 

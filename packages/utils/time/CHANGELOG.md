@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/time-v1.0.1...time-v1.0.2) (2023-07-18)
+
+
+### Bug Fixes
+
+* types ([026e1f6](https://github.com/dao-xyz/peerbit/commit/026e1f6388cc60f8ced7a8e29e13872244a8f54e))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/time-v1.0.0...time-v1.0.1) (2023-07-04)
 
 

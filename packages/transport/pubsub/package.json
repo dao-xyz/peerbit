@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub",
-	"version": "1.0.5",
+	"version": "1.0.6",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"sideEffects": false,
@@ -49,10 +49,10 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "1.0.1"
+		"@peerbit/libp2p-test-utils": "1.0.2"
 	},
 	"dependencies": {
-		"@peerbit/stream": "1.0.5",
+		"@peerbit/stream": "1.0.6",
 		"@peerbit/logger": "1.0.1",
 		"@peerbit/uint8arrays": "3.0.1",
 		"@libp2p/interfaces": "^3.3.2",

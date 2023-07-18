@@ -99,6 +99,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.9...shared-log-v2.0.0) (2023-07-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove ComposableProgram type
+
+### Features
+
+* remove ComposableProgram type ([4ccf6c2](https://github.com/dao-xyz/peerbit/commit/4ccf6c2ce07d7edfe1608e9bd5adfa03cf587dd4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 1.0.6 to 2.0.0
+    * @peerbit/log bumped from 1.0.13 to 1.0.14
+    * @peerbit/rpc bumped from 1.0.14 to 2.0.0
+    * @peerbit/time bumped from 1.0.1 to 1.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.13 to ^1.0.14
+
 ## [1.1.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.8...shared-log-v1.1.9) (2023-07-04)
 
 

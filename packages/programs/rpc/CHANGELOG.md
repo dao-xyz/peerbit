@@ -91,6 +91,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/rpc-v1.0.14...rpc-v2.0.0) (2023-07-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove ComposableProgram type
+
+### Features
+
+* remove ComposableProgram type ([4ccf6c2](https://github.com/dao-xyz/peerbit/commit/4ccf6c2ce07d7edfe1608e9bd5adfa03cf587dd4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
+    * @peerbit/program bumped from 1.0.6 to 2.0.0
+    * @peerbit/time bumped from 1.0.1 to 1.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.13 to ^1.0.14
+
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/rpc-v1.0.13...rpc-v1.0.14) (2023-07-04)
 
 
