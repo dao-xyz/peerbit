@@ -1,0 +1,49 @@
+{
+	"name": "@peerbit/proxy-window",
+	"version": "1.0.0",
+	"description": "Peerbit proxy host/server",
+	"author": "dao.xyz",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"dependencies": {
+		"@peerbit/proxy": "^1.0.12"
+	},
+	"devDependencies": {
+		"@peerbit/test-utils": "1.0.13"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"keywords": [
+		"peerbit",
+		"iframe"
+	]
+}

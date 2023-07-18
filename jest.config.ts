@@ -23,8 +23,8 @@ const jestConfig: JestConfigWithTsJest = {
 	// forceExit: true,
 	/*  useESM: true, */
 	testRegex: [
-		"[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
-		"[A-Za-z0-9-/]+(\\.integration)?\\.(test|spec)\\.ts$",
+		"[A-Za-z0-9-/]+(\\.integration)?\\.(?<!browser\\.)(test|spec)\\.ts$",
+		"[A-Za-z0-9-/]+(\\.integration)?\\.(?<!browser\\.)(test|spec)\\.ts$",
 	],
 	moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
 	testTimeout: 60000,
