@@ -58,7 +58,7 @@
 		"pub": "lerna publish --no-private",
 		"test": "yarn test:node && yarn test:browser",
 		"test:node": "node --experimental-vm-modules ./node_modules/.bin/jest test -c jest.config.ts",
-		"test:browser": "yarn --cwd ./packages/clients/peerbit-proxy/iframe/test playwright test",
+		"test:browser": "yarn --cwd ./packages/clients/peerbit-proxy/window/test playwright test",
 		"deploy": "yarn deploy:docs && yarn deploy:example",
 		"deploy:docs": "yarn docs && gh-pages --dist docs --dotfiles",
 		"docs": "shx rm -rf docs && NODE_OPTIONS=--max_old_space_size=8192 typedoc && shx cp ./{.nojekyll} docs/",
