@@ -38,12 +38,11 @@ export const App = () => {
 				dbRef.current = x;
 				console.log(queryParameters.get("read"));
 				if (queryParameters.get("read") !== "true") {
-					x.append(randomBytes(32), { nexts: [] });
+					setTimeout(() => {
+						// FIX make sure this works without timeout in the test
+						x.append(randomBytes(32), { nexts: [] });
+					}, 1000);
 				}
-				/* setTimeout(() => {
-					x.append(randomBytes(32));
-
-				}, 1000); */
 			});
 	}, []);
 	return (
