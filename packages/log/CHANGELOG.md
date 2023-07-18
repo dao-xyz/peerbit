@@ -91,6 +91,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+## [1.0.14](https://github.com/dao-xyz/peerbit/compare/log-v1.0.13...log-v1.0.14) (2023-07-18)
+
+
+### Bug Fixes
+
+* update for SimpleLevel functional status ([1a1893a](https://github.com/dao-xyz/peerbit/commit/1a1893af2001e27bb6613c20c5ceada5fe0d7427))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.0.1 to 1.0.2
+    * @peerbit/blocks-interface bumped from ^1.0.4 to ^1.0.5
+    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.13 to 1.0.14
+
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/log-v1.0.12...log-v1.0.13) (2023-07-04)
 
 

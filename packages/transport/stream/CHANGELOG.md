@@ -14,6 +14,25 @@
     * @peerbit/crypto bumped from 1.0.1 to 1.0.2
     * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.5...stream-v1.0.6) (2023-07-18)
+
+
+### Bug Fixes
+
+* correctly ignore undefined stream ([b297c19](https://github.com/dao-xyz/peerbit/commit/b297c190dde46617a158e8bd5bb182ac5dbe71af))
+* refactor ([751a3f3](https://github.com/dao-xyz/peerbit/commit/751a3f365f405b332a227203f65d4b3e278ca49d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.0.1 to 1.0.2
+    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
+    * @peerbit/stream-interface bumped from ^1.0.4 to ^1.0.5
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.1 to 1.0.2
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.4...stream-v1.0.5) (2023-07-04)
 
 

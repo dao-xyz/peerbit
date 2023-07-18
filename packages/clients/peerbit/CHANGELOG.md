@@ -32,6 +32,24 @@
   * dependencies
     * @peerbit/program bumped from 1.0.4 to 1.0.5
 
+## [1.1.7](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.6...peerbit-v1.1.7) (2023-07-18)
+
+
+### Bug Fixes
+
+* update for SimpleLevel functional status ([1a1893a](https://github.com/dao-xyz/peerbit/commit/1a1893af2001e27bb6613c20c5ceada5fe0d7427))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.0.1 to 1.0.2
+    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
+    * @peerbit/program bumped from 1.0.6 to 2.0.0
+    * @peerbit/pubsub bumped from ^1.0.5 to ^1.0.6
+    * @peerbit/blocks bumped from ^1.0.5 to ^1.0.6
+
 ## [1.1.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.5...peerbit-v1.1.6) (2023-07-04)
 
 
