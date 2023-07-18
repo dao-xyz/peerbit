@@ -5,5 +5,5 @@ coverage
 **/.svn
 **/.hg
 **/node_modules
-**/frontend/dist
+**/dist
 .release-please-manifest.json
