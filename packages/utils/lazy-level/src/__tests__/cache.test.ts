@@ -204,13 +204,17 @@ describe(`LazyLevel - level`, function () {
 			level = new LazyLevel(createStore());
 			await level.open();
 			await level.put("a", new Uint8Array([1]));
-			const sublevel = level.sublevel("sublevel");
-			await sublevel.open();
+			const sublevel = await level.sublevel("sublevel");
 			await sublevel.put("a", new Uint8Array([2]));
 			expect(await level.get("a")).toEqual(new Uint8Array([1]));
 			expect(await sublevel.get("a")).toEqual(new Uint8Array([2]));
-			await sublevel.clear();
-			expect(await level.get("a")).toEqual(new Uint8Array([1]));
+			expect(new Uint8Array((await level.get("a"))!)).toEqual(
+				new Uint8Array([1])
+			);
+			await level.clear();
+			expect(await sublevel.get("a")).toBeUndefined();
+			await sublevel.idle();
+			sublevel["_tempStore"]!.clear();
 			expect(await sublevel.get("a")).toBeUndefined();
 		});
 	});
