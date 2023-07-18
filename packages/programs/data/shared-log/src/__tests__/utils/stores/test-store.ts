@@ -1,6 +1,6 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
-import { CanTrust, Program } from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import { EventStore } from "./event-store";
 import type { PeerId } from "@libp2p/interface-peer-id";
 import { Ed25519PublicKey } from "@peerbit/crypto";
@@ -14,10 +14,7 @@ export type SetupOptions = {
 };
 
 @variant("permissioned_program")
-export class PermissionedEventStore
-	extends Program<SetupOptions>
-	implements CanTrust
-{
+export class PermissionedEventStore extends Program<SetupOptions> {
 	@field({ type: EventStore })
 	_store: EventStore<string>;
 

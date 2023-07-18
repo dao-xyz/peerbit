@@ -6,7 +6,7 @@ import {
 	deserialize,
 	serialize,
 } from "@dao-xyz/borsh";
-import { AbstractProgram, ComposableProgram, Program, ProgramClient } from "..";
+import { Program, ProgramClient, ProgramHandler } from "../program.js";
 import { getValuesWithType } from "../utils.js";
 import {
 	Ed25519Keypair,
@@ -21,12 +21,13 @@ import {
 	Unsubscription,
 } from "@peerbit/pubsub-interface";
 import { CustomEvent } from "@libp2p/interfaces/events";
+import { createPeer } from "./utils.js";
 
 @variant(0)
 class Log {}
 
 @variant("x1")
-class P1 extends ComposableProgram {
+class P1 extends Program {
 	@field({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -87,7 +88,7 @@ class P3 extends Program {
 		this.node.services.pubsub.subscribe(P3.TOPIC);
 	}
 
-	async close(from?: AbstractProgram | undefined): Promise<boolean> {
+	async close(from?: Program | undefined): Promise<boolean> {
 		this.node.services.pubsub.unsubscribe(P3.TOPIC);
 		return super.close(from);
 	}
@@ -125,159 +126,6 @@ describe("getValuesWithType", () => {
 		expect(stores).toEqual([log]);
 	});
 });
-
-const createPeer = async (
-	state: {
-		subsribers: Map<
-			string,
-			Map<
-				string,
-				{
-					timestamp: bigint;
-					data?: Uint8Array | undefined;
-				}
-			>
-		>;
-		pubsubEventHandlers: Map<string, { fn: any; publicKey: PublicSignKey }[]>;
-		peers: Map<string, ProgramClient>;
-	} = {
-		pubsubEventHandlers: new Map(),
-		subsribers: new Map(),
-		peers: new Map(),
-	}
-): Promise<ProgramClient> => {
-	const keypair = await Ed25519Keypair.create();
-	let blocks: Map<string, Uint8Array> = new Map();
-
-	const dispatchEvent = (e: CustomEvent<any>, emitSelf: boolean = false) => {
-		const handlers = state.pubsubEventHandlers.get(e.type);
-		if (handlers) {
-			handlers.forEach(({ fn, publicKey }) => {
-				if (!publicKey.equals(keypair.publicKey) || emitSelf) {
-					fn(e);
-				}
-			});
-			return true;
-		}
-		return false;
-	};
-	const peer: ProgramClient = {
-		peerId: await keypair.toPeerId(),
-		identity: keypair,
-		getMultiaddrs: () => [],
-		dial: () => Promise.resolve(false),
-		services: {
-			blocks: {
-				get: (c) => blocks.get(c),
-				has: (c) => blocks.has(c),
-				put: (c) => {
-					const hash = sha256Base64Sync(c);
-					blocks.set(hash, c);
-					return hash;
-				},
-				rm: (c) => {
-					blocks.delete(c);
-				},
-				waitFor: () => Promise.resolve(),
-			},
-			pubsub: {
-				subscribe: async (topic, opts) => {
-					let map = state.subsribers.get(topic);
-					if (!map) {
-						map = new Map();
-						state.subsribers.set(topic, map);
-					}
-					map.set(keypair.publicKey.hashcode(), {
-						timestamp: BigInt(+new Date()),
-						data: opts?.data,
-					});
-					dispatchEvent(
-						new CustomEvent<SubscriptionEvent>("subscribe", {
-							detail: {
-								from: keypair.publicKey,
-								subscriptions: [new Subscription(topic, opts?.data)],
-							},
-						})
-					);
-				},
-				getSubscribers: (topic) => {
-					return state.subsribers.get(topic);
-				},
-
-				unsubscribe: async (topic) => {
-					let map = state.subsribers.get(topic);
-					if (!map) {
-						return false;
-					}
-					const ret = map.delete(keypair.publicKey.hashcode());
-					if (ret) {
-						dispatchEvent(
-							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-								detail: {
-									from: keypair.publicKey,
-									unsubscriptions: [new Unsubscription(topic)],
-								},
-							})
-						);
-					}
-					return ret;
-				},
-
-				publish: (d, o) => Promise.resolve(randomBytes(32)),
-
-				addEventListener: (type, fn) => {
-					const arr = state.pubsubEventHandlers.get(type) || [];
-					arr.push({ fn, publicKey: keypair.publicKey });
-					state.pubsubEventHandlers.set(type, arr);
-				},
-
-				removeEventListener: (type, e) => {
-					let fns = state.pubsubEventHandlers.get(type);
-					const idx = fns?.findIndex((x) => x.fn == e);
-					if (idx == null || idx < 0) {
-						throw new Error("Missing handler");
-					}
-					fns?.splice(idx, 1);
-				},
-				dispatchEvent,
-
-				requestSubscribers: async () => {
-					for (const [topic, data] of state.subsribers) {
-						for (const [hash, opts] of data) {
-							if (hash !== keypair.publicKey.hashcode()) {
-								dispatchEvent(
-									new CustomEvent<SubscriptionEvent>("subscribe", {
-										detail: {
-											from: state.peers.get(hash)?.identity.publicKey!,
-											subscriptions: [new Subscription(topic, opts?.data)],
-										},
-									}),
-									true
-								);
-							}
-						}
-					}
-				},
-				waitFor: () => Promise.resolve(),
-			},
-		},
-		memory: undefined,
-		keychain: undefined,
-		start: () => Promise.resolve(),
-		stop: () => Promise.resolve(),
-		open: async (p, o) => {
-			if (typeof p === "string") {
-				throw new Error("Unsupported");
-			}
-			await p.beforeOpen(peer, o);
-			await p.open(o?.args);
-			await p.afterOpen();
-			return p;
-		},
-	};
-	state.peers.set(peer.identity.publicKey.hashcode(), peer);
-	return peer;
-};
 
 describe("program", () => {
 	describe("lifecycle", () => {
@@ -336,8 +184,8 @@ describe("program", () => {
 				);
 
 				// Remove NoVariant for globals to prevent sideeffects
-				const idx = Program.prototype[1001].findIndex((x) => x == NoVariant);
-				(Program.prototype[1001] as Array<() => void>).splice(idx, 1);
+				const idx = Program.prototype[1000].findIndex((x) => x == NoVariant);
+				(Program.prototype[1000] as Array<() => void>).splice(idx, 1);
 			});
 
 			it("static", async () => {

@@ -16,17 +16,18 @@ import {
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
-import { AbstractProgram, Address } from "@peerbit/program";
+import { Address } from "@peerbit/program";
 import {
+	DataEvent,
 	PubSubData,
 	PublishOptions as PubSubPublishOptions,
 } from "@peerbit/pubsub-interface";
-import { ComposableProgram } from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import { DataMessage } from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
 import { waitFor } from "@peerbit/time";
 
-export type SearchContext = (() => Address) | AbstractProgram;
+export type SearchContext = (() => Address) | Program;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
 
 export type RPCSetupOptions<Q, R> = {
@@ -57,7 +58,7 @@ const createValueResolver = <T>(
 };
 
 @variant("rpc")
-export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
+export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	canRead: CanRead;
 
 	private _subscribed = false;
@@ -93,7 +94,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		await this._subscribe();
 	}
 
-	private async _close(from?: AbstractProgram): Promise<void> {
+	private async _close(from?: Program): Promise<void> {
 		if (this._subscribed) {
 			await this.node.services.pubsub.unsubscribe(this.rpcTopic);
 			await this.node.services.pubsub.removeEventListener(
@@ -103,7 +104,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 			this._subscribed = false;
 		}
 	}
-	public async close(from?: AbstractProgram): Promise<boolean> {
+	public async close(from?: Program): Promise<boolean> {
 		const superClosed = await super.close(from);
 		if (!superClosed) {
 			return false;
@@ -112,7 +113,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		return true;
 	}
 
-	public async drop(from?: AbstractProgram): Promise<boolean> {
+	public async drop(from?: Program): Promise<boolean> {
 		const superDropped = await super.drop(from);
 		if (!superDropped) {
 			return false;
@@ -132,7 +133,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		this._subscribing = this.node.services.pubsub
 			.subscribe(this.rpcTopic, { data: this._subscriptionMetaData })
 			.then(() => {
-				this.node.services.pubsub.addEventListener(
+				return this.node.services.pubsub.addEventListener(
 					"data",
 					this._onMessageBinded!
 				);
@@ -144,9 +145,7 @@ export class RPC<Q, R> extends ComposableProgram<RPCSetupOptions<Q, R>> {
 		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 	}
 
-	async _onMessage(
-		evt: CustomEvent<{ data: PubSubData; message: DataMessage }>
-	): Promise<void> {
+	async _onMessage(evt: CustomEvent<DataEvent>): Promise<void> {
 		const { data, message } = evt.detail;
 
 		if (data?.topics.find((x) => x === this.rpcTopic) != null) {

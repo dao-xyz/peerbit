@@ -2,7 +2,7 @@ import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
 import { BORSH_ENCODING, Encoding } from "@peerbit/log";
 import { equals } from "@peerbit/uint8arrays";
-import { ComposableProgram } from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import {
 	IntegerCompare,
 	ByteMatchQuery,
@@ -268,7 +268,7 @@ export type OpenOptions<T> = {
 };
 
 @variant("documents_index")
-export class DocumentIndex<T> extends ComposableProgram<OpenOptions<T>> {
+export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	@field({ type: RPC })
 	_query: RPC<AbstractSearchRequest, Results<T>>;
 

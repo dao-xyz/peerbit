@@ -4,13 +4,10 @@ import { PubSub } from "@peerbit/pubsub-interface";
 import { Ed25519PublicKey, Identity, Keychain } from "@peerbit/crypto";
 import type { SimpleLevel } from "@peerbit/lazy-level";
 import { Multiaddr } from "@multiformats/multiaddr";
-import { Address } from "./address";
+import { Address } from "./address.js";
+import { CanOpen, Manageable, OpenOptions } from "./handler.js";
 
-export type WithArgs<Args> = { args?: Args };
-export type WithParent<T> = { parent?: T };
-export type CanOpen<Args> = { open(args?: Args): Promise<void> };
-
-export interface Client<T extends P, P> {
+export interface Client<T extends Manageable<any>> {
 	peerId: Libp2pPeerId;
 	identity: Identity<Ed25519PublicKey>;
 	getMultiaddrs: () => Multiaddr[];
@@ -19,12 +16,12 @@ export interface Client<T extends P, P> {
 		pubsub: PubSub;
 		blocks: Blocks;
 	};
-	memory?: SimpleLevel;
-	keychain?: Keychain;
+	memory: SimpleLevel;
+	keychain: Keychain;
 	start(): Promise<void>;
 	stop(): Promise<void>;
-	open<TExt extends T & CanOpen<Args>, Args = any>(
-		program: TExt | Address,
-		options?: WithArgs<Args> & WithParent<P>
-	): Promise<TExt>;
+	open<S extends T & CanOpen<Args>, Args = any>(
+		program: S | Address,
+		options?: OpenOptions<Args, S>
+	): Promise<S>;
 }
