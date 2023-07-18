@@ -1,5 +1,11 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 1.0.1 to 1.0.2
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/cache-v1.0.0...cache-v1.0.1) (2023-07-04)
 
 

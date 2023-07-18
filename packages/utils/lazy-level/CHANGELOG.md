@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.1...lazy-level-v1.0.2) (2023-07-18)
+
+
+### Bug Fixes
+
+* make SimpleLevel API promise compatible ([b08d954](https://github.com/dao-xyz/peerbit/commit/b08d954a4c6ef80f45d7e3ab02fe106a63683841))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/time bumped from 1.0.1 to 1.0.2
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.0...lazy-level-v1.0.1) (2023-07-04)
 
 
