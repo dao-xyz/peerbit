@@ -123,7 +123,7 @@ describe(`head-cache`, function () {
 		expect(log.values.length).toEqual(1);
 
 		await log.close();
-		expect(level.status).toEqual("closed");
+		expect(await level.status()).toEqual("closed");
 	});
 
 	it("loads when missing cache", async () => {

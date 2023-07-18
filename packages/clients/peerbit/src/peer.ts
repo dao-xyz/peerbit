@@ -12,10 +12,9 @@ import {
 import {
 	Program,
 	Address,
-	ProgramInitializationOptions,
 	ProgramClient,
+	ProgramHandler,
 } from "@peerbit/program";
-import { logger as loggerFn } from "@peerbit/logger";
 import { DirectSub } from "@peerbit/pubsub";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
@@ -31,7 +30,8 @@ import {
 import { DirectBlock } from "@peerbit/blocks";
 import { LevelDatastore } from "datastore-level";
 import { BinaryWriter } from "@dao-xyz/borsh";
-import PQueue from "p-queue";
+import { logger as loggerFn } from "@peerbit/logger";
+import { OpenOptions } from "@peerbit/program";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -53,13 +53,6 @@ export type CreateInstanceOptions = {
 	directory?: string;
 	cache?: LazyLevel;
 } & OptionalCreateOptions;
-type ProgramMergeStrategy = "replace" | "reject" | "reuse";
-export type OpenOptions<Args> = {
-	timeout?: number;
-	existing?: ProgramMergeStrategy;
-	/* 
-	reset?: boolean; */
-} & ProgramInitializationOptions<Args>;
 
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 	!!(libp2p as Libp2p).getMultiaddrs;
@@ -90,8 +83,6 @@ export class Peerbit implements ProgramClient {
 
 	directory?: string;
 
-	/// program address => Program metadata
-	programs: Map<string, Program>;
 	limitSigning: boolean;
 
 	private _cache: LazyLevel;
@@ -101,8 +92,7 @@ export class Peerbit implements ProgramClient {
 	private _identity: Ed25519Keypair;
 
 	private _keychain: Libp2pKeychain; // Keychain + Caching + X25519 keys
-
-	private _openQueue: PQueue;
+	private _handler: ProgramHandler;
 	constructor(libp2p: Libp2pExtended, options: CreateOptions) {
 		if (libp2p == null) {
 			throw new Error("Libp2p required");
@@ -123,11 +113,9 @@ export class Peerbit implements ProgramClient {
 		this._keychain = options.keychain;
 
 		this.directory = options.directory;
-		this.programs = new Map();
 		this.limitSigning = options.limitSigning || false;
 		this._cache = options.cache;
 		this._libp2pExternal = options.libp2pExternal;
-		this._openQueue = new PQueue({ concurrency: 1 });
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
@@ -283,14 +271,7 @@ export class Peerbit implements ProgramClient {
 		}
 	}
 	async stop() {
-		this._openQueue.clear();
-		await this._openQueue.onIdle();
-
-		// Close all open databases
-		await Promise.all(
-			[...this.programs.values()].map((program) => program.close())
-		);
-
+		await this._handler?.stop();
 		await this._cache.close();
 
 		// Close libp2p (after above)
@@ -298,57 +279,8 @@ export class Peerbit implements ProgramClient {
 			// only close it if we created it
 			await this.libp2p.stop();
 		}
-
-		// Remove all databases from the state
-		this.programs = new Map();
 	}
 
-	private _onProgamClose(program: Program) {
-		this.programs.delete(program.address!.toString());
-	}
-
-	private async _onProgramOpen(
-		program: Program,
-		mergeSrategy?: ProgramMergeStrategy
-	) {
-		const programAddress = program.address?.toString();
-		if (!programAddress) {
-			throw new Error("Missing program address");
-		}
-		if (this.programs.has(programAddress)) {
-			// second condition only makes this throw error if we are to add a new instance with the same address
-			const existing = await this.checkProcessExisting(
-				programAddress,
-				program,
-				mergeSrategy
-			);
-			if (!existing) {
-				throw new Error("Unexpected");
-			}
-			this.programs.set(programAddress, program);
-		} else {
-			this.programs.set(programAddress, program);
-		}
-	}
-
-	private async checkProcessExisting<S>(
-		address: Address,
-		toOpen: S,
-		mergeSrategy: ProgramMergeStrategy = "reject"
-	): Promise<S | undefined> {
-		const prev = this.programs.get(address);
-		if (mergeSrategy === "reject") {
-			if (prev) {
-				throw new Error(`Program at ${address} is already open`);
-			}
-		} else if (mergeSrategy === "replace") {
-			if (prev && prev !== toOpen) {
-				await prev.close(); // clouse previous
-			}
-		} else if (mergeSrategy === "reuse") {
-			return prev as S;
-		}
-	}
 	/**
 	 * Default behaviour of a store is only to accept heads that are forks (new roots) with some probability
 	 * and to replicate heads (and updates) which is requested by another peer
@@ -359,105 +291,11 @@ export class Peerbit implements ProgramClient {
 
 	async open<S extends Program<Args>, Args = any>(
 		storeOrAddress: S | Address | string,
-		options: OpenOptions<Args> = {}
+		options: OpenOptions<Args, S> = {}
 	): Promise<S> {
-		const fn = async (): Promise<S> => {
-			if (!this.libp2p.isStarted()) {
-				throw new Error("Can not open a store while disconnected");
-			}
-
-			// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
-
-			let program = storeOrAddress as S;
-			if (typeof storeOrAddress === "string") {
-				try {
-					if (this.programs?.has(storeOrAddress.toString())) {
-						const existing = await this.checkProcessExisting(
-							storeOrAddress.toString(),
-							program,
-							options?.existing
-						);
-						if (existing) {
-							return existing;
-						}
-					} else {
-						program = (await Program.load(
-							storeOrAddress,
-							this._libp2p.services.blocks,
-							options
-						)) as S; // TODO fix typings
-						if (program instanceof Program === false) {
-							throw new Error(
-								`Failed to open program because program is of type ${program?.constructor.name} and not ${Program.name}`
-							);
-						}
-					}
-				} catch (error) {
-					logger.error(
-						"Failed to load store with address: " + storeOrAddress.toString()
-					);
-					throw error;
-				}
-			} else if (!program.closed) {
-				const existing = this.programs.get(program.address);
-				if (existing === program) {
-					return program;
-				} else if (existing) {
-					const existing = await this.checkProcessExisting(
-						program.address,
-						program,
-						options?.existing
-					);
-
-					if (existing) {
-						return existing;
-					}
-				}
-			}
-
-			logger.debug(`Open database '${program.constructor.name}`);
-			const address = await program.save(this.services.blocks);
-			const existing = await this.checkProcessExisting(
-				address,
-				program,
-				options?.existing
-			);
-			if (existing) {
-				return existing;
-			}
-			await program.beforeOpen(this, {
-				onBeforeOpen: (p) => {
-					if (p instanceof Program && p.parents.length === 1 && !p.parents[0]) {
-						return this._onProgramOpen(p, options?.existing);
-					}
-				},
-				onClose: (p) => {
-					if (p instanceof Program) {
-						return this._onProgamClose(p);
-					}
-				},
-				onDrop: (p) => {
-					if (p instanceof Program) {
-						return this._onProgamClose(p);
-					}
-				},
-				...options,
-				// If the program opens more programs
-				// reset: options.reset,
-			});
-
-			await program.open(options.args);
-			await program.afterOpen();
-
-			return program as S;
-		};
-
-		// Prevent deadlocks when a program is opened by another program
-		// TODO make proper deduplciation behaviour
-		if (options?.parent) {
-			return fn();
-		}
-		return this._openQueue.add(fn) as any as S; // TODO p-queue seem to return void type ;
+		return (
+			this._handler || (this._handler = new ProgramHandler({ client: this }))
+		).open(storeOrAddress, options);
 	}
 
 	get memory() {

@@ -5,6 +5,7 @@ import { SimpleLevel } from "@peerbit/lazy-level";
 import { variant, option, field, vec } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";
+
 import path from "path-browserify";
 export const logger = loggerFn({ module: "heads-cache" });
 export class CachedValue {}
@@ -284,7 +285,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 	} */
 
 	get closed() {
-		return !this._cache || this._cache.status === "closed";
+		return !this._cache || this._cache.status() === "closed";
 	}
 
 	async close() {
@@ -306,7 +307,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		if (!this._cache) {
 			return; // already dropped
 		}
-		if (this._cache.status !== "open") {
+		if ((await this._cache.status()) !== "open") {
 			await this._cache.open();
 		}
 
@@ -322,7 +323,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			throw new Error("Store needs to be initialized before loaded");
 		}
 
-		if (this._cache!.status !== "open") {
+		if ((await this._cache!.status()) !== "open") {
 			await this._cache!.open();
 		}
 
@@ -335,7 +336,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			throw new Error("Needs to be initialized before loaded");
 		}
 
-		if (this._cache!.status !== "open") {
+		if ((await this._cache!.status()) !== "open") {
 			await this._cache!.open();
 		}
 
