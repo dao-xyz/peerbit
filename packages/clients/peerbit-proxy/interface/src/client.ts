@@ -36,7 +36,6 @@ import { X25519Keypair } from "@peerbit/crypto";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 
 import sodium from "libsodium-wrappers";
-await sodium.ready;
 
 const messageIdString = (messageId: Uint8Array) => sha256Base64(messageId);
 const levelKey = (level: string[]) => JSON.stringify(level);
@@ -273,6 +272,8 @@ export class PeerbitProxyClient implements ProgramClient {
 	}
 
 	async connect() {
+		await sodium.ready;
+
 		await this.messages.connect({ waitForParent: true });
 
 		this.messages.subscribe("data", this.onMessage.bind(this));
