@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/proxy-v1.1.0...proxy-v1.1.1) (2023-07-19)
+
+
+### Bug Fixes
+
+* remove top level await ([a45f517](https://github.com/dao-xyz/peerbit/commit/a45f517ae429197337c783635b10549569f21b66))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.0.13...proxy-v1.1.0) (2023-07-18)
 
 

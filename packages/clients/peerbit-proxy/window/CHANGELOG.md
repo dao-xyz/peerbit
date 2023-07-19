@@ -1,5 +1,11 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped from ^1.1.0 to ^1.1.1
+
 ## 1.0.0 (2023-07-18)
 
 
