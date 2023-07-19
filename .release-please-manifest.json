@@ -11,7 +11,7 @@
     "packages/log": "1.0.14",
     "packages/utils/logger": "1.0.1",
     "packages/programs/program": "2.0.0",
-    "packages/clients/peerbit-proxy/interface": "1.1.0",
+    "packages/clients/peerbit-proxy/interface": "1.1.1",
     "packages/transport/pubsub": "1.0.6",
     "packages/transport/pubsub-interface": "1.0.5",
     "packages/programs/rpc": "2.0.0",
@@ -25,5 +25,5 @@
     "packages/programs/acl/trusted-network": "1.0.16",
     "packages/utils/uint8arrays": "3.0.1",
     "packages/clients/peerbit": "1.1.7",
-    "packages/clients/peerbit-proxy/window": "1.0.0"
+    "packages/clients/peerbit-proxy/window": "1.0.1"
 }
