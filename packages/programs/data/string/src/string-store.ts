@@ -119,13 +119,7 @@ export class DString extends Program {
 	}
 
 	async del(index: Range, options?: AppendOptions<StringOperation>) {
-		const operation = {
-			index,
-		} as StringOperation;
-		return this._log.append(operation, {
-			nexts: await this._log.log.getHeads(),
-			...options,
-		});
+		return this.add("", index, options);
 	}
 
 	async queryHandler(
