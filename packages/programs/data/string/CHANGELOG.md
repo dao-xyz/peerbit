@@ -142,6 +142,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/string-v2.0.0...string-v2.0.1) (2023-07-20)
+
+
+### Bug Fixes
+
+* correctly initialize delete operation ([3962a50](https://github.com/dao-xyz/peerbit/commit/3962a5055a6540723722e7d8a54c93126017260e))
+* expose set log id ([435197a](https://github.com/dao-xyz/peerbit/commit/435197abba18dec7df4a42b98f8fed0d959323d4))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/string-v1.0.15...string-v2.0.0) (2023-07-18)
 
 
