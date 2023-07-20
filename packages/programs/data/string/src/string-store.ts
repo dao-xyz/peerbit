@@ -55,10 +55,13 @@ export class DString extends Program {
 
 	_optionCanAppend?: CanAppend<StringOperation>;
 
-	constructor(properties: { query?: RPC<StringQueryRequest, StringResult> }) {
+	constructor(properties: {
+		id?: Uint8Array;
+		query?: RPC<StringQueryRequest, StringResult>;
+	}) {
 		super();
 		this.query = properties.query || new RPC();
-		this._log = new SharedLog();
+		this._log = new SharedLog({ id: properties.id });
 		this._index = new StringIndex();
 	}
 
