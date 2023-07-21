@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/server",
-	"version": "1.0.18",
+	"version": "1.0.19",
 	"author": "dao.xyz",
 	"repository": {
 		"type": "git",
@@ -43,7 +43,7 @@
 		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
 	},
 	"devDependencies": {
-		"@peerbit/string": "2.0.1",
+		"@peerbit/string": "2.0.2",
 		"@peerbit/test-utils": "1.0.14",
 		"@peerbit/test-lib": "^0.0.1",
 		"@types/yargs": "^17.0.24",
