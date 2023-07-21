@@ -153,3 +153,32 @@ describe("query", () => {
 		expect(callbackValues).toEqual(["hello world"]);
 	});
 });
+
+describe("load", () => {
+	let session: LSession, store: DString;
+
+	beforeEach(async () => {
+		// we reinit sesion for every test since DString does always have same address
+		// and that might lead to sideeffects running all tests in one go
+		session = await LSession.connected(1);
+
+		// Create store
+		store = new DString({});
+		await session.peers[0].open(store);
+	});
+
+	afterEach(async () => {
+		await store.drop();
+		await session.stop();
+	});
+
+	it("loads on open", async () => {
+		let data = "hello";
+		await store.add(data, new Range({ offset: 0, length: data.length }));
+		await store.close();
+		expect(store._index.string).toEqual("");
+		expect(store._index._log).toBeUndefined();
+		await store.open();
+		expect(await store.getValue()).toEqual(data);
+	});
+});

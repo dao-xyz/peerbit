@@ -67,13 +67,14 @@ export class DString extends Program {
 
 	async open(options?: Args) {
 		this._optionCanAppend = options?.canAppend;
+		await this._index.open(this._log.log);
+
 		await this._log.open({
 			encoding,
 			canAppend: this.canAppend.bind(this),
 			onChange: this._index.updateIndex.bind(this._index),
 		});
 
-		await this._index.open(this._log.log);
 		await this.query.open({
 			...options,
 			topic: this._log.log.idString + "/" + "dstring",

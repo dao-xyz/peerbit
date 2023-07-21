@@ -37,6 +37,12 @@ export class StringIndex extends Program {
 		this._log = store;
 	}
 
+	close(parent: any) {
+		this._string = "";
+		this._log = undefined!;
+		return super.close(parent);
+	}
+
 	async updateIndex(_change: Change<StringOperation>) {
 		this._string = await applyOperations("", await this._log.values.toArray()); // TODO improve performance
 	}
