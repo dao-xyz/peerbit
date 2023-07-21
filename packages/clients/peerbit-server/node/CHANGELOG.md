@@ -142,6 +142,12 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.0 to 2.0.1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/string bumped from 2.0.1 to 2.0.2
+
 ## [1.0.16](https://github.com/dao-xyz/peerbit/compare/server-v1.0.15...server-v1.0.16) (2023-07-04)
 
 

@@ -142,6 +142,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/string-v2.0.1...string-v2.0.2) (2023-07-21)
+
+
+### Bug Fixes
+
+* prevent undefined behaviour on reload ([274d427](https://github.com/dao-xyz/peerbit/commit/274d4274820c3c8599f41b2ac9c69405165225d7))
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/string-v2.0.0...string-v2.0.1) (2023-07-20)
 
 
