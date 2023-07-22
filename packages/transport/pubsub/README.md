@@ -1,6 +1,6 @@
 # Direct Sub
 
-Pubsub protocol built on top of [Direct Stream](./../direct-stream/README.md)
+Pubsub protocol built on top of [Direct Stream](./../stream/README.md)
 
 Features
 - Accurate
