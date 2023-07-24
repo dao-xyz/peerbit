@@ -5,8 +5,8 @@ Documentation
 - [Examples](/examples.md)
 
 Modules
-- [Client](/modules/client/client.md)
-- [Programs](/modules/program/README.md)
+- [Client](/modules/client/)
+- [Programs](/modules/program/)
     - [What is a program?](/modules/program/)
     - [Document store](/modules/program/document-store/)
     - [Combining programs](/modules/program/composition/)
@@ -15,7 +15,7 @@ Modules
 
 Topics
 - [Peerbit vs [?]](/difference.md)
-- [Sharding](/sharding/sharding.md)
+- [Sharding](/sharding/)
 
 
 
