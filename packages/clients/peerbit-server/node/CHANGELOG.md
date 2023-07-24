@@ -148,6 +148,13 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [1.0.20](https://github.com/dao-xyz/peerbit/compare/server-v1.0.19...server-v1.0.20) (2023-07-24)
+
+
+### Bug Fixes
+
+* correctly handle custom domain names on startup ([1f1b890](https://github.com/dao-xyz/peerbit/commit/1f1b890a5f91511f99c0c77897cde95c16152f45))
+
 ## [1.0.16](https://github.com/dao-xyz/peerbit/compare/server-v1.0.15...server-v1.0.16) (2023-07-04)
 
 
