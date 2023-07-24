@@ -3,8 +3,25 @@ import { ProgramClient } from "@peerbit/program";
 import http from "http";
 import { startServer } from "../api";
 import dotenv from "dotenv";
+import { getDomainFromConfig } from "../domain";
 
 dotenv.config();
+
+describe("getDomainFromConfig", () => {
+	it("%DOMAIN%", async () => {
+		const config =
+			" ssl_certificate         /etc/letsencrypt/live/%DOMAIN%/fullchain.pem; \nssl_certificate_key     /etc/letsencrypt/live/%DOMAIN%/privkey.pem; ";
+		const domain = await getDomainFromConfig(config);
+		expect(domain).toBeUndefined();
+	});
+
+	it("specified domain", async () => {
+		const expectedDomain = "a.b-c.d";
+		const config = ` ssl_certificate         /etc/letsencrypt/live/${expectedDomain}/fullchain.pem; \nssl_certificate_key     /etc/letsencrypt/live/${expectedDomain}/privkey.pem; `;
+		const domain = await getDomainFromConfig(config);
+		expect(domain).toEqual(expectedDomain);
+	});
+});
 
 describe("ssl", () => {
 	let session: LSession, peer: ProgramClient, server: http.Server;
@@ -22,6 +39,7 @@ describe("ssl", () => {
 		await session.stop();
 		await server.close();
 	});
+
 	it("_", () => {});
 	/* These test are flaky, or have side effects, and should not be running in ci yet
 	it("certbot", async () => {

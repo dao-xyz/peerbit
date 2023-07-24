@@ -24,8 +24,16 @@ then install the CLI
 npm install -g @peerbit/server
 ```
 
+2. *Skip this step if testing locally*
 
-2. 
+Setup a test domain (so can access the node). The command below might take a while to run.
+
+```sh
+sudo peerbit domain test --email YOUR_EMAIL 
+```
+
+
+3. 
 Start the node in a background process
 ```sh
 peerbit start > log.txt 2>&1 &
@@ -33,19 +41,15 @@ peerbit start > log.txt 2>&1 &
 
 This will start a peerbit client
 
-3.
-Setup a test domain (so can access the node). The command below might take a while to run.
 
-```sh
-sudo peerbit domain test --email YOUR_EMAIL 
-```
 
 (``sudo`` is needed because docker will be installed if it is not available)
 
 After a while a domain will be written out that you can access and learn more about your peer
 
+ 
+4. *Skip this step if testing locally*
 
-4. 
 If you ssh'ed into a some server, remember to do this before exiting the terminal:
 
 Remove all jobs from the shell and make them ignore SIGHUP

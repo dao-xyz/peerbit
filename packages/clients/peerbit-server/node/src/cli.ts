@@ -1,4 +1,9 @@
-import { createTestDomain, startCertbot } from "./domain.js";
+import {
+	createTestDomain,
+	getDomainFromConfig,
+	loadConfig,
+	startCertbot,
+} from "./domain.js";
 import { serialize } from "@dao-xyz/borsh";
 import { client, startServerWithNode } from "./api.js";
 import { createRecord } from "./aws.js";
@@ -25,17 +30,13 @@ export const cli = async (args?: string[]) => {
 					type: "string",
 					default: await getConfigDir(),
 				},
-				domain: {
-					describe: "Domain to use when announcing Libp2p multiaddress",
-					defaultDescription: "Test domain from public IP",
-					type: "string",
-					default: undefined,
-				},
 			},
 			handler: async (args) => {
 				await startServerWithNode(
 					args.directory,
-					args.domain ? args.domain : await createTestDomain()
+					await loadConfig().then((config) =>
+						config ? getDomainFromConfig(config) : undefined
+					)
 				);
 			},
 		})

@@ -1,5 +1,4 @@
 import { waitFor, waitForAsync } from "@peerbit/time";
-import { client } from "./api.js";
 import { installDocker, startContainer } from "./docker.js";
 
 const isNode = typeof window === undefined || typeof window === "undefined";
@@ -12,6 +11,39 @@ const validateEmail = (email) => {
 		);
 };
 
+const getConfigFileTemplate = async (): Promise<string> => {
+	const url = await import("url");
+	const __filename = url.fileURLToPath(import.meta.url);
+	const fs = await import("fs");
+	const path = await import("path");
+	const file = fs.readFileSync(
+		path.join(__filename, "../nginx-template.conf"),
+		"utf-8"
+	);
+	return file;
+};
+
+const getNginxFolderPath = async () => {
+	const { exec } = await import("child_process");
+	const pwd: string = await new Promise((resolve, reject) => {
+		exec("pwd", (error, stdout, stderr) => {
+			if (error || stderr) {
+				reject("Failed to get current directory");
+			}
+			resolve(stdout.trimEnd());
+		});
+	});
+
+	const path = await import("path");
+	const nginxConfigPath = path.join(pwd, "nginx");
+	return nginxConfigPath;
+};
+
+const getNginxConfigPath = async (folder: string) => {
+	const path = await import("path");
+	return path.join(folder, "default.conf");
+};
+
 const createConfig = async (
 	outputPath: string,
 	domain: string
@@ -19,29 +51,12 @@ const createConfig = async (
 	if (!isNode) {
 		throw new Error("Config can only be created with node");
 	}
-	const { AxiosError } = await import("axios");
 
-	const url = await import("url");
-	const __filename = url.fileURLToPath(import.meta.url);
+	let file = await getConfigFileTemplate();
+	file = file.replaceAll("%DOMAIN%", domain);
+
 	const fs = await import("fs");
 	const path = await import("path");
-	let file = fs.readFileSync(
-		path.join(__filename, "../nginx-template.conf"),
-		"utf-8"
-	);
-	let ipfsId: string;
-	try {
-		ipfsId = await (await client()).peer.id.get();
-	} catch (error) {
-		if (error instanceof AxiosError) {
-			throw new Error(
-				"Failed to connect to Peerbit, have you started the node? e.g. 'peerbit start'"
-			);
-		}
-		throw error;
-	}
-	file = file.replaceAll("%IPFS_ID%", ipfsId);
-	file = file.replaceAll("%DOMAIN%", domain);
 
 	fs.mkdir(outputPath, { recursive: true }, (err) => {
 		if (err) throw err;
@@ -49,8 +64,25 @@ const createConfig = async (
 
 	await waitFor(() => fs.existsSync(outputPath));
 
-	fs.writeFileSync(path.join(outputPath, "default.conf"), file);
+	fs.writeFileSync(await getNginxConfigPath(outputPath), file);
 	return { domain };
+};
+
+export const loadConfig = async () => {
+	const configFilePath = await getNginxConfigPath(await getNginxFolderPath());
+	const fs = await import("fs");
+	if (!fs.existsSync(configFilePath)) {
+		return undefined;
+	}
+	const file = fs.readFileSync(configFilePath, "utf-8");
+	return file;
+};
+
+export const getDomainFromConfig = async (config: string) => {
+	const pattern = "/etc/letsencrypt/live/(.*)/fullchain.pem";
+	const match = config.match(pattern);
+	const domain = match?.[1];
+	return domain === "%DOMAIN%" ? undefined : domain;
 };
 const getUIPath = async (): Promise<string> => {
 	const url = await import("url");
@@ -108,7 +140,6 @@ export const createTestDomain = async () => {
 export const startCertbot = async (
 	domain: string,
 	email: string,
-	nginxConfigPath?: string,
 	waitForUp = false,
 	dockerProcessName = "nginx-certbot"
 ): Promise<void> => {
@@ -116,18 +147,7 @@ export const startCertbot = async (
 		throw new Error("Email for SSL renenewal is invalid");
 	}
 
-	const { exec } = await import("child_process");
-	const pwd: string = await new Promise((resolve, reject) => {
-		exec("pwd", (error, stdout, stderr) => {
-			if (error || stderr) {
-				reject("Failed to get current directory");
-			}
-			resolve(stdout.trimEnd());
-		});
-	});
-	const path = await import("path");
-	nginxConfigPath = path.join(nginxConfigPath || pwd, "nginx");
-
+	const nginxConfigPath = await getNginxFolderPath();
 	await createConfig(nginxConfigPath, domain);
 
 	await installDocker();
