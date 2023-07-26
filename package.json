@@ -46,7 +46,7 @@
 		]
 	},
 	"engines": {
-		"node": ">=16.15.1"
+		"node": ">=18"
 	},
 	"publishConfig": {
 		"access": "public"
