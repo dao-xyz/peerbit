@@ -32,6 +32,7 @@ import { LevelDatastore } from "datastore-level";
 import { BinaryWriter } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";
 import { OpenOptions } from "@peerbit/program";
+import { resolveBootstrapAddresses } from "./bootstrap.js";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -279,6 +280,14 @@ export class Peerbit implements ProgramClient {
 			// only close it if we created it
 			await this.libp2p.stop();
 		}
+	}
+
+	async bootstrap() {
+		const addresses = await resolveBootstrapAddresses();
+		if (addresses.length === 0) {
+			throw new Error("Failed to find any addresses to dial");
+		}
+		return Promise.all(addresses.map((x) => this.dial(x)));
 	}
 
 	/**

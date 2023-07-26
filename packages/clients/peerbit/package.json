@@ -10,7 +10,7 @@
 		"url": "https://github.com/dao-xyz/peerbit"
 	},
 	"engines": {
-		"node": ">=16.15.1"
+		"node": ">=18"
 	},
 	"files": [
 		"lib",
