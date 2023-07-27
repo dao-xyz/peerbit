@@ -332,7 +332,7 @@ export const cli = async (args?: string[]) => {
 						yargs.positional("dependency", {
 							type: "string",
 							describe:
-								"Dependency name (will be loaded with js import(...)). Onlu libraries that are globally installed and can be imported",
+								"Dependency name (will be loaded with js import(...)). Only dependencies that are globally installed and can be imported",
 							demandOption: true,
 						});
 						return yargs;
