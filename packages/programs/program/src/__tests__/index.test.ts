@@ -6,21 +6,10 @@ import {
 	deserialize,
 	serialize,
 } from "@dao-xyz/borsh";
-import { Program, ProgramClient, ProgramHandler } from "../program.js";
+import { Program, ProgramClient, getProgramFromVariant } from "../program.js";
 import { getValuesWithType } from "../utils.js";
-import {
-	Ed25519Keypair,
-	PublicSignKey,
-	randomBytes,
-	sha256Base64Sync,
-} from "@peerbit/crypto";
-import {
-	Subscription,
-	SubscriptionEvent,
-	UnsubcriptionEvent,
-	Unsubscription,
-} from "@peerbit/pubsub-interface";
-import { CustomEvent } from "@libp2p/interfaces/events";
+import { randomBytes } from "@peerbit/crypto";
+
 import { createPeer } from "./utils.js";
 
 @variant(0)
@@ -453,6 +442,27 @@ describe("program", () => {
 
 			expect(leaveEvents).toEqual([peer2.identity.publicKey.hashcode()]);
 			expect(leaveEvents2).toHaveLength(0);
+		});
+	});
+
+	describe("getProgram", () => {
+		@variant("test_get_a")
+		class A extends Program {
+			async open(args?: any): Promise<void> {}
+		}
+
+		@variant("test_get_b")
+		class B extends Program {
+			async open(args?: any): Promise<void> {}
+		}
+
+		it("can resolve by variant", () => {
+			expect(getProgramFromVariant("test_get_a")).toEqual(A);
+			expect(getProgramFromVariant("test_get_b")).toEqual(B);
+		});
+
+		it("will return undefined if missing", () => {
+			expect(getProgramFromVariant("missing")).toBeUndefined();
 		});
 	});
 });

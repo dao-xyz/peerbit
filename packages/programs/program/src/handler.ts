@@ -18,7 +18,7 @@ export type OpenOptions<Args, T extends Manageable<Args>> = {
 	timeout?: number;
 	existing?: ProgramMergeStrategy;
 	/* 
-    reset?: boolean; */
+	reset?: boolean; */
 } & ProgramInitializationOptions<Args, T>;
 
 export type WithArgs<Args> = { args?: Args };
@@ -61,7 +61,7 @@ export type ProgramInitializationOptions<Args, T extends Manageable<Args>> = {
 	EventOptions;
 
 export class Handler<T extends Manageable<any>> {
-	items: Map<string, Manageable<any>>;
+	items: Map<string, T>;
 	private _openQueue: PQueue;
 
 	constructor(
@@ -97,7 +97,7 @@ export class Handler<T extends Manageable<any>> {
 	}
 
 	private async _onProgramOpen(
-		program: Manageable<any>,
+		program: T,
 		mergeSrategy?: ProgramMergeStrategy
 	) {
 		const programAddress = program.address?.toString();
@@ -211,12 +211,12 @@ export class Handler<T extends Manageable<any>> {
 						p.parents.length === 1 &&
 						!p.parents[0]
 					) {
-						return this._onProgramOpen(p, options?.existing);
+						return this._onProgramOpen(p as T, options?.existing); // TODO types
 					}
 				},
 				onClose: (p) => {
 					if (this.properties.shouldMonitor(p)) {
-						return this._onProgamClose(p as Manageable<any>);
+						return this._onProgamClose(p as T); // TODO types
 					}
 				},
 				onDrop: (p) => {

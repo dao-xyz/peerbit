@@ -468,3 +468,18 @@ export abstract class Program<
 		return p as T;
 	}
 }
+
+export const getProgramFromVariants = <
+	T extends Program
+>(): Constructor<T>[] => {
+	const deps = Program.prototype[1000]; /// TODO improve BORSH lib to provide all necessary utility methods
+	return (deps || []) as Constructor<T>[];
+};
+
+export const getProgramFromVariant = <T extends Program>(
+	variant: string
+): Constructor<T> | undefined => {
+	return getProgramFromVariants().filter(
+		(x) => getSchema(x).variant === variant
+	)[0] as Constructor<T>;
+};
