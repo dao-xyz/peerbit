@@ -322,7 +322,10 @@ export const startServer = async (
 											);
 											if (!P) {
 												res.writeHead(400);
-												res.end("Missing program with variant: " + body);
+												res.end(
+													"Missing program with variant: " +
+														(startArguments as StartByVariant).variant
+												);
 												return;
 											}
 											program = new P();
