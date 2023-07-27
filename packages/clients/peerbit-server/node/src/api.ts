@@ -1,7 +1,13 @@
 import http from "http";
 import { fromBase64, toBase64 } from "@peerbit/crypto";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { Program, Address, ProgramClient } from "@peerbit/program";
+import {
+	Program,
+	Address,
+	ProgramClient,
+	getProgramFromVariant,
+	getProgramFromVariants,
+} from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
@@ -9,6 +15,8 @@ import { Libp2p } from "libp2p";
 import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./client.js";
+import { Peerbit } from "peerbit";
+import { getSchema } from "@dao-xyz/borsh";
 
 export const SSL_PORT = 9002;
 export const LOCAL_PORT = 8082;
@@ -28,8 +36,17 @@ export const getPort = (protocol: string) => {
 const PEER_ID_PATH = "/peer/id";
 const ADDRESS_PATH = "/peer/address";
 const PROGRAM_PATH = "/program";
-const LIBRARY_PATH = "/library";
+const PROGRAMS_PATH = "/programs";
+const DEPENDENCY_PATH = "/library";
+const BOOTSTRAP_PATH = "/network/bootstrap";
 
+interface StartByVariant {
+	variant: string;
+}
+interface StartByBase64 {
+	base64: string;
+}
+export type StartProgram = StartByVariant | StartByBase64;
 export const checkExistPath = async (path: string) => {
 	const fs = await import("fs");
 
@@ -97,11 +114,20 @@ export const loadOrCreatePassword = async (): Promise<string> => {
 		throw error;
 	}
 };
-export const startServerWithNode = async (
-	directory: string,
-	domain?: string
-) => {
-	const peer = await create(directory, domain);
+export const startServerWithNode = async (properties: {
+	directory?: string;
+	domain?: string;
+	bootstrap?: boolean;
+}) => {
+	const peer = await create({
+		directory: properties.directory,
+		domain: properties.domain,
+	});
+
+	if (properties.bootstrap) {
+		await peer.bootstrap();
+	}
+
 	const server = await startServer(peer);
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
@@ -129,7 +155,28 @@ export const startServerWithNode = async (
 		});
 	};
 	await shutDownHook(peer, server);
+	return { server, node: peer };
 };
+
+const getProgramFromPath = (
+	client: Peerbit,
+	req: http.IncomingMessage,
+	pathIndex: number
+): Program | undefined => {
+	if (!req.url) {
+		throw new Error("Missing url");
+	}
+	const url = new URL(req.url, "http://localhost:" + 1234);
+	const path = url.pathname
+		.substring(Math.min(1, url.pathname.length), url.pathname.length)
+		.split("/");
+	if (path.length <= pathIndex) {
+		throw new Error("Invalid path");
+	}
+	const address = decodeURIComponent(path[pathIndex]);
+	return client.handler.items.get(address);
+};
+
 export const startServer = async (
 	client: ProgramClient,
 	port: number = LOCAL_PORT
@@ -156,29 +203,6 @@ export const startServer = async (
 		return true;
 	};
 
-	const getProgramFromPath = (
-		req: http.IncomingMessage,
-		pathIndex: number
-	): Program | undefined => {
-		/* if (!req.url) {
-			throw new Error("Missing url");
-		}
-		const url = new URL(req.url, "http://localhost:" + port);
-		const path = url.pathname
-			.substring(Math.min(1, url.pathname.length), url.pathname.length)
-			.split("/");
-		if (path.length <= pathIndex) {
-			throw new Error("Invalid path");
-		}
-		const address = decodeURIComponent(path[pathIndex]);
-		const p = client.programs.get(address);
-		if (p) {
-			return p.program;
-		}  
-		return;
-		*/
-		throw new Error("Not supported");
-	};
 	const getBody = (
 		req: http.IncomingMessage,
 		callback: (body: string) => void
@@ -193,7 +217,8 @@ export const startServer = async (
 	};
 
 	const e404 = "404";
-	const endpoints = (client: ProgramClient | Libp2p): http.RequestListener => {
+
+	const endpoints = (client: ProgramClient): http.RequestListener => {
 		return async (req, res) => {
 			res.setHeader("Access-Control-Allow-Origin", "*");
 			res.setHeader("Access-Control-Request-Method", "*");
@@ -214,72 +239,150 @@ export const startServer = async (
 						res.writeHead(401);
 						res.end("Not authorized");
 						return;
-					} else if (req.url.startsWith(PROGRAM_PATH)) {
-						if (true as any /* client instanceof Peerbit === false */) {
+					} else if (req.url.startsWith(PROGRAMS_PATH)) {
+						if (client instanceof Peerbit === false) {
 							res.writeHead(400);
-							res.write(notSupportedError);
-							res.end();
-						} /* else {
-							switch (req.method) {
-								case "GET":
-									try {
-										const program = getProgramFromPath(req, 1);
-										if (program) {
-											res.writeHead(200);
-											res.write(toBase64(serialize(program)));
-											res.end();
-										} else {
-											res.writeHead(404);
-											res.end();
-										}
-									} catch (error: any) {
+							res.end("Server node is not running a native client");
+							return;
+						}
+						switch (req.method) {
+							case "GET":
+								try {
+									const keys = JSON.stringify([
+										...(client as Peerbit).handler.items.keys(),
+									]);
+									res.setHeader("Content-Type", "application/json");
+									res.writeHead(200);
+									res.end(keys);
+								} catch (error: any) {
+									res.writeHead(404);
+									res.end(error.message);
+								}
+								break;
+
+							default:
+								r404();
+								break;
+						}
+					} else if (req.url.startsWith(PROGRAM_PATH)) {
+						if (client instanceof Peerbit === false) {
+							res.writeHead(400);
+							res.end("Server node is not running a native client");
+							return;
+						}
+						switch (req.method) {
+							case "HEAD":
+								try {
+									const program = getProgramFromPath(client as Peerbit, req, 1);
+									if (program) {
+										res.writeHead(200);
+										res.end();
+									} else {
 										res.writeHead(404);
-										res.end(error.message);
+										res.end();
 									}
-									break;
+								} catch (error: any) {
+									res.writeHead(404);
+									res.end(error.message);
+								}
+								break;
 
-								case "PUT":
-									getBody(req, (body) => {
-										try {
-											const parsed = deserialize(fromBase64(body), Program);
-											(client as Peerbit)
-												.open(parsed)
-												.then((program) => {
-													res.writeHead(200);
-													res.end(program.address.toString());
-												})
-												.catch((error) => {
-													res.writeHead(400);
-													res.end(
-														"Failed to open program: " + error.toString()
-													);
-												});
-										} catch (error) {
-											res.writeHead(400);
-											res.end("Invalid base64 program binary");
+							case "DELETE":
+								try {
+									const url = new URL(req.url, "http://localhost:" + 1234);
+									const queryData = url.searchParams.get("delete");
+
+									const program = getProgramFromPath(client as Peerbit, req, 1);
+									if (program) {
+										if (queryData === "true") {
+											await program.drop();
+										} else {
+											await program.close();
 										}
-									});
-									break;
+										res.writeHead(200);
+										res.end();
+									} else {
+										res.writeHead(404);
+										res.end();
+									}
+								} catch (error: any) {
+									res.writeHead(404);
+									res.end(error.message);
+								}
+								break;
+							case "PUT":
+								getBody(req, (body) => {
+									try {
+										const startArguments: StartProgram = JSON.parse(body);
 
-								default:
-									r404();
-									break;
-							}
-						} */
-					} else if (req.url.startsWith(LIBRARY_PATH)) {
-						const url = new URL(req.url, "http://localhost:" + port);
+										let program: Program;
+										if ((startArguments as StartByVariant).variant) {
+											const P = getProgramFromVariant(
+												(startArguments as StartByVariant).variant
+											);
+											if (!P) {
+												res.writeHead(400);
+												res.end("Missing program with variant: " + body);
+												return;
+											}
+											program = new P();
+										} else {
+											program = deserialize(
+												fromBase64((startArguments as StartByBase64).base64),
+												Program
+											);
+										}
+										client
+											.open(program) // TODO all users to pass args
+											.then((program) => {
+												res.writeHead(200);
+												res.end(program.address.toString());
+											})
+											.catch((error) => {
+												res.writeHead(400);
+												res.end("Failed to open program: " + error.toString());
+											});
+									} catch (error: any) {
+										res.writeHead(400);
+										res.end(error.toString());
+									}
+								});
+								break;
+
+							default:
+								r404();
+								break;
+						}
+					} else if (req.url.startsWith(DEPENDENCY_PATH)) {
 						switch (req.method) {
 							case "PUT":
 								getBody(req, (body) => {
 									const name = body;
+									console.log("IMPORT '" + name + "'");
 									if (name && name.length === 0) {
 										res.writeHead(400);
 										res.end("Invalid library: " + name);
 									} else {
+										const programsPre = new Set(
+											getProgramFromVariants().map((x) => getSchema(x).variant)
+										);
+
 										import(/* webpackIgnore: true */ /* @vite-ignore */ name)
 											.then(() => {
+												const programsPost = getProgramFromVariants()?.map(
+													(x) => getSchema(x)
+												);
+												const newPrograms: { variant: string }[] = [];
+												for (const p of programsPost) {
+													if (!programsPre.has(p.variant)) {
+														newPrograms.push(p as { variant: string });
+													}
+												}
+
 												res.writeHead(200);
-												res.end();
+												res.end(
+													JSON.stringify(newPrograms.map((x) => x.variant))
+												);
 											})
 											.catch((e) => {
 												res.writeHead(400);
@@ -287,6 +390,23 @@ export const startServer = async (
 											});
 									}
 								});
+								break;
+
+							default:
+								r404();
+								break;
+						}
+					} else if (req.url.startsWith(BOOTSTRAP_PATH)) {
+						switch (req.method) {
+							case "POST":
+								if (client instanceof Peerbit === false) {
+									res.writeHead(400);
+									res.end("Server node is not running a native client");
+									return;
+								}
+								await (client as Peerbit).bootstrap();
+								res.writeHead(200);
+								res.end();
 								break;
 
 							default:
@@ -366,6 +486,7 @@ export const client = async (
 	const getId = async () =>
 		throwIfNot200(await axios.get(endpoint + PEER_ID_PATH, { validateStatus }))
 			.data;
+
 	const getHeaders = async () => {
 		const headers = {
 			authorization: "Basic admin:" + (await loadPassword()),
@@ -391,45 +512,93 @@ export const client = async (
 			},
 		},
 		program: {
-			get: async (address: Address | string): Promise<Program | undefined> => {
-				const result = getBodyByStatus<string, any>(
-					await axios.get(
-						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()),
-						{ validateStatus, headers: await getHeaders() }
-					)
+			has: async (address: Address | string): Promise<boolean> => {
+				const result = await axios.head(
+					endpoint +
+						PROGRAM_PATH +
+						"/" +
+						encodeURIComponent(address.toString()),
+					{ validateStatus, headers: await getHeaders() }
 				);
-				return !result ? undefined : deserialize(fromBase64(result), Program);
+				if (result.status !== 200 && result.status !== 404) {
+					throw new Error(result.data);
+				}
+				return result.status === 200 ? true : false;
 			},
 
-			/**
-			 * @param program Program, or base64 string representation
-			 * @param topic, topic
-			 * @returns
-			 */
-			put: async (program: Program | string): Promise<Address> => {
-				const base64 =
-					program instanceof Program ? toBase64(serialize(program)) : program;
+			open: async (program: StartProgram): Promise<Address> => {
 				const resp = throwIfNot200(
-					await axios.put(endpoint + PROGRAM_PATH, base64, {
+					await axios.put(endpoint + PROGRAM_PATH, JSON.stringify(program), {
 						validateStatus,
 						headers: await getHeaders(),
 					})
 				);
 				return resp.data as string;
 			},
-		},
-		library: {
-			put: async (name: string): Promise<void> => {
+
+			close: async (address: string): Promise<void> => {
 				throwIfNot200(
-					await axios.put(endpoint + LIBRARY_PATH, name, {
+					await axios.delete(
+						endpoint +
+							PROGRAM_PATH +
+							"/" +
+							encodeURIComponent(address.toString()),
+						{
+							validateStatus,
+							headers: await getHeaders(),
+						}
+					)
+				);
+			},
+
+			drop: async (address: string): Promise<void> => {
+				throwIfNot200(
+					await axios.delete(
+						endpoint +
+							PROGRAM_PATH +
+							"/" +
+							encodeURIComponent(address.toString()) +
+							"?delete=true",
+						{
+							validateStatus,
+							headers: await getHeaders(),
+						}
+					)
+				);
+			},
+
+			list: async (): Promise<string[]> => {
+				const resp = throwIfNot200(
+					await axios.get(endpoint + PROGRAMS_PATH, {
 						validateStatus,
 						headers: await getHeaders(),
 					})
 				);
-				return;
+				return resp.data as string[];
+			},
+		},
+		dependency: {
+			put: async (name: string): Promise<string[]> => {
+				const resp = await axios.put(endpoint + DEPENDENCY_PATH, name, {
+					validateStatus,
+					headers: await getHeaders(),
+				});
+				if (resp.status !== 200) {
+					throw new Error(
+						typeof resp.data === "string" ? resp.data : resp.data.toString()
+					);
+				}
+				return resp.data;
+			},
+		},
+		network: {
+			bootstrap: async (): Promise<void> => {
+				throwIfNot200(
+					await axios.post(endpoint + BOOTSTRAP_PATH, undefined, {
+						validateStatus,
+						headers: await getHeaders(),
+					})
+				);
 			},
 		},
 	};

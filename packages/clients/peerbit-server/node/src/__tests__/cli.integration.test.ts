@@ -1,9 +1,6 @@
 // This more like a playground as of now
 // No tests yet,
-// But there are ways here to generate base64 string for programs
-import { Peerbit } from "peerbit";
 import { LSession } from "@peerbit/test-utils";
-import http from "http";
 import { jest } from "@jest/globals";
 
 describe("server", () => {

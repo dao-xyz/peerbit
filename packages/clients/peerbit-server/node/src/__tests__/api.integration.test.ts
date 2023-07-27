@@ -1,9 +1,15 @@
 import { LSession } from "@peerbit/test-utils";
 import http from "http";
-import { client, startServer } from "../api.js";
+import { client, startServer, startServerWithNode } from "../api.js";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "@peerbit/test-lib";
-import { Address, ProgramClient } from "@peerbit/program";
+import { Address, Program, ProgramClient } from "@peerbit/program";
+import { getSchema, serialize } from "@dao-xyz/borsh";
+import { toBase64 } from "@peerbit/crypto";
+import { Peerbit } from "peerbit";
+import { tcp } from "@libp2p/tcp";
+import { webSockets } from "@libp2p/websockets";
+import { delay } from "@peerbit/time";
 
 describe("libp2p only", () => {
 	let session: LSession, server: http.Server;
@@ -40,43 +46,149 @@ describe("libp2p only", () => {
 });
 
 describe("server", () => {
-	let session: LSession,
-		peer: ProgramClient,
-		address: Address,
-		server: http.Server;
-	let db: PermissionedString;
+	describe("with node", () => {
+		let server: http.Server;
+		let node: Peerbit;
 
-	beforeAll(async () => {});
-
-	beforeEach(async () => {
-		session = await LSession.connected(1, {
-			directory: "./peerbit/" + +new Date(),
+		afterEach(async () => {
+			await node.stop();
+			server.close();
 		});
-		peer = session.peers[0];
-		db = await peer.open(new PermissionedString({ trusted: [] }));
-		address = db.address;
-		server = await startServer(peer);
-	});
-	afterEach(async () => {
-		server.close();
-		await db.close();
-		await session.stop();
-	});
-
-	afterAll(async () => {
-		await session.stop();
-	});
-
-	describe("client", () => {
-		it("id", async () => {
-			const c = await client();
-			expect(await c.peer.id.get()).toEqual(peer.peerId.toString());
+		it("bootstrap on start", async () => {
+			let result = await startServerWithNode({ bootstrap: true });
+			node = result.node;
+			server = result.server;
+			expect(node.libp2p.services.pubsub.peers.size).toBeGreaterThan(0);
 		});
-		it("addresses", async () => {
-			const c = await client();
-			expect((await c.peer.addresses.get()).map((x) => x.toString())).toEqual(
-				(await peer.getMultiaddrs()).map((x) => x.toString())
+	});
+	describe("api", () => {
+		let session: LSession,
+			peer: ProgramClient,
+			address: Address,
+			server: http.Server;
+		let db: PermissionedString;
+
+		beforeAll(async () => {});
+
+		beforeEach(async () => {
+			session = await LSession.connected(1, {
+				directory: "./peerbit/" + +new Date(),
+				libp2p: { transports: [tcp(), webSockets()] },
+			});
+			peer = session.peers[0];
+			db = await peer.open(new PermissionedString({ trusted: [] }));
+			address = db.address;
+			server = await startServer(peer);
+		});
+		afterEach(async () => {
+			server.close();
+			await db.close();
+			await session.stop();
+		});
+
+		describe("client", () => {
+			it("id", async () => {
+				const c = await client();
+				expect(await c.peer.id.get()).toEqual(peer.peerId.toString());
+			});
+			it("addresses", async () => {
+				const c = await client();
+				expect((await c.peer.addresses.get()).map((x) => x.toString())).toEqual(
+					(await peer.getMultiaddrs()).map((x) => x.toString())
+				);
+			});
+		});
+
+		describe("program", () => {
+			describe("open", () => {
+				it("variant", async () => {
+					const c = await client();
+					const address = await c.program.open({
+						variant: getSchema(PermissionedString).variant! as string,
+					});
+					expect(await c.program.has(address)).toBeTrue();
+				});
+
+				it("base64", async () => {
+					const c = await client();
+					const program = new PermissionedString({
+						trusted: [],
+					});
+					const address = await c.program.open({
+						base64: toBase64(serialize(program)),
+					});
+					expect(await c.program.has(address)).toBeTrue();
+				});
+			});
+
+			describe("close/drop", () => {
+				let program: Program;
+				let address: Address;
+				let dropped = false;
+				let closed = false;
+
+				beforeEach(async () => {
+					dropped = false;
+					closed = false;
+
+					const c = await client();
+					address = await c.program.open({
+						variant: getSchema(PermissionedString).variant! as string,
+					});
+					program = (session.peers[0] as Peerbit).handler.items.get(address)!;
+
+					const dropFn = program.drop.bind(program);
+					program.drop = (from) => {
+						dropped = true;
+						return dropFn(from);
+					};
+
+					const closeFn = program.close.bind(program);
+					program.close = (from) => {
+						closed = true;
+						return closeFn(from);
+					};
+				});
+
+				it("close", async () => {
+					const c = await client();
+					await c.program.close(address);
+					expect(dropped).toBeFalse();
+					expect(closed).toBeTrue();
+				});
+
+				it("drop", async () => {
+					const c = await client();
+					await c.program.drop(address);
+					expect(dropped).toBeTrue();
+					expect(closed).toBeFalse();
+				});
+			});
+
+			it("list", async () => {
+				const c = await client();
+				const address = await c.program.open({
+					variant: getSchema(PermissionedString).variant! as string,
+				});
+				expect(await c.program.list()).toContain(address);
+			});
+		});
+
+		it("bootstrap", async () => {
+			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).toEqual(
+				0
 			);
+			const c = await client();
+			await c.network.bootstrap();
+			expect(
+				(session.peers[0] as Peerbit).services.pubsub.peers.size
+			).toBeGreaterThan(0);
+		});
+
+		it("dependency", async () => {
+			const c = await client();
+			const result = await c.dependency.put("@peerbit/test-lib");
+			expect(result).toEqual([]); // will already be imported in this test env. TODO make test better here, so that new programs are discvovered on import
 		});
 	});
 
@@ -87,20 +199,8 @@ describe("server", () => {
 		expect(await c.topics.get(true)).toEqual([address.toString()]);
 	});
 
-	it("program", async () => {
-		const c = await client();
-		const program = new PermissionedString({
-			store: new DString({}),
-			trusted: [],
-		});
-		const address = await c.program.put(program);
-		const programInstance = await c.program.get(address);
-		expect(programInstance).toBeInstanceOf(PermissionedString);
-	});
-	it("library", async () => {
-		const c = await client();
-		await c.library.put("@peerbit/test-lib");
-	}); */
+
+	 */
 
 	/*  TODO add network functionality
 	

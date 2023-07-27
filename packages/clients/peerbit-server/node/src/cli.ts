@@ -5,10 +5,11 @@ import {
 	startCertbot,
 } from "./domain.js";
 import { serialize } from "@dao-xyz/borsh";
-import { client, startServerWithNode } from "./api.js";
+import { StartProgram, client, startServerWithNode } from "./api.js";
 import { createRecord } from "./aws.js";
 import { toBase64 } from "@peerbit/crypto";
 import { getConfigDir } from "./config.js";
+import chalk from "chalk";
 
 export const cli = async (args?: string[]) => {
 	const yargs = await import("yargs");
@@ -30,14 +31,21 @@ export const cli = async (args?: string[]) => {
 					type: "string",
 					default: await getConfigDir(),
 				},
+
+				bootstrap: {
+					describe: "Whether to connect to bootstap nodes on startup",
+					type: "boolean",
+					default: false,
+				},
 			},
 			handler: async (args) => {
-				await startServerWithNode(
-					args.directory,
-					await loadConfig().then((config) =>
+				await startServerWithNode({
+					directory: args.directory,
+					domain: await loadConfig().then((config) =>
 						config ? getDomainFromConfig(config) : undefined
-					)
-				);
+					),
+					bootstrap: args.bootstrap,
+				});
 			},
 		})
 		.command("domain", "Setup a domain and certificate", (yargs) => {
@@ -148,6 +156,20 @@ export const cli = async (args?: string[]) => {
 				.strict()
 				.demandCommand();
 		})
+		.command("network", "Manage network", (yargs) => {
+			yargs
+				.command({
+					command: "bootstrap",
+					describe: "Connect to bootstrap nodes",
+					handler: async () => {
+						const c = await client();
+						await c.network.bootstrap();
+					},
+				})
+				.strict()
+				.demandCommand();
+		})
+
 		.command("topic", "Manage topics the node is listening to", (yargs) => {
 			yargs
 				.command({
@@ -184,8 +206,8 @@ export const cli = async (args?: string[]) => {
 		.command("program", "Manage programs", (yargs) => {
 			yargs
 				.command({
-					command: "get <address>",
-					describe: "Get program manifest/serialized in base64",
+					command: "status <address>",
+					describe: "Is a program open",
 					builder: (yargs: any) => {
 						yargs.positional("address", {
 							type: "string",
@@ -197,73 +219,132 @@ export const cli = async (args?: string[]) => {
 
 					handler: async (args) => {
 						const c = await client();
-						const program = await c.program.get(args.address);
+						const program = await c.program.has(args.address);
 						if (!program) {
-							console.log("Program does not exist");
+							console.log(chalk.red("Closed"));
 						} else {
-							console.log(toBase64(serialize(program)));
+							console.log(chalk.green("Open"));
 						}
 					},
 				})
 				.command({
-					command: "add <program>",
-					describe: "Add program",
+					command: "drop <address>",
+					describe: "Drop a program",
+					builder: (yargs: any) => {
+						yargs.positional("address", {
+							type: "string",
+							describe: "Program address",
+							demandOption: true,
+						});
+						return yargs;
+					},
+
+					handler: async (args) => {
+						const c = await client();
+						await c.program.drop(args.address);
+					},
+				})
+				.command({
+					command: "close <address>",
+					describe: "Close a program",
+					builder: (yargs: any) => {
+						yargs.positional("address", {
+							type: "string",
+							describe: "Program address",
+							demandOption: true,
+						});
+						return yargs;
+					},
+
+					handler: async (args) => {
+						const c = await client();
+						await c.program.close(args.address);
+					},
+				})
+				.command({
+					command: "list",
+					describe: "List all runniing programs",
+					aliases: "ls",
+					handler: async (args) => {
+						const c = await client();
+						const list = await c.program.list();
+
+						console.log(`Running programs (${list.length}):`);
+						list.forEach((p) => {
+							console.log(chalk.green(p));
+						});
+					},
+				})
+
+				.command({
+					command: "open [program]",
+					describe: "Open program",
 					builder: (yargs: any) => {
 						yargs.positional("program", {
 							type: "string",
-							describe: "base64 serialized",
+							describe: "Identifier",
 							demandOption: true,
+						});
+						yargs.option("base64", {
+							type: "string",
+							describe: "Base64 encoded serialized",
+							alias: "b",
+						});
+						yargs.option("variant", {
+							type: "string",
+							describe: "Variant name",
+							alias: "v",
 						});
 						return yargs;
 					},
 					handler: async (args) => {
 						const c = await client();
-						const address = await c.program.put(args.program);
-						console.log(address.toString());
-					},
-				})
-				.command({
-					command: "import <library>",
-					describe: "import a library that contains programs",
-					builder: (yargs: any) => {
-						yargs.positional("library", {
-							type: "array",
-							describe:
-								"Library name (will be loaded with js import(...)). Onlu libraries that are globally installed and can be imported",
-							demandOption: true,
-						});
-						return yargs;
-					},
-					handler: async (args) => {
-						for (const lib of args.library) {
-							const importedLib = await import(
-								/* webpackIgnore: true */ /* @vite-ignore */ lib
+						if (!args.base64 && !args.variant) {
+							throw new Error(
+								"Either base64 or variant argument needs to be provided"
 							);
-							console.log("imported lib:", importedLib);
 						}
+						let startArg: StartProgram;
+						if (args.base64) {
+							startArg = {
+								base64: args.base64,
+							};
+						} else {
+							startArg = {
+								variant: args.variant,
+							};
+						}
+						const address = await c.program.open(startArg);
+						console.log("Started program with address: ");
+						console.log(chalk.green(address.toString()));
 					},
 				})
 				.strict()
 				.demandCommand();
 			return yargs;
 		})
-		.command("library", "Manage libraries", (yargs) => {
+		.command("dependency", "Manage dependencies", (yargs) => {
 			yargs
 				.command({
-					command: "add <library>",
-					describe: "add a library that contains programs",
+					command: "add <dependency>",
+					describe: "add a dependency that contains programs",
 					builder: (yargs: any) => {
-						yargs.positional("library", {
+						yargs.positional("dependency", {
 							type: "string",
 							describe:
-								"Library name (will be loaded with js import(...)). Onlu libraries that are globally installed and can be imported",
+								"Dependency name (will be loaded with js import(...)). Onlu libraries that are globally installed and can be imported",
 							demandOption: true,
 						});
 						return yargs;
 					},
 					handler: async (args) => {
 						const c = await client();
-						await c.library.put(args.library);
+						const newPrograms = await c.dependency.put(args.dependency);
+
+						console.log(`New programs available (${newPrograms.length}):`);
+						newPrograms.forEach((p) => {
+							console.log(chalk.green(p));
+						});
 					},
 				})
 				.strict()

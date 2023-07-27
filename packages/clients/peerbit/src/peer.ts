@@ -237,6 +237,10 @@ export class Peerbit implements ProgramClient {
 		return this._keychain;
 	}
 
+	get handler(): ProgramHandler {
+		return this._handler;
+	}
+
 	getMultiaddrs(): Multiaddr[] {
 		return this.libp2p.getMultiaddrs();
 	}

@@ -17,12 +17,11 @@ export class PermissionedString extends Program {
 		trusted: (PublicSignKey | PeerId)[];
 	}) {
 		super();
-		if (properties) {
-			this._store = properties.store || new DString({});
-			this.trusted = properties.trusted.map((x) =>
+		this._store = properties?.store || new DString({});
+		this.trusted =
+			properties?.trusted.map((x) =>
 				x instanceof PublicSignKey ? x : Ed25519PublicKey.fromPeerId(x)
-			);
-		}
+			) || [];
 	}
 
 	get store(): DString {

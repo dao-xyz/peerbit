@@ -1,12 +1,15 @@
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 
-export const create = (directory: string, domain?: string) => {
+export const create = (properties: { directory?: string; domain?: string }) => {
 	return Peerbit.create({
 		libp2p: {
 			addresses: {
-				announce: domain
-					? [`/dns4/${domain}/tcp/8001`, `/dns4/${domain}/tcp/8002/ws`]
+				announce: properties.domain
+					? [
+							`/dns4/${properties.domain}/tcp/8001`,
+							`/dns4/${properties.domain}/tcp/8002/ws`,
+					  ]
 					: undefined,
 				listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
 			},
@@ -18,6 +21,6 @@ export const create = (directory: string, domain?: string) => {
 				pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
 			},
 		},
-		directory,
+		directory: properties.directory,
 	});
 };
