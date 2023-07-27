@@ -1,3 +1,1 @@
-# Node dashboard
 
-# 🚧 WIP 🚧
