@@ -19,7 +19,7 @@
     "packages/programs/data/shared-log": "2.0.1",
     "packages/transport/stream": "1.0.7",
     "packages/transport/stream-interface": "1.0.5",
-    "packages/programs/data/string": "2.0.3",
+    "packages/programs/data/string": "2.0.4",
     "packages/clients/test-utils": "1.0.15",
     "packages/utils/time": "1.0.2",
     "packages/programs/acl/trusted-network": "1.0.17",
