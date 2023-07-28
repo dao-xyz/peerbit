@@ -1,7 +1,7 @@
 import { LSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
 import http from "http";
-import { startServer } from "../api";
+import { startServer } from "../server";
 import dotenv from "dotenv";
 import { getDomainFromConfig } from "../domain";
 

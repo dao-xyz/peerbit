@@ -1,6 +1,6 @@
 import { LSession } from "@peerbit/test-utils";
 import http from "http";
-import { client, startServer, startServerWithNode } from "../api.js";
+import { startServer, startServerWithNode } from "../server.js";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "@peerbit/test-lib";
 import { Address, Program, ProgramClient } from "@peerbit/program";
@@ -9,7 +9,7 @@ import { toBase64 } from "@peerbit/crypto";
 import { Peerbit } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
-import { delay } from "@peerbit/time";
+import { client } from "../client.js";
 
 describe("libp2p only", () => {
 	let session: LSession, server: http.Server;
@@ -187,7 +187,7 @@ describe("server", () => {
 
 		it("dependency", async () => {
 			const c = await client();
-			const result = await c.dependency.put("@peerbit/test-lib");
+			const result = await c.dependency.install("@peerbit/test-lib");
 			expect(result).toEqual([]); // will already be imported in this test env. TODO make test better here, so that new programs are discvovered on import
 		});
 	});

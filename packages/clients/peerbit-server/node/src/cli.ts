@@ -4,12 +4,12 @@ import {
 	loadConfig,
 	startCertbot,
 } from "./domain.js";
-import { serialize } from "@dao-xyz/borsh";
-import { StartProgram, client, startServerWithNode } from "./api.js";
+import { startServerWithNode } from "./server.js";
 import { createRecord } from "./aws.js";
-import { toBase64 } from "@peerbit/crypto";
 import { getConfigDir } from "./config.js";
 import chalk from "chalk";
+import { client } from "./client.js";
+import { StartProgram } from "./types.js";
 
 export const cli = async (args?: string[]) => {
 	const yargs = await import("yargs");
@@ -323,33 +323,27 @@ export const cli = async (args?: string[]) => {
 				.demandCommand();
 			return yargs;
 		})
-		.command("dependency", "Manage dependencies", (yargs) => {
-			yargs
-				.command({
-					command: "add <dependency>",
-					describe: "add a dependency that contains programs",
-					builder: (yargs: any) => {
-						yargs.positional("dependency", {
-							type: "string",
-							describe:
-								"Dependency name (will be loaded with js import(...)). Only dependencies that are globally installed and can be imported",
-							demandOption: true,
-						});
-						return yargs;
-					},
-					handler: async (args) => {
-						const c = await client();
-						const newPrograms = await c.dependency.put(args.dependency);
+		.command({
+			command: "install <package-spec>",
+			describe: "install and import a dependency",
+			builder: (yargs: any) => {
+				yargs.positional("package-spec", {
+					type: "string",
+					describe: "Installed dependency will be loaded with js import(...)",
+					demandOption: true,
+				});
 
-						console.log(`New programs available (${newPrograms.length}):`);
-						newPrograms.forEach((p) => {
-							console.log(chalk.green(p));
-						});
-					},
-				})
-				.strict()
-				.demandCommand();
-			return yargs;
+				return yargs;
+			},
+			handler: async (args) => {
+				const c = await client();
+				const newPrograms = await c.dependency.install(args["package-spec"]);
+
+				console.log(`New programs available (${newPrograms.length}):`);
+				newPrograms.forEach((p) => {
+					console.log(chalk.green(p));
+				});
+			},
 		})
 		.help()
 		.strict()

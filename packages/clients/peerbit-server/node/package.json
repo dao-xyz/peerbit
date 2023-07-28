@@ -17,6 +17,12 @@
 	"exports": {
 		"import": "./lib/esm/index.js"
 	},
+	"browser": {
+		"./lib/esm/server.js": "./lib/esm/server.browser.js",
+		"./server.js": "./lib/esm/server.browser.js",
+		"./lib/esm/config.js": "./lib/esm/config.browser.js",
+		"./config.js": "./lib/esm/config.browser.js"
+	},
 	"files": [
 		"lib",
 		"src",
@@ -37,14 +43,14 @@
 		"build": "yarn clean && yarn build-lib && yarn build-ui",
 		"build-lib": "tsc -p tsconfig.json",
 		"build-ui": "cd ../frontend && yarn build && cd ../node",
-		"postbuild": "cp src/nginx-template.conf lib/esm/ && echo '{\"type\":\"module\"} ' | node ../../../../node_modules/.bin/json > lib/esm/package.json && cp -r ../frontend/dist lib/ui",
+		"postbuild": "cp src/nginx-template.conf lib/esm/ && cp -r ../frontend/dist lib/ui",
 		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
 		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
 		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "1.0.14",
 		"@peerbit/test-lib": "^0.0.1",
+		"@peerbit/test-utils": "1.0.14",
 		"@types/yargs": "^17.0.24",
 		"aws-sdk": "^2.1259.0",
 		"dotenv": "^16.1.4"
@@ -53,8 +59,10 @@
 		"@aws-sdk/client-route-53": "^3.345.0",
 		"@dao-xyz/libp2p-noise": "^12.0.1",
 		"axios": "^1.4.0",
+		"chalk": "^5.3.0",
 		"peerbit": "1.1.7",
 		"yargs": "^17.7.2",
-		"chalk": "^5.3.0"
+		"zlib": "^1.0.5",
+		"tar-stream": "^3.1.6"
 	}
 }

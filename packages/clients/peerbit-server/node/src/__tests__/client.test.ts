@@ -1,5 +1,5 @@
 import { ProgramClient } from "@peerbit/program";
-import { create } from "../client";
+import { create } from "../peerbit";
 
 describe("client", () => {
 	let client: ProgramClient;

@@ -1,68 +1,38 @@
 import http from "http";
-import { fromBase64, toBase64 } from "@peerbit/crypto";
-import { serialize, deserialize } from "@dao-xyz/borsh";
+import { fromBase64 } from "@peerbit/crypto";
+import { deserialize } from "@dao-xyz/borsh";
 import {
 	Program,
-	Address,
 	ProgramClient,
 	getProgramFromVariant,
 	getProgramFromVariants,
 } from "@peerbit/program";
-import { multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
-import { Libp2p } from "libp2p";
-import { getConfigDir, getCredentialsPath, NotFoundError } from "./config.js";
+import {
+	checkExistPath,
+	getConfigDir,
+	getCredentialsPath,
+	getPackageName,
+	loadPassword,
+	NotFoundError,
+} from "./config.js";
 import { setMaxListeners } from "events";
-import { create } from "./client.js";
+import { create } from "./peerbit.js";
 import { Peerbit } from "peerbit";
 import { getSchema } from "@dao-xyz/borsh";
+import { StartByBase64, StartByVariant, StartProgram } from "./types.js";
+import {
+	ADDRESS_PATH,
+	BOOTSTRAP_PATH,
+	INSTALL_PATH,
+	LOCAL_PORT,
+	PEER_ID_PATH,
+	PROGRAMS_PATH,
+	PROGRAM_PATH,
+} from "./routes.js";
+import { client } from "./client.js";
 
-export const SSL_PORT = 9002;
-export const LOCAL_PORT = 8082;
-
-export const getPort = (protocol: string) => {
-	if (protocol === "https:") {
-		return SSL_PORT;
-	}
-
-	if (protocol === "http:") {
-		return LOCAL_PORT;
-	}
-
-	throw new Error("Unsupported protocol: " + protocol);
-};
-
-const PEER_ID_PATH = "/peer/id";
-const ADDRESS_PATH = "/peer/address";
-const PROGRAM_PATH = "/program";
-const PROGRAMS_PATH = "/programs";
-const DEPENDENCY_PATH = "/library";
-const BOOTSTRAP_PATH = "/network/bootstrap";
-
-interface StartByVariant {
-	variant: string;
-}
-interface StartByBase64 {
-	base64: string;
-}
-export type StartProgram = StartByVariant | StartByBase64;
-export const checkExistPath = async (path: string) => {
-	const fs = await import("fs");
-
-	try {
-		if (!fs.existsSync(path)) {
-			fs.accessSync(path, fs.constants.W_OK); // will throw if fails
-			return false;
-		}
-		return true;
-	} catch (err: any) {
-		if (err.message.indexOf("no such file")) {
-			return false;
-		}
-		throw new Error("Can not access path");
-	}
-};
 export const createPassword = async (): Promise<string> => {
 	const fs = await import("fs");
 	const configDir = await getConfigDir();
@@ -85,22 +55,6 @@ export const createPassword = async (): Promise<string> => {
 		JSON.stringify({ username: "admin", password })
 	);
 	console.log(`Created credentials at ${credentialsPath}`);
-	return password;
-};
-
-export const loadPassword = async (): Promise<string> => {
-	const fs = await import("fs");
-	const configDir = await getConfigDir();
-	const credentialsPath = await getCredentialsPath(configDir);
-	if (!(await checkExistPath(credentialsPath))) {
-		throw new NotFoundError("Credentials file does not exist");
-	}
-	const password = JSON.parse(
-		fs.readFileSync(credentialsPath, "utf-8")
-	).password;
-	if (!password || password.length === 0) {
-		throw new NotFoundError("Password not found");
-	}
 	return password;
 };
 
@@ -181,10 +135,6 @@ export const startServer = async (
 	client: ProgramClient,
 	port: number = LOCAL_PORT
 ): Promise<http.Server> => {
-	const notPeerBitError =
-		"Client is just a Libp2p node, not a full Peerbit client. The command is not supported for this node type";
-	const notSupportedError = "Not implemted";
-
 	const password = await loadOrCreatePassword();
 
 	const adminACL = (req: http.IncomingMessage): boolean => {
@@ -205,7 +155,7 @@ export const startServer = async (
 
 	const getBody = (
 		req: http.IncomingMessage,
-		callback: (body: string) => void
+		callback: (body: string) => Promise<void> | void
 	) => {
 		let body = "";
 		req.on("data", function (d) {
@@ -356,41 +306,65 @@ export const startServer = async (
 								r404();
 								break;
 						}
-					} else if (req.url.startsWith(DEPENDENCY_PATH)) {
+					} else if (req.url.startsWith(INSTALL_PATH)) {
 						switch (req.method) {
 							case "PUT":
-								getBody(req, (body) => {
+								getBody(req, async (body) => {
 									const name = body;
-									console.log("IMPORT '" + name + "'");
-									if (name && name.length === 0) {
+
+									let packageName = name;
+									if (name.endsWith(".tgz")) {
+										packageName = await getPackageName(name);
+									}
+
+									if (!name || name.length === 0) {
 										res.writeHead(400);
-										res.end("Invalid library: " + name);
+										res.end("Invalid package: " + name);
 									} else {
-										const programsPre = new Set(
-											getProgramFromVariants().map((x) => getSchema(x).variant)
-										);
+										const child_process = await import("child_process");
+										try {
+											child_process.execSync(
+												`npm install ${name} --no-save --no-package-lock`
+											); // TODO omit=dev ? but this makes breaks the tests after running once?
+										} catch (error: any) {
+											res.writeHead(400);
+											res.end(
+												"Failed ot install library: " +
+													name +
+													". " +
+													error.toString()
+											);
+											return;
+										}
 
-										import(/* webpackIgnore: true */ /* @vite-ignore */ name)
-											.then(() => {
-												const programsPost = getProgramFromVariants()?.map(
-													(x) => getSchema(x)
-												);
-												const newPrograms: { variant: string }[] = [];
-												for (const p of programsPost) {
-													if (!programsPre.has(p.variant)) {
-														newPrograms.push(p as { variant: string });
-													}
+										try {
+											const programsPre = new Set(
+												getProgramFromVariants().map(
+													(x) => getSchema(x).variant
+												)
+											);
+
+											await import(
+												/* webpackIgnore: true */ /* @vite-ignore */ packageName
+											);
+											const programsPost = getProgramFromVariants()?.map((x) =>
+												getSchema(x)
+											);
+											const newPrograms: { variant: string }[] = [];
+											for (const p of programsPost) {
+												if (!programsPre.has(p.variant)) {
+													newPrograms.push(p as { variant: string });
 												}
+											}
 
-												res.writeHead(200);
-												res.end(
-													JSON.stringify(newPrograms.map((x) => x.variant))
-												);
-											})
-											.catch((e) => {
-												res.writeHead(400);
-												res.end(e.message.toString?.());
-											});
+											res.writeHead(200);
+											res.end(
+												JSON.stringify(newPrograms.map((x) => x.variant))
+											);
+										} catch (e: any) {
+											res.writeHead(400);
+											res.end(e.message.toString?.());
+										}
 									}
 								});
 								break;
@@ -453,156 +427,4 @@ export const startServer = async (
 	});
 	console.log("API available at port", port);
 	return server;
-};
-
-export const client = async (
-	endpoint: string = "http://localhost:" + LOCAL_PORT
-) => {
-	const { default: axios } = await import("axios");
-
-	const validateStatus = (status: number) => {
-		return (status >= 200 && status < 300) || status == 404;
-	};
-
-	const throwIfNot200 = (resp: { status: number; data: any }) => {
-		if (resp.status !== 200) {
-			throw new Error(resp.data);
-		}
-		return resp;
-	};
-	const getBodyByStatus = <
-		D extends { toString(): string },
-		T extends { status: number; data: D }
-	>(
-		resp: T
-	): D | undefined => {
-		if (resp.status === 404) {
-			return;
-		}
-		if (resp.status == 200) {
-			return resp.data;
-		}
-		throw new Error(
-			typeof resp.data === "string" ? resp.data : resp.data.toString()
-		);
-	};
-	const getId = async () =>
-		throwIfNot200(await axios.get(endpoint + PEER_ID_PATH, { validateStatus }))
-			.data;
-
-	const getHeaders = async () => {
-		const headers = {
-			authorization: "Basic admin:" + (await loadPassword()),
-		};
-		return headers;
-	};
-	return {
-		peer: {
-			id: {
-				get: getId,
-			},
-			addresses: {
-				get: async () => {
-					return (
-						throwIfNot200(
-							await axios.get(endpoint + ADDRESS_PATH, {
-								validateStatus,
-								headers: await getHeaders(),
-							})
-						).data as string[]
-					).map((x) => multiaddr(x));
-				},
-			},
-		},
-		program: {
-			has: async (address: Address | string): Promise<boolean> => {
-				const result = await axios.head(
-					endpoint +
-						PROGRAM_PATH +
-						"/" +
-						encodeURIComponent(address.toString()),
-					{ validateStatus, headers: await getHeaders() }
-				);
-				if (result.status !== 200 && result.status !== 404) {
-					throw new Error(result.data);
-				}
-				return result.status === 200 ? true : false;
-			},
-
-			open: async (program: StartProgram): Promise<Address> => {
-				const resp = throwIfNot200(
-					await axios.put(endpoint + PROGRAM_PATH, JSON.stringify(program), {
-						validateStatus,
-						headers: await getHeaders(),
-					})
-				);
-				return resp.data as string;
-			},
-
-			close: async (address: string): Promise<void> => {
-				throwIfNot200(
-					await axios.delete(
-						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()),
-						{
-							validateStatus,
-							headers: await getHeaders(),
-						}
-					)
-				);
-			},
-
-			drop: async (address: string): Promise<void> => {
-				throwIfNot200(
-					await axios.delete(
-						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()) +
-							"?delete=true",
-						{
-							validateStatus,
-							headers: await getHeaders(),
-						}
-					)
-				);
-			},
-
-			list: async (): Promise<string[]> => {
-				const resp = throwIfNot200(
-					await axios.get(endpoint + PROGRAMS_PATH, {
-						validateStatus,
-						headers: await getHeaders(),
-					})
-				);
-				return resp.data as string[];
-			},
-		},
-		dependency: {
-			put: async (name: string): Promise<string[]> => {
-				const resp = await axios.put(endpoint + DEPENDENCY_PATH, name, {
-					validateStatus,
-					headers: await getHeaders(),
-				});
-				if (resp.status !== 200) {
-					throw new Error(
-						typeof resp.data === "string" ? resp.data : resp.data.toString()
-					);
-				}
-				return resp.data;
-			},
-		},
-		network: {
-			bootstrap: async (): Promise<void> => {
-				throwIfNot200(
-					await axios.post(endpoint + BOOTSTRAP_PATH, undefined, {
-						validateStatus,
-						headers: await getHeaders(),
-					})
-				);
-			},
-		},
-	};
 };
