@@ -148,6 +148,30 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/server-v1.0.20...server-v1.1.0) (2023-07-28)
+
+
+### Features
+
+* cli support program management ([67cc32c](https://github.com/dao-xyz/peerbit/commit/67cc32cb20883da226342d059a6ad49184b84ba2))
+* support program management ([81e865f](https://github.com/dao-xyz/peerbit/commit/81e865fb99689121a31d8b97644014f72f47936d))
+
+
+### Bug Fixes
+
+* description typo ([b6ae376](https://github.com/dao-xyz/peerbit/commit/b6ae37618624baa7bcfc671f8d39b0a86a9091ac))
+* improve error msg ([3b3cd43](https://github.com/dao-xyz/peerbit/commit/3b3cd43e892490eebc864c14cdfc78ed7428282a))
+* update node required version ([3cba886](https://github.com/dao-xyz/peerbit/commit/3cba886e3556c74084eb12ead44b2c3dbd59cfd8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.1.7 to 1.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.14 to 1.0.15
+
 ## [1.0.20](https://github.com/dao-xyz/peerbit/compare/server-v1.0.19...server-v1.0.20) (2023-07-24)
 
 

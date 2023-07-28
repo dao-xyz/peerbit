@@ -14,6 +14,13 @@
     * @peerbit/crypto bumped from 1.0.1 to 1.0.2
     * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.6...stream-v1.0.7) (2023-07-28)
+
+
+### Bug Fixes
+
+* fix graphology version ([aa549c9](https://github.com/dao-xyz/peerbit/commit/aa549c9a1fcfb0b78ba30a9a555e5e952634681b))
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.5...stream-v1.0.6) (2023-07-18)
 
 

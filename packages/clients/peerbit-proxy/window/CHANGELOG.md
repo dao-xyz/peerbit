@@ -6,6 +6,14 @@
   * dependencies
     * @peerbit/proxy bumped from ^1.1.0 to ^1.1.1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped from ^1.1.1 to ^1.1.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.14 to 1.0.15
+
 ## 1.0.0 (2023-07-18)
 
 
