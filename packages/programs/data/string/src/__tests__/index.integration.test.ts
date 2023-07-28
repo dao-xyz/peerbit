@@ -6,10 +6,13 @@ import {
 	StringMatch,
 	RangeMetadatas,
 	RangeMetadata,
+	StringOperation,
 } from "../index.js";
 import { Range } from "../range.js";
 import { Observer } from "@peerbit/shared-log";
 import { ProgramClient } from "@peerbit/program";
+import { Change } from "@peerbit/log";
+import { waitForResolved } from "@peerbit/time";
 
 describe("query", () => {
 	let session: LSession,
@@ -151,6 +154,70 @@ describe("query", () => {
 		});
 		expect(string).toEqual("hello world");
 		expect(callbackValues).toEqual(["hello world"]);
+	});
+});
+
+describe("events", () => {
+	let session: LSession,
+		peer1: ProgramClient,
+		peer2: ProgramClient,
+		store1: DString,
+		store2: DString;
+
+	beforeEach(async () => {
+		// we reinit sesion for every test since DString does always have same address
+		// and that might lead to sideeffects running all tests in one go
+		session = await LSession.connected(2);
+		peer1 = session.peers[0];
+		peer2 = session.peers[1];
+
+		// Create store
+		store1 = new DString({});
+		await peer2.open(store1);
+
+		store2 = (await DString.load(
+			store1.address!,
+			peer2.services.blocks
+		)) as DString;
+
+		await peer1.open(store2, {
+			args: {
+				role: new Observer(),
+			},
+		});
+	});
+
+	afterEach(async () => {
+		await store1.drop();
+		await store2.drop();
+		await session.stop();
+	});
+	it("emits events on join and append", async () => {
+		let events: Change<StringOperation>[] = [];
+		store2.events.addEventListener("change", (e) => {
+			events.push(e.detail);
+		});
+
+		await store1.add(
+			"hello",
+			new Range({ offset: 0n, length: "hello".length })
+		);
+
+		await waitForResolved(() => expect(events).toHaveLength(1));
+		expect(events[0].added).toHaveLength(1);
+		expect((await events[0].added[0].getPayloadValue()).value).toEqual("hello");
+
+		await store2.add(
+			"world",
+			new Range({
+				offset: BigInt("hello ".length),
+				length: "world".length,
+			})
+		);
+
+		await waitForResolved(() => expect(events).toHaveLength(2));
+		expect(events[1].added).toHaveLength(1);
+		expect((await events[1].added[0].getPayloadValue()).value).toEqual("world");
 	});
 });
 

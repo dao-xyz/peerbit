@@ -1,8 +1,8 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { AppendOptions, CanAppend, Entry } from "@peerbit/log";
+import { AppendOptions, CanAppend, Change, Entry } from "@peerbit/log";
 import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
 import { SignatureWithKey } from "@peerbit/crypto";
-import { Program } from "@peerbit/program";
+import { Program, ProgramEvents } from "@peerbit/program";
 import { RPCOptions, CanRead, RPC } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
@@ -13,6 +13,7 @@ import {
 	StringQueryRequest,
 	StringResult,
 } from "./query.js";
+import { CustomEvent } from "@libp2p/interfaces/events";
 
 import { Range } from "./range.js";
 
@@ -37,13 +38,18 @@ export type StringStoreOptions = {
 	canRead?: (key: SignatureWithKey) => Promise<boolean>;
 };
 
+export interface StringEvents {
+	change: CustomEvent<Change<StringOperation>>;
+}
+
 type Args = {
 	canRead?: CanRead;
 	canAppend?: CanAppend<StringOperation>;
 	log?: SharedLogOptions;
 };
+
 @variant("dstring")
-export class DString extends Program {
+export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	@field({ type: SharedLog })
 	_log: SharedLog<StringOperation>;
 
@@ -72,7 +78,14 @@ export class DString extends Program {
 		await this._log.open({
 			encoding,
 			canAppend: this.canAppend.bind(this),
-			onChange: this._index.updateIndex.bind(this._index),
+			onChange: async (change) => {
+				await this._index.updateIndex(change);
+				this.events.dispatchEvent(
+					new CustomEvent("change", {
+						detail: change,
+					})
+				);
+			},
 		});
 
 		await this.query.open({
