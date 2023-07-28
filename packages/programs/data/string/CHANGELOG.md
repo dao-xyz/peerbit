@@ -152,6 +152,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/string-v2.0.3...string-v2.0.4) (2023-07-28)
+
+
+### Bug Fixes
+
+* expose change events ([e6d4982](https://github.com/dao-xyz/peerbit/commit/e6d4982e43a0bf6e17ee5b3ff4672240cf625d7b))
+
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/string-v2.0.1...string-v2.0.2) (2023-07-21)
 
 
