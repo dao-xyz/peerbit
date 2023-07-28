@@ -91,6 +91,12 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.14 to 1.0.15
+
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/log-v1.0.13...log-v1.0.14) (2023-07-18)
 
 

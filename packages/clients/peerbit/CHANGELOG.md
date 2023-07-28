@@ -32,6 +32,23 @@
   * dependencies
     * @peerbit/program bumped from 1.0.4 to 1.0.5
 
+## [1.2.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.7...peerbit-v1.2.0) (2023-07-28)
+
+
+### Features
+
+* add bootstrap function ([52517ad](https://github.com/dao-xyz/peerbit/commit/52517ad655036ca30a17136d56cb35e3ec691256))
+* cli support program management ([67cc32c](https://github.com/dao-xyz/peerbit/commit/67cc32cb20883da226342d059a6ad49184b84ba2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.0.0 to 2.1.0
+    * @peerbit/pubsub bumped from ^1.0.6 to ^1.0.7
+    * @peerbit/blocks bumped from ^1.0.6 to ^1.0.7
+
 ## [1.1.7](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.6...peerbit-v1.1.7) (2023-07-18)
 
 

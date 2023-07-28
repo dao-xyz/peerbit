@@ -110,6 +110,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/document-v2.0.0...document-v2.0.1) (2023-07-28)
+
+
+### Bug Fixes
+
+* typo ([9e9f8dc](https://github.com/dao-xyz/peerbit/commit/9e9f8dc520d20363e8230f5630c98b5752fec56d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.0.0 to 2.1.0
+    * @peerbit/rpc bumped from 2.0.0 to 2.0.1
+    * @peerbit/shared-log bumped from 2.0.0 to 2.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.14 to 1.0.15
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/document-v1.1.9...document-v2.0.0) (2023-07-18)
 
 
