@@ -32,6 +32,9 @@ Setup a test domain (so can access the node). The command below might take a whi
 sudo peerbit domain test --email YOUR_EMAIL 
 ```
 
+(``sudo`` is needed because docker will be installed if it is not available)
+
+After a while a domain will be written out that you can access and learn more about your peer
 
 3. 
 Start the node in a background process
@@ -40,13 +43,6 @@ peerbit start > log.txt 2>&1 &
 ```
 
 This will start a peerbit client
-
-
-
-(``sudo`` is needed because docker will be installed if it is not available)
-
-After a while a domain will be written out that you can access and learn more about your peer
-
  
 4. *Skip this step if testing locally*
 
