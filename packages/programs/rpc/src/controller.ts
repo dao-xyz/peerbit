@@ -68,6 +68,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		(properties: { response: ResponseV0; message: DataMessage }) => any
 	>;
 	private _requestType: AbstractType<Q> | Uint8ArrayConstructor;
+	private _requestTypeIsUint8Array: boolean;
 	private _responseType: AbstractType<R>;
 	private _rpcTopic: string | undefined;
 	private _onMessageBinded: ((arg: any) => any) | undefined = undefined;
@@ -77,11 +78,11 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 	private _getResponseValueFn: (decrypted: DecryptedThing<R>) => R;
 	private _getRequestValueFn: (decrypted: DecryptedThing<Q>) => Q;
-
 	async open(args: RPCSetupOptions<Q, R>): Promise<void> {
 		this._rpcTopic = args.topic ?? this._rpcTopic;
 		this._responseHandler = args.responseHandler;
 		this._requestType = args.queryType;
+		this._requestTypeIsUint8Array = (this._requestType as any) === Uint8Array;
 		this._responseType = args.responseType;
 		this._responseResolver = new Map();
 		this._subscriptionMetaData = args.subscriptionData;
@@ -237,14 +238,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		respondTo?: X25519PublicKey,
 		options?: PublishOptions
 	) {
-		const requestData =
-			(this._requestType as any) === Uint8Array
-				? (request as Uint8Array)
-				: serialize(request);
+		const requestData = this._requestTypeIsUint8Array
+			? (request as Uint8Array)
+			: serialize(request);
 
 		const decryptedMessage = new DecryptedThing<Uint8Array>({
 			data: requestData,
 		});
+
 		let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
 
 		if (
