@@ -14,7 +14,7 @@ export class MinReplicas {
 }
 
 @variant(0)
-export class AbsolutMinReplicas extends MinReplicas {
+export class AbsoluteReplicas extends MinReplicas {
 	@field({ type: "u32" })
 	_value: number;
 
@@ -42,23 +42,23 @@ export class RelativeMinReplicas extends MinReplicas {
 }
  */
 
-export const encodeMinReplicas = (minReplicas: MinReplicas): Uint8Array => {
+export const encodeReplicas = (minReplicas: MinReplicas): Uint8Array => {
 	return serialize(minReplicas);
 };
 
-export const decodeMinReplicas = (entry: {
+export const decodeReplicas = (entry: {
 	meta: { data?: Uint8Array };
 }): MinReplicas => {
 	return deserialize(entry.meta.data!, MinReplicas);
 };
 
-export const maxMinReplicas = (
+export const maxReplicas = (
 	log: SharedLog,
 	entries: { meta: { data?: Uint8Array } }[]
 ) => {
 	let max = 0;
 	for (const entry of entries) {
-		max = Math.max(decodeMinReplicas(entry).getValue(log), max);
+		max = Math.max(decodeReplicas(entry).getValue(log), max);
 	}
 	return max;
 };

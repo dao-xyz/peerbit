@@ -5,7 +5,7 @@ import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { AbsolutMinReplicas, maxMinReplicas } from "../replication";
+import { AbsoluteReplicas, maxReplicas } from "../replication";
 import { Observer } from "../role";
 
 describe(`exchange`, function () {
@@ -68,7 +68,7 @@ describe(`exchange`, function () {
 		expect(
 			await db1.log.findLeaders(
 				db1Entries[0].gid,
-				maxMinReplicas(db1.log, db1Entries)
+				maxReplicas(db1.log, db1Entries)
 			)
 		).toContainAllValues(
 			[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
@@ -84,7 +84,7 @@ describe(`exchange`, function () {
 		expect(
 			await db2.log.findLeaders(
 				db2Entries[0].gid,
-				maxMinReplicas(db2.log, db2Entries)
+				maxReplicas(db2.log, db2Entries)
 			)
 		).toContainValues(
 			[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
@@ -353,7 +353,7 @@ describe("replication degree", () => {
 		const value = "hello";
 
 		const e1 = await db1.add(value, {
-			replicas: new AbsolutMinReplicas(1), // will be overriden by 'minReplicas' above
+			replicas: new AbsoluteReplicas(1), // will be overriden by 'minReplicas' above
 			meta: { next: [] },
 		});
 
@@ -371,7 +371,7 @@ describe("replication degree", () => {
 		const value = "hello";
 
 		const e1 = await db1.add(value, {
-			replicas: new AbsolutMinReplicas(100), // will be overriden by 'maxReplicas' above
+			replicas: new AbsoluteReplicas(100), // will be overriden by 'maxReplicas' above
 			meta: { next: [] },
 		});
 
@@ -391,11 +391,11 @@ describe("replication degree", () => {
 		const value = "hello";
 
 		const e1 = await db1.add(value, {
-			replicas: new AbsolutMinReplicas(1),
+			replicas: new AbsoluteReplicas(1),
 			meta: { next: [] },
 		});
 		const e2 = await db1.add(value, {
-			replicas: new AbsolutMinReplicas(3),
+			replicas: new AbsoluteReplicas(3),
 			meta: { next: [] },
 		});
 
@@ -417,7 +417,7 @@ describe("replication degree", () => {
 
 		const value = "hello";
 
-		const e1 = await db1.add(value, { replicas: new AbsolutMinReplicas(3) });
+		const e1 = await db1.add(value, { replicas: new AbsoluteReplicas(3) });
 
 		// Assume all peers gets it
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
@@ -426,7 +426,7 @@ describe("replication degree", () => {
 
 		// e2 only sets minReplicas to 1 which means only db2 or db3 needs to hold it
 		const e2 = await db1.add(value, {
-			replicas: new AbsolutMinReplicas(1),
+			replicas: new AbsoluteReplicas(1),
 			meta: { next: [e1.entry] },
 		});
 
@@ -443,7 +443,7 @@ describe("replication degree", () => {
 
 		const value = "hello";
 
-		const e1 = await db1.add(value, { replicas: new AbsolutMinReplicas(1) });
+		const e1 = await db1.add(value, { replicas: new AbsoluteReplicas(1) });
 
 		// Assume all peers gets it
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
@@ -464,7 +464,7 @@ describe("replication degree", () => {
 
 		const value = "hello";
 
-		const e1 = await db1.add(value, { replicas: new AbsolutMinReplicas(2) });
+		const e1 = await db1.add(value, { replicas: new AbsoluteReplicas(2) });
 
 		// Assume all peers gets it
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));

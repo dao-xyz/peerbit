@@ -3,7 +3,7 @@ import { EventStore } from "./utils/stores/event-store";
 // Include test utilities
 import { LSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
-import { AbsolutMinReplicas, maxMinReplicas } from "../replication.js";
+import { AbsoluteReplicas, maxReplicas } from "../replication.js";
 import { Replicator } from "../role";
 
 describe(`sharding`, () => {
@@ -130,7 +130,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -199,7 +199,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -246,7 +246,7 @@ describe(`sharding`, () => {
 			async () =>
 				checkReplicas(
 					[db1, db2, db3],
-					maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+					maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 					entryCount,
 					false
 				),
@@ -260,7 +260,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -333,7 +333,7 @@ describe(`sharding`, () => {
 		await waitForResolved(async () =>
 			checkReplicas(
 				[db1, db2],
-				maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+				maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 				entryCount,
 				false
 			)
@@ -406,7 +406,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			true
 		);
@@ -417,7 +417,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			true
 		);
@@ -497,7 +497,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -507,7 +507,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			maxMinReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			true
 		);
@@ -534,14 +534,14 @@ describe(`sharding`, () => {
 				return { hash: x, timestamp: +new Date() };
 			});
 		expect(getDiscoveryGroupsFn()).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
-		db1.log.replicas.min = new AbsolutMinReplicas(2);
+		db1.log.replicas.min = new AbsoluteReplicas(2);
 		expect(getDiscoveryGroupsFn()).toEqual([["a", "d"], ["b", "e"], ["c"]]);
-		db1.log.replicas.min = new AbsolutMinReplicas(3);
+		db1.log.replicas.min = new AbsoluteReplicas(3);
 		expect(getDiscoveryGroupsFn()).toEqual([
 			["a", "c", "e"],
 			["b", "d"],
 		]);
-		db1.log.replicas.min = new AbsolutMinReplicas(5);
+		db1.log.replicas.min = new AbsoluteReplicas(5);
 		expect(getDiscoveryGroupsFn()).toEqual([["a", "b", "c", "d", "e"]]);
 	});
 

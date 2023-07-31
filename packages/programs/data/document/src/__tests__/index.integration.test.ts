@@ -28,26 +28,19 @@ import {
 	Sort,
 	SortDirection,
 } from "../query.js";
-import { LSession, createStore } from "@peerbit/test-utils";
+import { LSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
-import {
-	X25519Keypair,
-	X25519PublicKey,
-	randomBytes,
-	sha256Base64,
-	toBase64,
-} from "@peerbit/crypto";
+import { randomBytes, toBase64 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { waitFor, waitForResolved } from "@peerbit/time";
 import { DocumentIndex } from "../document-index.js";
-import { waitForPeers as waitForPeersStreams } from "@peerbit/stream";
 import { Program } from "@peerbit/program";
-import pDefer, { DeferredPromise } from "p-defer";
+import pDefer from "p-defer";
 
 import {
-	AbsolutMinReplicas,
-	decodeMinReplicas,
-	encodeMinReplicas,
+	AbsoluteReplicas,
+	decodeReplicas,
+	encodeReplicas,
 } from "@peerbit/shared-log";
 
 BigInt.prototype["toJSON"] = function () {
@@ -202,9 +195,9 @@ describe("index", () => {
 
 				const putOperation = (await store.docs.put(doc, { replicas: 123 }))
 					.entry;
-				expect(
-					decodeMinReplicas(putOperation).getValue(store.docs.log)
-				).toEqual(123);
+				expect(decodeReplicas(putOperation).getValue(store.docs.log)).toEqual(
+					123
+				);
 			});
 
 			it("many chunks", async () => {
@@ -1378,7 +1371,7 @@ describe("index", () => {
 							...b,
 							meta: {
 								...b?.meta,
-								data: encodeMinReplicas(new AbsolutMinReplicas(1)),
+								data: encodeReplicas(new AbsoluteReplicas(1)),
 							},
 						};
 						return store.docs.log.log.append(a, b);

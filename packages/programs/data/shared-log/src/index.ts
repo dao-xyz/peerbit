@@ -40,11 +40,11 @@ import { startsWith } from "@peerbit/uint8arrays";
 import { TimeoutError } from "@peerbit/time";
 import { REPLICATOR_TYPE_VARIANT, Observer, Replicator, Role } from "./role.js";
 import {
-	AbsolutMinReplicas,
+	AbsoluteReplicas,
 	MinReplicas,
-	decodeMinReplicas,
-	encodeMinReplicas,
-	maxMinReplicas,
+	decodeReplicas,
+	encodeReplicas,
+	maxReplicas,
 } from "./replication.js";
 import pDefer, { DeferredPromise } from "p-defer";
 
@@ -88,7 +88,7 @@ export const DEFAULT_MIN_REPLICAS = 2;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
 export type SharedAppendOptions<T> = AppendOptions<T> & {
-	replicas?: AbsolutMinReplicas | number;
+	replicas?: AbsoluteReplicas | number;
 };
 
 @variant("shared_log")
@@ -141,10 +141,10 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		removed: Entry<T>[];
 	}> {
 		const appendOptions: AppendOptions<T> = { ...options };
-		const minReplicasData = encodeMinReplicas(
+		const minReplicasData = encodeReplicas(
 			options?.replicas
 				? typeof options.replicas === "number"
-					? new AbsolutMinReplicas(options.replicas)
+					? new AbsoluteReplicas(options.replicas)
 					: options.replicas
 				: this.replicas.min
 		);
@@ -169,12 +169,12 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		this.replicas = {
 			min: options?.replicas?.min
 				? typeof options?.replicas?.min === "number"
-					? new AbsolutMinReplicas(options?.replicas?.min)
+					? new AbsoluteReplicas(options?.replicas?.min)
 					: options?.replicas?.min
-				: new AbsolutMinReplicas(DEFAULT_MIN_REPLICAS),
+				: new AbsoluteReplicas(DEFAULT_MIN_REPLICAS),
 			max: options?.replicas?.max
 				? typeof options?.replicas?.max === "number"
-					? new AbsolutMinReplicas(options?.replicas?.max)
+					? new AbsoluteReplicas(options?.replicas?.max)
 					: options.replicas.max
 				: undefined,
 		};
@@ -207,7 +207,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 			...this._logProperties,
 			/* canAppend: (entry) => {
-				const replicas = decodeMinReplicas(entry).getValue(this);
+				const replicas = decodeReplicas(entry).getValue(this);
 				if (this.replicas.max && this.replicas.max.getValue(this) < replicas) {
 					return false;
 				}
@@ -238,7 +238,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					canTrim: async (entry) =>
 						!(await this.isLeader(
 							entry.meta.gid,
-							decodeMinReplicas(entry).getValue(this)
+							decodeReplicas(entry).getValue(this)
 						)), // TODO types
 					cacheId: () => this._lastSubscriptionMessageId,
 				},
@@ -376,24 +376,21 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 						for (const [gid, entries] of groupedByGid) {
 							const headsWithGid = this.log.headsIndex.gids.get(gid);
-							const maxMinReplicasFromHead =
+							const maxReplicasFromHead =
 								headsWithGid && headsWithGid.size > 0
-									? maxMinReplicas(this, [...headsWithGid.values()])
+									? maxReplicas(this, [...headsWithGid.values()])
 									: this.replicas.min.getValue(this);
 
-							const maxMinReplicasFromNewEntries = maxMinReplicas(this, [
+							const maxReplicasFromNewEntries = maxReplicas(this, [
 								...entries.map((x) => x.entry),
 							]);
 
 							const isLeader = await this.isLeader(
 								gid,
-								Math.max(maxMinReplicasFromHead, maxMinReplicasFromNewEntries)
+								Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
 							);
 
-							if (
-								maxMinReplicasFromNewEntries < maxMinReplicasFromHead &&
-								isLeader
-							) {
+							if (maxReplicasFromNewEntries < maxReplicasFromHead && isLeader) {
 								(maybeDelete || (maybeDelete = [])).push(entries);
 							}
 
@@ -433,7 +430,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 									entries[0].entry.meta.gid
 								);
 								if (headsWithGid && headsWithGid.size > 0) {
-									const minReplicas = maxMinReplicas(this, [
+									const minReplicas = maxReplicas(this, [
 										...headsWithGid.values(),
 									]);
 
@@ -467,7 +464,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 						indexedEntry &&
 						(await this.isLeader(
 							indexedEntry.meta.gid,
-							decodeMinReplicas(indexedEntry).getValue(this)
+							decodeReplicas(indexedEntry).getValue(this)
 						))
 					) {
 						hasAndIsLeader.push(new HasEntry(hash, true));
@@ -653,7 +650,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			const existCounter = new Set<string>();
 			const responseCounter = new Set<string>();
 
-			const minReplicas = decodeMinReplicas(entry);
+			const minReplicas = decodeReplicas(entry);
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const resolve = () => {
@@ -750,7 +747,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			const oldPeersSet = this._gidPeersHistory.get(gid);
 			const currentPeers = await this.findLeaders(
 				gid,
-				maxMinReplicas(this, entries) // pick max replication policy of all entries, so all information is treated equally important as the most important
+				maxReplicas(this, entries) // pick max replication policy of all entries, so all information is treated equally important as the most important
 			);
 			for (const currentPeer of currentPeers) {
 				if (
@@ -857,7 +854,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		return groups;
 	}
 	async replicator(entry: Entry<any>) {
-		return this.isLeader(entry.gid, decodeMinReplicas(entry).getValue(this));
+		return this.isLeader(entry.gid, decodeReplicas(entry).getValue(this));
 	}
 
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {

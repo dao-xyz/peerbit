@@ -5,7 +5,7 @@ import { variant, field, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { randomBytes } from "@peerbit/crypto";
 import {
-	AbsolutMinReplicas,
+	AbsoluteReplicas,
 	ReplicationLimitsOptions,
 	SharedLog,
 	SyncFilter,
@@ -75,7 +75,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			meta?: {
 				next?: Entry<any>[];
 			};
-			replicas?: AbsolutMinReplicas;
+			replicas?: AbsoluteReplicas;
 		}
 	) {
 		return this.log.append(
