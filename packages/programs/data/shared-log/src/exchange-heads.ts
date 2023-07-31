@@ -63,24 +63,12 @@ export class RequestHasEntries extends TransportMessage {
 	}
 }
 
-export class HasEntry {
-	@field({ type: "string" })
-	hash: string;
-
-	@field({ type: "bool" })
-	has: boolean;
-
-	constructor(hash: string, has: boolean) {
-		this.has = has;
-		this.hash = hash;
-	}
-}
 @variant([0, 3])
 export class ResponseHasEntries extends TransportMessage {
-	@field({ type: vec(HasEntry) })
-	hashes: HasEntry[];
+	@field({ type: vec("string") })
+	hashes: string[];
 
-	constructor(props: { hashes: HasEntry[] }) {
+	constructor(props: { hashes: string[] }) {
 		super();
 		this.hashes = props.hashes;
 	}

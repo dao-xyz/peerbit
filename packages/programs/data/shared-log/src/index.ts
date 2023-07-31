@@ -27,7 +27,6 @@ import { logger as loggerFn } from "@peerbit/logger";
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
-	HasEntry,
 	RequestHasEntries,
 	ResponseHasEntries,
 	createExchangeHeadsMessage,
@@ -117,9 +116,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		{
 			promise: DeferredPromise<void>;
 			clear: () => void;
-			callback: (publicKeyHash: string, has: boolean) => Promise<void> | void;
+			callback: (publicKeyHash: string) => Promise<void> | void;
 		}
 	>;
+
+	private __pendingIHave: Map<string, () => void>;
 
 	replicas: ReplicationLimits;
 
@@ -180,6 +181,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		};
 
 		this._pendingDeletes = new Map();
+		this.__pendingIHave = new Map();
 
 		this._sync = options?.sync;
 		this._role = options?.role || new Replicator();
@@ -206,6 +208,14 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			keychain: this.node.keychain,
 
 			...this._logProperties,
+			onChange: (change) => {
+				if (this.__pendingIHave.size > 0) {
+					for (const added of change.added) {
+						this.__pendingIHave.get(added.hash)?.();
+					}
+				}
+				return this._logProperties?.onChange?.(change);
+			},
 			/* canAppend: (entry) => {
 				const replicas = decodeReplicas(entry).getValue(this);
 				if (this.replicas.max && this.replicas.max.getValue(this) < replicas) {
@@ -299,6 +309,8 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			v.promise.resolve(); // TODO or reject?
 		}
 		this._pendingDeletes = new Map();
+		this.__pendingIHave = new Map();
+
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
 
@@ -457,7 +469,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					}
 				}
 			} else if (msg instanceof RequestHasEntries) {
-				const hasAndIsLeader: HasEntry[] = [];
+				const hasAndIsLeader: string[] = [];
 				for (const hash of msg.hashes) {
 					const indexedEntry = this.log.entryIndex.getShallow(hash);
 					if (
@@ -467,9 +479,17 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 							decodeReplicas(indexedEntry).getValue(this)
 						))
 					) {
-						hasAndIsLeader.push(new HasEntry(hash, true));
+						hasAndIsLeader.push(hash);
 					} else {
-						hasAndIsLeader.push(new HasEntry(hash, false));
+						const pendingIHave = this.__pendingIHave.get(hash);
+
+						this.__pendingIHave.set(hash, () => {
+							pendingIHave && pendingIHave();
+							this.rpc.send(new ResponseHasEntries({ hashes: [hash] }), {
+								to: [context.from!],
+							});
+							this.__pendingIHave.delete(hash);
+						});
 					}
 				}
 				this.rpc.send(new ResponseHasEntries({ hashes: hasAndIsLeader }), {
@@ -477,9 +497,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				});
 			} else if (msg instanceof ResponseHasEntries) {
 				for (const hash of msg.hashes) {
-					this._pendingDeletes
-						.get(hash.hash)
-						?.callback(context.from!.hashcode(), hash.has);
+					this._pendingDeletes.get(hash)?.callback(context.from!.hashcode());
 				}
 			} else {
 				throw new Error("Unexpected message");
@@ -648,8 +666,6 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 			filteredEntries.push(entry);
 			const existCounter = new Set<string>();
-			const responseCounter = new Set<string>();
-
 			const minReplicas = decodeReplicas(entry);
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
@@ -680,26 +696,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				clear: () => {
 					clearTimeout(timeout);
 				},
-				callback: async (publicKeyHash: string, has: boolean) => {
+				callback: async (publicKeyHash: string) => {
 					const minReplicasValue = minReplicas.getValue(this);
 					const l = await this.findLeaders(entry.gid, minReplicasValue);
 					if (l.find((x) => x === publicKeyHash)) {
-						if (has) {
-							existCounter.add(publicKeyHash);
-						}
-						responseCounter.add(publicKeyHash);
-
-						const maxResponses = l.length;
-						const responsesLeft = maxResponses - responseCounter.size;
-
-						if (responsesLeft + existCounter.size < minReplicasValue) {
-							reject(
-								new Error(
-									"Insufficient replicators to safely delete: " + entry.hash
-								)
-							);
-						}
-
+						existCounter.add(publicKeyHash);
 						if (minReplicas.getValue(this) <= existCounter.size) {
 							this.log
 								.remove(entry, {

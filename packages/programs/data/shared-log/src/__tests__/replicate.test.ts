@@ -459,6 +459,7 @@ describe("replication degree", () => {
 		expect(dbWithEntry.log.log.length).toEqual(1); // No deletions
 	});
 
+	/*  TODO feat
 	it("will reject early if leaders does not have entry", async () => {
 		await init(1);
 
@@ -479,5 +480,5 @@ describe("replication degree", () => {
 			"Insufficient replicators to safely delete: " + e1.entry.hash
 		);
 		expect(db2.log.log.length).toEqual(1);
-	});
+	}); */
 });
