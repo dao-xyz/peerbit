@@ -306,6 +306,11 @@ describe(`sharding`, () => {
 		await db3.close();
 		await session.peers[2].open(db3);
 		await db3.close();
+		// adding some delay seems to make CI tests also fail here
+		// Specifically is .pendingDeletes is used to resuse safelyDelete requests,
+		// which would make this test break since reopen, would/should invalidate pending deletes
+		// TODO make this more well defined
+		await delay(100);
 		await session.peers[2].open(db3);
 		await db3.close();
 		await session.peers[2].open(db3);
@@ -315,6 +320,7 @@ describe(`sharding`, () => {
 				db2.log.log.values.length > entryCount * 0.5 &&
 				db2.log.log.values.length < entryCount * 0.85
 		);
+
 		await waitFor(
 			() =>
 				db3.log.log.values.length > entryCount * 0.5 &&

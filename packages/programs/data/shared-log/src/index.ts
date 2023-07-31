@@ -640,11 +640,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		const promises: Promise<any>[] = [];
 		const filteredEntries: Entry<any>[] = [];
 		for (const entry of entries) {
-			const pending = this._pendingDeletes.get(entry.hash);
+			/* const pending = this._pendingDeletes.get(entry.hash);
 			if (pending) {
 				promises.push(pending.promise.promise);
 				continue;
-			}
+			} */
 
 			filteredEntries.push(entry);
 			const existCounter = new Set<string>();
@@ -654,13 +654,19 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const resolve = () => {
-				this._pendingDeletes.delete(entry.hash);
+				const pending = this._pendingDeletes.get(entry.hash);
+				if (pending?.promise == deferredPromise) {
+					this._pendingDeletes.delete(entry.hash);
+				}
 				clearTimeout(timeout);
 				deferredPromise.resolve();
 			};
 
 			const reject = (e: any) => {
-				this._pendingDeletes.delete(entry.hash);
+				const pending = this._pendingDeletes.get(entry.hash);
+				if (pending?.promise == deferredPromise) {
+					this._pendingDeletes.delete(entry.hash);
+				}
 				clearTimeout(timeout);
 				deferredPromise.reject(e);
 			};
