@@ -44,7 +44,11 @@ import { waitForPeers as waitForPeersStreams } from "@peerbit/stream";
 import { Program } from "@peerbit/program";
 import pDefer, { DeferredPromise } from "p-defer";
 
-import { AbsolutMinReplicas, encodeMinReplicas } from "@peerbit/shared-log";
+import {
+	AbsolutMinReplicas,
+	decodeMinReplicas,
+	encodeMinReplicas,
+} from "@peerbit/shared-log";
 
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();
@@ -176,6 +180,31 @@ describe("index", () => {
 				await store.docs.log.log.close();
 				await store.docs.log.log.load();
 				await store.docs.log.log.close();
+			});
+
+			it("replication degree", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex(),
+					}),
+				});
+				await session.peers[0].open(store);
+				const changes: DocumentsChange<Document>[] = [];
+
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				const putOperation = (await store.docs.put(doc, { replicas: 123 }))
+					.entry;
+				expect(
+					decodeMinReplicas(putOperation).getValue(store.docs.log)
+				).toEqual(123);
 			});
 
 			it("many chunks", async () => {

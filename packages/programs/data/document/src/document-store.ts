@@ -18,6 +18,7 @@ import {
 	Replicator,
 	SharedLog,
 	SharedLogOptions,
+	SharedAppendOptions,
 } from "@peerbit/shared-log";
 export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
@@ -248,7 +249,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 	public async put(
 		doc: T,
-		options?: AppendOptions<Operation<T>> & { unique?: boolean }
+		options?: SharedAppendOptions<Operation<T>> & { unique?: boolean }
 	) {
 		const key = this._index.indexByResolver(doc as any as Keyable);
 		checkKeyable(key);
