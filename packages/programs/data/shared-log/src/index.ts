@@ -87,6 +87,9 @@ export interface SharedLogOptions {
 export const DEFAULT_MIN_REPLICAS = 2;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
+export type SharedAppendOptions<T> = AppendOptions<T> & {
+	replicas?: AbsolutMinReplicas | number;
+};
 
 @variant("shared_log")
 export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
@@ -132,18 +135,18 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 	async append(
 		data: T,
-		options?:
-			| (AppendOptions<T> & {
-					replicas?: AbsolutMinReplicas;
-			  })
-			| undefined
+		options?: SharedAppendOptions<T> | undefined
 	): Promise<{
 		entry: Entry<T>;
 		removed: Entry<T>[];
 	}> {
 		const appendOptions: AppendOptions<T> = { ...options };
 		const minReplicasData = encodeMinReplicas(
-			options?.replicas || this.replicas.min
+			options?.replicas
+				? typeof options.replicas === "number"
+					? new AbsolutMinReplicas(options.replicas)
+					: options.replicas
+				: this.replicas.min
 		);
 
 		if (!appendOptions.meta) {
