@@ -19,9 +19,9 @@ describe("values", () => {
 			identity,
 			meta: {
 				gidSeed: Buffer.from("a"),
+				next: [],
 			},
 			data: new Uint8Array([0]),
-			next: [],
 		});
 
 		e2 = await Entry.create({
@@ -29,9 +29,9 @@ describe("values", () => {
 			identity,
 			meta: {
 				gidSeed: Buffer.from("a"),
+				next: [e1],
 			},
 			data: new Uint8Array([1]),
-			next: [e1],
 		});
 
 		e3 = await Entry.create({
@@ -39,9 +39,9 @@ describe("values", () => {
 			identity,
 			meta: {
 				gidSeed: Buffer.from("a"),
+				next: [e2],
 			},
 			data: new Uint8Array([2]),
-			next: [e2],
 		});
 		entryIndex = new EntryIndex({
 			store,

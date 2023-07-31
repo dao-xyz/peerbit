@@ -1,5 +1,4 @@
 import { HLC, LamportClock as Clock, Timestamp } from "./clock.js";
-import { isDefined } from "./is-defined.js";
 import {
 	variant,
 	field,
@@ -453,8 +452,8 @@ export class Entry<T>
 			type?: EntryType;
 			gidSeed?: Uint8Array;
 			data?: Uint8Array;
+			next?: Entry<T>[];
 		};
-		next?: Entry<T>[];
 		encoding?: Encoding<T>;
 		canAppend?: CanAppend<T>;
 		encryption?: EntryEncryption;
@@ -463,11 +462,13 @@ export class Entry<T>
 			data: Uint8Array
 		) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	}): Promise<Entry<T>> {
-		if (!properties.encoding || !properties.next) {
+		if (!properties.encoding || !properties?.meta?.next) {
 			properties = {
 				...properties,
-
-				next: properties.next ? properties.next : [],
+				meta: {
+					...properties?.meta,
+					next: properties.meta?.next ? properties.meta?.next : [],
+				},
 				encoding: properties.encoding ? properties.encoding : NO_ENCODING,
 			};
 		}
@@ -476,12 +477,12 @@ export class Entry<T>
 			throw new Error("Missing encoding options");
 		}
 
-		if (!isDefined(properties.data)) throw new Error("Entry requires data");
-		if (!isDefined(properties.next) || !Array.isArray(properties.next))
+		if (properties.data == null) throw new Error("Entry requires data");
+		if (properties.meta?.next == null || !Array.isArray(properties.meta.next))
 			throw new Error("'next' argument is not an array");
 
 		// Clean the next objects and convert to hashes
-		const nexts = properties.next;
+		const nexts = properties.meta?.next;
 
 		const payloadToSave = new Payload<T>({
 			data: properties.encoding.encoder(properties.data),

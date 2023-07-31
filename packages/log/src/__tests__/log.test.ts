@@ -56,10 +56,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
+					next: [],
 				},
 				data: "entryA",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const two = await Entry.create({
 				store,
@@ -67,10 +67,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
+					next: [],
 				},
 				data: "entryB",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const three = await Entry.create({
 				store,
@@ -78,10 +78,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
+					next: [],
 				},
 				data: "entryC",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -99,30 +99,30 @@ describe("properties", function () {
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
+					next: [],
 				},
 				data: "entryA",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
+					next: [],
 				},
 				data: "entryB",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
+					next: [],
 				},
 				data: "entryC",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -138,30 +138,30 @@ describe("properties", function () {
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
+					next: [],
 				},
 				data: "entryA",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
+					next: [],
 				},
 				data: "entryB",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
+					next: [],
 				},
 				data: "entryC",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });

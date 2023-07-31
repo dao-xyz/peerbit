@@ -368,23 +368,26 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1.identity,
-					meta: { gidSeed: Buffer.from("X") },
+					meta: {
+						gidSeed: Buffer.from("X"),
+						next: prev1 ? [prev1] : undefined,
+					},
 					data: new Uint8Array([0, i]),
-					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
-					meta: { gidSeed: Buffer.from("X") },
+					meta: { gidSeed: Buffer.from("X"), next: prev2 ? [prev2, n1] : [n1] },
 					data: new Uint8Array([1, i]),
-					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
-					meta: { gidSeed: Buffer.from("X") },
+					meta: {
+						gidSeed: Buffer.from("X"),
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
+					},
 					data: new Uint8Array([2, i]),
-					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
 				items1.push(n1);
 				items2.push(n2);
@@ -417,23 +420,26 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1.identity,
-					meta: { gidSeed: Buffer.from("X") },
+					meta: {
+						gidSeed: Buffer.from("X"),
+						next: prev1 ? [prev1] : undefined,
+					},
 					data: new Uint8Array([0, i]),
-					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
-					meta: { gidSeed: Buffer.from("X") },
+					meta: { gidSeed: Buffer.from("X"), next: prev2 ? [prev2, n1] : [n1] },
 					data: new Uint8Array([1, i]),
-					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
-					meta: { gidSeed: Buffer.from("X") },
+					meta: {
+						gidSeed: Buffer.from("X"),
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
+					},
 					data: new Uint8Array([2, i]),
-					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
 				items1.push(n1);
 				items2.push(n2);
@@ -471,10 +477,10 @@ describe("Log - Load", function () {
 							items1.length > 0
 								? items1[items1.length - 1].meta.clock.advance()
 								: undefined,
+						next: prev1 ? [prev1] : undefined,
 					},
 					data: "entryA" + i,
 					encoding: JSON_ENCODING,
-					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
@@ -485,10 +491,10 @@ describe("Log - Load", function () {
 							items2.length > 0
 								? items2[items2.length - 1].meta.clock.advance()
 								: undefined,
+						next: prev2 ? [prev2, n1] : [n1],
 					},
 					data: "entryB" + i,
 					encoding: JSON_ENCODING,
-					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
@@ -499,10 +505,10 @@ describe("Log - Load", function () {
 							items3.length > 0
 								? items3[items3.length - 1].meta.clock.advance()
 								: undefined,
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
 					},
 					data: "entryC" + i,
 					encoding: JSON_ENCODING,
-					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
 				/*        log1.mergeClock(log2.clock)
 			 log1.mergeClock(log3.clock)
@@ -1137,9 +1143,9 @@ describe("Log - Load", function () {
 								items1.length > 0
 									? items1[items1.length - 1].meta.clock.advance()
 									: undefined,
+							next: prev1 ? [prev1] : undefined,
 						},
 						data: new Uint8Array([0, i]),
-						next: prev1 ? [prev1] : undefined,
 					});
 					const n2 = await Entry.create({
 						store,
@@ -1150,9 +1156,9 @@ describe("Log - Load", function () {
 								items2.length > 0
 									? items2[items2.length - 1].meta.clock.advance()
 									: undefined,
+							next: prev2 ? [prev2, n1] : [n1],
 						},
 						data: new Uint8Array([1, i]),
-						next: prev2 ? [prev2, n1] : [n1],
 					});
 					const n3 = await Entry.create({
 						store,
@@ -1163,9 +1169,9 @@ describe("Log - Load", function () {
 								items3.length > 0
 									? items3[items3.length - 1].meta.clock.advance()
 									: undefined,
+							next: prev3 ? [prev3, n1, n2] : [n1, n2],
 						},
 						data: new Uint8Array([2, i]),
-						next: prev3 ? [prev3, n1, n2] : [n1, n2],
 					});
 
 					/*      log1.tickClock()

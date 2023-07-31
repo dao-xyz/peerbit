@@ -86,9 +86,9 @@ describe("join", function () {
 					},
 					meta: {
 						gidSeed: Buffer.from("X" + i),
+						next: prev1 ? [prev1] : undefined,
 					},
 					data: new Uint8Array([0, i]),
-					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store: session.peers[0].services.blocks,
@@ -96,8 +96,10 @@ describe("join", function () {
 						...signKey2,
 						sign: async (data: Uint8Array) => await signKey2.sign(data),
 					},
+					meta: {
+						next: prev2 ? [prev2, n1] : [n1],
+					},
 					data: new Uint8Array([1, i]),
-					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store: session.peers[1].services.blocks,
@@ -106,7 +108,9 @@ describe("join", function () {
 						sign: async (data: Uint8Array) => await signKey3.sign(data),
 					},
 					data: new Uint8Array([2, i]),
-					next: prev3 ? [prev3, n1, n2] : [n1, n2],
+					meta: {
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
+					},
 				});
 
 				items1.push(n1);
@@ -235,18 +239,18 @@ describe("join", function () {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const b1 = await Entry.create({
 					data: new Uint8Array([1, 0]),
-					next: [a1],
 					meta: {
 						type: EntryType.CUT,
+						next: [a1],
 					},
 					identity: log1.identity,
 					store: log1.storage,
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
-					next: [a1],
 					meta: {
 						type: EntryType.APPEND,
+						next: [a1],
 					},
 					identity: log1.identity,
 					store: log1.storage,
@@ -268,18 +272,18 @@ describe("join", function () {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const b1 = await Entry.create({
 					data: new Uint8Array([1, 0]),
-					next: [a1],
 					meta: {
 						type: EntryType.APPEND,
+						next: [a1],
 					},
 					identity: log1.identity,
 					store: log1.storage,
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
-					next: [a1],
 					meta: {
 						type: EntryType.CUT,
+						next: [a1],
 					},
 					identity: log1.identity,
 					store: log1.storage,

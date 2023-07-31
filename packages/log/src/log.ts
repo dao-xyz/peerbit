@@ -12,7 +12,6 @@ import { SimpleLevel } from "@peerbit/lazy-level";
 import { EntryIndex } from "./entry-index.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
-import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import {
 	EncryptionTemplateMaybeEncrypted,
@@ -118,11 +117,11 @@ export class Log<T> {
 	}
 
 	async open(store: Blocks, identity: Identity, options: LogOptions<T> = {}) {
-		if (!isDefined(store)) {
+		if (store == null) {
 			throw LogError.BlockStoreNotDefinedError();
 		}
 
-		if (!isDefined(identity)) {
+		if (identity == null) {
 			throw new Error("Identity is required");
 		}
 
@@ -133,7 +132,7 @@ export class Log<T> {
 		const { encoding, trim, keychain, cache, onGidRemoved } = options;
 		let { sortFn } = options;
 
-		if (!isDefined(sortFn)) {
+		if (sortFn == null) {
 			sortFn = LastWriteWins;
 		}
 		sortFn = sortFn as Sorting.ISortFunction;
@@ -543,8 +542,8 @@ export class Log<T> {
 				type: options.meta?.type,
 				gidSeed: options.meta?.gidSeed,
 				data: options.meta?.data,
+				next: nexts,
 			},
-			next: nexts,
 
 			encoding: this._encoding,
 
@@ -559,7 +558,7 @@ export class Log<T> {
 			canAppend: this._canAppend,
 		});
 
-		if (!isDefined(entry.hash)) {
+		if (!entry.hash) {
 			throw new Error("Unexpected");
 		}
 
@@ -898,7 +897,7 @@ export class Log<T> {
 			return;
 		}
 
-		if (!isDefined(e.hash)) {
+		if (!e.hash) {
 			throw new Error("Unexpected");
 		}
 
