@@ -689,7 +689,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 						if (responsesLeft + existCounter.size < minReplicasValue) {
 							reject(
 								new Error(
-									"Insufficient replicators to safelyDelete: " + entry.hash
+									"Insufficient replicators to safely delete: " + entry.hash
 								)
 							);
 						}

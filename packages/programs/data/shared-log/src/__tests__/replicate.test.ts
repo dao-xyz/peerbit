@@ -476,7 +476,7 @@ describe("replication degree", () => {
 		expect(db2.log.log.length).toEqual(1);
 		const fn = () => db2.log.safelyDelete([e1.entry], { timeout: 3000 })[0];
 		await expect(fn).rejects.toThrowError(
-			"Insufficient replicators to safelyDelete: " + e1.entry.hash
+			"Insufficient replicators to safely delete: " + e1.entry.hash
 		);
 		expect(db2.log.log.length).toEqual(1);
 	});
