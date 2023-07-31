@@ -59,8 +59,8 @@ describe("append", function () {
 
 		it("updated the clocks correctly", async () => {
 			(await log.toArray()).forEach((entry) => {
-				expect(entry.metadata.clock.id).toEqual(signKey.publicKey.bytes);
-				expect(entry.metadata.clock.timestamp.logical).toEqual(0);
+				expect(entry.meta.clock.id).toEqual(signKey.publicKey.bytes);
+				expect(entry.meta.clock.timestamp.logical).toEqual(0);
 			});
 		});
 	});
@@ -75,7 +75,7 @@ describe("append", function () {
 			expect(await blockExists(e2.hash)).toBeTrue();
 			expect(log.nextsIndex.get(e1.hash)!.has(e2.hash)).toBeTrue();
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
-				type: EntryType.CUT,
+				meta: { type: EntryType.CUT },
 			});
 			// No forward pointers to next indices. We do this, so when we delete an entry, we can now whether an entry has a depenency of another entry which is not of type RESET
 			expect(log.nextsIndex.get(e2.hash)).toBeUndefined();
@@ -98,7 +98,9 @@ describe("append", function () {
 			for (let i = 0; i < amount; i++) {
 				prev = (
 					await log.append(new TextEncoder().encode("hello" + i), {
-						nexts: prev ? [prev] : undefined,
+						meta: {
+							next: prev ? [prev] : undefined,
+						},
 					})
 				).entry;
 				// Make sure the log has the right heads after each append
@@ -126,12 +128,12 @@ describe("append", function () {
 			for (const [index, entry] of (await log.toArray()).entries()) {
 				if (index > 0) {
 					expect(
-						entry.metadata.clock.timestamp.compare(
-							(await log.toArray())[index - 1].metadata.clock.timestamp
+						entry.meta.clock.timestamp.compare(
+							(await log.toArray())[index - 1].meta.clock.timestamp
 						)
 					).toBeGreaterThan(0);
 				}
-				expect(entry.metadata.clock.id).toEqual(signKey.publicKey.bytes);
+				expect(entry.meta.clock.id).toEqual(signKey.publicKey.bytes);
 			}
 		});
 

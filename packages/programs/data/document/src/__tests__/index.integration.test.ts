@@ -43,8 +43,9 @@ import { DocumentIndex } from "../document-index.js";
 import { waitForPeers as waitForPeersStreams } from "@peerbit/stream";
 import { Program } from "@peerbit/program";
 import pDefer, { DeferredPromise } from "p-defer";
-import LazyLevel from "@peerbit/lazy-level";
-import { Peerbit } from "peerbit";
+
+import { AbsolutMinReplicas, encodeMinReplicas } from "@peerbit/shared-log";
+
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();
 };
@@ -130,6 +131,7 @@ describe("index", () => {
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
+
 				store.docs.events.addEventListener("change", (evt) => {
 					changes.push(evt.detail);
 				});
@@ -626,7 +628,7 @@ describe("index", () => {
 							id: Buffer.from(String(i)),
 							name: "Hello world " + String(i),
 						}),
-						{ nexts: [] }
+						{ meta: { next: [] } }
 					);
 				}
 
@@ -1341,14 +1343,21 @@ describe("index", () => {
 							: new TestStore({
 									docs: new Documents<Document>(),
 							  });
-					store.docs.log.append = (a, b) => {
+					store.docs.log.append = async (a, b) => {
+						// Omit synchronization so results are always the same (HACKY)
+						b = {
+							...b,
+							meta: {
+								...b?.meta,
+								data: encodeMinReplicas(new AbsolutMinReplicas(1)),
+							},
+						};
 						return store.docs.log.log.append(a, b);
-						// Omit synchronization so results are always the same
 					};
 					await session.peers[i].open(store, {
 						args: {
 							role: new Replicator(),
-							minReplicas: 1, // make sure documents only exist once
+							replicas: { min: 1 }, // make sure documents only exist once
 						},
 					});
 					stores.push(store);
@@ -1886,7 +1895,7 @@ describe("index", () => {
 			}); */
 
 			it("all", async () => {
-				stores[0].docs.log.replicators = () => [
+				stores[0].docs.log.getDiscoveryGroups = () => [
 					[
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
@@ -1908,7 +1917,7 @@ describe("index", () => {
 			});
 
 			it("will always query locally", async () => {
-				stores[0].docs.log.replicators = () => [];
+				stores[0].docs.log.getDiscoveryGroups = () => [];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
@@ -1916,7 +1925,7 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs.log.replicators = () => [
+				stores[0].docs.log.getDiscoveryGroups = () => [
 					[
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
@@ -1931,7 +1940,7 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs.log.replicators = () => [
+				stores[0].docs.log.getDiscoveryGroups = () => [
 					[
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
@@ -1953,7 +1962,7 @@ describe("index", () => {
 				expect(counters[2]).toEqual(1);
 			});
 			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.log.replicators = () => [
+				stores[0].docs.log.getDiscoveryGroups = () => [
 					[
 						{
 							hash: stores[0].node.identity.publicKey.hashcode(),
@@ -1974,7 +1983,7 @@ describe("index", () => {
 			it("ignore myself if I am a new replicator", async () => {
 				// and the other peer has been around for longer
 				const now = +new Date();
-				stores[0].docs.log.replicators = () => [
+				stores[0].docs.log.getDiscoveryGroups = () => [
 					[
 						{
 							hash: stores[0].node.identity.publicKey.hashcode(),
@@ -2020,7 +2029,7 @@ describe("index", () => {
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs.log.replicators = () => [
+					stores[0].docs.log.getDiscoveryGroups = () => [
 						[
 							{
 								hash: stores[1].node.identity.publicKey.hashcode(),
@@ -2059,7 +2068,7 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs.log.replicators = () => [
+					stores[0].docs.log.getDiscoveryGroups = () => [
 						[
 							{
 								hash: stores[1].node.identity.publicKey.hashcode(),

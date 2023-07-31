@@ -3,7 +3,6 @@ import { waitForAsync } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
-import { Observer, Replicator } from "../role";
 
 describe(`Automatic Replication`, function () {
 	let session: LSession;

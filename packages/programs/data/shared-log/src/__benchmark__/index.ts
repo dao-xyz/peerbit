@@ -1,15 +1,13 @@
 import B from "benchmark";
-import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, SetupOptions, Replicator } from "../document-store.js";
+import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { LSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
-import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 import { Program } from "@peerbit/program";
+import { Replicator, SharedLog, Args } from "../index.js";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
-// put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))
 
 @variant("document")
 class Document {
@@ -35,19 +33,24 @@ class Document {
 	}
 }
 
-@variant("test_documents")
-class TestStore extends Program<Partial<SetupOptions<Document>>> {
-	@field({ type: Documents })
-	docs: Documents<Document>;
+@variant("test_shared_log")
+class TestStore extends Program<Args<Document>> {
+	@field({ type: SharedLog })
+	logs: SharedLog<Document>;
 
-	constructor(properties?: { docs: Documents<Document> }) {
+	constructor(properties?: { logs: SharedLog<Document> }) {
 		super();
-		if (properties) {
-			this.docs = properties.docs;
-		}
+		this.logs = properties?.logs || new SharedLog();
 	}
-	async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
-		await this.docs.open({ ...options, type: Document, index: { key: "id" } });
+
+	async open(options?: Args<Document>): Promise<void> {
+		await this.logs.open({
+			...options,
+			encoding: {
+				decoder: (bytes) => deserialize(bytes, Document),
+				encoder: (data) => serialize(data),
+			},
+		});
 	}
 }
 
@@ -55,27 +58,27 @@ const peersCount = 1;
 const session = await LSession.connected(peersCount);
 
 const store = new TestStore({
-	docs: new Documents<Document>({
-		index: new DocumentIndex(),
+	logs: new SharedLog<Document>({
+		id: new Uint8Array(32),
 	}),
 });
 
 const client: ProgramClient = session.peers[0];
-await client.open(store, {
+await client.open<TestStore, Args<Document>>(store, {
 	args: {
 		role: new Replicator(),
 		trim: { type: "length" as const, to: 100 },
+		onChange: (change) => {
+			change.added.forEach(async (entry) => {
+				const doc = await entry.getPayloadValue();
+				resolver.get(doc.id)!();
+				resolver.delete(doc.id);
+			});
+		},
 	},
 });
 
 const resolver: Map<string, () => void> = new Map();
-store.docs.events.addEventListener("change", (change) => {
-	change.detail.added.forEach((doc) => {
-		resolver.get(doc.id)!();
-		resolver.delete(doc.id);
-	});
-});
-
 const suite = new B.Suite();
 suite
 	.add("put", {
@@ -89,7 +92,7 @@ suite
 			resolver.set(doc.id, () => {
 				deferred.resolve();
 			});
-			await store.docs.put(doc, { unique: true });
+			await store.logs.append(doc, { meta: { next: [] } });
 		},
 
 		minSamples: 300,

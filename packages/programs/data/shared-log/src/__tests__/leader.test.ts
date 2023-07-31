@@ -1,7 +1,6 @@
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
-import { PermissionedEventStore } from "./utils/stores/test-store";
 import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -11,6 +10,14 @@ describe(`leaders`, function () {
 	let session: LSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
 
+	const options = {
+		args: {
+			replicas: {
+				min: 1,
+				max: 10000,
+			},
+		},
+	};
 	beforeAll(async () => {
 		session = await LSession.connected(3, {
 			libp2p: {
@@ -38,43 +45,11 @@ describe(`leaders`, function () {
 		if (db3) await db3.drop();
 	});
 
-	it("will use trusted network for filtering", async () => {
-		const program =
-			// dont trust client 3
-			await session.peers[0].open(
-				new PermissionedEventStore({
-					trusted: [session.peers[0].peerId, session.peers[1].peerId],
-				})
-			);
-
-		// Subscription evnet is sent before I open, so I don't save the subscription?
-		// but this should requrest subscribers?
-		const program2 = await PermissionedEventStore.open(
-			program.address!,
-			session.peers[1]
-		);
-
-		await waitFor(() => program.store.log.getReplicatorsSorted()?.length === 2);
-		await waitFor(
-			() => program2.store.log.getReplicatorsSorted()?.length === 2
-		);
-
-		// now find 3 leaders from the network with 2 trusted participants (should return 2 leaders if trust control works correctly)
-		const leadersFrom1 = await program.store.log.findLeaders("", 3);
-		const leadersFrom2 = await program2.store.log.findLeaders("", 3);
-		expect(leadersFrom1).toEqual(leadersFrom2);
-		expect(leadersFrom1).toHaveLength(2);
-		expect(leadersFrom1).toContainAllValues([
-			getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
-			getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-		]);
-	});
-
 	it("select leaders for one or two peers", async () => {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await session.peers[0].open(new EventStore<string>());
+		db1 = await session.peers[0].open(new EventStore<string>(), options);
 		const isLeaderAOneLeader = await db1.log.isLeader(123, 1);
 		expect(isLeaderAOneLeader);
 		const isLeaderATwoLeader = await db1.log.isLeader(123, 2);
@@ -82,7 +57,8 @@ describe(`leaders`, function () {
 
 		db2 = (await EventStore.open(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			options
 		)) as EventStore<string>;
 
 		await waitForResolved(() =>
@@ -119,11 +95,12 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { role: new Observer() },
+			args: { role: new Observer(), ...options.args },
 		});
 		db2 = (await EventStore.open(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			options
 		)) as EventStore<string>;
 
 		await delay(5000); // some delay so that if peers are to replicate, they would have had time to notify each other
@@ -145,16 +122,18 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { role: new Observer() },
+			args: { role: new Observer(), ...options.args },
 		});
 
 		db2 = (await EventStore.open(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			options
 		)) as EventStore<string>;
 		db3 = (await EventStore.open(
 			db1.address!,
-			session.peers[2]
+			session.peers[2],
+			options
 		)) as EventStore<string>;
 
 		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 2);
@@ -180,11 +159,13 @@ describe(`leaders`, function () {
 		db1 = await session.peers[0].open(new EventStore<string>());
 		db2 = (await EventStore.open(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			options
 		)) as EventStore<string>;
 		db3 = (await EventStore.open(
 			db1.address!,
-			session.peers[2]
+			session.peers[2],
+			options
 		)) as EventStore<string>;
 
 		await waitForResolved(() =>
@@ -233,11 +214,13 @@ describe(`leaders`, function () {
 		db1 = await session.peers[0].open(new EventStore<string>());
 		db2 = (await EventStore.open(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			options
 		)) as EventStore<string>;
 		db3 = (await EventStore.open(
 			db1.address!,
-			session.peers[2]
+			session.peers[2],
+			options
 		)) as EventStore<string>;
 
 		await waitForResolved(() =>
@@ -274,11 +257,13 @@ describe(`leaders`, function () {
 		db1 = await session.peers[0].open(new EventStore<string>());
 		db2 = (await EventStore.open(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			options
 		)) as EventStore<string>;
 		db3 = (await EventStore.open(
 			db1.address!,
-			session.peers[2]
+			session.peers[2],
+			options
 		)) as EventStore<string>;
 
 		await waitForResolved(() =>
@@ -306,10 +291,11 @@ describe(`leaders`, function () {
 			expect(sorted).toEqual(strings);
 		};
 		it("can handle peers leaving and joining", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string>(), options);
 			db2 = (await EventStore.open(
 				db1.address!,
-				session.peers[1]
+				session.peers[1],
+				options
 			)) as EventStore<string>;
 
 			await waitForResolved(() =>
@@ -322,7 +308,8 @@ describe(`leaders`, function () {
 
 			db3 = (await EventStore.open(
 				db1.address!,
-				session.peers[2]
+				session.peers[2],
+				options
 			)) as EventStore<string>;
 
 			await waitForResolved(() =>
@@ -357,7 +344,8 @@ describe(`leaders`, function () {
 
 			db2 = (await EventStore.open(
 				db1.address!,
-				session.peers[1]
+				session.peers[1],
+				options
 			)) as EventStore<string>;
 
 			await waitForResolved(() =>

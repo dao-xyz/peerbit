@@ -4,34 +4,47 @@ import { HeadsCache } from "./heads-cache.js";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain } from "@peerbit/crypto";
 import { Encoding } from "./encoding.js";
+import { Values } from "./values.js";
+import { logger } from "./logger.js";
+import { EntryIndex } from "./entry-index.js";
 
 export type CacheUpdateOptions = {
 	cache?: { update?: false; reset?: false } | { update: true; reset?: boolean };
 };
 
-interface Config {
+interface Log<T> {
 	storage: Blocks;
 	keychain?: Keychain;
 	memory?: SimpleLevel;
 	encoding: Encoding<any>;
+	entryIndex: EntryIndex<T>;
+	values: Values<T>;
 }
 export class HeadsIndex<T> {
 	private _id: Uint8Array;
 	private _index: Set<string> = new Set();
-	private _gids: Map<string, number>;
+	private _gids: Map<string, Map<string, Entry<T>>>; // gid -> hash -> entry
 	private _headsCache: HeadsCache<T> | undefined;
-	private _config: Config;
+	private _config: Log<T>;
+	private _onGidRemoved?: (gid: string[]) => Promise<void> | void;
 	constructor(id: Uint8Array) {
 		this._gids = new Map();
 		this._id = id;
 	}
 
-	async init(config: Config, options: { entries?: Entry<T>[] } = {}) {
-		this._config = config;
+	async init(
+		log: Log<T>,
+		options: {
+			entries?: Entry<T>[];
+			onGidRemoved?: (gid: string[]) => Promise<void> | void;
+		} = {}
+	) {
+		this._config = log;
+		this._onGidRemoved = options.onGidRemoved;
 		await this.reset(options?.entries || []);
-		if (config.memory) {
+		if (log.memory) {
 			this._headsCache = new HeadsCache(this);
-			return this._headsCache.init(await config.memory.sublevel("heads"));
+			return this._headsCache.init(await log.memory.sublevel("heads"));
 		}
 	}
 
@@ -41,7 +54,7 @@ export class HeadsIndex<T> {
 			replicate?: boolean;
 			reload?: boolean;
 		} & CacheUpdateOptions
-	) {
+	): Promise<Entry<T>[] | undefined> {
 		if (!this._headsCache || (this._headsCache.loaded && !options?.reload)) {
 			return;
 		}
@@ -51,25 +64,19 @@ export class HeadsIndex<T> {
 		if (!heads) {
 			return;
 		}
-		try {
-			const entries = await Promise.all(
-				heads.map(async (x) => {
-					const entry = await Entry.fromMultihash<T>(
-						this._config.storage,
-						x,
-						options
-					);
-					entry.init(this._config);
-					await entry.getGid(); // decrypt gid
-					return entry;
-				})
-			);
-			await this.reset(entries);
-			return entries;
-		} catch (error) {
-			const q = 123;
-			throw error;
-		}
+		const entries = await Promise.all(
+			heads.map(async (x) => {
+				const entry = await this._config.entryIndex.get(x, { load: true });
+				if (!entry) {
+					logger.error("Failed to load entry from head with hash: " + x);
+					return;
+				}
+				await entry.getMeta(); // TODO types,decrypt gid
+				return entry;
+			})
+		);
+		await this.reset(entries.filter((x) => !!x) as Entry<any>[]);
+		return entries as Entry<any>[];
 	}
 
 	get headsCache(): HeadsCache<T> | undefined {
@@ -92,7 +99,7 @@ export class HeadsIndex<T> {
 		return this._index;
 	}
 
-	get gids(): Map<string, number> {
+	get gids(): Map<string, Map<string, Entry<T>>> {
 		return this._gids;
 	}
 
@@ -105,9 +112,15 @@ export class HeadsIndex<T> {
 		options: CacheUpdateOptions = { cache: { reset: true, update: true } }
 	) {
 		this._index.clear();
+		const gidKeys = [...this._gids.keys()];
+
 		this._gids = new Map();
-		if (entries) {
+		if (entries?.length > 0) {
 			await this.putAll(entries, options); // reset cache = true
+		}
+
+		if (gidKeys.length > 0) {
+			this._onGidRemoved?.(gidKeys);
 		}
 	}
 
@@ -116,14 +129,14 @@ export class HeadsIndex<T> {
 	}
 
 	async put(entry: Entry<T>, options?: CacheUpdateOptions) {
-		this._putOne(entry);
+		await this._putOne(entry);
 		if (options?.cache?.update) {
 			await this._headsCache?.queue({ added: [entry] }, options.cache.reset);
 		}
 	}
 
 	async putAll(entries: Entry<T>[], options?: CacheUpdateOptions) {
-		this._putAll(entries);
+		await this._putAll(entries);
 		if (options?.cache?.update) {
 			await this._headsCache?.queue({ added: entries }, options.cache.reset);
 		}
@@ -145,7 +158,7 @@ export class HeadsIndex<T> {
 		await this._headsCache?.queue(change, reset);
 	}
 
-	private _putOne(entry: Entry<T>) {
+	private async _putOne(entry: Entry<T>) {
 		if (!entry.hash) {
 			throw new Error("Missing hash");
 		}
@@ -154,42 +167,51 @@ export class HeadsIndex<T> {
 		}
 
 		this._index.add(entry.hash);
-		if (!this._gids.has(entry.gid)) {
-			this._gids.set(entry.gid, 1);
+		const map = this._gids.get(entry.meta.gid);
+		if (!map) {
+			const newMap = new Map();
+			this._gids.set(entry.meta.gid, newMap);
+			newMap.set(entry.hash, entry);
 		} else {
-			this._gids.set(entry.gid, this._gids.get(entry.gid)! + 1);
+			map.set(entry.hash, entry);
+		}
+
+		for (const next of entry.next) {
+			const indexedEntry = this._config.entryIndex.getShallow(next);
+			if (indexedEntry) {
+				await this.del(indexedEntry);
+			}
 		}
 	}
 
-	private _putAll(entries: Entry<T>[]) {
+	private async _putAll(entries: Entry<T>[]) {
 		for (const entry of entries) {
-			this._putOne(entry);
+			await this._putOne(entry);
 		}
 	}
 
 	async del(
-		entry: { hash: string; gid: string },
+		entry: { hash: string; meta: { gid: string } },
 		options?: CacheUpdateOptions
-	): Promise<{
-		removed: boolean;
-		lastWithGid: boolean;
-	}> {
+	): Promise<boolean> {
 		const wasHead = this._index.delete(entry.hash);
 		if (!wasHead) {
-			return {
-				lastWithGid: false,
-				removed: false,
-			};
+			return false;
 		}
-		const newValue = this._gids.get(entry.gid)! - 1;
-		const lastWithGid = newValue <= 0;
-		if (newValue <= 0) {
-			this._gids.delete(entry.gid);
-		} else {
-			this._gids.set(entry.gid, newValue);
+		let removedGids: Set<string> | undefined = undefined;
+		const map = this._gids.get(entry.meta.gid)!;
+		map.delete(entry.hash);
+		if (map.size <= 0) {
+			this._gids.delete(entry.meta.gid);
+			(removedGids || (removedGids = new Set<string>())).add(entry.meta.gid);
 		}
+
 		if (!entry.hash) {
 			throw new Error("Missing hash");
+		}
+
+		if (removedGids) {
+			await this._onGidRemoved?.([...removedGids]);
 		}
 
 		if (wasHead && options?.cache?.update) {
@@ -199,10 +221,7 @@ export class HeadsIndex<T> {
 			);
 		}
 
-		return {
-			removed: wasHead,
-			lastWithGid: lastWithGid,
-		};
+		return wasHead;
 		//     this._headsCache = undefined; // TODO do smarter things here, only remove the element needed (?)
 	}
 }

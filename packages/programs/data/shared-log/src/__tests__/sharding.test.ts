@@ -4,7 +4,7 @@ import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
 import { PermissionedEventStore } from "./utils/stores/test-store";
-import { AbsolutMinReplicas } from "../exchange-heads";
+import { AbsolutMinReplicas, maxMinReplicas } from "../replication.js";
 import { Replicator } from "../role";
 
 describe(`sharding`, () => {
@@ -78,8 +78,8 @@ describe(`sharding`, () => {
 		// expect min replicas 2 with 3 peers, this means that 66% of entries (ca) will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			// db1.store.add(i.toString(), { nexts: [] });
-			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+			// db1.store.add(i.toString(), { meta: { next: [] } });
+			promises.push(db1.store.add(i.toString(), { meta: { next: [] } }));
 		}
 
 		await Promise.all(promises);
@@ -127,7 +127,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			false
 		);
@@ -147,7 +149,7 @@ describe(`sharding`, () => {
 		const entryCount = sampleSize;
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+			promises.push(db1.store.add(i.toString(), { meta: { next: [] } }));
 		}
 
 		await Promise.all(promises);
@@ -194,7 +196,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			false
 		);
@@ -217,7 +221,7 @@ describe(`sharding`, () => {
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+			promises.push(db1.store.add(i.toString(), { meta: { next: [] } }));
 		}
 
 		await Promise.all(promises);
@@ -236,10 +240,12 @@ describe(`sharding`, () => {
 		);
 
 		await waitForResolved(
-			() =>
+			async () =>
 				checkReplicas(
 					[db1, db2, db3],
-					db1.store.log.minReplicas.value,
+					maxMinReplicas(db1.store.log, [
+						...(await db1.store.log.log.values.toArray()),
+					]),
 					entryCount,
 					false
 				),
@@ -253,7 +259,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			false
 		);
@@ -276,7 +284,7 @@ describe(`sharding`, () => {
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+			promises.push(db1.store.add(i.toString(), { meta: { next: [] } }));
 		}
 
 		await Promise.all(promises);
@@ -315,10 +323,12 @@ describe(`sharding`, () => {
 		await waitFor(() => db1.store.log.log.values.length === entryCount);
 		await waitFor(() => db2.store.log.log.values.length === entryCount);
 
-		await waitForResolved(() =>
+		await waitForResolved(async () =>
 			checkReplicas(
 				[db1, db2],
-				db1.store.log.minReplicas.value,
+				maxMinReplicas(db1.store.log, [
+					...(await db1.store.log.log.values.toArray()),
+				]),
 				entryCount,
 				false
 			)
@@ -343,18 +353,15 @@ describe(`sharding`, () => {
 		db3 = await session.peers[2].open<PermissionedEventStore>(db1.address, {
 			args: { trim: { to: 0, from: 1, type: "length" as const } },
 		});
-		try {
-			await waitFor(() => db2.store.log.getReplicatorsSorted()?.length === 3);
-		} catch (error) {
-			const q = 123;
-		}
+
+		await waitFor(() => db2.store.log.getReplicatorsSorted()?.length === 3);
 
 		await waitFor(() => db3.store.log.getReplicatorsSorted()?.length === 3);
 
 		const entryCount = sampleSize;
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+			promises.push(db1.store.add(i.toString(), { meta: { next: [] } }));
 		}
 
 		await Promise.all(promises);
@@ -399,7 +406,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			true
 		);
@@ -410,7 +419,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			true
 		);
@@ -439,7 +450,7 @@ describe(`sharding`, () => {
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
-			promises.push(db1.store.add(i.toString(), { nexts: [] }));
+			promises.push(db1.store.add(i.toString(), { meta: { next: [] } }));
 		}
 
 		await Promise.all(promises);
@@ -491,7 +502,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			false
 		);
@@ -501,7 +514,9 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			db1.store.log.minReplicas.value,
+			maxMinReplicas(db1.store.log, [
+				...(await db1.store.log.log.values.toArray()),
+			]),
 			entryCount,
 			true
 		);
@@ -513,11 +528,15 @@ describe(`sharding`, () => {
 		});
 
 		db1 = await session.peers[0].open(store, {
-			args: { minReplicas: 1 },
+			args: {
+				replicas: {
+					min: 1,
+				},
+			},
 		});
 
-		const replicatorsFn = () => {
-			const r = store.store.log.replicators();
+		const getDiscoveryGroupsFn = () => {
+			const r = store.store.log.getDiscoveryGroups();
 			return r.map((x) => x.map((y) => y.hash));
 		};
 
@@ -525,16 +544,16 @@ describe(`sharding`, () => {
 			["a", "b", "c", "d", "e"].map((x) => {
 				return { hash: x, timestamp: +new Date() };
 			});
-		expect(replicatorsFn()).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
-		db1.store.log.minReplicas = new AbsolutMinReplicas(2);
-		expect(replicatorsFn()).toEqual([["a", "d"], ["b", "e"], ["c"]]);
-		db1.store.log.minReplicas = new AbsolutMinReplicas(3);
-		expect(replicatorsFn()).toEqual([
+		expect(getDiscoveryGroupsFn()).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
+		db1.store.log.replicas.min = new AbsolutMinReplicas(2);
+		expect(getDiscoveryGroupsFn()).toEqual([["a", "d"], ["b", "e"], ["c"]]);
+		db1.store.log.replicas.min = new AbsolutMinReplicas(3);
+		expect(getDiscoveryGroupsFn()).toEqual([
 			["a", "c", "e"],
 			["b", "d"],
 		]);
-		db1.store.log.minReplicas = new AbsolutMinReplicas(5);
-		expect(replicatorsFn()).toEqual([["a", "b", "c", "d", "e"]]);
+		db1.store.log.replicas.min = new AbsolutMinReplicas(5);
+		expect(getDiscoveryGroupsFn()).toEqual([["a", "b", "c", "d", "e"]]);
 	});
 
 	// TODO test untrusted filtering

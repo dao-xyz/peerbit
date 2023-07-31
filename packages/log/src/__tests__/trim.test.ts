@@ -3,6 +3,7 @@ import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
 import { waitFor } from "@peerbit/time";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
+import { ShallowEntry } from "../entry.js";
 
 describe("trim", function () {
 	let store: BlockStore;
@@ -46,17 +47,17 @@ describe("trim", function () {
 
 	it("respect canTrim for length type", async () => {
 		let canTrimInvocations = 0;
-		const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // set nexts [] so all get unique gids
-		const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // set nexts [] so all get unique gids
-		const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // set nexts [] so all get unique gids
+		const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // set nexts [] so all get unique gids
+		const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // set nexts [] so all get unique gids
+		const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // set nexts [] so all get unique gids
 		await log.trim({
 			type: "length",
 			from: 2,
 			to: 2,
 			filter: {
-				canTrim: (gid) => {
+				canTrim: (entry) => {
 					canTrimInvocations += 1;
-					return Promise.resolve(gid !== e1.entry.gid);
+					return Promise.resolve(entry.meta.gid !== e1.entry.gid);
 				},
 			},
 		});
@@ -221,12 +222,12 @@ describe("trim", function () {
 	describe("cache", () => {
 		it("not recheck gid in cache", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
-			const canTrim = (gid) => {
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const canTrim = (entry: ShallowEntry) => {
 				canTrimInvocations += 1;
-				return Promise.resolve(gid !== e1.entry.gid); // can not trim
+				return Promise.resolve(entry.meta.gid !== e1.entry.gid); // can not trim
 			};
 			const cacheId = () => "";
 			await log.trim({
@@ -257,13 +258,13 @@ describe("trim", function () {
 
 		it("ignores invalid trim cache", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
-			const e4 = await log.append(new Uint8Array([4]), { nexts: [] }); // nexts: [] means unique gid
-			const canTrim = (gid) => {
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e4 = await log.append(new Uint8Array([4]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const canTrim = (entry: ShallowEntry) => {
 				canTrimInvocations += 1;
-				return Promise.resolve(gid !== e1.entry.gid); // can not trim
+				return Promise.resolve(entry.meta.gid !== e1.entry.gid); // can not trim
 			};
 
 			const cacheId = () => "";
@@ -296,11 +297,11 @@ describe("trim", function () {
 
 		it("uses trim cache cross sessions", async () => {
 			let canTrimInvocations: string[] = [];
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
-			const canTrim = (gid) => {
-				canTrimInvocations.push(gid);
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const canTrim = (entry: ShallowEntry) => {
+				canTrimInvocations.push(entry.meta.gid);
 				return Promise.resolve(false); // can not trim
 			};
 
@@ -334,7 +335,7 @@ describe("trim", function () {
 
 			expect(canTrimInvocations).toEqual([]); // no more checks since nothing has changed
 
-			const e4 = await log.append(new Uint8Array([4]), { nexts: [] }); // nexts: [] means unique gid
+			const e4 = await log.append(new Uint8Array([4]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			const result = await log.trim({
 				type: "length",
 				from: 0,
@@ -351,12 +352,12 @@ describe("trim", function () {
 			let canTrimInvocations: string[] = [];
 			let trimmableGids = new Set();
 
-			const canTrim = (gid) => {
-				canTrimInvocations.push(gid);
-				return trimmableGids.has(gid);
+			const canTrim = (entry: ShallowEntry) => {
+				canTrimInvocations.push(entry.meta.gid);
+				return trimmableGids.has(entry.meta.gid);
 			};
 
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 
 			trimmableGids.add(e1.entry.gid);
 
@@ -378,7 +379,7 @@ describe("trim", function () {
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([]);
 
 			canTrimInvocations = [];
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			trimmableGids.add(e2.entry.gid);
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e2.entry.hash,
@@ -396,7 +397,7 @@ describe("trim", function () {
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([]);
 
 			canTrimInvocations = [];
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e3.entry.hash,
 			]);
@@ -417,10 +418,10 @@ describe("trim", function () {
 		it("can trim later new entries are added", async () => {
 			let canTrimInvocations: string[] = [];
 			let trimmableGids = new Set();
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
-			const canTrim = (gid) => {
-				canTrimInvocations.push(gid);
-				return trimmableGids.has(gid);
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const canTrim = (entry: ShallowEntry) => {
+				canTrimInvocations.push(entry.meta.gid);
+				return trimmableGids.has(entry.meta.gid);
 			};
 
 			const cacheId = () => "id";
@@ -437,7 +438,7 @@ describe("trim", function () {
 			expect(canTrimInvocations).toEqual([e1.entry.gid]); // checks e1
 
 			canTrimInvocations = [];
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -454,7 +455,7 @@ describe("trim", function () {
 			]);
 
 			canTrimInvocations = [];
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -477,7 +478,7 @@ describe("trim", function () {
 			]);
 
 			canTrimInvocations = [];
-			const e4 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
+			const e4 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -502,9 +503,9 @@ describe("trim", function () {
 
 		it("drops cache if canTrim function changes", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -534,14 +535,14 @@ describe("trim", function () {
 
 		it("changing cacheId will reset cache", async () => {
 			let canTrimInvocations = 0;
-			const e1 = await log.append(new Uint8Array([1]), { nexts: [] }); // nexts: [] means unique gid
-			const e2 = await log.append(new Uint8Array([2]), { nexts: [] }); // nexts: [] means unique gid
-			const e3 = await log.append(new Uint8Array([3]), { nexts: [] }); // nexts: [] means unique gid
+			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
+			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 
 			let trimGid: string | undefined = undefined;
-			const canTrim = (gid) => {
+			const canTrim = (entry: ShallowEntry) => {
 				canTrimInvocations += 1;
-				return Promise.resolve(gid === trimGid); // can not trim
+				return Promise.resolve(entry.meta.gid === trimGid); // can not trim
 			};
 			await log.trim({
 				type: "length",

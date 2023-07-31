@@ -84,7 +84,9 @@ describe("join", function () {
 						...signKey,
 						sign: async (data: Uint8Array) => await signKey.sign(data),
 					},
-					gidSeed: Buffer.from("X" + i),
+					meta: {
+						gidSeed: Buffer.from("X" + i),
+					},
 					data: new Uint8Array([0, i]),
 					next: prev1 ? [prev1] : undefined,
 				});
@@ -200,8 +202,10 @@ describe("join", function () {
 			it("joins cut", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {
-					nexts: [a1],
-					type: EntryType.CUT,
+					meta: {
+						next: [a1],
+						type: EntryType.CUT,
+					},
 				});
 				const { entry: a2 } = await log1.append(new Uint8Array([0, 2]));
 				await log1.join(await log2.getHeads());
@@ -211,8 +215,10 @@ describe("join", function () {
 					a2.hash,
 				]);
 				const { entry: b2 } = await log2.append(new Uint8Array([1, 0]), {
-					nexts: [a2],
-					type: EntryType.CUT,
+					meta: {
+						next: [a2],
+						type: EntryType.CUT,
+					},
 				});
 				await log1.join(await log2.getHeads());
 				expect((await log1.getHeads()).map((e) => e.hash)).toEqual([
@@ -230,14 +236,18 @@ describe("join", function () {
 				const b1 = await Entry.create({
 					data: new Uint8Array([1, 0]),
 					next: [a1],
-					type: EntryType.CUT,
+					meta: {
+						type: EntryType.CUT,
+					},
 					identity: log1.identity,
 					store: log1.storage,
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
 					next: [a1],
-					type: EntryType.APPEND,
+					meta: {
+						type: EntryType.APPEND,
+					},
 					identity: log1.identity,
 					store: log1.storage,
 				});
@@ -259,14 +269,18 @@ describe("join", function () {
 				const b1 = await Entry.create({
 					data: new Uint8Array([1, 0]),
 					next: [a1],
-					type: EntryType.APPEND,
+					meta: {
+						type: EntryType.APPEND,
+					},
 					identity: log1.identity,
 					store: log1.storage,
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
 					next: [a1],
-					type: EntryType.CUT,
+					meta: {
+						type: EntryType.CUT,
+					},
 					identity: log1.identity,
 					store: log1.storage,
 				});
@@ -281,12 +295,16 @@ describe("join", function () {
 			it("joining multiple resets", async () => {
 				const { entry: a1 } = await log2.append(new Uint8Array([0, 1]));
 				const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {
-					nexts: [a1],
-					type: EntryType.CUT,
+					meta: {
+						next: [a1],
+						type: EntryType.CUT,
+					},
 				});
 				const { entry: b2 } = await log2.append(new Uint8Array([1, 1]), {
-					nexts: [a1],
-					type: EntryType.CUT,
+					meta: {
+						next: [a1],
+						type: EntryType.CUT,
+					},
 				});
 
 				expect((await log2.getHeads()).map((x) => x.hash)).toEqual([
@@ -306,7 +324,7 @@ describe("join", function () {
 		it("joins heads", async () => {
 			const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 			const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {
-				nexts: [a1],
+				meta: { next: [a1] },
 			});
 
 			expect(log1.length).toEqual(1);
@@ -570,13 +588,13 @@ describe("join", function () {
 			const { entry: a2 } = await log1.append(new Uint8Array([0, 2]));
 			const { entry: b2 } = await log2.append(new Uint8Array([1, 1]));
 
-			expect(a2.metadata.clock.id).toEqual(signKey.publicKey.bytes);
-			expect(b2.metadata.clock.id).toEqual(signKey2.publicKey.bytes);
+			expect(a2.meta.clock.id).toEqual(signKey.publicKey.bytes);
+			expect(b2.meta.clock.id).toEqual(signKey2.publicKey.bytes);
 			expect(
-				a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
+				a2.meta.clock.timestamp.compare(a1.meta.clock.timestamp)
 			).toBeGreaterThan(0);
 			expect(
-				b2.metadata.clock.timestamp.compare(b1.metadata.clock.timestamp)
+				b2.meta.clock.timestamp.compare(b1.meta.clock.timestamp)
 			).toBeGreaterThan(0);
 
 			await log3.join(await log1.getHeads());
@@ -591,15 +609,21 @@ describe("join", function () {
 			await log4.join(await log1.getHeads());
 			await log4.join(await log3.getHeads());
 			const { entry: d3 } = await log4.append(new Uint8Array([3, 2]));
-			expect(d3.gid).toEqual(c2.gid); // because c2 is the longest
+			expect(d3.gid).toEqual(
+				[a1.gid, a2.gid, b2.gid, c2.gid, d2.gid].sort()[0]
+			);
 			await log4.append(new Uint8Array([3, 3]));
 			await log1.join(await log4.getHeads());
 			await log4.join(await log1.getHeads());
 			const { entry: d5 } = await log4.append(new Uint8Array([3, 4]));
-			expect(d5.gid).toEqual(c2.gid); // because c2 previously
+			expect(d5.gid).toEqual(
+				[a1.gid, a2.gid, b2.gid, c2.gid, d2.gid, d3.gid, d5.gid].sort()[0]
+			);
 
 			const { entry: a5 } = await log1.append(new Uint8Array([0, 4]));
-			expect(a5.gid).toEqual(c2.gid); // because log1 joined with lgo4 and log4 was c2 (and len log4 > log1)
+			expect(a5.gid).toEqual(
+				[a1.gid, a2.gid, b2.gid, c2.gid, d2.gid, d3.gid, d5.gid].sort()[0]
+			);
 
 			await log4.join(await log1.getHeads());
 			const { entry: d6 } = await log4.append(new Uint8Array([3, 5]));
@@ -686,9 +710,9 @@ describe("join", function () {
 			expect(
 				(await log1.getHeads())[(await log1.getHeads()).length - 1].gid
 			).toEqual(a1.gid);
-			expect(a2.metadata.clock.id).toEqual(signKey.publicKey.bytes);
+			expect(a2.meta.clock.id).toEqual(signKey.publicKey.bytes);
 			expect(
-				a2.metadata.clock.timestamp.compare(a1.metadata.clock.timestamp)
+				a2.meta.clock.timestamp.compare(a1.meta.clock.timestamp)
 			).toBeGreaterThan(0);
 
 			await log3.join(await log1.getHeads());
@@ -708,7 +732,7 @@ describe("join", function () {
 			await log4.append(new Uint8Array([3, 2]));
 			const { entry: d4 } = await log4.append(new Uint8Array([3, 3]));
 
-			expect(d4.metadata.clock.id).toEqual(signKey4.publicKey.bytes);
+			expect(d4.meta.clock.id).toEqual(signKey4.publicKey.bytes);
 
 			const expectedData = [
 				new Uint8Array([0, 1]),
@@ -728,69 +752,6 @@ describe("join", function () {
 				(await log4.toArray()).map((e) => new Uint8Array(e.payload.getValue())),
 				expectedData
 			);
-		});
-
-		describe("gid shadow callback", () => {
-			it("it emits callback when gid is shadowed, triangle shape", async () => {
-				/*  
-				Either A or B shaded
-				┌─┐┌─┐  
-				│a││b│  
-				└┬┘└┬┘  
-				┌▽──▽──┐
-				│a or b│
-				└──────┘
-				*/
-
-				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]), {
-					nexts: [],
-				});
-				const { entry: b1 } = await log1.append(new Uint8Array([1, 0]), {
-					nexts: [],
-				});
-				let callbackValue: string[] = undefined as any;
-				const { entry: ab1 } = await log1.append(new Uint8Array([0]), {
-					nexts: [a1, b1],
-					onGidsShadowed: (gids) => (callbackValue = gids),
-				});
-				expect(callbackValue).toHaveLength(1);
-				expect(callbackValue[0]).toEqual(ab1.gid === a1.gid ? b1.gid : a1.gid); // if ab1 has gid a then b will be shadowed
-			});
-
-			it("it emits callback when gid is shadowed, N shape", async () => {
-				/*  
-					No shadows
-					┌──┐┌───┐ 
-					│a0││b1 │ 
-					└┬─┘└┬─┬┘ 
-					┌▽─┐ │┌▽─┐
-					│a1│ ││b2│
-					└┬─┘ │└──┘
-					┌▽───▽┐   
-					│a2   │   
-					└─────┘   
-				*/
-
-				const { entry: a0 } = await log1.append(new Uint8Array([0, 0]), {
-					nexts: [],
-				});
-				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]), {
-					nexts: [a0],
-				});
-				const { entry: b1 } = await log1.append(new Uint8Array([1, 0]), {
-					nexts: [],
-				});
-				await log1.append(new Uint8Array([1, 1]), { nexts: [b1] });
-
-				let callbackValue: any;
-				// make sure gid is choosen from 1 bs
-
-				await log1.append(new Uint8Array([0, 2]), {
-					nexts: [a1, b1],
-					onGidsShadowed: (gids) => (callbackValue = gids),
-				});
-				expect(callbackValue).toBeUndefined();
-			});
 		});
 
 		describe("entry-with-references", () => {
@@ -821,7 +782,7 @@ describe("join", function () {
 			it("joins with references", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const { entry: a2 } = await log1.append(new Uint8Array([0, 2]), {
-					nexts: [a1],
+					meta: { next: [a1] },
 				});
 				await log2.join([{ entry: a2, references: [a1] }]);
 				expect(log2.values.length).toEqual(2);

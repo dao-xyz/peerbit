@@ -1,25 +1,15 @@
-import { Entry } from "./entry";
+import { Entry, ShallowEntry } from "./entry";
 import { ISortFunction } from "./log-sorting";
 import yallist from "yallist";
 import { EntryIndex } from "./entry-index";
 
-type Storage<T> = (
-	hash: string
-) => Promise<Entry<T> | undefined> | Entry<T> | undefined;
-
-interface Value {
-	hash: string;
-	gid: string;
-	byteLength: number;
-}
-
-export type EntryNode = yallist.Node<Value>;
+export type EntryNode = yallist.Node<string>;
 
 export class Values<T> {
 	/**
 	 * Keep track of sorted elements in descending sort order (i.e. newest elements)
 	 */
-	private _values: yallist<Value>;
+	private _values: yallist<string>;
 	private _sortFn: ISortFunction;
 	private _byteLength: number;
 	private _entryIndex: EntryIndex<T>;
@@ -36,11 +26,15 @@ export class Values<T> {
 				.reverse()
 				.map((x) => {
 					if (!x.hash) throw new Error("Unexpected");
-					return {
+					return x.hash; /* {
 						hash: x.hash,
 						byteLength: x._payload.byteLength,
-						gid: x.gid,
-					};
+						meta: {
+							gids: x.gids,
+							gid: x.gid,
+							data: x.meta.data,
+						},
+					}; */
 				})
 		);
 		this._byteLength = 0;
@@ -53,7 +47,7 @@ export class Values<T> {
 
 	toArray(): Promise<Entry<T>[]> {
 		return Promise.all(
-			this._values.toArrayReverse().map((x) => this._entryIndex.get(x.hash))
+			this._values.toArrayReverse().map((x) => this._entryIndex.get(x))
 		).then((arr) => arr.filter((x) => !!x)) as Promise<Entry<T>[]>; // we do reverse because we assume the log is only meaningful if we read it from start to end
 	}
 
@@ -68,6 +62,10 @@ export class Values<T> {
 	}
 
 	private _putPromise: Map<string, Promise<any>> = new Map();
+
+	get entryIndex(): EntryIndex<T> {
+		return this._entryIndex;
+	}
 	async put(value: Entry<T>) {
 		let promise = this._putPromise.get(value.hash);
 		if (promise) {
@@ -85,7 +83,7 @@ export class Values<T> {
 		let walker = this._values.head;
 		let last: EntryNode | undefined = undefined;
 		while (walker) {
-			const walkerValue = await this.getEntry(walker);
+			const walkerValue = await this._entryIndex.getShallow(walker.value);
 			if (!walkerValue) {
 				throw new Error("Missing walker value");
 			}
@@ -106,11 +104,7 @@ export class Values<T> {
 			throw new Error("Unexpected");
 		}
 
-		_insertAfter(this._values, last, {
-			byteLength: value._payload.byteLength,
-			gid: value.gid,
-			hash: value.hash,
-		});
+		_insertAfter(this._values, last, value.hash);
 	}
 
 	async delete(value: Entry<T> | string) {
@@ -119,7 +113,7 @@ export class Values<T> {
 
 		let walker = this._values.tail;
 		while (walker) {
-			const walkerValue = await this.getEntry(walker);
+			const walkerValue = this._entryIndex.getShallow(walker.value);
 
 			if (!walkerValue) {
 				throw new Error("Missing walker value");
@@ -127,7 +121,7 @@ export class Values<T> {
 
 			if (walkerValue.hash === hash) {
 				this._values.removeNode(walker);
-				this._byteLength -= walkerValue._payload.byteLength;
+				this._byteLength -= walkerValue.payloadByteLength;
 				return;
 			}
 			walker = walker.prev; // prev will be undefined if you do removeNode(walker)
@@ -143,14 +137,16 @@ export class Values<T> {
 
 	deleteNode(node: EntryNode) {
 		this._values.removeNode(node);
-		this._byteLength -= node.value.byteLength;
+		this._byteLength -= this._entryIndex.getShallow(
+			node.value
+		)!.payloadByteLength;
 		return;
 	}
 
 	pop() {
 		const value = this._values.pop();
 		if (value) {
-			this._byteLength -= value.byteLength;
+			this._byteLength -= this._entryIndex.getShallow(value)!.payloadByteLength;
 		}
 		return value;
 	}
@@ -158,16 +154,12 @@ export class Values<T> {
 	get byteLength() {
 		return this._byteLength;
 	}
-
-	async getEntry(node: EntryNode) {
-		return this._entryIndex.get(node.value.hash);
-	}
 }
 
 function _insertAfter(
 	self: yallist<any>,
 	node: EntryNode | undefined,
-	value: Value
+	value: string
 ) {
 	const inserted = !node
 		? new yallist.Node(

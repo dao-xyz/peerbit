@@ -27,7 +27,9 @@ describe("entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 			});
 			deserialize(serialize(entry), Entry);
@@ -44,13 +46,16 @@ describe("entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+
 				data: new Uint8Array([1]),
-				clock,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock,
+				},
 			});
 			expect(entry.hash).toMatchSnapshot();
 			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
-			expect(entry.metadata.clock.equals(clock)).toBeTrue();
+			expect(entry.meta.clock.equals(clock)).toBeTrue();
 			expect(entry.payload.getValue()).toEqual(new Uint8Array([1]));
 			expect(entry.next.length).toEqual(0);
 		});
@@ -64,16 +69,18 @@ describe("entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock,
+				},
 				data: payload,
 				next: [],
-				clock,
 				encoding: JSON_ENCODING,
 			});
 			expect(entry.hash).toMatchSnapshot();
 			expect(entry.payload.getValue()).toEqual(payload);
 			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
-			expect(entry.metadata.clock.equals(clock)).toBeTrue();
+			expect(entry.meta.clock.equals(clock)).toBeTrue();
 			expect(entry.next.length).toEqual(0);
 		});
 
@@ -84,15 +91,16 @@ describe("entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload,
 				next: [],
 				encryption: {
 					reciever: {
-						metadata: undefined,
+						meta: undefined,
 						signatures: undefined,
 						payload: receiverKey.publicKey,
-						next: undefined,
 					},
 					keypair: senderKey,
 				},
@@ -102,12 +110,12 @@ describe("entry", function () {
 
 			// We can not have a hash check because nonce of encryption will always change
 			expect(entry.gid).toEqual(sha256Base64Sync(Buffer.from("a")));
-			expect(entry.metadata.clock.id).toEqual(
+			expect(entry.meta.clock.id).toEqual(
 				new Ed25519PublicKey({
 					publicKey: signKey.publicKey.publicKey,
 				}).bytes
 			);
-			expect(entry.metadata.clock.timestamp.logical).toEqual(0);
+			expect(entry.meta.clock.timestamp.logical).toEqual(0);
 			expect(entry.next.length).toEqual(0);
 		});
 
@@ -117,28 +125,31 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([0]),
+						timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+					}),
+				},
 				data: payload1,
 				next: [],
-				clock: new LamportClock({
-					id: new Uint8Array([0]),
-					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
-				}),
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([0]),
+						timestamp: new Timestamp({ wallTime: 1n, logical: 0 }),
+					}),
+				},
 				data: payload2,
 				next: [entry1],
-				clock: new LamportClock({
-					id: new Uint8Array([0]),
-					timestamp: new Timestamp({ wallTime: 1n, logical: 0 }),
-				}),
 			});
 			expect(entry2.payload.getValue()).toEqual(payload2);
 			expect(entry2.next.length).toEqual(1);
-			expect(entry2.maxChainLength).toEqual(2n); // because 1 next
 			expect(entry2.hash).toMatchSnapshot();
 		});
 
@@ -146,14 +157,18 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1],
 			});
@@ -164,14 +179,18 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1],
 			});
@@ -182,7 +201,9 @@ describe("entry", function () {
 			const entry0A = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
@@ -190,7 +211,9 @@ describe("entry", function () {
 			const entry1A = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [entry0A],
 			});
@@ -198,32 +221,41 @@ describe("entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("b"),
-				clock: entry1A.metadata.clock,
+				meta: {
+					gidSeed: Buffer.from("b"),
+					clock: entry1A.meta.clock,
+				},
+
 				data: new Uint8Array([1]),
 				next: [],
 			});
 
 			expect(entry1A.gid > entry1B.gid); // so that gid is not choosen because A has smaller gid
-			expect(entry1A.metadata.clock.timestamp.logical).toEqual(
-				entry1B.metadata.clock.timestamp.logical
+			expect(entry1A.meta.clock.timestamp.logical).toEqual(
+				entry1B.meta.clock.timestamp.logical
 			);
 
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("Should not be used"),
+				meta: {
+					gidSeed: Buffer.from("Should not be used"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1A, entry1B],
 			});
-			expect(entry2.gid).toEqual(entry1A.gid); // because A has alonger chain
+			expect(entry2.gid).toEqual(
+				entry1A.gid < entry1B.gid ? entry1A.gid : entry1B.gid
+			);
 		});
 
 		it("can calculate join gid from `next` max clock", async () => {
 			const entry1A = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("b"),
+				meta: {
+					gidSeed: Buffer.from("b"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
@@ -231,35 +263,41 @@ describe("entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
-				clock: entry1A.metadata.clock.advance(),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: entry1A.meta.clock.advance(),
+				},
+
 				data: new Uint8Array([1]),
 				next: [],
 			});
 
 			expect(entry1B.gid > entry1A.gid); // so that gid is not choosen because B has smaller gid
-			expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
 			expect(
-				entry1B.metadata.clock.timestamp.compare(
-					entry1A.metadata.clock.timestamp
-				)
+				entry1B.meta.clock.timestamp.compare(entry1A.meta.clock.timestamp)
 			).toBeGreaterThan(0);
 
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("Should not be used"),
+				meta: {
+					gidSeed: Buffer.from("Should not be used"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1A, entry1B],
 			});
-			expect(entry2.gid).toEqual(entry1B.gid); // because A has alonger chain
+			expect(entry2.gid).toEqual(
+				entry1A.gid < entry1B.gid ? entry1A.gid : entry1B.gid
+			);
 		});
 
 		it("can calculate join gid from `next` gid comparison", async () => {
 			const entry1A = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
@@ -267,33 +305,41 @@ describe("entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("b"),
-				clock: entry1A.metadata.clock,
+				meta: {
+					gidSeed: Buffer.from("b"),
+					clock: entry1A.meta.clock,
+				},
+
 				data: new Uint8Array([1]),
 				next: [],
 			});
 
 			expect(entry1B.gid < entry1A.gid).toBeTrue(); // so that B is choosen because of gid
-			expect(entry1A.maxChainLength).toEqual(entry1B.maxChainLength);
-			expect(entry1A.metadata.clock.timestamp.logical).toEqual(
-				entry1B.metadata.clock.timestamp.logical
+			expect(entry1A.meta.clock.timestamp.logical).toEqual(
+				entry1B.meta.clock.timestamp.logical
 			);
 
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("Should not be used"),
+				meta: {
+					gidSeed: Buffer.from("Should not be used"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1A, entry1B],
 			});
-			expect(entry2.gid).toEqual(entry1B.gid); // because gid B < gid A
+			expect(entry2.gid).toEqual(
+				entry1A.gid < entry1B.gid ? entry1A.gid : entry1B.gid
+			);
 		});
 
 		it("can calculate reuse gid from `next`", async () => {
 			const entry1A = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
@@ -301,7 +347,9 @@ describe("entry", function () {
 			const entry1B = await Entry.create({
 				store,
 				identity: signKey,
-				gid: entry1A.gid,
+				meta: {
+					gid: entry1A.gid,
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
@@ -309,7 +357,9 @@ describe("entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("Should not be used"),
+				meta: {
+					gidSeed: Buffer.from("Should not be used"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1A, entry1B],
 			});
@@ -321,7 +371,9 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: new Uint8Array([1]),
 				next: [],
 			});
@@ -329,7 +381,9 @@ describe("entry", function () {
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("Should not be used"),
+				meta: {
+					gidSeed: Buffer.from("Should not be used"),
+				},
 				data: new Uint8Array([2]),
 				next: [entry1],
 			});
@@ -342,7 +396,9 @@ describe("entry", function () {
 				await Entry.create({
 					store,
 					identity: signKey,
-					gidSeed: Buffer.from("a"),
+					meta: {
+						gidSeed: Buffer.from("a"),
+					},
 					data: null,
 					next: [],
 				});
@@ -358,7 +414,9 @@ describe("entry", function () {
 				await Entry.create({
 					store,
 					identity: signKey,
-					gidSeed: Buffer.from("a"),
+					meta: {
+						gidSeed: Buffer.from("a"),
+					},
 					data: new Uint8Array([1]),
 					next: {} as any,
 				});
@@ -374,13 +432,15 @@ describe("entry", function () {
 			const entry = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([1, 2, 3]),
+						timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
+					}),
+				},
 				data: new Uint8Array([1]),
 				next: [],
-				clock: new LamportClock({
-					id: new Uint8Array([1, 2, 3]),
-					timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
-				}),
 			});
 			const hash = entry.hash;
 			entry.hash = undefined as any;
@@ -411,24 +471,28 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([1, 2, 3]),
+						timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
+					}),
+				},
 				data: payload1,
 				next: [],
-				clock: new LamportClock({
-					id: new Uint8Array([1, 2, 3]),
-					timestamp: new Timestamp({ wallTime: 2n, logical: 3 }),
-				}),
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([1, 2, 3]),
+						timestamp: new Timestamp({ wallTime: 3n, logical: 3 }),
+					}),
+				},
 				data: payload2,
 				next: [entry1],
-				clock: new LamportClock({
-					id: new Uint8Array([1, 2, 3]),
-					timestamp: new Timestamp({ wallTime: 3n, logical: 3 }),
-				}),
 			});
 			const final = await Entry.fromMultihash<Uint8Array>(store, entry2.hash);
 			final.init(entry2);
@@ -448,14 +512,18 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload2,
 				next: [entry1],
 			});
@@ -468,21 +536,27 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload2,
 				next: [],
 			});
 			const entry3 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload2,
 				next: [entry2],
 			});
@@ -498,23 +572,29 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([1]),
+						timestamp: new Timestamp({ wallTime: 3n, logical: 2 }),
+					}),
+				},
 				data: payload1,
-				clock: new LamportClock({
-					id: new Uint8Array([1]),
-					timestamp: new Timestamp({ wallTime: 3n, logical: 2 }),
-				}),
+
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new LamportClock({
+						id: new Uint8Array([1]),
+						timestamp: new Timestamp({ wallTime: 3n, logical: 2 }),
+					}),
+				},
 				data: payload1,
-				clock: new LamportClock({
-					id: new Uint8Array([1]),
-					timestamp: new Timestamp({ wallTime: 3n, logical: 2 }),
-				}),
+
 				next: [],
 			});
 			expect(Entry.isEqual(entry1, entry2)).toEqual(true);
@@ -526,14 +606,18 @@ describe("entry", function () {
 			const entry1 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload1,
 				next: [],
 			});
 			const entry2 = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+				},
 				data: payload2,
 				next: [],
 			});

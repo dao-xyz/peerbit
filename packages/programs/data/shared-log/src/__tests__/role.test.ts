@@ -121,7 +121,7 @@ describe(`role`, () => {
 	await db1.add("hello", {
 		reciever: {
 			next: encryptionKey.keypair.publicKey,
-			metadata: encryptionKey.keypair.publicKey,
+			meta: encryptionKey.keypair.publicKey,
 			payload: encryptionKey.keypair.publicKey,
 			signatures: encryptionKey.keypair.publicKey,
 		},

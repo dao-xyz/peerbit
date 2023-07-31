@@ -77,6 +77,9 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 
 		await this._log.open({
 			encoding,
+			replicas: {
+				min: 0xffffffff, // assume a document can not be sharded?
+			},
 			canAppend: this.canAppend.bind(this),
 			onChange: async (change) => {
 				await this._index.updateIndex(change);
@@ -109,7 +112,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	}
 
 	async _canAppend(entry: Entry<StringOperation>): Promise<boolean> {
-		if (this._log.log.length === 0) {
+		if (this._log.log.length === 0 || entry.next.length === 0) {
 			return true;
 		} else {
 			for (const next of entry.next) {
@@ -131,7 +134,10 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 				index,
 				value,
 			}),
-			{ nexts: await this._log.log.getHeads(), ...options }
+			{
+				...options,
+				meta: { ...options?.meta, next: await this._log.log.getHeads() },
+			}
 		);
 	}
 

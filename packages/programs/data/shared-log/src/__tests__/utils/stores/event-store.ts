@@ -4,7 +4,12 @@ import { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
 import { variant, field, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { randomBytes } from "@peerbit/crypto";
-import { SharedLog, SyncFilter } from "../../..";
+import {
+	AbsolutMinReplicas,
+	ReplicationLimitsOptions,
+	SharedLog,
+	SyncFilter,
+} from "../../..";
 import { Role } from "../../../role";
 import { JSON_ENCODING } from "./encoding";
 
@@ -29,7 +34,7 @@ export class EventIndex<T> {
 type Args<T> = {
 	role?: Role;
 	trim?: TrimOptions;
-	minReplicas?: number;
+	replicas?: ReplicationLimitsOptions;
 	sync?: SyncFilter;
 	encoding?: Encoding<Operation<T>>;
 };
@@ -56,7 +61,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			canAppend: () => Promise.resolve(true),
 			role: properties?.role,
 			trim: properties?.trim,
-			minReplicas: properties?.minReplicas,
+			replicas: properties?.replicas,
 			sync: properties?.sync,
 			encoding: properties?.encoding || JSON_ENCODING,
 		});
@@ -67,7 +72,10 @@ export class EventStore<T> extends Program<Args<T>> {
 		options?: {
 			pin?: boolean;
 			reciever?: EncryptionTemplateMaybeEncrypted;
-			nexts?: Entry<any>[];
+			meta?: {
+				next?: Entry<any>[];
+			};
+			replicas?: AbsolutMinReplicas;
 		}
 	) {
 		return this.log.append(

@@ -223,23 +223,21 @@ export class LamportClock {
 	@field({ type: Timestamp })
 	timestamp: Timestamp;
 
-	constructor(properties?: { id: Uint8Array; timestamp?: Timestamp | number }) {
-		if (properties) {
-			this.id = properties.id;
-			if (!properties.timestamp) {
+	constructor(properties: { id: Uint8Array; timestamp?: Timestamp | number }) {
+		this.id = properties.id;
+		if (!properties.timestamp) {
+			this.timestamp = new Timestamp({
+				wallTime: bigintTime(),
+				logical: 0,
+			});
+		} else {
+			if (typeof properties.timestamp === "number") {
 				this.timestamp = new Timestamp({
 					wallTime: bigintTime(),
-					logical: 0,
+					logical: properties.timestamp,
 				});
 			} else {
-				if (typeof properties.timestamp === "number") {
-					this.timestamp = new Timestamp({
-						wallTime: bigintTime(),
-						logical: properties.timestamp,
-					});
-				} else {
-					this.timestamp = properties.timestamp;
-				}
+				this.timestamp = properties.timestamp;
 			}
 		}
 	}

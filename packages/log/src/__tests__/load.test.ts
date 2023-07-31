@@ -368,21 +368,21 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1.identity,
-					gidSeed: Buffer.from("X"),
+					meta: { gidSeed: Buffer.from("X") },
 					data: new Uint8Array([0, i]),
 					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
-					gidSeed: Buffer.from("X"),
+					meta: { gidSeed: Buffer.from("X") },
 					data: new Uint8Array([1, i]),
 					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
-					gidSeed: Buffer.from("X"),
+					meta: { gidSeed: Buffer.from("X") },
 					data: new Uint8Array([2, i]),
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
@@ -417,21 +417,21 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1.identity,
-					gidSeed: Buffer.from("X"),
+					meta: { gidSeed: Buffer.from("X") },
 					data: new Uint8Array([0, i]),
 					next: prev1 ? [prev1] : undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
-					gidSeed: Buffer.from("X"),
+					meta: { gidSeed: Buffer.from("X") },
 					data: new Uint8Array([1, i]),
 					next: prev2 ? [prev2, n1] : [n1],
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
-					gidSeed: Buffer.from("X"),
+					meta: { gidSeed: Buffer.from("X") },
 					data: new Uint8Array([2, i]),
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
 				});
@@ -465,38 +465,44 @@ describe("Log - Load", function () {
 				const n1 = await Entry.create({
 					store,
 					identity: log1.identity,
-					gidSeed: Buffer.from("X"),
+					meta: {
+						gidSeed: Buffer.from("X"),
+						clock:
+							items1.length > 0
+								? items1[items1.length - 1].meta.clock.advance()
+								: undefined,
+					},
 					data: "entryA" + i,
 					encoding: JSON_ENCODING,
 					next: prev1 ? [prev1] : undefined,
-					clock:
-						items1.length > 0
-							? items1[items1.length - 1].metadata.clock.advance()
-							: undefined,
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
-					gidSeed: Buffer.from("X"),
+					meta: {
+						gidSeed: Buffer.from("X"),
+						clock:
+							items2.length > 0
+								? items2[items2.length - 1].meta.clock.advance()
+								: undefined,
+					},
 					data: "entryB" + i,
 					encoding: JSON_ENCODING,
 					next: prev2 ? [prev2, n1] : [n1],
-					clock:
-						items2.length > 0
-							? items2[items2.length - 1].metadata.clock.advance()
-							: undefined,
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
-					gidSeed: Buffer.from("X"),
+					meta: {
+						gidSeed: Buffer.from("X"),
+						clock:
+							items3.length > 0
+								? items3[items3.length - 1].meta.clock.advance()
+								: undefined,
+					},
 					data: "entryC" + i,
 					encoding: JSON_ENCODING,
 					next: prev3 ? [prev3, n1, n2] : [n1, n2],
-					clock:
-						items3.length > 0
-							? items3[items3.length - 1].metadata.clock.advance()
-							: undefined,
 				});
 				/*        log1.mergeClock(log2.clock)
 			 log1.mergeClock(log3.clock)
@@ -900,7 +906,7 @@ describe("Log - Load", function () {
 		it("retrieves partially joined log deterministically - single next pointer", async () => {
 			for (let i = 1; i <= 5; i++) {
 				await log1.append("entryA" + i, {
-					nexts: await log1.getHeads(),
+					meta: { next: await log1.getHeads() },
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -920,7 +926,7 @@ describe("Log - Load", function () {
 	
 			for (let i = 6; i <= 10; i++) {
 				await log1.append("entryA" + i, {
-					nexts: await log1.getHeads(),
+					meta: { next: await log1.getHeads() },
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1008,7 +1014,7 @@ describe("Log - Load", function () {
 		it("retrieves partially joined log deterministically - multiple next pointers", async () => {
 			for (let i = 1; i <= 5; i++) {
 				await log1.append("entryA" + i, {
-					nexts: await log1.getHeads(),
+					meta: { next: await log1.getHeads() },
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1027,7 +1033,7 @@ describe("Log - Load", function () {
 	
 			for (let i = 6; i <= 10; i++) {
 				await log1.append("entryA" + i, {
-					nexts: await log1.getHeads(),
+					meta: { next: await log1.getHeads() },
 					timestamp: new Timestamp({
 						wallTime: BigInt(i),
 						logical: 0,
@@ -1125,35 +1131,41 @@ describe("Log - Load", function () {
 					const n1 = await Entry.create({
 						store,
 						identity: log1.identity,
-						gidSeed: Buffer.from("X"),
+						meta: {
+							gidSeed: Buffer.from("X"),
+							clock:
+								items1.length > 0
+									? items1[items1.length - 1].meta.clock.advance()
+									: undefined,
+						},
 						data: new Uint8Array([0, i]),
 						next: prev1 ? [prev1] : undefined,
-						clock:
-							items1.length > 0
-								? items1[items1.length - 1].metadata.clock.advance()
-								: undefined,
 					});
 					const n2 = await Entry.create({
 						store,
 						identity: log2.identity,
-						gidSeed: Buffer.from("X"),
+						meta: {
+							gidSeed: Buffer.from("X"),
+							clock:
+								items2.length > 0
+									? items2[items2.length - 1].meta.clock.advance()
+									: undefined,
+						},
 						data: new Uint8Array([1, i]),
 						next: prev2 ? [prev2, n1] : [n1],
-						clock:
-							items2.length > 0
-								? items2[items2.length - 1].metadata.clock.advance()
-								: undefined,
 					});
 					const n3 = await Entry.create({
 						store,
 						identity: log3.identity,
-						gidSeed: Buffer.from("X"),
+						meta: {
+							gidSeed: Buffer.from("X"),
+							clock:
+								items3.length > 0
+									? items3[items3.length - 1].meta.clock.advance()
+									: undefined,
+						},
 						data: new Uint8Array([2, i]),
 						next: prev3 ? [prev3, n1, n2] : [n1, n2],
-						clock:
-							items3.length > 0
-								? items3[items3.length - 1].metadata.clock.advance()
-								: undefined,
 					});
 
 					/*      log1.tickClock()

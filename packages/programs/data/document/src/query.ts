@@ -464,7 +464,7 @@ export class EntryEncryptedByQuery
 	>
 {
 	@field({ type: vec(X25519PublicKey) })
-	metadata: X25519PublicKey[];
+	meta: X25519PublicKey[];
 
 	@field({ type: vec(X25519PublicKey) })
 	payload: X25519PublicKey[];
@@ -476,7 +476,7 @@ export class EntryEncryptedByQuery
 	signatures: X25519PublicKey[];
 
 	constructor(properties?: {
-		metadata: X25519PublicKey[];
+		meta: X25519PublicKey[];
 		next: X25519PublicKey[];
 		payload: X25519PublicKey[];
 		signatures: X25519PublicKey[];

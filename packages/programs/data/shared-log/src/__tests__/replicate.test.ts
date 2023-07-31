@@ -1,12 +1,14 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
-import { waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
+import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { AbsolutMinReplicas, maxMinReplicas } from "../replication";
+import { Observer } from "../role";
 
-describe(`Replication`, function () {
+describe(`exchange`, function () {
 	let session: LSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 	let fetchEvents: number;
@@ -63,7 +65,12 @@ describe(`Replication`, function () {
 			await db1.iterator({ limit: -1 })
 		).collect();
 		expect(db1Entries.length).toEqual(1);
-		expect(await db1.log.findLeaders(db1Entries[0].gid)).toContainAllValues(
+		expect(
+			await db1.log.findLeaders(
+				db1Entries[0].gid,
+				maxMinReplicas(db1.log, db1Entries)
+			)
+		).toContainAllValues(
 			[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
 				getPublicKeyFromPeerId(p).hashcode()
 			)
@@ -74,7 +81,12 @@ describe(`Replication`, function () {
 			await db2.iterator({ limit: -1 })
 		).collect();
 		expect(db2Entries.length).toEqual(1);
-		expect(await db2.log.findLeaders(db2Entries[0].gid)).toContainValues(
+		expect(
+			await db2.log.findLeaders(
+				db2Entries[0].gid,
+				maxMinReplicas(db2.log, db2Entries)
+			)
+		).toContainValues(
 			[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
 				getPublicKeyFromPeerId(p).hashcode()
 			)
@@ -159,7 +171,7 @@ describe(`Replication`, function () {
 		let adds: number[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			adds.push(i);
-			await db1.add("hello " + i, { nexts: [] });
+			await db1.add("hello " + i, { meta: { next: [] } });
 			// TODO when nexts is omitted, entrise will dependon each other,
 			// When entries arrive in db2 unecessary fetches occur because there is already a sync in progress?
 		}
@@ -208,7 +220,7 @@ describe(`Replication`, function () {
 			entryCount
 		);
 		expect(fetchEvents).toEqual(fetchHashes.size);
-		expect(fetchEvents).toEqual(entryCount - 3); // - 3 because we also send some references for faster syncing (see exchange-heads.ts)
+		expect(fetchEvents).toEqual(entryCount - 1); // - 1 because we also send some references for faster syncing (see exchange-heads.ts)
 	});
 
 	it("emits correct replication info in two-way replication", async () => {
@@ -273,5 +285,199 @@ describe(`Replication`, function () {
 		// All entries should be in the database
 		expect(values1.length).toEqual(entryCount * 2);
 		expect(values2.length).toEqual(entryCount * 2);
+	});
+});
+
+describe("replication degree", () => {
+	let session: LSession;
+	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
+
+	const init = async (min: number, max?: number) => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				replicas: {
+					min,
+					max,
+				},
+				role: new Observer(),
+			},
+		});
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: {
+						min,
+						max,
+					},
+				},
+			}
+		))!;
+
+		db3 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: {
+					replicas: {
+						min,
+						max,
+					},
+				},
+			}
+		))!;
+
+		await db1.waitFor(session.peers[1].peerId);
+		await db2.waitFor(session.peers[0].peerId);
+		await db3.waitFor(session.peers[0].peerId);
+	};
+	beforeEach(async () => {
+		session = await LSession.connected(3);
+	});
+
+	afterEach(async () => {
+		if (db1) await db1.drop();
+
+		if (db2) await db2.drop();
+
+		if (db3) await db3.drop();
+
+		await session.stop();
+	});
+
+	it("can override min on program level", async () => {
+		let minReplicas = 2;
+		await init(minReplicas);
+
+		const value = "hello";
+
+		const e1 = await db1.add(value, {
+			replicas: new AbsolutMinReplicas(1), // will be overriden by 'minReplicas' above
+			meta: { next: [] },
+		});
+
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+	});
+
+	it("can override min on program level", async () => {
+		let minReplicas = 1;
+		let maxReplicas = 1;
+
+		await init(minReplicas, maxReplicas);
+
+		const value = "hello";
+
+		const e1 = await db1.add(value, {
+			replicas: new AbsolutMinReplicas(100), // will be overriden by 'maxReplicas' above
+			meta: { next: [] },
+		});
+
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await waitForResolved(() =>
+			expect(db2.log.log.length).not.toEqual(db3.log.log.length)
+		);
+		await delay(3000); // wait if so more replcation will eventually occur
+		await waitForResolved(() =>
+			expect(db2.log.log.length).not.toEqual(db3.log.log.length)
+		);
+	});
+
+	it("control per commmit", async () => {
+		await init(1);
+
+		const value = "hello";
+
+		const e1 = await db1.add(value, {
+			replicas: new AbsolutMinReplicas(1),
+			meta: { next: [] },
+		});
+		const e2 = await db1.add(value, {
+			replicas: new AbsolutMinReplicas(3),
+			meta: { next: [] },
+		});
+
+		// expect e1 to be replated at db1 and/or 1 other peer (when you write you always store locally)
+		// expect e2 to be replicated everywhere
+
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(2));
+		await waitForResolved(() =>
+			expect(db2.log.log.length).toBeGreaterThanOrEqual(1)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.log.length).toBeGreaterThanOrEqual(1)
+		);
+		expect(db2.log.log.length).not.toEqual(db3.log.log.length);
+	});
+
+	it("min replicas with be maximum value for gid", async () => {
+		await init(1);
+
+		const value = "hello";
+
+		const e1 = await db1.add(value, { replicas: new AbsolutMinReplicas(3) });
+
+		// Assume all peers gets it
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+
+		// e2 only sets minReplicas to 1 which means only db2 or db3 needs to hold it
+		const e2 = await db1.add(value, {
+			replicas: new AbsolutMinReplicas(1),
+			meta: { next: [e1.entry] },
+		});
+
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(2));
+		await waitForResolved(() =>
+			expect(db2.log.log.length).not.toEqual(db3.log.log.length)
+		);
+		let min = Math.min(db2.log.log.length, db3.log.log.length);
+		expect(min).toEqual(0); // because e2 dictates that only one of db2 and db3 needs to hold the e2 -> e1 log chain
+	});
+
+	it("will not delete unless replicated", async () => {
+		await init(1);
+
+		const value = "hello";
+
+		const e1 = await db1.add(value, { replicas: new AbsolutMinReplicas(1) });
+
+		// Assume all peers gets it
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await waitForResolved(() =>
+			expect(db2.log.log.length).not.toEqual(db3.log.log.length)
+		);
+
+		let dbWithEntry = db2.log.log.length === 1 ? db2 : db3;
+		expect(dbWithEntry.log.log.length).toEqual(1);
+		await expect(
+			() => dbWithEntry.log.safelyDelete([e1.entry], { timeout: 3000 })[0]
+		).rejects.toThrowError("Timeout");
+		expect(dbWithEntry.log.log.length).toEqual(1); // No deletions
+	});
+
+	it("will reject early if leaders does not have entry", async () => {
+		await init(1);
+
+		const value = "hello";
+
+		const e1 = await db1.add(value, { replicas: new AbsolutMinReplicas(2) });
+
+		// Assume all peers gets it
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+		await db3.log.log.deleteRecursively(await db3.log.log.getHeads());
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(0));
+
+		expect(db2.log.log.length).toEqual(1);
+		const fn = () => db2.log.safelyDelete([e1.entry], { timeout: 3000 })[0];
+		await expect(fn).rejects.toThrowError(
+			"Insufficient replicators to safelyDelete: " + e1.entry.hash
+		);
+		expect(db2.log.log.length).toEqual(1);
 	});
 });
