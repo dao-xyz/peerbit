@@ -6,7 +6,7 @@ import { EventStore, Operation } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { AbsoluteReplicas, maxReplicas } from "../replication";
-import { Observer } from "../role";
+import { Observer, Replicator } from "../role";
 
 describe(`exchange`, function () {
 	let session: LSession;
@@ -334,6 +334,9 @@ describe("replication degree", () => {
 	};
 	beforeEach(async () => {
 		session = await LSession.connected(3);
+		db1 = undefined as any;
+		db2 = undefined as any;
+		db3 = undefined as any;
 	});
 
 	afterEach(async () => {
@@ -454,9 +457,76 @@ describe("replication degree", () => {
 		let dbWithEntry = db2.log.log.length === 1 ? db2 : db3;
 		expect(dbWithEntry.log.log.length).toEqual(1);
 		await expect(
-			() => dbWithEntry.log.safelyDelete([e1.entry], { timeout: 3000 })[0]
-		).rejects.toThrowError("Timeout");
+			() => dbWithEntry.log.pruneSafely([e1.entry], { timeout: 3000 })[0]
+		).rejects.toThrowError("Timedout");
 		expect(dbWithEntry.log.log.length).toEqual(1); // No deletions
+	});
+
+	it("keep degree while updating role", async () => {
+		let min = 1;
+		let max = 1;
+
+		// peer 1 observer
+		// peer 2 observer
+
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				replicas: {
+					min,
+					max,
+				},
+				role: new Observer(),
+			},
+		});
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: {
+						min,
+						max,
+					},
+					role: new Observer(),
+				},
+			}
+		))!;
+
+		await db1.add("hello");
+
+		// peer 1 observer
+		// peer 2 replicator (will get entry)
+
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await db2.log.updateRole(new Replicator());
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+
+		// peer 1 removed
+		// peer 2 replicator (has entry)
+		await db1.drop();
+
+		// peer 1 observer
+		// peer 2 replicator (has entry)
+		await db1.open({
+			replicas: {
+				min,
+				max,
+			},
+			role: new Observer(),
+		});
+
+		// peer 1 observer
+		// peer 2 observer
+		expect(db2.log.log.length).toEqual(1);
+		await db2.log.updateRole(new Observer());
+		expect(db2.log.role instanceof Observer).toBeTrue();
+
+		// peer 1 replicator (will get entry)
+		// peer 2 observer (will safely delete the entry)
+		await db1.log.updateRole(new Replicator());
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
 	});
 
 	/*  TODO feat

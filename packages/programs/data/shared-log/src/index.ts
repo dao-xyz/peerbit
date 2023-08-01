@@ -100,7 +100,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 	// options
 	private _sync?: SyncFilter;
-	private _role: Role;
+	private _role: Observer | Replicator;
 
 	private _sortedPeersCache: { hash: string; timestamp: number }[] | undefined;
 	private _lastSubscriptionMessageId: number;
@@ -110,6 +110,8 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 	private _onUnsubscriptionFn: (arg: any) => any;
 
 	private _logProperties?: LogProperties<T> & LogEvents<T>;
+
+	private _loadedOnce = false;
 
 	private _pendingDeletes: Map<
 		string,
@@ -130,8 +132,41 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		this.rpc = new RPC();
 	}
 
-	get role(): Role {
+	get role(): Observer | Replicator {
 		return this._role;
+	}
+
+	async updateRole(role: Observer | Replicator) {
+		const wasRepicators = this._role instanceof Replicator;
+		this._role = role;
+		await this.initializeWithRole();
+		await this.rpc.subscribe(serialize(this._role));
+
+		if (wasRepicators) {
+			await this.replicationReorganization();
+		}
+	}
+
+	private async initializeWithRole() {
+		try {
+			this.modifySortedSubscriptionCache(
+				this._role instanceof Replicator ? true : false,
+				getPublicKeyFromPeerId(this.node.peerId).hashcode()
+			);
+
+			if (!this._loadedOnce) {
+				await this.log.load();
+				this._loadedOnce = true;
+			}
+		} catch (error) {
+			if (error instanceof AccessError) {
+				logger.error(
+					"Failed to load all entries due to access error, make sure you are opening the program with approate keychain configuration"
+				);
+			} else {
+				throw error;
+			}
+		}
 	}
 
 	async append(
@@ -184,8 +219,8 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		this.__pendingIHave = new Map();
 
 		this._sync = options?.sync;
-		this._role = options?.role || new Replicator();
 		this._logProperties = options;
+		this._role = options?.role || new Replicator();
 
 		this._lastSubscriptionMessageId = 0;
 		this._onSubscriptionFn = this._onSubscription.bind(this);
@@ -216,31 +251,12 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				}
 				return this._logProperties?.onChange?.(change);
 			},
-			/* canAppend: (entry) => {
+			canAppend: (entry) => {
 				const replicas = decodeReplicas(entry).getValue(this);
-				if (this.replicas.max && this.replicas.max.getValue(this) < replicas) {
-					return false;
-				}
-				if (this.replicas.min.getValue(this) > replicas) {
+				if (Number.isFinite(replicas) === false) {
 					return false;
 				}
 				return this._logProperties?.canAppend?.(entry) ?? true;
-			}, */
-			onGidRemoved: (removed: string[], replaced?: string) => {
-				/* if (this.log.headsIndex.has(gid)) {
-							// if can append at least one of the entries, then we should remove all entries for this particular gid
-							for (const entry of value) {
-								if (await this.log.canAppend!(entry.entry)) {
-
-									if (entriesToDelete.length > 0) {
-										await this.log.remove(entriesToDelete, {
-											recursively: true,
-										});
-									}
-									break;
-								}
-							}
-						} */
 			},
 			trim: this._logProperties?.trim && {
 				...this._logProperties?.trim,
@@ -258,25 +274,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				(await this.node.memory.sublevel(sha256Base64Sync(this.log.id))),
 		});
 
-		try {
-			if (this._role instanceof Replicator) {
-				this.modifySortedSubscriptionCache(
-					true,
-					getPublicKeyFromPeerId(this.node.peerId).hashcode()
-				);
-				await this.log.load();
-			} else {
-				await this.log.load({ heads: true, reload: true });
-			}
-		} catch (error) {
-			if (error instanceof AccessError) {
-				logger.error(
-					"Failed to load all entries due to access error, make sure you are opening the program with approate keychain configuration"
-				);
-			} else {
-				throw error;
-			}
-		}
+		await this.initializeWithRole();
 
 		// Take into account existing subscription
 		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
@@ -313,6 +311,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
+		this._loadedOnce = false;
 
 		this.node.services.pubsub.removeEventListener(
 			"subscribe",
@@ -432,7 +431,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 						await this.log.join(toMerge);
 						toDelete &&
-							Promise.all(this.safelyDelete(toDelete)).catch((e) => {
+							Promise.all(this.pruneSafely(toDelete)).catch((e) => {
 								logger.error(e.toString());
 							});
 
@@ -452,7 +451,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 									);
 									if (!isLeader) {
 										Promise.all(
-											this.safelyDelete(entries.map((x) => x.entry))
+											this.pruneSafely(entries.map((x) => x.entry))
 										).catch((e) => {
 											logger.error(e.toString());
 										});
@@ -587,7 +586,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			if (this.closed === false) {
 				throw new Error("Unexpected, sortedPeersCache is undefined");
 			}
-			return;
+			return false;
 		}
 		const code = fromHash;
 		if (subscribed) {
@@ -595,10 +594,18 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			if (!sortedPeer.find((x) => x.hash === code)) {
 				sortedPeer.push({ hash: code, timestamp: +new Date() });
 				sortedPeer.sort((a, b) => a.hash.localeCompare(b.hash));
+				return true;
+			} else {
+				return false;
 			}
 		} else {
 			const deleteIndex = sortedPeer.findIndex((x) => x.hash === code);
-			sortedPeer.splice(deleteIndex, 1);
+			if (deleteIndex >= 0) {
+				sortedPeer.splice(deleteIndex, 1);
+				return true;
+			} else {
+				return false;
+			}
 		}
 	}
 
@@ -608,6 +615,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		subscribed: boolean
 	) {
 		// TODO why are we doing two loops?
+		const prev: boolean[] = [];
 		for (const subscription of changes) {
 			if (this.log.idString !== subscription.topic) {
 				continue;
@@ -617,20 +625,24 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				!subscription.data ||
 				!startsWith(subscription.data, REPLICATOR_TYPE_VARIANT)
 			) {
+				prev.push(this.modifySortedSubscriptionCache(false, fromHash));
 				continue;
+			} else {
+				this._lastSubscriptionMessageId += 1;
+				prev.push(this.modifySortedSubscriptionCache(subscribed, fromHash));
 			}
-			this._lastSubscriptionMessageId += 1;
-			this.modifySortedSubscriptionCache(subscribed, fromHash);
 		}
 
-		for (const subscription of changes) {
+		for (const [i, subscription] of changes.entries()) {
 			if (this.log.idString !== subscription.topic) {
 				continue;
 			}
 			if (subscription.data) {
 				try {
 					const type = deserialize(subscription.data, Role);
-					if (type instanceof Replicator) {
+
+					// Reorganize if the new subscriber is a replicator, or observers AND was replicator
+					if (type instanceof Replicator || prev[i]) {
 						await this.replicationReorganization();
 					}
 				} catch (error: any) {
@@ -645,56 +657,52 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		}
 	}
 
-	safelyDelete(entries: Entry<any>[], options?: { timeout: number }) {
+	pruneSafely(entries: Entry<any>[], options?: { timeout: number }) {
 		// ask network if they have they entry,
 		// so I can delete it
 
 		// There is a few reasons why we might end up here
 
-		// - Two logs merge, and we should not, anymore keep the joined log replicated
-		// - An entry is joined, where minReplicas is lower than before (for all heads for this particular gid) and therefore we are not replicating anymore for this particular gid
+		// - Two logs merge, and we should not anymore keep the joined log replicated (because we are not responsible for the resulting gid)
+		// - An entry is joined, where min replicas is lower than before (for all heads for this particular gid) and therefore we are not replicating anymore for this particular gid
 		// - Peers join and leave, which means we might not be a replicator anymore
 
 		const promises: Promise<any>[] = [];
 		const filteredEntries: Entry<any>[] = [];
 		for (const entry of entries) {
-			/* const pending = this._pendingDeletes.get(entry.hash);
-			if (pending) {
-				promises.push(pending.promise.promise);
-				continue;
-			} */
+			const pendingPrev = this._pendingDeletes.get(entry.hash);
 
 			filteredEntries.push(entry);
 			const existCounter = new Set<string>();
 			const minReplicas = decodeReplicas(entry);
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
-			const resolve = () => {
+			const clear = () => {
+				pendingPrev?.clear();
 				const pending = this._pendingDeletes.get(entry.hash);
 				if (pending?.promise == deferredPromise) {
 					this._pendingDeletes.delete(entry.hash);
 				}
 				clearTimeout(timeout);
+			};
+			const resolve = () => {
+				clear();
 				deferredPromise.resolve();
 			};
 
 			const reject = (e: any) => {
-				const pending = this._pendingDeletes.get(entry.hash);
-				if (pending?.promise == deferredPromise) {
-					this._pendingDeletes.delete(entry.hash);
-				}
-				clearTimeout(timeout);
+				clear();
 				deferredPromise.reject(e);
 			};
 
 			const timeout = setTimeout(() => {
-				reject(new Error("Timeout"));
+				reject(new Error("Timedout"));
 			}, options?.timeout ?? 10 * 1000);
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,
 				clear: () => {
-					clearTimeout(timeout);
+					clear();
 				},
 				callback: async (publicKeyHash: string) => {
 					const minReplicasValue = minReplicas.getValue(this);
@@ -750,6 +758,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				gid,
 				maxReplicas(this, entries) // pick max replication policy of all entries, so all information is treated equally important as the most important
 			);
+
 			for (const currentPeer of currentPeers) {
 				if (
 					!oldPeersSet?.has(currentPeer) &&
@@ -798,7 +807,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				// delete entries since we are not suppose to replicate this anymore
 				// TODO add delay? freeze time? (to ensure resiliance for bad io)
 				if (entriesToDelete.length > 0) {
-					Promise.all(this.safelyDelete(entriesToDelete)).catch((e) => {
+					Promise.all(this.pruneSafely(entriesToDelete)).catch((e) => {
 						logger.error(e.toString());
 					});
 				}

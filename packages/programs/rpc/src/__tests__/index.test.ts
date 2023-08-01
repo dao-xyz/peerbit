@@ -1,4 +1,4 @@
-import { delay, waitFor } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { LSession } from "@peerbit/test-utils";
 import { RPC, RPCResponse, queryAll } from "../index.js";
 import { Program } from "@peerbit/program";
@@ -123,6 +123,42 @@ describe("rpc", () => {
 				)
 			).map((x) => x.response);
 			await waitFor(() => results.length === 1);
+		});
+
+		it("resubscribe", async () => {
+			expect(
+				responder.node.services.pubsub["subscriptions"].get("topic").counter
+			).toEqual(1);
+			expect(responder.node.services.pubsub["listenerCount"]("data")).toEqual(
+				1
+			);
+			expect(
+				reader.node.services.pubsub["topics"]
+					.get("topic")
+					.get(responder.node.identity.publicKey.hashcode()).data
+			).toBeUndefined();
+			await responder.query.subscribe(new Uint8Array([1]));
+			await waitForResolved(() =>
+				expect(
+					reader.node.services.pubsub["topics"]
+						.get("topic")
+						.get(responder.node.identity.publicKey.hashcode()).data[0]
+				).toEqual(1)
+			);
+			await responder.query.subscribe(new Uint8Array([2]));
+			await waitForResolved(() =>
+				expect(
+					reader.node.services.pubsub["topics"]
+						.get("topic")
+						.get(responder.node.identity.publicKey.hashcode()).data[0]
+				).toEqual(2)
+			);
+			expect(responder.node.services.pubsub["listenerCount"]("data")).toEqual(
+				1
+			);
+			expect(
+				responder.node.services.pubsub["subscriptions"].get("topic").counter
+			).toEqual(1);
 		});
 
 		it("close", async () => {

@@ -1,7 +1,7 @@
 import { waitFor } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
-import { Observer } from "../role";
+import { Observer, Replicator } from "../role";
 
 describe(`role`, () => {
 	let session: LSession;
@@ -28,6 +28,23 @@ describe(`role`, () => {
 	afterEach(async () => {
 		await db1?.drop();
 		await db2?.drop();
+	});
+
+	it("can update", async () => {
+		expect(
+			db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
+				.counter
+		).toEqual(1);
+		expect(db1.log.getReplicatorsSorted()?.map((x) => x.hash)).toEqual([
+			db1.node.identity.publicKey.hashcode(),
+		]);
+		expect(db1.log.role).toBeInstanceOf(Replicator);
+		await db1.log.updateRole(new Observer());
+		expect(db1.log.role).toBeInstanceOf(Observer);
+		expect(
+			db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
+				.counter
+		).toEqual(1);
 	});
 
 	it("observer", async () => {
