@@ -770,6 +770,13 @@ export class Log<T> {
 			timeout?: number;
 		} & CacheUpdateOptions
 	): Promise<void> {
+		const definedOptions = {
+			...options,
+			cache: options?.cache ?? {
+				update: true,
+			},
+		};
+
 		await this.load({ reload: false });
 		if (entriesOrLog.length === 0) {
 			return;
@@ -875,7 +882,12 @@ export class Log<T> {
 		while (entriesBottomUp.length > 0) {
 			const e = entriesBottomUp.shift()!;
 			await this._joining.get(e.hash);
-			const p = this.joinEntry(e, nextRefs, entriesBottomUp, options).then(
+			const p = this.joinEntry(
+				e,
+				nextRefs,
+				entriesBottomUp,
+				definedOptions
+			).then(
 				() => this._joining.delete(e.hash) // TODO, if head we run into problems with concurrency here!, we add heads at line 929 but resolve here
 			);
 			this._joining.set(e.hash, p);

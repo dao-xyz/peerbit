@@ -112,13 +112,13 @@ describe("head-tails", function () {
 
 			await log2.join(log1);
 
-			expect(log2Events.cacheUpdates).toEqual(1);
+			expect(log2Events.cacheUpdates).toEqual(2); // initial load + join
 			await log2.append(new Uint8Array([1, 1]));
 
 			expect(log1Events.gidsRemoved).toHaveLength(0);
 			expect(log2Events.gidsRemoved).toHaveLength(1); // because log2 had 2 different gis before last append
 
-			expect(log2Events.cacheUpdates).toEqual(2);
+			expect(log2Events.cacheUpdates).toEqual(3);
 			const expectedHead = last(await log2.toArray());
 
 			expect((await log2.getHeads()).length).toEqual(1);

@@ -2,8 +2,9 @@ import assert from "assert";
 import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
 import { compare } from "@peerbit/uint8arrays";
-import { LSession } from "@peerbit/test-utils";
+import { LSession, createStore } from "@peerbit/test-utils";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import LazyLevel from "@peerbit/lazy-level";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -57,7 +58,12 @@ describe("join", function () {
 			log1 = new Log<Uint8Array>();
 			await log1.open(session.peers[0].services.blocks, signKey, logOptions);
 			log2 = new Log<Uint8Array>();
-			await log2.open(session.peers[1].services.blocks, signKey2, logOptions);
+			let log2Cache = new LazyLevel(createStore());
+			await log2Cache.open();
+			await log2.open(session.peers[1].services.blocks, signKey2, {
+				...logOptions,
+				cache: log2Cache,
+			});
 			log3 = new Log<Uint8Array>();
 			await log3.open(session.peers[2].services.blocks, signKey3, logOptions);
 			log4 = new Log<Uint8Array>();
@@ -152,6 +158,17 @@ describe("join", function () {
 
 			await checkedStorage(logA);
 			await checkedStorage(logB);
+		});
+
+		it("will update cache", async () => {
+			// Expect log2 to use memory cache
+			expect(log2.headsIndex.headsCache).toBeDefined();
+
+			await log1.append(new Uint8Array([0, 1]));
+			await log2.join(await log1.getHeads());
+			await log2.load();
+			expect(await log2.getHeads()).toHaveLength(1);
+			expect(await log2.values.length).toEqual(1);
 		});
 
 		it("joins only unique items", async () => {
