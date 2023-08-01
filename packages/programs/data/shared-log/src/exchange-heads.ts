@@ -44,16 +44,15 @@ export class RequestHeadsMessage extends TransportMessage {
 	@field({ type: "string" })
 	address: string;
 
-	constructor(props: { topic: string; address: string }) {
+	constructor(props: { address: string }) {
 		super();
-		if (props) {
-			this.address = props.address;
-		}
+		this.address = props.address;
+		throw new Error("Unsupported"); // This message should not be used yet
 	}
 }
 
 @variant([0, 2])
-export class RequestHasEntries extends TransportMessage {
+export class RequestIHave extends TransportMessage {
 	@field({ type: vec("string") })
 	hashes: string[];
 
@@ -64,7 +63,7 @@ export class RequestHasEntries extends TransportMessage {
 }
 
 @variant([0, 3])
-export class ResponseHasEntries extends TransportMessage {
+export class ResponseIHave extends TransportMessage {
 	@field({ type: vec("string") })
 	hashes: string[];
 

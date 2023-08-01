@@ -1,7 +1,4 @@
 import { variant, deserialize, serialize, field } from "@dao-xyz/borsh";
-import { Entry, Log } from "@peerbit/log";
-import { ProgramClient } from "@peerbit/program";
-import { RPC } from "@peerbit/rpc";
 
 interface SharedLog {
 	getReplicatorsSorted(): { hash: string; timestamp: number }[] | undefined;
@@ -22,7 +19,7 @@ export class AbsoluteReplicas extends MinReplicas {
 		super();
 		this._value = value;
 	}
-	getValue(log: SharedLog): number {
+	getValue(_log: SharedLog): number {
 		return this._value;
 	}
 }

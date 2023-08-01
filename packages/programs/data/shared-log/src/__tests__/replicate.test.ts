@@ -7,6 +7,7 @@ import { LSession } from "@peerbit/test-utils";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { AbsoluteReplicas, maxReplicas } from "../replication";
 import { Observer, Replicator } from "../role";
+import { ExchangeHeadsMessage } from "../exchange-heads";
 
 describe(`exchange`, function () {
 	let session: LSession;
@@ -458,7 +459,7 @@ describe("replication degree", () => {
 		expect(dbWithEntry.log.log.length).toEqual(1);
 		await expect(
 			() => dbWithEntry.log.pruneSafely([e1.entry], { timeout: 3000 })[0]
-		).rejects.toThrowError("Timedout");
+		).rejects.toThrowError("Timeout");
 		expect(dbWithEntry.log.log.length).toEqual(1); // No deletions
 	});
 
@@ -527,6 +528,58 @@ describe("replication degree", () => {
 		await db1.log.updateRole(new Replicator());
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
+	});
+
+	it("time out when pending IHave are never resolve", async () => {
+		let min = 1;
+		let max = 1;
+
+		// peer 1 observer
+		// peer 2 observer
+
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				replicas: {
+					min,
+					max,
+				},
+				role: new Observer(),
+			},
+		});
+
+		let respondToIHaveTimeout = 3000;
+		db2 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: {
+						min,
+						max,
+					},
+					role: new Replicator(),
+					respondToIHaveTimeout,
+				},
+			}
+		);
+
+		const onMessageFn = db2.log._onMessage.bind(db2.log);
+		db2.log.rpc["_responseHandler"] = async (msg, cxt) => {
+			if (msg instanceof ExchangeHeadsMessage) {
+				return; // prevent replication
+			}
+			return onMessageFn(msg, cxt);
+		};
+		const { entry } = await db1.add("hello");
+		const expectPromise = expect(
+			() => db1.log.pruneSafely([entry], { timeout: 3000 })[0]
+		).rejects.toThrowError("Timeout");
+		await waitForResolved(() =>
+			expect(db2.log["_pendingIHave"].size).toEqual(1)
+		);
+		await delay(respondToIHaveTimeout);
+		expect(db2.log["_pendingIHave"].size).toEqual(0);
+		await expectPromise;
 	});
 
 	/*  TODO feat

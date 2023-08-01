@@ -27,8 +27,8 @@ import { logger as loggerFn } from "@peerbit/logger";
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
-	RequestHasEntries,
-	ResponseHasEntries,
+	RequestIHave,
+	ResponseIHave,
 	createExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import {
@@ -81,6 +81,7 @@ export interface SharedLogOptions {
 	replicas?: ReplicationLimitsOptions;
 	sync?: SyncFilter;
 	role?: Role;
+	respondToIHaveTimeout?: number;
 }
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -113,6 +114,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 	private _loadedOnce = false;
 
+	private _respondToIHaveTimeout;
 	private _pendingDeletes: Map<
 		string,
 		{
@@ -122,7 +124,10 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		}
 	>;
 
-	private __pendingIHave: Map<string, () => void>;
+	private _pendingIHave: Map<
+		string,
+		{ clear: () => void; callback: () => void }
+	>;
 
 	replicas: ReplicationLimits;
 
@@ -214,9 +219,9 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					: options.replicas.max
 				: undefined,
 		};
-
+		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
 		this._pendingDeletes = new Map();
-		this.__pendingIHave = new Map();
+		this._pendingIHave = new Map();
 
 		this._sync = options?.sync;
 		this._logProperties = options;
@@ -244,9 +249,13 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 			...this._logProperties,
 			onChange: (change) => {
-				if (this.__pendingIHave.size > 0) {
+				if (this._pendingIHave.size > 0) {
 					for (const added of change.added) {
-						this.__pendingIHave.get(added.hash)?.();
+						const ih = this._pendingIHave.get(added.hash);
+						if (ih) {
+							ih.clear();
+							ih.callback();
+						}
 					}
 				}
 				return this._logProperties?.onChange?.(change);
@@ -306,8 +315,12 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			v.clear();
 			v.promise.resolve(); // TODO or reject?
 		}
+		for (const [k, v] of this._pendingIHave) {
+			v.clear();
+		}
+
 		this._pendingDeletes = new Map();
-		this.__pendingIHave = new Map();
+		this._pendingIHave = new Map();
 
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
@@ -467,7 +480,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 						);
 					}
 				}
-			} else if (msg instanceof RequestHasEntries) {
+			} else if (msg instanceof RequestIHave) {
 				const hasAndIsLeader: string[] = [];
 				for (const hash of msg.hashes) {
 					const indexedEntry = this.log.entryIndex.getShallow(hash);
@@ -480,21 +493,34 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					) {
 						hasAndIsLeader.push(hash);
 					} else {
-						const pendingIHave = this.__pendingIHave.get(hash);
+						const prevPendingIHave = this._pendingIHave.get(hash);
+						const pendingIHave = {
+							clear: () => {
+								clearTimeout(timeout);
+								prevPendingIHave?.clear();
+							},
+							callback: () => {
+								prevPendingIHave && prevPendingIHave.callback();
+								this.rpc.send(new ResponseIHave({ hashes: [hash] }), {
+									to: [context.from!],
+								});
+								this._pendingIHave.delete(hash);
+							},
+						};
+						const timeout = setTimeout(() => {
+							const pendingIHaveRef = this._pendingIHave.get(hash);
+							if (pendingIHave === pendingIHaveRef) {
+								this._pendingIHave.delete(hash);
+							}
+						}, this._respondToIHaveTimeout);
 
-						this.__pendingIHave.set(hash, () => {
-							pendingIHave && pendingIHave();
-							this.rpc.send(new ResponseHasEntries({ hashes: [hash] }), {
-								to: [context.from!],
-							});
-							this.__pendingIHave.delete(hash);
-						});
+						this._pendingIHave.set(hash, pendingIHave);
 					}
 				}
-				this.rpc.send(new ResponseHasEntries({ hashes: hasAndIsLeader }), {
+				this.rpc.send(new ResponseIHave({ hashes: hasAndIsLeader }), {
 					to: [context.from!],
 				});
-			} else if (msg instanceof ResponseHasEntries) {
+			} else if (msg instanceof ResponseIHave) {
 				for (const hash of msg.hashes) {
 					this._pendingDeletes.get(hash)?.callback(context.from!.hashcode());
 				}
@@ -696,7 +722,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			};
 
 			const timeout = setTimeout(() => {
-				reject(new Error("Timedout"));
+				reject(new Error("Timeout"));
 			}, options?.timeout ?? 10 * 1000);
 
 			this._pendingDeletes.set(entry.hash, {
@@ -728,7 +754,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		}
 		if (filteredEntries.length > 0) {
 			this.rpc.send(
-				new RequestHasEntries({ hashes: filteredEntries.map((x) => x.hash) })
+				new RequestIHave({ hashes: filteredEntries.map((x) => x.hash) })
 			);
 		}
 

@@ -37,6 +37,7 @@ type Args<T> = {
 	replicas?: ReplicationLimitsOptions;
 	sync?: SyncFilter;
 	encoding?: Encoding<Operation<T>>;
+	respondToIHaveTimeout?: number;
 };
 @variant("event_store")
 export class EventStore<T> extends Program<Args<T>> {
@@ -64,6 +65,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			replicas: properties?.replicas,
 			sync: properties?.sync,
 			encoding: properties?.encoding || JSON_ENCODING,
+			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 		});
 	}
 
