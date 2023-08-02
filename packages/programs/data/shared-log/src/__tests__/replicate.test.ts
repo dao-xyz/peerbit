@@ -494,6 +494,14 @@ describe("replication degree", () => {
 			}
 		))!;
 
+		let db2ReorgCounter = 0;
+		let db2ReplicationReorganizationFn = db2.log.replicationReorganization.bind(
+			db2.log
+		);
+		db2.log.replicationReorganization = () => {
+			db2ReorgCounter += 1;
+			return db2ReplicationReorganizationFn();
+		};
 		await db1.add("hello");
 
 		// peer 1 observer
@@ -501,6 +509,7 @@ describe("replication degree", () => {
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await db2.log.updateRole(new Replicator());
+		expect(db2ReorgCounter).toEqual(0); // since was oberver, which means I should not have any meaningful data
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 
 		// peer 1 removed
@@ -520,7 +529,11 @@ describe("replication degree", () => {
 		// peer 1 observer
 		// peer 2 observer
 		expect(db2.log.log.length).toEqual(1);
+		await delay(2000);
+		expect(db2ReorgCounter).toEqual(0); // no reorgs as db1 is dropping and  opening as Observer
+
 		await db2.log.updateRole(new Observer());
+		expect(db2ReorgCounter).toEqual(1);
 		expect(db2.log.role instanceof Observer).toBeTrue();
 
 		// peer 1 replicator (will get entry)
@@ -528,6 +541,7 @@ describe("replication degree", () => {
 		await db1.log.updateRole(new Replicator());
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
+		expect(db2ReorgCounter).toEqual(2);
 	});
 
 	it("time out when pending IHave are never resolve", async () => {
