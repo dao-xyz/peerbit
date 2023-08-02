@@ -46,6 +46,7 @@ import {
 	maxReplicas,
 } from "./replication.js";
 import pDefer, { DeferredPromise } from "p-defer";
+import { Cache } from "@peerbit/cache";
 
 export * from "./replication.js";
 export { Observer, Replicator, Role };
@@ -113,7 +114,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 	private _logProperties?: LogProperties<T> & LogEvents<T>;
 
 	private _loadedOnce = false;
-
+	private _gidParentCache: Cache<Entry<any>[]>;
 	private _respondToIHaveTimeout;
 	private _pendingDeletes: Map<
 		string,
@@ -201,7 +202,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		const result = await this.log.append(data, appendOptions);
 
 		await this.rpc.send(
-			await createExchangeHeadsMessage(this.log, [result.entry], true)
+			await createExchangeHeadsMessage(
+				this.log,
+				[result.entry],
+				this._gidParentCache
+			)
 		);
 		return result;
 	}
@@ -222,6 +227,8 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
+
+		this._gidParentCache = new Cache({ max: 1000 });
 
 		this._sync = options?.sync;
 		this._logProperties = options;
@@ -319,6 +326,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			v.clear();
 		}
 
+		this._gidParentCache.clear();
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
 
@@ -848,7 +856,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			const message = await createExchangeHeadsMessage(
 				this.log,
 				[...toSend.values()], // TODO send to peers directly
-				true
+				this._gidParentCache
 			);
 
 			// TODO perhaps send less messages to more recievers for performance reasons?

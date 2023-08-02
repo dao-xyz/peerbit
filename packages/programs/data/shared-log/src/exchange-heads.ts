@@ -3,6 +3,7 @@ import { Entry, ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
+import { Cache } from "@peerbit/cache";
 
 const logger = loggerFn({ module: "exchange-heads" });
 
@@ -76,15 +77,13 @@ export class ResponseIHave extends TransportMessage {
 export const createExchangeHeadsMessage = async (
 	log: Log<any>,
 	heads: Entry<any>[],
-	includeReferences: boolean
+	gidParentCache: Cache<Entry<any>[]>
 ) => {
 	const headsSet = new Set(heads);
 	const headsWithRefs = await Promise.all(
 		heads.map(async (head) => {
-			const refs = !includeReferences
-				? []
-				: (await allEntriesWithUniqueGids(log, head)) // 1mb total limit split on all heads
-						.filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
+			const refs = (await allEntriesWithUniqueGids(log, head, gidParentCache)) // 1mb total limit split on all heads
+				.filter((r) => !headsSet.has(r));
 			return new EntryWithRefs({
 				entry: head,
 				references: refs,
@@ -100,8 +99,14 @@ export const createExchangeHeadsMessage = async (
 
 export const allEntriesWithUniqueGids = async (
 	log: Log<any>,
-	entry: Entry<any>
+	entry: Entry<any>,
+	gidParentCache: Cache<Entry<any>[]>
 ): Promise<Entry<any>[]> => {
+	const cachedValue = gidParentCache.get(entry.hash);
+	if (cachedValue != null) {
+		return cachedValue;
+	}
+
 	// TODO optimize this
 	const map: Map<string, ShallowEntry> = new Map();
 	let curr: ShallowEntry[] = [entry];
@@ -122,9 +127,11 @@ export const allEntriesWithUniqueGids = async (
 			curr = nexts;
 		}
 	}
-	return [
+	const value = [
 		...(await Promise.all(
 			[...map.values()].map((x) => log.entryIndex.get(x.hash))
 		)),
 	].filter((x) => !!x) as Entry<any>[];
+	gidParentCache.add(entry.hash, value);
+	return value;
 };

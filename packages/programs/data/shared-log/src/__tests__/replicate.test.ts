@@ -45,6 +45,60 @@ describe(`exchange`, function () {
 		await session.stop();
 	});
 
+	it("references all gids on exchange", async () => {
+		const { entry: entryA } = await db1.add("a", { meta: { next: [] } });
+		const { entry: entryB } = await db1.add("b", { meta: { next: [] } });
+		const { entry: entryAB } = await db1.add("ab", {
+			meta: { next: [entryA, entryB] },
+		});
+
+		expect(entryA.meta.gid).not.toEqual(entryB.gid);
+		expect(
+			entryAB.meta.gid === entryA.meta.gid ||
+				entryAB.meta.gid === entryB.meta.gid
+		).toBeTrue();
+
+		let entryWithNotSameGid =
+			entryAB.meta.gid === entryA.meta.gid ? entryB : entryA;
+
+		const sendFn = db1.log.rpc.send.bind(db1.log.rpc);
+
+		db1.log.rpc.send = async (msg, options) => {
+			if (msg instanceof ExchangeHeadsMessage) {
+				expect(msg.heads.map((x) => x.entry.hash)).toEqual([entryAB.hash]);
+				expect(
+					msg.heads.map((x) => x.references.map((y) => y.hash)).flat()
+				).toEqual([entryWithNotSameGid.hash]);
+			}
+			return sendFn(msg, options);
+		};
+
+		let cacheLookups: Entry<any>[][] = [];
+		let db1GetShallowFn = db1.log["_gidParentCache"].get.bind(
+			db1.log["_gidParentCache"]
+		);
+		db1.log["_gidParentCache"].get = (k) => {
+			const result = db1GetShallowFn(k);
+			cacheLookups.push(result!);
+			return result;
+		};
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		))!;
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(3));
+
+		expect(cacheLookups).toHaveLength(1);
+		expect(
+			cacheLookups.map((x) => x.map((y) => y.hash)).flat()
+		).toContainAllValues([entryWithNotSameGid.hash, entryAB.hash]);
+
+		await db1.close();
+		expect(db1.log["_gidParentCache"].size).toEqual(0);
+	});
+
 	it("replicates database of 1 entry", async () => {
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
