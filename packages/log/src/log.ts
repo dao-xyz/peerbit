@@ -12,7 +12,6 @@ import { SimpleLevel } from "@peerbit/lazy-level";
 import { EntryIndex } from "./entry-index.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
-import { isDefined } from "./is-defined.js";
 import { findUniques } from "./find-uniques.js";
 import {
 	EncryptionTemplateMaybeEncrypted,
@@ -42,6 +41,7 @@ const { LastWriteWins, NoZeroes } = Sorting;
 
 export type LogEvents<T> = {
 	onChange?: (change: Change<T>) => void;
+	onGidRemoved?: (gids: string[]) => Promise<void> | void;
 };
 
 export type MemoryProperties = {
@@ -62,16 +62,20 @@ export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 const ENTRY_CACHE_MAX = 1000; // TODO as param
 
 export type AppendOptions<T> = {
-	type?: EntryType;
-	gidSeed?: Uint8Array;
-	nexts?: Entry<any>[];
+	meta?: {
+		type?: EntryType;
+		gidSeed?: Uint8Array;
+		data?: Uint8Array;
+		timestamp?: Timestamp;
+		next?: Entry<any>[];
+	};
+
 	identity?: Identity;
 	signers?: ((
 		data: Uint8Array
 	) => Promise<SignatureWithKey> | SignatureWithKey)[];
-	onGidsShadowed?: (gids: string[]) => void;
+
 	trim?: TrimOptions;
-	timestamp?: Timestamp;
 	encryption?: {
 		keypair: X25519Keypair;
 		reciever: EncryptionTemplateMaybeEncrypted;
@@ -113,11 +117,11 @@ export class Log<T> {
 	}
 
 	async open(store: Blocks, identity: Identity, options: LogOptions<T> = {}) {
-		if (!isDefined(store)) {
+		if (store == null) {
 			throw LogError.BlockStoreNotDefinedError();
 		}
 
-		if (!isDefined(identity)) {
+		if (identity == null) {
 			throw new Error("Identity is required");
 		}
 
@@ -125,10 +129,10 @@ export class Log<T> {
 			throw new Error("Already open");
 		}
 
-		const { encoding, trim, keychain, cache } = options;
+		const { encoding, trim, keychain, cache, onGidRemoved } = options;
 		let { sortFn } = options;
 
-		if (!isDefined(sortFn)) {
+		if (sortFn == null) {
 			sortFn = LastWriteWins;
 		}
 		sortFn = sortFn as Sorting.ISortFunction;
@@ -158,7 +162,7 @@ export class Log<T> {
 			throw new Error("Id not set");
 		}
 		this._headsIndex = new HeadsIndex(id);
-		await this._headsIndex.init(this);
+		await this._headsIndex.init(this, { onGidRemoved });
 		this._entryCache = new Cache({ max: ENTRY_CACHE_MAX });
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
@@ -170,15 +174,15 @@ export class Log<T> {
 			{
 				deleteNode: async (node: EntryNode) => {
 					// TODO check if we have before delete?
-					const entry = await this.get(node.value.hash);
+					const entry = await this.get(node.value);
 					//f (!!entry)
 					const a = this.values.length;
 					if (entry) {
 						this.values.deleteNode(node);
-						await this.entryIndex.delete(node.value.hash);
-						await this.headsIndex.del(node.value);
-						this.nextsIndex.delete(node.value.hash);
-						await this.storage.rm(node.value.hash);
+						await this.headsIndex.del(this.entryIndex.getShallow(node.value)!);
+						await this.entryIndex.delete(node.value);
+						this.nextsIndex.delete(node.value);
+						await this.storage.rm(node.value);
 					}
 					const b = this.values.length;
 					if (a === b) {
@@ -242,6 +246,9 @@ export class Log<T> {
 
 	get values(): Values<T> {
 		return this._values;
+	}
+	get canAppend() {
+		return this._canAppend;
 	}
 
 	/**
@@ -506,8 +513,8 @@ export class Log<T> {
 		options: AppendOptions<T> = {}
 	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
 		// Update the clock (find the latest clock)
-		if (options.nexts) {
-			for (const n of options.nexts) {
+		if (options.meta?.next) {
+			for (const n of options.meta.next) {
 				if (!n.hash)
 					throw new Error(
 						"Expecting nexts to already be saved. missing hash for one or more entries"
@@ -517,13 +524,12 @@ export class Log<T> {
 
 		await this.load({ reload: false });
 
-		const hasNext = !!options.nexts; // true for [], which means we have explicitly said that nexts are empty
-		const nexts: Entry<any>[] = options.nexts || (await this.getHeads());
+		const nexts: Entry<any>[] = options.meta?.next || (await this.getHeads());
 
 		// Calculate max time for log/graph
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
-			timestamp: options.timestamp || this._hlc.now(),
+			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
 		const entry = await Entry.create<T>({
@@ -531,11 +537,16 @@ export class Log<T> {
 			identity: options.identity || this._identity,
 			signers: options.signers,
 			data,
-			clock,
-			type: options.type,
+			meta: {
+				clock,
+				type: options.meta?.type,
+				gidSeed: options.meta?.gidSeed,
+				data: options.meta?.data,
+				next: nexts,
+			},
+
 			encoding: this._encoding,
-			next: nexts,
-			gidSeed: options.gidSeed,
+
 			encryption: options.encryption
 				? {
 						keypair: options.encryption.keypair,
@@ -547,7 +558,7 @@ export class Log<T> {
 			canAppend: this._canAppend,
 		});
 
-		if (!isDefined(entry.hash)) {
+		if (!entry.hash) {
 			throw new Error("Unexpected");
 		}
 
@@ -562,34 +573,11 @@ export class Log<T> {
 			}
 		}
 
-		const removedGids: Set<string> = new Set();
-		if (hasNext) {
-			for (const next of nexts) {
-				const deletion = await this._headsIndex.del(next);
-				if (deletion.lastWithGid && next.gid !== entry.gid) {
-					removedGids.add(next.gid);
-				}
-			}
-		} else {
-			// next is all heads, which means we should just overwrite
-			for (const key of this.headsIndex.gids.keys()) {
-				if (key !== entry.gid) {
-					removedGids.add(key);
-				}
-			}
-			await this.headsIndex.reset([entry], { cache: { update: false } });
-		}
-
 		await this._entryIndex.set(entry, false); // save === false, because its already saved when Entry.create
 		await this._headsIndex.put(entry, { cache: { update: false } }); // we will update the cache a few lines later *
 		await this._values.put(entry);
 
 		const removed = await this.processEntry(entry);
-
-		// if next contails all gids
-		if (options.onGidsShadowed && removedGids.size > 0) {
-			options.onGidsShadowed([...removedGids]);
-		}
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 		//	console.log('put entry', entry.hash, (await this._entryIndex._index.size));
@@ -718,7 +706,7 @@ export class Log<T> {
 					return;
 				}
 
-				yield next.value.hash;
+				yield next.value;
 				counter++;
 
 				next = nextFn(next);
@@ -782,6 +770,13 @@ export class Log<T> {
 			timeout?: number;
 		} & CacheUpdateOptions
 	): Promise<void> {
+		const definedOptions = {
+			...options,
+			cache: options?.cache ?? {
+				update: true,
+			},
+		};
+
 		await this.load({ reload: false });
 		if (entriesOrLog.length === 0) {
 			return;
@@ -832,7 +827,6 @@ export class Log<T> {
 			}
 		}
 
-		// Resolve missing entries
 		const removedHeads: Entry<T>[] = [];
 		for (const hash of stack) {
 			if (visited.has(hash) || this.has(hash)) {
@@ -851,7 +845,7 @@ export class Log<T> {
 
 			let nexts: string[];
 			if (
-				entry.metadata.type !== EntryType.CUT &&
+				entry.meta.type !== EntryType.CUT &&
 				(nexts = await entry.getNext())
 			) {
 				let isRoot = true;
@@ -888,7 +882,12 @@ export class Log<T> {
 		while (entriesBottomUp.length > 0) {
 			const e = entriesBottomUp.shift()!;
 			await this._joining.get(e.hash);
-			const p = this.joinEntry(e, nextRefs, entriesBottomUp, options).then(
+			const p = this.joinEntry(
+				e,
+				nextRefs,
+				entriesBottomUp,
+				definedOptions
+			).then(
 				() => this._joining.delete(e.hash) // TODO, if head we run into problems with concurrency here!, we add heads at line 929 but resolve here
 			);
 			this._joining.set(e.hash, p);
@@ -910,7 +909,7 @@ export class Log<T> {
 			return;
 		}
 
-		if (!isDefined(e.hash)) {
+		if (!e.hash) {
 			throw new Error("Unexpected");
 		}
 
@@ -929,7 +928,7 @@ export class Log<T> {
 			await this._entryIndex.set(e);
 			await this._values.put(e);
 
-			if (e.metadata.type !== EntryType.CUT) {
+			if (e.meta.type !== EntryType.CUT) {
 				for (const a of e.next) {
 					if (!this.has(a)) {
 						await this.join([a]);
@@ -973,7 +972,7 @@ export class Log<T> {
 	}
 
 	private async processEntry(entry: Entry<T>) {
-		if (entry.metadata.type === EntryType.CUT) {
+		if (entry.meta.type === EntryType.CUT) {
 			return this.deleteRecursively(entry, true);
 		}
 		return [];
@@ -985,6 +984,8 @@ export class Log<T> {
 		const promises: Promise<void>[] = [];
 		let counter = 0;
 		const deleted: Entry<T>[] = [];
+		const deletedGids = new Set();
+
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
 			if ((counter > 0 || !skipFirst) && this.has(entry.hash)) {
@@ -993,6 +994,7 @@ export class Log<T> {
 				await this._values.delete(entry);
 				await this._entryIndex.delete(entry.hash);
 				await this._headsIndex.del(entry);
+
 				this._nextsIndex.delete(entry.hash);
 				deleted.push(entry);
 				promises.push(entry.delete(this._storage));

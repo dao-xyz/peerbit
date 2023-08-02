@@ -97,7 +97,7 @@ describe("get-pow-2-refs", function () {
 			await log1.open(store, signKey);
 
 			for (let i = 0; i <= 10; i++) {
-				await log1.append(new Uint8Array([i]), { nexts: [] });
+				await log1.append(new Uint8Array([i]), { meta: { next: [] } });
 			}
 		});
 

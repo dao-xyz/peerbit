@@ -1,5 +1,5 @@
 import { Cache } from "@peerbit/cache";
-import { Entry } from "./entry.js";
+import { Entry, ShallowEntry } from "./entry.js";
 import { deserialize } from "@dao-xyz/borsh";
 import { logger } from "./logger.js";
 import { Blocks } from "@peerbit/blocks-interface";
@@ -8,7 +8,7 @@ export class EntryIndex<T> {
 	_cache: Cache<Entry<T> | null>;
 	_store: Blocks;
 	_init: (entry: Entry<T>) => void;
-	_index: Set<string>;
+	_index: Map<string, ShallowEntry>;
 
 	constructor(properties: {
 		store: Blocks;
@@ -18,7 +18,7 @@ export class EntryIndex<T> {
 		this._cache = properties.cache;
 		this._store = properties.store;
 		this._init = properties.init;
-		this._index = new Set();
+		this._index = new Map();
 	}
 
 	async set(v: Entry<T>, toMultihash = true) {
@@ -40,14 +40,17 @@ export class EntryIndex<T> {
 			}
 		}
 		this._cache.add(v.hash, v);
-		this._index.add(v.hash);
+		this._index.set(v.hash, v.toShallow());
+	}
+	has(k: string) {
+		return this._index.has(k);
 	}
 
 	async get(
 		k: string,
-		options?: { replicate?: boolean; timeout?: number }
+		options?: { load?: boolean; replicate?: boolean; timeout?: number }
 	): Promise<Entry<T> | undefined> {
-		if (this._index.has(k)) {
+		if (this._index.has(k) || options?.load) {
 			let mem = this._cache.get(k);
 			if (mem === undefined) {
 				mem = await this.getFromStore(k, options);
@@ -60,6 +63,10 @@ export class EntryIndex<T> {
 			return mem ? mem : undefined;
 		}
 		return undefined;
+	}
+
+	getShallow(k: string) {
+		return this._index.get(k);
 	}
 
 	private async getFromStore(

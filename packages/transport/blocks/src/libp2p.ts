@@ -138,7 +138,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	}
 
 	async rm(cid: string) {
-		this._localStore?.rm(cid);
+		await this._localStore?.rm(cid);
 	}
 
 	async start(): Promise<void> {

@@ -40,7 +40,7 @@ export const App = () => {
 				if (queryParameters.get("read") !== "true") {
 					setTimeout(() => {
 						// FIX make sure this works without timeout in the test
-						x.append(randomBytes(32), { nexts: [] });
+						x.append(randomBytes(32), { meta: { next: [] } });
 					}, 1000);
 				}
 			});

@@ -38,7 +38,6 @@ export const logger = loggerFn({ module: "client" });
 
 export type OptionalCreateOptions = {
 	limitSigning?: boolean;
-	minReplicas?: number;
 	refreshIntreval?: number;
 	libp2pExternal?: boolean;
 };
@@ -210,7 +209,6 @@ export class Peerbit implements ProgramClient {
 			cache,
 			libp2pExternal,
 			limitSigning: options.limitSigning,
-			minReplicas: options.minReplicas,
 			refreshIntreval: options.refreshIntreval,
 			identity,
 			keychain,

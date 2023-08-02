@@ -1,28 +1,11 @@
-import { variant, option, field, vec, fixedArray } from "@dao-xyz/borsh";
-import { Entry } from "@peerbit/log";
+import { variant, field, vec, fixedArray } from "@dao-xyz/borsh";
+import { Entry, ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
+import { Cache } from "@peerbit/cache";
 
 const logger = loggerFn({ module: "exchange-heads" });
-
-export class MinReplicas {
-	get value(): number {
-		throw new Error("Not implemented");
-	}
-}
-
-@variant(0)
-export class AbsolutMinReplicas extends MinReplicas {
-	_value: number;
-	constructor(value: number) {
-		super();
-		this._value = value;
-	}
-	get value() {
-		return this._value;
-	}
-}
 
 /**
  * This thing allows use to faster sync since we can provide
@@ -48,20 +31,12 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: vec(EntryWithRefs) })
 	heads: EntryWithRefs<T>[];
 
-	@field({ type: option(MinReplicas) })
-	minReplicas?: MinReplicas;
-
 	@field({ type: fixedArray("u8", 4) })
 	reserved: Uint8Array = new Uint8Array(4);
 
-	constructor(props: {
-		logId: Uint8Array;
-		heads: EntryWithRefs<T>[];
-		minReplicas?: MinReplicas;
-	}) {
+	constructor(props: { logId: Uint8Array; heads: EntryWithRefs<T>[] }) {
 		super();
 		this.heads = props.heads;
-		this.minReplicas = props.minReplicas;
 	}
 }
 
@@ -70,31 +45,45 @@ export class RequestHeadsMessage extends TransportMessage {
 	@field({ type: "string" })
 	address: string;
 
-	constructor(props: { topic: string; address: string }) {
+	constructor(props: { address: string }) {
 		super();
-		if (props) {
-			this.address = props.address;
-		}
+		this.address = props.address;
+		throw new Error("Unsupported"); // This message should not be used yet
+	}
+}
+
+@variant([0, 2])
+export class RequestIHave extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { hashes: string[] }) {
+		super();
+		this.hashes = props.hashes;
+	}
+}
+
+@variant([0, 3])
+export class ResponseIHave extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { hashes: string[] }) {
+		super();
+		this.hashes = props.hashes;
 	}
 }
 
 export const createExchangeHeadsMessage = async (
 	log: Log<any>,
 	heads: Entry<any>[],
-	includeReferences: boolean
+	gidParentCache: Cache<Entry<any>[]>
 ) => {
 	const headsSet = new Set(heads);
 	const headsWithRefs = await Promise.all(
 		heads.map(async (head) => {
-			const refs = !includeReferences
-				? []
-				: (
-						await log.getReferenceSamples(head, {
-							pointerCount: 8,
-							memoryLimit: 1e6 / heads.length,
-						})
-				  ) // 1mb total limit split on all heads
-						.filter((r) => !headsSet.has(r)); // pick a proportional amount of refs so we can efficiently load the log. TODO should be equidistant for good performance?
+			const refs = (await allEntriesWithUniqueGids(log, head, gidParentCache)) // 1mb total limit split on all heads
+				.filter((r) => !headsSet.has(r));
 			return new EntryWithRefs({
 				entry: head,
 				references: refs,
@@ -106,4 +95,43 @@ export const createExchangeHeadsMessage = async (
 		logId: log.id!,
 		heads: headsWithRefs,
 	});
+};
+
+export const allEntriesWithUniqueGids = async (
+	log: Log<any>,
+	entry: Entry<any>,
+	gidParentCache: Cache<Entry<any>[]>
+): Promise<Entry<any>[]> => {
+	const cachedValue = gidParentCache.get(entry.hash);
+	if (cachedValue != null) {
+		return cachedValue;
+	}
+
+	// TODO optimize this
+	const map: Map<string, ShallowEntry> = new Map();
+	let curr: ShallowEntry[] = [entry];
+	while (curr.length > 0) {
+		const nexts: ShallowEntry[] = [];
+		for (const element of curr) {
+			if (!map.has(element.meta.gid)) {
+				map.set(element.meta.gid, element);
+				for (const next of element.meta.next) {
+					const indexedEntry = log.entryIndex.getShallow(next);
+					if (!indexedEntry) {
+						logger.error("Failed to find indexed entry for hash: " + next);
+					} else {
+						nexts.push(indexedEntry);
+					}
+				}
+			}
+			curr = nexts;
+		}
+	}
+	const value = [
+		...(await Promise.all(
+			[...map.values()].map((x) => log.entryIndex.get(x.hash))
+		)),
+	].filter((x) => !!x) as Entry<any>[];
+	gidParentCache.add(entry.hash, value);
+	return value;
 };

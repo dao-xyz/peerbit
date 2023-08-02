@@ -1,6 +1,6 @@
 import { Cache } from "@peerbit/cache";
 import PQueue from "p-queue";
-import { Entry } from "./entry.js";
+import { Entry, ShallowEntry } from "./entry.js";
 import { EntryNode, Values } from "./values.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
@@ -68,9 +68,10 @@ export type TrimCondition =
 	| TrimToByteLengthOption
 	| TrimToLengthOption
 	| TrimToTime;
+
 export type TrimCanAppendOption = {
 	filter?: {
-		canTrim: (gid: string) => Promise<boolean> | boolean;
+		canTrim: (entry: ShallowEntry) => Promise<boolean> | boolean;
 		cacheId?: () => string | number;
 	};
 };
@@ -98,7 +99,7 @@ export class Trim<T> {
 	}
 
 	deleteFromCache(entry: Entry<T>) {
-		if (this._canTrimCacheLastNode?.value.hash === entry.hash) {
+		if (this._canTrimCacheLastNode?.value === entry.hash) {
 			this._canTrimCacheLastNode = this._canTrimCacheLastNode.prev;
 		}
 	}
@@ -116,7 +117,7 @@ export class Trim<T> {
 		///  TODO Make this method less ugly
 		const deleted: Entry<T>[] = [];
 
-		let done: () => Promise<boolean> | boolean;
+		let done: () => boolean;
 		const values = this._log.values();
 		if (option.type === "length") {
 			const to = option.to;
@@ -136,18 +137,18 @@ export class Trim<T> {
 		} else if (option.type == "time") {
 			const s0 = BigInt(+new Date() * 1e6);
 			const maxAge = option.maxAge * 1e6;
-			done = async () => {
+			done = () => {
 				if (!values.tail) {
 					return true;
 				}
 
-				const nodeValue = await values.getEntry(values.tail);
+				const nodeValue = values.entryIndex.getShallow(values.tail.value);
 
 				if (!nodeValue) {
 					return true;
 				}
 
-				return s0 - nodeValue.metadata.clock.timestamp.wallTime < maxAge;
+				return s0 - nodeValue.meta.clock.timestamp.wallTime < maxAge;
 			};
 		} else {
 			return [];
@@ -194,7 +195,7 @@ export class Trim<T> {
 		// TODO only go through heads?
 		while (
 			node &&
-			!(await done()) &&
+			!done() &&
 			values.length > 0 &&
 			node &&
 			(!looped || node !== startNode)
@@ -202,15 +203,16 @@ export class Trim<T> {
 			let deleteAble: boolean | undefined = true;
 			if (option.filter?.canTrim) {
 				canTrimByGid = canTrimByGid || new Map();
-				deleteAble = canTrimByGid.get(node.value.gid);
+				const indexedEntry = values.entryIndex.getShallow(node.value)!; // TODO check undefined
+				deleteAble = canTrimByGid.get(indexedEntry.meta.gid);
 				if (deleteAble === undefined) {
-					deleteAble = await option.filter?.canTrim(node.value.gid);
-					canTrimByGid.set(node.value.gid, deleteAble);
+					deleteAble = await option.filter?.canTrim(indexedEntry);
+					canTrimByGid.set(indexedEntry.meta.gid, deleteAble);
 				}
 
 				if (!deleteAble && cacheProgress) {
 					// ignore it
-					this._canTrimCacheHashBreakpoint.add(node.value.hash, true);
+					this._canTrimCacheHashBreakpoint.add(node.value, true);
 				}
 			}
 

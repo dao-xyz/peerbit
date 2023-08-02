@@ -46,14 +46,7 @@ describe("encryption", () => {
 					keypair: await X25519Keypair.create(),
 					reciever: {
 						// Who can read the log entry metadata (e.g. timestamps)
-						metadata: [
-							client.identity.publicKey,
-							client2.identity.publicKey,
-							client3.identity.publicKey,
-						],
-
-						// Who can read the references of the entry (next pointers)
-						next: [
+						meta: [
 							client.identity.publicKey,
 							client2.identity.publicKey,
 							client3.identity.publicKey,
@@ -111,9 +104,8 @@ describe("encryption", () => {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
-						metadata: [client.identity.publicKey],
+						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
-						next: [client.identity.publicKey],
 						payload: [await X25519PublicKey.create()],
 					},
 				},
@@ -135,9 +127,8 @@ describe("encryption", () => {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
-						metadata: [client.identity.publicKey],
+						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
-						next: [client.identity.publicKey],
 						payload: [await X25519PublicKey.create()],
 					},
 				},

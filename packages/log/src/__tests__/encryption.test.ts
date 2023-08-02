@@ -78,7 +78,7 @@ describe("encryption", function () {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
-						metadata: undefined,
+						meta: undefined,
 						signatures: {
 							[await log2.identity.publicKey.hashcode()]: recieverKey.publicKey, // reciever 1
 							[await extraSigner.publicKey.hashcode()]: [
@@ -90,7 +90,6 @@ describe("encryption", function () {
 							).publicKey, // unknown reciever
 						},
 						payload: recieverKey.publicKey,
-						next: recieverKey.publicKey,
 					},
 				},
 				signers: [
@@ -102,10 +101,9 @@ describe("encryption", function () {
 
 			// Remove decrypted caches of the log2 values
 			(await log2.toArray()).forEach((value) => {
-				value._metadata.clear();
+				value._meta.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
-				value._next.clear();
 			});
 
 			await log1.join(log2);
@@ -125,10 +123,9 @@ describe("encryption", function () {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
-						metadata: undefined,
+						meta: undefined,
 						signatures: recieverKey.publicKey,
 						payload: recieverKey.publicKey,
-						next: recieverKey.publicKey,
 					},
 				},
 			});
@@ -136,10 +133,9 @@ describe("encryption", function () {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 					reciever: {
-						metadata: undefined,
+						meta: undefined,
 						signatures: recieverKey.publicKey,
 						payload: recieverKey.publicKey,
-						next: recieverKey.publicKey,
 					},
 				},
 			});
@@ -148,10 +144,9 @@ describe("encryption", function () {
 					keypair: await X25519Keypair.create(),
 
 					reciever: {
-						metadata: undefined,
+						meta: undefined,
 						signatures: recieverKey.publicKey,
 						payload: recieverKey.publicKey,
-						next: recieverKey.publicKey,
 					},
 				},
 			});
@@ -160,20 +155,18 @@ describe("encryption", function () {
 					keypair: await X25519Keypair.create(),
 
 					reciever: {
-						metadata: undefined,
+						meta: undefined,
 						signatures: recieverKey.publicKey,
 						payload: recieverKey.publicKey,
-						next: recieverKey.publicKey,
 					},
 				},
 			});
 
 			// Remove decrypted caches of the log2 values
 			(await log2.toArray()).forEach((value) => {
-				value._metadata.clear();
+				value._meta.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
-				value._next.clear();
 			});
 
 			await log1.join(log2);
@@ -220,10 +213,9 @@ describe("encryption", function () {
 				encryption: {
 					keypair: encryptioKey,
 					reciever: {
-						metadata: encryptioKey.publicKey,
+						meta: encryptioKey.publicKey,
 						signatures: encryptioKey.publicKey,
 						payload: encryptioKey.publicKey,
-						next: encryptioKey.publicKey,
 					},
 				},
 			});

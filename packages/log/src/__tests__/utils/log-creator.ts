@@ -52,11 +52,12 @@ export class LogCreator {
 
 			await log4.join(log3);
 			await log4.append("entryC0", {
-				timestamp: new Timestamp({
-					wallTime: (await logA.toArray())[5].metadata.clock.timestamp.wallTime,
-					logical:
-						(await logA.toArray())[5].metadata.clock.timestamp.logical + 1,
-				}),
+				meta: {
+					timestamp: new Timestamp({
+						wallTime: (await logA.toArray())[5].meta.clock.timestamp.wallTime,
+						logical: (await logA.toArray())[5].meta.clock.timestamp.logical + 1,
+					}),
+				},
 			});
 			await log4.join(logA);
 			expect(

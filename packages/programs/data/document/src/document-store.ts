@@ -18,6 +18,7 @@ import {
 	Replicator,
 	SharedLog,
 	SharedLogOptions,
+	SharedAppendOptions,
 } from "@peerbit/shared-log";
 export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
@@ -130,7 +131,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 			trim: options?.trim,
 			sync: options?.sync,
 			role: options?.role,
-			minReplicas: options?.minReplicas,
+			replicas: options?.replicas,
 		});
 	}
 
@@ -248,7 +249,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 	public async put(
 		doc: T,
-		options?: AppendOptions<Operation<T>> & { unique?: boolean }
+		options?: SharedAppendOptions<Operation<T>> & { unique?: boolean }
 	) {
 		const key = this._index.indexByResolver(doc as any as Keyable);
 		checkKeyable(key);
@@ -269,10 +270,13 @@ export class Documents<T extends Record<string, any>> extends Program<
 				value: doc,
 			}),
 			{
-				nexts: existingDocument
-					? [await this._resolveEntry(existingDocument.context.head)]
-					: [], //
 				...options,
+				meta: {
+					next: existingDocument
+						? [await this._resolveEntry(existingDocument.context.head)]
+						: [],
+					...options?.meta,
+				}, //
 			}
 		);
 	}
@@ -293,9 +297,12 @@ export class Documents<T extends Record<string, any>> extends Program<
 				key: asString(key),
 			}),
 			{
-				nexts: [await this._resolveEntry(existing.context.head)],
-				type: EntryType.CUT,
 				...options,
+				meta: {
+					next: [await this._resolveEntry(existing.context.head)],
+					type: EntryType.CUT,
+					...options?.meta,
+				},
 			} //
 		);
 	}
@@ -358,8 +365,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 					const context = new Context({
 						created:
 							this._index.index.get(key)?.context.created ||
-							item.metadata.clock.timestamp.wallTime,
-						modified: item.metadata.clock.timestamp.wallTime,
+							item.meta.clock.timestamp.wallTime,
+						modified: item.meta.clock.timestamp.wallTime,
 						head: item.hash,
 					});
 
@@ -378,7 +385,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 						if (
 							(await this.canOpen!(value, item)) &&
 							this.log.role instanceof Replicator &&
-							(await this.log.replicator(item.gid)) // TODO types, throw runtime error if replicator is not provided
+							(await this.log.replicator(item)) // TODO types, throw runtime error if replicator is not provided
 						) {
 							await this.node.open(value, {
 								parent: this as Program<any, any>,

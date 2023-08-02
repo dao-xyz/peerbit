@@ -55,11 +55,13 @@ describe(`head-cache`, function () {
 	let blockStore: BlockStore,
 		identityStore: AbstractLevel<any, string, Uint8Array>,
 		log: Log<any>;
+	let queueCounter: number = 0;
 
 	beforeEach(async () => {
 		identityStore = await createStore();
 		blockStore = new MemoryLevelBlockStore();
 		await blockStore.start();
+		queueCounter = 0;
 	});
 
 	afterEach(async () => {
@@ -71,9 +73,16 @@ describe(`head-cache`, function () {
 	const init = async (cache: LazyLevel) => {
 		log = new Log();
 		await log.open(blockStore, signKey, {
-			cache: cache,
+			cache,
 			encoding: JSON_ENCODING,
 		});
+		const queueFn = log.headsIndex.headsCache!.queue.bind(
+			log.headsIndex.headsCache
+		);
+		log.headsIndex.headsCache!.queue = (change) => {
+			queueCounter += 1;
+			return queueFn(change);
+		};
 	};
 
 	it("updates cached heads on write one head", async () => {
@@ -81,8 +90,10 @@ describe(`head-cache`, function () {
 		await init(level);
 		const data = { data: 12345 };
 		const { entry: e1 } = await log.append(data);
+		expect(queueCounter).toEqual(1);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [[e1.hash]]);
-		const { entry: e2 } = await log.append(data, { nexts: [e1] });
+		const { entry: e2 } = await log.append(data, { meta: { next: [e1] } });
+		expect(queueCounter).toEqual(2);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [[e2.hash]]);
 		expect((await log.headsIndex.headsCache?.getCachedHeads())?.length).toEqual(
 			1
@@ -94,8 +105,10 @@ describe(`head-cache`, function () {
 		await init(level);
 		const data = { data: 12345 };
 		const { entry: e1 } = await log.append(data);
+		expect(queueCounter).toEqual(1);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [[e1.hash]]);
-		const { entry: e2 } = await log.append(data, { nexts: [] });
+		const { entry: e2 } = await log.append(data, { meta: { next: [] } });
+		expect(queueCounter).toEqual(2);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [
 			[e2.hash],
 			[e1.hash],
@@ -172,9 +185,9 @@ describe(`head-cache`, function () {
 
 		await init(cache);
 
-		const { entry: e1 } = await log.append({ data: 1 }, { nexts: [] });
-		const { entry: e2 } = await log.append({ data: 2 }, { nexts: [] });
-		const { entry: e3 } = await log.append({ data: 3 }, { nexts: [] });
+		const { entry: e1 } = await log.append({ data: 1 }, { meta: { next: [] } });
+		const { entry: e2 } = await log.append({ data: 2 }, { meta: { next: [] } });
+		const { entry: e3 } = await log.append({ data: 3 }, { meta: { next: [] } });
 
 		expect(
 			await log.headsIndex.headsCache!.getCachedHeads()
@@ -246,7 +259,9 @@ describe(`head-cache`, function () {
 		});
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
-			entries.push((await log.append({ data: i }, { nexts: [] })).entry);
+			entries.push(
+				(await log.append({ data: i }, { meta: { next: [] } })).entry
+			);
 		}
 		const cachedHeads = await log.headsIndex.headsCache!.getCachedHeads();
 		expect(cachedHeads).toContainAllValues(
@@ -266,7 +281,9 @@ describe(`head-cache`, function () {
 		await init(cache);
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
-			entries.push((await log.append({ data: i }, { nexts: [] })).entry);
+			entries.push(
+				(await log.append({ data: i }, { meta: { next: [] } })).entry
+			);
 		}
 		const cachedHeads = await log.headsIndex.headsCache!.getCachedHeads();
 		expect(cachedHeads).toContainAllValues(entries.map((x) => x!.hash));
@@ -295,7 +312,9 @@ describe(`head-cache`, function () {
 		const entries: Promise<Entry<any>>[] = [];
 		let entryCount = 100;
 		for (let i = 0; i < entryCount; i++) {
-			entries.push(log.append({ data: i }, { nexts: [] }).then((x) => x.entry));
+			entries.push(
+				log.append({ data: i }, { meta: { next: [] } }).then((x) => x.entry)
+			);
 		}
 		await Promise.all(entries);
 		expect(log.length).toEqual(entryCount);
@@ -311,10 +330,13 @@ describe(`head-cache`, function () {
 		await log.load();
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 3; i++) {
-			entries.push((await log.append({ data: i }, { nexts: [] })).entry);
+			entries.push(
+				(await log.append({ data: i }, { meta: { next: [] } })).entry
+			);
 		}
 		expect(await log.headsIndex.headsCache!.getCachedHeads()).toHaveLength(3);
-		const e4 = (await log.append({ data: 4 }, { nexts: entries })).entry;
+		const e4 = (await log.append({ data: 4 }, { meta: { next: entries } }))
+			.entry;
 		expect(await log.headsIndex.headsCache!.getCachedHeads()).toHaveLength(1);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [[e4.hash]]);
 		await checkHashes(log, log.headsIndex.headsCache!.removedHeadsPath, []);

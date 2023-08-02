@@ -101,12 +101,16 @@ describe("replication", function () {
 			for (let i = 1; i <= amount; i++) {
 				prev1 = (
 					await input1.append("A" + i, {
-						nexts: prev1 ? [prev1] : undefined,
+						meta: {
+							next: prev1 ? [prev1] : undefined,
+						},
 					})
 				).entry;
 				prev2 = (
 					await input2.append("B" + i, {
-						nexts: prev2 ? [prev2] : undefined,
+						meta: {
+							next: prev2 ? [prev2] : undefined,
+						},
 					})
 				).entry;
 				const hashes1 = await input1.getHeads();

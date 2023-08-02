@@ -665,7 +665,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 		if (remote) {
 			const peerMinAge = remote.minAge ?? DEFAULT_REPLICATOR_MIN_AGE;
-			const replicatorGroups = await this._log.replicators?.();
+			const replicatorGroups = await this._log.getDiscoveryGroups?.();
 			if (replicatorGroups) {
 				// Make sure we don't query peers that are "too" new
 				// TODO make this better

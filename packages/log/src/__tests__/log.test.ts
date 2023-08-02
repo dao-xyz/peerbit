@@ -29,7 +29,6 @@ describe("properties", function () {
 			assert.notStrictEqual(await log.getHeads(), null);
 			assert.deepStrictEqual(await log.toArray(), []);
 			assert.deepStrictEqual(await log.getHeads(), []);
-			assert.deepStrictEqual(await log.getTails(), []);
 			assert.deepStrictEqual(await log.getTailHashes(), []);
 		});
 
@@ -54,29 +53,35 @@ describe("properties", function () {
 			const one = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
+					next: [],
+				},
 				data: "entryA",
 				encoding: JSON_ENCODING,
-				next: [],
-				clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
+					next: [],
+				},
 				data: "entryB",
 				encoding: JSON_ENCODING,
-				next: [],
-				clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
+					next: [],
+				},
 				data: "entryC",
 				encoding: JSON_ENCODING,
-				next: [],
-				clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -92,26 +97,32 @@ describe("properties", function () {
 			const one = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: [],
+				},
 				data: "entryA",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: [],
+				},
 				data: "entryB",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: [],
+				},
 				data: "entryC",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -125,26 +136,32 @@ describe("properties", function () {
 			const one = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: [],
+				},
 				data: "entryA",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: [],
+				},
 				data: "entryB",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
-				gidSeed: Buffer.from("a"),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: [],
+				},
 				data: "entryC",
 				encoding: JSON_ENCODING,
-				next: [],
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -165,11 +182,11 @@ describe("properties", function () {
 		beforeEach(async () => {
 			log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
-			await log.append("one", { gidSeed: Buffer.from("a") });
-			await log.append("two", { gidSeed: Buffer.from("a") });
-			await log.append("three", { gidSeed: Buffer.from("a") });
-			await log.append("four", { gidSeed: Buffer.from("a") });
-			await log.append("five", { gidSeed: Buffer.from("a") });
+			await log.append("one", { meta: { gidSeed: Buffer.from("a") } });
+			await log.append("two", { meta: { gidSeed: Buffer.from("a") } });
+			await log.append("three", { meta: { gidSeed: Buffer.from("a") } });
+			await log.append("four", { meta: { gidSeed: Buffer.from("a") } });
+			await log.append("five", { meta: { gidSeed: Buffer.from("a") } });
 		});
 
 		it("returns a nicely formatted string", async () => {
@@ -186,8 +203,10 @@ describe("properties", function () {
 			log = new Log<Uint8Array>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.append("one", {
-				gidSeed: Buffer.from("a"),
-				timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+				meta: {
+					gidSeed: Buffer.from("a"),
+					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+				},
 			});
 		});
 
@@ -210,23 +229,23 @@ describe("properties", function () {
 		beforeEach(async () => {
 			log = new Log();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
-			await log.append("one", { gidSeed: Buffer.from("a") });
+			await log.append("one", { meta: { gidSeed: Buffer.from("a") } });
 		});
 
 		it("changes identity", async () => {
-			expect((await log.toArray())[0].metadata.clock.id).toEqual(
+			expect((await log.toArray())[0].meta.clock.id).toEqual(
 				signKey.publicKey.bytes
 			);
 			log.setIdentity(signKey2);
-			await log.append("two", { gidSeed: Buffer.from("a") });
+			await log.append("two", { meta: { gidSeed: Buffer.from("a") } });
 			assert.deepStrictEqual(
-				(await log.toArray())[1].metadata.clock.id,
+				(await log.toArray())[1].meta.clock.id,
 				signKey2.publicKey.bytes
 			);
 			log.setIdentity(signKey3);
-			await log.append("three", { gidSeed: Buffer.from("a") });
+			await log.append("three", { meta: { gidSeed: Buffer.from("a") } });
 			assert.deepStrictEqual(
-				(await log.toArray())[2].metadata.clock.id,
+				(await log.toArray())[2].meta.clock.id,
 				signKey3.publicKey.bytes
 			);
 		});
@@ -238,7 +257,7 @@ describe("properties", function () {
 		beforeEach(async () => {
 			log = new Log();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
-			await log.append("one", { gidSeed: Buffer.from("a") });
+			await log.append("one", { meta: { gidSeed: Buffer.from("a") } });
 		});
 
 		it("returns true if it has an Entry", async () => {

@@ -1,5 +1,4 @@
 import { HLC, LamportClock as Clock, Timestamp } from "./clock.js";
-import { isDefined } from "./is-defined.js";
 import {
 	variant,
 	field,
@@ -54,8 +53,7 @@ const isMaybeEryptionPublicKey = (o: any) => {
 export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<
 	MaybeEncryptionPublicKey,
 	MaybeEncryptionPublicKey,
-	MaybeEncryptionPublicKey | { [key: string]: MaybeEncryptionPublicKey }, // signature either all signature encrypted by same key, or each individually
-	MaybeEncryptionPublicKey
+	MaybeEncryptionPublicKey | { [key: string]: MaybeEncryptionPublicKey } // signature either all signature encrypted by same key, or each individually
 >;
 export interface EntryEncryption {
 	reciever: EncryptionTemplateMaybeEncrypted;
@@ -118,11 +116,10 @@ export class Payload<T> {
 	}
 }
 
-export interface EntryEncryptionTemplate<A, B, C, D> {
-	metadata: A;
+export interface EntryEncryptionTemplate<A, B, C> {
+	meta: A;
 	payload: B;
 	signatures: C;
-	next: D;
 }
 
 export enum EntryType {
@@ -131,30 +128,35 @@ export enum EntryType {
 }
 
 @variant(0)
-export class Metadata {
-	@field({ type: "string" })
-	gid: string; // graph id
-
+export class Meta {
 	@field({ type: Clock })
 	clock: Clock;
 
-	@field({ type: "u64" })
-	maxChainLength: bigint; // longest chain/merkle tree path frmo this node. maxChainLength := max ( maxChainLength(this.next) , 1)
+	@field({ type: "string" })
+	gid: string; // graph id
+
+	@field({ type: vec("string") })
+	next: string[];
 
 	@field({ type: "u8" })
 	type: EntryType;
 
+	@field({ type: option(Uint8Array) })
+	data?: Uint8Array; // Optional metadata
+
 	constructor(properties?: {
 		gid: string;
 		clock: Clock;
-		maxChainLength: bigint;
 		type: EntryType;
+		data?: Uint8Array;
+		next: string[];
 	}) {
 		if (properties) {
 			this.gid = properties.gid;
 			this.clock = properties.clock;
-			this.maxChainLength = properties.maxChainLength;
 			this.type = properties.type;
+			this.data = properties.data;
+			this.next = properties.next;
 		}
 	}
 }
@@ -208,27 +210,29 @@ const maybeEncrypt = <Q>(
 	});
 };
 
+export interface ShallowEntry {
+	hash: string;
+	meta: {
+		clock: Clock;
+		data?: Uint8Array;
+		gid: string;
+		next: string[];
+	};
+	payloadByteLength: number;
+}
+
 @variant(0)
 export class Entry<T>
-	implements
-		EntryEncryptionTemplate<
-			Metadata,
-			Payload<T>,
-			SignatureWithKey[],
-			Array<string>
-		>
+	implements EntryEncryptionTemplate<Meta, Payload<T>, SignatureWithKey[]>
 {
 	@field({ type: MaybeEncrypted })
-	_metadata: MaybeEncrypted<Metadata>;
+	_meta: MaybeEncrypted<Meta>;
 
 	@field({ type: MaybeEncrypted })
 	_payload: MaybeEncrypted<Payload<T>>;
 
-	@field({ type: MaybeEncrypted })
-	_next: MaybeEncrypted<StringArray>; // Array of hashes (the tree)
-
 	@field({ type: fixedArray("u8", 4) })
-	_reserved: Uint8Array;
+	_reserved?: Uint8Array;
 
 	@field({ type: option(Signatures) })
 	_signatures?: Signatures;
@@ -244,17 +248,15 @@ export class Entry<T>
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
 		signatures?: Signatures;
-		metadata: MaybeEncrypted<Metadata>;
-		next: MaybeEncrypted<StringArray>;
+		meta: MaybeEncrypted<Meta>;
 		reserved?: Uint8Array; // intentational type 0  (not used)h
 		hash?: string;
 		createdLocally?: boolean;
 	}) {
-		this._metadata = obj.metadata;
+		this._meta = obj.meta;
 		this._payload = obj.payload;
 		this._signatures = obj.signatures;
-		this._next = obj.next;
-		this._reserved = obj.reserved || new Uint8Array([0, 0, 0, 0]);
+		this._reserved = new Uint8Array([0, 0, 0, 0]);
 		this.createdLocally = obj.createdLocally;
 	}
 
@@ -283,32 +285,25 @@ export class Entry<T>
 		return this._encoding;
 	}
 
-	get metadata(): Metadata {
-		return this._metadata.decrypted.getValue(Metadata);
+	get meta(): Meta {
+		return this._meta.decrypted.getValue(Meta);
 	}
 
-	async getMetadata(): Promise<Metadata> {
-		await this._metadata.decrypt(this._keychain);
-		return this.metadata;
-	}
-
-	get gid(): string {
-		return this.metadata.gid;
-	}
-	async getGid(): Promise<string> {
-		return (await this.getMetadata()).gid;
+	async getMeta(): Promise<Meta> {
+		await this._meta.decrypt(this._keychain);
+		return this.meta;
 	}
 
 	async getClock(): Promise<Clock> {
-		return (await this.getMetadata()).clock;
+		return (await this.getMeta()).clock;
 	}
 
-	get maxChainLength(): bigint {
-		return this._metadata.decrypted.getValue(Metadata).maxChainLength;
+	get gid(): string {
+		return this._meta.decrypted.getValue(Meta).gid;
 	}
 
-	async getMaxChainLength(): Promise<bigint> {
-		return (await this.getMetadata()).maxChainLength;
+	async getGid(): Promise<string> {
+		return (await this.getMeta()).gid;
 	}
 
 	get payload(): Payload<T> {
@@ -341,12 +336,11 @@ export class Entry<T>
 	}
 
 	get next(): string[] {
-		return this._next.decrypted.getValue(StringArray).arr;
+		return this.meta.next;
 	}
 
 	async getNext(): Promise<string[]> {
-		await this._next.decrypt(this._keychain);
-		return this.next;
+		return (await this.getMeta()).next;
 	}
 
 	/**
@@ -409,8 +403,7 @@ export class Entry<T>
 	static toSignable(entry: Entry<any>): Uint8Array {
 		// TODO fix types
 		const trimmed = new Entry({
-			metadata: entry._metadata,
-			next: entry._next,
+			meta: entry._meta,
 			payload: entry._payload,
 			reserved: entry._reserved,
 			signatures: undefined,
@@ -433,9 +426,8 @@ export class Entry<T>
 	equals(other: Entry<T>) {
 		return (
 			equals(this._reserved, other._reserved) &&
-			this._metadata.equals(other._metadata) &&
+			this._meta.equals(other._meta) &&
 			this._signatures!.equals(other._signatures!) &&
-			this._next.equals(other._next) &&
 			this._payload.equals(other._payload)
 		); // dont compare hashes because the hash is a function of the other properties
 	}
@@ -453,24 +445,30 @@ export class Entry<T>
 
 	static async create<T>(properties: {
 		store: Blocks;
-		gid?: string;
-		type?: EntryType;
-		gidSeed?: Uint8Array;
 		data: T;
+		meta?: {
+			clock?: Clock;
+			gid?: string;
+			type?: EntryType;
+			gidSeed?: Uint8Array;
+			data?: Uint8Array;
+			next?: Entry<T>[];
+		};
 		encoding?: Encoding<T>;
 		canAppend?: CanAppend<T>;
-		next?: Entry<T>[];
-		clock?: Clock;
 		encryption?: EntryEncryption;
 		identity: Identity;
 		signers?: ((
 			data: Uint8Array
 		) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	}): Promise<Entry<T>> {
-		if (!properties.encoding || !properties.next) {
+		if (!properties.encoding || !properties?.meta?.next) {
 			properties = {
 				...properties,
-				next: properties.next ? properties.next : [],
+				meta: {
+					...properties?.meta,
+					next: properties.meta?.next ? properties.meta?.next : [],
+				},
 				encoding: properties.encoding ? properties.encoding : NO_ENCODING,
 			};
 		}
@@ -479,12 +477,12 @@ export class Entry<T>
 			throw new Error("Missing encoding options");
 		}
 
-		if (!isDefined(properties.data)) throw new Error("Entry requires data");
-		if (!isDefined(properties.next) || !Array.isArray(properties.next))
+		if (properties.data == null) throw new Error("Entry requires data");
+		if (properties.meta?.next == null || !Array.isArray(properties.meta.next))
 			throw new Error("'next' argument is not an array");
 
 		// Clean the next objects and convert to hashes
-		const nexts = properties.next;
+		const nexts = properties.meta?.next;
 
 		const payloadToSave = new Payload<T>({
 			data: properties.encoding.encoder(properties.data),
@@ -492,16 +490,16 @@ export class Entry<T>
 			encoding: properties.encoding,
 		});
 
-		let clock: Clock | undefined = properties.clock;
+		let clock: Clock | undefined = properties.meta?.clock;
 		if (!clock) {
 			const hlc = new HLC();
 			for (const next of nexts) {
-				hlc.update(next.metadata.clock.timestamp);
+				hlc.update(next.meta.clock.timestamp);
 			}
 
 			if (
 				properties.encryption?.reciever.signatures &&
-				properties.encryption?.reciever.metadata
+				properties.encryption?.reciever.meta
 			) {
 				throw new Error(
 					"Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the reciever (encryption target) for the clock"
@@ -515,10 +513,10 @@ export class Entry<T>
 			const cv = clock;
 			// check if nexts, that all nexts are happening BEFORE this clock value (else clock make no sense)
 			for (const n of nexts) {
-				if (Timestamp.compare(n.metadata.clock.timestamp, cv.timestamp) >= 0) {
+				if (Timestamp.compare(n.meta.clock.timestamp, cv.timestamp) >= 0) {
 					throw new Error(
 						"Expecting next(s) to happen before entry, got: " +
-							n.metadata.clock.timestamp +
+							n.meta.clock.timestamp +
 							" > " +
 							cv.timestamp
 					);
@@ -533,78 +531,53 @@ export class Entry<T>
 		);
 
 		const nextHashes: string[] = [];
-		let gid!: string;
 		let maxChainLength = 0n;
-		const maxClock = new Timestamp({ wallTime: 0n, logical: 0 });
+		let gid: string | null = null;
 		if (nexts?.length > 0) {
 			// take min gid as our gid
+			if (properties.meta?.gid) {
+				throw new Error(
+					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided"
+				);
+			}
 			for (const n of nexts) {
 				if (!n.hash) {
 					throw new Error("Expecting hash to be defined to next entries");
 				}
 				nextHashes.push(n.hash);
-				if (
-					maxChainLength < n.maxChainLength ||
-					maxChainLength == n.maxChainLength
-				) {
-					maxChainLength = n.maxChainLength;
-					if (!gid) {
-						gid = n.metadata.gid;
-						continue;
-					}
-					// replace gid if next is from alonger chain, or from a later time, or same time but "smaller" gid
-					else if (
-						Timestamp.compare(n.metadata.clock.timestamp, maxClock) > 0 ||
-						(Timestamp.compare(n.metadata.clock.timestamp, maxClock) == 0 &&
-							n.metadata.gid < gid)
-					) {
-						gid = n.metadata.gid;
-					}
-				}
-			}
-			if (!gid) {
-				throw new Error("Unexpected behaviour, could not find gid");
+				gid =
+					gid == null
+						? n.meta.gid
+						: n.meta.gid < (gid as string)
+						? n.meta.gid
+						: gid;
 			}
 		} else {
-			gid = properties.gid || (await Entry.createGid(properties.gidSeed));
+			gid =
+				properties.meta?.gid ||
+				(await Entry.createGid(properties.meta?.gidSeed));
 		}
 
 		maxChainLength += 1n; // include this
 
 		const metadataEncrypted = await maybeEncrypt(
-			new Metadata({
-				maxChainLength,
+			new Meta({
 				clock,
-				gid,
-				type: properties.type ?? EntryType.APPEND,
+				gid: gid!,
+				type: properties.meta?.type ?? EntryType.APPEND,
+				data: properties.meta?.data,
+				next: nextHashes,
 			}),
 			properties.encryption?.keypair,
-			properties.encryption?.reciever.metadata
-		);
-
-		const next = nextHashes;
-		next?.forEach((next) => {
-			if (typeof next !== "string") {
-				throw new Error("Unsupported next type");
-			}
-		});
-
-		const nextEncrypted = await maybeEncrypt(
-			new StringArray({
-				arr: next,
-			}),
-			properties.encryption?.keypair,
-			properties.encryption?.reciever.next
+			properties.encryption?.reciever.meta
 		);
 
 		// Sign id, encrypted payload, clock, nexts, refs
 		const entry: Entry<T> = new Entry<T>({
 			payload,
-			metadata: metadataEncrypted,
+			meta: metadataEncrypted,
 			signatures: undefined,
 			createdLocally: true,
-			next: nextEncrypted, // Array of hashes
-			/* refs: properties.refs, */
 		});
 
 		const signers = properties.signers || [
@@ -620,6 +593,7 @@ export class Entry<T>
 		const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(
 			properties.encryption?.reciever?.signatures
 		);
+
 		for (const signature of signatures) {
 			const encryptionRecievers = encryptAllSignaturesWithSameKey
 				? properties.encryption?.reciever?.signatures
@@ -648,6 +622,23 @@ export class Entry<T>
 		entry.init({ encoding: properties.encoding });
 
 		return entry;
+	}
+
+	get payloadByteLength() {
+		return this._payload.byteLength;
+	}
+
+	toShallow(): ShallowEntry {
+		return {
+			hash: this.hash,
+			payloadByteLength: this._payload.byteLength,
+			meta: {
+				gid: this.meta.gid,
+				data: this.meta.data,
+				clock: this.meta.clock,
+				next: this.meta.next,
+			},
+		};
 	}
 
 	/**
@@ -695,8 +686,8 @@ export class Entry<T>
 	 * @returns {number} 1 if a is greater, -1 is b is greater
 	 */
 	static compare<T>(a: Entry<T>, b: Entry<T>) {
-		const aClock = a.metadata.clock;
-		const bClock = b.metadata.clock;
+		const aClock = a.meta.clock;
+		const bClock = b.meta.clock;
 		const distance = Clock.compare(aClock, bClock);
 		if (distance === 0) return aClock.id < bClock.id ? -1 : 1;
 		return distance;
@@ -741,9 +732,7 @@ export class Entry<T>
 			prev = parent;
 			parent = values.find((e) => Entry.isDirectParent(prev, e));
 		}
-		stack = stack.sort((a, b) =>
-			Clock.compare(a.metadata.clock, b.metadata.clock)
-		);
+		stack = stack.sort((a, b) => Clock.compare(a.meta.clock, b.meta.clock));
 		return stack;
 	}
 }

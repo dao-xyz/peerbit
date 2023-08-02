@@ -38,15 +38,8 @@ await store.log.append(payload, {
 	encryption: {
 		keypair: await X25519Keypair.create(),
 		reciever: {
-			// Who can read the log entry metadata (e.g. timestamps)
-			metadata: [
-				client.identity.publicKey,
-				client2.identity.publicKey,
-				client3.identity.publicKey,
-			],
-
-			// Who can read the references of the entry (next pointers)
-			next: [
+			// Who can read the log entry metadata (e.g. timestamps), next pointers, and more location information
+			meta: [
 				client.identity.publicKey,
 				client2.identity.publicKey,
 				client3.identity.publicKey,

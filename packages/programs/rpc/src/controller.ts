@@ -26,6 +26,7 @@ import { Program } from "@peerbit/program";
 import { DataMessage } from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
 import { waitFor } from "@peerbit/time";
+import { equals } from "uint8arrays";
 
 export type SearchContext = (() => Address) | Program;
 export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
@@ -68,6 +69,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		(properties: { response: ResponseV0; message: DataMessage }) => any
 	>;
 	private _requestType: AbstractType<Q> | Uint8ArrayConstructor;
+	private _requestTypeIsUint8Array: boolean;
 	private _responseType: AbstractType<R>;
 	private _rpcTopic: string | undefined;
 	private _onMessageBinded: ((arg: any) => any) | undefined = undefined;
@@ -77,21 +79,20 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 	private _getResponseValueFn: (decrypted: DecryptedThing<R>) => R;
 	private _getRequestValueFn: (decrypted: DecryptedThing<Q>) => Q;
-
 	async open(args: RPCSetupOptions<Q, R>): Promise<void> {
 		this._rpcTopic = args.topic ?? this._rpcTopic;
 		this._responseHandler = args.responseHandler;
 		this._requestType = args.queryType;
+		this._requestTypeIsUint8Array = (this._requestType as any) === Uint8Array;
 		this._responseType = args.responseType;
 		this._responseResolver = new Map();
-		this._subscriptionMetaData = args.subscriptionData;
 		this.canRead = args.canRead || (() => Promise.resolve(true));
 
 		this._getResponseValueFn = createValueResolver(this._responseType);
 		this._getRequestValueFn = createValueResolver(this._requestType);
 
 		this._keypair = await X25519Keypair.create();
-		await this._subscribe();
+		await this.subscribe(args.subscriptionData);
 	}
 
 	private async _close(from?: Program): Promise<void> {
@@ -123,25 +124,46 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	}
 
 	private _subscribing: Promise<void>;
-	private async _subscribe(): Promise<void> {
+	async subscribe(data = this._subscriptionMetaData): Promise<void> {
 		await this._subscribing;
-		if (this._subscribed) {
+		if (
+			this._subscribed &&
+			(this._subscriptionMetaData === data ||
+				(this._subscriptionMetaData &&
+					data &&
+					equals(this._subscriptionMetaData, data)))
+		) {
 			return;
 		}
+
+		const prevSubscriptionData = this._subscriptionMetaData;
+		this._subscriptionMetaData = data;
+		const wasSubscribed = this._subscribed;
 		this._subscribed = true;
+
 		this._onMessageBinded = this._onMessageBinded || this._onMessage.bind(this);
+
+		if (wasSubscribed) {
+			await this.node.services.pubsub.unsubscribe(this.rpcTopic, {
+				data: prevSubscriptionData,
+			});
+		}
+
 		this._subscribing = this.node.services.pubsub
-			.subscribe(this.rpcTopic, { data: this._subscriptionMetaData })
+			.subscribe(this.rpcTopic, { data })
 			.then(() => {
-				return this.node.services.pubsub.addEventListener(
-					"data",
-					this._onMessageBinded!
-				);
+				if (!wasSubscribed) {
+					this.node.services.pubsub.addEventListener(
+						"data",
+						this._onMessageBinded!
+					);
+				}
 			});
 
 		await this._subscribing;
-		await this.node.services.pubsub.requestSubscribers(this.rpcTopic);
-
+		if (!wasSubscribed) {
+			await this.node.services.pubsub.requestSubscribers(this.rpcTopic);
+		}
 		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 	}
 
@@ -237,14 +259,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		respondTo?: X25519PublicKey,
 		options?: PublishOptions
 	) {
-		const requestData =
-			(this._requestType as any) === Uint8Array
-				? (request as Uint8Array)
-				: serialize(request);
+		const requestData = this._requestTypeIsUint8Array
+			? (request as Uint8Array)
+			: serialize(request);
 
 		const decryptedMessage = new DecryptedThing<Uint8Array>({
 			data: requestData,
 		});
+
 		let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
 
 		if (

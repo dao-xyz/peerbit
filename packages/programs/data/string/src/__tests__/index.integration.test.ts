@@ -12,7 +12,7 @@ import { Range } from "../range.js";
 import { Observer } from "@peerbit/shared-log";
 import { ProgramClient } from "@peerbit/program";
 import { Change } from "@peerbit/log";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 
 describe("query", () => {
 	let session: LSession,
@@ -157,6 +157,64 @@ describe("query", () => {
 	});
 });
 
+describe("concurrency", () => {
+	let session: LSession,
+		peer1: ProgramClient,
+		peer2: ProgramClient,
+		peer3: ProgramClient,
+		store1: DString,
+		store2: DString,
+		store3: DString;
+
+	beforeEach(async () => {
+		// we reinit sesion for every test since DString does always have same address
+		// and that might lead to sideeffects running all tests in one go
+		session = await LSession.connected(3);
+		peer1 = session.peers[0];
+		peer2 = session.peers[1];
+		peer3 = session.peers[2];
+
+		store1 = new DString({});
+
+		await peer1.open(store1);
+
+		store2 = (await DString.load(
+			store1.address!,
+			peer2.services.blocks
+		)) as DString;
+
+		store3 = (await DString.load(
+			store1.address!,
+			peer3.services.blocks
+		)) as DString;
+
+		await peer2.open(store2);
+		await peer3.open(store3);
+	});
+
+	afterEach(async () => {
+		await store1.drop();
+		await store2.drop();
+		await store3.drop();
+		await session.stop();
+	});
+	it("can replicate state", async () => {
+		await store1.add("1", new Range({ offset: 0n, length: 1 }));
+		await store2.add("2", new Range({ offset: 1n, length: 1 }));
+		await store3.add("3", new Range({ offset: 2n, length: 1 }));
+
+		await waitForResolved(async () =>
+			expect(await store1.getValue()).toEqual("123")
+		);
+		await waitForResolved(async () =>
+			expect(await store2.getValue()).toEqual("123")
+		);
+		await waitForResolved(async () =>
+			expect(await store3.getValue()).toEqual("123")
+		);
+	});
+});
+
 describe("events", () => {
 	let session: LSession,
 		peer1: ProgramClient,
@@ -193,9 +251,14 @@ describe("events", () => {
 		await session.stop();
 	});
 	it("emits events on join and append", async () => {
-		let events: Change<StringOperation>[] = [];
+		let events1: Change<StringOperation>[] = [];
+		let events2: Change<StringOperation>[] = [];
+
+		store1.events.addEventListener("change", (e) => {
+			events1.push(e.detail);
+		});
 		store2.events.addEventListener("change", (e) => {
-			events.push(e.detail);
+			events2.push(e.detail);
 		});
 
 		await store1.add(
@@ -203,9 +266,17 @@ describe("events", () => {
 			new Range({ offset: 0n, length: "hello".length })
 		);
 
-		await waitForResolved(() => expect(events).toHaveLength(1));
-		expect(events[0].added).toHaveLength(1);
-		expect((await events[0].added[0].getPayloadValue()).value).toEqual("hello");
+		await waitForResolved(() => expect(events1).toHaveLength(1));
+		expect(events1[0].added).toHaveLength(1);
+		expect((await events1[0].added[0].getPayloadValue()).value).toEqual(
+			"hello"
+		);
+
+		await waitForResolved(() => expect(events2).toHaveLength(1));
+		expect(events2[0].added).toHaveLength(1);
+		expect((await events2[0].added[0].getPayloadValue()).value).toEqual(
+			"hello"
+		);
 
 		await store2.add(
 			"world",
@@ -215,9 +286,19 @@ describe("events", () => {
 			})
 		);
 
-		await waitForResolved(() => expect(events).toHaveLength(2));
-		expect(events[1].added).toHaveLength(1);
-		expect((await events[1].added[0].getPayloadValue()).value).toEqual("world");
+		await waitForResolved(() => expect(events1).toHaveLength(2));
+		expect(events1[1].added).toHaveLength(1);
+		expect((await events1[1].added[0].getPayloadValue()).value).toEqual(
+			"world"
+		);
+
+		await waitForResolved(() => expect(events2).toHaveLength(2));
+		expect(events2[1].added).toHaveLength(1);
+		expect((await events2[1].added[0].getPayloadValue()).value).toEqual(
+			"world"
+		);
+		expect(await store1.getValue()).toEqual("hello world");
+		expect(await store2.getValue()).toEqual("hello world");
 	});
 });
 

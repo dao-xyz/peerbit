@@ -17,25 +17,31 @@ describe("values", () => {
 		e1 = await Entry.create({
 			store,
 			identity,
-			gidSeed: Buffer.from("a"),
+			meta: {
+				gidSeed: Buffer.from("a"),
+				next: [],
+			},
 			data: new Uint8Array([0]),
-			next: [],
 		});
 
 		e2 = await Entry.create({
 			store,
 			identity,
-			gidSeed: Buffer.from("a"),
+			meta: {
+				gidSeed: Buffer.from("a"),
+				next: [e1],
+			},
 			data: new Uint8Array([1]),
-			next: [e1],
 		});
 
 		e3 = await Entry.create({
 			store,
 			identity,
-			gidSeed: Buffer.from("a"),
+			meta: {
+				gidSeed: Buffer.from("a"),
+				next: [e2],
+			},
 			data: new Uint8Array([2]),
-			next: [e2],
 		});
 		entryIndex = new EntryIndex({
 			store,
@@ -54,7 +60,7 @@ describe("values", () => {
 		await values.put(e1);
 		await values.put(e2);
 		await values.put(e3);
-		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect(values.head!.value).toEqual(e3.hash);
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
@@ -67,7 +73,7 @@ describe("values", () => {
 		await values.put(e1);
 		await values.put(e3);
 		await values.put(e2);
-		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect(values.head!.value).toEqual(e3.hash);
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
@@ -80,7 +86,7 @@ describe("values", () => {
 		await values.put(e2);
 		await values.put(e3);
 		await values.put(e1);
-		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect(values.head!.value).toEqual(e3.hash);
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
@@ -96,7 +102,7 @@ describe("values", () => {
 		}
 
 		await Promise.all(promises);
-		expect(values.head!.value.hash).toEqual(e1.hash);
+		expect(values.head!.value).toEqual(e1.hash);
 		expect((await values.toArray()).length).toEqual(1);
 	});
 	it("delete", async () => {
@@ -104,7 +110,7 @@ describe("values", () => {
 		await values.put(e1);
 		await values.put(e2);
 		await values.put(e3);
-		expect(values.head!.value.hash).toEqual(e3.hash);
+		expect(values.head!.value).toEqual(e3.hash);
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
@@ -115,12 +121,12 @@ describe("values", () => {
 			e1.hash,
 			e3.hash,
 		]);
-		expect(values.head!.value.hash).toEqual(e3.hash);
-		expect(values.tail!.value.hash).toEqual(e1.hash);
+		expect(values.head!.value).toEqual(e3.hash);
+		expect(values.tail!.value).toEqual(e1.hash);
 		await values.delete(e1);
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([e3.hash]);
-		expect(values.head!.value.hash).toEqual(e3.hash);
-		expect(values.tail!.value.hash).toEqual(e3.hash);
+		expect(values.head!.value).toEqual(e3.hash);
+		expect(values.tail!.value).toEqual(e3.hash);
 		await values.delete(e3);
 		expect(await values.toArray()).toEqual([]);
 		expect(values.head).toBeNull();
