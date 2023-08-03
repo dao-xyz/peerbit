@@ -1,16 +1,18 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { AppendOptions, CanAppend, Change, Entry } from "@peerbit/log";
 import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
-import { SignatureWithKey } from "@peerbit/crypto";
+import { PublicSignKey } from "@peerbit/crypto";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { RPCOptions, CanRead, RPC } from "@peerbit/rpc";
+import { RPCOptions, RPC, RequestContext } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
+	AbstractSearchResult,
+	NoAccess,
 	RangeMetadata,
 	RangeMetadatas,
 	StringMatch,
-	StringQueryRequest,
+	SearchRequest,
 	StringResult,
 } from "./query.js";
 import { CustomEvent } from "@libp2p/interfaces/events";
@@ -34,9 +36,7 @@ const findAllOccurrences = (str: string, substr: string): number[] => {
 	return result;
 };
 
-export type StringStoreOptions = {
-	canRead?: (key: SignatureWithKey) => Promise<boolean>;
-};
+export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
 
 export interface StringEvents {
 	change: CustomEvent<Change<StringOperation>>;
@@ -54,16 +54,17 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	_log: SharedLog<StringOperation>;
 
 	@field({ type: RPC })
-	query: RPC<StringQueryRequest, StringResult>;
+	query: RPC<SearchRequest, AbstractSearchResult>;
 
 	@field({ type: StringIndex })
 	_index: StringIndex;
 
 	_optionCanAppend?: CanAppend<StringOperation>;
+	_canRead?: CanRead;
 
 	constructor(properties: {
 		id?: Uint8Array;
-		query?: RPC<StringQueryRequest, StringResult>;
+		query?: RPC<SearchRequest, AbstractSearchResult>;
 	}) {
 		super();
 		this.query = properties.query || new RPC();
@@ -94,9 +95,8 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		await this.query.open({
 			...options,
 			topic: this._log.log.idString + "/" + "dstring",
-			canRead: options?.canRead,
 			responseHandler: this.queryHandler.bind(this),
-			queryType: StringQueryRequest,
+			queryType: SearchRequest,
 			responseType: StringResult,
 		});
 	}
@@ -146,14 +146,19 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	}
 
 	async queryHandler(
-		query: StringQueryRequest
-	): Promise<StringResult | undefined> {
+		query: SearchRequest,
+		ctx: RequestContext
+	): Promise<AbstractSearchResult | undefined> {
 		logger.debug("Recieved query");
-		if (query instanceof StringQueryRequest == false) {
+		if (query instanceof SearchRequest == false) {
 			logger.debug("Recieved query which is not a StringQueryRequest");
 			return;
 		}
-		const stringQuery = query as StringQueryRequest;
+
+		const stringQuery = query as SearchRequest;
+		if (this._canRead && !(await this._canRead(ctx.from))) {
+			return new NoAccess();
+		}
 
 		const content = this._index.string;
 		const relaventQueries = stringQuery.query.filter(
@@ -196,24 +201,31 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	async getValue(options?: {
 		remote: {
 			callback: (string: string) => any;
-			queryOptions: RPCOptions<StringResult>;
+			queryOptions: RPCOptions<AbstractSearchResult>;
 		};
 	}): Promise<string | undefined> {
 		if (options?.remote) {
 			const counter: Map<string, number> = new Map();
 			const responses = await this.query.request(
-				new StringQueryRequest({
+				new SearchRequest({
 					query: [],
 				}),
 				options.remote.queryOptions
 			);
 			for (const response of responses) {
-				options?.remote.callback &&
-					options?.remote.callback(response.response.string);
-				counter.set(
-					response.response.string,
-					(counter.get(response.response.string) || 0) + 1
-				);
+				if (response.response instanceof NoAccess) {
+					logger.error("Missing access");
+					continue;
+				} else if (response.response instanceof StringResult) {
+					options?.remote.callback &&
+						options?.remote.callback(response.response.string);
+					counter.set(
+						response.response.string,
+						(counter.get(response.response.string) || 0) + 1
+					);
+				} else {
+					throw new Error("Unsupported type: " + response?.constructor?.name);
+				}
 			}
 
 			let max = -1;

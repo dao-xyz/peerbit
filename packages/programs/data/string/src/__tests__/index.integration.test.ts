@@ -1,18 +1,19 @@
 import { LSession } from "@peerbit/test-utils";
 import { DString } from "../string-store.js";
 import {
-	StringQueryRequest,
+	SearchRequest,
 	StringResult,
 	StringMatch,
 	RangeMetadatas,
 	RangeMetadata,
 	StringOperation,
+	AbstractSearchResult,
 } from "../index.js";
 import { Range } from "../range.js";
 import { Observer } from "@peerbit/shared-log";
 import { ProgramClient } from "@peerbit/program";
 import { Change } from "@peerbit/log";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 
 describe("query", () => {
 	let session: LSession,
@@ -62,15 +63,16 @@ describe("query", () => {
 			})
 		);
 
-		let responses: StringResult[] = (
+		let responses: AbstractSearchResult[] = (
 			await observerStore.query.request(
-				new StringQueryRequest({
+				new SearchRequest({
 					query: [],
 				}),
 
 				{ amount: 1 }
 			)
 		).map((x) => x.response);
+
 		expect(responses[0]).toBeDefined();
 		expect(responses[0]).toMatchObject(
 			new StringResult({
@@ -93,9 +95,9 @@ describe("query", () => {
 			})
 		);
 
-		let response: StringResult[] = (
+		let response: AbstractSearchResult[] = (
 			await observerStore.query.request(
-				new StringQueryRequest({
+				new SearchRequest({
 					query: [
 						new StringMatch({
 							exactMatch: true,

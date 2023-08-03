@@ -51,7 +51,7 @@ export class StringMatch {
 }
 
 @variant(0)
-export class StringQueryRequest {
+export class SearchRequest {
 	@field({ type: vec(StringMatch) })
 	query!: StringMatch[];
 
@@ -63,18 +63,22 @@ export class StringQueryRequest {
 }
 
 /// ----- RESULTS -----
+export abstract class AbstractSearchResult {}
+
 @variant(0)
-export class StringResult {
+export class StringResult extends AbstractSearchResult {
 	@field({ type: "string" })
 	string: string;
 
 	@field({ type: option(RangeMetadatas) })
 	metadatas?: RangeMetadatas;
 
-	constructor(properties?: { string: string; metadatas?: RangeMetadatas }) {
-		if (properties) {
-			this.string = properties.string;
-			this.metadatas = properties.metadatas;
-		}
+	constructor(properties: { string: string; metadatas?: RangeMetadatas }) {
+		super();
+		this.string = properties.string;
+		this.metadatas = properties.metadatas;
 	}
 }
+
+@variant(1)
+export class NoAccess extends AbstractSearchResult {}
