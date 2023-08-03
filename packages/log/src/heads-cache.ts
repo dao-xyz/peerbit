@@ -12,7 +12,7 @@ export class CachedValue {}
 /* export type AppendOptions<T> = {
 	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
 	nexts?: Entry<T>[];
-	reciever?: EncryptionTemplateMaybeEncrypted;
+	receiver?: EncryptionTemplateMaybeEncrypted;
 	type?: EntryType;
 };
  */

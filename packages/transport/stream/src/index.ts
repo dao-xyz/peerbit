@@ -601,7 +601,7 @@ export abstract class DirectStream<
 			}
 
 			// This condition seem to work better than the one above, for some reason.
-			// The reason we need this at all is because we will connect to existing connection and recieve connection that
+			// The reason we need this at all is because we will connect to existing connection and receive connection that
 			// some times, yields a race connections where connection drop each other by reset
 
 			let stream: Stream = undefined as any; // TODO types
@@ -1171,7 +1171,7 @@ export abstract class DirectStream<
 				[peerStream]
 			);
 		} else if (message instanceof Pong) {
-			// Let the (waiting) thread know that we have recieved the pong
+			// Let the (waiting) thread know that we have received the pong
 			peerStream.pingJob?.resolve();
 		} else {
 			throw new Error("Unsupported");
@@ -1432,7 +1432,7 @@ export abstract class DirectStream<
 			await id.waitForWrite(bytes);
 		}
 		if (!sentOnce && !relayed) {
-			throw new Error("Message did not have any valid recievers. ");
+			throw new Error("Message did not have any valid receivers. ");
 		}
 	}
 

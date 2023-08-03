@@ -9,7 +9,7 @@ Every commit that is made can be E2E encrypted with public key encryption with m
 
 ### When appending 1 entry to a log 
 1. We generate an ephemeral key that is used to encrypt the content with. 
-2. This key is encrypted with Public Key encryption (with one or many recievers)
+2. This key is encrypted with Public Key encryption (with one or many receivers)
 3. The final message then is packed with the following. 
     - The encrypted message
     - The encrypted ephemeral key for every receiver

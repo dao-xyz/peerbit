@@ -47,12 +47,12 @@ const createMetrics = (pubsub: DirectSub) => {
 	const m: {
 		stream: DirectSub;
 		messages: Message[];
-		recieved: PubSubData[];
+		received: PubSubData[];
 		subscriptionEvents: SubscriptionEvent[];
 		unsubscriptionEvents: UnsubcriptionEvent[];
 	} = {
 		messages: [],
-		recieved: [],
+		received: [],
 		stream: pubsub,
 		subscriptionEvents: [],
 		unsubscriptionEvents: [],
@@ -61,7 +61,7 @@ const createMetrics = (pubsub: DirectSub) => {
 		m.messages.push(msg.detail);
 	});
 	pubsub.addEventListener("data", (msg) => {
-		m.recieved.push(msg.detail.data);
+		m.received.push(msg.detail.data);
 	});
 	pubsub.addEventListener("subscribe", (msg) => {
 		m.subscriptionEvents.push(msg.detail);
@@ -210,14 +210,14 @@ describe("pubsub", function () {
 
 			it("1->TOPIC", async () => {
 				await metrics[0].stream.publish(data, { topics: [TOPIC] });
-				await waitFor(() => metrics[1].recieved.length === 1);
-				expect(new Uint8Array(metrics[1].recieved[0].data)).toEqual(data);
-				expect(metrics[1].recieved[0].topics).toEqual([TOPIC]);
-				await waitFor(() => metrics[2].recieved.length === 1);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				await waitFor(() => metrics[1].received.length === 1);
+				expect(new Uint8Array(metrics[1].received[0].data)).toEqual(data);
+				expect(metrics[1].received[0].topics).toEqual([TOPIC]);
+				await waitFor(() => metrics[2].received.length === 1);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				await delay(3000); // wait some more time to make sure we dont get more messages
-				expect(metrics[1].recieved).toHaveLength(1);
-				expect(metrics[2].recieved).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(1);
+				expect(metrics[2].received).toHaveLength(1);
 			});
 
 			it("1->TOPIC strict to", async () => {
@@ -227,46 +227,46 @@ describe("pubsub", function () {
 					strict: true,
 				});
 				await waitForResolved(() =>
-					expect(metrics[2].recieved).toHaveLength(1)
+					expect(metrics[2].received).toHaveLength(1)
 				);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
-				expect(metrics[2].recieved[0].topics).toEqual([TOPIC]);
-				expect(metrics[1].recieved).toHaveLength(0);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
+				expect(metrics[2].received[0].topics).toEqual([TOPIC]);
+				expect(metrics[1].received).toHaveLength(0);
 				await delay(3000); // wait some more time to make sure we dont get more messages
-				expect(metrics[1].recieved).toHaveLength(0);
-				expect(metrics[2].recieved).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
 			});
 
 			it("send without topic directly", async () => {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[1].stream.components.peerId],
 				});
-				await waitFor(() => metrics[1].recieved.length === 1);
-				expect(new Uint8Array(metrics[1].recieved[0].data)).toEqual(data);
+				await waitFor(() => metrics[1].received.length === 1);
+				expect(new Uint8Array(metrics[1].received[0].data)).toEqual(data);
 				await delay(3000); // wait some more time to make sure we dont get more messages
-				expect(metrics[1].recieved).toHaveLength(1);
-				expect(metrics[2].recieved).toHaveLength(0);
+				expect(metrics[1].received).toHaveLength(1);
+				expect(metrics[2].received).toHaveLength(0);
 			});
 
 			it("send without topic over relay", async () => {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[2].stream.components.peerId],
 				});
-				await waitFor(() => metrics[2].recieved.length === 1);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				await waitFor(() => metrics[2].received.length === 1);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				await delay(3000); // wait some more time to make sure we dont get more messages
-				expect(metrics[2].recieved).toHaveLength(1);
-				expect(metrics[1].recieved).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(0);
 			});
 			it("can send as non subscribeer", async () => {
 				metrics[0].stream.unsubscribe(TOPIC);
 				metrics[1].stream.unsubscribe(TOPIC);
 				await metrics[0].stream.publish(data, { topics: [TOPIC] });
-				await waitFor(() => metrics[2].recieved.length === 1);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				await waitFor(() => metrics[2].received.length === 1);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				await delay(3000); // wait some more time to make sure we dont get more messages
-				expect(metrics[1].recieved).toHaveLength(0);
-				expect(metrics[2].recieved).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
 			});
 		});
 
@@ -335,7 +335,7 @@ describe("pubsub", function () {
 				// it could cause issues. The exact circumstances/reasons for this is unknown, not specified
 
 				const hasData = (d: Uint8Array, i: number) => {
-					return !!metrics[i].recieved.find((x) => equals(x.data, d));
+					return !!metrics[i].received.find((x) => equals(x.data, d));
 				};
 				const fn = async (i: number) => {
 					const d = randomBytes(999);
@@ -461,14 +461,14 @@ describe("pubsub", function () {
 			afterAll(async () => {});
 
 			it("will publish on routes", async () => {
-				metrics[3].recieved = [];
-				metrics[4].recieved = [];
+				metrics[3].received = [];
+				metrics[4].received = [];
 				await metrics[0].stream.publish(data, { topics: [TOPIC] });
-				await waitFor(() => metrics[3].recieved.length === 1);
-				expect(new Uint8Array(metrics[3].recieved[0].data)).toEqual(data);
+				await waitFor(() => metrics[3].received.length === 1);
+				expect(new Uint8Array(metrics[3].received[0].data)).toEqual(data);
 
 				await delay(1000); // some delay to allow all messages to progagate
-				expect(metrics[4].recieved).toHaveLength(0);
+				expect(metrics[4].received).toHaveLength(0);
 				// make sure data message did not arrive to peer 4
 				for (const message of metrics[4].messages) {
 					if (message instanceof DataMessage) {
@@ -539,15 +539,15 @@ describe("pubsub", function () {
 			afterAll(async () => {});
 
 			it("will not forward unless necessary", async () => {
-				peers[1].recieved = [];
-				peers[2].recieved = [];
+				peers[1].received = [];
+				peers[2].received = [];
 				await delay(5000);
 				await peers[0].stream.publish(data, { topics: [TOPIC] });
-				await waitFor(() => peers[1].recieved.length === 1);
-				expect(new Uint8Array(peers[1].recieved[0].data)).toEqual(data);
+				await waitFor(() => peers[1].received.length === 1);
+				expect(new Uint8Array(peers[1].received[0].data)).toEqual(data);
 
 				await delay(1000); // some delay to allow all messages to progagate
-				expect(peers[2].recieved).toHaveLength(0);
+				expect(peers[2].received).toHaveLength(0);
 				// make sure data message did not arrive to peer 4
 				for (const message of peers[2].messages) {
 					if (message instanceof DataMessage) {

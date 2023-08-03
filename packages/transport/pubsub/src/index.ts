@@ -47,7 +47,7 @@ export type DirectSubComponents = DirectStreamComponents;
 export type PeerId = Libp2pPeerId | PublicSignKey;
 
 export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
-	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest recieved)
+	public topics: Map<string, Map<string, SubscriptionData>>; // topic -> peers --> Uint8Array subscription metadata (the latest received)
 	public peerToTopic: Map<string, Set<string>>; // peer -> topics
 	public topicsToPeers: Map<string, Set<string>>; // topic -> peers
 	public subscriptions: Map<string, { counter: number; data?: Uint8Array }>; // topic -> subscription ids
@@ -416,7 +416,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		const pubsubMessage = PubSubMessage.from(message.data);
 		if (pubsubMessage instanceof PubSubData) {
 			/**
-			 * See if we know more subscribers of the message topics. If so, add aditional end recievers of the message
+			 * See if we know more subscribers of the message topics. If so, add aditional end receivers of the message
 			 */
 			let verified: boolean | undefined = undefined;
 
@@ -464,7 +464,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				message.to = [...newTos];
 			}
 
-			// Only relay if we got additional recievers
+			// Only relay if we got additional receivers
 			// or we are NOT subscribing ourselves (if we are not subscribing ourselves we are)
 			// If we are not subscribing ourselves, then we don't have enough information to "stop" message propagation here
 			if (

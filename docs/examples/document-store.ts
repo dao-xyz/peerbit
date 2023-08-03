@@ -5,7 +5,7 @@
  * - Another peer is dialing the first peer and later tries to find all posts
  *
  *
- * If you get consfused by the "/// [abc]" lines, they are just meant for the documentation
+ * If you get confused by the "/// [abc]" lines, they are just meant for the documentation
  * website to be able to render parts of the code.
  * If you are to copy code from this example, you can safely remove these
  */

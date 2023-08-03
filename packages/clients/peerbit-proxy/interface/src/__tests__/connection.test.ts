@@ -18,27 +18,27 @@ const testNodes = async (a: Node, b: Node, c: Node) => {
 	expect(b.out.size).toEqual(1);
 	expect(c.out.size).toEqual(0);
 
-	let recievedMessage: Uint8Array | undefined = undefined;
+	let receivedMessage: Uint8Array | undefined = undefined;
 	b.subscribe("data", (msg) => {
-		recievedMessage = msg.data;
+		receivedMessage = msg.data;
 	});
 
-	let recievedMessageC: Uint8Array | undefined = undefined;
+	let receivedMessageC: Uint8Array | undefined = undefined;
 	c.subscribe("data", (msg) => {
-		recievedMessageC = msg.data;
+		receivedMessageC = msg.data;
 	});
 
 	a.send(new Uint8Array([1, 2, 3]));
 	await waitForResolved(() =>
-		expect(recievedMessage).toEqual(new Uint8Array([1, 2, 3]))
+		expect(receivedMessage).toEqual(new Uint8Array([1, 2, 3]))
 	);
 
 	a.send(new Uint8Array([3, 2, 1]), b.id);
 	await waitForResolved(() =>
-		expect(recievedMessage).toEqual(new Uint8Array([3, 2, 1]))
+		expect(receivedMessage).toEqual(new Uint8Array([3, 2, 1]))
 	);
 
-	expect(recievedMessageC).toBeUndefined();
+	expect(receivedMessageC).toBeUndefined();
 };
 
 describe("index", () => {

@@ -238,12 +238,12 @@ describe("rpc", () => {
 				rpc.query = new RPC();
 				await peer.open(rpc);
 				rpcs.push(rpc);
-				await delay(500); // add a little delay, so that new peers will not recieve old subscription events
+				await delay(500); // add a little delay, so that new peers will not receive old subscription events
 			}
 			for (let i = 0; i < rpcs.length; i++) {
 				for (let j = 0; j < rpcs.length; j++) {
 					if (j !== i) {
-						// Test that even if we did not recieve the old subsription events, we have requested subscribers
+						// Test that even if we did not receive the old subsription events, we have requested subscribers
 						// Hence the line below will resolve
 						await rpcs[i].waitFor(session.peers[j].peerId);
 					}

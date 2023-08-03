@@ -97,7 +97,7 @@ describe("entry", function () {
 				},
 				data: payload,
 				encryption: {
-					reciever: {
+					receiver: {
 						meta: undefined,
 						signatures: undefined,
 						payload: receiverKey.publicKey,

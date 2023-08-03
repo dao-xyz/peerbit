@@ -5,8 +5,8 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Observer, Replicator, SharedLog, Role } from "@peerbit/shared-log";
 
 // The line below will make sure that every time the database manifest
-// gets seriaized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
-// who open the database (who recieve the database manifest in serialized bytes) can decode into this particular class.
+// gets serialized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
+// who open the database (who receive the database manifest in serialized bytes) can decode into this particular class.
 
 // We define an type here that is used as opening argument
 // role defines the responsibilities for replicating the data

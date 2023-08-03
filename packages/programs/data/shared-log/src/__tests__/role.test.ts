@@ -67,7 +67,7 @@ describe(`role`, () => {
 				(x) => x.payload.getValue().value
 			)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.log.log.values.length).toEqual(1); // ... but will not recieve entries
+		expect(db2.log.log.values.length).toEqual(1); // ... but will not receive entries
 	});
 
 	it("none", async () => {
@@ -90,7 +90,7 @@ describe(`role`, () => {
 				(x) => x.payload.getValue().value
 			)
 		).toContainAllValues(["hello", "world"]);
-		expect(db2.log.log.values.length).toEqual(1); // ... but will not recieve entries
+		expect(db2.log.log.values.length).toEqual(1); // ... but will not receive entries
 	});
 
 	it("sync", async () => {
@@ -136,7 +136,7 @@ describe(`role`, () => {
 	);
 
 	await db1.add("hello", {
-		reciever: {
+		receiver: {
 			next: encryptionKey.keypair.publicKey,
 			meta: encryptionKey.keypair.publicKey,
 			payload: encryptionKey.keypair.publicKey,

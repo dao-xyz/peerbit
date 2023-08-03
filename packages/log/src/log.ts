@@ -78,7 +78,7 @@ export type AppendOptions<T> = {
 	trim?: TrimOptions;
 	encryption?: {
 		keypair: X25519Keypair;
-		reciever: EncryptionTemplateMaybeEncrypted;
+		receiver: EncryptionTemplateMaybeEncrypted;
 	};
 };
 
@@ -550,8 +550,8 @@ export class Log<T> {
 			encryption: options.encryption
 				? {
 						keypair: options.encryption.keypair,
-						reciever: {
-							...options.encryption.reciever,
+						receiver: {
+							...options.encryption.receiver,
 						},
 				  }
 				: undefined,

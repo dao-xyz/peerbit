@@ -37,7 +37,7 @@ export class PubSubData extends PubSubMessage {
 	topics: string[];
 
 	@field({ type: "bool" })
-	strict: boolean; // only deliver message to initial to recievers
+	strict: boolean; // only deliver message to initial to receivers
 
 	@field({ type: Uint8Array })
 	data: Uint8Array;

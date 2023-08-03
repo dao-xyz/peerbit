@@ -52,7 +52,7 @@ await program.network.add(peer2.identity.publicKey)
 
 // peer2 also has to "join" the network, in practice this means that peer2 adds a record telling that its Peer ID trusts its libp2p Id
 const programPeer2 = await peer2.open(programPeer1.address, {... options ...})
-await peer2.join(programPeer2) // This might fail with "AccessError" if you do this too quickly after "open", because it has not yet recieved the full trust graph from peer1 yet
+await peer2.join(programPeer2) // This might fail with "AccessError" if you do this too quickly after "open", because it has not yet received the full trust graph from peer1 yet
 ```
 
 See [this test(s)](./src/__tests__/network.test.ts) for working examples

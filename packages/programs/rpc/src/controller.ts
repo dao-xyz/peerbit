@@ -180,7 +180,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 							const serializedResponse = serialize(response);
 
 							// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
-							// with pubsub with a certain reciever. If we use (this.identity) we are going to use an identity
+							// with pubsub with a certain receiver. If we use (this.identity) we are going to use an identity
 							// that is now known in the .pubsub network, hence the message might not be delivired if we
 							// send with { to: [RECIEVER] } param
 
@@ -360,7 +360,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		options?: RPCOptions<R>
 	): Promise<RPCResponse<R>[]> {
 		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
-		// this allows us to easily disregard a bunch of message just beacuse they are for a different reciever!
+		// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
 		const keypair = await X25519Keypair.create();
 
 		// send query and wait for replies in a generator like behaviour

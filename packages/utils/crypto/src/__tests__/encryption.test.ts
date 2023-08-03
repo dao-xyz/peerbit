@@ -18,39 +18,39 @@ describe("encryption", function () {
 	};
 	it("encrypt", async () => {
 		const senderKey = await X25519Keypair.create();
-		const recieverKey1 = await X25519Keypair.create();
-		const recieverKey2 = await X25519Keypair.create();
+		const receiverKey1 = await X25519Keypair.create();
+		const receiverKey2 = await X25519Keypair.create();
 
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
 			data,
 		});
 
-		const reciever1Config = keychain(recieverKey1);
-		const reciever2Config = keychain(recieverKey2);
+		const receiver1Config = keychain(receiverKey1);
+		const receiver2Config = keychain(receiverKey2);
 
 		const encrypted = await decrypted.encrypt(
 			senderKey,
-			recieverKey1.publicKey,
-			recieverKey2.publicKey
+			receiverKey1.publicKey,
+			receiverKey2.publicKey
 		);
 		encrypted._decrypted = undefined;
 
-		const decryptedFromEncrypted1 = await encrypted.decrypt(reciever1Config);
+		const decryptedFromEncrypted1 = await encrypted.decrypt(receiver1Config);
 		expect(decryptedFromEncrypted1._data).toStrictEqual(data);
 
-		const decryptedFromEncrypted2 = await encrypted.decrypt(reciever2Config);
+		const decryptedFromEncrypted2 = await encrypted.decrypt(receiver2Config);
 		expect(decryptedFromEncrypted2._data).toStrictEqual(data);
 	});
 
 	// TODO feat
 	/* it("it can use ed25519 for encryption", async () => {
 		const senderKey = await Ed25519Keypair.create();
-		const recieverKey1 = await Ed25519Keypair.create();
-		const recieverKey2 = await Ed25519Keypair.create();
+		const receiverKey1 = await Ed25519Keypair.create();
+		const receiverKey2 = await Ed25519Keypair.create();
 	
-		const reciever1Config = config(recieverKey1);
-		const reciever2Config = config(recieverKey2);
+		const receiver1Config = config(receiverKey1);
+		const receiver2Config = config(receiverKey2);
 	
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
@@ -59,18 +59,18 @@ describe("encryption", function () {
 	
 		const encrypted = await decrypted.encrypt(
 			senderKey,
-			recieverKey1.publicKey,
-			recieverKey2.publicKey
+			receiverKey1.publicKey,
+			receiverKey2.publicKey
 		);
 		encrypted._decrypted = undefined;
 	
 		const decryptedFromEncrypted1 = await encrypted.decrypt(
-			reciever1Config.getAnyKeypair
+			receiver1Config.getAnyKeypair
 		);
 		expect(decryptedFromEncrypted1._data).toStrictEqual(data);
 	
 		const decryptedFromEncrypted2 = await encrypted.decrypt(
-			reciever2Config.getAnyKeypair
+			receiver2Config.getAnyKeypair
 		);
 		expect(decryptedFromEncrypted2._data).toStrictEqual(data);
 	}); */

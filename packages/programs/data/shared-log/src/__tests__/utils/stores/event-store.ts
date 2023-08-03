@@ -73,7 +73,7 @@ export class EventStore<T> extends Program<Args<T>> {
 		data: T,
 		options?: {
 			pin?: boolean;
-			reciever?: EncryptionTemplateMaybeEncrypted;
+			receiver?: EncryptionTemplateMaybeEncrypted;
 			meta?: {
 				next?: Entry<any>[];
 			};

@@ -44,7 +44,7 @@ describe("encryption", () => {
 			await store.log.append(new Uint8Array([1]), {
 				encryption: {
 					keypair: await X25519Keypair.create(),
-					reciever: {
+					receiver: {
 						// Who can read the log entry metadata (e.g. timestamps)
 						meta: [
 							client.identity.publicKey,
@@ -103,7 +103,7 @@ describe("encryption", () => {
 			await store.log.append(new Uint8Array([1]), {
 				encryption: {
 					keypair: await X25519Keypair.create(),
-					reciever: {
+					receiver: {
 						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
 						payload: [await X25519PublicKey.create()],
@@ -126,7 +126,7 @@ describe("encryption", () => {
 			await store.log.append(new Uint8Array([1]), {
 				encryption: {
 					keypair: await X25519Keypair.create(),
-					reciever: {
+					receiver: {
 						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
 						payload: [await X25519PublicKey.create()],

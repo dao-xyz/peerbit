@@ -8,7 +8,7 @@ export const NO_ENCODING: Encoding<any> = {
 	encoder: (obj: Uint8Array) => {
 		if (obj instanceof Uint8Array === false) {
 			throw new Error(
-				"With NO_ENCODING only Uint8arrays are allowed, recieved: " +
+				"With NO_ENCODING only Uint8arrays are allowed, received: " +
 					(typeof obj === "object" ? obj.constructor.name : typeof obj)
 			);
 		}

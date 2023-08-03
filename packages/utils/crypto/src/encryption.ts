@@ -71,15 +71,15 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
 	async encrypt(
 		x25519Keypair: X25519Keypair,
-		...recieverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
+		...receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
 	): Promise<EncryptedThing<T>> {
 		const bytes = serialize(this);
 		const epheremalKey = sodium.crypto_secretbox_keygen();
 		const nonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
 		const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
-		const recieverX25519PublicKeys = await Promise.all(
-			recieverPublicKeys.map((key) => {
+		const receiverX25519PublicKeys = await Promise.all(
+			receiverPublicKeys.map((key) => {
 				if (key instanceof Ed25519PublicKey) {
 					return X25519PublicKey.from(key);
 				}
@@ -87,19 +87,19 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 			})
 		);
 
-		const ks = recieverX25519PublicKeys.map((recieverPublicKey) => {
+		const ks = receiverX25519PublicKeys.map((receiverPublicKey) => {
 			const kNonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
 			return new K({
 				encryptedKey: new CipherWithNonce({
 					cipher: sodium.crypto_box_easy(
 						epheremalKey,
 						kNonce,
-						recieverPublicKey.publicKey,
+						receiverPublicKey.publicKey,
 						x25519Keypair.secretKey.secretKey
 					),
 					nonce: kNonce,
 				}),
-				recieverPublicKey,
+				receiverPublicKey,
 			});
 		});
 
@@ -172,15 +172,15 @@ export class K {
 	_encryptedKey: CipherWithNonce;
 
 	@field({ type: X25519PublicKey })
-	_recieverPublicKey: X25519PublicKey;
+	_receiverPublicKey: X25519PublicKey;
 
 	constructor(props?: {
 		encryptedKey: CipherWithNonce;
-		recieverPublicKey: X25519PublicKey;
+		receiverPublicKey: X25519PublicKey;
 	}) {
 		if (props) {
 			this._encryptedKey = props.encryptedKey;
-			this._recieverPublicKey = props.recieverPublicKey;
+			this._receiverPublicKey = props.receiverPublicKey;
 		}
 	}
 
@@ -188,7 +188,7 @@ export class K {
 		if (other instanceof K) {
 			return (
 				this._encryptedKey.equals(other._encryptedKey) &&
-				this._recieverPublicKey.equals(other._recieverPublicKey)
+				this._receiverPublicKey.equals(other._receiverPublicKey)
 			);
 		} else {
 			return false;
@@ -281,7 +281,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 		let key: { index: number; keypair: X25519Keypair } | undefined;
 		if (keyResolver instanceof X25519Keypair) {
 			for (const [i, k] of this._envelope._ks.entries()) {
-				if (k._recieverPublicKey.equals(keyResolver.publicKey)) {
+				if (k._receiverPublicKey.equals(keyResolver.publicKey)) {
 					key = {
 						index: i,
 						keypair: keyResolver,
@@ -290,7 +290,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 			}
 		} else {
 			for (const [i, k] of this._envelope._ks.entries()) {
-				const exported = await keyResolver.exportByKey(k._recieverPublicKey);
+				const exported = await keyResolver.exportByKey(k._receiverPublicKey);
 				if (exported) {
 					key = {
 						index: i,

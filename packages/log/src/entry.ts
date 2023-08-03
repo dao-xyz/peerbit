@@ -56,7 +56,7 @@ export type EncryptionTemplateMaybeEncrypted = EntryEncryptionTemplate<
 	MaybeEncryptionPublicKey | { [key: string]: MaybeEncryptionPublicKey } // signature either all signature encrypted by same key, or each individually
 >;
 export interface EntryEncryption {
-	reciever: EncryptionTemplateMaybeEncrypted;
+	receiver: EncryptionTemplateMaybeEncrypted;
 	keypair: X25519Keypair;
 }
 
@@ -188,21 +188,21 @@ export class Signatures {
 const maybeEncrypt = <Q>(
 	thing: Q,
 	keypair?: X25519Keypair,
-	reciever?: MaybeEncryptionPublicKey
+	receiver?: MaybeEncryptionPublicKey
 ): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
-	const recievers = reciever
-		? Array.isArray(reciever)
-			? reciever
-			: [reciever]
+	const receivers = receiver
+		? Array.isArray(receiver)
+			? receiver
+			: [receiver]
 		: undefined;
-	if (recievers?.length && recievers?.length > 0) {
+	if (receivers?.length && receivers?.length > 0) {
 		if (!keypair) {
 			throw new Error("Keypair not provided");
 		}
 		return new DecryptedThing<Q>({
 			data: serialize(thing),
 			value: thing,
-		}).encrypt(keypair, ...recievers);
+		}).encrypt(keypair, ...receivers);
 	}
 	return new DecryptedThing<Q>({
 		data: serialize(thing),
@@ -237,7 +237,7 @@ export class Entry<T>
 	@field({ type: option(Signatures) })
 	_signatures?: Signatures;
 
-	@field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to recieve the hash, which we later set
+	@field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to receive the hash, which we later set
 	hash: string; // "zd...Foo", we'll set the hash after persisting the entry
 
 	createdLocally?: boolean;
@@ -498,11 +498,11 @@ export class Entry<T>
 			}
 
 			if (
-				properties.encryption?.reciever.signatures &&
-				properties.encryption?.reciever.meta
+				properties.encryption?.receiver.signatures &&
+				properties.encryption?.receiver.meta
 			) {
 				throw new Error(
-					"Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the reciever (encryption target) for the clock"
+					"Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the receiver (encryption target) for the clock"
 				);
 			}
 			clock = new Clock({
@@ -527,7 +527,7 @@ export class Entry<T>
 		const payload = await maybeEncrypt(
 			payloadToSave,
 			properties.encryption?.keypair,
-			properties.encryption?.reciever.payload
+			properties.encryption?.receiver.payload
 		);
 
 		const nextHashes: string[] = [];
@@ -569,7 +569,7 @@ export class Entry<T>
 				next: nextHashes,
 			}),
 			properties.encryption?.keypair,
-			properties.encryption?.reciever.meta
+			properties.encryption?.receiver.meta
 		);
 
 		// Sign id, encrypted payload, clock, nexts, refs
@@ -591,13 +591,13 @@ export class Entry<T>
 
 		const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
 		const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(
-			properties.encryption?.reciever?.signatures
+			properties.encryption?.receiver?.signatures
 		);
 
 		for (const signature of signatures) {
 			const encryptionRecievers = encryptAllSignaturesWithSameKey
-				? properties.encryption?.reciever?.signatures
-				: properties.encryption?.reciever?.signatures?.[
+				? properties.encryption?.receiver?.signatures
+				: properties.encryption?.receiver?.signatures?.[
 						signature.publicKey.hashcode()
 				  ];
 			const signatureEncrypted = await maybeEncrypt(

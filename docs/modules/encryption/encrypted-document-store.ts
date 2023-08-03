@@ -55,7 +55,7 @@ const message = new Message("Hello world!");
 await store.messages.put(message, {
 	encryption: {
 		keypair: await X25519Keypair.create(),
-		reciever: {
+		receiver: {
 			// Who can read the log entry metadata (e.g. timestamps), next pointers, and more location information
 			meta: [
 				client.identity.publicKey,

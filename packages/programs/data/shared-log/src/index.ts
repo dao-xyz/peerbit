@@ -373,7 +373,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		try {
 			if (msg instanceof ExchangeHeadsMessage) {
 				/**
-				 * I have recieved heads from someone else.
+				 * I have received heads from someone else.
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
 
@@ -799,7 +799,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					currentPeer !== this.node.identity.publicKey.hashcode()
 				) {
 					storeChanged = true;
-					// second condition means that if the new peer is us, we should not do anything, since we are expecting to recieve heads, not send
+					// second condition means that if the new peer is us, we should not do anything, since we are expecting to receive heads, not send
 					newPeers.push(currentPeer);
 
 					// send heads to the new peer
@@ -859,7 +859,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				this._gidParentCache
 			);
 
-			// TODO perhaps send less messages to more recievers for performance reasons?
+			// TODO perhaps send less messages to more receivers for performance reasons?
 			await this.rpc.send(message, {
 				to: newPeers,
 				strict: true,

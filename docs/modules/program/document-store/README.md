@@ -63,7 +63,7 @@ There are many different kinds of filter you can apply
 
 ## Sorting 
 
-You can apply one or more sort criterias. This will be evaluated in order, if there is a tie-break for the first criteria, the next will be evaluated 
+You can apply one or more sort criteria. This will be evaluated in order, if there is a tie-break for the first criteria, the next will be evaluated 
 
 
 [sort-detailed](./document-store.ts ':include :fragment=sort-detailed')
@@ -71,7 +71,7 @@ You can apply one or more sort criterias. This will be evaluated in order, if th
 
 ## Iterator
 
-The iterator is a recommmended way of collecting and iterating over documents as this provides the finest amount of control on how and when to fetch more documents from peers. The difference between search and iterate, is that the search api creates an iterator under the hood and performs ```iterator.next()``` and tries to collect as many documents as possible, while an iterator allow you to call next yourself.
+The iterator is a recommend way of collecting and iterating over documents as this provides the finest amount of control on how and when to fetch more documents from peers. The difference between search and iterate, is that the search api creates an iterator under the hood and performs ```iterator.next()``` and tries to collect as many documents as possible, while an iterator allow you to call next yourself.
 
 [iterator-detailed](./document-store.ts ':include :fragment=iterator-detailed')
 

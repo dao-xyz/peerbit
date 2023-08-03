@@ -21,13 +21,13 @@ const createMetrics = (stream: DirectStream) => {
 	const s: {
 		stream: TestDirectStream;
 		messages: Message[];
-		recieved: DataMessage[];
+		received: DataMessage[];
 		reachable: PublicSignKey[];
 		unrechable: PublicSignKey[];
 		seen: Map<string, number>;
 	} = {
 		messages: [],
-		recieved: [],
+		received: [],
 		reachable: [],
 		unrechable: [],
 		seen: new Map(),
@@ -37,7 +37,7 @@ const createMetrics = (stream: DirectStream) => {
 		s.messages.push(msg.detail);
 	});
 	s.stream.addEventListener("data", (msg) => {
-		s.recieved.push(msg.detail);
+		s.received.push(msg.detail);
 	});
 	s.stream.addEventListener("peer:reachable", (msg) => {
 		s.reachable.push(msg.detail);
@@ -238,7 +238,7 @@ describe("streams", function () {
 					const small = crypto.randomBytes(1e3); // 1kb
 					metrics[0].stream.publish(small);
 				}
-				await waitFor(() => metrics[2].recieved.length === iterations, {
+				await waitFor(() => metrics[2].received.length === iterations, {
 					delayInterval: 300,
 					timeout: 30 * 1000,
 				});
@@ -246,13 +246,13 @@ describe("streams", function () {
 
 			it("1->unknown", async () => {
 				await metrics[0].stream.publish(data);
-				await waitFor(() => metrics[1].recieved.length === 1);
-				expect(new Uint8Array(metrics[1].recieved[0].data)).toEqual(data);
-				await waitFor(() => metrics[2].recieved.length === 1);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				await waitFor(() => metrics[1].received.length === 1);
+				expect(new Uint8Array(metrics[1].received[0].data)).toEqual(data);
+				await waitFor(() => metrics[2].received.length === 1);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
-				expect(metrics[1].recieved).toHaveLength(1);
-				expect(metrics[2].recieved).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(1);
+				expect(metrics[2].received).toHaveLength(1);
 			});
 
 			it("1->2", async () => {
@@ -263,12 +263,12 @@ describe("streams", function () {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[1].stream.components.peerId],
 				});
-				await waitFor(() => metrics[1].recieved.length === 1);
-				let recievedMessage = metrics[1].recieved[0];
-				expect(new Uint8Array(recievedMessage.data)).toEqual(data);
+				await waitFor(() => metrics[1].received.length === 1);
+				let receivedMessage = metrics[1].received[0];
+				expect(new Uint8Array(receivedMessage.data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
-				expect(metrics[1].recieved).toHaveLength(1);
-				expect(metrics[2].recieved).toHaveLength(0);
+				expect(metrics[1].received).toHaveLength(1);
+				expect(metrics[2].received).toHaveLength(0);
 
 				// Never seen a message twice
 				expect(
@@ -287,12 +287,12 @@ describe("streams", function () {
 					to: [metrics[2].stream.components.peerId],
 				});
 				await waitForResolved(() =>
-					expect(metrics[2].recieved).toHaveLength(1)
+					expect(metrics[2].received).toHaveLength(1)
 				);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
-				expect(metrics[2].recieved).toHaveLength(1);
-				expect(metrics[1].recieved).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(0);
 			});
 
 			it("1->3 10mb data", async () => {
@@ -302,14 +302,14 @@ describe("streams", function () {
 				});
 
 				await waitForResolved(() =>
-					expect(metrics[2].recieved).toHaveLength(1)
+					expect(metrics[2].received).toHaveLength(1)
 				);
 
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toHaveLength(
+				expect(new Uint8Array(metrics[2].received[0].data)).toHaveLength(
 					bigData.length
 				);
-				expect(metrics[2].recieved).toHaveLength(1);
-				expect(metrics[1].recieved).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(0);
 			});
 
 			it("1->3 still works even if routing is missing", async () => {
@@ -319,12 +319,12 @@ describe("streams", function () {
 					to: [metrics[2].stream.components.peerId],
 				});
 				await waitForResolved(() =>
-					expect(metrics[2].recieved).toHaveLength(1)
+					expect(metrics[2].received).toHaveLength(1)
 				);
-				expect(new Uint8Array(metrics[2].recieved[0].data)).toEqual(data);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
-				expect(metrics[2].recieved).toHaveLength(1);
-				expect(metrics[1].recieved).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
+				expect(metrics[1].received).toHaveLength(0);
 			});
 
 			it("publishes on direct stream, even path is longer", async () => {
@@ -345,7 +345,7 @@ describe("streams", function () {
 				});
 				metrics[1].messages = [];
 				await waitForResolved(() =>
-					expect(metrics[2].recieved).toHaveLength(1)
+					expect(metrics[2].received).toHaveLength(1)
 				);
 
 				expect(
@@ -405,7 +405,7 @@ describe("streams", function () {
 					).toHaveLength(1)
 				); // will send through peer [1] since path [0] -> [2] -> [3] directly is currently longer
 				await waitForResolved(() =>
-					expect(metrics[3].recieved).toHaveLength(1)
+					expect(metrics[3].received).toHaveLength(1)
 				);
 
 				metrics[1].messages = [];
@@ -430,12 +430,12 @@ describe("streams", function () {
 				await metrics[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [metrics[3].stream.components.peerId],
 				});
-				await waitFor(() => metrics[3].recieved.length === 1);
+				await waitFor(() => metrics[3].received.length === 1);
 				const messages = metrics[1].messages.filter(
 					(x) => x instanceof DataMessage
 				);
 				expect(messages).toHaveLength(0); // no new messages for peer 1, because sending 0 -> 2 -> 3 directly is now faster
-				expect(metrics[1].recieved).toHaveLength(0);
+				expect(metrics[1].received).toHaveLength(0);
 			});
 		});
 
@@ -512,7 +512,7 @@ describe("streams", function () {
 						metrics[1].stream.publishMessage(session.peers[0].peerId, msg, [
 							metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!,
 						])
-					).rejects.toThrowError("Message did not have any valid recievers");
+					).rejects.toThrowError("Message did not have any valid receivers");
 				});
 				it("rejects when only to is from", async () => {
 					const msg = new DataMessage({
@@ -540,7 +540,7 @@ describe("streams", function () {
 					await msg.sign(metrics[1].stream.sign);
 					await metrics[0].stream.publishMessage(session.peers[0].peerId, msg);
 					await waitForResolved(() =>
-						expect(metrics[2].recieved).toHaveLength(1)
+						expect(metrics[2].received).toHaveLength(1)
 					);
 				});
 			});
@@ -630,13 +630,13 @@ describe("streams", function () {
 						],
 					});
 					await waitForResolved(() =>
-						expect(metrics[3].recieved).toHaveLength(1)
+						expect(metrics[3].received).toHaveLength(1)
 					);
 					await waitForResolved(() =>
-						expect(metrics[4].recieved).toHaveLength(1)
+						expect(metrics[4].received).toHaveLength(1)
 					);
 
-					const id1 = await getMsgId(serialize(metrics[3].recieved[0]));
+					const id1 = await getMsgId(serialize(metrics[3].received[0]));
 
 					await delay(3000); // Wait some extra time if additional messages are propagating through
 
@@ -732,14 +732,14 @@ describe("streams", function () {
 					return dialFn(a, b);
 				};
 
-				metrics[3].recieved = [];
+				metrics[3].received = [];
 				expect(metrics[0].stream.peers.size).toEqual(1);
 
 				await metrics[0].stream.publish(data, {
 					to: [metrics[3].stream.components.peerId],
 				});
 
-				await waitFor(() => metrics[3].recieved.length === 1);
+				await waitFor(() => metrics[3].received.length === 1);
 				expect(
 					metrics[3].messages.find((x) => x instanceof DataMessage)
 				).toBeDefined();
@@ -757,7 +757,7 @@ describe("streams", function () {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[3].stream.components.peerId],
 				});
-				await waitFor(() => metrics[3].recieved.length === 2);
+				await waitFor(() => metrics[3].received.length === 2);
 				expect(dials).toEqual(1);
 				expect(metrics[0].stream.peers.size).toEqual(2);
 				expect(
@@ -778,14 +778,14 @@ describe("streams", function () {
 					throw new Error("Mock Error");
 				};
 
-				metrics[3].recieved = [];
+				metrics[3].received = [];
 				expect(metrics[0].stream.peers.size).toEqual(1);
 
 				await metrics[0].stream.publish(data, {
 					to: [metrics[3].stream.components.peerId],
 				});
 
-				await waitFor(() => metrics[3].recieved.length === 1);
+				await waitFor(() => metrics[3].received.length === 1);
 				expect(
 					metrics[3].messages.find((x) => x instanceof DataMessage)
 				).toBeDefined();
@@ -802,7 +802,7 @@ describe("streams", function () {
 				let t1 = +new Date();
 				expect(dials).toHaveLength(expectedDialsCount); // No change, because TTL > autoDialRetryTimeout
 
-				await waitFor(() => metrics[3].recieved.length === 2);
+				await waitFor(() => metrics[3].received.length === 2);
 				await waitFor(() => +new Date() - t1 > autoDialRetryDelay);
 
 				// Try again, now expect another dial call, since the retry interval has been reached
@@ -851,7 +851,7 @@ describe("streams", function () {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[3].stream.components.peerId],
 				});
-				await waitFor(() => metrics[3].recieved.length === 1);
+				await waitFor(() => metrics[3].received.length === 1);
 			});
 		});
 
@@ -989,19 +989,19 @@ describe("streams", function () {
 			});
 
 			it("will publish on routes", async () => {
-				metrics[2].recieved = [];
-				metrics[3].recieved = [];
+				metrics[2].received = [];
+				metrics[3].received = [];
 
 				await metrics[0].stream.publish(data, {
 					to: [metrics[2].stream.components.peerId],
 				});
-				await waitFor(() => metrics[2].recieved.length === 1);
+				await waitFor(() => metrics[2].received.length === 1);
 				expect(
 					metrics[2].messages.find((x) => x instanceof DataMessage)
 				).toBeDefined();
 
 				await delay(1000); // some delay to allow all messages to progagate
-				expect(metrics[3].recieved).toHaveLength(0);
+				expect(metrics[3].received).toHaveLength(0);
 				expect(
 					metrics[3].messages.find((x) => x instanceof DataMessage)
 				).toBeUndefined();

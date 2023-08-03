@@ -274,10 +274,10 @@ describe("index", () => {
 		});
 
 		it("requestSubsribers", async () => {
-			let recievedMessages: (GetSubscribers | undefined)[] = [];
+			let receivedMessages: (GetSubscribers | undefined)[] = [];
 			await client2.services.pubsub.addEventListener("message", (message) => {
 				if (message.detail instanceof DataMessage) {
-					recievedMessages.push(
+					receivedMessages.push(
 						deserialize(message.detail.data, GetSubscribers)
 					);
 				}
@@ -287,8 +287,8 @@ describe("index", () => {
 				client2.identity.publicKey
 			);
 
-			await waitForResolved(() => expect(recievedMessages).toHaveLength(1));
-			expect(recievedMessages[0]).toBeInstanceOf(GetSubscribers);
+			await waitForResolved(() => expect(receivedMessages).toHaveLength(1));
+			expect(receivedMessages[0]).toBeInstanceOf(GetSubscribers);
 		});
 
 		it("emitSelf", () => {

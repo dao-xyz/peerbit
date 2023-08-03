@@ -6,4 +6,4 @@ You can include any external program into your program by adding it to you class
 
 [composition](./composition.ts ':include')
 
-Here are a few exmaples of programs that you can compose your program with: [Document store](./packages/programs/data/document), [Clock service](./packages/programs/clock-service), [Chain agnostic access controller](./packages/programs/acl/identity-access-controller) 
+Here are a few examples of programs that you can compose your program with: [Document store](./packages/programs/data/document), [Clock service](./packages/programs/clock-service), [Chain agnostic access controller](./packages/programs/acl/identity-access-controller) 

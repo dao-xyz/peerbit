@@ -65,7 +65,7 @@ export const queryAll = <Q, R>(
 		}
 		if (missingReponses) {
 			throw new MissingResponsesError(
-				"Did not recieve responses from all shards"
+				"Did not receive responses from all shards"
 			);
 		}
 	};

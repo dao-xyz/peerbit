@@ -131,7 +131,7 @@ export abstract class Node {
 	}
 }
 
-// say hello to sometone, they say hello back and we recieve the way wwe can send messages to them
+// say hello to sometone, they say hello back and we receive the way wwe can send messages to them
 
 export class MessageNode extends Node {
 	constructor(

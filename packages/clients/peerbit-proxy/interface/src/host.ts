@@ -290,7 +290,7 @@ export class PeerbitProxyHost implements ProgramClient {
 								message.type,
 								serialize(e.detail)
 							);
-							request.messageId = message.emitMessageId; // Same message id so that reciever can subscribe to all events emitted from this listener
+							request.messageId = message.emitMessageId; // Same message id so that receiver can subscribe to all events emitted from this listener
 							await this.messages.send(serialize(request), from.id);
 						},
 					};

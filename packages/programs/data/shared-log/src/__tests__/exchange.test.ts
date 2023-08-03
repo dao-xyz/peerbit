@@ -14,7 +14,7 @@ describe("exchange", () => {
 		await session.stop();
 	});
 
-	it("all subscribers will recieve heads", async () => {
+	it("all subscribers will receive heads", async () => {
 		let stores: EventStore<string>[] = [];
 		const s = new EventStore<string>();
 		const createStore = () => deserialize(serialize(s), EventStore);

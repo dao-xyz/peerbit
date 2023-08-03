@@ -165,7 +165,7 @@ export class Libp2pKeychain implements Keychain {
 		// import as ed
 		await this.keychain.importPeer(base58btc.encode(id), receiverKeyPeerId);
 
-		// import as x so we can decrypt messages with this public key (if recieved any)
+		// import as x so we can decrypt messages with this public key (if received any)
 		const xKeypair = await X25519Keypair.from(keypair);
 		this.cacheKey(xKeypair);
 		await this.keychain.importPeer(

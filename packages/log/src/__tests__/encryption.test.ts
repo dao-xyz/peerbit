@@ -50,17 +50,17 @@ describe("encryption", function () {
 
 	describe("join", () => {
 		let log1: Log<string>, log2: Log<string>;
-		let recieverKey: X25519Keypair;
+		let receiverKey: X25519Keypair;
 
 		beforeEach(async () => {
 			store = new MemoryLevelBlockStore();
 			await store.start();
 
 			const senderKey = await X25519Keypair.create();
-			recieverKey = await X25519Keypair.create();
+			receiverKey = await X25519Keypair.create();
 			const logOptions = {
 				encoding: JSON_ENCODING,
-				keychain: createKeychain([signKey, senderKey, recieverKey]),
+				keychain: createKeychain([signKey, senderKey, receiverKey]),
 			};
 
 			log1 = new Log();
@@ -69,7 +69,7 @@ describe("encryption", function () {
 			await log2.open(store, signKey2, logOptions);
 		});
 
-		it("can encrypt signatures with particular reciever", async () => {
+		it("can encrypt signatures with particular receiver", async () => {
 			// dummy signer
 			const extraSigner = await Ed25519Keypair.create();
 			const extraSigner2 = await Ed25519Keypair.create();
@@ -77,19 +77,19 @@ describe("encryption", function () {
 			await log2.append("helloA1", {
 				encryption: {
 					keypair: await X25519Keypair.create(),
-					reciever: {
+					receiver: {
 						meta: undefined,
 						signatures: {
-							[await log2.identity.publicKey.hashcode()]: recieverKey.publicKey, // reciever 1
+							[await log2.identity.publicKey.hashcode()]: receiverKey.publicKey, // receiver 1
 							[await extraSigner.publicKey.hashcode()]: [
-								recieverKey.publicKey,
+								receiverKey.publicKey,
 								(await X25519Keypair.create()).publicKey,
-							], // reciever 1 again and 1 unknown reciever
+							], // receiver 1 again and 1 unknown receiver
 							[await extraSigner2.publicKey.hashcode()]: (
 								await X25519Keypair.create()
-							).publicKey, // unknown reciever
+							).publicKey, // unknown receiver
 						},
-						payload: recieverKey.publicKey,
+						payload: receiverKey.publicKey,
 					},
 				},
 				signers: [
@@ -122,20 +122,20 @@ describe("encryption", function () {
 			await log1.append("helloA1", {
 				encryption: {
 					keypair: await X25519Keypair.create(),
-					reciever: {
+					receiver: {
 						meta: undefined,
-						signatures: recieverKey.publicKey,
-						payload: recieverKey.publicKey,
+						signatures: receiverKey.publicKey,
+						payload: receiverKey.publicKey,
 					},
 				},
 			});
 			await log1.append("helloA2", {
 				encryption: {
 					keypair: await X25519Keypair.create(),
-					reciever: {
+					receiver: {
 						meta: undefined,
-						signatures: recieverKey.publicKey,
-						payload: recieverKey.publicKey,
+						signatures: receiverKey.publicKey,
+						payload: receiverKey.publicKey,
 					},
 				},
 			});
@@ -143,10 +143,10 @@ describe("encryption", function () {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 
-					reciever: {
+					receiver: {
 						meta: undefined,
-						signatures: recieverKey.publicKey,
-						payload: recieverKey.publicKey,
+						signatures: receiverKey.publicKey,
+						payload: receiverKey.publicKey,
 					},
 				},
 			});
@@ -154,10 +154,10 @@ describe("encryption", function () {
 				encryption: {
 					keypair: await X25519Keypair.create(),
 
-					reciever: {
+					receiver: {
 						meta: undefined,
-						signatures: recieverKey.publicKey,
-						payload: recieverKey.publicKey,
+						signatures: receiverKey.publicKey,
+						payload: receiverKey.publicKey,
 					},
 				},
 			});
@@ -212,7 +212,7 @@ describe("encryption", function () {
 			await log.append("helloA1", {
 				encryption: {
 					keypair: encryptioKey,
-					reciever: {
+					receiver: {
 						meta: encryptioKey.publicKey,
 						signatures: encryptioKey.publicKey,
 						payload: encryptioKey.publicKey,

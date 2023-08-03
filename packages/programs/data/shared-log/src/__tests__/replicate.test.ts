@@ -174,7 +174,7 @@ describe(`exchange`, function () {
 			await waitFor(() => db2.log.log.length === entryCount);
 		} catch (error) {
 			console.error(
-				"Did not recieve all entries, missing: " +
+				"Did not receive all entries, missing: " +
 					(db2.log.log.length - entryCount),
 				"Fetch events: " +
 					fetchEvents +

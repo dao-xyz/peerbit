@@ -37,7 +37,7 @@ const payload = new Uint8Array([1, 2, 3]);
 await store.log.append(payload, {
 	encryption: {
 		keypair: await X25519Keypair.create(),
-		reciever: {
+		receiver: {
 			// Who can read the log entry metadata (e.g. timestamps), next pointers, and more location information
 			meta: [
 				client.identity.publicKey,
