@@ -12,7 +12,7 @@ The main reasons are outlined below:
 
 - Deterministic behavior is important. With a fixed-order encoding, you can be sure that encoding messages will yield the same output every time. In contrast to JSON, where fields can be serialized in any order.
 
-- Versioning. With Borsh, it is easy to provide data distriminators (version info) that makes migrations easy and reliable.
+- Versioning. With Borsh, it is easy to provide data discriminators (version info) that makes migrations easy and reliable.
 
 
 Below is an example how one would encode a "Post" object with Borsh encoding. 

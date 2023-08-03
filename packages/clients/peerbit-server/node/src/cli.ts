@@ -112,7 +112,7 @@ export const cli = async (args?: string[]) => {
 							type: "string",
 						},
 						email: {
-							describe: "Email for Lets encrypt autorenewal messages",
+							describe: "Email for Lets encrypt auto-renewal messages",
 							type: "string",
 							demandOption: true,
 						},
@@ -263,7 +263,7 @@ export const cli = async (args?: string[]) => {
 				})
 				.command({
 					command: "list",
-					describe: "List all runniing programs",
+					describe: "List all running programs",
 					aliases: "ls",
 					handler: async (args) => {
 						const c = await client();

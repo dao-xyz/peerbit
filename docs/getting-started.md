@@ -2,7 +2,7 @@
 
 
 ## New project
-A cloneable boilerplate project can be found [here](https://github.com/dao-xyz/peerbit-getting-started). 
+A clone-able boilerplate project can be found [here](https://github.com/dao-xyz/peerbit-getting-started). 
 
 ## Existing project
 
@@ -26,7 +26,7 @@ npm install @peerbit/document
 ### Inserting the first document
 [insert](./examples/document-store.ts ':include :type=code :fragment=insert')
 
-### Seaching for the document from another peer
+### Searching for the document from another peer
 [another-client](./examples/document-store.ts ':include :type=code :fragment=another-client')
 
 Read more about the Document store [here](./modules/program/document-store.md).
