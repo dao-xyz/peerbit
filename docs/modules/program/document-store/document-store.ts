@@ -97,7 +97,7 @@ class Channel extends Program<ChannelArgs> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			canAppend: () => true,
+			canWrite: () => true,
 			role: properties?.role,
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
@@ -120,7 +120,7 @@ class Channel extends Program<ChannelArgs> {
 
 		await this.reactions.open({
 			type: Reaction,
-			canAppend: () => true,
+			canWrite: () => true,
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
 				key: REACTION_ID_PROPERTY,

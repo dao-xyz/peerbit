@@ -3,7 +3,7 @@ import { AppendOptions, CanAppend, Change, Entry } from "@peerbit/log";
 import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
 import { SignatureWithKey } from "@peerbit/crypto";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { RPCOptions, CanRead, RPC } from "@peerbit/rpc";
+import { RPCOptions, CanRequest, RPC } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
@@ -43,8 +43,8 @@ export interface StringEvents {
 }
 
 type Args = {
-	canRead?: CanRead;
-	canAppend?: CanAppend<StringOperation>;
+	canRead?: CanRequest;
+	canWrite?: CanAppend<StringOperation>;
 	log?: SharedLogOptions;
 };
 
@@ -72,7 +72,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	}
 
 	async open(options?: Args) {
-		this._optionCanAppend = options?.canAppend;
+		this._optionCanAppend = options?.canWrite;
 		await this._index.open(this._log.log);
 
 		await this._log.open({
@@ -80,7 +80,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			replicas: {
 				min: 0xffffffff, // assume a document can not be sharded?
 			},
-			canAppend: this.canAppend.bind(this),
+			canAppend: this.canWrite.bind(this),
 			onChange: async (change) => {
 				await this._index.updateIndex(change);
 				this.events.dispatchEvent(
@@ -94,14 +94,14 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		await this.query.open({
 			...options,
 			topic: this._log.log.idString + "/" + "dstring",
-			canRead: options?.canRead,
+			canRequest: options?.canRead,
 			responseHandler: this.queryHandler.bind(this),
 			queryType: StringQueryRequest,
 			responseType: StringResult,
 		});
 	}
 
-	async canAppend(entry: Entry<StringOperation>): Promise<boolean> {
+	async canWrite(entry: Entry<StringOperation>): Promise<boolean> {
 		if (!(await this._canAppend(entry))) {
 			return false;
 		}

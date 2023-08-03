@@ -21,7 +21,7 @@ import {
 	AbstractRelation,
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
-import { CanRead } from "@peerbit/rpc";
+import { CanRequest } from "@peerbit/rpc";
 import { sha256Base64Sync } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface-peer-id";
 
@@ -79,7 +79,7 @@ const canAppendByRelation = async (
 	}
 };
 
-type IdentityGraphArgs = { canRead?: CanRead; role?: Role };
+type IdentityGraphArgs = { canRead?: CanRequest; role?: Role };
 @variant("relations")
 export class IdentityGraph extends Program<IdentityGraphArgs> {
 	@field({ type: Documents })
@@ -103,7 +103,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 	async open(options?: IdentityGraphArgs) {
 		await this.relationGraph.open({
 			type: IdentityRelation,
-			canAppend: this.canAppend.bind(this),
+			canWrite: this.canAppend.bind(this),
 			canRead: options?.canRead,
 			index: {
 				fields: (obj, _entry) => {
@@ -154,7 +154,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	async open(options?: TrustedNetworkArgs) {
 		await this.trustGraph.open({
 			type: IdentityRelation,
-			canAppend: this.canAppend.bind(this),
+			canWrite: this.canAppend.bind(this),
 			canRead: this.canRead.bind(this),
 			role: options?.role,
 			index: {

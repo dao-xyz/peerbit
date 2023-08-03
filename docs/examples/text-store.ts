@@ -7,6 +7,7 @@ import { Entry } from "@peerbit/log";
 
 @variant("collaborative_text") // You have to give the program a unique name
 class CollaborativeText extends Program {
+
 	@field({ type: DString })
 	string: DString; // distributed string
 
@@ -17,7 +18,7 @@ class CollaborativeText extends Program {
 
 	async open() {
 		await this.string.open({
-			canAppend: this.canAppend,
+			canWrite: this.canAppend,
 			canRead: this.canRead,
 		});
 	}

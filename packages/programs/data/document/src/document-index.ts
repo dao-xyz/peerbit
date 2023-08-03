@@ -26,7 +26,7 @@ import {
 	CloseIteratorRequest,
 } from "./query.js";
 import {
-	CanRead,
+	CanRequest,
 	RPC,
 	RPCOptions,
 	RPCResponse,
@@ -261,7 +261,7 @@ const DEFAULT_REPLICATOR_MIN_AGE = 10 * 1000; // how long, until we consider a p
 export type OpenOptions<T> = {
 	type: AbstractType<T>;
 	log: SharedLog<Operation<T>>;
-	canRead: CanRead;
+	canRead: CanRequest;
 	fields: Indexable<T>;
 	sync: (result: Results<T>) => Promise<void>;
 	indexBy?: string | string[];
@@ -330,7 +330,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 		await this._query.open({
 			topic: this._log.log.idString + "/document",
-			canRead: properties.canRead,
+			canRequest: properties.canRead,
 			responseHandler: async (query) => {
 				if (query instanceof CloseIteratorRequest) {
 					this.processCloseIteratorRequest(query);

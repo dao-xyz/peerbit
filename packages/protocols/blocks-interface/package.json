@@ -1,0 +1,59 @@
+{
+	"name": "@peerbit/blocks-interface",
+	"version": "1.0.5",
+	"description": "Block store streaming",
+	"type": "module",
+	"sideEffects": false,
+	"private": false,
+	"publishConfig": {
+		"access": "public"
+	},
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
+		"LICENSE"
+	],
+	"engines": {
+		"node": ">=16.15.1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dao-xyz/peerbit.git"
+	},
+	"keywords": [
+		"peerbit"
+	],
+	"author": "dao.xyz",
+	"license": "MIT",
+	"bugs": {
+		"url": "https://github.com/dao-xyz/peerbit/issues"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit#readme",
+	"localMaintainers": [
+		"dao.xyz"
+	],
+	"devDependencies": {
+		"@peerbit/libp2p-test-utils": "1.0.2"
+	},
+	"dependencies": {
+		"@dao-xyz/borsh": "^5.1.5",
+		"@peerbit/crypto": "1.0.4",
+		"@peerbit/stream-interface": "^1.0.5"
+	}
+}

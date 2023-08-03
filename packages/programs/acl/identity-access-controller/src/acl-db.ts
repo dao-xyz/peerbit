@@ -45,9 +45,9 @@ export class IdentityAccessController extends Program {
 		this.trustedNetwork = opts.trustedNetwork
 			? opts.trustedNetwork
 			: new TrustedNetwork({
-					id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
-					rootTrust: opts.rootTrust,
-			  });
+				id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
+				rootTrust: opts.rootTrust,
+			});
 		this.identityGraphController = new IdentityGraph({
 			relationGraph: createIdentityGraphStore(
 				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])]))
@@ -110,7 +110,7 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async canAppend(entry: Entry<any>): Promise<boolean> {
+	async canWrite(entry: Entry<any>): Promise<boolean> {
 		// TODO, improve, caching etc
 
 		// Check whether it is trusted by trust web
@@ -169,7 +169,7 @@ export class IdentityAccessController extends Program {
 		await this.access.open({
 			role: properties?.role,
 			type: Access,
-			canAppend: this.canAppend.bind(this),
+			canWrite: this.canWrite.bind(this),
 			canRead: this.canRead.bind(this),
 		});
 		await this.trustedNetwork.open(properties);

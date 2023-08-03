@@ -48,14 +48,12 @@ export abstract class MaybeEncrypted<T> {
 @variant(0)
 export class DecryptedThing<T> extends MaybeEncrypted<T> {
 	@field({ type: Uint8Array })
-	_data?: Uint8Array;
+	_data: Uint8Array;
 
-	constructor(props?: { data?: Uint8Array; value?: T }) {
+	constructor(props: { data: Uint8Array; value?: T }) {
 		super();
-		if (props) {
-			this._data = props.data;
-			this._value = props.value;
-		}
+		this._data = props.data;
+		this._value = props.value;
 	}
 
 	_value?: T;
@@ -67,6 +65,9 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 			throw new Error("Missing data");
 		}
 		return deserialize(this._data, clazz);
+	}
+	get data() {
+		return this._data;
 	}
 
 	async encrypt(

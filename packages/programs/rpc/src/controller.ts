@@ -6,8 +6,6 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import {
-	DecryptedThing,
-	MaybeEncrypted,
 	PublicSignKey,
 	toBase64,
 	AccessError,
@@ -15,27 +13,28 @@ import {
 	X25519Keypair,
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
-import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
+import { RPCOptions, logger, RPCResponse } from "./io.js";
 import { Address } from "@peerbit/program";
 import {
 	DataEvent,
 	PubSubData,
-	PublishOptions as PubSubPublishOptions,
+	PublishOptions,
 } from "@peerbit/pubsub-interface";
 import { Program } from "@peerbit/program";
 import { DataMessage } from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
 import { waitFor } from "@peerbit/time";
 import { equals } from "uint8arrays";
+import { options } from "benchmark";
 
 export type SearchContext = (() => Address) | Program;
-export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
+export type CanRequest = (key?: PublicSignKey) => Promise<boolean> | boolean;
 
 export type RPCSetupOptions<Q, R> = {
 	topic: string;
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
-	canRead?: CanRead;
+	canRequest?: CanRequest;
 	responseHandler?: ResponseHandler<Q, R>;
 	subscriptionData?: Uint8Array;
 };
@@ -50,17 +49,17 @@ export type ResponseHandler<Q, R> = (
 
 const createValueResolver = <T>(
 	type: AbstractType<T> | Uint8Array
-): ((decryptedThings: DecryptedThing<T>) => T) => {
+): ((data: Uint8Array) => T) => {
 	if ((type as any) === Uint8Array) {
-		return (decrypted) => decrypted._data as T;
+		return (data) => data as T
 	} else {
-		return (decrypted) => decrypted.getValue(type as AbstractType<T>);
+		return (data) => deserialize(data, type as AbstractType<T>);
 	}
 };
 
 @variant("rpc")
 export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
-	canRead: CanRead;
+	canRequest: CanRequest;
 
 	private _subscribed = false;
 	private _responseHandler?: ResponseHandler<Q, (R | undefined) | R>;
@@ -77,8 +76,8 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 	private _keypair: X25519Keypair;
 
-	private _getResponseValueFn: (decrypted: DecryptedThing<R>) => R;
-	private _getRequestValueFn: (decrypted: DecryptedThing<Q>) => Q;
+	private _getResponseValueFn: (data: Uint8Array) => R;
+	private _getRequestValueFn: (data: Uint8Array) => Q;
 	async open(args: RPCSetupOptions<Q, R>): Promise<void> {
 		this._rpcTopic = args.topic ?? this._rpcTopic;
 		this._responseHandler = args.responseHandler;
@@ -86,7 +85,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		this._requestTypeIsUint8Array = (this._requestType as any) === Uint8Array;
 		this._responseType = args.responseType;
 		this._responseResolver = new Map();
-		this.canRead = args.canRead || (() => Promise.resolve(true));
+		this.canRequest = args.canRequest || (() => Promise.resolve(true));
 
 		this._getResponseValueFn = createValueResolver(this._responseType);
 		this._getRequestValueFn = createValueResolver(this._requestType);
@@ -176,9 +175,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				if (rpcMessage instanceof RequestV0) {
 					if (this._responseHandler) {
 						const maybeEncrypted = rpcMessage.request;
-						const decrypted = await maybeEncrypted.decrypt(this.node.keychain);
+						const decrypted = maybeEncrypted; // await maybeEncrypted.decrypt(this.node.keychain);
 
-						if (!(await this.canRead(message.sender))) {
+						if (!(await this.canRequest(message.sender))) {
 							throw new AccessError();
 						}
 
@@ -192,34 +191,19 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 						if (response && rpcMessage.respondTo) {
 							// send query and wait for replies in a generator like behaviour
-							const serializedResponse = serialize(response);
-
-							// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
-							// with pubsub with a certain reciever. If we use (this.identity) we are going to use an identity
-							// that is now known in the .pubsub network, hence the message might not be delivired if we
-							// send with { to: [RECIEVER] } param
-
-							const decryptedMessage = new DecryptedThing<Uint8Array>({
-								data: serializedResponse,
-							});
-							let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> =
-								decryptedMessage;
-
-							maybeEncryptedMessage = await decryptedMessage.encrypt(
-								this._keypair,
-								rpcMessage.respondTo
-							);
 
 							await this.node.services.pubsub.publish(
 								serialize(
 									new ResponseV0({
-										response: maybeEncryptedMessage,
+										response: serialize(response),
 										requestId: message.id,
 									})
 								),
 								{
 									topics: [this.rpcTopic],
 									to: [message.sender],
+									recievers: [rpcMessage.respondTo],
+									encrypt: true,
 									strict: true,
 								}
 							);
@@ -248,26 +232,22 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				}
 				logger.error(
 					"Error handling query: " +
-						(error?.message ? error?.message?.toString() : error)
+					(error?.message ? error?.message?.toString() : error)
 				);
 			}
 		}
 	}
 
-	private async seal(
+	private async createRequest(
 		request: Q,
-		respondTo?: X25519PublicKey,
-		options?: PublishOptions
+		respondTo?: X25519PublicKey
 	) {
-		const requestData = this._requestTypeIsUint8Array
-			? (request as Uint8Array)
-			: serialize(request);
 
-		const decryptedMessage = new DecryptedThing<Uint8Array>({
+		/*const decryptedMessage = new DecryptedThing<Uint8Array>({
 			data: requestData,
 		});
 
-		let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
+		 let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
 
 		if (
 			options?.encryption?.responders &&
@@ -277,20 +257,21 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				options.encryption.key,
 				...options.encryption.responders
 			);
-		}
+		} */
 
-		const requestMessage = new RequestV0({
-			request: maybeEncryptedMessage,
+
+		return new RequestV0({
+			request: this._requestTypeIsUint8Array
+				? (request as Uint8Array)
+				: serialize(request),
 			respondTo,
-		});
-
-		return requestMessage;
+		});;
 	}
 
-	private getPublishOptions(options?: PublishOptions): PubSubPublishOptions {
-		return options?.to
-			? { to: options.to, strict: true, topics: [this.rpcTopic] }
-			: { topics: [this.rpcTopic] };
+	private getPublishOptions(options?: PublishOptions): PublishOptions {
+		return (options?.to
+			? { ...options, to: options.to, strict: true, topics: [this.rpcTopic] }
+			: { ...options, topics: [this.rpcTopic] }) as PublishOptions;
 	}
 
 	/**
@@ -300,7 +281,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	 */
 	public async send(message: Q, options?: PublishOptions): Promise<void> {
 		await this.node.services.pubsub.publish(
-			serialize(await this.seal(message, undefined, options)),
+			serialize(await this.createRequest(message, undefined)),
 			this.getPublishOptions(options)
 		);
 	}
@@ -325,8 +306,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					return;
 				}
 
-				const maybeEncrypted = response.response;
-				const decrypted = await maybeEncrypted.decrypt(keypair);
+				const decrypted = response.response;
 				const resultData = this._getResponseValueFn(decrypted);
 
 				if (expectedResponders) {
@@ -381,7 +361,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		// send query and wait for replies in a generator like behaviour
 		let timeoutFn: any = undefined;
 
-		const requestMessage = await this.seal(request, keypair.publicKey, options);
+		const requestMessage = await this.createRequest(request, keypair.publicKey);
 		const requestBytes = serialize(requestMessage);
 
 		const allResults: RPCResponse<R>[] = [];
@@ -395,8 +375,8 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		const expectedResponders =
 			options?.to && options.to.length > 0
 				? new Set(
-						options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
-				  )
+					options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
+				)
 				: undefined;
 
 		const responders = new Set<string>();
@@ -407,6 +387,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				this.getPublishOptions(options)
 			)
 		);
+
 		this._responseResolver.set(
 			id,
 			this.createResponseHandler(

@@ -1,3 +1,4 @@
+import { variant } from "@dao-xyz/borsh";
 import {
 	DecryptedThing,
 	X25519Keypair,
@@ -16,7 +17,34 @@ describe("encryption", function () {
 			},
 		};
 	};
-	it("encrypt", async () => {
+	it("encrypt with type", async () => {
+		const senderKey = await X25519Keypair.create();
+		const recieverKey1 = await X25519Keypair.create();
+		const recieverKey2 = await X25519Keypair.create();
+
+		const data = new Uint8Array([1, 2, 3]);
+		const decrypted = new DecryptedThing({
+			data,
+		});
+
+		const reciever1Config = keychain(recieverKey1);
+		const reciever2Config = keychain(recieverKey2);
+
+		const encrypted = await decrypted.encrypt(
+			senderKey,
+			recieverKey1.publicKey,
+			recieverKey2.publicKey
+		);
+		encrypted._decrypted = undefined;
+
+		const decryptedFromEncrypted1 = await encrypted.decrypt(reciever1Config);
+		expect(decryptedFromEncrypted1.data).toStrictEqual(data);
+
+		const decryptedFromEncrypted2 = await encrypted.decrypt(reciever2Config);
+		expect(decryptedFromEncrypted2.data).toStrictEqual(data);
+	});
+
+	it("uint8array payload", async () => {
 		const senderKey = await X25519Keypair.create();
 		const recieverKey1 = await X25519Keypair.create();
 		const recieverKey2 = await X25519Keypair.create();

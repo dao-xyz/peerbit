@@ -7,7 +7,7 @@ import {
 } from "@dao-xyz/borsh";
 import { CanAppend, Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { CanRead } from "@peerbit/rpc";
+import { CanRequest } from "@peerbit/rpc";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
@@ -50,8 +50,8 @@ export interface DocumentEvents<T> {
 
 export type SetupOptions<T> = {
 	type: AbstractType<T>;
-	canRead?: CanRead;
-	canAppend?: CanAppend<Operation<T>>;
+	canRead?: CanRequest;
+	canWrite?: CanAppend<Operation<T>>;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
 	index?: {
 		key?: string | string[];
@@ -110,8 +110,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 				);
 			}
 		}
-		if (options.canAppend) {
-			this._optionCanAppend = options.canAppend;
+		if (options.canWrite) {
+			this._optionCanAppend = options.canWrite;
 		}
 
 		await this._index.open({
@@ -126,7 +126,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
-			canAppend: this.canAppend.bind(this),
+			canAppend: this.canWrite.bind(this),
 			onChange: this.handleChanges.bind(this),
 			trim: options?.trim,
 			sync: options?.sync,
@@ -138,14 +138,14 @@ export class Documents<T extends Record<string, any>> extends Program<
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
 			? (await this.log.log.get(history)) ||
-					(await Entry.fromMultihash<Operation<T>>(
-						this.log.log.storage,
-						history
-					))
+			(await Entry.fromMultihash<Operation<T>>(
+				this.log.log.storage,
+				history
+			))
 			: history;
 	}
 
-	async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
+	async canWrite(entry: Entry<Operation<T>>): Promise<boolean> {
 		const l0 = await this._canAppend(entry);
 		if (!l0) {
 			return false;
@@ -161,7 +161,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||
-						(await Entry.fromMultihash(this.log.log.storage, history))
+				(await Entry.fromMultihash(this.log.log.storage, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
@@ -257,11 +257,11 @@ export class Documents<T extends Record<string, any>> extends Program<
 		const existingDocument = options?.unique
 			? undefined
 			: (
-					await this._index.getDetailed(key, {
-						local: true,
-						remote: { sync: true }, // only query remote if we know they exist
-					})
-			  )?.[0]?.results[0];
+				await this._index.getDetailed(key, {
+					local: true,
+					remote: { sync: true }, // only query remote if we know they exist
+				})
+			)?.[0]?.results[0];
 
 		return this.log.append(
 			new PutOperation({

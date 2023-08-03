@@ -278,7 +278,7 @@ describe("index", () => {
 			await client2.services.pubsub.addEventListener("message", (message) => {
 				if (message.detail instanceof DataMessage) {
 					recievedMessages.push(
-						deserialize(message.detail.data, GetSubscribers)
+						deserialize(message.detail.data.decrypted.data, GetSubscribers)
 					);
 				}
 			});

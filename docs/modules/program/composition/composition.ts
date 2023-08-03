@@ -94,7 +94,7 @@ class Forum extends Program<Args> {
 	async open(args?: Args): Promise<void> {
 		await this.channels.open({
 			type: Channel,
-			canAppend: (entry) => true, // who can create a channel?
+			canWrite: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
 			index: {
 				key: NAME_PROPERTY,

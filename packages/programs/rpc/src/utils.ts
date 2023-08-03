@@ -1,3 +1,4 @@
+import { PublishOptions } from "@peerbit/pubsub-interface";
 import { RPC } from "./controller";
 import { RPCOptions, RPCResponse } from "./io";
 export class MissingResponsesError extends Error {
@@ -35,7 +36,7 @@ export const queryAll = <Q, R>(
 				const results = await rpc.request(request, {
 					...options,
 					to: peersToQuery,
-				});
+				} as PublishOptions);
 
 				for (const result of results) {
 					if (!result.from) {
