@@ -34,7 +34,7 @@ class AnyCanAppendIdentityGraph extends IdentityGraph {
 	}) {
 		super(props);
 	}
-	async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
+	async canWrite(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
 		return true;
 	}
 }

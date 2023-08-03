@@ -34,7 +34,7 @@ class StringStore extends Program
 
     async setup() 
     {
-        await store.setup({ encoding: ... , canAppend: ..., canRead: ...})
+        await store.setup({ encoding: ... , canWrite: ..., canRead: ...})
         await trustedNetwork.setup()
     }
 }

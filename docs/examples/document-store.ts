@@ -59,7 +59,7 @@ class PostsDB extends Program {
 			type: Post,
 			index: { key: "id" },
 			// You can add more properties here, like
-			/* canAppend: (entry) => true */
+			/* canWrite: (entry) => true */
 		});
 	}
 }

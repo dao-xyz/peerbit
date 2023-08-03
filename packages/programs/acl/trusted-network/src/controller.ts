@@ -30,7 +30,7 @@ const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 		? publicKey
 		: getPublicKeyFromPeerId(publicKey);
 };
-const canAppendByRelation = async (
+const canWriteByRelation = async (
 	entry: Entry<Operation<IdentityRelation>>,
 	isTrusted?: (key: PublicSignKey) => Promise<boolean>
 ): Promise<boolean> => {
@@ -45,8 +45,8 @@ const canAppendByRelation = async (
 		const keys = await entry.getPublicKeys();
 		const checkKey = async (key: PublicSignKey): Promise<boolean> => {
 			if (operation instanceof PutOperation) {
-				// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canAppend method does not know what the payload will
-				// be, upon deserialization. There should be known in the `canAppend` method whether we are appending to the identityGraph.
+				// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canWrite method does not know what the payload will
+				// be, upon deserialization. There should be known in the `canWrite` method whether we are appending to the identityGraph.
 
 				const relation: AbstractRelation =
 					operation._value || deserialize(operation.data, AbstractRelation);
@@ -96,14 +96,14 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 		}
 	}
 
-	async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
-		return canAppendByRelation(entry);
+	async canWrite(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
+		return canWriteByRelation(entry);
 	}
 
 	async open(options?: IdentityGraphArgs) {
 		await this.relationGraph.open({
 			type: IdentityRelation,
-			canAppend: this.canAppend.bind(this),
+			canWrite: this.canWrite.bind(this),
 			canRead: options?.canRead,
 			index: {
 				fields: (obj, _entry) => {
@@ -154,7 +154,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	async open(options?: TrustedNetworkArgs) {
 		await this.trustGraph.open({
 			type: IdentityRelation,
-			canAppend: this.canAppend.bind(this),
+			canWrite: this.canWrite.bind(this),
 			canRead: this.canRead.bind(this),
 			role: options?.role,
 			index: {
@@ -168,8 +168,8 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		}); // self referencing access controller
 	}
 
-	async canAppend(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
-		return canAppendByRelation(entry, (key) => this.isTrusted(key));
+	async canWrite(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
+		return canWriteByRelation(entry, (key) => this.isTrusted(key));
 	}
 
 	async canRead(_key?: PublicSignKey): Promise<boolean> {

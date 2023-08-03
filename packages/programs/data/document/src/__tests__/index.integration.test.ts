@@ -861,8 +861,8 @@ describe("index", () => {
 			describe("sync", () => {
 				it("can match sync", async () => {
 					expect(stores[1].docs.index.size).toEqual(0);
-					let canAppendEvents = 0;
-					let canAppend = stores[1].docs["_optionCanAppend"]?.bind(
+					let canWriteEvents = 0;
+					let canWrite = stores[1].docs["_optionCanAppend"]?.bind(
 						stores[1].docs
 					);
 					let syncEvents = 0;
@@ -872,8 +872,8 @@ describe("index", () => {
 						return sync(r);
 					};
 					stores[1].docs["_optionCanAppend"] = async (e) => {
-						canAppendEvents += 1;
-						return !canAppend || canAppend(e);
+						canWriteEvents += 1;
+						return !canWrite || canWrite(e);
 					};
 
 					await stores[1].docs.index.search(
@@ -884,7 +884,7 @@ describe("index", () => {
 					);
 					await waitFor(() => stores[1].docs.index.size === 4);
 					expect(stores[1].docs.log.log.length).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
-					expect(canAppendEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
+					expect(canWriteEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
 					expect(syncEvents).toEqual(1);
 
 					await stores[1].docs.index.search(
@@ -894,7 +894,7 @@ describe("index", () => {
 						{ remote: { amount: 1, sync: true } }
 					);
 					await waitFor(() => syncEvents == 2);
-					expect(canAppendEvents).toEqual(6); // no new checks, since all docs already added
+					expect(canWriteEvents).toEqual(6); // no new checks, since all docs already added
 				});
 				it("will not sync already existing", async () => {});
 			});

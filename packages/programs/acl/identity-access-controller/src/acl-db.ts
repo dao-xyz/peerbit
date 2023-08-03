@@ -110,11 +110,11 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async canAppend(entry: Entry<any>): Promise<boolean> {
+	async canWrite(entry: Entry<any>): Promise<boolean> {
 		// TODO, improve, caching etc
 
 		// Check whether it is trusted by trust web
-		const canAppendByKey = async (key: PublicSignKey): Promise<boolean> => {
+		const canWriteByKey = async (key: PublicSignKey): Promise<boolean> => {
 			if (await this.trustedNetwork.isTrusted(key)) {
 				return true;
 			}
@@ -154,7 +154,7 @@ export class IdentityAccessController extends Program {
 		};
 
 		for (const key of await entry.getPublicKeys()) {
-			if (await canAppendByKey(key)) {
+			if (await canWriteByKey(key)) {
 				return true;
 			}
 		}
@@ -169,7 +169,7 @@ export class IdentityAccessController extends Program {
 		await this.access.open({
 			role: properties?.role,
 			type: Access,
-			canAppend: this.canAppend.bind(this),
+			canWrite: this.canWrite.bind(this),
 			canRead: this.canRead.bind(this),
 		});
 		await this.trustedNetwork.open(properties);

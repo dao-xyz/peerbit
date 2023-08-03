@@ -51,7 +51,7 @@ export interface DocumentEvents<T> {
 export type SetupOptions<T> = {
 	type: AbstractType<T>;
 	canRead?: CanRead;
-	canAppend?: CanAppend<Operation<T>>;
+	canWrite?: CanAppend<Operation<T>>;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
 	index?: {
 		key?: string | string[];
@@ -110,8 +110,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 				);
 			}
 		}
-		if (options.canAppend) {
-			this._optionCanAppend = options.canAppend;
+		if (options.canWrite) {
+			this._optionCanAppend = options.canWrite;
 		}
 
 		await this._index.open({
@@ -126,7 +126,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
-			canAppend: this.canAppend.bind(this),
+			canAppend: this.canWrite.bind(this),
 			onChange: this.handleChanges.bind(this),
 			trim: options?.trim,
 			sync: options?.sync,
@@ -145,8 +145,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 			: history;
 	}
 
-	async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
-		const l0 = await this._canAppend(entry);
+	async canWrite(entry: Entry<Operation<T>>): Promise<boolean> {
+		const l0 = await this._canWrite(entry);
 		if (!l0) {
 			return false;
 		}
@@ -157,7 +157,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 		return true;
 	}
 
-	async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
+	async _canWrite(entry: Entry<Operation<T>>): Promise<boolean> {
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||

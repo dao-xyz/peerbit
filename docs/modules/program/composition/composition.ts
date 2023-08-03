@@ -42,7 +42,7 @@ class PostsDB extends Program<Args> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			role: args?.role /* canAppend: (entry) => true */,
+			role: args?.role /* canWrite: (entry) => true */,
 		});
 	}
 }
@@ -94,7 +94,7 @@ class Forum extends Program<Args> {
 	async open(args?: Args): Promise<void> {
 		await this.channels.open({
 			type: Channel,
-			canAppend: (entry) => true, // who can create a channel?
+			canWrite: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
 			index: {
 				key: NAME_PROPERTY,

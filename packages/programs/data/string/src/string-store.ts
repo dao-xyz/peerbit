@@ -44,7 +44,7 @@ export interface StringEvents {
 
 type Args = {
 	canRead?: CanRead;
-	canAppend?: CanAppend<StringOperation>;
+	canWrite?: CanAppend<StringOperation>;
 	log?: SharedLogOptions;
 };
 
@@ -72,7 +72,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	}
 
 	async open(options?: Args) {
-		this._optionCanAppend = options?.canAppend;
+		this._optionCanAppend = options?.canWrite;
 		await this._index.open(this._log.log);
 
 		await this._log.open({
@@ -80,7 +80,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			replicas: {
 				min: 0xffffffff, // assume a document can not be sharded?
 			},
-			canAppend: this.canAppend.bind(this),
+			canAppend: this.canWrite.bind(this),
 			onChange: async (change) => {
 				await this._index.updateIndex(change);
 				this.events.dispatchEvent(
@@ -101,8 +101,8 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		});
 	}
 
-	async canAppend(entry: Entry<StringOperation>): Promise<boolean> {
-		if (!(await this._canAppend(entry))) {
+	async canWrite(entry: Entry<StringOperation>): Promise<boolean> {
+		if (!(await this._canWrite(entry))) {
 			return false;
 		}
 		if (this._optionCanAppend && !(await this._optionCanAppend(entry))) {
@@ -111,7 +111,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		return true;
 	}
 
-	async _canAppend(entry: Entry<StringOperation>): Promise<boolean> {
+	async _canWrite(entry: Entry<StringOperation>): Promise<boolean> {
 		if (this._log.log.length === 0 || entry.next.length === 0) {
 			return true;
 		} else {
