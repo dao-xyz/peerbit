@@ -28,24 +28,19 @@ import pDefer, { DeferredPromise } from "p-defer";
 import { waitFor } from "@peerbit/time";
 import { equals } from "uint8arrays";
 
-export type SearchContext = (() => Address) | Program;
-export type CanRead = (key?: PublicSignKey) => Promise<boolean> | boolean;
-
 export type RPCSetupOptions<Q, R> = {
 	topic: string;
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
-	canRead?: CanRead;
 	responseHandler?: ResponseHandler<Q, R>;
 	subscriptionData?: Uint8Array;
 };
-export type QueryContext = {
+export type RequestContext = {
 	from?: PublicSignKey;
-	address: string;
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
-	context: QueryContext
+	context: RequestContext
 ) => Promise<R | undefined> | R | undefined;
 
 const createValueResolver = <T>(
@@ -60,8 +55,6 @@ const createValueResolver = <T>(
 
 @variant("rpc")
 export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
-	canRead: CanRead;
-
 	private _subscribed = false;
 	private _responseHandler?: ResponseHandler<Q, (R | undefined) | R>;
 	private _responseResolver: Map<
@@ -86,8 +79,6 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		this._requestTypeIsUint8Array = (this._requestType as any) === Uint8Array;
 		this._responseType = args.responseType;
 		this._responseResolver = new Map();
-		this.canRead = args.canRead || (() => Promise.resolve(true));
-
 		this._getResponseValueFn = createValueResolver(this._responseType);
 		this._getRequestValueFn = createValueResolver(this._requestType);
 
@@ -177,15 +168,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					if (this._responseHandler) {
 						const maybeEncrypted = rpcMessage.request;
 						const decrypted = await maybeEncrypted.decrypt(this.node.keychain);
-
-						if (!(await this.canRead(message.sender))) {
-							throw new AccessError();
-						}
-
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
-								address: this.rpcTopic,
 								from: message.sender,
 							}
 						);

@@ -1,4 +1,4 @@
-import { QueryContext, RPC } from "@peerbit/rpc";
+import { RequestContext, RPC } from "@peerbit/rpc";
 import { TransportMessage } from "./message.js";
 import {
 	AppendOptions,
@@ -368,7 +368,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 	// Callback for receiving a message from the network
 	async _onMessage(
 		msg: TransportMessage,
-		context: QueryContext
+		context: RequestContext
 	): Promise<TransportMessage | undefined> {
 		try {
 			if (msg instanceof ExchangeHeadsMessage) {
