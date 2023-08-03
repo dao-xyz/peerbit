@@ -1,5 +1,10 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents, DocumentIndex, Role } from "@peerbit/document";
+import {
+	Documents,
+	DocumentIndex,
+	Role,
+	AbstractSearchRequest,
+} from "@peerbit/document";
 import {
 	getPathGenerator,
 	TrustedNetwork,
@@ -62,7 +67,7 @@ export class IdentityAccessController extends Program {
 
 	// custom can append
 
-	async canRead(s: PublicSignKey | undefined): Promise<boolean> {
+	async canRead(_obj: any, s: PublicSignKey | undefined): Promise<boolean> {
 		// TODO, improve, caching etc
 
 		if (!s) {
@@ -170,7 +175,9 @@ export class IdentityAccessController extends Program {
 			role: properties?.role,
 			type: Access,
 			canWrite: this.canWrite.bind(this),
-			canRead: this.canRead.bind(this),
+			index: {
+				canRead: this.canRead.bind(this),
+			},
 		});
 		await this.trustedNetwork.open(properties);
 	}

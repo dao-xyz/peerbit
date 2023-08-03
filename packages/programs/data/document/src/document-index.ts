@@ -24,9 +24,10 @@ import {
 	SearchRequest,
 	SortDirection,
 	CloseIteratorRequest,
+	NoAccess,
+	AbstractSearchResult,
 } from "./query.js";
 import {
-	CanRead,
 	RPC,
 	RPCOptions,
 	RPCResponse,
@@ -131,7 +132,7 @@ export type RemoteQueryOptions<R> = RPCOptions<R> & {
 	minAge?: number;
 };
 export type QueryOptions<R> = {
-	remote?: boolean | RemoteQueryOptions<Results<R>>;
+	remote?: boolean | RemoteQueryOptions<AbstractSearchResult<R>>;
 	local?: boolean;
 };
 export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
@@ -200,41 +201,43 @@ const resolvedSort = async <T, Q extends { value: T; context: Context }>(
 	);
 	return arr;
 };
-/* 
-const sortValueWithContext = async<T>(arr: {
-	value: T;
-	context: Context;
-}[], index: Indexable<T>) => {
-
-	
-}
- */
 
 const SORT_TMP_KEY = "__sort_ref";
 
 type QueryDetailedOptions<T> = QueryOptions<T> & {
-	onResponse?: (response: Results<T>, from?: PublicSignKey) => void;
+	onResponse?: (
+		response: AbstractSearchResult<T>,
+		from?: PublicSignKey
+	) => void;
 	excludePeerAgeThreshold?: number;
 };
 const introduceEntries = async <T>(
-	responses: RPCResponse<Results<T>>[],
+	responses: RPCResponse<AbstractSearchResult<T>>[],
 	type: AbstractType<T>,
 	sync: (result: Results<T>) => Promise<void>,
 	options?: QueryDetailedOptions<T>
 ): Promise<RPCResponse<Results<T>>[]> => {
-	return Promise.all(
-		responses.map(async (x) => {
-			x.response.results.forEach((r) => r.init(type));
+	const results: RPCResponse<Results<T>>[] = [];
+	for (const response of responses) {
+		if (!response.from) {
+			logger.error("Missing from for response");
+		}
+
+		if (response.response instanceof Results) {
+			response.response.results.forEach((r) => r.init(type));
 			if (typeof options?.remote !== "boolean" && options?.remote?.sync) {
-				await sync(x.response);
+				await sync(response.response);
 			}
-			if (!x.from) {
-				logger.error("Missing from for response");
-			}
-			options?.onResponse && options.onResponse(x.response, x.from!);
-			return x;
-		})
-	);
+			options?.onResponse &&
+				options.onResponse(response.response, response.from!);
+			results.push(response as RPCResponse<Results<T>>);
+		} else if (response.response instanceof NoAccess) {
+			logger.error("Search resulted in access error");
+		} else {
+			throw new Error("Unsupported");
+		}
+	}
+	return results;
 };
 
 const dedup = <T>(
@@ -258,10 +261,26 @@ const DEFAULT_INDEX_BY = "id";
 
 const DEFAULT_REPLICATOR_MIN_AGE = 10 * 1000; // how long, until we consider a peer unreliable
 
+/* 
+if (!(await this.canRead(message.sender))) {
+	throw new AccessError();
+} */
+
+export type CanSearch = (
+	request: SearchRequest | CollectNextRequest | CloseIteratorRequest,
+	from?: PublicSignKey
+) => Promise<boolean> | boolean;
+
+export type CanRead<T> = (
+	result: T,
+	from?: PublicSignKey
+) => Promise<boolean> | boolean;
+
 export type OpenOptions<T> = {
 	type: AbstractType<T>;
 	log: SharedLog<Operation<T>>;
-	canRead: CanRead;
+	canRead?: CanRead<T>;
+	canSearch?: CanSearch;
 	fields: Indexable<T>;
 	sync: (result: Results<T>) => Promise<void>;
 	indexBy?: string | string[];
@@ -270,7 +289,7 @@ export type OpenOptions<T> = {
 @variant("documents_index")
 export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	@field({ type: RPC })
-	_query: RPC<AbstractSearchRequest, Results<T>>;
+	_query: RPC<AbstractSearchRequest, AbstractSearchResult<T>>;
 
 	type: AbstractType<T>;
 
@@ -288,12 +307,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
-
 	private _resultsCollectQueue: Cache<{ value: T; context: Context }[]>;
 
 	private _log: SharedLog<Operation<T>>;
 
-	constructor(properties?: { query?: RPC<SearchRequest, Results<T>> }) {
+	constructor(properties?: {
+		query?: RPC<AbstractSearchRequest, AbstractSearchResult<T>>;
+	}) {
 		super();
 		this._query = properties?.query || new RPC();
 	}
@@ -330,13 +350,28 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 		await this._query.open({
 			topic: this._log.log.idString + "/document",
-			canRead: properties.canRead,
-			responseHandler: async (query) => {
+			responseHandler: async (query, ctx) => {
+				if (
+					properties.canSearch &&
+					!(await properties.canSearch(
+						query as SearchRequest | CollectNextRequest | CloseIteratorRequest,
+						ctx.from
+					))
+				) {
+					return new NoAccess();
+				}
+
 				if (query instanceof CloseIteratorRequest) {
 					this.processCloseIteratorRequest(query);
 				} else {
 					const results = await this.processFetchRequest(
-						query as SearchRequest | SearchRequest | CollectNextRequest
+						query as SearchRequest | SearchRequest | CollectNextRequest,
+						properties.canRead
+							? {
+									canRead: properties.canRead,
+									from: ctx.from,
+							  }
+							: undefined
 					);
 					return new Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
@@ -351,7 +386,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					});
 				}
 			},
-			responseType: Results,
+			responseType: AbstractSearchResult,
 			queryType: AbstractSearchRequest,
 		});
 	}
@@ -431,7 +466,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	async processFetchRequest(
-		query: SearchRequest | CollectNextRequest
+		query: SearchRequest | CollectNextRequest,
+		options?: {
+			canRead: CanRead<T>;
+			from?: PublicSignKey;
+		}
 	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
 		if (query instanceof SearchRequest) {
@@ -475,7 +514,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}
 			}
 
-			const results = await this._queryDocuments((doc) => {
+			let results = await this._queryDocuments((doc) => {
 				for (const f of query.query) {
 					if (!this.handleQueryObject(f, doc)) {
 						return false;
@@ -483,6 +522,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}
 				return true;
 			});
+
+			if (options) {
+				const keepFilter = await Promise.all(
+					results.map((x) => options.canRead(x.value, options.from))
+				);
+				results = results.filter((x, i) => keepFilter[i]);
+			}
 
 			// Sort
 			await resolvedSort(results, this._toIndex, query.sort);
@@ -617,7 +663,8 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		options?: QueryDetailedOptions<T>
 	): Promise<Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
-		let remote: RemoteQueryOptions<Results<T>> | undefined = undefined;
+		let remote: RemoteQueryOptions<AbstractSearchResult<T>> | undefined =
+			undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
 				remote = {};
@@ -628,7 +675,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			remote = options?.remote || {};
 		}
 
-		const promises: Promise<Results<T> | Results<T>[] | undefined>[] = [];
+		const promises: Promise<Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
 				"Expecting either 'options.remote' or 'options.local' to be true"
@@ -684,14 +731,16 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				const fn = async () => {
 					const rs: Results<T>[] = [];
 					const responseHandler = async (
-						results: RPCResponse<Results<T>>[]
+						results: RPCResponse<AbstractSearchResult<T>>[]
 					) => {
-						await introduceEntries(
+						for (const r of await introduceEntries(
 							results,
 							this.type,
 							this._sync,
 							options
-						).then((x) => x.forEach((y) => rs.push(y.response)));
+						)) {
+							rs.push(r.response);
+						}
 					};
 					try {
 						if (queryRequest instanceof CloseIteratorRequest) {
@@ -808,26 +857,34 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						logger.error("Missing response from");
 						return;
 					}
-
-					if (response.kept === 0n && response.results.length === 0) {
+					if (response instanceof NoAccess) {
+						logger.error("Dont have access");
 						return;
-					}
+					} else if (response instanceof Results) {
+						if (response.kept === 0n && response.results.length === 0) {
+							return;
+						}
 
-					if (response.kept > 0n) {
-						done = false; // we have more to do later!
-					}
+						if (response.kept > 0n) {
+							done = false; // we have more to do later!
+						}
 
-					peerBufferMap.set(from.hashcode(), {
-						buffer: response.results
-							.filter(
-								(x) => !visited.has(asString(this.indexByResolver(x.value)))
-							)
-							.map((x) => {
-								visited.add(asString(this.indexByResolver(x.value)));
-								return { from, value: x.value, context: x.context };
-							}),
-						kept: Number(response.kept),
-					});
+						peerBufferMap.set(from.hashcode(), {
+							buffer: response.results
+								.filter(
+									(x) => !visited.has(asString(this.indexByResolver(x.value)))
+								)
+								.map((x) => {
+									visited.add(asString(this.indexByResolver(x.value)));
+									return { from, value: x.value, context: x.context };
+								}),
+							kept: Number(response.kept),
+						});
+					} else {
+						throw new Error(
+							"Unsupported result type: " + response?.constructor?.name
+						);
+					}
 				},
 			});
 

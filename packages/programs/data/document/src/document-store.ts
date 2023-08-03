@@ -7,7 +7,6 @@ import {
 } from "@dao-xyz/borsh";
 import { CanAppend, Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { CanRead } from "@peerbit/rpc";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
@@ -29,6 +28,8 @@ import {
 	DocumentIndex,
 	Operation,
 	PutOperation,
+	CanSearch,
+	CanRead,
 } from "./document-index.js";
 import { asString, checkKeyable, Keyable } from "./utils.js";
 import { Context, Results } from "./query.js";
@@ -50,12 +51,13 @@ export interface DocumentEvents<T> {
 
 export type SetupOptions<T> = {
 	type: AbstractType<T>;
-	canRead?: CanRead;
 	canWrite?: CanAppend<Operation<T>>;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
 	index?: {
 		key?: string | string[];
 		fields?: Indexable<T>;
+		canSearch?: CanSearch;
+		canRead?: CanRead<T>;
 	};
 	trim?: TrimOptions;
 } & SharedLogOptions;
@@ -117,7 +119,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 		await this._index.open({
 			type: this._clazz,
 			log: this.log,
-			canRead: options.canRead || (() => Promise.resolve(true)),
+			canRead: options?.index?.canRead,
+			canSearch: options.index?.canSearch,
 			fields: options.index?.fields || ((obj) => obj),
 			indexBy: options.index?.key,
 			sync: async (result: Results<T>) =>

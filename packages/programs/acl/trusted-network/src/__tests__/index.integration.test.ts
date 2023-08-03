@@ -302,6 +302,7 @@ describe("index", () => {
 				l0a.address!,
 				session.peers[1]
 			);
+
 			// Can not append peer3Key since its not trusted by the root
 			await expect(l0b.add(session.peers[2].peerId)).rejects.toBeInstanceOf(
 				AccessError

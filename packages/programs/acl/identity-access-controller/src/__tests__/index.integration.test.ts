@@ -69,8 +69,10 @@ class TestStore extends Program<{ role: Role }> {
 		await this.accessController.open(properties);
 		await this.store.open({
 			type: Document,
-			canRead: this.accessController.canRead.bind(this.accessController),
 			canWrite: (entry) => this.accessController.canWrite(entry),
+			index: {
+				canRead: this.accessController.canRead.bind(this.accessController),
+			},
 			role: properties?.role,
 		});
 	}

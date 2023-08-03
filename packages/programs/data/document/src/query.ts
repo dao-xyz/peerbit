@@ -6,6 +6,7 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
+
 import { asString } from "./utils.js";
 import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
 
@@ -431,8 +432,10 @@ export class ResultWithSource<T> extends Result {
 	}
 }
 
+export abstract class AbstractSearchResult<T> {}
+
 @variant(0)
-export class Results<T> {
+export class Results<T> extends AbstractSearchResult<T> {
 	@field({ type: vec(ResultWithSource) })
 	results: ResultWithSource<T>[];
 
@@ -440,10 +443,14 @@ export class Results<T> {
 	kept: bigint; // how many results that were not sent, but can be collected later
 
 	constructor(properties: { results: ResultWithSource<T>[]; kept: bigint }) {
+		super();
 		this.kept = properties.kept;
 		this.results = properties.results;
 	}
 }
+
+@variant(1)
+export class NoAccess extends AbstractSearchResult<any> {}
 
 /* @variant(5)
 export class LogQuery extends Query { } */

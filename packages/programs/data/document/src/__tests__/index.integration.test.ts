@@ -27,10 +27,14 @@ import {
 	BoolQuery,
 	Sort,
 	SortDirection,
+	AbstractSearchResult,
+	NoAccess,
+	AbstractSearchRequest,
+	Results,
 } from "../query.js";
 import { LSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
-import { randomBytes, toBase64 } from "@peerbit/crypto";
+import { PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
 import { waitFor, waitForResolved } from "@peerbit/time";
 import { DocumentIndex } from "../document-index.js";
@@ -42,6 +46,7 @@ import {
 	decodeReplicas,
 	encodeReplicas,
 } from "@peerbit/shared-log";
+import { Ed25519PublicKey } from "@peerbit/crypto";
 
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();
@@ -93,7 +98,11 @@ class TestStore extends Program<Partial<SetupOptions<Document>>> {
 	}
 
 	async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
-		await this.docs.open({ ...options, type: Document, index: { key: "id" } });
+		await this.docs.open({
+			...options,
+			type: Document,
+			index: { ...options?.index, key: "id" },
+		});
 	}
 }
 
@@ -742,13 +751,31 @@ describe("index", () => {
 				});
 			});
 		});
-		describe("query", () => {
+		describe("search", () => {
 			let peersCount = 3,
 				stores: TestStore[] = [],
-				writeStore: TestStore;
-
+				writeStore: TestStore,
+				canRead: (
+					| undefined
+					| ((obj: any, publicKey: PublicSignKey) => Promise<boolean>)
+				)[] = [],
+				canSearch: (
+					| undefined
+					| ((
+							query: AbstractSearchRequest,
+							publicKey: PublicSignKey
+					  ) => Promise<boolean>)
+				)[] = [];
 			beforeAll(async () => {
 				session = await LSession.connected(peersCount);
+			});
+
+			afterAll(async () => {
+				await session.stop();
+			});
+
+			beforeEach(async () => {
+				stores = [];
 				// Create store
 				for (let i = 0; i < peersCount; i++) {
 					const store =
@@ -763,6 +790,20 @@ describe("index", () => {
 					await session.peers[i].open(store, {
 						args: {
 							role: i === 0 ? new Replicator() : new Observer(),
+							index: {
+								canRead:
+									i === 0
+										? (obj, key) => {
+												return canRead[i] ? canRead[i]!(obj, key) : true;
+										  }
+										: undefined,
+								canSearch:
+									i === 0
+										? (query, key) => {
+												return canSearch[i] ? canSearch[i]!(query, key) : true;
+										  }
+										: undefined,
+							},
 						},
 					});
 					stores.push(store);
@@ -824,11 +865,12 @@ describe("index", () => {
 				expect(stores[1].docs.log.role).toBeInstanceOf(Observer);
 				await stores[1].waitFor(session.peers[0].peerId);
 				await stores[0].waitFor(session.peers[1].peerId);
+				canRead = new Array(stores.length).fill(undefined);
+				canSearch = new Array(stores.length).fill(undefined);
 			});
 
-			afterAll(async () => {
+			afterEach(async () => {
 				await Promise.all(stores.map((x) => x.drop()));
-				await session.stop();
 			});
 
 			it("no-args", async () => {
@@ -1100,6 +1142,68 @@ describe("index", () => {
 				).toEqual(["1"]);
 			});
 
+			describe("canRead", () => {
+				it("no read access will return a response with 0 results", async () => {
+					const canReadInvocation: [Document, PublicSignKey][] = [];
+					canRead[0] = (a, b) => {
+						canReadInvocation.push([a, b]);
+						return Promise.resolve(false);
+					};
+					let allResponses: AbstractSearchResult<Document>[] = [];
+					let responses: Document[] = await stores[1].docs.index.search(
+						new SearchRequest({
+							query: [],
+						}),
+						{
+							local: false,
+							remote: {
+								onResponse: (r) => {
+									allResponses.push(r);
+								},
+							},
+						}
+					);
+					expect(responses).toHaveLength(0);
+					expect(allResponses).toHaveLength(1);
+					expect(allResponses[0]).toBeInstanceOf(Results);
+					expect(canReadInvocation).toHaveLength(4); // 4 documents in store
+					expect(canReadInvocation[0][0]).toBeInstanceOf(Document);
+					expect(canReadInvocation[0][1]).toBeInstanceOf(Ed25519PublicKey);
+				});
+			});
+
+			describe("canSearch", () => {
+				it("no search access will return an error response", async () => {
+					const canSearchInvocations: [AbstractSearchRequest, PublicSignKey][] =
+						[];
+					canSearch[0] = (a, b) => {
+						canSearchInvocations.push([a, b]);
+						return Promise.resolve(false);
+					};
+					let allResponses: AbstractSearchResult<Document>[] = [];
+					let responses: Document[] = await stores[1].docs.index.search(
+						new SearchRequest({
+							query: [],
+						}),
+						{
+							local: false,
+							remote: {
+								amount: 1,
+								onResponse: (r) => {
+									allResponses.push(r);
+								},
+							},
+						}
+					);
+					expect(responses).toHaveLength(0);
+					expect(allResponses).toHaveLength(1);
+					expect(allResponses[0]).toBeInstanceOf(NoAccess);
+					expect(canSearchInvocations).toHaveLength(1);
+					expect(canSearchInvocations[0][0]).toBeInstanceOf(SearchRequest);
+					expect(canSearchInvocations[0][1]).toBeInstanceOf(Ed25519PublicKey);
+				});
+			});
+
 			describe("logical", () => {
 				it("and", async () => {
 					let responses: Document[] = await stores[1].docs.index.search(
@@ -1310,6 +1414,11 @@ describe("index", () => {
 			let peersCount = 3,
 				stores: TestStore[] = [];
 
+			let canRead: (
+				| undefined
+				| ((publicKey: PublicSignKey) => Promise<boolean>)
+			)[] = [];
+
 			const put = async (storeIndex: number, id: number) => {
 				let doc = new Document({
 					id: Buffer.from(String(id)),
@@ -1354,6 +1463,8 @@ describe("index", () => {
 			});
 
 			beforeEach(async () => {
+				canRead = new Array(stores.length).fill(undefined);
+
 				// Create store
 				for (let i = 0; i < peersCount; i++) {
 					const store =
@@ -1378,6 +1489,11 @@ describe("index", () => {
 					};
 					await session.peers[i].open(store, {
 						args: {
+							index: {
+								canRead: (key) => {
+									return canRead[i] ? canRead[i]!(key) : true;
+								},
+							},
 							role: new Replicator(),
 							replicas: { min: 1 }, // make sure documents only exist once
 						},
@@ -1529,7 +1645,7 @@ describe("index", () => {
 					fields: async (obj) => {
 						return { [KEY]: obj.number };
 					},
-					canRead: () => true,
+					canSearch: () => true,
 					log: stores[0].docs.log,
 					sync: () => undefined as any,
 					type: Document,
@@ -1552,6 +1668,24 @@ describe("index", () => {
 				);
 				const next = await iterator.next(3);
 				expect(next.map((x) => x.name)).toEqual(["2", "1", "0"]);
+				expect(iterator.done()).toBeTrue();
+			});
+
+			it("will retrieve partial results of not having read access", async () => {
+				await put(0, 0);
+				await put(1, 1);
+				await put(1, 2);
+				canRead[0] = () => Promise.resolve(false);
+
+				const iterator = await stores[2].docs.index.iterate(
+					new SearchRequest({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					})
+				);
+				expect((await iterator.next(1)).map((x) => x.name)).toEqual(["1"]);
+				expect(iterator.done()).toBeFalse();
+				expect((await iterator.next(1)).map((x) => x.name)).toEqual(["2"]);
 				expect(iterator.done()).toBeTrue();
 			});
 

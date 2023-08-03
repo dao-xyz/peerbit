@@ -6,6 +6,7 @@ import {
 	PutOperation,
 	Replicator,
 	Role,
+	CanRead,
 } from "@peerbit/document";
 import { AppendOptions, Entry } from "@peerbit/log";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -21,7 +22,6 @@ import {
 	AbstractRelation,
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
-import { CanRead } from "@peerbit/rpc";
 import { sha256Base64Sync } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface-peer-id";
 
@@ -79,7 +79,8 @@ const canWriteByRelation = async (
 	}
 };
 
-type IdentityGraphArgs = { canRead?: CanRead; role?: Role };
+type IdentityGraphArgs = { canRead?: CanRead<IdentityRelation>; role?: Role };
+
 @variant("relations")
 export class IdentityGraph extends Program<IdentityGraphArgs> {
 	@field({ type: Documents })
@@ -104,8 +105,9 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 		await this.relationGraph.open({
 			type: IdentityRelation,
 			canWrite: this.canWrite.bind(this),
-			canRead: options?.canRead,
+			role: options?.role,
 			index: {
+				canRead: options?.canRead,
 				fields: (obj, _entry) => {
 					return {
 						from: obj.from.hashcode(),
@@ -113,8 +115,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 					};
 				},
 			},
-			role: options?.role,
-		}); // self referencing access controller
+		});
 	}
 
 	async addRelation(
@@ -137,6 +138,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
  */
 
 type TrustedNetworkArgs = { role?: Role };
+
 @variant("trusted_network")
 export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	@field({ type: PublicSignKey })
@@ -155,9 +157,9 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		await this.trustGraph.open({
 			type: IdentityRelation,
 			canWrite: this.canWrite.bind(this),
-			canRead: this.canRead.bind(this),
 			role: options?.role,
 			index: {
+				canRead: this.canRead.bind(this),
 				fields: (obj, _entry) => {
 					return {
 						from: obj.from.hashcode(),
@@ -172,7 +174,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		return canWriteByRelation(entry, (key) => this.isTrusted(key));
 	}
 
-	async canRead(_key?: PublicSignKey): Promise<boolean> {
+	async canRead(relation: any, publicKey?: PublicSignKey): Promise<boolean> {
 		return true; // TODO should we have read access control?
 	}
 
