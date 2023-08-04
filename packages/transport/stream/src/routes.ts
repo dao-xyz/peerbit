@@ -1,5 +1,5 @@
 import Graphs from "graphology";
-import type { MultiUndirectedGraph } from "graphology";
+import type { MultiDirectedGraph } from "graphology";
 import { dijkstra, unweighted } from "graphology-shortest-path";
 import { logger } from "./logger.js";
 import { MinimalEdgeMapper } from "graphology-utils/getters";
@@ -9,7 +9,7 @@ interface EdgeData {
 	time: number;
 }
 export class Routes {
-	graph: MultiUndirectedGraph<any, EdgeData>;
+	graph: MultiDirectedGraph<any, EdgeData>;
 	private peerId: string;
 	constructor(peerId: string) {
 		this.peerId = peerId;
@@ -34,6 +34,7 @@ export class Routes {
 		from: string,
 		to: string,
 		weight: number,
+		directed?: boolean,
 		origin: string = this.peerId
 	): string[] {
 		const linkExisted = this.hasLink(from, to);

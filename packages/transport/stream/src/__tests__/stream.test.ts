@@ -59,13 +59,14 @@ class TestDirectStream extends DirectStream {
 	constructor(
 		components: DirectStreamComponents,
 		options: {
+			canRelayMessage?: boolean;
 			id?: string;
 			pingInterval?: number;
 			connectionManager?: ConnectionManagerOptions;
 		} = {}
 	) {
 		super(components, [options.id || "test/0.0.0"], {
-			canRelayMessage: true,
+			canRelayMessage: options?.canRelayMessage ?? true,
 			emitSelf: true,
 			connectionManager: options.connectionManager || {
 				autoDial: false,
@@ -176,8 +177,129 @@ describe("streams", function () {
 		});
 	});
 
-	describe("publish", () => {
+	describe("routing", () => {
 		const data = new Uint8Array([1, 2, 3]);
+
+		describe("mixed relay", () => {
+			let session: TestSession;
+			let metrics: ReturnType<typeof createMetrics>[];
+
+			beforeAll(async () => {});
+
+			beforeEach(async () => {
+				/* 
+				where 2 is not a relay
+				┌────┐
+				│0   │
+				└┬──┬┘
+				┌▽┐┌▽┐
+				│2││1│
+				└┬┘└┬┘
+				┌▽──▽┐
+				│3   │
+				└────┘
+				*/
+				session = await disconnected(4, [
+					{
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { autoDial: false },
+								}),
+						},
+					},
+					{
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { autoDial: false },
+								}),
+						},
+					},
+					{
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									canRelayMessage: false,
+									connectionManager: { autoDial: false },
+								}),
+						},
+					},
+					{
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { autoDial: false },
+								}),
+						},
+					},
+				]);
+
+				metrics = [];
+				for (const peer of session.peers) {
+					metrics.push(createMetrics(peer.services.directstream));
+				}
+				await session.connect([
+					// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[3]],
+					[session.peers[0], session.peers[2]],
+					[session.peers[2], session.peers[3]],
+				]);
+
+				await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
+				await waitForPeerStreams(metrics[1].stream, metrics[3].stream);
+				await waitForPeerStreams(metrics[0].stream, metrics[2].stream);
+				await waitForPeerStreams(metrics[2].stream, metrics[3].stream);
+
+				await delay(1000);
+				for (const m of metrics) {
+					expect(m.stream.routes.nodeCount).toEqual(metrics.length);
+				}
+			});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+
+			it("favors path to a relay", async () => {
+				const defaultEdgeWeightFnPeer0 =
+					metrics[0].stream.routes.graph.getEdgeAttribute.bind(
+						metrics[0].stream.routes.graph
+					);
+
+				let link01 = metrics[0].stream.routes.getLink(
+					metrics[0].stream.publicKeyHash,
+					metrics[1].stream.publicKeyHash
+				);
+
+				// make path long from 0 to 1
+				metrics[0].stream.routes.graph.getEdgeAttribute = (
+					edge: unknown,
+					name: any
+				) => {
+					if (edge === link01) {
+						return 1e5;
+					}
+					return defaultEdgeWeightFnPeer0(edge, name);
+				};
+
+				await metrics[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [metrics[3].stream.components.peerId],
+				});
+
+				metrics[1].messages = [];
+
+				await waitForResolved(() =>
+					expect(
+						metrics[1].messages.filter((x) => x instanceof DataMessage)
+					).toHaveLength(1)
+				); // will send through peer [1] since path [0] -> [2] -> [3] is not possible since 2 is not a relay
+				await waitForResolved(() =>
+					expect(metrics[3].received).toHaveLength(0)
+				);
+			});
+		});
 
 		describe("shortest path", () => {
 			let session: TestSession;
