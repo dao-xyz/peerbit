@@ -274,11 +274,17 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				}
 				return this._logProperties?.onChange?.(change);
 			},
-			canAppend: (entry) => {
+			canAppend: async (entry) => {
 				const replicas = decodeReplicas(entry).getValue(this);
 				if (Number.isFinite(replicas) === false) {
 					return false;
 				}
+
+				// Don't verify entries that we have created (TODO should we? perf impact?)
+				if (!entry.createdLocally && !(await entry.verifySignatures())) {
+					return false;
+				}
+
 				return this._logProperties?.canAppend?.(entry) ?? true;
 			},
 			trim: this._logProperties?.trim && {

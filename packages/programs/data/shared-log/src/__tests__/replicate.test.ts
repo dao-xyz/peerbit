@@ -8,6 +8,7 @@ import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { AbsoluteReplicas, maxReplicas } from "../replication";
 import { Observer, Replicator } from "../role";
 import { ExchangeHeadsMessage } from "../exchange-heads";
+import { deserialize, serialize } from "@dao-xyz/borsh";
 
 describe(`exchange`, function () {
 	let session: LSession;
@@ -43,6 +44,42 @@ describe(`exchange`, function () {
 		if (db2) await db2.drop();
 
 		await session.stop();
+	});
+
+	it("verifies remote signatures by default", async () => {
+		const entry = await db1.add("a", { meta: { next: [] } });
+		await session.peers[0]["libp2p"].hangUp(session.peers[1].peerId);
+		db2 = await session.peers[1].open(new EventStore<string>());
+
+		const clonedEntry = deserialize(serialize(entry.entry), Entry);
+
+		let verified = false;
+		const verifyFn = clonedEntry.verifySignatures.bind(clonedEntry);
+
+		clonedEntry.verifySignatures = () => {
+			verified = true;
+			return verifyFn();
+		};
+		await db2.log.log.join([clonedEntry]);
+		expect(verified).toBeTrue();
+	});
+
+	it("does not verify owned signatures by default", async () => {
+		const entry = await db1.add("a", { meta: { next: [] } });
+		await session.peers[0]["libp2p"].hangUp(session.peers[1].peerId);
+		db2 = await session.peers[1].open(new EventStore<string>());
+
+		const clonedEntry = deserialize(serialize(entry.entry), Entry);
+
+		let verified = false;
+		const verifyFn = clonedEntry.verifySignatures.bind(clonedEntry);
+		clonedEntry.createdLocally = true;
+		clonedEntry.verifySiygnatures = () => {
+			verified = true;
+			return verifyFn();
+		};
+		await db2.log.log.join([clonedEntry]);
+		expect(verified).toBeFalse();
 	});
 
 	it("references all gids on exchange", async () => {
