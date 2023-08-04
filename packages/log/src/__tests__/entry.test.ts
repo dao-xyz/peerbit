@@ -622,4 +622,21 @@ describe("entry", function () {
 			expect(Entry.isEqual(entry1, entry2)).toEqual(false);
 		});
 	});
+
+	describe("verifySignatures", () => {
+		it("verifies", async () => {
+			const entry1 = await Entry.create({
+				store,
+				identity: signKey,
+				data: new Uint8Array(0),
+			});
+			entry1.createdLocally = false; //
+
+			expect(await entry1.verifySignatures()).toBeTrue();
+			entry1.signatures[0].signature = new Uint8Array(
+				entry1.signatures[0].signature.length
+			);
+			expect(await entry1.verifySignatures()).toBeFalse();
+		});
+	});
 });
