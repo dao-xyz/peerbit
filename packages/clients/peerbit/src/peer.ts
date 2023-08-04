@@ -38,7 +38,6 @@ export const logger = loggerFn({ module: "client" });
 
 export type OptionalCreateOptions = {
 	limitSigning?: boolean;
-	refreshIntreval?: number;
 	libp2pExternal?: boolean;
 };
 export type CreateOptions = {
@@ -48,8 +47,9 @@ export type CreateOptions = {
 	keychain: Libp2pKeychain;
 } & OptionalCreateOptions;
 
-export type CreateInstanceOptions = {
-	libp2p?: Libp2pExtended | ClientCreateOptions;
+type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
+type SimpleLibp2pOptions = { relay?: boolean };
+export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
 	cache?: LazyLevel;
 } & OptionalCreateOptions;
@@ -121,7 +121,10 @@ export class Peerbit implements ProgramClient {
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
 		await sodium.ready; // Some of the modules depends on sodium to be readyy
 
-		let libp2pExtended: Libp2pExtended = options.libp2p as Libp2pExtended;
+		let libp2pExtended: Libp2pExtended | undefined = (options as Libp2pOptions)
+			.libp2p as Libp2pExtended;
+		const asRelay = (options as SimpleLibp2pOptions).relay;
+
 		const blocksDirectory =
 			options.directory != null
 				? path.join(options.directory, "/blocks").toString()
@@ -139,8 +142,12 @@ export class Peerbit implements ProgramClient {
 		if (!libp2pExtended) {
 			libp2pExtended = await createLibp2pExtended({
 				services: {
-					blocks: (c) => new DirectBlock(c, { directory: blocksDirectory }),
-					pubsub: (c) => new DirectSub(c),
+					blocks: (c) =>
+						new DirectBlock(c, {
+							canRelayMessage: asRelay,
+							directory: blocksDirectory,
+						}),
+					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
 				},
 				// If directory is passed, we store keys within that directory, else we will use memory datastore (which is the default behaviour)
 				datastore,
@@ -153,8 +160,12 @@ export class Peerbit implements ProgramClient {
 				libp2pExtended = await createLibp2pExtended({
 					...extendedOptions,
 					services: {
-						blocks: (c) => new DirectBlock(c, { directory: blocksDirectory }),
-						pubsub: (c) => new DirectSub(c),
+						blocks: (c) =>
+							new DirectBlock(c, {
+								canRelayMessage: asRelay,
+								directory: blocksDirectory,
+							}),
+						pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
 						...extendedOptions?.services,
 					},
 					datastore,
@@ -209,7 +220,6 @@ export class Peerbit implements ProgramClient {
 			cache,
 			libp2pExternal,
 			limitSigning: options.limitSigning,
-			refreshIntreval: options.refreshIntreval,
 			identity,
 			keychain,
 		});
