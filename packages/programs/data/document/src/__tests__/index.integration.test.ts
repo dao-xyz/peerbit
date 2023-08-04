@@ -266,6 +266,60 @@ describe("index", () => {
 			});
 		});
 
+		describe("replication", () => {
+			let store: TestStore, store2: TestStore, store3: TestStore;
+
+			beforeAll(async () => {
+				session = await LSession.connected(3);
+			});
+
+			beforeEach(async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex(),
+					}),
+				});
+				await session.peers[0].open(store);
+				store2 = await session.peers[1].open<TestStore>(store.clone());
+			});
+
+			afterEach(async () => {
+				await store?.close();
+				await store2?.close();
+				await store3?.close();
+			});
+
+			afterAll(async () => {
+				await session.stop();
+			});
+
+			it("drops when no longer replicating", async () => {
+				let COUNT = 10;
+				for (let i = 0; i < COUNT; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: "Hello world",
+						})
+					);
+				}
+
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(COUNT)
+				);
+
+				store3 = await session.peers[2].open<TestStore>(store.clone());
+				store2.docs.log.updateRole(new Observer());
+
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(0)
+				);
+				await waitForResolved(() =>
+					expect(store3.docs.index.index.size).toEqual(COUNT)
+				);
+			});
+		});
+
 		describe("memory", () => {
 			let store: TestStore;
 
