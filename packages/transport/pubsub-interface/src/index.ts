@@ -49,6 +49,9 @@ export class DataEvent {
 }
 
 export class SubscriptionData {
+	@field({ type: PublicSignKey })
+	publicKey: PublicSignKey;
+
 	@field({ type: "u64" })
 	timestamp: bigint;
 
@@ -57,7 +60,12 @@ export class SubscriptionData {
 	})
 	data?: Uint8Array;
 
-	constructor(properties: { timestamp: bigint; data?: Uint8Array }) {
+	constructor(properties: {
+		publicKey: PublicSignKey;
+		timestamp: bigint;
+		data?: Uint8Array;
+	}) {
+		this.publicKey = properties.publicKey;
 		this.timestamp = properties.timestamp;
 		this.data = properties.data;
 	}

@@ -33,19 +33,14 @@ export class REQ_GetSubscribers extends PubSubMessage {
 
 @variant(1)
 export class RESP_GetSubscribers extends PubSubMessage {
-	@field({ type: option(vec("string")) })
-	hashes?: string[];
-
 	@field({ type: option(vec(SubscriptionData)) })
 	data?: SubscriptionData[];
 
 	constructor(map?: Map<string, SubscriptionData>) {
 		super();
 		if (map) {
-			this.hashes = [];
 			this.data = [];
 			for (const [k, v] of map.entries()) {
-				this.hashes.push(k);
 				this.data.push(v);
 			}
 		}
@@ -56,10 +51,10 @@ export class RESP_GetSubscribers extends PubSubMessage {
 		if (this._map !== undefined) {
 			return this._map;
 		}
-		if (this.hashes && this.data) {
+		if (this.data) {
 			const map = new Map();
-			for (const [i, hash] of this.hashes.entries()) {
-				map.set(hash, this.data[i]);
+			for (const [i, data] of this.data.entries()) {
+				map.set(data.publicKey.hashcode(), data);
 			}
 			return (this._map = map);
 		} else {

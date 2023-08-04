@@ -4,7 +4,7 @@ import { Entry } from "@peerbit/log";
 import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { LSession } from "@peerbit/test-utils";
-import { getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { AbsoluteReplicas, maxReplicas } from "../replication";
 import { Observer, Replicator } from "../role";
 import { ExchangeHeadsMessage } from "../exchange-heads";
@@ -340,6 +340,117 @@ describe(`exchange`, function () {
 		// All entries should be in the database
 		expect(values1.length).toEqual(entryCount * 2);
 		expect(values2.length).toEqual(entryCount * 2);
+	});
+});
+
+describe("canReplicate", () => {
+	let session: LSession;
+	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
+
+	const init = async (
+		canReplicate: (publicKey: PublicSignKey) => Promise<boolean> | boolean
+	) => {
+		let min = 100;
+		let max = undefined;
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				replicas: {
+					min,
+					max,
+				},
+				canReplicate,
+			},
+		});
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: {
+						min,
+						max,
+					},
+					canReplicate,
+				},
+			}
+		))!;
+
+		db3 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: {
+					replicas: {
+						min,
+						max,
+					},
+					canReplicate,
+				},
+			}
+		))!;
+
+		await db1.waitFor(session.peers[1].peerId);
+		await db2.waitFor(session.peers[0].peerId);
+		await db3.waitFor(session.peers[0].peerId);
+	};
+	beforeEach(async () => {
+		session = await LSession.connected(3);
+		db1 = undefined as any;
+		db2 = undefined as any;
+		db3 = undefined as any;
+	});
+
+	afterEach(async () => {
+		if (db1) await db1.drop();
+
+		if (db2) await db2.drop();
+
+		if (db3) await db3.drop();
+
+		await session.stop();
+	});
+
+	it("can filter unwanted replicators", async () => {
+		await init((key) => !key.equals(session.peers[0].identity.publicKey));
+		const expectedReplicators = [
+			session.peers[1].identity.publicKey.hashcode(),
+			session.peers[2].identity.publicKey.hashcode(),
+		];
+
+		await waitForResolved(() =>
+			expect(
+				db1.log.getReplicatorsSorted()?.map((x) => x.hash)
+			).toContainAllValues(expectedReplicators)
+		);
+		await waitForResolved(() =>
+			expect(
+				db2.log.getReplicatorsSorted()?.map((x) => x.hash)
+			).toContainAllValues(expectedReplicators)
+		);
+		await waitForResolved(() =>
+			expect(
+				db3.log.getReplicatorsSorted()?.map((x) => x.hash)
+			).toContainAllValues(expectedReplicators)
+		);
+
+		await db2.add("hello");
+
+		const groups1 = db2.log.getDiscoveryGroups();
+		expect(groups1).toHaveLength(1);
+		expect(groups1[0].map((x) => x.hash)).toContainAllValues(
+			expectedReplicators
+		);
+
+		const groups2 = db2.log.getDiscoveryGroups();
+		expect(groups2).toHaveLength(1);
+		expect(groups2[0].map((x) => x.hash)).toContainAllValues(
+			expectedReplicators
+		);
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+		await delay(1000); // Add some delay so that all replication events most likely have occured
+		expect(db1.log.log.length).toEqual(0); // because not trusted for replication job
 	});
 });
 

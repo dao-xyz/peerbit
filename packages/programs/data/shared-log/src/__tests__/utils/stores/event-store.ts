@@ -3,7 +3,7 @@ import { Entry } from "@peerbit/log";
 import { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
 import { variant, field, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
-import { randomBytes } from "@peerbit/crypto";
+import { PublicSignKey, randomBytes } from "@peerbit/crypto";
 import {
 	AbsoluteReplicas,
 	ReplicationLimitsOptions,
@@ -38,6 +38,7 @@ type Args<T> = {
 	sync?: SyncFilter;
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
+	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 };
 @variant("event_store")
 export class EventStore<T> extends Program<Args<T>> {
@@ -60,6 +61,7 @@ export class EventStore<T> extends Program<Args<T>> {
 		await this.log.open({
 			onChange: () => undefined,
 			canAppend: () => Promise.resolve(true),
+			canReplicate: properties?.canReplicate,
 			role: properties?.role,
 			trim: properties?.trim,
 			replicas: properties?.replicas,

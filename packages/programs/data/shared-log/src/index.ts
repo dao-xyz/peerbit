@@ -20,6 +20,7 @@ import {
 import {
 	AccessError,
 	getPublicKeyFromPeerId,
+	PublicSignKey,
 	sha256,
 	sha256Base64Sync,
 } from "@peerbit/crypto";
@@ -83,6 +84,7 @@ export interface SharedLogOptions {
 	sync?: SyncFilter;
 	role?: Role;
 	respondToIHaveTimeout?: number;
+	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 }
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -110,6 +112,10 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 	private _onSubscriptionFn: (arg: any) => any;
 	private _onUnsubscriptionFn: (arg: any) => any;
+
+	private _canReplicate?: (
+		publicKey: PublicSignKey
+	) => Promise<boolean> | boolean;
 
 	private _logProperties?: LogProperties<T> & LogEvents<T>;
 
@@ -155,9 +161,9 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 	private async initializeWithRole() {
 		try {
-			this.modifySortedSubscriptionCache(
+			await this.modifySortedSubscriptionCache(
 				this._role instanceof Replicator ? true : false,
-				getPublicKeyFromPeerId(this.node.peerId).hashcode()
+				getPublicKeyFromPeerId(this.node.peerId)
 			);
 
 			if (!this._loadedOnce) {
@@ -230,6 +236,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 		this._gidParentCache = new Cache({ max: 1000 });
 
+		this._canReplicate = options?.canReplicate;
 		this._sync = options?.sync;
 		this._logProperties = options;
 		this._role = options?.role || new Replicator();
@@ -296,7 +303,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
 			(v, k) => {
 				this.handleSubscriptionChange(
-					k,
+					v.publicKey,
 					[{ topic: this.topic, data: v.data }],
 					true
 				);
@@ -450,11 +457,13 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 							}
 						}
 
-						await this.log.join(toMerge);
-						toDelete &&
-							Promise.all(this.pruneSafely(toDelete)).catch((e) => {
-								logger.error(e.toString());
-							});
+						if (toMerge.length > 0) {
+							await this.log.join(toMerge);
+							toDelete &&
+								Promise.all(this.pruneSafely(toDelete)).catch((e) => {
+									logger.error(e.toString());
+								});
+						}
 
 						if (maybeDelete) {
 							for (const entries of maybeDelete) {
@@ -614,7 +623,18 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		return leaders;
 	}
 
-	private modifySortedSubscriptionCache(subscribed: boolean, fromHash: string) {
+	private async modifySortedSubscriptionCache(
+		subscribed: boolean,
+		publicKey: PublicSignKey
+	) {
+		if (
+			subscribed &&
+			this._canReplicate &&
+			!(await this._canReplicate(publicKey))
+		) {
+			return false;
+		}
+
 		const sortedPeer = this._sortedPeersCache;
 		if (!sortedPeer) {
 			if (this.closed === false) {
@@ -622,7 +642,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			}
 			return false;
 		}
-		const code = fromHash;
+		const code = publicKey.hashcode();
 		if (subscribed) {
 			// TODO use Set + list for fast lookup
 			if (!sortedPeer.find((x) => x.hash === code)) {
@@ -644,7 +664,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 	}
 
 	async handleSubscriptionChange(
-		fromHash: string,
+		publicKey: PublicSignKey,
 		changes: { topic: string; data?: Uint8Array }[],
 		subscribed: boolean
 	) {
@@ -659,14 +679,17 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				!subscription.data ||
 				!startsWith(subscription.data, REPLICATOR_TYPE_VARIANT)
 			) {
-				prev.push(this.modifySortedSubscriptionCache(false, fromHash));
+				prev.push(await this.modifySortedSubscriptionCache(false, publicKey));
 				continue;
 			} else {
 				this._lastSubscriptionMessageId += 1;
-				prev.push(this.modifySortedSubscriptionCache(subscribed, fromHash));
+				prev.push(
+					await this.modifySortedSubscriptionCache(subscribed, publicKey)
+				);
 			}
 		}
 
+		// TODO don't do this i fnot is replicator?
 		for (const [i, subscription] of changes.entries()) {
 			if (this.log.idString !== subscription.topic) {
 				continue;
@@ -909,7 +932,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		);
 
 		return this.handleSubscriptionChange(
-			evt.detail.from.hashcode(),
+			evt.detail.from,
 			evt.detail.unsubscriptions,
 			false
 		);
@@ -922,7 +945,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			)}'`
 		);
 		return this.handleSubscriptionChange(
-			evt.detail.from.hashcode(),
+			evt.detail.from,
 			evt.detail.subscriptions,
 			true
 		);

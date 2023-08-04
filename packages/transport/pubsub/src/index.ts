@@ -520,6 +520,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						new SubscriptionData({
 							timestamp: message.header.timetamp, // TODO update timestamps on all messages?
 							data: subscription.data,
+							publicKey: subscriber,
 						})
 					);
 					if (

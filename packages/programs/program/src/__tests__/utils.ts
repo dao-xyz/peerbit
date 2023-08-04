@@ -20,6 +20,7 @@ export const createPeer = async (
 			Map<
 				string,
 				{
+					publicKey: PublicSignKey;
 					timestamp: bigint;
 					data?: Uint8Array | undefined;
 				}
@@ -79,6 +80,7 @@ export const createPeer = async (
 						state.subsribers.set(topic, map);
 					}
 					map.set(keypair.publicKey.hashcode(), {
+						publicKey: keypair.publicKey,
 						timestamp: BigInt(+new Date()),
 						data: opts?.data,
 					});

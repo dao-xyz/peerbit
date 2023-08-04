@@ -7,7 +7,7 @@ import {
 } from "@dao-xyz/borsh";
 import { CanAppend, Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { AccessError, DecryptedThing } from "@peerbit/crypto";
+import { AccessError, DecryptedThing, PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
 import { CustomEvent } from "@libp2p/interfaces/events";
@@ -51,6 +51,7 @@ export interface DocumentEvents<T> {
 
 export type SetupOptions<T> = {
 	type: AbstractType<T>;
+	canReplicate?: (key: PublicSignKey) => Promise<boolean> | boolean;
 	canWrite?: CanAppend<Operation<T>>;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
 	index?: {
@@ -129,6 +130,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
+			canReplicate: options?.canReplicate,
 			canAppend: this.canWrite.bind(this),
 			onChange: this.handleChanges.bind(this),
 			trim: options?.trim,
