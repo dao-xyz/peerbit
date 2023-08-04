@@ -37,8 +37,9 @@ import {
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@peerbit/logger";
 import { Cache } from "@peerbit/cache";
-import { PublicSignKey } from "@peerbit/crypto";
+import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { SharedLog } from "@peerbit/shared-log";
+import { concat, fromString } from "uint8arrays";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -349,7 +350,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		this._resultsCollectQueue = new Cache({ max: 10000 }); // TODO choose limit better
 
 		await this._query.open({
-			topic: this._log.log.idString + "/document",
+			topic: sha256Base64Sync(
+				concat([this._log.log.id, fromString("/document")])
+			),
 			responseHandler: async (query, ctx) => {
 				if (
 					properties.canSearch &&

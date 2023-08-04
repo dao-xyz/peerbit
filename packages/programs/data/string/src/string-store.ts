@@ -1,7 +1,7 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { AppendOptions, CanAppend, Change, Entry } from "@peerbit/log";
 import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
-import { PublicSignKey } from "@peerbit/crypto";
+import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { Program, ProgramEvents } from "@peerbit/program";
 import { RPCOptions, RPC, RequestContext } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -16,6 +16,7 @@ import {
 	StringResult,
 } from "./query.js";
 import { CustomEvent } from "@libp2p/interfaces/events";
+import { concat, fromString } from "uint8arrays";
 
 import { Range } from "./range.js";
 
@@ -94,7 +95,9 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 
 		await this.query.open({
 			...options,
-			topic: this._log.log.idString + "/" + "dstring",
+			topic: sha256Base64Sync(
+				concat([this._log.log.id, fromString("/dstring")])
+			),
 			responseHandler: this.queryHandler.bind(this),
 			queryType: SearchRequest,
 			responseType: StringResult,
