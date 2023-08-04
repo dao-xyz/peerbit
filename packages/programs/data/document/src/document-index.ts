@@ -206,10 +206,7 @@ const resolvedSort = async <T, Q extends { value: T; context: Context }>(
 const SORT_TMP_KEY = "__sort_ref";
 
 type QueryDetailedOptions<T> = QueryOptions<T> & {
-	onResponse?: (
-		response: AbstractSearchResult<T>,
-		from?: PublicSignKey
-	) => void;
+	onResponse?: (response: AbstractSearchResult<T>, from: PublicSignKey) => void;
 	excludePeerAgeThreshold?: number;
 };
 const introduceEntries = async <T>(
@@ -230,7 +227,7 @@ const introduceEntries = async <T>(
 				await sync(response.response);
 			}
 			options?.onResponse &&
-				options.onResponse(response.response, response.from!);
+				options.onResponse(response.response, response.from!); // TODO fix types
 			results.push(response as RPCResponse<Results<T>>);
 		} else if (response.response instanceof NoAccess) {
 			logger.error("Search resulted in access error");
@@ -268,13 +265,13 @@ if (!(await this.canRead(message.sender))) {
 } */
 
 export type CanSearch = (
-	request: SearchRequest | CollectNextRequest | CloseIteratorRequest,
-	from?: PublicSignKey
+	request: SearchRequest | CollectNextRequest,
+	from: PublicSignKey
 ) => Promise<boolean> | boolean;
 
 export type CanRead<T> = (
 	result: T,
-	from?: PublicSignKey
+	from: PublicSignKey
 ) => Promise<boolean> | boolean;
 
 export type OpenOptions<T> = {
@@ -308,7 +305,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 	private _sync: (result: Results<T>) => Promise<void>;
 	private _index: Map<string, IndexedValue<T>>;
-	private _resultsCollectQueue: Cache<{ value: T; context: Context }[]>;
+	private _resultsCollectQueue: Cache<{
+		from: PublicSignKey;
+		arr: { value: T; context: Context }[];
+	}>;
 
 	private _log: SharedLog<Operation<T>>;
 
@@ -354,10 +354,17 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				concat([this._log.log.id, fromString("/document")])
 			),
 			responseHandler: async (query, ctx) => {
+				if (!ctx.from) {
+					logger.info("Receieved query without from");
+					return;
+				}
+
 				if (
 					properties.canSearch &&
+					(query instanceof SearchRequest ||
+						query instanceof CollectNextRequest) &&
 					!(await properties.canSearch(
-						query as SearchRequest | CollectNextRequest | CloseIteratorRequest,
+						query as SearchRequest | CollectNextRequest,
 						ctx.from
 					))
 				) {
@@ -365,16 +372,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}
 
 				if (query instanceof CloseIteratorRequest) {
-					this.processCloseIteratorRequest(query);
+					this.processCloseIteratorRequest(query, ctx.from);
 				} else {
 					const results = await this.processFetchRequest(
 						query as SearchRequest | SearchRequest | CollectNextRequest,
-						properties.canRead
-							? {
-									canRead: properties.canRead,
-									from: ctx.from,
-							  }
-							: undefined
+						ctx.from,
+						{
+							canRead: properties.canRead,
+						}
 					);
 					return new Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
@@ -470,9 +475,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 	async processFetchRequest(
 		query: SearchRequest | CollectNextRequest,
+		from: PublicSignKey,
 		options?: {
-			canRead: CanRead<T>;
-			from?: PublicSignKey;
+			canRead?: CanRead<T>;
 		}
 	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
@@ -526,9 +531,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				return true;
 			});
 
-			if (options) {
+			if (options?.canRead) {
 				const keepFilter = await Promise.all(
-					results.map((x) => options.canRead(x.value, options.from))
+					results.map((x) => options?.canRead!(x.value, from))
 				);
 				results = results.filter((x, i) => keepFilter[i]);
 			}
@@ -538,7 +543,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 			const batch = results.splice(0, query.fetch);
 			if (results.length > 0) {
-				this._resultsCollectQueue.add(query.idString, results); // cache resulst not returned
+				this._resultsCollectQueue.add(query.idString, {
+					arr: results,
+					from,
+				}); // cache resulst not returned
 			}
 
 			return { results: batch, kept: results.length }; // Only return 1 result since we are doing distributed sort, TODO buffer more initially
@@ -551,21 +559,29 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				};
 			}
 
-			const batch = results.splice(0, query.amount);
+			const batch = results.arr.splice(0, query.amount);
 
-			if (results.length === 0) {
+			if (results.arr.length === 0) {
 				this._resultsCollectQueue.del(query.idString); // TODO add tests for proper cleanup/timeouts
 			}
 
-			return { results: batch, kept: results.length };
+			return { results: batch, kept: results.arr.length };
 		}
 		throw new Error("Unsupported");
 	}
 
 	async processCloseIteratorRequest(
-		query: CloseIteratorRequest
+		query: CloseIteratorRequest,
+		publicKey: PublicSignKey
 	): Promise<void> {
-		this._resultsCollectQueue.del(query.idString);
+		const entry = this._resultsCollectQueue.get(query.idString);
+		if (entry?.from.equals(publicKey)) {
+			this._resultsCollectQueue.del(query.idString);
+		} else if (entry) {
+			logger.warn(
+				"Received a close iterator request for a iterator that does not belong to the requesting peer"
+			);
+		}
 	}
 
 	private handleQueryObject(f: Query, doc: IndexedValue<T>) {
@@ -687,7 +703,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		const allResults: Results<T>[] = [];
 
 		if (local) {
-			const results = await this.processFetchRequest(queryRequest);
+			const results = await this.processFetchRequest(
+				queryRequest,
+				this.node.identity.publicKey
+			);
 			if (results.results.length > 0) {
 				const resultsObject = new Results<T>({
 					results: await Promise.all(
@@ -928,7 +947,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
 						promises.push(
-							this.processFetchRequest(collectRequest)
+							this.processFetchRequest(
+								collectRequest,
+								this.node.identity.publicKey
+							)
 								.then((results) => {
 									resultsLeft += results.kept;
 
@@ -1095,7 +1117,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}
 				// Fetch locally?
 				if (peer === this.node.identity.publicKey.hashcode()) {
-					promises.push(this.processCloseIteratorRequest(closeRequest));
+					promises.push(
+						this.processCloseIteratorRequest(
+							closeRequest,
+							this.node.identity.publicKey
+						)
+					);
 				} else {
 					// Fetch remotely
 					promises.push(

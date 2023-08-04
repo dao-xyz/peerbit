@@ -31,12 +31,13 @@ import {
 	NoAccess,
 	AbstractSearchRequest,
 	Results,
+	CloseIteratorRequest,
 } from "../query.js";
 import { LSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
 import { PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
-import { waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { DocumentIndex } from "../document-index.js";
 import { Program } from "@peerbit/program";
 import pDefer from "p-defer";
@@ -1701,9 +1702,52 @@ describe("index", () => {
 					expect(iterator.done()).toBeFalse();
 					await iterator.next(2); // fetch some, but not all
 					expect(
-						stores[0].docs.index["_resultsCollectQueue"].get(request.idString)
+						stores[0].docs.index["_resultsCollectQueue"].get(request.idString)!
+							.arr
 					).toHaveLength(1);
 					await iterator.close();
+					await waitForResolved(
+						() =>
+							expect(
+								stores[0].docs.index["_resultsCollectQueue"].get(
+									request.idString
+								)
+							).toBeUndefined(),
+						{ timeout: 3000, delayInterval: 50 }
+					);
+				});
+
+				it("requires correct id", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					const request = new SearchRequest({
+						query: [],
+					});
+					const iterator = await stores[1].docs.index.iterate(request);
+					expect(iterator.done()).toBeFalse();
+					await iterator.next(1); // fetch some, but not all
+					expect(
+						stores[0].docs.index["_resultsCollectQueue"].get(request.idString)!
+							.arr
+					).toHaveLength(1);
+
+					const closeRequest = new CloseIteratorRequest({ id: request.id });
+
+					// Try to send from another peer (that is not the owner of the iterator)
+					await stores[2].docs.index["_query"].send(closeRequest, {
+						to: [session.peers[0].identity.publicKey],
+					});
+
+					await delay(2000);
+					expect(
+						stores[0].docs.index["_resultsCollectQueue"].get(request.idString)
+					).toBeDefined();
+
+					// send from the owner
+					await stores[1].docs.index["_query"].send(closeRequest, {
+						to: [session.peers[0].identity.publicKey],
+					});
+
 					await waitForResolved(
 						() =>
 							expect(
@@ -2019,9 +2063,9 @@ describe("index", () => {
 					const fn = stores[i].docs.index.processFetchRequest.bind(
 						stores[i].docs.index
 					);
-					stores[i].docs.index.processFetchRequest = (a) => {
+					stores[i].docs.index.processFetchRequest = (a, b, c) => {
 						counters[i] += 1;
-						return fn(a);
+						return fn(a, b, c);
 					};
 					await stores[i].docs.waitFor(
 						...session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId)
@@ -2205,12 +2249,12 @@ describe("index", () => {
 						const fn = stores[i].docs.index.processFetchRequest.bind(
 							stores[1].docs.index
 						);
-						stores[i].docs.index.processFetchRequest = (a) => {
+						stores[i].docs.index.processFetchRequest = (a, b, c) => {
 							if (!failedOnce) {
 								failedOnce = true;
 								throw new Error("Expected error");
 							}
-							return fn(a);
+							return fn(a, b, c);
 						};
 					}
 					let timeout = 1000;
