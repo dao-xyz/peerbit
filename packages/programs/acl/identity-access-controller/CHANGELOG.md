@@ -160,6 +160,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v1.0.17...identity-access-controller-v2.0.0) (2023-08-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* canPerform callback that allows peers to filter allowed operations
+* support canSearch and canRead filters for Documents
+
+### Features
+
+* canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
+* support canSearch and canRead filters for Documents ([573688d](https://github.com/dao-xyz/peerbit/commit/573688d51b9b8566e58b3c40d6b7854a515cb665))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 2.0.1 to 3.0.0
+    * @peerbit/trusted-network bumped from 1.0.17 to 2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
+
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v1.0.14...identity-access-controller-v1.0.15) (2023-07-04)
 
 

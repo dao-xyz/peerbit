@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/program-v2.1.0...program-v2.2.0) (2023-08-06)
+
+
+### Features
+
+* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    * @peerbit/blocks-interface bumped from ^1.0.5 to ^1.0.6
+    * @peerbit/pubsub-interface bumped from ^1.0.5 to ^1.1.0
+
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/program-v2.0.0...program-v2.1.0) (2023-07-28)
 
 

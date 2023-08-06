@@ -97,6 +97,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.14 to 1.0.15
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/log-v1.0.15...log-v2.0.0) (2023-08-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* replication degree on commit level
+
+### Features
+
+* replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
+
+
+### Bug Fixes
+
+* add verification test ([69edf75](https://github.com/dao-xyz/peerbit/commit/69edf750153ce061ad42850dae20581b4b59a795))
+* include entry type and ShallowEntry ([dc639c1](https://github.com/dao-xyz/peerbit/commit/dc639c1b327ae1eb922d7df4b94c3cf9f02e0f32))
+* rn file ([7b74a87](https://github.com/dao-xyz/peerbit/commit/7b74a87b0f639dab38b88e6c6116196601b1ca60))
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+* update cache on join ([1f65fc4](https://github.com/dao-xyz/peerbit/commit/1f65fc4de88d780149f5e926b4684c858e7cb2bc))
+* update Entry.create meta arg to include next property ([aaa2b6f](https://github.com/dao-xyz/peerbit/commit/aaa2b6f76cbc006d67ca00bdd34e8771db7c3b4b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.0.5 to ^1.0.6
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.15 to 1.0.16
+
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/log-v1.0.13...log-v1.0.14) (2023-07-18)
 
 

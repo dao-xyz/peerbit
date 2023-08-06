@@ -8,6 +8,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.14 to 1.0.15
 
+## [1.2.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.1.2...proxy-v1.2.0) (2023-08-06)
+
+
+### Features
+
+* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
+
+
+### Bug Fixes
+
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^2.1.0 to ^2.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.15 to 1.0.16
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/proxy-v1.1.0...proxy-v1.1.1) (2023-07-19)
 
 

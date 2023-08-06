@@ -25,6 +25,13 @@
   * dependencies
     * @peerbit/cache bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.4...crypto-v1.0.5) (2023-08-06)
+
+
+### Bug Fixes
+
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
 ## 1.0.0 (2023-06-28)
 
 

@@ -14,6 +14,26 @@
     * @peerbit/crypto bumped from 1.0.1 to 1.0.2
     * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.0.5...pubsub-interface-v1.1.0) (2023-08-06)
+
+
+### Features
+
+* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
+
+
+### Bug Fixes
+
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    * @peerbit/stream-interface bumped from ^1.0.5 to ^1.0.6
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.0.4...pubsub-interface-v1.0.5) (2023-07-18)
 
 

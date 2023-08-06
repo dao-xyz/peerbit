@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream",
-	"version": "1.0.7",
+	"version": "1.0.8",
 	"description": "A building block for direct streaming protocols",
 	"type": "module",
 	"sideEffects": false,
@@ -57,8 +57,8 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@peerbit/cache": "1.0.2",
-		"@peerbit/crypto": "1.0.4",
-		"@peerbit/stream-interface": "^1.0.5",
+		"@peerbit/crypto": "1.0.5",
+		"@peerbit/stream-interface": "^1.0.6",
 		"@libp2p/topology": "^4.0.1",
 		"abstract-level": "^1.0.3",
 		"graphology": "0.25.1",
