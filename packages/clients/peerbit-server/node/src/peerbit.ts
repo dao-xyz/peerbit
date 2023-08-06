@@ -1,3 +1,4 @@
+import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 
@@ -18,6 +19,7 @@ export const create = (properties: { directory?: string; domain?: string }) => {
 				minConnections: 0,
 			},
 			services: {
+				blocks: (c) => new DirectBlock(c, { canRelayMessage: true }),
 				pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
 			},
 		},
