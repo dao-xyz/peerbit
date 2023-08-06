@@ -99,8 +99,24 @@ export class Channel extends Program<ChannelArgs> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			canPerform: () => true,
 			role: properties?.role,
+			canPerform: async (operation, { entry }) => {
+				// Determine whether an operation, based on an entry should be allowed
+
+				// You can use the entry to get properties of the operation
+				// like signers
+				const signers = await entry.getPublicKeys();
+
+				if (operation instanceof PutOperation) {
+					// do some behaviour
+					return true;
+				} else if (operation instanceof DeleteOperation) {
+					// do some other behaviour
+					return true;
+				}
+				return false;
+			},
+
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
 				key: POST_ID_PROPERTY,
@@ -141,22 +157,6 @@ export class Channel extends Program<ChannelArgs> {
 
 		await this.reactions.open({
 			type: Reaction,
-			canPerform: async (operation, { entry }) => {
-				// Determine whether an operation, based on an entry should be allowed
-
-				// You can use the entry to get properties of the operation
-				// like signers
-				const signers = await entry.getPublicKeys();
-
-				if (operation instanceof PutOperation) {
-					// do some behaviour
-					return true;
-				} else if (operation instanceof DeleteOperation) {
-					// do some other behaviour
-					return true;
-				}
-				return false;
-			},
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
 				key: REACTION_ID_PROPERTY,
