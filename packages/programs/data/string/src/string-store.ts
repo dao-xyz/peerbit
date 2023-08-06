@@ -54,7 +54,7 @@ type Args = {
 	log?: SharedLogOptions;
 };
 
-type TransactionContext = {
+export type TransactionContext = {
 	entry: Entry<StringOperation>;
 };
 @variant("dstring")
