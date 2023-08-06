@@ -148,6 +148,22 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/server-v1.1.0...server-v1.1.1) (2023-08-06)
+
+
+### Bug Fixes
+
+* typo ([d619216](https://github.com/dao-xyz/peerbit/commit/d6192163bb37026ea19aa48118a024fc426111bd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.2.0 to 1.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.15 to 1.0.16
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/server-v1.0.20...server-v1.1.0) (2023-07-28)
 
 

@@ -147,6 +147,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v1.0.17...trusted-network-v2.0.0) (2023-08-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* canPerform callback that allows peers to filter allowed operations
+* support canSearch and canRead filters for Documents
+* rename canAppend to canWrite
+
+### Features
+
+* canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
+* rename canAppend to canWrite ([66f8960](https://github.com/dao-xyz/peerbit/commit/66f896069bbe8ba3a3c8a266adaeb5feba0b408e))
+* support canSearch and canRead filters for Documents ([573688d](https://github.com/dao-xyz/peerbit/commit/573688d51b9b8566e58b3c40d6b7854a515cb665))
+
+
+### Bug Fixes
+
+* simplify tests ([a73b33f](https://github.com/dao-xyz/peerbit/commit/a73b33f53b83bf12e89d4c02a473b7abe7777a9d))
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    * @peerbit/document bumped from 2.0.1 to 3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
+
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/trusted-network-v1.0.14...trusted-network-v1.0.15) (2023-07-04)
 
 

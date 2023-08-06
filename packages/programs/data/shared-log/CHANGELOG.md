@@ -109,6 +109,48 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v2.0.1...shared-log-v3.0.0) (2023-08-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* canPerform callback that allows peers to filter allowed operations
+* replication degree on commit level
+
+### Features
+
+* allow updating role while open ([4fe384d](https://github.com/dao-xyz/peerbit/commit/4fe384d079d2bc3afeb2294d024eb8b49009ea00))
+* canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
+* replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
+* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
+
+
+### Bug Fixes
+
+* add replication re-organization checks ([03954ba](https://github.com/dao-xyz/peerbit/commit/03954badc55c4e36e3459cc13be7b711b61e1cb5))
+* cache resolving parents with unique gids ([128a2ea](https://github.com/dao-xyz/peerbit/commit/128a2ea426843bf3326340cf25508a8cec82cb8a))
+* export append options ([44b7a2e](https://github.com/dao-xyz/peerbit/commit/44b7a2ecbf69d8915d6797a5abdb2b7b25596b08))
+* make sure pendingDeletes are not interfering with reopens ([b8f3bb4](https://github.com/dao-xyz/peerbit/commit/b8f3bb4b2c6edbb75c655bb7f4972d654f85bbf9))
+* remove pending IHave response handlers after timeout ([1a65fb8](https://github.com/dao-xyz/peerbit/commit/1a65fb8aaf31ef253a74eff5135cfdb481892f96))
+* rename replication types ([42ade4f](https://github.com/dao-xyz/peerbit/commit/42ade4fe45a5139c72019de8b982589a83731954))
+* simplify QueryContext ([86ae518](https://github.com/dao-xyz/peerbit/commit/86ae5187bf6cc8a894a6b7f160415ceb6b3cb64d))
+* simplify tests ([a73b33f](https://github.com/dao-xyz/peerbit/commit/a73b33f53b83bf12e89d4c02a473b7abe7777a9d))
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+* update error message ([8c90343](https://github.com/dao-xyz/peerbit/commit/8c90343236011d835b7739c8da7c69b1ee3d0582))
+* verify remote signatures by default ([ce96816](https://github.com/dao-xyz/peerbit/commit/ce968166d9d1b168cc5087052427ba9de33b4d2a))
+* wait for replicating entry before notifying peers ([2b79612](https://github.com/dao-xyz/peerbit/commit/2b79612766437fd51e48dcad0b7c624b6e322145))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.1.0 to 2.2.0
+    * @peerbit/log bumped from 1.0.15 to 2.0.0
+    * @peerbit/rpc bumped from 2.0.1 to 2.1.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.9...shared-log-v2.0.0) (2023-07-18)
 
 

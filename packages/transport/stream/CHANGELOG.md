@@ -14,6 +14,21 @@
     * @peerbit/crypto bumped from 1.0.1 to 1.0.2
     * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.7...stream-v1.0.8) (2023-08-06)
+
+
+### Bug Fixes
+
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    * @peerbit/stream-interface bumped from ^1.0.5 to ^1.0.6
+
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.6...stream-v1.0.7) (2023-07-28)
 
 

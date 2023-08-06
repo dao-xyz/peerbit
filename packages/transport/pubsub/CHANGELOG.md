@@ -42,6 +42,25 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.6 to 1.0.7
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.0.7...pubsub-v1.1.0) (2023-08-06)
+
+
+### Features
+
+* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
+
+
+### Bug Fixes
+
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.7 to 1.0.8
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.0.5...pubsub-v1.0.6) (2023-07-18)
 
 

@@ -152,6 +152,41 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/string-v2.0.4...string-v3.0.0) (2023-08-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* canPerform callback that allows peers to filter allowed operations
+* hash replication topics
+* add NoAccess return type for string search
+* rename canAppend to canWrite
+* replication degree on commit level
+
+### Features
+
+* add NoAccess return type for string search ([c2daab2](https://github.com/dao-xyz/peerbit/commit/c2daab2f63a29aab1f20466cdddc98d352640283))
+* canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
+* hash replication topics ([d941759](https://github.com/dao-xyz/peerbit/commit/d9417592303f2cc1f3dfdc9085565dcd32de301c))
+* rename canAppend to canWrite ([66f8960](https://github.com/dao-xyz/peerbit/commit/66f896069bbe8ba3a3c8a266adaeb5feba0b408e))
+* replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
+
+
+### Bug Fixes
+
+* export TransactionContext ([0939d2d](https://github.com/dao-xyz/peerbit/commit/0939d2d1df7e5744c6e9948a568bbe3929699de4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.1.0 to 2.2.0
+    * @peerbit/shared-log bumped from ^2.0.1 to ^3.0.0
+    * @peerbit/rpc bumped from 2.0.1 to 2.1.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/string-v2.0.3...string-v2.0.4) (2023-07-28)
 
 

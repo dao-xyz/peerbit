@@ -35,6 +35,22 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.6 to 1.0.7
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.7...blocks-v1.0.8) (2023-08-06)
+
+
+### Bug Fixes
+
+* await for rm ([aafe9a3](https://github.com/dao-xyz/peerbit/commit/aafe9a31b214e9dc4aa1326a252424fe39578fea))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.7 to 1.0.8
+    * @peerbit/blocks-interface bumped from 1.0.5 to 1.0.6
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.5...blocks-v1.0.6) (2023-07-18)
 
 

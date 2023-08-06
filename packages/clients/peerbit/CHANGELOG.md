@@ -32,6 +32,28 @@
   * dependencies
     * @peerbit/program bumped from 1.0.4 to 1.0.5
 
+## [1.3.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.2.0...peerbit-v1.3.0) (2023-08-06)
+
+
+### Features
+
+* add options to simply start as a replicator ([2f7d7f2](https://github.com/dao-xyz/peerbit/commit/2f7d7f2ccb066d3a2436b25bad1d652d6c61f96d))
+
+
+### Bug Fixes
+
+* remove unused minReplicas arg ([159a2f5](https://github.com/dao-xyz/peerbit/commit/159a2f5545a00fcba760c2ba367049b447052898))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    * @peerbit/program bumped from 2.1.0 to 2.2.0
+    * @peerbit/pubsub bumped from ^1.0.7 to ^1.1.0
+    * @peerbit/blocks bumped from ^1.0.7 to ^1.0.8
+
 ## [1.2.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.1.7...peerbit-v1.2.0) (2023-07-28)
 
 

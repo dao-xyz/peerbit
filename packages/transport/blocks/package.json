@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks",
-	"version": "1.0.7",
+	"version": "1.0.8",
 	"description": "Block store streaming",
 	"type": "module",
 	"sideEffects": false,
@@ -54,9 +54,9 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@peerbit/lazy-level": "1.0.2",
-		"@peerbit/stream": "1.0.7",
-		"@peerbit/blocks-interface": "1.0.5",
-		"@peerbit/crypto": "1.0.4",
+		"@peerbit/stream": "1.0.8",
+		"@peerbit/blocks-interface": "1.0.6",
+		"@peerbit/crypto": "1.0.5",
 		"@ipld/dag-cbor": "^9.0.2",
 		"abstract-level": "^1.0.3",
 		"libp2p": "^0.45.9",

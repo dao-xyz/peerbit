@@ -99,6 +99,30 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/rpc-v2.0.1...rpc-v2.1.0) (2023-08-06)
+
+
+### Features
+
+* allow updating role while open ([4fe384d](https://github.com/dao-xyz/peerbit/commit/4fe384d079d2bc3afeb2294d024eb8b49009ea00))
+
+
+### Bug Fixes
+
+* only check if request type is Uint8array once ([020ce19](https://github.com/dao-xyz/peerbit/commit/020ce19a9289c8d2d2384eece489ee1acae03b63))
+* simplify QueryContext ([86ae518](https://github.com/dao-xyz/peerbit/commit/86ae5187bf6cc8a894a6b7f160415ceb6b3cb64d))
+* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    * @peerbit/program bumped from 2.1.0 to 2.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/rpc-v1.0.14...rpc-v2.0.0) (2023-07-18)
 
 
