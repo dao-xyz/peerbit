@@ -74,7 +74,7 @@ describe(`exchange`, function () {
 		let verified = false;
 		const verifyFn = clonedEntry.verifySignatures.bind(clonedEntry);
 		clonedEntry.createdLocally = true;
-		clonedEntry.verifySiygnatures = () => {
+		clonedEntry.verifySignatures = () => {
 			verified = true;
 			return verifyFn();
 		};

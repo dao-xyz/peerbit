@@ -61,23 +61,14 @@ class PostsDB extends Program {
 			},
 			canReplicate: (publicKey) =>
 				!!ALL_MEMBERS.find((x) => x.equals(publicKey)),
-			canWrite: async (entry) => {
-				try {
-					await entry.verifySignatures();
-					const payload = await entry.getPayloadValue();
-					console.log("GOT PAYLOAD");
-					if (payload instanceof PutOperation) {
-						const post: Post = payload.getValue(this.posts.index.valueEncoding);
-						console.log("PUT POST", post);
-						return true;
-					} else if (payload instanceof DeleteOperation) {
-						return false;
-					}
+
+			canPerform: async (operation, _context) => {
+				if (operation instanceof PutOperation) {
 					return true;
-				} catch (error) {
-					const q = 123;
+				} else if (operation instanceof DeleteOperation) {
 					return false;
 				}
+				return true;
 			},
 		});
 	}
@@ -124,18 +115,14 @@ const nonMemberStore = await nonMember.open<PostsDB>(memberStore1.address);
 // And there could be a replication progress underway (https://github.com/dao-xyz/peerbit/issues/151)
 // If you open the store with an observer role, then you will not need this delay
 await delay(3000);
-
-console.log("Store1:");
 expect(await memberStore1.posts.index.search(new SearchRequest())).toHaveLength(
 	1
 );
 
-console.log("Store2:");
 expect(await memberStore2.posts.index.search(new SearchRequest())).toHaveLength(
 	1
 );
 
-console.log("Store3:");
 expect(
 	await nonMemberStore.posts.index.search(new SearchRequest())
 ).toHaveLength(0);

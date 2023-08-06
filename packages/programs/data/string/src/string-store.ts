@@ -43,12 +43,20 @@ export interface StringEvents {
 	change: CustomEvent<Change<StringOperation>>;
 }
 
+type CanPerform = (
+	operation: StringOperation,
+	context: TransactionContext
+) => Promise<boolean> | boolean;
+
 type Args = {
 	canRead?: CanRead;
-	canWrite?: CanAppend<StringOperation>;
+	canPerform?: CanPerform;
 	log?: SharedLogOptions;
 };
 
+type TransactionContext = {
+	entry: Entry<StringOperation>;
+};
 @variant("dstring")
 export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	@field({ type: SharedLog })
@@ -60,7 +68,6 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	@field({ type: StringIndex })
 	_index: StringIndex;
 
-	_optionCanAppend?: CanAppend<StringOperation>;
 	_canRead?: CanRead;
 
 	constructor(properties: {
@@ -74,7 +81,6 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	}
 
 	async open(options?: Args) {
-		this._optionCanAppend = options?.canWrite;
 		await this._index.open(this._log.log);
 
 		await this._log.open({
@@ -82,7 +88,16 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			replicas: {
 				min: 0xffffffff, // assume a document can not be sharded?
 			},
-			canAppend: this.canWrite.bind(this),
+			canAppend: async (entry) => {
+				const operation = await entry.getPayloadValue();
+
+				if (!(await this._canPerform(operation, { entry }))) {
+					return false;
+				}
+				return options?.canPerform
+					? options.canPerform(operation, { entry })
+					: true;
+			},
 			onChange: async (change) => {
 				await this._index.updateIndex(change);
 				this.events.dispatchEvent(
@@ -104,21 +119,14 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		});
 	}
 
-	async canWrite(entry: Entry<StringOperation>): Promise<boolean> {
-		if (!(await this._canWrite(entry))) {
-			return false;
-		}
-		if (this._optionCanAppend && !(await this._optionCanAppend(entry))) {
-			return false;
-		}
-		return true;
-	}
-
-	async _canWrite(entry: Entry<StringOperation>): Promise<boolean> {
-		if (this._log.log.length === 0 || entry.next.length === 0) {
+	private async _canPerform(
+		operation: StringOperation,
+		context: TransactionContext
+	): Promise<boolean> {
+		if (this._log.log.length === 0 || context.entry.next.length === 0) {
 			return true;
 		} else {
-			for (const next of entry.next) {
+			for (const next of context.entry.next) {
 				if (this._log.log.has(next)) {
 					return true;
 				}

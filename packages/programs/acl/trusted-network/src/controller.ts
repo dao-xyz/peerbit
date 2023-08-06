@@ -7,6 +7,7 @@ import {
 	Replicator,
 	Role,
 	CanRead,
+	TransactionContext,
 } from "@peerbit/document";
 import { AppendOptions, Entry } from "@peerbit/log";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -30,28 +31,25 @@ const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 		? publicKey
 		: getPublicKeyFromPeerId(publicKey);
 };
-const canWriteByRelation = async (
-	entry: Entry<Operation<IdentityRelation>>,
+const canPerformByRelation = async (
+	operation: PutOperation<IdentityRelation> | DeleteOperation,
+	context: TransactionContext<IdentityRelation>,
 	isTrusted?: (key: PublicSignKey) => Promise<boolean>
 ): Promise<boolean> => {
 	// verify the payload
-	const operation = await entry.getPayloadValue();
 	if (
 		operation instanceof PutOperation ||
 		operation instanceof DeleteOperation
 	) {
 		/*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
 
-		const keys = await entry.getPublicKeys();
+		const keys = await context.entry.getPublicKeys();
 		const checkKey = async (key: PublicSignKey): Promise<boolean> => {
 			if (operation instanceof PutOperation) {
-				// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canWrite method does not know what the payload will
-				// be, upon deserialization. There should be known in the `canWrite` method whether we are appending to the identityGraph.
+				// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canPerform method does not know what the payload will
+				// be, upon deserialization. There should be known in the `canPerform` method whether we are appending to the identityGraph.
 
-				const relation: AbstractRelation =
-					operation._value || deserialize(operation.data, AbstractRelation);
-				operation._value = relation;
-
+				const relation = operation.value;
 				if (relation instanceof IdentityRelation) {
 					if (!relation.from.equals(key)) {
 						return false;
@@ -97,14 +95,17 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 		}
 	}
 
-	async canWrite(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
-		return canWriteByRelation(entry);
+	async canPerform(
+		operation: PutOperation<IdentityRelation> | DeleteOperation,
+		context: TransactionContext<IdentityRelation>
+	): Promise<boolean> {
+		return canPerformByRelation(operation, context);
 	}
 
 	async open(options?: IdentityGraphArgs) {
 		await this.relationGraph.open({
 			type: IdentityRelation,
-			canWrite: this.canWrite.bind(this),
+			canPerform: this.canPerform.bind(this),
 			role: options?.role,
 			index: {
 				canRead: options?.canRead,
@@ -156,7 +157,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	async open(options?: TrustedNetworkArgs) {
 		await this.trustGraph.open({
 			type: IdentityRelation,
-			canWrite: this.canWrite.bind(this),
+			canPerform: this.canPerform.bind(this),
 			role: options?.role,
 			index: {
 				canRead: this.canRead.bind(this),
@@ -170,8 +171,13 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		}); // self referencing access controller
 	}
 
-	async canWrite(entry: Entry<Operation<IdentityRelation>>): Promise<boolean> {
-		return canWriteByRelation(entry, (key) => this.isTrusted(key));
+	async canPerform(
+		operation: PutOperation<IdentityRelation> | DeleteOperation,
+		context: TransactionContext<IdentityRelation>
+	): Promise<boolean> {
+		return canPerformByRelation(operation, context, (key) =>
+			this.isTrusted(key)
+		);
 	}
 
 	async canRead(relation: any, publicKey?: PublicSignKey): Promise<boolean> {

@@ -660,7 +660,9 @@ describe("index", () => {
 
 				await session.peers[0].open(store, {
 					args: {
-						trim: { type: "length" as const, to: 1 },
+						log: {
+							trim: { type: "length" as const, to: 1 },
+						},
 						role: new Observer(), // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
 					},
 				});
@@ -703,7 +705,9 @@ describe("index", () => {
 
 				await session.peers[0].open(store, {
 					args: {
-						trim: { type: "length" as const, to: 10 },
+						log: {
+							trim: { type: "length" as const, to: 10 },
+						},
 						role: new Observer(), // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
 					},
 				});
@@ -958,8 +962,8 @@ describe("index", () => {
 			describe("sync", () => {
 				it("can match sync", async () => {
 					expect(stores[1].docs.index.size).toEqual(0);
-					let canWriteEvents = 0;
-					let canWrite = stores[1].docs["_optionCanAppend"]?.bind(
+					let canPerformEvents = 0;
+					let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
 						stores[1].docs
 					);
 					let syncEvents = 0;
@@ -968,9 +972,9 @@ describe("index", () => {
 						syncEvents += 1;
 						return sync(r);
 					};
-					stores[1].docs["_optionCanAppend"] = async (e) => {
-						canWriteEvents += 1;
-						return !canWrite || canWrite(e);
+					stores[1].docs["_optionCanPerform"] = async (a, b) => {
+						canPerformEvents += 1;
+						return !canPerform || canPerform(a, b);
 					};
 
 					await stores[1].docs.index.search(
@@ -981,7 +985,7 @@ describe("index", () => {
 					);
 					await waitFor(() => stores[1].docs.index.size === 4);
 					expect(stores[1].docs.log.log.length).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
-					expect(canWriteEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
+					expect(canPerformEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
 					expect(syncEvents).toEqual(1);
 
 					await stores[1].docs.index.search(
@@ -991,7 +995,7 @@ describe("index", () => {
 						{ remote: { amount: 1, sync: true } }
 					);
 					await waitFor(() => syncEvents == 2);
-					expect(canWriteEvents).toEqual(6); // no new checks, since all docs already added
+					expect(canPerformEvents).toEqual(6); // no new checks, since all docs already added
 				});
 				it("will not sync already existing", async () => {});
 			});

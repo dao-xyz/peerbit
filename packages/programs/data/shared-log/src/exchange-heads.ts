@@ -1,5 +1,5 @@
 import { variant, field, vec, fixedArray } from "@dao-xyz/borsh";
-import { Entry, ShallowEntry } from "@peerbit/log";
+import { Entry, EntryType, ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
@@ -115,12 +115,14 @@ export const allEntriesWithUniqueGids = async (
 		for (const element of curr) {
 			if (!map.has(element.meta.gid)) {
 				map.set(element.meta.gid, element);
-				for (const next of element.meta.next) {
-					const indexedEntry = log.entryIndex.getShallow(next);
-					if (!indexedEntry) {
-						logger.error("Failed to find indexed entry for hash: " + next);
-					} else {
-						nexts.push(indexedEntry);
+				if (element.meta.type === EntryType.APPEND) {
+					for (const next of element.meta.next) {
+						const indexedEntry = log.entryIndex.getShallow(next);
+						if (!indexedEntry) {
+							logger.error("Failed to find indexed entry for hash: " + next);
+						} else {
+							nexts.push(indexedEntry);
+						}
 					}
 				}
 			}

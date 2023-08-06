@@ -5,7 +5,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { CanAppend, Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
+import { Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
 import { AccessError, DecryptedThing, PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -22,7 +22,7 @@ import {
 export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
 import {
-	Indexable,
+	IndexableFields,
 	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
 	DocumentIndex,
@@ -49,18 +49,30 @@ export interface DocumentEvents<T> {
 	change: CustomEvent<DocumentsChange<T>>;
 }
 
+export type TransactionContext<T> = {
+	entry: Entry<Operation<T>>;
+};
+
+type MaybePromise = Promise<boolean> | boolean;
+
+type CanPerform<T> = (
+	operation: PutOperation<T> | DeleteOperation,
+	context: TransactionContext<T>
+) => MaybePromise;
+
 export type SetupOptions<T> = {
 	type: AbstractType<T>;
-	canReplicate?: (key: PublicSignKey) => Promise<boolean> | boolean;
-	canWrite?: CanAppend<Operation<T>>;
-	canOpen?: (program: T) => Promise<boolean> | boolean;
+	canOpen?: (program: T) => MaybePromise;
+	canPerform?: CanPerform<T>;
 	index?: {
 		key?: string | string[];
-		fields?: Indexable<T>;
+		fields?: IndexableFields<T>;
 		canSearch?: CanSearch;
 		canRead?: CanRead<T>;
 	};
-	trim?: TrimOptions;
+	log?: {
+		trim?: TrimOptions;
+	};
 } & SharedLogOptions;
 
 @variant("documents")
@@ -79,7 +91,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 	private _clazz?: AbstractType<T>;
 
-	private _optionCanAppend?: CanAppend<Operation<T>>;
+	private _optionCanPerform?: CanPerform<T>;
+
 	canOpen?: (
 		program: T,
 		entry: Entry<Operation<T>>
@@ -113,9 +126,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 				);
 			}
 		}
-		if (options.canWrite) {
-			this._optionCanAppend = options.canWrite;
-		}
+
+		this._optionCanPerform = options.canPerform;
 
 		await this._index.open({
 			type: this._clazz,
@@ -131,9 +143,9 @@ export class Documents<T extends Record<string, any>> extends Program<
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
 			canReplicate: options?.canReplicate,
-			canAppend: this.canWrite.bind(this),
+			canAppend: this.canAppend.bind(this),
 			onChange: this.handleChanges.bind(this),
-			trim: options?.trim,
+			trim: options?.log?.trim,
 			sync: options?.sync,
 			role: options?.role,
 			replicas: options?.replicas,
@@ -150,19 +162,33 @@ export class Documents<T extends Record<string, any>> extends Program<
 			: history;
 	}
 
-	async canWrite(entry: Entry<Operation<T>>): Promise<boolean> {
-		const l0 = await this._canWrite(entry);
+	async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
+		const l0 = await this._canAppend(entry);
 		if (!l0) {
 			return false;
 		}
 
-		if (this._optionCanAppend && !(await this._optionCanAppend(entry))) {
-			return false;
+		if (this._optionCanPerform) {
+			const payload = await entry.getPayloadValue();
+
+			if (payload instanceof PutOperation) {
+				payload.getValue(this.index.valueEncoding); // Decode they value so callbacks can jsut do .value
+			}
+			if (
+				!(await this._optionCanPerform(
+					payload as PutOperation<T> | DeleteOperation,
+					{
+						entry,
+					}
+				))
+			) {
+				return false;
+			}
 		}
 		return true;
 	}
 
-	async _canWrite(entry: Entry<Operation<T>>): Promise<boolean> {
+	async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||

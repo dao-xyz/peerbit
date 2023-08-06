@@ -137,7 +137,7 @@ export type QueryOptions<R> = {
 	local?: boolean;
 };
 export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
-export type Indexable<T> = (
+export type IndexableFields<T> = (
 	obj: T,
 	context: Context
 ) => Record<string, any> | Promise<Record<string, any>>;
@@ -188,7 +188,7 @@ const extractSortCompare = (
 
 const resolvedSort = async <T, Q extends { value: T; context: Context }>(
 	arr: Q[],
-	index: Indexable<T>,
+	index: IndexableFields<T>,
 	sorts: Sort[]
 ) => {
 	await Promise.all(
@@ -279,7 +279,7 @@ export type OpenOptions<T> = {
 	log: SharedLog<Operation<T>>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
-	fields: Indexable<T>;
+	fields: IndexableFields<T>;
 	sync: (result: Results<T>) => Promise<void>;
 	indexBy?: string | string[];
 };
@@ -299,7 +299,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	indexByResolver: (obj: any) => string | Uint8Array;
 
 	// Indexed (transforms an docuemnt into an obj with fields that ought to be indexed)
-	private _toIndex: Indexable<T>;
+	private _toIndex: IndexableFields<T>;
 
 	private _valueEncoding: Encoding<T>;
 
@@ -327,7 +327,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return this._valueEncoding;
 	}
 
-	get toIndex(): Indexable<T> {
+	get toIndex(): IndexableFields<T> {
 		return this._toIndex;
 	}
 

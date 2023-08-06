@@ -8,7 +8,8 @@ import { Documents, SetupOptions } from "../document-store.js";
 import { Replicator } from "@peerbit/shared-log";
 import { DirectSub } from "@peerbit/pubsub";
 
-// put x 866 ops/sec ±2.71% (79 runs sampled)
+// Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
+// put x 1,009 ops/sec ±2.57% (80 runs sampled)
 
 @variant("document")
 class Document {
@@ -92,7 +93,7 @@ const readerResolver: Map<string, () => void> = new Map();
 
 for (const [i, client] of peers.entries()) {
 	const settings = {
-		//canWrite: (e: Entry<any>) => e.verifySignatures(),
+		//canPerform: (e: Entry<any>) => e.verifySignatures(),
 		sync: () => true,
 		role: new Replicator() /* i === peers.length - 1 ? new Replicator() : new Observer(), */,
 	};

@@ -17,12 +17,12 @@ class CollaborativeText extends Program {
 
 	async open() {
 		await this.string.open({
-			canWrite: this.canWrite,
+			canPerform: this.canPerform,
 			canRead: this.canRead,
 		});
 	}
 
-	async canWrite(entry: Entry<StringOperation>): Promise<boolean> {
+	async canPerform(entry: Entry<StringOperation>): Promise<boolean> {
 		// .. acl logic writers
 		return true;
 	}

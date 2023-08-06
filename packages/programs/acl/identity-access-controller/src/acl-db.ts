@@ -3,7 +3,9 @@ import {
 	Documents,
 	DocumentIndex,
 	Role,
-	AbstractSearchRequest,
+	TransactionContext,
+	PutOperation,
+	DeleteOperation,
 } from "@peerbit/document";
 import {
 	getPathGenerator,
@@ -115,16 +117,19 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async canWrite(entry: Entry<any>): Promise<boolean> {
+	async canPerform(
+		_operation: PutOperation<Access> | DeleteOperation,
+		context: TransactionContext<Access>
+	): Promise<boolean> {
 		// TODO, improve, caching etc
 
 		// Check whether it is trusted by trust web
-		const canWriteByKey = async (key: PublicSignKey): Promise<boolean> => {
+		const canPerformByKey = async (key: PublicSignKey): Promise<boolean> => {
 			if (await this.trustedNetwork.isTrusted(key)) {
 				return true;
 			}
 			// Else check whether its trusted by this access controller
-			const canWriteCheck = async (key: PublicSignKey) => {
+			const canPerformCheck = async (key: PublicSignKey) => {
 				for (const value of this.access.index.index.values()) {
 					const access = value.value;
 					if (access instanceof Access) {
@@ -142,7 +147,7 @@ export class IdentityAccessController extends Program {
 					}
 				}
 			};
-			if (await canWriteCheck(key)) {
+			if (await canPerformCheck(key)) {
 				return true;
 			}
 			for await (const trustedByKey of getPathGenerator(
@@ -150,7 +155,7 @@ export class IdentityAccessController extends Program {
 				this.identityGraphController.relationGraph,
 				getFromByTo
 			)) {
-				if (await canWriteCheck(trustedByKey.from)) {
+				if (await canPerformCheck(trustedByKey.from)) {
 					return true;
 				}
 			}
@@ -158,8 +163,8 @@ export class IdentityAccessController extends Program {
 			return false;
 		};
 
-		for (const key of await entry.getPublicKeys()) {
-			if (await canWriteByKey(key)) {
+		for (const key of await context.entry.getPublicKeys()) {
+			if (await canPerformByKey(key)) {
 				return true;
 			}
 		}
@@ -174,7 +179,7 @@ export class IdentityAccessController extends Program {
 		await this.access.open({
 			role: properties?.role,
 			type: Access,
-			canWrite: this.canWrite.bind(this),
+			canPerform: this.canPerform.bind(this),
 			index: {
 				canRead: this.canRead.bind(this),
 			},
