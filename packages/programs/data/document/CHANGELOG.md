@@ -110,6 +110,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.11 to 1.0.12
 
+## [3.0.1](https://github.com/dao-xyz/peerbit/compare/document-v3.0.0...document-v3.0.1) (2023-08-06)
+
+
+### Bug Fixes
+
+* export CanPerform type ([9164133](https://github.com/dao-xyz/peerbit/commit/916413388401f3d700bdc48f75acc1429ec4475d))
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/document-v2.0.1...document-v3.0.0) (2023-08-06)
 
 
