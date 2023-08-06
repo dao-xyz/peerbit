@@ -55,7 +55,7 @@ export type TransactionContext<T> = {
 
 type MaybePromise = Promise<boolean> | boolean;
 
-type CanPerform<T> = (
+export type CanPerform<T> = (
 	operation: PutOperation<T> | DeleteOperation,
 	context: TransactionContext<T>
 ) => MaybePromise;

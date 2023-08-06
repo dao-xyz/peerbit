@@ -43,12 +43,12 @@ export interface StringEvents {
 	change: CustomEvent<Change<StringOperation>>;
 }
 
-type CanPerform = (
+export type CanPerform = (
 	operation: StringOperation,
 	context: TransactionContext
 ) => Promise<boolean> | boolean;
 
-type Args = {
+export type Args = {
 	canRead?: CanRead;
 	canPerform?: CanPerform;
 	log?: SharedLogOptions;
