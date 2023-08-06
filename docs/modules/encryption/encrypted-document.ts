@@ -56,7 +56,12 @@ class PostsDB extends Program {
 			},
 			index: {
 				key: "id",
+				canRead: (post, publicKey) => {
+					// can publicKey read this particular post?
+					return true;
+				},
 				canSearch: (request, publicKey) => {
+					// can publicKey perform this query request?
 					return !!ALL_MEMBERS.find((x) => x.equals(publicKey));
 				},
 			},
