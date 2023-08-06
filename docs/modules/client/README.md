@@ -19,6 +19,12 @@ Data is not only things that you generate in your databases, but also keys that 
 
 ## Connecting nodes
 
+### Bootstrapping
+The easiest way to go online is to "bootstrap" your node. At the moment, this will dial all addresses available in the [public bootstrap list](https://github.com/dao-xyz/peerbit-bootstrap/blob/master/bootstrap.env)
+
+[bootstrap](./bootstrap.ts ':include')
+
+
 ### Directly
 
 Peerbit nodes are talking to each other through libp2p which is a transport agnostic way of doing communication. It supports a wide range of protocols, like WebRTC, WebSocket, TCP, WebTransport and can in the future support protocol such as Bluetooth.
