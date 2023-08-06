@@ -108,6 +108,16 @@ export class Payload<T> {
 		return equals(this.data, other.data);
 	}
 
+	get isDecoded(): boolean {
+		return this._value != null;
+	}
+
+	get value(): T {
+		if (this._value == null) {
+			throw new Error("Value not decoded. Invoke: .getValue once");
+		}
+		return this._value;
+	}
 	getValue(encoding: Encoding<T> = this.encoding || NO_ENCODING): T {
 		if (this._value != undefined) {
 			return this._value;
@@ -217,6 +227,7 @@ export interface ShallowEntry {
 		data?: Uint8Array;
 		gid: string;
 		next: string[];
+		type: EntryType;
 	};
 	payloadByteLength: number;
 }
@@ -323,7 +334,7 @@ export class Entry<T>
 
 	async getPayloadValue(): Promise<T> {
 		const payload = await this.getPayload();
-		return payload.getValue(this.encoding);
+		return payload.isDecoded ? payload.value : payload.getValue(this.encoding);
 	}
 
 	get publicKeys(): PublicSignKey[] {
@@ -637,6 +648,7 @@ export class Entry<T>
 				data: this.meta.data,
 				clock: this.meta.clock,
 				next: this.meta.next,
+				type: this.meta.type,
 			},
 		};
 	}
