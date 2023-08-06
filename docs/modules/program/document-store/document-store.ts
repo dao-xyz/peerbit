@@ -6,9 +6,11 @@ import { v4 as uuid } from "uuid";
 
 import {
 	ByteMatchQuery,
+	DeleteOperation,
 	DocumentIndex,
 	Documents,
 	MissingField,
+	PutOperation,
 	SearchRequest,
 	Sort,
 } from "@peerbit/document";
@@ -139,7 +141,22 @@ export class Channel extends Program<ChannelArgs> {
 
 		await this.reactions.open({
 			type: Reaction,
-			canPerform: () => true,
+			canPerform: async (operation, { entry }) => {
+				// Determine whether an operation, based on an entry should be allowed
+
+				// You can use the entry to get properties of the operation
+				// like signers
+				const signers = await entry.getPublicKeys();
+
+				if (operation instanceof PutOperation) {
+					// do some behaviour
+					return true;
+				} else if (operation instanceof DeleteOperation) {
+					// do some other behaviour
+					return true;
+				}
+				return false;
+			},
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
 				key: REACTION_ID_PROPERTY,
