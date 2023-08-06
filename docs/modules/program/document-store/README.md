@@ -80,3 +80,13 @@ You can sync documents to you local store while iterating or searching.
 
 [sync](./document-store.ts ':include :fragment=sync')
 
+
+## Replication degree 
+
+Below is an additional example how you granulary can control
+- Replication degree as opening argument.
+- Replication degree on put. 
+- Filtering on commits based on allowed replication degree 
+- What peers to trust as replicators
+
+[replication-degree](./replication-degree.ts ':include')

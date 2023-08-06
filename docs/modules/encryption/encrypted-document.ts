@@ -9,6 +9,7 @@ import {
 } from "@peerbit/document";
 import { delay } from "@peerbit/time";
 import { X25519Keypair } from "@peerbit/crypto";
+import { v4 as uuid } from "uuid";
 
 const groupMember1 = await Peerbit.create({
 	relay: true,
@@ -37,7 +38,7 @@ class Post {
 	}
 }
 
-@variant("posts")
+@variant("encrypted-posts-db")
 class PostsDB extends Program {
 	@field({ type: Documents })
 	posts: Documents<Post>;
@@ -81,7 +82,7 @@ const ALL_MEMBERS = [
 
 const memberStore1 = await groupMember1.open(new PostsDB());
 
-const post = new Post("ID1", "hello world");
+const post = new Post(uuid(), "hello world");
 
 await memberStore1.posts.put(post, {
 	encryption: {

@@ -22,7 +22,7 @@ const POST_MESSAGE_PROPERTY = "message";
 const POST_TIMESTAMP_PROPERTY = "timestamp";
 
 @variant(0) // version 0
-class Post {
+export class Post {
 	@field({ type: "string" })
 	id: string;
 
@@ -69,7 +69,7 @@ class Reaction {
 
 type ChannelArgs = { role?: Role };
 @variant("channel")
-class Channel extends Program<ChannelArgs> {
+export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
 	@field({ type: Documents })
@@ -115,6 +115,25 @@ class Channel extends Program<ChannelArgs> {
 						[POST_TIMESTAMP_PROPERTY]: context.modified,
 					};
 				},
+
+				canRead: (post, publicKey) => {
+					// determine whether publicKey can read post
+					return true;
+				},
+
+				canSearch: (query, publicKey) => {
+					// determine whether publicKey can perform query
+					return true;
+				},
+			},
+			replicas: {
+				// How many times should posts at least be replicated
+				min: 2,
+				// How many times at most can a post be replicated?
+				max: undefined,
+			},
+			canReplicate: (publicKey: PublicSignKey) => {
+				return true; // Create logic who we trust to be a replicator (and indexer)
 			},
 		});
 
@@ -166,7 +185,9 @@ await channelFromClient1.posts.put(new Post("The Shoebill is terrifying"), {
 });
 
 const message3 = new Post("No, it just a big duck");
-await channelFromClient2.posts.put(message3);
+await channelFromClient2.posts.put(message3, {
+	replicas: 10, // this is an very important message, so lets notify peers we want a high replication degree on it
+});
 
 // Since the first node is a replicator, it will eventually get all messages
 await waitForResolved(() =>
@@ -283,6 +304,7 @@ import {
 	Observer,
 	Role,
 } from "@peerbit/document";
+import { PublicSignKey } from "@peerbit/crypto";
 
 new SearchRequest({
 	query: [

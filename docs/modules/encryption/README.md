@@ -18,17 +18,23 @@ Every commit that is made can be E2E encrypted with public key encryption with m
 See [this](./../../../packages/utils/crypto/src/encryption.ts) for implementation details. 
 
 ### Log entry fields that are encrypted (separately)
-- Commit metadata
+- Commit metadata, e.g. timestamps, links (references to other commits). More info [here](https://github.com/dao-xyz/peerbit/blob/464e807d679e24b897b7811ac99d6f85fbd756f9/packages/log/src/entry.ts#L141C18-L141C18).
 - Payload
 - Signatures
-- Links (references to other commits)
 
-See below for an examples with a Log
+
+
+### Examples
+
+#### Encrypted log
 
 [encrypted-log](./encrypted-log.ts ':include')
 
 
-Document stores, which extends the Log, can also encrypt things in the same way. See below as an example
+#### Encrypted document store
 
 
-[encrypted-log](./encrypted-document-store.ts ':include')
+Document stores, which extends the Log, can also encrypt things in the same way. 
+
+
+[encrypted-log](./encrypted-document.ts ':include')
