@@ -118,14 +118,12 @@
 * canPerform callback that allows peers to filter allowed operations
 * hash replication topics
 * support canSearch and canRead filters for Documents
-* rename canAppend to canWrite
 * replication degree on commit level
 
 ### Features
 
 * canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
 * hash replication topics ([d941759](https://github.com/dao-xyz/peerbit/commit/d9417592303f2cc1f3dfdc9085565dcd32de301c))
-* rename canAppend to canWrite ([66f8960](https://github.com/dao-xyz/peerbit/commit/66f896069bbe8ba3a3c8a266adaeb5feba0b408e))
 * replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
 * support canSearch and canRead filters for Documents ([573688d](https://github.com/dao-xyz/peerbit/commit/573688d51b9b8566e58b3c40d6b7854a515cb665))
 * support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))

@@ -160,7 +160,6 @@
 * canPerform callback that allows peers to filter allowed operations
 * hash replication topics
 * add NoAccess return type for string search
-* rename canAppend to canWrite
 * replication degree on commit level
 
 ### Features
@@ -168,7 +167,6 @@
 * add NoAccess return type for string search ([c2daab2](https://github.com/dao-xyz/peerbit/commit/c2daab2f63a29aab1f20466cdddc98d352640283))
 * canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
 * hash replication topics ([d941759](https://github.com/dao-xyz/peerbit/commit/d9417592303f2cc1f3dfdc9085565dcd32de301c))
-* rename canAppend to canWrite ([66f8960](https://github.com/dao-xyz/peerbit/commit/66f896069bbe8ba3a3c8a266adaeb5feba0b408e))
 * replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
 
 

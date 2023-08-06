@@ -167,12 +167,10 @@
 
 * canPerform callback that allows peers to filter allowed operations
 * support canSearch and canRead filters for Documents
-* rename canAppend to canWrite
 
 ### Features
 
 * canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
-* rename canAppend to canWrite ([66f8960](https://github.com/dao-xyz/peerbit/commit/66f896069bbe8ba3a3c8a266adaeb5feba0b408e))
 * support canSearch and canRead filters for Documents ([573688d](https://github.com/dao-xyz/peerbit/commit/573688d51b9b8566e58b3c40d6b7854a515cb665))
 
 
