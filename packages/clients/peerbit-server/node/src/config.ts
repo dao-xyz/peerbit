@@ -1,6 +1,8 @@
-export const getConfigDir = async (): Promise<string> => {
-	const path = await import("path");
-	const os = await import("os");
+import path from "path";
+import os from "os";
+import fs from "fs";
+
+export const getHomeConfigDir = async (): Promise<string> => {
 	const configDir = path.join(os.homedir(), ".peerbit");
 	return configDir;
 };
@@ -8,18 +10,14 @@ export const getConfigDir = async (): Promise<string> => {
 export const getCredentialsPath = async (
 	configDir: string
 ): Promise<string> => {
-	const path = await import("path");
 	return path.join(configDir, "credentials");
 };
 
 export const getKeysPath = async (configDir: string): Promise<string> => {
-	const path = await import("path");
 	return path.join(configDir, "keys");
 };
 
 export const checkExistPath = async (path: string) => {
-	const fs = await import("fs");
-
 	try {
 		if (!fs.existsSync(path)) {
 			fs.accessSync(path, fs.constants.W_OK); // will throw if fails
@@ -35,8 +33,7 @@ export const checkExistPath = async (path: string) => {
 };
 
 export const loadPassword = async (): Promise<string> => {
-	const fs = await import("fs");
-	const configDir = await getConfigDir();
+	const configDir = await getHomeConfigDir();
 	const credentialsPath = await getCredentialsPath(configDir);
 	if (!(await checkExistPath(credentialsPath))) {
 		throw new NotFoundError("Credentials file does not exist");
@@ -51,11 +48,8 @@ export const loadPassword = async (): Promise<string> => {
 };
 
 export const getPackageName = async (path: string): Promise<string> => {
-	const pathLib = await import("path");
 	const tar = await import("tar-stream");
 	const zlib = await import("zlib");
-	const urlLib = await import("url");
-	const fs = await import("fs");
 
 	if (!fs.existsSync(path)) {
 		throw new Error("File does not exist");

@@ -6,7 +6,7 @@ import {
 } from "./domain.js";
 import { startServerWithNode } from "./server.js";
 import { createRecord } from "./aws.js";
-import { getConfigDir } from "./config.js";
+import { getHomeConfigDir } from "./config.js";
 import chalk from "chalk";
 import { client } from "./client.js";
 import { StartProgram } from "./types.js";
@@ -29,7 +29,7 @@ export const cli = async (args?: string[]) => {
 					describe: "Directory for all data created by the node",
 					defaultDescription: "~.peerbit",
 					type: "string",
-					default: await getConfigDir(),
+					default: await getHomeConfigDir(),
 				},
 
 				bootstrap: {
