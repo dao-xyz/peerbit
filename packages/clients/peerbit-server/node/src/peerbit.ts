@@ -8,8 +8,8 @@ export const create = (properties: { directory?: string; domain?: string }) => {
 			addresses: {
 				announce: properties.domain
 					? [
-							`/dns4/${properties.domain}/tcp/8001`,
-							`/dns4/${properties.domain}/tcp/8002/ws`,
+							`/dns4/${properties.domain}/tcp/4002`,
+							`/dns4/${properties.domain}/tcp/4003/wss`,
 					  ]
 					: undefined,
 				listen: ["/ip4/127.0.0.1/tcp/8001", "/ip4/127.0.0.1/tcp/8002/ws"],
