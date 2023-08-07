@@ -148,6 +148,17 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [1.1.2](https://github.com/dao-xyz/peerbit/compare/server-v1.1.1...server-v1.1.2) (2023-08-07)
+
+
+### Bug Fixes
+
+* disable lib install test ([cbcfa34](https://github.com/dao-xyz/peerbit/commit/cbcfa344dd016f1392ab982f81b644cf335db939))
+* relay blocks by default ([0ac0023](https://github.com/dao-xyz/peerbit/commit/0ac0023ee367851e5afe35a0bfd886a0a55424c9))
+* rename config dir resolver ([8bd6d76](https://github.com/dao-xyz/peerbit/commit/8bd6d76cfa2fb930a03ce1e09109f05a5cde9480))
+* update announce address ([21092b3](https://github.com/dao-xyz/peerbit/commit/21092b347f7ab38a9294dc7ffe20ca655300e019))
+* write permission on package install ([5faf35f](https://github.com/dao-xyz/peerbit/commit/5faf35f02c1ef4d96e54b57f119b10e8eb39c1c6))
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/server-v1.1.0...server-v1.1.1) (2023-08-06)
 
 
