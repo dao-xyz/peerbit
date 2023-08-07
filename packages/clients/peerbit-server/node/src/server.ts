@@ -11,7 +11,7 @@ import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
 import {
 	checkExistPath,
-	getConfigDir,
+	getHomeConfigDir,
 	getCredentialsPath,
 	getPackageName,
 	loadPassword,
@@ -33,9 +33,14 @@ import {
 } from "./routes.js";
 import { client } from "./client.js";
 
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 export const createPassword = async (): Promise<string> => {
 	const fs = await import("fs");
-	const configDir = await getConfigDir();
+	const configDir = await getHomeConfigDir();
 	const credentialsPath = await getCredentialsPath(configDir);
 	if (await checkExistPath(credentialsPath)) {
 		throw new Error(
@@ -323,8 +328,9 @@ export const startServer = async (
 									} else {
 										const child_process = await import("child_process");
 										try {
+											// TODO do this without sudo. i.e. for servers provide arguments so that this app folder is writeable by default by the user
 											child_process.execSync(
-												`npm install ${name} --no-save --no-package-lock`
+												`sudo npm install ${name} --prefix ${__dirname} --no-save --no-package-lock`
 											); // TODO omit=dev ? but this makes breaks the tests after running once?
 										} catch (error: any) {
 											res.writeHead(400);
