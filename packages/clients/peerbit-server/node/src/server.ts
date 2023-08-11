@@ -1,5 +1,5 @@
 import http from "http";
-import { fromBase64 } from "@peerbit/crypto";
+import { fromBase64, sha256Base64Sync } from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import {
 	Program,
@@ -16,33 +16,59 @@ import {
 	getPackageName,
 	loadPassword,
 	NotFoundError,
+	getNodePath,
 } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./peerbit.js";
 import { Peerbit } from "peerbit";
 import { getSchema } from "@dao-xyz/borsh";
-import { StartByBase64, StartByVariant, StartProgram } from "./types.js";
+import {
+	InstallDependency,
+	StartByBase64,
+	StartByVariant,
+	StartProgram,
+} from "./types.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
+	TERMINATE_PATH,
 	INSTALL_PATH,
 	LOCAL_PORT,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
+	RESTART_PATH,
 } from "./routes.js";
-import { client } from "./client.js";
-
+import { Session } from "./session.js";
+import fs from "fs";
+import { exit } from "process";
+import { spawn, fork, execSync } from "child_process";
+import tmp from "tmp";
+import path from "path";
+import { base58btc } from "multiformats/bases/base58";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
+import { Level } from "level";
+import { MemoryLevel } from "memory-level";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const createPassword = async (): Promise<string> => {
-	const fs = await import("fs");
-	const configDir = await getHomeConfigDir();
+export const stopAndWait = (server: http.Server) => {
+	let closed = false;
+	server.on("close", () => {
+		closed = true;
+	});
+	server.close();
+	return waitFor(() => closed);
+};
+
+export const createPassword = async (
+	configDirectory: string,
+	password?: string
+): Promise<string> => {
+	const configDir = configDirectory ?? (await getHomeConfigDir());
 	const credentialsPath = await getCredentialsPath(configDir);
-	if (await checkExistPath(credentialsPath)) {
+	if (!password && (await checkExistPath(credentialsPath))) {
 		throw new Error(
 			"Config path for credentials: " + credentialsPath + ", already exist"
 		);
@@ -54,46 +80,99 @@ export const createPassword = async (): Promise<string> => {
 
 	console.log(`Created config folder ${configDir}`);
 
-	const password = uuid();
+	password = password || uuid();
 	fs.writeFileSync(
 		credentialsPath,
 		JSON.stringify({ username: "admin", password })
 	);
 	console.log(`Created credentials at ${credentialsPath}`);
-	return password;
+	return password!;
 };
 
-export const loadOrCreatePassword = async (): Promise<string> => {
-	try {
-		return await loadPassword();
-	} catch (error) {
-		if (error instanceof NotFoundError) {
-			return createPassword();
+export const loadOrCreatePassword = async (
+	configDirectory: string,
+	password?: string
+): Promise<string> => {
+	if (!password) {
+		try {
+			return await loadPassword(configDirectory);
+		} catch (error) {
+			if (error instanceof NotFoundError) {
+				return createPassword(configDirectory, password);
+			}
+			throw error;
 		}
-		throw error;
+	} else {
+		return createPassword(configDirectory, password);
 	}
 };
 export const startServerWithNode = async (properties: {
 	directory?: string;
 	domain?: string;
 	bootstrap?: boolean;
+	newSession?: boolean;
+	password?: string;
+	ports?: {
+		node: number;
+		api: number;
+	};
+	restart?: () => void;
 }) => {
 	const peer = await create({
-		directory: properties.directory,
+		directory:
+			properties.directory != null
+				? getNodePath(properties.directory)
+				: undefined,
 		domain: properties.domain,
+		listenPort: properties.ports?.node,
 	});
 
 	if (properties.bootstrap) {
 		await peer.bootstrap();
 	}
+	const sessionDirectory =
+		properties.directory != null
+			? path.join(properties.directory, "session")
+			: undefined;
+	const session = new Session(
+		sessionDirectory
+			? new Level<string, Uint8Array>(sessionDirectory, {
+					valueEncoding: "view",
+					keyEncoding: "utf-8",
+			  })
+			: new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" })
+	);
+	if (!properties.newSession) {
+		for (const [string] of await session.imports.all()) {
+			await import(string);
+		}
+		for (const [address] of await session.programs.all()) {
+			// TODO args
+			try {
+				await peer.open(address, { timeout: 3000 });
+			} catch (error) {
+				console.error(error);
+			}
+		}
+	} else {
+		await session.clear();
+	}
 
-	const server = await startServer(peer);
+	const server = await startApiServer(peer, {
+		port: properties.ports?.api,
+		configDirectory:
+			properties.directory != null
+				? path.join(properties.directory, "server")
+				: undefined || getHomeConfigDir(),
+		session,
+		password: properties.password,
+	});
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
-		const id = await (await client()).peer.id.get();
+		const id = peer.peerId.toString();
 		console.log("id: " + id);
 		console.log("Addresses: ");
-		for (const a of await (await client()).peer.addresses.get()) {
+		for (const a of peer.getMultiaddrs()) {
 			console.log(a.toString());
 		}
 	};
@@ -101,16 +180,26 @@ export const startServerWithNode = async (properties: {
 	await printNodeInfo();
 	const shutDownHook = async (
 		controller: { stop: () => any },
-		server: {
-			close: () => void;
-		}
+		server: http.Server
 	) => {
-		const { exit } = await import("process");
-		process.on("SIGINT", async () => {
-			console.log("Shutting down node");
-			await server.close();
-			await controller.stop();
-			exit();
+		["SIGTERM", "SIGINT", "SIGUSR1", "SIGUSR2"].forEach((code) => {
+			process.on(code, async () => {
+				if (server.listening) {
+					console.log("Shutting down node");
+					await stopAndWait(server);
+					await waitFor(() => closed);
+					await controller.stop();
+				}
+				exit();
+			});
+		});
+		process.on("exit", async () => {
+			if (server.listening) {
+				console.log("Shutting down node");
+				await stopAndWait(server);
+				await waitFor(() => closed);
+				await controller.stop();
+			}
 		});
 	};
 	await shutDownHook(peer, server);
@@ -133,14 +222,78 @@ const getProgramFromPath = (
 		throw new Error("Invalid path");
 	}
 	const address = decodeURIComponent(path[pathIndex]);
-	return client.handler.items.get(address);
+	return client.handler?.items.get(address);
 };
+function findPeerbitProgramFolder(inputDirectory: string): string | null {
+	let currentDir = path.resolve(inputDirectory);
 
-export const startServer = async (
+	while (currentDir !== "/") {
+		// Stop at the root directory
+		const nodeModulesPath = path.join(currentDir, "node_modules");
+		const packageJsonPath = path.join(
+			nodeModulesPath,
+			"@peerbit",
+			"program",
+			"package.json"
+		);
+
+		if (fs.existsSync(packageJsonPath)) {
+			const packageJsonContent = fs.readFileSync(packageJsonPath, "utf-8");
+			const packageData = JSON.parse(packageJsonContent);
+
+			if (packageData.name === "@peerbit/program") {
+				return currentDir;
+			}
+		}
+
+		currentDir = path.dirname(currentDir);
+	}
+
+	return null;
+}
+
+export const startApiServer = async (
 	client: ProgramClient,
-	port: number = LOCAL_PORT
+	options: {
+		configDirectory: string;
+		session?: Session;
+		port?: number;
+		password?: string;
+	}
 ): Promise<http.Server> => {
-	const password = await loadOrCreatePassword();
+	const port = options?.port ?? LOCAL_PORT;
+	const password = await loadOrCreatePassword(
+		options.configDirectory,
+		options?.password
+	);
+
+	const restart = async () => {
+		await client.stop();
+		await stopAndWait(server);
+
+		// We filter out the reset command, since restarting means that we want to resume something
+		spawn(
+			process.argv.shift()!,
+			[
+				...process.execArgv,
+				...process.argv.filter((x) => x !== "--reset" && x !== "-r"),
+			],
+			{
+				cwd: process.cwd(),
+				detached: true,
+				stdio: "inherit",
+				gid: process.getgid!(),
+			}
+		);
+
+		/* process.on("exit", async () => {
+			child.kill("SIGINT")
+		});
+		process.on("SIGINT", async () => {
+			child.kill("SIGINT")
+		}); */
+		process.exit(0);
+	};
 
 	const adminACL = (req: http.IncomingMessage): boolean => {
 		const auth = req.headers["authorization"];
@@ -203,9 +356,8 @@ export const startServer = async (
 						switch (req.method) {
 							case "GET":
 								try {
-									const keys = JSON.stringify([
-										...(client as Peerbit).handler.items.keys(),
-									]);
+									const ref = (client as Peerbit).handler?.items?.keys() || [];
+									const keys = JSON.stringify([...ref]);
 									res.setHeader("Content-Type", "application/json");
 									res.writeHead(200);
 									res.end(keys);
@@ -249,11 +401,16 @@ export const startServer = async (
 
 									const program = getProgramFromPath(client as Peerbit, req, 1);
 									if (program) {
+										let closed = false;
 										if (queryData === "true") {
-											await program.drop();
+											closed = await program.drop();
 										} else {
-											await program.close();
+											closed = await program.close();
 										}
+										if (closed) {
+											await options?.session?.programs.remove(program.address);
+										}
+
 										res.writeHead(200);
 										res.end();
 									} else {
@@ -292,7 +449,18 @@ export const startServer = async (
 										}
 										client
 											.open(program) // TODO all users to pass args
-											.then((program) => {
+											.then(async (program) => {
+												// TODO what if this is a reopen?
+												console.log(
+													"OPEN ADDRESS",
+													program.address,
+													(client as Peerbit).directory,
+													await client.services.blocks.has(program.address)
+												);
+												await options?.session?.programs.add(
+													program.address,
+													new Uint8Array()
+												);
 												res.writeHead(200);
 												res.end(program.address.toString());
 											})
@@ -315,31 +483,60 @@ export const startServer = async (
 						switch (req.method) {
 							case "PUT":
 								getBody(req, async (body) => {
-									const name = body;
+									const installArgs: InstallDependency = JSON.parse(body);
 
-									let packageName = name;
-									if (name.endsWith(".tgz")) {
-										packageName = await getPackageName(name);
+									const packageName = installArgs.name; // @abc/123
+									let installName = installArgs.name; // abc123.tgz or @abc/123 (npm package name)
+									let clear: (() => void) | undefined;
+									if (installArgs.type === "tgz") {
+										const binary = fromBase64(installArgs.base64);
+										const tempFile = tmp.fileSync({
+											name:
+												base58btc.encode(Buffer.from(installName)) +
+												uuid() +
+												".tgz",
+										});
+										fs.writeFileSync(tempFile.fd, binary);
+										clear = () => tempFile.removeCallback();
+										installName = tempFile.name;
+									} else {
+										clear = undefined;
 									}
 
-									if (!name || name.length === 0) {
+									if (!installName || installName.length === 0) {
 										res.writeHead(400);
-										res.end("Invalid package: " + name);
+										res.end("Invalid package: " + packageName);
 									} else {
-										const child_process = await import("child_process");
 										try {
 											// TODO do this without sudo. i.e. for servers provide arguments so that this app folder is writeable by default by the user
-											child_process.execSync(
-												`sudo npm install ${name} --prefix ${__dirname} --no-save --no-package-lock`
+											const installDir =
+												process.env.PEERBIT_MODULES_PATH ||
+												findPeerbitProgramFolder(__dirname);
+											let permission = "";
+											if (!installDir) {
+												res.writeHead(400);
+												res.end("Missing installation directory");
+												return;
+											}
+											try {
+												fs.accessSync(installDir, fs.constants.W_OK);
+											} catch (error) {
+												permission = "sudo";
+											}
+
+											console.log("Installing package: " + installName);
+											execSync(
+												`${permission} npm install ${installName} --prefix ${installDir} --no-save --no-package-lock`
 											); // TODO omit=dev ? but this makes breaks the tests after running once?
 										} catch (error: any) {
 											res.writeHead(400);
 											res.end(
-												"Failed ot install library: " +
-													name +
+												"Failed to install library: " +
+													packageName +
 													". " +
 													error.toString()
 											);
+											clear?.();
 											return;
 										}
 
@@ -352,6 +549,10 @@ export const startServer = async (
 
 											await import(
 												/* webpackIgnore: true */ /* @vite-ignore */ packageName
+											);
+											await options?.session?.imports.add(
+												packageName,
+												new Uint8Array()
 											);
 											const programsPost = getProgramFromVariants()?.map((x) =>
 												getSchema(x)
@@ -370,6 +571,7 @@ export const startServer = async (
 										} catch (e: any) {
 											res.writeHead(400);
 											res.end(e.message.toString?.());
+											clear?.();
 										}
 									}
 								});
@@ -390,6 +592,30 @@ export const startServer = async (
 								await (client as Peerbit).bootstrap();
 								res.writeHead(200);
 								res.end();
+								break;
+
+							default:
+								r404();
+								break;
+						}
+					} else if (req.url.startsWith(RESTART_PATH)) {
+						switch (req.method) {
+							case "POST":
+								res.writeHead(200);
+								res.end();
+								restart();
+								break;
+
+							default:
+								r404();
+								break;
+						}
+					} else if (req.url.startsWith(TERMINATE_PATH)) {
+						switch (req.method) {
+							case "POST":
+								res.writeHead(200);
+								res.end();
+								process.exit(0);
 								break;
 
 							default:
@@ -431,6 +657,7 @@ export const startServer = async (
 			});
 		});
 	});
+	await waitFor(() => server.listening);
 	console.log("API available at port", port);
 	return server;
 };
