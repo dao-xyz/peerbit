@@ -1,19 +1,28 @@
-import { StartByBase64, StartByVariant, StartProgram } from "./types.js";
+import { InstallDependency, StartProgram } from "./types.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
+	TERMINATE_PATH,
 	INSTALL_PATH,
 	LOCAL_PORT,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
+	RESTART_PATH,
 } from "./routes.js";
 import { Address } from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
 
 export const client = async (
+	password: string,
 	endpoint: string = "http://localhost:" + LOCAL_PORT
 ) => {
+	const isLocalHost = endpoint.startsWith("http://localhost");
+
+	if (!isLocalHost && password == null) {
+		throw new Error("Expecting password when starting the client");
+	}
+
 	const { default: axios } = await import("axios");
 
 	const validateStatus = (status: number) => {
@@ -43,16 +52,20 @@ export const client = async (
 		);
 	};
 	const getId = async () =>
-		throwIfNot200(await axios.get(endpoint + PEER_ID_PATH, { validateStatus }))
-			.data;
+		throwIfNot200(
+			await axios.get(endpoint + PEER_ID_PATH, {
+				validateStatus,
+				timeout: 5000,
+			})
+		).data;
 
 	const getHeaders = async () => {
-		const config = await import("./config.js");
 		const headers = {
-			authorization: "Basic admin:" + (await config.loadPassword()),
+			authorization: "Basic admin:" + password,
 		};
 		return headers;
 	};
+
 	return {
 		peer: {
 			id: {
@@ -137,11 +150,15 @@ export const client = async (
 			},
 		},
 		dependency: {
-			install: async (name: string): Promise<string[]> => {
-				const resp = await axios.put(endpoint + INSTALL_PATH, name, {
-					validateStatus,
-					headers: await getHeaders(),
-				});
+			install: async (instruction: InstallDependency): Promise<string[]> => {
+				const resp = await axios.put(
+					endpoint + INSTALL_PATH,
+					JSON.stringify(instruction),
+					{
+						validateStatus,
+						headers: await getHeaders(),
+					}
+				);
 				if (resp.status !== 200) {
 					throw new Error(
 						typeof resp.data === "string" ? resp.data : resp.data.toString()
@@ -159,6 +176,22 @@ export const client = async (
 					})
 				);
 			},
+		},
+		restart: async (): Promise<void> => {
+			throwIfNot200(
+				await axios.post(endpoint + RESTART_PATH, undefined, {
+					validateStatus,
+					headers: await getHeaders(),
+				})
+			);
+		},
+		terminate: async (): Promise<void> => {
+			throwIfNot200(
+				await axios.post(endpoint + TERMINATE_PATH, undefined, {
+					validateStatus,
+					headers: await getHeaders(),
+				})
+			);
 		},
 	};
 };

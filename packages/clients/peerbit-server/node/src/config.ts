@@ -2,15 +2,34 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 
-export const getHomeConfigDir = async (): Promise<string> => {
+import { Duplex } from "stream"; // Native Node Module
+
+const bufferToStream = (myBuffer) => {
+	const tmp = new Duplex();
+	tmp.push(myBuffer);
+	tmp.push(null);
+	return tmp;
+};
+
+export const getHomeConfigDir = (): string => {
 	const configDir = path.join(os.homedir(), ".peerbit");
 	return configDir;
 };
 
-export const getCredentialsPath = async (
-	configDir: string
-): Promise<string> => {
-	return path.join(configDir, "credentials");
+export const getCredentialsPath = (configDir: string): string => {
+	return path.join(configDir, "credentials.json");
+};
+
+export const getServerConfigPath = (configDir: string): string => {
+	return path.join(configDir, "server");
+};
+
+export const getRemotesPath = (configDir: string): string => {
+	return path.join(configDir, "remotes.json");
+};
+
+export const getNodePath = (directory: string): string => {
+	return path.join(directory, "node");
 };
 
 export const getKeysPath = async (configDir: string): Promise<string> => {
@@ -32,8 +51,10 @@ export const checkExistPath = async (path: string) => {
 	}
 };
 
-export const loadPassword = async (): Promise<string> => {
-	const configDir = await getHomeConfigDir();
+export const loadPassword = async (
+	configDirectory: string
+): Promise<string> => {
+	const configDir = configDirectory || (await getHomeConfigDir());
 	const credentialsPath = await getCredentialsPath(configDir);
 	if (!(await checkExistPath(credentialsPath))) {
 		throw new NotFoundError("Credentials file does not exist");
@@ -47,12 +68,16 @@ export const loadPassword = async (): Promise<string> => {
 	return password;
 };
 
-export const getPackageName = async (path: string): Promise<string> => {
+export const getPackageName = async (
+	path: string | Uint8Array
+): Promise<string> => {
 	const tar = await import("tar-stream");
 	const zlib = await import("zlib");
 
-	if (!fs.existsSync(path)) {
-		throw new Error("File does not exist");
+	if (typeof path === "string") {
+		if (!fs.existsSync(path)) {
+			throw new Error("File does not exist");
+		}
 	}
 	return new Promise((resolve, reject) => {
 		try {
@@ -84,7 +109,11 @@ export const getPackageName = async (path: string): Promise<string> => {
 				reject(e);
 			});
 
-			fs.createReadStream(path).pipe(zlib.createGunzip()).pipe(extract);
+			if (typeof path === "string") {
+				fs.createReadStream(path).pipe(zlib.createGunzip()).pipe(extract);
+			} else {
+				bufferToStream(path).pipe(zlib.createGunzip()).pipe(extract);
+			}
 		} catch (error) {
 			reject(error);
 		}

@@ -1,6 +1,6 @@
 import { LSession } from "@peerbit/test-utils";
 import http from "http";
-import { startServer, startServerWithNode } from "../server.js";
+import { startApiServer, startServerWithNode } from "../server.js";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "@peerbit/test-lib";
 import { Address, Program, ProgramClient } from "@peerbit/program";
@@ -9,11 +9,23 @@ import { toBase64 } from "@peerbit/crypto";
 import { Peerbit } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
-import { client } from "../client.js";
+import { client as createClient } from "../client.js";
+import { v4 as uuid } from "uuid";
+import path, { dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+let PASSWORD = "pass";
+
+const client = (password: string = PASSWORD, address?: string) => {
+	return createClient(password, address);
+};
 
 describe("libp2p only", () => {
 	let session: LSession, server: http.Server;
 	jest.setTimeout(60 * 1000);
+	let configDirectory: string;
 
 	beforeAll(async () => {
 		session = await LSession.connected(1);
@@ -29,7 +41,18 @@ describe("libp2p only", () => {
 		session.peers[0].services.pubsub.subscribe("3", {
 			data: new Uint8Array([3]),
 		});
-		server = await startServer(session.peers[0], 7676);
+		configDirectory = path.join(
+			__dirname,
+			"tmp",
+			"api-test",
+			"libp2ponly",
+			uuid()
+		);
+		server = await startApiServer(session.peers[0], {
+			password: PASSWORD,
+			configDirectory,
+			port: 7676,
+		});
 	});
 	afterEach(() => {
 		server.close();
@@ -40,7 +63,7 @@ describe("libp2p only", () => {
 	});
 
 	it("use cli as libp2p cli", async () => {
-		const c = await client("http://localhost:" + 7676);
+		const c = await createClient(PASSWORD, "http://localhost:" + 7676);
 		expect(await c.peer.id.get()).toBeDefined();
 	});
 });
@@ -71,14 +94,17 @@ describe("server", () => {
 		beforeAll(async () => {});
 
 		beforeEach(async () => {
+			let directory = path.join(__dirname, "tmp", "api-test", "api", uuid());
 			session = await LSession.connected(1, {
-				directory: "./peerbit/" + +new Date(),
 				libp2p: { transports: [tcp(), webSockets()] },
 			});
 			peer = session.peers[0];
 			db = await peer.open(new PermissionedString({ trusted: [] }));
 			address = db.address;
-			server = await startServer(peer);
+			server = await startApiServer(peer, {
+				password: PASSWORD,
+				configDirectory: directory,
+			});
 		});
 		afterEach(async () => {
 			server.close();

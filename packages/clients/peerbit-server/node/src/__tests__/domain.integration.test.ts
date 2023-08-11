@@ -1,9 +1,11 @@
 import { LSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
 import http from "http";
-import { startServer } from "../server";
+import { startApiServer } from "../server";
 import dotenv from "dotenv";
 import { getDomainFromConfig } from "../domain";
+import path from "path";
+import { getServerConfigPath } from "../config";
 
 dotenv.config();
 
@@ -27,11 +29,15 @@ describe("ssl", () => {
 	let session: LSession, peer: ProgramClient, server: http.Server;
 
 	beforeAll(async () => {
+		const directory = "./tmp/peerbit/" + +new Date();
 		session = await LSession.connected(1, {
-			directory: "./peerbit/tmp/" + +new Date(),
+			directory: path.join(directory, "node"),
 		});
 		peer = session.peers[0];
-		server = await startServer(peer, 12345);
+		server = await startApiServer(peer, {
+			configDirectory: getServerConfigPath(directory),
+			port: 12345,
+		});
 	});
 
 	afterAll(async () => {
