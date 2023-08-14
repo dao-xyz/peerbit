@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.2...lazy-level-v1.0.3) (2023-08-14)
+
+
+### Bug Fixes
+
+* delay assertion ([5e68e6f](https://github.com/dao-xyz/peerbit/commit/5e68e6f3dee75d04ed6f4fbb3112938508b64df7))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.1...lazy-level-v1.0.2) (2023-07-18)
 
 
