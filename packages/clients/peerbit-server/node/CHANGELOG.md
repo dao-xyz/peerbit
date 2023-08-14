@@ -148,6 +148,26 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/server-v2.0.0...server-v3.0.0) (2023-08-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* access control using identities
+
+### Features
+
+* access control using identities ([1d0c733](https://github.com/dao-xyz/peerbit/commit/1d0c733edf22034d958e1ff098db7a365f77d113))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.3.0 to 1.3.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.16 to 1.0.17
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/server-v1.1.1...server-v2.0.0) (2023-08-11)
 
 
