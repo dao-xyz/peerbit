@@ -94,7 +94,9 @@ describe(`LazyLevel - level`, function () {
 					new Uint8Array(Buffer.from(JSON.stringify(d.value)))
 				);
 				await cache.idle();
-				expect(cache["_tempStore"]?.size).toEqual(0);
+				await waitForResolved(() =>
+					expect(cache["_tempStore"]?.size).toEqual(0)
+				);
 				expect(new Uint8Array(val!)).toEqual(
 					new Uint8Array(Buffer.from(JSON.stringify(d.value)))
 				);
