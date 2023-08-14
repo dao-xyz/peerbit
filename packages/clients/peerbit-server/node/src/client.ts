@@ -9,21 +9,37 @@ import {
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
 	RESTART_PATH,
+	TRUST_PATH,
 } from "./routes.js";
 import { Address } from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
+import { signRequest } from "./signes-request.js";
+import {
+	Ed25519PublicKey,
+	Identity,
+	PublicSignKey,
+	getPublicKeyFromPeerId,
+} from "@peerbit/crypto";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 export const client = async (
-	password: string,
+	keypair: Identity<Ed25519PublicKey>,
 	endpoint: string = "http://localhost:" + LOCAL_PORT
 ) => {
 	const isLocalHost = endpoint.startsWith("http://localhost");
-
-	if (!isLocalHost && password == null) {
-		throw new Error("Expecting password when starting the client");
-	}
-
 	const { default: axios } = await import("axios");
+	const axiosInstance = axios.create();
+	axiosInstance.interceptors.request.use(async (config) => {
+		const url = new URL(config.url!);
+		await signRequest(
+			config.headers,
+			config.method!,
+			url.pathname + url.search,
+			config.data,
+			keypair
+		);
+		return config;
+	});
 
 	const validateStatus = (status: number) => {
 		return (status >= 200 && status < 300) || status == 404;
@@ -53,18 +69,11 @@ export const client = async (
 	};
 	const getId = async () =>
 		throwIfNot200(
-			await axios.get(endpoint + PEER_ID_PATH, {
+			await axiosInstance.get(endpoint + PEER_ID_PATH, {
 				validateStatus,
 				timeout: 5000,
 			})
 		).data;
-
-	const getHeaders = async () => {
-		const headers = {
-			authorization: "Basic admin:" + password,
-		};
-		return headers;
-	};
 
 	return {
 		peer: {
@@ -75,7 +84,7 @@ export const client = async (
 				get: async () => {
 					return (
 						throwIfNot200(
-							await axios.get(endpoint + ADDRESS_PATH, {
+							await axiosInstance.get(endpoint + ADDRESS_PATH, {
 								validateStatus,
 							})
 						).data as string[]
@@ -83,14 +92,51 @@ export const client = async (
 				},
 			},
 		},
+		trust: {
+			add: async (key: PublicSignKey | PeerId) => {
+				const result = await axiosInstance.put(
+					endpoint +
+						TRUST_PATH +
+						"/" +
+						encodeURIComponent(
+							key instanceof PublicSignKey
+								? key.hashcode()
+								: getPublicKeyFromPeerId(key).hashcode()
+						),
+					undefined,
+					{ validateStatus }
+				);
+				if (result.status !== 200 && result.status !== 404) {
+					throw new Error(result.data);
+				}
+				return result.status === 200 ? true : false;
+			},
+			remove: async (key: PublicSignKey | PeerId) => {
+				const result = await axiosInstance.delete(
+					endpoint +
+						TRUST_PATH +
+						"/" +
+						encodeURIComponent(
+							key instanceof PublicSignKey
+								? key.hashcode()
+								: getPublicKeyFromPeerId(key).hashcode()
+						),
+					{ validateStatus }
+				);
+				if (result.status !== 200 && result.status !== 404) {
+					throw new Error(result.data);
+				}
+				return result.status === 200 ? true : false;
+			},
+		},
 		program: {
 			has: async (address: Address | string): Promise<boolean> => {
-				const result = await axios.head(
+				const result = await axiosInstance.head(
 					endpoint +
 						PROGRAM_PATH +
 						"/" +
 						encodeURIComponent(address.toString()),
-					{ validateStatus, headers: await getHeaders() }
+					{ validateStatus }
 				);
 				if (result.status !== 200 && result.status !== 404) {
 					throw new Error(result.data);
@@ -100,24 +146,26 @@ export const client = async (
 
 			open: async (program: StartProgram): Promise<Address> => {
 				const resp = throwIfNot200(
-					await axios.put(endpoint + PROGRAM_PATH, JSON.stringify(program), {
-						validateStatus,
-						headers: await getHeaders(),
-					})
+					await axiosInstance.put(
+						endpoint + PROGRAM_PATH,
+						JSON.stringify(program),
+						{
+							validateStatus,
+						}
+					)
 				);
 				return resp.data as string;
 			},
 
 			close: async (address: string): Promise<void> => {
 				throwIfNot200(
-					await axios.delete(
+					await axiosInstance.delete(
 						endpoint +
 							PROGRAM_PATH +
 							"/" +
 							encodeURIComponent(address.toString()),
 						{
 							validateStatus,
-							headers: await getHeaders(),
 						}
 					)
 				);
@@ -125,7 +173,7 @@ export const client = async (
 
 			drop: async (address: string): Promise<void> => {
 				throwIfNot200(
-					await axios.delete(
+					await axiosInstance.delete(
 						endpoint +
 							PROGRAM_PATH +
 							"/" +
@@ -133,7 +181,6 @@ export const client = async (
 							"?delete=true",
 						{
 							validateStatus,
-							headers: await getHeaders(),
 						}
 					)
 				);
@@ -141,9 +188,8 @@ export const client = async (
 
 			list: async (): Promise<string[]> => {
 				const resp = throwIfNot200(
-					await axios.get(endpoint + PROGRAMS_PATH, {
+					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
 						validateStatus,
-						headers: await getHeaders(),
 					})
 				);
 				return resp.data as string[];
@@ -151,12 +197,11 @@ export const client = async (
 		},
 		dependency: {
 			install: async (instruction: InstallDependency): Promise<string[]> => {
-				const resp = await axios.put(
+				const resp = await axiosInstance.put(
 					endpoint + INSTALL_PATH,
 					JSON.stringify(instruction),
 					{
 						validateStatus,
-						headers: await getHeaders(),
 					}
 				);
 				if (resp.status !== 200) {
@@ -170,26 +215,23 @@ export const client = async (
 		network: {
 			bootstrap: async (): Promise<void> => {
 				throwIfNot200(
-					await axios.post(endpoint + BOOTSTRAP_PATH, undefined, {
+					await axiosInstance.post(endpoint + BOOTSTRAP_PATH, undefined, {
 						validateStatus,
-						headers: await getHeaders(),
 					})
 				);
 			},
 		},
 		restart: async (): Promise<void> => {
 			throwIfNot200(
-				await axios.post(endpoint + RESTART_PATH, undefined, {
+				await axiosInstance.post(endpoint + RESTART_PATH, undefined, {
 					validateStatus,
-					headers: await getHeaders(),
 				})
 			);
 		},
 		terminate: async (): Promise<void> => {
 			throwIfNot200(
-				await axios.post(endpoint + TERMINATE_PATH, undefined, {
+				await axiosInstance.post(endpoint + TERMINATE_PATH, undefined, {
 					validateStatus,
-					headers: await getHeaders(),
 				})
 			);
 		},

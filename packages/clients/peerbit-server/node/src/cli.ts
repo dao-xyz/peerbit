@@ -6,7 +6,12 @@ import {
 } from "./domain.js";
 import { startServerWithNode } from "./server.js";
 import { createRecord } from "./aws.js";
-import { getHomeConfigDir, getPackageName, getRemotesPath } from "./config.js";
+import {
+	getHomeConfigDir,
+	getKeypair,
+	getPackageName,
+	getRemotesPath,
+} from "./config.js";
 import chalk from "chalk";
 import { client } from "./client.js";
 import { InstallDependency, StartProgram } from "./types.js";
@@ -17,6 +22,7 @@ import fs from "fs";
 import path from "path";
 import { toBase64 } from "@peerbit/crypto";
 import { Remotes } from "./remotes.js";
+import { peerIdFromString } from "@libp2p/peer-id";
 
 const padString = function (string: string, padding: number, padChar = " ") {
 	const val = string.valueOf();
@@ -64,14 +70,6 @@ export const cli = async (args?: string[]) => {
 						default: false,
 						alias: "r",
 					})
-					.option("password", {
-						describe:
-							"Setup password so you can interact with the node remotely",
-						type: "string",
-						defaultDescription:
-							"The password from the last session will be used or a password will be generated",
-						default: undefined,
-					})
 					.option("port-api", {
 						describe:
 							"Set API server port. Only modify this when testing locally, since NGINX config depends on the default value",
@@ -94,12 +92,28 @@ export const cli = async (args?: string[]) => {
 					),
 					ports: { api: args["port-api"], node: args["port-node"] },
 					bootstrap: args.bootstrap,
-					password: args.password,
 					newSession: args.reset,
 				});
 			},
 		})
-
+		.command({
+			command: "id",
+			describe: "Get peer id",
+			builder: (yargs: yargs.Argv) => {
+				yargs.option("directory", {
+					describe: "Peerbit directory",
+					defaultDescription: "~.peerbit",
+					type: "string",
+					alias: "d",
+					default: getHomeConfigDir(),
+				});
+				return yargs;
+			},
+			handler: async (args) => {
+				const kp = await getKeypair(args.directory);
+				console.log((await kp.toPeerId()).toString());
+			},
+		})
 		.command(
 			"domain",
 			"Setup a domain and certificate for this node",
@@ -254,7 +268,7 @@ export const cli = async (args?: string[]) => {
 					},
 				})
 				.command({
-					command: "add <name> <address> <password>",
+					command: "add <name> <address>",
 					describe: "Add remote",
 					builder: (yargs: yargs.Argv) => {
 						yargs
@@ -266,11 +280,6 @@ export const cli = async (args?: string[]) => {
 							.positional("name", {
 								type: "string",
 								describe: "Remote address",
-								demandOption: true,
-							})
-							.positional("password", {
-								type: "string",
-								describe: "Password",
 								demandOption: true,
 							})
 							.option("directory", {
@@ -287,7 +296,10 @@ export const cli = async (args?: string[]) => {
 						if (args.name === "localhost") {
 							throw new Error("Remote can not be named 'localhost'");
 						}
-						const api = await client(args.password, args.address);
+						const api = await client(
+							await getKeypair(args.directory),
+							args.address
+						);
 						try {
 							await api.program.list();
 						} catch (error) {
@@ -297,7 +309,7 @@ export const cli = async (args?: string[]) => {
 							fs.mkdirSync(args.directory, { recursive: true });
 						}
 						const remotes = new Remotes(getRemotesPath(args.directory));
-						remotes.add(args.name, args.address, args.password);
+						remotes.add(args.name, args.address);
 					},
 				})
 				.command({
@@ -363,20 +375,19 @@ export const cli = async (args?: string[]) => {
 							api: Awaited<ReturnType<typeof client>>;
 						}[] = [];
 						console.log(getRemotesPath(connectArgs.directory));
+						const config = await import("./config.js");
+						const keypair = await config.getKeypair(connectArgs.directory);
+
 						if (names.length > 0) {
 							const remotes = new Remotes(
 								getRemotesPath(connectArgs.directory)
 							);
 							for (const name of names) {
 								if (name === "localhost") {
-									const config = await import("./config.js");
-									const adminPassword = await config.loadPassword(
-										config.getServerConfigPath(connectArgs.directory)
-									);
 									apis.push({
 										log: (string) => console.log("localhost: " + string),
 										name: "localhost",
-										api: await client(adminPassword),
+										api: await client(keypair),
 									});
 								} else {
 									const remote = remotes.getByName(name);
@@ -389,10 +400,11 @@ export const cli = async (args?: string[]) => {
 									} else {
 										logFn = (string) => console.log(string);
 									}
+
 									apis.push({
 										log: logFn,
 										name,
-										api: await client(remote.password, remote.address),
+										api: await client(keypair, remote.address),
 									});
 								}
 							}
@@ -437,6 +449,50 @@ export const cli = async (args?: string[]) => {
 										.demandCommand();
 									return yargs;
 								})
+								.command(
+									"access",
+									"Modify access control for this node",
+									(yargs) => {
+										yargs
+											.command({
+												command: "grant <peer-id>",
+												describe: "Give a peer-id admin capabilities",
+												builder: (yargs: yargs.Argv) => {
+													yargs.positional("peer-id", {
+														describe: "Peer id",
+														type: "string",
+														demandOption: true,
+													});
+													return yargs;
+												},
+												handler: async (args) => {
+													const peerId = peerIdFromString(args["peer-id"]);
+													for (const api of apis) {
+														await api.api.trust.add(peerId);
+													}
+												},
+											})
+											.command({
+												command: "deny <peer-id>",
+												describe: "Remove admin capabilities from peer-id",
+												builder: (yargs: yargs.Argv) => {
+													yargs.positional("peer-id", {
+														describe: "Peer id",
+														demandOption: true,
+													});
+													return yargs;
+												},
+												handler: async (args) => {
+													const peerId = peerIdFromString(args["peer-id"]);
+													for (const api of apis) {
+														await api.api.trust.remove(peerId);
+													}
+												},
+											})
+											.strict()
+											.demandCommand();
+									}
+								)
 								.command("network", "Manage network", (yargs) => {
 									yargs
 										.command({

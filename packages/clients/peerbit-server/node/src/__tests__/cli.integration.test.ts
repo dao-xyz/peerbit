@@ -35,7 +35,6 @@ const runCommand = (args): string => {
 	return execSync(cmd).toString();
 };
 
-const PASSWORD = "pass";
 const LOCAL_REMOTE_NAME = "local-remote";
 
 type ProcessWithOut = {
@@ -99,9 +98,9 @@ describe("cli", () => {
 	let configDirectory: string;
 	let PORT = 9993;
 
-	const start = async (password: string = PASSWORD) => {
+	const start = async () => {
 		const cmd = runCommandAsync(
-			`start --reset --port-api ${PORT} --port-node 0 --password ${password} --directory ${configDirectory}`
+			`start --reset --port-api ${PORT} --port-node 0 --directory ${configDirectory}`
 		);
 		processes.push(cmd);
 		try {
@@ -110,7 +109,7 @@ describe("cli", () => {
 			console.log("Never resolved start:\n" + cmd.err.join("\n"));
 			throw error;
 		}
-		addRemote(LOCAL_REMOTE_NAME, "http://localhost:" + PORT, password);
+		addRemote(LOCAL_REMOTE_NAME, "http://localhost:" + PORT);
 		await waitForResolved(() =>
 			expect(
 				runCommand(
@@ -123,15 +122,14 @@ describe("cli", () => {
 
 	const addRemote = (
 		remote: string = LOCAL_REMOTE_NAME,
-		address: string = "http://localhost:" + PORT,
-		password = PASSWORD
+		address: string = "http://localhost:" + PORT
 	): void => {
 		execSync(
 			`node --loader ts-node/esm ${path.join(
 				__dirname,
 				"../",
 				"bin.ts"
-			)} remote add ${remote} ${address} ${password} --directory ${configDirectory}`
+			)} remote add ${remote} ${address} --directory ${configDirectory}`
 		);
 	};
 
@@ -192,7 +190,7 @@ describe("cli", () => {
 		}
 	};
 
-	it("sets password", async () => {
+	it("starts", async () => {
 		await start();
 		await checkPeerId();
 	});
@@ -201,7 +199,7 @@ describe("cli", () => {
 		it("rejets on invalid remote", async () => {
 			let rejected = false;
 			try {
-				runCommand("remote add test xyz password");
+				runCommand("remote add test xyz");
 			} catch (error) {
 				rejected = true;
 				expect(error?.toString().includes("Error: Failed to add remote"));
@@ -212,7 +210,7 @@ describe("cli", () => {
 		it("add valid remote", async () => {
 			await start();
 			runCommand(
-				`remote add xyz123 http://localhost:${PORT} ${PASSWORD} --directory ${configDirectory}`
+				`remote add xyz123 http://localhost:${PORT}  --directory ${configDirectory}`
 			);
 			const terminal = await connect("xyz123");
 			await checkPeerId(terminal);
@@ -221,10 +219,10 @@ describe("cli", () => {
 		it("connect to multiple nodes", async () => {
 			await start();
 			runCommand(
-				`remote add a http://localhost:${PORT} ${PASSWORD} --directory ${configDirectory}`
+				`remote add a http://localhost:${PORT} --directory ${configDirectory}`
 			);
 			runCommand(
-				`remote add b http://localhost:${PORT} ${PASSWORD} --directory ${configDirectory}`
+				`remote add b http://localhost:${PORT} --directory ${configDirectory}`
 			);
 			const terminal = await connect("a b");
 			terminal.out.splice(0, terminal.out.length);

@@ -11,7 +11,7 @@ export const getPort = (protocol: string) => {
 };
 export const SSL_PORT = 9002;
 export const LOCAL_PORT = 8082;
-
+export const TRUST_PATH = "/trust";
 export const PEER_ID_PATH = "/peer/id";
 export const ADDRESS_PATH = "/peer/address";
 export const PROGRAM_PATH = "/program";

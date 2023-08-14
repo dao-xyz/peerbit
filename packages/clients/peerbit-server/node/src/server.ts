@@ -1,5 +1,5 @@
 import http from "http";
-import { fromBase64, sha256Base64Sync } from "@peerbit/crypto";
+import { Ed25519Keypair, fromBase64, sha256Base64Sync } from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import {
 	Program,
@@ -10,13 +10,10 @@ import {
 import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
 import {
-	checkExistPath,
 	getHomeConfigDir,
-	getCredentialsPath,
-	getPackageName,
-	loadPassword,
-	NotFoundError,
 	getNodePath,
+	getKeypair,
+	getTrustPath,
 } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./peerbit.js";
@@ -38,6 +35,7 @@ import {
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
 	RESTART_PATH,
+	TRUST_PATH,
 } from "./routes.js";
 import { Session } from "./session.js";
 import fs from "fs";
@@ -50,6 +48,9 @@ import { dirname } from "path";
 import { fileURLToPath } from "url";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
+import { Trust } from "./trust.js";
+import { getBody, verifyRequest } from "./signes-request.js";
+import { cli } from "./cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -62,62 +63,21 @@ export const stopAndWait = (server: http.Server) => {
 	return waitFor(() => closed);
 };
 
-export const createPassword = async (
-	configDirectory: string,
-	password?: string
-): Promise<string> => {
-	const configDir = configDirectory ?? (await getHomeConfigDir());
-	const credentialsPath = await getCredentialsPath(configDir);
-	if (!password && (await checkExistPath(credentialsPath))) {
-		throw new Error(
-			"Config path for credentials: " + credentialsPath + ", already exist"
-		);
-	}
-	console.log(`Creating config folder ${configDir}`);
-
-	fs.mkdirSync(configDir, { recursive: true });
-	await waitFor(() => fs.existsSync(configDir));
-
-	console.log(`Created config folder ${configDir}`);
-
-	password = password || uuid();
-	fs.writeFileSync(
-		credentialsPath,
-		JSON.stringify({ username: "admin", password })
-	);
-	console.log(`Created credentials at ${credentialsPath}`);
-	return password!;
-};
-
-export const loadOrCreatePassword = async (
-	configDirectory: string,
-	password?: string
-): Promise<string> => {
-	if (!password) {
-		try {
-			return await loadPassword(configDirectory);
-		} catch (error) {
-			if (error instanceof NotFoundError) {
-				return createPassword(configDirectory, password);
-			}
-			throw error;
-		}
-	} else {
-		return createPassword(configDirectory, password);
-	}
-};
 export const startServerWithNode = async (properties: {
-	directory?: string;
+	directory: string;
 	domain?: string;
 	bootstrap?: boolean;
 	newSession?: boolean;
-	password?: string;
 	ports?: {
 		node: number;
 		api: number;
 	};
 	restart?: () => void;
 }) => {
+	if (!fs.existsSync(properties.directory)) {
+		fs.mkdirSync(properties.directory, { recursive: true });
+	}
+	const keypair = await getKeypair(properties.directory);
 	const peer = await create({
 		directory:
 			properties.directory != null
@@ -125,6 +85,7 @@ export const startServerWithNode = async (properties: {
 				: undefined,
 		domain: properties.domain,
 		listenPort: properties.ports?.node,
+		peerId: await keypair.toPeerId(),
 	});
 
 	if (properties.bootstrap) {
@@ -134,6 +95,7 @@ export const startServerWithNode = async (properties: {
 		properties.directory != null
 			? path.join(properties.directory, "session")
 			: undefined;
+
 	const session = new Session(
 		sessionDirectory
 			? new Level<string, Uint8Array>(sessionDirectory, {
@@ -165,7 +127,6 @@ export const startServerWithNode = async (properties: {
 				? path.join(properties.directory, "server")
 				: undefined || getHomeConfigDir(),
 		session,
-		password: properties.password,
 	});
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
@@ -206,11 +167,7 @@ export const startServerWithNode = async (properties: {
 	return { server, node: peer };
 };
 
-const getProgramFromPath = (
-	client: Peerbit,
-	req: http.IncomingMessage,
-	pathIndex: number
-): Program | undefined => {
+const getPathValue = (req: http.IncomingMessage, pathIndex: number): string => {
 	if (!req.url) {
 		throw new Error("Missing url");
 	}
@@ -222,7 +179,7 @@ const getProgramFromPath = (
 		throw new Error("Invalid path");
 	}
 	const address = decodeURIComponent(path[pathIndex]);
-	return client.handler?.items.get(address);
+	return address;
 };
 function findPeerbitProgramFolder(inputDirectory: string): string | null {
 	let currentDir = path.resolve(inputDirectory);
@@ -254,18 +211,18 @@ function findPeerbitProgramFolder(inputDirectory: string): string | null {
 
 export const startApiServer = async (
 	client: ProgramClient,
-	options: {
+	properties: {
 		configDirectory: string;
 		session?: Session;
 		port?: number;
-		password?: string;
 	}
 ): Promise<http.Server> => {
-	const port = options?.port ?? LOCAL_PORT;
-	const password = await loadOrCreatePassword(
-		options.configDirectory,
-		options?.password
-	);
+	const port = properties?.port ?? LOCAL_PORT;
+	if (!fs.existsSync(properties.configDirectory)) {
+		fs.mkdirSync(properties.configDirectory, { recursive: true });
+	}
+
+	const trust = new Trust(getTrustPath(properties.configDirectory));
 
 	const restart = async () => {
 		await client.stop();
@@ -285,43 +242,27 @@ export const startApiServer = async (
 				gid: process.getgid!(),
 			}
 		);
-
-		/* process.on("exit", async () => {
-			child.kill("SIGINT")
-		});
-		process.on("SIGINT", async () => {
-			child.kill("SIGINT")
-		}); */
 		process.exit(0);
 	};
+	if (!client.peerId.equals(await client.identity.publicKey.toPeerId())) {
+		throw new Error("Expecting node identity to equal peerId");
+	}
 
-	const adminACL = (req: http.IncomingMessage): boolean => {
-		const auth = req.headers["authorization"];
-		if (!auth?.startsWith("Basic ")) {
-			return false;
+	const getVerifiedBody = async (req: http.IncomingMessage) => {
+		const body = await getBody(req);
+		const result = await verifyRequest(
+			req.headers,
+			req.method!,
+			req.url!,
+			body
+		);
+		if (result.equals(client.identity.publicKey)) {
+			return body;
 		}
-		const credentials = auth?.substring("Basic ".length);
-		const username = credentials.split(":")[0];
-		if (username !== "admin") {
-			return false;
+		if (trust.isTrusted(result.hashcode())) {
+			return body;
 		}
-		if (password !== credentials.substring(username.length + 1)) {
-			return false;
-		}
-		return true;
-	};
-
-	const getBody = (
-		req: http.IncomingMessage,
-		callback: (body: string) => Promise<void> | void
-	) => {
-		let body = "";
-		req.on("data", function (d) {
-			body += d;
-		});
-		req.on("end", function () {
-			callback(body);
-		});
+		throw new Error("Not trusted");
 	};
 
 	const e404 = "404";
@@ -339,15 +280,20 @@ export const startApiServer = async (
 
 			try {
 				if (req.url) {
-					if (
-						!req.url.startsWith(PEER_ID_PATH) &&
-						!req.url.startsWith(ADDRESS_PATH) &&
-						!(await adminACL(req))
-					) {
+					let body: string;
+					try {
+						body =
+							req.url.startsWith(PEER_ID_PATH) ||
+							req.url.startsWith(ADDRESS_PATH)
+								? await getBody(req)
+								: await getVerifiedBody(req);
+					} catch (error: any) {
 						res.writeHead(401);
-						res.end("Not authorized");
+						res.end("Not authorized: " + error.toString());
 						return;
-					} else if (req.url.startsWith(PROGRAMS_PATH)) {
+					}
+
+					if (req.url.startsWith(PROGRAMS_PATH)) {
 						if (client instanceof Peerbit === false) {
 							res.writeHead(400);
 							res.end("Server node is not running a native client");
@@ -380,7 +326,9 @@ export const startApiServer = async (
 						switch (req.method) {
 							case "HEAD":
 								try {
-									const program = getProgramFromPath(client as Peerbit, req, 1);
+									const program = (client as Peerbit).handler?.items.get(
+										getPathValue(req, 1)
+									);
 									if (program) {
 										res.writeHead(200);
 										res.end();
@@ -399,7 +347,9 @@ export const startApiServer = async (
 									const url = new URL(req.url, "http://localhost:" + 1234);
 									const queryData = url.searchParams.get("delete");
 
-									const program = getProgramFromPath(client as Peerbit, req, 1);
+									const program = (client as Peerbit).handler?.items.get(
+										getPathValue(req, 1)
+									);
 									if (program) {
 										let closed = false;
 										if (queryData === "true") {
@@ -408,7 +358,9 @@ export const startApiServer = async (
 											closed = await program.close();
 										}
 										if (closed) {
-											await options?.session?.programs.remove(program.address);
+											await properties?.session?.programs.remove(
+												program.address
+											);
 										}
 
 										res.writeHead(200);
@@ -423,56 +375,54 @@ export const startApiServer = async (
 								}
 								break;
 							case "PUT":
-								getBody(req, (body) => {
-									try {
-										const startArguments: StartProgram = JSON.parse(body);
+								try {
+									const startArguments: StartProgram = JSON.parse(body);
 
-										let program: Program;
-										if ((startArguments as StartByVariant).variant) {
-											const P = getProgramFromVariant(
-												(startArguments as StartByVariant).variant
+									let program: Program;
+									if ((startArguments as StartByVariant).variant) {
+										const P = getProgramFromVariant(
+											(startArguments as StartByVariant).variant
+										);
+										if (!P) {
+											res.writeHead(400);
+											res.end(
+												"Missing program with variant: " +
+													(startArguments as StartByVariant).variant
 											);
-											if (!P) {
-												res.writeHead(400);
-												res.end(
-													"Missing program with variant: " +
-														(startArguments as StartByVariant).variant
-												);
-												return;
-											}
-											program = new P();
-										} else {
-											program = deserialize(
-												fromBase64((startArguments as StartByBase64).base64),
-												Program
-											);
+											return;
 										}
-										client
-											.open(program) // TODO all users to pass args
-											.then(async (program) => {
-												// TODO what if this is a reopen?
-												console.log(
-													"OPEN ADDRESS",
-													program.address,
-													(client as Peerbit).directory,
-													await client.services.blocks.has(program.address)
-												);
-												await options?.session?.programs.add(
-													program.address,
-													new Uint8Array()
-												);
-												res.writeHead(200);
-												res.end(program.address.toString());
-											})
-											.catch((error) => {
-												res.writeHead(400);
-												res.end("Failed to open program: " + error.toString());
-											});
-									} catch (error: any) {
-										res.writeHead(400);
-										res.end(error.toString());
+										program = new P();
+									} else {
+										program = deserialize(
+											fromBase64((startArguments as StartByBase64).base64),
+											Program
+										);
 									}
-								});
+									client
+										.open(program) // TODO all users to pass args
+										.then(async (program) => {
+											// TODO what if this is a reopen?
+											console.log(
+												"OPEN ADDRESS",
+												program.address,
+												(client as Peerbit).directory,
+												await client.services.blocks.has(program.address)
+											);
+											await properties?.session?.programs.add(
+												program.address,
+												new Uint8Array()
+											);
+											res.writeHead(200);
+											res.end(program.address.toString());
+										})
+										.catch((error) => {
+											res.writeHead(400);
+											res.end("Failed to open program: " + error.toString());
+										});
+								} catch (error: any) {
+									res.writeHead(400);
+									res.end(error.toString());
+								}
 								break;
 
 							default:
@@ -481,105 +431,101 @@ export const startApiServer = async (
 						}
 					} else if (req.url.startsWith(INSTALL_PATH)) {
 						switch (req.method) {
-							case "PUT":
-								getBody(req, async (body) => {
-									const installArgs: InstallDependency = JSON.parse(body);
+							case "PUT": {
+								const installArgs: InstallDependency = JSON.parse(body);
 
-									const packageName = installArgs.name; // @abc/123
-									let installName = installArgs.name; // abc123.tgz or @abc/123 (npm package name)
-									let clear: (() => void) | undefined;
-									if (installArgs.type === "tgz") {
-										const binary = fromBase64(installArgs.base64);
-										const tempFile = tmp.fileSync({
-											name:
-												base58btc.encode(Buffer.from(installName)) +
-												uuid() +
-												".tgz",
-										});
-										fs.writeFileSync(tempFile.fd, binary);
-										clear = () => tempFile.removeCallback();
-										installName = tempFile.name;
-									} else {
-										clear = undefined;
-									}
+								const packageName = installArgs.name; // @abc/123
+								let installName = installArgs.name; // abc123.tgz or @abc/123 (npm package name)
+								let clear: (() => void) | undefined;
+								if (installArgs.type === "tgz") {
+									const binary = fromBase64(installArgs.base64);
+									const tempFile = tmp.fileSync({
+										name:
+											base58btc.encode(Buffer.from(installName)) +
+											uuid() +
+											".tgz",
+									});
+									fs.writeFileSync(tempFile.fd, binary);
+									clear = () => tempFile.removeCallback();
+									installName = tempFile.name;
+								} else {
+									clear = undefined;
+								}
 
-									if (!installName || installName.length === 0) {
-										res.writeHead(400);
-										res.end("Invalid package: " + packageName);
-									} else {
-										try {
-											// TODO do this without sudo. i.e. for servers provide arguments so that this app folder is writeable by default by the user
-											const installDir =
-												process.env.PEERBIT_MODULES_PATH ||
-												findPeerbitProgramFolder(__dirname);
-											let permission = "";
-											if (!installDir) {
-												res.writeHead(400);
-												res.end("Missing installation directory");
-												return;
-											}
-											try {
-												fs.accessSync(installDir, fs.constants.W_OK);
-											} catch (error) {
-												permission = "sudo";
-											}
-
-											console.log("Installing package: " + installName);
-											execSync(
-												`${permission} npm install ${installName} --prefix ${installDir} --no-save --no-package-lock`
-											); // TODO omit=dev ? but this makes breaks the tests after running once?
-										} catch (error: any) {
+								if (!installName || installName.length === 0) {
+									res.writeHead(400);
+									res.end("Invalid package: " + packageName);
+								} else {
+									try {
+										// TODO do this without sudo. i.e. for servers provide arguments so that this app folder is writeable by default by the user
+										const installDir =
+											process.env.PEERBIT_MODULES_PATH ||
+											findPeerbitProgramFolder(__dirname);
+										let permission = "";
+										if (!installDir) {
 											res.writeHead(400);
-											res.end(
-												"Failed to install library: " +
-													packageName +
-													". " +
-													error.toString()
-											);
-											clear?.();
+											res.end("Missing installation directory");
 											return;
 										}
-
 										try {
-											const programsPre = new Set(
-												getProgramFromVariants().map(
-													(x) => getSchema(x).variant
-												)
-											);
-
-											await import(
-												/* webpackIgnore: true */ /* @vite-ignore */ packageName
-											);
-											await options?.session?.imports.add(
-												packageName,
-												new Uint8Array()
-											);
-											const programsPost = getProgramFromVariants()?.map((x) =>
-												getSchema(x)
-											);
-											const newPrograms: { variant: string }[] = [];
-											for (const p of programsPost) {
-												if (!programsPre.has(p.variant)) {
-													newPrograms.push(p as { variant: string });
-												}
-											}
-
-											res.writeHead(200);
-											res.end(
-												JSON.stringify(newPrograms.map((x) => x.variant))
-											);
-										} catch (e: any) {
-											res.writeHead(400);
-											res.end(e.message.toString?.());
-											clear?.();
+											fs.accessSync(installDir, fs.constants.W_OK);
+										} catch (error) {
+											permission = "sudo";
 										}
-									}
-								});
-								break;
 
-							default:
+										console.log("Installing package: " + installName);
+										execSync(
+											`${permission} npm install ${installName} --prefix ${installDir} --no-save --no-package-lock`
+										); // TODO omit=dev ? but this makes breaks the tests after running once?
+									} catch (error: any) {
+										res.writeHead(400);
+										res.end(
+											"Failed to install library: " +
+												packageName +
+												". " +
+												error.toString()
+										);
+										clear?.();
+										return;
+									}
+
+									try {
+										const programsPre = new Set(
+											getProgramFromVariants().map((x) => getSchema(x).variant)
+										);
+
+										await import(
+											/* webpackIgnore: true */ /* @vite-ignore */ packageName
+										);
+										await properties?.session?.imports.add(
+											packageName,
+											new Uint8Array()
+										);
+										const programsPost = getProgramFromVariants()?.map((x) =>
+											getSchema(x)
+										);
+										const newPrograms: { variant: string }[] = [];
+										for (const p of programsPost) {
+											if (!programsPre.has(p.variant)) {
+												newPrograms.push(p as { variant: string });
+											}
+										}
+
+										res.writeHead(200);
+										res.end(JSON.stringify(newPrograms.map((x) => x.variant)));
+									} catch (e: any) {
+										res.writeHead(400);
+										res.end(e.message.toString?.());
+										clear?.();
+									}
+								}
+								break;
+							}
+
+							default: {
 								r404();
 								break;
+							}
 						}
 					} else if (req.url.startsWith(BOOTSTRAP_PATH)) {
 						switch (req.method) {
@@ -594,6 +540,24 @@ export const startApiServer = async (
 								res.end();
 								break;
 
+							default:
+								r404();
+								break;
+						}
+					} else if (req.url.startsWith(TRUST_PATH)) {
+						switch (req.method) {
+							case "PUT": {
+								trust.add(getPathValue(req, 1));
+								res.writeHead(200);
+								res.end();
+								break;
+							}
+							case "DELETE": {
+								const removed = trust.remove(getPathValue(req, 1));
+								res.writeHead(200);
+								res.end(removed);
+								break;
+							}
 							default:
 								r404();
 								break;

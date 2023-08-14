@@ -2,12 +2,14 @@ import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 import path from "path";
+import { PeerId } from "@libp2p/interface-peer-id";
 
 export const LIBP2P_LISTEN_PORT = 8001;
 export const create = (properties: {
 	directory?: string;
 	domain?: string;
 	listenPort?: number;
+	peerId: PeerId;
 }) => {
 	const listenPort = properties.listenPort ?? LIBP2P_LISTEN_PORT;
 	const blocksDirectory =
@@ -17,6 +19,7 @@ export const create = (properties: {
 
 	return Peerbit.create({
 		libp2p: {
+			peerId: properties.peerId,
 			addresses: {
 				announce: properties.domain
 					? [

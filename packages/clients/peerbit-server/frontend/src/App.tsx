@@ -7,6 +7,7 @@ import {
 	ThemeProvider,
 	CssBaseline,
 } from "@mui/material";
+import { Ed25519Keypair } from "@peerbit/crypto";
 let theme = createTheme({
 	palette: {
 		mode: "dark",
@@ -32,31 +33,31 @@ export const App = () => {
 	const [client, setClient] = useState<
 		Awaited<ReturnType<typeof api>> | undefined
 	>();
-	const [password, setPassword] = useState<string>();
 	const [id, setId] = useState<string>();
 	useEffect(() => {
-		console.log();
-
-		api(
-			window.location.protocol +
-				"//" +
-				window.location.hostname +
-				":" +
-				getPort(window.location.protocol)
-		).then((c) => {
-			setClient(c);
-			c.peer.id
-				.get()
-				.then((_id) => {
-					setId(_id);
-				})
-				.catch((e) => {
-					if (window.location.hostname !== "localhost") {
-						alert(e);
-					} else {
-						console.error(e);
-					}
-				});
+		Ed25519Keypair.create().then((key) => {
+			return api(
+				key,
+				window.location.protocol +
+					"//" +
+					window.location.hostname +
+					":" +
+					getPort(window.location.protocol)
+			).then((c) => {
+				setClient(c);
+				c.peer.id
+					.get()
+					.then((_id) => {
+						setId(_id);
+					})
+					.catch((e) => {
+						if (window.location.hostname !== "localhost") {
+							alert(e);
+						} else {
+							console.error(e);
+						}
+					});
+			});
 		});
 	}, []);
 	return (

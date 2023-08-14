@@ -5,7 +5,12 @@ import { jest } from "@jest/globals";
 import { PermissionedString } from "@peerbit/test-lib";
 import { Address, Program, ProgramClient } from "@peerbit/program";
 import { getSchema, serialize } from "@dao-xyz/borsh";
-import { toBase64 } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	Ed25519PublicKey,
+	Identity,
+	toBase64,
+} from "@peerbit/crypto";
 import { Peerbit } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
@@ -16,10 +21,8 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-let PASSWORD = "pass";
-
-const client = (password: string = PASSWORD, address?: string) => {
-	return createClient(password, address);
+const client = (keypair: Identity<Ed25519PublicKey>, address?: string) => {
+	return createClient(keypair, address);
 };
 
 describe("libp2p only", () => {
@@ -49,7 +52,6 @@ describe("libp2p only", () => {
 			uuid()
 		);
 		server = await startApiServer(session.peers[0], {
-			password: PASSWORD,
 			configDirectory,
 			port: 7676,
 		});
@@ -63,7 +65,10 @@ describe("libp2p only", () => {
 	});
 
 	it("use cli as libp2p cli", async () => {
-		const c = await createClient(PASSWORD, "http://localhost:" + 7676);
+		const c = await createClient(
+			await Ed25519Keypair.create(),
+			"http://localhost:" + 7676
+		);
 		expect(await c.peer.id.get()).toBeDefined();
 	});
 });
@@ -78,7 +83,10 @@ describe("server", () => {
 			server.close();
 		});
 		it("bootstrap on start", async () => {
-			let result = await startServerWithNode({ bootstrap: true });
+			let result = await startServerWithNode({
+				bootstrap: true,
+				directory: path.join(__dirname, "tmp", "api-test", "server", uuid()),
+			});
 			node = result.node;
 			server = result.server;
 			expect(node.libp2p.services.pubsub.peers.size).toBeGreaterThan(0);
@@ -102,7 +110,6 @@ describe("server", () => {
 			db = await peer.open(new PermissionedString({ trusted: [] }));
 			address = db.address;
 			server = await startApiServer(peer, {
-				password: PASSWORD,
 				configDirectory: directory,
 			});
 		});
@@ -114,11 +121,12 @@ describe("server", () => {
 
 		describe("client", () => {
 			it("id", async () => {
-				const c = await client();
+				const c = await client(session.peers[0].identity);
 				expect(await c.peer.id.get()).toEqual(peer.peerId.toString());
 			});
+
 			it("addresses", async () => {
-				const c = await client();
+				const c = await client(session.peers[0].identity);
 				expect((await c.peer.addresses.get()).map((x) => x.toString())).toEqual(
 					(await peer.getMultiaddrs()).map((x) => x.toString())
 				);
@@ -128,7 +136,7 @@ describe("server", () => {
 		describe("program", () => {
 			describe("open", () => {
 				it("variant", async () => {
-					const c = await client();
+					const c = await client(session.peers[0].identity);
 					const address = await c.program.open({
 						variant: getSchema(PermissionedString).variant! as string,
 					});
@@ -136,7 +144,7 @@ describe("server", () => {
 				});
 
 				it("base64", async () => {
-					const c = await client();
+					const c = await client(session.peers[0].identity);
 					const program = new PermissionedString({
 						trusted: [],
 					});
@@ -147,6 +155,23 @@ describe("server", () => {
 				});
 			});
 
+			describe("trust", () => {
+				it("add", async () => {
+					const c = await client(session.peers[0].identity);
+					const kp2 = await Ed25519Keypair.create();
+					const kp3 = await Ed25519Keypair.create();
+
+					const c2 = await client(kp2);
+
+					console.log(session.peers[0].identity.publicKey.hashcode());
+					console.log(kp2.publicKey.hashcode());
+					await expect(() => c2.trust.add(kp3.publicKey)).rejects.toThrowError(
+						"Request failed with status code 401"
+					);
+					await c.trust.add(kp2.publicKey);
+					await c2.trust.add(kp3.publicKey); // now c2 can add since it is trusted by c
+				});
+			});
 			describe("close/drop", () => {
 				let program: Program;
 				let address: Address;
@@ -157,7 +182,7 @@ describe("server", () => {
 					dropped = false;
 					closed = false;
 
-					const c = await client();
+					const c = await client(session.peers[0].identity);
 					address = await c.program.open({
 						variant: getSchema(PermissionedString).variant! as string,
 					});
@@ -177,14 +202,14 @@ describe("server", () => {
 				});
 
 				it("close", async () => {
-					const c = await client();
+					const c = await client(session.peers[0].identity);
 					await c.program.close(address);
 					expect(dropped).toBeFalse();
 					expect(closed).toBeTrue();
 				});
 
 				it("drop", async () => {
-					const c = await client();
+					const c = await client(session.peers[0].identity);
 					await c.program.drop(address);
 					expect(dropped).toBeTrue();
 					expect(closed).toBeFalse();
@@ -192,7 +217,7 @@ describe("server", () => {
 			});
 
 			it("list", async () => {
-				const c = await client();
+				const c = await client(session.peers[0].identity);
 				const address = await c.program.open({
 					variant: getSchema(PermissionedString).variant! as string,
 				});
@@ -204,7 +229,7 @@ describe("server", () => {
 			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).toEqual(
 				0
 			);
-			const c = await client();
+			const c = await client(session.peers[0].identity);
 			await c.network.bootstrap();
 			expect(
 				(session.peers[0] as Peerbit).services.pubsub.peers.size

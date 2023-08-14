@@ -1,8 +1,9 @@
 import path from "path";
 import os from "os";
 import fs from "fs";
-
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Duplex } from "stream"; // Native Node Module
+import { Ed25519Keypair, Keypair, fromBase64 } from "@peerbit/crypto";
 
 const bufferToStream = (myBuffer) => {
 	const tmp = new Duplex();
@@ -14,10 +15,6 @@ const bufferToStream = (myBuffer) => {
 export const getHomeConfigDir = (): string => {
 	const configDir = path.join(os.homedir(), ".peerbit");
 	return configDir;
-};
-
-export const getCredentialsPath = (configDir: string): string => {
-	return path.join(configDir, "credentials.json");
 };
 
 export const getServerConfigPath = (configDir: string): string => {
@@ -32,8 +29,26 @@ export const getNodePath = (directory: string): string => {
 	return path.join(directory, "node");
 };
 
-export const getKeysPath = async (configDir: string): Promise<string> => {
+export const getTrustPath = (directory: string): string => {
+	return path.join(directory, "trust.json");
+};
+
+const getKeysPath = (configDir: string): string => {
 	return path.join(configDir, "keys");
+};
+
+export const getKeypair = async (
+	configDir: string
+): Promise<Ed25519Keypair> => {
+	const keypath = getKeysPath(configDir);
+	if (!fs.existsSync(keypath)) {
+		const keypair = await Ed25519Keypair.create();
+		fs.writeFileSync(keypath, serialize(keypair));
+		return keypair;
+	} else {
+		const keypair = deserialize(fs.readFileSync(keypath), Ed25519Keypair);
+		return keypair;
+	}
 };
 
 export const checkExistPath = async (path: string) => {
@@ -49,23 +64,6 @@ export const checkExistPath = async (path: string) => {
 		}
 		throw new Error("Can not access path");
 	}
-};
-
-export const loadPassword = async (
-	configDirectory: string
-): Promise<string> => {
-	const configDir = configDirectory || (await getHomeConfigDir());
-	const credentialsPath = await getCredentialsPath(configDir);
-	if (!(await checkExistPath(credentialsPath))) {
-		throw new NotFoundError("Credentials file does not exist");
-	}
-	const password = JSON.parse(
-		fs.readFileSync(credentialsPath, "utf-8")
-	).password;
-	if (!password || password.length === 0) {
-		throw new NotFoundError("Password not found");
-	}
-	return password;
 };
 
 export const getPackageName = async (

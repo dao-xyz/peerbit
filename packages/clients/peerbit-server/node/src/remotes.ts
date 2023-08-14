@@ -3,7 +3,6 @@ import fs from "fs";
 interface RemoteObject {
 	address: string;
 	name: string;
-	password: string;
 }
 
 interface RemotesObject {
@@ -35,11 +34,10 @@ export class Remotes {
 	getByAddress(address: string) {
 		return this.data.remotes.find((x) => x.address === address);
 	}
-	add(name: string, address: string, password: string) {
+	add(name: string, address: string) {
 		const obj: RemoteObject = {
 			address,
 			name,
-			password,
 		};
 		const existing = this.data.remotes.findIndex((x) => x.name === name);
 		if (existing >= 0) {

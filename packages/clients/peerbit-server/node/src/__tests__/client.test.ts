@@ -1,6 +1,7 @@
 import { ProgramClient } from "@peerbit/program";
 import { create } from "../peerbit";
 import { LevelBlockStore } from "@peerbit/blocks";
+import { Ed25519Keypair } from "@peerbit/crypto";
 
 describe("client", () => {
 	let client: ProgramClient;
@@ -9,6 +10,7 @@ describe("client", () => {
 	});
 	it("default config will relay messages", async () => {
 		client = await create({
+			peerId: await (await Ed25519Keypair.create()).toPeerId(),
 			directory: "./tmp/server-node/client/" + new Date(),
 			listenPort: 9123,
 		});
