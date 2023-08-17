@@ -1,6 +1,6 @@
 import { serialize } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "./hash.js";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 
 interface Key {
 	equals(other: Key): boolean;

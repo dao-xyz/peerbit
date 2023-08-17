@@ -1,4 +1,4 @@
-import type { PeerId as Libp2pPeerId } from "@libp2p/interface-peer-id";
+import type { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import { logger as logFn } from "@peerbit/logger";
 
 import { DataMessage } from "@peerbit/stream-interface";
@@ -9,7 +9,7 @@ import {
 	PeerStreams,
 } from "@peerbit/stream";
 
-import { CodeError } from "@libp2p/interfaces/errors";
+import { CodeError } from "@libp2p/interface/errors";
 import {
 	PubSubMessage,
 	Subscribe,
@@ -25,9 +25,9 @@ import {
 	SubscriptionData,
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
-import { CustomEvent } from "@libp2p/interfaces/events";
+import { CustomEvent } from "@libp2p/interface/events";
 import { waitFor } from "@peerbit/time";
-import { Connection } from "@libp2p/interface-connection";
+import { Connection } from "@libp2p/interface/connection";
 import { equals, startsWith } from "@peerbit/uint8arrays";
 import { PubSubEvents } from "@peerbit/pubsub-interface";
 

@@ -6,8 +6,8 @@ import {
 	WaitForPeer,
 	PeerEvents,
 } from "@peerbit/stream-interface";
-import { EventHandler } from "@libp2p/interfaces/events";
-import { PeerId as Libp2pPeerId } from "@libp2p/interface-peer-id";
+import { EventHandler } from "@libp2p/interface/events";
+import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import { field, option, vec } from "@dao-xyz/borsh";
 
 export class SubscriptionEvent {

@@ -1,4 +1,4 @@
-import type { PeerId as Libp2pPeerId } from "@libp2p/interface-peer-id";
+import type { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import { Blocks } from "@peerbit/blocks-interface";
 import { PubSub } from "@peerbit/pubsub-interface";
 import { Ed25519PublicKey, Identity, Keychain } from "@peerbit/crypto";

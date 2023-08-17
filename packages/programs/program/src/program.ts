@@ -2,11 +2,11 @@ import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Constructor, getSchema, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { CustomEvent, EventEmitter } from "@libp2p/interfaces/events";
+import { CustomEvent, EventEmitter } from "@libp2p/interface/events";
 import { Client } from "./client.js";
 import { waitForAsync } from "@peerbit/time";
 import { Blocks } from "@peerbit/blocks-interface";
-import { PeerId as Libp2pPeerId } from "@libp2p/interface-peer-id";
+import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,

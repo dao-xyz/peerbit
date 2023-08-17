@@ -9,7 +9,7 @@ import {
 } from "..";
 import { DataMessage, Message, getMsgId } from "@peerbit/stream-interface";
 import { PublicSignKey } from "@peerbit/crypto";
-import { PeerId, isPeerId } from "@libp2p/interface-peer-id";
+import { PeerId, isPeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { multiaddr } from "@multiformats/multiaddr";
 import { tcp } from "@libp2p/tcp";
@@ -54,7 +54,6 @@ const createMetrics = (stream: DirectStream) => {
 	};
 	return s;
 };
-
 class TestDirectStream extends DirectStream {
 	constructor(
 		components: DirectStreamComponents,

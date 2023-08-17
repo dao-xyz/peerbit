@@ -12,7 +12,7 @@ import { MemoryLevel } from "memory-level";
 import { waitFor } from "@peerbit/time";
 import LazyLevel, { LazyLevelOptions } from "@peerbit/lazy-level";
 import { PutOptions } from "@peerbit/blocks-interface";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { PublicSignKey } from "@peerbit/crypto";
 
 export class LevelBlockStore implements Blocks {

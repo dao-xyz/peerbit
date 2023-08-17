@@ -4,7 +4,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { delay, waitForResolved } from "@peerbit/time";
 import { GetSubscribers } from "@peerbit/pubsub-interface";
 import { deserialize } from "@dao-xyz/borsh";
-import { EventEmitter } from "@libp2p/interfaces/events";
+import { EventEmitter } from "@libp2p/interface/events";
 import { DataMessage } from "@peerbit/stream-interface";
 import { PeerbitProxyClient } from "../client.js";
 import { EventEmitterNode } from "./utils.js";

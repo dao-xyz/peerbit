@@ -1,5 +1,5 @@
 import { SimpleLevel } from "@peerbit/lazy-level";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
 import {
@@ -31,7 +31,7 @@ import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
 
-import { EventEmitter } from "@libp2p/interfaces/events";
+import { EventEmitter } from "@libp2p/interface/events";
 import { X25519Keypair } from "@peerbit/crypto";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 

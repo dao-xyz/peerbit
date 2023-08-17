@@ -10,7 +10,7 @@ let _curve: EC;
 
 import { equals } from "@peerbit/uint8arrays";
 import { toHexString } from "./utils.js";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { Identity, Signer } from "./signer.js";
 import { coerce } from "./bytes.js";
 import { generateKeyPair, supportedKeys } from "@libp2p/crypto/keys";

@@ -1,5 +1,5 @@
 import { PublicSignKey } from "@peerbit/crypto";
-import type { PeerId } from "@libp2p/interface-peer-id";
+import type { PeerId } from "@libp2p/interface/peer-id";
 
 export interface PeerEvents {
 	"peer:reachable": CustomEvent<PublicSignKey>;

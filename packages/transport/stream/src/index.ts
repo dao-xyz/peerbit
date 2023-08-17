@@ -1,11 +1,11 @@
-import { EventEmitter, CustomEvent } from "@libp2p/interfaces/events";
+import { EventEmitter, CustomEvent } from "@libp2p/interface/events";
 import { pipe } from "it-pipe";
 import Queue from "p-queue";
-import type { PeerId } from "@libp2p/interface-peer-id";
-import type { Connection } from "@libp2p/interface-connection";
+import type { PeerId } from "@libp2p/interface/peer-id";
+import type { Connection } from "@libp2p/interface/connection";
 import type { Pushable } from "it-pushable";
 import { pushable } from "it-pushable";
-import type { Stream } from "@libp2p/interface-connection";
+import type { Stream } from "@libp2p/interface/connection";
 import { Uint8ArrayList } from "uint8arraylist";
 import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
@@ -15,9 +15,11 @@ import { PeerMap } from "./peer-map.js";
 import type {
 	IncomingStreamData,
 	Registrar,
-} from "@libp2p/interface-registrar";
-import { ConnectionManager } from "@libp2p/interface-connection-manager";
-import { PeerStore } from "@libp2p/interface-peer-store";
+} from "@libp2p/interface-internal/registrar";
+import type { AddressManager } from "@libp2p/interface-internal/address-manager";
+import type { ConnectionManager } from "@libp2p/interface-internal/connection-manager";
+
+import { PeerStore } from "@libp2p/interface/peer-store";
 
 import { delay, TimeoutError, waitFor } from "@peerbit/time";
 import {
@@ -29,13 +31,10 @@ import {
 } from "@peerbit/crypto";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
-import type { AddressManager } from "@libp2p/interface-address-manager";
-
 import { logger } from "./logger.js";
 import { Cache } from "@peerbit/cache";
-import { createTopology } from "./topology.js";
 export { logger };
-import type { Libp2pEvents } from "@libp2p/interface-libp2p";
+import type { Libp2pEvents } from "@libp2p/interface";
 import {
 	PeerEvents,
 	Message as Message,
@@ -220,18 +219,20 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	async attachOutboundStream(stream: Stream) {
 		// If an outbound stream already exists, gently close it
 		const _prevStream = this.outboundStream;
+
 		this._rawOutboundStream = stream;
 		this.pingJob?.abort();
 
 		this.outboundStream = pushable<Uint8ArrayList>({
 			objectMode: true,
 			onEnd: () => {
-				stream.close();
-				if (this._rawOutboundStream === stream) {
-					this.dispatchEvent(new CustomEvent("close"));
-					this._rawOutboundStream = undefined;
-					this.outboundStream = undefined;
-				}
+				return stream.close().then(() => {
+					if (this._rawOutboundStream === stream) {
+						this.dispatchEvent(new CustomEvent("close"));
+						this._rawOutboundStream = undefined;
+						this.outboundStream = undefined;
+					}
+				});
 			},
 		});
 
@@ -256,7 +257,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	/**
 	 * Closes the open connection to peer
 	 */
-	close() {
+	async close() {
 		if (this.closed) {
 			return;
 		}
@@ -265,13 +266,13 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 
 		// End the outbound stream
 		if (this.outboundStream != null) {
-			this.outboundStream.return();
-			this._rawOutboundStream?.close();
+			await this.outboundStream.return();
+			await this._rawOutboundStream?.close();
 		}
 		// End the inbound stream
 		if (this.inboundStream != null) {
 			this.inboundAbortController.abort();
-			this._rawInboundStream?.close();
+			await this._rawInboundStream?.close();
 		}
 
 		this.pingJob?.abort();
@@ -308,7 +309,9 @@ export type DirectStreamOptions = {
 	connectionManager?: ConnectionManagerOptions;
 };
 
-export interface DirectStreamComponents {
+import { Components } from "libp2p/components";
+
+export interface DirectStreamComponents extends Components {
 	peerId: PeerId;
 	addressManager: AddressManager;
 	registrar: Registrar;
@@ -421,16 +424,14 @@ export abstract class DirectStream<
 
 		logger.debug("starting");
 
-		this.topology = createTopology({
-			onConnect: this.onPeerConnected.bind(this),
-			onDisconnect: this.onPeerDisconnected.bind(this),
-		});
-
 		// register protocol with topology
 		// Topology callbacks called on connection manager changes
 		this._registrarTopologyIds = await Promise.all(
 			this.multicodecs.map((multicodec) =>
-				this.components.registrar.register(multicodec, this.topology)
+				this.components.registrar.register(multicodec, {
+					onConnect: this.onPeerConnected.bind(this),
+					onDisconnect: this.onPeerDisconnected.bind(this),
+				})
 			)
 		);
 
@@ -520,7 +521,7 @@ export abstract class DirectStream<
 
 		logger.debug("stopping");
 		for (const peerStreams of this.peers.values()) {
-			peerStreams.close();
+			await peerStreams.close();
 		}
 
 		// unregister protocol and handlers
@@ -557,7 +558,7 @@ export abstract class DirectStream<
 
 		const { stream, connection } = data;
 		const peerId = connection.remotePeer;
-		if (stream.stat.protocol == null) {
+		if (stream.protocol == null) {
 			stream.abort(new Error("Stream was not multiplexed"));
 			return;
 		}
@@ -566,7 +567,7 @@ export abstract class DirectStream<
 		const peer = this.addPeer(
 			peerId,
 			publicKey,
-			stream.stat.protocol,
+			stream.protocol,
 			connection.id
 		);
 		const inboundStream = peer.attachInboundStream(stream);
@@ -583,7 +584,7 @@ export abstract class DirectStream<
 		conn: Connection,
 		fromExisting?: boolean
 	) {
-		if (!this.isStarted() || conn.stat.status !== "OPEN") {
+		if (!this.isStarted() || conn.status !== "open") {
 			return;
 		}
 		try {
@@ -592,9 +593,9 @@ export abstract class DirectStream<
 
 			for (const existingStreams of conn.streams) {
 				if (
-					existingStreams.stat.protocol &&
-					this.multicodecs.includes(existingStreams.stat.protocol) &&
-					existingStreams.stat.direction === "outbound"
+					existingStreams.protocol &&
+					this.multicodecs.includes(existingStreams.protocol) &&
+					existingStreams.direction === "outbound"
 				) {
 					return;
 				}
@@ -614,12 +615,14 @@ export abstract class DirectStream<
 				}
 
 				try {
-					stream = await conn.newStream(this.multicodecs);
-					if (stream.stat.protocol == null) {
+					stream = await conn.newStream(this.multicodecs, {
+						runOnTransientConnection: true,
+					});
+					if (stream.protocol == null) {
 						stream.abort(new Error("Stream was not multiplexed"));
 						return;
 					}
-					peer = this.addPeer(peerId, peerKey, stream.stat.protocol!, conn.id); // TODO types
+					peer = this.addPeer(peerId, peerKey, stream.protocol!, conn.id); // TODO types
 					await peer.attachOutboundStream(stream);
 
 					// TODO do we want to do this?
@@ -644,7 +647,7 @@ export abstract class DirectStream<
 					}
 
 					if (
-						conn.stat.status !== "OPEN" ||
+						conn.status !== "open" ||
 						error?.message === "Muxer already closed" ||
 						error.code === "ERR_STREAM_RESET"
 					) {
@@ -788,7 +791,7 @@ export abstract class DirectStream<
 		}
 
 		if (!this.publicKey.equals(peerKey)) {
-			this._removePeer(peerKey);
+			await this._removePeer(peerKey);
 			this.removeRouteConnection(this.publicKey, peerKey);
 
 			// Notify network
@@ -870,7 +873,7 @@ export abstract class DirectStream<
 	/**
 	 * Notifies the router that a peer has been disconnected
 	 */
-	protected _removePeer(publicKey: PublicSignKey) {
+	protected async _removePeer(publicKey: PublicSignKey) {
 		const hash = publicKey.hashcode();
 		const peerStreams = this.peers.get(hash);
 
@@ -879,7 +882,7 @@ export abstract class DirectStream<
 		}
 
 		// close peer streams
-		peerStreams.close();
+		await peerStreams.close();
 
 		// delete peer streams
 		logger.debug("delete peer" + publicKey.toString());

@@ -15,6 +15,7 @@ import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 import { ProgramClient } from "@peerbit/program";
+import { mplex } from "@libp2p/mplex";
 
 export type LibP2POptions = SLibP2POptions<Libp2pExtendServices>;
 
@@ -62,6 +63,7 @@ export class LSession {
 					pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
 					...o?.libp2p?.services,
 				},
+				streamMuxers: [mplex({ disconnectThreshold: 10 })],
 			};
 		};
 		let optionsWithServices:

@@ -18,7 +18,7 @@ import {
 	StoreStatus,
 } from "@peerbit/blocks";
 import { Blocks, GetOptions, PutOptions } from "@peerbit/blocks-interface";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
 const last = <T>(arr: T[]): T => {

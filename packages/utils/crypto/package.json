@@ -47,8 +47,8 @@
 		"@dao-xyz/borsh": "^5.1.5",
 		"@peerbit/uint8arrays": "3.0.1",
 		"@ethersproject/wallet": "^5.7.0",
-		"@libp2p/crypto": "^1.0.17",
-		"@libp2p/peer-id": "^2.0.3",
+		"@libp2p/crypto": "^2.0.3",
+		"@libp2p/peer-id": "^3.0.2",
 		"libsodium-wrappers": "^0.7.11"
 	}
 }

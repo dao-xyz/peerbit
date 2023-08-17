@@ -1,5 +1,5 @@
 import { SimpleLevel } from "@peerbit/lazy-level";
-import type { PeerId } from "@libp2p/interface-peer-id";
+import type { PeerId } from "@libp2p/interface/peer-id";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	DataEvent,
@@ -15,7 +15,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { Message } from "./message.js";
 import { Message as StreamMessage } from "@peerbit/stream-interface";
 
-import { CustomEvent } from "@libp2p/interfaces/events";
+import { CustomEvent } from "@libp2p/interface/events";
 
 @variant(6)
 export abstract class PubSubMessage extends Message {}

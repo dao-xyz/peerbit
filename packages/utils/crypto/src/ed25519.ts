@@ -8,7 +8,7 @@ import { peerIdFromKeys } from "@libp2p/peer-id";
 import { supportedKeys } from "@libp2p/crypto/keys";
 import { coerce } from "./bytes.js";
 import sodium from "libsodium-wrappers";
-import type { Ed25519PeerId, PeerId } from "@libp2p/interface-peer-id";
+import type { Ed25519PeerId, PeerId } from "@libp2p/interface/peer-id";
 import { sign } from "./ed25519-sign.js";
 import { PreHash } from "./prehash.js";
 import { concat } from "uint8arrays";
