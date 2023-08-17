@@ -21,7 +21,7 @@ import {
 import { RPC } from "@peerbit/rpc";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 
 @variant("document")
 class Document {

@@ -6,11 +6,11 @@ import { RecursivePartial } from "@libp2p/interfaces";
 import { Datastore } from "interface-datastore";
 import { relay, transports } from "./transports.js";
 import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
-import { Transport } from "@libp2p/interface-transport";
 import { Components } from "libp2p/components";
 import { identifyService } from "libp2p/identify";
 import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
 import type { Multiaddr } from "@multiformats/multiaddr";
+import type { Transport } from "@libp2p/interface/transport";
 
 export type LibP2POptions<T extends Record<string, unknown>> = {
 	transports?:
@@ -93,7 +93,7 @@ export class LSession<T> {
 						...(options?.[i] || options)?.services,
 					},
 					connectionEncryption: [noise()],
-					streamMuxers: [mplex()],
+					streamMuxers: [mplex({ disconnectThreshold: 10 })],
 					start: (options?.[i] || options)?.start,
 				});
 				return node;

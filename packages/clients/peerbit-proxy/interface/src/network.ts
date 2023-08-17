@@ -1,4 +1,4 @@
-import type { PeerId } from "@libp2p/interface-peer-id";
+import type { PeerId } from "@libp2p/interface/peer-id";
 import { peerIdFromBytes } from "@libp2p/peer-id";
 import { Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import { Identity, Ed25519PublicKey, Ed25519Keypair } from "@peerbit/crypto";

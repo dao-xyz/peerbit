@@ -36,7 +36,7 @@
 		"@peerbit/blocks-interface": "^1.0.6",
 		"@peerbit/crypto": "1.0.5",
 		"@peerbit/logger": "1.0.1",
-		"libp2p": "^0.45.9",
+		"libp2p": "^0.46.6",
 		"p-queue": "^7.3.3",
 		"path-browserify": "^1.0.1",
 		"yallist": "^4.0.0",

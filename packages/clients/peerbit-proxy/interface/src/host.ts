@@ -1,5 +1,5 @@
 import { SimpleLevel } from "@peerbit/lazy-level";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain, Ed25519Keypair } from "@peerbit/crypto";

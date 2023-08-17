@@ -51,6 +51,6 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@peerbit/crypto": "1.0.5",
-		"@libp2p/interface-peer-id": "^2.0.2"
+		"@libp2p/interfaces": "^3.3.2"
 	}
 }

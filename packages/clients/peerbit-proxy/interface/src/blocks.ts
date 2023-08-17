@@ -1,4 +1,4 @@
-import type { PeerId } from "@libp2p/interface-peer-id";
+import type { PeerId } from "@libp2p/interface/peer-id";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { field, variant, option } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";

@@ -5,7 +5,7 @@ import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
 import { tcp } from "@libp2p/tcp";
 import { Components } from "libp2p/components";
-import type { Transport } from "@libp2p/interface-transport";
+import type { Transport } from "@libp2p/interface/transport";
 
 export const transports = (
 	browser: boolean

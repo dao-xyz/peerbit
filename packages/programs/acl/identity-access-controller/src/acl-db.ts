@@ -19,7 +19,7 @@ import { Entry } from "@peerbit/log";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { RPC } from "@peerbit/rpc";
-import { PeerId } from "@libp2p/interface-peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { concat } from "uint8arrays";
 
 @variant("identity_acl")
