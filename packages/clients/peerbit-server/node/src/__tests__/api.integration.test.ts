@@ -86,14 +86,13 @@ describe("server", () => {
 			server?.close();
 		});
 		it("bootstrap on start", async () => {
-			// TODO enable when bootstrap nodes have been redeployed
-			/* let result = await startServerWithNode({
+			let result = await startServerWithNode({
 				bootstrap: true,
 				directory: path.join(__dirname, "tmp", "api-test", "server", uuid()),
 			});
 			node = result.node;
 			server = result.server;
-			expect(node.libp2p.services.pubsub.peers.size).toBeGreaterThan(0); */
+			expect(node.libp2p.services.pubsub.peers.size).toBeGreaterThan(0);
 		});
 	});
 	describe("api", () => {
@@ -228,8 +227,6 @@ describe("server", () => {
 		});
 
 		it("bootstrap", async () => {
-			// TODO enable when bootstrap nodes have been redeployed
-			/*
 			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).toEqual(
 				0
 			);
@@ -238,7 +235,6 @@ describe("server", () => {
 			expect(
 				(session.peers[0] as Peerbit).services.pubsub.peers.size
 			).toBeGreaterThan(0);
-			*/
 		});
 
 		/* TODO how to test this properly? Seems to hang once we added 'sudo --prefix __dirname' to the npm install in the child_process
