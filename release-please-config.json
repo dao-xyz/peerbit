@@ -1,6 +1,6 @@
 {
-	"bootstrap-sha": "43ec176fd2f75bf69c67302df12521bb458b9086",
-	"last-release-sha": "ab455154dd99306c2e1b3af7aa50a70b578fcfdb",
+	"bootstrap-sha": "2efb4d5dc542ac84cfd79bb576506ba0ca392a72",
+	"last-release-sha": "6f25aba5eb5c18333cd442a9f0ccc01e9d495577",
 	"bump-minor-pre-major": true,
 	"bump-patch-for-minor-pre-major": true,
 	"plugins": ["node-workspace"],
