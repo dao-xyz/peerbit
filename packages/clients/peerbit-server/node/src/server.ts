@@ -1,5 +1,9 @@
 import http from "http";
-import { Ed25519Keypair, fromBase64, sha256Base64Sync } from "@peerbit/crypto";
+import {
+	fromBase64,
+	getKeypairFromPeerId,
+	getPublicKeyFromPeerId,
+} from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import {
 	Program,
@@ -28,14 +32,14 @@ import {
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
-	TERMINATE_PATH,
 	INSTALL_PATH,
-	LOCAL_PORT,
+	LOCAL_API_PORT,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
 	RESTART_PATH,
 	TRUST_PATH,
+	STOP_PATH,
 } from "./routes.js";
 import { Session } from "./session.js";
 import fs from "fs";
@@ -51,6 +55,7 @@ import { MemoryLevel } from "memory-level";
 import { Trust } from "./trust.js";
 import { getBody, verifyRequest } from "./signes-request.js";
 import { cli } from "./cli.js";
+import { peerIdFromString } from "@libp2p/peer-id";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +73,7 @@ export const startServerWithNode = async (properties: {
 	domain?: string;
 	bootstrap?: boolean;
 	newSession?: boolean;
+	grantAccess?: string[];
 	ports?: {
 		node: number;
 		api: number;
@@ -77,12 +83,16 @@ export const startServerWithNode = async (properties: {
 	if (!fs.existsSync(properties.directory)) {
 		fs.mkdirSync(properties.directory, { recursive: true });
 	}
+
+	const trustPeerIds =
+		properties.grantAccess && properties.grantAccess.length > 0
+			? properties.grantAccess.map((x) => peerIdFromString(x))
+			: [];
+
 	const keypair = await getKeypair(properties.directory);
+
 	const peer = await create({
-		directory:
-			properties.directory != null
-				? getNodePath(properties.directory)
-				: undefined,
+		directory: getNodePath(properties.directory),
 		domain: properties.domain,
 		listenPort: properties.ports?.node,
 		peerId: await keypair.toPeerId(),
@@ -120,12 +130,10 @@ export const startServerWithNode = async (properties: {
 		await session.clear();
 	}
 
+	const trust = new Trust(getTrustPath(properties.directory));
 	const server = await startApiServer(peer, {
 		port: properties.ports?.api,
-		configDirectory:
-			properties.directory != null
-				? path.join(properties.directory, "server")
-				: undefined || getHomeConfigDir(),
+		trust,
 		session,
 	});
 	const printNodeInfo = async () => {
@@ -164,6 +172,12 @@ export const startServerWithNode = async (properties: {
 		});
 	};
 	await shutDownHook(peer, server);
+
+	if (trustPeerIds.length > 0) {
+		for (const id of trustPeerIds) {
+			trust.add(getPublicKeyFromPeerId(id).hashcode());
+		}
+	}
 	return { server, node: peer };
 };
 
@@ -212,17 +226,12 @@ function findPeerbitProgramFolder(inputDirectory: string): string | null {
 export const startApiServer = async (
 	client: ProgramClient,
 	properties: {
-		configDirectory: string;
+		trust: Trust;
 		session?: Session;
 		port?: number;
 	}
 ): Promise<http.Server> => {
-	const port = properties?.port ?? LOCAL_PORT;
-	if (!fs.existsSync(properties.configDirectory)) {
-		fs.mkdirSync(properties.configDirectory, { recursive: true });
-	}
-
-	const trust = new Trust(getTrustPath(properties.configDirectory));
+	const port = properties?.port ?? LOCAL_API_PORT;
 
 	const restart = async () => {
 		await client.stop();
@@ -259,7 +268,7 @@ export const startApiServer = async (
 		if (result.equals(client.identity.publicKey)) {
 			return body;
 		}
-		if (trust.isTrusted(result.hashcode())) {
+		if (properties.trust.isTrusted(result.hashcode())) {
 			return body;
 		}
 		throw new Error("Not trusted");
@@ -547,13 +556,13 @@ export const startApiServer = async (
 					} else if (req.url.startsWith(TRUST_PATH)) {
 						switch (req.method) {
 							case "PUT": {
-								trust.add(getPathValue(req, 1));
+								properties.trust.add(getPathValue(req, 1));
 								res.writeHead(200);
 								res.end();
 								break;
 							}
 							case "DELETE": {
-								const removed = trust.remove(getPathValue(req, 1));
+								const removed = properties.trust.remove(getPathValue(req, 1));
 								res.writeHead(200);
 								res.end(removed);
 								break;
@@ -574,7 +583,7 @@ export const startApiServer = async (
 								r404();
 								break;
 						}
-					} else if (req.url.startsWith(TERMINATE_PATH)) {
+					} else if (req.url.startsWith(STOP_PATH)) {
 						switch (req.method) {
 							case "POST":
 								res.writeHead(200);
@@ -586,7 +595,18 @@ export const startApiServer = async (
 								r404();
 								break;
 						}
-					} else if (req.url.startsWith(PEER_ID_PATH)) {
+					} /* else if (req.url.startsWith(TERMINATE_PATH)) {
+						switch (req.method) {
+							case "POST":
+								execSync("shutdown -h now")
+								process.exit(0);
+								break;
+
+							default:
+								r404();
+								break;
+						}
+					}  */ else if (req.url.startsWith(PEER_ID_PATH)) {
 						res.writeHead(200);
 						res.end(client.peerId.toString());
 					} else if (req.url.startsWith(ADDRESS_PATH)) {

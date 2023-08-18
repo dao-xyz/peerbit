@@ -1,4 +1,5 @@
-import { getMyIp } from "./domain.js";
+import { delay } from "@peerbit/time";
+import { type PeerId } from "@libp2p/interface/peer-id";
 
 export const createRecord = async (options: {
 	domain: string;
@@ -10,6 +11,7 @@ export const createRecord = async (options: {
 		"@aws-sdk/client-route-53"
 	);
 	const { isIPv4, isIPv6 } = await import("net");
+	const { getMyIp } = await import("./domain.js");
 
 	const myIp = await getMyIp();
 	const v4 = isIPv4(myIp);
@@ -45,4 +47,251 @@ export const createRecord = async (options: {
 		HostedZoneId: options.hostedZoneId,
 	});
 	await client.send(cmd);
+};
+
+const setupUserData = (email: string, grantAccess: PeerId[] = []) => {
+	const peerIdStrings = grantAccess.map((x) => x.toString());
+	return `#!/bin/bash
+cd /home/ubuntu
+curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash - &&\
+sudo apt-get install -y nodejs
+npm install -g @peerbit/server
+sudo peerbit domain test --email ${email}
+peerbit start ${peerIdStrings.map((key) => `--ga ${key}`)} > log.txt 2>&1 &
+`;
+};
+const PURPOSE_TAG_NAME = "Purpose";
+const PURPOSE_TAG_VALUE = "Peerbit";
+
+export const AWS_LINUX_ARM_AMIs: Record<string, string> = {
+	/* 	"af-south-1" */
+	"ap-northeast-1": "ami-0342c9aa06b2a6488",
+	"ap-northeast-2": "ami-00fdfe418c69b624a",
+	"ap-northeast-3": "ami-0d053887907187d0a",
+	"ap-south-1": "ami-0df6182e39efe7c4d",
+	/* 	"ap-south-2",
+		"ap-southeast-1", */
+	"ap-southeast-2": "ami-0641fc20c25fdd380",
+	/* 	"ap-southeast-3",
+		"ap-southeast-4", */
+	"ca-central-1": "ami-0dfbb7075b12dcc91",
+	/* 	"cn-north-1",
+		"cn-northwest-1", */
+	"eu-central-1": "ami-0d85ad3aa712d96af",
+	/* 	"eu-central-2", */
+	"eu-north-1": "ami-0ff124a3d7381bfec",
+	/* 	"eu-south-1",
+		"eu-south-2", */
+	"eu-west-1": "ami-09c59b011574e4c96",
+	"eu-west-2": "ami-0e3f80b3d2a794117",
+	"eu-west-3": "ami-0d031bec3dde37593",
+	/* 	"il-central-1",
+		"me-central-1",
+		"me-south-1", */
+	"sa-east-1": "ami-0aba9f6e2597c6993",
+	"us-east-1": "ami-0a0c8eebcdd6dcbd0",
+	"us-east-2": "ami-08fdd91d87f63bb09",
+	/* 	"us-gov-east-1",
+		"us-gov-west-1", */
+	"us-west-2": "ami-0c79a55dda52434da",
+	"us-west-1": "ami-07655b4bbf3eb3bd0",
+};
+export const launchNodes = async (properties: {
+	region?: string;
+	email: string;
+	count?: number;
+	size?: "micro" | "small" | "medium" | "large" | "xlarge" | "2xlarge";
+	namePrefix?: string;
+	grantAccess?: PeerId[];
+}): Promise<
+	{ instanceId: string; publicIp: string; name: string; region: string }[]
+> => {
+	if (properties.count && properties.count > 10) {
+		throw new Error(
+			"Unexpected node launch count: " +
+				properties.count +
+				". To prevent unwanted behaviour you can also launch 10 nodes at once"
+		);
+	}
+	const count = properties.count || 1;
+
+	const {
+		EC2Client,
+		CreateTagsCommand,
+		RunInstancesCommand,
+		DescribeSecurityGroupsCommand,
+		CreateSecurityGroupCommand,
+		AuthorizeSecurityGroupIngressCommand,
+		DescribeInstancesCommand,
+	} = await import("@aws-sdk/client-ec2");
+	const client = new EC2Client({ region: properties.region });
+	const regionString = await client.config.region();
+
+	// Ubuntu Server 22.04 LTS (HVM), SSD Volume Type, ARM
+	let securityGroupOut = (
+		await client.send(
+			new DescribeSecurityGroupsCommand({
+				Filters: [
+					{ Name: "tag:" + PURPOSE_TAG_NAME, Values: [PURPOSE_TAG_VALUE] },
+				],
+			})
+		)
+	)?.SecurityGroups?.[0];
+	if (!securityGroupOut) {
+		securityGroupOut = await client.send(
+			new CreateSecurityGroupCommand({
+				GroupName: "peerbit-node",
+				Description: "Security group for running Peerbit nodes",
+			})
+		);
+		await client.send(
+			new CreateTagsCommand({
+				Resources: [securityGroupOut.GroupId!],
+				Tags: [{ Key: PURPOSE_TAG_NAME, Value: PURPOSE_TAG_VALUE }],
+			})
+		);
+		await client.send(
+			new AuthorizeSecurityGroupIngressCommand({
+				GroupId: securityGroupOut.GroupId,
+				IpPermissions: [
+					{
+						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+						IpProtocol: "tcp",
+						FromPort: 80,
+						ToPort: 80,
+					}, // Frontend
+					{
+						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+						IpProtocol: "tcp",
+						FromPort: 443,
+						ToPort: 443,
+					}, // Frontend SSL
+					{
+						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+						IpProtocol: "tcp",
+						FromPort: 9002,
+						ToPort: 9002,
+					}, // HTTPS api
+					{
+						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+						IpProtocol: "tcp",
+						FromPort: 8082,
+						ToPort: 8082,
+					}, // HTTP api
+					{
+						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+						IpProtocol: "tcp",
+						FromPort: 4002,
+						ToPort: 4005,
+					}, // libp2p
+					{
+						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
+						IpProtocol: "tcp",
+						FromPort: 22,
+						ToPort: 22,
+					}, // SSH
+				],
+			})
+		);
+	}
+	const instanceTag =
+		"Peerbit" + (properties.namePrefix ? "-" + properties.namePrefix : "");
+	let existingCounter =
+		(
+			await client.send(
+				new DescribeInstancesCommand({
+					Filters: [{ Name: "tag:Purpose", Values: [instanceTag] }],
+				})
+			)
+		).Reservations?.length || 0;
+
+	console.log(regionString, AWS_LINUX_ARM_AMIs[regionString]);
+	const instanceOut = await client.send(
+		new RunInstancesCommand({
+			ImageId: AWS_LINUX_ARM_AMIs[regionString],
+			SecurityGroupIds: [securityGroupOut.GroupId!],
+			InstanceType: "t4g." + (properties.size || "micro"),
+			UserData: Buffer.from(
+				setupUserData(properties.email, properties.grantAccess)
+			).toString("base64"),
+			MinCount: count,
+			MaxCount: count,
+			// InstanceInitiatedShutdownBehavior: 'terminate' // to enable termination when node shutting itself down
+		})
+	);
+
+	if (!instanceOut.Instances || instanceOut.Instances.length === 0) {
+		throw new Error("Failed to create instance");
+	}
+
+	const names: string[] = [];
+	for (const instance of instanceOut.Instances) {
+		existingCounter++;
+		const name =
+			(properties.namePrefix ? properties.namePrefix : "peerbit-node") +
+			"-" +
+			existingCounter;
+		names.push(name);
+		await client.send(
+			new CreateTagsCommand({
+				Resources: [instance.InstanceId!],
+				Tags: [
+					{ Key: "Name", Value: name },
+					{ Key: "Purpose", Value: instanceTag },
+				],
+			})
+		);
+	}
+
+	// wait for instance ips to become available
+	let publicIps: string[] = [];
+	for (let i = 0; i < 10; i++) {
+		const info = await client.send(
+			new DescribeInstancesCommand({
+				InstanceIds: instanceOut.Instances.map((x) => x.InstanceId!),
+			})
+		);
+		const foundInstances = info
+			.Reservations!.map((x) => x.Instances!.map((y) => y))
+			.flat()!;
+		const foundIps: string[] = [];
+		for (const out of instanceOut.Instances) {
+			const foundInstance = foundInstances.find(
+				(x) => x!.InstanceId === out.InstanceId!
+			);
+			if (!foundInstance!.PublicIpAddress) {
+				await delay(3000);
+				continue;
+			}
+			foundIps.push(foundInstance!.PublicIpAddress!);
+		}
+		publicIps = foundIps;
+		break;
+	}
+
+	if (publicIps.length === 0) {
+		throw new Error("Failed to resolve IPs for created instances");
+	}
+
+	return publicIps.map((v, ix) => {
+		return {
+			instanceId: instanceOut.Instances![ix].InstanceId!,
+			publicIp: v,
+			name: names[ix],
+			region: regionString,
+		};
+	}); // TODO types
+};
+
+export const terminateNode = async (properties: {
+	instanceId: string;
+	region?: string;
+}) => {
+	const { EC2Client, TerminateInstancesCommand } = await import(
+		"@aws-sdk/client-ec2"
+	);
+	const client = new EC2Client({ region: properties.region });
+	await client.send(
+		new TerminateInstancesCommand({ InstanceIds: [properties.instanceId] })
+	);
 };

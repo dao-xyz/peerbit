@@ -2,31 +2,56 @@ import { InstallDependency, StartProgram } from "./types.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
-	TERMINATE_PATH,
+	STOP_PATH,
 	INSTALL_PATH,
-	LOCAL_PORT,
+	LOCAL_API_PORT,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
 	RESTART_PATH,
 	TRUST_PATH,
+	REMOTE_API_PORT,
 } from "./routes.js";
 import { Address } from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
 import { signRequest } from "./signes-request.js";
 import {
+	Ed25519Keypair,
 	Ed25519PublicKey,
 	Identity,
 	PublicSignKey,
 	getPublicKeyFromPeerId,
 } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface/peer-id";
+import { waitForResolved } from "@peerbit/time";
+import { RemoteOrigin } from "./remotes.js";
 
-export const client = async (
+export const createClient = async (
 	keypair: Identity<Ed25519PublicKey>,
-	endpoint: string = "http://localhost:" + LOCAL_PORT
+	remote: { address: string; origin?: RemoteOrigin } = {
+		address: "http://localhost:" + LOCAL_API_PORT,
+	}
 ) => {
+	// Add missing protocol
+	let endpoint = remote.address;
+	if (!endpoint.startsWith("http://") && !endpoint.startsWith("https://")) {
+		if (endpoint.endsWith("localhost:") || endpoint.endsWith("localhost")) {
+			endpoint = "http://" + endpoint;
+		} else {
+			endpoint = "https://" + endpoint;
+		}
+	}
+
+	// Add missing port
 	const isLocalHost = endpoint.startsWith("http://localhost");
+	if (new URL(endpoint).port === "" && !endpoint.endsWith(":80")) {
+		if (isLocalHost) {
+			endpoint = endpoint + ":" + LOCAL_API_PORT;
+		} else {
+			endpoint = endpoint + ":" + REMOTE_API_PORT;
+		}
+	}
+
 	const { default: axios } = await import("axios");
 	const axiosInstance = axios.create();
 	axiosInstance.interceptors.request.use(async (config) => {
@@ -92,14 +117,17 @@ export const client = async (
 				},
 			},
 		},
-		trust: {
-			add: async (key: PublicSignKey | PeerId) => {
+
+		access: {
+			allow: async (key: PublicSignKey | PeerId | string) => {
 				const result = await axiosInstance.put(
 					endpoint +
 						TRUST_PATH +
 						"/" +
 						encodeURIComponent(
-							key instanceof PublicSignKey
+							typeof key === "string"
+								? key
+								: key instanceof PublicSignKey
 								? key.hashcode()
 								: getPublicKeyFromPeerId(key).hashcode()
 						),
@@ -111,7 +139,7 @@ export const client = async (
 				}
 				return result.status === 200 ? true : false;
 			},
-			remove: async (key: PublicSignKey | PeerId) => {
+			deny: async (key: PublicSignKey | PeerId) => {
 				const result = await axiosInstance.delete(
 					endpoint +
 						TRUST_PATH +
@@ -221,6 +249,7 @@ export const client = async (
 				);
 			},
 		},
+
 		restart: async (): Promise<void> => {
 			throwIfNot200(
 				await axiosInstance.post(endpoint + RESTART_PATH, undefined, {
@@ -228,12 +257,48 @@ export const client = async (
 				})
 			);
 		},
-		terminate: async (): Promise<void> => {
+		stop: async (): Promise<void> => {
 			throwIfNot200(
-				await axiosInstance.post(endpoint + TERMINATE_PATH, undefined, {
+				await axiosInstance.post(endpoint + STOP_PATH, undefined, {
 					validateStatus,
 				})
 			);
 		},
+		terminate: async () => {
+			const { terminateNode } = await import("./aws.js");
+			if (remote.origin?.type === "aws") {
+				await terminateNode({
+					instanceId: remote.origin.instanceId,
+					region: remote.origin.region,
+				});
+			}
+		},
 	};
+};
+
+export const waitForDomain = async (
+	ip: string,
+	timeout: number = 5 * 60 * 1000
+): Promise<string> => {
+	const c = await createClient(await Ed25519Keypair.create(), {
+		address: "http://" + ip + ":" + LOCAL_API_PORT,
+	});
+	const result = await waitForResolved(
+		async () => {
+			const addresses = await c.peer.addresses.get();
+			const domain = multiaddr(addresses[0]).nodeAddress().address;
+			if (!domain) {
+				throw new Error("Not ready");
+			}
+			return domain;
+		},
+		{
+			delayInterval: 5000,
+			timeout,
+		}
+	);
+	if (!result) {
+		throw new Error("Failed to resolve domain");
+	}
+	return result;
 };

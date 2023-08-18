@@ -1,11 +1,23 @@
 import fs from "fs";
 
-interface RemoteObject {
-	address: string;
-	name: string;
+interface AWSOrigin {
+	type: "aws";
+	region: string;
+	instanceId: string;
 }
 
-interface RemotesObject {
+export type RemoteOrigin = AWSOrigin;
+
+export const DEFAULT_REMOTE_GROUP = "default";
+
+export interface RemoteObject {
+	address: string;
+	name: string;
+	group: string;
+	origin?: RemoteOrigin;
+}
+
+export interface RemotesObject {
 	remotes: RemoteObject[];
 }
 
@@ -31,19 +43,21 @@ export class Remotes {
 	getByName(name: string) {
 		return this.data.remotes.find((x) => x.name === name);
 	}
+
+	getByGroup(group: string) {
+		return this.data.remotes.filter((x) => x.group === group);
+	}
+
 	getByAddress(address: string) {
 		return this.data.remotes.find((x) => x.address === address);
 	}
-	add(name: string, address: string) {
-		const obj: RemoteObject = {
-			address,
-			name,
-		};
-		const existing = this.data.remotes.findIndex((x) => x.name === name);
+
+	add(remote: RemoteObject) {
+		const existing = this.data.remotes.findIndex((x) => x.name === remote.name);
 		if (existing >= 0) {
-			this.data.remotes[existing] = obj;
+			this.data.remotes[existing] = remote;
 		} else {
-			this.data.remotes.push(obj);
+			this.data.remotes.push(remote);
 		}
 		this.save();
 	}

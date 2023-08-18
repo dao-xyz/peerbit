@@ -5,10 +5,13 @@ import { jest } from "@jest/globals";
 import { execSync, exec, ChildProcess } from "child_process";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import fs from "fs";
 import readline from "readline";
 import { v4 as uuid } from "uuid";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import { Trust } from "../trust";
+import { getTrustPath } from "../config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -98,9 +101,9 @@ describe("cli", () => {
 	let configDirectory: string;
 	let PORT = 9993;
 
-	const start = async () => {
+	const start = async (extraArgs: string = "") => {
 		const cmd = runCommandAsync(
-			`start --reset --port-api ${PORT} --port-node 0 --directory ${configDirectory}`
+			`start --reset --port-api ${PORT} --port-node 0 --directory ${configDirectory} ${extraArgs}`
 		);
 		processes.push(cmd);
 		try {
@@ -190,9 +193,27 @@ describe("cli", () => {
 		}
 	};
 
-	it("starts", async () => {
-		await start();
-		await checkPeerId();
+	describe("starts", () => {
+		it("no-args", async () => {
+			await start();
+			await checkPeerId();
+		});
+
+		it("grant-access", async () => {
+			const kp1 = await Ed25519Keypair.create();
+			const kp2 = await Ed25519Keypair.create();
+
+			await start(
+				`--grant-access ${(await kp1.toPeerId()).toString()} --grant-access ${(
+					await kp2.toPeerId()
+				).toString()}`
+			);
+			const trust = new Trust(getTrustPath(configDirectory));
+			expect(trust.trusted).toContainAllValues([
+				kp1.publicKey.hashcode(),
+				kp2.publicKey.hashcode(),
+			]);
+		});
 	});
 
 	describe("remote", () => {
@@ -216,25 +237,50 @@ describe("cli", () => {
 			await checkPeerId(terminal);
 		});
 
-		it("connect to multiple nodes", async () => {
-			await start();
-			runCommand(
-				`remote add a http://localhost:${PORT} --directory ${configDirectory}`
-			);
-			runCommand(
-				`remote add b http://localhost:${PORT} --directory ${configDirectory}`
-			);
-			const terminal = await connect("a b");
-			terminal.out.splice(0, terminal.out.length);
-			terminal.write("peer id");
-			await waitForResolved(() =>
-				expect(countPeerIds(terminal.out)).toEqual(2)
-			);
+		describe("connect", () => {
+			const GROUP_A = "GROUP_A";
+			beforeEach(async () => {
+				await start();
+				runCommand(
+					`remote add a http://localhost:${PORT} --group ${GROUP_A} --directory ${configDirectory}`
+				);
+				runCommand(
+					`remote add b http://localhost:${PORT} --directory ${configDirectory}`
+				);
+			});
+
+			it("connect to multiple by name", async () => {
+				const terminal = await connect("a b");
+				terminal.out.splice(0, terminal.out.length);
+				terminal.write("peer id");
+				await waitForResolved(() =>
+					expect(countPeerIds(terminal.out)).toEqual(2)
+				);
+			});
+
+			it("connect to all", async () => {
+				const terminal = await connect("--all");
+				terminal.out.splice(0, terminal.out.length);
+				terminal.write("peer id");
+				await waitForResolved(
+					() => expect(countPeerIds(terminal.out)).toEqual(3) // a, b, LOCAL_REMOTE
+				);
+			});
+
+			it("connect to group", async () => {
+				const terminal = await connect("--group " + GROUP_A);
+				terminal.out.splice(0, terminal.out.length);
+				terminal.write("peer id");
+				await waitForResolved(() =>
+					expect(countPeerIds(terminal.out)).toEqual(1)
+				);
+			});
 		});
+
 		describe("restart", () => {
 			afterEach(async () => {
 				const terminal = connect();
-				terminal.write("terminate"); // we have to do this because else we create detached processes during restart
+				terminal.write("stop"); // we have to do this because else we create detached processes during restart
 				try {
 					await waitForResolved(() =>
 						expect(processes[0].out[processes[0].out.length - 1]).toEqual(

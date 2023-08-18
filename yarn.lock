@@ -94,7 +94,53 @@
     "@aws-sdk/util-utf8-browser" "^3.0.0"
     tslib "^1.11.1"
 
-"@aws-sdk/client-route-53@^3.345.0":
+"@aws-sdk/client-ec2@^3.390.0":
+  version "3.394.0"
+  resolved "https://registry.yarnpkg.com/@aws-sdk/client-ec2/-/client-ec2-3.394.0.tgz#dea756db58c13b16dab86c2806ac1be7b86503c2"
+  integrity sha512-eppLMLhGnJ7j9knFOUJGZ90GuVTl0i6VrZ18HULS0ONRZUZvpwKT36YmzF6k7MSG00L45R3Cpv8QIu1HLJ+F1w==
+  dependencies:
+    "@aws-crypto/sha256-browser" "3.0.0"
+    "@aws-crypto/sha256-js" "3.0.0"
+    "@aws-sdk/client-sts" "3.391.0"
+    "@aws-sdk/credential-provider-node" "3.391.0"
+    "@aws-sdk/middleware-host-header" "3.391.0"
+    "@aws-sdk/middleware-logger" "3.391.0"
+    "@aws-sdk/middleware-recursion-detection" "3.391.0"
+    "@aws-sdk/middleware-sdk-ec2" "3.391.0"
+    "@aws-sdk/middleware-signing" "3.391.0"
+    "@aws-sdk/middleware-user-agent" "3.391.0"
+    "@aws-sdk/types" "3.391.0"
+    "@aws-sdk/util-endpoints" "3.391.0"
+    "@aws-sdk/util-user-agent-browser" "3.391.0"
+    "@aws-sdk/util-user-agent-node" "3.391.0"
+    "@smithy/config-resolver" "^2.0.3"
+    "@smithy/fetch-http-handler" "^2.0.3"
+    "@smithy/hash-node" "^2.0.3"
+    "@smithy/invalid-dependency" "^2.0.3"
+    "@smithy/middleware-content-length" "^2.0.3"
+    "@smithy/middleware-endpoint" "^2.0.3"
+    "@smithy/middleware-retry" "^2.0.3"
+    "@smithy/middleware-serde" "^2.0.3"
+    "@smithy/middleware-stack" "^2.0.0"
+    "@smithy/node-config-provider" "^2.0.3"
+    "@smithy/node-http-handler" "^2.0.3"
+    "@smithy/protocol-http" "^2.0.3"
+    "@smithy/smithy-client" "^2.0.3"
+    "@smithy/types" "^2.2.0"
+    "@smithy/url-parser" "^2.0.3"
+    "@smithy/util-base64" "^2.0.0"
+    "@smithy/util-body-length-browser" "^2.0.0"
+    "@smithy/util-body-length-node" "^2.0.0"
+    "@smithy/util-defaults-mode-browser" "^2.0.3"
+    "@smithy/util-defaults-mode-node" "^2.0.3"
+    "@smithy/util-retry" "^2.0.0"
+    "@smithy/util-utf8" "^2.0.0"
+    "@smithy/util-waiter" "^2.0.3"
+    fast-xml-parser "4.2.5"
+    tslib "^2.5.0"
+    uuid "^8.3.2"
+
+"@aws-sdk/client-route-53@^3.391.0":
   version "3.391.0"
   resolved "https://registry.yarnpkg.com/@aws-sdk/client-route-53/-/client-route-53-3.391.0.tgz#d74f44724c0fa3c745aa03d14a7684e31723784c"
   integrity sha512-O8Lx7gX8hNJErSlaGAV43w9ipiBAmJ8qoCXaOp9RB2yB/8czpkjV3bbL2yutIFCQLtychENFZ1zX2cf/jH5eBg==
@@ -328,6 +374,20 @@
     "@smithy/types" "^2.2.0"
     tslib "^2.5.0"
 
+"@aws-sdk/middleware-sdk-ec2@3.391.0":
+  version "3.391.0"
+  resolved "https://registry.yarnpkg.com/@aws-sdk/middleware-sdk-ec2/-/middleware-sdk-ec2-3.391.0.tgz#adf60d9dc75f846e7829fc39c62a080f7def9390"
+  integrity sha512-IBiN1c9/6Vm3mqCTVsPffnpOp6NOvj1RL9OfdOlhoF3LOy2Yr2O1p+36fRqzeDtrttvgh8dWKU8ZAf/C6GWjQQ==
+  dependencies:
+    "@aws-sdk/types" "3.391.0"
+    "@aws-sdk/util-format-url" "3.391.0"
+    "@smithy/middleware-endpoint" "^2.0.3"
+    "@smithy/protocol-http" "^2.0.3"
+    "@smithy/signature-v4" "^2.0.0"
+    "@smithy/smithy-client" "^2.0.3"
+    "@smithy/types" "^2.2.0"
+    tslib "^2.5.0"
+
 "@aws-sdk/middleware-sdk-route53@3.391.0":
   version "3.391.0"
   resolved "https://registry.yarnpkg.com/@aws-sdk/middleware-sdk-route53/-/middleware-sdk-route53-3.391.0.tgz#0323bf5ad8123dff22a205c349a74c012dc4962e"
@@ -426,6 +486,16 @@
   integrity sha512-zv4sYDTQhNxyLoekcE02/nk3xvoo6yCHDy1kDJk0MFxOKaqUB+CvZdQBR4YBLSDlD4o4DUBmdYgKT58FfbM8sQ==
   dependencies:
     "@aws-sdk/types" "3.391.0"
+    tslib "^2.5.0"
+
+"@aws-sdk/util-format-url@3.391.0":
+  version "3.391.0"
+  resolved "https://registry.yarnpkg.com/@aws-sdk/util-format-url/-/util-format-url-3.391.0.tgz#30a4fb1fd043f4721877bfb09749294d50b59853"
+  integrity sha512-cddtpaYxKy8Hi2pCZonJ4RHx+T+nx3ESwr/A+r56jou2PQJiQZGg10rt366waU/GsgnVHvXHcC00CzGSbDkDGg==
+  dependencies:
+    "@aws-sdk/types" "3.391.0"
+    "@smithy/querystring-builder" "^2.0.3"
+    "@smithy/types" "^2.2.0"
     tslib "^2.5.0"
 
 "@aws-sdk/util-locate-window@^3.0.0":
@@ -3093,12 +3163,12 @@
   integrity sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==
 
 "@playwright/test@^1.37.0":
-  version "1.37.0"
-  resolved "https://registry.yarnpkg.com/@playwright/test/-/test-1.37.0.tgz#5b3b60dabaabc0d5d3021fb5a5bb8250b424c71d"
-  integrity sha512-181WBLk4SRUyH1Q96VZl7BP6HcK0b7lbdeKisn3N/vnjitk+9HbdlFz/L5fey05vxaAhldIDnzo8KUoy8S3mmQ==
+  version "1.37.1"
+  resolved "https://registry.yarnpkg.com/@playwright/test/-/test-1.37.1.tgz#e7f44ae0faf1be52d6360c6bbf689fd0057d9b6f"
+  integrity sha512-bq9zTli3vWJo8S3LwB91U0qDNQDpEXnw7knhxLM0nwDvexQAwx9tO8iKDZSqqneVq+URd/WIoz+BALMqUTgdSg==
   dependencies:
     "@types/node" "*"
-    playwright-core "1.37.0"
+    playwright-core "1.37.1"
   optionalDependencies:
     fsevents "2.3.2"
 
@@ -3339,7 +3409,7 @@
     "@smithy/types" "^2.2.1"
     tslib "^2.5.0"
 
-"@smithy/querystring-builder@^2.0.4":
+"@smithy/querystring-builder@^2.0.3", "@smithy/querystring-builder@^2.0.4":
   version "2.0.4"
   resolved "https://registry.yarnpkg.com/@smithy/querystring-builder/-/querystring-builder-2.0.4.tgz#d881779eb218572bd9f59bf5f823fdc021ff7602"
   integrity sha512-Jc7UPx1pNeisYcABkoo2Pn4kvomy1UI7uxv7R+1W3806KMAKgYHutWmZG01aPHu2XH0zY2RF2KfGiuialsxHvA==
@@ -4245,9 +4315,9 @@ available-typed-arrays@^1.0.5:
   integrity sha512-DMD0KiN46eipeziST1LPP/STfDU0sufISXmjSgvVsoU2tqxctQeASejWcfNtxYKqETM1UxQ8sp2OrSBWpHY6sw==
 
 aws-sdk@^2.1259.0:
-  version "2.1438.0"
-  resolved "https://registry.yarnpkg.com/aws-sdk/-/aws-sdk-2.1438.0.tgz#6bc9b3ef716b47ed78d94da5234692ec2dc73ff5"
-  integrity sha512-xessrWtoMD2icLPnm4KlTl3tiudJlYh3RtqBx+BggBc3ie9l98za1tSB4NunabTEbBUj4YMmzN1lpMsNEZ0NGw==
+  version "2.1439.0"
+  resolved "https://registry.yarnpkg.com/aws-sdk/-/aws-sdk-2.1439.0.tgz#fd8c45ee6b412cf0558d2122aff9f9e0dac72ed2"
+  integrity sha512-T2kXdLylb+pmpAhjFVQO4OpRYjkBpAKtxzRvv7tv90AJCaoguxZ5vfK8S7iKvHDuS9xKgBI8dVktYcgtkGcTJw==
   dependencies:
     buffer "4.9.2"
     events "1.1.1"
@@ -5247,9 +5317,9 @@ ejs@^3.1.7:
     jake "^10.8.5"
 
 electron-to-chromium@^1.4.477:
-  version "1.4.494"
-  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.4.494.tgz#588f7a3d19d32a31f3a7e05d81b61d95d25b1555"
-  integrity sha512-KF7wtsFFDu4ws1ZsSOt4pdmO1yWVNWCFtijVYZPUeW4SV7/hy/AESjLn/+qIWgq7mHscNOKAwN5AIM1+YAy+Ww==
+  version "1.4.495"
+  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.4.495.tgz#d72d2eddc05d07c538275a00f2619b113848bff6"
+  integrity sha512-mwknuemBZnoOCths4GtpU/SDuVMp3uQHKa2UNJT9/aVD6WVRjGpXOxRGX7lm6ILIenTdGXPSTCTDaWos5tEU8Q==
 
 elliptic@6.5.4:
   version "6.5.4"
@@ -8875,10 +8945,10 @@ platform@^1.3.3:
   resolved "https://registry.yarnpkg.com/platform/-/platform-1.3.6.tgz#48b4ce983164b209c2d45a107adb31f473a6e7a7"
   integrity sha512-fnWVljUchTro6RiCFvCXBbNhJc2NijN7oIQxbwsyL0buWJPG85v81ehlHI9fXrJsMNgTofEoWIQeClKpgxFLrg==
 
-playwright-core@1.37.0:
-  version "1.37.0"
-  resolved "https://registry.yarnpkg.com/playwright-core/-/playwright-core-1.37.0.tgz#a0a009b840076706452e29aab0efe0ebf5d45ab1"
-  integrity sha512-1c46jhTH/myQw6sesrcuHVtLoSNfJv8Pfy9t3rs6subY7kARv0HRw5PpyfPYPpPtQvBOmgbE6K+qgYUpj81LAA==
+playwright-core@1.37.1:
+  version "1.37.1"
+  resolved "https://registry.yarnpkg.com/playwright-core/-/playwright-core-1.37.1.tgz#cb517d52e2e8cb4fa71957639f1cd105d1683126"
+  integrity sha512-17EuQxlSIYCmEMwzMqusJ2ztDgJePjrbttaefgdsiqeLWidjYz9BxXaTaZWxH1J95SHGk6tjE+dwgWILJoUZfA==
 
 postcss@^8.4.27:
   version "8.4.28"
