@@ -40,6 +40,26 @@
     * @peerbit/program bumped from 2.2.0 to 2.2.1
     * @peerbit/blocks bumped from ^1.0.8 to ^1.0.9
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.3.1...peerbit-v2.0.0) (2023-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* update @dao-xyz/noise with corrected shared key computation
+
+### Bug Fixes
+
+* update @dao-xyz/noise with corrected shared key computation ([cbb303f](https://github.com/dao-xyz/peerbit/commit/cbb303fcbed7a090592919ca4c9bdd74247a8049))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.2.1 to 2.2.2
+    * @peerbit/pubsub bumped from ^1.1.0 to ^1.1.1
+    * @peerbit/blocks bumped from ^1.0.9 to ^1.0.10
+
 ## [1.3.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.2.0...peerbit-v1.3.0) (2023-08-06)
 
 
