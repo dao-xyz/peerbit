@@ -156,7 +156,6 @@ export const startServerWithNode = async (properties: {
 				if (server.listening) {
 					console.log("Shutting down node");
 					await stopAndWait(server);
-					await waitFor(() => closed);
 					await controller.stop();
 				}
 				exit();
@@ -166,7 +165,6 @@ export const startServerWithNode = async (properties: {
 			if (server.listening) {
 				console.log("Shutting down node");
 				await stopAndWait(server);
-				await waitFor(() => closed);
 				await controller.stop();
 			}
 		});
