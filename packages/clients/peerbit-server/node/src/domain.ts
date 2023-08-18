@@ -1,5 +1,4 @@
 import { waitFor, waitForAsync } from "@peerbit/time";
-import { installDocker, startContainer } from "./docker.js";
 
 const isNode = typeof window === undefined || typeof window === "undefined";
 
@@ -146,6 +145,7 @@ export const startCertbot = async (
 	if (!validateEmail(email)) {
 		throw new Error("Email for SSL renenewal is invalid");
 	}
+	const { installDocker, startContainer } = await import("./docker.js");
 
 	const nginxConfigPath = await getNginxFolderPath();
 	await createConfig(nginxConfigPath, domain);

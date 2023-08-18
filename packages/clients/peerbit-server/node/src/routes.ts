@@ -1,16 +1,16 @@
 export const getPort = (protocol: string) => {
 	if (protocol === "https:") {
-		return SSL_PORT;
+		return REMOTE_API_PORT;
 	}
 
 	if (protocol === "http:") {
-		return LOCAL_PORT;
+		return LOCAL_API_PORT;
 	}
 
 	throw new Error("Unsupported protocol: " + protocol);
 };
-export const SSL_PORT = 9002;
-export const LOCAL_PORT = 8082;
+export const REMOTE_API_PORT = 9002;
+export const LOCAL_API_PORT = 8082;
 export const TRUST_PATH = "/trust";
 export const PEER_ID_PATH = "/peer/id";
 export const ADDRESS_PATH = "/peer/address";
@@ -20,3 +20,4 @@ export const INSTALL_PATH = "/install";
 export const BOOTSTRAP_PATH = "/network/bootstrap";
 export const RESTART_PATH = "/restart";
 export const TERMINATE_PATH = "/terminate";
+export const STOP_PATH = "/path";

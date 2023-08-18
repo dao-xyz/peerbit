@@ -5,7 +5,8 @@ import { startApiServer } from "../server";
 import dotenv from "dotenv";
 import { getDomainFromConfig } from "../domain";
 import path from "path";
-import { getServerConfigPath } from "../config";
+import { getServerConfigPath, getTrustPath } from "../config";
+import { Trust } from "../trust";
 
 dotenv.config();
 
@@ -35,7 +36,7 @@ describe("ssl", () => {
 		});
 		peer = session.peers[0];
 		server = await startApiServer(peer, {
-			configDirectory: getServerConfigPath(directory),
+			trust: new Trust(getTrustPath(directory)),
 			port: 12345,
 		});
 	});

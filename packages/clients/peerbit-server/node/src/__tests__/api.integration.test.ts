@@ -14,15 +14,18 @@ import {
 import { Peerbit } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
-import { client as createClient } from "../client.js";
+import { createClient as createClient } from "../client.js";
 import { v4 as uuid } from "uuid";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
+import { Trust } from "../trust.js";
+import { getTrustPath } from "../config.js";
+import fs from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const client = (keypair: Identity<Ed25519PublicKey>, address?: string) => {
-	return createClient(keypair, address);
+	return createClient(keypair, address ? { address } : undefined);
 };
 
 describe("libp2p only", () => {
@@ -51,8 +54,9 @@ describe("libp2p only", () => {
 			"libp2ponly",
 			uuid()
 		);
+		fs.mkdirSync(configDirectory, { recursive: true });
 		server = await startApiServer(session.peers[0], {
-			configDirectory,
+			trust: new Trust(getTrustPath(configDirectory)),
 			port: 7676,
 		});
 	});
@@ -65,10 +69,9 @@ describe("libp2p only", () => {
 	});
 
 	it("use cli as libp2p cli", async () => {
-		const c = await createClient(
-			await Ed25519Keypair.create(),
-			"http://localhost:" + 7676
-		);
+		const c = await createClient(await Ed25519Keypair.create(), {
+			address: "http://localhost:" + 7676,
+		});
 		expect(await c.peer.id.get()).toBeDefined();
 	});
 });
@@ -110,8 +113,9 @@ describe("server", () => {
 			peer = session.peers[0];
 			db = await peer.open(new PermissionedString({ trusted: [] }));
 			address = db.address;
+			fs.mkdirSync(directory, { recursive: true });
 			server = await startApiServer(peer, {
-				configDirectory: directory,
+				trust: new Trust(getTrustPath(directory)),
 			});
 		});
 		afterEach(async () => {
@@ -163,14 +167,11 @@ describe("server", () => {
 					const kp3 = await Ed25519Keypair.create();
 
 					const c2 = await client(kp2);
-
-					console.log(session.peers[0].identity.publicKey.hashcode());
-					console.log(kp2.publicKey.hashcode());
-					await expect(() => c2.trust.add(kp3.publicKey)).rejects.toThrowError(
-						"Request failed with status code 401"
-					);
-					await c.trust.add(kp2.publicKey);
-					await c2.trust.add(kp3.publicKey); // now c2 can add since it is trusted by c
+					await expect(() =>
+						c2.access.allow(kp3.publicKey)
+					).rejects.toThrowError("Request failed with status code 401");
+					await c.access.allow(kp2.publicKey);
+					await c2.access.allow(kp3.publicKey); // now c2 can add since it is trusted by c
 				});
 			});
 			describe("close/drop", () => {

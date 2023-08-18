@@ -1,7 +1,7 @@
 import fs from "fs";
 
 export class Trust {
-	private trusted: string[];
+	trusted: string[];
 	constructor(readonly path: string) {
 		if (fs.existsSync(path)) {
 			this.trusted = JSON.parse(

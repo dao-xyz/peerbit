@@ -1,4 +1,4 @@
-import { client as api, getPort } from "@peerbit/server";
+import { createClient, getPort } from "@peerbit/server";
 import { useEffect, useState } from "react";
 import { Box, Grid, Paper, Typography } from "@mui/material";
 import {
@@ -31,24 +31,61 @@ theme = responsiveFontSizes(theme);
 
 export const App = () => {
 	const [client, setClient] = useState<
-		Awaited<ReturnType<typeof api>> | undefined
+		Awaited<ReturnType<typeof createClient>> | undefined
 	>();
 	const [id, setId] = useState<string>();
+	const [tcpAddress, setTCPAddress] = useState<string>();
+	const [websocketAddress, setWebsocketAddress] = useState<string>();
+	const [otherAddresses, setOtherAddresses] = useState<string[]>([]);
+
 	useEffect(() => {
 		Ed25519Keypair.create().then((key) => {
-			return api(
-				key,
-				window.location.protocol +
+			return createClient(key, {
+				address:
+					window.location.protocol +
 					"//" +
 					window.location.hostname +
 					":" +
-					getPort(window.location.protocol)
-			).then((c) => {
+					getPort(window.location.protocol),
+			}).then((c) => {
 				setClient(c);
 				c.peer.id
 					.get()
 					.then((_id) => {
 						setId(_id);
+					})
+					.catch((e) => {
+						if (window.location.hostname !== "localhost") {
+							alert(e);
+						} else {
+							console.error(e);
+						}
+					});
+				c.peer.addresses
+					.get()
+					.then((addresses) => {
+						const tcpAddress = addresses.find(
+							(x) =>
+								x.protoNames().includes("tcp") &&
+								!x.protoNames().includes("ws") &&
+								!x.protoNames().includes("wss")
+						);
+						if (tcpAddress) {
+							setTCPAddress(tcpAddress.toString());
+						}
+						const wsAddress = addresses.find(
+							(x) =>
+								x.protoNames().includes("ws") || x.protoNames().includes("wss")
+						);
+						if (wsAddress) {
+							setWebsocketAddress(wsAddress.toString());
+						}
+						let others = addresses.filter(
+							(x) =>
+								(!tcpAddress || !x.equals(tcpAddress)) &&
+								(!wsAddress || !x.equals(wsAddress))
+						);
+						setOtherAddresses(others.map((x) => x.toString()));
 					})
 					.catch((e) => {
 						if (window.location.hostname !== "localhost") {
@@ -81,43 +118,56 @@ export const App = () => {
 						<Grid item>
 							<Typography variant="overline">Address</Typography>
 						</Grid>
-						<Grid item>
-							<Typography variant="caption"> TCP (non-browser)</Typography>
+						{tcpAddress && (
+							<Grid item>
+								<Typography variant="caption"> TCP (non-browser)</Typography>
 
-							<Paper elevation={10}>
-								<Typography
-									m={2}
-									sx={{ verticalAlign: "middle" }}
-									variant="caption"
-								>
+								<Paper elevation={10}>
+									<Typography
+										m={2}
+										sx={{ verticalAlign: "middle" }}
+										variant="caption"
+									>
+										{tcpAddress}
+									</Typography>
+								</Paper>
+							</Grid>
+						)}
+						{websocketAddress && (
+							<Grid item>
+								<Typography variant="caption">
 									{" "}
-									/dns4/
-									{window.location.hostname === "localhost"
-										? "127.0.0.1"
-										: window.location.hostname}
-									/tcp/4002/p2p/{id}
+									Websockets (browser and non-browser){" "}
 								</Typography>
-							</Paper>
-						</Grid>
-						<Grid item>
-							<Typography variant="caption">
-								{" "}
-								Websockets (browser and non-browser){" "}
-							</Typography>
-							<Paper elevation={10}>
-								<Typography
-									m={2}
-									sx={{ verticalAlign: "middle" }}
-									variant="caption"
-								>
-									/dns4/
-									{window.location.hostname === "localhost"
-										? "127.0.0.1"
-										: window.location.hostname}
-									/tcp/4003/wss/p2p/{id}
-								</Typography>
-							</Paper>
-						</Grid>
+								<Paper elevation={10}>
+									<Typography
+										m={2}
+										sx={{ verticalAlign: "middle" }}
+										variant="caption"
+									>
+										{websocketAddress}
+									</Typography>
+								</Paper>
+							</Grid>
+						)}
+						{otherAddresses.length > 0 && (
+							<Grid item>
+								<Typography variant="caption"> Other addresses</Typography>
+								{otherAddresses.map((x) => {
+									return (
+										<Paper elevation={10}>
+											<Typography
+												m={2}
+												sx={{ verticalAlign: "middle" }}
+												variant="caption"
+											>
+												{x}
+											</Typography>
+										</Paper>
+									);
+								})}
+							</Grid>
+						)}
 					</Grid>
 				</Grid>
 			</Box>
