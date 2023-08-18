@@ -413,8 +413,8 @@ export const cli = async (args?: string[]) => {
 										x &= 3;
 									}, 250);
 								})();
-								try {
-									for (const node of nodes) {
+								for (const node of nodes) {
+									try {
 										const domain = await waitForDomain(node.publicIp);
 										const remotes = new Remotes(getRemotesPath(args.directory));
 										remotes.add({
@@ -427,17 +427,18 @@ export const cli = async (args?: string[]) => {
 												region: node.region,
 											},
 										});
+									} catch (error: any) {
+										process.stdout.write("\r");
+										console.error(
+											`Error waiting for domain for ip: ${
+												node.publicIp
+											} to be available: ${error?.toString()}`
+										);
 									}
-								} catch (error: any) {
-									console.error(
-										"Error waiting for domains to be available: " +
-											error?.toString()
-									);
-								} finally {
-									clearInterval(twirlTimer);
-									process.stdout.write("\r");
 								}
-								console.log(`New nodes available ${nodes.length}:`);
+								process.stdout.write("\r");
+								clearInterval(twirlTimer);
+								console.log(`New nodes available (${nodes.length}):`);
 								for (const node of nodes) {
 									console.log(chalk.green(node.name));
 								}
