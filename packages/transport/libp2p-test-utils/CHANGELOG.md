@@ -12,6 +12,13 @@
   * devDependencies
     * @peerbit/time bumped from 1.0.1 to 1.0.2
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.2...libp2p-test-utils-v1.0.3) (2023-08-18)
+
+
+### Bug Fixes
+
+* update @dao-xyz/noise with corrected shared key computation ([b015674](https://github.com/dao-xyz/peerbit/commit/b015674fee599caa3ae75129ffb29f36a5163dcd))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.0...libp2p-test-utils-v1.0.1) (2023-07-04)
 
 

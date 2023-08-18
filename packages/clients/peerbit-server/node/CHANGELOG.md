@@ -148,6 +148,31 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/server-v3.0.0...server-v4.0.0) (2023-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* update @dao-xyz/noise with corrected shared key computation
+
+### Features
+
+* support for spawning nodes from the cli ([a132437](https://github.com/dao-xyz/peerbit/commit/a1324379784edab3ddd47dacded81dc6621925c8))
+
+
+### Bug Fixes
+
+* update @dao-xyz/noise with corrected shared key computation ([cbb303f](https://github.com/dao-xyz/peerbit/commit/cbb303fcbed7a090592919ca4c9bdd74247a8049))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 1.3.1 to 2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.17 to 1.0.18
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/server-v2.0.0...server-v3.0.0) (2023-08-14)
 
 
