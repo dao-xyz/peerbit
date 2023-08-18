@@ -205,7 +205,7 @@ export const launchNodes = async (properties: {
 			)
 		).Reservations?.length || 0;
 
-	console.log(regionString, AWS_LINUX_ARM_AMIs[regionString]);
+	console.log("Region: " + regionString);
 	const instanceOut = await client.send(
 		new RunInstancesCommand({
 			ImageId: AWS_LINUX_ARM_AMIs[regionString],

@@ -30,6 +30,7 @@ import { DEFAULT_REMOTE_GROUP, RemoteObject, Remotes } from "./remotes.js";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { LOCAL_API_PORT } from "./routes.js";
 import { type PeerId } from "@libp2p/interface/peer-id";
+import Table from "tty-table";
 
 const colors = [
 	"#00FF00",
@@ -392,12 +393,13 @@ export const cli = async (args?: string[]) => {
 										  ];
 								const nodes = await launchNodes({
 									email: "marcus@dao.xyz",
-									count: args.number,
+									count: args.count,
 									namePrefix: args.name,
 									region: args.region,
 									grantAccess: accessGrant,
 									size: args.size,
 								});
+
 								console.log(
 									`Waiting for ${args.count} ${
 										args.count > 1 ? "nodes" : "node"
@@ -463,6 +465,13 @@ export const cli = async (args?: string[]) => {
 							demandOption: false,
 							array: true,
 						});
+						killArgs.option("directory", {
+							describe: "Peerbit directory",
+							defaultDescription: "~.peerbit",
+							type: "string",
+							alias: "d",
+							default: getHomeConfigDir(),
+						});
 						return killArgs;
 					},
 					handler: async (args) => {
@@ -498,27 +507,40 @@ export const cli = async (args?: string[]) => {
 					handler: async (args) => {
 						const remotes = new Remotes(getRemotesPath(args.directory));
 						const allRemotes = await remotes.all();
-						const maxNameLength = allRemotes
-							.map((x) => x.name.length)
-							.reduce((prev, c, i) => {
-								return Math.max(prev, c);
-							}, 0);
 
-						const all = await remotes.all();
+						const all = allRemotes;
+						const apis = await Promise.all(
+							all.map(async (remote) =>
+								createClient(await getKeypair(args.directory), remote)
+							)
+						);
+						const resolvedOrRejected = await Promise.allSettled(
+							apis.map((x) => x.peer.id.get())
+						);
+
 						if (all.length > 0) {
-							console.log(
-								padString("Name", maxNameLength + 10),
-								padString("Group" || "", 10),
-								"Address"
-							);
-
-							for (const remote of all) {
-								console.log(
-									padString(remote.name, maxNameLength + 10),
-									padString(remote.group || "", 10),
-									remote.address
-								);
+							const rows: string[][] = [];
+							for (const [ix, remote] of all.entries()) {
+								const row = [
+									remote.name,
+									remote.group || "",
+									remote.origin?.type === "aws"
+										? `aws\n${remote.origin.region}\n${remote.origin.instanceId}`
+										: "",
+									resolvedOrRejected[ix].status === "fulfilled"
+										? chalk.green("Y")
+										: chalk.red("N"),
+									remote.address,
+								];
+								rows.push(row);
 							}
+							const table = Table(
+								["Name", "Group", "Origin", "Online", "Address"].map((x) => {
+									return { value: x, align: "left" };
+								}),
+								rows
+							);
+							console.log(table.render());
 						} else {
 							console.log("No remotes found!");
 						}
