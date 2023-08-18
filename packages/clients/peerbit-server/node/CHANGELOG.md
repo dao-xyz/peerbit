@@ -148,6 +148,14 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [4.0.1](https://github.com/dao-xyz/peerbit/compare/server-v4.0.0...server-v4.0.1) (2023-08-18)
+
+
+### Bug Fixes
+
+* improve spawn logs ([74667cf](https://github.com/dao-xyz/peerbit/commit/74667cfc262c4ef080f8dd1c63e7061b62b484e9))
+* use ubuntu 20 lts ([c155178](https://github.com/dao-xyz/peerbit/commit/c1551783af7b603093b8665dc8715515c82f7e29))
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/server-v3.0.0...server-v4.0.0) (2023-08-18)
 
 
