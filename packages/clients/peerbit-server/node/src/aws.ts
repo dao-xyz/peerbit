@@ -63,18 +63,19 @@ peerbit start ${peerIdStrings.map((key) => `--ga ${key}`)} > log.txt 2>&1 &
 const PURPOSE_TAG_NAME = "Purpose";
 const PURPOSE_TAG_VALUE = "Peerbit";
 
+// Ubuntu Server 20.04 LTS (HVM), SSD Volume Type (64-bit (Arm))
 export const AWS_LINUX_ARM_AMIs: Record<string, string> = {
 	/* 	"af-south-1" */
-	"ap-northeast-1": "ami-0342c9aa06b2a6488",
-	"ap-northeast-2": "ami-00fdfe418c69b624a",
-	"ap-northeast-3": "ami-0d053887907187d0a",
+	"ap-northeast-1": "ami-01444f83954203c6f",
+	"ap-northeast-2": "ami-0ac62099928d25fec",
+	"ap-northeast-3": "ami-0efdceaebc778c5f3",
 	"ap-south-1": "ami-0df6182e39efe7c4d",
-	/* 	"ap-south-2",
-		"ap-southeast-1", */
+	"ap-southeast-1": "ami-01d87e25d3c65ec37",
 	"ap-southeast-2": "ami-0641fc20c25fdd380",
+	/* 	"ap-south-2", */
 	/* 	"ap-southeast-3",
 		"ap-southeast-4", */
-	"ca-central-1": "ami-0dfbb7075b12dcc91",
+	"ca-central-1": "ami-0a3e942fe4813672b",
 	/* 	"cn-north-1",
 		"cn-northwest-1", */
 	"eu-central-1": "ami-0d85ad3aa712d96af",
@@ -83,18 +84,18 @@ export const AWS_LINUX_ARM_AMIs: Record<string, string> = {
 	/* 	"eu-south-1",
 		"eu-south-2", */
 	"eu-west-1": "ami-09c59b011574e4c96",
-	"eu-west-2": "ami-0e3f80b3d2a794117",
-	"eu-west-3": "ami-0d031bec3dde37593",
+	"eu-west-2": "ami-03e26d11b665ac7be",
+	"eu-west-3": "ami-00771c0ac817397bd",
 	/* 	"il-central-1",
 		"me-central-1",
 		"me-south-1", */
-	"sa-east-1": "ami-0aba9f6e2597c6993",
-	"us-east-1": "ami-0a0c8eebcdd6dcbd0",
-	"us-east-2": "ami-08fdd91d87f63bb09",
+	"sa-east-1": "ami-08dc4b989f93eafb9",
+	"us-east-1": "ami-097d5b19d4f1a7d1b",
+	"us-east-2": "ami-0071e4b30f26879e2",
 	/* 	"us-gov-east-1",
 		"us-gov-west-1", */
+	"us-west-1": "ami-0dca369228f3b2ce7",
 	"us-west-2": "ami-0c79a55dda52434da",
-	"us-west-1": "ami-07655b4bbf3eb3bd0",
 };
 export const launchNodes = async (properties: {
 	region?: string;
@@ -127,7 +128,6 @@ export const launchNodes = async (properties: {
 	const client = new EC2Client({ region: properties.region });
 	const regionString = await client.config.region();
 
-	// Ubuntu Server 22.04 LTS (HVM), SSD Volume Type, ARM
 	let securityGroupOut = (
 		await client.send(
 			new DescribeSecurityGroupsCommand({
