@@ -40,6 +40,41 @@
     * @peerbit/program bumped from 2.2.0 to 2.2.1
     * @peerbit/blocks bumped from ^1.0.8 to ^1.0.9
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.0...peerbit-v3.0.0) (2023-08-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* update @dao-xyz/noise with corrected shared key computation
+
+### Features
+
+* add bootstrap function ([52517ad](https://github.com/dao-xyz/peerbit/commit/52517ad655036ca30a17136d56cb35e3ec691256))
+* add options to simply start as a replicator ([2f7d7f2](https://github.com/dao-xyz/peerbit/commit/2f7d7f2ccb066d3a2436b25bad1d652d6c61f96d))
+* cli support program management ([67cc32c](https://github.com/dao-xyz/peerbit/commit/67cc32cb20883da226342d059a6ad49184b84ba2))
+* support for replacing programs on open ([8d41e7e](https://github.com/dao-xyz/peerbit/commit/8d41e7ef2eb44746125419a3df2fb0b3094933c4))
+
+
+### Bug Fixes
+
+* add path-browserify dependency ([9e20ff1](https://github.com/dao-xyz/peerbit/commit/9e20ff11935428c687cadea538bd98211db43310))
+* allow open to reuse existing program ([a953070](https://github.com/dao-xyz/peerbit/commit/a9530705bdfb69dc4c27c5b94b01ef7c34590636))
+* invalid program rejection on reopen ([fe0f634](https://github.com/dao-xyz/peerbit/commit/fe0f6345fd0012f817f6deab1edc0ac6e512d7ca))
+* prevent deadlock when program opens other programs ([91e6e8f](https://github.com/dao-xyz/peerbit/commit/91e6e8f69a086b2aea158fdddf6ef91e6198d1ea))
+* remove unused minReplicas arg ([159a2f5](https://github.com/dao-xyz/peerbit/commit/159a2f5545a00fcba760c2ba367049b447052898))
+* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
+* update @dao-xyz/noise with corrected shared key computation ([cbb303f](https://github.com/dao-xyz/peerbit/commit/cbb303fcbed7a090592919ca4c9bdd74247a8049))
+* update for SimpleLevel functional status ([1a1893a](https://github.com/dao-xyz/peerbit/commit/1a1893af2001e27bb6613c20c5ceada5fe0d7427))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.2.2 to 2.2.3
+    * @peerbit/pubsub bumped from ^1.1.1 to ^1.1.2
+    * @peerbit/blocks bumped from ^1.0.10 to ^1.0.11
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.3.1...peerbit-v2.0.0) (2023-08-18)
 
 
