@@ -148,6 +148,13 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [4.0.2](https://github.com/dao-xyz/peerbit/compare/server-v4.0.1...server-v4.0.2) (2023-08-18)
+
+
+### Bug Fixes
+
+* spawn with count ([2daa2ac](https://github.com/dao-xyz/peerbit/commit/2daa2ac79ea544fa62466856f07b85d927d66189))
+
 ## [4.0.1](https://github.com/dao-xyz/peerbit/compare/server-v4.0.0...server-v4.0.1) (2023-08-18)
 
 
