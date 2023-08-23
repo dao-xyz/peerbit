@@ -1,11 +1,12 @@
 # Trusted network
 ## 🚧 Experimental state 🚧
 
-A store that lets you build trusted networks of identities
-The store is defined by the "root trust" which have the responsibility in the beginning to trust additional identities. Later, these identities can add more identities to the network. 
+A store that lets you build trusted networks of identities.
+
+The store is defined by the "root trust" which has the responsibility in the beginning to trust additional identities. Later, these identities can add more identities to the network. 
 Trusted identities can also be revoked.
 
-Distributing content among untrusted peers will be unreliable and not resilient to malicious parties that starts to participate in the replication process with large amount (>> min replicas) of nodes and shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this you can launch your program in a "Network", which is basically a list of nodes that trust each other. Symbolically you could thing of this as a VPC.
+Distributing content among untrusted peers will be unreliable, and not resilient to malicious parties that start to participate in the replication process with large amount (>> min replicas) of nodes followed by shutting them down simultaneously (no way for the original peers recover all lost data). To mitigate this, you can launch your program in a "Network", which is basically a list of nodes that trust each other. Symbolically you could thing of this as a VPC.
 
 To do this, you only have to implement the "Network" interface: 
 ```typescript
