@@ -29,7 +29,7 @@ npm install @peerbit/document
 ### Searching for the document from another peer
 [another-client](./examples/document-store.ts ':include :type=code :fragment=another-client')
 
-Read more about the Document store [here](./modules/program/document-store.md).
+Read more about the Document store [here](./modules/program/document-store/README.md).
 
 
 
