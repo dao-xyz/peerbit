@@ -40,6 +40,14 @@
     * @peerbit/program bumped from 2.2.0 to 2.2.1
     * @peerbit/blocks bumped from ^1.0.8 to ^1.0.9
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.0...peerbit-v2.0.1) (2023-08-24)
+
+
+### Bug Fixes
+
+* make sure cache is re-opened on re-start ([05a7ebd](https://github.com/dao-xyz/peerbit/commit/05a7ebd7ff8af2d24e0b390249eee3bcdb074dec))
+* re-enable bootstrap tests ([f711b5e](https://github.com/dao-xyz/peerbit/commit/f711b5e55f87bd0168faa95fe20f57206cdad4fc))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v1.3.1...peerbit-v2.0.0) (2023-08-18)
 
 

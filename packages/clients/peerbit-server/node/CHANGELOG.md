@@ -148,6 +148,23 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [4.0.3](https://github.com/dao-xyz/peerbit/compare/server-v4.0.2...server-v4.0.3) (2023-08-24)
+
+
+### Bug Fixes
+
+* fm waiting for missing closed param ([e3e4150](https://github.com/dao-xyz/peerbit/commit/e3e4150a63e33312cfb93e1d85965408625fb40b))
+* re-enable bootstrap tests ([f711b5e](https://github.com/dao-xyz/peerbit/commit/f711b5e55f87bd0168faa95fe20f57206cdad4fc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 2.0.0 to 2.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.18 to 1.0.19
+
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/server-v4.0.1...server-v4.0.2) (2023-08-18)
 
 

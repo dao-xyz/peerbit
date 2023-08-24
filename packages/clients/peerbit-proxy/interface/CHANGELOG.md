@@ -24,6 +24,12 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.17 to 1.0.18
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.18 to 1.0.19
+
 ## [1.2.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.1.2...proxy-v1.2.0) (2023-08-06)
 
 
