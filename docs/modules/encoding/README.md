@@ -25,7 +25,4 @@ Below is an example how one would encode a "Post" object with Borsh encoding.
 
 
 ## Using Protobuf or JSON with Peerbit
-Even though the first class encoding is done using Borsh encoding scheme, you can still use any encoding layer with you data, see below
-
-
-[borsh](./json.ts ':include')
+Even though the first class encoding is done using Borsh encoding scheme, you can still use any encoding layer with your data. see [borsh](./json.ts ':include') in `json.ts`.

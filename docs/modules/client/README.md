@@ -11,7 +11,7 @@ npm install peerbit
 
 ### Memory configuration
 
-The most important configuration is to determine whether you want data to persist between session, or if you want it to persist in memory only
+The most important configuration is to determine whether you want data to persist between session, or if you want it to persist in memory only.
 Data is not only things that you generate in your databases, but also keys that are used to encrypt and decrypt them.
 
 [memory](./example.ts ':include :type=code :fragment=memory')
@@ -27,12 +27,12 @@ The easiest way to go online is to "bootstrap" your node. At the moment, this wi
 
 ### Directly
 
-Peerbit nodes are talking to each other through libp2p which is a transport agnostic way of doing communication. It supports a wide range of protocols, like WebRTC, WebSocket, TCP, WebTransport and can in the future support protocol such as Bluetooth.
+Peerbit nodes are talking to each other through libp2p, which is a transport-agnostic way of doing communication. It supports a wide range of protocols, like WebRTC, WebSocket, TCP, WebTransport and can in the future support protocols such as Bluetooth.
 
 
-Connecting nodes is done through dialing another peer address, which depends on what transport they support.
+Connecting nodes is done through dialing another peer address, which depends on what transports they support.
 
-Below are a few example how you can dial another node 
+Below are a few examples of how you can dial another node 
 
 [connectivity](./connectivity-direct.ts ':include')
 
@@ -40,7 +40,7 @@ Below are a few example how you can dial another node
 
 ### Relayed
 
-Browser-to-browser connections can not be establish without an intermediate node that facilities that a WebRTC direction connection can be established, or if this fails, the intermediate can forward packages from one to another.
+Browser-to-browser connections can not be established without an intermediate node that facilities a WebRTC direct connection. Or, if this fails, the intermediary can forward packages from one to the other.
 
 You can read more about deploying a relay [here](./deployment/server-node.md)
 
@@ -54,7 +54,7 @@ Since Peerbit at the current stage is only javascript modules, you can deploy yo
 
 ### Server
 Sometimes it make sense to deploy a Peerbit on a server that can be accessed through a domain. There are mainly two reasons why you want to do this: 
-- Hole punching. Two browser can not connect to each other directly without the aid on an intermediate peer that allows the browser clients to find other
+- Hole punching. Two browsers can not connect to each other directly without the aid on an intermediary peer that allows the browser clients to find others.
 - A replicator that is always online. While a client in the browser can store data themselves, sometimes you need to be sure that there is always one node online. 
 
 To deploy a server node, there is a handy CLI. [See this](https://github.com/dao-xyz/peerbit/tree/master/packages/clients/peerbit-server)

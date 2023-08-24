@@ -1,10 +1,11 @@
 # Running a server node 
-A non-browser node with a CLI and server API so you can manage your non-browser node with easy
+A non-browser node with a CLI and server API, so you can manage your non-browser node with ease.
 
 ## Features
-- Request SSL certificate and setup NGINX config so that your node can be accessed from a browser
+- Request SSL certificate
+- Setup NGINX config so that your node can be accessed from a browser
 
-**This CLI does not work in Windows at the moment. As of now this CLI have only tested with Ubuntu 22.04.**
+**This CLI does not work in Windows at the moment. As of now this CLI has only tested with Ubuntu 22.04.**
 
 ## Run a node 
 Needs port forwarding on 80, 443 (for the console/frontend) and 4002 (for Libp2p)
@@ -34,7 +35,7 @@ sudo peerbit domain test --email YOUR_EMAIL
 
 (``sudo`` is needed because docker will be installed if it is not available)
 
-After a while a domain will be written out that you can access and learn more about your peer
+After a while, a domain will be written out that you can access to learn more about your peer.
 
 3. 
 Start the node in a background process
@@ -46,7 +47,7 @@ This will start a peerbit client
  
 4. *Skip this step if testing locally*
 
-If you ssh'ed into a some server, remember to do this before exiting the terminal:
+If you ssh'ed into some server, remember to do this before exiting the terminal:
 
 Remove all jobs from the shell and make them ignore SIGHUP
 

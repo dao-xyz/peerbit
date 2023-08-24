@@ -1,6 +1,6 @@
 # RPC
 
-This module contains a communication protocol for a generic request and response communication, this modules can be used as a component in other modules. [Documents](./../../data/document), [DString](./../../data/string) for examples
+This module contains a communication protocol for  generic request-and-response communication. This module can be used as a component in other modules. [Documents](./../../data/document), [DString](./../../data/string) for examples
 
 
 
@@ -62,4 +62,4 @@ await rpcTest.rpc.request( new Hello(), (resp) => { console.log(resp)  })
     <img width="400" src="./documentation/rpc2.png"  alt="p1">
 </p>
 
-See [Document store](./../data/document) and [Clock Service](./../clock-service) as implementation examples
+See [Document store](./../data/document) and [Clock Service](./../clock-service) as implementation examples.

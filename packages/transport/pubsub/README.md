@@ -9,7 +9,7 @@ Features
 	.getSubscribers(topic)
 	``` 
 	
-	metho. Based on aggregated subscriber info, not only from immediate peers.
+	method based on aggregated subscriber info, not only from immediate peers.
 
 - Subscriptions with associated metadata. E.g. you can subscribe to topics and provide data that explains the purpose for peers
 	```typescript 
@@ -20,7 +20,7 @@ Features
 	.getSubscribersWithData(topic, data)
 	``` 
 
-- Efficient, content routing through path-finding algorithms
+- Efficient content routing through path-finding algorithms
 	```typescript
 	.publish(data, { topics: ["a","b"]})
 	```

@@ -14,7 +14,7 @@ Later
 # Scalability
 
 ## Throughput
-Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 MB/s. 
+Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a throughput of 100 MB/s. 
 
 ![Dogestream](/videostream.gif)
 
@@ -22,12 +22,12 @@ Peerbit is performant, so performant in fact you can use it for [streaming video
 
 Peerbit provides an abstraction layer that lets you program with distributed data types. For example, ```String``` can be replaced with [DString](./packages/programs/data/string) (distributed string). Some data-types, like [Document store](./packages/programs/data/document) are sharded automatically as long as there are not data dependencies between individual documents.
 
-Every peer has an identity which is simply their public key, this key can *currently* either be secp256k1 or a Ed25519 key. To prevent peers from manually sign messages, you can link identities together in a trust graph. This allows you to have a root identity that approves and revokes permissions to keys that can act on your behalf. Hence this allows you to build applications that allows users to act on multiple devices and chains seamlessly.
+Every peer has an identity which is simply their public key, this key can *currently* either be secp256k1 or a Ed25519 key. To prevent peers from having to manually sign messages, you can link identities together in a trust graph. This allows you to have a root identity that approves and revokes permissions to keys that can act on your behalf. This allows you to build applications that allow users to act on multiple devices and chains seamlessly.
  
-Data can be shared and encrypted on a granular level, you can decide exactly what parts of metadata should be public and not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end to end conversation between two identities, you just include the other peers' public key as a receiver and you would be certain that know one in the middle would be able to read your message.
+Data can be shared and encrypted on a granular level - you can decide exactly what parts of metadata should be public and what parts should not. When you create a commit or a query request, you can specify exactly who is going to be able to decrypt the message. If you want an end-to-end conversation between two identities, you just include the other peer's public key as a receiver, and you can be certain that no one in the middle will be able to read your message.
 
 ## Scaling networks
-Peerbit is built on top of a [pubsub](./../packages/transport/direct-sub/) protocol that automatically optimizes the routing for packages so that the network stays overall healthy. If some path in the network gets congested, packages are routed with alternative routes, potentially over WebRTC, Websocket and TCP connections. 
+Peerbit is built on top of a [pubsub](./../packages/transport/direct-sub/) protocol that automatically optimizes the routing for packages so that the network stays healthy overall. If some path in the network gets congested, packages are routed with alternative routes, potentially over WebRTC, Websocket and TCP connections. 
 
 This is useful when you are building a app that requires streaming large amount of data, with a network consisting of peers with limited bandwidth. An example is a streaming service, where a streamer can write video stream chunks into a database and these chunks can propagate to thousands of peers without having to send to all of them directly.
 

@@ -1,2 +1,2 @@
 # Direct stream
-Data streaming protocol that aggregates "hellos" and goodbye" from peers to build a route map, which is used with path-finding algorithms to find shorted path to send data from A to B. 
+Data streaming protocol that aggregates "hellos" and goodbye" from peers to build a route map, which is used with path-finding algorithms to find the shortest path to send data from A to B. 
