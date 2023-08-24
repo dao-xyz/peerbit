@@ -278,6 +278,8 @@ export class Peerbit implements ProgramClient {
 	}
 
 	async start() {
+		await this._cache.open();
+
 		if (!this.libp2p.isStarted()) {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
 			return this.libp2p.start();
