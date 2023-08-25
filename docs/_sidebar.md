@@ -9,6 +9,7 @@ Modules
 - [Programs](/modules/program/)
     - [What is a program?](/modules/program/)
     - [Document store](/modules/program/document-store/)
+    - [RPC](/modules/program/rpc/)
     - [Combining programs](/modules/program/composition/)
 - [Encoding](/modules/encoding/)
 - [Encryption](/modules/encryption/)
