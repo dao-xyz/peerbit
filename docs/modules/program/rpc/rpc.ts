@@ -53,7 +53,7 @@ class RPCTest extends Program<Args> {
 			responseType: World,
 			responseHandler:
 				args?.role instanceof Responder
-					? (resp, from) => {
+					? (hello, from) => {
 							return new World();
 					  }
 					: undefined, // only create a response handler if we are to respond to requests
