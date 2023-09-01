@@ -3,7 +3,7 @@ import {
 	sha256 as sha256Browser,
 	sha256Base64 as sha256Base64Browser,
 	sha256Base64Sync as sha256Base64SyncBrowser,
-	sha256Sync as sha256SyncBrowser,
+	sha256Sync as sha256SyncBrowser
 } from "../hash-browser.js";
 
 import { equals } from "uint8arrays";

@@ -11,7 +11,7 @@ const ethKeccak256Hash = (message: Uint8Array) =>
 				concat([
 					toUtf8Bytes(messagePrefix),
 					toUtf8Bytes(String(message.length)),
-					message,
+					message
 				])
 			)
 			.arrayBuffer()
@@ -21,7 +21,7 @@ export enum PreHash {
 	NONE = 0,
 	SHA_256 = 1,
 	//BLAKE3 = 2,
-	ETH_KECCAK_256 = 3,
+	ETH_KECCAK_256 = 3
 }
 
 export const prehashFn = (

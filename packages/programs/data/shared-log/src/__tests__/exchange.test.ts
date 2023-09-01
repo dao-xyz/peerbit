@@ -22,8 +22,8 @@ describe("exchange", () => {
 			const store = await peer.open(createStore(), {
 				args: {
 					role: i === 0 ? new Replicator() : new Observer(),
-					sync: () => true,
-				},
+					sync: () => true
+				}
 			});
 			stores.push(store);
 		}

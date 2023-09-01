@@ -3,7 +3,7 @@ import {
 	Ed25519Keypair,
 	Keypair,
 	X25519PublicKey,
-	X25519Keypair,
+	X25519Keypair
 } from "@peerbit/crypto";
 import { field, variant, vec, option } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";

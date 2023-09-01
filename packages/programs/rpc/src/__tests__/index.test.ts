@@ -44,7 +44,7 @@ class RPCTest extends Program {
 						const resp = query;
 						return resp;
 				  }
-				: undefined,
+				: undefined
 		});
 	}
 }
@@ -75,7 +75,7 @@ describe("rpc", () => {
 		it("any", async () => {
 			let results: RPCResponse<Body>[] = await reader.query.request(
 				new Body({
-					arr: new Uint8Array([0, 1, 2]),
+					arr: new Uint8Array([0, 1, 2])
 				}),
 				{ amount: 1 }
 			);
@@ -90,14 +90,14 @@ describe("rpc", () => {
 			let results: Body[] = [];
 			await reader.query.request(
 				new Body({
-					arr: new Uint8Array([0, 1, 2]),
+					arr: new Uint8Array([0, 1, 2])
 				}),
 
 				{
 					amount: 1,
 					onResponse: (resp) => {
 						results.push(resp);
-					},
+					}
 				}
 			);
 
@@ -108,7 +108,7 @@ describe("rpc", () => {
 			let results: Body[] = (
 				await reader.query.request(
 					new Body({
-						arr: new Uint8Array([0, 1, 2]),
+						arr: new Uint8Array([0, 1, 2])
 					}),
 					{ timeout: 3000, amount: 1, to: [] }
 				)
@@ -117,7 +117,7 @@ describe("rpc", () => {
 			results = (
 				await reader.query.request(
 					new Body({
-						arr: new Uint8Array([0, 1, 2]),
+						arr: new Uint8Array([0, 1, 2])
 					}),
 					{ to: [responder.node.identity.publicKey] }
 				)
@@ -188,7 +188,7 @@ describe("rpc", () => {
 				promises.push(
 					reader.query.request(
 						new Body({
-							arr: new Uint8Array([i]),
+							arr: new Uint8Array([i])
 						}),
 						{ amount: 1 }
 					)
@@ -208,10 +208,10 @@ describe("rpc", () => {
 			let results: Body[] = (
 				await reader.query.request(
 					new Body({
-						arr: new Uint8Array([0, 1, 2]),
+						arr: new Uint8Array([0, 1, 2])
 					}),
 					{
-						timeout: waitFor,
+						timeout: waitFor
 					}
 				)
 			).map((x) => x.response);
@@ -300,7 +300,7 @@ describe("queryAll", () => {
 			[
 				session.peers
 					.filter((x, ix) => ix !== 0)
-					.map((x) => x.identity.publicKey.hashcode()),
+					.map((x) => x.identity.publicKey.hashcode())
 			],
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {

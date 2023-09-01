@@ -6,9 +6,9 @@ import { all } from "@libp2p/websockets/filters";
 export const transports = () => [
 	webSockets({ filter: all }),
 	circuitRelayTransport({
-		discoverRelays: 1,
+		discoverRelays: 1
 	}),
-	webRTC({}),
+	webRTC({})
 ];
 
 export const relay = () => undefined;

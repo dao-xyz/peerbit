@@ -13,10 +13,10 @@ export const transports = (
 	browser
 		? [
 				circuitRelayTransport({
-					discoverRelays: 1,
+					discoverRelays: 1
 				}),
 				webRTC({}),
-				webSockets({ filter: filters.all }),
+				webSockets({ filter: filters.all })
 		  ]
 		: [tcp()];
 

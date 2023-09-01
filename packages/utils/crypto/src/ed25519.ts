@@ -60,7 +60,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 		}
 		if (id.type === "Ed25519") {
 			return new Ed25519PublicKey({
-				publicKey: coerce(id.publicKey!.slice(4)),
+				publicKey: coerce(id.publicKey!.slice(4))
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -101,7 +101,7 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 		}
 		if (id.type === "Ed25519") {
 			return new Ed25519PrivateKey({
-				privateKey: coerce(id.privateKey!.slice(4, 36)),
+				privateKey: coerce(id.privateKey!.slice(4, 36))
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -130,11 +130,11 @@ export class Ed25519Keypair extends Keypair implements Identity {
 		const generated = sodium.crypto_sign_keypair();
 		const kp = new Ed25519Keypair({
 			publicKey: new Ed25519PublicKey({
-				publicKey: generated.publicKey,
+				publicKey: generated.publicKey
 			}),
 			privateKey: new Ed25519PrivateKey({
-				privateKey: generated.privateKey.slice(0, 32), // Only the private key part (?)
-			}),
+				privateKey: generated.privateKey.slice(0, 32) // Only the private key part (?)
+			})
 		});
 
 		return kp;
@@ -166,7 +166,7 @@ export class Ed25519Keypair extends Keypair implements Identity {
 	static fromPeerId(peerId: PeerId | Ed25519PeerId) {
 		return new Ed25519Keypair({
 			privateKey: Ed25519PrivateKey.fromPeerID(peerId),
-			publicKey: Ed25519PublicKey.fromPeerId(peerId),
+			publicKey: Ed25519PublicKey.fromPeerId(peerId)
 		});
 	}
 
@@ -176,7 +176,7 @@ export class Ed25519Keypair extends Keypair implements Identity {
 			this._privateKeyPublicKey ||
 			(this._privateKeyPublicKey = concat([
 				this.privateKey.privateKey,
-				this.publicKey.publicKey,
+				this.publicKey.publicKey
 			]))
 		);
 	}

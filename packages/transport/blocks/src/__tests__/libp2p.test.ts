@@ -31,7 +31,7 @@ describe("transport", function () {
 
 	it("rw", async () => {
 		session = await LSession.connected(2, {
-			services: { blocks: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) }
 		});
 
 		await store(session, 0).start();
@@ -49,7 +49,7 @@ describe("transport", function () {
 
 	it("read concurrently", async () => {
 		session = await LSession.connected(2, {
-			services: { blocks: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) }
 		});
 
 		await store(session, 0).start();
@@ -80,7 +80,7 @@ describe("transport", function () {
 
 	it("reads from joining peer", async () => {
 		session = await LSession.disconnected(2, {
-			services: { blocks: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) }
 		});
 
 		const data = new Uint8Array([5, 4, 3]);
@@ -97,7 +97,7 @@ describe("transport", function () {
 
 	it("timeout", async () => {
 		session = await LSession.connected(2, {
-			services: { blocks: (c) => new DirectBlock(c) },
+			services: { blocks: (c) => new DirectBlock(c) }
 		});
 		await waitForPeers(store(session, 0), store(session, 1));
 

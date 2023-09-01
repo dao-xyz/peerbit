@@ -56,16 +56,16 @@ const session = await LSession.connected(peersCount);
 
 const store = new TestStore({
 	docs: new Documents<Document>({
-		index: new DocumentIndex(),
-	}),
+		index: new DocumentIndex()
+	})
 });
 
 const client: ProgramClient = session.peers[0];
 await client.open(store, {
 	args: {
 		role: new Replicator(),
-		trim: { type: "length" as const, to: 100 },
-	},
+		trim: { type: "length" as const, to: 100 }
+	}
 });
 
 const resolver: Map<string, () => void> = new Map();
@@ -84,7 +84,7 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1200),
+				bytes: crypto.randomBytes(1200)
 			});
 			resolver.set(doc.id, () => {
 				deferred.resolve();
@@ -93,7 +93,7 @@ suite
 		},
 
 		minSamples: 300,
-		defer: true,
+		defer: true
 	})
 	.on("cycle", (event: any) => {
 		console.log(String(event.target));

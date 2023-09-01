@@ -2,14 +2,14 @@ import {
 	Ed25519Keypair,
 	PublicSignKey,
 	randomBytes,
-	sha256Base64Sync,
+	sha256Base64Sync
 } from "@peerbit/crypto";
 import { ProgramClient, ProgramHandler } from "../program";
 import {
 	Subscription,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
-	Unsubscription,
+	Unsubscription
 } from "@peerbit/pubsub-interface";
 import { CustomEvent } from "@libp2p/interface/events";
 
@@ -31,7 +31,7 @@ export const createPeer = async (
 	} = {
 		pubsubEventHandlers: new Map(),
 		subsribers: new Map(),
-		peers: new Map(),
+		peers: new Map()
 	}
 ): Promise<ProgramClient> => {
 	const keypair = await Ed25519Keypair.create();
@@ -69,7 +69,7 @@ export const createPeer = async (
 				rm: (c) => {
 					blocks.delete(c);
 				},
-				waitFor: () => Promise.resolve(),
+				waitFor: () => Promise.resolve()
 			},
 			pubsub: {
 				emitSelf: false,
@@ -82,13 +82,13 @@ export const createPeer = async (
 					map.set(keypair.publicKey.hashcode(), {
 						publicKey: keypair.publicKey,
 						timestamp: BigInt(+new Date()),
-						data: opts?.data,
+						data: opts?.data
 					});
 					dispatchEvent(
 						new CustomEvent<SubscriptionEvent>("subscribe", {
 							detail: new SubscriptionEvent(keypair.publicKey, [
-								new Subscription(topic, opts?.data),
-							]),
+								new Subscription(topic, opts?.data)
+							])
 						})
 					);
 				},
@@ -106,8 +106,8 @@ export const createPeer = async (
 						dispatchEvent(
 							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
 								detail: new UnsubcriptionEvent(keypair.publicKey, [
-									new Unsubscription(topic),
-								]),
+									new Unsubscription(topic)
+								])
 							})
 						);
 					}
@@ -142,7 +142,7 @@ export const createPeer = async (
 										detail: new SubscriptionEvent(
 											state.peers.get(hash)!.identity.publicKey!,
 											[new Subscription(topic, opts?.data)]
-										),
+										)
 									}),
 									true
 								);
@@ -150,8 +150,8 @@ export const createPeer = async (
 						}
 					}
 				},
-				waitFor: () => Promise.resolve(),
-			},
+				waitFor: () => Promise.resolve()
+			}
 		},
 		memory: undefined as any, // TODO
 		keychain: undefined as any, // TODO
@@ -164,7 +164,7 @@ export const createPeer = async (
 				p,
 				o
 			);
-		},
+		}
 	};
 	state.peers.set(peer.identity.publicKey.hashcode(), peer);
 	return peer;

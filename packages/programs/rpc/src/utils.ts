@@ -34,7 +34,7 @@ export const queryAll = <Q, R>(
 			if (peersToQuery.length > 0) {
 				const results = await rpc.request(request, {
 					...options,
-					to: peersToQuery,
+					to: peersToQuery
 				});
 
 				for (const result of results) {

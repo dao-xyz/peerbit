@@ -43,7 +43,7 @@ export class Libp2pKeychain implements Keychain {
 	keychainKeyIdFromPublicKey(publicKey: X25519PublicKey) {
 		const bytes = keysPBM.PublicKey.encode({
 			Type: keysPBM.KeyType.Ed25519,
-			Data: publicKey.publicKey,
+			Data: publicKey.publicKey
 		}).subarray();
 
 		const encoding = identity.digest(bytes);
@@ -182,7 +182,7 @@ export class Libp2pKeychain implements Keychain {
 				if (key && key instanceof X25519Keypair) {
 					return {
 						index: i,
-						keypair: key as X25519Keypair,
+						keypair: key as X25519Keypair
 					};
 				}
 			} catch (error: any) {

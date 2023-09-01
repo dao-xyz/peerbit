@@ -5,7 +5,7 @@ import {
 	variant,
 	serialize,
 	deserialize,
-	option,
+	option
 } from "@dao-xyz/borsh";
 export abstract class PubSubMessage {
 	abstract bytes(): Uint8Array | Uint8ArrayList;

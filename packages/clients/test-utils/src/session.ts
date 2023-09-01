@@ -1,15 +1,15 @@
 import {
 	LSession as SSession,
-	LibP2POptions as SLibP2POptions,
+	LibP2POptions as SLibP2POptions
 } from "@peerbit/libp2p-test-utils";
 import {
 	DirectStream,
-	waitForPeers as waitForPeersStreams,
+	waitForPeers as waitForPeersStreams
 } from "@peerbit/stream";
 import {
 	Libp2pCreateOptions,
 	Libp2pExtendServices,
-	Libp2pCreateOptionsWithServices,
+	Libp2pCreateOptionsWithServices
 } from "peerbit";
 import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
@@ -61,9 +61,9 @@ export class LSession {
 				services: {
 					blocks: (c) => new DirectBlock(c),
 					pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
-					...o?.libp2p?.services,
+					...o?.libp2p?.services
 				},
-				streamMuxers: [mplex({ disconnectThreshold: 10 })],
+				streamMuxers: [mplex({ disconnectThreshold: 10 })]
 			};
 		};
 		let optionsWithServices:

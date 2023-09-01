@@ -7,7 +7,7 @@ import {
 	Replicator,
 	Role,
 	CanRead,
-	TransactionContext,
+	TransactionContext
 } from "@peerbit/document";
 import { AppendOptions, Entry } from "@peerbit/log";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -20,7 +20,7 @@ import {
 	getFromByTo,
 	getToByFrom,
 	getRelation,
-	AbstractRelation,
+	AbstractRelation
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";
@@ -112,10 +112,10 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 				fields: (obj, _entry) => {
 					return {
 						from: obj.from.hashcode(),
-						to: obj.to.hashcode(),
+						to: obj.to.hashcode()
 					};
-				},
-			},
+				}
+			}
 		});
 	}
 
@@ -127,7 +127,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 		await this.relationGraph.put(
 			new IdentityRelation({
 				to: coercePublicKey(to),
-				from: options?.identity?.publicKey || this.node.identity.publicKey,
+				from: options?.identity?.publicKey || this.node.identity.publicKey
 			}),
 			options
 		);
@@ -164,10 +164,10 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 				fields: (obj, _entry) => {
 					return {
 						from: obj.from.hashcode(),
-						to: obj.to.hashcode(),
+						to: obj.to.hashcode()
 					};
-				},
-			},
+				}
+			}
 		}); // self referencing access controller
 	}
 
@@ -199,7 +199,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		if (!existingRelation) {
 			const relation = new IdentityRelation({
 				to: key,
-				from: this.node.identity.publicKey,
+				from: this.node.identity.publicKey
 			});
 			await this.trustGraph.put(relation);
 			return relation;
@@ -245,7 +245,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			this.trustGraph.index.search(new SearchRequest({ query: [] }), {
-				remote: { sync: true },
+				remote: { sync: true }
 			});
 			return this._isTrustedLocal(trustee, truster);
 		}

@@ -4,7 +4,7 @@ import {
 	field,
 	fixedArray,
 	variant,
-	vec,
+	vec
 } from "@dao-xyz/borsh";
 
 import { asString } from "./utils.js";
@@ -15,7 +15,7 @@ export enum Compare {
 	Greater = 1,
 	GreaterOrEqual = 2,
 	Less = 3,
-	LessOrEqual = 4,
+	LessOrEqual = 4
 }
 export const compare = (
 	test: bigint | number,
@@ -45,7 +45,7 @@ export abstract class Query {}
 
 export enum SortDirection {
 	ASC = 0,
-	DESC = 1,
+	DESC = 1
 }
 
 @variant(0)
@@ -268,7 +268,7 @@ export class ByteMatchQuery extends StateFieldQuery {
 export enum StringMatchMethod {
 	"exact" = 0,
 	"prefix" = 1,
-	"contains" = 2,
+	"contains" = 2
 }
 
 @variant(2)

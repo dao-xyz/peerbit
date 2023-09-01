@@ -9,26 +9,26 @@ const jestConfig: JestConfigWithTsJest = {
 		"^.+\\.tsx?$": [
 			"ts-jest",
 			{
-				useESM: true,
-			},
-		],
+				useESM: true
+			}
+		]
 	},
 	fakeTimers: {},
 	extensionsToTreatAsEsm: [".ts"],
 	moduleNameMapper: {
 		uuid: require.resolve("uuid"),
-		"^(\\.{1,2}/.*)\\.js$": "$1",
+		"^(\\.{1,2}/.*)\\.js$": "$1"
 	},
 	transformIgnorePatterns: ["dns"],
 	// forceExit: true,
 	/*  useESM: true, */
 	testRegex: [
 		"[A-Za-z0-9-/]+(\\.integration)?\\.(?<!browser\\.)(test|spec)\\.ts$",
-		"[A-Za-z0-9-/]+(\\.integration)?\\.(?<!browser\\.)(test|spec)\\.ts$",
+		"[A-Za-z0-9-/]+(\\.integration)?\\.(?<!browser\\.)(test|spec)\\.ts$"
 	],
 	moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
 	testTimeout: 60000,
-	setupFilesAfterEnv: ["jest-extended/all"],
+	setupFilesAfterEnv: ["jest-extended/all"]
 	/*   coverageReporters: ["lcov"] */
 };
 export default jestConfig;

@@ -43,7 +43,7 @@ suite
 			deserialize(serialize(new MBytes(await sha256(getSample()))), MBytes);
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.add("hash-to-string", {
 		fn: async (deferred) => {
@@ -53,7 +53,7 @@ suite
 			);
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.on("error", (error: any) => {
 		throw error;

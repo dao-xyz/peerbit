@@ -7,7 +7,7 @@ import {
 	checkDecodeBlock,
 	cidifyString,
 	codecMap,
-	stringifyCid,
+	stringifyCid
 } from "../block.js";
 import { equals } from "uint8arrays";
 
@@ -75,20 +75,20 @@ for (const size of sizes) {
 				const cid = await Block.encode({
 					value: rng,
 					codec,
-					hasher: sha256,
+					hasher: sha256
 				});
 				const cidString = stringifyCid(cid.cid);
 				const cidObject = cidifyString(cidString);
 				const checked = await checkDecodeBlock(cidObject, rng, {
 					hasher: sha256,
-					codec,
+					codec
 				});
 				if (!checked) {
 					throw new Error("Not verified");
 				}
 				deferred.resolve();
 			}
-		},
+		}
 	});
 
 	suite.add("dummy, size: " + size / 1e3 + "kb", {
@@ -105,7 +105,7 @@ for (const size of sizes) {
 				}
 				deferred.resolve();
 			}
-		},
+		}
 	});
 
 	suite.add("sha256 digest hex, size: " + size / 1e3 + "kb", {
@@ -123,7 +123,7 @@ for (const size of sizes) {
 				}
 				deferred.resolve();
 			}
-		},
+		}
 	});
 }
 suite

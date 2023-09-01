@@ -19,9 +19,9 @@ describe("values", () => {
 			identity,
 			meta: {
 				gidSeed: Buffer.from("a"),
-				next: [],
+				next: []
 			},
-			data: new Uint8Array([0]),
+			data: new Uint8Array([0])
 		});
 
 		e2 = await Entry.create({
@@ -29,9 +29,9 @@ describe("values", () => {
 			identity,
 			meta: {
 				gidSeed: Buffer.from("a"),
-				next: [e1],
+				next: [e1]
 			},
-			data: new Uint8Array([1]),
+			data: new Uint8Array([1])
 		});
 
 		e3 = await Entry.create({
@@ -39,14 +39,14 @@ describe("values", () => {
 			identity,
 			meta: {
 				gidSeed: Buffer.from("a"),
-				next: [e2],
+				next: [e2]
 			},
-			data: new Uint8Array([2]),
+			data: new Uint8Array([2])
 		});
 		entryIndex = new EntryIndex({
 			store,
 			init: (e) => {},
-			cache: new Cache({ max: 1000 }),
+			cache: new Cache({ max: 1000 })
 		});
 		await entryIndex.set(e1);
 		await entryIndex.set(e2);
@@ -64,7 +64,7 @@ describe("values", () => {
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
-			e3.hash,
+			e3.hash
 		]);
 	});
 
@@ -77,7 +77,7 @@ describe("values", () => {
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
-			e3.hash,
+			e3.hash
 		]);
 	});
 
@@ -90,7 +90,7 @@ describe("values", () => {
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
-			e3.hash,
+			e3.hash
 		]);
 	});
 
@@ -114,12 +114,12 @@ describe("values", () => {
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
 			e2.hash,
-			e3.hash,
+			e3.hash
 		]);
 		await values.delete(e2);
 		expect((await values.toArray()).map((x) => x.hash)).toEqual([
 			e1.hash,
-			e3.hash,
+			e3.hash
 		]);
 		expect(values.head!.value).toEqual(e3.hash);
 		expect(values.tail!.value).toEqual(e1.hash);

@@ -17,16 +17,16 @@ const session = await LSession.disconnected(4, {
 				canRelayMessage: true,
 				emitSelf: true,
 				connectionManager: {
-					autoDial: false,
-				},
-			}),
-	},
+					autoDial: false
+				}
+			})
+	}
 });
 
 await session.connect([
 	[session.peers[0], session.peers[1]],
 	[session.peers[1], session.peers[2]],
-	[session.peers[2], session.peers[3]],
+	[session.peers[2], session.peers[3]]
 ]);
 
 /* 
@@ -89,7 +89,7 @@ for (const size of sizes) {
 			session.peers[
 				session.peers.length - 1
 			].services.pubsub.removeEventListener("data", listener);
-		},
+		}
 	});
 }
 suite

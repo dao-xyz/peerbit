@@ -53,7 +53,7 @@ const getProcessWithOut = (p: ChildProcess): ProcessWithOut => {
 	let err: string[] = [];
 	let outSinceWrite: string[] = [];
 	const rl = readline.createInterface({
-		input: p.stdout!,
+		input: p.stdout!
 	});
 
 	p.stderr!.on("data", (d: string) => {
@@ -77,7 +77,7 @@ const getProcessWithOut = (p: ChildProcess): ProcessWithOut => {
 		out,
 		err,
 		write,
-		outSinceWrite,
+		outSinceWrite
 	};
 };
 
@@ -211,7 +211,7 @@ describe("cli", () => {
 			const trust = new Trust(getTrustPath(configDirectory));
 			expect(trust.trusted).toContainAllValues([
 				kp1.publicKey.hashcode(),
-				kp2.publicKey.hashcode(),
+				kp2.publicKey.hashcode()
 			]);
 		});
 	});

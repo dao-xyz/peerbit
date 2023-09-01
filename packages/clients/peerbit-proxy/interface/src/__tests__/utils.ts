@@ -20,7 +20,7 @@ export class EventEmitterNode extends connection.MessageNode {
 			dispatchEvent: (msg) =>
 				this.eventEmitter.dispatchEvent(
 					new CustomEvent(msg.type, { detail: msg })
-				),
+				)
 		});
 	}
 }

@@ -25,7 +25,7 @@ export class LogCreator {
 			"entryA7",
 			"entryA8",
 			"entryA9",
-			"entryA10",
+			"entryA10"
 		];
 
 		const create = async (): Promise<Log<string>> => {
@@ -55,9 +55,9 @@ export class LogCreator {
 				meta: {
 					timestamp: new Timestamp({
 						wallTime: (await logA.toArray())[5].meta.clock.timestamp.wallTime,
-						logical: (await logA.toArray())[5].meta.clock.timestamp.logical + 1,
-					}),
-				},
+						logical: (await logA.toArray())[5].meta.clock.timestamp.logical + 1
+					})
+				}
 			});
 			await log4.join(logA);
 			expect(

@@ -15,7 +15,7 @@ describe("server", () => {
 
 	beforeAll(async () => {
 		session = await LSession.connected(1, {
-			directory: "./tmp/peerbit/" + +new Date(),
+			directory: "./tmp/peerbit/" + +new Date()
 		});
 		peer = session.peers[0];
 	});
@@ -28,7 +28,7 @@ describe("server", () => {
 	it("_", async () => {
 		const program = new PermissionedString({
 			store: new DString({}),
-			trusted: [peer.identity.publicKey],
+			trusted: [peer.identity.publicKey]
 		});
 		const base54 = Buffer.from(serialize(program)).toString("base64");
 		const pr = deserialize(Buffer.from(base54, "base64"), Program);

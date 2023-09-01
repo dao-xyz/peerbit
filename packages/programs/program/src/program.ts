@@ -9,14 +9,14 @@ import { Blocks } from "@peerbit/blocks-interface";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import {
 	SubscriptionEvent,
-	UnsubcriptionEvent,
+	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
 import { Address } from "./address.js";
 import {
 	EventOptions,
 	Handler,
 	Manageable,
-	ProgramInitializationOptions,
+	ProgramInitializationOptions
 } from "./handler.js";
 
 const intersection = (
@@ -71,7 +71,7 @@ class ProgramHandler extends Handler<Program> {
 		super({
 			client: properties.client,
 			shouldMonitor: (p) => p instanceof Program,
-			load: Program.load,
+			load: Program.load
 		});
 	}
 }
@@ -371,9 +371,8 @@ export abstract class Program<
 			if (program.getTopics) {
 				const topics = program.getTopics();
 				for (const topic of topics) {
-					const subscribers = await this.node.services.pubsub.getSubscribers(
-						topic
-					);
+					const subscribers =
+						await this.node.services.pubsub.getSubscribers(topic);
 					if (!subscribers) {
 						throw new Error(
 							"client is not subscriber to topic data, do not have any info about peer readiness"

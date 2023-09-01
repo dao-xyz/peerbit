@@ -8,7 +8,7 @@ import {
 	Ed25519Keypair,
 	Identity,
 	PublicSignKey,
-	randomBytes,
+	randomBytes
 } from "@peerbit/crypto";
 import {
 	Documents,
@@ -16,7 +16,7 @@ import {
 	SearchRequest,
 	StringMatch,
 	Observer,
-	Role,
+	Role
 } from "@peerbit/document";
 import { RPC } from "@peerbit/rpc";
 import { Program } from "@peerbit/program";
@@ -39,7 +39,7 @@ const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
 	return {
 		publicKey: ed.publicKey,
-		sign: (data) => ed.sign(data),
+		sign: (data) => ed.sign(data)
 	} as Identity;
 };
 
@@ -56,11 +56,11 @@ class TestStore extends Program<{ role: Role }> {
 		if (properties) {
 			this.store = new Documents({
 				index: new DocumentIndex({
-					query: new RPC(),
-				}),
+					query: new RPC()
+				})
 			});
 			this.accessController = new IdentityAccessController({
-				rootTrust: properties.publicKey,
+				rootTrust: properties.publicKey
 			});
 		}
 	}
@@ -72,9 +72,9 @@ class TestStore extends Program<{ role: Role }> {
 			canPerform: (operation, context) =>
 				this.accessController.canPerform(operation, context),
 			index: {
-				canRead: this.accessController.canRead.bind(this.accessController),
+				canRead: this.accessController.canRead.bind(this.accessController)
 			},
-			role: properties?.role,
+			role: properties?.role
 		});
 	}
 }
@@ -95,11 +95,11 @@ describe("index", () => {
 		let id = randomBytes(32);
 		const t1 = new IdentityAccessController({
 			id: key.publicKey,
-			rootTrust: key,
+			rootTrust: key
 		});
 		const t2 = new IdentityAccessController({
 			id: key.publicKey,
-			rootTrust: key,
+			rootTrust: key
 		});
 		expect(serialize(t1)).toEqual(serialize(t2));
 	});
@@ -112,14 +112,14 @@ describe("index", () => {
 
 		await l0a.store.put(
 			new Document({
-				id: "1",
+				id: "1"
 			})
 		);
 
 		await expect(
 			l0b.store.put(
 				new Document({
-					id: "id",
+					id: "id"
 				})
 			)
 		).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -135,7 +135,7 @@ describe("index", () => {
 		);
 		await l0b.store.put(
 			new Document({
-				id: "2",
+				id: "2"
 			})
 		); // Now trusted
 
@@ -150,13 +150,13 @@ describe("index", () => {
 		it("publickey", async () => {
 			const l0a = await session.peers[0].open(
 				new TestStore({
-					publicKey: session.peers[0].peerId,
+					publicKey: session.peers[0].peerId
 				})
 			);
 
 			await l0a.store.put(
 				new Document({
-					id: "1",
+					id: "1"
 				})
 			);
 
@@ -168,7 +168,7 @@ describe("index", () => {
 			await expect(
 				l0b.store.put(
 					new Document({
-						id: "id",
+						id: "id"
 					})
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -176,9 +176,9 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new PublicKeyAccessCondition({
-						key: session.peers[1].peerId,
+						key: session.peers[1].peerId
 					}),
-					accessTypes: [AccessType.Any],
+					accessTypes: [AccessType.Any]
 				})
 			);
 
@@ -188,7 +188,7 @@ describe("index", () => {
 			await waitFor(() => l0b.accessController.access.index.size === 1);
 			await l0b.store.put(
 				new Document({
-					id: "2",
+					id: "2"
 				})
 			); // Now trusted
 		});
@@ -196,13 +196,13 @@ describe("index", () => {
 		it("through trust chain", async () => {
 			const l0a = await session.peers[0].open(
 				new TestStore({
-					publicKey: session.peers[0].peerId,
+					publicKey: session.peers[0].peerId
 				})
 			);
 
 			await l0a.store.put(
 				new Document({
-					id: "1",
+					id: "1"
 				})
 			);
 
@@ -222,7 +222,7 @@ describe("index", () => {
 			await expect(
 				l0c.store.put(
 					new Document({
-						id: "id",
+						id: "id"
 					})
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -230,9 +230,9 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new PublicKeyAccessCondition({
-						key: session.peers[1].peerId,
+						key: session.peers[1].peerId
 					}),
-					accessTypes: [AccessType.Any],
+					accessTypes: [AccessType.Any]
 				})
 			);
 
@@ -246,7 +246,7 @@ describe("index", () => {
 			await expect(
 				l0c.store.put(
 					new Document({
-						id: "id",
+						id: "id"
 					})
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
@@ -266,7 +266,7 @@ describe("index", () => {
 			);
 			await l0c.store.put(
 				new Document({
-					id: "2",
+					id: "2"
 				})
 			); // Now trusted
 		});
@@ -274,13 +274,13 @@ describe("index", () => {
 		it("any access", async () => {
 			const l0a = await session.peers[0].open(
 				new TestStore({
-					publicKey: session.peers[0].peerId,
+					publicKey: session.peers[0].peerId
 				})
 			);
 
 			await l0a.store.put(
 				new Document({
-					id: "1",
+					id: "1"
 				})
 			);
 
@@ -295,14 +295,14 @@ describe("index", () => {
 			await expect(
 				l0b.store.put(
 					new Document({
-						id: "id",
+						id: "id"
 					})
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
 
 			const access = new Access({
 				accessCondition: new AnyAccessCondition(),
-				accessTypes: [AccessType.Any],
+				accessTypes: [AccessType.Any]
 			});
 			expect(access.id).toBeDefined();
 			await l0a.accessController.access.put(access);
@@ -313,7 +313,7 @@ describe("index", () => {
 			await waitFor(() => l0b.accessController.access.index.size === 1);
 			await l0b.store.put(
 				new Document({
-					id: "2",
+					id: "2"
 				})
 			); // Now trusted
 		});
@@ -321,17 +321,17 @@ describe("index", () => {
 		it("read access", async () => {
 			const l0a = await session.peers[0].open(
 				new TestStore({
-					publicKey: session.peers[0].peerId,
+					publicKey: session.peers[0].peerId
 				})
 			);
 
 			await l0a.store.put(
 				new Document({
-					id: "1",
+					id: "1"
 				})
 			);
 			const l0b = await TestStore.open(l0a.address!, session.peers[1], {
-				args: { role: new Observer() },
+				args: { role: new Observer() }
 			});
 
 			await l0b.waitFor(session.peers[0].peerId);
@@ -342,13 +342,13 @@ describe("index", () => {
 						query: [
 							new StringMatch({
 								key: "id",
-								value: "1",
-							}),
-						],
+								value: "1"
+							})
+						]
 					}),
 					{
 						remote: true,
-						local: false,
+						local: false
 					}
 				);
 			};
@@ -358,7 +358,7 @@ describe("index", () => {
 			await l0a.accessController.access.put(
 				new Access({
 					accessCondition: new AnyAccessCondition(),
-					accessTypes: [AccessType.Read],
+					accessTypes: [AccessType.Read]
 				}).initialize()
 			);
 			await l0b.accessController.access.log.log.join(
@@ -371,9 +371,9 @@ describe("index", () => {
 					query: [
 						new StringMatch({
 							key: "id",
-							value: "1",
-						}),
-					],
+							value: "1"
+						})
+					]
 				})
 			);
 
@@ -385,7 +385,7 @@ describe("index", () => {
 	it("manifests are not unique", async () => {
 		const l0a = await session.peers[0].open(
 			new TestStore({
-				publicKey: session.peers[0].peerId,
+				publicKey: session.peers[0].peerId
 			})
 		);
 
@@ -397,21 +397,21 @@ describe("index", () => {
 	it("can query", async () => {
 		const l0a = await session.peers[0].open(
 			new TestStore({
-				publicKey: session.peers[0].peerId,
+				publicKey: session.peers[0].peerId
 			})
 		);
 
 		await l0a.accessController.access.put(
 			new Access({
 				accessCondition: new AnyAccessCondition(),
-				accessTypes: [AccessType.Any],
+				accessTypes: [AccessType.Any]
 			}).initialize()
 		);
 
 		const l0b = await TestStore.open(l0a.address!, session.peers[1], {
 			args: {
-				role: new Observer(),
-			},
+				role: new Observer()
+			}
 		});
 
 		// Allow all for easy query
@@ -424,13 +424,13 @@ describe("index", () => {
 
 		let results: Document[] = await l0b.accessController.access.index.search(
 			new SearchRequest({
-				query: [],
+				query: []
 			}),
 			{
 				remote: {
-					amount: 1,
+					amount: 1
 				},
-				local: false,
+				local: false
 			}
 		);
 

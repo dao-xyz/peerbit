@@ -27,25 +27,25 @@ export default defineConfig({
 		// baseURL: 'http://127.0.0.1:3000',
 
 		/* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
-		trace: "on-first-retry",
+		trace: "on-first-retry"
 	},
 
 	/* Configure projects for major browsers */
 	projects: [
 		{
 			name: "chromium",
-			use: { ...devices["Desktop Chrome"] },
+			use: { ...devices["Desktop Chrome"] }
 		},
 
 		{
 			name: "firefox",
-			use: { ...devices["Desktop Firefox"] },
+			use: { ...devices["Desktop Firefox"] }
 		},
 
 		{
 			name: "webkit",
-			use: { ...devices["Desktop Safari"] },
-		},
+			use: { ...devices["Desktop Safari"] }
+		}
 
 		/* Test against mobile viewports. */
 		// {
@@ -73,12 +73,12 @@ export default defineConfig({
 		{
 			command: "yarn --cwd ./child start",
 			url: "http://localhost:5173",
-			reuseExistingServer: !process.env.CI,
+			reuseExistingServer: !process.env.CI
 		},
 		{
 			command: "yarn --cwd ./parent start",
 			url: "http://localhost:5174",
-			reuseExistingServer: !process.env.CI,
-		},
-	],
+			reuseExistingServer: !process.env.CI
+		}
+	]
 });

@@ -8,7 +8,7 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 	type PublishOptions,
-	SubscriptionData,
+	SubscriptionData
 } from "@peerbit/pubsub-interface";
 import { field, variant, vec, option, deserialize } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
@@ -272,27 +272,27 @@ export const createCustomEventFromType = (
 ) => {
 	if (type === "data") {
 		return new CustomEvent<DataEvent>("data", {
-			detail: deserialize(data, DataEvent),
+			detail: deserialize(data, DataEvent)
 		});
 	} else if (type === "message") {
 		return new CustomEvent<StreamMessage>("message", {
-			detail: deserialize(data, StreamMessage),
+			detail: deserialize(data, StreamMessage)
 		});
 	} else if (type === "peer:reachable") {
 		return new CustomEvent<PublicSignKey>("peer:reachable", {
-			detail: deserialize(data, PublicSignKey),
+			detail: deserialize(data, PublicSignKey)
 		});
 	} else if (type === "peer:unreachable") {
 		return new CustomEvent<PublicSignKey>("peer:unreachable", {
-			detail: deserialize(data, PublicSignKey),
+			detail: deserialize(data, PublicSignKey)
 		});
 	} else if (type === "subscribe") {
 		return new CustomEvent<SubscriptionEvent>("subscribe", {
-			detail: deserialize(data, SubscriptionEvent),
+			detail: deserialize(data, SubscriptionEvent)
 		});
 	} else if (type === "unsubscribe") {
 		return new CustomEvent<UnsubcriptionEvent>("subscribe", {
-			detail: deserialize(data, UnsubcriptionEvent),
+			detail: deserialize(data, UnsubcriptionEvent)
 		});
 	} else throw new Error("Unsupported event type: " + String(type));
 };

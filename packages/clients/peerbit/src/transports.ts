@@ -6,12 +6,12 @@ import { all } from "@libp2p/websockets/filters";
 export const transports = () => [
 	webSockets({ filter: all }),
 	circuitRelayTransport(),
-	tcp(),
+	tcp()
 ];
 export const relay = () =>
 	circuitRelayServer({ reservations: { maxReservations: 1000 } });
 
 export const listen: () => string[] | undefined = () => [
 	"/ip4/127.0.0.1/tcp/0",
-	"/ip4/127.0.0.1/tcp/0/ws",
+	"/ip4/127.0.0.1/tcp/0/ws"
 ];

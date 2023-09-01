@@ -4,7 +4,7 @@ import {
 	stringifyCid,
 	cidifyString,
 	codecCodes,
-	checkDecodeBlock,
+	checkDecodeBlock
 } from "./block.js";
 import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
 import { CID } from "multiformats/cid";
@@ -69,7 +69,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			emitSelf: false,
 			signaturePolicy: "StrictNoSign",
 			messageProcessingConcurrency: 10,
-			canRelayMessage: options?.canRelayMessage ?? true,
+			canRelayMessage: options?.canRelayMessage ?? true
 		});
 
 		const localTimeout = options?.localTimeout || 1000;
@@ -89,7 +89,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				if (decoded instanceof BlockRequest && this._localStore) {
 					const cid = stringifyCid(decoded.cid);
 					const bytes = await this._localStore.get(cid, {
-						timeout: localTimeout,
+						timeout: localTimeout
 					});
 					if (!bytes) {
 						return;
@@ -158,14 +158,17 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		if (!promise) {
 			promise = new Promise<Block.Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
-					const timeoutCallback = setTimeout(() => {
-						resolve(undefined);
-					}, options.timeout || 30 * 1000);
+					const timeoutCallback = setTimeout(
+						() => {
+							resolve(undefined);
+						},
+						options.timeout || 30 * 1000
+					);
 
 					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
 						const value = await checkDecodeBlock(cidObject, bytes, {
 							codec,
-							hasher: options?.hasher,
+							hasher: options?.hasher
 						});
 
 						clearTimeout(timeoutCallback);

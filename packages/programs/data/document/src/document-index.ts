@@ -25,14 +25,14 @@ import {
 	SortDirection,
 	CloseIteratorRequest,
 	NoAccess,
-	AbstractSearchResult,
+	AbstractSearchResult
 } from "./query.js";
 import {
 	RPC,
 	RPCOptions,
 	RPCResponse,
 	queryAll,
-	MissingResponsesError,
+	MissingResponsesError
 } from "@peerbit/rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -378,7 +378,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						query as SearchRequest | SearchRequest | CollectNextRequest,
 						ctx.from,
 						{
-							canRead: properties.canRead,
+							canRead: properties.canRead
 						}
 					);
 					return new Results({
@@ -387,15 +387,15 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 							(r) =>
 								new ResultWithSource({
 									source: serialize(r.value),
-									context: r.context,
+									context: r.context
 								})
 						),
-						kept: BigInt(results.kept),
+						kept: BigInt(results.kept)
 					});
 				}
 			},
 			responseType: AbstractSearchResult,
-			queryType: AbstractSearchRequest,
+			queryType: AbstractSearchRequest
 		});
 	}
 
@@ -414,7 +414,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
 				new SearchRequest({
-					query: [new ByteMatchQuery({ key: this._indexByArr, value: key })],
+					query: [new ByteMatchQuery({ key: this._indexByArr, value: key })]
 				}),
 				options
 			);
@@ -425,9 +425,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					query: [
 						new StringMatch({
 							key: this._indexByArr,
-							value: stringValue,
-						}),
-					],
+							value: stringValue
+						})
+					]
 				}),
 				options
 			);
@@ -466,7 +466,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			if (filter(value)) {
 				results.push({
 					context: value.context,
-					value: await this.getDocument(value),
+					value: await this.getDocument(value)
 				});
 			}
 		}
@@ -496,10 +496,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								results: [
 									{
 										value: await this.getDocument(doc),
-										context: doc.context,
-									},
+										context: doc.context
+									}
 								],
-								kept: 0,
+								kept: 0
 						  }
 						: { results: [], kept: 0 };
 				} else if (
@@ -513,10 +513,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								results: [
 									{
 										value: await this.getDocument(doc),
-										context: doc.context,
-									},
+										context: doc.context
+									}
 								],
-								kept: 0,
+								kept: 0
 						  }
 						: { results: [], kept: 0 };
 				}
@@ -545,7 +545,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			if (results.length > 0) {
 				this._resultsCollectQueue.add(query.idString, {
 					arr: results,
-					from,
+					from
 				}); // cache resulst not returned
 			}
 
@@ -555,7 +555,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			if (!results) {
 				return {
 					results: [],
-					kept: 0,
+					kept: 0
 				};
 			}
 
@@ -718,13 +718,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								return new ResultWithSource({
 									context: r.context,
 									value: r.value,
-									source: payloadValue.data,
+									source: payloadValue.data
 								});
 							}
 							throw new Error("Unexpected");
 						})
 					),
-					kept: BigInt(results.kept),
+					kept: BigInt(results.kept)
 				});
 				options?.onResponse &&
 					options.onResponse(resultsObject, this.node.identity.publicKey);
@@ -900,14 +900,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 									visited.add(asString(this.indexByResolver(x.value)));
 									return { from, value: x.value, context: x.context };
 								}),
-							kept: Number(response.kept),
+							kept: Number(response.kept)
 						});
 					} else {
 						throw new Error(
 							"Unsupported result type: " + response?.constructor?.name
 						);
 					}
-				},
+				}
 			});
 
 			return done;
@@ -942,7 +942,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					// TODO batch to multiple 'to's
 					const collectRequest = new CollectNextRequest({
 						id: queryRequest.id,
-						amount: 10, //n - buffer.buffer.length,
+						amount: 10 //n - buffer.buffer.length,
 					});
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
@@ -977,7 +977,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 													return {
 														value: x.value,
 														context: x.context,
-														from: this.node.identity.publicKey,
+														from: this.node.identity.publicKey
 													};
 												})
 										);
@@ -997,7 +997,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								.request(collectRequest, {
 									...options,
 									stopper: (fn) => stopperFns.push(fn),
-									to: [peer],
+									to: [peer]
 								})
 								.then((response) =>
 									introduceEntries(response, this.type, this._sync, options)
@@ -1034,7 +1034,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 																return {
 																	value: x.value,
 																	context: x.context,
-																	from: response.from!,
+																	from: response.from!
 																};
 															})
 													);
@@ -1128,7 +1128,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					promises.push(
 						this._query.send(closeRequest, {
 							...options,
-							to: [peer],
+							to: [peer]
 						})
 					);
 				}
@@ -1139,7 +1139,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return {
 			close,
 			next,
-			done: () => done,
+			done: () => done
 		};
 	}
 }

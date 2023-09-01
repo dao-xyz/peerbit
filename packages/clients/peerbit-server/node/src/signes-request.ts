@@ -5,7 +5,7 @@ import {
 	fromBase64,
 	toBase64,
 	verify,
-	Ed25519PublicKey,
+	Ed25519PublicKey
 } from "@peerbit/crypto";
 import { deserialize, serialize, BinaryWriter } from "@dao-xyz/borsh";
 import http from "http";

@@ -33,20 +33,20 @@ describe("Iterator", function () {
 
 		it("returns a Symbol.iterator object", async () => {
 			const it = log1.iterator({
-				amount: 0,
+				amount: 0
 			});
 
 			expect(typeof it[Symbol.iterator]).toEqual("function");
 			assert.deepStrictEqual(it.next(), {
 				value: undefined,
-				done: true,
+				done: true
 			});
 		});
 
 		it("returns length from tail and amount", async () => {
 			const amount = 10;
 			const it = log1.iterator({
-				amount: amount,
+				amount: amount
 			});
 			const length = [...it].length;
 			expect(length).toEqual(10);
@@ -60,7 +60,7 @@ describe("Iterator", function () {
 			const amount = 10;
 			const it = log1.iterator({
 				amount: amount,
-				from: "head",
+				from: "head"
 			});
 			const length = [...it].length;
 			expect(length).toEqual(10);

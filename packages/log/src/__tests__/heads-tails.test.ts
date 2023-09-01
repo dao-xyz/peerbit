@@ -21,14 +21,14 @@ const createEvents = async (
 ) => {
 	let events: Events = {
 		cacheUpdates: 0,
-		gidsRemoved: [],
+		gidsRemoved: []
 	};
 	const cache = new LazyLevel(await createStore());
 	await log.open(store, signKey, {
 		cache,
 		onGidRemoved: (gids) => {
 			events.gidsRemoved.push(gids);
-		},
+		}
 	});
 	const queueFn = log.headsIndex.headsCache!.queue.bind(
 		log.headsIndex.headsCache
@@ -143,7 +143,7 @@ describe("head-tails", function () {
 			expect(heads.length).toEqual(2);
 			expect(heads.map((x) => x.hash)).toContainAllValues([
 				expectedHead1.hash,
-				expectedHead2.hash,
+				expectedHead2.hash
 			]);
 		});
 
@@ -191,7 +191,7 @@ describe("head-tails", function () {
 			expect(heads.length).toEqual(2);
 			expect(heads.map((x) => x.hash)).toContainAllValues([
 				expectedHead1.hash,
-				expectedHead2.hash,
+				expectedHead2.hash
 			]);
 		});
 
@@ -217,7 +217,7 @@ describe("head-tails", function () {
 			expect(heads.map((x) => x.hash)).toContainAllValues([
 				expectedHead1.hash,
 				expectedHead2.hash,
-				expectedHead3.hash,
+				expectedHead3.hash
 			]);
 		});
 
@@ -234,13 +234,13 @@ describe("head-tails", function () {
 				*/
 
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]), {
-					meta: { next: [] },
+					meta: { next: [] }
 				});
 				const { entry: b1 } = await log1.append(new Uint8Array([1, 0]), {
-					meta: { next: [] },
+					meta: { next: [] }
 				});
 				const { entry: ab1 } = await log1.append(new Uint8Array([0]), {
-					meta: { next: [a1, b1] },
+					meta: { next: [a1, b1] }
 				});
 				expect(log1Events.cacheUpdates).toEqual(3);
 				expect(log1Events.gidsRemoved).toHaveLength(1);
@@ -265,23 +265,23 @@ describe("head-tails", function () {
 				*/
 
 				const { entry: a0 } = await log1.append(new Uint8Array([0, 0]), {
-					meta: { next: [], gidSeed: Buffer.from("b") },
+					meta: { next: [], gidSeed: Buffer.from("b") }
 				});
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]), {
-					meta: { next: [a0] },
+					meta: { next: [a0] }
 				});
 				const { entry: b1 } = await log1.append(new Uint8Array([1, 0]), {
-					meta: { next: [], gidSeed: Buffer.from("a") },
+					meta: { next: [], gidSeed: Buffer.from("a") }
 				});
 
 				// b2
 				const _b2 = await log1.append(new Uint8Array([1, 1]), {
-					meta: { next: [b1] },
+					meta: { next: [b1] }
 				});
 
 				// a2
 				const a2 = await log1.append(new Uint8Array([0, 2]), {
-					meta: { next: [a1, b1] },
+					meta: { next: [a1, b1] }
 				});
 
 				// this test only makes sense to do, we try to make b1 gid "removable", i.e. by using a1 gid instead for a2
@@ -314,12 +314,12 @@ describe("head-tails", function () {
 			await log1.close();
 			log1 = new Log();
 			await log1.open(store, signKey, {
-				trim: { type: "length", to: 2 },
+				trim: { type: "length", to: 2 }
 			});
 			await log2.close();
 			log2 = new Log();
 			await log2.open(store, signKey, {
-				trim: { type: "length", to: 2 },
+				trim: { type: "length", to: 2 }
 			});
 			const { entry: a1 } = await log1.append(new Uint8Array([0, 0]));
 			const { entry: b1 } = await log2.append(new Uint8Array([1, 0]));
@@ -330,7 +330,7 @@ describe("head-tails", function () {
 			// the joined log will only contain the last two entries a2, b2
 			expect((await log1.toArray()).map((x) => x.hash)).toContainAllValues([
 				a2.hash,
-				b2.hash,
+				b2.hash
 			]);
 			expect(await log1.getTailHashes()).toContainAllValues([a1.hash, b1.hash]);
 		});

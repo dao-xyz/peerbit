@@ -8,7 +8,7 @@ import {
 	AbsoluteReplicas,
 	ReplicationLimitsOptions,
 	SharedLog,
-	SyncFilter,
+	SyncFilter
 } from "../../..";
 import { Role } from "../../../role";
 import { JSON_ENCODING } from "./encoding";
@@ -67,7 +67,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			replicas: properties?.replicas,
 			sync: properties?.sync,
 			encoding: properties?.encoding || JSON_ENCODING,
-			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
+			respondToIHaveTimeout: properties?.respondToIHaveTimeout
 		});
 	}
 
@@ -85,7 +85,7 @@ export class EventStore<T> extends Program<Args<T>> {
 		return this.log.append(
 			{
 				op: "ADD",
-				value: data,
+				value: data
 			},
 			options
 		);
@@ -105,7 +105,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			next() {
 				let item: { value?: Entry<Operation<T>>; done: boolean } = {
 					value: undefined,
-					done: true,
+					done: true
 				};
 				if (currentIndex < messages.length) {
 					item = { value: messages[currentIndex], done: false };
@@ -113,7 +113,7 @@ export class EventStore<T> extends Program<Args<T>> {
 				}
 				return item;
 			},
-			collect: () => messages,
+			collect: () => messages
 		};
 
 		return iterator;

@@ -10,14 +10,14 @@ import {
 	PublicSignKey,
 	X25519PublicKey,
 	KeypairFromPublicKey,
-	randomBytes,
+	randomBytes
 } from "@peerbit/crypto";
 import { PubSub, PubSubEvents } from "@peerbit/pubsub-interface";
 import {
 	Address,
 	OpenOptions,
 	Program,
-	ProgramHandler,
+	ProgramHandler
 } from "@peerbit/program";
 import { ProgramClient } from "@peerbit/program";
 import { sha256Base64 } from "@peerbit/crypto";
@@ -74,7 +74,7 @@ export class PeerbitProxyClient implements ProgramClient {
 
 						subscription = {
 							counter: 1,
-							messageId: emitMessageIdStr,
+							messageId: emitMessageIdStr
 						};
 						eventListenerSubscribeCounter.set(type, subscription);
 						this._responseCallbacks.set(emitMessageIdStr, {
@@ -89,7 +89,7 @@ export class PeerbitProxyClient implements ProgramClient {
 									);
 								}
 							},
-							once: false,
+							once: false
 						});
 						await this.request<pubsub.RESP_AddEventListener>(request);
 					} else {
@@ -152,7 +152,7 @@ export class PeerbitProxyClient implements ProgramClient {
 					await this.request<pubsub.RESP_PubsubWaitFor>(
 						new pubsub.REQ_PubsubWaitFor(publicKey)
 					);
-				},
+				}
 			},
 			blocks: {
 				get: async (cid, options) => {
@@ -181,8 +181,8 @@ export class PeerbitProxyClient implements ProgramClient {
 					await this.request<blocks.RESP_BlockWaitFor>(
 						new blocks.REQ_BlockWaitFor(publicKey)
 					);
-				},
-			},
+				}
+			}
 		};
 		this._keychain = {
 			exportById: async <
@@ -212,7 +212,7 @@ export class PeerbitProxyClient implements ProgramClient {
 				await this.request<keychain.RESP_ImportKey>(
 					new keychain.REQ_ImportKey(keypair, id)
 				);
-			},
+			}
 		};
 		const levelMap: Map<string, SimpleLevel> = new Map();
 		const createMemory = (level: string[] = []): SimpleLevel => {
@@ -265,7 +265,7 @@ export class PeerbitProxyClient implements ProgramClient {
 				},
 				open: async () => {
 					await this.request<memory.RESP_Open>(new memory.REQ_Open({ level }));
-				},
+				}
 			};
 		};
 		this._memory = createMemory();

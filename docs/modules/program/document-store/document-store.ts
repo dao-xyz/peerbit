@@ -12,7 +12,7 @@ import {
 	MissingField,
 	PutOperation,
 	SearchRequest,
-	Sort,
+	Sort
 } from "@peerbit/document";
 /// [imports]
 
@@ -44,7 +44,7 @@ enum ReactionType {
 	THUMBS_UP = 0,
 	THUMBS_DOWN = 1,
 	HAHA = 2,
-	HEART = 3,
+	HEART = 3
 }
 
 const REACTION_ID_PROPERTY = "id";
@@ -83,11 +83,11 @@ export class Channel extends Program<ChannelArgs> {
 	constructor() {
 		super();
 		this.posts = new Documents({
-			index: new DocumentIndex(),
+			index: new DocumentIndex()
 		});
 
 		this.reactions = new Documents({
-			index: new DocumentIndex(),
+			index: new DocumentIndex()
 		});
 	}
 
@@ -130,7 +130,7 @@ export class Channel extends Program<ChannelArgs> {
 						[POST_MESSAGE_PROPERTY]: post.message,
 						[POST_FROM_PROPERTY]: (await this.posts.log.log.get(context.head))
 							?.signatures[0].publicKey.bytes,
-						[POST_TIMESTAMP_PROPERTY]: context.modified,
+						[POST_TIMESTAMP_PROPERTY]: context.modified
 					};
 				},
 
@@ -142,25 +142,25 @@ export class Channel extends Program<ChannelArgs> {
 				canSearch: (query, publicKey) => {
 					// determine whether publicKey can perform query
 					return true;
-				},
+				}
 			},
 			replicas: {
 				// How many times should posts at least be replicated
 				min: 2,
 				// How many times at most can a post be replicated?
-				max: undefined,
+				max: undefined
 			},
 			canReplicate: (publicKey: PublicSignKey) => {
 				return true; // Create logic who we trust to be a replicator (and indexer)
-			},
+			}
 		});
 
 		await this.reactions.open({
 			type: Reaction,
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
-				key: REACTION_ID_PROPERTY,
-			},
+				key: REACTION_ID_PROPERTY
+			}
 			// we don't provide an index here, which means we will index all fields of Reaction
 		});
 	}
@@ -182,7 +182,7 @@ const channelFromClient2 = await peer2.open<Channel, ChannelArgs>(
 	channelFromClient1.address!,
 	{
 		// Observer will not store anything unless explicitly doing so
-		args: { role: new Observer() }, // or new Replicator() (default))
+		args: { role: new Observer() } // or new Replicator() (default))
 	}
 );
 
@@ -198,12 +198,12 @@ await channelFromClient1.posts.put(message1);
 // passing { unique: true } will disable the validation check for duplicates, this is useful
 // if you know the id is unique in advance (for performance reasons)
 await channelFromClient1.posts.put(new Post("The Shoebill is terrifying"), {
-	unique: true,
+	unique: true
 });
 
 const message3 = new Post("No, it just a big duck");
 await channelFromClient2.posts.put(message3, {
-	replicas: 10, // this is an very important message, so lets notify peers we want a high replication degree on it
+	replicas: 10 // this is an very important message, so lets notify peers we want a high replication degree on it
 });
 
 // Since the first node is a replicator, it will eventually get all messages
@@ -247,14 +247,14 @@ await waitForResolved(() =>
 const posts: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
 		query: [new MissingField({ key: POST_PARENT_POST_ID })],
-		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }),
+		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	})
 );
 expect(posts).toHaveLength(3);
 expect(posts.map((x) => x.message)).toEqual([
 	"hello world",
 	"The Shoebill is terrifying",
-	"No, it just a big duck",
+	"No, it just a big duck"
 ]);
 
 /// [search-all]
@@ -263,11 +263,11 @@ expect(posts.map((x) => x.message)).toEqual([
 const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
 		query: [new MissingField({ key: POST_PARENT_POST_ID })],
-		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }),
+		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	}),
 	{
 		remote: false,
-		local: true,
+		local: true
 	}
 );
 expect(postsLocally).toHaveLength(1);
@@ -281,15 +281,15 @@ const postsFromClient1: Post[] = await channelFromClient2.posts.index.search(
 		query: [
 			new ByteMatchQuery({
 				key: POST_FROM_PROPERTY,
-				value: peer.identity.publicKey.bytes,
-			}),
-		],
+				value: peer.identity.publicKey.bytes
+			})
+		]
 	})
 );
 expect(postsFromClient1).toHaveLength(2);
 expect(postsFromClient1.map((x) => x.message)).toEqual([
 	"hello world",
-	"The Shoebill is terrifying",
+	"The Shoebill is terrifying"
 ]);
 
 /// [search-from-one]
@@ -299,8 +299,8 @@ expect(postsFromClient1.map((x) => x.message)).toEqual([
 const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
 	new SearchRequest({
 		query: [
-			new StringMatch({ key: [REACTION_POST_ID_PROPERTY], value: posts[2].id }),
-		],
+			new StringMatch({ key: [REACTION_POST_ID_PROPERTY], value: posts[2].id })
+		]
 	})
 );
 
@@ -319,7 +319,7 @@ import {
 	Or,
 	And,
 	Observer,
-	Role,
+	Role
 } from "@peerbit/document";
 import { PublicSignKey } from "@peerbit/crypto";
 
@@ -330,49 +330,49 @@ new SearchRequest({
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			method: StringMatchMethod.contains,
+			method: StringMatchMethod.contains
 		}), // string matches somewhere
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			method: StringMatchMethod.exact,
+			method: StringMatchMethod.exact
 		}), // default
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			method: StringMatchMethod.prefix,
+			method: StringMatchMethod.prefix
 		}), // prefix match
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			caseInsensitive: true,
+			caseInsensitive: true
 		}),
 
 		// Integers
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.Equal,
+			compare: Compare.Equal
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.Greater,
+			compare: Compare.Greater
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.GreaterOrEqual,
+			compare: Compare.GreaterOrEqual
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.Less,
+			compare: Compare.Less
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.LessOrEqual,
+			compare: Compare.LessOrEqual
 		}),
 
 		// Boolean
@@ -390,11 +390,11 @@ new SearchRequest({
 				new IntegerCompare({
 					key: "integerProperty",
 					value: 123,
-					compare: Compare.Less,
-				}),
-			]),
-		]),
-	],
+					compare: Compare.Less
+				})
+			])
+		])
+	]
 });
 /// [query-detailed]
 
@@ -403,8 +403,8 @@ new SearchRequest({
 	query: [],
 	sort: [
 		new Sort({ key: "someProperty" }), // ascending sort direction (default)
-		new Sort({ key: "anotherProperty", direction: SortDirection.DESC }),
-	],
+		new Sort({ key: "anotherProperty", direction: SortDirection.DESC })
+	]
 });
 
 /// [sort-detailed]

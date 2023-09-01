@@ -6,7 +6,7 @@ import {
 	DirectStream,
 	DirectStreamComponents,
 	DirectStreamOptions,
-	PeerStreams,
+	PeerStreams
 } from "@peerbit/stream";
 
 import { CodeError } from "@libp2p/interface/errors";
@@ -22,7 +22,7 @@ import {
 	SubscriptionEvent,
 	PubSub,
 	DataEvent,
-	SubscriptionData,
+	SubscriptionData
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interface/events";
@@ -121,7 +121,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			} else {
 				this.subscriptions.set(t, {
 					counter: 1,
-					data: options?.data,
+					data: options?.data
 				});
 
 				newTopicsForTopicData.push(t);
@@ -135,9 +135,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					new Subscribe({
 						subscriptions: newTopicsForTopicData.map(
 							(x) => new Subscription(x, options?.data)
-						),
+						)
 					}).bytes()
-				),
+				)
 			});
 
 			await this.publishMessage(
@@ -185,7 +185,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			await this.publishMessage(
 				this.components.peerId,
 				await new DataMessage({
-					data: toUint8Array(new Unsubscribe({ topics: [topic] }).bytes()),
+					data: toUint8Array(new Unsubscribe({ topics: [topic] }).bytes())
 				}).sign(this.sign)
 			);
 			return true;
@@ -262,7 +262,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			this.components.peerId,
 			await new DataMessage({
 				to: from ? [from.hashcode()] : [],
-				data: toUint8Array(new GetSubscribers({ topics }).bytes()),
+				data: toUint8Array(new GetSubscribers({ topics }).bytes())
 			}).sign(this.sign)
 		);
 	}
@@ -321,7 +321,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		const dataMessage = new PubSubData({
 			topics: topics.map((x) => x.toString()),
 			data,
-			strict: options.strict,
+			strict: options.strict
 		});
 
 		const bytes = dataMessage.bytes();
@@ -330,7 +330,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 		if (this.emitSelf) {
 			super.dispatchEvent(
-				new CustomEvent("data", { detail: new DataEvent(dataMessage, message) })
+				new CustomEvent("data", {
+					detail: new DataEvent(dataMessage, message)
+				})
 			);
 		}
 
@@ -377,7 +379,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		if (changed.length > 0) {
 			this.dispatchEvent(
 				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-					detail: new UnsubcriptionEvent(publicKey, changed),
+					detail: new UnsubcriptionEvent(publicKey, changed)
 				})
 			);
 		}
@@ -448,7 +450,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					}
 					this.dispatchEvent(
 						new CustomEvent("data", {
-							detail: new DataEvent(pubsubMessage, message),
+							detail: new DataEvent(pubsubMessage, message)
 						})
 					);
 				}
@@ -520,7 +522,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						new SubscriptionData({
 							timestamp: message.header.timetamp, // TODO update timestamps on all messages?
 							data: subscription.data,
-							publicKey: subscriber,
+							publicKey: subscriber
 						})
 					);
 					if (
@@ -537,7 +539,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			if (changed.length > 0) {
 				this.dispatchEvent(
 					new CustomEvent<SubscriptionEvent>("subscribe", {
-						detail: new SubscriptionEvent(subscriber, changed),
+						detail: new SubscriptionEvent(subscriber, changed)
 					})
 				);
 			}
@@ -577,7 +579,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			if (changed.length > 0) {
 				this.dispatchEvent(
 					new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-						detail: new UnsubcriptionEvent(subscriber, changed),
+						detail: new UnsubcriptionEvent(subscriber, changed)
 					})
 				);
 			}
@@ -615,9 +617,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					await new DataMessage({
 						data: toUint8Array(
 							new Subscribe({
-								subscriptions: subscriptionsToSend,
+								subscriptions: subscriptionsToSend
 							}).bytes()
-						),
+						)
 					}).sign(this.sign),
 					[stream]
 				); // send back to same stream

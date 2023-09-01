@@ -5,7 +5,7 @@ import {
 	waitForPeers as waitForPeerStreams,
 	DirectStream,
 	ConnectionManagerOptions,
-	DirectStreamComponents,
+	DirectStreamComponents
 } from "..";
 import { DataMessage, Message, getMsgId } from "@peerbit/stream-interface";
 import { PublicSignKey } from "@peerbit/crypto";
@@ -31,7 +31,7 @@ const createMetrics = (stream: DirectStream) => {
 		reachable: [],
 		unrechable: [],
 		seen: new Map(),
-		stream,
+		stream
 	};
 	s.stream.addEventListener("message", (msg) => {
 		s.messages.push(msg.detail);
@@ -67,9 +67,9 @@ class TestDirectStream extends DirectStream {
 			canRelayMessage: true,
 			emitSelf: true,
 			connectionManager: options.connectionManager || {
-				autoDial: false,
+				autoDial: false
 			},
-			...options,
+			...options
 		});
 	}
 }
@@ -84,8 +84,8 @@ const connected = async (
 		n,
 		options || {
 			services: {
-				directstream: (components) => new TestDirectStream(components, options),
-			},
+				directstream: (components) => new TestDirectStream(components, options)
+			}
 		}
 	);
 	return session;
@@ -101,8 +101,8 @@ const disconnected = async (
 		n,
 		options || {
 			services: {
-				directstream: (components) => new TestDirectStream(components, options),
-			},
+				directstream: (components) => new TestDirectStream(components, options)
+			}
 		}
 	);
 	return session;
@@ -160,8 +160,8 @@ describe("streams", function () {
 			// 0 and 2 not connected
 			session = await connected(2, {
 				services: {
-					directstream: (c) => new TestDirectStream(c, { pingInterval: 1000 }),
-				},
+					directstream: (c) => new TestDirectStream(c, { pingInterval: 1000 })
+				}
 			});
 			await waitForPeers(session);
 
@@ -190,9 +190,9 @@ describe("streams", function () {
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
-								connectionManager: { autoDial: false },
-							}),
-					},
+								connectionManager: { autoDial: false }
+							})
+					}
 				});
 
 				/* 
@@ -218,7 +218,7 @@ describe("streams", function () {
 					// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
 					[session.peers[0], session.peers[1]],
 					[session.peers[1], session.peers[2]],
-					[session.peers[2], session.peers[3]],
+					[session.peers[2], session.peers[3]]
 				]);
 
 				await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
@@ -239,7 +239,7 @@ describe("streams", function () {
 				}
 				await waitFor(() => metrics[2].received.length === iterations, {
 					delayInterval: 300,
-					timeout: 30 * 1000,
+					timeout: 30 * 1000
 				});
 			});
 
@@ -260,7 +260,7 @@ describe("streams", function () {
 				metrics[2].seen.clear();
 
 				await metrics[0].stream.publish(data, {
-					to: [metrics[1].stream.components.peerId],
+					to: [metrics[1].stream.components.peerId]
 				});
 				await waitFor(() => metrics[1].received.length === 1);
 				let receivedMessage = metrics[1].received[0];
@@ -283,7 +283,7 @@ describe("streams", function () {
 
 			it("1->3", async () => {
 				await metrics[0].stream.publish(data, {
-					to: [metrics[2].stream.components.peerId],
+					to: [metrics[2].stream.components.peerId]
 				});
 				await waitForResolved(() =>
 					expect(metrics[2].received).toHaveLength(1)
@@ -297,7 +297,7 @@ describe("streams", function () {
 			it("1->3 10mb data", async () => {
 				const bigData = crypto.randomBytes(1e7);
 				await metrics[0].stream.publish(bigData, {
-					to: [metrics[2].stream.components.peerId],
+					to: [metrics[2].stream.components.peerId]
 				});
 
 				await waitForResolved(() =>
@@ -315,7 +315,7 @@ describe("streams", function () {
 				metrics[0].stream.routes.clear();
 				metrics[1].stream.routes.clear();
 				await metrics[0].stream.publish(data, {
-					to: [metrics[2].stream.components.peerId],
+					to: [metrics[2].stream.components.peerId]
 				});
 				await waitForResolved(() =>
 					expect(metrics[2].received).toHaveLength(1)
@@ -340,7 +340,7 @@ describe("streams", function () {
 					1e5
 				);
 				await metrics[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [metrics[2].stream.components.peerId],
+					to: [metrics[2].stream.components.peerId]
 				});
 				metrics[1].messages = [];
 				await waitForResolved(() =>
@@ -393,7 +393,7 @@ describe("streams", function () {
 				};
 
 				await metrics[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 
 				metrics[1].messages = [];
@@ -427,7 +427,7 @@ describe("streams", function () {
 					).length
 				).toEqual(2);
 				await metrics[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 				await waitFor(() => metrics[3].received.length === 1);
 				const messages = metrics[1].messages.filter(
@@ -450,9 +450,9 @@ describe("streams", function () {
 						services: {
 							directstream: (c) =>
 								new TestDirectStream(c, {
-									connectionManager: { autoDial: false },
-								}),
-						},
+									connectionManager: { autoDial: false }
+								})
+						}
 					});
 					metrics = [];
 					for (const peer of session.peers) {
@@ -475,7 +475,7 @@ describe("streams", function () {
 					metrics[2].stream.canRelayMessage = false; // so that 2 does not relay to 0
 					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg, [
 						metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!,
-						metrics[1].stream.peers.get(metrics[2].stream.publicKeyHash)!,
+						metrics[1].stream.peers.get(metrics[2].stream.publicKeyHash)!
 					]);
 					const msgId = await getMsgId(msg.bytes());
 					await waitForResolved(() =>
@@ -492,8 +492,8 @@ describe("streams", function () {
 						data: new Uint8Array([0]),
 						to: [
 							metrics[0].stream.publicKeyHash,
-							metrics[2].stream.publicKeyHash,
-						],
+							metrics[2].stream.publicKeyHash
+						]
 					});
 					await msg.sign(metrics[1].stream.sign);
 					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg);
@@ -509,14 +509,14 @@ describe("streams", function () {
 					await msg.sign(metrics[1].stream.sign);
 					await expect(
 						metrics[1].stream.publishMessage(session.peers[0].peerId, msg, [
-							metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!,
+							metrics[1].stream.peers.get(metrics[0].stream.publicKeyHash)!
 						])
 					).rejects.toThrowError("Message did not have any valid receivers");
 				});
 				it("rejects when only to is from", async () => {
 					const msg = new DataMessage({
 						data: new Uint8Array([0]),
-						to: [metrics[1].stream.publicKeyHash],
+						to: [metrics[1].stream.publicKeyHash]
 					});
 					await msg.sign(metrics[1].stream.sign);
 					await metrics[1].stream.publishMessage(session.peers[0].peerId, msg);
@@ -534,7 +534,7 @@ describe("streams", function () {
 					// make sure message is received
 					const msg = new DataMessage({
 						data: new Uint8Array([0]),
-						to: [metrics[2].stream.publicKeyHash],
+						to: [metrics[2].stream.publicKeyHash]
 					});
 					await msg.sign(metrics[1].stream.sign);
 					await metrics[0].stream.publishMessage(session.peers[0].peerId, msg);
@@ -573,9 +573,9 @@ describe("streams", function () {
 						services: {
 							directstream: (c) =>
 								new TestDirectStream(c, {
-									connectionManager: { autoDial: false },
-								}),
-						},
+									connectionManager: { autoDial: false }
+								})
+						}
 					});
 					metrics = [];
 					for (const peer of session.peers) {
@@ -590,7 +590,7 @@ describe("streams", function () {
 						[session.peers[1], session.peers[4]],
 
 						[session.peers[2], session.peers[3]],
-						[session.peers[2], session.peers[4]],
+						[session.peers[2], session.peers[4]]
 					]);
 
 					await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
@@ -625,8 +625,8 @@ describe("streams", function () {
 					metrics[0].stream.publish(data, {
 						to: [
 							metrics[3].stream.publicKeyHash,
-							metrics[4].stream.publicKeyHash,
-						],
+							metrics[4].stream.publicKeyHash
+						]
 					});
 					await waitForResolved(() =>
 						expect(metrics[3].received).toHaveLength(1)
@@ -665,10 +665,10 @@ describe("streams", function () {
 									new TestDirectStream(c, {
 										connectionManager: {
 											autoDial: i === 0, // allow client 0 to auto dial
-											retryDelay: autoDialRetryDelay,
-										},
-									}),
-							},
+											retryDelay: autoDialRetryDelay
+										}
+									})
+							}
 						};
 					})
 				); // Second arg is due to https://github.com/transport/js-libp2p/issues/1690
@@ -735,7 +735,7 @@ describe("streams", function () {
 				expect(metrics[0].stream.peers.size).toEqual(1);
 
 				await metrics[0].stream.publish(data, {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 
 				await waitFor(() => metrics[3].received.length === 1);
@@ -754,7 +754,7 @@ describe("streams", function () {
 
 				// Republishing will not result in an additional dial
 				await metrics[0].stream.publish(data, {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 				await waitFor(() => metrics[3].received.length === 2);
 				expect(dials).toEqual(1);
@@ -781,7 +781,7 @@ describe("streams", function () {
 				expect(metrics[0].stream.peers.size).toEqual(1);
 
 				await metrics[0].stream.publish(data, {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 
 				await waitFor(() => metrics[3].received.length === 1);
@@ -796,7 +796,7 @@ describe("streams", function () {
 
 				// Republishing will not result in an additional dial
 				await metrics[0].stream.publish(data, {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 				let t1 = +new Date();
 				expect(dials).toHaveLength(expectedDialsCount); // No change, because TTL > autoDialRetryTimeout
@@ -806,7 +806,7 @@ describe("streams", function () {
 
 				// Try again, now expect another dial call, since the retry interval has been reached
 				await metrics[0].stream.publish(data, {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 				expect(dials).toHaveLength(expectedDialsCount * 2); // 1 dial directly, X dials through neighbour as relay
 			});
@@ -848,7 +848,7 @@ describe("streams", function () {
 					filteredDial;
 				expect(metrics[0].stream.peers.size).toEqual(1);
 				await metrics[0].stream.publish(data, {
-					to: [metrics[3].stream.components.peerId],
+					to: [metrics[3].stream.components.peerId]
 				});
 				await waitFor(() => metrics[3].received.length === 1);
 			});
@@ -860,9 +860,9 @@ describe("streams", function () {
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
-								connectionManager: { autoDial: false },
-							}),
-					},
+								connectionManager: { autoDial: false }
+							})
+					}
 				});
 
 				/* 
@@ -905,17 +905,17 @@ describe("streams", function () {
 
 				expect([...metrics[0].stream.peers.keys()]).toEqual([
 					metrics[1].stream.publicKeyHash,
-					metrics[3].stream.publicKeyHash,
+					metrics[3].stream.publicKeyHash
 				]);
 				expect([...metrics[1].stream.peers.keys()]).toEqual([
 					metrics[0].stream.publicKeyHash,
-					metrics[2].stream.publicKeyHash,
+					metrics[2].stream.publicKeyHash
 				]);
 				expect([...metrics[2].stream.peers.keys()]).toEqual([
-					metrics[1].stream.publicKeyHash,
+					metrics[1].stream.publicKeyHash
 				]);
 				expect([...metrics[3].stream.peers.keys()]).toEqual([
-					metrics[0].stream.publicKeyHash,
+					metrics[0].stream.publicKeyHash
 				]);
 
 				for (const peer of metrics) {
@@ -963,7 +963,7 @@ describe("streams", function () {
 				await waitFor(() =>
 					hasAll(metrics[1].unrechable, [
 						metrics[0].stream.publicKey,
-						metrics[3].stream.publicKey,
+						metrics[3].stream.publicKey
 					])
 				);
 
@@ -972,7 +972,7 @@ describe("streams", function () {
 					hasAll(metrics[2].unrechable, [
 						metrics[0].stream.publicKey,
 						metrics[1].stream.publicKey,
-						metrics[3].stream.publicKey,
+						metrics[3].stream.publicKey
 					])
 				);
 
@@ -981,7 +981,7 @@ describe("streams", function () {
 					hasAll(metrics[3].unrechable, [
 						metrics[0].stream.publicKey,
 						metrics[1].stream.publicKey,
-						metrics[2].stream.publicKey,
+						metrics[2].stream.publicKey
 					])
 				);
 				await session.peers[3].stop();
@@ -992,7 +992,7 @@ describe("streams", function () {
 				metrics[3].received = [];
 
 				await metrics[0].stream.publish(data, {
-					to: [metrics[2].stream.components.peerId],
+					to: [metrics[2].stream.components.peerId]
 				});
 				await waitFor(() => metrics[2].received.length === 1);
 				expect(
@@ -1092,15 +1092,15 @@ describe("streams", function () {
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
-								connectionManager: { autoDial: false },
-							}),
-					},
+								connectionManager: { autoDial: false }
+							})
+					}
 				});
 				await session.connect([
 					[session.peers[0], session.peers[1]],
 					[session.peers[1], session.peers[2]],
 					[session.peers[3], session.peers[4]],
-					[session.peers[4], session.peers[5]],
+					[session.peers[4], session.peers[5]]
 				]);
 
 				metrics = [];
@@ -1183,9 +1183,9 @@ describe("streams", function () {
 				services: {
 					directstream: (c) =>
 						new TestDirectStream(c, {
-							connectionManager: { autoDial: false },
-						}),
-				},
+							connectionManager: { autoDial: false }
+						})
+				}
 			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 
 			await waitFor(() => stream(session, 1).helloMap.size == 1);
@@ -1207,8 +1207,8 @@ describe("streams", function () {
 			session = await disconnected(2, {
 				transports: [tcp(), webSockets({ filter: filters.all })],
 				services: {
-					directstream: (c) => new TestDirectStream(c),
-				},
+					directstream: (c) => new TestDirectStream(c)
+				}
 			});
 
 			await session.connect();
@@ -1219,8 +1219,8 @@ describe("streams", function () {
 			session = await connected(2, {
 				transports: [tcp(), webSockets({ filter: filters.all })],
 				services: {
-					directstream: (c) => new TestDirectStream(c),
-				},
+					directstream: (c) => new TestDirectStream(c)
+				}
 			});
 			await delay(3000);
 
@@ -1234,8 +1234,8 @@ describe("streams", function () {
 			session = await connected(2, {
 				transports: [tcp(), webSockets({ filter: filters.all })],
 				services: {
-					directstream: (c) => new TestDirectStream(c),
-				},
+					directstream: (c) => new TestDirectStream(c)
+				}
 			});
 			await waitForPeerStreams(stream(session, 0), stream(session, 1));
 			await session.peers[0].services.directstream.stop();
@@ -1261,8 +1261,8 @@ describe("streams", function () {
 				services: {
 					directstream: (c) => new TestDirectStream(c),
 					directstream2: (c) =>
-						new TestDirectStream(c, { id: "another-protocol" }),
-				},
+						new TestDirectStream(c, { id: "another-protocol" })
+				}
 			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 		});
 

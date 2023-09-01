@@ -13,7 +13,7 @@ import {
 	RangeMetadatas,
 	StringMatch,
 	SearchRequest,
-	StringResult,
+	StringResult
 } from "./query.js";
 import { CustomEvent } from "@libp2p/interfaces/events";
 import { concat, fromString } from "uint8arrays";
@@ -86,7 +86,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		await this._log.open({
 			encoding,
 			replicas: {
-				min: 0xffffffff, // assume a document can not be sharded?
+				min: 0xffffffff // assume a document can not be sharded?
 			},
 			canAppend: async (entry) => {
 				const operation = await entry.getPayloadValue();
@@ -102,10 +102,10 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 				await this._index.updateIndex(change);
 				this.events.dispatchEvent(
 					new CustomEvent("change", {
-						detail: change,
+						detail: change
 					})
 				);
-			},
+			}
 		});
 
 		await this.query.open({
@@ -115,7 +115,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			),
 			responseHandler: this.queryHandler.bind(this),
 			queryType: SearchRequest,
-			responseType: StringResult,
+			responseType: StringResult
 		});
 	}
 
@@ -143,11 +143,11 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		return this._log.append(
 			new StringOperation({
 				index,
-				value,
+				value
 			}),
 			{
 				...options,
-				meta: { ...options?.meta, next: await this._log.log.getHeads() },
+				meta: { ...options?.meta, next: await this._log.log.getHeads() }
 			}
 		);
 	}
@@ -178,7 +178,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		if (relaventQueries.length == 0) {
 			logger.debug("Responding with all");
 			return new StringResult({
-				string: content,
+				string: content
 			});
 		}
 		const ranges = relaventQueries
@@ -190,7 +190,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 				return occurances.map((ix) => {
 					return new RangeMetadata({
 						offset: BigInt(ix),
-						length: BigInt(query.value.length),
+						length: BigInt(query.value.length)
 					});
 				});
 			})
@@ -204,8 +204,8 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		return new StringResult({
 			string: content,
 			metadatas: new RangeMetadatas({
-				metadatas: ranges,
-			}),
+				metadatas: ranges
+			})
 		});
 	}
 
@@ -219,7 +219,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			const counter: Map<string, number> = new Map();
 			const responses = await this.query.request(
 				new SearchRequest({
-					query: [],
+					query: []
 				}),
 				options.remote.queryOptions
 			);

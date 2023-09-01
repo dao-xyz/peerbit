@@ -5,12 +5,12 @@ import sodium from "libsodium-wrappers";
 import {
 	Keypair,
 	PrivateEncryptionKey,
-	PublicKeyEncryptionKey,
+	PublicKeyEncryptionKey
 } from "./key.js";
 import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
-	Ed25519PrivateKey,
+	Ed25519PrivateKey
 } from "./ed25519.js";
 import { toHexString } from "./utils.js";
 import { PeerId } from "@libp2p/interface/peer-id";
@@ -44,7 +44,7 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 		return new X25519PublicKey({
 			publicKey: sodium.crypto_sign_ed25519_pk_to_curve25519(
 				ed25119PublicKey.publicKey
-			),
+			)
 		});
 	}
 
@@ -57,7 +57,7 @@ export class X25519PublicKey extends PublicKeyEncryptionKey {
 	static async create(): Promise<X25519PublicKey> {
 		await sodium.ready;
 		return new X25519PublicKey({
-			publicKey: sodium.crypto_box_keypair().publicKey,
+			publicKey: sodium.crypto_box_keypair().publicKey
 		});
 	}
 }
@@ -89,7 +89,7 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 
 	async publicKey(): Promise<X25519PublicKey> {
 		return new X25519PublicKey({
-			publicKey: sodium.crypto_scalarmult_base(this.secretKey),
+			publicKey: sodium.crypto_scalarmult_base(this.secretKey)
 		});
 	}
 	static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519SecretKey> {
@@ -97,14 +97,14 @@ export class X25519SecretKey extends PrivateEncryptionKey {
 		return new X25519SecretKey({
 			secretKey: sodium.crypto_sign_ed25519_sk_to_curve25519(
 				ed25119Keypair.privateKeyPublicKey
-			),
+			)
 		});
 	}
 
 	static async create(): Promise<X25519SecretKey> {
 		await sodium.ready;
 		return new X25519SecretKey({
-			secretKey: sodium.crypto_box_keypair().privateKey,
+			secretKey: sodium.crypto_box_keypair().privateKey
 		});
 	}
 }
@@ -131,11 +131,11 @@ export class X25519Keypair extends Keypair {
 		const generated = sodium.crypto_box_keypair();
 		const kp = new X25519Keypair({
 			publicKey: new X25519PublicKey({
-				publicKey: generated.publicKey,
+				publicKey: generated.publicKey
 			}),
 			secretKey: new X25519SecretKey({
-				secretKey: generated.privateKey,
-			}),
+				secretKey: generated.privateKey
+			})
 		});
 
 		return kp;
@@ -144,7 +144,7 @@ export class X25519Keypair extends Keypair {
 	static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519Keypair> {
 		const kp = new X25519Keypair({
 			publicKey: await X25519PublicKey.from(ed25119Keypair.publicKey),
-			secretKey: await X25519SecretKey.from(ed25119Keypair),
+			secretKey: await X25519SecretKey.from(ed25119Keypair)
 		});
 		return kp;
 	}

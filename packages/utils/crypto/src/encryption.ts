@@ -5,7 +5,7 @@ import {
 	field,
 	serialize,
 	variant,
-	vec,
+	vec
 } from "@dao-xyz/borsh";
 import { equals } from "@peerbit/uint8arrays";
 import { AccessError } from "./errors.js";
@@ -97,9 +97,9 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 						receiverPublicKey.publicKey,
 						x25519Keypair.secretKey.secretKey
 					),
-					nonce: kNonce,
+					nonce: kNonce
 				}),
-				receiverPublicKey,
+				receiverPublicKey
 			});
 		});
 
@@ -108,8 +108,8 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 			nonce,
 			envelope: new Envelope({
 				senderPublicKey: x25519Keypair.publicKey,
-				ks,
-			}),
+				ks
+			})
 		});
 		enc._decrypted = this;
 		return enc;
@@ -284,7 +284,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 				if (k._receiverPublicKey.equals(keyResolver.publicKey)) {
 					key = {
 						index: i,
-						keypair: keyResolver,
+						keypair: keyResolver
 					};
 				}
 			}
@@ -294,7 +294,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 				if (exported) {
 					key = {
 						index: i,
-						keypair: exported,
+						keypair: exported
 					};
 					break;
 				}

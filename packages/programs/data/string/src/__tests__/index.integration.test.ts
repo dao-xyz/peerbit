@@ -7,7 +7,7 @@ import {
 	RangeMetadatas,
 	RangeMetadata,
 	StringOperation,
-	AbstractSearchResult,
+	AbstractSearchResult
 } from "../index.js";
 import { Range } from "../range.js";
 import { Observer } from "@peerbit/shared-log";
@@ -40,8 +40,8 @@ describe("query", () => {
 
 		await observer.open(observerStore, {
 			args: {
-				role: new Observer(),
-			},
+				role: new Observer()
+			}
 		});
 	});
 
@@ -59,14 +59,14 @@ describe("query", () => {
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length,
+				length: "world".length
 			})
 		);
 
 		let responses: AbstractSearchResult[] = (
 			await observerStore.query.request(
 				new SearchRequest({
-					query: [],
+					query: []
 				}),
 
 				{ amount: 1 }
@@ -77,7 +77,7 @@ describe("query", () => {
 		expect(responses[0]).toMatchObject(
 			new StringResult({
 				string: "hello world",
-				metadatas: undefined, //  because we are matching without any specific query
+				metadatas: undefined //  because we are matching without any specific query
 			})
 		);
 	});
@@ -91,7 +91,7 @@ describe("query", () => {
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length,
+				length: "world".length
 			})
 		);
 
@@ -101,13 +101,13 @@ describe("query", () => {
 					query: [
 						new StringMatch({
 							exactMatch: true,
-							value: "o w",
+							value: "o w"
 						}),
 						new StringMatch({
 							exactMatch: true,
-							value: "orld",
-						}),
-					],
+							value: "orld"
+						})
+					]
 				}),
 				{ amount: 1 }
 			)
@@ -120,14 +120,14 @@ describe("query", () => {
 					metadatas: [
 						new RangeMetadata({
 							length: BigInt("o w".length),
-							offset: BigInt("hell".length),
+							offset: BigInt("hell".length)
 						}),
 						new RangeMetadata({
 							length: BigInt("orld".length),
-							offset: BigInt("hello w".length),
-						}),
-					],
-				}),
+							offset: BigInt("hello w".length)
+						})
+					]
+				})
 			})
 		);
 	});
@@ -141,7 +141,7 @@ describe("query", () => {
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length,
+				length: "world".length
 			})
 		);
 
@@ -151,8 +151,8 @@ describe("query", () => {
 				callback: (s) => {
 					callbackValues.push(s);
 				},
-				queryOptions: { amount: 1 },
-			},
+				queryOptions: { amount: 1 }
+			}
 		});
 		expect(string).toEqual("hello world");
 		expect(callbackValues).toEqual(["hello world"]);
@@ -242,8 +242,8 @@ describe("events", () => {
 
 		await peer1.open(store2, {
 			args: {
-				role: new Observer(),
-			},
+				role: new Observer()
+			}
 		});
 	});
 
@@ -284,7 +284,7 @@ describe("events", () => {
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length,
+				length: "world".length
 			})
 		);
 

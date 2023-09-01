@@ -54,9 +54,9 @@ const peers = await Promise.all(
 				pubsub: (sub) =>
 					new DirectSub(sub, {
 						canRelayMessage: true,
-						connectionManager: { autoDial: false },
-					}),
-			},
+						connectionManager: { autoDial: false }
+					})
+			}
 		}),
 		await createLibp2pExtended({
 			transports: [tcp()],
@@ -64,9 +64,9 @@ const peers = await Promise.all(
 				pubsub: (sub) =>
 					new DirectSub(sub, {
 						canRelayMessage: true,
-						connectionManager: { autoDial: false },
-					}),
-			},
+						connectionManager: { autoDial: false }
+					})
+			}
 		}),
 		await createLibp2pExtended({
 			transports: [tcp()],
@@ -74,10 +74,10 @@ const peers = await Promise.all(
 				pubsub: (sub) =>
 					new DirectSub(sub, {
 						canRelayMessage: true,
-						connectionManager: { autoDial: false },
-					}),
-			},
-		}),
+						connectionManager: { autoDial: false }
+					})
+			}
+		})
 	].map((x) => Peerbit.create({ libp2p: x }))
 );
 
@@ -95,16 +95,16 @@ for (const [i, client] of peers.entries()) {
 	const settings = {
 		//canPerform: (e: Entry<any>) => e.verifySignatures(),
 		sync: () => true,
-		role: new Replicator() /* i === peers.length - 1 ? new Replicator() : new Observer(), */,
+		role: new Replicator() /* i === peers.length - 1 ? new Replicator() : new Observer(), */
 	};
 	let store: TestStore;
 	if (address) {
 		store = await client.open<TestStore, any>(address, {
-			args: settings,
+			args: settings
 		});
 	} else {
 		store = await client.open(new TestStore(), {
-			args: settings,
+			args: settings
 		});
 		address = store.address;
 	}
@@ -129,13 +129,13 @@ suite
 			const doc = new Document({
 				id: uuid(),
 				name: uuid(),
-				number: 2341n,
+				number: 2341n
 			});
 			// wait for reading
 			readerResolver.set(doc.id, deferred.resolve.bind(deferred));
 			await writeStore.docs.put(doc, { unique: true });
 		},
-		defer: true,
+		defer: true
 	})
 	.on("cycle", (event: any) => {
 		console.log(String(event.target));

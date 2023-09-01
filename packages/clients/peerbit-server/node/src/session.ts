@@ -13,13 +13,13 @@ export class Session {
 		this.imports = new KV(
 			this.level.sublevel<string, Uint8Array>("imports", {
 				keyEncoding: "utf8",
-				valueEncoding: "view",
+				valueEncoding: "view"
 			})
 		);
 		this.programs = new KV(
 			this.level.sublevel<string, Uint8Array>("programs", {
 				keyEncoding: "utf8",
-				valueEncoding: "view",
+				valueEncoding: "view"
 			})
 		);
 	}

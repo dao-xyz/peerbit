@@ -84,17 +84,17 @@ export class ClockService extends Program<Args> {
 							if (abs(now - cmp) > this._maxError) {
 								logger.info("Recieved an entry with an invalid timestamp");
 								return new SignError({
-									message: "Recieved an entry with an invalid timestamp",
+									message: "Recieved an entry with an invalid timestamp"
 								});
 							}
 							const signature = await this.node.identity.sign(
 								entry.toSignable()
 							);
 							return new Ok({
-								signature,
+								signature
 							});
 					  }
-					: undefined,
+					: undefined
 		});
 	}
 

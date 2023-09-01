@@ -177,7 +177,7 @@ export class PeerbitProxyHost implements ProgramClient {
 						message,
 						new memory.RESP_Get({
 							bytes: await m.get(message.key),
-							level: message.level,
+							level: message.level
 						}),
 						from
 					);
@@ -207,7 +207,7 @@ export class PeerbitProxyHost implements ProgramClient {
 						message,
 						new memory.RESP_Status({
 							status: await m.status(),
-							level: message.level,
+							level: message.level
 						}),
 						from
 					);
@@ -232,7 +232,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					new blocks.RESP_GetBlock(
 						await this.services.blocks.get(message.cid, {
 							replicate: message.replicate,
-							timeout: message.timeout,
+							timeout: message.timeout
 						})
 					),
 					from
@@ -292,7 +292,7 @@ export class PeerbitProxyHost implements ProgramClient {
 							);
 							request.messageId = message.emitMessageId; // Same message id so that receiver can subscribe to all events emitted from this listener
 							await this.messages.send(serialize(request), from.id);
-						},
+						}
 					};
 					await this.services.pubsub.addEventListener(
 						message.type,
@@ -354,7 +354,7 @@ export class PeerbitProxyHost implements ProgramClient {
 						await this.services.pubsub.publish(message.data, {
 							strict: message.strict,
 							to: message.to!,
-							topics: message.topics!,
+							topics: message.topics!
 						})
 					),
 					from
@@ -367,7 +367,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(message, new pubsub.RESP_RequestSubscribers(), from);
 			} else if (message instanceof pubsub.REQ_Subscribe) {
 				await this.services.pubsub.subscribe(message.topic, {
-					data: message.data,
+					data: message.data
 				});
 
 				let set = this._pubsubTopicSubscriptions.get(from.id);
@@ -386,7 +386,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					new pubsub.RESP_Unsubscribe(
 						await this.services.pubsub.unsubscribe(message.topic, {
 							force: message.force,
-							data: message.data,
+							data: message.data
 						})
 					),
 					from

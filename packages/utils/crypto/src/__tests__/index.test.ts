@@ -7,7 +7,7 @@ import {
 	verify,
 	Ed25519PublicKey,
 	SignatureWithKey,
-	Ed25519PrivateKey,
+	Ed25519PrivateKey
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
@@ -16,11 +16,11 @@ import { createSecp256k1PeerId } from "@libp2p/peer-id-factory";
 import { supportedKeys } from "@libp2p/crypto/keys";
 import {
 	verifySignatureEd25519,
-	sign as signEd25519,
+	sign as signEd25519
 } from "../ed25519-sign.js";
 import {
 	verifySignatureEd25519 as verifySignatureEd25519Browser,
-	sign as signEd25519Browser,
+	sign as signEd25519Browser
 } from "../ed25519-sign-browser";
 import { PreHash } from "../prehash.js";
 
@@ -53,7 +53,7 @@ describe("Ed25519", () => {
 				new SignatureWithKey({
 					prehash: PreHash.NONE,
 					publicKey: new Ed25519PublicKey({ publicKey: keypair.publicKey }),
-					signature: signature,
+					signature: signature
 				}),
 				data
 			);
@@ -191,7 +191,7 @@ describe("Sepck2561k1", () => {
 		const signatureWithKey = new SignatureWithKey({
 			prehash: PreHash.ETH_KECCAK_256,
 			publicKey: pk,
-			signature: signatureBytes,
+			signature: signatureBytes
 		});
 
 		const isVerified = await verifySignatureSecp256k1(signatureWithKey, data);

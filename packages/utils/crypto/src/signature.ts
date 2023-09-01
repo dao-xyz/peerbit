@@ -4,7 +4,7 @@ import {
 	field,
 	option,
 	serialize,
-	AbstractType,
+	AbstractType
 } from "@dao-xyz/borsh";
 import { equals } from "@peerbit/uint8arrays";
 import { verifySignatureEd25519 } from "./ed25519-sign.js";

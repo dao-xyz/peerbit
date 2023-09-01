@@ -78,7 +78,7 @@ const updateHashes = async (
 		headCache.cache?.put(
 			newHeadsPath,
 			serialize(new HeadsCacheToSerialize(hashes, counter, lastCid))
-		),
+		)
 	]);
 	return { counter, newPath: newHeadsPath };
 };

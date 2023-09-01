@@ -15,13 +15,13 @@ export const sign = async (
 		keypair.privateKey.keyObject = crypto.createPrivateKey({
 			format: "der",
 			type: "pkcs8",
-			key: toDER(keypair.privateKeyPublicKey, true),
+			key: toDER(keypair.privateKeyPublicKey, true)
 		});
 	}
 	return new SignatureWithKey({
 		prehash,
 		publicKey: keypair.publicKey,
-		signature: crypto.sign(null, hashedData, keypair.privateKey.keyObject),
+		signature: crypto.sign(null, hashedData, keypair.privateKey.keyObject)
 	});
 };
 
@@ -47,7 +47,7 @@ export const verifySignatureEd25519 = async (
 };
 
 const DER_PREFIX = Buffer.from([
-	48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32,
+	48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32
 ]);
 const ED25519_OID = Buffer.from([0x06, 0x03, 0x2b, 0x65, 0x70]);
 const SEQUENCE_TAG = Buffer.from([0x30]); // Sequence tag
@@ -69,14 +69,14 @@ function toDER(key: Uint8Array, p = false) {
 		BIT_TAG,
 		Buffer.from([key.length + 1]),
 		ZERO_BIT_TAG,
-		key,
+		key
 	]);
 
 	// Wrap up by creating a sequence of elements
 	const der = Buffer.concat([
 		SEQUENCE_TAG,
 		Buffer.from([elements.length]),
-		elements,
+		elements
 	]);
 
 	return der;

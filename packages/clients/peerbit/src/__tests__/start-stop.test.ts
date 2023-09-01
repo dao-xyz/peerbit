@@ -18,7 +18,7 @@ describe("start-stop", () => {
 	it("can create with peerId", async () => {
 		const peerId = await createEd25519PeerId();
 		client = await Peerbit.create({
-			libp2p: { peerId },
+			libp2p: { peerId }
 		});
 		expect(client.peerId.equals(peerId)).toBeTrue();
 		const addressA = (await client.open(new TestP())).address;

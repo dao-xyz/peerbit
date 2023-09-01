@@ -5,14 +5,14 @@ import {
 	Role,
 	TransactionContext,
 	PutOperation,
-	DeleteOperation,
+	DeleteOperation
 } from "@peerbit/document";
 import {
 	getPathGenerator,
 	TrustedNetwork,
 	getFromByTo,
 	IdentityGraph,
-	createIdentityGraphStore,
+	createIdentityGraphStore
 } from "@peerbit/trusted-network";
 import { Access, AccessType } from "./access";
 import { Entry } from "@peerbit/log";
@@ -45,20 +45,20 @@ export class IdentityAccessController extends Program {
 		this.access = new Documents({
 			id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([0])])),
 			index: new DocumentIndex({
-				query: new RPC(),
-			}),
+				query: new RPC()
+			})
 		});
 
 		this.trustedNetwork = opts.trustedNetwork
 			? opts.trustedNetwork
 			: new TrustedNetwork({
 					id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
-					rootTrust: opts.rootTrust,
+					rootTrust: opts.rootTrust
 			  });
 		this.identityGraphController = new IdentityGraph({
 			relationGraph: createIdentityGraphStore(
 				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])]))
-			),
+			)
 		});
 	}
 
@@ -174,15 +174,15 @@ export class IdentityAccessController extends Program {
 	async open(properties?: { role?: Role }) {
 		await this.identityGraphController.open({
 			role: properties?.role,
-			canRead: this.canRead.bind(this),
+			canRead: this.canRead.bind(this)
 		});
 		await this.access.open({
 			role: properties?.role,
 			type: Access,
 			canPerform: this.canPerform.bind(this),
 			index: {
-				canRead: this.canRead.bind(this),
-			},
+				canRead: this.canRead.bind(this)
+			}
 		});
 		await this.trustedNetwork.open(properties);
 	}

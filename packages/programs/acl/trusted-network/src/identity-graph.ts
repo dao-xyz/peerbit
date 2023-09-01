@@ -3,7 +3,7 @@ import {
 	Documents,
 	DocumentIndex,
 	SearchRequest,
-	StringMatch,
+	StringMatch
 } from "@peerbit/document";
 import { PublicSignKey } from "@peerbit/crypto";
 import { concat } from "uint8arrays";
@@ -26,18 +26,18 @@ export const getFromByTo: RelationResolver = {
 					query: [
 						new StringMatch({
 							key: "to",
-							value: to.hashcode(),
-						}),
-					],
+							value: to.hashcode()
+						})
+					]
 				}),
 				{
 					local: true,
-					remote: false,
+					remote: false
 				}
 			)
 		);
 	},
-	next: (relation) => relation.from,
+	next: (relation) => relation.from
 };
 
 export const getToByFrom: RelationResolver = {
@@ -48,18 +48,18 @@ export const getToByFrom: RelationResolver = {
 					query: [
 						new StringMatch({
 							key: "from",
-							value: from.hashcode(),
-						}),
-					],
+							value: from.hashcode()
+						})
+					]
 				}),
 				{
 					local: true,
-					remote: false,
+					remote: false
 				}
 			)
 		);
 	},
-	next: (relation) => relation.to,
+	next: (relation) => relation.to
 };
 
 export async function* getPathGenerator(
@@ -183,7 +183,7 @@ export const getRelation = async (
 export const createIdentityGraphStore = (id?: Uint8Array) =>
 	new Documents<IdentityRelation>({
 		index: new DocumentIndex({
-			query: new RPC(),
+			query: new RPC()
 		}),
-		id,
+		id
 	});

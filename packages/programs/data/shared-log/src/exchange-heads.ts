@@ -86,14 +86,14 @@ export const createExchangeHeadsMessage = async (
 				.filter((r) => !headsSet.has(r));
 			return new EntryWithRefs({
 				entry: head,
-				references: refs,
+				references: refs
 			});
 		})
 	);
 	logger.debug(`Send latest heads of '${log.id}'`);
 	return new ExchangeHeadsMessage({
 		logId: log.id!,
-		heads: headsWithRefs,
+		heads: headsWithRefs
 	});
 };
 
@@ -132,7 +132,7 @@ export const allEntriesWithUniqueGids = async (
 	const value = [
 		...(await Promise.all(
 			[...map.values()].map((x) => log.entryIndex.get(x.hash))
-		)),
+		))
 	].filter((x) => !!x) as Entry<any>[];
 	gidParentCache.add(entry.hash, value);
 	return value;

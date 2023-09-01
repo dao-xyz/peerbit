@@ -18,7 +18,7 @@ export const sign = async (
 		signature: sodium.crypto_sign_detached(
 			hashedData,
 			keypair.privateKeyPublicKey
-		),
+		)
 	});
 };
 

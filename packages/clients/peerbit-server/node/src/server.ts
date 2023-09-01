@@ -2,14 +2,14 @@ import http from "http";
 import {
 	fromBase64,
 	getKeypairFromPeerId,
-	getPublicKeyFromPeerId,
+	getPublicKeyFromPeerId
 } from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import {
 	Program,
 	ProgramClient,
 	getProgramFromVariant,
-	getProgramFromVariants,
+	getProgramFromVariants
 } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
@@ -17,7 +17,7 @@ import {
 	getHomeConfigDir,
 	getNodePath,
 	getKeypair,
-	getTrustPath,
+	getTrustPath
 } from "./config.js";
 import { setMaxListeners } from "events";
 import { create } from "./peerbit.js";
@@ -27,7 +27,7 @@ import {
 	InstallDependency,
 	StartByBase64,
 	StartByVariant,
-	StartProgram,
+	StartProgram
 } from "./types.js";
 import {
 	ADDRESS_PATH,
@@ -39,7 +39,7 @@ import {
 	PROGRAM_PATH,
 	RESTART_PATH,
 	TRUST_PATH,
-	STOP_PATH,
+	STOP_PATH
 } from "./routes.js";
 import { Session } from "./session.js";
 import fs from "fs";
@@ -95,7 +95,7 @@ export const startServerWithNode = async (properties: {
 		directory: getNodePath(properties.directory),
 		domain: properties.domain,
 		listenPort: properties.ports?.node,
-		peerId: await keypair.toPeerId(),
+		peerId: await keypair.toPeerId()
 	});
 
 	if (properties.bootstrap) {
@@ -110,7 +110,7 @@ export const startServerWithNode = async (properties: {
 		sessionDirectory
 			? new Level<string, Uint8Array>(sessionDirectory, {
 					valueEncoding: "view",
-					keyEncoding: "utf-8",
+					keyEncoding: "utf-8"
 			  })
 			: new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" })
 	);
@@ -134,7 +134,7 @@ export const startServerWithNode = async (properties: {
 	const server = await startApiServer(peer, {
 		port: properties.ports?.api,
 		trust,
-		session,
+		session
 	});
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
@@ -240,13 +240,13 @@ export const startApiServer = async (
 			process.argv.shift()!,
 			[
 				...process.execArgv,
-				...process.argv.filter((x) => x !== "--reset" && x !== "-r"),
+				...process.argv.filter((x) => x !== "--reset" && x !== "-r")
 			],
 			{
 				cwd: process.cwd(),
 				detached: true,
 				stdio: "inherit",
-				gid: process.getgid!(),
+				gid: process.getgid!()
 			}
 		);
 		process.exit(0);
@@ -450,7 +450,7 @@ export const startApiServer = async (
 										name:
 											base58btc.encode(Buffer.from(installName)) +
 											uuid() +
-											".tgz",
+											".tgz"
 									});
 									fs.writeFileSync(tempFile.fd, binary);
 									clear = () => tempFile.removeCallback();

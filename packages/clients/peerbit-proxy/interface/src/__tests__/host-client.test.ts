@@ -266,9 +266,9 @@ describe("index", () => {
 			await client1.services.pubsub.requestSubscribers("topic");
 			await waitForResolved(async () =>
 				expect(
-					(
-						await client1.services.pubsub.getSubscribers("topic")
-					)?.get(client2.identity.publicKey.hashcode())
+					(await client1.services.pubsub.getSubscribers("topic"))?.get(
+						client2.identity.publicKey.hashcode()
+					)
 				).toBeDefined()
 			);
 		});

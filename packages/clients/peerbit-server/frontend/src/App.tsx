@@ -5,12 +5,12 @@ import {
 	createTheme,
 	responsiveFontSizes,
 	ThemeProvider,
-	CssBaseline,
+	CssBaseline
 } from "@mui/material";
 import { Ed25519Keypair } from "@peerbit/crypto";
 let theme = createTheme({
 	palette: {
-		mode: "dark",
+		mode: "dark"
 	},
 	typography: {
 		fontFamily: [
@@ -23,9 +23,9 @@ let theme = createTheme({
 			"sans-serif",
 			'"Apple Color Emoji"',
 			'"Segoe UI Emoji"',
-			'"Segoe UI Symbol"',
-		].join(","),
-	},
+			'"Segoe UI Symbol"'
+		].join(",")
+	}
 });
 theme = responsiveFontSizes(theme);
 
@@ -46,7 +46,7 @@ export const App = () => {
 					"//" +
 					window.location.hostname +
 					":" +
-					getPort(window.location.protocol),
+					getPort(window.location.protocol)
 			}).then((c) => {
 				setClient(c);
 				c.peer.id

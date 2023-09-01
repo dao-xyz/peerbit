@@ -61,8 +61,8 @@ describe(`sharding`, () => {
 		db1 = await session.peers[0].open(store, {
 			args: {
 				role: new Replicator(),
-				trim: { to: 0, from: 1, type: "length" as const },
-			},
+				trim: { to: 0, from: 1, type: "length" as const }
+			}
 		});
 		db2 = await EventStore.open<EventStore<Uint8Array>>(
 			db1.address!,
@@ -112,11 +112,11 @@ describe(`sharding`, () => {
 
 		await waitForAsync(() => checkConverged(db2), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 		await waitForAsync(() => checkConverged(db3), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 
 		expect(
@@ -180,11 +180,11 @@ describe(`sharding`, () => {
 
 		await waitForAsync(() => checkConverged(db2), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 		await waitForAsync(() => checkConverged(db3), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 
 		expect(
@@ -345,13 +345,13 @@ describe(`sharding`, () => {
 		// to replicate (basically nullifies the trim)
 
 		db1 = await session.peers[0].open(new EventStore<Uint8Array>(), {
-			args: { trim: { to: 0, from: 1, type: "length" as const } },
+			args: { trim: { to: 0, from: 1, type: "length" as const } }
 		});
 		db2 = await session.peers[1].open<EventStore<Uint8Array>>(db1.address, {
-			args: { trim: { to: 0, from: 1, type: "length" as const } },
+			args: { trim: { to: 0, from: 1, type: "length" as const } }
 		});
 		db3 = await session.peers[2].open<EventStore<Uint8Array>>(db1.address, {
-			args: { trim: { to: 0, from: 1, type: "length" as const } },
+			args: { trim: { to: 0, from: 1, type: "length" as const } }
 		});
 
 		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
@@ -392,16 +392,16 @@ describe(`sharding`, () => {
 
 		await waitForAsync(() => checkConverged(db1), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 
 		await waitForAsync(() => checkConverged(db2), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 		await waitForAsync(() => checkConverged(db3), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 
 		await checkReplicas(
@@ -431,7 +431,7 @@ describe(`sharding`, () => {
 
 		const client1WantedDbSize = Math.round(0.95 * entryCount);
 		db1 = await session.peers[0].open(new EventStore<Uint8Array>(), {
-			args: { trim: { to: client1WantedDbSize, type: "length" as const } },
+			args: { trim: { to: client1WantedDbSize, type: "length" as const } }
 		});
 		db2 = await EventStore.open<EventStore<Uint8Array>>(
 			db1.address!,
@@ -483,16 +483,16 @@ describe(`sharding`, () => {
 
 		await waitForAsync(() => checkConverged(db1), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 
 		await waitForAsync(() => checkConverged(db2), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 		await waitForAsync(() => checkConverged(db3), {
 			timeout: 20000,
-			delayInterval: 500,
+			delayInterval: 500
 		});
 
 		await checkReplicas(
@@ -519,9 +519,9 @@ describe(`sharding`, () => {
 		db1 = await session.peers[0].open(store, {
 			args: {
 				replicas: {
-					min: 1,
-				},
-			},
+					min: 1
+				}
+			}
 		});
 
 		const getDiscoveryGroupsFn = () => {
@@ -539,7 +539,7 @@ describe(`sharding`, () => {
 		db1.log.replicas.min = new AbsoluteReplicas(3);
 		expect(getDiscoveryGroupsFn()).toEqual([
 			["a", "c", "e"],
-			["b", "d"],
+			["b", "d"]
 		]);
 		db1.log.replicas.min = new AbsoluteReplicas(5);
 		expect(getDiscoveryGroupsFn()).toEqual([["a", "b", "c", "d", "e"]]);

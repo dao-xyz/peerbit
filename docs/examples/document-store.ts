@@ -57,7 +57,7 @@ class PostsDB extends Program {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			index: { key: "id" },
+			index: { key: "id" }
 			// You can add more properties here, like
 			/* canPerform: (entry) => true */
 		});
@@ -84,7 +84,7 @@ await store.waitFor(peer2.peerId);
 
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({
-		query: [], // query all
+		query: [] // query all
 	})
 );
 expect(responses).toHaveLength(1);

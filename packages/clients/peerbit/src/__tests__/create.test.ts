@@ -18,7 +18,7 @@ describe("Create", function () {
 		beforeAll(async () => {
 			clientDirectory = dbPath + uuid();
 			client = (await Peerbit.create({
-				directory: clientDirectory,
+				directory: clientDirectory
 			})) as Peerbit;
 		});
 		afterAll(async () => {
@@ -46,7 +46,7 @@ describe("Create", function () {
 	it("can create with peerId", async () => {
 		const peerId = await createEd25519PeerId();
 		const client = await Peerbit.create({
-			libp2p: { peerId },
+			libp2p: { peerId }
 		});
 		expect(client.peerId.equals(peerId)).toBeTrue();
 		await client.stop();

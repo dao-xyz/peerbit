@@ -57,7 +57,7 @@ class RPCTest extends Program<Args> {
 							return new World();
 					  }
 					: undefined, // only create a response handler if we are to respond to requests
-			subscriptionData: args?.role ? serialize(args.role) : undefined,
+			subscriptionData: args?.role ? serialize(args.role) : undefined
 		});
 	}
 
@@ -81,7 +81,7 @@ await requester.dial(responder);
 const rpcRequester = await requester.open(new RPCTest());
 
 const rpcResponder = await responder.open(new RPCTest(), {
-	args: { role: new Responder() },
+	args: { role: new Responder() }
 });
 
 // For testing purposes, wait for responder to be available

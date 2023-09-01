@@ -2,7 +2,7 @@ import { ProgramClient } from "@peerbit/program";
 import {
 	PeerbitProxyClient,
 	PeerbitProxyHost,
-	connection,
+	connection
 } from "@peerbit/proxy";
 type WindowFunctions = {
 	addEventListener: <K extends keyof WindowEventMap>(
@@ -42,11 +42,11 @@ export class PostMessageNode extends connection.MessageNode {
 											ev.source?.postMessage(
 												{
 													type: PostMessageNode.messagePrefixKey + msg.type,
-													message: msg,
+													message: msg
 												},
 												{ targetOrigin: "*" }
 											),
-										parent: ev.source === window.top,
+										parent: ev.source === window.top
 								  }
 								: undefined
 						);
@@ -58,12 +58,12 @@ export class PostMessageNode extends connection.MessageNode {
 				(windowHandle.top || windowHandle).postMessage(
 					{
 						type: messageKey,
-						message: msg,
+						message: msg
 					},
 					this.targetOrigin,
 					msg.type === "data" ? [msg.data] : undefined
 				); // TODO transferable
-			},
+			}
 		});
 	}
 }

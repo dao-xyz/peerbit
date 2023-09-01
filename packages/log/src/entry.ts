@@ -6,7 +6,7 @@ import {
 	deserialize,
 	option,
 	vec,
-	fixedArray,
+	fixedArray
 } from "@dao-xyz/borsh";
 
 import {
@@ -21,7 +21,7 @@ import {
 	randomBytes,
 	Identity,
 	Keychain,
-	X25519Keypair,
+	X25519Keypair
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
 import { compare, equals } from "@peerbit/uint8arrays";
@@ -134,7 +134,7 @@ export interface EntryEncryptionTemplate<A, B, C> {
 
 export enum EntryType {
 	APPEND = 0, // Add more data
-	CUT = 1, // Delete or Create tombstone ... delete all nexts, i
+	CUT = 1 // Delete or Create tombstone ... delete all nexts, i
 }
 
 @variant(0)
@@ -211,12 +211,12 @@ const maybeEncrypt = <Q>(
 		}
 		return new DecryptedThing<Q>({
 			data: serialize(thing),
-			value: thing,
+			value: thing
 		}).encrypt(keypair, ...receivers);
 	}
 	return new DecryptedThing<Q>({
 		data: serialize(thing),
-		value: thing,
+		value: thing
 	});
 };
 
@@ -418,7 +418,7 @@ export class Entry<T>
 			payload: entry._payload,
 			reserved: entry._reserved,
 			signatures: undefined,
-			hash: undefined,
+			hash: undefined
 		});
 		return serialize(trimmed);
 	}
@@ -478,9 +478,9 @@ export class Entry<T>
 				...properties,
 				meta: {
 					...properties?.meta,
-					next: properties.meta?.next ? properties.meta?.next : [],
+					next: properties.meta?.next ? properties.meta?.next : []
 				},
-				encoding: properties.encoding ? properties.encoding : NO_ENCODING,
+				encoding: properties.encoding ? properties.encoding : NO_ENCODING
 			};
 		}
 
@@ -498,7 +498,7 @@ export class Entry<T>
 		const payloadToSave = new Payload<T>({
 			data: properties.encoding.encoder(properties.data),
 			value: properties.data,
-			encoding: properties.encoding,
+			encoding: properties.encoding
 		});
 
 		let clock: Clock | undefined = properties.meta?.clock;
@@ -518,7 +518,7 @@ export class Entry<T>
 			}
 			clock = new Clock({
 				id: properties.identity.publicKey.bytes,
-				timestamp: hlc.now(),
+				timestamp: hlc.now()
 			});
 		} else {
 			const cv = clock;
@@ -577,7 +577,7 @@ export class Entry<T>
 				gid: gid!,
 				type: properties.meta?.type ?? EntryType.APPEND,
 				data: properties.meta?.data,
-				next: nextHashes,
+				next: nextHashes
 			}),
 			properties.encryption?.keypair,
 			properties.encryption?.receiver.meta
@@ -588,11 +588,11 @@ export class Entry<T>
 			payload,
 			meta: metadataEncrypted,
 			signatures: undefined,
-			createdLocally: true,
+			createdLocally: true
 		});
 
 		const signers = properties.signers || [
-			properties.identity.sign.bind(properties.identity),
+			properties.identity.sign.bind(properties.identity)
 		];
 		const signable = entry.toSignable();
 		let signatures = await Promise.all(
@@ -620,7 +620,7 @@ export class Entry<T>
 		}
 
 		entry._signatures = new Signatures({
-			signatures: encryptedSignatures,
+			signatures: encryptedSignatures
 		});
 
 		if (properties.canAppend && !(await properties.canAppend(entry))) {
@@ -648,8 +648,8 @@ export class Entry<T>
 				data: this.meta.data,
 				clock: this.meta.clock,
 				next: this.meta.next,
-				type: this.meta.type,
-			},
+				type: this.meta.type
+			}
 		};
 	}
 

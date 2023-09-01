@@ -14,7 +14,7 @@ import { multiaddr } from "@multiformats/multiaddr";
 import { PeerMap } from "./peer-map.js";
 import type {
 	IncomingStreamData,
-	Registrar,
+	Registrar
 } from "@libp2p/interface-internal/registrar";
 import type { AddressManager } from "@libp2p/interface-internal/address-manager";
 import type { ConnectionManager } from "@libp2p/interface-internal/connection-manager";
@@ -27,7 +27,7 @@ import {
 	getKeypairFromPeerId,
 	getPublicKeyFromPeerId,
 	PublicSignKey,
-	SignatureWithKey,
+	SignatureWithKey
 } from "@peerbit/crypto";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
@@ -45,7 +45,7 @@ import {
 	PingPong,
 	Pong,
 	getMsgId,
-	WaitForPeer,
+	WaitForPeer
 } from "@peerbit/stream-interface";
 export interface PeerStreamsInit {
 	peerId: PeerId;
@@ -204,7 +204,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 				returnOnAbort: true,
 				onReturnError: (err) => {
 					logger.error("Inbound stream error", err?.message);
-				},
+				}
 			}
 		);
 
@@ -233,7 +233,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 						this.outboundStream = undefined;
 					}
 				});
-			},
+			}
 		});
 
 		pipe(
@@ -381,7 +381,7 @@ export abstract class DirectStream<
 			maxInboundStreams,
 			maxOutboundStreams,
 			signaturePolicy = "StictSign",
-			connectionManager = { autoDial: true },
+			connectionManager = { autoDial: true }
 		} = options || {};
 
 		const signKey = getKeypairFromPeerId(components.peerId);
@@ -413,7 +413,7 @@ export abstract class DirectStream<
 		this.connectionManagerOptions = connectionManager;
 		this.recentDials = new Cache({
 			ttl: connectionManager.retryDelay || 60 * 1000,
-			max: 1e3,
+			max: 1e3
 		});
 	}
 
@@ -430,7 +430,7 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.register(multicodec, {
 					onConnect: this.onPeerConnected.bind(this),
-					onDisconnect: this.onPeerDisconnected.bind(this),
+					onDisconnect: this.onPeerDisconnected.bind(this)
 				})
 			)
 		);
@@ -441,7 +441,7 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
-					maxOutboundStreams: this.maxOutboundStreams,
+					maxOutboundStreams: this.maxOutboundStreams
 				})
 			)
 		);
@@ -616,7 +616,7 @@ export abstract class DirectStream<
 
 				try {
 					stream = await conn.newStream(this.multicodecs, {
-						runOnTransientConnection: true,
+						runOnTransientConnection: true
 					});
 					if (stream.protocol == null) {
 						stream.abort(new Error("Stream was not multiplexed"));
@@ -687,7 +687,7 @@ export abstract class DirectStream<
 						await new Hello({
 							multiaddrs: this.components.addressManager
 								.getAddresses()
-								.map((x) => x.toString()),
+								.map((x) => x.toString())
 						}).sign(this.sign),
 						[peer]
 					)
@@ -860,12 +860,12 @@ export abstract class DirectStream<
 			peerId,
 			publicKey,
 			protocol,
-			connId,
+			connId
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
 		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
-			once: true,
+			once: true
 		});
 		return peerStreams;
 	}
@@ -999,7 +999,7 @@ export abstract class DirectStream<
 
 		this.dispatchEvent(
 			new CustomEvent("message", {
-				detail: message,
+				detail: message
 			})
 		);
 
@@ -1038,7 +1038,7 @@ export abstract class DirectStream<
 
 				this.dispatchEvent(
 					new CustomEvent("data", {
-						detail: message,
+						detail: message
 					})
 				);
 			}
@@ -1204,7 +1204,7 @@ export abstract class DirectStream<
 				abort: () => {
 					clearTimeout(timeout);
 					resolve(undefined);
-				},
+				}
 			};
 			this.publishMessage(this.components.peerId, ping, [stream]).catch(
 				(err) => {
@@ -1250,7 +1250,7 @@ export abstract class DirectStream<
 		}
 		const message = new DataMessage({
 			data: data instanceof Uint8ArrayList ? data.subarray() : data,
-			to: toHashes,
+			to: toHashes
 		});
 		if (this.signaturePolicy === "StictSign") {
 			await message.sign(this.sign);
@@ -1273,7 +1273,7 @@ export abstract class DirectStream<
 		if (this.emitSelf) {
 			super.dispatchEvent(
 				new CustomEvent("data", {
-					detail: message,
+					detail: message
 				})
 			);
 		}
@@ -1295,7 +1295,7 @@ export abstract class DirectStream<
 				multiaddrs: this.components.addressManager
 					.getAddresses()
 					.map((x) => x.toString()),
-				data,
+				data
 			}).sign(this.sign.bind(this))
 		);
 	}
@@ -1346,7 +1346,7 @@ export abstract class DirectStream<
 						const fromMe = from.equals(this.components.peerId);
 						const block = !fromMe ? fromKey : undefined;
 						const path = this.routes.getPath(this.publicKeyHash, to, {
-							block, // prevent send message backwards
+							block // prevent send message backwards
 						});
 
 						if (path && path.length > 0) {

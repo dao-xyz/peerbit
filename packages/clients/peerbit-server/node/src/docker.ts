@@ -33,7 +33,7 @@ export const installDocker = async () => {
 		try {
 			await waitForAsync(() => dockerExist(), {
 				timeout: 30 * 1000,
-				delayInterval: 1000,
+				delayInterval: 1000
 			});
 		} catch (error) {
 			throw new Error("Failed to install docker");

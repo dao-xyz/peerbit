@@ -1,7 +1,7 @@
 import {
 	HeadsCache,
 	CachePath,
-	HeadsCacheToSerialize,
+	HeadsCacheToSerialize
 } from "../heads-cache.js";
 import { default as LazyLevel } from "@peerbit/lazy-level";
 import { AbstractLevel } from "abstract-level";
@@ -74,7 +74,7 @@ describe(`head-cache`, function () {
 		log = new Log();
 		await log.open(blockStore, signKey, {
 			cache,
-			encoding: JSON_ENCODING,
+			encoding: JSON_ENCODING
 		});
 		const queueFn = log.headsIndex.headsCache!.queue.bind(
 			log.headsIndex.headsCache
@@ -111,7 +111,7 @@ describe(`head-cache`, function () {
 		expect(queueCounter).toEqual(2);
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [
 			[e2.hash],
-			[e1.hash],
+			[e1.hash]
 		]);
 		expect((await log.headsIndex.headsCache?.getCachedHeads())?.length).toEqual(
 			2
@@ -203,10 +203,10 @@ describe(`head-cache`, function () {
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [
 			[e3.hash],
 			[e2.hash],
-			[e1.hash],
+			[e1.hash]
 		]);
 		await checkHashes(log, log.headsIndex.headsCache!.removedHeadsPath, [
-			[e1.hash],
+			[e1.hash]
 		]);
 
 		// Remove e2
@@ -253,9 +253,9 @@ describe(`head-cache`, function () {
 			cache,
 			trim: {
 				type: "length",
-				to: 3,
+				to: 3
 			},
-			encoding: JSON_ENCODING,
+			encoding: JSON_ENCODING
 		});
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
@@ -268,7 +268,7 @@ describe(`head-cache`, function () {
 			[
 				entries[entries.length - 3],
 				entries[entries.length - 2],
-				entries[entries.length - 1],
+				entries[entries.length - 1]
 			].map((x) => x!.hash)
 		);
 
@@ -301,7 +301,7 @@ describe(`head-cache`, function () {
 
 		// Make sure that all hashes are in the first "file", since its reseted
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [
-			entries.reverse().map((x) => x.hash),
+			entries.reverse().map((x) => x.hash)
 		]);
 	});
 

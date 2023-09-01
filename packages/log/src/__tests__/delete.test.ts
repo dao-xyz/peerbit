@@ -56,13 +56,13 @@ describe("delete", function () {
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2 } = await log.append("hello2a");
 			const { entry: e2b } = await log.append("hello2b", {
-				meta: { next: [e2] },
+				meta: { next: [e2] }
 			});
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
 				meta: {
 					next: [e2],
-					type: EntryType.CUT,
-				},
+					type: EntryType.CUT
+				}
 			});
 			expect(await log.toArray()).toHaveLength(4);
 			expect(log.nextsIndex.size).toEqual(2); // e1 ->  e2, e2 -> e2b
@@ -88,10 +88,10 @@ describe("delete", function () {
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2a } = await log.append("hello2a", {
-				meta: { next: [e1] },
+				meta: { next: [e1] }
 			});
 			const { entry: e2b } = await log.append("hello2b", {
-				meta: { next: [e1] },
+				meta: { next: [e1] }
 			});
 
 			await log.deleteRecursively(e2a);

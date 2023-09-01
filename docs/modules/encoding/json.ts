@@ -3,7 +3,7 @@ import {
 	field,
 	fixedArray,
 	serialize,
-	deserialize,
+	deserialize
 } from "@dao-xyz/borsh";
 import { randomBytes } from "@peerbit/crypto";
 
@@ -34,7 +34,7 @@ class Post {
 }
 const message = new Post({
 	title: "Hello world!",
-	message: "This is a JSON message",
+	message: "This is a JSON message"
 });
 const bytes = serialize(message); // [0, ... ] will start with 0 because @variant(0)
 const post: Post = deserialize(bytes, Post);

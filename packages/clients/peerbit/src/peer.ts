@@ -7,13 +7,13 @@ import type { Libp2p } from "libp2p";
 import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
-	Libp2pKeychain,
+	Libp2pKeychain
 } from "@peerbit/crypto";
 import {
 	Program,
 	Address,
 	ProgramClient,
-	ProgramHandler,
+	ProgramHandler
 } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import sodium from "libsodium-wrappers";
@@ -25,7 +25,7 @@ import { Cache } from "@peerbit/cache";
 import {
 	createLibp2pExtended,
 	Libp2pExtended,
-	Libp2pCreateOptions as ClientCreateOptions,
+	Libp2pCreateOptions as ClientCreateOptions
 } from "./libp2p.js";
 import { DirectBlock } from "@peerbit/blocks";
 import { LevelDatastore } from "datastore-level";
@@ -145,12 +145,12 @@ export class Peerbit implements ProgramClient {
 					blocks: (c) =>
 						new DirectBlock(c, {
 							canRelayMessage: asRelay,
-							directory: blocksDirectory,
+							directory: blocksDirectory
 						}),
-					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
+					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay })
 				},
 				// If directory is passed, we store keys within that directory, else we will use memory datastore (which is the default behaviour)
-				datastore,
+				datastore
 			});
 		} else {
 			if (isLibp2pInstance(libp2pExtended)) {
@@ -163,12 +163,12 @@ export class Peerbit implements ProgramClient {
 						blocks: (c) =>
 							new DirectBlock(c, {
 								canRelayMessage: asRelay,
-								directory: blocksDirectory,
+								directory: blocksDirectory
 							}),
 						pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
-						...extendedOptions?.services,
+						...extendedOptions?.services
 					},
-					datastore,
+					datastore
 				});
 			}
 		}
@@ -200,7 +200,7 @@ export class Peerbit implements ProgramClient {
 
 		const identity = Ed25519Keypair.fromPeerId(libp2pExtended.peerId);
 		const keychain = new Libp2pKeychain(libp2pExtended.keychain, {
-			cache: new Cache({ max: 1000 }),
+			cache: new Cache({ max: 1000 })
 		});
 
 		try {
@@ -221,7 +221,7 @@ export class Peerbit implements ProgramClient {
 			libp2pExternal,
 			limitSigning: options.limitSigning,
 			identity,
-			keychain,
+			keychain
 		});
 		return peer;
 	}

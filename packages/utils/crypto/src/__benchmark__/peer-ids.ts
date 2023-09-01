@@ -13,12 +13,12 @@ suite
 	.add("PublicSignKey", {
 		fn: async () => {
 			deserialize(serialize(keypair.publicKey), Ed25519PublicKey);
-		},
+		}
 	})
 	.add("PeerId ", {
 		fn: () => {
 			peerIdFromBytes(peerIdPublicKey.toBytes());
-		},
+		}
 	})
 	.on("error", (error: any) => {
 		throw error;

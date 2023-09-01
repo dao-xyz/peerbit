@@ -5,14 +5,14 @@ import {
 	option,
 	serialize,
 	variant,
-	vec,
+	vec
 } from "@dao-xyz/borsh";
 import {
 	Documents,
 	DocumentsChange,
 	SetupOptions,
 	Observer,
-	Replicator,
+	Replicator
 } from "../document-store";
 import {
 	IntegerCompare,
@@ -31,7 +31,7 @@ import {
 	NoAccess,
 	AbstractSearchRequest,
 	Results,
-	CloseIteratorRequest,
+	CloseIteratorRequest
 } from "../query.js";
 import { LSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
@@ -45,7 +45,7 @@ import pDefer from "p-defer";
 import {
 	AbsoluteReplicas,
 	decodeReplicas,
-	encodeReplicas,
+	encodeReplicas
 } from "@peerbit/shared-log";
 import { Ed25519PublicKey } from "@peerbit/crypto";
 
@@ -102,7 +102,7 @@ class TestStore extends Program<Partial<SetupOptions<Document>>> {
 		await this.docs.open({
 			...options,
 			type: Document,
-			index: { ...options?.index, key: "id" },
+			index: { ...options?.index, key: "id" }
 		});
 	}
 }
@@ -133,8 +133,8 @@ describe("index", () => {
 			it("can add and delete", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
-					}),
+						index: new DocumentIndex()
+					})
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
@@ -145,11 +145,11 @@ describe("index", () => {
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world",
+					name: "Hello world"
 				});
 				let doc2 = new Document({
 					id: uuid(),
-					name: "Hello world",
+					name: "Hello world"
 				});
 
 				const putOperation = (await store.docs.put(doc)).entry;
@@ -188,8 +188,8 @@ describe("index", () => {
 			it("replication degree", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
-					}),
+						index: new DocumentIndex()
+					})
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
@@ -200,7 +200,7 @@ describe("index", () => {
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world",
+					name: "Hello world"
 				});
 
 				const putOperation = (await store.docs.put(doc, { replicas: 123 }))
@@ -213,8 +213,8 @@ describe("index", () => {
 			it("many chunks", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
-					}),
+						index: new DocumentIndex()
+					})
 				});
 				await session.peers[0].open(store);
 				const insertions = 100;
@@ -226,7 +226,7 @@ describe("index", () => {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: rngs[i],
+							name: rngs[i]
 						}),
 						{ unique: true }
 					);
@@ -237,18 +237,18 @@ describe("index", () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex(),
-						immutable: false,
-					}),
+						immutable: false
+					})
 				});
 				await session.peers[0].open(store);
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world",
+					name: "Hello world"
 				});
 				let editDoc = new Document({
 					id: doc.id,
-					name: "Hello world 2",
+					name: "Hello world 2"
 				});
 
 				const _putOperation = await store.docs.put(doc);
@@ -276,8 +276,8 @@ describe("index", () => {
 			beforeEach(async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
-					}),
+						index: new DocumentIndex()
+					})
 				});
 				await session.peers[0].open(store);
 				store2 = await session.peers[1].open<TestStore>(store.clone());
@@ -299,7 +299,7 @@ describe("index", () => {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: "Hello world",
+							name: "Hello world"
 						})
 					);
 				}
@@ -325,7 +325,7 @@ describe("index", () => {
 
 			beforeAll(async () => {
 				session = await LSession.connected(1, {
-					directory: "./tmp/document-store/drop-test/",
+					directory: "./tmp/document-store/drop-test/"
 				});
 			});
 
@@ -340,8 +340,8 @@ describe("index", () => {
 			it("can load and drop", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
-					}),
+						index: new DocumentIndex()
+					})
 				});
 
 				await session.peers[0].open(store);
@@ -351,7 +351,7 @@ describe("index", () => {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: "Hello world",
+							name: "Hello world"
 						})
 					);
 				}
@@ -387,8 +387,8 @@ describe("index", () => {
 				const store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex(),
-						immutable: false,
-					}),
+						immutable: false
+					})
 				});
 				for (const [i, peer] of session.peers.entries()) {
 					if (store.closed) {
@@ -396,7 +396,7 @@ describe("index", () => {
 					} else {
 						stores.push(
 							await TestStore.open(store.address, peer, {
-								args: { sync: () => true },
+								args: { sync: () => true }
 							})
 						);
 					}
@@ -486,7 +486,7 @@ describe("index", () => {
 					async open(): Promise<void> {
 						await this.docs.open({
 							type: SimpleDocument,
-							index: { key: this.indexBy },
+							index: { key: this.indexBy }
 						});
 					}
 				}
@@ -494,8 +494,8 @@ describe("index", () => {
 					store = new TestIndexStore(
 						{
 							docs: new Documents<SimpleDocument>({
-								index: new DocumentIndex(),
-							}),
+								index: new DocumentIndex()
+							})
 						},
 						"__missing__"
 					);
@@ -504,7 +504,7 @@ describe("index", () => {
 
 					let doc = new SimpleDocument({
 						id: "abc 123",
-						value: "Hello world",
+						value: "Hello world"
 					});
 
 					// put doc
@@ -519,8 +519,8 @@ describe("index", () => {
 					store = new TestIndexStore(
 						{
 							docs: new Documents<SimpleDocument>({
-								index: new DocumentIndex(),
-							}),
+								index: new DocumentIndex()
+							})
 						},
 						"value"
 					);
@@ -530,7 +530,7 @@ describe("index", () => {
 					let helloWorld = "Hello world";
 					let doc = new SimpleDocument({
 						id: "abc 123",
-						value: helloWorld,
+						value: helloWorld
 					});
 
 					// put doc
@@ -543,13 +543,13 @@ describe("index", () => {
 
 				it("can StringQuery index", async () => {
 					store = new TestIndexStore({
-						docs: new Documents<SimpleDocument>(),
+						docs: new Documents<SimpleDocument>()
 					});
 					await session.peers[0].open(store);
 
 					let doc = new SimpleDocument({
 						id: "abc 123",
-						value: "Hello world",
+						value: "Hello world"
 					});
 
 					await (store as TestIndexStore).docs.put(doc);
@@ -561,9 +561,9 @@ describe("index", () => {
 									key: "id",
 									value: "123",
 									caseInsensitive: false,
-									method: StringMatchMethod.contains,
-								}),
-							],
+									method: StringMatchMethod.contains
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -602,21 +602,21 @@ describe("index", () => {
 					async open(): Promise<void> {
 						await this.docs.open({
 							type: SimpleDocument,
-							index: { key: "id" },
+							index: { key: "id" }
 						});
 					}
 				}
 
 				it("index as Uint8array", async () => {
 					store = new TestSimpleStore({
-						docs: new Documents<SimpleDocument>(),
+						docs: new Documents<SimpleDocument>()
 					});
 					await session.peers[0].open(store);
 
 					const id = new Uint8Array([1, 2, 3]);
 					let doc = new SimpleDocument({
 						id,
-						value: "Hello world",
+						value: "Hello world"
 					});
 
 					await (store as TestSimpleStore).docs.put(doc);
@@ -625,9 +625,9 @@ describe("index", () => {
 							query: [
 								new ByteMatchQuery({
 									key: "id",
-									value: id,
-								}),
-							],
+									value: id
+								})
+							]
 						})
 					);
 					expect(results).toHaveLength(1);
@@ -654,17 +654,17 @@ describe("index", () => {
 			it("trim deduplicate changes", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
-					}),
+						index: new DocumentIndex()
+					})
 				});
 
 				await session.peers[0].open(store, {
 					args: {
 						log: {
-							trim: { type: "length" as const, to: 1 },
+							trim: { type: "length" as const, to: 1 }
 						},
-						role: new Observer(), // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
-					},
+						role: new Observer() // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
+					}
 				});
 
 				const changes: DocumentsChange<Document>[] = [];
@@ -674,7 +674,7 @@ describe("index", () => {
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world",
+					name: "Hello world"
 				});
 
 				// put doc
@@ -699,24 +699,24 @@ describe("index", () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
 						index: new DocumentIndex(),
-						immutable: false,
-					}),
+						immutable: false
+					})
 				});
 
 				await session.peers[0].open(store, {
 					args: {
 						log: {
-							trim: { type: "length" as const, to: 10 },
+							trim: { type: "length" as const, to: 10 }
 						},
-						role: new Observer(), // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
-					},
+						role: new Observer() // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
+					}
 				});
 
 				for (let i = 0; i < 100; i++) {
 					await store.docs.put(
 						new Document({
 							id: Buffer.from(String(i)),
-							name: "Hello world " + String(i),
+							name: "Hello world " + String(i)
 						}),
 						{ meta: { next: [] } }
 					);
@@ -754,15 +754,15 @@ describe("index", () => {
 								key: "id",
 								fields: async (obj) => {
 									return { [indexedNameField]: obj.name };
-								},
-							},
+								}
+							}
 						});
 					}
 				}
 
 				it("filters field", async () => {
 					store = new FilteredStore({
-						docs: new Documents<Document>(),
+						docs: new Documents<Document>()
 					});
 					store.docs.log.log.id = new Uint8Array(32);
 
@@ -770,7 +770,7 @@ describe("index", () => {
 
 					let doc = new Document({
 						id: uuid(),
-						name: "Hello world",
+						name: "Hello world"
 					});
 
 					await store.docs.put(doc);
@@ -780,7 +780,7 @@ describe("index", () => {
 					expect(indexedValues).toHaveLength(1);
 
 					expect(indexedValues[0].value).toEqual({
-						[indexedNameField]: doc.name,
+						[indexedNameField]: doc.name
 					});
 					expect(indexedValues[0].reference).toBeUndefined(); // Because we dont want to keep it in memory (by default)
 
@@ -795,8 +795,8 @@ describe("index", () => {
 
 					await session.peers[1].open(store2, {
 						args: {
-							role: new Observer(),
-						},
+							role: new Observer()
+						}
 					});
 
 					expect(store2.docs.log.role).toBeInstanceOf(Observer);
@@ -844,7 +844,7 @@ describe("index", () => {
 									session.peers[i].services.blocks
 							  ))!
 							: new TestStore({
-									docs: new Documents<Document>(),
+									docs: new Documents<Document>()
 							  });
 					await session.peers[i].open(store, {
 						args: {
@@ -861,9 +861,9 @@ describe("index", () => {
 										? (query, key) => {
 												return canSearch[i] ? canSearch[i]!(query, key) : true;
 										  }
-										: undefined,
-							},
-						},
+										: undefined
+							}
+						}
 					});
 					stores.push(store);
 				}
@@ -873,7 +873,7 @@ describe("index", () => {
 				let doc = new Document({
 					id: Buffer.from("1"),
 					name: "hello",
-					number: 1n,
+					number: 1n
 				});
 
 				let docEdit = new Document({
@@ -881,33 +881,33 @@ describe("index", () => {
 					name: "hello world",
 					number: 1n,
 					bool: true,
-					data: new Uint8Array([1]),
+					data: new Uint8Array([1])
 				});
 
 				let doc2 = new Document({
 					id: Buffer.from("2"),
 					name: "hello world",
-					number: 4n,
+					number: 4n
 				});
 
 				let doc2Edit = new Document({
 					id: Buffer.from("2"),
 					name: "Hello World",
 					number: 2n,
-					data: new Uint8Array([2]),
+					data: new Uint8Array([2])
 				});
 
 				let doc3 = new Document({
 					id: Buffer.from("3"),
 					name: "foo",
 					number: 3n,
-					data: new Uint8Array([3]),
+					data: new Uint8Array([3])
 				});
 
 				let doc4 = new Document({
 					id: Buffer.from("4"),
 					name: undefined,
-					number: undefined,
+					number: undefined
 				});
 
 				await writeStore.docs.put(doc);
@@ -942,7 +942,7 @@ describe("index", () => {
 			it("match locally", async () => {
 				let results: Document[] = await stores[0].docs.index.search(
 					new SearchRequest({
-						query: [],
+						query: []
 					}),
 					{ remote: false }
 				);
@@ -952,7 +952,7 @@ describe("index", () => {
 			it("match all", async () => {
 				let results: Document[] = await stores[1].docs.index.search(
 					new SearchRequest({
-						query: [],
+						query: []
 					}),
 					{ remote: { amount: 1 } }
 				);
@@ -979,7 +979,7 @@ describe("index", () => {
 
 					await stores[1].docs.index.search(
 						new SearchRequest({
-							query: [],
+							query: []
 						}),
 						{ remote: { amount: 1, sync: true } }
 					);
@@ -990,7 +990,7 @@ describe("index", () => {
 
 					await stores[1].docs.index.search(
 						new SearchRequest({
-							query: [],
+							query: []
 						}),
 						{ remote: { amount: 1, sync: true } }
 					);
@@ -1008,9 +1008,9 @@ describe("index", () => {
 								new StringMatch({
 									key: "name",
 									value: "hello world",
-									caseInsensitive: true,
-								}),
-							],
+									caseInsensitive: true
+								})
+							]
 						})
 					);
 					expect(
@@ -1025,9 +1025,9 @@ describe("index", () => {
 								new StringMatch({
 									key: "name",
 									value: "Hello World",
-									caseInsensitive: true,
-								}),
-							],
+									caseInsensitive: true
+								})
+							]
 						})
 					);
 					expect(responses).toHaveLength(2);
@@ -1043,9 +1043,9 @@ describe("index", () => {
 								new StringMatch({
 									key: "name",
 									value: "Hello World",
-									caseInsensitive: false,
-								}),
-							],
+									caseInsensitive: false
+								})
+							]
 						})
 					);
 					expect(responses).toHaveLength(1);
@@ -1058,9 +1058,9 @@ describe("index", () => {
 								new StringMatch({
 									key: "name",
 									value: "hello world",
-									caseInsensitive: false,
-								}),
-							],
+									caseInsensitive: false
+								})
+							]
 						})
 					);
 					expect(
@@ -1075,9 +1075,9 @@ describe("index", () => {
 									key: "name",
 									value: "hel",
 									method: StringMatchMethod.prefix,
-									caseInsensitive: true,
-								}),
-							],
+									caseInsensitive: true
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1095,9 +1095,9 @@ describe("index", () => {
 									key: "name",
 									value: "ello",
 									method: StringMatchMethod.contains,
-									caseInsensitive: true,
-								}),
-							],
+									caseInsensitive: true
+								})
+							]
 						})
 					);
 					expect(responses).toHaveLength(2);
@@ -1111,14 +1111,14 @@ describe("index", () => {
 						id: Buffer.from("a"),
 						name: "_",
 						number: undefined,
-						tags: ["Hello", "World"],
+						tags: ["Hello", "World"]
 					});
 
 					let docArray2 = new Document({
 						id: Buffer.from("b"),
 						name: "__",
 						number: undefined,
-						tags: ["Hello"],
+						tags: ["Hello"]
 					});
 					beforeEach(async () => {
 						await writeStore.docs.put(docArray1);
@@ -1136,9 +1136,9 @@ describe("index", () => {
 										key: "tags",
 										value: "world",
 										method: StringMatchMethod.contains,
-										caseInsensitive: true,
-									}),
-								],
+										caseInsensitive: true
+									})
+								]
 							})
 						);
 						expect(responses).toHaveLength(1);
@@ -1154,9 +1154,9 @@ describe("index", () => {
 					new SearchRequest({
 						query: [
 							new MissingField({
-								key: "name",
-							}),
-						],
+								key: "name"
+							})
+						]
 					}),
 					{ remote: { amount: 1 } }
 				);
@@ -1172,9 +1172,9 @@ describe("index", () => {
 						query: [
 							new ByteMatchQuery({
 								key: "data",
-								value: Buffer.from([1]),
-							}),
-						],
+								value: Buffer.from([1])
+							})
+						]
 					})
 				);
 				expect(responses).toHaveLength(1);
@@ -1189,9 +1189,9 @@ describe("index", () => {
 						query: [
 							new BoolQuery({
 								key: "bool",
-								value: true,
-							}),
-						],
+								value: true
+							})
+						]
 					}),
 					{ remote: { amount: 1 } }
 				);
@@ -1211,15 +1211,15 @@ describe("index", () => {
 					let allResponses: AbstractSearchResult<Document>[] = [];
 					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							query: [],
+							query: []
 						}),
 						{
 							local: false,
 							remote: {
 								onResponse: (r) => {
 									allResponses.push(r);
-								},
-							},
+								}
+							}
 						}
 					);
 					expect(responses).toHaveLength(0);
@@ -1242,7 +1242,7 @@ describe("index", () => {
 					let allResponses: AbstractSearchResult<Document>[] = [];
 					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							query: [],
+							query: []
 						}),
 						{
 							local: false,
@@ -1250,8 +1250,8 @@ describe("index", () => {
 								amount: 1,
 								onResponse: (r) => {
 									allResponses.push(r);
-								},
-							},
+								}
+							}
 						}
 					);
 					expect(responses).toHaveLength(0);
@@ -1273,16 +1273,16 @@ describe("index", () => {
 										key: "name",
 										value: "hello",
 										caseInsensitive: true,
-										method: StringMatchMethod.contains,
+										method: StringMatchMethod.contains
 									}),
 									new StringMatch({
 										key: "name",
 										value: "world",
 										caseInsensitive: true,
-										method: StringMatchMethod.contains,
-									}),
-								]),
-							],
+										method: StringMatchMethod.contains
+									})
+								])
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1299,14 +1299,14 @@ describe("index", () => {
 								new Or([
 									new ByteMatchQuery({
 										key: "id",
-										value: Buffer.from("1"),
+										value: Buffer.from("1")
 									}),
 									new ByteMatchQuery({
 										key: "id",
-										value: Buffer.from("2"),
-									}),
-								]),
-							],
+										value: Buffer.from("2")
+									})
+								])
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1325,9 +1325,9 @@ describe("index", () => {
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.Equal,
-									value: 2n,
-								}),
-							],
+									value: 2n
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1342,9 +1342,9 @@ describe("index", () => {
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.Greater,
-									value: 2n,
-								}),
-							],
+									value: 2n
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1359,9 +1359,9 @@ describe("index", () => {
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.GreaterOrEqual,
-									value: 2n,
-								}),
-							],
+									value: 2n
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1380,9 +1380,9 @@ describe("index", () => {
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.Less,
-									value: 2n,
-								}),
-							],
+									value: 2n
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1397,9 +1397,9 @@ describe("index", () => {
 								new IntegerCompare({
 									key: "number",
 									compare: Compare.LessOrEqual,
-									value: 2n,
-								}),
-							],
+									value: 2n
+								})
+							]
 						}),
 						{ remote: { amount: 1 } }
 					);
@@ -1426,9 +1426,9 @@ describe("index", () => {
 											new IntegerCompare({
 												key: "number",
 												compare: Compare.GreaterOrEqual,
-												value: 2n,
-											}),
-										],
+												value: 2n
+											})
+										]
 									}),
 									{ remote: { amount: 1 } }
 								)
@@ -1441,9 +1441,9 @@ describe("index", () => {
 											new IntegerCompare({
 												key: "number",
 												compare: Compare.Less,
-												value: 2n,
-											}),
-										],
+												value: 2n
+											})
+										]
 									}),
 									{ remote: { amount: 1 } }
 								)
@@ -1482,7 +1482,7 @@ describe("index", () => {
 				let doc = new Document({
 					id: Buffer.from(String(id)),
 					name: String(id),
-					number: BigInt(id),
+					number: BigInt(id)
 				});
 				return stores[storeIndex].docs.put(doc);
 			};
@@ -1493,13 +1493,13 @@ describe("index", () => {
 				query = new IntegerCompare({
 					key: "number",
 					compare: Compare.GreaterOrEqual,
-					value: 0n,
+					value: 0n
 				})
 			) => {
 				await waitForResolved(async () => {
 					const req = new SearchRequest({
 						query: [query],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "number" })]
 					});
 					const iterator = stores[fromStoreIndex].docs.index.iterate(req);
 
@@ -1533,7 +1533,7 @@ describe("index", () => {
 									session.peers[i].services.blocks
 							  ))!
 							: new TestStore({
-									docs: new Documents<Document>(),
+									docs: new Documents<Document>()
 							  });
 					store.docs.log.append = async (a, b) => {
 						// Omit synchronization so results are always the same (HACKY)
@@ -1541,8 +1541,8 @@ describe("index", () => {
 							...b,
 							meta: {
 								...b?.meta,
-								data: encodeReplicas(new AbsoluteReplicas(1)),
-							},
+								data: encodeReplicas(new AbsoluteReplicas(1))
+							}
 						};
 						return store.docs.log.log.append(a, b);
 					};
@@ -1551,11 +1551,11 @@ describe("index", () => {
 							index: {
 								canRead: (key) => {
 									return canRead[i] ? canRead[i]!(key) : true;
-								},
+								}
 							},
 							role: new Replicator(),
-							replicas: { min: 1 }, // make sure documents only exist once
-						},
+							replicas: { min: 1 } // make sure documents only exist once
+						}
 					});
 					stores.push(store);
 				}
@@ -1618,7 +1618,7 @@ describe("index", () => {
 				await put(0, 4);
 				await checkIterate(0, [
 					[0n, 1n],
-					[2n, 3n, 4n],
+					[2n, 3n, 4n]
 				]);
 			});
 
@@ -1637,13 +1637,13 @@ describe("index", () => {
 					promises.push(
 						checkIterate(i, [
 							[0n, 1n],
-							[2n, 3n, 4n],
+							[2n, 3n, 4n]
 						])
 					);
 					promises.push(
 						checkIterate(i, [
 							[0n, 1n, 2n],
-							[3n, 4n],
+							[3n, 4n]
 						])
 					);
 					promises.push(checkIterate(i, [[0n, 1n, 2n, 3n], [4n]]));
@@ -1659,7 +1659,7 @@ describe("index", () => {
 					const iterator = await stores[0].docs.index.iterate(
 						new SearchRequest({
 							query: [],
-							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
 						})
 					);
 					expect(iterator.done()).toBeFalse();
@@ -1671,7 +1671,7 @@ describe("index", () => {
 					const iterator = await stores[0].docs.index.iterate(
 						new SearchRequest({
 							query: [],
-							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
+							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })]
 						})
 					);
 					expect(iterator.done()).toBeFalse();
@@ -1689,7 +1689,7 @@ describe("index", () => {
 				const iterator = await stores[0].docs.index.iterate(
 					new SearchRequest({
 						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
 					})
 				);
 				expect(iterator.done()).toBeFalse();
@@ -1708,7 +1708,7 @@ describe("index", () => {
 					log: stores[0].docs.log,
 					sync: () => undefined as any,
 					type: Document,
-					indexBy: ["id"],
+					indexBy: ["id"]
 				});
 
 				await put(0, 0);
@@ -1718,11 +1718,11 @@ describe("index", () => {
 				const iterator = await stores[0].docs.index.iterate(
 					new SearchRequest({
 						query: [],
-						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
+						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })]
 					}),
 					{
 						local: true,
-						remote: false,
+						remote: false
 					}
 				);
 				const next = await iterator.next(3);
@@ -1739,7 +1739,7 @@ describe("index", () => {
 				const iterator = await stores[2].docs.index.iterate(
 					new SearchRequest({
 						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
 					})
 				);
 				expect((await iterator.next(1)).map((x) => x.name)).toEqual(["1"]);
@@ -1754,7 +1754,7 @@ describe("index", () => {
 					await put(0, 1);
 					await put(0, 2);
 					const request = new SearchRequest({
-						query: [],
+						query: []
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).toBeFalse();
@@ -1779,7 +1779,7 @@ describe("index", () => {
 					await put(0, 0);
 					await put(0, 1);
 					const request = new SearchRequest({
-						query: [],
+						query: []
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).toBeFalse();
@@ -1793,7 +1793,7 @@ describe("index", () => {
 
 					// Try to send from another peer (that is not the owner of the iterator)
 					await stores[2].docs.index["_query"].send(closeRequest, {
-						to: [session.peers[0].identity.publicKey],
+						to: [session.peers[0].identity.publicKey]
 					});
 
 					await delay(2000);
@@ -1803,7 +1803,7 @@ describe("index", () => {
 
 					// send from the owner
 					await stores[1].docs.index["_query"].send(closeRequest, {
-						to: [session.peers[0].identity.publicKey],
+						to: [session.peers[0].identity.publicKey]
 					});
 
 					await waitForResolved(
@@ -1822,7 +1822,7 @@ describe("index", () => {
 					await put(0, 1);
 					await put(0, 2);
 					const request = new SearchRequest({
-						query: [],
+						query: []
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).toBeFalse();
@@ -1843,7 +1843,7 @@ describe("index", () => {
 					await put(0, 1);
 					await put(0, 2);
 					const request = new SearchRequest({
-						query: [],
+						query: []
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					await iterator.next(2);
@@ -1901,8 +1901,8 @@ describe("index", () => {
 					...options,
 					type: SubProgram,
 					index: {
-						key: ["id"],
-					},
+						key: ["id"]
+					}
 				});
 			}
 		}
@@ -1930,14 +1930,14 @@ describe("index", () => {
 								session.peers[i].services.blocks
 						  ))!
 						: new TestStoreSubPrograms({
-								docs: new Documents<SubProgram>(),
+								docs: new Documents<SubProgram>()
 						  });
 
 				await session.peers[i].open(store, {
 					args: {
 						role: i === 0 ? new Replicator() : new Observer(),
-						canOpen: () => true,
-					},
+						canOpen: () => true
+					}
 				});
 				stores.push({ store });
 			}
@@ -2059,8 +2059,8 @@ describe("index", () => {
 							key: ["id"],
 							fields: (obj) => {
 								return { id: obj.id, custom: obj.id };
-							},
-						},
+							}
+						}
 					});
 				}
 			}
@@ -2082,8 +2082,8 @@ describe("index", () => {
 					const results = await s.docs.index.search(
 						new SearchRequest({
 							query: [
-								new ByteMatchQuery({ key: "custom", value: subProgram.id }),
-							],
+								new ByteMatchQuery({ key: "custom", value: subProgram.id })
+							]
 						})
 					);
 					expect(results).toHaveLength(1);
@@ -2111,7 +2111,7 @@ describe("index", () => {
 									session.peers[i].services.blocks
 							  ))!
 							: new TestStore({
-									docs: new Documents<Document>(),
+									docs: new Documents<Document>()
 							  });
 					await session.peers[i].open(store);
 					stores.push(store);
@@ -2157,15 +2157,15 @@ describe("index", () => {
 					[
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
-						},
+							timestamp: +new Date()
+						}
 					],
 					[
 						{
 							hash: stores[2].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
-						},
-					],
+							timestamp: +new Date()
+						}
+					]
 				];
 
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
@@ -2187,9 +2187,9 @@ describe("index", () => {
 					[
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
-						},
-					],
+							timestamp: +new Date()
+						}
+					]
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
@@ -2202,18 +2202,18 @@ describe("index", () => {
 					[
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
-						},
+							timestamp: +new Date()
+						}
 					],
 					[
 						{
 							hash: stores[2].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
-						},
-					],
+							timestamp: +new Date()
+						}
+					]
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-					local: false,
+					local: false
 				});
 				expect(counters[0]).toEqual(0);
 				expect(counters[1]).toEqual(1);
@@ -2224,13 +2224,13 @@ describe("index", () => {
 					[
 						{
 							hash: stores[0].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
+							timestamp: +new Date()
 						},
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date(),
-						},
-					],
+							timestamp: +new Date()
+						}
+					]
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
@@ -2245,18 +2245,18 @@ describe("index", () => {
 					[
 						{
 							hash: stores[0].node.identity.publicKey.hashcode(),
-							timestamp: now,
+							timestamp: now
 						},
 						{
 							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: 0,
-						},
-					],
+							timestamp: 0
+						}
+					]
 				];
 				const t1 = +new Date();
 				const minAge = 1000;
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-					remote: { minAge },
+					remote: { minAge }
 				});
 				expect(counters[0]).toEqual(1); // will always query locally
 				expect(counters[1]).toEqual(1); // but now also remotely since we can not trust local only
@@ -2264,7 +2264,7 @@ describe("index", () => {
 				await waitFor(() => +new Date() - t1 > minAge + 100);
 
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-					remote: { minAge },
+					remote: { minAge }
 				});
 				expect(counters[0]).toEqual(2); // will always query locally
 				expect(counters[1]).toEqual(1); // we don't have to query remote since local will suffice since minAge time has passed
@@ -2291,15 +2291,15 @@ describe("index", () => {
 						[
 							{
 								hash: stores[1].node.identity.publicKey.hashcode(),
-								timestamp: +new Date(),
-							},
+								timestamp: +new Date()
+							}
 						],
 						[
 							{
 								hash: stores[2].node.identity.publicKey.hashcode(),
-								timestamp: +new Date(),
-							},
-						],
+								timestamp: +new Date()
+							}
+						]
 					];
 
 					let failedOnce = false;
@@ -2317,7 +2317,7 @@ describe("index", () => {
 					}
 					let timeout = 1000;
 					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-						remote: { timeout },
+						remote: { timeout }
 					});
 					expect(failedOnce).toBeTrue();
 					expect(counters[0]).toEqual(1);
@@ -2330,15 +2330,15 @@ describe("index", () => {
 						[
 							{
 								hash: stores[1].node.identity.publicKey.hashcode(),
-								timestamp: +new Date(),
-							},
+								timestamp: +new Date()
+							}
 						],
 						[
 							{
 								hash: stores[2].node.identity.publicKey.hashcode(),
-								timestamp: +new Date(),
-							},
-						],
+								timestamp: +new Date()
+							}
+						]
 					];
 					for (let i = 1; i < stores.length; i++) {
 						stores[i].docs.index.processFetchRequest = (a) => {
@@ -2349,7 +2349,7 @@ describe("index", () => {
 					let timeout = 1000;
 
 					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-						remote: { timeout },
+						remote: { timeout }
 					});
 					expect(counters[0]).toEqual(1);
 					expect(counters[1]).toEqual(0);

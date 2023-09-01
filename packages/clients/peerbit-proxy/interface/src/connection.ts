@@ -76,7 +76,7 @@ export abstract class Node {
 		this.publishMessage({
 			type: "hello",
 			from: this.id,
-			to: properties?.to?.id,
+			to: properties?.to?.id
 		});
 
 		try {
@@ -117,7 +117,7 @@ export abstract class Node {
 					type: "hello",
 					from: this.id,
 					to: hello.from,
-					resp: true,
+					resp: true
 				});
 			}
 		};
@@ -164,7 +164,7 @@ export class MessageNode extends Node {
 			type: "data",
 			data,
 			from: this.id,
-			to: typeof to === "string" ? to : toStrict,
+			to: typeof to === "string" ? to : toStrict
 		};
 
 		const outFn = this.out.get(toStrict);
@@ -203,7 +203,7 @@ export class MessageNode extends Node {
 					((message: Hello | DataMessage) => {
 						this.events.dispatchEvent(message);
 					}),
-				parent: from?.parent,
+				parent: from?.parent
 			});
 		});
 	}

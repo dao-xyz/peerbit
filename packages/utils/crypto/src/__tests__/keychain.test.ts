@@ -16,7 +16,7 @@ describe("keychain", () => {
 			new Libp2pKeychain(
 				new DefaultKeyChain({ datastore: new MemoryDatastore() }, {}),
 				{ cache: new Cache({ max: 1000 }) }
-			),
+			)
 		];
 	});
 

@@ -4,7 +4,7 @@ import {
 	codecCodes,
 	createBlock,
 	defaultHasher,
-	stringifyCid,
+	stringifyCid
 } from "./block.js";
 import * as Block from "multiformats/block";
 import { AbstractLevel } from "abstract-level";
@@ -46,7 +46,7 @@ export class LevelBlockStore implements Blocks {
 			const block = await Block.decode({
 				bytes,
 				codec,
-				hasher: options?.hasher || defaultHasher,
+				hasher: options?.hasher || defaultHasher
 			});
 			return (block as Block.Block<Uint8Array, any, any, any>).bytes;
 		} catch (error: any) {
@@ -86,7 +86,7 @@ export class LevelBlockStore implements Blocks {
 				timeout: 10 * 1000,
 				stopperCallback: (fn) => {
 					this._onClose = fn;
-				},
+				}
 			});
 			await this._opening;
 		} finally {

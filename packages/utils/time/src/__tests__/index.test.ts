@@ -13,7 +13,7 @@ describe("delay", () => {
 				setTimeout(() => {
 					stop();
 				}, 1000);
-			},
+			}
 		});
 		expect(+new Date() - startTime).toBeLessThan(1200);
 	});
@@ -32,7 +32,7 @@ describe("waitFor", () => {
 				setTimeout(() => {
 					stop();
 				}, 1000);
-			},
+			}
 		});
 		expect(+new Date() - startTime).toBeLessThan(1200);
 	});

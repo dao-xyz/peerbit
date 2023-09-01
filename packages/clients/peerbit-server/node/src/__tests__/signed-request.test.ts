@@ -16,7 +16,7 @@ describe("signed-request", () => {
 			data,
 			headers: {},
 			method: "POST",
-			url: "https://example.com/hello",
+			url: "https://example.com/hello"
 		};
 		await signRequest(
 			signedRequest.headers,

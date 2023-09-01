@@ -30,8 +30,8 @@ export const App = () => {
 									console.log(client.messages.id, dbRef.current?.log.length);
 								});
 							}, 1000);
-						},
-					},
+						}
+					}
 				}
 			)
 			.then((x: any) => {

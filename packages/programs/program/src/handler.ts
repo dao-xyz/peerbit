@@ -224,7 +224,7 @@ export class Handler<T extends Manageable<any>> {
 						return this._onProgamClose(p);
 					}
 				},
-				...options,
+				...options
 				// If the program opens more programs
 				// reset: options.reset,
 			});

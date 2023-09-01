@@ -14,9 +14,9 @@ describe(`leaders`, function () {
 		args: {
 			replicas: {
 				min: 1,
-				max: 10000,
-			},
-		},
+				max: 10000
+			}
+		}
 	};
 	beforeAll(async () => {
 		session = await LSession.connected(3, {
@@ -26,10 +26,10 @@ describe(`leaders`, function () {
 					pubsub: (c) =>
 						new DirectSub(c, {
 							canRelayMessage: true,
-							connectionManager: { autoDial: false },
-						}),
-				},
-			},
+							connectionManager: { autoDial: false }
+						})
+				}
+			}
 		});
 	});
 
@@ -75,7 +75,7 @@ describe(`leaders`, function () {
 			const isLeaderBOneLeader = await db2.log.isLeader(slot, 1);
 			expect([isLeaderAOneLeader, isLeaderBOneLeader]).toContainAllValues([
 				false,
-				true,
+				true
 			]);
 
 			// Two leaders
@@ -84,7 +84,7 @@ describe(`leaders`, function () {
 
 			expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).toContainAllValues([
 				true,
-				true,
+				true
 			]);
 		}
 	});
@@ -95,7 +95,7 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { role: new Observer(), ...options.args },
+			args: { role: new Observer(), ...options.args }
 		});
 		db2 = (await EventStore.open(
 			db1.address!,
@@ -122,7 +122,7 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { role: new Observer(), ...options.args },
+			args: { role: new Observer(), ...options.args }
 		});
 
 		db2 = (await EventStore.open(
@@ -187,7 +187,7 @@ describe(`leaders`, function () {
 		expect([
 			isLeaderAOneLeader,
 			isLeaderBOneLeader,
-			isLeaderCOneLeader,
+			isLeaderCOneLeader
 		]).toContainValues([false, false, true]);
 
 		// Two leaders
@@ -197,7 +197,7 @@ describe(`leaders`, function () {
 		expect([
 			isLeaderATwoLeaders,
 			isLeaderBTwoLeaders,
-			isLeaderCTwoLeaders,
+			isLeaderCTwoLeaders
 		]).toContainValues([false, true, true]);
 
 		// Three leders
@@ -207,7 +207,7 @@ describe(`leaders`, function () {
 		expect([
 			isLeaderAThreeLeaders,
 			isLeaderBThreeLeaders,
-			isLeaderCThreeLeaders,
+			isLeaderCThreeLeaders
 		]).toContainValues([true, true, true]);
 	});
 	it("evenly distributed", async () => {
@@ -327,7 +327,7 @@ describe(`leaders`, function () {
 					db1.log.getReplicatorsSorted()?.map((x) => x.hash)
 				).toContainAllValues([
 					getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
-					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
 				])
 			);
 
@@ -336,7 +336,7 @@ describe(`leaders`, function () {
 					db3.log.getReplicatorsSorted()?.map((x) => x.hash)
 				).toContainAllValues([
 					getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
-					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
 				])
 			);
 
@@ -363,21 +363,21 @@ describe(`leaders`, function () {
 			).toContainAllValues([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
 			]);
 			expect(
 				db2.log.getReplicatorsSorted()?.map((x) => x.hash)
 			).toContainAllValues([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
 			]);
 			expect(
 				db3.log.getReplicatorsSorted()?.map((x) => x.hash)
 			).toContainAllValues([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
 			]);
 
 			checkSorted(db1.log.getReplicatorsSorted()!);

@@ -5,7 +5,7 @@ import {
 	Range,
 	DString,
 	StringOperation,
-	TransactionContext,
+	TransactionContext
 } from "@peerbit/string";
 import { field, variant } from "@dao-xyz/borsh";
 
@@ -22,7 +22,7 @@ class CollaborativeText extends Program {
 	async open() {
 		await this.string.open({
 			canPerform: this.canPerform,
-			canRead: this.canRead,
+			canRead: this.canRead
 		});
 	}
 

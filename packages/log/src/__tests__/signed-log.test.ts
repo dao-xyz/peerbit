@@ -63,7 +63,7 @@ describe("signature", function () {
 			)
 		).toContainAllValues([
 			await signKey.publicKey.hashcode(),
-			await signKey2.publicKey.hashcode(),
+			await signKey2.publicKey.hashcode()
 		]);
 	});
 

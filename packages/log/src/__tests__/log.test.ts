@@ -56,10 +56,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
-					next: [],
+					next: []
 				},
 				data: "entryA",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const two = await Entry.create({
 				store,
@@ -67,10 +67,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
-					next: [],
+					next: []
 				},
 				data: "entryB",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const three = await Entry.create({
 				store,
@@ -78,10 +78,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
-					next: [],
+					next: []
 				},
 				data: "entryC",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -99,30 +99,30 @@ describe("properties", function () {
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: [],
+					next: []
 				},
 				data: "entryA",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: [],
+					next: []
 				},
 				data: "entryB",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: [],
+					next: []
 				},
 				data: "entryC",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -138,30 +138,30 @@ describe("properties", function () {
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: [],
+					next: []
 				},
 				data: "entryA",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: [],
+					next: []
 				},
 				data: "entryB",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: [],
+					next: []
 				},
 				data: "entryC",
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -169,7 +169,7 @@ describe("properties", function () {
 			expect((await log.getHeads()).map((x) => x.hash)).toContainAllValues([
 				one.hash,
 				two.hash,
-				three.hash,
+				three.hash
 			]);
 		});
 	});
@@ -205,8 +205,8 @@ describe("properties", function () {
 			await log.append("one", {
 				meta: {
 					gidSeed: Buffer.from("a"),
-					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
-				},
+					timestamp: new Timestamp({ wallTime: 0n, logical: 0 })
+				}
 			});
 		});
 

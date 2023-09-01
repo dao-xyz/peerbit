@@ -6,7 +6,7 @@ import {
 	Role,
 	DocumentIndex,
 	Documents,
-	SearchRequest,
+	SearchRequest
 } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
 
@@ -42,7 +42,7 @@ class PostsDB extends Program<Args> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			role: args?.role /* canPerform: (entry) => true */,
+			role: args?.role /* canPerform: (entry) => true */
 		});
 	}
 }
@@ -87,7 +87,7 @@ class Forum extends Program<Args> {
 
 		this[NAME_PROPERTY] = name;
 		this.channels = new Documents({
-			index: new DocumentIndex(),
+			index: new DocumentIndex()
 		});
 	}
 
@@ -97,9 +97,9 @@ class Forum extends Program<Args> {
 			canPerform: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
 			index: {
-				key: NAME_PROPERTY,
+				key: NAME_PROPERTY
 			},
-			role: args?.role,
+			role: args?.role
 		});
 	}
 }
@@ -117,7 +117,7 @@ await client2.dial(client.getMultiaddrs());
 
 // open the forum as a observer, i.e. not replication duties
 const forum2 = await client2.open<Forum>(forum.address, {
-	args: { role: new Observer() },
+	args: { role: new Observer() }
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
@@ -131,7 +131,7 @@ expect(channels[0].name).toEqual("general");
 // open this channel (if we would open the forum with role: new Replicator(), this would already be done)
 expect(channels[0].closed).toBeTrue();
 const channel2 = await client2.open<Channel>(channels[0], {
-	args: { role: new Observer() },
+	args: { role: new Observer() }
 });
 
 // Wait for client 1 to be available (only needed for testing locally)

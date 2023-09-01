@@ -48,8 +48,8 @@ class TestStore extends Program<Args<Document>> {
 			...options,
 			encoding: {
 				decoder: (bytes) => deserialize(bytes, Document),
-				encoder: (data) => serialize(data),
-			},
+				encoder: (data) => serialize(data)
+			}
 		});
 	}
 }
@@ -59,8 +59,8 @@ const session = await LSession.connected(peersCount);
 
 const store = new TestStore({
 	logs: new SharedLog<Document>({
-		id: new Uint8Array(32),
-	}),
+		id: new Uint8Array(32)
+	})
 });
 
 const client: ProgramClient = session.peers[0];
@@ -74,8 +74,8 @@ await client.open<TestStore, Args<Document>>(store, {
 				resolver.get(doc.id)!();
 				resolver.delete(doc.id);
 			});
-		},
-	},
+		}
+	}
 });
 
 const resolver: Map<string, () => void> = new Map();
@@ -87,7 +87,7 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1200),
+				bytes: crypto.randomBytes(1200)
 			});
 			resolver.set(doc.id, () => {
 				deferred.resolve();
@@ -96,7 +96,7 @@ suite
 		},
 
 		minSamples: 300,
-		defer: true,
+		defer: true
 	})
 	.on("cycle", (event: any) => {
 		console.log(String(event.target));

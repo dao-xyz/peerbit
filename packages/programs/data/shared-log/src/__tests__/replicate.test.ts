@@ -86,7 +86,7 @@ describe(`exchange`, function () {
 		const { entry: entryA } = await db1.add("a", { meta: { next: [] } });
 		const { entry: entryB } = await db1.add("b", { meta: { next: [] } });
 		const { entry: entryAB } = await db1.add("ab", {
-			meta: { next: [entryA, entryB] },
+			meta: { next: [entryA, entryB] }
 		});
 
 		expect(entryA.meta.gid).not.toEqual(entryB.gid);
@@ -393,10 +393,10 @@ describe("canReplicate", () => {
 			args: {
 				replicas: {
 					min,
-					max,
+					max
 				},
-				canReplicate,
-			},
+				canReplicate
+			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
@@ -405,10 +405,10 @@ describe("canReplicate", () => {
 				args: {
 					replicas: {
 						min,
-						max,
+						max
 					},
-					canReplicate,
-				},
+					canReplicate
+				}
 			}
 		))!;
 
@@ -419,10 +419,10 @@ describe("canReplicate", () => {
 				args: {
 					replicas: {
 						min,
-						max,
+						max
 					},
-					canReplicate,
-				},
+					canReplicate
+				}
 			}
 		))!;
 
@@ -451,7 +451,7 @@ describe("canReplicate", () => {
 		await init((key) => !key.equals(session.peers[0].identity.publicKey));
 		const expectedReplicators = [
 			session.peers[1].identity.publicKey.hashcode(),
-			session.peers[2].identity.publicKey.hashcode(),
+			session.peers[2].identity.publicKey.hashcode()
 		];
 
 		await waitForResolved(() =>
@@ -500,10 +500,10 @@ describe("replication degree", () => {
 			args: {
 				replicas: {
 					min,
-					max,
+					max
 				},
-				role: new Observer(),
-			},
+				role: new Observer()
+			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
@@ -512,9 +512,9 @@ describe("replication degree", () => {
 				args: {
 					replicas: {
 						min,
-						max,
-					},
-				},
+						max
+					}
+				}
 			}
 		))!;
 
@@ -525,9 +525,9 @@ describe("replication degree", () => {
 				args: {
 					replicas: {
 						min,
-						max,
-					},
-				},
+						max
+					}
+				}
 			}
 		))!;
 
@@ -560,7 +560,7 @@ describe("replication degree", () => {
 
 		const e1 = await db1.add(value, {
 			replicas: new AbsoluteReplicas(1), // will be overriden by 'minReplicas' above
-			meta: { next: [] },
+			meta: { next: [] }
 		});
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
@@ -578,7 +578,7 @@ describe("replication degree", () => {
 
 		const e1 = await db1.add(value, {
 			replicas: new AbsoluteReplicas(100), // will be overriden by 'maxReplicas' above
-			meta: { next: [] },
+			meta: { next: [] }
 		});
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
@@ -598,11 +598,11 @@ describe("replication degree", () => {
 
 		const e1 = await db1.add(value, {
 			replicas: new AbsoluteReplicas(1),
-			meta: { next: [] },
+			meta: { next: [] }
 		});
 		const e2 = await db1.add(value, {
 			replicas: new AbsoluteReplicas(3),
-			meta: { next: [] },
+			meta: { next: [] }
 		});
 
 		// expect e1 to be replated at db1 and/or 1 other peer (when you write you always store locally)
@@ -633,7 +633,7 @@ describe("replication degree", () => {
 		// e2 only sets minReplicas to 1 which means only db2 or db3 needs to hold it
 		const e2 = await db1.add(value, {
 			replicas: new AbsoluteReplicas(1),
-			meta: { next: [e1.entry] },
+			meta: { next: [e1.entry] }
 		});
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(2));
@@ -676,10 +676,10 @@ describe("replication degree", () => {
 			args: {
 				replicas: {
 					min,
-					max,
+					max
 				},
-				role: new Observer(),
-			},
+				role: new Observer()
+			}
 		});
 
 		db2 = (await EventStore.open<EventStore<string>>(
@@ -689,10 +689,10 @@ describe("replication degree", () => {
 				args: {
 					replicas: {
 						min,
-						max,
+						max
 					},
-					role: new Observer(),
-				},
+					role: new Observer()
+				}
 			}
 		))!;
 
@@ -723,9 +723,9 @@ describe("replication degree", () => {
 		await db1.open({
 			replicas: {
 				min,
-				max,
+				max
 			},
-			role: new Observer(),
+			role: new Observer()
 		});
 
 		// peer 1 observer
@@ -757,10 +757,10 @@ describe("replication degree", () => {
 			args: {
 				replicas: {
 					min,
-					max,
+					max
 				},
-				role: new Observer(),
-			},
+				role: new Observer()
+			}
 		});
 
 		let respondToIHaveTimeout = 3000;
@@ -771,11 +771,11 @@ describe("replication degree", () => {
 				args: {
 					replicas: {
 						min,
-						max,
+						max
 					},
 					role: new Replicator(),
-					respondToIHaveTimeout,
-				},
+					respondToIHaveTimeout
+				}
 			}
 		);
 

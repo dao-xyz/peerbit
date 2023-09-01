@@ -4,7 +4,7 @@ import {
 	vec,
 	option,
 	deserialize,
-	serialize,
+	serialize
 } from "@dao-xyz/borsh";
 import { Program, ProgramClient, getProgramFromVariant } from "../program.js";
 import { getValuesWithType } from "../utils.js";
@@ -393,12 +393,12 @@ describe("program", () => {
 			const peer = await createPeer({
 				subsribers: subscriptions,
 				pubsubEventHandlers: eventHandlers,
-				peers,
+				peers
 			});
 			const peer2 = await createPeer({
 				subsribers: subscriptions,
 				pubsubEventHandlers: eventHandlers,
-				peers,
+				peers
 			});
 
 			const p = new P3();

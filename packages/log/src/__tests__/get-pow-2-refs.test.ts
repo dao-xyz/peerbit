@@ -28,7 +28,7 @@ describe("get-pow-2-refs", function () {
 			const heads = await log1.getHeads();
 			expect(heads).toHaveLength(1);
 			const refs = await log1.getReferenceSamples(heads[0], {
-				pointerCount: 1,
+				pointerCount: 1
 			});
 			expect(refs).toHaveLength(1);
 			for (const head of heads) {
@@ -39,7 +39,7 @@ describe("get-pow-2-refs", function () {
 		it("get refs 4", async () => {
 			const heads = await log1.getHeads();
 			const refs = await log1.getReferenceSamples(heads[0], {
-				pointerCount: 4,
+				pointerCount: 4
 			});
 			expect(refs).toHaveLength(2); // 2**2 = 4
 			for (const head of heads) {
@@ -56,7 +56,7 @@ describe("get-pow-2-refs", function () {
 		it("get refs 8", async () => {
 			const heads = await log1.getHeads();
 			const refs = await log1.getReferenceSamples(heads[0], {
-				pointerCount: 8,
+				pointerCount: 8
 			});
 			expect(refs).toHaveLength(3); // 2**3 = 8
 			for (const head of heads) {
@@ -75,7 +75,7 @@ describe("get-pow-2-refs", function () {
 			expect(heads).toHaveLength(1);
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: Number.MAX_SAFE_INTEGER,
-				memoryLimit: 100,
+				memoryLimit: 100
 			});
 			const sum = refs
 				.map((r) => r._payload.byteLength)
@@ -104,7 +104,7 @@ describe("get-pow-2-refs", function () {
 		it("no refs if no nexts", async () => {
 			const heads = await log1.getHeads();
 			const refs = await log1.getReferenceSamples(heads[0], {
-				pointerCount: 8,
+				pointerCount: 8
 			});
 			expect(refs).toHaveLength(1); // because heads[0] has no nexts (all commits are roots)
 			expect(heads[0].hash).toEqual(refs[0].hash);

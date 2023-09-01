@@ -16,8 +16,8 @@ const session: LSession<{ blocks: DirectBlock }> = await LSession.disconnected(
 	{
 		transports: [tcp()],
 		services: {
-			blocks: (c) => new DirectBlock(c),
-		},
+			blocks: (c) => new DirectBlock(c)
+		}
 	}
 );
 
@@ -40,7 +40,7 @@ const session: LSession<{ blocks: DirectBlock }> = await LSession.disconnected(
 await session.connect([
 	[session.peers[0], session.peers[1]],
 	[session.peers[1], session.peers[2]],
-	[session.peers[2], session.peers[3]],
+	[session.peers[2], session.peers[3]]
 ]);
 
 await session.connect();
@@ -84,7 +84,7 @@ for (const size of sizes) {
 				);
 				deferred.resolve();
 			}
-		},
+		}
 	});
 }
 suite

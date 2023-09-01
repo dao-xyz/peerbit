@@ -3,7 +3,7 @@ import {
 	BorshError,
 	deserialize,
 	serialize,
-	variant,
+	variant
 } from "@dao-xyz/borsh";
 import {
 	DecryptedThing,
@@ -12,7 +12,7 @@ import {
 	toBase64,
 	AccessError,
 	X25519PublicKey,
-	X25519Keypair,
+	X25519Keypair
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
@@ -20,7 +20,7 @@ import { Address } from "@peerbit/program";
 import {
 	DataEvent,
 	PubSubData,
-	PublishOptions as PubSubPublishOptions,
+	PublishOptions as PubSubPublishOptions
 } from "@peerbit/pubsub-interface";
 import { Program } from "@peerbit/program";
 import { DataMessage } from "@peerbit/stream-interface";
@@ -136,7 +136,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 		if (wasSubscribed) {
 			await this.node.services.pubsub.unsubscribe(this.rpcTopic, {
-				data: prevSubscriptionData,
+				data: prevSubscriptionData
 			});
 		}
 
@@ -171,7 +171,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
-								from: message.sender,
+								from: message.sender
 							}
 						);
 
@@ -185,7 +185,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 							// send with { to: [RECIEVER] } param
 
 							const decryptedMessage = new DecryptedThing<Uint8Array>({
-								data: serializedResponse,
+								data: serializedResponse
 							});
 							let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> =
 								decryptedMessage;
@@ -199,13 +199,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 								serialize(
 									new ResponseV0({
 										response: maybeEncryptedMessage,
-										requestId: message.id,
+										requestId: message.id
 									})
 								),
 								{
 									topics: [this.rpcTopic],
 									to: [message.sender],
-									strict: true,
+									strict: true
 								}
 							);
 						}
@@ -218,7 +218,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					}
 					handler!({
 						message,
-						response: rpcMessage,
+						response: rpcMessage
 					});
 				}
 			} catch (error: any) {
@@ -249,7 +249,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 			: serialize(request);
 
 		const decryptedMessage = new DecryptedThing<Uint8Array>({
-			data: requestData,
+			data: requestData
 		});
 
 		let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
@@ -266,7 +266,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 		const requestMessage = new RequestV0({
 			request: maybeEncryptedMessage,
-			respondTo,
+			respondTo
 		});
 
 		return requestMessage;
@@ -373,9 +373,12 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 		const deferredPromise = pDefer();
 		options?.stopper && options.stopper(deferredPromise.resolve);
-		timeoutFn = setTimeout(() => {
-			deferredPromise.resolve();
-		}, options?.timeout || 10 * 1000);
+		timeoutFn = setTimeout(
+			() => {
+				deferredPromise.resolve();
+			},
+			options?.timeout || 10 * 1000
+		);
 
 		const expectedResponders =
 			options?.to && options.to.length > 0

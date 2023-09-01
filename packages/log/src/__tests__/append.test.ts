@@ -75,7 +75,7 @@ describe("append", function () {
 			expect(await blockExists(e2.hash)).toBeTrue();
 			expect(log.nextsIndex.get(e1.hash)!.has(e2.hash)).toBeTrue();
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
-				meta: { type: EntryType.CUT },
+				meta: { type: EntryType.CUT }
 			});
 			// No forward pointers to next indices. We do this, so when we delete an entry, we can now whether an entry has a depenency of another entry which is not of type RESET
 			expect(log.nextsIndex.get(e2.hash)).toBeUndefined();
@@ -99,8 +99,8 @@ describe("append", function () {
 				prev = (
 					await log.append(new TextEncoder().encode("hello" + i), {
 						meta: {
-							next: prev ? [prev] : undefined,
-						},
+							next: prev ? [prev] : undefined
+						}
 					})
 				).entry;
 				// Make sure the log has the right heads after each append

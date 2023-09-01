@@ -5,20 +5,20 @@ import {
 	DeleteOperation,
 	Documents,
 	PutOperation,
-	SearchRequest,
+	SearchRequest
 } from "@peerbit/document";
 import { delay } from "@peerbit/time";
 import { X25519Keypair } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
 
 const groupMember1 = await Peerbit.create({
-	relay: true,
+	relay: true
 });
 const groupMember2 = await Peerbit.create({
-	relay: true,
+	relay: true
 });
 const nonMember = await Peerbit.create({
-	relay: true,
+	relay: true
 });
 
 await groupMember2.dial(groupMember1.getMultiaddrs());
@@ -52,7 +52,7 @@ class PostsDB extends Program {
 		await this.posts.open({
 			type: Post,
 			replicas: {
-				min: 2,
+				min: 2
 			},
 			index: {
 				key: "id",
@@ -63,7 +63,7 @@ class PostsDB extends Program {
 				canSearch: (request, publicKey) => {
 					// can publicKey perform this query request?
 					return !!ALL_MEMBERS.find((x) => x.equals(publicKey));
-				},
+				}
 			},
 			canReplicate: (publicKey) =>
 				!!ALL_MEMBERS.find((x) => x.equals(publicKey)),
@@ -75,14 +75,14 @@ class PostsDB extends Program {
 					return false;
 				}
 				return true;
-			},
+			}
 		});
 	}
 }
 
 const ALL_MEMBERS = [
 	groupMember1.identity.publicKey,
-	groupMember2.identity.publicKey,
+	groupMember2.identity.publicKey
 ];
 
 const memberStore1 = await groupMember1.open(new PostsDB());
@@ -109,9 +109,9 @@ await memberStore1.posts.put(post, {
 				// client1.identity.publicKey,
 				// client2.identity.publicKey,
 				// client3.identity.publicKey
-			],
-		},
-	},
+			]
+		}
+	}
 });
 
 const memberStore2 = await groupMember2.open<PostsDB>(memberStore1.address);

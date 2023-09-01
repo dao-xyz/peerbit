@@ -3,7 +3,7 @@ import {
 	field,
 	fixedArray,
 	serialize,
-	deserialize,
+	deserialize
 } from "@dao-xyz/borsh";
 import { randomBytes } from "@peerbit/crypto";
 abstract class AbstractPost {}

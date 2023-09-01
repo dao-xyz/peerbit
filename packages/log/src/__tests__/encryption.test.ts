@@ -4,12 +4,12 @@ import {
 	Ed25519PublicKey,
 	Keychain,
 	X25519Keypair,
-	X25519PublicKey,
+	X25519PublicKey
 } from "@peerbit/crypto";
 import {
 	BlockStore,
 	LevelBlockStore,
-	MemoryLevelBlockStore,
+	MemoryLevelBlockStore
 } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { Level } from "level";
@@ -37,7 +37,7 @@ const createKeychain = (keys: (Ed25519Keypair | X25519Keypair)[]) => {
 		},
 		import: () => {
 			throw new Error("Not implemented");
-		},
+		}
 	} as Keychain;
 };
 
@@ -60,7 +60,7 @@ describe("encryption", function () {
 			receiverKey = await X25519Keypair.create();
 			const logOptions = {
 				encoding: JSON_ENCODING,
-				keychain: createKeychain([signKey, senderKey, receiverKey]),
+				keychain: createKeychain([signKey, senderKey, receiverKey])
 			};
 
 			log1 = new Log();
@@ -83,20 +83,20 @@ describe("encryption", function () {
 							[await log2.identity.publicKey.hashcode()]: receiverKey.publicKey, // receiver 1
 							[await extraSigner.publicKey.hashcode()]: [
 								receiverKey.publicKey,
-								(await X25519Keypair.create()).publicKey,
+								(await X25519Keypair.create()).publicKey
 							], // receiver 1 again and 1 unknown receiver
 							[await extraSigner2.publicKey.hashcode()]: (
 								await X25519Keypair.create()
-							).publicKey, // unknown receiver
+							).publicKey // unknown receiver
 						},
-						payload: receiverKey.publicKey,
-					},
+						payload: receiverKey.publicKey
+					}
 				},
 				signers: [
 					log2.identity.sign.bind(log2.identity),
 					extraSigner.sign.bind(extraSigner),
-					extraSigner2.sign.bind(extraSigner2),
-				],
+					extraSigner2.sign.bind(extraSigner2)
+				]
 			});
 
 			// Remove decrypted caches of the log2 values
@@ -114,7 +114,7 @@ describe("encryption", function () {
 				(await item.getSignatures()).map((x) => x.publicKey.hashcode())
 			).toContainAllValues([
 				extraSigner.publicKey.hashcode(),
-				log2.identity.publicKey.hashcode(),
+				log2.identity.publicKey.hashcode()
 			]);
 		});
 
@@ -125,9 +125,9 @@ describe("encryption", function () {
 					receiver: {
 						meta: undefined,
 						signatures: receiverKey.publicKey,
-						payload: receiverKey.publicKey,
-					},
-				},
+						payload: receiverKey.publicKey
+					}
+				}
 			});
 			await log1.append("helloA2", {
 				encryption: {
@@ -135,9 +135,9 @@ describe("encryption", function () {
 					receiver: {
 						meta: undefined,
 						signatures: receiverKey.publicKey,
-						payload: receiverKey.publicKey,
-					},
-				},
+						payload: receiverKey.publicKey
+					}
+				}
 			});
 			await log2.append("helloB1", {
 				encryption: {
@@ -146,9 +146,9 @@ describe("encryption", function () {
 					receiver: {
 						meta: undefined,
 						signatures: receiverKey.publicKey,
-						payload: receiverKey.publicKey,
-					},
-				},
+						payload: receiverKey.publicKey
+					}
+				}
 			});
 			await log2.append("helloB2", {
 				encryption: {
@@ -157,9 +157,9 @@ describe("encryption", function () {
 					receiver: {
 						meta: undefined,
 						signatures: receiverKey.publicKey,
-						payload: receiverKey.publicKey,
-					},
-				},
+						payload: receiverKey.publicKey
+					}
+				}
 			});
 
 			// Remove decrypted caches of the log2 values
@@ -190,7 +190,7 @@ describe("encryption", function () {
 				"./tmp/log/encryption/load/loads-encrypted-entries/" + +new Date()
 			);
 			const blocks = level.sublevel<string, Uint8Array>("blocks", {
-				valueEncoding: "view",
+				valueEncoding: "view"
 			});
 			store = new LevelBlockStore(blocks);
 			await store.start();
@@ -205,7 +205,7 @@ describe("encryption", function () {
 			const logOptions = {
 				keychain: createKeychain([signingKey, encryptioKey]),
 				cache,
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			};
 			await log.open(store, signKey, logOptions);
 
@@ -215,9 +215,9 @@ describe("encryption", function () {
 					receiver: {
 						meta: encryptioKey.publicKey,
 						signatures: encryptioKey.publicKey,
-						payload: encryptioKey.publicKey,
-					},
-				},
+						payload: encryptioKey.publicKey
+					}
+				}
 			});
 			expect(log.length).toEqual(1);
 			await log.close();

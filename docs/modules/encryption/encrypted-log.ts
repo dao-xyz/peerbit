@@ -42,7 +42,7 @@ await store.log.append(payload, {
 			meta: [
 				client.identity.publicKey,
 				client2.identity.publicKey,
-				client3.identity.publicKey,
+				client3.identity.publicKey
 			],
 
 			// Who can read the message?
@@ -53,12 +53,12 @@ await store.log.append(payload, {
 			signatures: [
 				client.identity.publicKey,
 				client2.identity.publicKey,
-				client3.identity.publicKey,
-			],
+				client3.identity.publicKey
+			]
 
 			// Omitting any of the fields below will make it unencrypted
-		},
-	},
+		}
+	}
 });
 
 // A peer that can open

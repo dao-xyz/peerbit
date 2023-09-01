@@ -32,9 +32,9 @@ describe("clock", () => {
 		responder = new P({
 			clock: new ClockService({
 				trustedNetwork: new TrustedNetwork({
-					rootTrust: session.peers[0].peerId,
-				}),
-			}),
+					rootTrust: session.peers[0].peerId
+				})
+			})
 		});
 
 		await session.peers[0].open(responder);
@@ -57,15 +57,15 @@ describe("clock", () => {
 			store: session.peers[1].services.blocks,
 			signers: [
 				reader.node.identity.sign.bind(reader.node.identity),
-				reader.clock.sign.bind(reader.clock),
-			],
+				reader.clock.sign.bind(reader.clock)
+			]
 		});
 		expect(
 			await Promise.all(entry.signatures.map((x) => x.publicKey.hashcode()))
 		).toContainAllValues(
 			await Promise.all([
 				reader.node.identity.publicKey.hashcode(),
-				responder.node.identity.publicKey.hashcode(),
+				responder.node.identity.publicKey.hashcode()
 			])
 		);
 		expect(await reader.clock.verify(entry)).toBeTrue();
@@ -82,8 +82,8 @@ describe("clock", () => {
 					async (data: Uint8Array) => {
 						await delay(maxTimeError + 1000);
 						return reader.clock.sign(data);
-					},
-				],
+					}
+				]
 			})
 		).rejects.toThrowError(
 			new Error("Recieved an entry with an invalid timestamp")

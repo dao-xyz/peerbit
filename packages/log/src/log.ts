@@ -4,7 +4,7 @@ import {
 	sha256Base64Sync,
 	Identity,
 	Keychain,
-	X25519Keypair,
+	X25519Keypair
 } from "@peerbit/crypto";
 import { Cache } from "@peerbit/cache";
 import { SimpleLevel } from "@peerbit/lazy-level";
@@ -18,13 +18,13 @@ import {
 	Entry,
 	Payload,
 	CanAppend,
-	EntryType,
+	EntryType
 } from "./entry.js";
 import {
 	HLC,
 	LamportClock as Clock,
 	LamportClock,
-	Timestamp,
+	Timestamp
 } from "./clock.js";
 
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
@@ -167,7 +167,7 @@ export class Log<T> {
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
-			cache: this._entryCache,
+			cache: this._entryCache
 		});
 		this._values = new Values(this._entryIndex, this._sortFn);
 		this._trim = new Trim(
@@ -195,7 +195,7 @@ export class Log<T> {
 					}
 					return entry;
 				},
-				values: () => this.values,
+				values: () => this.values
 			},
 			trim
 		);
@@ -529,7 +529,7 @@ export class Log<T> {
 		// Calculate max time for log/graph
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
-			timestamp: options?.meta?.timestamp || this._hlc.now(),
+			timestamp: options?.meta?.timestamp || this._hlc.now()
 		});
 
 		const entry = await Entry.create<T>({
@@ -542,7 +542,7 @@ export class Log<T> {
 				type: options.meta?.type,
 				gidSeed: options.meta?.gidSeed,
 				data: options.meta?.data,
-				next: nexts,
+				next: nexts
 			},
 
 			encoding: this._encoding,
@@ -551,11 +551,11 @@ export class Log<T> {
 				? {
 						keypair: options.encryption.keypair,
 						receiver: {
-							...options.encryption.receiver,
-						},
+							...options.encryption.receiver
+						}
 				  }
 				: undefined,
-			canAppend: this._canAppend,
+			canAppend: this._canAppend
 		});
 
 		if (!entry.hash) {
@@ -590,7 +590,7 @@ export class Log<T> {
 
 		const changes: Change<T> = {
 			added: [entry],
-			removed: removed,
+			removed: removed
 		};
 
 		await this._headsIndex.updateHeadsCache(changes); // * here
@@ -603,7 +603,7 @@ export class Log<T> {
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
-			cache: this._entryCache,
+			cache: this._entryCache
 		});
 		const promises: Promise<any>[] = [];
 		const set = new Set<string>();
@@ -666,7 +666,7 @@ export class Log<T> {
 		if (entries.length === 0) {
 			return {
 				added: [],
-				removed: [],
+				removed: []
 			};
 		}
 
@@ -680,7 +680,7 @@ export class Log<T> {
 
 		const change: Change<T> = {
 			added: [],
-			removed: Array.isArray(entry) ? entry : [entry],
+			removed: Array.isArray(entry) ? entry : [entry]
 		};
 
 		/* 	await Promise.all([
@@ -773,8 +773,8 @@ export class Log<T> {
 		const definedOptions = {
 			...options,
 			cache: options?.cache ?? {
-				update: true,
-			},
+				update: true
+			}
 		};
 
 		await this.load({ reload: false });
@@ -837,7 +837,7 @@ export class Log<T> {
 			const entry =
 				resolvedEntries.get(hash) ||
 				(await Entry.fromMultihash<T>(this._storage, hash, {
-					timeout: options?.timeout,
+					timeout: options?.timeout
 				}));
 
 			entry.init(this);
@@ -1039,7 +1039,7 @@ export class Log<T> {
 		}
 		await this._headsIndex.updateHeadsCache({
 			added: newHeads,
-			removed: [entry.hash],
+			removed: [entry.hash]
 		});
 		return entry.delete(this._storage);
 	}
@@ -1058,9 +1058,7 @@ export class Log<T> {
 	): Promise<string> {
 		return (
 			await Promise.all(
-				(
-					await this.toArray()
-				)
+				(await this.toArray())
 					.slice()
 					.reverse()
 					.map(async (e, idx) => {
@@ -1113,7 +1111,7 @@ export class Log<T> {
 			replicate: true, // TODO this.replication.replicate(x) => true/false
 			timeout: opts.fetchEntryTimeout,
 			reload: opts.reload,
-			cache: { update: true, reset: true },
+			cache: { update: true, reset: true }
 		});
 
 		if (heads) {
@@ -1134,8 +1132,8 @@ export class Log<T> {
 					/* length: amount, */
 					timeout: opts?.fetchEntryTimeout,
 					cache: {
-						update: false,
-					},
+						update: false
+					}
 				});
 			}
 		}
@@ -1156,7 +1154,7 @@ export class Log<T> {
 		await log.join(!Array.isArray(entryOrHash) ? [entryOrHash] : entryOrHash, {
 			timeout: options.timeout,
 			trim: options.trim,
-			verifySignatures: true,
+			verifySignatures: true
 		});
 		return log;
 	}

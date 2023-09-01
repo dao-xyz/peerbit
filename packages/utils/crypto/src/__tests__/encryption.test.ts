@@ -2,7 +2,7 @@ import {
 	DecryptedThing,
 	X25519Keypair,
 	Keychain,
-	PublicSignKey,
+	PublicSignKey
 } from "../index.js";
 
 describe("encryption", function () {
@@ -13,7 +13,7 @@ describe("encryption", function () {
 				publicKey.equals(keypair.publicKey) ? (keypair as Q) : undefined,
 			import: (keypair: any, id: Uint8Array) => {
 				throw new Error("No implemented+");
-			},
+			}
 		};
 	};
 	it("encrypt", async () => {
@@ -23,7 +23,7 @@ describe("encryption", function () {
 
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
-			data,
+			data
 		});
 
 		const receiver1Config = keychain(receiverKey1);

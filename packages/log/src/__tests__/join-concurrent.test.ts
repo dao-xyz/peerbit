@@ -24,12 +24,12 @@ describe("concurrency", function () {
 			log1 = new Log();
 			await log1.open(store, signKey, {
 				sortFn: SortByEntryHash,
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			log2 = new Log();
 			await log2.open(store, signKey, {
 				sortFn: SortByEntryHash,
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 		});
 

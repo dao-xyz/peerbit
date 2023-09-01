@@ -12,7 +12,7 @@ describe("client", () => {
 		client = await create({
 			peerId: await (await Ed25519Keypair.create()).toPeerId(),
 			directory: "./tmp/server-node/client/" + new Date(),
-			listenPort: 9123,
+			listenPort: 9123
 		});
 		expect(client.services.blocks["_localStore"]).toBeInstanceOf(
 			LevelBlockStore

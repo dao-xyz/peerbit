@@ -6,7 +6,7 @@ import { toBase64 } from "@peerbit/crypto";
 export enum AccessType {
 	Any = 0,
 	Read = 1,
-	Write = 2,
+	Write = 2
 }
 
 @variant(0)

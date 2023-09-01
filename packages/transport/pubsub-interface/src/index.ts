@@ -4,7 +4,7 @@ import {
 	Message,
 	DataMessage,
 	WaitForPeer,
-	PeerEvents,
+	PeerEvents
 } from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interface/events";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
@@ -56,7 +56,7 @@ export class SubscriptionData {
 	timestamp: bigint;
 
 	@field({
-		type: option(Uint8Array),
+		type: option(Uint8Array)
 	})
 	data?: Uint8Array;
 

@@ -28,7 +28,7 @@ describe("join", function () {
 			await Ed25519Keypair.create(),
 			await Ed25519Keypair.create(),
 			await Ed25519Keypair.create(),
-			await Ed25519Keypair.create(),
+			await Ed25519Keypair.create()
 		];
 		keys.sort((a, b) => {
 			return compare(a.publicKey.publicKey, b.publicKey.publicKey);
@@ -62,7 +62,7 @@ describe("join", function () {
 			await log2Cache.open();
 			await log2.open(session.peers[1].services.blocks, signKey2, {
 				...logOptions,
-				cache: log2Cache,
+				cache: log2Cache
 			});
 			log3 = new Log<Uint8Array>();
 			await log3.open(session.peers[2].services.blocks, signKey3, logOptions);
@@ -88,35 +88,35 @@ describe("join", function () {
 					store: session.peers[0].services.blocks,
 					identity: {
 						...signKey,
-						sign: async (data: Uint8Array) => await signKey.sign(data),
+						sign: async (data: Uint8Array) => await signKey.sign(data)
 					},
 					meta: {
 						gidSeed: Buffer.from("X" + i),
-						next: prev1 ? [prev1] : undefined,
+						next: prev1 ? [prev1] : undefined
 					},
-					data: new Uint8Array([0, i]),
+					data: new Uint8Array([0, i])
 				});
 				const n2 = await Entry.create({
 					store: session.peers[0].services.blocks,
 					identity: {
 						...signKey2,
-						sign: async (data: Uint8Array) => await signKey2.sign(data),
+						sign: async (data: Uint8Array) => await signKey2.sign(data)
 					},
 					meta: {
-						next: prev2 ? [prev2, n1] : [n1],
+						next: prev2 ? [prev2, n1] : [n1]
 					},
-					data: new Uint8Array([1, i]),
+					data: new Uint8Array([1, i])
 				});
 				const n3 = await Entry.create({
 					store: session.peers[1].services.blocks,
 					identity: {
 						...signKey3,
-						sign: async (data: Uint8Array) => await signKey3.sign(data),
+						sign: async (data: Uint8Array) => await signKey3.sign(data)
 					},
 					data: new Uint8Array([2, i]),
 					meta: {
-						next: prev3 ? [prev3, n1, n2] : [n1, n2],
-					},
+						next: prev3 ? [prev3, n1, n2] : [n1, n2]
+					}
 				});
 
 				items1.push(n1);
@@ -183,7 +183,7 @@ describe("join", function () {
 				new Uint8Array([0, 1]),
 				new Uint8Array([1, 0]),
 				new Uint8Array([0, 2]),
-				new Uint8Array([1, 1]),
+				new Uint8Array([1, 1])
 			];
 
 			expect(log1.length).toEqual(4);
@@ -225,30 +225,30 @@ describe("join", function () {
 				const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {
 					meta: {
 						next: [a1],
-						type: EntryType.CUT,
-					},
+						type: EntryType.CUT
+					}
 				});
 				const { entry: a2 } = await log1.append(new Uint8Array([0, 2]));
 				await log1.join(await log2.getHeads());
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					a1.hash,
 					b1.hash,
-					a2.hash,
+					a2.hash
 				]);
 				const { entry: b2 } = await log2.append(new Uint8Array([1, 0]), {
 					meta: {
 						next: [a2],
-						type: EntryType.CUT,
-					},
+						type: EntryType.CUT
+					}
 				});
 				await log1.join(await log2.getHeads());
 				expect((await log1.getHeads()).map((e) => e.hash)).toEqual([
 					b1.hash,
-					b2.hash,
+					b2.hash
 				]);
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					b1.hash,
-					b2.hash,
+					b2.hash
 				]);
 			});
 
@@ -258,19 +258,19 @@ describe("join", function () {
 					data: new Uint8Array([1, 0]),
 					meta: {
 						type: EntryType.CUT,
-						next: [a1],
+						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage,
+					store: log1.storage
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
 					meta: {
 						type: EntryType.APPEND,
-						next: [a1],
+						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage,
+					store: log1.storage
 				});
 
 				// We need to store a1 somewhere else, becuse log1 will temporarely delete the block since due to the merge order
@@ -281,7 +281,7 @@ describe("join", function () {
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					a1.hash,
 					b1.hash,
-					b2.hash,
+					b2.hash
 				]);
 			});
 
@@ -291,25 +291,25 @@ describe("join", function () {
 					data: new Uint8Array([1, 0]),
 					meta: {
 						type: EntryType.APPEND,
-						next: [a1],
+						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage,
+					store: log1.storage
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
 					meta: {
 						type: EntryType.CUT,
-						next: [a1],
+						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage,
+					store: log1.storage
 				});
 				await log1.join([b1, b2]);
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					a1.hash,
 					b1.hash,
-					b2.hash,
+					b2.hash
 				]);
 			});
 
@@ -318,26 +318,26 @@ describe("join", function () {
 				const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {
 					meta: {
 						next: [a1],
-						type: EntryType.CUT,
-					},
+						type: EntryType.CUT
+					}
 				});
 				const { entry: b2 } = await log2.append(new Uint8Array([1, 1]), {
 					meta: {
 						next: [a1],
-						type: EntryType.CUT,
-					},
+						type: EntryType.CUT
+					}
 				});
 
 				expect((await log2.getHeads()).map((x) => x.hash)).toEqual([
 					b1.hash,
-					b2.hash,
+					b2.hash
 				]);
 				fetchEvents = 0;
 				await log1.join(await log2.getHeads());
 				expect(fetchEvents).toEqual(0); // will not fetch a1 since b1 and b2 is CUT (no point iterating to nexts)
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					b1.hash,
-					b2.hash,
+					b2.hash
 				]);
 			});
 		});
@@ -345,7 +345,7 @@ describe("join", function () {
 		it("joins heads", async () => {
 			const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 			const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {
-				meta: { next: [a1] },
+				meta: { next: [a1] }
 			});
 
 			expect(log1.length).toEqual(1);
@@ -398,7 +398,7 @@ describe("join", function () {
 			const expectedData = [
 				new Uint8Array([0, 1]),
 				new Uint8Array([0, 2]),
-				new Uint8Array([0, 3]),
+				new Uint8Array([0, 3])
 			];
 			expect(log2.length).toEqual(3);
 			expect(
@@ -421,7 +421,7 @@ describe("join", function () {
 				new Uint8Array([0, 1]),
 				new Uint8Array([1, 0]),
 				new Uint8Array([0, 2]),
-				new Uint8Array([1, 1]),
+				new Uint8Array([1, 1])
 			];
 
 			expect(await log1.getHeads()).toContainAllValues([a2, b2]);
@@ -455,7 +455,7 @@ describe("join", function () {
 				new Uint8Array([0, 1]),
 				new Uint8Array([1, 0]),
 				new Uint8Array([0, 2]),
-				new Uint8Array([1, 1]),
+				new Uint8Array([1, 1])
 			];
 
 			expect(
@@ -480,7 +480,7 @@ describe("join", function () {
 				new Uint8Array([0, 1]),
 				new Uint8Array([1, 0]),
 				new Uint8Array([0, 2]),
-				new Uint8Array([1, 1]),
+				new Uint8Array([1, 1])
 			];
 
 			expect(log2.length).toEqual(4);
@@ -568,7 +568,7 @@ describe("join", function () {
 				new Uint8Array([0, 2]),
 				new Uint8Array([1, 1]),
 				new Uint8Array([2, 1]),
-				new Uint8Array([3, 1]),
+				new Uint8Array([3, 1])
 			];
 
 			expect(log1.length).toEqual(8);
@@ -654,63 +654,63 @@ describe("join", function () {
 			const expectedData = [
 				{
 					payload: new Uint8Array([0, 1]),
-					gid: a1.gid,
+					gid: a1.gid
 				},
 				{
 					payload: new Uint8Array([1, 0]),
-					gid: b1.gid,
+					gid: b1.gid
 				},
 
 				{
 					payload: new Uint8Array([0, 2]),
-					gid: a2.gid,
+					gid: a2.gid
 				},
 				{
 					payload: new Uint8Array([1, 1]),
-					gid: b2.gid,
+					gid: b2.gid
 				},
 				{
 					payload: new Uint8Array([2, 0]),
-					gid: a1.gid,
+					gid: a1.gid
 				},
 				{
 					payload: new Uint8Array([2, 1]),
-					gid: c2.gid,
+					gid: c2.gid
 				},
 				{
 					payload: new Uint8Array([3, 0]),
-					gid: d2.gid,
+					gid: d2.gid
 				},
 				{
 					payload: new Uint8Array([3, 1]),
-					gid: d2.gid,
+					gid: d2.gid
 				},
 				{
 					payload: new Uint8Array([3, 2]),
-					gid: d3.gid,
+					gid: d3.gid
 				},
 				{
 					payload: new Uint8Array([3, 3]),
-					gid: d3.gid,
+					gid: d3.gid
 				},
 				{
 					payload: new Uint8Array([3, 4]),
-					gid: d5.gid,
+					gid: d5.gid
 				},
 				{
 					payload: new Uint8Array([0, 4]),
-					gid: a5.gid,
+					gid: a5.gid
 				},
 				{
 					payload: new Uint8Array([3, 5]),
-					gid: d6.gid,
-				},
+					gid: d6.gid
+				}
 			];
 
 			const transformed = (await log4.toArray()).map((e) => {
 				return {
 					payload: new Uint8Array(e.payload.getValue()),
-					gid: e.gid,
+					gid: e.gid
 				};
 			});
 
@@ -765,7 +765,7 @@ describe("join", function () {
 				new Uint8Array([3, 0]),
 				new Uint8Array([3, 1]),
 				new Uint8Array([3, 2]),
-				new Uint8Array([3, 3]),
+				new Uint8Array([3, 3])
 			];
 
 			expect(log4.length).toEqual(10);
@@ -803,7 +803,7 @@ describe("join", function () {
 			it("joins with references", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const { entry: a2 } = await log1.append(new Uint8Array([0, 2]), {
-					meta: { next: [a1] },
+					meta: { next: [a1] }
 				});
 				await log2.join([{ entry: a2, references: [a1] }]);
 				expect(log2.values.length).toEqual(2);
@@ -860,7 +860,7 @@ describe("join", function () {
 				const expectedData = [
 					new Uint8Array([1, 0]),
 					new Uint8Array([0, 2]),
-					new Uint8Array([1, 1]),
+					new Uint8Array([1, 1])
 				];
 				const lastEntry = last(await log1.toArray());
 
@@ -881,7 +881,7 @@ describe("join", function () {
 					new Uint8Array([0, 1]),
 					new Uint8Array([1, 0]),
 					new Uint8Array([0, 2]),
-					new Uint8Array([1, 1]),
+					new Uint8Array([1, 1])
 				];
 				const lastEntry = last(await log1.toArray());
 

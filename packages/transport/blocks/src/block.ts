@@ -14,11 +14,11 @@ export const defaultHasher = sha256;
 
 export const codecCodes = {
 	[dagCbor.code]: dagCbor,
-	[raw.code]: raw,
+	[raw.code]: raw
 };
 export const codecMap = {
 	raw: raw,
-	"dag-cbor": dagCbor,
+	"dag-cbor": dagCbor
 };
 
 export const cidifyString = (str: string): CID => {
@@ -51,7 +51,7 @@ export const checkDecodeBlock = async (
 	const block = await Block.decode({
 		bytes: bytes,
 		codec,
-		hasher: options?.hasher || defaultHasher,
+		hasher: options?.hasher || defaultHasher
 	});
 	if (!block.cid.equals(cidObject)) {
 		throw new Error("CID does not match");
@@ -108,7 +108,7 @@ export const createBlock = async (
 	const block = await Block.encode({
 		value,
 		codec,
-		hasher: options?.hasher || defaultHasher,
+		hasher: options?.hasher || defaultHasher
 	});
 	return block as Block.Block<any, any, any, any>;
 };

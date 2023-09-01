@@ -5,7 +5,7 @@ import {
 	Entry,
 	Log,
 	LogEvents,
-	LogProperties,
+	LogProperties
 } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import {
@@ -15,14 +15,14 @@ import {
 	deserialize,
 	field,
 	serialize,
-	variant,
+	variant
 } from "@dao-xyz/borsh";
 import {
 	AccessError,
 	getPublicKeyFromPeerId,
 	PublicSignKey,
 	sha256,
-	sha256Base64Sync,
+	sha256Base64Sync
 } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -30,11 +30,11 @@ import {
 	ExchangeHeadsMessage,
 	RequestIHave,
 	ResponseIHave,
-	createExchangeHeadsMessage,
+	createExchangeHeadsMessage
 } from "./exchange-heads.js";
 import {
 	SubscriptionEvent,
-	UnsubcriptionEvent,
+	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
 import { startsWith } from "@peerbit/uint8arrays";
 import { TimeoutError } from "@peerbit/time";
@@ -44,7 +44,7 @@ import {
 	MinReplicas,
 	decodeReplicas,
 	encodeReplicas,
-	maxReplicas,
+	maxReplicas
 } from "./replication.js";
 import pDefer, { DeferredPromise } from "p-defer";
 import { Cache } from "@peerbit/cache";
@@ -199,7 +199,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 		if (!appendOptions.meta) {
 			appendOptions.meta = {
-				data: minReplicasData,
+				data: minReplicasData
 			};
 		} else {
 			appendOptions.meta.data = minReplicasData;
@@ -228,7 +228,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				? typeof options?.replicas?.max === "number"
 					? new AbsoluteReplicas(options?.replicas?.max)
 					: options.replicas.max
-				: undefined,
+				: undefined
 		};
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
 		this._pendingDeletes = new Map();
@@ -295,12 +295,12 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 							entry.meta.gid,
 							decodeReplicas(entry).getValue(this)
 						)), // TODO types
-					cacheId: () => this._lastSubscriptionMessageId,
-				},
+					cacheId: () => this._lastSubscriptionMessageId
+				}
 			},
 			cache:
 				this.node.memory &&
-				(await this.node.memory.sublevel(sha256Base64Sync(this.log.id))),
+				(await this.node.memory.sublevel(sha256Base64Sync(this.log.id)))
 		});
 
 		await this.initializeWithRole();
@@ -322,7 +322,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			responseType: TransportMessage,
 			responseHandler: this._onMessage.bind(this),
 			topic: this.topic,
-			subscriptionData: serialize(this.role),
+			subscriptionData: serialize(this.role)
 		});
 	}
 
@@ -405,7 +405,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 							head.entry.init({
 								// we need to init because we perhaps need to decrypt gid
 								keychain: this.log.keychain,
-								encoding: this.log.encoding,
+								encoding: this.log.encoding
 							});
 							filteredHeads.push(head);
 						}
@@ -427,7 +427,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 									: this.replicas.min.getValue(this);
 
 							const maxReplicasFromNewEntries = maxReplicas(this, [
-								...entries.map((x) => x.entry),
+								...entries.map((x) => x.entry)
 							]);
 
 							const isLeader = await this.isLeader(
@@ -478,7 +478,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 								);
 								if (headsWithGid && headsWithGid.size > 0) {
 									const minReplicas = maxReplicas(this, [
-										...headsWithGid.values(),
+										...headsWithGid.values()
 									]);
 
 									const isLeader = await this.isLeader(
@@ -525,10 +525,10 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 							callback: () => {
 								prevPendingIHave && prevPendingIHave.callback();
 								this.rpc.send(new ResponseIHave({ hashes: [hash] }), {
-									to: [context.from!],
+									to: [context.from!]
 								});
 								this._pendingIHave.delete(hash);
-							},
+							}
 						};
 						const timeout = setTimeout(() => {
 							const pendingIHaveRef = this._pendingIHave.get(hash);
@@ -541,7 +541,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					}
 				}
 				this.rpc.send(new ResponseIHave({ hashes: hasAndIsLeader }), {
-					to: [context.from!],
+					to: [context.from!]
 				});
 			} else if (msg instanceof ResponseIHave) {
 				for (const hash of msg.hashes) {
@@ -758,9 +758,12 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				deferredPromise.reject(e);
 			};
 
-			const timeout = setTimeout(() => {
-				reject(new Error("Timeout"));
-			}, options?.timeout ?? 10 * 1000);
+			const timeout = setTimeout(
+				() => {
+					reject(new Error("Timeout"));
+				},
+				options?.timeout ?? 10 * 1000
+			);
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,
@@ -775,7 +778,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 						if (minReplicas.getValue(this) <= existCounter.size) {
 							this.log
 								.remove(entry, {
-									recursively: true,
+									recursively: true
 								})
 								.then(() => {
 									resolve();
@@ -785,7 +788,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 								});
 						}
 					}
-				},
+				}
 			});
 			promises.push(deferredPromise.promise);
 		}
@@ -891,7 +894,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			await this.rpc.send(message, {
 				to: newPeers,
-				strict: true,
+				strict: true
 			});
 		}
 		if (storeChanged) {

@@ -29,7 +29,7 @@ import {
 	ForwardJumpError,
 	HLC,
 	Timestamp,
-	WallTimeOverflowError,
+	WallTimeOverflowError
 } from "../clock.js";
 
 describe("hlc", () => {
@@ -39,7 +39,7 @@ describe("hlc", () => {
 		deepEquals: (a: any, b: any) => expect(a).toEqual(b),
 		throws: (a: any, error: any) => expect(a).toThrow(error),
 		ok: (x: any) => x === true,
-		fail: (x: any) => fail(x),
+		fail: (x: any) => fail(x)
 	};
 
 	test(".now() returns a new timestamp", () => {
@@ -99,19 +99,19 @@ describe("hlc", () => {
 	test("restoring from a past timestamp", () => {
 		const clockOlder = new HLC({
 			wallTime: () => 0n,
-			last: new Timestamp({ wallTime: 1n }),
+			last: new Timestamp({ wallTime: 1n })
 		});
 		t.equals(clockOlder.last.wallTime, 1n);
 		const clockNewer = new HLC({
 			wallTime: () => 2n,
-			last: new Timestamp({ wallTime: 1n }),
+			last: new Timestamp({ wallTime: 1n })
 		});
 		t.equals(clockNewer.last.wallTime, 2n);
 	});
 	test("updating with newer logical", () => {
 		const clock = new HLC({
 			wallTime: () => 0n,
-			last: new Timestamp({ wallTime: 1n, logical: 2 }),
+			last: new Timestamp({ wallTime: 1n, logical: 2 })
 		});
 		clock.update(new Timestamp({ wallTime: 1n, logical: 5 }));
 		t.equals(clock.last.wallTime, 1n);
@@ -120,7 +120,7 @@ describe("hlc", () => {
 	test("updating with older logical", () => {
 		const clock = new HLC({
 			wallTime: () => 0n,
-			last: new Timestamp({ wallTime: 1n, logical: 5 }),
+			last: new Timestamp({ wallTime: 1n, logical: 5 })
 		});
 		clock.update(new Timestamp({ wallTime: 1n, logical: 2 }));
 		t.equals(clock.last.wallTime, 1n);
@@ -133,7 +133,7 @@ describe("hlc", () => {
 		const clockNoError = new HLC({ wallTime });
 		const clockError = new HLC({
 			wallTime,
-			toleratedForwardClockJump: 10n,
+			toleratedForwardClockJump: 10n
 		});
 		t.equals(clockError.toleratedForwardClockJump, 10n);
 		myTime = 2n;
@@ -156,7 +156,7 @@ describe("hlc", () => {
 			clockNoError.now(),
 			new Timestamp({
 				wallTime: 20n,
-				logical: 2,
+				logical: 2
 			})
 		);
 		t.throws(
@@ -165,33 +165,39 @@ describe("hlc", () => {
 		);
 	});
 	test("wall overflow error", () => {
-		t.throws(() => {
-			new HLC({ wallTime: () => 18446744073709551615n + 1n }).now();
-		}, new WallTimeOverflowError(18446744073709551616n, 18446744073709551615n));
-		t.throws(() => {
-			new HLC({
-				wallTime: () => 2n,
-				wallTimeUpperBound: 1n,
-			}).now();
-		}, new WallTimeOverflowError(2n, 1n));
+		t.throws(
+			() => {
+				new HLC({ wallTime: () => 18446744073709551615n + 1n }).now();
+			},
+			new WallTimeOverflowError(18446744073709551616n, 18446744073709551615n)
+		);
+		t.throws(
+			() => {
+				new HLC({
+					wallTime: () => 2n,
+					wallTimeUpperBound: 1n
+				}).now();
+			},
+			new WallTimeOverflowError(2n, 1n)
+		);
 	});
 	test("logical overflow leads to physical increase", () => {
 		const clock = new HLC({
 			wallTime: () => 0n,
-			last: new Timestamp({ wallTime: 0n, logical: 0xffffffff - 1 }),
+			last: new Timestamp({ wallTime: 0n, logical: 0xffffffff - 1 })
 		});
 		t.deepEquals(
 			clock.now(),
 			new Timestamp({
 				wallTime: 0n,
-				logical: 0xffffffff,
+				logical: 0xffffffff
 			})
 		);
 		t.deepEquals(
 			clock.now(),
 			new Timestamp({
 				wallTime: 1n,
-				logical: 0,
+				logical: 0
 			})
 		);
 	});
@@ -200,7 +206,7 @@ describe("hlc", () => {
 			maxOffset: 0n, // [default=0] Maximum time in nanosecons that another timestamp may exceed the wall-clock before an error is thrown.
 			toleratedForwardClockJump: 0n, // [default=0] Maximum time in nanoseconds that the wall-clock may exceed the previous timestamp before an error is thrown. Setting it 0 will disable it.
 			wallTimeUpperBound: 0n, // [default=0] will throw an error if the wallTime exceeds this value. Setting it to 0 will limit it to the uint64 max-value.
-			last: undefined, // [default=undefined] The last known timestamp to start off, useful for restoring a clock's state
+			last: undefined // [default=undefined] The last known timestamp to start off, useful for restoring a clock's state
 		});
 
 		const timestamp = clock.now();
@@ -216,12 +222,12 @@ describe("hlc", () => {
 	test("example: clock drift", () => {
 		try {
 			const clock = new HLC({
-				maxOffset: BigInt(60 * 1e9) /* 1 minute in nanoseconds */,
+				maxOffset: BigInt(60 * 1e9) /* 1 minute in nanoseconds */
 			});
 			const timestamp = clock.now();
 			clock.update(
 				new Timestamp({
-					wallTime: timestamp.wallTime + BigInt(120 * 1e9),
+					wallTime: timestamp.wallTime + BigInt(120 * 1e9)
 				})
 			);
 			t.fail("error should have thrown");
@@ -238,7 +244,7 @@ describe("hlc", () => {
 				BigInt(new Date("2022-01-01T00:00:00.000Z").getTime()) * BigInt(1e6);
 			const clock = new HLC({
 				wallTime: () => wallTimeUpperBound + 1n, // Faking a wallTime that is beyond the max we allow
-				wallTimeUpperBound,
+				wallTimeUpperBound
 			});
 			clock.now();
 			t.fail("error should have thrown");
@@ -251,7 +257,7 @@ describe("hlc", () => {
 	});
 	test("example: clock drift", () => {
 		const clock = new HLC({
-			toleratedForwardClockJump: BigInt(1e6) /* 1 ms in nanoseconds */,
+			toleratedForwardClockJump: BigInt(1e6) /* 1 ms in nanoseconds */
 		});
 		setTimeout(() => {
 			try {
@@ -286,7 +292,7 @@ describe("hlc", () => {
 
 		const clock = new CockroachHLC({
 			wallTime: () => 10n,
-			maxOffset: 20,
+			maxOffset: 20
 		});
 		clock.update(new Timestamp({ wallTime: 13n }));
 		t.equals(clock.monotonicityErrorCount, 1);

@@ -34,7 +34,7 @@ describe("session", () => {
 		);
 
 		session.peers[0].services.pubsub.publish(new Uint8Array([1, 2, 3]), {
-			topics: ["x"],
+			topics: ["x"]
 		});
 		await waitFor(() => !!result);
 	});

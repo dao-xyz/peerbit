@@ -27,13 +27,13 @@ export const createLibp2pExtended = (
 	opts: Libp2pCreateOptions = {
 		services: {
 			blocks: (c) => new DirectBlock(c),
-			pubsub: (c) => new DirectSub(c),
-		},
+			pubsub: (c) => new DirectSub(c)
+		}
 	}
 ): Promise<Libp2pExtended> => {
 	const relayIdentify = {
 		relay: relay(),
-		identify: identifyService(),
+		identify: identifyService()
 	};
 
 	// https://github.com/libp2p/js-libp2p/issues/1757
@@ -45,10 +45,10 @@ export const createLibp2pExtended = (
 
 	return createLibp2p({
 		connectionManager: {
-			minConnections: 0,
+			minConnections: 0
 		},
 		addresses: {
-			listen: listen(),
+			listen: listen()
 		},
 		transports: transports(),
 		connectionEncryption: [noise()],
@@ -63,11 +63,11 @@ export const createLibp2pExtended = (
 						canRelayMessage: true,
 						signaturePolicy: "StrictNoSign",
 						connectionManager: {
-							autoDial: true,
-						},
+							autoDial: true
+						}
 					})),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
-			...opts.services,
-		},
+			...opts.services
+		}
 	});
 };

@@ -63,7 +63,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		}
 		if (id.type === "secp256k1") {
 			return new Secp256k1PublicKey({
-				publicKey: id.publicKey.slice(4), // computeAddress(!.slice(4)),
+				publicKey: id.publicKey.slice(4) // computeAddress(!.slice(4)),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -101,7 +101,7 @@ export class Secp256k1PrivateKey extends PrivateSignKey {
 		}
 		if (id.type === "secp256k1") {
 			return new Secp256k1PrivateKey({
-				privateKey: coerce(id.privateKey!.slice(4)),
+				privateKey: coerce(id.privateKey!.slice(4))
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -130,11 +130,11 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		const generated = await generateKeyPair("secp256k1");
 		const kp = new Secp256k1Keypair({
 			publicKey: new Secp256k1PublicKey({
-				publicKey: generated.public.marshal(),
+				publicKey: generated.public.marshal()
 			}),
 			privateKey: new Secp256k1PrivateKey({
-				privateKey: generated.marshal(),
-			}),
+				privateKey: generated.marshal()
+			})
 		});
 
 		return kp;
@@ -157,7 +157,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		return new SignatureWithKey({
 			prehash,
 			publicKey: this.publicKey,
-			signature: signatureBytes,
+			signature: signatureBytes
 		});
 	}
 
@@ -174,7 +174,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	static fromPeerId(peerId: PeerId) {
 		return new Secp256k1Keypair({
 			privateKey: Secp256k1PrivateKey.from(peerId),
-			publicKey: Secp256k1PublicKey.from(peerId),
+			publicKey: Secp256k1PublicKey.from(peerId)
 		});
 	}
 

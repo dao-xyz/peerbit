@@ -66,16 +66,16 @@ describe("replication", function () {
 				{ encoding: JSON_ENCODING };
 			log2 = new Log({ id: logId });
 			await log2.open(session.peers[1].services.blocks, signKey2, {
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 
 			input1 = new Log({ id: logId });
 			await input1.open(session.peers[0].services.blocks, signKey, {
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			input2 = new Log({ id: logId });
 			await input2.open(session.peers[1].services.blocks, signKey2, {
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 			session.peers[0].services.pubsub.subscribe(channel);
 			session.peers[1].services.pubsub.subscribe(channel);
@@ -102,15 +102,15 @@ describe("replication", function () {
 				prev1 = (
 					await input1.append("A" + i, {
 						meta: {
-							next: prev1 ? [prev1] : undefined,
-						},
+							next: prev1 ? [prev1] : undefined
+						}
 					})
 				).entry;
 				prev2 = (
 					await input2.append("B" + i, {
 						meta: {
-							next: prev2 ? [prev2] : undefined,
-						},
+							next: prev2 ? [prev2] : undefined
+						}
 					})
 				).entry;
 				const hashes1 = await input1.getHeads();
@@ -120,7 +120,7 @@ describe("replication", function () {
 						serialize(new StringArray({ arr: hashes1.map((x) => x.hash) }))
 					),
 					{
-						topics: [channel],
+						topics: [channel]
 					}
 				);
 				await session.peers[1].services.pubsub.publish(
@@ -128,7 +128,7 @@ describe("replication", function () {
 						serialize(new StringArray({ arr: hashes2.map((x) => x.hash) }))
 					),
 					{
-						topics: [channel],
+						topics: [channel]
 					}
 				);
 			}
@@ -156,7 +156,7 @@ describe("replication", function () {
 
 			const result = new Log<string>({ id: logId });
 			result.open(session.peers[0].services.blocks, signKey, {
-				encoding: JSON_ENCODING,
+				encoding: JSON_ENCODING
 			});
 
 			await result.join(log1);

@@ -11,7 +11,7 @@ describe(`role`, () => {
 		session = await LSession.disconnected(3);
 		await session.connect([
 			[session.peers[0], session.peers[1]],
-			[session.peers[1], session.peers[2]],
+			[session.peers[1], session.peers[2]]
 		]);
 		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
 		await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);
@@ -36,7 +36,7 @@ describe(`role`, () => {
 				.counter
 		).toEqual(1);
 		expect(db1.log.getReplicatorsSorted()?.map((x) => x.hash)).toEqual([
-			db1.node.identity.publicKey.hashcode(),
+			db1.node.identity.publicKey.hashcode()
 		]);
 		expect(db1.log.role).toBeInstanceOf(Replicator);
 		await db1.log.updateRole(new Observer());
@@ -52,7 +52,7 @@ describe(`role`, () => {
 			db1.address!,
 			session.peers[1],
 			{
-				args: { role: new Observer() },
+				args: { role: new Observer() }
 			}
 		))!;
 
@@ -75,7 +75,7 @@ describe(`role`, () => {
 			db1.address!,
 			session.peers[1],
 			{
-				args: { role: new Observer() },
+				args: { role: new Observer() }
 			}
 		))!;
 
@@ -98,7 +98,7 @@ describe(`role`, () => {
 			db1.address!,
 			session.peers[1],
 			{
-				args: { role: new Observer(), sync: () => true },
+				args: { role: new Observer(), sync: () => true }
 			}
 		))!;
 

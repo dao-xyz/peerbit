@@ -8,7 +8,7 @@ import {
 	fixedArray,
 	serialize,
 	variant,
-	vec,
+	vec
 } from "@dao-xyz/borsh";
 import { waitForAsync } from "@peerbit/time";
 import LocalStore from "@peerbit/lazy-level";
@@ -59,7 +59,7 @@ export const save = async <T>(
 			id: log.id,
 			heads: await log.getHeads(),
 			size: BigInt(values.length),
-			values: values,
+			values: values
 		})
 	);
 
@@ -70,7 +70,7 @@ export const save = async <T>(
 
 	await waitForAsync(() => cache.get(snapshotPath).then((bytes) => !!bytes), {
 		delayInterval: 200,
-		timeout: 10 * 1000,
+		timeout: 10 * 1000
 	});
 
 	logger.debug(`Saved snapshot: ${snapshot}`);

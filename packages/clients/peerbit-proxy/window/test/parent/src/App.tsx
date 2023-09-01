@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 const client = createHost(
 	await Peerbit.create({
 		libp2p: {
-			services: { pubsub: (c) => new DirectSub(c, { emitSelf: true }) },
-		},
+			services: { pubsub: (c) => new DirectSub(c, { emitSelf: true }) }
+		}
 	}),
 	"*"
 );

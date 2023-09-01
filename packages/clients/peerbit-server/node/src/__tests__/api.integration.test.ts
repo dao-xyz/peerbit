@@ -9,7 +9,7 @@ import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
 	Identity,
-	toBase64,
+	toBase64
 } from "@peerbit/crypto";
 import { Peerbit } from "peerbit";
 import { tcp } from "@libp2p/tcp";
@@ -39,13 +39,13 @@ describe("libp2p only", () => {
 
 	beforeEach(async () => {
 		session.peers[0].services.pubsub.subscribe("1", {
-			data: new Uint8Array([1]),
+			data: new Uint8Array([1])
 		});
 		session.peers[0].services.pubsub.subscribe("2", {
-			data: new Uint8Array([2]),
+			data: new Uint8Array([2])
 		});
 		session.peers[0].services.pubsub.subscribe("3", {
-			data: new Uint8Array([3]),
+			data: new Uint8Array([3])
 		});
 		configDirectory = path.join(
 			__dirname,
@@ -57,7 +57,7 @@ describe("libp2p only", () => {
 		fs.mkdirSync(configDirectory, { recursive: true });
 		server = await startApiServer(session.peers[0], {
 			trust: new Trust(getTrustPath(configDirectory)),
-			port: 7676,
+			port: 7676
 		});
 	});
 	afterEach(() => {
@@ -70,7 +70,7 @@ describe("libp2p only", () => {
 
 	it("use cli as libp2p cli", async () => {
 		const c = await createClient(await Ed25519Keypair.create(), {
-			address: "http://localhost:" + 7676,
+			address: "http://localhost:" + 7676
 		});
 		expect(await c.peer.id.get()).toBeDefined();
 	});
@@ -88,7 +88,7 @@ describe("server", () => {
 		it("bootstrap on start", async () => {
 			let result = await startServerWithNode({
 				bootstrap: true,
-				directory: path.join(__dirname, "tmp", "api-test", "server", uuid()),
+				directory: path.join(__dirname, "tmp", "api-test", "server", uuid())
 			});
 			node = result.node;
 			server = result.server;
@@ -107,14 +107,14 @@ describe("server", () => {
 		beforeEach(async () => {
 			let directory = path.join(__dirname, "tmp", "api-test", "api", uuid());
 			session = await LSession.connected(1, {
-				libp2p: { transports: [tcp(), webSockets()] },
+				libp2p: { transports: [tcp(), webSockets()] }
 			});
 			peer = session.peers[0];
 			db = await peer.open(new PermissionedString({ trusted: [] }));
 			address = db.address;
 			fs.mkdirSync(directory, { recursive: true });
 			server = await startApiServer(peer, {
-				trust: new Trust(getTrustPath(directory)),
+				trust: new Trust(getTrustPath(directory))
 			});
 		});
 		afterEach(async () => {
@@ -142,7 +142,7 @@ describe("server", () => {
 				it("variant", async () => {
 					const c = await client(session.peers[0].identity);
 					const address = await c.program.open({
-						variant: getSchema(PermissionedString).variant! as string,
+						variant: getSchema(PermissionedString).variant! as string
 					});
 					expect(await c.program.has(address)).toBeTrue();
 				});
@@ -150,10 +150,10 @@ describe("server", () => {
 				it("base64", async () => {
 					const c = await client(session.peers[0].identity);
 					const program = new PermissionedString({
-						trusted: [],
+						trusted: []
 					});
 					const address = await c.program.open({
-						base64: toBase64(serialize(program)),
+						base64: toBase64(serialize(program))
 					});
 					expect(await c.program.has(address)).toBeTrue();
 				});
@@ -185,7 +185,7 @@ describe("server", () => {
 
 					const c = await client(session.peers[0].identity);
 					address = await c.program.open({
-						variant: getSchema(PermissionedString).variant! as string,
+						variant: getSchema(PermissionedString).variant! as string
 					});
 					program = (session.peers[0] as Peerbit).handler.items.get(address)!;
 
@@ -220,7 +220,7 @@ describe("server", () => {
 			it("list", async () => {
 				const c = await client(session.peers[0].identity);
 				const address = await c.program.open({
-					variant: getSchema(PermissionedString).variant! as string,
+					variant: getSchema(PermissionedString).variant! as string
 				});
 				expect(await c.program.list()).toContain(address);
 			});

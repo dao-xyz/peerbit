@@ -6,7 +6,7 @@ import {
 	getPathGenerator,
 	getToByFrom,
 	TrustedNetwork,
-	IdentityGraph,
+	IdentityGraph
 } from "..";
 import { waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, Identity } from "@peerbit/crypto";
@@ -22,7 +22,7 @@ const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
 	return {
 		publicKey: ed.publicKey,
-		sign: (data) => ed.sign(data),
+		sign: (data) => ed.sign(data)
 	};
 };
 
@@ -66,17 +66,17 @@ describe("index", () => {
 			const c = (await Ed25519Keypair.create()).publicKey;
 
 			const store = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore(),
+				relationGraph: createIdentityGraphStore()
 			});
 			await session.peers[0].open(store);
 
 			const ab = new IdentityRelation({
 				to: b,
-				from: a,
+				from: a
 			});
 			const bc = new IdentityRelation({
 				to: c,
-				from: b,
+				from: b
 			});
 			await store.relationGraph.put(ab);
 			await store.relationGraph.put(bc);
@@ -129,13 +129,13 @@ describe("index", () => {
 			const b = await Secp256k1PublicKey.recover(await Wallet.createRandom());
 
 			const store = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore(),
+				relationGraph: createIdentityGraphStore()
 			});
 			await session.peers[0].open(store);
 
 			const ab = new IdentityRelation({
 				to: b,
-				from: a,
+				from: a
 			});
 
 			await store.relationGraph.put(ab);
@@ -173,7 +173,7 @@ describe("index", () => {
 
 		it("trusted by chain", async () => {
 			const l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId,
+				rootTrust: session.peers[0].peerId
 			});
 			await session.peers[0].open(l0a);
 
@@ -189,8 +189,8 @@ describe("index", () => {
 				session.peers[2],
 				{
 					args: {
-						role: new Observer(),
-					},
+						role: new Observer()
+					}
 				}
 			);
 
@@ -224,7 +224,7 @@ describe("index", () => {
 			// Try query with trusted
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
 				new SearchRequest({
-					query: [],
+					query: []
 				})
 			);
 
@@ -262,7 +262,7 @@ describe("index", () => {
 
 		it("has relation", async () => {
 			const l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId,
+				rootTrust: session.peers[0].peerId
 			});
 			await session.peers[0].open(l0a);
 
@@ -277,7 +277,7 @@ describe("index", () => {
 
 		it("can not append with wrong truster", async () => {
 			let l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId,
+				rootTrust: session.peers[0].peerId
 			});
 			await session.peers[0].open(l0a);
 
@@ -285,7 +285,7 @@ describe("index", () => {
 				l0a.trustGraph.put(
 					new IdentityRelation({
 						to: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
-						from: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+						from: await Secp256k1PublicKey.recover(await Wallet.createRandom())
 					})
 				)
 			).rejects.toBeInstanceOf(AccessError);
@@ -293,7 +293,7 @@ describe("index", () => {
 
 		it("untrusteed by chain", async () => {
 			let l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId,
+				rootTrust: session.peers[0].peerId
 			});
 
 			await session.peers[0].open(l0a);

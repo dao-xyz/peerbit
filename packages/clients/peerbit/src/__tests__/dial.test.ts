@@ -28,7 +28,7 @@ describe(`dial`, function () {
 		});
 		await clients[0].dial(clients[1].getMultiaddrs()[0]);
 		await clients[0].services.pubsub.publish(new Uint8Array([1]), {
-			topics: [topic],
+			topics: [topic]
 		});
 		await waitFor(() => !!data);
 		expect(data && new Uint8Array(data)).toEqual(new Uint8Array([1]));

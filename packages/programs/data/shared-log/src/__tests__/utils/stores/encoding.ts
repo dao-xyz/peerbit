@@ -11,12 +11,12 @@ export const JSON_ENCODING: Encoding<any> = {
 	},
 	decoder: (bytes: Uint8Array) => {
 		return JSON.parse(decoder.decode(bytes).toString());
-	},
+	}
 };
 
 export const BORSH_ENCODING = <T>(clazz: AbstractType<T>): Encoding<T> => {
 	return {
 		decoder: (bytes: Uint8Array) => deserialize(bytes, clazz),
-		encoder: (data: any) => serialize(data),
+		encoder: (data: any) => serialize(data)
 	};
 };

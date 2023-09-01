@@ -7,24 +7,24 @@ describe("operations", () => {
 			{
 				index: new Range({
 					offset: 0,
-					length: "hello".length,
+					length: "hello".length
 				}),
-				value: "hello",
+				value: "hello"
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: " ".length,
+					length: " ".length
 				}),
-				value: " ",
+				value: " "
 			},
 			{
 				index: new Range({
 					offset: "hello ".length,
-					length: "world".length,
+					length: "world".length
 				}),
-				value: "world",
-			},
+				value: "world"
+			}
 		];
 
 		let string = await applyOperations(
@@ -34,11 +34,11 @@ describe("operations", () => {
 					return {
 						hash: ix.toString(),
 						payload: {
-							getValue: () => v,
+							getValue: () => v
 						},
 						getPayload: async () => {
 							return { getValue: () => v };
-						},
+						}
 					} as any;
 				}
 			})
@@ -51,31 +51,31 @@ describe("operations", () => {
 			{
 				index: new Range({
 					offset: 0,
-					length: "hello".length,
+					length: "hello".length
 				}),
-				value: "hello",
+				value: "hello"
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: "w".length,
+					length: "w".length
 				}),
-				value: "w",
+				value: "w"
 			},
 			{
 				index: new Range({
 					offset: "hello ".length,
-					length: "world".length,
+					length: "world".length
 				}),
-				value: "world",
+				value: "world"
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: " ".length,
+					length: " ".length
 				}),
-				value: " ",
-			},
+				value: " "
+			}
 		];
 
 		let string = await applyOperations(
@@ -85,11 +85,11 @@ describe("operations", () => {
 					return {
 						hash: ix.toString(),
 						payload: {
-							getValue: () => v,
+							getValue: () => v
 						},
 						getPayload: async () => {
 							return { getValue: () => v };
-						},
+						}
 					} as any;
 				}
 			})
@@ -102,16 +102,16 @@ describe("operations", () => {
 			{
 				index: new Range({
 					offset: 0,
-					length: 0,
+					length: 0
 				}),
-				value: "hello world",
+				value: "hello world"
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: "hello world".length,
-				}),
-			},
+					length: "hello world".length
+				})
+			}
 		];
 
 		let string = await applyOperations(
@@ -121,11 +121,11 @@ describe("operations", () => {
 					return {
 						hash: ix.toString(),
 						payload: {
-							getValue: () => v,
+							getValue: () => v
 						},
 						getPayload: async () => {
 							return { getValue: () => v };
-						},
+						}
 					} as any;
 				}
 			})

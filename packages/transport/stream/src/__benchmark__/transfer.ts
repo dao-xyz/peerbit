@@ -3,7 +3,7 @@ import { LSession } from "@peerbit/libp2p-test-utils";
 import {
 	DirectStreamComponents,
 	DirectStream,
-	waitForPeers,
+	waitForPeers
 } from "../index.js";
 import { delay } from "@peerbit/time";
 import { tcp } from "@libp2p/tcp";
@@ -20,14 +20,14 @@ class TestStreamImpl extends DirectStream {
 			canRelayMessage: true,
 			emitSelf: true,
 			connectionManager: {
-				autoDial: false,
-			},
+				autoDial: false
+			}
 		});
 	}
 }
 const session = await LSession.disconnected(4, {
 	transports: [tcp()],
-	services: { directstream: (c) => new TestStreamImpl(c) },
+	services: { directstream: (c) => new TestStreamImpl(c) }
 });
 
 /* 
@@ -48,7 +48,7 @@ const session = await LSession.disconnected(4, {
 await session.connect([
 	[session.peers[0], session.peers[1]],
 	[session.peers[1], session.peers[2]],
-	[session.peers[2], session.peers[3]],
+	[session.peers[2], session.peers[3]]
 ]);
 
 const stream = (i: number): TestStreamImpl =>
@@ -74,7 +74,7 @@ for (const size of sizes) {
 			const small = crypto.randomBytes(size); // 1kb
 			msgMap.set(msgIdFn(small), deferred);
 			stream(0).publish(small, {
-				to: [stream(session.peers.length - 1).publicKey],
+				to: [stream(session.peers.length - 1).publicKey]
 			});
 		},
 		setup: () => {
@@ -87,7 +87,7 @@ for (const size of sizes) {
 		},
 		teardown: () => {
 			stream(session.peers.length - 1).removeEventListener("data", listener);
-		},
+		}
 	});
 }
 suite

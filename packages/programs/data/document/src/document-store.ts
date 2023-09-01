@@ -3,7 +3,7 @@ import {
 	deserialize,
 	field,
 	serialize,
-	variant,
+	variant
 } from "@dao-xyz/borsh";
 import { Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
@@ -17,7 +17,7 @@ import {
 	Replicator,
 	SharedLog,
 	SharedLogOptions,
-	SharedAppendOptions,
+	SharedAppendOptions
 } from "@peerbit/shared-log";
 export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
@@ -29,7 +29,7 @@ import {
 	Operation,
 	PutOperation,
 	CanSearch,
-	CanRead,
+	CanRead
 } from "./document-index.js";
 import { asString, checkKeyable, Keyable } from "./utils.js";
 import { Context, Results } from "./query.js";
@@ -137,7 +137,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 			fields: options.index?.fields || ((obj) => obj),
 			indexBy: options.index?.key,
 			sync: async (result: Results<T>) =>
-				this.log.log.join(result.results.map((x) => x.context.head)),
+				this.log.log.join(result.results.map((x) => x.context.head))
 		});
 
 		await this.log.open({
@@ -148,7 +148,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 			trim: options?.log?.trim,
 			sync: options?.sync,
 			role: options?.role,
-			replicas: options?.replicas,
+			replicas: options?.replicas
 		});
 	}
 
@@ -178,7 +178,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 				!(await this._optionCanPerform(
 					payload as PutOperation<T> | DeleteOperation,
 					{
-						entry,
+						entry
 					}
 				))
 			) {
@@ -216,7 +216,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 		try {
 			entry.init({
 				encoding: this.log.log.encoding,
-				keychain: this.node.keychain,
+				keychain: this.node.keychain
 			});
 			const operation =
 				entry._payload instanceof DecryptedThing
@@ -290,7 +290,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 			: (
 					await this._index.getDetailed(key, {
 						local: true,
-						remote: { sync: true }, // only query remote if we know they exist
+						remote: { sync: true } // only query remote if we know they exist
 					})
 			  )?.[0]?.results[0];
 
@@ -298,7 +298,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 			new PutOperation({
 				key: asString(key),
 				data: ser,
-				value: doc,
+				value: doc
 			}),
 			{
 				...options,
@@ -306,8 +306,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 					next: existingDocument
 						? [await this._resolveEntry(existingDocument.context.head)]
 						: [],
-					...options?.meta,
-				}, //
+					...options?.meta
+				} //
 			}
 		);
 	}
@@ -316,7 +316,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 		const existing = (
 			await this._index.getDetailed(key, {
 				local: true,
-				remote: { sync: true },
+				remote: { sync: true }
 			})
 		)?.[0]?.results[0];
 		if (!existing) {
@@ -325,15 +325,15 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 		return this.log.append(
 			new DeleteOperation({
-				key: asString(key),
+				key: asString(key)
 			}),
 			{
 				...options,
 				meta: {
 					next: [await this._resolveEntry(existing.context.head)],
 					type: EntryType.CUT,
-					...options?.meta,
-				},
+					...options?.meta
+				}
 			} //
 		);
 	}
@@ -377,7 +377,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 
 		let documentsChanged: DocumentsChange<T> = {
 			added: [],
-			removed: [],
+			removed: []
 		};
 
 		for (const [_key, entries] of visited) {
@@ -398,7 +398,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 							this._index.index.get(key)?.context.created ||
 							item.meta.clock.timestamp.wallTime,
 						modified: item.meta.clock.timestamp.wallTime,
-						head: item.hash,
+						head: item.hash
 					});
 
 					const valueToIndex = this._index.toIndex(value, context);
@@ -407,7 +407,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 						key: payload.key,
 						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
 						context,
-						reference: valueToIndex === value || isProgram ? value : undefined,
+						reference: valueToIndex === value || isProgram ? value : undefined
 					});
 
 					// Program specific
@@ -419,7 +419,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 							(await this.log.replicator(item)) // TODO types, throw runtime error if replicator is not provided
 						) {
 							await this.node.open(value, {
-								parent: this as Program<any, any>,
+								parent: this as Program<any, any>
 							}); // TODO types
 						}
 					}

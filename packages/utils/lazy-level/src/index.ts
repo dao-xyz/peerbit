@@ -68,11 +68,9 @@ export default class LazyLevel implements SimpleLevel {
 			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
 				timeout: this._opts.batch.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
 				delayInterval: 100,
-				timeoutMessage: `Failed to wait for idling, got txQueue with ${
-					this._txQueue?.length
-				} elements. Store status: ${
-					this._store?.status
-				}, interval exist: ${!!this._interval}`,
+				timeoutMessage: `Failed to wait for idling, got txQueue with ${this
+					._txQueue?.length} elements. Store status: ${this._store
+					?.status}, interval exist: ${!!this._interval}`
 			});
 		}
 	}
@@ -184,7 +182,7 @@ export default class LazyLevel implements SimpleLevel {
 		const iterator = this._store.iterator<any, Uint8Array>({
 			gte: prefix,
 			lte: prefix + "\xFF",
-			valueEncoding: "view",
+			valueEncoding: "view"
 		});
 		const ret: Uint8Array[] = [];
 		for await (const [_key, value] of iterator) {
@@ -209,7 +207,7 @@ export default class LazyLevel implements SimpleLevel {
 		const iterator = this._store.iterator<any, Uint8Array>({
 			gte: prefix,
 			lte: prefix + "\xFF",
-			valueEncoding: "view",
+			valueEncoding: "view"
 		});
 		const keys: string[] = [];
 		for await (const [key, _value] of iterator) {
@@ -232,7 +230,7 @@ export default class LazyLevel implements SimpleLevel {
 			this._txQueue!.push({
 				type: "put",
 				key: key,
-				value: value,
+				value: value
 			});
 		} else {
 			return this._store.put(key, value, { valueEncoding: "view" });

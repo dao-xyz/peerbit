@@ -2,7 +2,7 @@ import {
 	X25519PublicKey,
 	Ed25519PublicKey,
 	PublicSignKey,
-	X25519Keypair,
+	X25519Keypair
 } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 

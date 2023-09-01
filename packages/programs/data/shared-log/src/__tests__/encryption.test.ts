@@ -49,7 +49,7 @@ describe("encryption", () => {
 						meta: [
 							client.identity.publicKey,
 							client2.identity.publicKey,
-							client3.identity.publicKey,
+							client3.identity.publicKey
 						],
 
 						// Who can read the message?
@@ -60,12 +60,12 @@ describe("encryption", () => {
 						signatures: [
 							client.identity.publicKey,
 							client2.identity.publicKey,
-							client3.identity.publicKey,
-						],
+							client3.identity.publicKey
+						]
 
 						// Omitting any of the fields below will make it unencrypted
-					},
-				},
+					}
+				}
 			});
 
 			// A peer that can open
@@ -87,7 +87,7 @@ describe("encryption", () => {
 		beforeEach(async () => {
 			session = await LSession.connected(2, [
 				{ directory: "./tmp/shared-log/access-error/1" + +new Date() },
-				{ directory: "./tmp/shared-log/access-error/2" + +new Date() },
+				{ directory: "./tmp/shared-log/access-error/2" + +new Date() }
 			]);
 		});
 
@@ -106,9 +106,9 @@ describe("encryption", () => {
 					receiver: {
 						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
-						payload: [await X25519PublicKey.create()],
-					},
-				},
+						payload: [await X25519PublicKey.create()]
+					}
+				}
 			});
 
 			expect(store.log.log.values.length).toEqual(1);
@@ -129,9 +129,9 @@ describe("encryption", () => {
 					receiver: {
 						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
-						payload: [await X25519PublicKey.create()],
-					},
-				},
+						payload: [await X25519PublicKey.create()]
+					}
+				}
 			});
 
 			expect(store.log.log.values.length).toEqual(1);

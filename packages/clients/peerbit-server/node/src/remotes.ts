@@ -31,7 +31,7 @@ export class Remotes {
 			) as RemotesObject;
 		} else {
 			this.data = {
-				remotes: [],
+				remotes: []
 			};
 		}
 	}

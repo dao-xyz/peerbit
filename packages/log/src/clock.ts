@@ -36,7 +36,7 @@ export function fromBits(low, high, unsigned, target?) {
 		return {
 			low: low | 0,
 			high: high | 0,
-			unsigned: !!unsigned,
+			unsigned: !!unsigned
 		};
 	}
 	target.low = low | 0;
@@ -92,7 +92,7 @@ export class Timestamp {
 	clone(): Timestamp {
 		return new Timestamp({
 			wallTime: this.wallTime,
-			logical: this.logical,
+			logical: this.logical
 		});
 	}
 
@@ -228,13 +228,13 @@ export class LamportClock {
 		if (!properties.timestamp) {
 			this.timestamp = new Timestamp({
 				wallTime: bigintTime(),
-				logical: 0,
+				logical: 0
 			});
 		} else {
 			if (typeof properties.timestamp === "number") {
 				this.timestamp = new Timestamp({
 					wallTime: bigintTime(),
-					logical: properties.timestamp,
+					logical: properties.timestamp
 				});
 			} else {
 				this.timestamp = properties.timestamp;
@@ -245,7 +245,7 @@ export class LamportClock {
 	clone() {
 		return new LamportClock({
 			id: this.id,
-			timestamp: this.timestamp.clone(),
+			timestamp: this.timestamp.clone()
 		});
 	}
 

@@ -78,10 +78,10 @@ export class LSession<T> {
 			const result = async () => {
 				const node = await createLibp2p<T>({
 					addresses: {
-						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
+						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"]
 					},
 					connectionManager: (options?.[i] || options)?.connectionManager ?? {
-						minConnections: 0,
+						minConnections: 0
 					},
 					datastore: (options?.[i] || options)?.datastore,
 					transports:
@@ -90,11 +90,11 @@ export class LSession<T> {
 					services: {
 						relay: (options?.[i] || options)?.browser ? undefined : relay(),
 						identify: identifyService(),
-						...(options?.[i] || options)?.services,
+						...(options?.[i] || options)?.services
 					},
 					connectionEncryption: [noise()],
 					streamMuxers: [mplex({ disconnectThreshold: 10 })],
-					start: (options?.[i] || options)?.start,
+					start: (options?.[i] || options)?.start
 				});
 				return node;
 			};

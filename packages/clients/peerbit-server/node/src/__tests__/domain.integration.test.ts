@@ -32,12 +32,12 @@ describe("ssl", () => {
 	beforeAll(async () => {
 		const directory = "./tmp/peerbit/" + +new Date();
 		session = await LSession.connected(1, {
-			directory: path.join(directory, "node"),
+			directory: path.join(directory, "node")
 		});
 		peer = session.peers[0];
 		server = await startApiServer(peer, {
 			trust: new Trust(getTrustPath(directory)),
-			port: 12345,
+			port: 12345
 		});
 	});
 

@@ -27,7 +27,7 @@ suite
 			await keypair.sign(data, PreHash.NONE);
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.add("hash+sign", {
 		fn: async (deferred) => {
@@ -35,7 +35,7 @@ suite
 			await keypair.sign(data, PreHash.SHA_256);
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.add("verify", {
 		fn: async (deferred) => {
@@ -46,7 +46,7 @@ suite
 			}
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.add("hash+verify", {
 		fn: async (deferred) => {
@@ -57,7 +57,7 @@ suite
 			}
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.on("error", (error: any) => {
 		throw error;

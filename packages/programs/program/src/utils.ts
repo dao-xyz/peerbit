@@ -2,7 +2,7 @@ import {
 	AbstractType,
 	Constructor,
 	getSchema,
-	StructKind,
+	StructKind
 } from "@dao-xyz/borsh";
 
 const MAX_PROTOTYPE_SEARCH = 500;

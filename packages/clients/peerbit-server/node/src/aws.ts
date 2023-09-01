@@ -26,9 +26,9 @@ export const createRecord = async (options: {
 		credentials: options.credentials
 			? {
 					accessKeyId: options.credentials.accessKeyId,
-					secretAccessKey: options.credentials.secretAccessKey,
+					secretAccessKey: options.credentials.secretAccessKey
 			  }
-			: undefined,
+			: undefined
 	});
 	const cmd = new ChangeResourceRecordSetsCommand({
 		ChangeBatch: {
@@ -39,12 +39,12 @@ export const createRecord = async (options: {
 						Name: options.domain,
 						Type: v4 ? "A" : "AAAA",
 						TTL: 60,
-						ResourceRecords: [{ Value: myIp }],
-					},
-				},
-			],
+						ResourceRecords: [{ Value: myIp }]
+					}
+				}
+			]
 		},
-		HostedZoneId: options.hostedZoneId,
+		HostedZoneId: options.hostedZoneId
 	});
 	await client.send(cmd);
 };
@@ -95,7 +95,7 @@ export const AWS_LINUX_ARM_AMIs: Record<string, string> = {
 	/* 	"us-gov-east-1",
 		"us-gov-west-1", */
 	"us-west-1": "ami-0dca369228f3b2ce7",
-	"us-west-2": "ami-0c79a55dda52434da",
+	"us-west-2": "ami-0c79a55dda52434da"
 };
 export const launchNodes = async (properties: {
 	region?: string;
@@ -123,7 +123,7 @@ export const launchNodes = async (properties: {
 		DescribeSecurityGroupsCommand,
 		CreateSecurityGroupCommand,
 		AuthorizeSecurityGroupIngressCommand,
-		DescribeInstancesCommand,
+		DescribeInstancesCommand
 	} = await import("@aws-sdk/client-ec2");
 	const client = new EC2Client({ region: properties.region });
 	const regionString = await client.config.region();
@@ -132,8 +132,8 @@ export const launchNodes = async (properties: {
 		await client.send(
 			new DescribeSecurityGroupsCommand({
 				Filters: [
-					{ Name: "tag:" + PURPOSE_TAG_NAME, Values: [PURPOSE_TAG_VALUE] },
-				],
+					{ Name: "tag:" + PURPOSE_TAG_NAME, Values: [PURPOSE_TAG_VALUE] }
+				]
 			})
 		)
 	)?.SecurityGroups?.[0];
@@ -141,13 +141,13 @@ export const launchNodes = async (properties: {
 		securityGroupOut = await client.send(
 			new CreateSecurityGroupCommand({
 				GroupName: "peerbit-node",
-				Description: "Security group for running Peerbit nodes",
+				Description: "Security group for running Peerbit nodes"
 			})
 		);
 		await client.send(
 			new CreateTagsCommand({
 				Resources: [securityGroupOut.GroupId!],
-				Tags: [{ Key: PURPOSE_TAG_NAME, Value: PURPOSE_TAG_VALUE }],
+				Tags: [{ Key: PURPOSE_TAG_NAME, Value: PURPOSE_TAG_VALUE }]
 			})
 		);
 		await client.send(
@@ -158,39 +158,39 @@ export const launchNodes = async (properties: {
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 80,
-						ToPort: 80,
+						ToPort: 80
 					}, // Frontend
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 443,
-						ToPort: 443,
+						ToPort: 443
 					}, // Frontend SSL
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 9002,
-						ToPort: 9002,
+						ToPort: 9002
 					}, // HTTPS api
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 8082,
-						ToPort: 8082,
+						ToPort: 8082
 					}, // HTTP api
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 4002,
-						ToPort: 4005,
+						ToPort: 4005
 					}, // libp2p
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 22,
-						ToPort: 22,
-					}, // SSH
-				],
+						ToPort: 22
+					} // SSH
+				]
 			})
 		);
 	}
@@ -200,7 +200,7 @@ export const launchNodes = async (properties: {
 		(
 			await client.send(
 				new DescribeInstancesCommand({
-					Filters: [{ Name: "tag:Purpose", Values: [instanceTag] }],
+					Filters: [{ Name: "tag:Purpose", Values: [instanceTag] }]
 				})
 			)
 		).Reservations?.length || 0;
@@ -215,7 +215,7 @@ export const launchNodes = async (properties: {
 				setupUserData(properties.email, properties.grantAccess)
 			).toString("base64"),
 			MinCount: count,
-			MaxCount: count,
+			MaxCount: count
 			// InstanceInitiatedShutdownBehavior: 'terminate' // to enable termination when node shutting itself down
 		})
 	);
@@ -237,8 +237,8 @@ export const launchNodes = async (properties: {
 				Resources: [instance.InstanceId!],
 				Tags: [
 					{ Key: "Name", Value: name },
-					{ Key: "Purpose", Value: instanceTag },
-				],
+					{ Key: "Purpose", Value: instanceTag }
+				]
 			})
 		);
 	}
@@ -248,7 +248,7 @@ export const launchNodes = async (properties: {
 	for (let i = 0; i < 10; i++) {
 		const info = await client.send(
 			new DescribeInstancesCommand({
-				InstanceIds: instanceOut.Instances.map((x) => x.InstanceId!),
+				InstanceIds: instanceOut.Instances.map((x) => x.InstanceId!)
 			})
 		);
 		const foundInstances = info
@@ -278,7 +278,7 @@ export const launchNodes = async (properties: {
 			instanceId: instanceOut.Instances![ix].InstanceId!,
 			publicIp: v,
 			name: names[ix],
-			region: regionString,
+			region: regionString
 		};
 	}); // TODO types
 };

@@ -5,7 +5,7 @@ import {
 	serialize,
 	deserialize,
 	fixedArray,
-	option,
+	option
 } from "@dao-xyz/borsh";
 import { equals } from "uint8arrays";
 import { Uint8ArrayList } from "uint8arraylist";
@@ -15,7 +15,7 @@ import {
 	verify,
 	randomBytes,
 	sha256Base64,
-	sha256,
+	sha256
 } from "@peerbit/crypto";
 
 /**
@@ -448,7 +448,7 @@ export class Hello extends Message {
 			),
 			serialize(
 				new Signatures(this.signatures.signatures.slice(0, iteration + 1))
-			),
+			)
 		];
 	}
 

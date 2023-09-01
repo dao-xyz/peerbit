@@ -12,7 +12,7 @@ suite
 			await node.stop();
 			deferred.resolve();
 		},
-		defer: true,
+		defer: true
 	})
 	.on("cycle", (event: any) => {
 		console.log(String(event.target));

@@ -80,7 +80,7 @@ describe("profile", () => {
 			const doc = new Document({
 				id: uuid(),
 				name: uuid(),
-				bytes: RANDOM_BYTES,
+				bytes: RANDOM_BYTES
 			});
 			await writeStore.docs.put(doc, { unique: true });
 		}
