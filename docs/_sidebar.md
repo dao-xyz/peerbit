@@ -11,7 +11,7 @@ Modules
         - [Spawn new servers](/modules/deploy/server/automatic.md)
         - [Existing server](/modules/deploy/server/custom.md)
     - [Manage nodes](/modules/deploy/manage/)
-    - [Deploy a project](/modules/deploy/deploy/)
+    - [Deploy a project](/modules/deploy/publish/)
 - [Programs](/modules/program/)
     - [What is a program?](/modules/program/)
     - [Document store](/modules/program/document-store/)
