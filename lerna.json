@@ -35,6 +35,5 @@
 		"packages/utils/logger"
 	],
 	"version": "independent",
-	"npmClient": "yarn",
-	"useWorkspaces": true
+	"npmClient": "yarn"
 }
