@@ -35,7 +35,6 @@ jobs:
         if: ${{ steps.release.outputs.releases_created }}
         run: |
           yarn
-          yarn lerna bootstrap
           yarn build
 
     # Release Please has already incremented versions and published tags, so we just

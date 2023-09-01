@@ -36,7 +36,6 @@ jobs:
       - name: Install deps
         run: |
           yarn
-          yarn lerna bootstrap
 
       - name: Build
         run: yarn build
@@ -81,7 +80,6 @@ jobs:
       - name: Install deps
         run: |
           yarn
-          yarn lerna bootstrap
       - name: Tests
         run: ${{matrix.test_cmd}}
 
@@ -113,7 +111,6 @@ jobs:
       - name: Install deps
         run: |
           yarn
-          yarn lerna bootstrap
       - name: Tests
         run: ${{matrix.test_cmd}}
 
