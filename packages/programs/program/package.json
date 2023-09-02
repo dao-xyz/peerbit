@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program",
-	"version": "2.2.3",
+	"version": "2.2.4",
 	"description": "Program interface",
 	"type": "module",
 	"sideEffects": false,
@@ -33,6 +33,6 @@
 		"@peerbit/crypto": "1.0.6",
 		"@peerbit/blocks-interface": "^1.0.8",
 		"@peerbit/pubsub-interface": "^1.1.1",
-		"@peerbit/lazy-level": "^1.1.0"
+		"@peerbit/lazy-level": "^1.1.1"
 	}
 }

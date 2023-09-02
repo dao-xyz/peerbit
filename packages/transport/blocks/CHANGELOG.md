@@ -50,6 +50,12 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.1.0 to 1.1.1
+
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.10...blocks-v1.0.11) (2023-09-02)
 
 
