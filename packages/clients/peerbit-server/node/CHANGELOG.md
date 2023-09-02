@@ -148,6 +148,23 @@
   * devDependencies
     * @peerbit/string bumped from 2.0.1 to 2.0.2
 
+## [4.0.5](https://github.com/dao-xyz/peerbit/compare/server-v4.0.4...server-v4.0.5) (2023-09-02)
+
+
+### Bug Fixes
+
+* create config dir if not exist when getting keypair ([15a3289](https://github.com/dao-xyz/peerbit/commit/15a3289c038bc521f5a2f2919d43a537cb386a93))
+* improve test output ([e291e25](https://github.com/dao-xyz/peerbit/commit/e291e256d87829e9b630504c83c6bcdcb8f5a62e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 2.0.2 to 2.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.20 to 1.0.21
+
 ## [4.0.4](https://github.com/dao-xyz/peerbit/compare/server-v4.0.3...server-v4.0.4) (2023-09-02)
 
 

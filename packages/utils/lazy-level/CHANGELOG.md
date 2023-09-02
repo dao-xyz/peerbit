@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.1.0...lazy-level-v1.1.1) (2023-09-02)
+
+
+### Bug Fixes
+
+* rm Cache tempstore and use Map instead ([f9d6314](https://github.com/dao-xyz/peerbit/commit/f9d6314dda470c07a89512495dffdb5b672641a3))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.3...lazy-level-v1.1.0) (2023-09-02)
 
 
