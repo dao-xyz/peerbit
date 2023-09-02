@@ -19,6 +19,23 @@ describe("cache", () => {
 		expect(cache.has("1")).toBeFalse();
 	});
 
+	it("custom size", async () => {
+		const cache = new Cache({ max: 21, ttl: 1e6 });
+		cache.add("1", undefined, 10);
+		cache.add("2", undefined, 10);
+		expect(cache.size).toEqual(20);
+		expect(cache.has("1")).toBeTrue();
+		cache.add("3", undefined, 10);
+		expect(cache.has("1")).toBeFalse();
+		expect(cache.size).toEqual(20);
+		cache.del("2");
+		expect(cache.size).toEqual(10);
+		cache.del("2");
+		expect(cache.size).toEqual(10);
+		cache.del("3");
+		expect(cache.size).toEqual(0);
+	});
+
 	it("no ttl", async () => {
 		const cache = new Cache({ max: 2 });
 		cache.add("1");
