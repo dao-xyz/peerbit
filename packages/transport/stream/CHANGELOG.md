@@ -20,6 +20,24 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.10](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.9...stream-v1.0.10) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.0.2 to 1.1.0
+    * @peerbit/crypto bumped from 1.0.5 to 1.0.6
+    * @peerbit/stream-interface bumped from ^1.0.6 to ^1.0.7
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.7...stream-v1.0.8) (2023-08-06)
 
 

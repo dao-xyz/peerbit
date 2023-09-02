@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/time",
-	"version": "1.0.2",
+	"version": "1.0.3",
 	"description": "Utility functions for time",
 	"type": "module",
 	"sideEffects": false,

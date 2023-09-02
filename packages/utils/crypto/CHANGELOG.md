@@ -25,6 +25,20 @@
   * dependencies
     * @peerbit/cache bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.5...crypto-v1.0.6) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from ^1.0.2 to ^1.1.0
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.4...crypto-v1.0.5) (2023-08-06)
 
 

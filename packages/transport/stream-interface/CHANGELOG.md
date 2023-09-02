@@ -18,6 +18,20 @@
   * dependencies
     * @peerbit/crypto bumped from 1.0.4 to 1.0.5
 
+## [1.0.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v1.0.6...stream-interface-v1.0.7) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.5 to 1.0.6
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v1.0.4...stream-interface-v1.0.5) (2023-07-18)
 
 

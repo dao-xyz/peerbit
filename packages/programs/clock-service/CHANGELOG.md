@@ -199,6 +199,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.18 to ^1.0.19
 
+## [1.0.23](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.22...clock-service-v1.0.23) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 2.1.3 to 2.1.4
+    * @peerbit/trusted-network bumped from 2.0.4 to 2.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.19 to ^1.0.20
+
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.14...clock-service-v1.0.15) (2023-07-04)
 
 
