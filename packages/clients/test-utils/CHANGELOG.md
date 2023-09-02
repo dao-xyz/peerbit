@@ -110,6 +110,23 @@
   * dependencies
     * peerbit bumped from 2.0.0 to 2.0.1
 
+## [1.0.20](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.19...test-utils-v1.0.20) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+    * peerbit bumped from 2.0.1 to 2.0.2
+  * devDependencies
+    * @peerbit/time bumped from 1.0.2 to 1.0.3
+
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.13...test-utils-v1.0.14) (2023-07-18)
 
 

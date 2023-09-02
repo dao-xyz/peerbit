@@ -50,6 +50,27 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.11](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.10...blocks-v1.0.11) (2023-09-02)
+
+
+### Bug Fixes
+
+* clear fetch queue before stopping ([82e570c](https://github.com/dao-xyz/peerbit/commit/82e570cc0d1bf6da873a1f6726b500535342a9b2))
+* queue block fetch request to prevent OOM ([602edf2](https://github.com/dao-xyz/peerbit/commit/602edf264f66e7a898d82bff67126cc77e47dcdd))
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.0.3 to 1.1.0
+    * @peerbit/stream bumped from 1.0.9 to 1.0.10
+    * @peerbit/blocks-interface bumped from 1.0.7 to 1.0.8
+    * @peerbit/crypto bumped from 1.0.5 to 1.0.6
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.7...blocks-v1.0.8) (2023-08-06)
 
 

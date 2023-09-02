@@ -121,6 +121,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.18 to ^1.0.19
 
+## [2.1.4](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.3...rpc-v2.1.4) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.5 to 1.0.6
+    * @peerbit/program bumped from 2.2.2 to 2.2.3
+    * @peerbit/time bumped from 1.0.2 to 1.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.19 to ^1.0.20
+
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/rpc-v2.0.1...rpc-v2.1.0) (2023-08-06)
 
 

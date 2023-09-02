@@ -40,6 +40,24 @@
     * @peerbit/program bumped from 2.2.0 to 2.2.1
     * @peerbit/blocks bumped from ^1.0.8 to ^1.0.9
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.1...peerbit-v2.0.2) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.0.3 to 1.1.0
+    * @peerbit/crypto bumped from 1.0.5 to 1.0.6
+    * @peerbit/program bumped from 2.2.2 to 2.2.3
+    * @peerbit/pubsub bumped from ^1.1.1 to ^1.1.2
+    * @peerbit/blocks bumped from ^1.0.10 to ^1.0.11
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.0...peerbit-v2.0.1) (2023-08-24)
 
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.3...lazy-level-v1.1.0) (2023-09-02)
+
+
+### Features
+
+* limit tx queue memory usage ([6c7d967](https://github.com/dao-xyz/peerbit/commit/6c7d9672447ca1257145c5b40ff45bb424a08783))
+
+
+### Bug Fixes
+
+* prevent duplicated tx ingestion interval on re-open ([7c61c82](https://github.com/dao-xyz/peerbit/commit/7c61c827cea25df02fdab7481310f77689ba0dac))
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/time bumped from 1.0.2 to 1.0.3
+    * @peerbit/cache bumped from ^1.0.2 to ^1.1.0
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.0.2...lazy-level-v1.0.3) (2023-08-14)
 
 

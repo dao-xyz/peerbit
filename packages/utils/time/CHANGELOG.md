@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/time-v1.0.2...time-v1.0.3) (2023-09-02)
+
+
+### Bug Fixes
+
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/time-v1.0.1...time-v1.0.2) (2023-07-18)
 
 

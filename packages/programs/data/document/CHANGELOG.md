@@ -139,6 +139,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.18 to 1.0.19
 
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/document-v3.0.4...document-v3.0.5) (2023-09-02)
+
+
+### Bug Fixes
+
+* add helper methods for updating role ([96333d3](https://github.com/dao-xyz/peerbit/commit/96333d3761c5ff65d5604f47cc47c45c4ca1755a))
+* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.2.2 to 2.2.3
+    * @peerbit/rpc bumped from 2.1.3 to 2.1.4
+    * @peerbit/shared-log bumped from 3.0.3 to 3.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.19 to 1.0.20
+    * @peerbit/time bumped from 1.0.2 to 1.0.3
+
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/document-v3.0.0...document-v3.0.1) (2023-08-06)
 
 

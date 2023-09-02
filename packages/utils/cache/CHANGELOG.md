@@ -6,6 +6,20 @@
   * devDependencies
     * @peerbit/time bumped from 1.0.1 to 1.0.2
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/cache-v1.0.2...cache-v1.1.0) (2023-09-02)
+
+
+### Features
+
+* allow custom cache size calculations ([c552c43](https://github.com/dao-xyz/peerbit/commit/c552c4366ed1faaa4923a5cf92031eab90ce750e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 1.0.2 to 1.0.3
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/cache-v1.0.0...cache-v1.0.1) (2023-07-04)
 
 
