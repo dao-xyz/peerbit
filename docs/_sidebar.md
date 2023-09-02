@@ -21,8 +21,9 @@ Modules
 - [Encryption](/modules/encryption/)
 
 Topics
-- [Peerbit vs [?]](/difference.md)
-- [Sharding](/sharding/)
+- [Peerbit vs [?]](/topics/difference.md)
+- [Data integrity](/topics/integrity.md)
+- [Sharding](/topics/sharding/)
 
 
 
