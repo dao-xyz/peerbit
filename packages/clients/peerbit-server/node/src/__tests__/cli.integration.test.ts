@@ -220,7 +220,7 @@ describe("cli", () => {
 		it("rejets on invalid remote", async () => {
 			let rejected = false;
 			try {
-				runCommand("remote add test xyz");
+				runCommand("remote add test this-address-is-invalid");
 			} catch (error) {
 				rejected = true;
 				expect(error?.toString().includes("Error: Failed to add remote"));
