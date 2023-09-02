@@ -17,6 +17,7 @@ import { DirectStreamComponents } from "@peerbit/stream";
 import { LevelBlockStore, MemoryLevelBlockStore } from "./level.js";
 import { Level } from "level";
 import { GetOptions, PutOptions } from "@peerbit/blocks-interface";
+import PQueue from "p-queue";
 
 export class BlockMessage {}
 
@@ -51,6 +52,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	private _localStore: BlockStore;
 	private _responseHandler?: (evt: CustomEvent<DataMessage>) => any;
 	private _resolvers: Map<string, (data: Uint8Array) => void>;
+	private _loadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<
 		string,
 		Promise<Block.Block<any, any, any, 1> | undefined> | undefined
@@ -63,16 +65,20 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			directory?: string;
 			canRelayMessage?: boolean;
 			localTimeout?: number;
+			messageProcessingConcurrency?: number;
 		}
 	) {
 		super(components, ["direct-block/1.0.0"], {
 			emitSelf: false,
 			signaturePolicy: "StrictNoSign",
-			messageProcessingConcurrency: 10,
+			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			canRelayMessage: options?.canRelayMessage ?? true
 		});
 
 		const localTimeout = options?.localTimeout || 1000;
+		this._loadFetchQueue = new PQueue({
+			concurrency: options?.messageProcessingConcurrency || 10
+		});
 		this._localStore =
 			options?.directory != null
 				? new LevelBlockStore(new Level(options.directory))
@@ -87,15 +93,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			try {
 				const decoded = deserialize(message.data, BlockMessage);
 				if (decoded instanceof BlockRequest && this._localStore) {
-					const cid = stringifyCid(decoded.cid);
-					const bytes = await this._localStore.get(cid, {
-						timeout: localTimeout
-					});
-					if (!bytes) {
-						return;
-					}
-					const response = serialize(new BlockResponse(cid, bytes));
-					await this.publish(response);
+					this._loadFetchQueue.add(() =>
+						this.handleFetchRequest(decoded, localTimeout)
+					);
 				} else if (decoded instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
 
@@ -146,6 +146,21 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		await super.start();
 		this.addEventListener("data", this._responseHandler!);
 		this._open = true;
+	}
+
+	private async handleFetchRequest(
+		request: BlockRequest,
+		localTimeout: number
+	) {
+		const cid = stringifyCid(request.cid);
+		const bytes = await this._localStore.get(cid, {
+			timeout: localTimeout
+		});
+		if (!bytes) {
+			return;
+		}
+		const response = serialize(new BlockResponse(cid, bytes));
+		await this.publish(response);
 	}
 
 	private async _readFromPeers(
@@ -203,8 +218,14 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	}
 
 	async stop(): Promise<void> {
-		await super.stop();
+		// Dont listen for more incoming messages
 		this.removeEventListener("data", this._responseHandler);
+
+		// Wait for processing request
+		this._loadFetchQueue.clear();
+		await this._loadFetchQueue.onIdle(); // wait for pending
+		await super.stop();
+		this._loadFetchQueue.clear();
 		await this._localStore?.stop();
 		this._readFromPeersPromises.clear();
 		this._resolvers.clear();
