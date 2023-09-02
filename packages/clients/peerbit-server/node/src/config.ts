@@ -3,7 +3,8 @@ import os from "os";
 import fs from "fs";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Duplex } from "stream"; // Native Node Module
-import { Ed25519Keypair, Keypair, fromBase64 } from "@peerbit/crypto";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import { dirname } from "path";
 
 const bufferToStream = (myBuffer) => {
 	const tmp = new Duplex();
@@ -42,6 +43,7 @@ export const getKeypair = async (
 ): Promise<Ed25519Keypair> => {
 	const keypath = getKeysPath(configDir);
 	if (!fs.existsSync(keypath)) {
+		fs.mkdirSync(dirname(keypath), { recursive: true });
 		const keypair = await Ed25519Keypair.create();
 		fs.writeFileSync(keypath, serialize(keypair));
 		return keypair;
