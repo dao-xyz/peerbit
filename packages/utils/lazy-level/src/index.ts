@@ -58,11 +58,16 @@ class TXQueue {
 
 	open() {
 		this.queue = [];
-		this.tempStore = new Cache({ max: this.opts.cacheMaxBytes });
-		this.tempDeleted = new Set();
-		this._interval = setInterval(() => {
-			this.processTxQueue();
-		}, this.opts.interval);
+
+		// TODO can we prevent re-open?
+		this.tempStore =
+			this.tempStore || new Cache({ max: this.opts.cacheMaxBytes });
+		this.tempDeleted = this.tempDeleted || new Set();
+		this._interval =
+			this._interval ||
+			setInterval(() => {
+				this.processTxQueue();
+			}, this.opts.interval);
 	}
 
 	async add(
@@ -156,6 +161,7 @@ class TXQueue {
 		this.tempStore.clear();
 		this.tempDeleted.clear();
 	}
+
 	async close() {
 		await this.idle();
 		clearInterval(this._interval);
