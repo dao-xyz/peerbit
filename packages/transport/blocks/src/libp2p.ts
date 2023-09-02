@@ -225,7 +225,6 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		this._loadFetchQueue.clear();
 		await this._loadFetchQueue.onIdle(); // wait for pending
 		await super.stop();
-		this._loadFetchQueue.clear();
 		await this._localStore?.stop();
 		this._readFromPeersPromises.clear();
 		this._resolvers.clear();
