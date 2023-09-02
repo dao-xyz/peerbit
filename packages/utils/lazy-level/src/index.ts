@@ -1,11 +1,11 @@
 import { logger as loggerFn } from "@peerbit/logger";
 import { waitFor } from "@peerbit/time";
 import { AbstractBatchOperation, AbstractLevel } from "abstract-level";
-import { Cache } from "@peerbit/cache";
+import PQueue from "p-queue";
+
 export type LevelBatchOptions = {
 	interval: number;
 	queueMaxBytes: number;
-	cacheMaxBytes: number;
 	onError?: (error: any) => void;
 };
 export type LazyLevelOptions = { batch?: LevelBatchOptions };
@@ -26,13 +26,11 @@ export interface SimpleLevel {
 	idle?(): Promise<void>;
 }
 
-const DEFAULT_MAX_CACHE_SIZE_BYTES = 10 ** 7;
 const DEFAULT_BATCH_INTERVAL = 300;
-const DEFAULT_MAX_BATCH_SIZE = 10 ** 7;
+const DEFAULT_MAX_BATCH_SIZE = 5 * 10 ** 6;
 const DEFAULT_BATCH_OPTIONS: LevelBatchOptions = {
 	interval: DEFAULT_BATCH_INTERVAL,
-	queueMaxBytes: DEFAULT_MAX_BATCH_SIZE,
-	cacheMaxBytes: DEFAULT_MAX_CACHE_SIZE_BYTES
+	queueMaxBytes: DEFAULT_MAX_BATCH_SIZE
 };
 
 const DELETE_TX_SIZE = 50; // experimental memory consumption
@@ -45,10 +43,10 @@ class TXQueue {
 	>[];
 	currentSize = 0;
 
-	txPromise?: Promise<void>;
+	promiseQueue: PQueue;
 	private _interval?: ReturnType<typeof setInterval>;
 
-	tempStore: Cache<Uint8Array>;
+	tempStore: Map<string, Uint8Array>;
 	tempDeleted: Set<string>;
 
 	constructor(
@@ -60,9 +58,9 @@ class TXQueue {
 		this.queue = [];
 
 		// TODO can we prevent re-open?
-		this.tempStore =
-			this.tempStore || new Cache({ max: this.opts.cacheMaxBytes });
+		this.tempStore = this.tempStore || new Map();
 		this.tempDeleted = this.tempDeleted || new Set();
+		this.promiseQueue = new PQueue();
 		this._interval =
 			this._interval ||
 			setInterval(() => {
@@ -80,7 +78,7 @@ class TXQueue {
 		let size: number;
 		if (tx.type === "put") {
 			this.tempDeleted.delete(tx.key);
-			this.tempStore.add(tx.key, tx.value, tx.value.byteLength);
+			this.tempStore.set(tx.key, tx.value);
 			size = tx.value.byteLength;
 		} else if (tx.type == "del") {
 			size = DELETE_TX_SIZE;
@@ -109,17 +107,17 @@ class TXQueue {
 					}
 				}
 
-				const next = () =>
+				this.promiseQueue.add(() =>
 					this.store
 						.batch(arr, { valueEncoding: "view" })
 						.then(() => {
 							arr.forEach((v) => {
 								if (v.type === "put") {
 									this.tempDeleted?.delete(v.key);
-									this.tempStore!.del(v.key);
+									this.tempStore!.delete(v.key);
 								} else if (v.type === "del") {
 									this.tempDeleted?.delete(v.key);
-									this.tempStore!.del(v.key);
+									this.tempStore!.delete(v.key);
 								}
 							});
 						})
@@ -129,10 +127,8 @@ class TXQueue {
 							} else {
 								logger.error(error);
 							}
-						});
-				this.txPromise = (this.txPromise ? this.txPromise : Promise.resolve())
-					.then(next)
-					.catch(next);
+						})
+				);
 			}
 		}
 	}
@@ -146,7 +142,7 @@ class TXQueue {
 		) {
 			throw new Error("Store is closed, so cache will never finish idling");
 		}
-		await this.txPromise;
+		await this.promiseQueue.onIdle();
 		await waitFor(() => !this.queue || this.queue.length === 0, {
 			timeout: this.opts.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
 			delayInterval: 100,
@@ -300,7 +296,7 @@ export default class LazyLevel implements SimpleLevel {
 		}
 
 		if (this.txQueue) {
-			for (const key of this.txQueue.tempStore.map.keys()) {
+			for (const [key] of this.txQueue.tempStore) {
 				if (key.startsWith(prefix)) {
 					keys.push(key);
 				}

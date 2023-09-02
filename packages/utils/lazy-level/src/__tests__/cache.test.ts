@@ -85,7 +85,6 @@ describe(`LazyLevel - level`, function () {
 			cache = new LazyLevel(store, {
 				batch: {
 					interval: interval,
-					cacheMaxBytes: MAX_CACHE_SIZE,
 					queueMaxBytes: MAX_QUEUE_SIZE
 				}
 			});
@@ -140,7 +139,7 @@ describe(`LazyLevel - level`, function () {
 			for (let i = 0; i < putCount; i++) {
 				await cache.put(String(i), crypto.randomBytes(putSize));
 			}
-			expect(cache.txQueue?.tempStore.size).toEqual(putSize * putCount);
+			expect(cache.txQueue?.tempStore.size).toEqual(putCount);
 			await cache.idle();
 			await waitForResolved(() =>
 				expect(cache.txQueue?.tempStore.size).toEqual(0)
@@ -208,20 +207,6 @@ describe(`LazyLevel - level`, function () {
 				putCount * putSize - MAX_QUEUE_SIZE
 			]);
 		});
-
-		it("cacheMaxBytes", async () => {
-			let putSize = 10;
-			let putCount = 150;
-			expect(putCount * putSize).toBeGreaterThan(MAX_CACHE_SIZE);
-			for (let i = 0; i < putCount; i++) {
-				await cache.put(String(i), crypto.randomBytes(putSize));
-				expect(cache.txQueue!.tempStore.currentSize).toBeLessThanOrEqual(
-					MAX_CACHE_SIZE
-				);
-			}
-			await cache.idle();
-		});
-
 		/* TODO feat (?)
 		
 		it("delete by prefix", async () => {
