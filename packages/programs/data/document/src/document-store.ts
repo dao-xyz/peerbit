@@ -162,6 +162,13 @@ export class Documents<T extends Record<string, any>> extends Program<
 			: history;
 	}
 
+	async updateRole(role: Replicator | Observer) {
+		await this.log.updateRole(role);
+	}
+	get role(): Replicator | Observer {
+		return this.log.role;
+	}
+
 	async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
 		const l0 = await this._canAppend(entry);
 		if (!l0) {

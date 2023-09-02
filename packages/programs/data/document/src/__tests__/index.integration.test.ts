@@ -309,7 +309,7 @@ describe("index", () => {
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone());
-				store2.docs.log.updateRole(new Observer());
+				store2.docs.updateRole(new Observer());
 
 				await waitForResolved(() =>
 					expect(store2.docs.index.index.size).toEqual(0)
