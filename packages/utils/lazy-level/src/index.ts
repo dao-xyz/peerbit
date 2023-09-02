@@ -1,9 +1,11 @@
 import { logger as loggerFn } from "@peerbit/logger";
 import { waitFor } from "@peerbit/time";
 import { AbstractBatchOperation, AbstractLevel } from "abstract-level";
-
+import { Cache } from "@peerbit/cache";
 export type LevelBatchOptions = {
 	interval: number;
+	queueMaxBytes: number;
+	cacheMaxBytes: number;
 	onError?: (error: any) => void;
 };
 export type LazyLevelOptions = { batch?: LevelBatchOptions };
@@ -24,29 +26,164 @@ export interface SimpleLevel {
 	idle?(): Promise<void>;
 }
 
-export default class LazyLevel implements SimpleLevel {
-	private _store: AbstractLevel<any, any, any>;
-	private _interval: any;
-	private _txQueue?: AbstractBatchOperation<
+const DEFAULT_MAX_CACHE_SIZE_BYTES = 10 ** 7;
+const DEFAULT_BATCH_INTERVAL = 300;
+const DEFAULT_MAX_BATCH_SIZE = 10 ** 7;
+const DEFAULT_BATCH_OPTIONS: LevelBatchOptions = {
+	interval: DEFAULT_BATCH_INTERVAL,
+	queueMaxBytes: DEFAULT_MAX_BATCH_SIZE,
+	cacheMaxBytes: DEFAULT_MAX_CACHE_SIZE_BYTES
+};
+
+const DELETE_TX_SIZE = 50; // experimental memory consumption
+
+class TXQueue {
+	queue: AbstractBatchOperation<
 		AbstractLevel<any, string, Uint8Array>,
 		string,
 		Uint8Array
 	>[];
-	private _tempStore?: Map<string, Uint8Array>;
-	private _tempDeleted?: Set<string>;
-	private _txPromise?: Promise<void>;
+	currentSize = 0;
+
+	txPromise?: Promise<void>;
+	private _interval?: ReturnType<typeof setInterval>;
+
+	tempStore: Cache<Uint8Array>;
+	tempDeleted: Set<string>;
+
+	constructor(
+		readonly opts: LevelBatchOptions,
+		readonly store: AbstractLevel<any, any, any>
+	) {}
+
+	open() {
+		this.queue = [];
+		this.tempStore = new Cache({ max: this.opts.cacheMaxBytes });
+		this.tempDeleted = new Set();
+		this._interval = setInterval(() => {
+			this.processTxQueue();
+		}, this.opts.interval);
+	}
+
+	async add(
+		tx: AbstractBatchOperation<
+			AbstractLevel<any, string, Uint8Array>,
+			string,
+			Uint8Array
+		>
+	) {
+		let size: number;
+		if (tx.type === "put") {
+			this.tempDeleted.delete(tx.key);
+			this.tempStore.add(tx.key, tx.value, tx.value.byteLength);
+			size = tx.value.byteLength;
+		} else if (tx.type == "del") {
+			size = DELETE_TX_SIZE;
+			this.tempDeleted.add(tx.key);
+		} else {
+			throw new Error("Unexpected tx type: " + tx["type"]);
+		}
+
+		this.queue.push(tx);
+		this.currentSize += size;
+		if (this.currentSize >= this.opts.queueMaxBytes) {
+			await this.processTxQueue();
+		}
+	}
+
+	async processTxQueue() {
+		if (this.store.status === "open" && this.currentSize > 0) {
+			const arr = this.queue.splice(0, this.queue.length);
+			if (arr?.length > 0) {
+				// We manipulate sizes before finishing the tx so that subsequent calls to process processTxQueue end up here because invalid this.currentSize calculations
+				for (const v of arr) {
+					if (v.type === "put") {
+						this.currentSize -= v.value.byteLength;
+					} else if (v.type === "del") {
+						this.currentSize -= DELETE_TX_SIZE;
+					}
+				}
+
+				const next = () =>
+					this.store
+						.batch(arr, { valueEncoding: "view" })
+						.then(() => {
+							arr.forEach((v) => {
+								if (v.type === "put") {
+									this.tempDeleted?.delete(v.key);
+									this.tempStore!.del(v.key);
+								} else if (v.type === "del") {
+									this.tempDeleted?.delete(v.key);
+									this.tempStore!.del(v.key);
+								}
+							});
+						})
+						.catch((error) => {
+							if (this.opts.onError) {
+								this.opts.onError(error);
+							} else {
+								logger.error(error);
+							}
+						});
+				this.txPromise = (this.txPromise ? this.txPromise : Promise.resolve())
+					.then(next)
+					.catch(next);
+			}
+		}
+	}
+
+	async idle() {
+		if (
+			this.store.status !== "open" &&
+			this.store.status !== "opening" &&
+			this.queue &&
+			this.queue.length > 0
+		) {
+			throw new Error("Store is closed, so cache will never finish idling");
+		}
+		await this.txPromise;
+		await waitFor(() => !this.queue || this.queue.length === 0, {
+			timeout: this.opts.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
+			delayInterval: 100,
+			timeoutMessage: `Failed to wait for idling, got txQueue with ${this.queue
+				?.length} elements. Store status: ${this.store
+				?.status}, interval exist: ${!!this._interval}`
+		});
+	}
+
+	clear() {
+		this.queue = [];
+		this.tempStore.clear();
+		this.tempDeleted.clear();
+	}
+	async close() {
+		await this.idle();
+		clearInterval(this._interval);
+		this.clear();
+		this._interval = undefined;
+	}
+}
+export default class LazyLevel implements SimpleLevel {
+	private _store: AbstractLevel<any, any, any>;
+
 	private _opts?: LazyLevelOptions;
 	private _sublevels: LazyLevel[] = [];
+	txQueue?: TXQueue;
 
 	constructor(
 		store: AbstractLevel<any, any, any>,
-		opts: LazyLevelOptions | { batch: boolean } = { batch: { interval: 300 } }
+		opts: LazyLevelOptions | { batch: boolean } = {
+			batch: DEFAULT_BATCH_OPTIONS
+		}
 	) {
 		this._store = store;
 		if (typeof opts.batch === "boolean") {
-			if (opts.batch === true) this._opts = { batch: { interval: 300 } };
+			if (opts.batch === true) this._opts = { batch: DEFAULT_BATCH_OPTIONS };
 		} else if (opts) {
-			this._opts = { batch: { interval: 300, ...opts.batch }, ...opts };
+			this._opts = {
+				batch: { ...DEFAULT_BATCH_OPTIONS, ...opts.batch },
+				...opts
+			};
 		}
 	}
 
@@ -55,36 +192,16 @@ export default class LazyLevel implements SimpleLevel {
 	}
 
 	async idle() {
-		if (this._opts?.batch && this._txQueue) {
-			if (
-				this._store.status !== "open" &&
-				this._store.status !== "opening" &&
-				this._txQueue &&
-				this._txQueue.length > 0
-			) {
-				throw new Error("Store is closed, so cache will never finish idling");
-			}
-			await this._txPromise;
-			await waitFor(() => !this._txQueue || this._txQueue.length === 0, {
-				timeout: this._opts.batch.interval * 2 + 1000, // TODO, do this better so tests don't fail in slow envs.
-				delayInterval: 100,
-				timeoutMessage: `Failed to wait for idling, got txQueue with ${this
-					._txQueue?.length} elements. Store status: ${this._store
-					?.status}, interval exist: ${!!this._interval}`
-			});
-		}
+		await this.txQueue?.idle();
 	}
+
 	async close() {
 		if (!this._store) {
 			return Promise.reject(new Error("No cache store found to close"));
 		}
 
-		await this.idle(); // idle after clear interval (because else txQueue might be filled with new things that are never removed)
-		if (this._opts?.batch) {
-			clearInterval(this._interval);
-			this._interval = undefined;
-			this._tempStore?.clear();
-			this._tempDeleted?.clear();
+		if (this.txQueue) {
+			await this.txQueue.close();
 		}
 		await Promise.all(this._sublevels.map((l) => l.close()));
 
@@ -98,47 +215,11 @@ export default class LazyLevel implements SimpleLevel {
 		if (!this._store)
 			return Promise.reject(new Error("No cache store found to open"));
 
-		if (this._opts?.batch && !this._interval) {
-			this._txQueue = [];
-			this._tempStore = new Map();
-			this._tempDeleted = new Set();
-			this._interval = setInterval(() => {
-				if (
-					this._store.status === "open" &&
-					this._txQueue &&
-					this._txQueue.length > 0
-				) {
-					const arr = this._txQueue.splice(0, this._txQueue.length);
-					if (arr?.length > 0) {
-						const next = () =>
-							this._store
-								.batch(arr, { valueEncoding: "view" })
-								.then(() => {
-									arr.forEach((v) => {
-										if (v.type === "put") {
-											this._tempDeleted?.delete(v.key);
-											this._tempStore!.delete(v.key);
-										} else if (v.type === "del") {
-											this._tempDeleted?.delete(v.key);
-											this._tempStore!.delete(v.key);
-										}
-									});
-								})
-								.catch((error) => {
-									if (this._opts?.batch?.onError) {
-										this._opts?.batch.onError(error);
-									} else {
-										logger.error(error);
-									}
-								});
-						this._txPromise = (
-							this._txPromise ? this._txPromise : Promise.resolve()
-						)
-							.then(next)
-							.catch(next);
-					}
-				}
-			}, this._opts.batch.interval);
+		if (this._opts?.batch) {
+			(
+				this.txQueue ||
+				(this.txQueue = new TXQueue(this._opts.batch, this._store))
+			).open();
 		}
 
 		if (this.status() !== "open") {
@@ -153,13 +234,13 @@ export default class LazyLevel implements SimpleLevel {
 		}
 		let data: Uint8Array;
 		try {
-			if (this._tempDeleted) {
+			if (this.txQueue) {
 				// batching is activated
-				if (this._tempDeleted.has(key)) {
+				if (this.txQueue.tempDeleted.has(key)) {
 					return undefined;
 				}
 				data =
-					(this._tempStore && this._tempStore.get(key)) ||
+					(this.txQueue.tempStore && this.txQueue.tempStore.get(key)) ||
 					(await this._store.get(key, { valueEncoding: "view" }));
 			} else {
 				data = await this._store.get(key, { valueEncoding: "view" });
@@ -193,10 +274,8 @@ export default class LazyLevel implements SimpleLevel {
 	}
 
 	async clear(clearStore = true): Promise<void> {
-		this._txQueue = [];
+		this.txQueue?.clear();
 		await this.idle();
-		this._tempStore?.clear();
-		this._tempDeleted?.clear();
 		if (clearStore) {
 			await this._store.clear(); // will also clear sublevels
 		}
@@ -214,8 +293,8 @@ export default class LazyLevel implements SimpleLevel {
 			keys.push(key);
 		}
 
-		if (this._tempStore) {
-			for (const key of this._tempStore.keys()) {
+		if (this.txQueue) {
+			for (const key of this.txQueue.tempStore.map.keys()) {
 				if (key.startsWith(prefix)) {
 					keys.push(key);
 				}
@@ -224,10 +303,8 @@ export default class LazyLevel implements SimpleLevel {
 		return this.delAll(keys);
 	}
 	async put(key: string, value: Uint8Array) {
-		if (this._opts?.batch) {
-			this._tempDeleted!.delete(key);
-			this._tempStore!.set(key, value);
-			this._txQueue!.push({
+		if (this.txQueue) {
+			await this.txQueue.add({
 				type: "put",
 				key: key,
 				value: value
@@ -243,9 +320,8 @@ export default class LazyLevel implements SimpleLevel {
 			throw new Error("Cache store not open: " + this._store.status);
 		}
 
-		if (this._opts?.batch) {
-			this._tempDeleted!.add(key);
-			this._txQueue!.push({ type: "del", key: key });
+		if (this.txQueue) {
+			this.txQueue.add({ type: "del", key: key });
 		} else {
 			return new Promise<void>((resolve, reject) => {
 				this._store.del(key, (err) => {

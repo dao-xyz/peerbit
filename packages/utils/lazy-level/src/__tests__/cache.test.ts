@@ -76,9 +76,19 @@ describe(`LazyLevel - level`, function () {
 		let cache: LazyLevel, store: MemoryLevel;
 
 		let interval = 1000;
+
+		let MAX_CACHE_SIZE = 1000;
+		let MAX_QUEUE_SIZE = 1000;
+
 		beforeEach(async () => {
 			store = await createStore();
-			cache = new LazyLevel(store, { batch: { interval: interval } });
+			cache = new LazyLevel(store, {
+				batch: {
+					interval: interval,
+					cacheMaxBytes: MAX_CACHE_SIZE,
+					queueMaxBytes: MAX_QUEUE_SIZE
+				}
+			});
 			await cache.open();
 		});
 
@@ -95,7 +105,7 @@ describe(`LazyLevel - level`, function () {
 				);
 				await cache.idle();
 				await waitForResolved(() =>
-					expect(cache["_tempStore"]?.size).toEqual(0)
+					expect(cache.txQueue!.tempStore.size).toEqual(0)
 				);
 				expect(new Uint8Array(val!)).toEqual(
 					new Uint8Array(Buffer.from(JSON.stringify(d.value)))
@@ -125,12 +135,19 @@ describe(`LazyLevel - level`, function () {
 		});
 
 		it("put many", async () => {
-			for (let i = 0; i < 100; i++) {
-				await cache.put(String(i), crypto.randomBytes(8));
+			let putSize = 8;
+			let putCount = 100;
+			for (let i = 0; i < putCount; i++) {
+				await cache.put(String(i), crypto.randomBytes(putSize));
 			}
-			expect(cache["_tempStore"]?.size).toEqual(100);
+			expect(cache.txQueue?.tempStore.size).toEqual(putSize * putCount);
 			await cache.idle();
-			await waitForResolved(() => expect(cache["_tempStore"]?.size).toEqual(0));
+			await waitForResolved(() =>
+				expect(cache.txQueue?.tempStore.size).toEqual(0)
+			);
+			await waitForResolved(() =>
+				expect(cache.txQueue?.currentSize).toEqual(0)
+			);
 			for (let i = 0; i < 100; i++) {
 				expect(await cache.get(String(i))).toBeDefined();
 			}
@@ -143,8 +160,11 @@ describe(`LazyLevel - level`, function () {
 			expect(await cache.get(key)).toBeUndefined();
 			await cache.idle();
 			expect(await cache.get(key)).toBeUndefined();
-			await waitFor(() => cache["_tempDeleted"]?.size === 0);
-			expect(cache["_tempStore"]!.size).toEqual(0);
+			await waitFor(() => cache.txQueue?.tempDeleted.size === 0);
+			await waitFor(() => cache.txQueue?.tempStore.size === 0);
+			await waitForResolved(() =>
+				expect(cache.txQueue?.currentSize).toEqual(0)
+			);
 		});
 
 		it("put delete put", async () => {
@@ -157,9 +177,51 @@ describe(`LazyLevel - level`, function () {
 			expect(new Uint8Array((await cache.get(key))!)).toEqual(
 				new Uint8Array([1])
 			);
-			await waitFor(() => cache["_tempDeleted"]?.size === 0);
-			await waitFor(() => cache["_tempStore"]!.size === 0);
+			await waitFor(() => cache.txQueue?.tempDeleted.size === 0);
+			await waitFor(() => cache.txQueue?.tempStore.size === 0);
+			await waitForResolved(() =>
+				expect(cache.txQueue?.currentSize).toEqual(0)
+			);
 		});
+
+		it("queueMaxBytes", async () => {
+			let putSize = 10;
+			let putCount = 150;
+			let processTxFn = cache.txQueue!.processTxQueue.bind(cache.txQueue);
+
+			let invocationsWithSizes: number[] = [];
+			cache.txQueue!.processTxQueue = () => {
+				if (cache.txQueue!.currentSize > 0) {
+					invocationsWithSizes.push(cache.txQueue!.currentSize);
+				}
+				return processTxFn();
+			};
+			for (let i = 0; i < putCount; i++) {
+				await cache.put(String(i), crypto.randomBytes(putSize));
+			}
+
+			await cache.idle();
+
+			// Two invocations, first triggered by MAX_QUEUE_SIZE
+			expect(invocationsWithSizes).toEqual([
+				MAX_QUEUE_SIZE,
+				putCount * putSize - MAX_QUEUE_SIZE
+			]);
+		});
+
+		it("cacheMaxBytes", async () => {
+			let putSize = 10;
+			let putCount = 150;
+			expect(putCount * putSize).toBeGreaterThan(MAX_CACHE_SIZE);
+			for (let i = 0; i < putCount; i++) {
+				await cache.put(String(i), crypto.randomBytes(putSize));
+				expect(cache.txQueue!.tempStore.currentSize).toBeLessThanOrEqual(
+					MAX_CACHE_SIZE
+				);
+			}
+			await cache.idle();
+		});
+
 		/* TODO feat (?)
 		
 		it("delete by prefix", async () => {
@@ -216,7 +278,7 @@ describe(`LazyLevel - level`, function () {
 			await level.clear();
 			expect(await sublevel.get("a")).toBeUndefined();
 			await sublevel.idle();
-			sublevel["_tempStore"]!.clear();
+			sublevel.txQueue?.tempStore.clear();
 			expect(await sublevel.get("a")).toBeUndefined();
 		});
 	});
