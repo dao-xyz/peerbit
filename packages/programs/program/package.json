@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program",
-	"version": "2.2.4",
+	"version": "2.2.5",
 	"description": "Program interface",
 	"type": "module",
 	"sideEffects": false,
@@ -31,7 +31,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.5",
 		"@peerbit/crypto": "1.0.6",
-		"@peerbit/blocks-interface": "^1.0.8",
+		"@peerbit/blocks-interface": "^1.0.9",
 		"@peerbit/pubsub-interface": "^1.1.1",
 		"@peerbit/lazy-level": "^1.1.1"
 	}
