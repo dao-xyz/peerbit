@@ -56,6 +56,12 @@
   * dependencies
     * @peerbit/lazy-level bumped from 1.1.0 to 1.1.1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.11 to 1.0.12
+
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.12...blocks-v1.0.13) (2023-09-03)
 
 
