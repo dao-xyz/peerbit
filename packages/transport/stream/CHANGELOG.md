@@ -20,6 +20,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.12](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.11...stream-v1.0.12) (2023-09-03)
+
+
+### Bug Fixes
+
+* prevent slow writes to block fast writes ([b01eecc](https://github.com/dao-xyz/peerbit/commit/b01eeccf992bbda45886644df352e7accf66c819))
+
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.10...stream-v1.0.11) (2023-09-03)
 
 
