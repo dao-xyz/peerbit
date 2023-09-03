@@ -62,7 +62,7 @@
 		"abstract-level": "^1.0.3",
 		"graphology": "0.25.1",
 		"graphology-shortest-path": "2.0.2",
-		"libp2p": "^0.46.6",
+		"libp2p": "^0.46.8",
 		"memory-level": "^1.0.0",
 		"yallist": "^4.0.0"
 	}

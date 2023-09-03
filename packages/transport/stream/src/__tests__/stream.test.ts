@@ -182,7 +182,7 @@ describe("streams", function () {
 			let session: TestSession;
 			let metrics: ReturnType<typeof createMetrics>[];
 
-			beforeAll(async () => {});
+			beforeAll(async () => { });
 
 			beforeEach(async () => {
 				// 0 and 2 not connected
@@ -244,6 +244,7 @@ describe("streams", function () {
 			});
 
 			it("1->unknown", async () => {
+				await delay(6000)
 				await metrics[0].stream.publish(data);
 				await waitFor(() => metrics[1].received.length === 1);
 				expect(new Uint8Array(metrics[1].received[0].data)).toEqual(data);
@@ -443,7 +444,7 @@ describe("streams", function () {
 				let session: TestSession;
 				let metrics: ReturnType<typeof createMetrics>[];
 
-				beforeAll(async () => {});
+				beforeAll(async () => { });
 
 				beforeEach(async () => {
 					session = await connected(3, {
@@ -566,7 +567,7 @@ describe("streams", function () {
 				let metrics: ReturnType<typeof createMetrics>[];
 				const data = new Uint8Array([1, 2, 3]);
 
-				beforeAll(async () => {});
+				beforeAll(async () => { });
 
 				beforeEach(async () => {
 					session = await disconnected(5, {

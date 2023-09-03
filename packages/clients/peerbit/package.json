@@ -41,6 +41,7 @@
 		"@peerbit/program": "2.2.3",
 		"@peerbit/pubsub": "^1.1.2",
 		"@peerbit/blocks": "^1.0.11",
+		"@chainsafe/libp2p-yamux": "^5.0.0",
 		"@peerbit/uint8arrays": "3.0.1",
 		"datastore-level": "^10.1.2",
 		"@dao-xyz/libp2p-noise": "^13.0.1",

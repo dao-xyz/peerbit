@@ -67,6 +67,9 @@
 		"nuke": "shx rm -rf {.,packages/*/*}/{node_modules,yarn.lock}"
 	},
 	"devDependencies": {
+		"it-ndjson": "^1.0.4",
+		"sinon-ts": "^1.0.0",
+		"sinon": "^15.2.0",
 		"@types/benchmark": "^2.1.2",
 		"@types/eslint": "^8.37.0",
 		"@types/eslint-plugin-prettier": "^3.1.0",

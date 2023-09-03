@@ -19,7 +19,7 @@ import { Level } from "level";
 import { GetOptions, PutOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
 
-export class BlockMessage {}
+export class BlockMessage { }
 
 @variant(0)
 export class BlockRequest extends BlockMessage {
@@ -92,6 +92,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			const message = evt.detail;
 			try {
 				const decoded = deserialize(message.data, BlockMessage);
+
 				if (decoded instanceof BlockRequest && this._localStore) {
 					this._loadFetchQueue.add(() =>
 						this.handleFetchRequest(decoded, localTimeout)

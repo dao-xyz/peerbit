@@ -3,6 +3,8 @@ import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 import path from "path";
 import { PeerId } from "@libp2p/interface/peer-id";
+import { webSockets } from "@libp2p/websockets";
+import { identifyService } from 'libp2p/identify'
 
 export const LIBP2P_LISTEN_PORT = 8001;
 export const create = (properties: {
@@ -23,14 +25,13 @@ export const create = (properties: {
 			addresses: {
 				announce: properties.domain
 					? [
-							`/dns4/${properties.domain}/tcp/4002`,
-							`/dns4/${properties.domain}/tcp/4003/wss`
-					  ]
+						`/dns4/${properties.domain}/tcp/4002`,
+						`/dns4/${properties.domain}/tcp/4003/wss`
+					]
 					: undefined,
 				listen: [
 					`/ip4/127.0.0.1/tcp/${listenPort}`,
-					`/ip4/127.0.0.1/tcp/${
-						listenPort !== 0 ? listenPort + 1 : listenPort
+					`/ip4/127.0.0.1/tcp/${listenPort !== 0 ? listenPort + 1 : listenPort
 					}/ws`
 				]
 			},
@@ -44,7 +45,8 @@ export const create = (properties: {
 						directory: blocksDirectory,
 						canRelayMessage: true
 					}),
-				pubsub: (c) => new DirectSub(c, { canRelayMessage: true })
+				pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+				identify: identifyService(),
 			}
 		},
 		directory: properties.directory

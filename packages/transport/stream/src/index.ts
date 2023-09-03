@@ -176,9 +176,9 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 				.catch((error) => {
 					logger.error(
 						"Failed to send to stream: " +
-							this.peerId +
-							". " +
-							(error?.message || error?.toString())
+						this.peerId +
+						". " +
+						(error?.message || error?.toString())
 					);
 				});
 		} else {
@@ -226,8 +226,10 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.outboundStream = pushable<Uint8ArrayList>({
 			objectMode: true,
 			onEnd: () => {
+				console.trace()
 				return stream.close().then(() => {
 					if (this._rawOutboundStream === stream) {
+
 						this.dispatchEvent(new CustomEvent("close"));
 						this._rawOutboundStream = undefined;
 						this.outboundStream = undefined;
@@ -249,6 +251,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 
 		if (_prevStream != null) {
 			// End the stream without emitting a close event
+			console.log("END PREV!")
 			await _prevStream.end();
 		}
 		return this.outboundStream;
@@ -321,11 +324,10 @@ export interface DirectStreamComponents extends Components {
 }
 
 export abstract class DirectStream<
-		Events extends { [s: string]: any } = StreamEvents
-	>
+	Events extends { [s: string]: any } = StreamEvents
+>
 	extends EventEmitter<Events>
-	implements WaitForPeer
-{
+	implements WaitForPeer {
 	public peerId: PeerId;
 	public peerIdStr: string;
 	public publicKey: PublicSignKey;
@@ -376,7 +378,7 @@ export abstract class DirectStream<
 		const {
 			canRelayMessage = false,
 			emitSelf = false,
-			messageProcessingConcurrency = 10,
+			messageProcessingConcurrency = 5000,
 			pingInterval = 10 * 1000,
 			maxInboundStreams,
 			maxOutboundStreams,
@@ -449,28 +451,28 @@ export abstract class DirectStream<
 		this.started = true;
 
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
-		const peerToConnections: Map<string, Connection[]> = new Map();
-		const connections = this.components.connectionManager.getConnections();
-		for (const conn of connections) {
-			let arr = peerToConnections.get(conn.remotePeer.toString());
-			if (!arr) {
-				arr = [];
-				peerToConnections.set(conn.remotePeer.toString(), arr);
-			}
-			arr.push(conn);
-		}
-		for (const [_peer, arr] of peerToConnections) {
-			let conn = arr[0]; // TODO choose TCP when both websocket and tcp exist
-			for (const c of arr) {
-				if (!isWebsocketConnection(c)) {
-					// TODO what is correct connection prioritization?
-					conn = c; // always favor non websocket address
-					break;
+		/* 	const peerToConnections: Map<string, Connection[]> = new Map();
+			const connections = this.components.connectionManager.getConnections();
+			for (const conn of connections) {
+				let arr = peerToConnections.get(conn.remotePeer.toString());
+				if (!arr) {
+					arr = [];
+					peerToConnections.set(conn.remotePeer.toString(), arr);
 				}
+				arr.push(conn);
 			}
-
-			await this.onPeerConnected(conn.remotePeer, conn, true);
-		}
+			for (const [_peer, arr] of peerToConnections) {
+				let conn = arr[0]; // TODO choose TCP when both websocket and tcp exist
+				for (const c of arr) {
+					if (!isWebsocketConnection(c)) {
+						// TODO what is correct connection prioritization?
+						conn = c; // always favor non websocket address
+						break;
+					}
+				}
+	
+				await this.onPeerConnected(conn.remotePeer, conn, true);
+			} */
 
 		const pingJob = async () => {
 			// TODO don't use setInterval but waitFor previous done to be done
@@ -535,6 +537,7 @@ export abstract class DirectStream<
 		this.helloMap.clear();
 		this.multiaddrsMap.clear();
 		this.earlyGoodbyes.clear();
+		console.log("CLEAR!")
 		this.peers.clear();
 		this.seenCache.clear();
 		this.routes.clear();
@@ -597,6 +600,7 @@ export abstract class DirectStream<
 					this.multicodecs.includes(existingStreams.protocol) &&
 					existingStreams.direction === "outbound"
 				) {
+					console.log("PEER CONN RETRUN 1")
 					return;
 				}
 			}
@@ -615,13 +619,18 @@ export abstract class DirectStream<
 				}
 
 				try {
+					console.log("INBOUND!", conn.remoteAddr)
 					stream = await conn.newStream(this.multicodecs, {
 						runOnTransientConnection: true
 					});
+
 					if (stream.protocol == null) {
 						stream.abort(new Error("Stream was not multiplexed"));
+						console.log("PEER CONN RETRUN 2")
+
 						return;
 					}
+					console.log("ADD PEER", peerId.toString(), peerKey.hashcode())
 					peer = this.addPeer(peerId, peerKey, stream.protocol!, conn.id); // TODO types
 					await peer.attachOutboundStream(stream);
 
@@ -651,6 +660,8 @@ export abstract class DirectStream<
 						error?.message === "Muxer already closed" ||
 						error.code === "ERR_STREAM_RESET"
 					) {
+						console.log("PEER CONN RETRUN 3")
+
 						return; // fail silenty
 					}
 
@@ -659,10 +670,14 @@ export abstract class DirectStream<
 				break;
 			}
 			if (!stream) {
+				console.log("PEER CONN RETRUN 4")
+
 				return;
 			}
 
 			if (fromExisting) {
+				console.log("PEER CONN RETRUN 5")
+
 				return; // we return here because we will enter this method once more once the protocol has been registered for the remote peer
 			}
 
@@ -731,6 +746,7 @@ export abstract class DirectStream<
 			return resolved;
 		} catch (err: any) {
 			logger.error(err);
+			console.error(err)
 		}
 	}
 
@@ -864,6 +880,7 @@ export abstract class DirectStream<
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
+		console.log("NEW PEER SET", this.peers.size)
 		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
 			once: true
 		});
@@ -874,6 +891,8 @@ export abstract class DirectStream<
 	 * Notifies the router that a peer has been disconnected
 	 */
 	protected async _removePeer(publicKey: PublicSignKey) {
+		console.log("REMOVE PEER: " + publicKey.hashcode())
+		console.trace()
 		const hash = publicKey.hashcode();
 		const peerStreams = this.peers.get(hash);
 
@@ -939,9 +958,9 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			logger.error(
 				"error on processing messages to id: " +
-					peerStreams.peerId.toString() +
-					". " +
-					err?.message
+				peerStreams.peerId.toString() +
+				". " +
+				err?.message
 			);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
@@ -1033,6 +1052,7 @@ export abstract class DirectStream<
 				) {
 					// we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
 					logger.warn("Recieved message with invalid signature or timestamp");
+					console.log("???")
 					return false;
 				}
 
@@ -1044,11 +1064,14 @@ export abstract class DirectStream<
 			}
 			if (isForMe && message.to.length === 1) {
 				// dont forward this message anymore because it was meant ONLY for me
+
+				console.log("???")
 				return true;
 			}
 		}
 
 		// Forward
+
 		await this.relayMessage(from, message);
 		return true;
 	}
@@ -1060,8 +1083,7 @@ export abstract class DirectStream<
 				message.networkInfo.pingLatencies.length ===
 				message.signatures.signatures.length - 1;
 			logger.warn(
-				`Recieved hello message that did not verify. Header: ${a}, Ping info ${b}, Signatures ${
-					a && b
+				`Recieved hello message that did not verify. Header: ${a}, Ping info ${b}, Signatures ${a && b
 				}`
 			);
 			return false;
@@ -1242,8 +1264,8 @@ export abstract class DirectStream<
 					to instanceof PublicSignKey
 						? to.hashcode()
 						: typeof to === "string"
-						? to
-						: getPublicKeyFromPeerId(to).hashcode();
+							? to
+							: getPublicKeyFromPeerId(to).hashcode();
 			}
 		} else {
 			toHashes = [];
@@ -1317,6 +1339,10 @@ export abstract class DirectStream<
 		to?: PeerStreams[] | PeerMap<PeerStreams>,
 		relayed?: boolean
 	): Promise<void> {
+		if (message instanceof DataMessage) {
+			console.log("MAYBE RELAY DATA MESSAGE?", !!to, message.to.length, to ? [...to.values()]?.length : undefined, [...this.peers.values()].length)
+
+		}
 		if (message instanceof DataMessage && !to) {
 			// message.to can be distant peers, but "to" are neighbours
 			const fanoutMap = new Map<string, string[]>();
@@ -1393,8 +1419,21 @@ export abstract class DirectStream<
 								sentOnce = true;
 							}
 
+							if (message instanceof DataMessage) {
+								console.log("RELAY DATA MESSAGE A?")
+
+							}
+
 							const stream = this.peers.get(neighbour);
-							await stream?.waitForWrite(bytes);
+							stream?.waitForWrite(bytes).then(() => {
+								if (message instanceof DataMessage) {
+									console.log("RELAY DATA MESSAGE A!")
+
+								}
+							});
+
+
+
 						}
 						return; // we are done sending the message in all direction with updates 'to' lists
 					}
@@ -1432,7 +1471,18 @@ export abstract class DirectStream<
 					this.seenCache.add(msgId);
 				}
 			}
-			await id.waitForWrite(bytes);
+
+			if (message instanceof DataMessage) {
+				console.log("RELAY DATA MESSAGE B?")
+
+			}
+			id.waitForWrite(bytes).then(() => {
+				if (message instanceof DataMessage) {
+					console.log("RELAY DATA MESSAGE B!")
+
+				}
+			})
+
 		}
 		if (!sentOnce && !relayed) {
 			throw new Error("Message did not have any valid receivers. ");
@@ -1506,9 +1556,9 @@ export abstract class DirectStream<
 					} catch (error: any) {
 						logger.error(
 							"Failed to connect directly to: " +
-								circuitAddress.toString() +
-								". " +
-								error?.message
+							circuitAddress.toString() +
+							". " +
+							error?.message
 						);
 					}
 				}
@@ -1534,11 +1584,11 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					hash +
-					" does not exist. Connection exist: " +
-					this.peers.has(hash) +
-					". Route exist: " +
-					this.routes.hasLink(this.publicKeyHash, hash)
+				hash +
+				" does not exist. Connection exist: " +
+				this.peers.has(hash) +
+				". Route exist: " +
+				this.routes.hasLink(this.publicKeyHash, hash)
 			);
 		}
 		const stream = this.peers.get(hash)!;
@@ -1547,11 +1597,11 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					stream.publicKey.hashcode() +
-					" not ready. Readable: " +
-					stream.isReadable +
-					". Writable " +
-					stream.isWritable
+				stream.publicKey.hashcode() +
+				" not ready. Readable: " +
+				stream.isReadable +
+				". Writable " +
+				stream.isWritable
 			);
 		}
 	}

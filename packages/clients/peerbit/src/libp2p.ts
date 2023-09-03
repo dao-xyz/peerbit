@@ -1,8 +1,10 @@
 import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
 import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
-import { noise } from "@dao-xyz/libp2p-noise";
+import { noise } from "@chainsafe/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
+import { yamux } from "@chainsafe/libp2p-yamux";
+
 import { transports, relay, listen } from "./transports.js";
 import { identifyService } from "libp2p/identify";
 import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
@@ -52,7 +54,7 @@ export const createLibp2pExtended = (
 		},
 		transports: transports(),
 		connectionEncryption: [noise()],
-		streamMuxers: [mplex()],
+		streamMuxers: [yamux()],
 		...opts,
 		services: {
 			...relayIdentify,

@@ -1,5 +1,5 @@
 import { createLibp2p, Libp2p, ServiceFactoryMap } from "libp2p";
-import { noise } from "@dao-xyz/libp2p-noise";
+import { noise } from "@chainsafe/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { setMaxListeners } from "events";
 import { RecursivePartial } from "@libp2p/interfaces";
@@ -14,8 +14,8 @@ import type { Transport } from "@libp2p/interface/transport";
 
 export type LibP2POptions<T extends Record<string, unknown>> = {
 	transports?:
-		| RecursivePartial<(components: Components) => Transport>[]
-		| undefined;
+	| RecursivePartial<(components: Components) => Transport>[]
+	| undefined;
 	connectionManager?: RecursivePartial<ConnectionManagerInit>;
 	datastore?: RecursivePartial<Datastore> | undefined;
 	browser?: boolean;
