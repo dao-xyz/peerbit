@@ -123,6 +123,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.20 to 1.0.21
 
+## [2.0.6](https://github.com/dao-xyz/peerbit/compare/log-v2.0.5...log-v2.0.6) (2023-09-03)
+
+
+### Bug Fixes
+
+* downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.0.8 to ^1.0.9
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.21 to 1.0.22
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/log-v2.0.3...log-v2.0.4) (2023-09-02)
 
 

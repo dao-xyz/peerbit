@@ -56,6 +56,23 @@
   * dependencies
     * @peerbit/lazy-level bumped from 1.1.0 to 1.1.1
 
+## [1.0.13](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.12...blocks-v1.0.13) (2023-09-03)
+
+
+### Bug Fixes
+
+* downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.10 to 1.0.11
+    * @peerbit/blocks-interface bumped from 1.0.8 to 1.0.9
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.5
+
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.10...blocks-v1.0.11) (2023-09-02)
 
 

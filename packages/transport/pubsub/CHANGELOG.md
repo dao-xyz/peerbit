@@ -50,6 +50,22 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.2...pubsub-v1.1.3) (2023-09-03)
+
+
+### Bug Fixes
+
+* downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.10 to 1.0.11
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.5
+
 ## [1.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.1...pubsub-v1.1.2) (2023-09-02)
 
 
