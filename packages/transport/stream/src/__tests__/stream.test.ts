@@ -1141,12 +1141,7 @@ describe("streams", function () {
 			let extraSession: TestSession;
 			beforeEach(async () => {
 				session = await connected(3);
-			});
-			afterEach(async () => {
-				await session?.stop();
-				await extraSession?.stop();
-			});
-			it("old hellos are purged", async () => {
+
 				for (let i = 0; i < session.peers.length; i++) {
 					await waitForResolved(() =>
 						expect(
@@ -1154,6 +1149,12 @@ describe("streams", function () {
 						).toEqual(3)
 					);
 				}
+			});
+			afterEach(async () => {
+				await session?.stop();
+				await extraSession?.stop();
+			});
+			it("old hellos are purged", async () => {
 				session.peers[1].stop();
 				extraSession = await disconnected(1);
 				await extraSession.peers[0].dial(session.peers[2].getMultiaddrs());
@@ -1166,6 +1167,56 @@ describe("streams", function () {
 				expect(
 					extraSession.peers[0].services.directstream.routes.nodeCount
 				).toEqual(3);
+			});
+
+			it("will not get blocked for slow writes", async () => {
+				let slowPeer = [1, 2];
+				let fastPeer = [2, 1];
+				let directDelivery = [true, false];
+				for (let i = 0; i < slowPeer.length; i++) {
+					const slow = session.peers[0].services.directstream.peers.get(
+						session.peers[slowPeer[i]].services.directstream.publicKeyHash
+					)!;
+					const fast = session.peers[0].services.directstream.peers.get(
+						session.peers[fastPeer[i]].services.directstream.publicKeyHash
+					)!;
+
+					expect(slow).toBeDefined();
+					const waitForWriteDefaultFn = slow.waitForWrite.bind(slow);
+					slow.waitForWrite = async (bytes) => {
+						await delay(3000);
+						return waitForWriteDefaultFn(bytes);
+					};
+
+					const t0 = +new Date();
+					let t1: number | undefined = undefined;
+					await session.peers[0].services.directstream.publish(
+						new Uint8Array([1, 2, 3]),
+						{
+							to: directDelivery[i]
+								? [slow.publicKey, fast.publicKey]
+								: undefined
+						}
+					);
+
+					let listener = () => {
+						t1 = +new Date();
+					};
+					session.peers[fastPeer[i]].services.directstream.addEventListener(
+						"data",
+						listener
+					);
+					await waitForResolved(() => expect(t1).toBeDefined());
+
+					expect(t1! - t0).toBeLessThan(3000);
+
+					// reset
+					slow.waitForWrite = waitForWriteDefaultFn;
+					session.peers[fastPeer[i]].services.directstream.removeEventListener(
+						"data",
+						listener
+					);
+				}
 			});
 		});
 	});

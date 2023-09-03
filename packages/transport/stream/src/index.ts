@@ -1394,7 +1394,9 @@ export abstract class DirectStream<
 							}
 
 							const stream = this.peers.get(neighbour);
-							await stream?.waitForWrite(bytes);
+							stream?.waitForWrite(bytes).catch((e) => {
+								logger.error("Failed to publish message: " + e.message);
+							});
 						}
 						return; // we are done sending the message in all direction with updates 'to' lists
 					}
@@ -1432,8 +1434,11 @@ export abstract class DirectStream<
 					this.seenCache.add(msgId);
 				}
 			}
-			await id.waitForWrite(bytes);
+			id.waitForWrite(bytes).catch((e) => {
+				logger.error("Failed to publish message: " + e.message);
+			});
 		}
+
 		if (!sentOnce && !relayed) {
 			throw new Error("Message did not have any valid receivers. ");
 		}
