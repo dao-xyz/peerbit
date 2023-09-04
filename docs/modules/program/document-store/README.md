@@ -37,11 +37,13 @@ export class Channel extends Program<ChannelArgs> {
 	constructor() {
 		super();
 		this.posts = new Documents({
+            // id needs to have length 32
             id: sha256Sync(new TextEncoder().encode("posts")),
 			index: new DocumentIndex()
 		});
 
 		this.reactions = new Documents({
+            // id needs to have length 32
             id: sha256Sync(new TextEncoder().encode("reactions")),
 			index: new DocumentIndex()
 		});
