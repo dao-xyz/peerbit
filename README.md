@@ -40,12 +40,13 @@ Peerbit is performant, so performant in fact you can use it for [streaming video
 [<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/many-chat-rooms/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/many-chat-rooms/)
 
 ### [Sync files](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
-#### React app
+#### [React app](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
+[<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/file-share/demo-frontend.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
+
+#### [CLI](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
 [<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/file-share/demo-cli.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
 
 
-#### CLI
-[<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/file-share/demo-frontend.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
 
 ### [Collaborative machine learning](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/collaborative-learning/)
 [<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/collaborative-learning/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/collaborative-learning/)
