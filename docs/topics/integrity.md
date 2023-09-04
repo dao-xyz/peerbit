@@ -6,7 +6,7 @@ Peerbit employs a distinctive approach to guarantee unique addresses for databas
 
 - **Automated Address Generation**: Peerbit generates unique program addresses based on the program specification or what, in many cases, would represent a database schema. These addresses are calculated using a combination of schema properties, ensuring that each database is uniquely identifiable.
 
-- **Manual Identification**: Users also have the option to manually specify when composing higher-order functionality with building blocks like the [Document store](/modules/program/document-store/). This manual identification ensures that databases with identical schemas remain distinguishable.
+- **Manual Identification**: Users also have the option to manually specify when composing higher-order functionality with building blocks like the [Document store](/modules/program/document-store/). This manual identification ensures that databases with identical schemas remain distinguishable. See [here](/modules/program/document-store/?id=determinism) for example how you can preconfigure identifiers for a document store so that the resulting db address will be deterministic.
 
 ## Schema-Based Access Control
 

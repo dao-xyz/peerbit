@@ -16,6 +16,51 @@ Below is an example of a definition of two document stores where we store posts,
 
 [imports](./document-store.ts ':include :fragment=definition')
 
+### Determinism
+The `Documents` construction in the Channel constructor leaves some id variables unset. The values for these will be randomly generated. If you want to ensure that the address of the program is the same every time you construct it, you can set these, e.g. 
+
+```typescript
+
+import { sha256Sync } from "@peerbit/crypto";
+
+type ChannelArgs = { role?: Role };
+@variant("channel")
+export class Channel extends Program<ChannelArgs> {
+	// Documents<?> provide document store functionality around posts
+
+	@field({ type: Documents })
+	posts: Documents<Post>;
+
+	@field({ type: Documents })
+	reactions: Documents<Reaction>;
+
+	constructor() {
+		super();
+		this.posts = new Documents({
+            id: sha256Sync(new TextEncoder().encode("posts")),
+			index: new DocumentIndex()
+		});
+
+		this.reactions = new Documents({
+            id: sha256Sync(new TextEncoder().encode("reactions")),
+			index: new DocumentIndex()
+		});
+	}
+...
+
+// Now doing
+
+// zb2abc123...
+console.log(await client.open(new Channel()).address); 
+
+// zb2abc123... (the same address will be generated)
+console.log(await client.open(new Channel()).address); 
+```
+
+For more applied information about uniqueness see [the tests](https://github.com/dao-xyz/peerbit-getting-started/blob/c19532c658f9cf59988b8f4acc9006b08b6fecbe/src/index.test.ts#L120) in the getting started repo where different setups are explored. For more info about data integrity and uniqueness in general see [this](/topics/integrity.md).
+
+
+
 ## Put
 Inserting documents is done like so.
 

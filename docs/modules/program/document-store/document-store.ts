@@ -83,10 +83,12 @@ export class Channel extends Program<ChannelArgs> {
 	constructor() {
 		super();
 		this.posts = new Documents({
+			id: sha256Sync(new TextEncoder().encode("posts")),
 			index: new DocumentIndex()
 		});
 
 		this.reactions = new Documents({
+			id: sha256Sync(new TextEncoder().encode("reactions")),
 			index: new DocumentIndex()
 		});
 	}
@@ -321,7 +323,7 @@ import {
 	Observer,
 	Role
 } from "@peerbit/document";
-import { PublicSignKey } from "@peerbit/crypto";
+import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 
 new SearchRequest({
 	query: [
