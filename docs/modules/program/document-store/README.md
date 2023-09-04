@@ -51,10 +51,10 @@ export class Channel extends Program<ChannelArgs> {
 // Now doing
 
 // zb2abc123...
-console.log(await client.open(new Channel()).address); 
+console.log((await peer.open(new Channel())).address); 
 
 // zb2abc123... (the same address will be generated)
-console.log(await client.open(new Channel()).address); 
+console.log((await peer.open(new Channel())).address); 
 ```
 
 For more applied information about uniqueness see [the tests](https://github.com/dao-xyz/peerbit-getting-started/blob/c19532c658f9cf59988b8f4acc9006b08b6fecbe/src/index.test.ts#L120) in the getting started repo where different setups are explored. For more info about data integrity and uniqueness in general see [this](/topics/integrity.md).
