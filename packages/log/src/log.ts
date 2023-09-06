@@ -599,63 +599,16 @@ export class Log<T> {
 		return { entry, removed };
 	}
 
-	async reset(entries: Entry<T>[], heads?: (string | Entry<T>)[]) {
+	async reset(entries: Entry<T>[]) {
 		this._nextsIndex = new Map();
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
 			cache: this._entryCache
 		});
-		const promises: Promise<any>[] = [];
-		const set = new Set<string>();
-		const uniqueEntries: Entry<T>[] = [];
-		for (const entry of entries) {
-			if (!entry.hash) {
-				throw new Error("Unexpected");
-			}
-
-			if (set.has(entry.hash)) {
-				continue;
-			}
-
-			set.add(entry.hash);
-			uniqueEntries.push(entry);
-			promises.push(this._entryIndex.set(entry));
-		}
-
-		await Promise.all(promises);
-
-		// Set heads if not passed as an argument
-		const foundHeads = heads
-			? ((await Promise.all(
-					heads.map((x) => {
-						if (x instanceof Entry) return x;
-						const resolved = this._entryIndex.get(x);
-						if (!resolved) {
-							throw new Error("Missing head with cid: " + x);
-						}
-						return resolved;
-					})
-			  )) as Entry<T>[])
-			: Log.findHeads(uniqueEntries);
-
-		await this._headsIndex.reset(foundHeads);
-
-		this._values = new Values(this._entryIndex, this._sortFn, uniqueEntries);
-
-		for (const e of entries) {
-			for (const a of e.next) {
-				let nextIndexSet = this._nextsIndex.get(a);
-				if (!nextIndexSet) {
-					nextIndexSet = new Set();
-					nextIndexSet.add(e.hash);
-					this._nextsIndex.set(a, nextIndexSet);
-				} else {
-					nextIndexSet.add(e.hash);
-				}
-			}
-		}
-		await this._onChange?.({ added: foundHeads, removed: [] });
+		await this.headsIndex.reset([]);
+		this._values = new Values(this._entryIndex, this._sortFn, []);
+		await this.join(entries);
 	}
 
 	async remove(

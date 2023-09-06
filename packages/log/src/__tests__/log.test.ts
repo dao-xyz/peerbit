@@ -48,130 +48,6 @@ describe("properties", function () {
 			await log.open(store, signKey);
 			expect(log.id).toBeInstanceOf(Uint8Array);
 		});
-
-		it("sets items if given as params", async () => {
-			const one = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
-					next: []
-				},
-				data: "entryA",
-				encoding: JSON_ENCODING
-			});
-			const two = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
-					next: []
-				},
-				data: "entryB",
-				encoding: JSON_ENCODING
-			});
-			const three = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
-					next: []
-				},
-				data: "entryC",
-				encoding: JSON_ENCODING
-			});
-			const log = new Log<string>();
-			await log.open(store, signKey, { encoding: JSON_ENCODING });
-			await log.reset([one, two, three]);
-
-			expect(log.length).toEqual(3);
-			expect((await log.toArray())[0].payload.getValue()).toEqual("entryA");
-			expect((await log.toArray())[1].payload.getValue()).toEqual("entryB");
-			expect((await log.toArray())[2].payload.getValue()).toEqual("entryC");
-		});
-
-		it("sets heads if given as params", async () => {
-			const one = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					next: []
-				},
-				data: "entryA",
-				encoding: JSON_ENCODING
-			});
-			const two = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					next: []
-				},
-				data: "entryB",
-				encoding: JSON_ENCODING
-			});
-			const three = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					next: []
-				},
-				data: "entryC",
-				encoding: JSON_ENCODING
-			});
-			const log = new Log<string>();
-			await log.open(store, signKey, { encoding: JSON_ENCODING });
-			await log.reset([one, two, three], [three]);
-
-			expect((await log.getHeads()).length).toEqual(1);
-			expect((await log.getHeads())[0].hash).toEqual(three.hash);
-		});
-
-		it("finds heads if heads not given as params", async () => {
-			const one = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					next: []
-				},
-				data: "entryA",
-				encoding: JSON_ENCODING
-			});
-			const two = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					next: []
-				},
-				data: "entryB",
-				encoding: JSON_ENCODING
-			});
-			const three = await Entry.create({
-				store,
-				identity: signKey,
-				meta: {
-					gidSeed: Buffer.from("a"),
-					next: []
-				},
-				data: "entryC",
-				encoding: JSON_ENCODING
-			});
-			const log = new Log<string>();
-			await log.open(store, signKey, { encoding: JSON_ENCODING });
-			await log.reset([one, two, three]);
-			expect((await log.getHeads()).map((x) => x.hash)).toContainAllValues([
-				one.hash,
-				two.hash,
-				three.hash
-			]);
-		});
 	});
 
 	describe("toString", () => {
@@ -275,6 +151,141 @@ describe("properties", function () {
 		});
 	});
 
+	describe("reset", () => {
+		it("sets items if given as params", async () => {
+			const one = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
+					next: []
+				},
+				data: "entryA",
+				encoding: JSON_ENCODING
+			});
+			const two = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
+					next: []
+				},
+				data: "entryB",
+				encoding: JSON_ENCODING
+			});
+			const three = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
+					next: []
+				},
+				data: "entryC",
+				encoding: JSON_ENCODING
+			});
+			const log = new Log<string>();
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
+			await log.reset([one, two, three]);
+
+			expect(log.length).toEqual(3);
+			expect((await log.toArray())[0].payload.getValue()).toEqual("entryA");
+			expect((await log.toArray())[1].payload.getValue()).toEqual("entryB");
+			expect((await log.toArray())[2].payload.getValue()).toEqual("entryC");
+		});
+
+		it("sorts on reset", async () => {
+			const one = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: []
+				},
+				data: "entryA",
+				encoding: JSON_ENCODING
+			});
+			const two = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: []
+				},
+				data: "entryB",
+				encoding: JSON_ENCODING
+			});
+			const three = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					next: []
+				},
+				data: "entryC",
+				encoding: JSON_ENCODING
+			});
+			const log = new Log<string>();
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
+			await log.reset([two, three, one]);
+			expect((await log.getHeads()).map((x) => x.hash)).toContainAllValues([
+				one.hash,
+				two.hash,
+				three.hash
+			]);
+		});
+
+		it("resets and skips", async () => {
+			const one = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
+					next: []
+				},
+				data: "entryA",
+				encoding: JSON_ENCODING
+			});
+			const two = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
+					next: []
+				},
+				data: "entryB",
+				encoding: JSON_ENCODING
+			});
+			const three = await Entry.create({
+				store,
+				identity: signKey,
+				meta: {
+					gidSeed: Buffer.from("a"),
+					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
+					next: []
+				},
+				data: "entryC",
+				encoding: JSON_ENCODING
+			});
+			const log = new Log<string>();
+			await log.open(store, signKey, { encoding: JSON_ENCODING });
+			await log.join([one, two, three]);
+			expect(log.length).toEqual(3);
+			expect((await log.toArray())[0].payload.getValue()).toEqual("entryA");
+			expect((await log.toArray())[1].payload.getValue()).toEqual("entryB");
+			expect((await log.toArray())[1].payload.getValue()).toEqual("entryB");
+
+			await log.reset([one, two]);
+
+			expect(log.length).toEqual(2);
+			expect((await log.toArray())[0].payload.getValue()).toEqual("entryA");
+			expect((await log.toArray())[1].payload.getValue()).toEqual("entryB");
+		});
+	});
 	describe("values", () => {
 		it("returns all entries in the log", async () => {
 			const log = new Log<Uint8Array>();
