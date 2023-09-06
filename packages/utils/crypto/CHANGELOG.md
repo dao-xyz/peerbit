@@ -25,6 +25,13 @@
   * dependencies
     * @peerbit/cache bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.7](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.6...crypto-v1.0.7) (2023-09-06)
+
+
+### Bug Fixes
+
+* export ready ([6fdb86e](https://github.com/dao-xyz/peerbit/commit/6fdb86eb1afd3fa53c5a03002305425bca929b10))
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.5...crypto-v1.0.6) (2023-09-02)
 
 

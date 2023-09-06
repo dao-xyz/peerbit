@@ -63,6 +63,16 @@
     * @peerbit/pubsub bumped from ^1.1.3 to ^1.1.4
     * @peerbit/blocks bumped from ^1.0.13 to ^1.0.14
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.1.1 to 1.2.0
+    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
+    * @peerbit/program bumped from 2.2.5 to 2.3.0
+    * @peerbit/pubsub bumped from ^1.1.4 to ^1.1.5
+    * @peerbit/blocks bumped from ^1.0.14 to ^1.1.0
+
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.1...peerbit-v2.0.2) (2023-09-02)
 
 

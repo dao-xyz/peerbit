@@ -48,6 +48,23 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.5
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.0.9...blocks-interface-v1.1.0) (2023-09-06)
+
+
+### Features
+
+* store iterator ([63535ab](https://github.com/dao-xyz/peerbit/commit/63535ab252995334b72d6f65d9c04d39ca2065e5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
+    * @peerbit/stream-interface bumped from ^1.0.7 to ^1.0.8
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.5 to 1.0.6
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.0.4...blocks-interface-v1.0.5) (2023-07-18)
 
 

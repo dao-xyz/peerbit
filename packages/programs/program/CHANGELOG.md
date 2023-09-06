@@ -24,6 +24,23 @@
   * dependencies
     * @peerbit/blocks-interface bumped from ^1.0.8 to ^1.0.9
 
+## [2.3.0](https://github.com/dao-xyz/peerbit/compare/program-v2.2.5...program-v2.3.0) (2023-09-06)
+
+
+### Features
+
+* support recovery of heads ([968b780](https://github.com/dao-xyz/peerbit/commit/968b780f315454f8e18d81f37f3e8a5c885b272d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
+    * @peerbit/blocks-interface bumped from ^1.0.9 to ^1.1.0
+    * @peerbit/pubsub-interface bumped from ^1.1.1 to ^1.1.2
+    * @peerbit/lazy-level bumped from ^1.1.1 to ^1.2.0
+
 ## [2.2.3](https://github.com/dao-xyz/peerbit/compare/program-v2.2.2...program-v2.2.3) (2023-09-02)
 
 

@@ -18,6 +18,12 @@
   * dependencies
     * @peerbit/crypto bumped from 1.0.4 to 1.0.5
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
+
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v1.0.6...stream-interface-v1.0.7) (2023-09-02)
 
 

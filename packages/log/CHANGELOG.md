@@ -129,6 +129,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.22 to 1.0.23
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/log-v2.0.7...log-v2.1.0) (2023-09-06)
+
+
+### Features
+
+* support recovery of heads ([968b780](https://github.com/dao-xyz/peerbit/commit/968b780f315454f8e18d81f37f3e8a5c885b272d))
+
+
+### Bug Fixes
+
+* update to 0.46.9 ([f6bf439](https://github.com/dao-xyz/peerbit/commit/f6bf4398e4caf7472cdfa4296990d0518c295e4c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.0.9 to ^1.1.0
+    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.23 to 1.0.24
+
 ## [2.0.6](https://github.com/dao-xyz/peerbit/compare/log-v2.0.5...log-v2.0.6) (2023-09-03)
 
 

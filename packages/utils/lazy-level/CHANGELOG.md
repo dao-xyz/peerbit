@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.1.1...lazy-level-v1.2.0) (2023-09-06)
+
+
+### Features
+
+* store iterator ([63535ab](https://github.com/dao-xyz/peerbit/commit/63535ab252995334b72d6f65d9c04d39ca2065e5))
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.1.0...lazy-level-v1.1.1) (2023-09-02)
 
 
