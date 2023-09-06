@@ -210,6 +210,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.23 to ^1.0.24
 
+## [2.0.10](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.9...trusted-network-v2.0.10) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.7 to 1.0.8
+    * @peerbit/document bumped from 3.1.0 to 3.1.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.24 to ^1.0.25
+
 ## [2.0.5](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.4...trusted-network-v2.0.5) (2023-09-02)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program",
-	"version": "2.3.0",
+	"version": "2.3.1",
 	"description": "Program interface",
 	"type": "module",
 	"sideEffects": false,
@@ -30,9 +30,9 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.6",
-		"@peerbit/crypto": "1.0.7",
-		"@peerbit/blocks-interface": "^1.1.0",
-		"@peerbit/pubsub-interface": "^1.1.2",
+		"@peerbit/crypto": "1.0.8",
+		"@peerbit/blocks-interface": "^1.1.1",
+		"@peerbit/pubsub-interface": "^1.1.3",
 		"@peerbit/lazy-level": "^1.2.0"
 	}
 }

@@ -20,6 +20,21 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.14](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.13...stream-v1.0.14) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.7 to 1.0.8
+    * @peerbit/stream-interface bumped from ^1.0.8 to ^1.0.9
+
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.12...stream-v1.0.13) (2023-09-06)
 
 

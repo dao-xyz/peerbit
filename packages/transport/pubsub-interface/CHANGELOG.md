@@ -21,6 +21,21 @@
     * @peerbit/crypto bumped from 1.0.6 to 1.0.7
     * @peerbit/stream-interface bumped from ^1.0.7 to ^1.0.8
 
+## [1.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.2...pubsub-interface-v1.1.3) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.7 to 1.0.8
+    * @peerbit/stream-interface bumped from ^1.0.8 to ^1.0.9
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.0...pubsub-interface-v1.1.1) (2023-09-02)
 
 

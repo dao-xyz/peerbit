@@ -152,6 +152,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.23 to ^1.0.24
 
+## [2.1.9](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.8...rpc-v2.1.9) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.7 to 1.0.8
+    * @peerbit/program bumped from 2.3.0 to 2.3.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.24 to ^1.0.25
+
 ## [2.1.4](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.3...rpc-v2.1.4) (2023-09-02)
 
 
