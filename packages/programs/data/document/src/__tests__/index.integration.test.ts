@@ -36,6 +36,7 @@ import {
 import { LSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
 import {
+	AccessError,
 	PublicSignKey,
 	randomBytes,
 	sha256Base64Sync,
@@ -43,7 +44,7 @@ import {
 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
-import { DocumentIndex } from "../document-index.js";
+import { DocumentIndex, Operation, PutOperation } from "../document-index.js";
 import { Program } from "@peerbit/program";
 import pDefer from "p-defer";
 
@@ -210,9 +211,15 @@ describe("index", () => {
 
 				const putOperation = (await store.docs.put(doc, { replicas: 123 }))
 					.entry;
-				expect(decodeReplicas(putOperation).getValue(store.docs.log)).toEqual(
-					123
-				);
+				expect(
+					decodeReplicas(
+						putOperation as {
+							meta: {
+								data: Uint8Array;
+							};
+						}
+					).getValue(store.docs.log)
+				).toEqual(123);
 			});
 
 			it("many chunks", async () => {
@@ -1872,6 +1879,59 @@ describe("index", () => {
 			// TODO deletion while sort
 
 			// TODO session timeouts?
+		});
+	});
+
+	describe("canAppend", () => {
+		let store: TestStore;
+		beforeAll(async () => {
+			session = await LSession.connected(1);
+		});
+		afterEach(async () => {
+			await store?.close();
+		});
+
+		afterAll(async () => {
+			await session.stop();
+		});
+
+		it("reject entries with unexpected payloads", async () => {
+			store = await session.peers[0].open(
+				new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex()
+					})
+				})
+			);
+			await expect(
+				store.docs.log.log.append(
+					new PutOperation({ key: "key", data: randomBytes(32) })
+				)
+			).rejects.toThrowError(AccessError);
+		});
+
+		it("reject entries with unexpected payloads", async () => {
+			store = await session.peers[0].open(
+				new TestStore({
+					docs: new Documents<Document>({
+						index: new DocumentIndex()
+					})
+				})
+			);
+
+			store["_canAppend"] = () => true; // ignore internal
+
+			const canAppend = await store.docs.canAppend(
+				(await Entry.create({
+					data: new PutOperation({ key: "key", data: randomBytes(32) }),
+					identity: store.node.identity,
+					store: store.docs.log.log.storage,
+					canAppend: () => true,
+					encoding: store.docs.log.log.encoding
+				})) as Entry<Operation<Document>>
+			);
+
+			await expect(canAppend).toBeFalse();
 		});
 	});
 

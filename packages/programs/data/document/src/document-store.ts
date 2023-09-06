@@ -1,5 +1,6 @@
 import {
 	AbstractType,
+	BorshError,
 	deserialize,
 	field,
 	serialize,
@@ -180,20 +181,27 @@ export class Documents<T extends Record<string, any>> extends Program<
 		}
 
 		if (this._optionCanPerform) {
-			const payload = await entry.getPayloadValue();
-
-			if (payload instanceof PutOperation) {
-				payload.getValue(this.index.valueEncoding); // Decode they value so callbacks can jsut do .value
-			}
-			if (
-				!(await this._optionCanPerform(
-					payload as PutOperation<T> | DeleteOperation,
-					{
-						entry
-					}
-				))
-			) {
-				return false;
+			try {
+				const payload = await entry.getPayloadValue();
+				if (payload instanceof PutOperation) {
+					payload.getValue(this.index.valueEncoding); // Decode they value so callbacks can jsut do .value
+				}
+				if (
+					!(await this._optionCanPerform(
+						payload as PutOperation<T> | DeleteOperation,
+						{
+							entry
+						}
+					))
+				) {
+					return false;
+				}
+			} catch (error) {
+				if (error instanceof BorshError) {
+					logger.warn("Received payload that could not be decoded, skipping");
+					return false;
+				}
+				throw error;
 			}
 		}
 		return true;
@@ -283,6 +291,9 @@ export class Documents<T extends Record<string, any>> extends Program<
 		} catch (error) {
 			if (error instanceof AccessError) {
 				return false; // we cant index because we can not decrypt
+			} else if (error instanceof BorshError) {
+				logger.warn("Received payload that could not be decoded, skipping");
+				return false;
 			}
 			throw error;
 		}

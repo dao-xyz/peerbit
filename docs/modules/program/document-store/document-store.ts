@@ -107,6 +107,7 @@ export class Channel extends Program<ChannelArgs> {
 
 				// You can use the entry to get properties of the operation
 				// like signers
+
 				const signers = await entry.getPublicKeys();
 
 				if (operation instanceof PutOperation) {

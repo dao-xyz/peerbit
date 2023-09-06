@@ -34,7 +34,7 @@
 		"./transports.js": "./lib/esm/transports-browser.js"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.5",
+		"@dao-xyz/borsh": "^5.1.6",
 		"@peerbit/lazy-level": "1.2.0",
 		"@peerbit/crypto": "1.0.7",
 		"@peerbit/logger": "1.0.1",
