@@ -27,6 +27,10 @@ export class PeerbitProxyHost implements ProgramClient {
 	> = new Map();
 
 	private _pubsubTopicSubscriptions: Map<string, Set<string>>;
+	private _memoryIterator: Map<
+		string,
+		AsyncIterator<[string, Uint8Array], void, void>
+	>;
 
 	constructor(
 		readonly hostClient: ProgramClient,
@@ -37,6 +41,8 @@ export class PeerbitProxyHost implements ProgramClient {
 		}
 		this._levels = new Map();
 		this._pubsubTopicSubscriptions = new Map();
+		this._memoryIterator = new Map();
+
 		this.messages.start();
 	}
 
@@ -170,6 +176,32 @@ export class PeerbitProxyHost implements ProgramClient {
 					await this.respond(
 						message,
 						new memory.RESP_Del({ level: message.level }),
+						from
+					);
+				} else if (message instanceof memory.REQ_Iterator_Next) {
+					let iterator = this._memoryIterator.get(message.id);
+					if (!iterator) {
+						iterator = m.iterator()[Symbol.asyncIterator]();
+						this._memoryIterator.set(message.id, iterator);
+					}
+					const next = await iterator.next();
+					await this.respond(
+						message,
+						new memory.RESP_Iterator_Next({
+							keys: next.done ? [] : [next.value[0]],
+							values: next.done ? [] : [next.value[1]],
+							level: message.level
+						}),
+						from
+					);
+					if (next.done) {
+						this._memoryIterator.delete(message.id);
+					}
+				} else if (message instanceof memory.REQ_Iterator_Stop) {
+					this._memoryIterator.delete(message.id);
+					await this.respond(
+						message,
+						new memory.RESP_Iterator_Stop({ level: message.level }),
 						from
 					);
 				} else if (message instanceof memory.REQ_Get) {
