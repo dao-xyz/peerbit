@@ -1,6 +1,6 @@
 import type { PeerId } from "@libp2p/interface/peer-id";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { field, variant, option } from "@dao-xyz/borsh";
+import { field, variant, option, vec } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
 import { Message } from "./message.js";
 
@@ -97,6 +97,31 @@ export class REQ_RmBlock extends BlocksMessage {
 export class RESP_RmBlock extends BlocksMessage {}
 
 @variant(8)
+export class REQ_Iterator extends BlocksMessage {
+	@field({ type: "u32" })
+	step: number;
+
+	constructor() {
+		super();
+		this.step = 1;
+	}
+}
+@variant(9)
+export class RESP_Iterator extends BlocksMessage {
+	@field({ type: vec("string") })
+	keys: string[];
+
+	@field({ type: vec(Uint8Array) })
+	values: Uint8Array[];
+
+	constructor(keys: string[], values: Uint8Array[]) {
+		super();
+		this.keys = keys;
+		this.values = values;
+	}
+}
+
+@variant(10)
 export class REQ_BlockWaitFor extends BlocksMessage {
 	@field({ type: PublicSignKey })
 	publicKey: PublicSignKey;
@@ -109,5 +134,5 @@ export class REQ_BlockWaitFor extends BlocksMessage {
 	}
 }
 
-@variant(9)
+@variant(11)
 export class RESP_BlockWaitFor extends BlocksMessage {}

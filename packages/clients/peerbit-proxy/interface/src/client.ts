@@ -10,7 +10,9 @@ import {
 	PublicSignKey,
 	X25519PublicKey,
 	KeypairFromPublicKey,
-	randomBytes
+	randomBytes,
+	toBase64,
+	ready
 } from "@peerbit/crypto";
 import { PubSub, PubSubEvents } from "@peerbit/pubsub-interface";
 import {
@@ -30,15 +32,72 @@ import { Message } from "./message.js";
 import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
-
+import { v4 as uuid } from "uuid";
 import { EventEmitter } from "@libp2p/interface/events";
 import { X25519Keypair } from "@peerbit/crypto";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 
-import sodium from "libsodium-wrappers";
-
 const messageIdString = (messageId: Uint8Array) => sha256Base64(messageId);
 const levelKey = (level: string[]) => JSON.stringify(level);
+
+async function* blocksIterator(client: {
+	request<T extends Message>(request: Message): Promise<T>;
+}) {
+	while (true) {
+		const resp = await client.request<blocks.RESP_Iterator>(
+			new blocks.REQ_Iterator()
+		);
+		for (let i = 0; i < resp.keys.length; i++) {
+			yield [resp.keys[i], resp.values[i]] as [string, Uint8Array];
+		}
+		if (resp.keys.length === 0) {
+			break;
+		}
+	}
+}
+
+function memoryIterator(
+	client: { request<T extends Message>(request: Message): Promise<T> },
+	level: string[]
+): {
+	[Symbol.asyncIterator]: () => AsyncIterator<[string, Uint8Array], void, void>;
+} {
+	return {
+		[Symbol.asyncIterator]() {
+			const iteratorId = uuid();
+			return {
+				next: async () => {
+					const resp = await client.request<memory.RESP_Iterator_Next>(
+						new memory.REQ_Iterator_Next({ id: iteratorId, level })
+					);
+					if (resp.keys.length > 1) {
+						throw new Error("Unsupported iteration response");
+					}
+					// Will only have 0 or 1 element for now
+					for (let i = 0; i < resp.keys.length; i++) {
+						return {
+							done: false,
+							value: [resp.keys[i], resp.values[i]] as [string, Uint8Array]
+						} as { done: false; value: [string, Uint8Array] };
+					}
+					return { done: true, value: undefined } as {
+						done: true;
+						value: undefined;
+					};
+				},
+				async return() {
+					await client.request<memory.RESP_Iterator_Next>(
+						new memory.REQ_Iterator_Stop({ id: iteratorId, level })
+					);
+					return { done: true, value: undefined } as {
+						done: true;
+						value: undefined;
+					};
+				}
+			};
+		}
+	};
+}
 
 export class PeerbitProxyClient implements ProgramClient {
 	peerId: PeerId;
@@ -177,6 +236,9 @@ export class PeerbitProxyClient implements ProgramClient {
 				rm: async (cid) => {
 					await this.request<blocks.RESP_RmBlock>(new blocks.REQ_RmBlock(cid));
 				},
+
+				iterator: () => blocksIterator(this),
+
 				waitFor: async (publicKey) => {
 					await this.request<blocks.RESP_BlockWaitFor>(
 						new blocks.REQ_BlockWaitFor(publicKey)
@@ -257,6 +319,8 @@ export class PeerbitProxyClient implements ProgramClient {
 				idle: async () => {
 					await this.request<memory.RESP_Idle>(new memory.REQ_Idle({ level }));
 				},
+
+				iterator: () => memoryIterator(this, level),
 				close: async () => {
 					await this.request<memory.RESP_Close>(
 						new memory.REQ_Close({ level })
@@ -272,7 +336,7 @@ export class PeerbitProxyClient implements ProgramClient {
 	}
 
 	async connect() {
-		await sodium.ready;
+		await ready;
 
 		await this.messages.connect({ waitForParent: true });
 

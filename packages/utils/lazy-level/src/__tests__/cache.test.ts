@@ -232,6 +232,20 @@ describe(`LazyLevel - level`, function () {
 			await cache.close();
 			await cache.close();
 		});
+
+		it("iterator", async () => {
+			await cache.put("0", new Uint8Array([0]));
+			await cache.put("1", new Uint8Array([1]));
+			await cache.idle();
+
+			let c = 0;
+			for await (const [key, value] of cache.iterator()) {
+				expect(key).toEqual(String(c));
+				expect(new Uint8Array(value)).toEqual(new Uint8Array([c]));
+				c++;
+			}
+			expect(c).toEqual(2);
+		});
 	});
 
 	describe("sublevel", () => {

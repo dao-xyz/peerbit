@@ -22,6 +22,13 @@ export interface SimpleLevel {
 	put(key: string, value: Uint8Array);
 	del(key): Promise<void>;
 	sublevel(name: string): MaybePromise<SimpleLevel>;
+	iterator: () => {
+		[Symbol.asyncIterator]: () => AsyncIterator<
+			[string, Uint8Array],
+			void,
+			void
+		>;
+	};
 	clear(): Promise<void>;
 	idle?(): Promise<void>;
 }
@@ -273,6 +280,15 @@ export default class LazyLevel implements SimpleLevel {
 		}
 
 		return ret;
+	}
+
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		const iterator = this._store.iterator<any, Uint8Array>({
+			valueEncoding: "view"
+		});
+		for await (const [key, value] of iterator) {
+			yield [key, value];
+		}
 	}
 
 	async clear(clearStore = true): Promise<void> {

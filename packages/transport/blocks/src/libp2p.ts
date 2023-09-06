@@ -141,6 +141,12 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		await this._localStore?.rm(cid);
 	}
 
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		for await (const [key, value] of this._localStore.iterator()) {
+			yield [key, value];
+		}
+	}
+
 	async start(): Promise<void> {
 		await this._localStore?.start();
 		await super.start();

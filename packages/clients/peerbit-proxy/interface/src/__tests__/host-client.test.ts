@@ -109,6 +109,41 @@ describe("index", () => {
 			expect(await client1.memory.get(key)).toEqual(undefined);
 			expect(await host1.memory.get(key)).toEqual(undefined);
 		});
+		it("iterator", async () => {
+			const keys = [key, key + "-2"];
+			const datas = [data, new Uint8Array([1])];
+			await client1.memory.put(key, data);
+			await Promise.all(
+				keys.map((key, ix) => client1.memory.put(key, datas[ix]))
+			);
+			await client1.memory.idle?.();
+
+			let c = 0;
+			for await (const iter of client1.memory.iterator()) {
+				expect(iter[0]).toEqual(keys[c]);
+				expect(new Uint8Array(iter[1])).toEqual(datas[c]);
+
+				c++;
+			}
+			expect(c).toEqual(2);
+			expect(host1["_memoryIterator"].size).toEqual(0);
+		});
+
+		it("iterator early break no leak", async () => {
+			const keys = [key, key + "-2"];
+			const datas = [data, new Uint8Array([1])];
+			await client1.memory.put(key, data);
+			await Promise.all(
+				keys.map((key, ix) => client1.memory.put(key, datas[ix]))
+			);
+			await client1.memory.idle?.();
+
+			let c = 0;
+			for await (const iter of client1.memory.iterator()) {
+				break;
+			}
+			expect(host1["_memoryIterator"].size).toEqual(0);
+		});
 
 		it("clear", async () => {
 			await client1.memory.put(key, data);

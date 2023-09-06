@@ -72,6 +72,12 @@ export class LevelBlockStore implements Blocks {
 		await this._level.del(cid);
 	}
 
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		for await (const [key, value] of this._level.iterator()) {
+			yield [key, value];
+		}
+	}
+
 	async has(cid: string) {
 		return !!(await this._level.get(cid));
 	}

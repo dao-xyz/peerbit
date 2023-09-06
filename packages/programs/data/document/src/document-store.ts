@@ -152,6 +152,10 @@ export class Documents<T extends Record<string, any>> extends Program<
 		});
 	}
 
+	async recover() {
+		return this.log.recover();
+	}
+
 	private async _resolveEntry(history: Entry<Operation<T>> | string) {
 		return typeof history === "string"
 			? (await this.log.log.get(history)) ||

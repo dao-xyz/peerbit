@@ -1,5 +1,5 @@
-import { v4 as uuid } from "uuid";
 import { waitFor } from "@peerbit/time";
+import { v4 as uuid } from "uuid";
 
 export interface Hello {
 	type: "hello";

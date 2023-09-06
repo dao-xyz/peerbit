@@ -69,7 +69,10 @@ export const createPeer = async (
 				rm: (c) => {
 					blocks.delete(c);
 				},
-				waitFor: () => Promise.resolve()
+				waitFor: () => Promise.resolve(),
+				iterator: () => {
+					return undefined as any; // TODO
+				}
 			},
 			pubsub: {
 				emitSelf: false,

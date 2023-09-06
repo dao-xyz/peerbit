@@ -1,4 +1,4 @@
-import { Encoding, TrimOptions } from "@peerbit/log";
+import { CanAppend, Encoding, TrimOptions } from "@peerbit/log";
 import { Entry } from "@peerbit/log";
 import { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
 import { variant, field, option } from "@dao-xyz/borsh";
@@ -49,6 +49,7 @@ export class EventStore<T> extends Program<Args<T>> {
 	id: Uint8Array;
 
 	_index: EventIndex<T>;
+	_canAppend?: CanAppend<Operation<T>>;
 
 	constructor(properties?: { id: Uint8Array }) {
 		super();
@@ -56,11 +57,17 @@ export class EventStore<T> extends Program<Args<T>> {
 		this.log = new SharedLog();
 	}
 
+	setCanAppend(canAppend: CanAppend<Operation<T>> | undefined) {
+		this._canAppend = canAppend;
+	}
+
 	async open(properties?: Args<T>) {
 		this._index = new EventIndex(this.log);
 		await this.log.open({
 			onChange: () => undefined,
-			canAppend: () => Promise.resolve(true),
+			canAppend: (entry) => {
+				return this._canAppend ? this._canAppend(entry) : true;
+			},
 			canReplicate: properties?.canReplicate,
 			role: properties?.role,
 			trim: properties?.trim,

@@ -96,6 +96,54 @@ export class REQ_Del extends MemoryMessage {
 export class RESP_Del extends MemoryMessage {}
 
 @variant(12)
+export class REQ_Iterator_Next extends MemoryMessage {
+	@field({ type: "string" })
+	id: string;
+
+	@field({ type: "u32" })
+	step: number;
+
+	constructor(properties: { id: string; level: string[] }) {
+		super(properties);
+		this.id = properties.id;
+		this.step = 1;
+	}
+}
+
+@variant(13)
+export class RESP_Iterator_Next extends MemoryMessage {
+	@field({ type: vec("string") })
+	keys: string[];
+
+	@field({ type: vec(Uint8Array) })
+	values: Uint8Array[];
+
+	constructor(properties: {
+		level: string[];
+		keys: string[];
+		values: Uint8Array[];
+	}) {
+		super(properties);
+		this.keys = properties.keys;
+		this.values = properties.values;
+	}
+}
+
+@variant(14)
+export class REQ_Iterator_Stop extends MemoryMessage {
+	@field({ type: "string" })
+	id: string;
+
+	constructor(properties: { id: string; level: string[] }) {
+		super(properties);
+		this.id = properties.id;
+	}
+}
+
+@variant(15)
+export class RESP_Iterator_Stop extends MemoryMessage {}
+
+@variant(16)
 export class REQ_Sublevel extends MemoryMessage {
 	@field({ type: "string" })
 	name: string;
@@ -106,17 +154,17 @@ export class REQ_Sublevel extends MemoryMessage {
 	}
 }
 
-@variant(13)
+@variant(17)
 export class RESP_Sublevel extends MemoryMessage {}
 
-@variant(14)
+@variant(18)
 export class REQ_Clear extends MemoryMessage {}
 
-@variant(15)
+@variant(19)
 export class RESP_Clear extends MemoryMessage {}
 
-@variant(16)
+@variant(20)
 export class REQ_Idle extends MemoryMessage {}
 
-@variant(17)
+@variant(21)
 export class RESP_Idle extends MemoryMessage {}
