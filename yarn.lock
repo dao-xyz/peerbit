@@ -3244,10 +3244,10 @@
     "@types/scheduler" "*"
     csstype "^3.0.2"
 
-"@types/retry@0.12.1":
-  version "0.12.1"
-  resolved "https://registry.yarnpkg.com/@types/retry/-/retry-0.12.1.tgz#d8f1c0d0dc23afad6dc16a9e993a0865774b4065"
-  integrity sha512-xoDlM2S4ortawSWORYqsdU+2rxdh4LRW9ytc3zmT37RIKQh6IHyKwwtKhKis9ah8ol07DCkZxPt8BBvPjC6v4g==
+"@types/retry@0.12.2":
+  version "0.12.2"
+  resolved "https://registry.yarnpkg.com/@types/retry/-/retry-0.12.2.tgz#ed279a64fa438bb69f2480eda44937912bb7480a"
+  integrity sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==
 
 "@types/rimraf@^3.0.2":
   version "3.0.2"
@@ -7287,10 +7287,10 @@ libnpmpublish@7.3.0:
     sigstore "^1.4.0"
     ssri "^10.0.1"
 
-libp2p@0.46.6:
-  version "0.46.6"
-  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.46.6.tgz#374d2af8e6401729a215af67c46fa03ed7d5bd0c"
-  integrity sha512-5zDUpi4Foj30s+I/f6UC+wrO2u1CMLVFXby+AnCl1cEt4r+z92rLlN1Td0gUQjiAw1I3EL9yI+ASt3/Pts5IPw==
+libp2p@0.46.9:
+  version "0.46.9"
+  resolved "https://registry.yarnpkg.com/libp2p/-/libp2p-0.46.9.tgz#e8d996529e25a67a8f879600b46021ad72aea723"
+  integrity sha512-voJaMxTaf/LONFdUuSn0rE9SC+VeTwFfIkqSzZGD043CtrUsftToR2+zyIyl2eXS75vTkXyKqzL8Q9IIoqTaFQ==
   dependencies:
     "@achingbrain/nat-port-mapper" "^1.0.9"
     "@libp2p/crypto" "^2.0.3"
@@ -7308,7 +7308,6 @@ libp2p@0.46.6:
     "@multiformats/mafmt" "^12.1.2"
     "@multiformats/multiaddr" "^12.1.5"
     "@multiformats/multiaddr-matcher" "^1.0.0"
-    abortable-iterator "^5.0.1"
     any-signal "^4.1.1"
     datastore-core "^9.0.1"
     delay "^6.0.0"
@@ -7330,10 +7329,10 @@ libp2p@0.46.6:
     multiformats "^12.0.1"
     p-defer "^4.0.0"
     p-queue "^7.3.4"
-    p-retry "^5.0.0"
+    p-retry "^6.0.0"
     private-ip "^3.0.0"
     protons-runtime "^5.0.0"
-    rate-limiter-flexible "^2.3.11"
+    rate-limiter-flexible "^3.0.0"
     uint8arraylist "^2.4.3"
     uint8arrays "^4.0.6"
     wherearewe "^2.0.1"
@@ -8418,12 +8417,12 @@ p-reduce@2.1.0, p-reduce@^2.0.0, p-reduce@^2.1.0:
   resolved "https://registry.yarnpkg.com/p-reduce/-/p-reduce-2.1.0.tgz#09408da49507c6c274faa31f28df334bc712b64a"
   integrity sha512-2USApvnsutq8uoxZBGbbWM0JIYLiEMJ9RlaN7fAzVNb9OZN0SHjjTTfIcb667XynS5Y1VhwDJVDa72TnPzAYWw==
 
-p-retry@^5.0.0:
-  version "5.1.2"
-  resolved "https://registry.yarnpkg.com/p-retry/-/p-retry-5.1.2.tgz#c16eaee4f2016f9161d12da40d3b8b0f2e3c1b76"
-  integrity sha512-couX95waDu98NfNZV+i/iLt+fdVxmI7CbrrdC2uDWfPdUAApyxT4wmDlyOtR5KtTDmkDO0zDScDjDou9YHhd9g==
+p-retry@^6.0.0:
+  version "6.0.0"
+  resolved "https://registry.yarnpkg.com/p-retry/-/p-retry-6.0.0.tgz#059de483a8ff588a7a28fad5801868267c2494ef"
+  integrity sha512-6NuuXu8Upembd4sNdo4PRbs+M6aHgBTrFE6lkH0YKjVzne3cDW4gkncB98ty/bkMxLxLVNeD5bX9FyWjM7WZ+A==
   dependencies:
-    "@types/retry" "0.12.1"
+    "@types/retry" "0.12.2"
     retry "^0.13.1"
 
 p-timeout@^3.2.0:
@@ -8880,6 +8879,11 @@ rate-limiter-flexible@^2.3.11:
   version "2.4.2"
   resolved "https://registry.yarnpkg.com/rate-limiter-flexible/-/rate-limiter-flexible-2.4.2.tgz#2a219cc473f015142fd8fb599371223d730decbd"
   integrity sha512-rMATGGOdO1suFyf/mI5LYhts71g1sbdhmd6YvdiXO2gJnd42Tt6QS4JUKJKSWVVkMtBacm6l40FR7Trjo6Iruw==
+
+rate-limiter-flexible@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/rate-limiter-flexible/-/rate-limiter-flexible-3.0.0.tgz#1dba6de44d4d5a5e6494774c2ff7657e82856673"
+  integrity sha512-janAJkWxWxmLka0hV+XvCTo0M8keeSeOuz8ZL33cTXrkS4ek9mQ2VJm9ri7fm03oTVth19Sfqb1ijCmo7K/vAg==
 
 rc@^1.2.7:
   version "1.2.8"
