@@ -129,6 +129,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.22 to 1.0.23
 
+## [2.1.2](https://github.com/dao-xyz/peerbit/compare/log-v2.1.1...log-v2.1.2) (2023-09-06)
+
+
+### Bug Fixes
+
+* simply log reset ([bb21346](https://github.com/dao-xyz/peerbit/commit/bb2134666f085aaaa8d6dc9636385e0d3b365265))
+
 ## [2.1.1](https://github.com/dao-xyz/peerbit/compare/log-v2.1.0...log-v2.1.1) (2023-09-06)
 
 
