@@ -73,6 +73,23 @@
     * @peerbit/pubsub bumped from ^1.1.4 to ^1.1.5
     * @peerbit/blocks bumped from ^1.0.14 to ^1.1.0
 
+## [2.0.7](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.6...peerbit-v2.0.7) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.7 to 1.0.8
+    * @peerbit/program bumped from 2.3.0 to 2.3.1
+    * @peerbit/pubsub bumped from ^1.1.5 to ^1.1.6
+    * @peerbit/blocks bumped from ^1.1.0 to ^1.1.1
+
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.1...peerbit-v2.0.2) (2023-09-02)
 
 

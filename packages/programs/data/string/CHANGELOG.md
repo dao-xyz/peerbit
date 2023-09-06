@@ -220,6 +220,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.23 to ^1.0.24
 
+## [3.0.10](https://github.com/dao-xyz/peerbit/compare/string-v3.0.9...string-v3.0.10) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.3.0 to 2.3.1
+    * @peerbit/shared-log bumped from ^3.1.0 to ^3.1.1
+    * @peerbit/rpc bumped from 2.1.8 to 2.1.9
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.24 to ^1.0.25
+
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/string-v3.0.4...string-v3.0.5) (2023-09-02)
 
 

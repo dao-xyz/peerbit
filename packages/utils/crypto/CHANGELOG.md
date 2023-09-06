@@ -25,6 +25,13 @@
   * dependencies
     * @peerbit/cache bumped from ^1.0.1 to ^1.0.2
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.7...crypto-v1.0.8) (2023-09-06)
+
+
+### Bug Fixes
+
+* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
+
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.6...crypto-v1.0.7) (2023-09-06)
 
 
