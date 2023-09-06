@@ -43,7 +43,7 @@
 		"@libp2p/webrtc": "^3.1.6",
 		"@libp2p/websockets": "^7.0.4",
 		"datastore-level": "^10.1.2",
-		"libp2p": "0.46.6",
+		"libp2p": "0.46.9",
 		"memory-level": "^1.0.0"
 	},
 	"devDependencies": {
