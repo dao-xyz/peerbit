@@ -62,6 +62,30 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.11 to 1.0.12
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.14...blocks-v1.1.0) (2023-09-06)
+
+
+### Features
+
+* store iterator ([63535ab](https://github.com/dao-xyz/peerbit/commit/63535ab252995334b72d6f65d9c04d39ca2065e5))
+
+
+### Bug Fixes
+
+* update to 0.46.9 ([f6bf439](https://github.com/dao-xyz/peerbit/commit/f6bf4398e4caf7472cdfa4296990d0518c295e4c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.1.1 to 1.2.0
+    * @peerbit/stream bumped from 1.0.12 to 1.0.13
+    * @peerbit/blocks-interface bumped from 1.0.9 to 1.1.0
+    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.5 to 1.0.6
+
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/blocks-v1.0.12...blocks-v1.0.13) (2023-09-03)
 
 

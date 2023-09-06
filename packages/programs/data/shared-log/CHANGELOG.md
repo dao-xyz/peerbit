@@ -167,6 +167,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.22 to ^1.0.23
 
+## [3.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.0.7...shared-log-v3.1.0) (2023-09-06)
+
+
+### Features
+
+* support recovery of heads ([968b780](https://github.com/dao-xyz/peerbit/commit/968b780f315454f8e18d81f37f3e8a5c885b272d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.2.5 to 2.3.0
+    * @peerbit/log bumped from 2.0.7 to 2.1.0
+    * @peerbit/rpc bumped from 2.1.7 to 2.1.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.23 to ^1.0.24
+
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.0.3...shared-log-v3.0.4) (2023-09-02)
 
 

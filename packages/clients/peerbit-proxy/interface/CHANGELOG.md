@@ -52,6 +52,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.22 to 1.0.23
 
+## [1.3.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.2.7...proxy-v1.3.0) (2023-09-06)
+
+
+### Features
+
+* store iterator ([63535ab](https://github.com/dao-xyz/peerbit/commit/63535ab252995334b72d6f65d9c04d39ca2065e5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^2.2.5 to ^2.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.23 to 1.0.24
+
 ## [1.2.4](https://github.com/dao-xyz/peerbit/compare/proxy-v1.2.3...proxy-v1.2.4) (2023-09-02)
 
 
