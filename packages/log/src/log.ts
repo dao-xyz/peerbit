@@ -27,7 +27,7 @@ import {
 	Timestamp
 } from "./clock.js";
 
-import { field, fixedArray, variant } from "@dao-xyz/borsh";
+import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
 import { Encoding, NO_ENCODING } from "./encoding.js";
 import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
 import { EntryNode, Values } from "./values.js";
@@ -36,6 +36,7 @@ import { logger } from "./logger.js";
 import { Change } from "./change.js";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { Blocks } from "@peerbit/blocks-interface";
+import { cidifyString } from "@peerbit/blocks";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 
@@ -654,6 +655,7 @@ export class Log<T> {
 				}
 			}
 		}
+		await this._onChange?.({ added: foundHeads, removed: [] });
 	}
 
 	async remove(
@@ -1099,24 +1101,64 @@ export class Log<T> {
 		await this._memory?.clear();
 		await this._memory?.close();
 	}
+
+	async recover() {
+		// merge existing
+		const existing = await this.getHeads();
+
+		const allHeads: Map<string, Entry<any>> = new Map();
+		for (const head of existing) {
+			allHeads.set(head.hash, head);
+		}
+
+		// fetch all possible entries
+		for await (const [key, value] of this._storage.iterator()) {
+			if (allHeads.has(key)) {
+				continue;
+			}
+			try {
+				cidifyString(key);
+			} catch (error) {
+				continue;
+			}
+
+			try {
+				const der = deserialize(value, Entry);
+				der.hash = key;
+				der.init(this);
+				allHeads.set(key, der);
+			} catch (error) {
+				continue; // invalid entries
+			}
+		}
+
+		// assume they are valid, (let access control reject them if not)
+		await this.load({ reload: true, heads: [...allHeads.values()] });
+	}
+
 	async load(
-		opts: ({ fetchEntryTimeout?: number } & (
-			| {
-					/* amount?: number  TODO */
-			  }
-			| { heads?: true }
-		)) & { reload: boolean } = { reload: true }
+		opts: (
+			| (
+					| {
+							/* amount?: number  TODO */
+					  }
+					| { heads?: true }
+			  )
+			| { heads: Entry<T>[] }
+		) & { fetchEntryTimeout?: number; reload: boolean } = { reload: true }
 	) {
-		const heads = await this.headsIndex.load({
-			replicate: true, // TODO this.replication.replicate(x) => true/false
-			timeout: opts.fetchEntryTimeout,
-			reload: opts.reload,
-			cache: { update: true, reset: true }
-		});
+		const heads = Array.isArray(opts["heads"])
+			? opts["heads"]
+			: await this.headsIndex.load({
+					replicate: true, // TODO this.replication.replicate(x) => true/false
+					timeout: opts.fetchEntryTimeout,
+					reload: opts.reload,
+					cache: { update: true, reset: true }
+			  });
 
 		if (heads) {
 			// Load the log
-			if ((opts as { heads?: true }).heads) {
+			if ((opts as { heads?: true }).heads != null) {
 				await this.reset(heads);
 			} else {
 				const amount = (opts as { amount?: number }).amount;

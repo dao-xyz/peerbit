@@ -378,6 +378,10 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		return true;
 	}
 
+	async recover(): Promise<void> {
+		return this.log.recover();
+	}
+
 	// Callback for receiving a message from the network
 	async _onMessage(
 		msg: TransportMessage,

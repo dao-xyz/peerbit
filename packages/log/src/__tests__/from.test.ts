@@ -60,6 +60,12 @@ class SlowBlockStore implements Blocks {
 		return this._store.status();
 	}
 
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		for await (const kv of this._store.iterator()) {
+			yield kv;
+		}
+	}
+
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
 		return this._store.waitFor(peer);
 	}

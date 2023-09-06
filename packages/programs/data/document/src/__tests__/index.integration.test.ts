@@ -35,7 +35,12 @@ import {
 } from "../query.js";
 import { LSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
-import { PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
+import {
+	PublicSignKey,
+	randomBytes,
+	sha256Base64Sync,
+	toBase64
+} from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { DocumentIndex } from "../document-index.js";
@@ -810,6 +815,7 @@ describe("index", () => {
 				});
 			});
 		});
+
 		describe("search", () => {
 			let peersCount = 3,
 				stores: TestStore[] = [],
@@ -2356,6 +2362,51 @@ describe("index", () => {
 					expect(counters[2]).toEqual(0);
 				});
 			});
+		});
+	});
+	describe("recover", () => {
+		let session: LSession;
+		let db1: TestStore;
+
+		beforeEach(async () => {
+			session = await LSession.connected(1);
+
+			db1 = await session.peers[0].open(
+				new TestStore({ docs: new Documents() })
+			);
+		});
+
+		afterEach(async () => {
+			if (db1) await db1.drop();
+			await session.stop();
+		});
+
+		it("can recover from too strict acl", async () => {
+			await db1.docs.put(new Document({ id: uuid() }));
+			await db1.docs.put(new Document({ id: uuid() }));
+			await db1.docs.put(new Document({ id: uuid() }));
+			expect(db1.docs.index.size).toEqual(3);
+			await db1.close();
+			let canPerform = false;
+			db1 = await session.peers[0].open(db1.clone(), {
+				args: { canPerform: () => canPerform }
+			});
+			expect(db1.docs.index.size).toEqual(0);
+			await db1.docs.log.log.headsIndex["_index"].clear();
+			canPerform = true;
+			await db1.docs.put(new Document({ id: uuid() }));
+			await db1.docs.log.log.headsIndex.resetHeadsCache();
+			await delay(2000);
+			await db1.close();
+			db1 = await session.peers[0].open(db1.clone());
+			expect(db1.docs.index.size).toEqual(1); // heads are ruined
+			await db1.docs.recover();
+			expect(db1.docs.index.size).toEqual(4);
+
+			// next time opening db I should not have to recover any more
+			await db1.close();
+			db1 = await session.peers[0].open(db1.clone());
+			expect(db1.docs.index.size).toEqual(4);
 		});
 	});
 });
