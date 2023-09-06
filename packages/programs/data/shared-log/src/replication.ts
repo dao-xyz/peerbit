@@ -44,14 +44,14 @@ export const encodeReplicas = (minReplicas: MinReplicas): Uint8Array => {
 };
 
 export const decodeReplicas = (entry: {
-	meta: { data?: Uint8Array };
+	meta: { data: Uint8Array };
 }): MinReplicas => {
-	return deserialize(entry.meta.data!, MinReplicas);
+	return deserialize(entry.meta.data, MinReplicas);
 };
 
 export const maxReplicas = (
 	log: SharedLog,
-	entries: { meta: { data?: Uint8Array } }[]
+	entries: { meta: { data: Uint8Array } }[]
 ) => {
 	let max = 0;
 	for (const entry of entries) {

@@ -275,14 +275,30 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 				return this._logProperties?.onChange?.(change);
 			},
 			canAppend: async (entry) => {
-				const replicas = decodeReplicas(entry).getValue(this);
-				if (Number.isFinite(replicas) === false) {
-					return false;
-				}
+				try {
+					if (!entry.meta.data) {
+						logger.warn("Received entry without meta data, skipping");
+						return false;
+					}
+					const replicas = decodeReplicas(
+						entry as {
+							meta: { data: Uint8Array };
+						}
+					).getValue(this);
+					if (Number.isFinite(replicas) === false) {
+						return false;
+					}
 
-				// Don't verify entries that we have created (TODO should we? perf impact?)
-				if (!entry.createdLocally && !(await entry.verifySignatures())) {
-					return false;
+					// Don't verify entries that we have created (TODO should we? perf impact?)
+					if (!entry.createdLocally && !(await entry.verifySignatures())) {
+						return false;
+					}
+				} catch (error) {
+					if (error instanceof BorshError) {
+						logger.warn("Received payload that could not be decoded, skipping");
+						return false;
+					}
+					throw error;
 				}
 
 				return this._logProperties?.canAppend?.(entry) ?? true;
@@ -293,7 +309,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 					canTrim: async (entry) =>
 						!(await this.isLeader(
 							entry.meta.gid,
-							decodeReplicas(entry).getValue(this)
+							decodeReplicas(
+								entry as {
+									meta: { data: Uint8Array };
+								}
+							).getValue(this)
 						)), // TODO types
 					cacheId: () => this._lastSubscriptionMessageId
 				}
@@ -427,12 +447,16 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 							const headsWithGid = this.log.headsIndex.gids.get(gid);
 							const maxReplicasFromHead =
 								headsWithGid && headsWithGid.size > 0
-									? maxReplicas(this, [...headsWithGid.values()])
+									? maxReplicas(this, [...headsWithGid.values()] as {
+											meta: { data: Uint8Array };
+									  }[])
 									: this.replicas.min.getValue(this);
 
 							const maxReplicasFromNewEntries = maxReplicas(this, [
 								...entries.map((x) => x.entry)
-							]);
+							] as {
+								meta: { data: Uint8Array };
+							}[]);
 
 							const isLeader = await this.isLeader(
 								gid,
@@ -483,7 +507,9 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 								if (headsWithGid && headsWithGid.size > 0) {
 									const minReplicas = maxReplicas(this, [
 										...headsWithGid.values()
-									]);
+									] as {
+										meta: { data: Uint8Array };
+									}[]);
 
 									const isLeader = await this.isLeader(
 										entries[0].entry.meta.gid,
@@ -515,7 +541,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 						indexedEntry &&
 						(await this.isLeader(
 							indexedEntry.meta.gid,
-							decodeReplicas(indexedEntry).getValue(this)
+							decodeReplicas(
+								indexedEntry as {
+									meta: { data: Uint8Array };
+								}
+							).getValue(this)
 						))
 					) {
 						hasAndIsLeader.push(hash);
@@ -741,7 +771,11 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 
 			filteredEntries.push(entry);
 			const existCounter = new Set<string>();
-			const minReplicas = decodeReplicas(entry);
+			const minReplicas = decodeReplicas(
+				entry as {
+					meta: { data: Uint8Array };
+				}
+			);
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const clear = () => {
@@ -826,7 +860,7 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 			const oldPeersSet = this._gidPeersHistory.get(gid);
 			const currentPeers = await this.findLeaders(
 				gid,
-				maxReplicas(this, entries) // pick max replication policy of all entries, so all information is treated equally important as the most important
+				maxReplicas(this, entries as { meta: { data: Uint8Array } }[]) // pick max replication policy of all entries, so all information is treated equally important as the most important
 			);
 
 			for (const currentPeer of currentPeers) {
@@ -934,7 +968,14 @@ export class SharedLog<T = Uint8Array> extends Program<Args<T>> {
 		return groups;
 	}
 	async replicator(entry: Entry<any>) {
-		return this.isLeader(entry.gid, decodeReplicas(entry).getValue(this));
+		return this.isLeader(
+			entry.gid,
+			decodeReplicas(
+				entry as {
+					meta: { data: Uint8Array };
+				}
+			).getValue(this)
+		);
 	}
 
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
