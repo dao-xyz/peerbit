@@ -1,6 +1,6 @@
 {
 	"name": "peerbit",
-	"version": "2.0.7",
+	"version": "2.0.8",
 	"description": "Peerbit client",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -39,8 +39,8 @@
 		"@peerbit/crypto": "1.0.8",
 		"@peerbit/logger": "1.0.1",
 		"@peerbit/program": "2.3.1",
-		"@peerbit/pubsub": "^1.1.6",
-		"@peerbit/blocks": "^1.1.1",
+		"@peerbit/pubsub": "^1.1.7",
+		"@peerbit/blocks": "^1.1.2",
 		"@peerbit/uint8arrays": "3.0.1",
 		"datastore-level": "^10.1.2",
 		"@dao-xyz/libp2p-noise": "^13.0.1",

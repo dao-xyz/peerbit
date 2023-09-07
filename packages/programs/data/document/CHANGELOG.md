@@ -174,6 +174,25 @@
   * dependencies
     * @peerbit/shared-log bumped from 3.1.1 to 3.1.2
 
+## [3.1.3](https://github.com/dao-xyz/peerbit/compare/document-v3.1.2...document-v3.1.3) (2023-09-07)
+
+
+### Bug Fixes
+
+* alway try to decode payload on canAppend ([a93cff1](https://github.com/dao-xyz/peerbit/commit/a93cff15a932cac34c813cb2b82f92835cdce156))
+* improve error message on unknown operation ([33cad4f](https://github.com/dao-xyz/peerbit/commit/33cad4f8c576b11bfd3b509e68b418ce00787c57))
+* improve recover test ([c4ae9d0](https://github.com/dao-xyz/peerbit/commit/c4ae9d0552eb0693e7402f39e262cb9eea5c37e8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 2.1.9 to 2.1.10
+    * @peerbit/shared-log bumped from 3.1.2 to 3.1.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.25 to 1.0.26
+
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/document-v3.1.0...document-v3.1.1) (2023-09-06)
 
 

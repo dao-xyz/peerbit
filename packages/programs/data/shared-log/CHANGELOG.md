@@ -173,6 +173,23 @@
   * dependencies
     * @peerbit/log bumped from 2.1.1 to 2.1.2
 
+## [3.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.2...shared-log-v3.1.3) (2023-09-07)
+
+
+### Bug Fixes
+
+* rm type casting when calling decodeReplicas ([0616d30](https://github.com/dao-xyz/peerbit/commit/0616d30cd16734bbfa6b0751fbde46bea3b408aa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 2.1.2 to 2.1.3
+    * @peerbit/rpc bumped from 2.1.9 to 2.1.10
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.25 to ^1.0.26
+
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.0...shared-log-v3.1.1) (2023-09-06)
 
 

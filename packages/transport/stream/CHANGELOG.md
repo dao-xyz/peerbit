@@ -20,6 +20,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.15](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.14...stream-v1.0.15) (2023-09-07)
+
+
+### Bug Fixes
+
+* allow incoming streams to run on transient connection ([ece5005](https://github.com/dao-xyz/peerbit/commit/ece5005fbaaf32fe82cb0456f56b05d841f494b9))
+
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.13...stream-v1.0.14) (2023-09-06)
 
 
