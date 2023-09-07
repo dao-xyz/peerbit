@@ -62,6 +62,12 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.11 to 1.0.12
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.14 to 1.0.15
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.0...blocks-v1.1.1) (2023-09-06)
 
 
