@@ -59,7 +59,7 @@ BigInt.prototype["toJSON"] = function () {
 	return this.toString();
 };
 
-@variant("document")
+@variant(0)
 class Document {
 	@field({ type: Uint8Array })
 	id: Uint8Array;
@@ -2425,8 +2425,43 @@ describe("index", () => {
 		});
 	});
 	describe("recover", () => {
+		@variant(0)
+		class OtherDoc {
+			@field({ type: "string" })
+			id: string;
+
+			constructor(properties: { id: string }) {
+				this.id = properties.id;
+			}
+		}
+
+		@variant("alternative_store")
+		class AlternativeStore extends Program<Partial<SetupOptions<OtherDoc>>> {
+			@field({ type: Uint8Array })
+			id: Uint8Array;
+
+			@field({ type: Documents })
+			docs: Documents<OtherDoc>;
+
+			constructor(properties: { docs: Documents<OtherDoc> }) {
+				super();
+
+				this.id = randomBytes(32);
+				this.docs = properties.docs;
+			}
+
+			async open(options?: Partial<SetupOptions<OtherDoc>>): Promise<void> {
+				await this.docs.open({
+					...options,
+					type: OtherDoc,
+					index: { ...options?.index, key: "id" }
+				});
+			}
+		}
+
 		let session: LSession;
 		let db1: TestStore;
+		let db2: AlternativeStore;
 
 		beforeEach(async () => {
 			session = await LSession.connected(1);
@@ -2434,17 +2469,35 @@ describe("index", () => {
 			db1 = await session.peers[0].open(
 				new TestStore({ docs: new Documents() })
 			);
+
+			db2 = await session.peers[0].open(
+				new AlternativeStore({ docs: new Documents() })
+			);
 		});
 
 		afterEach(async () => {
 			if (db1) await db1.drop();
+			if (db2) await db2.drop();
+
 			await session.stop();
 		});
 
 		it("can recover from too strict acl", async () => {
+			// We are createing two document store for this, because
+			// we want blocks in our block store that will mess the recovery process
+
+			let sharedId = uuid();
+
+			await db2.docs.put(new OtherDoc({ id: sharedId }));
+			await db2.docs.put(new OtherDoc({ id: uuid() }));
+			await db2.docs.put(new OtherDoc({ id: uuid() }));
+
+			await db1.docs.put(new Document({ id: sharedId }));
 			await db1.docs.put(new Document({ id: uuid() }));
 			await db1.docs.put(new Document({ id: uuid() }));
-			await db1.docs.put(new Document({ id: uuid() }));
+
+			await db2.docs.del(sharedId);
+
 			expect(db1.docs.index.size).toEqual(3);
 			await db1.close();
 			let canPerform = false;
@@ -2456,10 +2509,16 @@ describe("index", () => {
 			canPerform = true;
 			await db1.docs.put(new Document({ id: uuid() }));
 			await db1.docs.log.log.headsIndex.resetHeadsCache();
-			await delay(2000);
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(db1.docs.index.size).toEqual(1); // heads are ruined
+			await db1.docs.recover();
+			expect(db1.docs.index.size).toEqual(4);
+
+			// recovering multi0ple time should work
+			await db1.close();
+			db1 = await session.peers[0].open(db1.clone());
+
 			await db1.docs.recover();
 			expect(db1.docs.index.size).toEqual(4);
 
