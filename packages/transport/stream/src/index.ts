@@ -441,7 +441,8 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
-					maxOutboundStreams: this.maxOutboundStreams
+					maxOutboundStreams: this.maxOutboundStreams,
+					runOnTransientConnection: true
 				})
 			)
 		);
