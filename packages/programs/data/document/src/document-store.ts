@@ -90,7 +90,7 @@ export class Documents<T extends Record<string, any>> extends Program<
 	@field({ type: DocumentIndex })
 	private _index: DocumentIndex<T>;
 
-	private _clazz?: AbstractType<T>;
+	private _clazz: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
 
@@ -180,12 +180,13 @@ export class Documents<T extends Record<string, any>> extends Program<
 			return false;
 		}
 
-		if (this._optionCanPerform) {
-			try {
-				const payload = await entry.getPayloadValue();
-				if (payload instanceof PutOperation) {
-					payload.getValue(this.index.valueEncoding); // Decode they value so callbacks can jsut do .value
-				}
+		try {
+			const payload = await entry.getPayloadValue();
+			if (payload instanceof PutOperation) {
+				(payload as PutOperation<T>).getValue(this.index.valueEncoding); // Decode they value so callbacks can jsut do .value
+			}
+
+			if (this._optionCanPerform) {
 				if (
 					!(await this._optionCanPerform(
 						payload as PutOperation<T> | DeleteOperation,
@@ -196,14 +197,15 @@ export class Documents<T extends Record<string, any>> extends Program<
 				) {
 					return false;
 				}
-			} catch (error) {
-				if (error instanceof BorshError) {
-					logger.warn("Received payload that could not be decoded, skipping");
-					return false;
-				}
-				throw error;
 			}
+		} catch (error) {
+			if (error instanceof BorshError) {
+				logger.warn("Received payload that could not be decoded, skipping");
+				return false;
+			}
+			throw error;
 		}
+
 		return true;
 	}
 
