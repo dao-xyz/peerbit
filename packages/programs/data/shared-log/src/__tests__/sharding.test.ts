@@ -130,9 +130,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -201,9 +199,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -250,9 +246,7 @@ describe(`sharding`, () => {
 			async () =>
 				checkReplicas(
 					[db1, db2, db3],
-					maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-						meta: { data: Uint8Array };
-					}[]),
+					maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 					entryCount,
 					false
 				),
@@ -266,9 +260,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -341,9 +333,7 @@ describe(`sharding`, () => {
 		await waitForResolved(async () =>
 			checkReplicas(
 				[db1, db2],
-				maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-					meta: { data: Uint8Array };
-				}[]),
+				maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 				entryCount,
 				false
 			)
@@ -416,9 +406,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			true
 		);
@@ -429,9 +417,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			true
 		);
@@ -511,9 +497,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2, db3],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			false
 		);
@@ -523,9 +507,7 @@ describe(`sharding`, () => {
 
 		await checkReplicas(
 			[db1, db2],
-			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())] as {
-				meta: { data: Uint8Array };
-			}[]),
+			maxReplicas(db1.log, [...(await db1.log.log.values.toArray())]),
 			entryCount,
 			true
 		);

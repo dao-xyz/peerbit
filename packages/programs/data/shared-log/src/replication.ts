@@ -1,4 +1,10 @@
-import { variant, deserialize, serialize, field } from "@dao-xyz/borsh";
+import {
+	variant,
+	deserialize,
+	serialize,
+	field,
+	BorshError
+} from "@dao-xyz/borsh";
 
 interface SharedLog {
 	getReplicatorsSorted(): { hash: string; timestamp: number }[] | undefined;
@@ -43,15 +49,23 @@ export const encodeReplicas = (minReplicas: MinReplicas): Uint8Array => {
 	return serialize(minReplicas);
 };
 
+export class ReplicationError extends Error {
+	constructor(message: string) {
+		super(message);
+	}
+}
 export const decodeReplicas = (entry: {
-	meta: { data: Uint8Array };
+	meta: { data?: Uint8Array };
 }): MinReplicas => {
+	if (!entry.meta.data) {
+		throw new ReplicationError("Missing meta data from error");
+	}
 	return deserialize(entry.meta.data, MinReplicas);
 };
 
 export const maxReplicas = (
 	log: SharedLog,
-	entries: { meta: { data: Uint8Array } }[]
+	entries: { meta: { data?: Uint8Array } }[]
 ) => {
 	let max = 0;
 	for (const entry of entries) {

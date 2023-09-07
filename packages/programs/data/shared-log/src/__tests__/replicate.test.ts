@@ -160,12 +160,7 @@ describe(`exchange`, function () {
 		expect(
 			await db1.log.findLeaders(
 				db1Entries[0].gid,
-				maxReplicas(
-					db1.log,
-					db1Entries as {
-						meta: { data: Uint8Array };
-					}[]
-				)
+				maxReplicas(db1.log, db1Entries)
 			)
 		).toContainAllValues(
 			[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
@@ -181,12 +176,7 @@ describe(`exchange`, function () {
 		expect(
 			await db2.log.findLeaders(
 				db2Entries[0].gid,
-				maxReplicas(
-					db2.log,
-					db2Entries as {
-						meta: { data: Uint8Array };
-					}[]
-				)
+				maxReplicas(db2.log, db2Entries)
 			)
 		).toContainValues(
 			[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
