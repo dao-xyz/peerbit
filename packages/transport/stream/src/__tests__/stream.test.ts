@@ -59,7 +59,7 @@ class TestDirectStream extends DirectStream {
 		components: DirectStreamComponents,
 		options: {
 			id?: string;
-			pingInterval?: number;
+			pingInterval?: number | null,
 			connectionManager?: ConnectionManagerOptions;
 		} = {}
 	) {
@@ -182,7 +182,7 @@ describe("streams", function () {
 			let session: TestSession;
 			let metrics: ReturnType<typeof createMetrics>[];
 
-			beforeAll(async () => {});
+			beforeAll(async () => { })
 
 			beforeEach(async () => {
 				// 0 and 2 not connected
@@ -443,7 +443,7 @@ describe("streams", function () {
 				let session: TestSession;
 				let metrics: ReturnType<typeof createMetrics>[];
 
-				beforeAll(async () => {});
+				beforeAll(async () => { })
 
 				beforeEach(async () => {
 					session = await connected(3, {
@@ -566,7 +566,7 @@ describe("streams", function () {
 				let metrics: ReturnType<typeof createMetrics>[];
 				const data = new Uint8Array([1, 2, 3]);
 
-				beforeAll(async () => {});
+				beforeAll(async () => { });
 
 				beforeEach(async () => {
 					session = await disconnected(5, {
@@ -600,21 +600,10 @@ describe("streams", function () {
 					await waitForPeerStreams(metrics[2].stream, metrics[3].stream);
 					await waitForPeerStreams(metrics[2].stream, metrics[4].stream);
 
-					await waitForResolved(() =>
-						expect(metrics[0].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(metrics[1].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(metrics[2].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(metrics[3].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(metrics[4].stream.routes.nodeCount).toEqual(5)
-					);
+					for (let m of metrics) {
+						await waitForResolved(() =>
+							expect(m.stream.routes.nodeCount).toEqual(5))
+					}
 				});
 
 				afterEach(async () => {
@@ -643,9 +632,108 @@ describe("streams", function () {
 					expect(metrics[4].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
 				});
 			});
+
+
+			describe("1->2->1", () => {
+
+				/* 
+				┌────┐
+				│0   │
+				└┬──┬┘
+				┌▽┐┌▽┐
+				│2││1│
+				└┬┘└┬┘
+				┌▽──▽┐
+				│3   │
+				└────┘
+
+				*/
+
+				let session: TestSession;
+				let metrics: ReturnType<typeof createMetrics>[];
+				const data = new Uint8Array([1, 2, 3]);
+
+				beforeAll(async () => { });
+
+				beforeEach(async () => {
+					session = await disconnected(4, {
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									pingInterval: null, // in this test we are to update weight so we disable pinging
+									connectionManager: { autoDial: false }
+								})
+						}
+					});
+					metrics = [];
+					for (const peer of session.peers) {
+						metrics.push(createMetrics(peer.services.directstream));
+					}
+					await session.connect([
+						// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+						[session.peers[0], session.peers[1]],
+						[session.peers[0], session.peers[2]],
+
+						[session.peers[1], session.peers[3]],
+						[session.peers[2], session.peers[3]]
+					]);
+
+					await waitForPeerStreams(metrics[0].stream, metrics[1].stream);
+					await waitForPeerStreams(metrics[0].stream, metrics[2].stream);
+					await waitForPeerStreams(metrics[1].stream, metrics[3].stream);
+					await waitForPeerStreams(metrics[2].stream, metrics[3].stream);
+
+					for (let m of metrics) {
+						await waitForResolved(() =>
+							expect(m.stream.routes.nodeCount).toEqual(4))
+					}
+				});
+
+				afterEach(async () => {
+					await session.stop();
+				});
+
+				it("can handle conflicting routing", async () => {
+					/**
+					 * In this test we test what happens if two relays makes 
+					 * the assesment the path to the receiver is best made through anoth relay
+					 * If boths relays does the same thing, it might be the case that a message
+					 * gets ignored since the "seenCache" would make relays drop messages the second
+					 * time they get them
+					 */
+
+					// make direct path long from 1 to 3 from 1 perspective
+					metrics[1].stream.routes.graph.setEdgeAttribute(
+						metrics[1].stream.routes.getLink(
+							metrics[1].stream.publicKeyHash,
+							metrics[3].stream.publicKeyHash
+						),
+						"weight",
+						1e5
+					);
+
+					// make direct path long from 2 to 3 from 2 perspective
+					metrics[2].stream.routes.graph.setEdgeAttribute(
+						metrics[2].stream.routes.getLink(
+							metrics[2].stream.publicKeyHash,
+							metrics[3].stream.publicKeyHash
+						),
+						"weight",
+						1e5
+					);
+
+					await metrics[0].stream.publish(data, {
+						to: [
+							metrics[3].stream.publicKeyHash,
+						]
+					});
+					await waitForResolved(() =>
+						expect(metrics[3].received).toHaveLength(1)
+					);
+				});
+			});
 		});
 	});
-
 	// TODO test that messages are not sent backward, triangles etc
 
 	describe("join/leave", () => {
@@ -1328,4 +1416,4 @@ describe("streams", function () {
 			await waitFor(() => !!service(session, 1, "directstream2").peers.size);
 		});
 	});
-});
+})

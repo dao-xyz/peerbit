@@ -176,9 +176,9 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 				.catch((error) => {
 					logger.error(
 						"Failed to send to stream: " +
-							this.peerId +
-							". " +
-							(error?.message || error?.toString())
+						this.peerId +
+						". " +
+						(error?.message || error?.toString())
 					);
 				});
 		} else {
@@ -305,7 +305,7 @@ export type DirectStreamOptions = {
 	maxInboundStreams?: number;
 	maxOutboundStreams?: number;
 	signaturePolicy?: SignaturePolicy;
-	pingInterval?: number;
+	pingInterval?: number | null;
 	connectionManager?: ConnectionManagerOptions;
 };
 
@@ -321,11 +321,10 @@ export interface DirectStreamComponents extends Components {
 }
 
 export abstract class DirectStream<
-		Events extends { [s: string]: any } = StreamEvents
-	>
+	Events extends { [s: string]: any } = StreamEvents
+>
 	extends EventEmitter<Events>
-	implements WaitForPeer
-{
+	implements WaitForPeer {
 	public peerId: PeerId;
 	public peerIdStr: string;
 	public publicKey: PublicSignKey;
@@ -360,10 +359,9 @@ export abstract class DirectStream<
 	private _registrarTopologyIds: string[] | undefined;
 	private readonly maxInboundStreams?: number;
 	private readonly maxOutboundStreams?: number;
-	private topology: any;
 	private pingJobPromise: any;
 	private pingJob: any;
-	private pingInterval: number;
+	private pingInterval: number | null;
 	private connectionManagerOptions: ConnectionManagerOptions;
 	private recentDials: Cache<string>;
 
@@ -497,10 +495,12 @@ export abstract class DirectStream<
 					if (!this.started) {
 						return;
 					}
-					this.pingJob = setTimeout(pingJob, this.pingInterval);
+					this.pingJob = setTimeout(pingJob, this.pingInterval!);
 				});
 		};
-		pingJob();
+		if (this.pingInterval != null) {
+			pingJob();
+		}
 	}
 
 	/**
@@ -939,9 +939,9 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			logger.error(
 				"error on processing messages to id: " +
-					peerStreams.peerId.toString() +
-					". " +
-					err?.message
+				peerStreams.peerId.toString() +
+				". " +
+				err?.message
 			);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
@@ -1060,8 +1060,7 @@ export abstract class DirectStream<
 				message.networkInfo.pingLatencies.length ===
 				message.signatures.signatures.length - 1;
 			logger.warn(
-				`Recieved hello message that did not verify. Header: ${a}, Ping info ${b}, Signatures ${
-					a && b
+				`Recieved hello message that did not verify. Header: ${a}, Ping info ${b}, Signatures ${a && b
 				}`
 			);
 			return false;
@@ -1242,8 +1241,8 @@ export abstract class DirectStream<
 					to instanceof PublicSignKey
 						? to.hashcode()
 						: typeof to === "string"
-						? to
-						: getPublicKeyFromPeerId(to).hashcode();
+							? to
+							: getPublicKeyFromPeerId(to).hashcode();
 			}
 		} else {
 			toHashes = [];
@@ -1511,9 +1510,9 @@ export abstract class DirectStream<
 					} catch (error: any) {
 						logger.error(
 							"Failed to connect directly to: " +
-								circuitAddress.toString() +
-								". " +
-								error?.message
+							circuitAddress.toString() +
+							". " +
+							error?.message
 						);
 					}
 				}
@@ -1539,11 +1538,11 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					hash +
-					" does not exist. Connection exist: " +
-					this.peers.has(hash) +
-					". Route exist: " +
-					this.routes.hasLink(this.publicKeyHash, hash)
+				hash +
+				" does not exist. Connection exist: " +
+				this.peers.has(hash) +
+				". Route exist: " +
+				this.routes.hasLink(this.publicKeyHash, hash)
 			);
 		}
 		const stream = this.peers.get(hash)!;
@@ -1552,11 +1551,11 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					stream.publicKey.hashcode() +
-					" not ready. Readable: " +
-					stream.isReadable +
-					". Writable " +
-					stream.isWritable
+				stream.publicKey.hashcode() +
+				" not ready. Readable: " +
+				stream.isReadable +
+				". Writable " +
+				stream.isWritable
 			);
 		}
 	}
