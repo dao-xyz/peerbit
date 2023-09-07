@@ -454,7 +454,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		if (payloadValue instanceof PutOperation) {
 			return payloadValue.getValue(this.valueEncoding);
 		}
-		throw new Error("Unexpected");
+
+		throw new Error(
+			"Unexpected value type when getting document: " +
+				payloadValue?.constructor?.name || typeof payloadValue
+		);
 	}
 
 	async _queryDocuments(
@@ -721,7 +725,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 									source: payloadValue.data
 								});
 							}
-							throw new Error("Unexpected");
+							throw new Error(
+								"Unexpected value type on local results: " +
+									payloadValue?.constructor.name || typeof payloadValue
+							);
 						})
 					),
 					kept: BigInt(results.kept)
