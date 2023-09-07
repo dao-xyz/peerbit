@@ -52,7 +52,7 @@
 		"@peerbit/libp2p-test-utils": "1.0.6"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.6",
+		"@dao-xyz/borsh": "^5.1.7",
 		"@peerbit/lazy-level": "1.2.0",
 		"@peerbit/stream": "1.0.14",
 		"@peerbit/blocks-interface": "1.1.1",

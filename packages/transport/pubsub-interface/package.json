@@ -49,7 +49,7 @@
 		"dao.xyz"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.6",
+		"@dao-xyz/borsh": "^5.1.7",
 		"@peerbit/crypto": "1.0.8",
 		"@peerbit/stream-interface": "^1.0.9"
 	}

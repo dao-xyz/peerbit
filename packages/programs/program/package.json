@@ -29,7 +29,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.6",
+		"@dao-xyz/borsh": "^5.1.7",
 		"@peerbit/crypto": "1.0.8",
 		"@peerbit/blocks-interface": "^1.1.1",
 		"@peerbit/pubsub-interface": "^1.1.3",
