@@ -59,7 +59,7 @@ class TestDirectStream extends DirectStream {
 		components: DirectStreamComponents,
 		options: {
 			id?: string;
-			pingInterval?: number;
+			pingInterval?: number | null;
 			connectionManager?: ConnectionManagerOptions;
 		} = {}
 	) {
@@ -190,6 +190,7 @@ describe("streams", function () {
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
+								pingInterval: null,
 								connectionManager: { autoDial: false }
 							})
 					}
@@ -262,6 +263,7 @@ describe("streams", function () {
 				await metrics[0].stream.publish(data, {
 					to: [metrics[1].stream.components.peerId]
 				});
+
 				await waitFor(() => metrics[1].received.length === 1);
 				let receivedMessage = metrics[1].received[0];
 				expect(new Uint8Array(receivedMessage.data)).toEqual(data);
@@ -1249,6 +1251,7 @@ describe("streams", function () {
 			await stream(session, 0).start();
 			expect(stream(session, 0).helloMap.size).toEqual(0);
 			await stream(session, 1).start();
+
 			await waitFor(() => stream(session, 0).peers.size === 1);
 			await waitFor(() => stream(session, 0).helloMap.size === 1);
 			await waitFor(() => stream(session, 1).helloMap.size === 1);

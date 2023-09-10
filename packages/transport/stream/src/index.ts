@@ -29,6 +29,7 @@ import {
 	PublicSignKey,
 	SignatureWithKey
 } from "@peerbit/crypto";
+import { Errors } from "datastore-core";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 import { logger } from "./logger.js";
@@ -305,7 +306,7 @@ export type DirectStreamOptions = {
 	maxInboundStreams?: number;
 	maxOutboundStreams?: number;
 	signaturePolicy?: SignaturePolicy;
-	pingInterval?: number;
+	pingInterval?: number | null;
 	connectionManager?: ConnectionManagerOptions;
 };
 
@@ -363,7 +364,7 @@ export abstract class DirectStream<
 	private topology: any;
 	private pingJobPromise: any;
 	private pingJob: any;
-	private pingInterval: number;
+	private pingInterval: number | null;
 	private connectionManagerOptions: ConnectionManagerOptions;
 	private recentDials: Cache<string>;
 
@@ -441,12 +442,17 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
-					maxOutboundStreams: this.maxOutboundStreams,
-					runOnTransientConnection: true
+					maxOutboundStreams: this.maxOutboundStreams
 				})
 			)
 		);
 
+		// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
+		this.components.events.addEventListener("connection:open", (e) => {
+			this.onPeerConnected(e.detail.remotePeer, e.detail, {
+				skipIfVisited: true
+			});
+		});
 		this.started = true;
 
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
@@ -470,7 +476,7 @@ export abstract class DirectStream<
 				}
 			}
 
-			await this.onPeerConnected(conn.remotePeer, conn, true);
+			await this.onPeerConnected(conn.remotePeer, conn, { fromExisting: true });
 		}
 
 		const pingJob = async () => {
@@ -488,14 +494,13 @@ export abstract class DirectStream<
 					})
 				);
 			});
-
 			promises.push(this.hello()); // Repetedly say hello to everyone to create traces in the network to measure latencies
 			this.pingJobPromise = Promise.all(promises)
 				.catch((e) => {
 					logger.error(e?.message);
 				})
 				.finally(() => {
-					if (!this.started) {
+					if (!this.started || !this.pingInterval) {
 						return;
 					}
 					this.pingJob = setTimeout(pingJob, this.pingInterval);
@@ -583,11 +588,30 @@ export abstract class DirectStream<
 	public async onPeerConnected(
 		peerId: PeerId,
 		conn: Connection,
-		fromExisting?: boolean
+		properties?: { skipIfVisited?: boolean; fromExisting?: boolean }
 	) {
+		if (conn.transient) {
+			return;
+		}
+
 		if (!this.isStarted() || conn.status !== "open") {
 			return;
 		}
+
+		try {
+			const hasProtocol = await this.components.peerStore
+				.get(peerId)
+				.then((x) => this.multicodecs.find((y) => x.protocols.includes(y)));
+			if (!hasProtocol) {
+				return;
+			}
+		} catch (error: any) {
+			if (error.code === "ERR_NOT_FOUND") {
+				return;
+			}
+			throw error;
+		}
+
 		try {
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
@@ -616,9 +640,7 @@ export abstract class DirectStream<
 				}
 
 				try {
-					stream = await conn.newStream(this.multicodecs, {
-						runOnTransientConnection: true
-					});
+					stream = await conn.newStream(this.multicodecs);
 					if (stream.protocol == null) {
 						stream.abort(new Error("Stream was not multiplexed"));
 						return;
@@ -663,7 +685,7 @@ export abstract class DirectStream<
 				return;
 			}
 
-			if (fromExisting) {
+			if (properties?.fromExisting) {
 				return; // we return here because we will enter this method once more once the protocol has been registered for the remote peer
 			}
 
