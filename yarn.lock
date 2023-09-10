@@ -874,6 +874,19 @@
     uint8arraylist "^2.4.3"
     uint8arrays "^4.0.4"
 
+"@chainsafe/libp2p-yamux@^5.0.0":
+  version "5.0.0"
+  resolved "https://registry.yarnpkg.com/@chainsafe/libp2p-yamux/-/libp2p-yamux-5.0.0.tgz#c1016fc839870139b5c097daff9408b91c58f2a7"
+  integrity sha512-aWTnBPR2hJt0A2y579sMtZVB6IqgSSHlZ6Eg+WDxNZQ0zcexafuruZQDj+z3FUTNPz+E8IeuyCi7tjI4IEehjw==
+  dependencies:
+    "@libp2p/interface" "^0.1.0"
+    "@libp2p/logger" "^3.0.0"
+    abortable-iterator "^5.0.1"
+    it-foreach "^2.0.3"
+    it-pipe "^3.0.1"
+    it-pushable "^3.2.0"
+    uint8arraylist "^2.4.3"
+
 "@chainsafe/netmask@^2.0.0":
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/@chainsafe/netmask/-/netmask-2.0.0.tgz#0d4a75f47919f65011da4327a3845c9661f1038a"
@@ -1895,7 +1908,7 @@
     interface-datastore "^8.2.0"
     multiformats "^12.0.1"
 
-"@libp2p/mplex@^9.0.4":
+"@libp2p/mplex@^9.0.5":
   version "9.0.5"
   resolved "https://registry.yarnpkg.com/@libp2p/mplex/-/mplex-9.0.5.tgz#1778b0addde9fa59111216a833b8fc8548647f31"
   integrity sha512-cwg8ueB7xzwQbWt2da/Q5oPsm/6wk1GwNiGBiUsvy75h3qr6b1RNDuFJYkCSySI4mLvdTrkvthJCXHQMAW4Tvg==
@@ -1996,7 +2009,7 @@
     uint8arraylist "^2.4.3"
     uint8arrays "^4.0.6"
 
-"@libp2p/tcp@^8.0.4":
+"@libp2p/tcp@^8.0.5":
   version "8.0.5"
   resolved "https://registry.yarnpkg.com/@libp2p/tcp/-/tcp-8.0.5.tgz#cada4ec20a8eb5089b3d63e88bb9939287b39792"
   integrity sha512-y9ImbEl/VbsRFxv+uYbl2qWFTt86ICmdMS3Oa08020a91bhjjVvaJlbvFLq35RStAED4fvIAurGo/UflTIhS+A==
@@ -2023,10 +2036,10 @@
     private-ip "^3.0.0"
     uint8arraylist "^2.4.3"
 
-"@libp2p/webrtc@^3.1.6":
-  version "3.1.8"
-  resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-3.1.8.tgz#d50b2943612ef199a1a9ebf256c7c2bd49aab5de"
-  integrity sha512-VUb9rVMFBRzvqt241rX3l+fAQYvj8V+scsiykJnP/k1bII451CYIfTgiGCQZfZV5mTR4K5PhFx7pKRMPpgeS4Q==
+"@libp2p/webrtc@^3.1.9":
+  version "3.1.9"
+  resolved "https://registry.yarnpkg.com/@libp2p/webrtc/-/webrtc-3.1.9.tgz#eec4660381467f5233a55a5e398550d4b13db0a3"
+  integrity sha512-ZGWKii3BLQh/o0r1V5ODjXhMzgPrfpVqcrOOfO/jEKG58MEitWOpXeT9Jb4CnuvqZaJySlf7WfXlrwGnvop5iw==
   dependencies:
     "@chainsafe/libp2p-noise" "^13.0.0"
     "@libp2p/interface" "^0.1.2"
@@ -2052,7 +2065,7 @@
     uint8arraylist "^2.4.3"
     uint8arrays "^4.0.6"
 
-"@libp2p/websockets@^7.0.4":
+"@libp2p/websockets@^7.0.5":
   version "7.0.5"
   resolved "https://registry.yarnpkg.com/@libp2p/websockets/-/websockets-7.0.5.tgz#16212031bef1cc56ef2d9f35211fd828f6c2a544"
   integrity sha512-2Dz4ETRk+ecF2nj1S/G5vSBrhXhuBrXIMAzpqzTM6L0TrEraGrJYyoYB15A+u7kA8xMbdRodyguB6ZLVatL5nw==
@@ -6479,6 +6492,13 @@ it-first@^3.0.1:
   version "3.0.3"
   resolved "https://registry.yarnpkg.com/it-first/-/it-first-3.0.3.tgz#76d4b7b0c761114690dd46d730333ac55ee4e350"
   integrity sha512-RC8tplctsDpoBUljwsp1viiyaR5fPvMe+FgbbcU0sFjKkJa7iwbB4CCPhHtVYSdjsrREfr0QEotfQrBoGyt7Dw==
+
+it-foreach@^2.0.3:
+  version "2.0.4"
+  resolved "https://registry.yarnpkg.com/it-foreach/-/it-foreach-2.0.4.tgz#d723b3525f0f4bc11678e799dcea2a5fe49333a7"
+  integrity sha512-txxcoc09g+KdLyOapxAuB12H9zUb2FuZC/TqSXRT+YR0T5fHnvcDIhspgvx/e/HiPKlKjOR8onA0qtuiAtcXqg==
+  dependencies:
+    it-peekable "^3.0.0"
 
 it-handshake@^4.1.3:
   version "4.1.3"
