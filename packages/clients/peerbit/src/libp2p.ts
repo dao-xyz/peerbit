@@ -6,6 +6,7 @@ import { mplex } from "@libp2p/mplex";
 import { transports, relay, listen } from "./transports.js";
 import { identifyService } from "libp2p/identify";
 import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
+import { yamux } from "@chainsafe/libp2p-yamux";
 
 export type Libp2pExtendServices = {
 	pubsub: DirectSub;
@@ -44,16 +45,18 @@ export const createLibp2pExtended = (
 	});
 
 	return createLibp2p({
+		...opts,
 		connectionManager: {
-			minConnections: 0
+			minConnections: 0,
+			...opts.connectionManager
 		},
 		addresses: {
-			listen: listen()
+			listen: listen(),
+			...opts.addresses
 		},
-		transports: transports(),
-		connectionEncryption: [noise()],
-		streamMuxers: [mplex()],
-		...opts,
+		transports: opts.transports || transports(),
+		connectionEncryption: opts.connectionEncryption || [noise()],
+		streamMuxers: opts.streamMuxers || [yamux(), mplex()],
 		services: {
 			...relayIdentify,
 			pubsub:
