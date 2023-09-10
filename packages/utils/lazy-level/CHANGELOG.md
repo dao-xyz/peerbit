@@ -1,5 +1,11 @@
 # Changelog
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/time bumped from 1.0.3 to 1.0.4
+
 ## [1.2.0](https://github.com/dao-xyz/peerbit/compare/lazy-level-v1.1.1...lazy-level-v1.2.0) (2023-09-06)
 
 

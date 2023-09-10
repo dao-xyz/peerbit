@@ -68,6 +68,17 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.14 to 1.0.15
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.2.0 to 1.2.1
+    * @peerbit/stream bumped from 1.0.15 to 1.0.16
+    * @peerbit/blocks-interface bumped from 1.1.1 to 1.1.2
+    * @peerbit/crypto bumped from 1.0.8 to 1.0.9
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.6 to 1.0.7
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.0...blocks-v1.1.1) (2023-09-06)
 
 

@@ -174,6 +174,17 @@
   * dependencies
     * @peerbit/shared-log bumped from 3.1.1 to 3.1.2
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.3.1 to 2.3.2
+    * @peerbit/rpc bumped from 2.1.10 to 2.1.11
+    * @peerbit/shared-log bumped from 3.1.3 to 3.1.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.26 to 1.0.27
+    * @peerbit/time bumped from 1.0.3 to 1.0.4
+
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/document-v3.1.2...document-v3.1.3) (2023-09-07)
 
 

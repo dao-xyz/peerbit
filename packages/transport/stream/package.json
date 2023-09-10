@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream",
-	"version": "1.0.15",
+	"version": "1.0.16",
 	"description": "A building block for direct streaming protocols",
 	"type": "module",
 	"sideEffects": false,
@@ -50,15 +50,15 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "1.0.6",
+		"@peerbit/libp2p-test-utils": "1.0.7",
 		"@types/yallist": "^4.0.1",
 		"graphology-types": "^0.24.7"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.7",
-		"@peerbit/cache": "1.1.0",
-		"@peerbit/crypto": "1.0.8",
-		"@peerbit/stream-interface": "^1.0.9",
+		"@peerbit/cache": "1.1.1",
+		"@peerbit/crypto": "1.0.9",
+		"@peerbit/stream-interface": "^1.0.10",
 		"abstract-level": "^1.0.3",
 		"graphology": "0.25.1",
 		"graphology-shortest-path": "2.0.2",

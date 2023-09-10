@@ -80,6 +80,25 @@
     * @peerbit/pubsub bumped from ^1.1.6 to ^1.1.7
     * @peerbit/blocks bumped from ^1.1.1 to ^1.1.2
 
+## [2.0.9](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.8...peerbit-v2.0.9) (2023-09-10)
+
+
+### Bug Fixes
+
+* add yamux as optional stream muxer ([4191318](https://github.com/dao-xyz/peerbit/commit/4191318dc8c949097a4bd4c224c3a1e80477b8d0))
+* listen on webrtc ([c29ba77](https://github.com/dao-xyz/peerbit/commit/c29ba77c429c3ead28b8641328c8c62a374d9c05))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/lazy-level bumped from 1.2.0 to 1.2.1
+    * @peerbit/crypto bumped from 1.0.8 to 1.0.9
+    * @peerbit/program bumped from 2.3.1 to 2.3.2
+    * @peerbit/pubsub bumped from ^1.1.7 to ^1.1.8
+    * @peerbit/blocks bumped from ^1.1.2 to ^1.1.3
+
 ## [2.0.7](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.6...peerbit-v2.0.7) (2023-09-06)
 
 
