@@ -20,6 +20,24 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.16](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.15...stream-v1.0.16) (2023-09-10)
+
+
+### Bug Fixes
+
+* listen for new connections outside topology to capture webrtc connection ([5a50682](https://github.com/dao-xyz/peerbit/commit/5a50682e5b1e9fd1d77c1d2bfc1d29bea908d608))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.1.0 to 1.1.1
+    * @peerbit/crypto bumped from 1.0.8 to 1.0.9
+    * @peerbit/stream-interface bumped from ^1.0.9 to ^1.0.10
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.6 to 1.0.7
+
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.14...stream-v1.0.15) (2023-09-07)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/time-v1.0.3...time-v1.0.4) (2023-09-10)
+
+
+### Bug Fixes
+
+* bump error threshold for delay tests ([c60aa5f](https://github.com/dao-xyz/peerbit/commit/c60aa5fbc9032864851086cc54b5a47c2e8a10af))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/time-v1.0.2...time-v1.0.3) (2023-09-02)
 
 

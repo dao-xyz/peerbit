@@ -224,6 +224,16 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.25 to ^1.0.26
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.8 to 1.0.9
+    * @peerbit/document bumped from 3.1.3 to 3.1.4
+  * devDependencies
+    * @peerbit/time bumped from 1.0.3 to 1.0.4
+    * @peerbit/test-utils bumped from ^1.0.26 to ^1.0.27
+
 ## [2.0.10](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.9...trusted-network-v2.0.10) (2023-09-06)
 
 

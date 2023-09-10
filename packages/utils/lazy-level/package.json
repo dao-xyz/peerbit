@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/lazy-level",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "Level with lazy transactions",
 	"type": "module",
 	"publishConfig": {
@@ -36,7 +36,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/logger": "1.0.1",
-		"@peerbit/time": "1.0.3",
+		"@peerbit/time": "1.0.4",
 		"level": "^8.0.0"
 	},
 	"localMaintainers": [
