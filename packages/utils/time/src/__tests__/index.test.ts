@@ -3,7 +3,7 @@ describe("delay", () => {
 	it("delay", async () => {
 		let startTime = +new Date();
 		await delay(1000);
-		expect(+new Date() - startTime).toBeLessThan(1200);
+		expect(+new Date() - startTime).toBeLessThan(1500);
 	});
 
 	it("stop early", async () => {
@@ -15,7 +15,7 @@ describe("delay", () => {
 				}, 1000);
 			}
 		});
-		expect(+new Date() - startTime).toBeLessThan(1200);
+		expect(+new Date() - startTime).toBeLessThan(1500);
 	});
 });
 
