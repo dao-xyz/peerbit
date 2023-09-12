@@ -606,7 +606,7 @@ export abstract class DirectStream<
 				closeFn?.();
 			};
 			this.addEventListener("close", close);
-			await waitForAsync(
+			const result = await waitForAsync(
 				async () => {
 					try {
 						const hasProtocol = await this.components.peerStore
@@ -634,8 +634,11 @@ export abstract class DirectStream<
 					}
 				}
 			).finally(() => {
-				this.addEventListener("close", close);
+				this.removeEventListener("close", close);
 			});
+			if (!result) {
+				return;
+			}
 		} catch (error) {
 			return;
 		}
