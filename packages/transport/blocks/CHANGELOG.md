@@ -79,6 +79,20 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.6 to 1.0.7
 
+## [1.1.4](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.3...blocks-v1.1.4) (2023-09-12)
+
+
+### Bug Fixes
+
+* manage joining peers on get before first publish ([8a92549](https://github.com/dao-xyz/peerbit/commit/8a925497fa340acf81a643e89ec43eb4b69be5f3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.16 to 1.0.17
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.0...blocks-v1.1.1) (2023-09-06)
 
 

@@ -94,6 +94,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.26 to 1.0.27
 
+## [2.0.12](https://github.com/dao-xyz/peerbit/compare/proxy-window-v2.0.11...proxy-window-v2.0.12) (2023-09-12)
+
+
+### Bug Fixes
+
+* wait for webrtc directions to support protocol ([987c457](https://github.com/dao-xyz/peerbit/commit/987c457707cf7e6c7e4239f67720dab358ac0815))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped from ^1.3.3 to ^1.3.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.27 to 1.0.28
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/proxy-window-v2.0.3...proxy-window-v2.0.4) (2023-09-02)
 
 

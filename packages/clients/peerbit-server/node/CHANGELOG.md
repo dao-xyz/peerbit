@@ -196,6 +196,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.26 to 1.0.27
 
+## [4.0.12](https://github.com/dao-xyz/peerbit/compare/server-v4.0.11...server-v4.0.12) (2023-09-12)
+
+
+### Bug Fixes
+
+* flaky test ([452cc8c](https://github.com/dao-xyz/peerbit/commit/452cc8c9b0f9209a9653a843a0137d39433fbe08))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 2.0.9 to 2.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.27 to 1.0.28
+
 ## [4.0.5](https://github.com/dao-xyz/peerbit/compare/server-v4.0.4...server-v4.0.5) (2023-09-02)
 
 

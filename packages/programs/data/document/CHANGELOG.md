@@ -185,6 +185,15 @@
     * @peerbit/test-utils bumped from 1.0.26 to 1.0.27
     * @peerbit/time bumped from 1.0.3 to 1.0.4
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 2.1.11 to 2.1.12
+    * @peerbit/shared-log bumped from 3.1.4 to 3.1.5
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.27 to 1.0.28
+
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/document-v3.1.2...document-v3.1.3) (2023-09-07)
 
 
