@@ -29,7 +29,6 @@ import {
 	PublicSignKey,
 	SignatureWithKey
 } from "@peerbit/crypto";
-import { identifyService } from "libp2p/identify";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 import { logger } from "./logger.js";
@@ -449,9 +448,9 @@ export abstract class DirectStream<
 
 		// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
 		this.components.events.addEventListener("connection:open", (e) => {
-			this.onPeerConnected(e.detail.remotePeer, e.detail, {
-				skipIfVisited: true
-			});
+			if (e.detail.multiplexer === "/webrtc") {
+				this.onPeerConnected(e.detail.remotePeer, e.detail);
+			}
 		});
 
 		this.started = true;
@@ -589,7 +588,7 @@ export abstract class DirectStream<
 	public async onPeerConnected(
 		peerId: PeerId,
 		conn: Connection,
-		properties?: { skipIfVisited?: boolean; fromExisting?: boolean }
+		properties?: { fromExisting?: boolean }
 	) {
 		if (conn.transient) {
 			return;
@@ -601,27 +600,45 @@ export abstract class DirectStream<
 
 		try {
 			// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
-			await waitForAsync(async () => {
-				try {
-					const hasProtocol = await this.components.peerStore
-						.get(peerId)
-						.then((x) => this.multicodecs.find((y) => x.protocols.includes(y)));
-					if (!hasProtocol) {
-						return;
-					}
-				} catch (error: any) {
-					if (error.code === "ERR_NOT_FOUND") {
-						return;
-					}
-					throw error;
-				}
 
-				return true;
+			let closeFn: (() => void) | undefined = undefined;
+			const close = () => {
+				closeFn?.();
+			};
+			this.addEventListener("close", close);
+			await waitForAsync(
+				async () => {
+					try {
+						const hasProtocol = await this.components.peerStore
+							.get(peerId)
+							.then((x) =>
+								this.multicodecs.find((y) => x.protocols.includes(y))
+							);
+						if (!hasProtocol) {
+							return;
+						}
+					} catch (error: any) {
+						if (error.code === "ERR_NOT_FOUND") {
+							return;
+						}
+						throw error;
+					}
+
+					return true;
+				},
+				{
+					delayInterval: 100,
+					timeout: 1e4,
+					stopperCallback: (cb) => {
+						closeFn = cb;
+					}
+				}
+			).finally(() => {
+				this.addEventListener("close", close);
 			});
 		} catch (error) {
 			return;
 		}
-
 		try {
 			const peerKey = getPublicKeyFromPeerId(peerId);
 			const peerKeyHash = peerKey.hashcode();
