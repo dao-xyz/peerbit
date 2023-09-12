@@ -305,10 +305,12 @@ describe("cli", () => {
 				}
 			});
 
+			//TODO too slow to run in CI?
+
 			it("can restart", async () => {
 				const s = await start();
 				const terminal = connect();
-				await checkPeerId();
+				await checkPeerId(terminal);
 
 				terminal.write("restart");
 				await waitForResolved(() =>
@@ -316,11 +318,10 @@ describe("cli", () => {
 						s.out.filter((x) => x.includes("Starting node with address(es)"))
 					).toHaveLength(2)
 				);
-				await checkPeerId();
+				await checkPeerId(terminal);
 			});
-
-			//TODO too slow to run in CI?
-			/* it("re-opens on restart", async () => {
+			/*
+			it("re-opens on restart", async () => {
 				const server = await start();
 				const terminal = connect();
 				terminal.write(`install ${path.join(__dirname, "test.tgz")}`);
