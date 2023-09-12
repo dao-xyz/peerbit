@@ -4,6 +4,8 @@
 		"packages/transport/blocks-interface",
 		"packages/transport/stream",
 		"packages/transport/stream-interface",
+		"packages/transport/stream/test/browser",
+		"packages/transport/stream/test/browser/browser-node",
 		"packages/transport/pubsub",
 		"packages/transport/pubsub-interface",
 		"packages/transport/libp2p-test-utils",

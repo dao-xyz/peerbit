@@ -21,7 +21,7 @@ import type { ConnectionManager } from "@libp2p/interface-internal/connection-ma
 
 import { PeerStore } from "@libp2p/interface/peer-store";
 
-import { delay, TimeoutError, waitFor } from "@peerbit/time";
+import { delay, TimeoutError, waitFor, waitForAsync } from "@peerbit/time";
 import {
 	Ed25519PublicKey,
 	getKeypairFromPeerId,
@@ -29,7 +29,7 @@ import {
 	PublicSignKey,
 	SignatureWithKey
 } from "@peerbit/crypto";
-import { Errors } from "datastore-core";
+import { identifyService } from "libp2p/identify";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 import { logger } from "./logger.js";
@@ -453,6 +453,7 @@ export abstract class DirectStream<
 				skipIfVisited: true
 			});
 		});
+
 		this.started = true;
 
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
@@ -599,17 +600,26 @@ export abstract class DirectStream<
 		}
 
 		try {
-			const hasProtocol = await this.components.peerStore
-				.get(peerId)
-				.then((x) => this.multicodecs.find((y) => x.protocols.includes(y)));
-			if (!hasProtocol) {
-				return;
-			}
-		} catch (error: any) {
-			if (error.code === "ERR_NOT_FOUND") {
-				return;
-			}
-			throw error;
+			// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
+			await waitForAsync(async () => {
+				try {
+					const hasProtocol = await this.components.peerStore
+						.get(peerId)
+						.then((x) => this.multicodecs.find((y) => x.protocols.includes(y)));
+					if (!hasProtocol) {
+						return;
+					}
+				} catch (error: any) {
+					if (error.code === "ERR_NOT_FOUND") {
+						return;
+					}
+					throw error;
+				}
+
+				return true;
+			});
+		} catch (error) {
+			return;
 		}
 
 		try {
