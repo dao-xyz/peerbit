@@ -37,7 +37,6 @@ import { resolveBootstrapAddresses } from "./bootstrap.js";
 export const logger = loggerFn({ module: "client" });
 
 export type OptionalCreateOptions = {
-	limitSigning?: boolean;
 	libp2pExternal?: boolean;
 };
 export type CreateOptions = {
@@ -83,8 +82,6 @@ export class Peerbit implements ProgramClient {
 
 	directory?: string;
 
-	limitSigning: boolean;
-
 	private _cache: LazyLevel;
 	private _libp2pExternal?: boolean = false;
 
@@ -113,7 +110,6 @@ export class Peerbit implements ProgramClient {
 		this._keychain = options.keychain;
 
 		this.directory = options.directory;
-		this.limitSigning = options.limitSigning || false;
 		this._cache = options.cache;
 		this._libp2pExternal = options.libp2pExternal;
 	}
@@ -219,7 +215,6 @@ export class Peerbit implements ProgramClient {
 			directory,
 			cache,
 			libp2pExternal,
-			limitSigning: options.limitSigning,
 			identity,
 			keychain
 		});
