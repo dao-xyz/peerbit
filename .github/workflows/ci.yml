@@ -9,53 +9,7 @@ on:
   pull_request:
     types: ['opened', 'reopened', 'synchronize']
 jobs:
-  lint:
-    name: lint
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-      - name: Install deps
-        run: yarn
-      - name: Lint
-        run: yarn lint
-
-  build:
-    name: build
-    needs: lint
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-      - name: Install deps
-        run: |
-          yarn
-
-      - name: Build
-        run: yarn build
-
-      - name: Save target (artifact)
-        uses: actions/upload-artifact@v3
-        with:
-          name: target
-          retention-days: 1
-          # If a wildcard pattern is used, the path hierarchy will be preserved after the first wildcard pattern.
-          # Dummy file CODOWNERS is also added to preserve paths
-          # https://github.com/actions/upload-artifact#upload-using-multiple-paths-and-exclusions
-          path: |
-            !packages/*/node_modules
-            !packages/*/src
-            packages
-            CODEOWNERS 
-
   test_push:
-    needs: build
     strategy:
        matrix:
         node-version: [18.x]
@@ -70,22 +24,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Restore target
-        uses: actions/download-artifact@v3
-        with:
-          name: target
       - uses: actions/setup-node@v3
         with:
           node-version: 18
       - name: Install deps
         run: |
           yarn
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Build
+        run: yarn build
+
       - name: Tests
         run: ${{matrix.test_cmd}}
 
   test_pr:
     if: github.event_name == 'pull_request'
-    needs: build
     strategy:
         matrix:
             os: [ ubuntu-22.04 ]
@@ -101,16 +57,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Restore target
-        uses: actions/download-artifact@v3
-        with:
-          name: target
       - uses: actions/setup-node@v3
         with:
           node-version: ${{ matrix.node-version }}
+
       - name: Install deps
         run: |
           yarn
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Build
+        run: yarn build
+
       - name: Tests
         run: ${{matrix.test_cmd}}
 
