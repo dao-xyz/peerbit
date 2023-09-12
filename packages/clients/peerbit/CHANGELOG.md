@@ -80,6 +80,21 @@
     * @peerbit/pubsub bumped from ^1.1.6 to ^1.1.7
     * @peerbit/blocks bumped from ^1.1.1 to ^1.1.2
 
+## [2.0.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.9...peerbit-v2.0.10) (2023-09-12)
+
+
+### Bug Fixes
+
+* rm redundant limitSigning options ([1384047](https://github.com/dao-xyz/peerbit/commit/138404782f86fc06fa7c2fa020623dff33b117e3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub bumped from ^1.1.8 to ^1.1.9
+    * @peerbit/blocks bumped from ^1.1.3 to ^1.1.4
+
 ## [2.0.9](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.8...peerbit-v2.0.9) (2023-09-10)
 
 

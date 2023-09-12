@@ -20,6 +20,14 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.17](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.16...stream-v1.0.17) (2023-09-12)
+
+
+### Bug Fixes
+
+* only listen to webrtc connection-open events ([8c8718a](https://github.com/dao-xyz/peerbit/commit/8c8718a81ff44fb03a948bc284429123a05945dd))
+* wait for webrtc directions to support protocol ([987c457](https://github.com/dao-xyz/peerbit/commit/987c457707cf7e6c7e4239f67720dab358ac0815))
+
 ## [1.0.16](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.15...stream-v1.0.16) (2023-09-10)
 
 
