@@ -16,7 +16,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { DirectStreamComponents } from "@peerbit/stream";
 import { LevelBlockStore, MemoryLevelBlockStore } from "./level.js";
 import { Level } from "level";
-import { GetOptions, PutOptions } from "@peerbit/blocks-interface";
+import { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
 
 export class BlockMessage {}
@@ -198,18 +198,19 @@ export class DirectBlock extends DirectStream implements IBlocks {
 					});
 				}
 			);
+
+			this._readFromPeersPromises.set(cidString, promise);
+
 			const publish = (to?: PublicSignKey[]) =>
 				this.publish(serialize(new BlockRequest(cidString)), { to: to });
-			await publish();
 
 			const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) => {
 				return publish([e.detail]);
 			};
-
-			this._readFromPeersPromises.set(cidString, promise);
+			this.addEventListener("peer:reachable", publishOnNewPeers);
+			await publish();
 
 			// we want to make sure that if some new peers join, we also try to ask them
-			this.addEventListener("peer:reachable", publishOnNewPeers);
 
 			const result = await promise;
 			this._readFromPeersPromises.delete(cidString);
