@@ -204,6 +204,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.28 to 1.0.29
 
+## [4.0.14](https://github.com/dao-xyz/peerbit/compare/server-v4.0.13...server-v4.0.14) (2023-09-13)
+
+
+### Bug Fixes
+
+* save after removing remote node ([302e4ee](https://github.com/dao-xyz/peerbit/commit/302e4eef5c009119894cc72c79b12d9b7b67babf))
+
 ## [4.0.12](https://github.com/dao-xyz/peerbit/compare/server-v4.0.11...server-v4.0.12) (2023-09-12)
 
 
