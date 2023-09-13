@@ -627,6 +627,7 @@ export const cli = async (args?: string[]) => {
 							console.log(
 								chalk.green("Removed remote with name: " + args.name)
 							);
+							remotes.save();
 						} else {
 							console.log(
 								chalk.red("Did not find any remote with name: " + args.name)
