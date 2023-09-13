@@ -204,6 +204,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.28 to 1.0.29
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/server-v4.0.14...server-v4.1.0) (2023-09-13)
+
+
+### Features
+
+* add command for listing all variants ([de787a4](https://github.com/dao-xyz/peerbit/commit/de787a4e5eb1113da6e37a3bf09a1e04190376bd))
+
 ## [4.0.14](https://github.com/dao-xyz/peerbit/compare/server-v4.0.13...server-v4.0.14) (2023-09-13)
 
 
