@@ -15,7 +15,7 @@
     "packages/transport/pubsub": "1.1.10",
     "packages/transport/pubsub-interface": "1.1.4",
     "packages/programs/rpc": "2.1.13",
-    "packages/clients/peerbit-server/node": "4.0.13",
+    "packages/clients/peerbit-server/node": "4.0.14",
     "packages/programs/data/shared-log": "3.1.6",
     "packages/transport/stream": "1.0.18",
     "packages/transport/stream-interface": "1.0.10",
