@@ -20,6 +20,14 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.18](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.17...stream-v1.0.18) (2023-09-13)
+
+
+### Bug Fixes
+
+* correctly return on missing protocols ([105bc24](https://github.com/dao-xyz/peerbit/commit/105bc2476b661e02d3e7fab8d5a11ac0c11c37f1))
+* refactor test ([39ce150](https://github.com/dao-xyz/peerbit/commit/39ce150222f760707cb690b7e7784ac3a33b6c28))
+
 ## [1.0.17](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.16...stream-v1.0.17) (2023-09-12)
 
 
