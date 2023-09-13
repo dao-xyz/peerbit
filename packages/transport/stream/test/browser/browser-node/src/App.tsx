@@ -14,28 +14,9 @@ import { ready } from "@peerbit/crypto";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { identifyService } from "libp2p/identify";
-
-class TestDirectStream extends DirectStream {
-	constructor(
-		components: DirectStreamComponents,
-		options: {
-			id?: string;
-			pingInterval?: number | null;
-			connectionManager?: ConnectionManagerOptions;
-		} = {}
-	) {
-		super(components, [options.id || "/browser-test/0.0.0"], {
-			canRelayMessage: true,
-			emitSelf: false,
-			connectionManager: options.connectionManager || {
-				autoDial: false
-			},
-			...options
-		});
-	}
-}
-
+import { TestDirectStream } from "./../../shared/utils.js";
 await ready;
+
 const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	services: {
 		stream: (c) => new TestDirectStream(c),
@@ -60,7 +41,6 @@ let receivedData = 0;
 export const App = () => {
 	const queryParameters = new URLSearchParams(window.location.search);
 
-	const [frames, setFrames] = useState(0);
 	const [_, forceUpdate] = useReducer((x) => x + 1, 0);
 
 	client.services.stream.addEventListener("peer:reachable", () => {

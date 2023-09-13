@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
 import { createLibp2p } from "libp2p";
-import { circuitRelayTransport } from "libp2p/circuit-relay";
 import { webSockets } from "@libp2p/websockets";
 import { circuitRelayServer } from "libp2p/circuit-relay";
 import { delay, waitForResolved } from "@peerbit/time";
