@@ -985,7 +985,20 @@ export const cli = async (args?: string[]) => {
 													}
 												}
 											})
-
+											.command({
+												command: "variants",
+												describe: "List all programs variants",
+												aliases: "v",
+												handler: async (args) => {
+													for (const api of apis) {
+														const list = await api.api.program.variants();
+														api.log(`Program variants (${list.length}):`);
+														list.forEach((p) => {
+															api.log(chalk.green(p));
+														});
+													}
+												}
+											})
 											.command({
 												command: "open [program]",
 												describe: "Open program",

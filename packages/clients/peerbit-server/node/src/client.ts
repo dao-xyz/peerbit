@@ -10,7 +10,8 @@ import {
 	PROGRAM_PATH,
 	RESTART_PATH,
 	TRUST_PATH,
-	REMOTE_API_PORT
+	REMOTE_API_PORT,
+	PROGRAM_VARIANTS_PATH
 } from "./routes.js";
 import { Address } from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
@@ -217,6 +218,14 @@ export const createClient = async (
 			list: async (): Promise<string[]> => {
 				const resp = throwIfNot200(
 					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
+						validateStatus
+					})
+				);
+				return resp.data as string[];
+			},
+			variants: async (): Promise<string[]> => {
+				const resp = throwIfNot200(
+					await axiosInstance.get(endpoint + PROGRAM_VARIANTS_PATH, {
 						validateStatus
 					})
 				);

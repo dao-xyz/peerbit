@@ -39,7 +39,8 @@ import {
 	PROGRAM_PATH,
 	RESTART_PATH,
 	TRUST_PATH,
-	STOP_PATH
+	STOP_PATH,
+	PROGRAM_VARIANTS_PATH
 } from "./routes.js";
 import { Session } from "./session.js";
 import fs from "fs";
@@ -324,6 +325,32 @@ export const startApiServer = async (
 								r404();
 								break;
 						}
+					} else if (req.url.startsWith(PROGRAM_VARIANTS_PATH)) {
+						if (client instanceof Peerbit === false) {
+							res.writeHead(400);
+							res.end("Server node is not running a native client");
+							return;
+						}
+						switch (req.method) {
+							case "GET":
+								try {
+									res.setHeader("Content-Type", "application/json");
+									res.writeHead(200);
+									res.end(
+										JSON.stringify(
+											getProgramFromVariants().map((x) => getSchema(x).variant)
+										)
+									);
+								} catch (error: any) {
+									res.writeHead(404);
+									res.end(error.message);
+								}
+								break;
+
+							default:
+								r404();
+								break;
+						}
 					} else if (req.url.startsWith(PROGRAM_PATH)) {
 						if (client instanceof Peerbit === false) {
 							res.writeHead(400);
@@ -409,12 +436,6 @@ export const startApiServer = async (
 										.open(program) // TODO all users to pass args
 										.then(async (program) => {
 											// TODO what if this is a reopen?
-											console.log(
-												"OPEN ADDRESS",
-												program.address,
-												(client as Peerbit).directory,
-												await client.services.blocks.has(program.address)
-											);
 											await properties?.session?.programs.add(
 												program.address,
 												new Uint8Array()
@@ -428,6 +449,7 @@ export const startApiServer = async (
 										});
 								} catch (error: any) {
 									res.writeHead(400);
+									console.error(error);
 									res.end(error.toString());
 								}
 								break;
