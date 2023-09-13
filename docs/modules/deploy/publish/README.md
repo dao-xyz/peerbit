@@ -64,6 +64,15 @@ You can modify this list using the CLI. For further details, refer to [this link
 </p>
 
 
+### Updating an existing package
+
+- If you update an existing package you will have to restart the server to force re-importing of updated depndencies 
+
+When connected invoke
+
+```sh
+restart
+```
 
 ### Deploying to many nodes at once
 
