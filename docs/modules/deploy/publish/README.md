@@ -26,7 +26,7 @@ install the-name-of-your-build.tgz
 program open --variant PROGRAM_NAME
 ```
 
-## Overview of How the Package Distribution Works
+## Overview of how the package distribution works
 
 ### Setup
 
