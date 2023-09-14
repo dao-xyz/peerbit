@@ -38,14 +38,12 @@ export class Channel extends Program<ChannelArgs> {
 		super();
 		this.posts = new Documents({
             // id needs to have length 32
-            id: sha256Sync(new TextEncoder().encode("posts")),
-			index: new DocumentIndex()
+            id: sha256Sync(new TextEncoder().encode("posts"))
 		});
 
 		this.reactions = new Documents({
             // id needs to have length 32
-            id: sha256Sync(new TextEncoder().encode("reactions")),
-			index: new DocumentIndex()
+            id: sha256Sync(new TextEncoder().encode("reactions"))
 		});
 	}
 ...
@@ -137,3 +135,77 @@ Below is an additional example of how you granular your control of replication i
 - What peers to trust as replicators
 
 [replication-degree](./replication-degree.ts ':include')
+
+
+## Multi-signed posts
+
+You can override the signers when doing insertions. See example below
+
+[multisig](./multisig.ts ':include')
+
+In real life scenarios, you would not have the `REQUIRED_SIGNER` keypair locally. What you instead can do is to make a remote signer function, where you send away the entry to be signed and get it returned with the required signature. See [this](https://github.com/dao-xyz/peerbit/blob/master/packages/programs/clock-service/src/__tests__/index.test.ts) as an implementation example on how a remote node is signing a document if they approved that the entry has a correctly set timestamp.
+
+
+It is also possible here to make Web3 wallets such as MetaMask to conform to the signer function type.
+
+
+
+## Migrations
+
+
+Migration is usually something that is achieved by having a central authority iterating over all data in mutating it in some way. In a P2P setup where the ownership can be decentralized makes the approach to this different.
+
+
+### Modifying the type of new documents
+When you want to update how a document should look like, e.g. you have PostV0 and now want to do PostV1 which contains different kinds of information, you can rely on polymorphism to let both types coexist in the same database. See example below
+
+
+[migration](./migration-types.ts ':include')
+
+
+
+
+### Converting existing documents
+If you don't want the old version to linger around you might want to perform two actions.
+
+
+1. Insert a new document with the new type constructed from the old document
+2. Delete the old document once you have successfully inserted the new document.
+
+
+The challenge with this approach is that if only documents can be deleted or inserted by the owners themselves (let say you can only create a post with your name as author if you signed it), then
+
+
+- (a) Everyone that has inserted documents in the db needs to participate in the migration process.
+
+
+
+
+Or
+
+
+- (b) Some authority needs to be trusted by everyone for doing the migration. I.e. This authority can insert documents and when peers evaluate the signatures public key in the `canPerform` callback, they will approve the operations if it is from this trusted authority. This would be conceptually equivalent to a traditional database migration where you have a central authority having power to mutate any document at any time.
+
+
+
+
+(a) is easier than it sounds. You can have a function that is running on `open` that iterates on all documents I have locally (that you have created) and re-insert them. The migration job is basically then just to make sure all peers are running the updated code that does this iteration, and eventually with time, all documents will be migrated.
+
+
+[migration-owned](./migration-owned.ts ':include')
+
+
+
+
+(b)
+
+
+For the central authority solution, this is an example how it can look like:
+
+
+[migration-centralized](./migration-centralized.ts ':include')
+
+
+Additionally you need to have a good way of managing the information about who is the central authority and how to fetch that information.
+
+
