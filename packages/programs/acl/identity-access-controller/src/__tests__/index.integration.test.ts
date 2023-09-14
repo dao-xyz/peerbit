@@ -54,11 +54,7 @@ class TestStore extends Program<{ role: Role }> {
 	constructor(properties: { publicKey: PublicSignKey | PeerId }) {
 		super();
 		if (properties) {
-			this.store = new Documents({
-				index: new DocumentIndex({
-					query: new RPC()
-				})
-			});
+			this.store = new Documents();
 			this.accessController = new IdentityAccessController({
 				rootTrust: properties.publicKey
 			});

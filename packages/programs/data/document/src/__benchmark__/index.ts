@@ -55,9 +55,7 @@ const peersCount = 1;
 const session = await LSession.connected(peersCount);
 
 const store = new TestStore({
-	docs: new Documents<Document>({
-		index: new DocumentIndex()
-	})
+	docs: new Documents<Document>()
 });
 
 const client: ProgramClient = session.peers[0];

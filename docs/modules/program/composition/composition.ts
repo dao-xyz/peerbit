@@ -86,9 +86,7 @@ class Forum extends Program<Args> {
 		super();
 
 		this[NAME_PROPERTY] = name;
-		this.channels = new Documents({
-			index: new DocumentIndex()
-		});
+		this.channels = new Documents();
 	}
 
 	async open(args?: Args): Promise<void> {

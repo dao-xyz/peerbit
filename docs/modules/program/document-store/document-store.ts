@@ -83,13 +83,11 @@ export class Channel extends Program<ChannelArgs> {
 	constructor() {
 		super();
 		this.posts = new Documents({
-			id: sha256Sync(new TextEncoder().encode("posts")),
-			index: new DocumentIndex()
+			id: sha256Sync(new TextEncoder().encode("posts"))
 		});
 
 		this.reactions = new Documents({
-			id: sha256Sync(new TextEncoder().encode("reactions")),
-			index: new DocumentIndex()
+			id: sha256Sync(new TextEncoder().encode("reactions"))
 		});
 	}
 

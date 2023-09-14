@@ -138,9 +138,7 @@ describe("index", () => {
 
 			it("can add and delete", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
@@ -193,9 +191,7 @@ describe("index", () => {
 
 			it("replication degree", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
@@ -224,9 +220,7 @@ describe("index", () => {
 
 			it("many chunks", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				});
 				await session.peers[0].open(store);
 				const insertions = 100;
@@ -248,7 +242,6 @@ describe("index", () => {
 			it("delete permanently", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
 						immutable: false
 					})
 				});
@@ -287,9 +280,7 @@ describe("index", () => {
 
 			beforeEach(async () => {
 				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				});
 				await session.peers[0].open(store);
 				store2 = await session.peers[1].open<TestStore>(store.clone());
@@ -351,9 +342,7 @@ describe("index", () => {
 
 			it("can load and drop", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				});
 
 				await session.peers[0].open(store);
@@ -398,7 +387,6 @@ describe("index", () => {
 			it("emits event on replication", async () => {
 				const store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
 						immutable: false
 					})
 				});
@@ -505,9 +493,7 @@ describe("index", () => {
 				it("will throw error if indexBy does not exist in document", async () => {
 					store = new TestIndexStore(
 						{
-							docs: new Documents<SimpleDocument>({
-								index: new DocumentIndex()
-							})
+							docs: new Documents<SimpleDocument>()
 						},
 						"__missing__"
 					);
@@ -530,9 +516,7 @@ describe("index", () => {
 				it("index by another property", async () => {
 					store = new TestIndexStore(
 						{
-							docs: new Documents<SimpleDocument>({
-								index: new DocumentIndex()
-							})
+							docs: new Documents<SimpleDocument>()
 						},
 						"value"
 					);
@@ -665,9 +649,7 @@ describe("index", () => {
 
 			it("trim deduplicate changes", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				});
 
 				await session.peers[0].open(store, {
@@ -710,7 +692,6 @@ describe("index", () => {
 			it("trim and update index", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						index: new DocumentIndex(),
 						immutable: false
 					})
 				});
@@ -1898,9 +1879,7 @@ describe("index", () => {
 		it("reject entries with unexpected payloads", async () => {
 			store = await session.peers[0].open(
 				new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				})
 			);
 			await expect(
@@ -1913,9 +1892,7 @@ describe("index", () => {
 		it("reject entries with unexpected payloads", async () => {
 			store = await session.peers[0].open(
 				new TestStore({
-					docs: new Documents<Document>({
-						index: new DocumentIndex()
-					})
+					docs: new Documents<Document>()
 				})
 			);
 

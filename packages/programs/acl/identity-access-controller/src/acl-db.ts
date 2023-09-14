@@ -43,10 +43,7 @@ export class IdentityAccessController extends Program {
 			throw new Error("Expecting either TrustedNetwork or rootTrust");
 		}
 		this.access = new Documents({
-			id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([0])])),
-			index: new DocumentIndex({
-				query: new RPC()
-			})
+			id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([0])]))
 		});
 
 		this.trustedNetwork = opts.trustedNetwork
