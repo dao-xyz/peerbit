@@ -1086,7 +1086,7 @@ export const cli = async (args?: string[]) => {
 												const newPrograms =
 													await api.api.dependency.install(installCommand);
 												api.log(
-													`New programs available (${newPrograms.length}):`
+													`New variants available (${newPrograms.length}):`
 												);
 												newPrograms.forEach((p) => {
 													api.log(chalk.green(p));
