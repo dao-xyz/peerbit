@@ -316,7 +316,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					: typeof x === "string"
 					? x
 					: getPublicKeyFromPeerId(x).hashcode()
-			) || [];
+			) || this.getPeersWithTopics(topics);
+
 		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
 		const dataMessage = new PubSubData({
 			topics: topics.map((x) => x.toString()),
@@ -326,7 +327,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 		const bytes = dataMessage.bytes();
 
-		const message = await this.createMessage(bytes, options);
+		const message = await this.createMessage(bytes, { ...options, to: tos });
 
 		if (this.emitSelf) {
 			super.dispatchEvent(
@@ -588,7 +589,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			await this.relayMessage(from, message);
 		} else if (pubsubMessage instanceof GetSubscribers) {
 			if (!(await message.verify(true))) {
-				logger.warn("Recieved message that did not verify Unsubscribe");
+				logger.warn("Recieved message that did not verify GetSubscribers");
 				return false;
 			}
 

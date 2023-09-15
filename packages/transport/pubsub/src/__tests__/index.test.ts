@@ -48,11 +48,13 @@ const createMetrics = (pubsub: DirectSub) => {
 		stream: DirectSub;
 		messages: Message[];
 		received: PubSubData[];
+		allReceived: PubSubData[];
 		subscriptionEvents: SubscriptionEvent[];
 		unsubscriptionEvents: UnsubcriptionEvent[];
 	} = {
 		messages: [],
 		received: [],
+		allReceived: [],
 		stream: pubsub,
 		subscriptionEvents: [],
 		unsubscriptionEvents: []
@@ -69,6 +71,14 @@ const createMetrics = (pubsub: DirectSub) => {
 	pubsub.addEventListener("unsubscribe", (msg) => {
 		m.unsubscriptionEvents.push(msg.detail);
 	});
+	const onDataMessageFn = pubsub.onDataMessage.bind(pubsub);
+	pubsub.onDataMessage = (from, stream, message) => {
+		const pubsubMessage = PubSubMessage.from(message.data);
+		if (pubsubMessage instanceof PubSubData) {
+			m.allReceived.push(pubsubMessage);
+		}
+		return onDataMessageFn(from, stream, message);
+	};
 	return m;
 };
 
@@ -208,7 +218,7 @@ describe("pubsub", function () {
 				await session.stop();
 			});
 
-			it("1->TOPIC", async () => {
+			it("0->TOPIC", async () => {
 				await metrics[0].stream.publish(data, { topics: [TOPIC] });
 				await waitFor(() => metrics[1].received.length === 1);
 				expect(new Uint8Array(metrics[1].received[0].data)).toEqual(data);
@@ -220,7 +230,7 @@ describe("pubsub", function () {
 				expect(metrics[2].received).toHaveLength(1);
 			});
 
-			it("1->TOPIC strict to", async () => {
+			it("0->TOPIC strict to", async () => {
 				await metrics[0].stream.publish(data, {
 					topics: [TOPIC],
 					to: [metrics[2].stream.publicKey],
@@ -232,9 +242,47 @@ describe("pubsub", function () {
 				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
 				expect(metrics[2].received[0].topics).toEqual([TOPIC]);
 				expect(metrics[1].received).toHaveLength(0);
+				expect(metrics[1].allReceived).toHaveLength(1); // because the message has to travel through this node
+
 				await delay(3000); // wait some more time to make sure we dont get more messages
 				expect(metrics[1].received).toHaveLength(0);
+				expect(metrics[1].allReceived).toHaveLength(1); // because the message has to travel through this node
 				expect(metrics[2].received).toHaveLength(1);
+			});
+			it("1->TOPIC strict to", async () => {
+				await metrics[1].stream.publish(data, {
+					topics: [TOPIC],
+					to: [metrics[2].stream.publicKey],
+					strict: true
+				});
+				await waitForResolved(() =>
+					expect(metrics[2].received).toHaveLength(1)
+				);
+				expect(new Uint8Array(metrics[2].received[0].data)).toEqual(data);
+				expect(metrics[2].received[0].topics).toEqual([TOPIC]);
+				expect(metrics[0].allReceived).toHaveLength(0);
+				await delay(3000); // wait some more time to make sure we dont get more messages
+				expect(metrics[0].allReceived).toHaveLength(0);
+				expect(metrics[2].received).toHaveLength(1);
+			});
+			it("sends only in necessary directions", async () => {
+				await metrics[2].stream.unsubscribe(TOPIC);
+				await waitForResolved(() =>
+					expect(metrics[1].stream.getSubscribers(TOPIC)!.size).toEqual(1)
+				);
+
+				const sendBytes = randomBytes(32);
+				await metrics[1].stream.publish(sendBytes, { topics: [TOPIC] });
+
+				await waitFor(() => metrics[0].received.length === 1);
+				await delay(3000); // wait some more time to make sure we dont get more messages
+
+				// Make sure we never received the data message in node 2
+				for (const message of metrics[2].allReceived) {
+					expect(
+						equals(new Uint8Array(message.data), new Uint8Array(sendBytes))
+					).toBeFalse();
+				}
 			});
 
 			it("send without topic directly", async () => {
