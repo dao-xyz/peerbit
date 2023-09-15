@@ -203,6 +203,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.28 to 1.0.29
 
+## [3.1.7](https://github.com/dao-xyz/peerbit/compare/document-v3.1.6...document-v3.1.7) (2023-09-15)
+
+
+### Bug Fixes
+
+* remove unnecessary new DocumentIndex() calls ([b8489d7](https://github.com/dao-xyz/peerbit/commit/b8489d78b1555d73a03ee2f72e31af595a188599))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 2.1.13 to 2.1.14
+    * @peerbit/shared-log bumped from 3.1.6 to 3.1.7
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.29 to 1.0.30
+
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/document-v3.1.2...document-v3.1.3) (2023-09-07)
 
 

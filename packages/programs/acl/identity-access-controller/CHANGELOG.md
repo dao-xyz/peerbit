@@ -274,6 +274,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.28 to ^1.0.29
 
+## [2.0.16](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v2.0.15...identity-access-controller-v2.0.16) (2023-09-15)
+
+
+### Bug Fixes
+
+* remove unnecessary new DocumentIndex() calls ([b8489d7](https://github.com/dao-xyz/peerbit/commit/b8489d78b1555d73a03ee2f72e31af595a188599))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 3.1.6 to 3.1.7
+    * @peerbit/trusted-network bumped from 2.0.15 to 2.0.16
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.29 to ^1.0.30
+
 ## [2.0.10](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v2.0.9...identity-access-controller-v2.0.10) (2023-09-06)
 
 
