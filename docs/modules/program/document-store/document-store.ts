@@ -145,6 +145,7 @@ export class Channel extends Program<ChannelArgs> {
 					return true;
 				}
 			},
+
 			replicas: {
 				// How many times should posts at least be replicated
 				min: 2,
@@ -382,8 +383,11 @@ new SearchRequest({
 		// Missing values
 		new MissingField({ key: "someProperty" }),
 
-		// Nested queries
+		// Nested propety
+		// Find values for nested fields, e.g. { a: { b: { c: "hello "}}}
+		new StringMatch({ key: ["a", "b", "c"], value: "hello" }),
 
+		// Nested queries
 		new Or([
 			new StringMatch({ key: "stringProperty", value: "hello" }),
 			new And([
