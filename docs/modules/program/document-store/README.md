@@ -24,6 +24,7 @@ The `Documents` construction in the Channel constructor leaves some id variables
 import { sha256Sync } from "@peerbit/crypto";
 
 type ChannelArgs = { role?: Role };
+
 @variant("channel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
@@ -148,6 +149,51 @@ In real life scenarios, you would not have the `REQUIRED_SIGNER` keypair locally
 
 It is also possible here to make Web3 wallets such as MetaMask to conform to the signer function type.
 
+## Custom Index
+
+Quite often one wants to manually control what is indexed and not in order to make sure no data other than what's necessary lives in RAM.
+Additionally, sometimes we also want to do transformations of the data before making it searchable.
+
+
+With the document store you can override the document transformer to suit your needs, see below
+
+
+
+```typescript 
+
+@variant("channel")
+class Channel extends Program {
+... 
+
+	async open(properties?: ChannelArgs): Promise<void> {
+
+		await this.posts.open({
+			type: Post,
+			index: {
+				key: "id",
+				// You can tailor what fields should be indexed,
+				// everything else will be stored on disc (if you use disc storage with the client)
+				fields: async (post, context) => {
+					return {
+						"id": post.id,
+						"parent": post.parentPostid,
+						"message": post.message,
+
+						// Get the author from the signature
+						"from": (await this.posts.log.log.get(context.head))
+							?.signatures[0].publicKey.bytes,
+
+						// The timestamp for the last modification
+						"modified": context.modified, // Nano seconds
+						
+						// The timestamp for when the document was first created
+						"created": context.created, // Nano seconds
+					};
+				},
+			}})
+	}
+}
+```
 
 
 ## Migrations
