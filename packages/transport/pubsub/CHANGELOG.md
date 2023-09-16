@@ -88,6 +88,13 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.17 to 1.0.18
 
+## [1.1.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.10...pubsub-v1.1.11) (2023-09-15)
+
+
+### Bug Fixes
+
+* force publisher to only stream to subscribers by default ([5228808](https://github.com/dao-xyz/peerbit/commit/52288082b345a88169ad73968a04c5138dd026a9))
+
 ## [1.1.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.4...pubsub-v1.1.5) (2023-09-06)
 
 

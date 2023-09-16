@@ -204,6 +204,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.28 to 1.0.29
 
+## [4.1.1](https://github.com/dao-xyz/peerbit/compare/server-v4.1.0...server-v4.1.1) (2023-09-15)
+
+
+### Bug Fixes
+
+* available programs message on package install ([a06d334](https://github.com/dao-xyz/peerbit/commit/a06d3340d3e608437caca7a858ef2b922bdd1423))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 2.0.11 to 2.0.12
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.29 to 1.0.30
+
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/server-v4.0.14...server-v4.1.0) (2023-09-13)
 
 
