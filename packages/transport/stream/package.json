@@ -55,7 +55,7 @@
 		"graphology-types": "^0.24.7"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.7",
+		"@dao-xyz/borsh": "^5.1.8",
 		"@peerbit/cache": "1.1.1",
 		"@peerbit/crypto": "1.0.9",
 		"@peerbit/stream-interface": "^1.0.10",

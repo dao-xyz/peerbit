@@ -31,7 +31,7 @@
 		"crdt"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.7",
+		"@dao-xyz/borsh": "^5.1.8",
 		"@peerbit/cache": "1.1.1",
 		"@peerbit/blocks-interface": "^1.1.2",
 		"@peerbit/crypto": "1.0.9",
