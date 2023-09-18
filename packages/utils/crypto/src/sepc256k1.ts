@@ -1,5 +1,6 @@
 import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
+
 import { Wallet } from "@ethersproject/wallet";
 import { arrayify } from "@ethersproject/bytes";
 import { joinSignature } from "@ethersproject/bytes";
@@ -11,7 +12,7 @@ let _curve: EC;
 import { equals } from "@peerbit/uint8arrays";
 import { toHexString } from "./utils.js";
 import { PeerId } from "@libp2p/interface/peer-id";
-import { Identity, Signer } from "./signer.js";
+import { Identity } from "./signer.js";
 import { coerce } from "./bytes.js";
 import { generateKeyPair, supportedKeys } from "@libp2p/crypto/keys";
 import utf8 from "@protobufjs/utf8";
@@ -32,7 +33,9 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		this.publicKey = properties.publicKey;
 	}
 
-	static async recover(wallet: Wallet) {
+	static async recover(wallet: {
+		signMessage(message: string | Uint8Array): Promise<string> | string;
+	}) {
 		// Signa message
 		const toSign = new Uint8Array([0]);
 		const signature = await wallet.signMessage(toSign);
