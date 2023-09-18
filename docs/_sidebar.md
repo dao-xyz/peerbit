@@ -21,6 +21,7 @@ Modules
 - [Encryption](/modules/encryption/)
 
 Topics
+- [Wallet integration](/topics/wallet-integration/)
 - [Peerbit vs [?]](/topics/difference.md)
 - [Data integrity](/topics/integrity.md)
 - [Sharding](/topics/sharding/)
