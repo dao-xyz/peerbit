@@ -24,7 +24,7 @@ const REQUIRED_SIGNER = await Ed25519Keypair.create();
 @variant("post-store")
 class PostStore extends Program {
 	@field({ type: Documents })
-	posts: Documents<Post>; // Use base class here
+	posts: Documents<Post>;
 
 	constructor() {
 		super();
