@@ -1,5 +1,5 @@
 import B from "benchmark";
-import { LSession } from "@peerbit/libp2p-test-utils";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	DirectStreamComponents,
 	DirectStream,
@@ -25,7 +25,7 @@ class TestStreamImpl extends DirectStream {
 		});
 	}
 }
-const session = await LSession.disconnected(4, {
+const session = await TestSession.disconnected(4, {
 	transports: [tcp()],
 	services: { directstream: (c) => new TestStreamImpl(c) }
 });

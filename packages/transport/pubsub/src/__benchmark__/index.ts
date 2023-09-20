@@ -1,5 +1,5 @@
 import B from "benchmark";
-import { LSession } from "@peerbit/libp2p-test-utils";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import { DirectSub } from "../index.js";
 import crypto from "crypto";
 import { waitForPeers } from "@peerbit/stream";
@@ -9,7 +9,7 @@ import { tcp } from "@libp2p/tcp";
 // size: 1kb x 1,722 ops/sec ±1.89% (82 runs sampled)
 // size: 1000kb x 107 ops/sec ±2.02% (85 runs sampled)
 
-const session = await LSession.disconnected(4, {
+const session = await TestSession.disconnected(4, {
 	transports: [tcp()],
 	services: {
 		pubsub: (c) =>

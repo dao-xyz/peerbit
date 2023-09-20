@@ -33,7 +33,7 @@ import {
 	Results,
 	CloseIteratorRequest
 } from "../query.js";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
 import {
 	AccessError,
@@ -117,7 +117,7 @@ const bigIntSort = <T extends number | bigint>(a: T, b: T): number =>
 	a > b ? 1 : 0 || -(a < b);
 
 describe("index", () => {
-	let session: LSession;
+	let session: TestSession;
 
 	describe("operations", () => {
 		describe("basic", () => {
@@ -125,7 +125,7 @@ describe("index", () => {
 			let store2: TestStore;
 
 			beforeAll(async () => {
-				session = await LSession.connected(2);
+				session = await TestSession.connected(2);
 			});
 			afterEach(async () => {
 				await store?.close();
@@ -275,7 +275,7 @@ describe("index", () => {
 			let store: TestStore, store2: TestStore, store3: TestStore;
 
 			beforeAll(async () => {
-				session = await LSession.connected(3);
+				session = await TestSession.connected(3);
 			});
 
 			beforeEach(async () => {
@@ -327,7 +327,7 @@ describe("index", () => {
 			let store: TestStore;
 
 			beforeAll(async () => {
-				session = await LSession.connected(1, {
+				session = await TestSession.connected(1, {
 					directory: "./tmp/document-store/drop-test/"
 				});
 			});
@@ -371,7 +371,7 @@ describe("index", () => {
 			let stores: TestStore[];
 
 			beforeAll(async () => {
-				session = await LSession.connected(3);
+				session = await TestSession.connected(3);
 			});
 			beforeEach(() => {
 				stores = [];
@@ -441,7 +441,7 @@ describe("index", () => {
 			let store2: Program;
 
 			beforeAll(async () => {
-				session = await LSession.connected(2);
+				session = await TestSession.connected(2);
 			});
 			afterEach(async () => {
 				await store?.close();
@@ -636,7 +636,7 @@ describe("index", () => {
 			let store2: TestStore;
 
 			beforeAll(async () => {
-				session = await LSession.connected(2);
+				session = await TestSession.connected(2);
 			});
 			afterEach(async () => {
 				await store?.close();
@@ -820,7 +820,7 @@ describe("index", () => {
 					  ) => Promise<boolean>)
 				)[] = [];
 			beforeAll(async () => {
-				session = await LSession.connected(peersCount);
+				session = await TestSession.connected(peersCount);
 			});
 
 			afterAll(async () => {
@@ -1512,7 +1512,7 @@ describe("index", () => {
 			};
 
 			beforeAll(async () => {
-				session = await LSession.connected(peersCount);
+				session = await TestSession.connected(peersCount);
 			});
 
 			beforeEach(async () => {
@@ -1866,7 +1866,7 @@ describe("index", () => {
 	describe("canAppend", () => {
 		let store: TestStore;
 		beforeAll(async () => {
-			session = await LSession.connected(1);
+			session = await TestSession.connected(1);
 		});
 		afterEach(async () => {
 			await store?.close();
@@ -1954,7 +1954,7 @@ describe("index", () => {
 		let peersCount = 2;
 
 		beforeAll(async () => {
-			session = await LSession.connected(peersCount);
+			session = await TestSession.connected(peersCount);
 		});
 		beforeEach(async () => {
 			stores = [];
@@ -2144,7 +2144,7 @@ describe("index", () => {
 			let counters: Array<number> = [];
 
 			beforeAll(async () => {
-				session = await LSession.connected(peersCount);
+				session = await TestSession.connected(peersCount);
 				// Create store
 				for (let i = 0; i < peersCount; i++) {
 					const store =
@@ -2436,12 +2436,12 @@ describe("index", () => {
 			}
 		}
 
-		let session: LSession;
+		let session: TestSession;
 		let db1: TestStore;
 		let db2: AlternativeStore;
 
 		beforeEach(async () => {
-			session = await LSession.connected(1);
+			session = await TestSession.connected(1);
 
 			db1 = await session.peers[0].open(
 				new TestStore({ docs: new Documents() })

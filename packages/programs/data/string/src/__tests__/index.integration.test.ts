@@ -1,4 +1,4 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { DString } from "../string-store.js";
 import {
 	SearchRequest,
@@ -16,7 +16,7 @@ import { Change } from "@peerbit/log";
 import { waitForResolved } from "@peerbit/time";
 
 describe("query", () => {
-	let session: LSession,
+	let session: TestSession,
 		observer: ProgramClient,
 		writer: ProgramClient,
 		writeStore: DString,
@@ -25,7 +25,7 @@ describe("query", () => {
 	beforeEach(async () => {
 		// we reinit sesion for every test since DString does always have same address
 		// and that might lead to sideeffects running all tests in one go
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 		observer = session.peers[0];
 		writer = session.peers[1];
 
@@ -160,7 +160,7 @@ describe("query", () => {
 });
 
 describe("concurrency", () => {
-	let session: LSession,
+	let session: TestSession,
 		peer1: ProgramClient,
 		peer2: ProgramClient,
 		peer3: ProgramClient,
@@ -171,7 +171,7 @@ describe("concurrency", () => {
 	beforeEach(async () => {
 		// we reinit sesion for every test since DString does always have same address
 		// and that might lead to sideeffects running all tests in one go
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 		peer1 = session.peers[0];
 		peer2 = session.peers[1];
 		peer3 = session.peers[2];
@@ -218,7 +218,7 @@ describe("concurrency", () => {
 });
 
 describe("events", () => {
-	let session: LSession,
+	let session: TestSession,
 		peer1: ProgramClient,
 		peer2: ProgramClient,
 		store1: DString,
@@ -227,7 +227,7 @@ describe("events", () => {
 	beforeEach(async () => {
 		// we reinit sesion for every test since DString does always have same address
 		// and that might lead to sideeffects running all tests in one go
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 		peer1 = session.peers[0];
 		peer2 = session.peers[1];
 
@@ -305,12 +305,12 @@ describe("events", () => {
 });
 
 describe("load", () => {
-	let session: LSession, store: DString;
+	let session: TestSession, store: DString;
 
 	beforeEach(async () => {
 		// we reinit sesion for every test since DString does always have same address
 		// and that might lead to sideeffects running all tests in one go
-		session = await LSession.connected(1);
+		session = await TestSession.connected(1);
 
 		// Create store
 		store = new DString({});

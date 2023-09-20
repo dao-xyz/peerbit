@@ -2,13 +2,13 @@ import { EventStore } from "./utils/stores/event-store";
 import mapSeries from "p-each-series";
 
 // Include test utilities
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 
 describe(`Replicate and Load`, function () {
-	let session: LSession;
+	let session: TestSession;
 
 	beforeAll(async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 		// Connect the peers manually to speed up test times
 	});
 

@@ -2,14 +2,14 @@ import { waitFor } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 
 /**
  * Tests that are relavent for browser environments
  */
 
 describe(`browser`, function () {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 
 	afterAll(async () => {});
@@ -23,7 +23,7 @@ describe(`browser`, function () {
 	});
 
 	it("can replicate entries", async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 
 		db1 = await session.peers[0].open(new EventStore<string>());
 
@@ -50,7 +50,7 @@ describe(`browser`, function () {
 	});
 
 	it("can replicate entries through relay", async () => {
-		session = await LSession.disconnected(3);
+		session = await TestSession.disconnected(3);
 
 		// peer 3 is relay, and dont connect 1 with 2 directly
 		session.peers[0].dial(session.peers[2].getMultiaddrs()[0]);
@@ -79,7 +79,7 @@ describe(`browser`, function () {
 	});
 
 	it("will share entries as replicator on peer connect", async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 
 		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
 
@@ -106,7 +106,7 @@ describe(`browser`, function () {
 	});
 
 	it("will share entries as observer on peer connect", async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 
 		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
 

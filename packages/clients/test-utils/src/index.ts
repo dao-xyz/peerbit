@@ -1,4 +1,4 @@
-import { LSession } from "./session.js";
+import { TestSession } from "./session.js";
 export { createStore } from "./storage.js";
 
-export { LSession };
+export { TestSession };

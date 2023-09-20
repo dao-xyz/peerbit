@@ -1,9 +1,8 @@
 import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Documents, SetupOptions, Replicator } from "../document-store.js";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
-import { DocumentIndex } from "../document-index.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 import { Program } from "@peerbit/program";
@@ -52,7 +51,7 @@ class TestStore extends Program<Partial<SetupOptions<Document>>> {
 }
 
 const peersCount = 1;
-const session = await LSession.connected(peersCount);
+const session = await TestSession.connected(peersCount);
 
 const store = new TestStore({
 	docs: new Documents<Document>()

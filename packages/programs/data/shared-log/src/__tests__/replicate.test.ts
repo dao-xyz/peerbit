@@ -3,7 +3,7 @@ import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
 import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { AbsoluteReplicas, maxReplicas } from "../replication";
 import { Observer, Replicator } from "../role";
@@ -11,7 +11,7 @@ import { ExchangeHeadsMessage } from "../exchange-heads";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 
 describe(`exchange`, function () {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 	let fetchEvents: number;
 	let fetchHashes: Set<string>;
@@ -33,7 +33,7 @@ describe(`exchange`, function () {
 	beforeEach(async () => {
 		fetchEvents = 0;
 		fetchHashes = new Set();
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 
 		db1 = await session.peers[0].open(new EventStore<string>());
 	});
@@ -381,7 +381,7 @@ describe(`exchange`, function () {
 });
 
 describe("canReplicate", () => {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
 
 	const init = async (
@@ -431,7 +431,7 @@ describe("canReplicate", () => {
 		await db3.waitFor(session.peers[0].peerId);
 	};
 	beforeEach(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 		db1 = undefined as any;
 		db2 = undefined as any;
 		db3 = undefined as any;
@@ -492,7 +492,7 @@ describe("canReplicate", () => {
 });
 
 describe("replication degree", () => {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
 
 	const init = async (min: number, max?: number) => {
@@ -536,7 +536,7 @@ describe("replication degree", () => {
 		await db3.waitFor(session.peers[0].peerId);
 	};
 	beforeEach(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 		db1 = undefined as any;
 		db2 = undefined as any;
 		db3 = undefined as any;

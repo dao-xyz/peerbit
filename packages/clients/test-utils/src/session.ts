@@ -1,5 +1,5 @@
 import {
-	LSession as SSession,
+	TestSession as SSession,
 	LibP2POptions as SLibP2POptions
 } from "@peerbit/libp2p-test-utils";
 import {
@@ -20,7 +20,7 @@ import { mplex } from "@libp2p/mplex";
 export type LibP2POptions = SLibP2POptions<Libp2pExtendServices>;
 
 type CreateOptions = { libp2p?: Libp2pCreateOptions; directory?: string };
-export class LSession {
+export class TestSession {
 	private session: SSession<Libp2pExtendServices>;
 	private _peers: Peerbit[];
 	constructor(session: SSession<Libp2pExtendServices>, peers: Peerbit[]) {
@@ -42,7 +42,7 @@ export class LSession {
 	}
 
 	static async connected(n: number, options?: CreateOptions | CreateOptions[]) {
-		const session = await LSession.disconnected(n, options);
+		const session = await TestSession.disconnected(n, options);
 		await session.connect();
 		// TODO types
 		await waitForPeersStreams(
@@ -72,7 +72,7 @@ export class LSession {
 			? options.map(m)
 			: m(options);
 		const session = await SSession.disconnected(n, optionsWithServices);
-		return new LSession(
+		return new TestSession(
 			session,
 			(await Promise.all(
 				session.peers.map((x, ix) =>

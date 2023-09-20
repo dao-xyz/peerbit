@@ -1,5 +1,5 @@
 import { delay } from "@peerbit/time";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { Entry } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
@@ -26,9 +26,9 @@ class P extends Program {
 }
 
 describe("clock", () => {
-	let session: LSession, responder: P, reader: P;
+	let session: TestSession, responder: P, reader: P;
 	beforeEach(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 		responder = new P({
 			clock: new ClockService({
 				trustedNetwork: new TrustedNetwork({

@@ -1,6 +1,6 @@
 import B from "benchmark";
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
@@ -55,7 +55,7 @@ class TestStore extends Program<Args<Document>> {
 }
 
 const peersCount = 1;
-const session = await LSession.connected(peersCount);
+const session = await TestSession.connected(peersCount);
 
 const store = new TestStore({
 	logs: new SharedLog<Document>({

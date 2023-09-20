@@ -1,19 +1,19 @@
 import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../replication.js";
 import { Replicator } from "../role";
 
 describe(`sharding`, () => {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<Uint8Array>,
 		db2: EventStore<Uint8Array>,
 		db3: EventStore<Uint8Array>;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 	});
 
 	afterEach(async () => {

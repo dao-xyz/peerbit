@@ -1,4 +1,4 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import {
 	IdentityRelation,
 	createIdentityGraphStore,
@@ -40,10 +40,10 @@ class AnyCanAppendIdentityGraph extends IdentityGraph {
 }
 describe("index", () => {
 	describe("identity-graph", () => {
-		let session: LSession, identites: Identity[], programs: Program[];
+		let session: TestSession, identites: Identity[], programs: Program[];
 
 		beforeAll(async () => {
-			session = await LSession.connected(1);
+			session = await TestSession.connected(1);
 			identites = [];
 			programs = [];
 
@@ -151,9 +151,9 @@ describe("index", () => {
 	});
 
 	describe("TrustedNetwork", () => {
-		let session: LSession;
+		let session: TestSession;
 		beforeAll(async () => {
-			session = await LSession.connected(4);
+			session = await TestSession.connected(4);
 		});
 		beforeEach(async () => {});
 

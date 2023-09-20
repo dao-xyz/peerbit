@@ -1,4 +1,4 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { randomBytes } from "@peerbit/crypto";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
@@ -9,10 +9,10 @@ import { PubSubData } from "@peerbit/pubsub-interface";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("replication", function () {
-	let session: LSession;
+	let session: TestSession;
 
 	beforeAll(async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 	});
 
 	afterAll(async () => {

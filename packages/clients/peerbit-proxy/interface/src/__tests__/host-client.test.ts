@@ -1,5 +1,5 @@
 import { PeerbitProxyHost } from "../host";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { delay, waitForResolved } from "@peerbit/time";
 import { GetSubscribers } from "@peerbit/pubsub-interface";
@@ -10,7 +10,7 @@ import { PeerbitProxyClient } from "../client.js";
 import { EventEmitterNode } from "./utils.js";
 
 describe("index", () => {
-	let session: LSession;
+	let session: TestSession;
 	let hostWithClients: [
 		PeerbitProxyHost,
 		PeerbitProxyClient,
@@ -25,7 +25,7 @@ describe("index", () => {
 
 	beforeEach(async () => {
 		hostWithClients = [];
-		session = await LSession.disconnected(2);
+		session = await TestSession.disconnected(2);
 
 		const events = new EventEmitter();
 		for (let i = 0; i < 2; i++) {

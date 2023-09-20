@@ -4,7 +4,7 @@ import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
 import { waitFor } from "@peerbit/time";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 
 /**
  * A test meant for profiling purposes
@@ -48,10 +48,10 @@ const RANDOM_BYTES = randomBytes(14 * 1000);
 
 describe("profile", () => {
 	let stores: TestStore[];
-	let session: LSession;
+	let session: TestSession;
 
 	beforeEach(async () => {
-		session = await LSession.disconnected(3);
+		session = await TestSession.disconnected(3);
 
 		await session.peers[0].dial(session.peers[1].getMultiaddrs());
 		await session.peers[1].dial(session.peers[2].getMultiaddrs());

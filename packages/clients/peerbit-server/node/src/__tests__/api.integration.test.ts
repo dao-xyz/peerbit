@@ -1,4 +1,4 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import http from "http";
 import { startApiServer, startServerWithNode } from "../server.js";
 import { jest } from "@jest/globals";
@@ -29,12 +29,12 @@ const client = (keypair: Identity<Ed25519PublicKey>, address?: string) => {
 };
 
 describe("libp2p only", () => {
-	let session: LSession, server: http.Server;
+	let session: TestSession, server: http.Server;
 	jest.setTimeout(60 * 1000);
 	let configDirectory: string;
 
 	beforeAll(async () => {
-		session = await LSession.connected(1);
+		session = await TestSession.connected(1);
 	});
 
 	beforeEach(async () => {
@@ -96,7 +96,7 @@ describe("server", () => {
 		});
 	});
 	describe("api", () => {
-		let session: LSession,
+		let session: TestSession,
 			peer: ProgramClient,
 			address: Address,
 			server: http.Server;
@@ -106,7 +106,7 @@ describe("server", () => {
 
 		beforeEach(async () => {
 			let directory = path.join(__dirname, "tmp", "api-test", "api", uuid());
-			session = await LSession.connected(1, {
+			session = await TestSession.connected(1, {
 				libp2p: { transports: [tcp(), webSockets()] }
 			});
 			peer = session.peers[0];

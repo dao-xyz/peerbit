@@ -1,5 +1,5 @@
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { RPC, RPCResponse, queryAll } from "../index.js";
 import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
@@ -51,9 +51,9 @@ class RPCTest extends Program {
 
 describe("rpc", () => {
 	describe("request", () => {
-		let session: LSession, responder: RPCTest, reader: RPCTest;
+		let session: TestSession, responder: RPCTest, reader: RPCTest;
 		beforeEach(async () => {
-			session = await LSession.connected(3);
+			session = await TestSession.connected(3);
 
 			responder = new RPCTest([session.peers[0].peerId]);
 			responder.query = new RPC();
@@ -222,11 +222,11 @@ describe("rpc", () => {
 	});
 
 	describe("init", () => {
-		let session: LSession, rpcs: RPCTest[];
+		let session: TestSession, rpcs: RPCTest[];
 
 		beforeEach(async () => {
 			rpcs = [];
-			session = await LSession.connected(3);
+			session = await TestSession.connected(3);
 		});
 		afterEach(async () => {
 			await Promise.all(rpcs.map((x) => x.close()));
@@ -253,10 +253,10 @@ describe("rpc", () => {
 	});
 });
 describe("queryAll", () => {
-	let session: LSession, clients: RPCTest[];
+	let session: TestSession, clients: RPCTest[];
 
 	beforeEach(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 
 		const t = new RPCTest(session.peers.map((x) => x.peerId));
 		t.query = new RPC();

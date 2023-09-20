@@ -1,5 +1,5 @@
 import { EventStore } from "./utils/stores/event-store";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
@@ -7,7 +7,7 @@ import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Observer } from "../role";
 
 describe(`leaders`, function () {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
 
 	const options = {
@@ -19,7 +19,7 @@ describe(`leaders`, function () {
 		}
 	};
 	beforeAll(async () => {
-		session = await LSession.connected(3, {
+		session = await TestSession.connected(3, {
 			libp2p: {
 				services: {
 					blocks: (c) => new DirectBlock(c),

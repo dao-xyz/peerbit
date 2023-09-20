@@ -1,14 +1,14 @@
 import { waitFor } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { Observer, Replicator } from "../role";
 
 describe(`role`, () => {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 
 	beforeAll(async () => {
-		session = await LSession.disconnected(3);
+		session = await TestSession.disconnected(3);
 		await session.connect([
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]]

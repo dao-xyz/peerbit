@@ -1,5 +1,5 @@
 import B from "benchmark";
-import { LSession } from "@peerbit/libp2p-test-utils";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForPeers } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
 import crypto from "crypto";
@@ -11,15 +11,13 @@ import { tcp } from "@libp2p/tcp";
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)
 // size: 1000kb x 40.51 ops/sec ±4.09% (62 runs sampled)
 
-const session: LSession<{ blocks: DirectBlock }> = await LSession.disconnected(
-	4,
-	{
+const session: TestSession<{ blocks: DirectBlock }> =
+	await TestSession.disconnected(4, {
 		transports: [tcp()],
 		services: {
 			blocks: (c) => new DirectBlock(c)
 		}
-	}
-);
+	});
 
 /* 
 ┌─┐

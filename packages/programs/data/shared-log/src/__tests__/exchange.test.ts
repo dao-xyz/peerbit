@@ -1,13 +1,13 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { EventStore } from "./utils/stores";
 import { Observer, Replicator } from "../role";
 import { waitFor } from "@peerbit/time";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 
 describe("exchange", () => {
-	let session: LSession;
+	let session: TestSession;
 	beforeAll(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 	});
 
 	afterAll(async () => {

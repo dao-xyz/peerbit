@@ -1,4 +1,4 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
 import http from "http";
 import { startApiServer } from "../server";
@@ -27,11 +27,11 @@ describe("getDomainFromConfig", () => {
 });
 
 describe("ssl", () => {
-	let session: LSession, peer: ProgramClient, server: http.Server;
+	let session: TestSession, peer: ProgramClient, server: http.Server;
 
 	beforeAll(async () => {
 		const directory = "./tmp/peerbit/" + +new Date();
-		session = await LSession.connected(1, {
+		session = await TestSession.connected(1, {
 			directory: path.join(directory, "node")
 		});
 		peer = session.peers[0];

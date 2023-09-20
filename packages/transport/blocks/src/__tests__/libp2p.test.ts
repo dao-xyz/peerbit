@@ -1,13 +1,13 @@
-import { LSession } from "@peerbit/libp2p-test-utils";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import { getBlockValue } from "../block.js";
 import { DirectBlock } from "..";
 import { waitForPeers } from "@peerbit/stream";
 
-const store = (s: LSession<{ blocks: DirectBlock }>, i: number) =>
+const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
 
 describe("transport", function () {
-	let session: LSession<{ blocks: DirectBlock }>;
+	let session: TestSession<{ blocks: DirectBlock }>;
 
 	afterEach(async () => {
 		await session.stop();
@@ -18,7 +18,7 @@ describe("transport", function () {
 	// autiodialer could perhaps help?
 
 	/* it("can restart", async () => {
-		session = await LSession.connected(2, {
+		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) },
 		});
 		await waitForPeers(store(session, 0), store(session, 1));
@@ -30,7 +30,7 @@ describe("transport", function () {
 	}); */
 
 	it("rw", async () => {
-		session = await LSession.connected(2, {
+		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) }
 		});
 
@@ -48,7 +48,7 @@ describe("transport", function () {
 	});
 
 	it("read concurrently", async () => {
-		session = await LSession.connected(2, {
+		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) }
 		});
 
@@ -79,7 +79,7 @@ describe("transport", function () {
 	});
 
 	it("reads from joining peer", async () => {
-		session = await LSession.disconnected(2, {
+		session = await TestSession.disconnected(2, {
 			services: { blocks: (c) => new DirectBlock(c) }
 		});
 
@@ -96,7 +96,7 @@ describe("transport", function () {
 	});
 
 	it("timeout", async () => {
-		session = await LSession.connected(2, {
+		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) }
 		});
 		await waitForPeers(store(session, 0), store(session, 1));

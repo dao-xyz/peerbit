@@ -25,7 +25,7 @@ export type LibP2POptions<T extends Record<string, unknown>> = {
 
 type DefaultServices = { relay: CircuitRelayService; identify: any };
 type Libp2pWithServices<T> = Libp2p<T & DefaultServices>;
-export class LSession<T> {
+export class TestSession<T> {
 	peers: Libp2pWithServices<T & DefaultServices>[];
 
 	constructor(peers: Libp2pWithServices<T & DefaultServices>[]) {
@@ -61,8 +61,8 @@ export class LSession<T> {
 		n: number,
 		options?: LibP2POptions<T> | LibP2POptions<T>[]
 	) {
-		const libs = (await LSession.disconnected<T>(n, options)).peers;
-		return new LSession(libs).connect();
+		const libs = (await TestSession.disconnected<T>(n, options)).peers;
+		return new TestSession(libs).connect();
 	}
 
 	static async disconnected<T extends Record<string, unknown>>(
@@ -102,7 +102,7 @@ export class LSession<T> {
 		}
 
 		const libs = (await Promise.all(promises)) as Libp2p<T & DefaultServices>[];
-		return new LSession(libs);
+		return new TestSession(libs);
 	}
 
 	stop(): Promise<any> {

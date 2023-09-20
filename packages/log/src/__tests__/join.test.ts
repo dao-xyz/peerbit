@@ -2,7 +2,7 @@ import assert from "assert";
 import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
 import { compare } from "@peerbit/uint8arrays";
-import { LSession, createStore } from "@peerbit/test-utils";
+import { TestSession, createStore } from "@peerbit/test-utils";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import LazyLevel from "@peerbit/lazy-level";
 
@@ -17,7 +17,7 @@ const checkedStorage = async (log: Log<any>) => {
 };
 
 describe("join", function () {
-	let session: LSession;
+	let session: TestSession;
 
 	let signKey: Ed25519Keypair,
 		signKey2: Ed25519Keypair,
@@ -37,7 +37,7 @@ describe("join", function () {
 		signKey2 = keys[1];
 		signKey3 = keys[2];
 		signKey4 = keys[3];
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
 		await session.peers[2].services.blocks.waitFor(session.peers[0].peerId);
 		await session.peers[2].services.blocks.waitFor(session.peers[1].peerId);

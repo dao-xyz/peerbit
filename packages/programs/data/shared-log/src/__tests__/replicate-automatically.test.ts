@@ -1,13 +1,13 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { waitForAsync } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
 
 describe(`Automatic Replication`, function () {
-	let session: LSession;
+	let session: TestSession;
 	beforeEach(async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 	});
 
 	afterEach(async () => {

@@ -1,12 +1,12 @@
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { EventStore } from "./utils/stores";
 
 describe("recover", () => {
-	let session: LSession;
+	let session: TestSession;
 	let db1: EventStore<string>;
 
 	beforeEach(async () => {
-		session = await LSession.connected(1);
+		session = await TestSession.connected(1);
 
 		db1 = await session.peers[0].open(new EventStore<string>());
 	});

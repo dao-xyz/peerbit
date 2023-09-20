@@ -2,8 +2,8 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { X25519Keypair, X25519PublicKey } from "@peerbit/crypto";
 import { SharedLog } from "..";
-import { LSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { TestSession } from "@peerbit/test-utils";
+import { waitForResolved } from "@peerbit/time";
 
 @variant("encrypt_store")
 class SimpleStore extends Program {
@@ -24,11 +24,11 @@ class SimpleStore extends Program {
 
 describe("encryption", () => {
 	describe("replicate", () => {
-		let session: LSession;
+		let session: TestSession;
 		// This class extends Program which allows it to be replicated amongst peers
 
 		beforeEach(async () => {
-			session = await LSession.connected(3);
+			session = await TestSession.connected(3);
 		});
 
 		afterEach(async () => {
@@ -81,11 +81,11 @@ describe("encryption", () => {
 	});
 
 	describe("load", () => {
-		let session: LSession;
+		let session: TestSession;
 		// This class extends Program which allows it to be replicated amongst peers
 
 		beforeEach(async () => {
-			session = await LSession.connected(2, [
+			session = await TestSession.connected(2, [
 				{ directory: "./tmp/shared-log/access-error/1" + +new Date() },
 				{ directory: "./tmp/shared-log/access-error/2" + +new Date() }
 			]);

@@ -1,13 +1,13 @@
 // Include test utilities
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { EventStore } from "./utils/stores";
 import { delay, waitForResolved } from "@peerbit/time";
 
 describe("replicators", () => {
-	let session: LSession;
+	let session: TestSession;
 
 	beforeEach(async () => {
-		session = await LSession.connected(2);
+		session = await TestSession.connected(2);
 	});
 	afterEach(async () => {
 		await session.stop();

@@ -1,10 +1,10 @@
-import { LSession } from "../session.js";
+import { TestSession } from "../session.js";
 import { waitFor, waitForAsync } from "@peerbit/time";
 
 describe("session", () => {
-	let session: LSession;
+	let session: TestSession;
 	beforeAll(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 	});
 
 	afterAll(async () => {

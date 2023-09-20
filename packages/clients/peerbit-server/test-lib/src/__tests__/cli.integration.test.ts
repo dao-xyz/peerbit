@@ -5,16 +5,16 @@
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { Program, ProgramClient } from "@peerbit/program";
 import { DString } from "@peerbit/string";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { jest } from "@jest/globals";
 import { PermissionedString } from "..";
 
 describe("server", () => {
-	let session: LSession, peer: ProgramClient;
+	let session: TestSession, peer: ProgramClient;
 	jest.setTimeout(60 * 1000);
 
 	beforeAll(async () => {
-		session = await LSession.connected(1, {
+		session = await TestSession.connected(1, {
 			directory: "./tmp/peerbit/" + +new Date()
 		});
 		peer = session.peers[0];

@@ -1,6 +1,6 @@
 // This more like a playground as of now
 // No tests yet,
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { jest } from "@jest/globals";
 import { execSync, exec, ChildProcess } from "child_process";
 import path, { dirname } from "path";
@@ -95,7 +95,7 @@ const debugProcess = (p: ProcessWithOut) => {
 };
 
 describe("cli", () => {
-	let session: LSession;
+	let session: TestSession;
 	jest.setTimeout(60 * 1000);
 	let processes: ProcessWithOut[];
 	let configDirectory: string;
@@ -152,7 +152,7 @@ describe("cli", () => {
 
 	beforeAll(async () => {
 		//	execSync(`cd ${path.join(__dirname, '../../../', 'test-lib')} && npm pack`)
-		session = await LSession.connected(1);
+		session = await TestSession.connected(1);
 	});
 
 	beforeEach(() => {

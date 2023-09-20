@@ -1,5 +1,5 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { LSession } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
 import { delay, waitFor } from "@peerbit/time";
@@ -76,10 +76,10 @@ class TestStore extends Program<{ role: Role }> {
 }
 
 describe("index", () => {
-	let session: LSession;
+	let session: TestSession;
 
 	beforeAll(async () => {
-		session = await LSession.connected(3);
+		session = await TestSession.connected(3);
 	});
 
 	afterAll(async () => {
