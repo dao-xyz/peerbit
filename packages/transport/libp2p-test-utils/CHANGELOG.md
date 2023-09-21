@@ -18,6 +18,13 @@
   * devDependencies
     * @peerbit/time bumped from 1.0.3 to 1.0.4
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.7...libp2p-test-utils-v1.0.8) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.5...libp2p-test-utils-v1.0.6) (2023-09-06)
 
 

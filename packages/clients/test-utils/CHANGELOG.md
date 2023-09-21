@@ -175,6 +175,21 @@
   * dependencies
     * peerbit bumped from 2.0.11 to 2.0.12
 
+## [1.0.31](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.30...test-utils-v1.0.31) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.7 to 1.0.8
+    * peerbit bumped from 2.0.12 to 2.0.13
+
 ## [1.0.20](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.19...test-utils-v1.0.20) (2023-09-02)
 
 

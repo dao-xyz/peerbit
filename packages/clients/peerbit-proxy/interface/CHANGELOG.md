@@ -92,6 +92,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.29 to 1.0.30
 
+## [1.3.7](https://github.com/dao-xyz/peerbit/compare/proxy-v1.3.6...proxy-v1.3.7) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+* support exporting export by x25519 publickeys ([7edbcb0](https://github.com/dao-xyz/peerbit/commit/7edbcb0be4715fbfcdafcb237479e68b5e92a43a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^2.3.2 to ^2.4.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.30 to 1.0.31
+
 ## [1.3.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.2.7...proxy-v1.3.0) (2023-09-06)
 
 

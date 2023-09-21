@@ -211,6 +211,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.29 to ^1.0.30
 
+## [3.1.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.7...shared-log-v3.1.8) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.3.2 to 2.4.0
+    * @peerbit/log bumped from 2.1.7 to 2.1.8
+    * @peerbit/rpc bumped from 2.1.14 to 2.1.15
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.30 to ^1.0.31
+
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.2...shared-log-v3.1.3) (2023-09-07)
 
 
