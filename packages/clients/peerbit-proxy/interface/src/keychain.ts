@@ -5,8 +5,7 @@ import {
 	X25519PublicKey,
 	X25519Keypair
 } from "@peerbit/crypto";
-import { field, variant, vec, option } from "@dao-xyz/borsh";
-import { PublicSignKey } from "@peerbit/crypto";
+import { field, variant, option } from "@dao-xyz/borsh";
 import { Message } from "./message.js";
 
 @variant(8)
@@ -30,13 +29,43 @@ export class REQ_ImportKey extends KeyChainMessage {
 @variant(1)
 export class RESP_ImportKey extends KeyChainMessage {}
 
+abstract class PublicKeyWrapped {
+	key: Ed25519PublicKey | X25519PublicKey;
+}
+
+@variant(0)
+class PublicSignKeyWrapped extends PublicKeyWrapped {
+	@field({ type: Ed25519PublicKey })
+	key: Ed25519PublicKey;
+
+	constructor(key: Ed25519PublicKey) {
+		super();
+		this.key = key;
+	}
+}
+
+@variant(1)
+class EncryptionKeyWrapped extends PublicKeyWrapped {
+	@field({ type: X25519PublicKey })
+	key: X25519PublicKey;
+
+	constructor(key: X25519PublicKey) {
+		super();
+		this.key = key;
+	}
+}
+
 @variant(2)
 export class REQ_ExportKeypairByKey extends KeyChainMessage {
-	@field({ type: PublicSignKey })
-	publicKey: Ed25519PublicKey | X25519PublicKey;
+	@field({ type: PublicKeyWrapped })
+	publicKey: PublicKeyWrapped;
+
 	constructor(publicKey: Ed25519PublicKey | X25519PublicKey) {
 		super();
-		this.publicKey = publicKey;
+		this.publicKey =
+			publicKey instanceof Ed25519PublicKey
+				? new PublicSignKeyWrapped(publicKey)
+				: new EncryptionKeyWrapped(publicKey);
 	}
 }
 

@@ -36,7 +36,6 @@ export const App = () => {
 			)
 			.then((x: any) => {
 				dbRef.current = x;
-				console.log(queryParameters.get("read"));
 				if (queryParameters.get("read") !== "true") {
 					setTimeout(() => {
 						// FIX make sure this works without timeout in the test

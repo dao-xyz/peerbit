@@ -1,6 +1,6 @@
 import { PeerbitProxyHost } from "../host";
 import { TestSession } from "@peerbit/test-utils";
-import { Ed25519Keypair } from "@peerbit/crypto";
+import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
 import { delay, waitForResolved } from "@peerbit/time";
 import { GetSubscribers } from "@peerbit/pubsub-interface";
 import { deserialize } from "@dao-xyz/borsh";
@@ -175,7 +175,7 @@ describe("index", () => {
 	});
 
 	describe("keychain", () => {
-		it("import", async () => {
+		it("ed25519", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const id = new Uint8Array([1, 2, 3]);
 			await client1.keychain.import(keypair, id);
@@ -190,6 +190,22 @@ describe("index", () => {
 			).toBeTrue();
 			expect(
 				(await host1.keychain.exportByKey(keypair.publicKey))?.equals(keypair)
+			).toBeTrue();
+		});
+
+		it("x25519", async () => {
+			const keypair = await Ed25519Keypair.create();
+			const id = new Uint8Array([1, 2, 3]);
+			await client1.keychain.import(keypair, id);
+			const xkeypair = await X25519Keypair.from(keypair);
+			expect(
+				(await client1.keychain.exportByKey(xkeypair.publicKey))?.equals(
+					xkeypair
+				)
+			).toBeTrue();
+
+			expect(
+				(await host1.keychain.exportByKey(xkeypair.publicKey))?.equals(xkeypair)
 			).toBeTrue();
 		});
 	});

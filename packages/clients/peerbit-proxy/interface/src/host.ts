@@ -139,7 +139,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new keychain.RESP_ExportKeypairByKey(
-						await this.keychain?.exportByKey(message.publicKey)
+						await this.keychain?.exportByKey(message.publicKey.key)
 					),
 					from
 				);
