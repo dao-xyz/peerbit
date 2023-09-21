@@ -109,13 +109,15 @@ export class Libp2pKeychain implements Keychain {
 			}
 		}
 
-		try {
-			keyInfo = await this.keychain.findKeyByName(
-				base58btc.encode(publicKey.bytes)
-			);
-		} catch (e: any) {
-			if (e.code !== "ERR_KEY_NOT_FOUND") {
-				throw e;
+		if (!keyInfo) {
+			try {
+				keyInfo = await this.keychain.findKeyByName(
+					base58btc.encode(publicKey.bytes)
+				);
+			} catch (e: any) {
+				if (e.code !== "ERR_KEY_NOT_FOUND") {
+					throw e;
+				}
 			}
 		}
 
