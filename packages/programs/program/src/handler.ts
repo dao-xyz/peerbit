@@ -62,7 +62,7 @@ export type ProgramInitializationOptions<Args, T extends Manageable<Args>> = {
 
 export class Handler<T extends Manageable<any>> {
 	items: Map<string, T>;
-	private _openQueue: PQueue;
+	private _openQueue: Map<string, PQueue>;
 
 	constructor(
 		readonly properties: {
@@ -75,13 +75,18 @@ export class Handler<T extends Manageable<any>> {
 			shouldMonitor: (thing: any) => boolean;
 		}
 	) {
-		this._openQueue = new PQueue({ concurrency: 1 });
+		this._openQueue = new Map();
 		this.items = new Map();
 	}
 
 	async stop() {
+		await Promise.all(
+			[...this._openQueue.values()].map((x) => {
+				x.clear();
+				return x.onIdle();
+			})
+		);
 		this._openQueue.clear();
-		await this._openQueue.onIdle();
 
 		// Close all open databases
 		await Promise.all(
@@ -94,6 +99,8 @@ export class Handler<T extends Manageable<any>> {
 
 	private _onProgamClose(program: Manageable<any>) {
 		this.items.delete(program.address!.toString());
+
+		// TODO remove item from this._openQueue?
 	}
 
 	private async _onProgramOpen(
@@ -163,7 +170,13 @@ export class Handler<T extends Manageable<any>> {
 							this.properties.client.services.blocks,
 							options
 						)) as S; // TODO fix typings
+
 						if (!this.properties.shouldMonitor(program)) {
+							if (!program) {
+								throw new Error(
+									"Failed to resolve program with address: " + storeOrAddress
+								);
+							}
 							throw new Error(
 								`Failed to open program because program is of type ${program?.constructor.name} `
 							);
@@ -193,9 +206,12 @@ export class Handler<T extends Manageable<any>> {
 			}
 
 			logger.debug(`Open database '${program.constructor.name}`);
+
+			// TODO prevent resave if already saved
 			const address = await program.save(
 				this.properties.client.services.blocks
 			);
+
 			const existing = await this.checkProcessExisting(
 				address,
 				program,
@@ -239,6 +255,28 @@ export class Handler<T extends Manageable<any>> {
 		if (options?.parent) {
 			return fn();
 		}
-		return this._openQueue.add(fn) as any as S; // TODO p-queue seem to return void type ;
+
+		let address: string;
+		if (typeof storeOrAddress === "string") {
+			address = storeOrAddress;
+		} else {
+			if (storeOrAddress.closed) {
+				address = await storeOrAddress.save(
+					this.properties.client.services.blocks
+				);
+			} else {
+				address = storeOrAddress.address;
+			}
+		}
+
+		if (address) {
+			let queue = this._openQueue.get(address);
+			if (!queue) {
+				queue = new PQueue({ concurrency: 1 });
+				this._openQueue.set(address, queue);
+			}
+			return queue.add(fn) as any as S; // TODO p-queue seem to return void type ;
+		}
+		return fn(); // No address lookup,
 	}
 }

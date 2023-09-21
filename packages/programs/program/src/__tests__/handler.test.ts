@@ -49,6 +49,22 @@ describe(`shared`, () => {
 		await expect(await client.open(db1)).toEqual(db1);
 	});
 
+	it("can open different dbs concurrently", async () => {
+		let timeout = 3000;
+		let t0 = +new Date();
+		const nonExisting = client.open(
+			"zb2rhXREnAbm5Twtm2ahJM7QKT6FoQGNksWv5jp7o5W6BQ7ax",
+			{ timeout }
+		);
+		expect(await client.open(new TestProgram())).toBeDefined();
+		let t1 = +new Date();
+
+		expect(t1 - t0).toBeLessThan(timeout); // Because db1 will be opened concurrently
+		await expect(nonExisting).rejects.toThrowError(
+			"Failed to resolve program with address: zb2rhXREnAbm5Twtm2ahJM7QKT6FoQGNksWv5jp7o5W6BQ7ax"
+		);
+	});
+
 	it("open same store twice by address will throw error", async () => {
 		const db1 = await client.open(new TestProgram());
 		await expect(() => client.open(db1.address)).rejects.toThrowError(
