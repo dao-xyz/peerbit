@@ -31,6 +31,14 @@
   * dependencies
     * @peerbit/cache bumped from ^1.1.0 to ^1.1.1
 
+## [1.0.10](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.9...crypto-v1.0.10) (2023-09-21)
+
+
+### Bug Fixes
+
+* prevent resolving keyinfo twice ([e0ddf54](https://github.com/dao-xyz/peerbit/commit/e0ddf54674796fed16f92f7995cda9c707c70eba))
+* recover simplify Wallet type ([b389000](https://github.com/dao-xyz/peerbit/commit/b38900098f0d75832757dff82ac09361fd802e31))
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.7...crypto-v1.0.8) (2023-09-06)
 
 

@@ -203,6 +203,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.28 to 1.0.29
 
+## [3.1.8](https://github.com/dao-xyz/peerbit/compare/document-v3.1.7...document-v3.1.8) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.3.2 to 2.4.0
+    * @peerbit/rpc bumped from 2.1.14 to 2.1.15
+    * @peerbit/shared-log bumped from 3.1.7 to 3.1.8
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.30 to 1.0.31
+
 ## [3.1.7](https://github.com/dao-xyz/peerbit/compare/document-v3.1.6...document-v3.1.7) (2023-09-15)
 
 

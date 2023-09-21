@@ -250,6 +250,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.28 to ^1.0.29
 
+## [2.0.17](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.16...trusted-network-v2.0.17) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.9 to 1.0.10
+    * @peerbit/document bumped from 3.1.7 to 3.1.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.30 to ^1.0.31
+
 ## [2.0.16](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.15...trusted-network-v2.0.16) (2023-09-15)
 
 

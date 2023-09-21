@@ -93,6 +93,15 @@
   * dependencies
     * @peerbit/pubsub bumped from ^1.1.10 to ^1.1.11
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.9 to 1.0.10
+    * @peerbit/program bumped from 2.3.2 to 2.4.0
+    * @peerbit/pubsub bumped from ^1.1.11 to ^1.1.12
+    * @peerbit/blocks bumped from ^1.1.5 to ^1.1.6
+
 ## [2.0.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.9...peerbit-v2.0.10) (2023-09-12)
 
 

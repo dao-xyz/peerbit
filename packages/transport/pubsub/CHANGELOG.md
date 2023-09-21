@@ -88,6 +88,22 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.17 to 1.0.18
 
+## [1.1.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.11...pubsub-v1.1.12) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.18 to 1.0.19
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.7 to 1.0.8
+
 ## [1.1.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.10...pubsub-v1.1.11) (2023-09-15)
 
 

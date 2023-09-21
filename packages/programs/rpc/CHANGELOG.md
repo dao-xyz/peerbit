@@ -186,6 +186,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.29 to ^1.0.30
 
+## [2.1.15](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.14...rpc-v2.1.15) (2023-09-21)
+
+
+### Bug Fixes
+
+* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.9 to 1.0.10
+    * @peerbit/program bumped from 2.3.2 to 2.4.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.30 to ^1.0.31
+
 ## [2.1.9](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.8...rpc-v2.1.9) (2023-09-06)
 
 
