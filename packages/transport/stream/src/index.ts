@@ -1410,7 +1410,9 @@ export abstract class DirectStream<
 									this.connectionManagerOptions.autoDial &&
 									path.length >= 3
 								) {
-									await this.maybeConnectDirectly(path).catch((e) => {
+									// Dont await this even if it is async since this method can fail
+									// and might take some time to run
+									this.maybeConnectDirectly(path).catch((e) => {
 										logger.error(
 											"Failed to request direct connection: " + e.message
 										);
