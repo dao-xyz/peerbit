@@ -60,6 +60,13 @@ export type ProgramInitializationOptions<Args, T extends Manageable<Args>> = {
 	WithParent<T> &
 	EventOptions;
 
+export const addParent = (child: Manageable<any>, parent?: Manageable<any>) => {
+	(child.parents || (child.parents = [])).push(parent);
+	if (parent) {
+		(parent.children || (parent.children = [])).push(child);
+	}
+};
+
 export class Handler<T extends Manageable<any>> {
 	items: Map<string, T>;
 	private _openQueue: Map<string, PQueue>;
@@ -101,30 +108,6 @@ export class Handler<T extends Manageable<any>> {
 		this.items.delete(program.address!.toString());
 
 		// TODO remove item from this._openQueue?
-	}
-
-	private async _onProgramOpen(
-		program: T,
-		mergeSrategy?: ProgramMergeStrategy
-	) {
-		const programAddress = program.address?.toString();
-		if (!programAddress) {
-			throw new Error("Missing program address");
-		}
-		if (this.items.has(programAddress)) {
-			// second condition only makes this throw error if we are to add a new instance with the same address
-			const existing = await this.checkProcessExisting(
-				programAddress,
-				program,
-				mergeSrategy
-			);
-			if (!existing) {
-				throw new Error("Unexpected");
-			}
-			this.items.set(programAddress, program);
-		} else {
-			this.items.set(programAddress, program);
-		}
 	}
 
 	private async checkProcessExisting<S extends T>(
@@ -196,6 +179,7 @@ export class Handler<T extends Manageable<any>> {
 				if (!program.closed) {
 					const existing = this.items.get(program.address);
 					if (existing === program) {
+						addParent(existing, options.parent);
 						return program;
 					} else if (existing) {
 						// we got existing, but it is not the same instance
@@ -212,6 +196,7 @@ export class Handler<T extends Manageable<any>> {
 						// assume new instance was not added to monitored items, just add it
 						// and return it as we would opened it normally
 						this.items.set(program.address, program);
+						addParent(program, options.parent);
 						return program;
 					}
 				}
@@ -234,13 +219,9 @@ export class Handler<T extends Manageable<any>> {
 			}
 
 			await program.beforeOpen(this.properties.client, {
-				onBeforeOpen: async (p) => {
-					if (
-						this.properties.shouldMonitor(p) &&
-						p.parents.length === 1 &&
-						!p.parents[0]
-					) {
-						return this._onProgramOpen(p as T, options?.existing); // TODO types
+				onBeforeOpen: (p) => {
+					if (this.properties.shouldMonitor(program) && !options.parent) {
+						this.items.set(address, program);
 					}
 				},
 				onClose: (p) => {
@@ -257,7 +238,6 @@ export class Handler<T extends Manageable<any>> {
 				// If the program opens more programs
 				// reset: options.reset,
 			});
-
 			await program.open(options.args);
 			await program.afterOpen();
 			return program as S;

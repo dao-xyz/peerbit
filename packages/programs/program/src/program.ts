@@ -16,7 +16,8 @@ import {
 	EventOptions,
 	Handler,
 	Manageable,
-	ProgramInitializationOptions
+	ProgramInitializationOptions,
+	addParent
 } from "./handler.js";
 
 const intersection = (
@@ -107,13 +108,6 @@ export abstract class Program<
 		this._address = address;
 	}
 
-	addParent(program: Program<any> | undefined) {
-		(this.parents || (this.parents = [])).push(program);
-		if (program) {
-			(program.children || (program.children = [])).push(this);
-		}
-	}
-
 	get events(): EventEmitter<Events> {
 		return this._events || (this._events = new EventEmitter());
 	}
@@ -158,11 +152,12 @@ export abstract class Program<
 		}
 
 		if (!this.closed) {
-			this.addParent(options?.parent);
+			addParent(this, options?.parent);
 			return;
 		} else {
-			this.addParent(options?.parent);
+			addParent(this, options?.parent);
 		}
+
 		this._eventOptions = options;
 		this.node = node;
 		const nexts = this.programs;
