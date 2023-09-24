@@ -33,6 +33,13 @@
     * @peerbit/pubsub-interface bumped from ^1.1.3 to ^1.1.4
     * @peerbit/lazy-level bumped from ^1.2.0 to ^1.2.1
 
+## [2.4.2](https://github.com/dao-xyz/peerbit/compare/program-v2.4.1...program-v2.4.2) (2023-09-24)
+
+
+### Bug Fixes
+
+* correctly reopen as subprogram ([34183ac](https://github.com/dao-xyz/peerbit/commit/34183ac4aceb2635ea05e21a5946da41fb642a21))
+
 ## [2.4.1](https://github.com/dao-xyz/peerbit/compare/program-v2.4.0...program-v2.4.1) (2023-09-24)
 
 
