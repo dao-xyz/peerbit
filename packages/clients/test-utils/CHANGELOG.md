@@ -181,6 +181,12 @@
   * dependencies
     * peerbit bumped from 2.0.13 to 2.0.14
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 2.0.14 to 2.0.15
+
 ## [1.0.31](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.30...test-utils-v1.0.31) (2023-09-21)
 
 
