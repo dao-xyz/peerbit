@@ -4,7 +4,7 @@ import { Program } from "@peerbit/program";
 
 abstract class AbstractPost {}
 
-@variant(1) // Adding this will prepend the byte 0 to posts of this type (important (!))
+@variant(0) // Adding this will prepend the byte 0 to posts of this type (important (!))
 class PostV0 extends AbstractPost {
 	@field({ type: "string" })
 	id: string;
