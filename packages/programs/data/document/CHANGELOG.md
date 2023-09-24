@@ -203,6 +203,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.28 to 1.0.29
 
+## [3.1.9](https://github.com/dao-xyz/peerbit/compare/document-v3.1.8...document-v3.1.9) (2023-09-24)
+
+
+### Bug Fixes
+
+* can-open program that was opened as a subprogram ([5e73a20](https://github.com/dao-xyz/peerbit/commit/5e73a2021029506dbca2452ff2080e773c07cc2f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.4.0 to 2.4.1
+    * @peerbit/rpc bumped from 2.1.15 to 2.1.16
+    * @peerbit/shared-log bumped from 3.1.8 to 3.1.9
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.31 to 1.0.32
+
 ## [3.1.8](https://github.com/dao-xyz/peerbit/compare/document-v3.1.7...document-v3.1.8) (2023-09-21)
 
 

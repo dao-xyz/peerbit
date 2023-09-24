@@ -20,6 +20,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [1.0.20](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.19...stream-v1.0.20) (2023-09-24)
+
+
+### Bug Fixes
+
+* don't wait for direct dials ([89fd6ba](https://github.com/dao-xyz/peerbit/commit/89fd6ba557806fc8a8229006099b9ca654eb9fe4))
+
 ## [1.0.19](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.18...stream-v1.0.19) (2023-09-21)
 
 
