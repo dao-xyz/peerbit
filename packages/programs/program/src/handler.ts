@@ -188,19 +188,31 @@ export class Handler<T extends Manageable<any>> {
 					);
 					throw error;
 				}
-			} else if (!program.closed) {
-				const existing = this.items.get(program.address);
-				if (existing === program) {
-					return program;
-				} else if (existing) {
-					const existing = await this.checkProcessExisting(
-						program.address,
-						program,
-						options?.existing
-					);
+			} else {
+				if (options.parent == program) {
+					throw new Error("Parent program can not be equal to the program");
+				}
 
-					if (existing) {
-						return existing as S;
+				if (!program.closed) {
+					const existing = this.items.get(program.address);
+					if (existing === program) {
+						return program;
+					} else if (existing) {
+						// we got existing, but it is not the same instance
+						const existing = await this.checkProcessExisting(
+							program.address,
+							program,
+							options?.existing
+						);
+
+						if (existing) {
+							return existing as S;
+						}
+					} else {
+						// assume new instance was not added to monitored items, just add it
+						// and return it as we would opened it normally
+						this.items.set(program.address, program);
+						return program;
 					}
 				}
 			}
@@ -220,6 +232,7 @@ export class Handler<T extends Manageable<any>> {
 			if (existing) {
 				return existing as S;
 			}
+
 			await program.beforeOpen(this.properties.client, {
 				onBeforeOpen: async (p) => {
 					if (

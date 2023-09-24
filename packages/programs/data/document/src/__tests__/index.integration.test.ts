@@ -2014,7 +2014,16 @@ describe("index", () => {
 			).toBeTrue();
 		});
 
-		// TODO test can open after put (?)
+		it("can open after put", async () => {
+			const subProgram = new SubProgram();
+			await stores[0].store.docs.put(subProgram);
+			await session.peers[0].open(subProgram, { existing: "reuse" });
+			expect(subProgram.closed).toBeFalse();
+			expect(
+				subProgram ==
+					stores[0].store.docs.index.index.values().next().value.value
+			).toBeTrue();
+		});
 
 		it("will close subprogram after put", async () => {
 			const subProgram = new SubProgram();

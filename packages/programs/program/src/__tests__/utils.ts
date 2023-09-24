@@ -129,7 +129,7 @@ export const createPeer = async (
 					const fns = state.pubsubEventHandlers.get(type);
 					const idx = fns?.findIndex((x) => x.fn == e);
 					if (idx == null || idx < 0) {
-						throw new Error("Missing handler");
+						return; // already removed
 					}
 					fns?.splice(idx, 1);
 				},

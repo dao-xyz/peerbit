@@ -153,6 +153,34 @@ describe(`shared`, () => {
 		expect(p2.nested.openInvoked).toBeFalsy();
 	});
 
+	it("rejects", async () => {
+		const someParent = new TestProgram();
+		await expect(() =>
+			client.open(someParent, { parent: someParent })
+		).rejects.toThrow("Parent program can not be equal to the program");
+	});
+
+	it("opens when existing is not in items", async () => {
+		const someParent = new TestProgram();
+		await client.open(someParent);
+
+		const p1 = new TestProgram(1);
+		await client.open(p1, { parent: someParent });
+
+		let didReopen = false;
+		const pOpen = p1.open.bind(p1);
+		p1.open = () => {
+			didReopen = true;
+			return pOpen();
+		};
+		const db2Open = await client.open(p1);
+		expect(db2Open).toEqual(p1);
+		expect(didReopen).toEqual(false);
+		expect(p1.closed).toBeFalse();
+		await client.stop();
+		expect(p1.closed).toBeTrue();
+	});
+
 	// TODO add tests and define behaviour for cross topic programs
 	// TODO add tests for shared subprogams
 	// TODO add tests for subprograms that is also open as root program
