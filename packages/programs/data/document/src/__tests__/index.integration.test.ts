@@ -2006,7 +2006,7 @@ describe("index", () => {
 		it("can put after open", async () => {
 			const subProgram = new SubProgram();
 			await session.peers[0].open(subProgram);
-			await stores[0].store.docs.put(subProgram);
+			await stores[0].store.docs.put(subProgram.clone());
 			expect(subProgram.closed).toBeFalse();
 			expect(
 				subProgram ==

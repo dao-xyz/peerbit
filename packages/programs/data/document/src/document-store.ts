@@ -413,8 +413,23 @@ export class Documents<T extends Record<string, any>> extends Program<
 						: await item.getPayloadValue();
 				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
 					const key = payload.key;
-					const value = this.deserializeOrPass(payload);
 
+					let value = this.deserializeOrPass(payload);
+
+					// Program specific
+					if (value instanceof Program) {
+						// if replicator, then open
+						if (
+							(await this.canOpen!(value, item)) &&
+							this.log.role instanceof Replicator &&
+							(await this.log.replicator(item)) // TODO types, throw runtime error if replicator is not provided
+						) {
+							value = (await this.node.open(value, {
+								parent: this as Program<any, any>,
+								existing: "reuse"
+							})) as any as T; // TODO types
+						}
+					}
 					documentsChanged.added.push(value);
 
 					const context = new Context({
@@ -426,27 +441,15 @@ export class Documents<T extends Record<string, any>> extends Program<
 					});
 
 					const valueToIndex = this._index.toIndex(value, context);
-					const isProgram = value instanceof Program;
 					this._index.index.set(key, {
 						key: payload.key,
 						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
 						context,
-						reference: valueToIndex === value || isProgram ? value : undefined
+						reference:
+							valueToIndex === value || value instanceof Program
+								? value
+								: undefined
 					});
-
-					// Program specific
-					if (isProgram) {
-						// if replicator, then open
-						if (
-							(await this.canOpen!(value, item)) &&
-							this.log.role instanceof Replicator &&
-							(await this.log.replicator(item)) // TODO types, throw runtime error if replicator is not provided
-						) {
-							await this.node.open(value, {
-								parent: this as Program<any, any>
-							}); // TODO types
-						}
-					}
 				} else if (
 					(payload instanceof DeleteOperation && !removedSet.has(item.hash)) ||
 					payload instanceof PutOperation ||
