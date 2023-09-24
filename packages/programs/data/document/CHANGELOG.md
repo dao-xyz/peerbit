@@ -213,6 +213,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [3.1.11](https://github.com/dao-xyz/peerbit/compare/document-v3.1.10...document-v3.1.11) (2023-09-24)
+
+
+### Bug Fixes
+
+* re-use existing when opening a program as document ([d99a85a](https://github.com/dao-xyz/peerbit/commit/d99a85aa29a9630b8ccf6afa68be3bd2f44362b2))
+
 ## [3.1.9](https://github.com/dao-xyz/peerbit/compare/document-v3.1.8...document-v3.1.9) (2023-09-24)
 
 

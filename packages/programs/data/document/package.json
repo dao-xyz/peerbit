@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document",
-	"version": "3.1.10",
+	"version": "3.1.11",
 	"description": "Document Store for orbit-db with binary ser/der",
 	"type": "module",
 	"sideEffects": false,
