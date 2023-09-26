@@ -42,7 +42,7 @@ Below are a few examples of how you can dial another node
 
 Browser-to-browser connections can not be established without an intermediate node that facilities a WebRTC direct connection. Or, if this fails, the intermediary can forward packages from one to the other.
 
-You can read more about deploying a relay [here](./deployment/server-node.md)
+You can read more about deploying a relay [here](/modules/deploy/server/)
 
 [connectivity](./connectivity-relay.ts ':include')
 

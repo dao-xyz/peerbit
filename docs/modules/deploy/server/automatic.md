@@ -6,9 +6,11 @@ The CLI offers the capability to directly spawn nodes within server centers, pre
 
 1. 
 
+
 Configure your AWS environment to ensure the availability of a .aws configuration folder in your system's home directory. If you haven't already done this, consult this [guide](https://wellarchitectedlabs.com/common/documentation/aws_credentials/) if you have not done it already. 
 
 2. 
+
 
 Install the CLI locally:
 ```sh
@@ -16,6 +18,7 @@ npm install -g @peerbit/server
 ```
 
 3. 
+
 
 Initiate the spawn command:
 This will create a new node in your default region.
@@ -31,6 +34,7 @@ peerbit remote spawn aws --help
 ```
 
 4. 
+
 
 Verify the status of your node:
 ```sh
