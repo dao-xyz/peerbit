@@ -50,6 +50,12 @@ describe("query", () => {
 		await observerStore.drop();
 		await session.stop();
 	});
+
+	it("empty", async () => {
+		const string = await writeStore.getValue();
+		expect(string).toEqual("");
+	});
+
 	it("match all", async () => {
 		await writeStore.add(
 			"hello",
