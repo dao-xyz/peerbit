@@ -33,16 +33,32 @@ By default, when you spawn nodes using the [CLI](/modules/deploy/server/automati
 
 If you need to modify permissions for which nodes that can perform actions, do follow these steps:
 
-1. Go to the machine which you want to add and learn its publickey by invoking
+1. 
+
+Go to the machine which you want to add and learn its publickey by invoking
 ```sh
 peerbit id
 ```
 
 2.
+
+
+Get access to the nodes you want to modify directly. In their terminals run:
+
+```sh
+peerbit remote connect
+```
+
+OR
+
 Connect to the nodes you want to modify (see previous section)
 
+
 3.
+
+
 To give a peer-id admin capabilities
+
 ```sh 
 access grant <peer-id>  
 ```
@@ -51,4 +67,6 @@ To revoke admin capabilities from a peer-id
 ```sh
 access deny <peer-id>
 ```  
+
+Where <peer-id> is the id you obtained in step 1.
 
