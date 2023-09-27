@@ -272,6 +272,12 @@
   * dependencies
     * @peerbit/document bumped from 3.1.10 to 3.1.11
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 3.1.11 to 3.2.0
+
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.16...trusted-network-v2.0.17) (2023-09-21)
 
 

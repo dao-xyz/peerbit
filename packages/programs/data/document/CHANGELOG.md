@@ -213,6 +213,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [3.2.0](https://github.com/dao-xyz/peerbit/compare/document-v3.1.11...document-v3.2.0) (2023-09-27)
+
+
+### Features
+
+* search array fields ([af22011](https://github.com/dao-xyz/peerbit/commit/af22011d8ef0c994dd6d756802545d68b4fce228))
+
 ## [3.1.11](https://github.com/dao-xyz/peerbit/compare/document-v3.1.10...document-v3.1.11) (2023-09-24)
 
 

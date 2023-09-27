@@ -293,6 +293,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.32 to ^1.0.33
 
+## [3.0.20](https://github.com/dao-xyz/peerbit/compare/string-v3.0.19...string-v3.0.20) (2023-09-27)
+
+
+### Bug Fixes
+
+* add test for emptry string ([c3c8484](https://github.com/dao-xyz/peerbit/commit/c3c8484df56379e9b3d13bf268898ac152323e1f))
+
 ## [3.0.17](https://github.com/dao-xyz/peerbit/compare/string-v3.0.16...string-v3.0.17) (2023-09-21)
 
 
