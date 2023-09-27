@@ -142,13 +142,6 @@ export type IndexableFields<T> = (
 	context: Context
 ) => Record<string, any> | Promise<Record<string, any>>;
 
-const extractFieldValue = <T>(doc: any, path: string[]): T => {
-	for (let i = 0; i < path.length; i++) {
-		doc = doc[path[i]];
-	}
-	return doc;
-};
-
 export type ResultsIterator<T> = {
 	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
@@ -166,6 +159,14 @@ const sortCompare = (av: any, bv: any) => {
 	}
 	return 0;
 };
+
+const extractFieldValue = <T>(doc: any, path: string[]): T => {
+	for (let i = 0; i < path.length; i++) {
+		doc = doc[path[i]];
+	}
+	return doc;
+};
+
 const extractSortCompare = (
 	a: Record<string, any>,
 	b: Record<string, any>,
@@ -274,8 +275,11 @@ export type CanRead<T> = (
 	from: PublicSignKey
 ) => Promise<boolean> | boolean;
 
+export type IndexedDB<T> = { index: DocumentIndex<T> };
+
 export type OpenOptions<T> = {
 	type: AbstractType<T>;
+	dbType: AbstractType<IndexedDB<T>>;
 	log: SharedLog<Operation<T>>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
@@ -290,6 +294,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	_query: RPC<AbstractSearchRequest, AbstractSearchResult<T>>;
 
 	type: AbstractType<T>;
+	dbType: AbstractType<IndexedDB<T>>;
 
 	// Index key
 	private _indexBy: string | string[];
@@ -335,6 +340,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		this._index = new Map();
 		this._log = properties.log;
 		this.type = properties.type;
+		this.dbType = properties.dbType;
 		this._sync = properties.sync;
 		this._toIndex = properties.fields;
 		this._indexBy = properties.indexBy || DEFAULT_INDEX_BY;
@@ -462,12 +468,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	async _queryDocuments(
-		filter: (doc: IndexedValue<T>) => boolean
+		filter: (doc: IndexedValue<T>) => Promise<boolean>
 	): Promise<{ context: Context; value: T }[]> {
 		// Whether we return the full operation data or just the db value
 		const results: { context: Context; value: T }[] = [];
 		for (const value of this._index.values()) {
-			if (filter(value)) {
+			if (await filter(value)) {
 				results.push({
 					context: value.context,
 					value: await this.getDocument(value)
@@ -486,6 +492,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
 		if (query instanceof SearchRequest) {
+			// Special case querying ids
 			if (
 				query.query.length === 1 &&
 				(query.query[0] instanceof ByteMatchQuery ||
@@ -526,9 +533,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}
 			}
 
-			let results = await this._queryDocuments((doc) => {
+			// Handle query normally
+			let results = await this._queryDocuments(async (doc) => {
 				for (const f of query.query) {
-					if (!this.handleQueryObject(f, doc)) {
+					if (!(await this.handleQueryObject(f, doc))) {
 						return false;
 					}
 				}
@@ -588,53 +596,85 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		}
 	}
 
-	private handleQueryObject(f: Query, doc: IndexedValue<T>) {
-		if (f instanceof StateFieldQuery) {
-			const fv: any = extractFieldValue(doc.value, f.key);
-
-			if (f instanceof StringMatch) {
-				let compare = f.value;
-				if (f.caseInsensitive) {
-					compare = compare.toLowerCase();
+	private async handleFieldQuery(
+		f: StateFieldQuery,
+		obj: T,
+		startIndex: number
+	) {
+		// this clause is needed if we have a field that is of type [][] (we will recursively go through each subarray)
+		if (Array.isArray(obj)) {
+			for (const element of obj) {
+				if (await this.handleFieldQuery(f, element, startIndex)) {
+					return true;
 				}
+			}
+			return false;
+		}
 
-				if (Array.isArray(fv)) {
-					for (const string of fv) {
-						if (this.handleStringMatch(f, compare, string)) {
-							return true;
-						}
-					}
-					return false;
-				} else {
-					if (this.handleStringMatch(f, compare, fv)) {
+		// Resolve the field from the key path. If we reach an array or nested Document store,
+		// then do a recursive call or a search to look into them
+		for (let i = startIndex; i < f.key.length; i++) {
+			obj = obj[f.key[i]];
+			if (Array.isArray(obj)) {
+				for (const element of obj) {
+					if (await this.handleFieldQuery(f, element, i + 1)) {
 						return true;
 					}
-					return false;
 				}
-			} else if (f instanceof ByteMatchQuery) {
-				if (fv instanceof Uint8Array === false) {
-					if (stringArraysEquals(f.key, this._indexByArr)) {
-						return f.valueString === fv;
-					}
-					return false;
-				}
-				return equals(fv, f.value);
-			} else if (f instanceof IntegerCompare) {
-				const value: bigint | number = fv;
-
-				if (typeof value !== "bigint" && typeof value !== "number") {
-					return false;
-				}
-				return compare(value, f.compare, f.value.value);
-			} else if (f instanceof MissingField) {
-				return fv == null; // null or undefined
-			} else if (f instanceof BoolQuery) {
-				return fv === f.value; // true/false
+				return false;
 			}
+			if (obj instanceof this.dbType) {
+				const queryCloned = f.clone();
+				queryCloned.key.splice(0, i + 1); // remove key path until the document store
+				const results = await (obj as any as IndexedDB<any>).index.search(
+					new SearchRequest({ query: [queryCloned] })
+				);
+				return results.length > 0 ? true : false; // TODO return INNER HITS?
+			}
+		}
+
+		//  When we reach here, the field value (obj) is comparable
+		if (f instanceof StringMatch) {
+			let compare = f.value;
+			if (f.caseInsensitive) {
+				compare = compare.toLowerCase();
+			}
+
+			if (this.handleStringMatch(f, compare, obj as string)) {
+				return true;
+			}
+			return false;
+		} else if (f instanceof ByteMatchQuery) {
+			if (obj instanceof Uint8Array === false) {
+				if (stringArraysEquals(f.key, this._indexByArr)) {
+					return f.valueString === obj;
+				}
+				return false;
+			}
+			return equals(obj as Uint8Array, f.value);
+		} else if (f instanceof IntegerCompare) {
+			const value: bigint | number = obj as bigint | number;
+
+			if (typeof value !== "bigint" && typeof value !== "number") {
+				return false;
+			}
+			return compare(value, f.compare, f.value.value);
+		} else if (f instanceof MissingField) {
+			return obj == null; // null or undefined
+		} else if (f instanceof BoolQuery) {
+			return obj === f.value; // true/false
+		}
+		logger.warn("Unsupported query type: " + f.constructor.name);
+		return false;
+	}
+
+	private async handleQueryObject(f: Query, doc: IndexedValue<T>) {
+		if (f instanceof StateFieldQuery) {
+			return this.handleFieldQuery(f, doc.value as T, 0);
 		} else if (f instanceof LogicalQuery) {
 			if (f instanceof And) {
 				for (const and of f.and) {
-					if (!this.handleQueryObject(and, doc)) {
+					if (!(await this.handleQueryObject(and, doc))) {
 						return false;
 					}
 				}
@@ -643,7 +683,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 			if (f instanceof Or) {
 				for (const or of f.or) {
-					if (this.handleQueryObject(or, doc)) {
+					if (await this.handleQueryObject(or, doc)) {
 						return true;
 					}
 				}
@@ -1087,6 +1127,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				this._toIndex,
 				queryRequest.sort
 			);
+
 			const pendingMoreResults = n < results.length;
 
 			const batch = results.splice(0, n);

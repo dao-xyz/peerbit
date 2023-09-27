@@ -30,7 +30,8 @@ import {
 	Operation,
 	PutOperation,
 	CanSearch,
-	CanRead
+	CanRead,
+	IndexedDB
 } from "./document-index.js";
 import { asString, checkKeyable, Keyable } from "./utils.js";
 import { Context, Results } from "./query.js";
@@ -77,10 +78,10 @@ export type SetupOptions<T> = {
 } & SharedLogOptions;
 
 @variant("documents")
-export class Documents<T extends Record<string, any>> extends Program<
-	SetupOptions<T>,
-	DocumentEvents<T> & ProgramEvents
-> {
+export class Documents<T extends Record<string, any>>
+	extends Program<SetupOptions<T>, DocumentEvents<T> & ProgramEvents>
+	implements IndexedDB<T>
+{
 	@field({ type: SharedLog })
 	log: SharedLog<Operation<T>>;
 
@@ -138,7 +139,8 @@ export class Documents<T extends Record<string, any>> extends Program<
 			fields: options.index?.fields || ((obj) => obj),
 			indexBy: options.index?.key,
 			sync: async (result: Results<T>) =>
-				this.log.log.join(result.results.map((x) => x.context.head))
+				this.log.log.join(result.results.map((x) => x.context.head)),
+			dbType: this.constructor
 		});
 
 		await this.log.open({

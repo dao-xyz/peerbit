@@ -44,7 +44,7 @@ import {
 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
-import { DocumentIndex, Operation, PutOperation } from "../document-index.js";
+import { Operation, PutOperation } from "../document-index.js";
 import { Program } from "@peerbit/program";
 import pDefer from "p-defer";
 
@@ -1195,6 +1195,228 @@ describe("index", () => {
 				).toEqual(["1"]);
 			});
 
+			describe("array", () => {
+				describe("nested store", () => {
+					@variant("test-nested-document-store")
+					class NestedDocument extends Program<any> {
+						@field({ type: Uint8Array })
+						id: Uint8Array;
+
+						@field({ type: Documents })
+						documents: Documents<Document>;
+
+						constructor(document: Documents<Document>) {
+							super();
+							this.id = randomBytes(32);
+							this.documents = document;
+						}
+						open(args?: any): Promise<void> {
+							return this.documents.open({ type: Document });
+						}
+					}
+
+					@variant("test-nested-nested-document-store")
+					class NestedDocumentStore extends Program<
+						Partial<SetupOptions<Document>>
+					> {
+						@field({ type: Uint8Array })
+						id: Uint8Array;
+
+						@field({ type: Documents })
+						documents: Documents<NestedDocument>;
+
+						constructor(properties: { docs: Documents<NestedDocument> }) {
+							super();
+							this.id = randomBytes(32);
+							this.documents = properties.docs;
+						}
+
+						async open(
+							options?: Partial<SetupOptions<Document>>
+						): Promise<void> {
+							await this.documents.open({
+								...options,
+								type: NestedDocument,
+								index: { ...options?.index, key: "id" },
+								canOpen: () => true
+							});
+						}
+					}
+
+					it("nested document store", async () => {
+						const nestedStore = await session.peers[0].open(
+							new NestedDocumentStore({ docs: new Documents() })
+						);
+						const nestedDoc = new NestedDocument(new Documents());
+						await session.peers[0].open(nestedDoc);
+						const document = new Document({
+							id: randomBytes(32),
+							name: "hello"
+						});
+						await nestedDoc.documents.put(document);
+						await nestedStore.documents.put(nestedDoc);
+
+						const nestedStore2 =
+							await session.peers[1].open<NestedDocumentStore>(
+								nestedStore.address,
+								{ args: { role: new Observer() } }
+							);
+						await nestedStore2.waitFor(session.peers[0].peerId);
+						const results = await nestedStore2.documents.index.search(
+							new SearchRequest({
+								query: [
+									new StringMatch({
+										key: ["documents", "name"],
+										value: "hello"
+									})
+								]
+							})
+						);
+						expect(results.length).toEqual(1);
+					});
+				});
+
+				describe("multi-dimensional", () => {
+					class MultiDimensionalDoc {
+						@field({ type: Uint8Array })
+						id: Uint8Array;
+
+						@field({ type: option(vec(Uint8Array)) })
+						bytesArrays?: Uint8Array[];
+
+						@field({ type: option(vec(vec("u32"))) })
+						matrix?: number[][];
+
+						@field({ type: option(vec(Document)) })
+						documents?: Document[];
+
+						constructor(properties?: {
+							bytesArrays?: Uint8Array[];
+							matrix?: number[][];
+							documents?: Document[];
+						}) {
+							this.id = randomBytes(32);
+							this.matrix = properties?.matrix;
+							this.bytesArrays = properties?.bytesArrays;
+							this.documents = properties?.documents;
+						}
+					}
+
+					@variant("test-multidim-doc-store")
+					class MultiDimensionalDocStore extends Program<any> {
+						@field({ type: Documents })
+						documents: Documents<MultiDimensionalDoc>;
+
+						constructor() {
+							super();
+							this.documents = new Documents<MultiDimensionalDoc>();
+						}
+						open(args?: Partial<SetupOptions<any>>): Promise<void> {
+							return this.documents.open({
+								...args,
+								type: MultiDimensionalDoc
+							});
+						}
+					}
+
+					it("uint8array[]", async () => {
+						const docs = await session.peers[0].open(
+							new MultiDimensionalDocStore()
+						);
+
+						const d1 = new MultiDimensionalDoc({
+							bytesArrays: [new Uint8Array([1]), new Uint8Array([2])]
+						});
+						await docs.documents.put(d1);
+						await docs.documents.put(
+							new MultiDimensionalDoc({ bytesArrays: [new Uint8Array([3])] })
+						);
+
+						const docsObserver =
+							await session.peers[1].open<MultiDimensionalDocStore>(
+								docs.address,
+								{ args: { role: new Observer() } }
+							);
+						await docsObserver.waitFor(session.peers[0].peerId);
+						const results = await docsObserver.documents.index.search(
+							new SearchRequest({
+								query: [
+									new ByteMatchQuery({
+										key: "bytesArrays",
+										value: new Uint8Array([2])
+									})
+								]
+							})
+						);
+						expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+					});
+
+					it("number[][]", async () => {
+						const docs = await session.peers[0].open(
+							new MultiDimensionalDocStore()
+						);
+
+						const d1 = new MultiDimensionalDoc({ matrix: [[1, 2], [3]] });
+						await docs.documents.put(d1);
+						await docs.documents.put(
+							new MultiDimensionalDoc({ matrix: [[4, 5]] })
+						);
+
+						const docsObserver =
+							await session.peers[1].open<MultiDimensionalDocStore>(
+								docs.address,
+								{ args: { role: new Observer() } }
+							);
+						await docsObserver.waitFor(session.peers[0].peerId);
+
+						const results = await docsObserver.documents.index.search(
+							new SearchRequest({
+								query: new IntegerCompare({
+									key: "matrix",
+									compare: Compare.Equal,
+									value: 2
+								})
+							})
+						);
+						expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+					});
+
+					it("Document[]", async () => {
+						const docs = await session.peers[0].open(
+							new MultiDimensionalDocStore()
+						);
+
+						const d1 = new MultiDimensionalDoc({
+							documents: [new Document({ id: randomBytes(32), number: 123n })]
+						});
+						await docs.documents.put(d1);
+						await docs.documents.put(
+							new MultiDimensionalDoc({
+								documents: [new Document({ id: randomBytes(32), number: 124n })]
+							})
+						);
+
+						const docsObserver =
+							await session.peers[1].open<MultiDimensionalDocStore>(
+								docs.address,
+								{ args: { role: new Observer() } }
+							);
+						await docsObserver.waitFor(session.peers[0].peerId);
+
+						const results = await docsObserver.documents.index.search(
+							new SearchRequest({
+								query: new IntegerCompare({
+									key: ["documents", "number"],
+									compare: Compare.Equal,
+									value: 123n
+								})
+							})
+						);
+						expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+					});
+				});
+			});
+
 			describe("canRead", () => {
 				it("no read access will return a response with 0 results", async () => {
 					const canReadInvocation: [Document, PublicSignKey][] = [];
@@ -1698,6 +1920,7 @@ describe("index", () => {
 					fields: async (obj) => {
 						return { [KEY]: obj.number };
 					},
+					dbType: Documents,
 					canSearch: () => true,
 					log: stores[0].docs.log,
 					sync: () => undefined as any,

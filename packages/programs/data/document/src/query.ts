@@ -3,6 +3,7 @@ import {
 	deserialize,
 	field,
 	fixedArray,
+	serialize,
 	variant,
 	vec
 } from "@dao-xyz/borsh";
@@ -41,7 +42,11 @@ export const compare = (
 
 /// ----- QUERY -----
 
-export abstract class Query {}
+export abstract class Query {
+	clone() {
+		return deserialize(serialize(this), this.constructor) as this;
+	}
+}
 
 export enum SortDirection {
 	ASC = 0,
