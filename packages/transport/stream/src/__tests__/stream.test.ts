@@ -818,6 +818,8 @@ describe("streams", function () {
 					streams[0].stream.components.connectionManager.openConnection.bind(
 						streams[0].stream.components.connectionManager
 					);
+
+				let directlyDialded = false;
 				const filteredDial = (address: PeerId | Multiaddr | Multiaddr[]) => {
 					if (
 						isPeerId(address) &&
@@ -837,12 +839,13 @@ describe("streams", function () {
 							throw new Error("Mock fail"); // don't allow connect directly
 						}
 					}
-					const q = 123;
 					addresses = addresses.map((x) =>
-						x.protoCodes().includes(281)
+						x.protoNames().includes("p2p-circuit")
 							? multiaddr(x.toString().replace("/webrtc/", "/"))
 							: x
 					); // TODO use webrtc in node
+
+					directlyDialded = true;
 					return dialFn(addresses);
 				};
 
@@ -853,6 +856,80 @@ describe("streams", function () {
 					to: [streams[3].stream.components.peerId]
 				});
 				await waitFor(() => streams[3].received.length === 1);
+				await waitForResolved(() => expect(directlyDialded).toBeTrue());
+			});
+
+			it("tries multiple relays", async () => {
+				await session.connect([[session.peers[1], session.peers[3]]]);
+				await waitForPeerStreams(streams[1].stream, streams[3].stream);
+
+				/* 
+				┌───┐ 
+				│ 0 │ 
+				└┬─┬┘ 
+				 │┌▽┐ 
+				 ││1│ 
+				 │└┬┘ 
+				┌▽┐│  
+				│2││  
+				└┬┘│  
+				┌▽─▽─┐
+				│ 3  │
+				└────┘ 
+				
+				*/
+
+				const dialedCircuitRelayAddresses: Set<string> = new Set();
+
+				const dialFn =
+					streams[0].stream.components.connectionManager.openConnection.bind(
+						streams[0].stream.components.connectionManager
+					);
+				const filteredDial = (address: PeerId | Multiaddr | Multiaddr[]) => {
+					if (
+						isPeerId(address) &&
+						address.toString() === streams[3].stream.peerIdStr
+					) {
+						throw new Error("Mock fail"); // don't allow connect directly
+					}
+
+					let addresses: Multiaddr[] = Array.isArray(address)
+						? address
+						: [address as Multiaddr];
+					for (const a of addresses) {
+						if (
+							!a.protoNames().includes("p2p-circuit") &&
+							a.toString().includes(streams[3].stream.peerIdStr)
+						) {
+							throw new Error("Mock fail"); // don't allow connect directly
+						}
+					}
+					addresses
+						.filter((x) => x.protoNames().includes("p2p-circuit"))
+						.forEach((x) => {
+							dialedCircuitRelayAddresses.add(x.toString());
+						});
+					addresses = addresses.map((x) =>
+						x.protoNames().includes("p2p-circuit")
+							? multiaddr(x.toString().replace("/webrtc/", "/"))
+							: x
+					); // TODO use webrtc in node
+
+					if (dialedCircuitRelayAddresses.size === 1) {
+						throw new Error("Mock fail"); // only succeed with the dial once we have tried two unique addresses (both neighbors)
+					}
+					return dialFn(addresses);
+				};
+
+				streams[0].stream.components.connectionManager.openConnection =
+					filteredDial;
+
+				expect(streams[0].stream.peers.size).toEqual(1);
+				await streams[0].stream.publish(data, {
+					to: [streams[3].stream.components.peerId]
+				});
+				await waitFor(() => streams[3].received.length === 1);
+				expect(dialedCircuitRelayAddresses.size).toEqual(2);
 			});
 		});
 

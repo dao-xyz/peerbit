@@ -1412,7 +1412,7 @@ export abstract class DirectStream<
 								) {
 									// Dont await this even if it is async since this method can fail
 									// and might take some time to run
-									this.maybeConnectDirectly(path).catch((e) => {
+									this.maybeConnectDirectly(to).catch((e) => {
 										logger.error(
 											"Failed to request direct connection: " + e.message
 										);
@@ -1499,13 +1499,7 @@ export abstract class DirectStream<
 		}
 	}
 
-	async maybeConnectDirectly(path: string[]) {
-		if (path.length < 3) {
-			return;
-		}
-
-		const toHash = path[path.length - 1];
-
+	async maybeConnectDirectly(toHash: string) {
 		if (this.peers.has(toHash)) {
 			return; // TODO, is this expected, or are we to dial more addresses?
 		}
@@ -1527,49 +1521,51 @@ export abstract class DirectStream<
 		}
 
 		// Connect through a closer relay that maybe does holepunch for us
-		const nextToHash = path[path.length - 2];
-		const routeKey = nextToHash + toHash;
-		if (!this.recentDials.has(routeKey)) {
-			this.recentDials.add(routeKey);
-			const to = this.peerKeyHashToPublicKey.get(toHash)! as Ed25519PublicKey;
-			const toPeerId = await to.toPeerId();
-			const addrs = this.multiaddrsMap.get(path[path.length - 2]);
-			if (addrs && addrs.length > 0) {
-				const addressesToDial = addrs.sort((a, b) => {
-					if (a.includes("/wss/")) {
-						if (b.includes("/wss/")) {
-							return 0;
+		const neighbours = this.routes.graph.neighbors(toHash);
+		outer: for (const neighbour of neighbours) {
+			const routeKey = neighbour + toHash;
+			if (!this.recentDials.has(routeKey)) {
+				this.recentDials.add(routeKey);
+				const to = this.peerKeyHashToPublicKey.get(toHash)! as Ed25519PublicKey;
+				const toPeerId = await to.toPeerId();
+				const addrs = this.multiaddrsMap.get(neighbour);
+				if (addrs && addrs.length > 0) {
+					const addressesToDial = addrs.sort((a, b) => {
+						if (a.includes("/wss/")) {
+							if (b.includes("/wss/")) {
+								return 0;
+							}
+							return -1;
 						}
-						return -1;
-					}
-					if (a.includes("/ws/")) {
-						if (b.includes("/ws/")) {
-							return 0;
+						if (a.includes("/ws/")) {
+							if (b.includes("/ws/")) {
+								return 0;
+							}
+							if (b.includes("/wss/")) {
+								return 1;
+							}
+							return -1;
 						}
-						if (b.includes("/wss/")) {
-							return 1;
-						}
-						return -1;
-					}
-					return 0;
-				});
+						return 0;
+					});
 
-				for (const addr of addressesToDial) {
-					const circuitAddress = multiaddr(
-						addr + "/p2p-circuit/webrtc/p2p/" + toPeerId.toString()
-					);
-					try {
-						await this.components.connectionManager.openConnection(
-							circuitAddress
+					for (const addr of addressesToDial) {
+						const circuitAddress = multiaddr(
+							addr + "/p2p-circuit/webrtc/p2p/" + toPeerId.toString()
 						);
-						return;
-					} catch (error: any) {
-						logger.error(
-							"Failed to connect directly to: " +
-								circuitAddress.toString() +
-								". " +
-								error?.message
-						);
+						try {
+							await this.components.connectionManager.openConnection(
+								circuitAddress
+							);
+							break outer; // We succeeded! that means we dont have to try anymore
+						} catch (error: any) {
+							logger.warn(
+								"Failed to connect directly to: " +
+									circuitAddress.toString() +
+									". " +
+									error?.message
+							);
+						}
 					}
 				}
 			}
