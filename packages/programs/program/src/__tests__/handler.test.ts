@@ -1,5 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { ProgramHandler, ProgramClient, Program } from "../index.js";
+import { ProgramClient, Program } from "../index.js";
 import { createPeer } from "./utils.js";
 
 @variant("test-shared_nested")

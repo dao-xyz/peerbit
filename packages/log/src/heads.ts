@@ -1,5 +1,5 @@
 import { Entry } from "./entry.js";
-import { SimpleLevel } from "@peerbit/lazy-level";
+import { AnyStore } from "@peerbit/any-store";
 import { HeadsCache } from "./heads-cache.js";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain } from "@peerbit/crypto";
@@ -15,7 +15,7 @@ export type CacheUpdateOptions = {
 interface Log<T> {
 	storage: Blocks;
 	keychain?: Keychain;
-	memory?: SimpleLevel;
+	memory?: AnyStore;
 	encoding: Encoding<any>;
 	entryIndex: EntryIndex<T>;
 	values: Values<T>;

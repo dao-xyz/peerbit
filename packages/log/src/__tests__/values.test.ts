@@ -1,4 +1,4 @@
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { Entry } from "../entry";
 import { EntryIndex } from "../entry-index";
 import { LastWriteWins } from "../log-sorting";
@@ -12,7 +12,7 @@ describe("values", () => {
 	let entryIndex: EntryIndex<Uint8Array>;
 	beforeEach(async () => {
 		const identity = signKey;
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 		e1 = await Entry.create({
 			store,

@@ -1,5 +1,5 @@
 import { Log } from "../log.js";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { waitFor } from "@peerbit/time";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -9,7 +9,7 @@ describe("trim", function () {
 	let store: BlockStore;
 
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 
@@ -107,7 +107,6 @@ describe("trim", function () {
 		const { entry: a3, removed } = await log.append(new Uint8Array([3]));
 		expect(removed.map((x) => x.hash)).toContainAllValues([a1.hash, a2.hash]);
 		expect(log.length).toEqual(1);
-		await (log.storage as MemoryLevelBlockStore).idle();
 		expect(await log.storage.get(a1.hash)).toBeUndefined();
 		expect(await log.storage.get(a2.hash)).toBeUndefined();
 		expect(await log.storage.get(a3.hash)).toBeDefined();
@@ -186,7 +185,6 @@ describe("trim", function () {
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
 			new Uint8Array([4])
 		]);
-		await (log.storage as MemoryLevelBlockStore).idle();
 		expect(await log.storage.get(a1.hash)).toBeUndefined();
 		expect(await log.storage.get(a2.hash)).toBeUndefined();
 		expect(await log.storage.get(a3.hash)).toBeUndefined();

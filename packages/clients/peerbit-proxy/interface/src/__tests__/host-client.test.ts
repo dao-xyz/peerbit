@@ -116,7 +116,6 @@ describe("index", () => {
 			await Promise.all(
 				keys.map((key, ix) => client1.memory.put(key, datas[ix]))
 			);
-			await client1.memory.idle?.();
 
 			let c = 0;
 			for await (const iter of client1.memory.iterator()) {
@@ -136,7 +135,6 @@ describe("index", () => {
 			await Promise.all(
 				keys.map((key, ix) => client1.memory.put(key, datas[ix]))
 			);
-			await client1.memory.idle?.();
 
 			let c = 0;
 			for await (const iter of client1.memory.iterator()) {

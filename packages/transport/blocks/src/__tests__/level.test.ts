@@ -1,16 +1,15 @@
-import { MemoryLevelBlockStore } from "../level";
-import { createBlock, getBlockValue, stringifyCid } from "../block.js";
 import { equals } from "uint8arrays";
+import { AnyBlockStore } from "../any-blockstore.js";
 
 describe(`level`, function () {
-	let store: MemoryLevelBlockStore;
+	let store: AnyBlockStore;
 
 	afterEach(async () => {
 		await store.stop();
 	});
 
 	it("rw", async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 		const data = new Uint8Array([1, 2, 3]);
 		const cid = await store.put(data);
@@ -21,16 +20,15 @@ describe(`level`, function () {
 	});
 
 	it("iterate", async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 		let datas = [new Uint8Array([0]), new Uint8Array([1])];
 		const cids = await Promise.all(datas.map((x) => store.put(x)));
-		await store.idle();
 		let allKeys = new Set();
 		for await (const [key, value] of store.iterator()) {
 			let found = false;
 			for (let i = 0; i < cids.length; i++) {
-				if (key === cids[i] && equals(value, datas[i])) {
+				if (key === cids[i] && equals(new Uint8Array(value), datas[i])) {
 					found = true;
 				}
 			}

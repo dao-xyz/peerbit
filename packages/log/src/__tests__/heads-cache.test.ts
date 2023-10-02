@@ -3,11 +3,10 @@ import {
 	CachePath,
 	HeadsCacheToSerialize
 } from "../heads-cache.js";
-import { default as LazyLevel } from "@peerbit/lazy-level";
+import { AnyStore, createStore } from "@peerbit/any-store";
 import { AbstractLevel } from "abstract-level";
 import { deserialize } from "@dao-xyz/borsh";
-import { createStore } from "@peerbit/test-utils";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
@@ -19,17 +18,17 @@ const checkHashes = async (
 	hashes: string[][]
 ) => {
 	await log.idle();
-	let cachePath = await log.headsIndex.headsCache?.cache
-		?.get(headsPath)
-		.then((bytes) => bytes && deserialize(bytes, CachePath).path);
+	const cacheBytes = await log.headsIndex.headsCache?.cache?.get(headsPath);
+
+	let cachePath = cacheBytes && deserialize(cacheBytes, CachePath).path;
 	let nextPath = cachePath!;
 	let ret: string[] = [];
 	if (hashes.length > 0) {
 		for (let i = 0; i < hashes.length; i++) {
 			ret.push(nextPath);
-			let headCache = await log.headsIndex.headsCache?.cache
-				?.get(nextPath!)
-				.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize));
+			const nextBytes = await log.headsIndex.headsCache?.cache?.get(nextPath!);
+			let headCache =
+				nextBytes && deserialize(nextBytes, HeadsCacheToSerialize);
 			expect(headCache?.heads).toContainAllValues(hashes[i]);
 			if (i === hashes.length - 1) {
 				expect(headCache?.last).toBeUndefined();
@@ -40,10 +39,9 @@ const checkHashes = async (
 		}
 	} else {
 		if (cachePath) {
+			const bytes = await log.headsIndex.headsCache?.cache?.get(cachePath);
 			expect(
-				await log.headsIndex.headsCache?.cache
-					?.get(cachePath)
-					.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize))
+				bytes && deserialize(bytes, HeadsCacheToSerialize)
 			).toBeUndefined();
 		}
 	}
@@ -52,14 +50,12 @@ const checkHashes = async (
 };
 
 describe(`head-cache`, function () {
-	let blockStore: BlockStore,
-		identityStore: AbstractLevel<any, string, Uint8Array>,
-		log: Log<any>;
+	let blockStore: BlockStore, identityStore: AnyStore, log: Log<any>;
 	let queueCounter: number = 0;
 
 	beforeEach(async () => {
 		identityStore = await createStore();
-		blockStore = new MemoryLevelBlockStore();
+		blockStore = new AnyBlockStore();
 		await blockStore.start();
 		queueCounter = 0;
 	});
@@ -70,7 +66,7 @@ describe(`head-cache`, function () {
 		await identityStore?.close();
 	});
 
-	const init = async (cache: LazyLevel) => {
+	const init = async (cache: AnyStore) => {
 		log = new Log();
 		await log.open(blockStore, signKey, {
 			cache,
@@ -86,7 +82,7 @@ describe(`head-cache`, function () {
 	};
 
 	it("updates cached heads on write one head", async () => {
-		const level = new LazyLevel(await createStore());
+		const level = createStore();
 		await init(level);
 		const data = { data: 12345 };
 		const { entry: e1 } = await log.append(data);
@@ -101,7 +97,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("updates cached heads on write multiple heads", async () => {
-		const level = new LazyLevel(await createStore());
+		const level = createStore();
 		await init(level);
 		const data = { data: 12345 };
 		const { entry: e1 } = await log.append(data);
@@ -119,7 +115,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("closes and loads", async () => {
-		const level = new LazyLevel(await createStore());
+		const level = createStore();
 		await init(level);
 
 		const data = { data: 12345 };
@@ -140,8 +136,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("loads when missing cache", async () => {
-		const level = await createStore();
-		const cache = new LazyLevel(level);
+		const cache = await createStore();
 		await init(cache);
 
 		const data = { data: 12345 };
@@ -159,7 +154,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("loads when corrupt cache", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 		await init(cache);
 		const data = { data: 12345 };
 		await log.append(data).then((entry) => {
@@ -167,21 +162,19 @@ describe(`head-cache`, function () {
 		});
 
 		await log.idle();
-		const headsPath = (
-			await log.headsIndex.headsCache?.cache
-				?.get(log.headsIndex.headsCache?.headsPath)
-				.then((bytes) => bytes && deserialize(bytes, CachePath))
-		)?.path!;
+		const bytes = await log.headsIndex.headsCache?.cache?.get(
+			log.headsIndex.headsCache?.headsPath
+		);
+		const headsPath = ((await bytes) && deserialize(bytes!, CachePath))?.path!;
 		await log.headsIndex.headsCache?.cache?.put(
 			headsPath,
 			new Uint8Array([255])
 		);
-		await log.headsIndex.headsCache?.cache?.idle?.();
 		await expect(() => log.load()).rejects.toThrowError();
 	});
 
 	it("will respect deleted heads", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 
 		await init(cache);
 
@@ -238,16 +231,13 @@ describe(`head-cache`, function () {
 		await checkHashes(log, log.headsIndex.headsCache!.removedHeadsPath, []);
 
 		for (const key of [...addedCacheKeys, ...removedCacheKeys]) {
-			expect(
-				await log.headsIndex.headsCache?.cache
-					?.get(key)
-					.then((bytes) => bytes && deserialize(bytes, HeadsCache))
-			).toBeUndefined();
+			const bytes = await log.headsIndex.headsCache?.cache?.get(key);
+			expect(bytes && deserialize(bytes, HeadsCache)).toBeUndefined();
 		}
 	});
 
 	it("resets heads eventually", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 		log = new Log();
 		await log.open(blockStore, signKey, {
 			cache,
@@ -277,7 +267,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("resets heads on load", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 		await init(cache);
 		const entries: Entry<any>[] = [];
 		for (let i = 0; i < 6; i++) {
@@ -306,7 +296,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("can cache heads concurrently", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 		await init(cache);
 		await log.load();
 		const entries: Promise<Entry<any>>[] = [];
@@ -324,7 +314,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("resets heads when referencing all", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 		await init(cache);
 
 		await log.load();
@@ -343,7 +333,7 @@ describe(`head-cache`, function () {
 	});
 
 	it("will load heads on write", async () => {
-		const cache = new LazyLevel(await createStore());
+		const cache = createStore();
 		await init(cache);
 
 		await log.append({ data: 1 });

@@ -7,24 +7,17 @@ import {
 	stringifyCid
 } from "./block.js";
 import * as Block from "multiformats/block";
-import { AbstractLevel } from "abstract-level";
-import { MemoryLevel } from "memory-level";
 import { waitFor } from "@peerbit/time";
-import LazyLevel, { LazyLevelOptions } from "@peerbit/lazy-level";
-import { PutOptions } from "@peerbit/blocks-interface";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { PublicSignKey } from "@peerbit/crypto";
+import { AnyStore, createStore } from "@peerbit/any-store";
 
-export class LevelBlockStore implements Blocks {
-	private _level: LazyLevel;
+export class AnyBlockStore implements Blocks {
+	private _store: AnyStore;
 	private _opening: Promise<any>;
-	private _closed = false;
 	private _onClose: (() => any) | undefined;
-	constructor(
-		level: AbstractLevel<any, string, Uint8Array>,
-		options?: LazyLevelOptions
-	) {
-		this._level = new LazyLevel(level, options);
+	constructor(store: AnyStore = createStore()) {
+		this._store = store;
 	}
 
 	async get(
@@ -38,7 +31,7 @@ export class LevelBlockStore implements Blocks {
 	): Promise<Uint8Array | undefined> {
 		const cidObject = cidifyString(cid);
 		try {
-			const bytes = await this._level.get(cid);
+			const bytes = await this._store.get(cid);
 			if (!bytes) {
 				return undefined;
 			}
@@ -64,30 +57,29 @@ export class LevelBlockStore implements Blocks {
 		const block = await createBlock(bytes, "raw");
 		const cid = stringifyCid(block.cid);
 		const bbytes = block.bytes;
-		await this._level.put(cid, bbytes);
+		await this._store.put(cid, bbytes);
 		return cid;
 	}
 
 	async rm(cid: string): Promise<void> {
-		await this._level.del(cid);
+		await this._store.del(cid);
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
-		for await (const [key, value] of this._level.iterator()) {
+		for await (const [key, value] of this._store.iterator()) {
 			yield [key, value];
 		}
 	}
 
 	async has(cid: string) {
-		return !!(await this._level.get(cid));
+		return !!(await this._store.get(cid));
 	}
 
 	async start(): Promise<void> {
-		this._closed = false;
-		await this._level.open();
+		await this._store.open();
 
 		try {
-			this._opening = waitFor(() => this._level.status() === "open", {
+			this._opening = waitFor(() => this._store.status() === "open", {
 				delayInterval: 100,
 				timeout: 10 * 1000,
 				stopperCallback: (fn) => {
@@ -101,26 +93,14 @@ export class LevelBlockStore implements Blocks {
 	}
 
 	async stop(): Promise<void> {
-		await this.idle();
-		this._closed = true;
 		this._onClose && this._onClose();
-		return this._level.close();
-	}
-
-	async idle(): Promise<void> {
-		await this._level.idle();
+		return this._store.close();
 	}
 
 	status() {
-		return this._level.status();
+		return this._store.status();
 	}
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
 		return; // Offline storage // TODO this feels off resolving
-	}
-}
-
-export class MemoryLevelBlockStore extends LevelBlockStore {
-	constructor(options?: LazyLevelOptions) {
-		super(new MemoryLevel({ valueEncoding: "view" }), options);
 	}
 }

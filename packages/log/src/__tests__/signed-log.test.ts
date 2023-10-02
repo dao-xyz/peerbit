@@ -1,7 +1,7 @@
 import assert from "assert";
 import { Log } from "../log.js";
 import { Entry } from "../entry.js";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
@@ -9,7 +9,7 @@ describe("signature", function () {
 	let store: BlockStore;
 
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 

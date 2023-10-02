@@ -66,7 +66,7 @@ You can modify this list using the CLI. For further details, refer to [this link
 
 ### Updating an existing package
 
-- If you update an existing package you will have to restart the server to force re-importing of updated depndencies 
+- If you update an existing package you will have to restart the server to force re-importing of updated dependencies 
 
 When connected invoke
 

@@ -30,7 +30,7 @@
 		"packages/programs/data/string",
 		"packages/programs/data/shared-log",
 		"packages/utils/crypto",
-		"packages/utils/lazy-level",
+		"packages/utils/any-store",
 		"packages/utils/uint8arrays",
 		"packages/utils/cache",
 		"packages/utils/time",

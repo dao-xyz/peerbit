@@ -6,7 +6,7 @@ import fs from "fs";
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
-import { LevelBlockStore } from "@peerbit/blocks";
+import { AnyBlockStore } from "@peerbit/blocks";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
 
 const dbPath = path.join("tmp", "peerbit", "tests", "create-open");
@@ -35,8 +35,8 @@ describe("Create", function () {
 
 		it("block storage exist at path", async () => {
 			const location = (
-				client.libp2p.services.blocks["_localStore"] as LevelBlockStore
-			)["_level"]._store["location"];
+				client.libp2p.services.blocks["_localStore"] as AnyBlockStore
+			)["_store"].store["location"];
 			expect(location).toEndWith(
 				path.join(client.directory!, "blocks").toString()
 			);

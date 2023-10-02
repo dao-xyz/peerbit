@@ -6,8 +6,10 @@ import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 import { Program } from "@peerbit/program";
 import { Replicator, SharedLog, Args } from "../index.js";
+import { mplex } from "@libp2p/mplex";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// put x 5,843 ops/sec ±4.50% (367 runs sampled)
 
 @variant("document")
 class Document {
@@ -55,7 +57,11 @@ class TestStore extends Program<Args<Document>> {
 }
 
 const peersCount = 1;
-const session = await TestSession.connected(peersCount);
+const session = await TestSession.connected(peersCount, {
+	libp2p: {
+		streamMuxers: [mplex()]
+	}
+});
 
 const store = new TestStore({
 	logs: new SharedLog<Document>({

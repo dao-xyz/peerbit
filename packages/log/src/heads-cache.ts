@@ -1,7 +1,7 @@
 import PQueue from "p-queue";
 import { v4 as uuid } from "uuid";
 import { Entry } from "./entry";
-import { SimpleLevel } from "@peerbit/lazy-level";
+import { AnyStore } from "@peerbit/any-store";
 import { variant, option, field, vec } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -102,7 +102,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 	private _lastRemovedHeadsPath?: string;
 	private _lastRemovedHeadsCount = 0n;
 
-	private _cache?: SimpleLevel;
+	private _cache?: AnyStore;
 	private _cacheWriteQueue?: PQueue<any, any>;
 
 	private _loaded = false;
@@ -112,7 +112,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		this._index = index;
 	}
 
-	get cache(): SimpleLevel | undefined {
+	get cache(): AnyStore | undefined {
 		return this._cache;
 	}
 
@@ -120,7 +120,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		return this._headsPathCounter;
 	}
 
-	async init(cache?: SimpleLevel): Promise<this> {
+	async init(cache?: AnyStore): Promise<this> {
 		if (this.initialized) {
 			throw new Error("Already initialized");
 		}
@@ -232,7 +232,6 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		// to make sure everything that all operations that have
 		// been queued will be written to disk
 		await this._cacheWriteQueue?.onIdle();
-		await this._cache?.idle?.();
 	}
 
 	async getCachedHeads(
@@ -249,9 +248,9 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			const result: string[] = [];
 			let next = start;
 			while (next) {
-				const cache = await this._cache
-					?.get(next)
-					.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize));
+				const bytes = await this._cache?.get(next);
+
+				const cache = bytes && deserialize(bytes, HeadsCacheToSerialize);
 				next = cache?.last;
 				cache?.heads.forEach((head) => {
 					if (filter && filter.has(head)) {
@@ -346,12 +345,11 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 	}
 
 	async loadLastHeadsPath() {
-		this._lastHeadsPath = await this._cache
-			?.get(this.headsPath)
-			.then((bytes) => bytes && deserialize(bytes, CachePath).path);
-		this._lastRemovedHeadsPath = await this._cache
-			?.get(this.removedHeadsPath)
-			.then((bytes) => bytes && deserialize(bytes, CachePath).path);
+		const headBytes = await this._cache?.get(this.headsPath);
+		this._lastHeadsPath = headBytes && deserialize(headBytes, CachePath).path;
+		const lastBytes = await this._cache?.get(this.removedHeadsPath);
+		this._lastRemovedHeadsPath =
+			lastBytes && deserialize(lastBytes, CachePath).path;
 		this._lastHeadsCount = this._lastHeadsPath
 			? await this.getCachedHeadsCount(this._lastHeadsPath)
 			: 0n;
@@ -364,13 +362,8 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 		if (!headPath) {
 			return 0n;
 		}
-		return (
-			(
-				await this._cache
-					?.get(headPath)
-					.then((bytes) => bytes && deserialize(bytes, HeadsCacheToSerialize))
-			)?.counter || 0n
-		);
+		const bytes = await this._cache?.get(headPath);
+		return (bytes && deserialize(bytes, HeadsCacheToSerialize))?.counter || 0n;
 	}
 
 	async waitForHeads() {

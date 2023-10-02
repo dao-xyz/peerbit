@@ -1,7 +1,4 @@
-import LazyLevel from "@peerbit/lazy-level";
-import { AbstractLevel } from "abstract-level";
-import { Level } from "level";
-import { MemoryLevel } from "memory-level";
+import { AnyStore } from "../../../utils/any-store/lib/esm/index.js";
 import { multiaddr, Multiaddr, isMultiaddr } from "@multiformats/multiaddr";
 import type { Libp2p } from "libp2p";
 import {
@@ -33,6 +30,7 @@ import { BinaryWriter } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";
 import { OpenOptions } from "@peerbit/program";
 import { resolveBootstrapAddresses } from "./bootstrap.js";
+import { createStore } from "@peerbit/any-store";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -41,7 +39,7 @@ export type OptionalCreateOptions = {
 };
 export type CreateOptions = {
 	directory?: string;
-	cache: LazyLevel;
+	memory: AnyStore;
 	identity: Ed25519Keypair;
 	keychain: Libp2pKeychain;
 } & OptionalCreateOptions;
@@ -50,30 +48,22 @@ type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
 type SimpleLibp2pOptions = { relay?: boolean };
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
-	cache?: LazyLevel;
 } & OptionalCreateOptions;
 
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 	!!(libp2p as Libp2p).getMultiaddrs;
 
-const createLevel = (path?: string): AbstractLevel<any, string, Uint8Array> => {
-	return path
-		? new Level(path, { valueEncoding: "view" })
-		: new MemoryLevel({ valueEncoding: "view" });
-};
-
 const createCache = async (
 	directory: string | undefined,
 	options?: { reset?: boolean }
 ) => {
-	const cache = await new LazyLevel(createLevel(directory));
+	const cache = createStore(directory);
 
 	// "Wake up" the caches if they need it
 	if (cache) await cache.open();
 	if (options?.reset) {
-		await cache["_store"].clear();
+		await cache.clear();
 	}
-
 	return cache;
 };
 
@@ -82,7 +72,7 @@ export class Peerbit implements ProgramClient {
 
 	directory?: string;
 
-	private _cache: LazyLevel;
+	private _memory: AnyStore;
 	private _libp2pExternal?: boolean = false;
 
 	// Libp2p peerid in Identity form
@@ -110,7 +100,7 @@ export class Peerbit implements ProgramClient {
 		this._keychain = options.keychain;
 
 		this.directory = options.directory;
-		this._cache = options.cache;
+		this._memory = options.memory;
 		this._libp2pExternal = options.libp2pExternal;
 	}
 
@@ -122,14 +112,16 @@ export class Peerbit implements ProgramClient {
 		const asRelay = (options as SimpleLibp2pOptions).relay;
 
 		const blocksDirectory =
-			options.directory != null
-				? path.join(options.directory, "/blocks").toString()
+			options["directory"] != null
+				? path.join(options["directory"], "/blocks").toString()
 				: undefined;
 		let libp2pExternal = false;
 
 		const datastore =
-			options.directory != null
-				? new LevelDatastore(path.join(options.directory, "/libp2p").toString())
+			options["directory"] != null
+				? new LevelDatastore(
+						path.join(options["directory"], "/libp2p").toString()
+				  )
 				: undefined;
 		if (datastore) {
 			await datastore.open();
@@ -188,11 +180,9 @@ export class Peerbit implements ProgramClient {
 		}
 
 		const directory = options.directory;
-		const cache =
-			options.cache ||
-			(await createCache(
-				directory ? path.join(directory, "/cache") : undefined
-			));
+		const memory = await createCache(
+			directory ? path.join(directory, "/cache") : undefined
+		);
 
 		const identity = Ed25519Keypair.fromPeerId(libp2pExtended.peerId);
 		const keychain = new Libp2pKeychain(libp2pExtended.keychain, {
@@ -213,7 +203,7 @@ export class Peerbit implements ProgramClient {
 
 		const peer = new Peerbit(libp2pExtended, {
 			directory,
-			cache,
+			memory: memory,
 			libp2pExternal,
 			identity,
 			keychain
@@ -273,7 +263,7 @@ export class Peerbit implements ProgramClient {
 	}
 
 	async start() {
-		await this._cache.open();
+		await this._memory.open();
 
 		if (!this.libp2p.isStarted()) {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
@@ -282,7 +272,7 @@ export class Peerbit implements ProgramClient {
 	}
 	async stop() {
 		await this._handler?.stop();
-		await this._cache.close();
+		await this._memory.close();
 
 		// Close libp2p (after above)
 		if (!this._libp2pExternal) {
@@ -317,6 +307,6 @@ export class Peerbit implements ProgramClient {
 	}
 
 	get memory() {
-		return this._cache;
+		return this._memory;
 	}
 }

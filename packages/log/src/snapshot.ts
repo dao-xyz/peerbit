@@ -11,7 +11,7 @@ import {
 	vec
 } from "@dao-xyz/borsh";
 import { waitForAsync } from "@peerbit/time";
-import LocalStore from "@peerbit/lazy-level";
+import { AnyStore } from "@peerbit/any-store";
 import { logger } from "./logger.js";
 
 @variant(0)
@@ -46,7 +46,7 @@ export class Snapshot {
 export const save = async <T>(
 	snapshotPath: string,
 	blockstore: Blocks,
-	cache: LocalStore,
+	cache: AnyStore,
 	log: {
 		id: Uint8Array;
 		getHeads: () => Promise<string[]>;
@@ -68,7 +68,7 @@ export const save = async <T>(
 	writer.string(snapshot);
 	await cache.put(snapshotPath, writer.finalize());
 
-	await waitForAsync(() => cache.get(snapshotPath).then((bytes) => !!bytes), {
+	await waitForAsync(async () => (await cache.get(snapshotPath)) != null, {
 		delayInterval: 200,
 		timeout: 10 * 1000
 	});
@@ -91,7 +91,7 @@ export const load = async (
 export const loadFromCache = async (
 	path: string,
 	blockstore: Blocks,
-	cache: LocalStore
+	cache: AnyStore
 ) => {
 	const snapshotOrCID = await cache.get(path);
 	if (!snapshotOrCID) {

@@ -1,5 +1,5 @@
 import { Log } from "../log.js";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { EntryType } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -8,7 +8,7 @@ describe("delete", function () {
 	let store: BlockStore;
 
 	beforeEach(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 
@@ -18,7 +18,6 @@ describe("delete", function () {
 
 	const blockExists = async (hash: string): Promise<boolean> => {
 		try {
-			await (store as MemoryLevelBlockStore).idle();
 			return !!(await store.get(hash, { timeout: 3000 }));
 		} catch (error) {
 			return false;

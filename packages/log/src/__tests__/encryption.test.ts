@@ -6,14 +6,9 @@ import {
 	X25519Keypair,
 	X25519PublicKey
 } from "@peerbit/crypto";
-import {
-	BlockStore,
-	LevelBlockStore,
-	MemoryLevelBlockStore
-} from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
-import { Level } from "level";
-import LazyLevel from "@peerbit/lazy-level";
+import { AnyStore, createStore } from "@peerbit/any-store";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
 const last = <T>(arr: T[]): T => {
@@ -53,7 +48,7 @@ describe("encryption", function () {
 		let receiverKey: X25519Keypair;
 
 		beforeEach(async () => {
-			store = new MemoryLevelBlockStore();
+			store = new AnyBlockStore();
 			await store.start();
 
 			const senderKey = await X25519Keypair.create();
@@ -177,7 +172,7 @@ describe("encryption", function () {
 	});
 
 	describe("load", () => {
-		let cache: LazyLevel, level: Level, log: Log<any>;
+		let cache: AnyStore, level: AnyStore, log: Log<any>;
 		afterEach(async () => {
 			await log?.close();
 			await cache?.close();
@@ -186,22 +181,18 @@ describe("encryption", function () {
 		});
 
 		it("loads encrypted entries", async () => {
-			level = new Level(
+			level = createStore(
 				"./tmp/log/encryption/load/loads-encrypted-entries/" + +new Date()
 			);
-			const blocks = level.sublevel<string, Uint8Array>("blocks", {
-				valueEncoding: "view"
-			});
-			store = new LevelBlockStore(blocks);
+			store = new AnyBlockStore(await level.sublevel("blocks"));
 			await store.start();
 
 			const encryptioKey = await X25519Keypair.create();
 			const signingKey = await Ed25519Keypair.create();
 
 			log = new Log();
-			cache = new LazyLevel(
-				level.sublevel<string, Uint8Array>("cache", { valueEncoding: "view" })
-			);
+			cache = await level.sublevel("cache");
+
 			const logOptions = {
 				keychain: createKeychain([signingKey, encryptioKey]),
 				cache,

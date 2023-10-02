@@ -1,11 +1,11 @@
 import { Log } from "../log.js";
-import { MemoryLevelBlockStore } from "@peerbit/blocks";
+import { AnyBlockStore } from "@peerbit/blocks";
 import { signKey } from "./fixtures/privateKey.js";
 
 describe("get-pow-2-refs", function () {
-	let store: MemoryLevelBlockStore;
+	let store: AnyBlockStore;
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 

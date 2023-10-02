@@ -1,6 +1,6 @@
 import assert from "assert";
 import { Log } from "../log.js";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { Entry } from "../entry.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -9,7 +9,7 @@ describe("Iterator", function () {
 	let store: BlockStore;
 
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 

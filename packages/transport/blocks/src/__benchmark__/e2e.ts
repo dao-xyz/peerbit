@@ -4,7 +4,6 @@ import { waitForPeers } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
 import crypto from "crypto";
 import { DirectBlock, stringifyCid } from "../index.js";
-import { createBlock, getBlockValue } from "../block.js";
 import { tcp } from "@libp2p/tcp";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/e2e.ts"

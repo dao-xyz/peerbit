@@ -17,10 +17,10 @@ import { webSockets } from "@libp2p/websockets";
 import { createClient as createClient } from "../client.js";
 import { v4 as uuid } from "uuid";
 import path, { dirname } from "path";
-import { fileURLToPath } from "url";
 import { Trust } from "../trust.js";
 import { getTrustPath } from "../config.js";
 import fs from "fs";
+import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

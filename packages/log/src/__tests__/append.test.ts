@@ -1,6 +1,6 @@
 import { Log } from "../log.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { EntryType } from "../entry.js";
 
 describe("append", function () {
@@ -9,7 +9,6 @@ describe("append", function () {
 
 	const blockExists = async (hash: string): Promise<boolean> => {
 		try {
-			await (store as MemoryLevelBlockStore).idle();
 			return !!(await store.get(hash, { timeout: 3000 }));
 		} catch (error) {
 			return false;
@@ -17,7 +16,7 @@ describe("append", function () {
 	};
 
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		signKey = await Ed25519Keypair.create();
 		await store.start();
 	});

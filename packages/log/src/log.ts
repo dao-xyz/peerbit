@@ -7,7 +7,7 @@ import {
 	X25519Keypair
 } from "@peerbit/crypto";
 import { Cache } from "@peerbit/cache";
-import { SimpleLevel } from "@peerbit/lazy-level";
+import { AnyStore } from "@peerbit/any-store";
 
 import { EntryIndex } from "./entry-index.js";
 import * as LogError from "./log-errors.js";
@@ -46,7 +46,7 @@ export type LogEvents<T> = {
 };
 
 export type MemoryProperties = {
-	cache?: SimpleLevel;
+	cache?: AnyStore;
 };
 
 export type LogProperties<T> = {
@@ -110,7 +110,7 @@ export class Log<T> {
 	private _canAppend?: CanAppend<T>;
 	private _onChange?: (change: Change<T>) => void;
 	private _closed = true;
-	private _memory?: SimpleLevel;
+	private _memory?: AnyStore;
 	private _joining: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 
 	constructor(properties?: { id?: Uint8Array }) {
@@ -276,7 +276,7 @@ export class Log<T> {
 		return this._headsIndex;
 	}
 
-	get memory(): SimpleLevel | undefined {
+	get memory(): AnyStore | undefined {
 		return this._memory;
 	}
 

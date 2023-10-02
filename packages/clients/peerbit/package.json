@@ -35,7 +35,7 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.8",
-		"@peerbit/lazy-level": "1.2.1",
+		"@peerbit/any-store": "^0.0.1",
 		"@peerbit/crypto": "1.0.10",
 		"@peerbit/logger": "1.0.1",
 		"@peerbit/program": "2.4.2",

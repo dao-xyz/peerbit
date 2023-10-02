@@ -1,4 +1,4 @@
-import { BlockStore } from "./store.js";
+import { BlockStore } from "./interface.js";
 import { Blocks as IBlocks } from "@peerbit/blocks-interface";
 import {
 	stringifyCid,
@@ -14,10 +14,10 @@ import { DirectStream } from "@peerbit/stream";
 import * as Block from "multiformats/block";
 import { PublicSignKey } from "@peerbit/crypto";
 import { DirectStreamComponents } from "@peerbit/stream";
-import { LevelBlockStore, MemoryLevelBlockStore } from "./level.js";
-import { Level } from "level";
+import { AnyBlockStore } from "./any-blockstore.js";
 import { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
+import { createStore } from "@peerbit/any-store";
 
 export class BlockMessage {}
 
@@ -79,10 +79,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		this._loadFetchQueue = new PQueue({
 			concurrency: options?.messageProcessingConcurrency || 10
 		});
-		this._localStore =
-			options?.directory != null
-				? new LevelBlockStore(new Level(options.directory))
-				: new MemoryLevelBlockStore();
+		this._localStore = new AnyBlockStore(createStore(options?.directory));
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
 		this._responseHandler = async (evt: CustomEvent<DataMessage>) => {

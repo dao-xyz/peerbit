@@ -2,9 +2,9 @@ import assert from "assert";
 import { Entry, EntryType } from "../entry.js";
 import { Log } from "../log.js";
 import { compare } from "@peerbit/uint8arrays";
-import { TestSession, createStore } from "@peerbit/test-utils";
+import { TestSession } from "@peerbit/test-utils";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import LazyLevel from "@peerbit/lazy-level";
+import { createStore } from "@peerbit/any-store";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -58,7 +58,7 @@ describe("join", function () {
 			log1 = new Log<Uint8Array>();
 			await log1.open(session.peers[0].services.blocks, signKey, logOptions);
 			log2 = new Log<Uint8Array>();
-			let log2Cache = new LazyLevel(createStore());
+			let log2Cache = createStore();
 			await log2Cache.open();
 			await log2.open(session.peers[1].services.blocks, signKey2, {
 				...logOptions,

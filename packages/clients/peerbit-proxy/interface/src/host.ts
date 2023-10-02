@@ -1,4 +1,4 @@
-import { SimpleLevel } from "@peerbit/lazy-level";
+import { AnyStore } from "@peerbit/any-store";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
@@ -20,7 +20,7 @@ import { serialize, deserialize } from "@dao-xyz/borsh";
 const levelKey = (level: string[]) => JSON.stringify(level);
 
 export class PeerbitProxyHost implements ProgramClient {
-	private _levels: Map<string, SimpleLevel>;
+	private _levels: Map<string, AnyStore>;
 	private _eventListenerSubscribeCounter: Map<
 		string,
 		Map<string, { counter: number; fn: (event: any) => void }>
@@ -68,7 +68,7 @@ export class PeerbitProxyHost implements ProgramClient {
 		return this.hostClient.keychain;
 	}
 
-	get memory(): SimpleLevel {
+	get memory(): AnyStore {
 		return this.hostClient.memory;
 	}
 
@@ -151,107 +151,121 @@ export class PeerbitProxyHost implements ProgramClient {
 					from
 				);
 			} else if (message instanceof memory.MemoryMessage) {
+				const request = message.message as memory.api.MemoryMessage;
 				const m =
-					message.level.length === 0
+					request.level.length === 0
 						? this.memory
-						: this._levels.get(levelKey(message.level));
+						: this._levels.get(levelKey(request.level));
 				if (!m) {
 					throw new Error("Recieved memory message for an undefined level");
-				} else if (message instanceof memory.REQ_Clear) {
+				} else if (request instanceof memory.api.REQ_Clear) {
 					await m.clear();
 					await this.respond(
 						message,
-						new memory.RESP_Clear({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Clear({ level: request.level })
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Close) {
+				} else if (request instanceof memory.api.REQ_Close) {
 					await m.close();
 					await this.respond(
 						message,
-						new memory.RESP_Close({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Close({ level: request.level })
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Del) {
-					await m.del(message.key);
+				} else if (request instanceof memory.api.REQ_Del) {
+					await m.del(request.key);
 					await this.respond(
 						message,
-						new memory.RESP_Del({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Del({ level: request.level })
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Iterator_Next) {
-					let iterator = this._memoryIterator.get(message.id);
+				} else if (request instanceof memory.api.REQ_Iterator_Next) {
+					let iterator = this._memoryIterator.get(request.id);
 					if (!iterator) {
 						iterator = m.iterator()[Symbol.asyncIterator]();
-						this._memoryIterator.set(message.id, iterator);
+						this._memoryIterator.set(request.id, iterator);
 					}
 					const next = await iterator.next();
 					await this.respond(
 						message,
-						new memory.RESP_Iterator_Next({
-							keys: next.done ? [] : [next.value[0]],
-							values: next.done ? [] : [next.value[1]],
-							level: message.level
-						}),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Iterator_Next({
+								keys: next.done ? [] : [next.value[0]],
+								values: next.done ? [] : [next.value[1]],
+								level: request.level
+							})
+						),
 						from
 					);
 					if (next.done) {
-						this._memoryIterator.delete(message.id);
+						this._memoryIterator.delete(request.id);
 					}
-				} else if (message instanceof memory.REQ_Iterator_Stop) {
-					this._memoryIterator.delete(message.id);
+				} else if (request instanceof memory.api.REQ_Iterator_Stop) {
+					this._memoryIterator.delete(request.id);
 					await this.respond(
 						message,
-						new memory.RESP_Iterator_Stop({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Iterator_Stop({ level: request.level })
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Get) {
+				} else if (request instanceof memory.api.REQ_Get) {
 					await this.respond(
 						message,
-						new memory.RESP_Get({
-							bytes: await m.get(message.key),
-							level: message.level
-						}),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Get({
+								bytes: await m.get(request.key),
+								level: request.level
+							})
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Idle) {
-					await m.idle?.();
-					await this.respond(
-						message,
-						new memory.RESP_Idle({ level: message.level }),
-						from
-					);
-				} else if (message instanceof memory.REQ_Open) {
+				} else if (request instanceof memory.api.REQ_Open) {
 					await m.open();
 					await this.respond(
 						message,
-						new memory.RESP_Open({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Open({ level: request.level })
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Put) {
-					await m.put(message.key, message.bytes);
+				} else if (request instanceof memory.api.REQ_Put) {
+					await m.put(request.key, request.bytes);
 					await this.respond(
 						message,
-						new memory.RESP_Put({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Put({ level: request.level })
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Status) {
+				} else if (request instanceof memory.api.REQ_Status) {
 					await this.respond(
 						message,
-						new memory.RESP_Status({
-							status: await m.status(),
-							level: message.level
-						}),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Status({
+								status: await m.status(),
+								level: request.level
+							})
+						),
 						from
 					);
-				} else if (message instanceof memory.REQ_Sublevel) {
-					const sublevel = await m.sublevel(message.name);
+				} else if (request instanceof memory.api.REQ_Sublevel) {
+					const sublevel = await m.sublevel(request.name);
 					this._levels.set(
-						levelKey([...message.level, message.name]),
+						levelKey([...request.level, request.name]),
 						sublevel
 					);
 					await this.respond(
 						message,
-						new memory.RESP_Sublevel({ level: message.level }),
+						new memory.MemoryMessage(
+							new memory.api.RESP_Sublevel({ level: request.level })
+						),
 						from
 					);
 				}

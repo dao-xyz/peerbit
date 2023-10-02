@@ -4,7 +4,7 @@ import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Ed25519PublicKey, X25519Keypair } from "@peerbit/crypto";
 import sodium from "libsodium-wrappers";
 import { LamportClock, Timestamp } from "../clock.js";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 
 import { sha256Base64Sync } from "@peerbit/crypto";
 import { signKey } from "./fixtures/privateKey.js";
@@ -15,7 +15,7 @@ describe("entry", function () {
 
 	beforeAll(async () => {
 		await sodium.ready;
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 

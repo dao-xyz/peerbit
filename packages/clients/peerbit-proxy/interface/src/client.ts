@@ -1,4 +1,4 @@
-import { SimpleLevel } from "@peerbit/lazy-level";
+import { AnyStore } from "@peerbit/any-store";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
@@ -67,17 +67,25 @@ function memoryIterator(
 			const iteratorId = uuid();
 			return {
 				next: async () => {
-					const resp = await client.request<memory.RESP_Iterator_Next>(
-						new memory.REQ_Iterator_Next({ id: iteratorId, level })
+					const resp = await client.request<
+						memory.MemoryMessage<memory.api.RESP_Iterator_Next>
+					>(
+						new memory.MemoryMessage(
+							new memory.api.REQ_Iterator_Next({ id: iteratorId, level })
+						)
 					);
-					if (resp.keys.length > 1) {
+					if (resp.message.keys.length > 1) {
 						throw new Error("Unsupported iteration response");
 					}
+
 					// Will only have 0 or 1 element for now
-					for (let i = 0; i < resp.keys.length; i++) {
+					for (let i = 0; i < resp.message.keys.length; i++) {
 						return {
 							done: false,
-							value: [resp.keys[i], resp.values[i]] as [string, Uint8Array]
+							value: [resp.message.keys[i], resp.message.values[i]] as [
+								string,
+								Uint8Array
+							]
 						} as { done: false; value: [string, Uint8Array] };
 					}
 					return { done: true, value: undefined } as {
@@ -86,8 +94,12 @@ function memoryIterator(
 					};
 				},
 				async return() {
-					await client.request<memory.RESP_Iterator_Next>(
-						new memory.REQ_Iterator_Stop({ id: iteratorId, level })
+					await client.request<
+						memory.MemoryMessage<memory.api.RESP_Iterator_Next>
+					>(
+						new memory.MemoryMessage(
+							new memory.api.REQ_Iterator_Stop({ id: iteratorId, level })
+						)
 					);
 					return { done: true, value: undefined } as {
 						done: true;
@@ -106,7 +118,7 @@ export class PeerbitProxyClient implements ProgramClient {
 	private _multiaddr: Multiaddr[];
 	private _services: { pubsub: PubSub; blocks: Blocks };
 	private _keychain: Keychain;
-	private _memory: SimpleLevel;
+	private _memory: AnyStore;
 	private _handler: ProgramHandler;
 
 	constructor(readonly messages: connection.Node) {
@@ -276,59 +288,62 @@ export class PeerbitProxyClient implements ProgramClient {
 				);
 			}
 		};
-		const levelMap: Map<string, SimpleLevel> = new Map();
-		const createMemory = (level: string[] = []): SimpleLevel => {
+		const levelMap: Map<string, AnyStore> = new Map();
+		const createMemory = (level: string[] = []): AnyStore => {
 			return {
 				clear: async () => {
-					await this.request<memory.RESP_Clear>(
-						new memory.REQ_Clear({ level })
+					await this.request<memory.MemoryMessage<memory.api.RESP_Clear>>(
+						new memory.MemoryMessage(new memory.api.REQ_Clear({ level }))
 					);
 				},
 				del: async (key) => {
-					await this.request<memory.RESP_Del>(
-						new memory.REQ_Del({ level, key })
+					await this.request<memory.MemoryMessage<memory.api.RESP_Del>>(
+						new memory.MemoryMessage(new memory.api.REQ_Del({ level, key }))
 					);
 				},
 				get: async (key) => {
 					return (
-						await this.request<memory.RESP_Get>(
-							new memory.REQ_Get({ level, key })
+						await this.request<memory.MemoryMessage<memory.api.RESP_Get>>(
+							new memory.MemoryMessage(new memory.api.REQ_Get({ level, key }))
 						)
-					).bytes;
+					).message.bytes;
 				},
 				put: async (key, value) => {
-					await this.request<memory.RESP_Put>(
-						new memory.REQ_Put({ level, key, bytes: value })
+					await this.request<memory.MemoryMessage<memory.api.RESP_Put>>(
+						new memory.MemoryMessage(
+							new memory.api.REQ_Put({ level, key, bytes: value })
+						)
 					);
 				},
 				status: async () =>
 					(
-						await this.request<memory.RESP_Status>(
-							new memory.REQ_Status({ level })
+						await this.request<memory.MemoryMessage<memory.api.RESP_Status>>(
+							new memory.MemoryMessage(new memory.api.REQ_Status({ level }))
 						)
-					).status,
+					).message.status,
 				sublevel: async (name) => {
-					await this.request<memory.RESP_Sublevel>(
-						new memory.REQ_Sublevel({ level, name })
+					await this.request<memory.MemoryMessage<memory.api.RESP_Sublevel>>(
+						new memory.MemoryMessage(
+							new memory.api.REQ_Sublevel({ level, name })
+						)
 					);
 					const newLevels = [...level, name];
 					const sublevel = createMemory(newLevels);
 					levelMap.set(levelKey(newLevels), sublevel);
 					return sublevel;
 				},
-				idle: async () => {
-					await this.request<memory.RESP_Idle>(new memory.REQ_Idle({ level }));
-				},
 
 				iterator: () => memoryIterator(this, level),
 				close: async () => {
-					await this.request<memory.RESP_Close>(
-						new memory.REQ_Close({ level })
+					await this.request<memory.MemoryMessage<memory.api.RESP_Close>>(
+						new memory.MemoryMessage(new memory.api.REQ_Close({ level }))
 					);
 					levelMap.delete(levelKey(level));
 				},
 				open: async () => {
-					await this.request<memory.RESP_Open>(new memory.REQ_Open({ level }));
+					await this.request<memory.MemoryMessage<memory.api.RESP_Open>>(
+						new memory.MemoryMessage(new memory.api.REQ_Open({ level }))
+					);
 				}
 			};
 		};
@@ -376,7 +391,7 @@ export class PeerbitProxyClient implements ProgramClient {
 		return this._keychain;
 	}
 
-	get memory(): SimpleLevel {
+	get memory(): AnyStore {
 		return this._memory;
 	}
 

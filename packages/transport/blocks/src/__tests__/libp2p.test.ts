@@ -113,12 +113,12 @@ describe("transport", function () {
 
 	/* it('can handle conurrent read/write', async () => {
 		store = new Blocks(
-			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+			new LibP2PBlockStore(session.peers[0], new AnyBlockStore())
 		);
 		await sx(session,0).start();
 	
 		sx(session,1) = new Blocks(
-			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+			new LibP2PBlockStore(session.peers[1], new AnyBlockStore())
 		);
 		await sx(session,1).start();
 		await session.connect();
@@ -147,12 +147,12 @@ describe("transport", function () {
 	})
 	it("large", async () => {
 		store = new Blocks(
-			new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+			new LibP2PBlockStore(session.peers[0], new AnyBlockStore())
 		);
 		await sx(session,0).start();
 	
 		sx(session,1) = new Blocks(
-			new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+			new LibP2PBlockStore(session.peers[1], new AnyBlockStore())
 		);
 		await sx(session,1).start();
 		await session.connect();
@@ -194,12 +194,12 @@ describe("transport", function () {
 	
 		it("small", async () => {
 			store = new Blocks(
-				new LibP2PBlockStore(session.peers[0], new MemoryLevelBlockStore())
+				new LibP2PBlockStore(session.peers[0], new AnyBlockStore())
 			);
 			await sx(session,0).start();
 	
 			sx(session,1) = new Blocks(
-				new LibP2PBlockStore(session.peers[1], new MemoryLevelBlockStore())
+				new LibP2PBlockStore(session.peers[1], new AnyBlockStore())
 			);
 	
 			await sx(session,1).start();

@@ -1,12 +1,12 @@
 import { Log } from "../log.js";
-import { MemoryLevelBlockStore } from "@peerbit/blocks";
+import { AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("crdt", function () {
-	let store: MemoryLevelBlockStore;
+	let store: AnyBlockStore;
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 

@@ -12,11 +12,7 @@ const FirstWriteWins = (a: any, b: any) => LastWriteWins(a, b) * -1;
 const BadComparatorReturnsZero = (a: any, b: any) => 0;
 
 import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
-import {
-	BlockStore,
-	MemoryLevelBlockStore,
-	StoreStatus
-} from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore, StoreStatus } from "@peerbit/blocks";
 import { Blocks, GetOptions, PutOptions } from "@peerbit/blocks-interface";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -112,7 +108,7 @@ describe("from", function () {
 		signKey2 = signKeys[1];
 		signKey3 = signKeys[2];
 		signKey4 = signKeys[3];
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 

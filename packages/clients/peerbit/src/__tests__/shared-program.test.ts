@@ -1,4 +1,4 @@
-import { Program, ProgramClient } from "@peerbit/program";
+import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
 import { Peerbit } from "../peer.js";
 

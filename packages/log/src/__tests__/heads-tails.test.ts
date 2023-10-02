@@ -1,10 +1,9 @@
 import assert from "assert";
 import { Log } from "../log.js";
-import { BlockStore, MemoryLevelBlockStore } from "@peerbit/blocks";
+import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey3, signKey4 } from "./fixtures/privateKey.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import LazyLevel from "@peerbit/lazy-level";
-import { createStore } from "@peerbit/test-utils";
+import { createStore } from "@peerbit/any-store";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -23,7 +22,7 @@ const createEvents = async (
 		cacheUpdates: 0,
 		gidsRemoved: []
 	};
-	const cache = new LazyLevel(await createStore());
+	const cache = createStore();
 	await log.open(store, signKey, {
 		cache,
 		onGidRemoved: (gids) => {
@@ -55,7 +54,7 @@ describe("head-tails", function () {
 		log4: Log<Uint8Array>;
 
 	beforeAll(async () => {
-		store = new MemoryLevelBlockStore();
+		store = new AnyBlockStore();
 		await store.start();
 	});
 
