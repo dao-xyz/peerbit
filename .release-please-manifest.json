@@ -6,7 +6,6 @@
     "packages/utils/crypto": "1.0.10",
     "packages/programs/data/document": "3.2.0",
     "packages/programs/acl/identity-access-controller": "2.0.21",
-    "packages/utils/lazy-level": "1.2.1",
     "packages/transport/libp2p-test-utils": "1.0.8",
     "packages/log": "2.1.10",
     "packages/utils/logger": "1.0.1",
