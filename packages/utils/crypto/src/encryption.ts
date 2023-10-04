@@ -27,7 +27,10 @@ export abstract class MaybeEncrypted<T> {
 	}
 
 	decrypt(
-		keyOrKeychain?: Keychain | X25519Keypair
+		keyOrKeychain?:
+			| Keychain
+			| X25519Keypair
+			| Uint8Array /* Comment: The last is added */
 	): Promise<DecryptedThing<T>> | DecryptedThing<T> {
 		throw new Error("Not implemented");
 	}
@@ -43,6 +46,24 @@ export abstract class MaybeEncrypted<T> {
 	}
 
 	abstract get byteLength(): number;
+}
+
+type EncryptAsymmetricParameters = {
+	x25519Keypair: X25519Keypair;
+	receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[];
+};
+
+type EncryptSymmetricParameters = { symmetricKey: Uint8Array };
+
+type EncryptReturnValue<Parameters, T> =
+	Parameters extends EncryptSymmetricParameters
+		? EncryptedSymmetricThing<T>
+		: EncryptedThing<T>;
+
+function isEncryptSymmetricParameters(
+	parameters: EncryptSymmetricParameters | EncryptAsymmetricParameters
+): parameters is EncryptSymmetricParameters {
+	return (parameters as EncryptSymmetricParameters).symmetricKey !== undefined;
 }
 
 @variant(0)
@@ -69,50 +90,67 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 		return deserialize(this._data, clazz);
 	}
 
-	async encrypt(
-		x25519Keypair: X25519Keypair,
-		...receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
-	): Promise<EncryptedThing<T>> {
+	async encrypt<
+		Parameters extends EncryptAsymmetricParameters | EncryptSymmetricParameters
+	>(
+		parameters: EncryptAsymmetricParameters | EncryptSymmetricParameters
+		/* Comment: instead of 
+        x25519Keypair: X25519Keypair,
+		...receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[] */
+	): Promise<
+		EncryptReturnValue<Parameters, T>
+	> /* Comment: instead of Promise<EncryptedThing<T>> */ {
 		const bytes = serialize(this);
-		const epheremalKey = sodium.crypto_secretbox_keygen();
+		const epheremalKey = isEncryptSymmetricParameters(parameters)
+			? parameters.symmetricKey
+			: sodium.crypto_secretbox_keygen();
+		/* Comment: instead of const epheremalKey = sodium.crypto_secretbox_keygen(); */
 		const nonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
 		const cipher = sodium.crypto_secretbox_easy(bytes, nonce, epheremalKey);
 
-		const receiverX25519PublicKeys = await Promise.all(
-			receiverPublicKeys.map((key) => {
-				if (key instanceof Ed25519PublicKey) {
-					return X25519PublicKey.from(key);
-				}
-				return key;
-			})
-		);
+		if (!isEncryptSymmetricParameters(parameters)) {
+			const { receiverPublicKeys, x25519Keypair } = parameters;
+			const receiverX25519PublicKeys = await Promise.all(
+				receiverPublicKeys.map((key) => {
+					if (key instanceof Ed25519PublicKey) {
+						return X25519PublicKey.from(key);
+					}
+					return key;
+				})
+			);
 
-		const ks = receiverX25519PublicKeys.map((receiverPublicKey) => {
-			const kNonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
-			return new K({
-				encryptedKey: new CipherWithNonce({
-					cipher: sodium.crypto_box_easy(
-						epheremalKey,
-						kNonce,
-						receiverPublicKey.publicKey,
-						x25519Keypair.secretKey.secretKey
-					),
-					nonce: kNonce
-				}),
-				receiverPublicKey
+			const ks = receiverX25519PublicKeys.map((receiverPublicKey) => {
+				const kNonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodium random
+				return new K({
+					encryptedKey: new CipherWithNonce({
+						cipher: sodium.crypto_box_easy(
+							epheremalKey,
+							kNonce,
+							receiverPublicKey.publicKey,
+							x25519Keypair.secretKey.secretKey
+						),
+						nonce: kNonce
+					}),
+					receiverPublicKey
+				});
 			});
-		});
-
-		const enc = new EncryptedThing<T>({
+			const enc = new EncryptedThing<T>({
+				encrypted: new Uint8Array(cipher),
+				nonce,
+				envelope: new Envelope({
+					senderPublicKey: x25519Keypair.publicKey,
+					ks
+				})
+			});
+			enc._decrypted = this;
+			return enc as EncryptReturnValue<Parameters, T>;
+		}
+		const enc = new EncryptedSymmetricThing<T>({
 			encrypted: new Uint8Array(cipher),
-			nonce,
-			envelope: new Envelope({
-				senderPublicKey: x25519Keypair.publicKey,
-				ks
-			})
+			nonce
 		});
 		enc._decrypted = this;
-		return enc;
+		return enc as EncryptReturnValue<Parameters, T>;
 	}
 
 	get decrypted(): DecryptedThing<T> {
@@ -360,6 +398,141 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 			if (!this._envelope.equals(other._envelope)) {
 				return false;
 			}
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	clear() {
+		this._decrypted = undefined;
+	}
+
+	get byteLength() {
+		return this._encrypted.byteLength; // ignore other metdata for now in the size calculation
+	}
+}
+
+@variant(2)
+export class EncryptedSymmetricThing<T> extends MaybeEncrypted<T> {
+	@field({ type: Uint8Array })
+	_encrypted: Uint8Array;
+
+	@field({ type: Uint8Array })
+	_nonce: Uint8Array;
+
+	constructor(props?: { encrypted: Uint8Array; nonce: Uint8Array }) {
+		super();
+		if (props) {
+			this._encrypted = props.encrypted;
+			this._nonce = props.nonce;
+		}
+	}
+
+	_decrypted?: DecryptedThing<T>;
+	get decrypted(): DecryptedThing<T> {
+		if (!this._decrypted) {
+			throw new Error(
+				"Entry has not been decrypted, invoke decrypt method before"
+			);
+		}
+		return this._decrypted;
+	}
+
+	async decrypt(
+		keyResolver?: Uint8Array /* Comment: instead of Keychain | X25519Keypair */
+	): Promise<DecryptedThing<T>> {
+		if (this._decrypted) {
+			return this._decrypted;
+		}
+
+		if (!keyResolver) {
+			throw new AccessError("Expecting key resolver");
+		}
+		/* 
+		// We only need to open with one of the keys
+		let key: { index: number; keypair: X25519Keypair } | undefined;
+		if (keyResolver instanceof X25519Keypair) {
+			for (const [i, k] of this._envelope._ks.entries()) {
+				if (k._receiverPublicKey.equals(keyResolver.publicKey)) {
+					key = {
+						index: i,
+						keypair: keyResolver
+					};
+				}
+			}
+		} else {
+			for (const [i, k] of this._envelope._ks.entries()) {
+				const exported = await keyResolver.exportByKey(k._receiverPublicKey);
+				if (exported) {
+					key = {
+						index: i,
+						keypair: exported
+					};
+					break;
+				}
+			}
+		} */
+
+		/* if (key) {
+			const k = this._envelope._ks[key.index];
+			let secretKey: X25519SecretKey = undefined as any;
+			if (key.keypair instanceof X25519Keypair) {
+				secretKey = key.keypair.secretKey;
+			} else {
+				secretKey = await X25519SecretKey.from(key.keypair);
+			}
+			let epheremalKey: Uint8Array;
+			try {
+				epheremalKey = sodium.crypto_box_open_easy(
+					k._encryptedKey.cipher,
+					k._encryptedKey.nonce,
+					this._envelope._senderPublicKey.publicKey,
+					secretKey.secretKey
+				);
+			} catch (error) {
+				throw new AccessError('Failed to decrypt');
+			} */
+
+		// TODO: is nested decryption necessary?
+		/*  let der: any = this;
+			 let counter = 0;
+			 while (der instanceof EncryptedThing) {
+				 const decrypted = await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey);
+				 der = deserialize(decrypted, DecryptedThing)
+				 counter += 1;
+				 if (counter >= 10) {
+					 throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
+				 }
+			 } */
+
+		const der = deserialize(
+			sodium.crypto_secretbox_open_easy(
+				this._encrypted,
+				this._nonce,
+				keyResolver /* Comment: instead of epheremalKey */
+			),
+			DecryptedThing
+		);
+		this._decrypted = der as DecryptedThing<T>;
+		/* } else {
+			throw new AccessError('Failed to resolve decryption key');
+		} */
+		return this._decrypted;
+	}
+
+	equals(other: MaybeEncrypted<T>): boolean {
+		if (other instanceof EncryptedSymmetricThing) {
+			if (!equals(this._encrypted, other._encrypted)) {
+				return false;
+			}
+			if (!equals(this._nonce, other._nonce)) {
+				return false;
+			}
+			/* 
+			if (!this._envelope.equals(other._envelope)) {
+				return false;
+			} */
 			return true;
 		} else {
 			return false;
