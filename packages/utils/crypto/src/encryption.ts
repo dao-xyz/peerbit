@@ -5,7 +5,8 @@ import {
 	field,
 	serialize,
 	variant,
-	vec
+	vec,
+	fixedArray
 } from "@dao-xyz/borsh";
 import { equals } from "@peerbit/uint8arrays";
 import { AccessError } from "./errors.js";
@@ -14,6 +15,8 @@ import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import { randomBytes } from "./random.js";
 import { Keychain } from "./keychain.js";
+import { sha256 } from "./hash.js";
+import { Aes256Key } from "./aes256.js";
 
 const NONCE_LENGTH = 24;
 
@@ -30,7 +33,7 @@ export abstract class MaybeEncrypted<T> {
 		keyOrKeychain?:
 			| Keychain
 			| X25519Keypair
-			| Uint8Array /* Comment: The last is added */
+			| Aes256Key /* Comment: The last is added */
 	): Promise<DecryptedThing<T>> | DecryptedThing<T> {
 		throw new Error("Not implemented");
 	}
@@ -93,7 +96,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 	async encrypt<
 		Parameters extends EncryptAsymmetricParameters | EncryptSymmetricParameters
 	>(
-		parameters: EncryptAsymmetricParameters | EncryptSymmetricParameters
+		parameters: Parameters
 		/* Comment: instead of 
         x25519Keypair: X25519Keypair,
 		...receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[] */
@@ -137,7 +140,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 			const enc = new EncryptedThing<T>({
 				encrypted: new Uint8Array(cipher),
 				nonce,
-				envelope: new Envelope({
+				envelope: new PublicKeyEnvelope({
 					senderPublicKey: x25519Keypair.publicKey,
 					ks
 				})
@@ -147,7 +150,10 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 		}
 		const enc = new EncryptedSymmetricThing<T>({
 			encrypted: new Uint8Array(cipher),
-			nonce
+			nonce,
+			envelope: new HashedKeyEnvelope({
+				hash: await sha256(parameters.symmetricKey)
+			})
 		});
 		enc._decrypted = this;
 		return enc as EncryptReturnValue<Parameters, T>;
@@ -234,8 +240,10 @@ export class K {
 	}
 }
 
+abstract class AbstractEnvelope {}
+
 @variant(0)
-export class Envelope {
+class PublicKeyEnvelope extends AbstractEnvelope {
 	@field({ type: X25519PublicKey })
 	_senderPublicKey: X25519PublicKey;
 
@@ -243,14 +251,16 @@ export class Envelope {
 	_ks: K[];
 
 	constructor(props?: { senderPublicKey: X25519PublicKey; ks: K[] }) {
+		super();
 		if (props) {
 			this._senderPublicKey = props.senderPublicKey;
 			this._ks = props.ks;
 		}
 	}
 
-	equals(other: Envelope): boolean {
-		if (other instanceof Envelope) {
+	// TODO: should this be comparable to AbstractEnvelope?
+	equals(other: PublicKeyEnvelope): boolean {
+		if (other instanceof PublicKeyEnvelope) {
 			if (!this._senderPublicKey.equals(other._senderPublicKey)) {
 				return false;
 			}
@@ -271,6 +281,31 @@ export class Envelope {
 }
 
 @variant(1)
+class HashedKeyEnvelope extends AbstractEnvelope {
+	@field({ type: fixedArray("u8", 32) })
+	hash: Uint8Array;
+	// TODO: Do we need a salt here?
+	constructor(props?: { hash: Uint8Array }) {
+		super();
+		if (props) {
+			this.hash = props.hash;
+		}
+	}
+
+	// TODO: should this be comparable to AbstractEnvelope?
+	equals(other: HashedKeyEnvelope): boolean {
+		if (other instanceof HashedKeyEnvelope) {
+			if (!equals(this.hash, other.hash)) {
+				return false;
+			}
+			return true;
+		} else {
+			return false;
+		}
+	}
+}
+
+@variant(1)
 export class EncryptedThing<T> extends MaybeEncrypted<T> {
 	@field({ type: Uint8Array })
 	_encrypted: Uint8Array;
@@ -278,13 +313,13 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 	@field({ type: Uint8Array })
 	_nonce: Uint8Array;
 
-	@field({ type: Envelope })
-	_envelope: Envelope;
+	@field({ type: PublicKeyEnvelope })
+	_envelope: PublicKeyEnvelope;
 
 	constructor(props?: {
 		encrypted: Uint8Array;
 		nonce: Uint8Array;
-		envelope: Envelope;
+		envelope: PublicKeyEnvelope;
 	}) {
 		super();
 		if (props) {
@@ -421,11 +456,19 @@ export class EncryptedSymmetricThing<T> extends MaybeEncrypted<T> {
 	@field({ type: Uint8Array })
 	_nonce: Uint8Array;
 
-	constructor(props?: { encrypted: Uint8Array; nonce: Uint8Array }) {
+	@field({ type: HashedKeyEnvelope })
+	_envelope: HashedKeyEnvelope;
+
+	constructor(props?: {
+		encrypted: Uint8Array;
+		nonce: Uint8Array;
+		envelope: HashedKeyEnvelope;
+	}) {
 		super();
 		if (props) {
 			this._encrypted = props.encrypted;
 			this._nonce = props.nonce;
+			this._envelope = props.envelope;
 		}
 	}
 
@@ -440,7 +483,7 @@ export class EncryptedSymmetricThing<T> extends MaybeEncrypted<T> {
 	}
 
 	async decrypt(
-		keyResolver?: Uint8Array /* Comment: instead of Keychain | X25519Keypair */
+		keyResolver?: Aes256Key /* Comment: instead of Keychain | X25519Keypair */
 	): Promise<DecryptedThing<T>> {
 		if (this._decrypted) {
 			return this._decrypted;
@@ -449,68 +492,14 @@ export class EncryptedSymmetricThing<T> extends MaybeEncrypted<T> {
 		if (!keyResolver) {
 			throw new AccessError("Expecting key resolver");
 		}
-		/* 
-		// We only need to open with one of the keys
-		let key: { index: number; keypair: X25519Keypair } | undefined;
-		if (keyResolver instanceof X25519Keypair) {
-			for (const [i, k] of this._envelope._ks.entries()) {
-				if (k._receiverPublicKey.equals(keyResolver.publicKey)) {
-					key = {
-						index: i,
-						keypair: keyResolver
-					};
-				}
-			}
-		} else {
-			for (const [i, k] of this._envelope._ks.entries()) {
-				const exported = await keyResolver.exportByKey(k._receiverPublicKey);
-				if (exported) {
-					key = {
-						index: i,
-						keypair: exported
-					};
-					break;
-				}
-			}
-		} */
 
-		/* if (key) {
-			const k = this._envelope._ks[key.index];
-			let secretKey: X25519SecretKey = undefined as any;
-			if (key.keypair instanceof X25519Keypair) {
-				secretKey = key.keypair.secretKey;
-			} else {
-				secretKey = await X25519SecretKey.from(key.keypair);
-			}
-			let epheremalKey: Uint8Array;
-			try {
-				epheremalKey = sodium.crypto_box_open_easy(
-					k._encryptedKey.cipher,
-					k._encryptedKey.nonce,
-					this._envelope._senderPublicKey.publicKey,
-					secretKey.secretKey
-				);
-			} catch (error) {
-				throw new AccessError('Failed to decrypt');
-			} */
-
-		// TODO: is nested decryption necessary?
-		/*  let der: any = this;
-			 let counter = 0;
-			 while (der instanceof EncryptedThing) {
-				 const decrypted = await sodium.crypto_secretbox_open_easy(this._encrypted, this._nonce, epheremalKey);
-				 der = deserialize(decrypted, DecryptedThing)
-				 counter += 1;
-				 if (counter >= 10) {
-					 throw new Error("Unexpected decryption behaviour, data seems to always be in encrypted state")
-				 }
-			 } */
+		/* Comment: Should we add a test for the question "Can we decrypt?" */
 
 		const der = deserialize(
 			sodium.crypto_secretbox_open_easy(
 				this._encrypted,
 				this._nonce,
-				keyResolver /* Comment: instead of epheremalKey */
+				keyResolver.bytes /* Comment: instead of epheremalKey */
 			),
 			DecryptedThing
 		);
@@ -529,10 +518,10 @@ export class EncryptedSymmetricThing<T> extends MaybeEncrypted<T> {
 			if (!equals(this._nonce, other._nonce)) {
 				return false;
 			}
-			/* 
+
 			if (!this._envelope.equals(other._envelope)) {
 				return false;
-			} */
+			}
 			return true;
 		} else {
 			return false;
