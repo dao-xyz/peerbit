@@ -319,7 +319,7 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 	constructor(props?: {
 		encrypted: Uint8Array;
 		nonce: Uint8Array;
-		envelope: PublicKeyEnvelope;
+		envelope: PublicKeyEnvelope | HashedKeyEnvelope;
 	}) {
 		super();
 		if (props) {
