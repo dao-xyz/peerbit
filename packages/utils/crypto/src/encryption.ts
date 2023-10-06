@@ -313,13 +313,13 @@ export class EncryptedThing<T> extends MaybeEncrypted<T> {
 	@field({ type: Uint8Array })
 	_nonce: Uint8Array;
 
-	@field({type: AbstractEnvelope})
-        _envelope: PublicKeyEnvelope | HashedKeyEnvelope
+	@field({ type: AbstractEnvelope })
+	_envelope: PublicKeyEnvelope | HashedKeyEnvelope;
 
 	constructor(props?: {
 		encrypted: Uint8Array;
 		nonce: Uint8Array;
-		envelope: PublicKeyEnvelope | HashedKeyEnvelope;
+		envelope: PublicKeyEnvelope | HashedKeyEnvelope;
 	}) {
 		super();
 		if (props) {
