@@ -3,6 +3,8 @@ import { PlainKey } from "./key";
 import { compare } from "@peerbit/uint8arrays";
 import { toHexString } from "./utils";
 
+import sodium from "libsodium-wrappers";
+
 @variant(0)
 export class Aes256Key extends PlainKey {
 	@field({ type: fixedArray("u8", 32) })
@@ -14,6 +16,16 @@ export class Aes256Key extends PlainKey {
 			throw new Error("Expecting key to have length 32");
 		}
 		this.key = properties.key;
+	}
+
+	static async create(): Promise<Aes256Key> {
+		await sodium.ready;
+		const generated = sodium.crypto_secretbox_keygen();
+		const kp = new Aes256Key({
+			key: generated
+		});
+
+		return kp;
 	}
 
 	equals(other: Aes256Key): boolean {
