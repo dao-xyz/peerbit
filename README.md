@@ -72,6 +72,16 @@ IMPORTANT: Peerbit uses yarn.
 3. Build: `yarn build`
 4. Run tests: `yarn test`
 
+To create a new package, follow the following steps:
+
+1. Clone the time folder within /packages/utils/time to the desired destination and rename it
+2. Update the package.json `name`, `description`, `version` fields
+3. Possibly add other depencencies to the package.json `dependencies` field (like `@peerbit/crypto`)
+4. Delete contents in CHANGELOG.md
+5. Update the root package.json `workspaces.packages` field
+6. Update root lerna.json `workspaces.packages` field
+7. run yarn once in root
+
 We recommend running tests with the VS Code integration though: https://marketplace.visualstudio.com/items?itemName=firsttris.vscode-jest-runner
 
 ## Let's Get Coding!
