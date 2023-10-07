@@ -11,7 +11,6 @@ export * from "./hash.js";
 export * from "./random.js";
 export * from "./prehash.js";
 export * from "./signer.js";
-export * from "./keychain.js";
 import libsodium from "libsodium-wrappers";
 const ready = libsodium.ready; // TODO  can we export ready directly ?
 export { ready };
