@@ -10,11 +10,7 @@ export * from "./hash.js";
 export * from "./random.js";
 export * from "./prehash.js";
 export * from "./signer.js";
-<<<<<<< Updated upstream
-=======
-export * from "./keychain.js";
 export * from "./xsalsa20poly1305.js";
->>>>>>> Stashed changes
 import libsodium from "libsodium-wrappers";
 const ready = libsodium.ready; // TODO  can we export ready directly ?
 export { ready };
