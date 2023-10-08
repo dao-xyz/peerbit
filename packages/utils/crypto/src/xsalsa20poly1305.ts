@@ -6,7 +6,7 @@ import { toHexString } from "./utils";
 import sodium from "libsodium-wrappers";
 
 @variant(0)
-export class Aes256Key extends PlainKey {
+export class XSalsa20Poly1305 extends PlainKey {
 	@field({ type: fixedArray("u8", 32) })
 	key: Uint8Array;
 
@@ -18,23 +18,23 @@ export class Aes256Key extends PlainKey {
 		this.key = properties.key;
 	}
 
-	static async create(): Promise<Aes256Key> {
+	static async create(): Promise<XSalsa20Poly1305> {
 		await sodium.ready;
 		const generated = sodium.crypto_secretbox_keygen();
-		const kp = new Aes256Key({
+		const kp = new XSalsa20Poly1305({
 			key: generated
 		});
 
 		return kp;
 	}
 
-	equals(other: Aes256Key): boolean {
-		if (other instanceof Aes256Key) {
+	equals(other: PlainKey): boolean {
+		if (other instanceof XSalsa20Poly1305) {
 			return compare(this.key, other.key) === 0;
 		}
 		return false;
 	}
 	toString(): string {
-		return "aes256/" + toHexString(this.key);
+		return "xsalsa20poly1305/" + toHexString(this.key);
 	}
 }

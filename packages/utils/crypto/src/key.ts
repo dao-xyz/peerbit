@@ -1,6 +1,8 @@
-import { serialize } from "@dao-xyz/borsh";
+import { field, serialize } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "./hash.js";
 import { PeerId } from "@libp2p/interface/peer-id";
+import { compare } from "@peerbit/uint8arrays";
+import { toHexString } from "./utils";
 
 interface Key {
 	equals(other: Key): boolean;
@@ -20,6 +22,8 @@ export abstract class Keypair {
 	toPeerId(): Promise<PeerId> {
 		throw new Error("Not implemented");
 	}
+
+	// TODO: Should we add not implemented errors for .create and and .from as well?
 }
 
 // ---- SIGNATURE KEYS -----
@@ -76,5 +80,24 @@ export abstract class PlainKey implements Key {
 
 	hashcode(): string {
 		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
+	}
+}
+
+export class ByteKey extends PlainKey {
+	@field({ type: Uint8Array })
+	key: Uint8Array;
+
+	constructor(properties: { key: Uint8Array }) {
+		super();
+		this.key = properties.key;
+	}
+
+	equals(other: ByteKey) {
+		return compare(this.key, other.key) === 0;
+	}
+
+	// TODO: What should be preprended to this string here?
+	toString(): string {
+		return "bytekey/" + toHexString(this.key);
 	}
 }

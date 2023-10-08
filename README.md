@@ -72,6 +72,8 @@ IMPORTANT: Peerbit uses yarn.
 3. Build: `yarn build`
 4. Run tests: `yarn test`
 
+You might possibly need to CMD + Shift + P and then enter to restart the typescript server after the build step.
+
 To create a new package, follow the following steps:
 
 1. Clone the time folder within /packages/utils/time to the desired destination and rename it
