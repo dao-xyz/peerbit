@@ -1,5 +1,10 @@
 import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
-import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
+import {
+	EncryptedKeypair,
+	Keypair,
+	PrivateSignKey,
+	PublicSignKey
+} from "./key.js";
 
 import { Wallet } from "@ethersproject/wallet";
 import { arrayify } from "@ethersproject/bytes";
@@ -19,6 +24,13 @@ import utf8 from "@protobufjs/utf8";
 import { SignatureWithKey } from "./signature.js";
 import { PreHash, prehashFn } from "./prehash.js";
 import { peerIdFromKeys } from "@libp2p/peer-id";
+import {
+	DecryptProvider,
+	DecryptedThing,
+	EncryptProvide,
+	EncryptedThing,
+	KeyExchangeOptions
+} from "./encryption.js";
 
 @variant(1)
 export class Secp256k1PublicKey extends PublicSignKey {
@@ -191,6 +203,53 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 				this.publicKey.publicKey
 			).bytes
 		);
+	}
+
+	async encrypt<Parameters extends KeyExchangeOptions>(
+		provider: EncryptProvide<Parameters>,
+		parameters: Parameters
+	) {
+		const decryptedSecret = new DecryptedThing({ value: this.privateKey });
+		return new EncryptedSecp256k1Keypair({
+			publicKey: this.publicKey,
+			encryptedPrivateKey: await decryptedSecret.encrypt(provider, parameters)
+		});
+	}
+}
+
+@variant(2)
+export class EncryptedSecp256k1Keypair extends EncryptedKeypair {
+	@field({ type: Secp256k1PublicKey })
+	publicKey: Secp256k1PublicKey;
+
+	@field({ type: EncryptedThing<Secp256k1PrivateKey> })
+	encryptedPrivateKey: EncryptedThing<Secp256k1PrivateKey>;
+
+	constructor(properties: {
+		publicKey: Secp256k1PublicKey;
+		encryptedPrivateKey: EncryptedThing<Secp256k1PrivateKey>;
+	}) {
+		super();
+		this.encryptedPrivateKey = properties.encryptedPrivateKey;
+		this.publicKey = properties.publicKey;
+	}
+
+	equals(other: EncryptedKeypair) {
+		if (other instanceof EncryptedSecp256k1Keypair) {
+			return (
+				this.publicKey.equals(other.publicKey) &&
+				this.encryptedPrivateKey.equals(other.encryptedPrivateKey)
+			);
+		}
+		return false;
+	}
+
+	async decrypt(provider: DecryptProvider) {
+		const decryptedThing = await this.encryptedPrivateKey.decrypt(provider);
+		return new Secp256k1Keypair({
+			publicKey: this.publicKey,
+			privateKey: decryptedThing.getValue(Secp256k1PrivateKey)
+		});
 	}
 }
 

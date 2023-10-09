@@ -1,8 +1,9 @@
-import { field, serialize } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "./hash.js";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { compare } from "@peerbit/uint8arrays";
 import { toHexString } from "./utils";
+import { DecryptProvider, EncryptedThing } from "./encryption.js";
 
 interface Key {
 	equals(other: Key): boolean;
@@ -20,6 +21,18 @@ export abstract class Keypair {
 	}
 
 	toPeerId(): Promise<PeerId> {
+		throw new Error("Not implemented");
+	}
+
+	// TODO: Should we add not implemented errors for .create and and .from as well?
+}
+
+export abstract class EncryptedKeypair {
+	equals(other: EncryptedKeypair): boolean {
+		throw new Error("Not implemented");
+	}
+
+	async decrypt(provider: DecryptProvider): Promise<Keypair> {
 		throw new Error("Not implemented");
 	}
 

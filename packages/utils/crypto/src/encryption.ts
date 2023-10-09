@@ -67,7 +67,7 @@ type EnvelopeFromParameter<Parameters extends KeyExchangeOptions> =
 		? PublicKeyEnvelope
 		: HashedKeyEnvelope;
 
-type EncryptProvide<Parameters extends KeyExchangeOptions> = (
+export type EncryptProvide<Parameters extends KeyExchangeOptions> = (
 	bytes: Uint8Array,
 	parameters: Parameters
 ) => Promise<CipherWithEnvelope<EnvelopeFromParameter<Parameters>>>;
@@ -143,17 +143,21 @@ export const createLocalEncryptProvider = <
 	};
 };
 
-type DecryptProvider = (
+export type DecryptProvider = (
 	encrypted: Uint8Array,
 	nonce: Uint8Array,
 	exchange: Envelope
 ) => Promise<Uint8Array>;
 
-type KeyResolver = <PublicKey extends X25519PublicKey | Uint8Array>(
-	key: PublicKey
-) =>
+export type KeyResolverReturnType<
+	PublicKey extends X25519PublicKey | Uint8Array
+> =
 	| (PublicKey extends X25519PublicKey ? X25519Keypair : Uint8Array)
 	| undefined;
+
+export type KeyResolver = <PublicKey extends X25519PublicKey | Uint8Array>(
+	key: PublicKey
+) => Promise<KeyResolverReturnType<PublicKey>>;
 
 export const createDecrypterFromKeyResolver = (
 	keyResolver: KeyResolver
@@ -174,7 +178,7 @@ export const createDecrypterFromKeyResolver = (
 				if (exported) {
 					key = {
 						index: i,
-						keypair: exported
+						keypair: await exported
 					};
 					break;
 				}
@@ -203,7 +207,7 @@ export const createDecrypterFromKeyResolver = (
 				throw new AccessError("Failed to resolve decryption key");
 			}
 		} else if (exchange instanceof HashedKeyEnvelope) {
-			epheremalKey = keyResolver(exchange.hash);
+			epheremalKey = await keyResolver(exchange.hash);
 		}
 
 		if (!epheremalKey) {
