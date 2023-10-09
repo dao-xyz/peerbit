@@ -46,7 +46,8 @@
 			"packages/utils/uint8arrays",
 			"packages/utils/time",
 			"packages/utils/cache",
-			"packages/utils/logger"
+			"packages/utils/logger",
+			"packages/utils/keychain"
 		]
 	},
 	"engines": {

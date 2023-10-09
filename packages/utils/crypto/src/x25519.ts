@@ -3,6 +3,7 @@ import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { compare } from "@peerbit/uint8arrays";
 import sodium from "libsodium-wrappers";
 import {
+	EncryptedKeypair,
 	Keypair,
 	PrivateEncryptionKey,
 	PublicKeyEncryptionKey
@@ -14,6 +15,14 @@ import {
 } from "./ed25519.js";
 import { toHexString } from "./utils.js";
 import { PeerId } from "@libp2p/interface/peer-id";
+import {
+	DecryptProvider,
+	DecryptedThing,
+	EncryptProvide,
+	EncryptedThing,
+	KeyExchangeOptions
+} from "./encryption.js";
+import { Secp256k1Keypair } from "./sepc256k1.js";
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
 	@field({ type: fixedArray("u8", 32) })
@@ -141,10 +150,18 @@ export class X25519Keypair extends Keypair {
 		return kp;
 	}
 
-	static async from(ed25119Keypair: Ed25519Keypair): Promise<X25519Keypair> {
+	static async from(
+		keypair: Ed25519Keypair | X25519Keypair
+	): Promise<X25519Keypair> {
 		const kp = new X25519Keypair({
-			publicKey: await X25519PublicKey.from(ed25119Keypair.publicKey),
-			secretKey: await X25519SecretKey.from(ed25119Keypair)
+			publicKey:
+				keypair instanceof X25519Keypair
+					? keypair.publicKey
+					: await X25519PublicKey.from(keypair.publicKey),
+			secretKey:
+				keypair instanceof X25519Keypair
+					? keypair.secretKey
+					: await X25519SecretKey.from(keypair)
 		});
 		return kp;
 	}
@@ -163,5 +180,52 @@ export class X25519Keypair extends Keypair {
 			);
 		}
 		return false;
+	}
+
+	async encrypt<Parameters extends KeyExchangeOptions>(
+		provider: EncryptProvide<Parameters>,
+		parameters: Parameters
+	) {
+		const decryptedSecret = new DecryptedThing({ value: this.secretKey });
+		return new EncryptedX25519Keypair({
+			publicKey: this.publicKey,
+			encryptedSecretKey: await decryptedSecret.encrypt(provider, parameters)
+		});
+	}
+}
+
+@variant(0)
+export class EncryptedX25519Keypair extends EncryptedKeypair {
+	@field({ type: X25519PublicKey })
+	publicKey: X25519PublicKey;
+
+	@field({ type: EncryptedThing<X25519SecretKey> })
+	encryptedSecretKey: EncryptedThing<X25519SecretKey>;
+
+	constructor(properties: {
+		publicKey: X25519PublicKey;
+		encryptedSecretKey: EncryptedThing<X25519SecretKey>;
+	}) {
+		super();
+		this.publicKey = properties.publicKey;
+		this.encryptedSecretKey = properties.encryptedSecretKey;
+	}
+
+	equals(other: EncryptedKeypair) {
+		if (other instanceof EncryptedX25519Keypair) {
+			return (
+				this.publicKey.equals(other.publicKey) &&
+				this.encryptedSecretKey.equals(other.encryptedSecretKey)
+			);
+		}
+		return false;
+	}
+
+	async decrypt(provider: DecryptProvider) {
+		const decryptedThing = await this.encryptedSecretKey.decrypt(provider);
+		return new X25519Keypair({
+			publicKey: this.publicKey,
+			secretKey: decryptedThing.getValue(X25519SecretKey)
+		});
 	}
 }

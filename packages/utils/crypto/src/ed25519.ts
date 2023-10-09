@@ -1,5 +1,10 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
+import {
+	PrivateSignKey,
+	PublicSignKey,
+	Keypair,
+	EncryptedKeypair
+} from "./key.js";
 import { equals } from "@peerbit/uint8arrays";
 import { Identity, Signer, SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
@@ -12,6 +17,13 @@ import type { Ed25519PeerId, PeerId } from "@libp2p/interface/peer-id";
 import { sign } from "./ed25519-sign.js";
 import { PreHash } from "./prehash.js";
 import { concat } from "uint8arrays";
+import {
+	DecryptProvider,
+	DecryptedThing,
+	EncryptProvide,
+	EncryptedThing,
+	KeyExchangeOptions
+} from "./encryption.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -190,5 +202,52 @@ export class Ed25519Keypair extends Keypair implements Identity {
 				this.publicKey.publicKey
 			).bytes
 		);
+	}
+
+	async encrypt<Parameters extends KeyExchangeOptions>(
+		provider: EncryptProvide<Parameters>,
+		parameters: Parameters
+	) {
+		const decryptedSecret = new DecryptedThing({ value: this.privateKey });
+		return new EncryptedEd25519Keypair({
+			publicKey: this.publicKey,
+			encryptedPrivateKey: await decryptedSecret.encrypt(provider, parameters)
+		});
+	}
+}
+
+@variant(1)
+export class EncryptedEd25519Keypair extends EncryptedKeypair {
+	@field({ type: Ed25519PublicKey })
+	publicKey: Ed25519PublicKey;
+
+	@field({ type: EncryptedThing<Ed25519PrivateKey> })
+	encryptedPrivateKey: EncryptedThing<Ed25519PrivateKey>;
+
+	constructor(properties: {
+		publicKey: Ed25519PublicKey;
+		encryptedPrivateKey: EncryptedThing<Ed25519PrivateKey>;
+	}) {
+		super();
+		this.encryptedPrivateKey = properties.encryptedPrivateKey;
+		this.publicKey = properties.publicKey;
+	}
+
+	equals(other: EncryptedKeypair) {
+		if (other instanceof EncryptedEd25519Keypair) {
+			return (
+				this.publicKey.equals(other.publicKey) &&
+				this.encryptedPrivateKey.equals(other.encryptedPrivateKey)
+			);
+		}
+		return false;
+	}
+
+	async decrypt(provider: DecryptProvider) {
+		const decryptedThing = await this.encryptedPrivateKey.decrypt(provider);
+		return new Ed25519Keypair({
+			publicKey: this.publicKey,
+			privateKey: decryptedThing.getValue(Ed25519PrivateKey)
+		});
 	}
 }

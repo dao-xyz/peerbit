@@ -5,3 +5,4 @@ export {
 export * from "./client.js";
 export * from "./program.js";
 export * from "./address.js";
+export * from "./keychain.js";
