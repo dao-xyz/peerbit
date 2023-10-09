@@ -196,11 +196,13 @@ export class KeychainProgram extends Program {
 	async open(parameters: {
 		identity: Identity;
 		l1EncryptProvider: EncryptProvide<KeyExchangeOptions>;
+		l1EncryptKeyResolver: L1EncryptKeyResolver;
 		l1DecryptProvider: DecryptProvider;
 	}) {
 		this.identity = parameters.identity;
 		this.l1EncryptProvider = parameters.l1EncryptProvider;
 		this.l1DecryptProvider = parameters.l1DecryptProvider;
+		this.l1EncryptKeyResolver = parameters.l1EncryptKeyResolver;
 		// TODO: This should be opened with the layer 1 encryption provider
 		await this.keys.open({
 			type: EncryptedExtendedKey,
