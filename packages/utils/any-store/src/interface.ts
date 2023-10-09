@@ -5,7 +5,7 @@ export interface AnyStore {
 	close(): MaybePromise<void>;
 	open(): MaybePromise<void>;
 	get(key: string): MaybePromise<Uint8Array | undefined>;
-	put(key: string, value: Uint8Array);
+	put(key: string, value: Uint8Array): MaybePromise<void>;
 	del(key): MaybePromise<void>;
 	sublevel(name: string): MaybePromise<AnyStore>;
 	iterator: () => {

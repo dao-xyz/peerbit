@@ -42,7 +42,7 @@ export class MemoryStore implements AnyStore {
 	}
 
 	put(key: string, value: Uint8Array) {
-		return this.store.set(key, value);
+		this.store.set(key, value);
 	}
 
 	// Remove a value and key from the cache
