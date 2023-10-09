@@ -32,21 +32,26 @@ import {
 	Identity,
 	EncryptProvide,
 	KeyExchangeOptions,
-	DecryptProvider
+	DecryptProvider,
+	Ed25519Keypair,
+	PublicSignKey,
+	Secp256k1Keypair,
+	KeyResolver,
+	PublicKeyEncryptionKey
 } from "@peerbit/crypto";
 import { compare } from "@peerbit/uint8arrays";
 
 @variant(0)
 class EncryptedExtendedKey {
 	// TODO: The owner of the key determined by wallet address or public sign key?
-	@field({ type: vec("u8") })
-	owner: Uint8Array;
+	@field({ type: PublicSignKey })
+	owner: PublicSignKey;
 	// Is this key revoked? HAS TO BE TRUE if recipient is set.
 	@field({ type: "bool" })
 	revoked: boolean;
 	// Provide a single-use key for someone else
-	@field({ type: option(vec("u8")) })
-	recipient?: Uint8Array;
+	@field({ type: option(PublicSignKey) })
+	recipient?: PublicSignKey;
 	// TODO: add the actual key here
 	@field({ type: EncryptedKeypair })
 	keypair:
@@ -55,18 +60,22 @@ class EncryptedExtendedKey {
 		| EncryptedSecp256k1Keypair;
 
 	constructor(parameters: {
-		owner: Uint8Array;
+		owner: PublicSignKey;
 		keypair:
 			| EncryptedX25519Keypair
 			| EncryptedEd25519Keypair
 			| EncryptedSecp256k1Keypair;
 		revoked?: boolean;
+		recipient?: PublicSignKey
 	}) {
 		this.keypair = parameters.keypair;
 		this.owner = parameters.owner;
 		this.revoked = parameters.revoked ?? false;
+		this.recipient = parameters.recipient
 	}
 }
+
+type L1EncryptKeyResolver = (owner: PublicSignKey) => Promise<X25519PublicKey>
 
 export class KeychainProgram extends Program {
 	@field({ type: Documents<EncryptedExtendedKey> })
@@ -76,27 +85,49 @@ export class KeychainProgram extends Program {
 	identity: Identity;
 
 	@field({ type: EncryptProvide })
-	encryptProvider: EncryptProvide<KeyExchangeOptions>;
+	l1EncryptProvider: EncryptProvide<KeyExchangeOptions>;
+
+	// Should resolve l1 sign keys to l1 public keys
+	@field({type: L1EncryptKeyResolver})
+	l1EncryptKeyResolver: L1EncryptKeyResolver
 
 	@field({ type: DecryptProvider })
-	decryptProvider: DecryptProvider;
+	l1DecryptProvider: DecryptProvider;
 
 	// TODO: Offer rotate keys functionality. revokes all unrevoked keys and adds a new key which it returns
+	
+	
 	// TODO: Write Key updater that either adds a given key or generates a new one.
 	// TODO: the key updater should always set the revoked flag for keys with a recipient
+
+	async updateKey(parameters: {keypair?: X25519Keypair | Ed25519Keypair | Secp256k1Keypair, recipient?: PublicSignKey, revoked?: boolean} = {}) {
+		const {keypair = await X25519Keypair.create(), recipient, revoked} = parameters
+		// We assume owner is identity here.
+		// Generate regular keypair if I am the owner or the recipient
+		// Otherwise generate a temporary key pair
+		const recipientIsMe = recipient == undefined || recipient.equals(this.identity.publicKey) 
+		// for whom are we encrypting? Me (owner) and the specified recipient.
+		const encryptedExtendedKey = new EncryptedExtendedKey({
+			owner: this.identity.publicKey,
+			keypair: await keypair.encrypt(this.l1EncryptProvider, {type: "publicKey", receiverPublicKeys: [await this.l1EncryptKeyResolver(this.identity.publicKey), ...(recipientIsMe ? [] : [await this.l1EncryptKeyResolver(recipient)])]}), 
+			revoked: revoked || !recipientIsMe,
+			recipient: recipient
+		})
+		this.keys.put(encryptedExtendedKey, { signers: [this.identity.sign] })
+	}
 
 	// TODO: Write a key getter that get's my latest key. If no valid key is found, run rotate and return newly created
 	// TODO: Write a key getter that get's the latest key's of recipients. If no valid key is found for a recipient, add a new, temporary key for the recipient.
 	// TODO: Write a key getter that get's a specified key, no matter the revoked status
 	async getKey(
 		parameters:
-			| { owner?: Uint8Array; publicKey?: never }
+			| { owner?: PublicSignKey; publicKey?: never }
 			| {
 					owner?: never;
 					publicKey?: X25519PublicKey | Ed25519PublicKey | Secp256k1PublicKey;
 			  } = {}
 	) {
-		const { owner = this.identity.publicKey.bytes, publicKey } = parameters;
+		const { owner = this.identity.publicKey, publicKey } = parameters;
 		// Create Filter options
 		const queries =
 			// Looking for specific public keys. We don't care about revocation status.
@@ -116,6 +147,7 @@ export class KeychainProgram extends Program {
 							// TODO: Is this correct?
 							new MissingField({ key: "recipient" }),
 							// And from the specified owner
+							// TODO: fix this query to compare PublicSignKey
 							new ByteMatchQuery({
 								key: "owner",
 								value: owner
@@ -136,20 +168,20 @@ export class KeychainProgram extends Program {
 		// If owner is not me, create a new, temporary key with me as owner and recipient as the requested owner
 		// If owner is me, create a new permanent key with
 		if (keys.length === 0) {
-			//return compare(this.identity.publicKey.bytes, owner) ?
+			return this.identity.publicKey.equals(owner) ? 
 		}
-		return keys[0].keypair.decrypt(this.decryptProvider);
+		return keys[0].keypair.decrypt(this.l1DecryptProvider);
 	}
 
 	// TODO: Unsure about encryptProvider here honestly - should this be layer 1 keychain?
 	async open(parameters: {
 		identity: Identity;
-		encryptProvider: EncryptProvide<KeyExchangeOptions>;
-		decryptProvider: DecryptProvider;
+		l1EncryptProvider: EncryptProvide<KeyExchangeOptions>;
+		l1DecryptProvider: DecryptProvider;
 	}) {
 		this.identity = parameters.identity;
-		this.encryptProvider = parameters.encryptProvider;
-		this.decryptProvider = parameters.decryptProvider;
+		this.l1EncryptProvider = parameters.l1EncryptProvider;
+		this.l1DecryptProvider = parameters.l1DecryptProvider;
 		// TODO: This should be opened with the layer 1 encryption provider
 		await this.keys.open({
 			type: EncryptedExtendedKey,
