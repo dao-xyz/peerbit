@@ -66,16 +66,16 @@ class EncryptedExtendedKey {
 			| EncryptedEd25519Keypair
 			| EncryptedSecp256k1Keypair;
 		revoked?: boolean;
-		recipient?: PublicSignKey
+		recipient?: PublicSignKey;
 	}) {
 		this.keypair = parameters.keypair;
 		this.owner = parameters.owner;
 		this.revoked = parameters.revoked ?? false;
-		this.recipient = parameters.recipient
+		this.recipient = parameters.recipient;
 	}
 }
 
-type L1EncryptKeyResolver = (owner: PublicSignKey) => Promise<X25519PublicKey>
+type L1EncryptKeyResolver = (owner: PublicSignKey) => Promise<X25519PublicKey>;
 
 export class KeychainProgram extends Program {
 	@field({ type: Documents<EncryptedExtendedKey> })
@@ -88,37 +88,54 @@ export class KeychainProgram extends Program {
 	l1EncryptProvider: EncryptProvide<KeyExchangeOptions>;
 
 	// Should resolve l1 sign keys to l1 public keys
-	@field({type: L1EncryptKeyResolver})
-	l1EncryptKeyResolver: L1EncryptKeyResolver
+	@field({ type: L1EncryptKeyResolver })
+	l1EncryptKeyResolver: L1EncryptKeyResolver;
 
 	@field({ type: DecryptProvider })
 	l1DecryptProvider: DecryptProvider;
 
 	// TODO: Offer rotate keys functionality. revokes all unrevoked keys and adds a new key which it returns
-	
-	
-	// TODO: Write Key updater that either adds a given key or generates a new one.
-	// TODO: the key updater should always set the revoked flag for keys with a recipient
 
-	async updateKey(parameters: {keypair?: X25519Keypair | Ed25519Keypair | Secp256k1Keypair, recipient?: PublicSignKey, revoked?: boolean} = {}) {
-		const {keypair = await X25519Keypair.create(), recipient, revoked} = parameters
+	// Key updater that either adds a given key or generates a new one.
+	// the key updater should always set the revoked flag for keys with a recipient
+
+	async updateKey(
+		parameters: {
+			keypair?: X25519Keypair | Ed25519Keypair | Secp256k1Keypair;
+			recipient?: PublicSignKey;
+			revoked?: boolean;
+		} = {}
+	) {
+		const {
+			keypair = await X25519Keypair.create(),
+			recipient,
+			revoked
+		} = parameters;
 		// We assume owner is identity here.
 		// Generate regular keypair if I am the owner or the recipient
 		// Otherwise generate a temporary key pair
-		const recipientIsMe = recipient == undefined || recipient.equals(this.identity.publicKey) 
+		const recipientIsMe =
+			recipient == undefined || recipient.equals(this.identity.publicKey);
 		// for whom are we encrypting? Me (owner) and the specified recipient.
 		const encryptedExtendedKey = new EncryptedExtendedKey({
 			owner: this.identity.publicKey,
-			keypair: await keypair.encrypt(this.l1EncryptProvider, {type: "publicKey", receiverPublicKeys: [await this.l1EncryptKeyResolver(this.identity.publicKey), ...(recipientIsMe ? [] : [await this.l1EncryptKeyResolver(recipient)])]}), 
+			keypair: await keypair.encrypt(this.l1EncryptProvider, {
+				type: "publicKey",
+				receiverPublicKeys: [
+					await this.l1EncryptKeyResolver(this.identity.publicKey),
+					...(recipientIsMe ? [] : [await this.l1EncryptKeyResolver(recipient)])
+				]
+			}),
 			revoked: revoked || !recipientIsMe,
-			recipient: recipient
-		})
-		this.keys.put(encryptedExtendedKey, { signers: [this.identity.sign] })
+			recipient: recipientIsMe ? undefined : recipient
+		});
+		this.keys.put(encryptedExtendedKey, { signers: [this.identity.sign] });
+		return encryptedExtendedKey;
 	}
 
-	// TODO: Write a key getter that get's my latest key. If no valid key is found, run rotate and return newly created
-	// TODO: Write a key getter that get's the latest key's of recipients. If no valid key is found for a recipient, add a new, temporary key for the recipient.
-	// TODO: Write a key getter that get's a specified key, no matter the revoked status
+	// Write a key getter that get's my latest key. If no valid key is found, run rotate and return newly created
+	// Write a key getter that get's the latest key's of recipients. If no valid key is found for a recipient, add a new, temporary key for the recipient.
+	// Write a key getter that get's a specified key, no matter the revoked status
 	async getKey(
 		parameters:
 			| { owner?: PublicSignKey; publicKey?: never }
@@ -168,7 +185,9 @@ export class KeychainProgram extends Program {
 		// If owner is not me, create a new, temporary key with me as owner and recipient as the requested owner
 		// If owner is me, create a new permanent key with
 		if (keys.length === 0) {
-			return this.identity.publicKey.equals(owner) ? 
+			return (await this.updateKey({ recipient: owner })).keypair.decrypt(
+				this.l1DecryptProvider
+			);
 		}
 		return keys[0].keypair.decrypt(this.l1DecryptProvider);
 	}
