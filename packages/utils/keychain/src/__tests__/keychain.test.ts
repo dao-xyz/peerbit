@@ -1,9 +1,9 @@
-import { Keychain, Libp2pKeychain } from "../keychain";
 import { MemoryDatastore } from "datastore-core";
 import { DefaultKeyChain } from "@libp2p/keychain";
-import { Ed25519Keypair } from "../ed25519";
-import { X25519Keypair } from "../x25519";
+import { Ed25519Keypair } from "@peerbit/crypto/src/ed25519";
+import { X25519Keypair } from "@peerbit/crypto/src/x25519";
 import { Cache } from "@peerbit/cache";
+import { Keychain } from "..";
 
 describe("keychain", () => {
 	let keychains: Keychain[];
