@@ -30,6 +30,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/crypto": "^1.0.10"
+		"@peerbit/crypto": "^1.0.10",
+		"@peerbit/any-store": "^0.0.1"
 	}
 }

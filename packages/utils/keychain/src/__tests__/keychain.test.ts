@@ -1,9 +1,10 @@
 import { MemoryDatastore } from "datastore-core";
 import { DefaultKeyChain } from "@libp2p/keychain";
-import { Ed25519Keypair } from "@peerbit/crypto/src/ed25519";
-import { X25519Keypair } from "@peerbit/crypto/src/x25519";
+import { Ed25519Keypair, X25519Keypair, ByteKey } from "@peerbit/crypto";
 import { Cache } from "@peerbit/cache";
-import { Keychain } from "..";
+import { Keychain } from "../";
+
+// TODO update tests
 
 describe("keychain", () => {
 	let keychains: Keychain[];
@@ -31,7 +32,7 @@ describe("keychain", () => {
 					)?.equals(kp)
 				).toBeTrue();
 				expect(
-					(await keychain.exportByKey(kp.publicKey))?.equals(kp)
+					(await keychain.exportByPublicKey(kp.publicKey))?.equals(kp)
 				).toBeTrue();
 			}
 		});
@@ -49,7 +50,7 @@ describe("keychain", () => {
 					)?.equals(xkp)
 				).toBeTrue();
 				expect(
-					(await keychain.exportByKey(xkp.publicKey))?.equals(xkp)
+					(await keychain.exportByPublicKey(xkp.publicKey))?.equals(xkp)
 				).toBeTrue();
 			}
 		});
