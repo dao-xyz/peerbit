@@ -82,12 +82,8 @@ export class Subscription {
 	@field({ type: "string" })
 	topic: string;
 
-	@field({ type: option(Uint8Array) })
-	data?: Uint8Array; // if omitted, the subcription event is a no-op (will not replace anything)
-
-	constructor(topic: string, data?: Uint8Array) {
+	constructor(topic: string) {
 		this.topic = topic;
-		this.data = data;
 	}
 }
 

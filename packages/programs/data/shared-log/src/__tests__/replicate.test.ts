@@ -1,7 +1,7 @@
 import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
-import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -142,6 +142,7 @@ describe(`exchange`, function () {
 			session.peers[1]
 		))!;
 
+		await delay(5000);
 		await db1.waitFor(session.peers[1].peerId);
 		await db2.waitFor(session.peers[0].peerId);
 
@@ -350,7 +351,7 @@ describe(`exchange`, function () {
 		await mapSeries(adds, add);
 
 		// All entries should be in the database
-		await waitForAsync(
+		await waitFor(
 			async () =>
 				(await db2.iterator({ limit: -1 })).collect().length === entryCount * 2,
 			{ delayInterval: 200, timeout: 20000 }
@@ -448,7 +449,9 @@ describe("canReplicate", () => {
 	});
 
 	it("can filter unwanted replicators", async () => {
+		// allow all replicaotors except node 0
 		await init((key) => !key.equals(session.peers[0].identity.publicKey));
+
 		const expectedReplicators = [
 			session.peers[1].identity.publicKey.hashcode(),
 			session.peers[2].identity.publicKey.hashcode()
@@ -533,6 +536,7 @@ describe("replication degree", () => {
 
 		await db1.waitFor(session.peers[1].peerId);
 		await db2.waitFor(session.peers[0].peerId);
+		await db2.waitFor(session.peers[2].peerId);
 		await db3.waitFor(session.peers[0].peerId);
 	};
 	beforeEach(async () => {
@@ -550,22 +554,6 @@ describe("replication degree", () => {
 		if (db3) await db3.drop();
 
 		await session.stop();
-	});
-
-	it("can override min on program level", async () => {
-		let minReplicas = 2;
-		await init(minReplicas);
-
-		const value = "hello";
-
-		const e1 = await db1.add(value, {
-			replicas: new AbsoluteReplicas(1), // will be overriden by 'minReplicas' above
-			meta: { next: [] }
-		});
-
-		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
-		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
-		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
 	});
 
 	it("can override min on program level", async () => {
@@ -591,6 +579,72 @@ describe("replication degree", () => {
 		);
 	});
 
+	it("will prune once reaching max replicas", async () => {
+		await session.stop();
+		session = await TestSession.disconnected(3);
+
+		let minReplicas = 1;
+		let maxReplicas = 1;
+
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				replicas: {
+					min: minReplicas,
+					max: maxReplicas
+				},
+				role: new Observer()
+			}
+		});
+		db2 = (await session.peers[1].open(db1.clone(), {
+			args: {
+				replicas: {
+					min: minReplicas,
+					max: maxReplicas
+				}
+			}
+		}))!;
+
+		db3 = (await session.peers[2].open(db1.clone(), {
+			args: {
+				replicas: {
+					min: minReplicas,
+					max: maxReplicas
+				}
+			}
+		}))!;
+
+		const value = "hello";
+
+		await db1.add(value, {
+			replicas: new AbsoluteReplicas(100), // will be overriden by 'maxReplicas' above
+			meta: { next: [] }
+		});
+
+		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
+		session.peers[1].dial(session.peers[0].getMultiaddrs());
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await db2.close();
+
+		session.peers[2].dial(session.peers[0].getMultiaddrs());
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+
+		// reopen db2 again and make sure either db3 or db2 drops the entry (not both need to replicate)
+		await delay(2000);
+		db2 = await session.peers[1].open(db2, {
+			args: {
+				replicas: {
+					min: minReplicas,
+					max: maxReplicas
+				}
+			}
+		});
+		await delay(2000);
+
+		await waitForResolved(() =>
+			expect(db2.log.log.length).not.toEqual(db3.log.log.length)
+		);
+	});
+
 	it("control per commmit", async () => {
 		await init(1);
 
@@ -605,7 +659,7 @@ describe("replication degree", () => {
 			meta: { next: [] }
 		});
 
-		// expect e1 to be replated at db1 and/or 1 other peer (when you write you always store locally)
+		// expect e1 to be replicated at db1 and/or 1 other peer (when you write you always store locally)
 		// expect e2 to be replicated everywhere
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(2));
@@ -615,7 +669,10 @@ describe("replication degree", () => {
 		await waitForResolved(() =>
 			expect(db3.log.log.length).toBeGreaterThanOrEqual(1)
 		);
-		expect(db2.log.log.length).not.toEqual(db3.log.log.length);
+
+		await waitForResolved(() =>
+			expect(db2.log.log.length).not.toEqual(db3.log.log.length)
+		);
 	});
 
 	it("min replicas with be maximum value for gid", async () => {

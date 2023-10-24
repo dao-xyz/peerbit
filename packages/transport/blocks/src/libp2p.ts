@@ -68,7 +68,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			messageProcessingConcurrency?: number;
 		}
 	) {
-		super(components, ["direct-block/1.0.0"], {
+		super(components, ["/lazyblock/1.0.0"], {
 			emitSelf: false,
 			signaturePolicy: "StrictNoSign",
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
@@ -87,6 +87,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				return;
 			}
 			const message = evt.detail;
+			if (!message.data) {
+				return;
+			}
+
 			try {
 				const decoded = deserialize(message.data, BlockMessage);
 				if (decoded instanceof BlockRequest && this._localStore) {

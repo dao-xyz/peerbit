@@ -4,7 +4,7 @@ import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { CustomEvent, EventEmitter } from "@libp2p/interface/events";
 import { Client } from "./client.js";
-import { waitForAsync } from "@peerbit/time";
+import { waitFor } from "@peerbit/time";
 import { Blocks } from "@peerbit/blocks-interface";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import {
@@ -22,12 +22,21 @@ import {
 
 const intersection = (
 	a: Set<string> | undefined,
-	b: Set<string> | IterableIterator<string>
+	b: Set<string> | PublicSignKey[]
 ) => {
 	const newSet = new Set<string>();
-	for (const el of b) {
-		if (!a || a.has(el)) {
-			newSet.add(el);
+
+	if (Array.isArray(b)) {
+		for (const el of b) {
+			if (!a || a.has(el.hashcode())) {
+				newSet.add(el.hashcode());
+			}
+		}
+	} else {
+		for (const el of b) {
+			if (!a || a.has(el)) {
+				newSet.add(el);
+			}
 		}
 	}
 	return newSet;
@@ -206,8 +215,8 @@ export abstract class Program<
 		// if subscribing to all topics, emit "join" event
 		for (const topic of allTopics) {
 			if (
-				!(await this.node.services.pubsub.getSubscribers(topic))?.has(
-					s.from.hashcode()
+				!(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
+					s.from.equals(x)
 				)
 			) {
 				return;
@@ -225,8 +234,8 @@ export abstract class Program<
 		// if subscribing not subscribing to any topics, emit "leave" event
 		for (const topic of allTopics) {
 			if (
-				(await this.node.services.pubsub.getSubscribers(topic))?.has(
-					s.from.hashcode()
+				(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
+					s.from.equals(x)
 				)
 			) {
 				return;
@@ -340,22 +349,31 @@ export abstract class Program<
 	 * Wait for another peer to be 'ready' to talk with you for this particular program
 	 * @param other
 	 */
-	async waitFor(...other: (PublicSignKey | Libp2pPeerId)[]): Promise<void> {
+	async waitFor(
+		other: PublicSignKey | Libp2pPeerId | (PublicSignKey | Libp2pPeerId)[],
+		options?: { signal?: AbortSignal; timeout?: number }
+	): Promise<void> {
+		const ids = Array.isArray(other) ? other : [other];
 		const expectedHashes = new Set(
-			other.map((x) =>
+			ids.map((x) =>
 				x instanceof PublicSignKey
 					? x.hashcode()
 					: getPublicKeyFromPeerId(x).hashcode()
 			)
 		);
-		await waitForAsync(
+
+		// make sure nodes are reachable
+		await Promise.all(ids.map((x) => this.node.services.pubsub.waitFor(x)));
+
+		// wait for subscribing to topics
+		await waitFor(
 			async () => {
 				return (
 					intersection(expectedHashes, await this.getReady()).size ===
 					expectedHashes.size
 				);
 			},
-			{ delayInterval: 200, timeout: 10 * 1000 }
+			{ signal: options?.signal, timeout: options?.timeout || 10 * 1000 }
 		); // 200 ms delay since this is an expensive op. TODO, make event based instead
 	}
 
@@ -370,10 +388,10 @@ export abstract class Program<
 						await this.node.services.pubsub.getSubscribers(topic);
 					if (!subscribers) {
 						throw new Error(
-							"client is not subscriber to topic data, do not have any info about peer readiness"
+							`Client is not subscriber to topic ${topic}, do not have any info about peer readiness`
 						);
 					}
-					ready = intersection(ready, subscribers.keys());
+					ready = intersection(ready, subscribers);
 				}
 			}
 		}

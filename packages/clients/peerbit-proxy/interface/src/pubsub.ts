@@ -32,33 +32,12 @@ export class REQ_GetSubscribers extends PubSubMessage {
 
 @variant(1)
 export class RESP_GetSubscribers extends PubSubMessage {
-	@field({ type: option(vec(SubscriptionData)) })
-	data?: SubscriptionData[];
+	@field({ type: option(vec(PublicSignKey)) })
+	subscribers?: PublicSignKey[];
 
-	constructor(map?: Map<string, SubscriptionData>) {
+	constructor(subscribers?: PublicSignKey[]) {
 		super();
-		if (map) {
-			this.data = [];
-			for (const [k, v] of map.entries()) {
-				this.data.push(v);
-			}
-		}
-	}
-
-	_map: Map<string, SubscriptionData> | null | undefined;
-	get map() {
-		if (this._map !== undefined) {
-			return this._map;
-		}
-		if (this.data) {
-			const map = new Map();
-			for (const [i, data] of this.data.entries()) {
-				map.set(data.publicKey.hashcode(), data);
-			}
-			return (this._map = map);
-		} else {
-			return (this._map = null);
-		}
+		this.subscribers = subscribers;
 	}
 }
 
@@ -121,13 +100,9 @@ export class REQ_Subscribe extends PubSubMessage {
 	@field({ type: "string" })
 	topic: string;
 
-	@field({ type: option(Uint8Array) })
-	data?: Uint8Array;
-
-	constructor(topic: string, options?: { data?: Uint8Array }) {
+	constructor(topic: string) {
 		super();
 		this.topic = topic;
-		this.data = options?.data;
 	}
 }
 
@@ -136,11 +111,10 @@ export class RESP_Subscribe extends PubSubMessage {}
 
 @variant(8)
 export class REQ_Unsubscribe extends PubSubMessage {
-	constructor(topic: string, options?: { force?: boolean; data?: Uint8Array }) {
+	constructor(topic: string, options?: { force?: boolean }) {
 		super();
 		this.topic = topic;
 		this.force = options?.force;
-		this.data = options?.data;
 	}
 	@field({ type: "string" })
 	topic: string;

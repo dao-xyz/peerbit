@@ -40,20 +40,21 @@ export class Cache<T = undefined> {
 	}
 
 	trim(time = +new Date()) {
-		const peek = this.list.head;
-		let outOfDate =
-			peek &&
-			this.ttl !== undefined &&
-			this._map.get(peek.value)!.time < time - this.ttl;
-		while (outOfDate || this.currentSize > this.max) {
-			const key = this.list.shift();
-			if (key !== undefined) {
-				const cacheValue = this._map.get(key)!;
-				outOfDate = this.ttl !== undefined && cacheValue.time < time - this.ttl;
-				this._map.delete(key);
-				const wasDeleted = this.deleted.delete(key);
-				if (!wasDeleted) {
-					this.currentSize -= cacheValue.size;
+		for (;;) {
+			const headKey = this.list.head;
+			if (headKey?.value !== undefined) {
+				const cacheValue = this._map.get(headKey.value)!;
+				const outOfDate =
+					this.ttl !== undefined && cacheValue.time < time - this.ttl;
+				if (outOfDate || this.currentSize > this.max) {
+					this.list.shift();
+					this._map.delete(headKey.value);
+					const wasDeleted = this.deleted.delete(headKey.value);
+					if (!wasDeleted) {
+						this.currentSize -= cacheValue.size;
+					}
+				} else {
+					break;
 				}
 			} else {
 				break;

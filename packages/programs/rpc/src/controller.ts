@@ -33,7 +33,6 @@ export type RPCSetupOptions<Q, R> = {
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
 	responseHandler?: ResponseHandler<Q, R>;
-	subscriptionData?: Uint8Array;
 };
 export type RequestContext = {
 	from?: PublicSignKey;
@@ -66,7 +65,6 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	private _responseType: AbstractType<R>;
 	private _rpcTopic: string | undefined;
 	private _onMessageBinded: ((arg: any) => any) | undefined = undefined;
-	private _subscriptionMetaData: Uint8Array | undefined;
 
 	private _keypair: X25519Keypair;
 
@@ -83,7 +81,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		this._getRequestValueFn = createValueResolver(this._requestType);
 
 		this._keypair = await X25519Keypair.create();
-		await this.subscribe(args.subscriptionData);
+		await this.subscribe();
 	}
 
 	private async _close(from?: Program): Promise<void> {
@@ -114,47 +112,23 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		return true;
 	}
 
-	private _subscribing: Promise<void>;
-	async subscribe(data = this._subscriptionMetaData): Promise<void> {
+	private _subscribing: Promise<void> | void;
+	async subscribe(): Promise<void> {
 		await this._subscribing;
-		if (
-			this._subscribed &&
-			(this._subscriptionMetaData === data ||
-				(this._subscriptionMetaData &&
-					data &&
-					equals(this._subscriptionMetaData, data)))
-		) {
+		if (this._subscribed) {
 			return;
 		}
 
-		const prevSubscriptionData = this._subscriptionMetaData;
-		this._subscriptionMetaData = data;
-		const wasSubscribed = this._subscribed;
 		this._subscribed = true;
 
 		this._onMessageBinded = this._onMessageBinded || this._onMessage.bind(this);
 
-		if (wasSubscribed) {
-			await this.node.services.pubsub.unsubscribe(this.rpcTopic, {
-				data: prevSubscriptionData
-			});
-		}
+		this.node.services.pubsub.addEventListener("data", this._onMessageBinded!);
 
-		this._subscribing = this.node.services.pubsub
-			.subscribe(this.rpcTopic, { data })
-			.then(() => {
-				if (!wasSubscribed) {
-					this.node.services.pubsub.addEventListener(
-						"data",
-						this._onMessageBinded!
-					);
-				}
-			});
+		this._subscribing = this.node.services.pubsub.subscribe(this.rpcTopic);
 
 		await this._subscribing;
-		if (!wasSubscribed) {
-			await this.node.services.pubsub.requestSubscribers(this.rpcTopic);
-		}
+		await this.node.services.pubsub.requestSubscribers(this.rpcTopic);
 		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 	}
 
@@ -171,7 +145,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
-								from: message.sender
+								from: message.header.signatures!.publicKeys[0]
 							}
 						);
 
@@ -204,7 +178,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 								),
 								{
 									topics: [this.rpcTopic],
-									to: [message.sender],
+									to: [message.header.signatures!.publicKeys[0]],
 									strict: true
 								}
 							);
@@ -274,8 +248,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 	private getPublishOptions(options?: PublishOptions): PubSubPublishOptions {
 		return options?.to
-			? { to: options.to, strict: true, topics: [this.rpcTopic] }
-			: { topics: [this.rpcTopic] };
+			? {
+					mode: options?.mode,
+					to: options.to,
+					strict: true,
+					topics: [this.rpcTopic]
+			  }
+			: { mode: options?.mode, topics: [this.rpcTopic] };
 	}
 
 	/**
@@ -304,7 +283,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		}) => {
 			try {
 				const { response, message } = properties;
-				const from = message.sender;
+				const from = message.header.signatures!.publicKeys[0];
 
 				if (options?.isTrusted && !(await options?.isTrusted(from))) {
 					return;

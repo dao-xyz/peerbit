@@ -8,7 +8,7 @@ import {
 	TrustedNetwork,
 	IdentityGraph
 } from "..";
-import { waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, Identity } from "@peerbit/crypto";
 import { Secp256k1PublicKey } from "@peerbit/crypto";
 import { Entry } from "@peerbit/log";
@@ -200,7 +200,7 @@ describe("index", () => {
 				session.peers[3]
 			);
 
-			await l0c.waitFor(session.peers[0].peerId, session.peers[1].peerId);
+			await l0c.waitFor([session.peers[0].peerId, session.peers[1].peerId]);
 
 			await l0a.add(session.peers[1].peerId);
 
@@ -218,8 +218,11 @@ describe("index", () => {
 
 			await waitFor(() => l0b.trustGraph.index.size == 2);
 			await waitFor(() => l0a.trustGraph.index.size == 2);
-			await l0c.waitFor(session.peers[0].peerId);
-			await l0c.waitFor(session.peers[1].peerId);
+
+			await l0c.trustGraph.log.waitForReplicator(
+				session.peers[0].identity.publicKey,
+				session.peers[1].identity.publicKey
+			);
 
 			// Try query with trusted
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(

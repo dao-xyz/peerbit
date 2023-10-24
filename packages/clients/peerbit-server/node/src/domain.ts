@@ -1,4 +1,4 @@
-import { waitFor, waitForAsync } from "@peerbit/time";
+import { waitFor } from "@peerbit/time";
 
 const isNode = typeof window === undefined || typeof window === "undefined";
 
@@ -179,7 +179,7 @@ export const startCertbot = async (
 		const { default: axios } = await import("axios");
 
 		console.log("Waiting for domain to be ready ...");
-		await waitForAsync(
+		await waitFor(
 			async () => {
 				try {
 					const status = (await axios.get("https://" + domain)).status;

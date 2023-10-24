@@ -1,5 +1,5 @@
 import { TestSession } from "@peerbit/test-utils";
-import { waitForAsync } from "@peerbit/time";
+import { waitFor } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
 import assert from "assert";
 import mapSeries from "p-each-series";
@@ -39,7 +39,7 @@ describe(`Automatic Replication`, function () {
 			session.peers[1]
 		))!;
 
-		await waitForAsync(
+		await waitFor(
 			async () =>
 				(await db2.iterator({ limit: -1 })).collect().length === entryCount
 		);
@@ -72,7 +72,7 @@ describe(`Automatic Replication`, function () {
 			session.peers[1]
 		))!;
 
-		await waitForAsync(
+		await waitFor(
 			async () =>
 				(await db2.iterator({ limit: -1 })).collect().length === entryCount
 		);

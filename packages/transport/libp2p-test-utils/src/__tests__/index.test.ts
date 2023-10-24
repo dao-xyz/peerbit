@@ -1,4 +1,4 @@
-import { TestSession } from "../session";
+import { TestSession } from "../session.js";
 
 it("connect", async () => {
 	const session = await TestSession.connected(3);

@@ -4,6 +4,7 @@ import { DirectSub } from "../index.js";
 import crypto from "crypto";
 import { waitForPeers } from "@peerbit/stream";
 import { tcp } from "@libp2p/tcp";
+import { DataEvent } from "@peerbit/pubsub-interface";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // size: 1kb x 1,722 ops/sec ±1.89% (82 runs sampled)
@@ -62,8 +63,9 @@ await waitForPeers(
 let suite = new B.Suite();
 let listener: ((msg: any) => any) | undefined = undefined;
 const msgMap: Map<string, { resolve: () => any }> = new Map();
-const msgIdFn = (msg: Uint8Array) =>
-	crypto.createHash("sha1").update(msg.subarray(0, 20)).digest("base64");
+const msgIdFn = (msg: Uint8Array) => {
+	return crypto.createHash("sha1").update(msg.subarray(0, 20)).digest("base64");
+};
 
 const sizes = [1e3, 1e6];
 for (const size of sizes) {
@@ -75,8 +77,8 @@ for (const size of sizes) {
 			session.peers[0].services.pubsub.publish(small, { topics: [TOPIC] });
 		},
 		setup: () => {
-			listener = (msg) => {
-				msgMap.get(msgIdFn(msg.detail.data))!.resolve();
+			listener = (msg: CustomEvent<DataEvent>) => {
+				msgMap.get(msgIdFn(msg.detail.data.data))!.resolve();
 			};
 
 			session.peers[session.peers.length - 1].services.pubsub.addEventListener(
