@@ -551,7 +551,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					);
 
 					// also send back a message telling the remote whethe we are subsbscringib
-					if (message instanceof SeekDelivery) {
+					if (message.deliveryMode instanceof SeekDelivery) {
 						// only if Subscribe message is of 'seek' type we will respond with our subscriptions
 						const mySubscriptions = changed
 							.map((x) => {
