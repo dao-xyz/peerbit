@@ -128,7 +128,6 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		this._subscribing = this.node.services.pubsub.subscribe(this.rpcTopic);
 
 		await this._subscribing;
-		await this.node.services.pubsub.requestSubscribers(this.rpcTopic);
 		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
 	}
 
