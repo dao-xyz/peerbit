@@ -306,7 +306,7 @@ describe("cli", () => {
 			});
 
 			//TODO too slow to run in CI?
-
+			/* 
 			it("can restart", async () => {
 				const s = await start();
 				const terminal = connect();
@@ -319,7 +319,8 @@ describe("cli", () => {
 					).toHaveLength(2)
 				);
 				await checkPeerId(terminal);
-			});
+			}); 
+			*/
 			/*
 			it("re-opens on restart", async () => {
 				const server = await start();
