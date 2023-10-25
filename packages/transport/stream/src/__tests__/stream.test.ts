@@ -771,7 +771,7 @@ describe("streams", function () {
 							streams[3].stream.publicKeyHash,
 							streams[4].stream.publicKeyHash
 						],
-						mode: new SeekDelivery(1)
+						mode: new SeekDelivery(2)
 					});
 
 					expect(
@@ -786,6 +786,20 @@ describe("streams", function () {
 							streams[4].stream.publicKeyHash
 						)
 					).toBeTrue();
+
+					expect(
+						streams[0].stream.routes.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)?.list
+					).toHaveLength(2);
+
+					expect(
+						streams[0].stream.routes.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[4].stream.publicKeyHash
+						)?.list
+					).toHaveLength(2);
 
 					const allWrites = streams.map((x) => collectDataWrites(x.stream));
 
