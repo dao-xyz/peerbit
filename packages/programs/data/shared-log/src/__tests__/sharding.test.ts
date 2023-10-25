@@ -166,9 +166,15 @@ describe(`sharding`, () => {
 		);
 		// client 3 will subscribe and start to recive heads before recieving subscription info about other peers
 
-		await waitFor(() => db1.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
+		await waitForResolved(() =>
+			expect(db1.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+		);
 
 		await waitFor(
 			() =>
@@ -356,29 +362,44 @@ describe(`sharding`, () => {
 		]);
 		console.log("XYZ1", db1.log.getReplicatorsSorted());
 		//
-		const a = [...db1.log["_gidPeersHistory"].values()];
+		/* const a = [...db1.log["_gidPeersHistory"].values()];
 		console.log(
 			a.slice(0, 5),
 			db2.log.log.values.length,
 			db3.log.log.values.length
 		);
-		//await delay(1000);
+		await delay(1000);
 		console.log(
 			JSON.stringify([...db1.log["_gidPeersHistory"].values()]) ===
-				JSON.stringify(a),
+			JSON.stringify(a),
 			db2.log.log.values.length,
 			db3.log.log.values.length
 		);
-		console.log("XYZ2", db1.log.getReplicatorsSorted());
+		console.log("XYZ2", db1.log.getReplicatorsSorted()); */
 
 		await db3.close();
 
 		await waitForResolved(() =>
 			expect(db1.log.log.values.length).toEqual(entryCount)
 		);
-		await waitForResolved(() =>
-			expect(db2.log.log.values.length).toEqual(entryCount)
-		);
+		try {
+			await waitForResolved(() =>
+				expect(db2.log.log.values.length).toEqual(entryCount)
+			);
+		} catch (error) {
+			db1.log["_gidPeersHistory"].clear();
+			db2.log["_gidPeersHistory"].clear();
+
+			db1.log.replicationReorganization();
+			try {
+				await waitForResolved(() =>
+					expect(db2.log.log.values.length).toEqual(entryCount)
+				);
+			} catch (error2) {
+				throw error2;
+			}
+			throw error;
+		}
 
 		await waitForResolved(async () =>
 			checkReplicas(
