@@ -119,7 +119,7 @@ const forum2 = await client2.open<Forum>(forum.address, {
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
-await forum2.waitFor(client.peerId);
+await forum2.channels.log.waitForReplicator(client.identity.publicKey);
 
 // find channels from the forum from client2 perspective
 const channels = await forum2.channels.index.search(new SearchRequest());
@@ -133,7 +133,7 @@ const channel2 = await client2.open<Channel>(channels[0], {
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
-await channel2.waitFor(client.peerId);
+await channel2.db.posts.log.waitForReplicator(client.identity.publicKey);
 
 // find messages
 const messages = await channel2.db.posts.index.search(new SearchRequest());

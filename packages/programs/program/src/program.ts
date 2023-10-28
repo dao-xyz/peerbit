@@ -19,6 +19,7 @@ import {
 	ProgramInitializationOptions,
 	addParent
 } from "./handler.js";
+import type { TypedEventTarget } from "@libp2p/interface/events";
 
 const intersection = (
 	a: Set<string> | undefined,
@@ -96,7 +97,7 @@ export abstract class Program<
 	private _node: ProgramClient;
 	private _allPrograms: Program[] | undefined;
 
-	private _events: EventEmitter<ProgramEvents>;
+	private _events: TypedEventTarget<ProgramEvents>;
 	private _closed: boolean;
 
 	parents: (Program<any> | undefined)[];
@@ -117,7 +118,7 @@ export abstract class Program<
 		this._address = address;
 	}
 
-	get events(): EventEmitter<Events> {
+	get events(): TypedEventTarget<Events> {
 		return this._events || (this._events = new EventEmitter());
 	}
 

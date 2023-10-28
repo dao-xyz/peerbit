@@ -1,4 +1,4 @@
-import { waitFor, delay, waitForResolved } from "@peerbit/time";
+import { waitFor, delay, waitForResolved, TimeoutError } from "@peerbit/time";
 import crypto from "crypto";
 import {
 	waitForPeers as waitForPeerStreams,
@@ -647,7 +647,7 @@ describe("streams", function () {
 							streams[1].stream.publicKeyHash,
 							streams[2].stream.publicKeyHash
 						],
-						mode: new SeekDelivery(1)
+						mode: new SeekDelivery(2)
 					});
 
 					// message delivered to 1 from 0 and relayed through 2. (2 ACKS)
@@ -666,9 +666,7 @@ describe("streams", function () {
 						)
 					).toBeTrue();
 
-					await waitForResolved(async () =>
-						expect(streams[0].ack).toHaveLength(4)
-					);
+					await waitForResolved(() => expect(streams[0].ack).toHaveLength(4));
 
 					const allWrites = streams.map((x) => collectDataWrites(x.stream));
 					streams[1].received = [];
@@ -884,6 +882,65 @@ describe("streams", function () {
 				});
 			});
 		});
+
+		describe("concurrency", () => {
+			let session: TestSessionStream;
+			let streams: ReturnType<typeof createMetrics>[];
+
+			beforeAll(async () => {});
+
+			beforeEach(async () => {
+				session = await connected(3, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: { autoDial: false }
+							})
+					}
+				});
+				streams = [];
+				for (const peer of session.peers) {
+					streams.push(createMetrics(peer.services.directstream));
+				}
+
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[2]]
+				]);
+
+				await waitForPeerStreams(streams[0].stream, streams[1].stream);
+				await waitForPeerStreams(streams[1].stream, streams[2].stream);
+			});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+
+			it("can concurrently seek and wait for ack", async () => {
+				await streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId]
+				});
+				const p = streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId],
+					mode: new AcknowledgeDelivery(1)
+				});
+				streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId],
+					mode: new SeekDelivery(1)
+				});
+
+				streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId],
+					mode: new SeekDelivery(1)
+				});
+				streams[2].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[0].stream.components.peerId],
+					mode: new SeekDelivery(1)
+				});
+
+				await p;
+			});
+		});
 	});
 
 	// TODO test that messages are not sent backward, triangles etc
@@ -985,6 +1042,59 @@ describe("streams", function () {
 				expect(
 					streams[0].stream.peers.has(streams[1].stream.publicKeyHash)
 				).toBeTrue();
+			});
+
+			it("can leave and join quickly", async () => {
+				await streams[0].stream.publish(data, {
+					to: [streams[3].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await waitForResolved(
+					() => expect(streams[0].stream.routes.count()).toEqual(2) // neighbour + streams[3]
+				);
+
+				// miss on messages
+
+				let missedOne = false;
+
+				let msg: any[] = [];
+				let unreachable: PublicSignKey[] = [];
+
+				streams[0].stream.addEventListener("peer:unreachable", (e) => {
+					unreachable.push(e.detail);
+				});
+
+				// simulate beeing offline for 1 messages
+				const onDataMessage = streams[3].stream.onDataMessage.bind(
+					streams[3].stream
+				);
+				streams[3].stream.onDataMessage = async (
+					publicKey,
+					peerStream,
+					message,
+					seenBefore
+				) => {
+					msg.push(message);
+					if (!missedOne) {
+						missedOne = true;
+						return true;
+					}
+					return onDataMessage(publicKey, peerStream, message, seenBefore);
+				};
+
+				const publishToMissing = streams[0].stream.publish(data, {
+					to: [streams[3].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await delay(1000);
+				await streams[0].stream.publish(data, {
+					// Since this the next message
+					to: [streams[3].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await expect(publishToMissing).rejects.toThrow(TimeoutError);
+				expect(missedOne).toBeTrue();
+				expect(unreachable).toHaveLength(0); // because the next message reached the node before the first message timed out
 			});
 
 			it("retry dial after a while", async () => {

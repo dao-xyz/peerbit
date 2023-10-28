@@ -38,7 +38,7 @@
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "*",
-		"libp2p": "0.46.9"
+		"libp2p": "0.46.16"
 	},
 	"dependencies": {
 		"@peerbit/string": "*",

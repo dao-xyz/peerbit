@@ -12,14 +12,16 @@ import { webSockets } from "@libp2p/websockets";
 import { multiaddr } from "@multiformats/multiaddr";
 import { ready } from "@peerbit/crypto";
 import { noise } from "@dao-xyz/libp2p-noise";
-import { mplex } from "@libp2p/mplex";
+import { yamux } from "@chainsafe/libp2p-yamux";
 import { identifyService } from "libp2p/identify";
 import { TestDirectStream } from "./../../shared/utils.js";
+
 await ready;
 
 const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	services: {
-		stream: (c) => new TestDirectStream(c),
+		stream: (c) =>
+			new TestDirectStream(c, { connectionManager: { autoDial: true } }),
 		identify: identifyService()
 	},
 	connectionGater: {
@@ -33,7 +35,7 @@ const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	addresses: {
 		listen: ["/webrtc"]
 	},
-	streamMuxers: [mplex()],
+	streamMuxers: [yamux()],
 	connectionEncryption: [noise()]
 });
 let receivedData = 0;
@@ -62,7 +64,7 @@ export const App = () => {
 		client
 			.dial(multiaddr(decodeURIComponent(relayAddrs)))
 			.then((conn) => {
-				console.log(conn);
+				console.log("CONNECTED!", conn);
 			})
 			.catch((err) => {
 				console.error(err);

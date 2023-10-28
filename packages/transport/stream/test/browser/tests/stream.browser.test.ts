@@ -7,6 +7,7 @@ import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { identifyService } from "libp2p/identify";
 import { all } from "@libp2p/websockets/filters";
+import { TestDirectStream } from "../shared/utils";
 
 test.describe("stream", () => {
 	let relay: Awaited<ReturnType<typeof createLibp2p>>;
@@ -14,13 +15,15 @@ test.describe("stream", () => {
 		relay = await createLibp2p<{
 			relay: any;
 			identify: any;
+			stream: TestDirectStream;
 		}>({
 			addresses: {
 				listen: ["/ip4/127.0.0.1/tcp/0/ws"]
 			},
 			services: {
 				relay: circuitRelayServer({ reservations: { maxReservations: 1000 } }),
-				identify: identifyService()
+				identify: identifyService(),
+				stream: (c) => new TestDirectStream(c)
 			},
 			transports: [webSockets({ filter: all })],
 			streamMuxers: [mplex()],

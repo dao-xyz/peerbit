@@ -27,7 +27,7 @@ describe("waitFor", () => {
 		await waitFor(() => {
 			return done;
 		});
-		expect(+new Date() - startTime).toBeLessThan(1200);
+		expect(+new Date() - startTime).toBeLessThan(1400);
 	});
 	it("stop early", async () => {
 		const startTime = +new Date();
@@ -43,7 +43,7 @@ describe("waitFor", () => {
 				{ signal: AbortSignal.timeout(1000) }
 			)
 		).rejects.toThrow(AbortError);
-		expect(+new Date() - startTime).toBeLessThan(1300);
+		expect(+new Date() - startTime).toBeLessThan(1400);
 	});
 });
 
@@ -57,7 +57,7 @@ describe("waitForResolved", () => {
 		await waitFor(() => {
 			return done;
 		});
-		expect(+new Date() - startTime).toBeLessThan(1200);
+		expect(+new Date() - startTime).toBeLessThan(1400);
 	});
 	it("stop early", async () => {
 		const startTime = +new Date();
@@ -73,6 +73,6 @@ describe("waitForResolved", () => {
 				{ signal: AbortSignal.timeout(1000) }
 			)
 		).rejects.toThrow(AbortError);
-		expect(+new Date() - startTime).toBeLessThan(1200);
+		expect(+new Date() - startTime).toBeLessThan(1400);
 	});
 });

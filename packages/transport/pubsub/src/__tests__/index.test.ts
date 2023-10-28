@@ -624,7 +624,6 @@ describe("pubsub", function () {
 						() => peer.stream.topics.get(TOPIC)?.size === (i === 3 ? 0 : 1)
 					); // all others (except 4 which is not subscribing)
 				}
-
 				await waitForResolved(() =>
 					expect(streams[0].stream.routes.count()).toEqual(4)
 				);
@@ -1049,19 +1048,21 @@ describe("pubsub", function () {
 				TOPIC_1
 			);
 
+			await delay(2000);
 			await streams[0].stream.stop();
-			await waitFor(
-				() =>
-					!streams[2].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
-			);
 			await waitFor(
 				() =>
 					!streams[1].stream.topics
 						.get(TOPIC_1)
 						?.has(streams[0].stream.publicKeyHash)
 			);
+			await waitFor(
+				() =>
+					!streams[2].stream.topics
+						.get(TOPIC_1)
+						?.has(streams[0].stream.publicKeyHash)
+			);
+
 			expect(streams[2].subscriptionEvents).toHaveLength(1);
 			expect(streams[1].subscriptionEvents).toHaveLength(1);
 			expect(streams[2].unsubscriptionEvents).toHaveLength(1);

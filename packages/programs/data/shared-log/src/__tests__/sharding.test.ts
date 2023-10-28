@@ -5,7 +5,6 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../replication.js";
 import { Replicator } from "../role";
-import { deserialize } from "@dao-xyz/borsh";
 
 describe(`sharding`, () => {
 	let session: TestSession;
@@ -77,8 +76,12 @@ describe(`sharding`, () => {
 			session.peers[2]
 		);
 
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+		);
 
 		const entryCount = sampleSize;
 
@@ -287,31 +290,16 @@ describe(`sharding`, () => {
 			db1.address!,
 			session.peers[2]
 		);
-		console.log("xxxxxxxxxxxxxxxxxxxxxxxxxx");
-		console.log(session.peers.map((x) => x.identity.publicKey.hashcode()));
 
 		const entryCount = sampleSize;
 
 		await waitForResolved(() =>
 			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
 		);
-		try {
-			await waitForResolved(() =>
-				expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
-			);
-		} catch (error) {
-			console.log(
-				"???",
-				db3.log.getReplicatorsSorted(),
-				db3.log.role,
-				db3.log
-					.getReplicatorsSorted()
-					?.find(
-						(x) => x.hash === session.peers[2].identity.publicKey.hashcode()
-					)
-			);
-			throw error;
-		}
+
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+		);
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
@@ -357,25 +345,6 @@ describe(`sharding`, () => {
 				db3.log.log.values.length > entryCount * 0.5 &&
 				db3.log.log.values.length < entryCount * 0.85
 		);
-		console.log("---->", [
-			session.peers.map((x) => x.identity.publicKey.hashcode())
-		]);
-		console.log("XYZ1", db1.log.getReplicatorsSorted());
-		//
-		/* const a = [...db1.log["_gidPeersHistory"].values()];
-		console.log(
-			a.slice(0, 5),
-			db2.log.log.values.length,
-			db3.log.log.values.length
-		);
-		await delay(1000);
-		console.log(
-			JSON.stringify([...db1.log["_gidPeersHistory"].values()]) ===
-			JSON.stringify(a),
-			db2.log.log.values.length,
-			db3.log.log.values.length
-		);
-		console.log("XYZ2", db1.log.getReplicatorsSorted()); */
 
 		await db3.close();
 

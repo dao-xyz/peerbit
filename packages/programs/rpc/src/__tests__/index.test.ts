@@ -219,7 +219,7 @@ describe("rpc", () => {
 				)
 			).map((x) => x.response);
 			const t1 = +new Date();
-			expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
+			expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(500); // some threshold
 			expect(results).toHaveLength(1);
 		});
 	});

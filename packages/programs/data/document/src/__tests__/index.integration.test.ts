@@ -1801,8 +1801,10 @@ describe("index", () => {
 				}
 				// Wait for ack that everone can connect to each outher through the rpc topic
 				for (let i = 0; i < session.peers.length; i++) {
-					await stores[i].docs.waitFor(
-						session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId)
+					await stores[i].docs.log.waitForReplicator(
+						...session.peers
+							.filter((_v, ix) => ix !== i)
+							.map((x) => x.identity.publicKey)
 					);
 				}
 			});
