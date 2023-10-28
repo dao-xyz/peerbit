@@ -1120,14 +1120,6 @@ export abstract class DirectStream<
 
 		const nextStream = next ? this.peers.get(next) : undefined;
 
-		if (!next && !message.header.to.includes(this.publicKeyHash)) {
-			console.error(
-				"????",
-				message.header.to,
-				!!this._ackCallbacks.get(messageIdString)
-			);
-		}
-
 		this._ackCallbacks
 			.get(messageIdString)
 			?.callback(message, peerStream, nextStream);

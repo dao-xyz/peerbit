@@ -251,43 +251,8 @@ describe("index", () => {
 				})
 			);
 		});
-		/* 	it("xxxx", async () => {
-				console.log("----------------------------------------");
-	
-				const l0axx = await session.peers[0].open(
-					new TestStore({
-						publicKey: session.peers[0].peerId
-					})
-				);
-	
-				await TestStore.open(l0axx.address!, session.peers[1]);
-				await TestStore.open(l0axx.address!, session.peers[2]);
-	
-				console.log(l0axx.getTopics?.());
-				console.log("B");
-	
-				const l0a = await session.peers[0].open(
-					new TestStore({
-						publicKey: session.peers[1].peerId
-					})
-				);
-				console.log(l0a.getTopics?.());
-	
-				const l0b = await TestStore.open(l0a.address!, session.peers[1], {
-					args: { role: new Observer() }
-				});
-	
-				await l0b.store.log.waitForReplicator(
-					session.peers[0].identity.publicKey
-				);
-			}); */
-
-		/*
-		 */
 
 		it("any access", async () => {
-			console.log("A");
-
 			const l0a = await session.peers[0].open(
 				new TestStore({
 					publicKey: session.peers[0].peerId
@@ -329,9 +294,6 @@ describe("index", () => {
 		});
 
 		it("read access", async () => {
-			//
-			console.log("B");
-
 			const l0a = await session.peers[0].open(
 				new TestStore({
 					publicKey: session.peers[0].peerId
