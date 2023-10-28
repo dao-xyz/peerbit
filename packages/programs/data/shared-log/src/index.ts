@@ -90,7 +90,7 @@ export interface SharedLogOptions {
 }
 
 export const DEFAULT_MIN_REPLICAS = 2;
-export const WAIT_FOR_REPLICATOR_TIMEOUT = 500;
+export const WAIT_FOR_REPLICATOR_TIMEOUT = 5000;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
 export type SharedAppendOptions<T> = AppendOptions<T> & {
@@ -515,6 +515,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 						if (toMerge.length > 0) {
 							await this.log.join(toMerge);
+
 							toDelete &&
 								Promise.all(this.pruneSafely(toDelete)).catch((e) => {
 									logger.error(e.toString());
@@ -628,11 +629,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 								})
 							);
 
-							this.replicationReorganization();
+							return this.replicationReorganization();
 						}
 					})
-					.catch(() => {
-						logger.error("Failed to find peer who updated their role");
+					.catch((e) => {
+						if (e instanceof AbortError) {
+							return;
+						}
+						logger.error(
+							"Failed to find peer who updated their role: " + e?.message
+						);
 					});
 			} else {
 				throw new Error("Unexpected message");
