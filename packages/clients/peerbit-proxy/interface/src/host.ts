@@ -412,9 +412,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.services.pubsub.requestSubscribers(message.topic);
 				await this.respond(message, new pubsub.RESP_RequestSubscribers(), from);
 			} else if (message instanceof pubsub.REQ_Subscribe) {
-				await this.services.pubsub.subscribe(message.topic, {
-					data: message.data
-				});
+				await this.services.pubsub.subscribe(message.topic);
 
 				let set = this._pubsubTopicSubscriptions.get(from.id);
 				if (!set) {

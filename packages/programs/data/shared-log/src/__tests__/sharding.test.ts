@@ -2,7 +2,7 @@ import { EventStore } from "./utils/stores/event-store";
 
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForAsync, waitForResolved } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../replication.js";
 import { Replicator } from "../role";
 
@@ -10,19 +10,22 @@ describe(`sharding`, () => {
 	let session: TestSession;
 	let db1: EventStore<Uint8Array>,
 		db2: EventStore<Uint8Array>,
-		db3: EventStore<Uint8Array>;
+		db3: EventStore<Uint8Array>,
+		db4: EventStore<Uint8Array>;
 
 	beforeAll(async () => {
-		session = await TestSession.connected(3);
+		session = await TestSession.connected(4);
 	});
 
 	afterEach(async () => {
 		await db1?.drop();
 		await db2?.drop();
 		await db3?.drop();
+		await db4?.drop();
 		db1 = undefined as any;
 		db2 = undefined as any;
 		db3 = undefined as any;
+		db4 = undefined as any;
 	});
 
 	afterAll(async () => {
@@ -73,8 +76,12 @@ describe(`sharding`, () => {
 			session.peers[2]
 		);
 
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+		);
 
 		const entryCount = sampleSize;
 
@@ -110,11 +117,11 @@ describe(`sharding`, () => {
 			return a === db.log.log.values.length;
 		};
 
-		await waitForAsync(() => checkConverged(db2), {
+		await waitFor(() => checkConverged(db2), {
 			timeout: 20000,
 			delayInterval: 500
 		});
-		await waitForAsync(() => checkConverged(db3), {
+		await waitFor(() => checkConverged(db3), {
 			timeout: 20000,
 			delayInterval: 500
 		});
@@ -162,9 +169,15 @@ describe(`sharding`, () => {
 		);
 		// client 3 will subscribe and start to recive heads before recieving subscription info about other peers
 
-		await waitFor(() => db1.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
+		await waitForResolved(() =>
+			expect(db1.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+		);
 
 		await waitFor(
 			() =>
@@ -178,11 +191,11 @@ describe(`sharding`, () => {
 			return a === db.log.log.values.length;
 		};
 
-		await waitForAsync(() => checkConverged(db2), {
+		await waitFor(() => checkConverged(db2), {
 			timeout: 20000,
 			delayInterval: 500
 		});
-		await waitForAsync(() => checkConverged(db3), {
+		await waitFor(() => checkConverged(db3), {
 			timeout: 20000,
 			delayInterval: 500
 		});
@@ -280,8 +293,13 @@ describe(`sharding`, () => {
 
 		const entryCount = sampleSize;
 
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
+		);
+
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+		);
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
@@ -311,6 +329,7 @@ describe(`sharding`, () => {
 		// which would make this test break since reopen, would/should invalidate pending deletes
 		// TODO make this more well defined
 		await delay(100);
+
 		await session.peers[2].open(db3);
 		await db3.close();
 		await session.peers[2].open(db3);
@@ -326,9 +345,30 @@ describe(`sharding`, () => {
 				db3.log.log.values.length > entryCount * 0.5 &&
 				db3.log.log.values.length < entryCount * 0.85
 		);
+
 		await db3.close();
-		await waitFor(() => db1.log.log.values.length === entryCount);
-		await waitFor(() => db2.log.log.values.length === entryCount);
+
+		await waitForResolved(() =>
+			expect(db1.log.log.values.length).toEqual(entryCount)
+		);
+		try {
+			await waitForResolved(() =>
+				expect(db2.log.log.values.length).toEqual(entryCount)
+			);
+		} catch (error) {
+			db1.log["_gidPeersHistory"].clear();
+			db2.log["_gidPeersHistory"].clear();
+
+			db1.log.replicationReorganization();
+			try {
+				await waitForResolved(() =>
+					expect(db2.log.log.values.length).toEqual(entryCount)
+				);
+			} catch (error2) {
+				throw error2;
+			}
+			throw error;
+		}
 
 		await waitForResolved(async () =>
 			checkReplicas(
@@ -390,16 +430,16 @@ describe(`sharding`, () => {
 			return a === db.log.log.values.length;
 		};
 
-		await waitForAsync(() => checkConverged(db1), {
+		await waitFor(() => checkConverged(db1), {
 			timeout: 20000,
 			delayInterval: 500
 		});
 
-		await waitForAsync(() => checkConverged(db2), {
+		await waitFor(() => checkConverged(db2), {
 			timeout: 20000,
 			delayInterval: 500
 		});
-		await waitForAsync(() => checkConverged(db3), {
+		await waitFor(() => checkConverged(db3), {
 			timeout: 20000,
 			delayInterval: 500
 		});
@@ -461,7 +501,9 @@ describe(`sharding`, () => {
 		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
 		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
 
-		await waitFor(() => db1.log.log.values.length === client1WantedDbSize);
+		await waitForResolved(() =>
+			expect(db1.log.log.values.length).toEqual(client1WantedDbSize)
+		);
 
 		await waitFor(
 			() =>
@@ -481,16 +523,16 @@ describe(`sharding`, () => {
 			return a === db.log.log.values.length;
 		};
 
-		await waitForAsync(() => checkConverged(db1), {
+		await waitFor(() => checkConverged(db1), {
 			timeout: 20000,
 			delayInterval: 500
 		});
 
-		await waitForAsync(() => checkConverged(db2), {
+		await waitFor(() => checkConverged(db2), {
 			timeout: 20000,
 			delayInterval: 500
 		});
-		await waitForAsync(() => checkConverged(db3), {
+		await waitFor(() => checkConverged(db3), {
 			timeout: 20000,
 			delayInterval: 500
 		});

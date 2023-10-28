@@ -8,6 +8,7 @@ export const NO_TYPE_VARIANT = new Uint8Array([0]);
 export class NoType extends Role {}
 
 export const OBSERVER_TYPE_VARIANT = new Uint8Array([1]);
+
 @variant(1)
 export class Observer extends Role {}
 

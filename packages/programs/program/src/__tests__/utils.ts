@@ -22,7 +22,6 @@ export const createPeer = async (
 				{
 					publicKey: PublicSignKey;
 					timestamp: bigint;
-					data?: Uint8Array | undefined;
 				}
 			>
 		>;
@@ -76,7 +75,7 @@ export const createPeer = async (
 			},
 			pubsub: {
 				emitSelf: false,
-				subscribe: async (topic, opts) => {
+				subscribe: async (topic) => {
 					let map = state.subsribers.get(topic);
 					if (!map) {
 						map = new Map();
@@ -84,19 +83,20 @@ export const createPeer = async (
 					}
 					map.set(keypair.publicKey.hashcode(), {
 						publicKey: keypair.publicKey,
-						timestamp: BigInt(+new Date()),
-						data: opts?.data
+						timestamp: BigInt(+new Date())
 					});
 					dispatchEvent(
 						new CustomEvent<SubscriptionEvent>("subscribe", {
 							detail: new SubscriptionEvent(keypair.publicKey, [
-								new Subscription(topic, opts?.data)
+								new Subscription(topic)
 							])
 						})
 					);
 				},
 				getSubscribers: (topic) => {
-					return state.subsribers.get(topic);
+					return [...(state.subsribers.get(topic)?.values() || [])].map(
+						(x) => x.publicKey
+					);
 				},
 
 				unsubscribe: async (topic) => {
@@ -144,7 +144,7 @@ export const createPeer = async (
 										// TODO undefined checks
 										detail: new SubscriptionEvent(
 											state.peers.get(hash)!.identity.publicKey!,
-											[new Subscription(topic, opts?.data)]
+											[new Subscription(topic)]
 										)
 									}),
 									true

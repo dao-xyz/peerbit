@@ -35,7 +35,6 @@
 		"@peerbit/trusted-network": "2.0.21"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^1.0.33",
-		"memory-level": "^1.0.0"
+		"@peerbit/test-utils": "^1.0.33"
 	}
 }

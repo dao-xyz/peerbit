@@ -56,8 +56,7 @@ class RPCTest extends Program<Args> {
 					? (hello, from) => {
 							return new World();
 					  }
-					: undefined, // only create a response handler if we are to respond to requests
-			subscriptionData: args?.role ? serialize(args.role) : undefined
+					: undefined // only create a response handler if we are to respond to requests
 		});
 	}
 
@@ -65,9 +64,7 @@ class RPCTest extends Program<Args> {
 		const allSubscribers = await this.node.services.pubsub.getSubscribers(
 			this.rpc.rpcTopic
 		);
-		return [...(allSubscribers ? allSubscribers.values() : [])]
-			.filter((x) => x.data && equals(x.data, serialize(new Responder())))
-			.map((x) => x.publicKey);
+		return allSubscribers || [];
 	}
 }
 

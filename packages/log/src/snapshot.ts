@@ -10,7 +10,7 @@ import {
 	variant,
 	vec
 } from "@dao-xyz/borsh";
-import { waitForAsync } from "@peerbit/time";
+import { waitFor } from "@peerbit/time";
 import { AnyStore } from "@peerbit/any-store";
 import { logger } from "./logger.js";
 
@@ -68,7 +68,7 @@ export const save = async <T>(
 	writer.string(snapshot);
 	await cache.put(snapshotPath, writer.finalize());
 
-	await waitForAsync(async () => (await cache.get(snapshotPath)) != null, {
+	await waitFor(async () => (await cache.get(snapshotPath)) != null, {
 		delayInterval: 200,
 		timeout: 10 * 1000
 	});

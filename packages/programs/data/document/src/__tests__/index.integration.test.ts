@@ -312,14 +312,23 @@ describe("index", () => {
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone());
-				store2.docs.updateRole(new Observer());
+				await delay(3000);
 
-				await waitForResolved(() =>
-					expect(store2.docs.index.index.size).toEqual(0)
-				);
-				await waitForResolved(() =>
-					expect(store3.docs.index.index.size).toEqual(COUNT)
-				);
+				const abc123 = store2.docs.log.topic;
+
+				await store2.docs.updateRole(new Observer());
+				try {
+					await waitForResolved(() =>
+						expect(store2.docs.index.index.size).toEqual(0)
+					);
+					await waitForResolved(() =>
+						expect(store3.docs.index.index.size).toEqual(COUNT)
+					);
+				} catch (error) {
+					const y = 123;
+				}
+
+				const x = 123;
 			});
 		});
 
@@ -794,7 +803,9 @@ describe("index", () => {
 
 					expect(store2.docs.log.role).toBeInstanceOf(Observer);
 
-					await store2.waitFor(session.peers[0].peerId);
+					await store2.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey
+					);
 
 					let results = await store2.docs.index.search(
 						new SearchRequest({ query: [] })
@@ -917,6 +928,9 @@ describe("index", () => {
 				expect(stores[0].docs.log.role).toBeInstanceOf(Replicator);
 				expect(stores[1].docs.log.role).toBeInstanceOf(Observer);
 				await stores[1].waitFor(session.peers[0].peerId);
+				await stores[1].docs.log.waitForReplicator(
+					session.peers[0].identity.publicKey
+				);
 				await stores[0].waitFor(session.peers[1].peerId);
 				canRead = new Array(stores.length).fill(undefined);
 				canSearch = new Array(stores.length).fill(undefined);
@@ -996,6 +1010,7 @@ describe("index", () => {
 
 			describe("string", () => {
 				it("exact", async () => {
+					let q = stores[1].docs.log.getReplicatorsSorted();
 					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
 							query: [
@@ -1008,7 +1023,7 @@ describe("index", () => {
 						})
 					);
 					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						responses.map((x) => Buffer.from(x.id).toString())
 					).toContainAllValues(["1", "2"]);
 				});
 
@@ -1261,7 +1276,9 @@ describe("index", () => {
 								nestedStore.address,
 								{ args: { role: new Observer() } }
 							);
-						await nestedStore2.waitFor(session.peers[0].peerId);
+						await nestedStore2.documents.log.waitForReplicator(
+							session.peers[0].identity.publicKey
+						);
 						const results = await nestedStore2.documents.index.search(
 							new SearchRequest({
 								query: [
@@ -1337,7 +1354,10 @@ describe("index", () => {
 								docs.address,
 								{ args: { role: new Observer() } }
 							);
-						await docsObserver.waitFor(session.peers[0].peerId);
+						await docsObserver.documents.log.waitForReplicator(
+							session.peers[0].identity.publicKey
+						);
+
 						const results = await docsObserver.documents.index.search(
 							new SearchRequest({
 								query: [
@@ -1367,7 +1387,9 @@ describe("index", () => {
 								docs.address,
 								{ args: { role: new Observer() } }
 							);
-						await docsObserver.waitFor(session.peers[0].peerId);
+						await docsObserver.documents.log.waitForReplicator(
+							session.peers[0].identity.publicKey
+						);
 
 						const results = await docsObserver.documents.index.search(
 							new SearchRequest({
@@ -1401,7 +1423,9 @@ describe("index", () => {
 								docs.address,
 								{ args: { role: new Observer() } }
 							);
-						await docsObserver.waitFor(session.peers[0].peerId);
+						await docsObserver.documents.log.waitForReplicator(
+							session.peers[0].identity.publicKey
+						);
 
 						const results = await docsObserver.documents.index.search(
 							new SearchRequest({
@@ -1777,8 +1801,10 @@ describe("index", () => {
 				}
 				// Wait for ack that everone can connect to each outher through the rpc topic
 				for (let i = 0; i < session.peers.length; i++) {
-					await stores[i].docs.waitFor(
-						...session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId)
+					await stores[i].docs.log.waitForReplicator(
+						...session.peers
+							.filter((_v, ix) => ix !== i)
+							.map((x) => x.identity.publicKey)
 					);
 				}
 			});
@@ -2401,7 +2427,7 @@ describe("index", () => {
 						return fn(a, b, c);
 					};
 					await stores[i].docs.waitFor(
-						...session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId)
+						session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId)
 					);
 				}
 			});

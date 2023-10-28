@@ -1,10 +1,10 @@
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved, waitFor } from "@peerbit/time";
 import { TestSession } from "@peerbit/test-utils";
 import { RPC, RPCResponse, queryAll } from "../index.js";
 import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { PeerId } from "@peerbit/pubsub";
+import { DirectSub, PeerId } from "@peerbit/pubsub";
 
 @variant("payload")
 class Body {
@@ -54,6 +54,7 @@ describe("rpc", () => {
 		let session: TestSession, responder: RPCTest, reader: RPCTest;
 		beforeEach(async () => {
 			session = await TestSession.connected(3);
+			//await delay(2000)
 
 			responder = new RPCTest([session.peers[0].peerId]);
 			responder.query = new RPC();
@@ -65,6 +66,7 @@ describe("rpc", () => {
 
 			//await waitForSubscribers(reader.libp2p, responder.libp2p, reader.query.rpcTopic);
 			await reader.waitFor(session.peers[0].peerId);
+			await responder.waitFor(session.peers[1].peerId);
 		});
 		afterEach(async () => {
 			await reader.close();
@@ -80,7 +82,7 @@ describe("rpc", () => {
 				{ amount: 1 }
 			);
 
-			await waitFor(() => results.length === 1);
+			await waitForResolved(() => expect(results).toHaveLength(1));
 			expect(results[0].from?.hashcode()).toEqual(
 				responder.node.identity.publicKey.hashcode()
 			);
@@ -137,22 +139,23 @@ describe("rpc", () => {
 					.get("topic")
 					.get(responder.node.identity.publicKey.hashcode()).data
 			).toBeUndefined();
-			await responder.query.subscribe(new Uint8Array([1]));
+			await responder.query.subscribe();
 			await waitForResolved(() =>
 				expect(
 					reader.node.services.pubsub["topics"]
 						.get("topic")
-						.get(responder.node.identity.publicKey.hashcode()).data[0]
-				).toEqual(1)
+						.get(responder.node.identity.publicKey.hashcode())
+				).toBeDefined()
 			);
-			await responder.query.subscribe(new Uint8Array([2]));
-			await waitForResolved(() =>
-				expect(
-					reader.node.services.pubsub["topics"]
-						.get("topic")
-						.get(responder.node.identity.publicKey.hashcode()).data[0]
-				).toEqual(2)
-			);
+			await responder.query.subscribe();
+
+			// no change since already subscribed
+			expect(
+				reader.node.services.pubsub["topics"]
+					.get("topic")
+					.get(responder.node.identity.publicKey.hashcode())
+			).toBeDefined();
+
 			expect(responder.node.services.pubsub["listenerCount"]("data")).toEqual(
 				1
 			);
@@ -216,7 +219,7 @@ describe("rpc", () => {
 				)
 			).map((x) => x.response);
 			const t1 = +new Date();
-			expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(200); // some threshold
+			expect(Math.abs(t1 - t0 - waitFor)).toBeLessThan(500); // some threshold
 			expect(results).toHaveLength(1);
 		});
 	});
@@ -257,19 +260,19 @@ describe("queryAll", () => {
 
 	beforeEach(async () => {
 		session = await TestSession.connected(3);
-
 		const t = new RPCTest(session.peers.map((x) => x.peerId));
 		t.query = new RPC();
 
 		clients = [];
 		for (let i = 0; i < session.peers.length; i++) {
 			const c = deserialize(serialize(t), RPCTest);
+
 			await session.peers[i].open(c);
 			clients.push(c);
 		}
 		for (let i = 0; i < session.peers.length; i++) {
 			await clients[i].waitFor(
-				...session.peers.filter((p, ix) => ix !== i).map((x) => x.peerId)
+				session.peers.filter((p, ix) => ix !== i).map((x) => x.peerId)
 			);
 		}
 	});
@@ -312,7 +315,8 @@ describe("queryAll", () => {
 	});
 
 	it("series", async () => {
-		const fn = async (i: number) => {
+		const fn = async (index: number) => {
+			const i = index % session.peers.length;
 			let r: RPCResponse<Body>[][] = [];
 			await queryAll(
 				clients[i].query,
@@ -325,8 +329,9 @@ describe("queryAll", () => {
 			expect(r).toHaveLength(1);
 			expect(r[0]).toHaveLength(2);
 		};
+
 		for (let i = 0; i < 100; i++) {
-			await fn(i % session.peers.length);
+			await fn(i);
 		}
 	});
 

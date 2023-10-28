@@ -195,7 +195,7 @@ export class PeerbitProxyClient implements ProgramClient {
 					const resp = await this.request<pubsub.RESP_GetSubscribers>(
 						new pubsub.REQ_GetSubscribers(topic)
 					);
-					return resp.map || undefined;
+					return resp.subscribers;
 				},
 				publish: async (data, options) => {
 					const resp = await this.request<pubsub.RESP_Publish>(
@@ -208,9 +208,9 @@ export class PeerbitProxyClient implements ProgramClient {
 						new pubsub.REQ_RequestSubscribers(topic)
 					);
 				},
-				subscribe: async (topic, options) => {
+				subscribe: async (topic) => {
 					await this.request<pubsub.RESP_Subscribe>(
-						new pubsub.REQ_Subscribe(topic, options)
+						new pubsub.REQ_Subscribe(topic)
 					);
 				},
 				unsubscribe: async (topic, options) => {

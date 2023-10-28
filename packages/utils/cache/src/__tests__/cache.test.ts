@@ -10,6 +10,20 @@ describe("cache", () => {
 		expect(cache.has("")).toBeFalse();
 	});
 
+	it("trim", async () => {
+		const cache = new Cache({ max: 1e3, ttl: 3e3 });
+		cache.add("1");
+		await delay(1500);
+		cache.add("2");
+		expect(cache.has("1")).toBeTrue();
+		await delay(1500);
+		expect(cache.has("1")).toBeFalse();
+		expect(cache.has("2")).toBeTrue();
+		await delay(1500);
+		expect(cache.has("1")).toBeFalse();
+		expect(cache.has("2")).toBeFalse();
+	});
+
 	it("max", async () => {
 		const cache = new Cache({ max: 2, ttl: 1e6 });
 		cache.add("1");

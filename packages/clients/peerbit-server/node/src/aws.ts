@@ -210,7 +210,7 @@ export const launchNodes = async (properties: {
 		new RunInstancesCommand({
 			ImageId: AWS_LINUX_ARM_AMIs[regionString],
 			SecurityGroupIds: [securityGroupOut.GroupId!],
-			InstanceType: "t4g." + (properties.size || "micro"),
+			InstanceType: ("t4g." + (properties.size || "micro")) as any, // TODO types
 			UserData: Buffer.from(
 				setupUserData(properties.email, properties.grantAccess)
 			).toString("base64"),

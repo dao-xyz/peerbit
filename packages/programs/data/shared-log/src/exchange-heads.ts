@@ -34,7 +34,7 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: fixedArray("u8", 4) })
 	reserved: Uint8Array = new Uint8Array(4);
 
-	constructor(props: { logId: Uint8Array; heads: EntryWithRefs<T>[] }) {
+	constructor(props: { heads: EntryWithRefs<T>[] }) {
 		super();
 		this.heads = props.heads;
 	}
@@ -92,7 +92,6 @@ export const createExchangeHeadsMessage = async (
 	);
 	logger.debug(`Send latest heads of '${log.id}'`);
 	return new ExchangeHeadsMessage({
-		logId: log.id!,
 		heads: headsWithRefs
 	});
 };

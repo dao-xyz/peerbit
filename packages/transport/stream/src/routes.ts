@@ -1,283 +1,251 @@
-import Graphs from "graphology";
-import type { MultiUndirectedGraph } from "graphology";
-import { dijkstra, unweighted } from "graphology-shortest-path";
-import { logger } from "./logger.js";
-import { MinimalEdgeMapper } from "graphology-utils/getters";
+import { PublicSignKey } from "@peerbit/crypto";
 
-interface EdgeData {
-	weight: number;
-	time: number;
-}
 export class Routes {
-	graph: MultiUndirectedGraph<any, EdgeData>;
-	private peerId: string;
-	constructor(peerId: string) {
-		this.peerId = peerId;
-		this.graph = new (Graphs as any).UndirectedGraph();
+	// END receiver -> Neighbour
+
+	constructor(
+		readonly me: string,
+		readonly routes: Map<
+			string,
+			Map<
+				string,
+				{ session: number; list: { hash: string; distance: number }[] }
+			>
+		> = new Map()
+	) {}
+
+	clear() {
+		this.routes.clear();
 	}
 
-	get linksCount() {
-		return this.graph.edges().length;
-	}
-
-	get nodeCount() {
-		return this.graph.nodes().length;
-	}
-
-	/**
-	 *
-	 * @param from
-	 * @param to
-	 * @returns new nodes
-	 */
-	addLink(
+	add(
 		from: string,
-		to: string,
-		weight: number,
-		origin: string = this.peerId
-	): string[] {
-		const linkExisted = this.hasLink(from, to);
-		const newReachableNodesFromOrigin: string[] = [];
-		if (!linkExisted) {
-			const currentTime = +new Date();
-			const fromWasReachable =
-				origin == from ||
-				this.getPath(origin, from, { unweighted: true }).length;
-			const toWasReachable =
-				origin === to || this.getPath(origin, to, { unweighted: true }).length;
-			const fromIsNowReachable = toWasReachable;
-			const toIsNowReachable = fromWasReachable;
-
-			const visited = new Set<string | number>();
-			const newReachableNodes: string[] = [];
-			if (fromIsNowReachable) {
-				newReachableNodes.push(from);
-			}
-			if (toIsNowReachable) {
-				newReachableNodes.push(to);
-			}
-			if (fromWasReachable) {
-				visited.add(from);
-			}
-			if (toWasReachable) {
-				visited.add(to);
-			}
-
-			if (!this.graph.hasNode(from)) {
-				this.graph.addNode(from);
-			}
-			if (!this.graph.hasNode(to)) {
-				this.graph.addNode(to);
-			}
-
-			this.graph.addUndirectedEdge(from, to, { weight, time: currentTime });
-
-			for (const newReachableNode of newReachableNodes) {
-				// get all nodes from this and add them to the new reachable set of nodes one can access from origin
-
-				const stack = [newReachableNode]; // iterate from the not reachable node
-				while (stack.length > 0) {
-					const node = stack.shift();
-					if (!node) {
-						continue;
-					}
-					if (visited.has(node)) {
-						continue;
-					}
-
-					visited.add(node);
-					const neighbors = this.graph.neighbors(node);
-					for (const neighbor of neighbors) {
-						const edge = this.graph.undirectedEdge(node, neighbor);
-						if (!edge) {
-							logger.warn(`Missing edge between: ${node} - ${neighbor}`);
-							continue;
-						}
-
-						const attributes = this.graph.getEdgeAttributes(edge);
-						if (attributes.time > currentTime) {
-							continue; // a new link has been added while we are iterating, dont follow this path
-						}
-
-						if (visited.has(neighbor)) {
-							continue;
-						}
-
-						stack.push(neighbor);
-					}
-					newReachableNodesFromOrigin.push(node);
-				}
-			}
-		} else {
-			// update weight
-			const edge = this.graph.undirectedEdge(from, to);
-			this.graph.setEdgeAttribute(edge, "weight", weight);
-			this.graph.setEdgeAttribute(edge, "time", +new Date());
+		neighbour: string,
+		target: string,
+		distance: number,
+		session?: number
+	) {
+		let fromMap = this.routes.get(from);
+		if (!fromMap) {
+			fromMap = new Map();
+			this.routes.set(from, fromMap);
+		}
+		let prev = fromMap.get(target) || {
+			session: session ?? +new Date(),
+			list: [] as { hash: string; distance: number }[]
+		};
+		if (session != null && prev.session < session) {
+			// second condition means that when we add new routes in a session that is newer
+			prev = { session, list: [] }; // reset route info how to reach this target
+		}
+		if (from === this.me && neighbour === target) {
+			// force distance to neighbour as targets to always favor directly sending to them
+			// i.e. if target is our neighbour, always assume the shortest path to them is the direct path
+			distance = -1;
 		}
 
-		return newReachableNodesFromOrigin;
+		for (const route of prev.list) {
+			if (route.hash === neighbour) {
+				route.distance = Math.min(route.distance, distance);
+				prev.list.sort((a, b) => a.distance - b.distance);
+				return;
+			}
+		}
+		prev.list.push({ distance, hash: neighbour });
+		prev.list.sort((a, b) => a.distance - b.distance);
+		fromMap.set(target, prev);
 	}
 
-	/**
-	 *
-	 * @param from
-	 * @param to
-	 * @param origin
-	 * @returns nodes that are no longer reachable from origin
+	/* 
+		add(neighbour: string, target: string, quality: number) {
+			this.routes.set(target, { neighbour, distance: quality })
+		}
 	 */
-	deleteLink(from: string, to: string, origin: string = this.peerId): string[] {
-		const link = this.getLink(from, to);
-		if (link) {
-			const date = +new Date();
-			const fromWasReachable =
-				origin == from ||
-				this.getPath(origin, from, { unweighted: true }).length;
-			const toWasReachable =
-				origin === to || this.getPath(origin, to, { unweighted: true }).length;
-			this.graph.dropEdge(link);
 
-			const unreachableNodesFromOrigin: string[] = [];
-			if (
-				fromWasReachable &&
-				origin !== from &&
-				this.getPath(origin, from, { unweighted: true }).length === 0
-			) {
-				unreachableNodesFromOrigin.push(from);
+	removeTarget(target: string) {
+		this.routes.delete(target);
+		for (const [fromMapKey, fromMap] of this.routes) {
+			// delete target
+			fromMap.delete(target);
+			if (fromMap.size === 0) {
+				this.routes.delete(fromMapKey);
 			}
-			if (
-				toWasReachable &&
-				origin !== to &&
-				this.getPath(origin, to, { unweighted: true }).length === 0
-			) {
-				unreachableNodesFromOrigin.push(to);
-			}
-
-			// remove subgraphs that are now disconnected from me
-			for (const disconnected of [...unreachableNodesFromOrigin]) {
-				const node = disconnected;
-				if (!this.graph.hasNode(node)) {
-					continue;
-				}
-
-				const stack = [disconnected];
-				const visited = new Set<string | number>();
-				while (stack.length > 0) {
-					const node = stack.shift();
-					const nodeId = node;
-					if (!nodeId || !this.graph.hasNode(nodeId)) {
-						continue;
-					}
-					if (visited.has(nodeId)) {
-						continue;
-					}
-
-					visited.add(nodeId);
-
-					const neighbors = this.graph.neighbors(node);
-
-					for (const neighbor of neighbors) {
-						const edge = this.graph.undirectedEdge(node, neighbor);
-						if (!edge) {
-							logger.warn(`Missing edge between: ${node} - ${neighbor}`);
-							continue;
-						}
-						const attributes = this.graph.getEdgeAttributes(edge);
-						if (attributes.time > date) {
-							continue; // don't follow path because this is a new link that might provide some new connectivity
-						}
-
-						if (visited.has(neighbor)) {
-							continue;
-						}
-
-						stack.push(neighbor);
-					}
-					this.graph.dropNode(nodeId);
-					if (disconnected !== nodeId) {
-						unreachableNodesFromOrigin.push(nodeId.toString());
-					}
-				}
-			}
-			return unreachableNodesFromOrigin;
 		}
-		return [];
+		return [target];
 	}
 
-	getLink(from: string, to: string): string | undefined {
-		if (!this.graph.hasNode(from) || !this.graph.hasNode(to)) {
+	removeNeighbour(target: string) {
+		this.routes.delete(target);
+		const maybeUnreachable: Set<string> = new Set([target]);
+		for (const [fromMapKey, fromMap] of this.routes) {
+			// delete target
+			fromMap.delete(target);
+
+			// delete this as neighbour
+			for (const [remote, neighbours] of fromMap) {
+				neighbours.list = neighbours.list.filter((x) => x.hash !== target);
+				if (neighbours.list.length === 0) {
+					fromMap.delete(remote);
+					maybeUnreachable.add(remote);
+				}
+			}
+
+			if (fromMap.size === 0) {
+				this.routes.delete(fromMapKey);
+			}
+		}
+		return [...maybeUnreachable].filter((x) => !this.isReachable(this.me, x));
+	}
+
+	/* removeTarget(to: string, neighbour?: string) {
+		for (const [fromMapKey, fromMap] of this.routes) {
+			let unreachable = true;
+			if(neighbour)
+			{
+				const neighbours = fromMap.get(to);
+				unreachable = neighbours?.list.find(x=>x.hash === neighbour)
+			}
+			if (unreachable) {
+				fromMap.delete(to)
+				if (fromMap.size === 0) {
+					this.routes.delete(fromMapKey);
+				}
+			}
+
+		}
+
+		this.removeNeighbour(to)
+	}
+
+	removeNeighbour(neighbour: string) {
+		const removed: string[] = [];
+		for (const [fromMapKey, fromMap] of this.routes) {
+			for (const [target, v] of fromMap) {
+				const keepRoutes: { hash: string; distance: number }[] = [];
+				for (const route of v.list) {
+					if (route.hash !== neighbour) {
+						keepRoutes.push(route);
+					}
+				}
+
+				if (keepRoutes.length === 0) {
+					fromMap.delete(target);
+					removed.push(target);
+				} else {
+					fromMap.set(target, { session: v.session, list: keepRoutes });
+				}
+			}
+
+			removed.push(neighbour);
+			fromMap.delete(neighbour);
+			if (fromMap.size === 0) {
+				this.routes.delete(fromMapKey);
+			}
+		}
+
+
+
+		// Return all unreachable
+		return removed.filter((x) => !this.routes.has(x));
+	} */
+
+	findNeighbor(from: string, target: string) {
+		return this.routes.get(from)?.get(target);
+	}
+
+	isReachable(from: string, target: string) {
+		return this.routes.get(from)?.has(target) === true;
+	}
+
+	hasTarget(target: string) {
+		for (const [k, v] of this.routes) {
+			if (v.has(target)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	getDependent(target: string) {
+		const dependent: string[] = [];
+		for (const [fromMapKey, fromMap] of this.routes) {
+			if (fromMapKey !== this.me && fromMap.has(target)) {
+				dependent.push(fromMapKey);
+			}
+		}
+		return dependent;
+	}
+
+	count() {
+		const set: Set<string> = new Set();
+		const map = this.routes.get(this.me);
+		if (map) {
+			for (const [k, v] of map) {
+				set.add(k);
+				for (const peer of v.list) {
+					set.add(peer.hash);
+				}
+			}
+		}
+		return set.size;
+	}
+
+	// for all tos if
+	getFanout(
+		from: PublicSignKey,
+		tos: string[],
+		redundancy: number
+	): Map<string, string[]> | undefined {
+		if (tos.length === 0) {
 			return undefined;
 		}
 
-		const edges = this.graph.edges(from, to);
-		if (edges.length > 1) {
-			throw new Error("Unexpected edge count: " + edges.length);
-		}
-		if (edges.length > 0) {
-			return edges[0];
-		}
-		return undefined;
-	}
+		let fanoutMap: Map<string, string[]> | undefined = undefined;
 
-	getLinkData(from: string, to: string): EdgeData | undefined {
-		const edgeId = this.getLink(from, to);
-		if (edgeId) return this.graph.getEdgeAttributes(edgeId);
-		return undefined;
-	}
+		const fromKey = from.hashcode();
 
-	hasLink(from: string, to: string): boolean {
-		return this.graph.hasEdge(from, to);
-	}
-	hasNode(node: string): boolean {
-		return this.graph.hasNode(node);
-	}
-
-	getPath(
-		from: string,
-		to: string,
-		options?: { unweighted?: boolean } | { block?: string }
-	): unweighted.ShortestPath | dijkstra.BidirectionalDijstraResult {
-		try {
-			let getEdgeWeight:
-				| keyof EdgeData
-				| MinimalEdgeMapper<number, EdgeData> = (edge) =>
-				this.graph.getEdgeAttribute(edge, "weight");
-			const blockId = (options as { block?: string })?.block;
-			if (blockId) {
-				const neighBourEdges = new Set(
-					this.graph
-						.inboundNeighbors(blockId)
-						.map((x) => this.graph.edges(x, blockId))
-						.flat()
-				);
-				getEdgeWeight = (edge) => {
-					if (neighBourEdges.has(edge)) {
-						return Number.MAX_SAFE_INTEGER;
-					}
-					return this.graph.getEdgeAttribute(edge, "weight");
-				};
-			}
-
-			// TODO catching for network changes and resuse last result
-			const path =
-				((options as { unweighted?: boolean })?.unweighted
-					? unweighted.bidirectional(this.graph, from, to)
-					: dijkstra.bidirectional(this.graph, from, to, getEdgeWeight)) || [];
-			if (path?.length > 0 && path[0] !== from) {
-				path.reverse();
-			}
-
-			if (blockId) {
-				if (path.includes(blockId)) {
-					return []; // Path does not exist, as we go through a blocked node with inifite weight
+		// Message to > 0
+		if (tos.length > 0) {
+			for (const to of tos) {
+				if (to === this.me || fromKey === to) {
+					continue; // don't send to me or backwards
 				}
-			}
 
-			return path as any; // TODO fix types
-		} catch (error) {
-			return [];
+				const neighbour = this.findNeighbor(fromKey, to);
+				if (neighbour) {
+					let foundClosest = false;
+					for (
+						let i = 0;
+						i < Math.min(neighbour.list.length, redundancy);
+						i++
+					) {
+						const distance = neighbour.list[i].distance;
+						if (distance >= redundancy) {
+							break; // because neighbour listis sorted
+						}
+						if (distance <= 0) {
+							foundClosest = true;
+						}
+						const fanout = (fanoutMap || (fanoutMap = new Map())).get(
+							neighbour.list[i].hash
+						);
+						if (!fanout) {
+							fanoutMap.set(neighbour.list[i].hash, [to]);
+						} else {
+							fanout.push(to);
+						}
+					}
+					if (!foundClosest && from.hashcode() === this.me) {
+						return undefined; // we dont have the shortest path to our target (yet). Send to all
+					}
+
+					continue;
+				}
+
+				// we can't find path, send message to all peers
+				return undefined;
+			}
 		}
-	}
-	clear() {
-		this.graph.clear();
+		return fanoutMap || (fanoutMap = new Map());
 	}
 }

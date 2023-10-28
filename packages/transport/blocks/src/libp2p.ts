@@ -18,6 +18,7 @@ import { AnyBlockStore } from "./any-blockstore.js";
 import { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
 import { createStore } from "@peerbit/any-store";
+import { AbortError } from "@peerbit/time";
 
 export class BlockMessage {}
 
@@ -68,7 +69,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			messageProcessingConcurrency?: number;
 		}
 	) {
-		super(components, ["direct-block/1.0.0"], {
+		super(components, ["/lazyblock/1.0.0"], {
 			emitSelf: false,
 			signaturePolicy: "StrictNoSign",
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
@@ -87,6 +88,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				return;
 			}
 			const message = evt.detail;
+			if (!message.data) {
+				return;
+			}
+
 			try {
 				const decoded = deserialize(message.data, BlockMessage);
 				if (decoded instanceof BlockRequest && this._localStore) {
@@ -182,6 +187,16 @@ export class DirectBlock extends DirectStream implements IBlocks {
 						},
 						options.timeout || 30 * 1000
 					);
+					const abortHandler = () => {
+						clearTimeout(timeoutCallback);
+						this._resolvers.delete(cidString);
+						this.closeController.signal.removeEventListener(
+							"abort",
+							abortHandler
+						);
+						reject(new AbortError());
+					};
+					this.closeController.signal.addEventListener("abort", abortHandler);
 
 					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
 						const value = await checkDecodeBlock(cidObject, bytes, {
@@ -191,6 +206,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 
 						clearTimeout(timeoutCallback);
 						this._resolvers.delete(cidString); // TODO concurrency might not work as expected here
+						this.closeController.signal.removeEventListener(
+							"abort",
+							abortHandler
+						);
 						resolve(value);
 					});
 				}

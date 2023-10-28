@@ -17,11 +17,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const modulesPath = path.join(__dirname, "./tmp/cli-test/modules");
 
-const runCommandAsync = (args): ProcessWithOut => {
-	const cmd = `node --loader ts-node/esm ${path.join(
+const runCommandProcess = (args): ProcessWithOut => {
+	const cmd = `node --experimental-vm-modules ${path.join(
 		__dirname,
-		"../",
-		"bin.ts"
+		"../../",
+		"lib",
+		"esm",
+		"bin.js"
 	)} ${args}`;
 	const p = exec(
 		cmd /* , { env: { ...process.env, "PEERBIT_MODULES_PATH": modulesPath } } */
@@ -30,10 +32,12 @@ const runCommandAsync = (args): ProcessWithOut => {
 };
 
 const runCommand = (args): string => {
-	const cmd = `node --loader ts-node/esm ${path.join(
+	const cmd = `node --experimental-vm-modules ${path.join(
 		__dirname,
-		"../",
-		"bin.ts"
+		"../../",
+		"lib",
+		"esm",
+		"bin.js"
 	)} ${args}`;
 	return execSync(cmd).toString();
 };
@@ -102,7 +106,7 @@ describe("cli", () => {
 	let PORT = 9993;
 
 	const start = async (extraArgs: string = "") => {
-		const cmd = runCommandAsync(
+		const cmd = runCommandProcess(
 			`start --reset --port-api ${PORT} --port-node 0 --directory ${configDirectory} ${extraArgs}`
 		);
 		processes.push(cmd);
@@ -127,24 +131,14 @@ describe("cli", () => {
 		remote: string = LOCAL_REMOTE_NAME,
 		address: string = "http://localhost:" + PORT
 	): void => {
-		execSync(
-			`node --loader ts-node/esm ${path.join(
-				__dirname,
-				"../",
-				"bin.ts"
-			)} remote add ${remote} ${address} --directory ${configDirectory}`
+		runCommand(
+			`remote add ${remote} ${address} --directory ${configDirectory}`
 		);
 	};
 
 	const connect = (remote: string = LOCAL_REMOTE_NAME): ProcessWithOut => {
-		const p = getProcessWithOut(
-			exec(
-				`node --loader ts-node/esm ${path.join(
-					__dirname,
-					"../",
-					"bin.ts"
-				)} remote connect ${remote} --directory ${configDirectory}`
-			)
+		const p = runCommandProcess(
+			`remote connect ${remote} --directory ${configDirectory}`
 		);
 		processes.push(p);
 		return p;
@@ -320,6 +314,7 @@ describe("cli", () => {
 				);
 				await checkPeerId(terminal);
 			});
+
 			/*
 			it("re-opens on restart", async () => {
 				const server = await start();

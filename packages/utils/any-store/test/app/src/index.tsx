@@ -1,6 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { MemoryLevel } from "memory-level";
 import { createStore } from "@peerbit/any-store";
 
 /* import { expect } from '@jest/globals'; */

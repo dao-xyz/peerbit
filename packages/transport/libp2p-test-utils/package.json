@@ -38,13 +38,11 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/libp2p-noise": "^13.0.1",
-		"@libp2p/mplex": "^9.0.5",
-		"@libp2p/tcp": "^8.0.5",
-		"@libp2p/webrtc": "^3.1.9",
-		"@libp2p/websockets": "^7.0.5",
-		"datastore-level": "^10.1.4",
-		"libp2p": "0.46.9",
-		"memory-level": "^1.0.0"
+		"@libp2p/mplex": "^9.0.9",
+		"@libp2p/tcp": "^8.0.10",
+		"@libp2p/webrtc": "^3.2.5",
+		"@libp2p/websockets": "^7.0.10",
+		"libp2p": "0.46.16"
 	},
 	"devDependencies": {
 		"@peerbit/time": "1.0.4"

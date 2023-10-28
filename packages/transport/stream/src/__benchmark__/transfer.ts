@@ -5,9 +5,10 @@ import {
 	DirectStream,
 	waitForPeers
 } from "../index.js";
-import { delay } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { tcp } from "@libp2p/tcp";
 import crypto from "crypto";
+import { SeekDelivery } from "@peerbit/stream-interface";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
 
@@ -57,7 +58,14 @@ const stream = (i: number): TestStreamImpl =>
 await waitForPeers(stream(0), stream(1));
 await waitForPeers(stream(1), stream(2));
 await waitForPeers(stream(2), stream(3));
-await delay(6000);
+
+stream(0).publish(new Uint8Array([123]), {
+	to: [stream(session.peers.length - 1).publicKey],
+	mode: new SeekDelivery(1)
+});
+await waitForResolved(() =>
+	stream(0).routes.isReachable(stream(0).publicKeyHash, stream(3).publicKeyHash)
+);
 
 let suite = new B.Suite();
 

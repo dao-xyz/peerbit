@@ -5,6 +5,7 @@ import {
 	X25519Keypair
 } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
+import { DeliveryMode } from "@peerbit/stream-interface";
 
 export const logger = loggerFn({ module: "rpc" });
 export type RPCOptions<R> = {
@@ -23,6 +24,7 @@ export type PublishOptions = {
 	};
 	to?: PublicSignKey[] | string[];
 	strict?: boolean;
+	mode?: DeliveryMode;
 };
 
 export type RPCResponse<R> = { response: R; from?: PublicSignKey };

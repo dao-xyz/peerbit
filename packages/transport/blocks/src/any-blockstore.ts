@@ -16,6 +16,7 @@ export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
 	private _onClose: (() => any) | undefined;
+	private _closeController: AbortController;
 	constructor(store: AnyStore = createStore()) {
 		this._store = store;
 	}
@@ -77,14 +78,13 @@ export class AnyBlockStore implements Blocks {
 
 	async start(): Promise<void> {
 		await this._store.open();
+		this._closeController = new AbortController();
 
 		try {
 			this._opening = waitFor(() => this._store.status() === "open", {
 				delayInterval: 100,
 				timeout: 10 * 1000,
-				stopperCallback: (fn) => {
-					this._onClose = fn;
-				}
+				signal: this._closeController.signal
 			});
 			await this._opening;
 		} finally {
@@ -94,6 +94,7 @@ export class AnyBlockStore implements Blocks {
 
 	async stop(): Promise<void> {
 		this._onClose && this._onClose();
+		this._closeController.abort();
 		return this._store.close();
 	}
 

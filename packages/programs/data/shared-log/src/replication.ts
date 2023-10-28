@@ -1,12 +1,10 @@
-import {
-	variant,
-	deserialize,
-	serialize,
-	field,
-	BorshError
-} from "@dao-xyz/borsh";
+import { variant, deserialize, serialize, field } from "@dao-xyz/borsh";
+import { TransportMessage } from "./message.js";
+import { Role } from "./role.js";
+export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
 
 interface SharedLog {
+	replicas: Partial<ReplicationLimits>;
 	getReplicatorsSorted(): { hash: string; timestamp: number }[] | undefined;
 }
 
@@ -27,6 +25,24 @@ export class AbsoluteReplicas extends MinReplicas {
 	}
 	getValue(_log: SharedLog): number {
 		return this._value;
+	}
+}
+
+@variant([1, 0])
+export class RequestRoleMessage extends TransportMessage {
+	constructor() {
+		super();
+	}
+}
+
+@variant([2, 0])
+export class ResponseRoleMessage extends TransportMessage {
+	@field({ type: Role })
+	role: Role;
+
+	constructor(role: Role) {
+		super();
+		this.role = role;
 	}
 }
 
@@ -65,11 +81,16 @@ export const decodeReplicas = (entry: {
 
 export const maxReplicas = (
 	log: SharedLog,
-	entries: { meta: { data?: Uint8Array } }[]
+	entries:
+		| { meta: { data?: Uint8Array } }[]
+		| IterableIterator<{ meta: { data?: Uint8Array } }>
 ) => {
 	let max = 0;
 	for (const entry of entries) {
 		max = Math.max(decodeReplicas(entry).getValue(log), max);
 	}
-	return max;
+	const lower = log.replicas.min?.getValue(log) || 1;
+	const higher = log.replicas.max?.getValue(log) ?? Number.MAX_SAFE_INTEGER;
+	const numberOfLeaders = Math.max(Math.min(higher, max), lower);
+	return numberOfLeaders;
 };

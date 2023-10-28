@@ -80,7 +80,7 @@ await peer2.dial(peer.getMultiaddrs());
 const store2 = await peer2.open<PostsDB>(store.address!);
 
 // Wait for peer1 to be reachable for query
-await store.waitFor(peer2.peerId);
+await store.posts.log.waitForReplicator(peer2.identity.publicKey);
 
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({

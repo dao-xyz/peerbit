@@ -284,7 +284,7 @@ describe("index", () => {
 			await client1.services.pubsub.requestSubscribers("topic");
 			await waitForResolved(async () =>
 				expect(
-					(await client1.services.pubsub.getSubscribers("topic"))!.size
+					(await client1.services.pubsub.getSubscribers("topic"))!.length
 				).toEqual(1)
 			);
 			await client1.services.pubsub.publish(data, { topics: ["topic"] });
@@ -315,8 +315,8 @@ describe("index", () => {
 			await client1.services.pubsub.requestSubscribers("topic");
 			await waitForResolved(async () =>
 				expect(
-					(await client1.services.pubsub.getSubscribers("topic"))?.get(
-						client2.identity.publicKey.hashcode()
+					(await client1.services.pubsub.getSubscribers("topic"))?.find((x) =>
+						x.equals(client2.identity.publicKey)
 					)
 				).toBeDefined()
 			);
@@ -325,7 +325,7 @@ describe("index", () => {
 		it("requestSubsribers", async () => {
 			let receivedMessages: (GetSubscribers | undefined)[] = [];
 			await client2.services.pubsub.addEventListener("message", (message) => {
-				if (message.detail instanceof DataMessage) {
+				if (message.detail instanceof DataMessage && message.detail.data) {
 					receivedMessages.push(
 						deserialize(message.detail.data, GetSubscribers)
 					);

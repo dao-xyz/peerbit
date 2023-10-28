@@ -1,6 +1,6 @@
 import { EventStore } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -124,7 +124,6 @@ describe(`leaders`, function () {
 		db1 = await session.peers[0].open(store, {
 			args: { role: new Observer(), ...options.args }
 		});
-
 		db2 = (await EventStore.open(
 			db1.address!,
 			session.peers[1],
@@ -136,8 +135,12 @@ describe(`leaders`, function () {
 			options
 		)) as EventStore<string>;
 
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 2);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 2);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(2)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(2)
+		);
 
 		// One leader
 		const slot = 0;

@@ -1,4 +1,4 @@
-import { delay, waitForAsync } from "@peerbit/time";
+import { delay, waitFor } from "@peerbit/time";
 
 export const installDocker = async () => {
 	const { exec } = await import("child_process");
@@ -31,7 +31,7 @@ export const installDocker = async () => {
 		});
 
 		try {
-			await waitForAsync(() => dockerExist(), {
+			await waitFor(() => dockerExist(), {
 				timeout: 30 * 1000,
 				delayInterval: 1000
 			});

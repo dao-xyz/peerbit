@@ -4,7 +4,8 @@ import {
 	Message,
 	DataMessage,
 	WaitForPeer,
-	PeerEvents
+	PeerEvents,
+	DeliveryMode
 } from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interface/events";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
@@ -55,19 +56,9 @@ export class SubscriptionData {
 	@field({ type: "u64" })
 	timestamp: bigint;
 
-	@field({
-		type: option(Uint8Array)
-	})
-	data?: Uint8Array;
-
-	constructor(properties: {
-		publicKey: PublicSignKey;
-		timestamp: bigint;
-		data?: Uint8Array;
-	}) {
+	constructor(properties: { publicKey: PublicSignKey; timestamp: bigint }) {
 		this.publicKey = properties.publicKey;
 		this.timestamp = properties.timestamp;
-		this.data = properties.data;
 	}
 }
 
@@ -97,28 +88,23 @@ export type PublishOptions =
 			topics?: string[];
 			to?: (string | PublicSignKey | Libp2pPeerId)[];
 			strict?: false;
+			mode?: DeliveryMode | undefined;
 	  }
 	| {
 			topics: string[];
 			to: (string | PublicSignKey | Libp2pPeerId)[];
 			strict: true;
+			mode?: DeliveryMode | undefined;
 	  };
 
 export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
 	emitSelf: boolean;
 
-	getSubscribers(
-		topic: string
-	): MaybePromise<Map<string, SubscriptionData> | undefined>;
+	getSubscribers(topic: string): MaybePromise<PublicSignKey[] | undefined>;
 
-	requestSubscribers(topic: string, from?: PublicSignKey): Promise<void>;
+	requestSubscribers(topic: string, from?: PublicSignKey): MaybePromise<void>;
 
-	subscribe(
-		topic: string,
-		options?: {
-			data?: Uint8Array;
-		}
-	): Promise<void>;
+	subscribe(topic: string): MaybePromise<void>;
 
 	unsubscribe(
 		topic: string,
@@ -126,9 +112,9 @@ export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
 			force?: boolean;
 			data?: Uint8Array;
 		}
-	): Promise<boolean>;
+	): MaybePromise<boolean>;
 
-	publish(data: Uint8Array, options?: PublishOptions): Promise<Uint8Array>;
+	publish(data: Uint8Array, options?: PublishOptions): MaybePromise<Uint8Array>;
 }
 
 export * from "./messages.js";

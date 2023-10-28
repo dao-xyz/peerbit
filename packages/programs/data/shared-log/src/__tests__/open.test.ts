@@ -21,7 +21,7 @@ describe("replicators", () => {
 			expect(
 				(await session.peers[1].services.pubsub.getSubscribers(
 					db1.log.topic
-				))!.has(session.peers[0].identity.publicKey.hashcode())
+				))!.find((x) => x.equals(session.peers[0].identity.publicKey))
 			)
 		);
 

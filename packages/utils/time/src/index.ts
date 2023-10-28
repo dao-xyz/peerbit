@@ -3,46 +3,54 @@ export class TimeoutError extends Error {
 		super(message);
 	}
 }
-export const delay = (
-	ms: number,
-	options?: { stopperCallback?: (stopper: () => void) => void }
-) => {
-	return new Promise<void>((res) => {
-		const timer = setTimeout(res, ms);
-		if (options?.stopperCallback)
-			options?.stopperCallback(() => {
-				clearTimeout(timer);
-				res();
-			});
+
+export class AbortError extends Error {
+	constructor() {
+		super();
+	}
+}
+export const delay = (ms: number, options?: { signal?: AbortSignal }) => {
+	return new Promise<void>((res, rej) => {
+		function handleAbort() {
+			clearTimeout(timer);
+			rej(new AbortError());
+		}
+		options?.signal?.addEventListener("abort", handleAbort);
+		const timer = setTimeout(() => {
+			options?.signal?.removeEventListener("abort", handleAbort);
+			res();
+		}, ms);
 	});
 };
 
 export const waitFor = async <T>(
-	fn: () => T,
+	fn: () => T | Promise<T>,
 	options: {
-		timeout: number;
-		stopperCallback?: (stopper: () => void) => void;
-		delayInterval: number;
+		timeout?: number;
+		signal?: AbortSignal;
+		delayInterval?: number;
 		timeoutMessage?: string;
-	} = { timeout: 10 * 1000, delayInterval: 50 }
+	} = { timeout: 10 * 1000, delayInterval: 100 }
 ): Promise<T | undefined> => {
+	const delayInterval = options.delayInterval || 100;
+	const timeout = options.timeout || 10 * 1000;
 	const startTime = +new Date();
 	let stop = false;
-	if (options.stopperCallback) {
-		const stopper = () => {
-			stop = true;
-		};
-		options.stopperCallback(stopper);
-	}
-	while (+new Date() - startTime < options.timeout) {
-		if (stop) {
-			return;
-		}
-		const result = fn();
+
+	const handleAbort = () => {
+		stop = true;
+		options.signal?.removeEventListener("abort", handleAbort);
+	};
+
+	options.signal?.addEventListener("abort", handleAbort);
+	while (!stop && +new Date() - startTime < timeout) {
+		const result = await fn();
 		if (result) {
+			options.signal?.removeEventListener("abort", handleAbort);
 			return result;
 		}
-		await delay(options.delayInterval, options);
+
+		await delay(delayInterval, options);
 	}
 	throw new TimeoutError(
 		options.timeoutMessage
@@ -54,58 +62,39 @@ export const waitFor = async <T>(
 export const waitForResolved = async <T>(
 	fn: () => T | Promise<T>,
 	options: {
-		timeout: number;
-		delayInterval: number;
+		timeout?: number;
+		signal?: AbortSignal;
+		delayInterval?: number;
 		timeoutMessage?: string;
 	} = { timeout: 10 * 1000, delayInterval: 50 }
 ): Promise<T | undefined> => {
-	const startTime = +new Date();
-	const stop = false;
-	let lastError: Error | undefined;
-	while (+new Date() - startTime < options.timeout) {
-		if (stop) {
-			return;
-		}
-		try {
-			return await fn();
-		} catch (error: any) {
-			lastError = error;
-		}
-		await delay(options.delayInterval);
-	}
-	throw lastError;
-};
+	const delayInterval = options.delayInterval || 50;
+	const timeout = options.timeout || 10 * 1000;
 
-export const waitForAsync = async <T>(
-	fn: () => Promise<T>,
-	options: {
-		timeout: number;
-		stopperCallback?: (stopper: () => void) => void;
-		delayInterval: number;
-		timeoutMessage?: string;
-	} = { timeout: 10 * 1000, delayInterval: 50 }
-): Promise<T | undefined> => {
 	const startTime = +new Date();
 	let stop = false;
-	if (options.stopperCallback) {
-		const stopper = () => {
-			stop = true;
-		};
-		options.stopperCallback(stopper);
-	}
-	while (+new Date() - startTime < options.timeout) {
-		if (stop) {
-			return;
-		}
-		const result = await fn();
-		if (result) {
+	let lastError: Error | undefined;
+
+	const handleAbort = () => {
+		stop = true;
+		options.signal?.removeEventListener("abort", handleAbort);
+	};
+
+	options.signal?.addEventListener("abort", handleAbort);
+	while (!stop && +new Date() - startTime < timeout) {
+		try {
+			const result = await fn();
+			options.signal?.removeEventListener("abort", handleAbort);
 			return result;
+		} catch (error: any) {
+			if (error instanceof AbortError === false) {
+				lastError = error;
+			} else {
+				throw error;
+			}
 		}
-		await delay(options.delayInterval, options);
+		await delay(delayInterval, options);
 	}
-	throw new TimeoutError(
-		options.timeoutMessage
-			? "Timed out: " + options.timeoutMessage
-			: "Timed out"
-	);
+
+	throw lastError;
 };

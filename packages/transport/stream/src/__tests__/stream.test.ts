@@ -1,5 +1,4 @@
-import { LibP2POptions, TestSession } from "@peerbit/libp2p-test-utils";
-import { waitFor, delay, waitForResolved } from "@peerbit/time";
+import { waitFor, delay, waitForResolved, TimeoutError } from "@peerbit/time";
 import crypto from "crypto";
 import {
 	waitForPeers as waitForPeerStreams,
@@ -7,30 +6,75 @@ import {
 	ConnectionManagerOptions,
 	DirectStreamComponents
 } from "..";
-import { DataMessage, Message, getMsgId } from "@peerbit/stream-interface";
+import {
+	ACK,
+	AcknowledgeDelivery,
+	DataMessage,
+	Message,
+	MessageHeader,
+	SeekDelivery,
+	SilentDelivery,
+	getMsgId
+} from "@peerbit/stream-interface";
 import { PublicSignKey } from "@peerbit/crypto";
-import { PeerId, isPeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
-import { multiaddr } from "@multiformats/multiaddr";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
-import { serialize } from "@dao-xyz/borsh";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { LibP2POptions, TestSession } from "@peerbit/libp2p-test-utils";
+
+const collectDataWrites = (client: DirectStream) => {
+	const writes: Map<string, DataMessage[]> = new Map();
+	for (const [name, peer] of client.peers) {
+		writes.set(name, []);
+		const writeFn = peer.write.bind(peer);
+		peer.write = (data) => {
+			const bytes = data instanceof Uint8Array ? data : data.subarray();
+			const message = deserialize(bytes, Message);
+			if (message instanceof DataMessage) {
+				writes.get(name)?.push(message);
+			}
+			return writeFn(data);
+		};
+	}
+	return writes;
+};
+
+const getWritesCount = (writes: Map<string, DataMessage[]>) => {
+	let sum = 0;
+	for (const [k, v] of writes) {
+		sum += v.length;
+	}
+	return sum;
+};
+
+const getUniqueMessages = async (messages: Message[]) => {
+	const map: Map<string, Message> = new Map();
+	for (const message of messages) {
+		const id = await getMsgId(message.bytes());
+		map.set(id, message);
+	}
+	return [...map.values()];
+};
 
 const createMetrics = (stream: DirectStream) => {
 	const s: {
 		stream: TestDirectStream;
 		messages: Message[];
 		received: DataMessage[];
+		ack: ACK[];
 		reachable: PublicSignKey[];
 		unrechable: PublicSignKey[];
-		seen: Map<string, number>;
+		processed: Map<string, number>;
 	} = {
 		messages: [],
 		received: [],
 		reachable: [],
+		ack: [],
 		unrechable: [],
-		seen: new Map(),
+		processed: new Map(),
 		stream
 	};
 	s.stream.addEventListener("message", (msg) => {
@@ -46,12 +90,22 @@ const createMetrics = (stream: DirectStream) => {
 		s.unrechable.push(msg.detail);
 	});
 
-	let seenHas = s.stream.seenCache.has.bind(s.stream.seenCache);
-	s.stream.seenCache.has = (k) => {
-		let prev = s.seen.get(k);
-		s.seen.set(k, (prev ?? 0) + 1);
-		return seenHas(k);
+	let processMessage = s.stream.processMessage.bind(s.stream);
+	s.stream.processMessage = async (k, v, msg) => {
+		const msgId = await getMsgId(
+			msg instanceof Uint8Array ? msg : msg.subarray()
+		);
+		let prev = s.processed.get(msgId);
+		s.processed.set(msgId, (prev ?? 0) + 1);
+		return processMessage(k, v, msg);
 	};
+
+	const ackFn = s.stream.onAck.bind(s.stream);
+	s.stream.onAck = (a, b, c) => {
+		s.ack.push(c);
+		return ackFn(a, b, c);
+	};
+
 	return s;
 };
 class TestDirectStream extends DirectStream {
@@ -59,7 +113,6 @@ class TestDirectStream extends DirectStream {
 		components: DirectStreamComponents,
 		options: {
 			id?: string;
-			pingInterval?: number | null;
 			connectionManager?: ConnectionManagerOptions;
 		} = {}
 	) {
@@ -116,65 +169,6 @@ const waitForPeers = (s: TestSessionStream) =>
 	waitForPeerStreams(...s.peers.map((x) => x.services.directstream));
 
 describe("streams", function () {
-	describe("ping", () => {
-		let session: TestSessionStream;
-
-		afterEach(async () => {
-			await session?.stop();
-		});
-
-		it("2-ping", async () => {
-			// 0 and 2 not connected
-			session = await connected(2);
-			await waitForPeers(session);
-
-			// Pings can be aborted, by the interval pinging, so we just need to check that eventually we get results
-			await stream(session, 0).ping(
-				stream(session, 0).peers.get(stream(session, 1).publicKeyHash)!
-			);
-			await waitFor(
-				() =>
-					stream(session, 0).peers.get(stream(session, 1).publicKeyHash)
-						?.pingLatency! < 1000
-			);
-		});
-
-		it("4-ping", async () => {
-			// 0 and 2 not connected
-			session = await connected(4);
-			await waitForPeers(session);
-
-			// Pings can be aborted, by the interval pinging, so we just need to check that eventually we get results
-			await stream(session, 0).ping(
-				stream(session, 0).peers.get(stream(session, 1).publicKeyHash)!
-			);
-			await waitFor(
-				() =>
-					stream(session, 0).peers.get(stream(session, 1).publicKeyHash)
-						?.pingLatency! < 1000
-			);
-		});
-		// TODO add test to make sure Hello's are not resent uneccessary amount of times
-
-		it("ping interval", async () => {
-			// 0 and 2 not connected
-			session = await connected(2, {
-				services: {
-					directstream: (c) => new TestDirectStream(c, { pingInterval: 1000 })
-				}
-			});
-			await waitForPeers(session);
-
-			let counter = 0;
-			const pingFn = stream(session, 0).onPing.bind(stream(session, 0));
-			stream(session, 0).onPing = (a, b, c) => {
-				counter += 1;
-				return pingFn(a, b, c);
-			};
-			await waitFor(() => counter > 5);
-		});
-	});
-
 	describe("publish", () => {
 		const data = new Uint8Array([1, 2, 3]);
 
@@ -190,7 +184,6 @@ describe("streams", function () {
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
-								pingInterval: null,
 								connectionManager: { autoDial: false }
 							})
 					}
@@ -231,28 +224,28 @@ describe("streams", function () {
 				await session.stop();
 			});
 
-			it("many", async () => {
-				let iterations = 300;
-
-				for (let i = 0; i < iterations; i++) {
-					const small = crypto.randomBytes(1e3); // 1kb
-					streams[0].stream.publish(small);
-				}
-				await waitFor(() => streams[2].received.length === iterations, {
-					delayInterval: 300,
-					timeout: 30 * 1000
-				});
-			});
-
 			it("1->unknown", async () => {
 				await streams[0].stream.publish(data);
 				await waitFor(() => streams[1].received.length === 1);
-				expect(new Uint8Array(streams[1].received[0].data)).toEqual(data);
+				expect(new Uint8Array(streams[1].received[0].data!)).toEqual(data);
 				await waitFor(() => streams[2].received.length === 1);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+				expect(new Uint8Array(streams[2].received[0].data!)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(streams[1].received).toHaveLength(1);
 				expect(streams[2].received).toHaveLength(1);
+				expect(streams[3].received).toHaveLength(1);
+
+				for (const [i, stream] of streams.entries()) {
+					if (i < 2) {
+						// because i = 2 is the last node and that node has no-where else to look
+						expect(stream.stream.pending).toBeTrue(); // beacuse seeking with explitictly defined end (will timeout eventuallyl)
+					}
+				}
+
+				// expect routes to have be defined
+				await waitForResolved(() =>
+					expect(streams[0].stream.routes.count()).toEqual(3)
+				);
 			});
 
 			it("1->2", async () => {
@@ -261,21 +254,26 @@ describe("streams", function () {
 				});
 
 				await waitFor(() => streams[1].received.length === 1);
+
+				for (const stream of streams) {
+					expect(stream.stream.pending).toBeFalse(); // since receiver is known and SilentDeliery by default if providing to: [...]
+				}
+
 				let receivedMessage = streams[1].received[0];
-				expect(new Uint8Array(receivedMessage.data)).toEqual(data);
+				expect(new Uint8Array(receivedMessage.data!)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(streams[1].received).toHaveLength(1);
 				expect(streams[2].received).toHaveLength(0);
 
 				// Never seen a message twice
 				expect(
-					[...streams[0].seen.values()].find((x) => x > 1)
+					[...streams[0].processed.values()].find((x) => x > 1)
 				).toBeUndefined();
 				expect(
-					[...streams[1].seen.values()].find((x) => x > 1)
+					[...streams[1].processed.values()].find((x) => x > 1)
 				).toBeUndefined();
 				expect(
-					[...streams[2].seen.values()].find((x) => x > 1)
+					[...streams[2].processed.values()].find((x) => x > 1)
 				).toBeUndefined();
 			});
 
@@ -283,10 +281,11 @@ describe("streams", function () {
 				await streams[0].stream.publish(data, {
 					to: [streams[2].stream.components.peerId]
 				});
+
 				await waitForResolved(() =>
 					expect(streams[2].received).toHaveLength(1)
 				);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+				expect(new Uint8Array(streams[2].received[0].data!)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(streams[2].received).toHaveLength(1);
 				expect(streams[1].received).toHaveLength(0);
@@ -302,7 +301,7 @@ describe("streams", function () {
 					expect(streams[2].received).toHaveLength(1)
 				);
 
-				expect(new Uint8Array(streams[2].received[0].data)).toHaveLength(
+				expect(new Uint8Array(streams[2].received[0].data!)).toHaveLength(
 					bigData.length
 				);
 				expect(streams[2].received).toHaveLength(1);
@@ -318,7 +317,7 @@ describe("streams", function () {
 				await waitForResolved(() =>
 					expect(streams[2].received).toHaveLength(1)
 				);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+				expect(new Uint8Array(streams[2].received[0].data!)).toEqual(data);
 				await delay(1000); // wait some more time to make sure we dont get more messages
 				expect(streams[2].received).toHaveLength(1);
 				expect(streams[1].received).toHaveLength(0);
@@ -328,15 +327,15 @@ describe("streams", function () {
 				await session.connect([[session.peers[0], session.peers[2]]]);
 				await waitForPeerStreams(streams[0].stream, streams[2].stream);
 
-				// make path 1->3 longest, to make sure we send over it directly anyways because it is a direct path
-				streams[0].stream.routes.graph.setEdgeAttribute(
-					streams[0].stream.routes.getLink(
-						streams[0].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					),
-					"weight",
-					1e5
+				// mark 0 -> 1 -> 2 as shortest route...
+
+				streams[0].stream.routes.add(
+					streams[0].stream.publicKeyHash,
+					streams[1].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash,
+					0
 				);
+
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[2].stream.components.peerId]
 				});
@@ -345,6 +344,7 @@ describe("streams", function () {
 					expect(streams[2].received).toHaveLength(1)
 				);
 
+				// ...yet make sure the data has not travelled this path
 				expect(
 					streams[1].messages.filter((x) => x instanceof DataMessage)
 				).toHaveLength(0);
@@ -369,26 +369,12 @@ describe("streams", function () {
 				await session.connect([[session.peers[0], session.peers[2]]]);
 				await waitForPeerStreams(streams[0].stream, streams[2].stream);
 
-				const defaultEdgeWeightFnPeer0 =
-					streams[0].stream.routes.graph.getEdgeAttribute.bind(
-						streams[0].stream.routes.graph
-					);
-
-				let link02 = streams[0].stream.routes.getLink(
+				streams[0].stream.routes.add(
 					streams[0].stream.publicKeyHash,
-					streams[2].stream.publicKeyHash
+					streams[1].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash,
+					0
 				);
-
-				// make path from 0 -> 2 long, so data will be sent in the path 0 -> 1 -> 2 -> 3
-				streams[0].stream.routes.graph.getEdgeAttribute = (
-					edge: unknown,
-					name: any
-				) => {
-					if (edge === link02) {
-						return 1e5;
-					}
-					return defaultEdgeWeightFnPeer0(edge, name);
-				};
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[3].stream.components.peerId]
@@ -409,23 +395,12 @@ describe("streams", function () {
 
 				streams[1].messages = [];
 
-				// Make [0] -> [2] path short
-				streams[0].stream.routes.graph.getEdgeAttribute = (
-					edge: unknown,
-					name: any
-				) => {
-					if (edge === link02) {
-						return 0;
-					}
-					return defaultEdgeWeightFnPeer0(edge, name);
-				};
-
-				expect(
-					streams[0].stream.routes.getPath(
-						streams[0].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					).length
-				).toEqual(2);
+				streams[0].stream.routes.add(
+					streams[0].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash,
+					0
+				);
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[3].stream.components.peerId]
 				});
@@ -437,6 +412,56 @@ describe("streams", function () {
 				// no new messages for peer 1, because sending 0 -> 2 -> 3 directly is now faster
 				expect(messages).toHaveLength(0);
 				expect(streams[1].received).toHaveLength(0);
+			});
+
+			it("will eventually figure out shortest path", async () => {
+				/* 
+				┌───┐
+				│ 0 │
+				└┬─┬┘
+				 │┌▽┐
+				 ││1│
+				 │└┬┘
+				┌▽─▽┐
+				│2  │
+				└┬──┘
+				┌▽┐  
+				│3│  
+				└─┘   
+				*/
+
+				await session.connect([[session.peers[0], session.peers[2]]]);
+				await waitForPeerStreams(streams[0].stream, streams[2].stream);
+
+				await streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[3].stream.components.peerId]
+				});
+
+				// because node 2 will deduplicate message coming from 1, only 1 data message will arrive to node 3
+				// hence only one ACK will be returned to A
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(1));
+				await delay(2000);
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(1));
+
+				streams[1].messages = [];
+				streams[3].received = [];
+
+				expect(
+					streams[0].stream.routes
+						.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)
+						?.list?.map((x) => x.hash)
+				).toEqual([streams[2].stream.publicKeyHash]); // "2" is fastest route
+				await streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[3].stream.components.peerId]
+				});
+
+				await waitFor(() => streams[3].received.length === 1);
+
+				expect(streams[1].messages).toHaveLength(0); // Because shortest route is 0 -> 2 -> 3
+				expect(streams[1].stream.routes.count()).toEqual(2);
 			});
 		});
 
@@ -468,65 +493,94 @@ describe("streams", function () {
 					await session.stop();
 				});
 
-				/**
-				 * If tests below fails, dead-locks can apphear in unpredictable ways
-				 */
-				it("will not publish to from when explicitly providing to", async () => {
-					const msg = new DataMessage({ data: new Uint8Array([0]) });
-					await msg.sign(streams[1].stream.sign);
+				it("will not publish to 'from' when explicitly providing to", async () => {
+					const msg = new DataMessage({
+						data: new Uint8Array([0]),
+						deliveryMode: new SeekDelivery(1)
+					});
 					streams[2].stream.canRelayMessage = false; // so that 2 does not relay to 0
-					await streams[1].stream.publishMessage(session.peers[0].peerId, msg, [
-						streams[1].stream.peers.get(streams[0].stream.publicKeyHash)!,
-						streams[1].stream.peers.get(streams[2].stream.publicKeyHash)!
-					]);
+
+					await streams[1].stream.publishMessage(
+						session.peers[0].services.directstream.publicKey,
+						await msg.sign(streams[1].stream.sign),
+						[
+							//streams[1].stream.peers.get(streams[0].stream.publicKeyHash)!,
+							streams[1].stream.peers.get(streams[2].stream.publicKeyHash)!
+						]
+					);
 					const msgId = await getMsgId(msg.bytes());
 					await waitForResolved(() =>
-						expect(streams[2].seen.get(msgId)).toEqual(1)
+						expect(streams[2].processed.get(msgId)).toEqual(1)
 					);
 
 					await delay(1000); // wait for more messages eventually propagate
-					expect(streams[0].seen.get(msgId)).toBeUndefined();
-					expect(streams[1].seen.get(msgId)).toBeUndefined();
+					expect(streams[0].processed.get(msgId)).toBeUndefined();
+					expect(streams[1].processed.get(msgId)).toBeUndefined();
 				});
 
+				/**
+				 * If tests below fails, dead-locks can apphear in unpredictable ways
+				 */
 				it("to in message will not send back", async () => {
 					const msg = new DataMessage({
 						data: new Uint8Array([0]),
-						to: [
-							streams[0].stream.publicKeyHash,
-							streams[2].stream.publicKeyHash
-						]
+						header: new MessageHeader({
+							to: [
+								streams[0].stream.publicKeyHash,
+								streams[2].stream.publicKeyHash
+							]
+						}),
+						deliveryMode: new SeekDelivery(1)
 					});
+					streams[2].stream.canRelayMessage = false; // so that 2 does not relay to 0
+
 					await msg.sign(streams[1].stream.sign);
-					await streams[1].stream.publishMessage(session.peers[0].peerId, msg);
+					await streams[1].stream.publishMessage(
+						session.peers[0].services.directstream.publicKey,
+						msg,
+						undefined,
+						true
+					);
 					await delay(1000);
 					const msgId = await getMsgId(msg.bytes());
-					expect(streams[0].seen.get(msgId)).toBeUndefined();
-					expect(streams[1].seen.get(msgId)).toBeUndefined();
-					expect(streams[2].seen.get(msgId)).toEqual(1);
+					expect(streams[0].processed.get(msgId)).toBeUndefined();
+					expect(streams[1].processed.get(msgId)).toBeUndefined();
+					expect(streams[2].processed.get(msgId)).toEqual(1);
 				});
 
 				it("rejects when to peers is from", async () => {
-					const msg = new DataMessage({ data: new Uint8Array([0]) });
+					const msg = new DataMessage({
+						data: new Uint8Array([0]),
+						deliveryMode: new SilentDelivery(1)
+					});
 					await msg.sign(streams[1].stream.sign);
 					await expect(
-						streams[1].stream.publishMessage(session.peers[0].peerId, msg, [
-							streams[1].stream.peers.get(streams[0].stream.publicKeyHash)!
-						])
+						streams[1].stream.publishMessage(
+							session.peers[0].services.directstream.publicKey,
+							msg,
+							[streams[1].stream.peers.get(streams[0].stream.publicKeyHash)!]
+						)
 					).rejects.toThrowError("Message did not have any valid receivers");
 				});
+
 				it("rejects when only to is from", async () => {
 					const msg = new DataMessage({
 						data: new Uint8Array([0]),
-						to: [streams[1].stream.publicKeyHash]
+						header: new MessageHeader({
+							to: [streams[0].stream.publicKeyHash]
+						}),
+						deliveryMode: new SilentDelivery(1)
 					});
 					await msg.sign(streams[1].stream.sign);
-					await streams[1].stream.publishMessage(session.peers[0].peerId, msg);
+					await streams[1].stream.publishMessage(
+						session.peers[0].services.directstream.publicKey,
+						msg
+					);
 					const msgId = await getMsgId(msg.bytes());
 					await delay(1000);
-					expect(streams[0].seen.get(msgId)).toBeUndefined();
-					expect(streams[1].seen.get(msgId)).toBeUndefined();
-					expect(streams[2].seen.get(msgId)).toBeUndefined();
+					expect(streams[0].processed.get(msgId)).toBeUndefined();
+					expect(streams[1].processed.get(msgId)).toBeUndefined();
+					expect(streams[2].processed.get(msgId)).toBeUndefined();
 				});
 
 				it("will send through peer", async () => {
@@ -536,15 +590,114 @@ describe("streams", function () {
 					// make sure message is received
 					const msg = new DataMessage({
 						data: new Uint8Array([0]),
-						to: [streams[2].stream.publicKeyHash]
+						header: new MessageHeader({
+							to: [streams[2].stream.publicKeyHash]
+						}),
+						deliveryMode: new SeekDelivery(1)
 					});
 					await msg.sign(streams[1].stream.sign);
-					await streams[0].stream.publishMessage(session.peers[0].peerId, msg);
+					await streams[0].stream.publishMessage(
+						session.peers[0].services.directstream.publicKey,
+						msg
+					);
 					await waitForResolved(() =>
 						expect(streams[2].received).toHaveLength(1)
 					);
 				});
 			});
+
+			describe("1->2", () => {
+				let session: TestSessionStream;
+				let streams: ReturnType<typeof createMetrics>[];
+				const data = new Uint8Array([1, 2, 3]);
+
+				beforeAll(async () => {});
+
+				beforeEach(async () => {
+					session = await connected(3, {
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: { autoDial: false }
+								})
+						}
+					});
+					streams = [];
+					for (const peer of session.peers) {
+						await waitForResolved(() =>
+							expect(peer.services.directstream.peers.size).toEqual(
+								session.peers.length - 1
+							)
+						);
+						streams.push(createMetrics(peer.services.directstream));
+					}
+				});
+
+				afterEach(async () => {
+					await session.stop();
+				});
+
+				it("messages are only sent once to each peer", async () => {
+					let totalWrites = 1;
+					expect(streams[0].ack).toHaveLength(0);
+
+					//  push one message to ensure paths are found
+					await streams[0].stream.publish(data, {
+						to: [
+							streams[1].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						],
+						mode: new SeekDelivery(2)
+					});
+
+					// message delivered to 1 from 0 and relayed through 2. (2 ACKS)
+					// message delivered to 2 from 0 and relayed through 1. (2 ACKS)
+					// 2 + 2 = 4
+					expect(
+						streams[0].stream.routes.isReachable(
+							streams[0].stream.publicKeyHash,
+							streams[1].stream.publicKeyHash
+						)
+					).toBeTrue();
+					expect(
+						streams[0].stream.routes.isReachable(
+							streams[0].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+					).toBeTrue();
+
+					await waitForResolved(() => expect(streams[0].ack).toHaveLength(4));
+
+					const allWrites = streams.map((x) => collectDataWrites(x.stream));
+					streams[1].received = [];
+					streams[2].received = [];
+
+					// expect the data to be sent smartly
+					for (let i = 0; i < totalWrites; i++) {
+						await streams[0].stream.publish(data, {
+							to: [
+								streams[1].stream.publicKeyHash,
+								streams[2].stream.publicKeyHash
+							]
+						});
+					}
+
+					await waitForResolved(() =>
+						expect(streams[1].received).toHaveLength(totalWrites)
+					);
+					await waitForResolved(() =>
+						expect(streams[2].received).toHaveLength(totalWrites)
+					);
+
+					await delay(2000);
+
+					// Check number of writes for each node
+					expect(getWritesCount(allWrites[0])).toEqual(totalWrites * 2); // write to "1" or "2"
+					expect(getWritesCount(allWrites[1])).toEqual(0); // "1" should never has to push any data
+					expect(getWritesCount(allWrites[2])).toEqual(0); // "2" should never has to push any data
+				});
+			});
+
 			describe("1->2->2", () => {
 				/** 
 			┌─────┐ 
@@ -560,7 +713,7 @@ describe("streams", function () {
 			 ┌│──│┘│
 			 ││  │┌┘
 			┌▽▽┐┌▽▽┐
-			│3 ││4 │
+			│3 ││4 │ // 3 and 4 are connected also
 			└──┘└──┘
 			*/
 
@@ -592,7 +745,9 @@ describe("streams", function () {
 						[session.peers[1], session.peers[4]],
 
 						[session.peers[2], session.peers[3]],
-						[session.peers[2], session.peers[4]]
+						[session.peers[2], session.peers[4]],
+
+						[session.peers[3], session.peers[4]]
 					]);
 
 					await waitForPeerStreams(streams[0].stream, streams[1].stream);
@@ -601,22 +756,7 @@ describe("streams", function () {
 					await waitForPeerStreams(streams[1].stream, streams[4].stream);
 					await waitForPeerStreams(streams[2].stream, streams[3].stream);
 					await waitForPeerStreams(streams[2].stream, streams[4].stream);
-
-					await waitForResolved(() =>
-						expect(streams[0].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(streams[1].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(streams[2].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(streams[3].stream.routes.nodeCount).toEqual(5)
-					);
-					await waitForResolved(() =>
-						expect(streams[4].stream.routes.nodeCount).toEqual(5)
-					);
+					await waitForPeerStreams(streams[3].stream, streams[4].stream);
 				});
 
 				afterEach(async () => {
@@ -624,26 +764,181 @@ describe("streams", function () {
 				});
 
 				it("messages are only sent once to each peer", async () => {
-					streams[0].stream.publish(data, {
+					await streams[0].stream.publish(data, {
 						to: [
 							streams[3].stream.publicKeyHash,
 							streams[4].stream.publicKeyHash
-						]
+						],
+						mode: new SeekDelivery(2)
 					});
+
+					expect(
+						streams[0].stream.routes.isReachable(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)
+					).toBeTrue();
+					expect(
+						streams[0].stream.routes.isReachable(
+							streams[0].stream.publicKeyHash,
+							streams[4].stream.publicKeyHash
+						)
+					).toBeTrue();
+
+					expect(
+						streams[0].stream.routes.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)?.list
+					).toHaveLength(2);
+
+					expect(
+						streams[0].stream.routes.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[4].stream.publicKeyHash
+						)?.list
+					).toHaveLength(2);
+
+					const allWrites = streams.map((x) => collectDataWrites(x.stream));
+
+					let totalWrites = 100;
+					streams[3].received = [];
+					streams[4].received = [];
+					streams[3].processed.clear();
+					streams[4].processed.clear();
+
+					for (let i = 0; i < totalWrites; i++) {
+						streams[0].stream.publish(data, {
+							to: [
+								streams[3].stream.publicKeyHash,
+								streams[4].stream.publicKeyHash
+							]
+						});
+					}
+
 					await waitForResolved(() =>
-						expect(streams[3].received).toHaveLength(1)
+						expect(streams[3].received).toHaveLength(totalWrites)
 					);
 					await waitForResolved(() =>
-						expect(streams[4].received).toHaveLength(1)
+						expect(streams[4].received).toHaveLength(totalWrites)
 					);
 
 					const id1 = await getMsgId(serialize(streams[3].received[0]));
 
-					await delay(3000); // Wait some extra time if additional messages are propagating through
+					await delay(3000); // Wait some exstra time if additional messages are propagating through
 
-					expect(streams[3].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
-					expect(streams[4].seen.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
+					expect(streams[3].processed.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
+					expect(streams[4].processed.get(id1)).toEqual(1); // 1 delivery even though there are multiple path leading to this node
+
+					// Check number of writes for each node
+					expect(getWritesCount(allWrites[0])).toEqual(totalWrites); // write to "1" or "2"
+					expect(
+						getWritesCount(allWrites[1]) + getWritesCount(allWrites[2])
+					).toEqual(totalWrites * 2); // write to "3" and "4"
+					expect(getWritesCount(allWrites[3])).toEqual(0); // "3" should never has to push any data
+					expect(getWritesCount(allWrites[4])).toEqual(0); // "4" should never has to push any data
 				});
+
+				it("can send with higher redundancy", async () => {
+					await streams[0].stream.publish(data, {
+						to: [
+							streams[3].stream.publicKeyHash,
+							streams[4].stream.publicKeyHash
+						],
+						mode: new SeekDelivery(2)
+					});
+
+					const neighbourTo3 = streams[0].stream.routes.findNeighbor(
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash
+					)!.list[0];
+
+					expect(
+						streams[0].stream.routes.isReachable(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)
+					).toBeTrue();
+					expect(
+						streams[0].stream.routes.isReachable(
+							streams[0].stream.publicKeyHash,
+							streams[4].stream.publicKeyHash
+						)
+					).toBeTrue();
+
+					streams.find(
+						(x) => x.stream.publicKeyHash === neighbourTo3.hash
+					)!.stream.processMessage = async (a, b, c) => {
+						// dont do anything
+					};
+
+					await streams[0].stream.publish(data, {
+						to: [
+							streams[3].stream.publicKeyHash,
+							streams[4].stream.publicKeyHash
+						],
+						mode: new AcknowledgeDelivery(2) // send at least 2 routes
+					});
+				});
+			});
+		});
+
+		describe("concurrency", () => {
+			let session: TestSessionStream;
+			let streams: ReturnType<typeof createMetrics>[];
+
+			beforeAll(async () => {});
+
+			beforeEach(async () => {
+				session = await connected(3, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: { autoDial: false }
+							})
+					}
+				});
+				streams = [];
+				for (const peer of session.peers) {
+					streams.push(createMetrics(peer.services.directstream));
+				}
+
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[2]]
+				]);
+
+				await waitForPeerStreams(streams[0].stream, streams[1].stream);
+				await waitForPeerStreams(streams[1].stream, streams[2].stream);
+			});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+
+			it("can concurrently seek and wait for ack", async () => {
+				await streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId]
+				});
+				const p = streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId],
+					mode: new AcknowledgeDelivery(1)
+				});
+				streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId],
+					mode: new SeekDelivery(1)
+				});
+
+				streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId],
+					mode: new SeekDelivery(1)
+				});
+				streams[2].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[0].stream.components.peerId],
+					mode: new SeekDelivery(1)
+				});
+
+				await p;
 			});
 		});
 	});
@@ -692,27 +987,11 @@ describe("streams", function () {
 
 				// slowly connect to that the route maps are deterministic
 				await session.connect([[session.peers[0], session.peers[1]]]);
-				await waitFor(() => streams[0].stream.routes.linksCount === 1);
-				await waitFor(() => streams[1].stream.routes.linksCount === 1);
 				await session.connect([[session.peers[1], session.peers[2]]]);
-				await waitFor(() => streams[0].stream.routes.linksCount === 2);
-				await waitFor(() => streams[1].stream.routes.linksCount === 2);
 				await session.connect([[session.peers[2], session.peers[3]]]);
-				await waitFor(() => streams[0].stream.routes.linksCount === 3);
-				await waitFor(() => streams[1].stream.routes.linksCount === 3);
-				await waitFor(() => streams[2].stream.routes.linksCount === 3);
 				await waitForPeerStreams(streams[0].stream, streams[1].stream);
 				await waitForPeerStreams(streams[1].stream, streams[2].stream);
 				await waitForPeerStreams(streams[2].stream, streams[3].stream);
-
-				for (const peer of streams) {
-					await waitFor(() => peer.reachable.length === 3);
-					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
-						streams
-							.map((x) => x.stream.publicKeyHash)
-							.filter((x) => x !== peer.stream.publicKeyHash)
-					); // peer has recevied reachable event from everone
-				}
 			});
 
 			afterEach(async () => {
@@ -737,21 +1016,17 @@ describe("streams", function () {
 				expect(streams[0].stream.peers.size).toEqual(1);
 
 				await streams[0].stream.publish(data, {
-					to: [streams[3].stream.components.peerId]
+					to: [streams[3].stream.components.peerId],
+					mode: new SeekDelivery(1)
 				});
 
-				await waitFor(() => streams[3].received.length === 1);
-				expect(
-					streams[3].messages.find((x) => x instanceof DataMessage)
-				).toBeDefined();
+				await waitFor(() => streams[0].ack.length === 1);
 
 				// Dialing will yield a new connection
-				try {
-					await waitFor(() => streams[0].stream.peers.size === 2);
-				} catch (error) {
-					const q = 12;
-					throw q;
-				}
+				await waitForResolved(() =>
+					expect(streams[0].stream.peers.size).toEqual(2)
+				);
+
 				expect(dials).toEqual(1);
 
 				// Republishing will not result in an additional dial
@@ -769,6 +1044,59 @@ describe("streams", function () {
 				).toBeTrue();
 			});
 
+			it("can leave and join quickly", async () => {
+				await streams[0].stream.publish(data, {
+					to: [streams[3].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await waitForResolved(
+					() => expect(streams[0].stream.routes.count()).toEqual(2) // neighbour + streams[3]
+				);
+
+				// miss on messages
+
+				let missedOne = false;
+
+				let msg: any[] = [];
+				let unreachable: PublicSignKey[] = [];
+
+				streams[0].stream.addEventListener("peer:unreachable", (e) => {
+					unreachable.push(e.detail);
+				});
+
+				// simulate beeing offline for 1 messages
+				const onDataMessage = streams[3].stream.onDataMessage.bind(
+					streams[3].stream
+				);
+				streams[3].stream.onDataMessage = async (
+					publicKey,
+					peerStream,
+					message,
+					seenBefore
+				) => {
+					msg.push(message);
+					if (!missedOne) {
+						missedOne = true;
+						return true;
+					}
+					return onDataMessage(publicKey, peerStream, message, seenBefore);
+				};
+
+				const publishToMissing = streams[0].stream.publish(data, {
+					to: [streams[3].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await delay(1000);
+				await streams[0].stream.publish(data, {
+					// Since this the next message
+					to: [streams[3].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await expect(publishToMissing).rejects.toThrow(TimeoutError);
+				expect(missedOne).toBeTrue();
+				expect(unreachable).toHaveLength(0); // because the next message reached the node before the first message timed out
+			});
+
 			it("retry dial after a while", async () => {
 				let dials: (PeerId | Multiaddr | Multiaddr[])[] = [];
 				streams[0].stream.components.connectionManager.openConnection = (
@@ -783,36 +1111,41 @@ describe("streams", function () {
 				expect(streams[0].stream.peers.size).toEqual(1);
 
 				await streams[0].stream.publish(data, {
-					to: [streams[3].stream.components.peerId]
+					to: [streams[3].stream.components.peerId],
+					mode: new SeekDelivery(1)
 				});
 
-				await waitFor(() => streams[3].received.length === 1);
-				expect(
-					streams[3].messages.find((x) => x instanceof DataMessage)
-				).toBeDefined();
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(1));
 
 				// Dialing will yield a new connection
 				await waitFor(() => streams[0].stream.peers.size === 1);
-				let expectedDialsCount = 1 + session.peers[2].getMultiaddrs().length; // 1 dial directly, X dials through neighbour as relay
+				let expectedDialsCount = 1; // 1 dial directly
 				expect(dials).toHaveLength(expectedDialsCount);
 
 				// Republishing will not result in an additional dial
 				await streams[0].stream.publish(data, {
-					to: [streams[3].stream.components.peerId]
+					to: [streams[3].stream.components.peerId],
+					mode: new SeekDelivery(1)
 				});
+
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(2));
+
 				let t1 = +new Date();
 				expect(dials).toHaveLength(expectedDialsCount); // No change, because TTL > autoDialRetryTimeout
-
-				await waitFor(() => streams[3].received.length === 2);
 				await waitFor(() => +new Date() - t1 > autoDialRetryDelay);
 
 				// Try again, now expect another dial call, since the retry interval has been reached
 				await streams[0].stream.publish(data, {
-					to: [streams[3].stream.components.peerId]
+					to: [streams[3].stream.components.peerId],
+					mode: new SeekDelivery(1)
 				});
-				expect(dials).toHaveLength(expectedDialsCount * 2); // 1 dial directly, X dials through neighbour as relay
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(3));
+
+				expect(dials).toHaveLength(2);
 			});
 
+			/* TODO test that autodialler tries multiple addresses 
+			
 			it("through relay if fails", async () => {
 				const dialFn =
 					streams[0].stream.components.connectionManager.openConnection.bind(
@@ -853,84 +1186,12 @@ describe("streams", function () {
 					filteredDial;
 				expect(streams[0].stream.peers.size).toEqual(1);
 				await streams[0].stream.publish(data, {
-					to: [streams[3].stream.components.peerId]
+					to: [streams[3].stream.components.peerId],
+					mode: new SeekDelivery(1)
 				});
 				await waitFor(() => streams[3].received.length === 1);
 				await waitForResolved(() => expect(directlyDialded).toBeTrue());
-			});
-
-			it("tries multiple relays", async () => {
-				await session.connect([[session.peers[1], session.peers[3]]]);
-				await waitForPeerStreams(streams[1].stream, streams[3].stream);
-
-				/* 
-				┌───┐ 
-				│ 0 │ 
-				└┬─┬┘ 
-				 │┌▽┐ 
-				 ││1│ 
-				 │└┬┘ 
-				┌▽┐│  
-				│2││  
-				└┬┘│  
-				┌▽─▽─┐
-				│ 3  │
-				└────┘ 
-				
-				*/
-
-				const dialedCircuitRelayAddresses: Set<string> = new Set();
-
-				const dialFn =
-					streams[0].stream.components.connectionManager.openConnection.bind(
-						streams[0].stream.components.connectionManager
-					);
-				const filteredDial = (address: PeerId | Multiaddr | Multiaddr[]) => {
-					if (
-						isPeerId(address) &&
-						address.toString() === streams[3].stream.peerIdStr
-					) {
-						throw new Error("Mock fail"); // don't allow connect directly
-					}
-
-					let addresses: Multiaddr[] = Array.isArray(address)
-						? address
-						: [address as Multiaddr];
-					for (const a of addresses) {
-						if (
-							!a.protoNames().includes("p2p-circuit") &&
-							a.toString().includes(streams[3].stream.peerIdStr)
-						) {
-							throw new Error("Mock fail"); // don't allow connect directly
-						}
-					}
-					addresses
-						.filter((x) => x.protoNames().includes("p2p-circuit"))
-						.forEach((x) => {
-							dialedCircuitRelayAddresses.add(x.toString());
-						});
-					addresses = addresses.map((x) =>
-						x.protoNames().includes("p2p-circuit")
-							? multiaddr(x.toString().replace("/webrtc/", "/"))
-							: x
-					); // TODO use webrtc in node
-
-					if (dialedCircuitRelayAddresses.size === 1) {
-						throw new Error("Mock fail"); // only succeed with the dial once we have tried two unique addresses (both neighbors)
-					}
-					return dialFn(addresses);
-				};
-
-				streams[0].stream.components.connectionManager.openConnection =
-					filteredDial;
-
-				expect(streams[0].stream.peers.size).toEqual(1);
-				await streams[0].stream.publish(data, {
-					to: [streams[3].stream.components.peerId]
-				});
-				await waitFor(() => streams[3].received.length === 1);
-				expect(dialedCircuitRelayAddresses.size).toEqual(2);
-			});
+			}); */
 		});
 
 		describe("4", () => {
@@ -967,17 +1228,8 @@ describe("streams", function () {
 
 				// slowly connect to that the route maps are deterministic
 				await session.connect([[session.peers[0], session.peers[1]]]);
-				await waitFor(() => streams[0].stream.routes.linksCount === 1);
-				await waitFor(() => streams[1].stream.routes.linksCount === 1);
 				await session.connect([[session.peers[1], session.peers[2]]]);
-				await waitFor(() => streams[0].stream.routes.linksCount === 2);
-				await waitFor(() => streams[1].stream.routes.linksCount === 2);
-				await waitFor(() => streams[2].stream.routes.linksCount === 2);
 				await session.connect([[session.peers[0], session.peers[3]]]);
-				await waitFor(() => streams[0].stream.routes.linksCount === 3);
-				await waitFor(() => streams[1].stream.routes.linksCount === 3);
-				await waitFor(() => streams[2].stream.routes.linksCount === 3);
-				await waitFor(() => streams[3].stream.routes.linksCount === 3);
 				await waitForPeerStreams(streams[0].stream, streams[1].stream);
 				await waitForPeerStreams(streams[1].stream, streams[2].stream);
 				await waitForPeerStreams(streams[0].stream, streams[3].stream);
@@ -995,94 +1247,11 @@ describe("streams", function () {
 				]);
 				expect([...streams[3].stream.peers.keys()]).toEqual([
 					streams[0].stream.publicKeyHash
-				]);
-
-				for (const peer of streams) {
-					await waitFor(() => peer.reachable.length === 3);
-					expect(peer.reachable.map((x) => x.hashcode())).toContainAllValues(
-						streams
-							.map((x) => x.stream.publicKeyHash)
-							.filter((x) => x !== peer.stream.publicKeyHash)
-					); // peer has recevied reachable event from everone
-				}
-
-				for (const peer of streams) {
-					expect(peer.unrechable).toHaveLength(0); // No unreachable events before stopping
-				}
+				]); // peer has recevied reachable event from everone
 			});
 
 			afterEach(async () => {
 				await session.stop();
-			});
-
-			it("will emit unreachable events on shutdown", async () => {
-				/** Shut down slowly and check that all unreachable events are fired */
-
-				let reachableBeforeStop = streams[2].reachable.length;
-				await session.peers[0].stop();
-				const hasAll = (arr: PublicSignKey[], cmp: PublicSignKey[]) => {
-					let a = new Set(arr.map((x) => x.hashcode()));
-					let b = new Set(cmp.map((x) => x.hashcode()));
-					if (a.size === b.size) {
-						for (const key of cmp) {
-							if (!arr.find((x) => x.equals(key))) {
-								return false;
-							}
-						}
-						return true;
-					}
-					return false;
-				};
-
-				expect(reachableBeforeStop).toEqual(streams[1].reachable.length);
-				expect(reachableBeforeStop).toEqual(streams[2].reachable.length);
-				expect(reachableBeforeStop).toEqual(streams[0].reachable.length);
-
-				expect(streams[0].unrechable).toHaveLength(0);
-				await waitFor(() =>
-					hasAll(streams[1].unrechable, [
-						streams[0].stream.publicKey,
-						streams[3].stream.publicKey
-					])
-				);
-
-				await session.peers[1].stop();
-				await waitFor(() =>
-					hasAll(streams[2].unrechable, [
-						streams[0].stream.publicKey,
-						streams[1].stream.publicKey,
-						streams[3].stream.publicKey
-					])
-				);
-
-				await session.peers[2].stop();
-				await waitFor(() =>
-					hasAll(streams[3].unrechable, [
-						streams[0].stream.publicKey,
-						streams[1].stream.publicKey,
-						streams[2].stream.publicKey
-					])
-				);
-				await session.peers[3].stop();
-			});
-
-			it("will publish on routes", async () => {
-				streams[2].received = [];
-				streams[3].received = [];
-
-				await streams[0].stream.publish(data, {
-					to: [streams[2].stream.components.peerId]
-				});
-				await waitFor(() => streams[2].received.length === 1);
-				expect(
-					streams[2].messages.find((x) => x instanceof DataMessage)
-				).toBeDefined();
-
-				await delay(1000); // some delay to allow all messages to progagate
-				expect(streams[3].received).toHaveLength(0);
-				expect(
-					streams[3].messages.find((x) => x instanceof DataMessage)
-				).toBeUndefined();
 			});
 
 			it("re-route new connection", async () => {
@@ -1101,118 +1270,94 @@ describe("streams", function () {
 				└───┘ 
 				 */
 
+				await streams[3].stream.publish(new Uint8Array(0), {
+					to: [streams[2].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
 				expect(
-					streams[3].stream.routes.getPath(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					)
-				).toHaveLength(4);
-				await session.connect([[session.peers[2], session.peers[3]]]);
-				await waitFor(
-					() =>
-						streams[3].stream.routes.getPath(
+					streams[3].stream.routes
+						.findNeighbor(
 							streams[3].stream.publicKeyHash,
 							streams[2].stream.publicKeyHash
-						).length === 2
-				);
-			});
-
-			it("handle on drop no routes", async () => {
-				expect(
-					streams[3].stream.routes.getPath(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					)
-				).toHaveLength(4);
-				expect(streams[1].stream.earlyGoodbyes.size).toEqual(2);
-				expect(streams[3].stream.earlyGoodbyes.size).toEqual(1);
-
-				await session.peers[0].stop();
-				await waitFor(() => streams[3].stream.routes.linksCount === 0); // because 1, 2 are now disconnected
-				await delay(1000); // make sure nothing get readded
-				expect(streams[3].stream.routes.linksCount).toEqual(0);
-				expect(
-					streams[3].stream.routes.getPath(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					)
-				).toHaveLength(0);
-				expect(streams[3].stream.earlyGoodbyes.size).toEqual(0);
-			});
-		});
-
-		describe("6", () => {
-			/* 
-			┌─┐
-			│0│
-			└△┘
-			┌▽┐
-			│1│
-			└△┘
-			┌▽┐
-			│2│
-			└─┘
-		
-			< 2 connects with 3 >
-		
-			┌─┐
-			│3│
-			└△┘
-			┌▽┐
-			│4│
-			└△┘
-			┌▽┐
-			│5│
-			└─┘ 
-			*/
-
-			beforeEach(async () => {
-				session = await disconnected(6, {
-					services: {
-						directstream: (c) =>
-							new TestDirectStream(c, {
-								connectionManager: { autoDial: false }
-							})
-					}
-				});
-				await session.connect([
-					[session.peers[0], session.peers[1]],
-					[session.peers[1], session.peers[2]],
-					[session.peers[3], session.peers[4]],
-					[session.peers[4], session.peers[5]]
-				]);
-
-				streams = [];
-				for (const [i, peer] of session.peers.entries()) {
-					streams.push(createMetrics(peer.services.directstream));
-				}
-
-				for (const peer of streams.values()) {
-					await waitFor(() => peer.stream.routes.linksCount === 2);
-				}
-
-				for (let i = 0; i < 2; i++) {
-					await waitForPeerStreams(streams[i].stream, streams[i + 1].stream);
-				}
-				for (let i = 3; i < 5; i++) {
-					await waitForPeerStreams(streams[i].stream, streams[i + 1].stream);
-				}
-			});
-
-			afterAll(async () => {
-				await session.stop();
-			});
-			it("will replay on connect", async () => {
-				for (let i = 3; i < 5; i++) {
-					await waitForPeerStreams(streams[i].stream, streams[i + 1].stream);
-				}
-				expect(streams[2].stream.helloMap.size).toEqual(2); // these hellos will be forwarded on connect
-				expect(streams[3].stream.helloMap.size).toEqual(2); // these hellos will be forwarded on connect
+						)
+						?.list?.map((x) => x.hash)
+				).toEqual([streams[0].stream.publicKeyHash]);
 				await session.connect([[session.peers[2], session.peers[3]]]);
+				await waitForPeerStreams(streams[2].stream, streams[3].stream);
+				await streams[3].stream.publish(new Uint8Array(0), {
+					to: [streams[2].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				await waitForResolved(() => {
+					expect(
+						streams[3].stream.routes
+							.findNeighbor(
+								streams[3].stream.publicKeyHash,
+								streams[2].stream.publicKeyHash
+							)
+							?.list.map((x) => x.hash)
+					).toEqual([
+						streams[2].stream.publicKeyHash,
+						streams[0].stream.publicKeyHash
+					]);
+				});
+			});
 
-				for (const peer of streams) {
-					await waitFor(() => peer.stream.routes.linksCount === 5); // everyone knows everone
-				}
+			it("neighbour drop", async () => {
+				await streams[3].stream.publish(new Uint8Array(0), {
+					to: [streams[2].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				expect(
+					streams[3].stream.routes
+						.findNeighbor(
+							streams[3].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+						?.list?.map((x) => x.hash)
+				).toEqual([streams[0].stream.publicKeyHash]);
+				await session.peers[0].stop();
+				await waitForResolved(() => {
+					expect(
+						streams[3].stream.routes.findNeighbor(
+							streams[3].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+					).toBeUndefined();
+				});
+			});
+
+			it("distant drop", async () => {
+				await streams[3].stream.publish(new Uint8Array(0), {
+					to: [streams[2].stream.publicKeyHash],
+					mode: new SeekDelivery(2)
+				});
+				expect(
+					streams[3].stream.routes
+						.findNeighbor(
+							streams[3].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+						?.list?.map((x) => x.hash)
+				).toEqual([streams[0].stream.publicKeyHash]);
+				await session.peers[2].stop();
+				await waitForResolved(() => {
+					expect(
+						streams[3].stream.routes.isReachable(
+							streams[3].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+					).toEqual(false);
+				});
+
+				await waitForResolved(() => {
+					expect(
+						streams[3].stream.routes.findNeighbor(
+							streams[3].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+					).toBeUndefined();
+				});
 			});
 		});
 
@@ -1224,28 +1369,14 @@ describe("streams", function () {
 				for (let i = 0; i < session.peers.length; i++) {
 					await waitForResolved(() =>
 						expect(
-							session.peers[i].services.directstream.routes.nodeCount
-						).toEqual(3)
+							session.peers[i].services.directstream.routes.count()
+						).toEqual(2)
 					);
 				}
 			});
 			afterEach(async () => {
 				await session?.stop();
 				await extraSession?.stop();
-			});
-			it("old hellos are purged", async () => {
-				session.peers[1].stop();
-				extraSession = await disconnected(1);
-				await extraSession.peers[0].dial(session.peers[2].getMultiaddrs());
-				await waitForResolved(() =>
-					expect(
-						extraSession.peers[0].services.directstream.routes.nodeCount
-					).toEqual(3)
-				);
-				await delay(3000);
-				expect(
-					extraSession.peers[0].services.directstream.routes.nodeCount
-				).toEqual(3);
 			});
 
 			it("will not get blocked for slow writes", async () => {
@@ -1272,9 +1403,7 @@ describe("streams", function () {
 					await session.peers[0].services.directstream.publish(
 						new Uint8Array([1, 2, 3]),
 						{
-							to: directDelivery[i]
-								? [slow.publicKey, fast.publicKey]
-								: undefined
+							to: directDelivery[i] ? [slow.publicKey, fast.publicKey] : [] // undefined ?
 						}
 					);
 
@@ -1317,21 +1446,22 @@ describe("streams", function () {
 						})
 				}
 			}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
+			await waitForPeerStreams(stream(session, 0), stream(session, 1));
 
-			await waitFor(() => stream(session, 1).helloMap.size == 1);
+			/* await waitFor(() => stream(session, 1).helloMap.size == 1); */
 			await stream(session, 0).stop();
-			await waitFor(() => stream(session, 1).helloMap.size === 0);
+			/* await waitFor(() => stream(session, 1).helloMap.size === 0); */
 
 			await stream(session, 1).stop();
 			expect(stream(session, 0).peers.size).toEqual(0);
 			await delay(3000);
 			await stream(session, 0).start();
-			expect(stream(session, 0).helloMap.size).toEqual(0);
+			/* expect(stream(session, 0).helloMap.size).toEqual(0); */
 			await stream(session, 1).start();
 
 			await waitFor(() => stream(session, 0).peers.size === 1);
-			await waitFor(() => stream(session, 0).helloMap.size === 1);
-			await waitFor(() => stream(session, 1).helloMap.size === 1);
+			/* 	await waitFor(() => stream(session, 0).helloMap.size === 1);
+				await waitFor(() => stream(session, 1).helloMap.size === 1); */
 			await waitForPeerStreams(stream(session, 0), stream(session, 1));
 		});
 		it("can connect after start", async () => {

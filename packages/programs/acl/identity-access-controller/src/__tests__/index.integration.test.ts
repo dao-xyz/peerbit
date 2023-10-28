@@ -1,4 +1,4 @@
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
@@ -12,13 +12,11 @@ import {
 } from "@peerbit/crypto";
 import {
 	Documents,
-	DocumentIndex,
 	SearchRequest,
 	StringMatch,
 	Observer,
 	Role
 } from "@peerbit/document";
-import { RPC } from "@peerbit/rpc";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
 import { PeerId } from "@libp2p/interface/peer-id";
@@ -53,12 +51,10 @@ class TestStore extends Program<{ role: Role }> {
 
 	constructor(properties: { publicKey: PublicSignKey | PeerId }) {
 		super();
-		if (properties) {
-			this.store = new Documents();
-			this.accessController = new IdentityAccessController({
-				rootTrust: properties.publicKey
-			});
-		}
+		this.store = new Documents();
+		this.accessController = new IdentityAccessController({
+			rootTrust: properties.publicKey
+		});
 	}
 
 	async open(properties?: { role: Role }) {
@@ -88,7 +84,6 @@ describe("index", () => {
 
 	it("can be deterministic", async () => {
 		const key = (await Ed25519Keypair.create()).publicKey;
-		let id = randomBytes(32);
 		const t1 = new IdentityAccessController({
 			id: key.publicKey,
 			rootTrust: key
@@ -205,16 +200,6 @@ describe("index", () => {
 			const l0b = await TestStore.open(l0a.address!, session.peers[1]);
 			const l0c = await TestStore.open(l0a.address!, session.peers[2]);
 
-			/* await waitForPeers(
-				session.peers[1],
-				session.peers[0],
-				l0a.address.toString()
-			);
-			await waitForPeers(
-				session.peers[2],
-				session.peers[0],
-				l0a.address.toString()
-			); */
 			await expect(
 				l0c.store.put(
 					new Document({
@@ -264,7 +249,7 @@ describe("index", () => {
 				new Document({
 					id: "2"
 				})
-			); // Now trusted
+			);
 		});
 
 		it("any access", async () => {
@@ -281,12 +266,6 @@ describe("index", () => {
 			);
 
 			const l0b = await TestStore.open(l0a.address!, session.peers[1]);
-
-			/* 		await waitForPeers(
-						session.peers[1],
-						session.peers[0],
-						l0a.address.toString()
-					); */
 
 			await expect(
 				l0b.store.put(
@@ -330,7 +309,9 @@ describe("index", () => {
 				args: { role: new Observer() }
 			});
 
-			await l0b.waitFor(session.peers[0].peerId);
+			await l0b.store.log.waitForReplicator(
+				session.peers[0].identity.publicKey
+			);
 
 			const q = async (): Promise<Document[]> => {
 				return l0b.store.index.search(
@@ -361,17 +342,6 @@ describe("index", () => {
 				await l0a.accessController.access.log.log.getHeads()
 			);
 			await waitFor(() => l0b.accessController.access.index.size === 1);
-
-			const abc = await l0a.store.index.search(
-				new SearchRequest({
-					query: [
-						new StringMatch({
-							key: "id",
-							value: "1"
-						})
-					]
-				})
-			);
 
 			const result = await q();
 			expect(result.length).toBeGreaterThan(0); // Because read access
@@ -411,7 +381,9 @@ describe("index", () => {
 		});
 
 		// Allow all for easy query
-		await l0b.waitFor(session.peers[0].peerId);
+		await l0b.accessController.access.log.waitForReplicator(
+			session.peers[0].identity.publicKey
+		);
 		await l0b.accessController.access.log.log.join(
 			await l0a.accessController.access.log.log.getHeads()
 		);

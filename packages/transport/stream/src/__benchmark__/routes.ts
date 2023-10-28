@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { Routes } from "../routes.js";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/routes.ts"
-
+/* 
 const id = () => crypto.randomBytes(16).toString("hex");
 let suite = new B.Suite();
 const sizes = [5, 10, 20, 40, 80, 160, 320];
@@ -28,3 +28,4 @@ suite
 		console.log(String(event.target));
 	})
 	.run();
+ */
