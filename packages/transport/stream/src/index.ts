@@ -1106,31 +1106,11 @@ export abstract class DirectStream<
 		}
 
 		const messageIdString = await sha256Base64(message.messageIdToAcknowledge);
-		/* 	if (message.header.to.includes(this.publicKeyHash)) {
-				console.log(
-					"GOT ACK",
-					this.publicKeyHash,
-					messageIdString,
-					!!this._ackCallbacks.get(messageIdString)
-				);
-	
-			}
-	 */
 		const next = this.traces.get(messageIdString);
-
 		const nextStream = next ? this.peers.get(next) : undefined;
-
 		this._ackCallbacks
 			.get(messageIdString)
 			?.callback(message, peerStream, nextStream);
-
-		/* 	console.log("RECEIVED ACK", {
-				me: this.publicKeyHash, from: publicKey.hashcode(), signer: message.header.signatures?.publicKeys[0].hashcode(), msgAckId: messageIdString, acc: !!
-					this._ackCallbacks
-						.get(messageIdString),
-				next: nextStream,
-				last: message.header.to.includes(this.publicKeyHash)
-			},); */
 
 		// relay ACK ?
 		// send exactly backwards same route we got this message
@@ -1327,7 +1307,6 @@ export abstract class DirectStream<
 				this.healthChecks.set(
 					to,
 					setTimeout(() => {
-						console.log("REMOVE TO", to);
 						this.removeRouteConnection(to, false);
 					}, SEEK_DELIVERY_TIMEOUT)
 				);
@@ -1515,7 +1494,6 @@ export abstract class DirectStream<
 				message.deliveryMode.redundancy
 			);
 
-			// console.log("FANOUT", from.equals(this.publicKey), fanout)
 			// update to's
 
 			if (fanout) {
