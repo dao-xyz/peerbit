@@ -4,7 +4,7 @@ import { webSockets } from "@libp2p/websockets";
 import { circuitRelayServer } from "libp2p/circuit-relay";
 import { delay, waitForResolved } from "@peerbit/time";
 import { noise } from "@dao-xyz/libp2p-noise";
-import { mplex } from "@libp2p/mplex";
+import { yamux } from "@chainsafe/libp2p-yamux";
 import { identifyService } from "libp2p/identify";
 import { all } from "@libp2p/websockets/filters";
 import { TestDirectStream } from "../shared/utils";
@@ -26,7 +26,7 @@ test.describe("stream", () => {
 				stream: (c) => new TestDirectStream(c)
 			},
 			transports: [webSockets({ filter: all })],
-			streamMuxers: [mplex()],
+			streamMuxers: [yamux()],
 			connectionEncryption: [noise()]
 		});
 	});
@@ -55,12 +55,12 @@ test.describe("stream", () => {
 
 		await waitForResolved(async () => {
 			const counter = await page.getByTestId("peer-counter");
-			await expect(counter).toHaveText(String(1), { timeout: 15e3 });
+			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
 		});
 
 		await waitForResolved(async () => {
 			const counter = await anotherPage.getByTestId("peer-counter");
-			await expect(counter).toHaveText(String(1), { timeout: 15e3 });
+			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
 		});
 
 		// Shut down the relay to make sure traffic works over webrtc
