@@ -1,3 +1,5 @@
+import { PublicSignKey } from "@peerbit/crypto";
+
 export class Routes {
 	// END receiver -> Neighbour
 
@@ -186,5 +188,64 @@ export class Routes {
 			}
 		}
 		return set.size;
+	}
+
+	// for all tos if
+	getFanout(
+		from: PublicSignKey,
+		tos: string[],
+		redundancy: number
+	): Map<string, string[]> | undefined {
+		if (tos.length === 0) {
+			return undefined;
+		}
+
+		let fanoutMap: Map<string, string[]> | undefined = undefined;
+
+		const fromKey = from.hashcode();
+
+		// Message to > 0
+		if (tos.length > 0) {
+			for (const to of tos) {
+				if (to === this.me || fromKey === to) {
+					continue; // don't send to me or backwards
+				}
+
+				const neighbour = this.findNeighbor(fromKey, to);
+				if (neighbour) {
+					let foundClosest = false;
+					for (
+						let i = 0;
+						i < Math.min(neighbour.list.length, redundancy);
+						i++
+					) {
+						const distance = neighbour.list[i].distance;
+						if (distance >= redundancy) {
+							break; // because neighbour listis sorted
+						}
+						if (distance <= 0) {
+							foundClosest = true;
+						}
+						const fanout = (fanoutMap || (fanoutMap = new Map())).get(
+							neighbour.list[i].hash
+						);
+						if (!fanout) {
+							fanoutMap.set(neighbour.list[i].hash, [to]);
+						} else {
+							fanout.push(to);
+						}
+					}
+					if (!foundClosest && from.hashcode() === this.me) {
+						return undefined; // we dont have the shortest path to our target (yet). Send to all
+					}
+
+					continue;
+				}
+
+				// we can't find path, send message to all peers
+				return undefined;
+			}
+		}
+		return fanoutMap || (fanoutMap = new Map());
 	}
 }

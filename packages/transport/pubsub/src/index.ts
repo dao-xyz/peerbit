@@ -34,6 +34,7 @@ import { CustomEvent } from "@libp2p/interface/events";
 import { PubSubEvents } from "@peerbit/pubsub-interface";
 
 export const logger = logFn({ module: "lazysub", level: "warn" });
+const logError = (e?: { message: string }) => logger.error(e?.message);
 
 export interface PeerStreamsInit {
 	id: Libp2pPeerId;
@@ -195,7 +196,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	async requestSubscribers(
 		topic: string | string[],
-		from?: PublicSignKey
+		to?: PublicSignKey
 	): Promise<void> {
 		if (!this.started) {
 			throw new CodeError("not started yet", "ERR_NOT_STARTED_YET");
@@ -217,7 +218,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		return this.publishMessage(
 			this.publicKey,
 			await new DataMessage({
-				header: new MessageHeader({ to: from ? [from.hashcode()] : [] }),
+				header: new MessageHeader({ to: to ? [to.hashcode()] : [] }),
 				data: toUint8Array(new GetSubscribers({ topics }).bytes()),
 				deliveryMode: new SeekDelivery(2)
 			}).sign(this.sign)
@@ -478,7 +479,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				!pubsubMessage.topics.find((topic) => this.topics.has(topic)) ||
 				message.deliveryMode instanceof SeekDelivery
 			) {
-				await this.relayMessage(from, message);
+				// DONT await this since it might introduce a dead-lock
+				this.relayMessage(from, message).catch(logError);
 			}
 		} else {
 			if (!(await message.verify(true))) {
@@ -566,7 +568,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 										subscriptions: mySubscriptions
 									}).bytes()
 								),
-								deliveryMode: new AcknowledgeDelivery(2),
+								deliveryMode: new AcknowledgeDelivery(2), // needs to be Ack or Silent else we will run into a infite message loop
 								header: new MessageHeader({ to: [subscriber.hashcode()] })
 							});
 
@@ -579,7 +581,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				}
 
 				// Forward
-				await this.relayMessage(from, message);
+				// DONT await this since it might introduce a dead-lock
+				this.relayMessage(from, message).catch(logError);
 			} else if (pubsubMessage instanceof Unsubscribe) {
 				if (!this.subscriptionMessageIsLatest(message, pubsubMessage)) {
 					logger.trace("Recieved old subscription message");
@@ -609,7 +612,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				}
 
 				// Forward
-				await this.relayMessage(from, message);
+				// DONT await this since it might introduce a dead-lock
+				this.relayMessage(from, message).catch(logError);
 			} else if (pubsubMessage instanceof GetSubscribers) {
 				const subscriptionsToSend: Subscription[] = [];
 				for (const topic of pubsubMessage.topics) {
@@ -636,7 +640,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				}
 
 				// Forward
-				await this.relayMessage(from, message);
+				// DONT await this since it might introduce a dead-lock
+				this.relayMessage(from, message).catch(logError);
 			}
 		}
 		return true;
