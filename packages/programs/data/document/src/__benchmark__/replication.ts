@@ -8,6 +8,7 @@ import { Documents, SetupOptions } from "../document-store.js";
 import { Replicator } from "@peerbit/shared-log";
 import { DirectSub } from "@peerbit/pubsub";
 import { mplex } from "@libp2p/mplex";
+
 // Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
 // put x 1,009 ops/sec ±2.57% (80 runs sampled)
 
@@ -55,7 +56,19 @@ const peers = await Promise.all(
 				pubsub: (sub) =>
 					new DirectSub(sub, {
 						canRelayMessage: true,
-						connectionManager: { autoDial: false }
+						connectionManager: false
+					})
+			}
+		}),
+		await createLibp2pExtended({
+			connectionManager: {},
+			transports: [tcp()],
+			streamMuxers: [mplex()],
+			services: {
+				pubsub: (sub) =>
+					new DirectSub(sub, {
+						canRelayMessage: true,
+						connectionManager: false
 					})
 			}
 		}),
@@ -66,18 +79,7 @@ const peers = await Promise.all(
 				pubsub: (sub) =>
 					new DirectSub(sub, {
 						canRelayMessage: true,
-						connectionManager: { autoDial: false }
-					})
-			}
-		}),
-		await createLibp2pExtended({
-			transports: [tcp()],
-			streamMuxers: [mplex()],
-			services: {
-				pubsub: (sub) =>
-					new DirectSub(sub, {
-						canRelayMessage: true,
-						connectionManager: { autoDial: false }
+						connectionManager: false
 					})
 			}
 		})

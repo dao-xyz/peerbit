@@ -20,9 +20,7 @@ class TestStreamImpl extends DirectStream {
 		super(c, ["bench/0.0.0"], {
 			canRelayMessage: true,
 			emitSelf: true,
-			connectionManager: {
-				autoDial: false
-			}
+			connectionManager: false
 		});
 	}
 }

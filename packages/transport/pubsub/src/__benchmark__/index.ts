@@ -17,9 +17,7 @@ const session = await TestSession.disconnected(4, {
 			new DirectSub(c, {
 				canRelayMessage: true,
 				emitSelf: true,
-				connectionManager: {
-					autoDial: false
-				}
+				connectionManager: false
 			})
 	}
 });

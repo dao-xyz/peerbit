@@ -64,10 +64,9 @@ export const createLibp2pExtended = (
 				((c) =>
 					new DirectSub(c, {
 						canRelayMessage: true,
-						signaturePolicy: "StrictNoSign",
-						connectionManager: {
-							autoDial: true
-						}
+						signaturePolicy: "StrictNoSign"
+						// auto dial true
+						// auto prune true
 					})),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
 			...opts.services

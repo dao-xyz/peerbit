@@ -36,10 +36,19 @@ describe(`dial`, function () {
 
 	it("autodials by default", async () => {
 		expect(
-			clients[0].services.pubsub["connectionManagerOptions"].autoDial
-		).toBeTrue();
+			clients[0].services.pubsub.connectionManagerOptions.dialer
+		).toBeDefined();
 		expect(
-			clients[1].services.pubsub["connectionManagerOptions"].autoDial
-		).toBeTrue();
+			clients[1].services.blocks.connectionManagerOptions.dialer
+		).toBeDefined();
+	});
+
+	it("autoprunes by default", async () => {
+		expect(
+			clients[0].services.pubsub.connectionManagerOptions.pruner
+		).toBeDefined();
+		expect(
+			clients[1].services.blocks.connectionManagerOptions.pruner
+		).toBeDefined();
 	});
 });

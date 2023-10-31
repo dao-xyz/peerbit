@@ -83,6 +83,7 @@ export class TestSession<T> {
 					connectionManager: (options?.[i] || options)?.connectionManager ?? {
 						minConnections: 0
 					},
+
 					datastore: (options?.[i] || options)?.datastore,
 					transports:
 						(options?.[i] || options)?.transports ??
