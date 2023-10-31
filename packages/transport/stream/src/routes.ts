@@ -3,16 +3,12 @@ import { PublicSignKey } from "@peerbit/crypto";
 export class Routes {
 	// END receiver -> Neighbour
 
-	constructor(
-		readonly me: string,
-		readonly routes: Map<
-			string,
-			Map<
-				string,
-				{ session: number; list: { hash: string; distance: number }[] }
-			>
-		> = new Map()
-	) {}
+	routes: Map<
+		string,
+		Map<string, { session: number; list: { hash: string; distance: number }[] }>
+	> = new Map();
+
+	constructor(readonly me: string) {}
 
 	clear() {
 		this.routes.clear();
@@ -247,5 +243,28 @@ export class Routes {
 			}
 		}
 		return fanoutMap || (fanoutMap = new Map());
+	}
+
+	/**
+	 * Returns a list of a prunable nodes that are not needed to reach all remote nodes
+	 */
+	getPrunable(neighbours: string[]): string[] {
+		const map = this.routes.get(this.me);
+		if (map) {
+			// check if all targets can be reached without it
+			return neighbours.filter((candidate) => {
+				for (const [target, neighbours] of map) {
+					if (
+						target !== candidate &&
+						neighbours.list.length === 1 &&
+						neighbours.list[0].hash === candidate
+					) {
+						return false;
+					}
+				}
+				return true;
+			});
+		}
+		return [];
 	}
 }

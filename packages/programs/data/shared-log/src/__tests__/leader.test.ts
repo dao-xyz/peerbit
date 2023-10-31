@@ -26,7 +26,7 @@ describe(`leaders`, function () {
 					pubsub: (c) =>
 						new DirectSub(c, {
 							canRelayMessage: true,
-							connectionManager: { autoDial: false }
+							connectionManager: false
 						})
 				}
 			}

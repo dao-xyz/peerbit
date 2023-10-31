@@ -10,7 +10,6 @@ import { Uint8ArrayList } from "uint8arraylist";
 import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
 import { Routes } from "./routes.js";
-import { PeerMap } from "./peer-map.js";
 import type {
 	IncomingStreamData,
 	Registrar
@@ -61,6 +60,7 @@ import {
 
 import { DeliveryMode } from "@peerbit/stream-interface";
 import { MultiAddrinfo } from "@peerbit/stream-interface";
+import { MovingAverageTracker } from "./metrics.js";
 
 const logError = (e?: { message: string }) => logger.error(e?.message);
 export interface PeerStreamsInit {
@@ -81,6 +81,14 @@ export interface PeerStreamEvents {
 }
 
 const SEEK_DELIVERY_TIMEOUT = 9e3;
+const MAX_DATA_LENGTH = 1e7 + 1000; // 10 mb and some metadata
+const MAX_QUEUED_BYTES = MAX_DATA_LENGTH * 50;
+
+const DEFAULT_PRUNE_CONNECTIONS_INTERVAL = 1e4;
+const DEFAULT_MIN_CONNECTIONS = 2;
+const DEFAULT_MAX_CONNECTIONS = 300;
+
+const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
@@ -114,6 +122,8 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	private closed: boolean;
 
 	public connId: string;
+
+	private usedBandWidthTracker: MovingAverageTracker;
 	constructor(init: PeerStreamsInit) {
 		super();
 
@@ -124,6 +134,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.closed = false;
 		this.connId = init.connId;
 		this.counter = 1;
+		this.usedBandWidthTracker = new MovingAverageTracker();
 	}
 
 	/**
@@ -140,6 +151,10 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		return Boolean(this.outboundStream);
 	}
 
+	get usedBanwidth() {
+		return this.usedBandWidthTracker.value;
+	}
+
 	/**
 	 * Send a message to this peer.
 	 * Throws if there is no `stream` to write to available.
@@ -149,6 +164,9 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 			logger.error("No writable connection to " + this.peerId.toString());
 			throw new Error("No writable connection to " + this.peerId.toString());
 		}
+
+		this.usedBandWidthTracker.add(data.byteLength);
+
 		this.outboundStream.push(
 			data instanceof Uint8Array ? new Uint8ArrayList(data) : data
 		);
@@ -214,7 +232,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this._rawInboundStream = stream;
 		this.inboundStream = abortableSource(
 			pipe(this._rawInboundStream, (source) =>
-				lp.decode(source, { maxDataLength: 100001000 })
+				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH })
 			),
 			this.inboundAbortController.signal,
 			{
@@ -304,10 +322,22 @@ export interface StreamEvents extends PeerEvents, MessageEvents {
 	data: CustomEvent<DataMessage>;
 }
 
-export type ConnectionManagerOptions = {
-	autoDial?: boolean;
-	retryDelay?: number;
+type DialerOptions = {
+	retryDelay: number;
 };
+type PrunerOptions = {
+	interval: number; // how often to check for pruning
+	bandwidth?: number; // Mbps, unlimited if unset
+	maxBuffer?: number; // max queued bytes until pruning
+	connectionTimeout: number; // how long a pruned connection should be treated as non wanted
+};
+type ConnectionManagerOptions = {
+	minConnections: number;
+	maxConnections: number;
+	dialer?: DialerOptions;
+	pruner?: PrunerOptions;
+};
+
 export type DirectStreamOptions = {
 	canRelayMessage?: boolean;
 	emitSelf?: boolean;
@@ -315,8 +345,7 @@ export type DirectStreamOptions = {
 	maxInboundStreams?: number;
 	maxOutboundStreams?: number;
 	signaturePolicy?: SignaturePolicy;
-	pingInterval?: number | null;
-	connectionManager?: ConnectionManagerOptions;
+	connectionManager?: ConnectionManagerArguments;
 };
 
 export interface DirectStreamComponents extends Components {
@@ -328,6 +357,13 @@ export interface DirectStreamComponents extends Components {
 	events: TypedEventTarget<Libp2pEvents>;
 }
 
+export type ConnectionManagerArguments =
+	| (Partial<Pick<ConnectionManagerOptions, "minConnections">> &
+			Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
+				pruner?: Partial<PrunerOptions> | false;
+			} & { dialer?: Partial<DialerOptions> | false })
+	| false;
+
 export abstract class DirectStream<
 		Events extends { [s: string]: any } = StreamEvents
 	>
@@ -335,7 +371,6 @@ export abstract class DirectStream<
 	implements WaitForPeer
 {
 	public peerId: PeerId;
-	public peerIdStr: string;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
 	public sign: (bytes: Uint8Array) => Promise<SignatureWithKey>;
@@ -345,7 +380,7 @@ export abstract class DirectStream<
 	/**
 	 * Map of peer streams
 	 */
-	public peers: PeerMap<PeerStreams>;
+	public peers: Map<string, PeerStreams>;
 	public peerKeyHashToPublicKey: Map<string, PublicSignKey>;
 	public routes: Routes;
 	/**
@@ -364,11 +399,13 @@ export abstract class DirectStream<
 	private _registrarTopologyIds: string[] | undefined;
 	private readonly maxInboundStreams?: number;
 	private readonly maxOutboundStreams?: number;
-	private connectionManagerOptions: ConnectionManagerOptions;
-	private recentDials: Cache<string>;
-	private traces: Map<string, string>;
+	connectionManagerOptions: ConnectionManagerOptions;
+	private recentDials?: Cache<string>;
+	private traces: Cache<string>;
 	closeController: AbortController;
 	private healthChecks: Map<string, ReturnType<typeof setTimeout>>;
+	private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
+	private prunedConnectionsCache?: Cache<string>;
 
 	private _ackCallbacks: Map<
 		string,
@@ -392,13 +429,12 @@ export abstract class DirectStream<
 			maxInboundStreams,
 			maxOutboundStreams,
 			signaturePolicy = "StictSign",
-			connectionManager = { autoDial: true }
+			connectionManager
 		} = options || {};
 
 		const signKey = getKeypairFromPeerId(components.peerId);
 		this.sign = signKey.sign.bind(signKey);
 		this.peerId = components.peerId;
-		this.peerIdStr = components.peerId.toString();
 		this.publicKey = signKey.publicKey;
 		this.publicKeyHash = signKey.publicKey.hashcode();
 		this.multicodecs = multicodecs;
@@ -417,16 +453,55 @@ export abstract class DirectStream<
 		this.onPeerConnected = this.onPeerConnected.bind(this);
 		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
 		this.signaturePolicy = signaturePolicy;
-		this.connectionManagerOptions = connectionManager;
-		this.recentDials = new Cache({
-			ttl: connectionManager.retryDelay || 60 * 1000,
-			max: 1e3
-		});
 
-		this.traces = new Map(); /* new Cache({
+		if (connectionManager === false || connectionManager === null) {
+			this.connectionManagerOptions = {
+				maxConnections: Number.MAX_SAFE_INTEGER,
+				minConnections: 0,
+				dialer: undefined,
+				pruner: undefined
+			};
+		} else {
+			this.connectionManagerOptions = {
+				maxConnections: DEFAULT_MAX_CONNECTIONS,
+				minConnections: DEFAULT_MIN_CONNECTIONS,
+				...connectionManager,
+				dialer:
+					connectionManager?.dialer !== false &&
+					connectionManager?.dialer !== null
+						? { retryDelay: 60 * 1000, ...connectionManager?.dialer }
+						: undefined,
+				pruner:
+					connectionManager?.pruner !== false &&
+					connectionManager?.pruner !== null
+						? {
+								connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
+								interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
+								maxBuffer: MAX_QUEUED_BYTES,
+								...connectionManager?.pruner
+						  }
+						: undefined
+			};
+		}
+
+		this.recentDials = this.connectionManagerOptions.dialer
+			? new Cache({
+					ttl: this.connectionManagerOptions.dialer.retryDelay,
+					max: 1e3
+			  })
+			: undefined;
+
+		this.traces = new Cache({
 			ttl: 10 * 1000,
 			max: 1e6
-		}); */
+		});
+
+		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
+			? new Cache({
+					max: 1e6,
+					ttl: this.connectionManagerOptions.pruner.connectionTimeout
+			  })
+			: undefined;
 	}
 
 	async start() {
@@ -459,11 +534,9 @@ export abstract class DirectStream<
 				})
 			)
 		);
-
 		// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
 		this.components.events.addEventListener("connection:open", (e) => {
 			if (e.detail.multiplexer === "/webrtc") {
-				console.log("ADD WEBRTC CONNECTION");
 				this.onPeerConnected(e.detail.remotePeer, e.detail);
 			}
 		});
@@ -493,35 +566,19 @@ export abstract class DirectStream<
 
 			await this.onPeerConnected(conn.remotePeer, conn, { fromExisting: true });
 		}
-
-		/* const pingJob = async () => {
-			// TODO don't use setInterval but waitFor previous done to be done
-			await this.pingJobPromise;
-			const promises: Promise<any>[] = [];
-			this.peers.forEach((peer) => {
-				promises.push(
-					this.ping(peer).catch((e) => {
-						if (e instanceof TimeoutError) {
-							// Ignore
-						} else {
-							logger.error(e);
+		if (this.connectionManagerOptions.pruner) {
+			const pruneConnectionsLoop = () => {
+				this.pruneConnectionsTimeout = setTimeout(() => {
+					this.maybePruneConnections().finally(() => {
+						if (!this.started) {
+							return;
 						}
-					})
-				);
-			});
-			promises.push(this.hello()); // Repetedly say hello to everyone to create traces in the network to measure latencies
-			this.pingJobPromise = Promise.all(promises)
-				.catch((e) => {
-					logger.error(e?.message);
-				})
-				.finally(() => {
-					if (!this.started || !this.pingInterval) {
-						return;
-					}
-					this.pingJob = setTimeout(pingJob, this.pingInterval);
-				});
-		};
-		pingJob(); */
+						pruneConnectionsLoop();
+					});
+				}, this.connectionManagerOptions.pruner!.interval);
+			};
+			pruneConnectionsLoop();
+		}
 	}
 
 	/**
@@ -533,6 +590,8 @@ export abstract class DirectStream<
 		}
 		this.started = false;
 		this.closeController.abort();
+
+		clearTimeout(this.pruneConnectionsTimeout);
 
 		await Promise.all(
 			this.multicodecs.map((x) => this.components.registrar.unhandle(x))
@@ -546,6 +605,7 @@ export abstract class DirectStream<
 			clearTimeout(v);
 		}
 		this.healthChecks.clear();
+		this.prunedConnectionsCache?.clear();
 
 		// unregister protocol and handlers
 		if (this._registrarTopologyIds != null) {
@@ -588,6 +648,12 @@ export abstract class DirectStream<
 		}
 
 		const publicKey = getPublicKeyFromPeerId(peerId);
+
+		if (this.prunedConnectionsCache?.has(publicKey.hashcode())) {
+			await connection.close();
+			return;
+		}
+
 		const peer = this.addPeer(
 			peerId,
 			publicKey,
@@ -612,6 +678,11 @@ export abstract class DirectStream<
 
 		if (!this.isStarted() || conn.status !== "open") {
 			return;
+		}
+		const peerKey = getPublicKeyFromPeerId(peerId);
+
+		if (this.prunedConnectionsCache?.has(peerKey.hashcode())) {
+			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
 
 		try {
@@ -649,8 +720,6 @@ export abstract class DirectStream<
 			return;
 		}
 		try {
-			const peerKey = getPublicKeyFromPeerId(peerId);
-
 			for (const existingStreams of conn.streams) {
 				if (
 					existingStreams.protocol &&
@@ -845,6 +914,7 @@ export abstract class DirectStream<
 		connId: string
 	): PeerStreams {
 		const publicKeyHash = publicKey.hashcode();
+
 		const existing = this.peers.get(publicKeyHash);
 
 		// If peer streams already exists, do nothing
@@ -1069,8 +1139,12 @@ export abstract class DirectStream<
 					// TODO only give origin info to peers we want to connect to us
 					header: new MessageHeader({
 						to: message.header.signatures!.publicKeys.map((x) => x.hashcode()),
+						// include our origin if message is SeekDelivery and we have not recently pruned a connection to this peer
 						origin:
-							message.deliveryMode instanceof SeekDelivery
+							message.deliveryMode instanceof SeekDelivery &&
+							!message.header.signatures!.publicKeys.find(
+								(x) => this.prunedConnectionsCache?.has(x.hashcode())
+							)
 								? new MultiAddrinfo(
 										this.components.addressManager
 											.getAddresses()
@@ -1121,7 +1195,8 @@ export abstract class DirectStream<
 				await this.publishMessage(this.publicKey, message, [nextStream], true);
 			}
 		} else {
-			if (message.header.origin && this.connectionManagerOptions.autoDial) {
+			// if origin exist (we can connect to remote peer) && we have autodialer turned on
+			if (message.header.origin && this.connectionManagerOptions.dialer) {
 				this.maybeConnectDirectly(
 					message.header.signatures!.publicKeys[0].hashcode(),
 					message.header.origin
@@ -1254,7 +1329,7 @@ export abstract class DirectStream<
 	public async relayMessage(
 		from: PublicSignKey,
 		message: Message,
-		to?: PeerStreams[] | PeerMap<PeerStreams>
+		to?: PeerStreams[] | Map<string, PeerStreams>
 	) {
 		if (this.canRelayMessage) {
 			if (message instanceof DataMessage) {
@@ -1275,7 +1350,7 @@ export abstract class DirectStream<
 					message.deliveryMode instanceof SeekDelivery
 				) {
 					const messageId = await sha256Base64(message.id);
-					this.traces.set(messageId, from.hashcode());
+					this.traces.add(messageId, from.hashcode());
 				}
 			}
 
@@ -1432,7 +1507,7 @@ export abstract class DirectStream<
 	public async publishMessage(
 		from: PublicSignKey,
 		message: Message,
-		to?: PeerStreams[] | PeerMap<PeerStreams>,
+		to?: PeerStreams[] | Map<string, PeerStreams>,
 		relayed?: boolean
 	): Promise<void> {
 		let delivereyPromise: DeferredPromise<void> | undefined = undefined as any;
@@ -1514,7 +1589,7 @@ export abstract class DirectStream<
 		}
 
 		// We fils to send the message directly, instead fallback to floodsub
-		const peers: PeerStreams[] | PeerMap<PeerStreams> = to || this.peers;
+		const peers: PeerStreams[] | Map<string, PeerStreams> = to || this.peers;
 		if (
 			peers == null ||
 			(Array.isArray(peers) && peers.length === 0) ||
@@ -1547,14 +1622,14 @@ export abstract class DirectStream<
 	}
 
 	async maybeConnectDirectly(toHash: string, origin: MultiAddrinfo) {
-		if (this.peers.has(toHash)) {
+		if (this.peers.has(toHash) || this.prunedConnectionsCache?.has(toHash)) {
 			return; // TODO, is this expected, or are we to dial more addresses?
 		}
 
 		const addresses = origin.multiaddrs
 			.filter((x) => {
-				const ret = !this.recentDials.has(x);
-				this.recentDials.add(x);
+				const ret = !this.recentDials!.has(x);
+				this.recentDials!.add(x);
 				return ret;
 			})
 			.map((x) => multiaddr(x));
@@ -1614,6 +1689,58 @@ export abstract class DirectStream<
 
 	get pending(): boolean {
 		return this._ackCallbacks.size > 0;
+	}
+
+	lastQueuedBytes = 0;
+
+	// make this into a job? run every few ms
+	maybePruneConnections(): Promise<void> {
+		if (this.connectionManagerOptions.pruner!.bandwidth != null) {
+			let usedBandwidth = 0;
+			for (const [_k, v] of this.peers) {
+				usedBandwidth += v.usedBanwidth;
+			}
+			usedBandwidth /= this.peers.size;
+
+			if (usedBandwidth > this.connectionManagerOptions.pruner!.bandwidth) {
+				// prune
+				return this.pruneConnections();
+			}
+		} else if (this.connectionManagerOptions.pruner!.maxBuffer != null) {
+			const queuedBytes = this.getQueuedBytes();
+			if (queuedBytes > this.connectionManagerOptions.pruner!.maxBuffer) {
+				// prune
+				return this.pruneConnections();
+			}
+		}
+		return Promise.resolve();
+	}
+
+	async pruneConnections(): Promise<void> {
+		// TODO sort by bandwidth
+		if (this.peers.size <= this.connectionManagerOptions.minConnections) {
+			return;
+		}
+		const sorted = [...this.peers.values()]
+			.sort((x, y) => x.usedBanwidth - y.usedBanwidth)
+			.map((x) => x.publicKey.hashcode());
+		const prunables = this.routes.getPrunable(sorted);
+		if (prunables.length === 0) {
+			return;
+		}
+		const stream = this.peers.get(prunables[0])!;
+		this.prunedConnectionsCache!.add(stream.publicKey.hashcode());
+
+		await this.onPeerDisconnected(stream.peerId);
+		return this.components.connectionManager.closeConnections(stream.peerId);
+	}
+
+	getQueuedBytes(): number {
+		let sum = 0;
+		for (const peer of this.peers) {
+			sum += peer[1].outboundStream?.readableLength || 0;
+		}
+		return sum;
 	}
 }
 

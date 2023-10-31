@@ -160,7 +160,7 @@ describe("pubsub", function () {
 					pubsub: (c) =>
 						new DirectSub(c, {
 							canRelayMessage: true,
-							connectionManager: { autoDial: false }
+							connectionManager: false
 						})
 				}
 			});
@@ -217,7 +217,7 @@ describe("pubsub", function () {
 						pubsub: (c) =>
 							new DirectSub(c, {
 								canRelayMessage: true,
-								connectionManager: { autoDial: false }
+								connectionManager: false
 							})
 					}
 				});
@@ -369,7 +369,7 @@ describe("pubsub", function () {
 						pubsub: (c) =>
 							new DirectSub(c, {
 								canRelayMessage: true,
-								connectionManager: { autoDial: false }
+								connectionManager: false
 							})
 					}
 				});
@@ -523,7 +523,7 @@ describe("pubsub", function () {
 							new DirectSub(c, {
 								emitSelf: true,
 								canRelayMessage: true,
-								connectionManager: { autoDial: false }
+								connectionManager: false
 							})
 					}
 				});
@@ -579,7 +579,7 @@ describe("pubsub", function () {
 						pubsub: (c) =>
 							new DirectSub(c, {
 								canRelayMessage: true,
-								connectionManager: { autoDial: false }
+								connectionManager: false
 							})
 					}
 				});
@@ -680,7 +680,7 @@ describe("pubsub", function () {
 						pubsub: (c) =>
 							new DirectSub(c, {
 								canRelayMessage: true,
-								connectionManager: { autoDial: false }
+								connectionManager: false
 							})
 					}
 				});
@@ -752,17 +752,14 @@ describe("pubsub", function () {
 			let session: TestSession<{ pubsub: DirectSub }>;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			const data = new Uint8Array([1, 2, 3]);
 			const TOPIC = "topic";
-			const PING_INTERVAL = 1000;
 			beforeEach(async () => {
 				session = await TestSession.disconnected(4, {
 					services: {
 						pubsub: (c) =>
 							new DirectSub(c, {
-								pingInterval: PING_INTERVAL,
 								canRelayMessage: true,
-								connectionManager: { autoDial: false }
+								connectionManager: false
 							})
 					}
 				});
@@ -894,7 +891,7 @@ describe("pubsub", function () {
 					pubsub: (c) =>
 						new DirectSub(c, {
 							canRelayMessage: true,
-							connectionManager: { autoDial: false }
+							connectionManager: false
 						})
 				}
 			});
@@ -983,7 +980,7 @@ describe("pubsub", function () {
 					pubsub: (c) =>
 						new DirectSub(c, {
 							canRelayMessage: true,
-							connectionManager: { autoDial: false }
+							connectionManager: false
 						})
 				}
 			});

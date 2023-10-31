@@ -1,8 +1,3 @@
-import {
-	ConnectionManagerOptions,
-	DirectStream,
-	DirectStreamComponents
-} from "@peerbit/stream";
 import { useEffect, useReducer, useState, useRef } from "react";
 import { createLibp2p } from "libp2p";
 import { circuitRelayTransport } from "libp2p/circuit-relay";
@@ -20,8 +15,7 @@ await ready;
 
 const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	services: {
-		stream: (c) =>
-			new TestDirectStream(c, { connectionManager: { autoDial: true } }),
+		stream: (c) => new TestDirectStream(c),
 		identify: identifyService()
 	},
 	connectionGater: {
