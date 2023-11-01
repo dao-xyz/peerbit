@@ -27,7 +27,6 @@ import {
 	getPublicKeyFromPeerId,
 	PublicSignKey,
 	sha256Base64,
-	sha256Base64Sync,
 	SignatureWithKey
 } from "@peerbit/crypto";
 
@@ -939,6 +938,7 @@ export abstract class DirectStream<
 		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
 			once: true
 		});
+
 		return peerStreams;
 	}
 
@@ -1568,8 +1568,6 @@ export abstract class DirectStream<
 				message.header.to,
 				message.deliveryMode.redundancy
 			);
-
-			// update to's
 
 			if (fanout) {
 				if (fanout.size > 0) {
