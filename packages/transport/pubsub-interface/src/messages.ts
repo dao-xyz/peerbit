@@ -7,6 +7,7 @@ import {
 	deserialize,
 	option
 } from "@dao-xyz/borsh";
+import { sha256Base64Sync } from "@peerbit/crypto";
 export abstract class PubSubMessage {
 	abstract bytes(): Uint8Array | Uint8ArrayList;
 	static from(bytes: Uint8Array) {
@@ -24,6 +25,7 @@ export abstract class PubSubMessage {
 		if (first === 3) {
 			return GetSubscribers.from(bytes);
 		}
+
 		throw new Error("Unsupported");
 	}
 }
@@ -77,27 +79,17 @@ export class PubSubData extends PubSubMessage {
 	}
 }
 
-@variant(0)
-export class Subscription {
-	@field({ type: "string" })
-	topic: string;
-
-	constructor(topic: string) {
-		this.topic = topic;
-	}
-}
-
 @variant(1)
 export class Subscribe extends PubSubMessage {
-	@field({ type: vec(Subscription) })
-	subscriptions: Subscription[];
+	@field({ type: vec("string") })
+	topics: string[];
 
-	constructor(options: { subscriptions: Subscription[] }) {
+	constructor(options: { topics: string[] }) {
 		super();
-		this.subscriptions = options.subscriptions;
+		this.topics = options.topics;
 	}
 
-	_serialized: Uint8ArrayList;
+	private _serialized: Uint8ArrayList;
 
 	bytes() {
 		if (this._serialized) {
@@ -115,29 +107,16 @@ export class Subscribe extends PubSubMessage {
 		}
 		return ret;
 	}
-
-	get topics() {
-		return this.subscriptions.map((x) => x.topic);
-	}
-}
-
-@variant(0)
-export class Unsubscription {
-	@field({ type: "string" })
-	topic: string;
-	constructor(topic: string) {
-		this.topic = topic;
-	}
 }
 
 @variant(2)
 export class Unsubscribe extends PubSubMessage {
-	@field({ type: vec(Unsubscription) })
-	unsubscriptions: Unsubscription[];
+	@field({ type: vec("string") })
+	topics: string[];
 
 	constructor(options: { topics: string[] }) {
 		super();
-		this.unsubscriptions = options.topics.map((x) => new Unsubscription(x));
+		this.topics = options.topics;
 	}
 
 	_serialized: Uint8ArrayList;
@@ -158,10 +137,6 @@ export class Unsubscribe extends PubSubMessage {
 			ret._serialized = bytes;
 		}
 		return ret;
-	}
-
-	get topics() {
-		return this.unsubscriptions.map((x) => x.topic);
 	}
 }
 

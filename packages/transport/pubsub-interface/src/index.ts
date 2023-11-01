@@ -1,5 +1,5 @@
 import { PublicSignKey } from "@peerbit/crypto";
-import { PubSubData, Subscription } from "./messages.js";
+import { PubSubData } from "./messages.js";
 import {
 	Message,
 	DataMessage,
@@ -15,10 +15,10 @@ export class SubscriptionEvent {
 	@field({ type: PublicSignKey })
 	from: PublicSignKey;
 
-	@field({ type: vec(Subscription) })
-	subscriptions: Subscription[];
+	@field({ type: vec("string") })
+	subscriptions: string[];
 
-	constructor(from: PublicSignKey, subscriptions: Subscription[]) {
+	constructor(from: PublicSignKey, subscriptions: string[]) {
 		this.from = from;
 		this.subscriptions = subscriptions;
 	}
@@ -28,10 +28,10 @@ export class UnsubcriptionEvent {
 	@field({ type: PublicSignKey })
 	from: PublicSignKey;
 
-	@field({ type: vec(Subscription) })
-	unsubscriptions: Subscription[];
+	@field({ type: vec("string") })
+	unsubscriptions: string[];
 
-	constructor(from: PublicSignKey, unsubscriptions: Subscription[]) {
+	constructor(from: PublicSignKey, unsubscriptions: string[]) {
 		this.from = from;
 		this.unsubscriptions = unsubscriptions;
 	}

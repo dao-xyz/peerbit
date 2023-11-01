@@ -1041,7 +1041,7 @@ describe("pubsub", function () {
 				)
 			).toBeTrue();
 			expect(streams[2].subscriptionEvents[0].subscriptions).toHaveLength(1);
-			expect(streams[2].subscriptionEvents[0].subscriptions[0].topic).toEqual(
+			expect(streams[2].subscriptionEvents[0].subscriptions[0]).toEqual(
 				TOPIC_1
 			);
 
@@ -1072,9 +1072,9 @@ describe("pubsub", function () {
 			expect(streams[2].unsubscriptionEvents[0].unsubscriptions).toHaveLength(
 				1
 			);
-			expect(
-				streams[2].unsubscriptionEvents[0].unsubscriptions[0].topic
-			).toEqual(TOPIC_1);
+			expect(streams[2].unsubscriptionEvents[0].unsubscriptions[0]).toEqual(
+				TOPIC_1
+			);
 		});
 
 		it("can unsubscribe across peers", async () => {
@@ -1118,12 +1118,12 @@ describe("pubsub", function () {
 				)
 			).toBeTrue();
 			expect(streams[2].subscriptionEvents[0].subscriptions).toHaveLength(1);
-			expect(streams[2].subscriptionEvents[0].subscriptions[0].topic).toEqual(
+			expect(streams[2].subscriptionEvents[0].subscriptions[0]).toEqual(
 				TOPIC_1
 			);
 
 			expect(streams[2].subscriptionEvents[1].subscriptions).toHaveLength(1);
-			expect(streams[2].subscriptionEvents[1].subscriptions[0].topic).toEqual(
+			expect(streams[2].subscriptionEvents[1].subscriptions[0]).toEqual(
 				TOPIC_2
 			);
 
@@ -1162,9 +1162,9 @@ describe("pubsub", function () {
 			expect(streams[2].unsubscriptionEvents[0].unsubscriptions).toHaveLength(
 				1
 			);
-			expect(
-				streams[2].unsubscriptionEvents[0].unsubscriptions[0].topic
-			).toEqual(TOPIC_1);
+			expect(streams[2].unsubscriptionEvents[0].unsubscriptions[0]).toEqual(
+				TOPIC_1
+			);
 			streams[0].stream.unsubscribe(TOPIC_2);
 			await waitFor(
 				() =>
@@ -1200,9 +1200,9 @@ describe("pubsub", function () {
 			expect(streams[2].unsubscriptionEvents[1].unsubscriptions).toHaveLength(
 				1
 			);
-			expect(
-				streams[2].unsubscriptionEvents[1].unsubscriptions[0].topic
-			).toEqual(TOPIC_2);
+			expect(streams[2].unsubscriptionEvents[1].unsubscriptions[0]).toEqual(
+				TOPIC_2
+			);
 		});
 
 		it("can handle multiple subscriptions", async () => {
