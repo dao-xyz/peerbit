@@ -16,17 +16,14 @@ import {
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
-import { Address } from "@peerbit/program";
 import {
 	DataEvent,
-	PubSubData,
 	PublishOptions as PubSubPublishOptions
 } from "@peerbit/pubsub-interface";
 import { Program } from "@peerbit/program";
 import { DataMessage } from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
 import { waitFor } from "@peerbit/time";
-import { equals } from "uint8arrays";
 
 export type RPCSetupOptions<Q, R> = {
 	topic: string;

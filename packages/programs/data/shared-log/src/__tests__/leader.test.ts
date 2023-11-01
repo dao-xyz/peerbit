@@ -4,7 +4,7 @@ import { delay, waitForResolved } from "@peerbit/time";
 import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { Observer } from "../role";
+import { Observer } from "../role.js";
 
 describe(`leaders`, function () {
 	let session: TestSession;

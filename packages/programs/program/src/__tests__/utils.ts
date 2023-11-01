@@ -6,10 +6,8 @@ import {
 } from "@peerbit/crypto";
 import { ProgramClient, ProgramHandler } from "../program";
 import {
-	Subscription,
 	SubscriptionEvent,
-	UnsubcriptionEvent,
-	Unsubscription
+	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
 import { CustomEvent } from "@libp2p/interface/events";
 
@@ -87,9 +85,7 @@ export const createPeer = async (
 					});
 					dispatchEvent(
 						new CustomEvent<SubscriptionEvent>("subscribe", {
-							detail: new SubscriptionEvent(keypair.publicKey, [
-								new Subscription(topic)
-							])
+							detail: new SubscriptionEvent(keypair.publicKey, [topic])
 						})
 					);
 				},
@@ -108,9 +104,7 @@ export const createPeer = async (
 					if (ret) {
 						dispatchEvent(
 							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-								detail: new UnsubcriptionEvent(keypair.publicKey, [
-									new Unsubscription(topic)
-								])
+								detail: new UnsubcriptionEvent(keypair.publicKey, [topic])
 							})
 						);
 					}
@@ -144,7 +138,7 @@ export const createPeer = async (
 										// TODO undefined checks
 										detail: new SubscriptionEvent(
 											state.peers.get(hash)!.identity.publicKey!,
-											[new Subscription(topic)]
+											[topic]
 										)
 									}),
 									true

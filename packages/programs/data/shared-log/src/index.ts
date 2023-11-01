@@ -347,7 +347,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (v.equals(this.node.identity.publicKey)) {
 					return;
 				}
-				this.handleSubscriptionChange(v, [{ topic: this.topic }], true);
+				this.handleSubscriptionChange(v, [this.topic], true);
 			}
 		);
 
@@ -836,13 +836,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	async handleSubscriptionChange(
 		publicKey: PublicSignKey,
-		changes: { topic: string }[],
+		changes: string[],
 		subscribed: boolean
 	) {
 		if (subscribed) {
 			if (this.role instanceof Replicator) {
 				for (const subscription of changes) {
-					if (this.log.idString !== subscription.topic) {
+					if (this.log.idString !== subscription) {
 						continue;
 					}
 					await this.rpc.send(new ResponseRoleMessage(this.role), {
@@ -855,7 +855,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			//if(evt.detail.subscriptions.map((x) => x.topic).includes())
 		} else {
 			for (const topic of changes) {
-				if (this.log.idString !== topic.topic) {
+				if (this.log.idString !== topic) {
 					continue;
 				}
 				const change = await this.modifyReplicatorsCache(
@@ -1153,7 +1153,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
 		logger.debug(
 			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
-				evt.detail.unsubscriptions.map((x) => x.topic)
+				evt.detail.unsubscriptions.map((x) => x)
 			)}'`
 		);
 
@@ -1167,7 +1167,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
 		logger.debug(
 			`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
-				evt.detail.subscriptions.map((x) => x.topic)
+				evt.detail.subscriptions.map((x) => x)
 			)}'`
 		);
 		return this.handleSubscriptionChange(

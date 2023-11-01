@@ -9,7 +9,7 @@ import {
 	CanRead,
 	TransactionContext
 } from "@peerbit/document";
-import { AppendOptions, Entry } from "@peerbit/log";
+import { AppendOptions } from "@peerbit/log";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { DeleteOperation } from "@peerbit/document";
 import {
@@ -19,8 +19,7 @@ import {
 	hasPath,
 	getFromByTo,
 	getToByFrom,
-	getRelation,
-	AbstractRelation
+	getRelation
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";

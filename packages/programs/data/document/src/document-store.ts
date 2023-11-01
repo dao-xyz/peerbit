@@ -8,7 +8,7 @@ import {
 } from "@dao-xyz/borsh";
 import { Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { AccessError, DecryptedThing, PublicSignKey } from "@peerbit/crypto";
+import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
 import { CustomEvent } from "@libp2p/interface/events";
@@ -20,6 +20,7 @@ import {
 	SharedLogOptions,
 	SharedAppendOptions
 } from "@peerbit/shared-log";
+
 export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
 import {

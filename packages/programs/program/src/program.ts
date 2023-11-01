@@ -8,6 +8,7 @@ import { waitFor } from "@peerbit/time";
 import { Blocks } from "@peerbit/blocks-interface";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import {
+	PubSub,
 	SubscriptionEvent,
 	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
