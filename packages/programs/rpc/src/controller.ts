@@ -33,6 +33,7 @@ export type RPCSetupOptions<Q, R> = {
 };
 export type RequestContext = {
 	from?: PublicSignKey;
+	timestamp: bigint;
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
@@ -141,7 +142,8 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
-								from: message.header.signatures!.publicKeys[0]
+								from: message.header.signatures!.publicKeys[0],
+								timestamp: message.header.timetamp
 							}
 						);
 
