@@ -164,9 +164,12 @@ const sign = async <T extends WithHeader>(
 ): Promise<T> => {
 	const to = obj.header.to;
 	obj.header.to = [];
+	const signatures = obj.header.signatures;
 	obj.header.signatures = undefined;
 	const signature = await signer(serialize(obj));
-	obj.header.signatures = new Signatures([signature]);
+	obj.header.signatures = new Signatures(
+		signatures ? [...signatures.signatures, signature] : [signature]
+	);
 	obj.header.to = to;
 	return obj;
 };
@@ -229,7 +232,9 @@ export abstract class Message {
 	}
 }
 
-export abstract class DeliveryMode {}
+export abstract class DeliveryMode {
+	abstract get redundancy(): number;
+}
 
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
@@ -359,12 +364,29 @@ export class ACK extends Message {
 	}) {
 		super();
 		this.header = properties.header;
-
 		this.messageIdToAcknowledge = properties.messageIdToAcknowledge;
 		this.seenCounter = Math.min(255, properties.seenCounter);
 	}
 	get id() {
 		return this.header.id;
+	}
+
+	async sign(
+		signer: (bytes: Uint8Array) => Promise<SignatureWithKey>
+	): Promise<this> {
+		const seenCounter = this.seenCounter;
+		this.seenCounter = 0;
+		await sign(this, signer);
+		this.seenCounter = seenCounter;
+		return this;
+	}
+
+	async verify(expectSignatures: boolean): Promise<boolean> {
+		const seenCounter = this.seenCounter;
+		this.seenCounter = 0;
+		const verified = await super.verify(expectSignatures);
+		this.seenCounter = seenCounter;
+		return verified;
 	}
 
 	bytes() {
