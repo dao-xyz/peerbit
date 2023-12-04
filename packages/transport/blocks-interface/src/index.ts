@@ -3,6 +3,7 @@ import { WaitForPeer } from "@peerbit/stream-interface";
 export type GetOptions = {
 	timeout?: number;
 	replicate?: boolean;
+	from?: string[];
 };
 export type PutOptions = {
 	timeout?: number;
