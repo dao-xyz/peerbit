@@ -1049,6 +1049,10 @@ export class Log<T> {
 	async drop() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
+
+		await Promise.all(
+			[...this.entryIndex._index.values()].map((x) => this.storage.rm(x.hash))
+		);
 		await this._headsIndex?.drop();
 		await this._entryCache?.clear();
 		await this._memory?.clear();
