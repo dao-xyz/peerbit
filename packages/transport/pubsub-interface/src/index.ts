@@ -9,7 +9,7 @@ import {
 } from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interface/events";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
-import { field, option, vec } from "@dao-xyz/borsh";
+import { field, vec } from "@dao-xyz/borsh";
 
 export class SubscriptionEvent {
 	@field({ type: PublicSignKey })
@@ -37,15 +37,36 @@ export class UnsubcriptionEvent {
 	}
 }
 
+export class PublishEvent {
+	@field({ type: PubSubData })
+	data: PubSubData;
+
+	@field({ type: DataMessage })
+	message: DataMessage;
+
+	client?: string;
+
+	constructor(properties: {
+		client?: string;
+		data: PubSubData;
+		message: DataMessage;
+	}) {
+		this.client = properties.client;
+		this.data = properties.data;
+		this.message = properties.message;
+	}
+}
+
 export class DataEvent {
 	@field({ type: PubSubData })
 	data: PubSubData;
 
 	@field({ type: DataMessage })
 	message: DataMessage;
-	constructor(data: PubSubData, message: DataMessage) {
-		this.data = data;
-		this.message = message;
+
+	constructor(properties: { data: PubSubData; message: DataMessage }) {
+		this.data = properties.data;
+		this.message = properties.message;
 	}
 }
 
@@ -63,6 +84,7 @@ export class SubscriptionData {
 }
 
 export interface PubSubEvents extends PeerEvents {
+	publish: CustomEvent<DataEvent>;
 	data: CustomEvent<DataEvent>;
 	subscribe: CustomEvent<SubscriptionEvent>;
 	unsubscribe: CustomEvent<UnsubcriptionEvent>;
@@ -83,7 +105,7 @@ export interface IEventEmitter<EventMap extends Record<string, any>> {
 }
 
 type MaybePromise<T> = Promise<T> | T;
-export type PublishOptions =
+export type PublishOptions = (
 	| {
 			topics?: string[];
 			to?: (string | PublicSignKey | Libp2pPeerId)[];
@@ -95,11 +117,10 @@ export type PublishOptions =
 			to: (string | PublicSignKey | Libp2pPeerId)[];
 			strict: true;
 			mode?: DeliveryMode | undefined;
-	  };
+	  }
+) & { client?: string };
 
 export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
-	emitSelf: boolean;
-
 	getSubscribers(topic: string): MaybePromise<PublicSignKey[] | undefined>;
 
 	requestSubscribers(topic: string, from?: PublicSignKey): MaybePromise<void>;
