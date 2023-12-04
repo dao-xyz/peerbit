@@ -98,7 +98,8 @@ describe("values", () => {
 		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
 		let promises: Promise<any>[] = [];
 		for (let i = 0; i < 100; i++) {
-			promises.push(values.put(e1));
+			const fn = async () => values.put(e1);
+			promises.push(fn());
 		}
 
 		await Promise.all(promises);

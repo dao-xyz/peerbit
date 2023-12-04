@@ -1,6 +1,6 @@
 import { Log } from "../log.js";
 import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
-import { waitFor } from "@peerbit/time";
+import { delay, waitFor } from "@peerbit/time";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
 import { ShallowEntry } from "../entry.js";
@@ -115,41 +115,43 @@ describe("trim", function () {
 		);
 	});
 
-	it("trimming and concurrency", async () => {
-		/**
-		 * In this test we test, that even if the commits are concurrent the output is determenistic if we are trimming
-		 */
-		let canTrimInvocations = 0;
-		const log = new Log<string>();
-		await log.open(
-			store,
-			signKey,
-			{
-				trim: {
-					type: "length",
-					from: 1,
-					to: 1,
-					filter: {
-						canTrim: () => {
-							canTrimInvocations += 1;
-							return true;
+	describe("concurrency", () => {
+		it("append", async () => {
+			/**
+			 * In this test we test, that even if the commits are concurrent the output is determenistic if we are trimming
+			 */
+			let canTrimInvocations = 0;
+			const log = new Log<string>();
+			await log.open(
+				store,
+				signKey,
+				{
+					trim: {
+						type: "length",
+						from: 1,
+						to: 1,
+						filter: {
+							canTrim: () => {
+								canTrimInvocations += 1;
+								return true;
+							}
 						}
-					}
-				},
-				encoding: JSON_ENCODING
-			} // when length > 3 cut back to 1
-		);
-		let size = 3;
-		let promises: Promise<any>[] = [];
-		for (let i = 0; i < size; i++) {
-			promises.push(log.append("hello" + i));
-		}
-		await Promise.all(promises);
-		expect(canTrimInvocations).toBeLessThan(size); // even though concurrently trimming is sync
-		expect(log.length).toEqual(1);
-		expect((await log.toArray())[0].payload.getValue()).toEqual(
-			"hello" + String(size - 1)
-		);
+					},
+					encoding: JSON_ENCODING
+				} // when length > 3 cut back to 1
+			);
+			let size = 3;
+			let promises: Promise<any>[] = [];
+			for (let i = 0; i < size; i++) {
+				promises.push(log.append("hello" + i));
+			}
+			await Promise.all(promises);
+			expect(canTrimInvocations).toBeLessThan(size); // even though concurrently trimming is sync
+			expect(log.length).toEqual(1);
+			expect((await log.toArray())[0].payload.getValue()).toEqual(
+				"hello" + String(size - 1)
+			);
+		});
 	});
 
 	it("cut back to bytelength", async () => {
@@ -579,6 +581,43 @@ describe("trim", function () {
 			});
 			expect(log.length).toEqual(2);
 			expect(canTrimInvocations).toEqual(6); // cache resets, so will go through all entries
+		});
+
+		it("trims on middle insertion", async () => {
+			const log2 = new Log<Uint8Array>();
+			await log2.open(store, signKey);
+			const e1 = await log.append(new Uint8Array([1]));
+			const e2 = await log2.append(new Uint8Array([2]));
+			const e3 = await log.append(new Uint8Array([3]));
+			const canTrim = () => true;
+			await log.trim({
+				type: "length",
+				from: 2,
+				to: 2,
+				filter: {
+					canTrim,
+					cacheId: () => "b"
+				}
+			});
+			await log.join([e2.entry]);
+			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
+				e1.entry.hash,
+				e2.entry.hash,
+				e3.entry.hash
+			]);
+			await log.trim({
+				type: "length",
+				from: 2,
+				to: 2,
+				filter: {
+					canTrim,
+					cacheId: () => "b"
+				}
+			});
+			expect((await log.values.toArray()).map((x) => x.hash)).toEqual([
+				e2.entry.hash,
+				e3.entry.hash
+			]);
 		});
 	});
 });
