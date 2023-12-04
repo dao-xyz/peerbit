@@ -81,11 +81,14 @@ export class AnyBlockStore implements Blocks {
 		this._closeController = new AbortController();
 
 		try {
-			this._opening = waitFor(() => this._store.status() === "open", {
-				delayInterval: 100,
-				timeout: 10 * 1000,
-				signal: this._closeController.signal
-			});
+			this._opening = waitFor(
+				async () => (await this._store.status()) === "open",
+				{
+					delayInterval: 100,
+					timeout: 10 * 1000,
+					signal: this._closeController.signal
+				}
+			);
 			await this._opening;
 		} finally {
 			this._onClose = undefined;

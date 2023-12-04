@@ -2,6 +2,7 @@ import { TestSession } from "@peerbit/libp2p-test-utils";
 import { getBlockValue } from "../block.js";
 import { DirectBlock } from "..";
 import { waitForPeers } from "@peerbit/stream";
+import { jest } from "@jest/globals";
 
 const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
@@ -61,21 +62,37 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 
 		expect(cid).toEqual("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
-		let publishCounter = 0;
-		const publish = store(session, 1).publish.bind(store(session, 1));
-		store(session, 1).publish = (d, o) => {
-			publishCounter += 1;
-			return publish(d, o);
-		};
+		const publish = jest.fn(store(session, 1)["remoteBlocks"].options.publish);
+		store(session, 1)["remoteBlocks"].options.publish = publish;
+
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < 100; i++) {
 			promises.push(store(session, 1).get(cid));
 		}
 		const resolved = await Promise.all(promises);
-		expect(publishCounter).toEqual(1);
+		expect(publish).toHaveBeenCalledOnce();
 		for (const b of resolved) {
 			expect(new Uint8Array(b!)).toEqual(data);
 		}
+	});
+
+	it("get from specific peer", async () => {
+		session = await TestSession.disconnected(2, {
+			services: { blocks: (c) => new DirectBlock(c) }
+		});
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+
+		expect(cid).toEqual("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+		const readDataPromise = store(session, 1).get(cid, {
+			from: [session.peers[0].services.blocks.publicKey.hashcode()]
+		});
+
+		await session.connect(); // we connect after get request is sent
+		await waitForPeers(store(session, 0), store(session, 1));
+
+		expect(new Uint8Array((await readDataPromise)!)).toEqual(data);
 	});
 
 	it("reads from joining peer", async () => {
@@ -109,6 +126,23 @@ describe("transport", function () {
 		const t2 = +new Date();
 		expect(readData).toBeUndefined();
 		expect(t2 - t1 < 3100);
+	});
+
+	it("iterate", async () => {
+		session = await TestSession.disconnected(1, {
+			services: { blocks: (c) => new DirectBlock(c) }
+		});
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		await store(session, 0).stop();
+		await store(session, 0).start();
+		let once = false;
+		for await (const resolved of store(session, 0).iterator()) {
+			once = true;
+			expect(resolved[0]).toEqual(cid);
+		}
+		expect(once).toBeTrue();
 	});
 
 	/* it('can handle conurrent read/write', async () => {
