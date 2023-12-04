@@ -2,8 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { createStore } from "@peerbit/any-store";
 
-/* import { expect } from '@jest/globals'; */
-/* expect(1).toEqual(1) */
 (window as any)["create"] = async (type: "disc" | "memory") => {
 	const store = createStore(
 		type === "disc" ? "./tmp/" + (+new Date()).toString() : undefined

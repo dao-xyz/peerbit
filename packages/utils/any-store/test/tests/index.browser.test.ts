@@ -18,9 +18,9 @@ test.describe("AnyLevel", () => {
 					test.beforeEach(async ({ page }) => {
 						await page.goto("http://localhost:5205");
 						await page.waitForFunction(() => window["create"]);
-						await page.evaluateHandle(async () => {
-							window["create"]("opfs");
-						});
+						await page.evaluateHandle(async (type) => {
+							window["create"](type);
+						}, type);
 						await page.waitForFunction(() => window["store"]);
 						handle = await page.evaluateHandle(
 							async (args) => {
@@ -45,6 +45,11 @@ test.describe("AnyLevel", () => {
 					test("get missing", async () => {
 						const result = await handle.evaluate((store) => store.get("y"));
 						expect(result).toEqual(undefined);
+					});
+
+					test("size", async () => {
+						const result = await handle.evaluate((store) => store.size());
+						expect(result).toEqual(1);
 					});
 
 					test("del", async () => {

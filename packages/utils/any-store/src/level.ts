@@ -1,9 +1,12 @@
 import { AbstractLevel } from "abstract-level";
-import { AnyStore } from "./interface.js";
+import { AnyStore, MaybePromise } from "./interface.js";
+import { MemoryLevel } from "memory-level";
+import { ClassicLevel } from "classic-level";
 
 const isNotFoundError = (err) =>
 	err.toString().indexOf("NotFoundError: Key not found in database") === -1 &&
 	err.toString().indexOf("NotFound") === -1;
+
 export class LevelStore implements AnyStore {
 	constructor(readonly store: AbstractLevel<any, any, any>) {}
 
@@ -63,6 +66,11 @@ export class LevelStore implements AnyStore {
 	}
 
 	async put(key: string, value: Uint8Array) {
+		// Remove when https://github.com/Level/classic-level/issues/87 is fixed
+		/* if (this.store instanceof ClassicLevel) {
+			await this.store.del(key, { sync: true });
+		} */
+
 		return this.store.put(key, value, { valueEncoding: "view" });
 	}
 
@@ -71,6 +79,7 @@ export class LevelStore implements AnyStore {
 		if (this.store.status !== "open") {
 			throw new Error("Cache store not open: " + this.store.status);
 		}
+
 		return new Promise<void>((resolve, reject) => {
 			this.store.del(key, (err) => {
 				if (err) {
@@ -82,6 +91,35 @@ export class LevelStore implements AnyStore {
 				resolve();
 			});
 		});
+	}
+
+	async size(): Promise<number> {
+		let size = 0;
+		if (this.store instanceof ClassicLevel) {
+			const e = this.store.keys({
+					limit: 1,
+					fillCache: !1
+				}),
+				a = await e.next();
+			await e.close();
+			const t = this.store.keys({
+					limit: 1,
+					reverse: !0,
+					fillCache: !1
+				}),
+				s = await t.next();
+			return (
+				await t.close(),
+				this.store.approximateSize(a, s + "\uffff", {
+					keyEncoding: "utf8"
+				})
+			);
+		} else {
+			for await (const v of this.iterator()) {
+				size += v[1].length;
+			}
+		}
+		return size;
 	}
 
 	async sublevel(name: string) {
