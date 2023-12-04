@@ -26,13 +26,12 @@ import {
 	SubscriptionEvent,
 	PubSub,
 	DataEvent,
-	SubscriptionData
+	SubscriptionData,
+	PublishEvent
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interface/events";
 import { PubSubEvents } from "@peerbit/pubsub-interface";
-import { AnyStore, createStore } from "@peerbit/any-store";
-import { variant, field, option, serialize, deserialize } from "@dao-xyz/borsh";
 
 export const logger = logFn({ module: "lazysub", level: "warn" });
 const logError = (e?: { message: string }) => logger.error(e?.message);
@@ -240,8 +239,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	} */
 
 	async publish(
-		data: Uint8Array,
-		options:
+		data: Uint8Array | undefined,
+		options: (
 			| {
 					topics?: string[];
 					to?: (string | PeerId)[];
@@ -254,6 +253,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					strict: true;
 					mode?: DeliveryMode | undefined;
 			  }
+		) & { client?: string }
 	): Promise<Uint8Array> {
 		if (!this.started) {
 			throw new Error("Not started");
@@ -261,6 +261,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 		const topics =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
+
 		const tos =
 			options?.to?.map((x) =>
 				x instanceof PublicSignKey
@@ -271,20 +272,26 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			) || this.getPeersOnTopics(topics);
 
 		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
-		const dataMessage = new PubSubData({
-			topics: topics.map((x) => x.toString()),
-			data,
-			strict: options.strict
-		});
+		const dataMessage = data
+			? new PubSubData({
+					topics: topics.map((x) => x.toString()),
+					data,
+					strict: options.strict
+			  })
+			: undefined;
 
-		const bytes = dataMessage.bytes();
+		const bytes = dataMessage?.bytes();
 
 		const message = await this.createMessage(bytes, { ...options, to: tos });
 
-		if (this.emitSelf && data) {
-			super.dispatchEvent(
-				new CustomEvent("data", {
-					detail: new DataEvent(dataMessage, message)
+		if (dataMessage) {
+			this.dispatchEvent(
+				new CustomEvent("publish", {
+					detail: new PublishEvent({
+						client: options.client,
+						data: dataMessage,
+						message
+					})
 				})
 			);
 		}
@@ -401,7 +408,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		message: DataMessage,
 		seenBefore: number
 	) {
-		if (!message.data) {
+		if (!message.data || message.data.length === 0) {
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
@@ -411,42 +418,47 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			 * See if we know more subscribers of the message topics. If so, add aditional end receivers of the message
 			 */
 
-			const isFromSelf = this.publicKey.equals(from);
-			if (!isFromSelf || this.emitSelf) {
-				let isForMe: boolean;
-				if (pubsubMessage.strict) {
-					isForMe =
-						!!pubsubMessage.topics.find((topic) =>
-							this.subscriptions.has(topic)
-						) && !!message.header.to.find((x) => this.publicKeyHash === x);
-				} else {
-					isForMe =
-						!!pubsubMessage.topics.find((topic) =>
-							this.subscriptions.has(topic)
-						) ||
-						(pubsubMessage.topics.length === 0 &&
-							!!message.header.to.find((x) => this.publicKeyHash === x));
+			let isForMe: boolean;
+			if (pubsubMessage.strict) {
+				isForMe =
+					!!pubsubMessage.topics.find((topic) =>
+						this.subscriptions.has(topic)
+					) && !!message.header.to.find((x) => this.publicKeyHash === x);
+			} else {
+				isForMe =
+					!!pubsubMessage.topics.find((topic) =>
+						this.subscriptions.has(topic)
+					) ||
+					(pubsubMessage.topics.length === 0 &&
+						!!message.header.to.find((x) => this.publicKeyHash === x));
+			}
+			if (isForMe) {
+				if ((await this.maybeVerifyMessage(message)) === false) {
+					logger.warn("Recieved message that did not verify PubSubData");
+					return false;
 				}
-				if (isForMe) {
-					if ((await this.maybeVerifyMessage(message)) === false) {
-						logger.warn("Recieved message that did not verify PubSubData");
-						return false;
-					}
 
-					await this.acknowledgeMessage(stream, message, seenBefore);
+				await this.acknowledgeMessage(stream, message, seenBefore);
 
-					if (seenBefore === 0) {
-						this.dispatchEvent(
-							new CustomEvent("data", {
-								detail: new DataEvent(pubsubMessage, message)
+				if (seenBefore === 0) {
+					this.dispatchEvent(
+						new CustomEvent("data", {
+							detail: new DataEvent({
+								data: pubsubMessage,
+								message
 							})
-						);
-					}
+						})
+					);
 				}
 			}
+
 			if (seenBefore > 0) {
 				return false;
 			}
+
+			message.header.to = message.header.to.filter(
+				(x) => x !== this.publicKeyHash
+			);
 
 			// Forward
 			if (!pubsubMessage.strict) {

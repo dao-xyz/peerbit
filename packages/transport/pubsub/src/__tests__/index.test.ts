@@ -10,7 +10,8 @@ import {
 	GetSubscribers,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
-	DataEvent
+	DataEvent,
+	PublishEvent
 } from "@peerbit/pubsub-interface";
 import { DirectSub, waitForSubscribers } from "./../index.js";
 import { deserialize } from "@dao-xyz/borsh";
@@ -514,38 +515,39 @@ describe("pubsub", function () {
 				}
 			});
 		});
+	});
 
-		describe("emitSelf", () => {
-			beforeEach(async () => {
-				session = await TestSession.disconnected(2, {
-					services: {
-						pubsub: (c) =>
-							new DirectSub(c, {
-								emitSelf: true,
-								canRelayMessage: true,
-								connectionManager: false
-							})
-					}
-				});
-			});
+	describe("events", () => {
+		let session: TestSession<{ pubsub: DirectSub }>;
 
-			afterEach(async () => {
-				await session.stop();
+		beforeEach(async () => {
+			session = await TestSession.disconnected(2, {
+				services: {
+					pubsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: false
+						})
+				}
 			});
+		});
 
-			it("publish", async () => {
-				const dataMessages: DataEvent[] = [];
-				session.peers[0].services.pubsub.addEventListener("data", (e) => {
-					dataMessages.push(e.detail);
-				});
-				await session.peers[0].services.pubsub.publish(
-					new Uint8Array([1, 2, 3]),
-					{ to: [session.peers[1].peerId] }
-				);
-				expect(dataMessages).toHaveLength(1);
-				expect(dataMessages[0]).toBeInstanceOf(DataEvent);
-				expect(dataMessages[0].data.data).toEqual(new Uint8Array([1, 2, 3]));
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("publish", async () => {
+			const dataMessages: DataEvent[] = [];
+			session.peers[0].services.pubsub.addEventListener("publish", (e) => {
+				dataMessages.push(e.detail);
 			});
+			await session.peers[0].services.pubsub.publish(
+				new Uint8Array([1, 2, 3]),
+				{ to: [session.peers[1].peerId] }
+			);
+			expect(dataMessages).toHaveLength(1);
+			expect(dataMessages[0]).toBeInstanceOf(PublishEvent);
+			expect(dataMessages[0].data.data).toEqual(new Uint8Array([1, 2, 3]));
 		});
 	});
 
@@ -655,19 +657,7 @@ describe("pubsub", function () {
 			});
 		});
 
-		describe("line", () => {
-			/* 
-			┌─┐   
-			│0│   // Sender of message
-			└┬┘   
-			┌▽┐   
-			│1│   // Subscribes to topic
-			└┬┘   
-			┌▽┐   
-			│2│   // Does not subscribe 
-			└─┘  
-			*/
-
+		describe("3", () => {
 			let session: TestSession<{ pubsub: DirectSub }>;
 			let streams: ReturnType<typeof createMetrics>[];
 
@@ -685,26 +675,9 @@ describe("pubsub", function () {
 					}
 				});
 				streams = [];
+
 				for (const [i, peer] of session.peers.entries()) {
 					streams.push(createMetrics(peer.services.pubsub));
-
-					if (i === 1) {
-						peer.services.pubsub.subscribe(TOPIC);
-					}
-				}
-
-				await session.connect([
-					[session.peers[0], session.peers[1]],
-					[session.peers[1], session.peers[2]]
-				]);
-
-				for (const [i, peer] of streams.entries()) {
-					if (i !== 1) {
-						await peer.stream.requestSubscribers(TOPIC);
-					}
-					await waitForResolved(() =>
-						expect(peer.stream.getSubscribers(TOPIC)).toHaveLength(1)
-					); // all others (except 4 which is not subscribing)
 				}
 			});
 
@@ -714,7 +687,39 @@ describe("pubsub", function () {
 			});
 			afterAll(async () => {});
 
-			it("will not forward unless necessary", async () => {
+			it("line", async () => {
+				/* 
+				┌─┐   
+				│0│   // Sender of message
+				└┬┘   
+				┌▽┐   
+				│1│   // Subscribes to topic
+				└┬┘   
+				┌▽┐   
+				│2│   // Does not subscribe 
+				└─┘  
+				*/
+
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[2]]
+				]);
+
+				for (const [i, peer] of session.peers.entries()) {
+					if (i === 1) {
+						peer.services.pubsub.subscribe(TOPIC);
+					}
+				}
+
+				for (const [i, peer] of streams.entries()) {
+					if (i !== 1) {
+						await peer.stream.requestSubscribers(TOPIC);
+					}
+					await waitForResolved(() =>
+						expect(peer.stream.getSubscribers(TOPIC)).toHaveLength(1)
+					); // all others (except 4 which is not subscribing)
+				}
+
 				streams[1].received = [];
 				streams[2].received = [];
 				await streams[0].stream.publish(data, { topics: [TOPIC] });
@@ -723,6 +728,7 @@ describe("pubsub", function () {
 
 				await delay(1000); // some delay to allow all messages to progagate
 				expect(streams[2].received).toHaveLength(0);
+
 				// make sure data message did not arrive to peer 4
 				for (const message of streams[2].messages) {
 					if (message instanceof DataMessage && message.data) {
@@ -730,6 +736,66 @@ describe("pubsub", function () {
 						expect(pubsubMessage).not.toBeInstanceOf(PubSubData);
 					}
 				}
+			});
+
+			it("fully connected", async () => {
+				await session.connect([
+					[session.peers[0], session.peers[1]],
+					[session.peers[1], session.peers[2]],
+					[session.peers[0], session.peers[2]]
+				]);
+
+				for (const [i, peer] of session.peers.entries()) {
+					await peer.services.pubsub.subscribe(TOPIC);
+				}
+				for (const [i, peer] of streams.entries()) {
+					await waitForResolved(() =>
+						expect(peer.stream.getSubscribers(TOPIC)).toHaveLength(3)
+					); // all others (except 4 which is not subscribing)
+				}
+				await delay(11000);
+
+				await streams[0].stream.publish(data, {
+					topics: [TOPIC],
+					strict: true,
+					to: streams.map((x) => x.stream.publicKeyHash)
+				});
+
+				await delay(3000);
+
+				await streams[0].stream.publish(data, {
+					topics: [TOPIC],
+					strict: true,
+					to: streams.map((x) => x.stream.publicKeyHash)
+				});
+				await streams[0].stream.publish(data, {
+					topics: [TOPIC],
+					strict: true,
+					to: streams.map((x) => x.stream.publicKeyHash)
+				});
+
+				await delay(3000);
+				const a = streams.map((x) => x.stream.routes.routes.size);
+				const b = streams.map((x) => x.stream.routes.routes.size);
+				const c = streams.map((x) => x.stream.routes.routes.size);
+
+				streams[1].received = [];
+				streams[2].received = [];
+
+				await streams[0].stream.publish(data, {
+					topics: [TOPIC],
+					strict: true,
+					to: streams.map((x) => x.stream.publicKeyHash)
+				});
+				await waitFor(() => streams[1].received.length === 1);
+				await waitFor(() => streams[2].received.length === 1);
+
+				expect(new Uint8Array(streams[1].received[0].data)).toEqual(data);
+				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+
+				await delay(1000); // some delay to allow all messages to progagate
+				expect(streams[1].received).toHaveLength(1);
+				expect(streams[2].received).toHaveLength(1);
 			});
 		});
 
@@ -799,14 +865,14 @@ describe("pubsub", function () {
 			it("will not send messages back another route", async () => {
 				// if '0' pushes data on TOPIC to '3'
 				// there is no point for '3' to send messages back to '0'
-
+	
 				const allWrites = streams.map((stream) =>
 					collectDataWrites(stream.stream)
 				);
 				console.log(streams[0].stream.publicKeyHash);
-
+	
 				await delay(PING_INTERVAL * 6);
-
+	
 				for (const stream of streams) {
 					for (let i = 0; i < streams.length; i++) {
 						for (let j = 0; j < streams.length; j++) {
@@ -822,16 +888,16 @@ describe("pubsub", function () {
 						}
 					}
 				}
-
+	
 				let count = 1;
 				for (let i = 0; i < count; i++) {
 					await streams[0].stream.publish(data, { topics: [TOPIC] });
 				}
-
+	
 				await waitForResolved(() =>
 					expect(streams[3].received).toHaveLength(count)
 				);
-
+	
 				const p330 = streams[3].stream.routes.getPath(
 					streams[3].stream.publicKeyHash,
 					streams[0].stream.publicKeyHash
@@ -844,7 +910,7 @@ describe("pubsub", function () {
 					streams[1].stream.publicKeyHash,
 					streams[0].stream.publicKeyHash
 				);
-
+	
 				const p230 = streams[2].stream.routes.getPath(
 					streams[3].stream.publicKeyHash,
 					streams[0].stream.publicKeyHash
@@ -853,7 +919,7 @@ describe("pubsub", function () {
 					streams[2].stream.publicKeyHash,
 					streams[0].stream.publicKeyHash
 				);
-
+	
 				for (const stream of streams) {
 					for (let i = 0; i < streams.length; i++) {
 						for (let j = 0; j < streams.length; j++) {
@@ -869,7 +935,7 @@ describe("pubsub", function () {
 						}
 					}
 				}
-
+	
 				for (const [peer, writes] of allWrites[3]) {
 					expect(writes).toHaveLength(0);
 				}
