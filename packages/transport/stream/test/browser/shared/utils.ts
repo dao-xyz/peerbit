@@ -14,7 +14,6 @@ export class TestDirectStream extends DirectStream {
 	) {
 		super(components, [options.id || "/browser-test/0.0.0"], {
 			canRelayMessage: true,
-			emitSelf: false,
 			connectionManager: options.connectionManager || false,
 			...options
 		});

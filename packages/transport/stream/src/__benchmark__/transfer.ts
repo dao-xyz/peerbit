@@ -19,7 +19,6 @@ class TestStreamImpl extends DirectStream {
 	constructor(c: DirectStreamComponents) {
 		super(c, ["bench/0.0.0"], {
 			canRelayMessage: true,
-			emitSelf: true,
 			connectionManager: false
 		});
 	}
