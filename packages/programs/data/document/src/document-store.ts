@@ -150,7 +150,6 @@ export class Documents<T extends Record<string, any>>
 			canAppend: this.canAppend.bind(this),
 			onChange: this.handleChanges.bind(this),
 			trim: options?.log?.trim,
-			sync: options?.sync,
 			role: options?.role,
 			replicas: options?.replicas
 		});

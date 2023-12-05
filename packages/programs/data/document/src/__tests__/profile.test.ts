@@ -41,7 +41,7 @@ class TestStore extends Program {
 	}
 
 	async open(): Promise<void> {
-		await this.docs.open({ type: Document, sync: () => true });
+		await this.docs.open({ type: Document });
 	}
 }
 const RANDOM_BYTES = randomBytes(14 * 1000);

@@ -8,16 +8,9 @@ import {
 	LogProperties
 } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import {
-	BinaryReader,
-	BinaryWriter,
-	BorshError,
-	field,
-	variant
-} from "@dao-xyz/borsh";
+import { BinaryWriter, BorshError, field, variant } from "@dao-xyz/borsh";
 import {
 	AccessError,
-	getPublicKeyFromPeerId,
 	PublicSignKey,
 	sha256,
 	sha256Base64Sync
@@ -40,19 +33,24 @@ import {
 	AbsoluteReplicas,
 	ReplicationError,
 	ReplicationLimits,
+	ReplicatorRect,
 	RequestRoleMessage,
 	ResponseRoleMessage,
 	decodeReplicas,
 	encodeReplicas,
+	hashToUniformNumber,
 	maxReplicas
 } from "./replication.js";
 import pDefer, { DeferredPromise } from "p-defer";
 import { Cache } from "@peerbit/cache";
-import PQueue from "p-queue";
 import { CustomEvent } from "@libp2p/interface/events";
-import { PeerId } from "@libp2p/interface/dist/src/peer-id/index.js";
+import yallist from "yallist";
+import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
+import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
+import { BlocksMessage } from "./blocks.js";
 
 export * from "./replication.js";
+
 export { Observer, Replicator, Role };
 
 export const logger = loggerFn({ module: "shared-log" });
@@ -75,22 +73,20 @@ const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
 	return groupByGid;
 };
 
-export type SyncFilter = (entries: Entry<any>) => Promise<boolean> | boolean;
-
 export type ReplicationLimitsOptions =
 	| Partial<ReplicationLimits>
 	| { min?: number; max?: number };
 
 export interface SharedLogOptions {
 	replicas?: ReplicationLimitsOptions;
-	sync?: SyncFilter;
-	role?: Role;
+	role?: Role | number | { limits: { storage: number } };
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 }
 
 export const DEFAULT_MIN_REPLICAS = 2;
-export const WAIT_FOR_REPLICATOR_TIMEOUT = 5000;
+export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
+export const WAIT_FOR_ROLE_MATURITY = 5000;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
 export type SharedAppendOptions<T> = AppendOptions<T> & {
@@ -114,10 +110,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 	rpc: RPC<TransportMessage, TransportMessage>;
 
 	// options
-	private _sync?: SyncFilter;
 	private _role: Observer | Replicator;
 
-	private _sortedPeersCache: { hash: string; timestamp: number }[] | undefined;
+	private _sortedPeersCache: yallist<ReplicatorRect> | undefined;
 	private _lastSubscriptionMessageId: number;
 	private _gidPeersHistory: Map<string, Set<string>>;
 
@@ -125,7 +120,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private _onUnsubscriptionFn: (arg: any) => any;
 
 	private _canReplicate?: (
-		publicKey: PublicSignKey
+		publicKey: PublicSignKey,
+		role: Replicator
 	) => Promise<boolean> | boolean;
 
 	private _logProperties?: LogProperties<T> & LogEvents<T>;
@@ -144,8 +140,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	private _pendingIHave: Map<
 		string,
-		{ clear: () => void; callback: () => void }
+		{ clear: () => void; callback: (entry: Entry<T>) => void }
 	>;
+
+	private latestRoleMessages: Map<string, bigint>;
+
+	private fixedParticipationRate: boolean;
+
+	private remoteBlocks: RemoteBlocks;
 
 	replicas: ReplicationLimits;
 
@@ -159,45 +161,24 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this._role;
 	}
 
-	async updateRole(role: Observer | Replicator) {
-		const wasReplicator = this._role instanceof Replicator;
+	async updateRole(role: Observer | Replicator, onRoleChange = true) {
 		this._role = role;
-		await this.initializeWithRole();
-		await this.rpc.subscribe();
-		await this.rpc.send(new ResponseRoleMessage(role), {
-			/* mode: new SeekDelivery(2)  */
-		});
-		if (wasReplicator) {
-			await this.replicationReorganization();
-		}
-
-		this.events.dispatchEvent(
-			new CustomEvent<UpdateRoleEvent>("role", {
-				detail: { publicKey: this.node.identity.publicKey, role: this._role }
-			})
+		this._lastSubscriptionMessageId += 1;
+		const { changed } = await this._modifyReplicators(
+			this.role,
+			this.node.identity.publicKey
 		);
-	}
-
-	private async initializeWithRole() {
-		try {
-			await this.modifyReplicatorsCache(
-				this._role,
-				getPublicKeyFromPeerId(this.node.peerId)
-			);
-
-			if (!this._loadedOnce) {
-				await this.log.load();
-				this._loadedOnce = true;
-			}
-		} catch (error) {
-			if (error instanceof AccessError) {
-				logger.error(
-					"Failed to load all entries due to access error, make sure you are opening the program with approate keychain configuration"
-				);
-			} else {
-				throw error;
-			}
+		if (!this._loadedOnce) {
+			await this.log.load();
+			this._loadedOnce = true;
 		}
+		await this.rpc.subscribe();
+		await this.rpc.send(new ResponseRoleMessage(role));
+
+		if (onRoleChange) {
+			this.onRoleChange(undefined, this._role, this.node.identity.publicKey);
+		}
+		return changed;
 	}
 
 	async append(
@@ -225,14 +206,25 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		const result = await this.log.append(data, appendOptions);
+		const leaders = await this.findLeaders(
+			result.entry.meta.gid,
+			decodeReplicas(result.entry).getValue(this)
+		);
+		const isLeader = leaders.includes(this.node.identity.publicKey.hashcode());
 
 		await this.rpc.send(
 			await createExchangeHeadsMessage(
 				this.log,
 				[result.entry],
 				this._gidParentCache
-			)
+			),
+			{
+				to: leaders,
+				strict: true,
+				mode: isLeader ? new SilentDelivery(1) : new AcknowledgeDelivery(1)
+			}
 		);
+
 		return result;
 	}
 
@@ -249,22 +241,30 @@ export class SharedLog<T = Uint8Array> extends Program<
 					: options.replicas.max
 				: undefined
 		};
+
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
+		this.latestRoleMessages = new Map();
 
 		this._gidParentCache = new Cache({ max: 1000 });
 		this._closeController = new AbortController();
 
 		this._canReplicate = options?.canReplicate;
-		this._sync = options?.sync;
 		this._logProperties = options;
-		this._role = options?.role || new Replicator();
+
+		let role: Role;
+		if (options?.role) {
+			role = options?.role;
+			this.fixedParticipationRate = true;
+		} else {
+			role = new Replicator({ factor: 1, timestamp: BigInt(+new Date()) });
+			this.fixedParticipationRate = false;
+		}
 
 		this._lastSubscriptionMessageId = 0;
 		this._onSubscriptionFn = this._onSubscription.bind(this);
-
-		this._sortedPeersCache = [];
+		this._sortedPeersCache = yallist.create();
 		this._gidPeersHistory = new Map();
 
 		await this.node.services.pubsub.addEventListener(
@@ -278,9 +278,27 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this._onUnsubscriptionFn
 		);
 
-		await this.log.open(this.node.services.blocks, this.node.identity, {
-			keychain: this.node.keychain,
+		const id = sha256Base64Sync(this.log.id);
+		const storage = await this.node.memory.sublevel(id);
+		const localBlocks = await new AnyBlockStore(
+			await storage.sublevel("blocks")
+		);
+		const cache = await storage.sublevel("cache");
 
+		this.remoteBlocks = new RemoteBlocks({
+			local: localBlocks,
+			publish: (message, options) =>
+				this.rpc.send(new BlocksMessage(message), {
+					to: options?.to,
+					strict: options?.to && true
+				}),
+			waitFor: this.rpc.waitFor.bind(this.rpc)
+		});
+
+		await this.remoteBlocks.start();
+
+		await this.log.open(this.remoteBlocks, this.node.identity, {
+			keychain: this.node.keychain,
 			...this._logProperties,
 			onChange: (change) => {
 				if (this._pendingIHave.size > 0) {
@@ -288,7 +306,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 						const ih = this._pendingIHave.get(added.hash);
 						if (ih) {
 							ih.clear();
-							ih.callback();
+							ih.callback(added);
 						}
 					}
 				}
@@ -323,23 +341,39 @@ export class SharedLog<T = Uint8Array> extends Program<
 				return this._logProperties?.canAppend?.(entry) ?? true;
 			},
 			trim: this._logProperties?.trim && {
-				...this._logProperties?.trim,
-				filter: {
+				...this._logProperties?.trim
+				/* filter: {
 					canTrim: async (entry) => {
-						return !(await this.isLeader(
+						await this.warmUpPromise;
+						const isLeader = (await this.isLeader(
 							entry.meta.gid,
-							decodeReplicas(entry).getValue(this)
-						)); // TODO types
+							maxReplicas(this, [entry])
+						))
+						if (!isLeader) {
+							this.trims = (this.trims || 0) + 1;
+						}
+						else {
+							this.ntrims = (this.ntrims || 0) + 1;
+		
+						}
+						return !isLeader
 					},
 					cacheId: () => this._lastSubscriptionMessageId
-				}
+				} */
 			},
-			cache:
-				this.node.memory &&
-				(await this.node.memory.sublevel(sha256Base64Sync(this.log.id)))
+			cache: cache
 		});
 
-		await this.initializeWithRole();
+		// Open for communcation
+		await this.rpc.open({
+			queryType: TransportMessage,
+			responseType: TransportMessage,
+			responseHandler: this._onMessage.bind(this),
+			topic: this.topic
+		});
+
+		await this.updateRole(role);
+		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
 		(await this.node.services.pubsub.getSubscribers(this.topic))?.forEach(
@@ -350,16 +384,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this.handleSubscriptionChange(v, [this.topic], true);
 			}
 		);
-
-		// Open for communcation
-		await this.rpc.open({
-			queryType: TransportMessage,
-			responseType: TransportMessage,
-			responseHandler: this._onMessage.bind(this),
-			topic: this.topic
-		});
-
-		await this.updateRole(this._role);
 	}
 
 	get topic() {
@@ -377,9 +401,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 			v.clear();
 		}
 
+		await this.remoteBlocks.stop();
 		this._gidParentCache.clear();
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
+		this.latestRoleMessages.clear();
 
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
@@ -411,8 +437,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		if (!superDropped) {
 			return superDropped;
 		}
-		await this._close();
 		await this.log.drop();
+		await this._close();
 		return true;
 	}
 
@@ -433,7 +459,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 				 */
 
 				const { heads } = msg;
-				// replication topic === trustedNetwork address
 
 				logger.debug(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
@@ -453,108 +478,102 @@ export class SharedLog<T = Uint8Array> extends Program<
 						}
 					}
 
-					if (!this._sync) {
-						const toMerge: EntryWithRefs<any>[] = [];
-						let toDelete: Entry<any>[] | undefined = undefined;
-						let maybeDelete: EntryWithRefs<any>[][] | undefined = undefined;
+					if (filteredHeads.length === 0) {
+						return;
+					}
 
-						const groupedByGid = await groupByGid(filteredHeads);
-						const promises: Promise<void>[] = [];
-						for (const [gid, entries] of groupedByGid) {
-							const fn = async () => {
-								const headsWithGid = this.log.headsIndex.gids.get(gid);
+					const toMerge: EntryWithRefs<any>[] = [];
+					let toDelete: Entry<any>[] | undefined = undefined;
+					let maybeDelete: EntryWithRefs<any>[][] | undefined = undefined;
 
-								const maxReplicasFromHead =
-									headsWithGid && headsWithGid.size > 0
-										? maxReplicas(this, [...headsWithGid.values()])
-										: this.replicas.min.getValue(this);
+					const groupedByGid = await groupByGid(filteredHeads);
+					const promises: Promise<void>[] = [];
 
-								const maxReplicasFromNewEntries = maxReplicas(
-									this,
-									entries.map((x) => x.entry)
-								);
+					for (const [gid, entries] of groupedByGid) {
+						const fn = async () => {
+							const headsWithGid = this.log.headsIndex.gids.get(gid);
 
-								const isLeader = await this.waitForIsLeader(
-									gid,
-									Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
-								);
+							const maxReplicasFromHead =
+								headsWithGid && headsWithGid.size > 0
+									? maxReplicas(this, [...headsWithGid.values()])
+									: this.replicas.min.getValue(this);
 
-								if (
-									maxReplicasFromNewEntries < maxReplicasFromHead &&
-									isLeader
-								) {
-									(maybeDelete || (maybeDelete = [])).push(entries);
-								}
+							const maxReplicasFromNewEntries = maxReplicas(
+								this,
+								entries.map((x) => x.entry)
+							);
 
-								outer: for (const entry of entries) {
-									if (isLeader) {
-										toMerge.push(entry);
-									} else {
-										for (const ref of entry.references) {
-											const map = this.log.headsIndex.gids.get(
-												await ref.getGid()
-											);
-											if (map && map.size > 0) {
-												toMerge.push(entry);
-												(toDelete || (toDelete = [])).push(entry.entry);
-												continue outer;
-											}
+							const isLeader = await this.waitForIsLeader(
+								gid,
+								Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
+							);
+
+							if (maxReplicasFromNewEntries < maxReplicasFromHead && isLeader) {
+								(maybeDelete || (maybeDelete = [])).push(entries);
+							}
+
+							outer: for (const entry of entries) {
+								if (isLeader) {
+									toMerge.push(entry);
+								} else {
+									for (const ref of entry.references) {
+										const map = this.log.headsIndex.gids.get(
+											await ref.getGid()
+										);
+										if (map && map.size > 0) {
+											toMerge.push(entry);
+											(toDelete || (toDelete = [])).push(entry.entry);
+											continue outer;
 										}
 									}
-
-									logger.debug(
-										`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
-											entry.entry.gid
-										}. Because not leader`
-									);
 								}
-							};
-							promises.push(fn());
-						}
-						await Promise.all(promises);
 
-						if (toMerge.length > 0) {
-							await this.log.join(toMerge);
-
-							toDelete &&
-								Promise.all(this.pruneSafely(toDelete)).catch((e) => {
-									logger.error(e.toString());
-								});
-						}
-
-						if (maybeDelete) {
-							for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-								const headsWithGid = this.log.headsIndex.gids.get(
-									entries[0].entry.meta.gid
+								logger.debug(
+									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
+										entry.entry.gid
+									}. Because not leader`
 								);
-								if (headsWithGid && headsWithGid.size > 0) {
-									const minReplicas = maxReplicas(this, headsWithGid.values());
+							}
+						};
+						promises.push(fn());
+					}
+					await Promise.all(promises);
 
-									const isLeader = await this.isLeader(
-										entries[0].entry.meta.gid,
-										minReplicas
-									);
+					if (toMerge.length > 0) {
+						await this.log.join(toMerge);
+						toDelete &&
+							Promise.all(this.prune(toDelete)).catch((e) => {
+								logger.error(e.toString());
+							});
+					}
 
-									if (!isLeader) {
-										Promise.all(
-											this.pruneSafely(entries.map((x) => x.entry))
-										).catch((e) => {
+					if (maybeDelete) {
+						for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
+							const headsWithGid = this.log.headsIndex.gids.get(
+								entries[0].entry.meta.gid
+							);
+							if (headsWithGid && headsWithGid.size > 0) {
+								const minReplicas = maxReplicas(this, headsWithGid.values());
+
+								const isLeader = await this.isLeader(
+									entries[0].entry.meta.gid,
+									minReplicas
+								);
+
+								if (!isLeader) {
+									Promise.all(this.prune(entries.map((x) => x.entry))).catch(
+										(e) => {
 											logger.error(e.toString());
-										});
-									}
+										}
+									);
 								}
 							}
 						}
-					} else {
-						await this.log.join(
-							await Promise.all(
-								filteredHeads.map((x) => this._sync!(x.entry))
-							).then((filter) => filteredHeads.filter((v, ix) => filter[ix]))
-						);
 					}
 				}
 			} else if (msg instanceof RequestIHave) {
 				const hasAndIsLeader: string[] = [];
+
 				for (const hash of msg.hashes) {
 					const indexedEntry = this.log.entryIndex.getShallow(hash);
 					if (
@@ -572,12 +591,21 @@ export class SharedLog<T = Uint8Array> extends Program<
 								clearTimeout(timeout);
 								prevPendingIHave?.clear();
 							},
-							callback: () => {
-								prevPendingIHave && prevPendingIHave.callback();
-								this.rpc.send(new ResponseIHave({ hashes: [hash] }), {
-									to: [context.from!]
-								});
-								this._pendingIHave.delete(hash);
+							callback: async (entry) => {
+								if (
+									await this.isLeader(
+										entry.meta.gid,
+										decodeReplicas(entry).getValue(this)
+									)
+								) {
+									this.rpc.send(new ResponseIHave({ hashes: [entry.hash] }), {
+										to: [context.from!]
+									});
+								}
+
+								prevPendingIHave && prevPendingIHave.callback(entry);
+
+								this._pendingIHave.delete(entry.hash);
 							}
 						};
 						const timeout = setTimeout(() => {
@@ -590,7 +618,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 						this._pendingIHave.set(hash, pendingIHave);
 					}
 				}
-
 				await this.rpc.send(new ResponseIHave({ hashes: hasAndIsLeader }), {
 					to: [context.from!]
 				});
@@ -598,9 +625,15 @@ export class SharedLog<T = Uint8Array> extends Program<
 				for (const hash of msg.hashes) {
 					this._pendingDeletes.get(hash)?.callback(context.from!.hashcode());
 				}
+			} else if (msg instanceof BlocksMessage) {
+				await this.remoteBlocks.onMessage(msg.message);
 			} else if (msg instanceof RequestRoleMessage) {
 				if (!context.from) {
 					throw new Error("Missing form in update role message");
+				}
+
+				if (context.from.equals(this.node.identity.publicKey)) {
+					return;
 				}
 
 				await this.rpc.send(new ResponseRoleMessage({ role: this.role }), {
@@ -611,31 +644,33 @@ export class SharedLog<T = Uint8Array> extends Program<
 					throw new Error("Missing form in update role message");
 				}
 
+				if (context.from.equals(this.node.identity.publicKey)) {
+					return;
+				}
+
 				this.waitFor(context.from, {
 					signal: this._closeController.signal,
 					timeout: WAIT_FOR_REPLICATOR_TIMEOUT
 				})
 					.then(async () => {
-						const change = await this.modifyReplicatorsCache(
-							msg.role,
-							context.from!
-						);
-						if (change) {
-							this._lastSubscriptionMessageId += 1;
+						//await delay(4000 + Math.random())
 
-							this.events.dispatchEvent(
-								new CustomEvent<UpdateRoleEvent>("role", {
-									detail: { publicKey: context.from!, role: msg.role }
-								})
-							);
-
-							return this.replicationReorganization();
+						const prev = this.latestRoleMessages.get(context.from!.hashcode());
+						if (prev && prev > context.timestamp) {
+							return;
 						}
+						this.latestRoleMessages.set(
+							context.from!.hashcode(),
+							context.timestamp
+						);
+
+						await this.modifyReplicators(msg.role, context.from!);
 					})
 					.catch((e) => {
 						if (e instanceof AbortError) {
 							return;
 						}
+
 						logger.error(
 							"Failed to find peer who updated their role: " + e?.message
 						);
@@ -669,14 +704,18 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 	}
 
-	getReplicatorsSorted(): { hash: string; timestamp: number }[] | undefined {
+	getReplicatorsSorted(): yallist<ReplicatorRect> | undefined {
 		return this._sortedPeersCache;
 	}
 
 	async waitForReplicator(...keys: PublicSignKey[]) {
 		const check = () => {
 			for (const k of keys) {
-				if (!this.getReplicatorsSorted()?.find((x) => x.hash == k.hashcode())) {
+				if (
+					!this.getReplicatorsSorted()
+						?.toArray()
+						?.find((x) => x.publicKey.equals(k))
+				) {
 					return false;
 				}
 			}
@@ -687,17 +726,22 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	async isLeader(
 		slot: { toString(): string },
-		numberOfLeaders: number
+		numberOfLeaders: number,
+		options?: {
+			candidates?: string[];
+			roleAge?: number;
+		}
 	): Promise<boolean> {
-		const isLeader = (await this.findLeaders(slot, numberOfLeaders)).find(
-			(l) => l === this.node.identity.publicKey.hashcode()
-		);
+		const isLeader = (
+			await this.findLeaders(slot, numberOfLeaders, options)
+		).find((l) => l === this.node.identity.publicKey.hashcode());
 		return !!isLeader;
 	}
 
 	private async waitForIsLeader(
 		slot: { toString(): string },
-		numberOfLeaders: number
+		numberOfLeaders: number,
+		timeout = WAIT_FOR_REPLICATOR_TIMEOUT
 	): Promise<boolean> {
 		return new Promise((res, rej) => {
 			const removeListeners = () => {
@@ -706,20 +750,20 @@ export class SharedLog<T = Uint8Array> extends Program<
 			};
 			const abortListener = () => {
 				removeListeners();
-				clearTimeout(timeout);
+				clearTimeout(timer);
 				res(false);
 			};
 
-			const timeout = setTimeout(() => {
+			const timer = setTimeout(() => {
 				removeListeners();
 				res(false);
-			}, WAIT_FOR_REPLICATOR_TIMEOUT);
+			}, timeout);
 
 			const check = () =>
 				this.isLeader(slot, numberOfLeaders).then((isLeader) => {
 					if (isLeader) {
 						removeListeners();
-						clearTimeout(timeout);
+						clearTimeout(timer);
 						res(isLeader);
 					}
 				});
@@ -732,41 +776,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			check();
 		});
-		/* */
-
-		/* try {
-			const result =
-				(await waitFor(
-					async () =>
-						(await this.isLeader(slot, numberOfLeaders)) == true
-							? true
-							: undefined,
-					{ timeout: WAIT_FOR_REPLICATOR_TIMEOUT, signal: this._closeController.signal }
-				)) == true;
-			return result;
-		} catch (error: any) {
-			if (error instanceof AbortError || error instanceof TimeoutError) {
-				return false;
-			}
-
-			throw error;
-		} */
 	}
 
 	async findLeaders(
 		subject: { toString(): string },
-		numberOfLeaders: number
+		numberOfLeaders: number,
+		options?: {
+			roleAge?: number;
+		}
 	): Promise<string[]> {
 		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
 		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
-		const peers: { hash: string; timestamp: number }[] =
-			this.getReplicatorsSorted() || [];
-
-		if (peers.length === 0) {
-			return [];
-		}
-
-		numberOfLeaders = Math.min(numberOfLeaders, peers.length);
 
 		// Convert this thing we wan't to distribute to 8 bytes so we get can convert it into a u64
 		// modulus into an index
@@ -775,28 +795,226 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const seed = await sha256(utf8writer.finalize());
 
 		// convert hash of slot to a number
-		const seedNumber = new BinaryReader(
-			seed.subarray(seed.length - 8, seed.length)
-		).u64();
-		const startIndex = Number(seedNumber % BigInt(peers.length));
-
-		// we only step forward 1 step (ignoring that step backward 1 could be 'closer')
-		// This does not matter, we only have to make sure all nodes running the code comes to somewhat the
-		// same conclusion (are running the same leader selection algorithm)
-		const leaders = new Array(numberOfLeaders);
-		for (let i = 0; i < numberOfLeaders; i++) {
-			leaders[i] = peers[(i + startIndex) % peers.length].hash;
-		}
-		return leaders;
+		const cursor = hashToUniformNumber(seed); // bounded between 0 and 1
+		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
-	private async modifyReplicatorsCache(role: Role, publicKey: PublicSignKey) {
+	/* getParticipationSum(age: number) {
+		let sum = 0;
+		const t = +new Date;
+		let currentNode = this.getReplicatorsSorted()?.head;
+		while (currentNode) {
+
+			const value = currentNode.value;
+			if (t - value.timestamp > age || currentNode.value.publicKey.equals(this.node.identity.publicKey)) {
+				sum += value.length;
+			}
+			if (sum >= 1) {
+				return 1;
+			}
+			currentNode = currentNode.next
+		}
+
+		return sum;
+	} */
+
+	private findLeadersFromUniformNumber(
+		cursor: number,
+		numberOfLeaders: number,
+		options?: {
+			roleAge?: number;
+		}
+	) {
+		const leaders: Set<string> = new Set();
+		const width = 1; // this.getParticipationSum(roleAge);
+		const peers = this.getReplicatorsSorted();
+		if (!peers || peers?.length === 0) {
+			return [];
+		}
+		numberOfLeaders = Math.min(numberOfLeaders, peers.length);
+
+		const t = +new Date();
+		const roleAge = options?.roleAge ?? WAIT_FOR_ROLE_MATURITY;
+
+		for (let i = 0; i < numberOfLeaders; i++) {
+			let matured = 0;
+			const maybeIncrementMatured = (role: Replicator) => {
+				if (t - Number(role.timestamp) > roleAge) {
+					matured++;
+				}
+			};
+
+			const x = ((cursor + i / numberOfLeaders) % 1) * width;
+			let currentNode = peers.head;
+			const diffs: { diff: number; rect: ReplicatorRect }[] = [];
+			while (currentNode) {
+				const start = currentNode.value.offset % width;
+				const absDelta = Math.abs(start - x);
+				const diff = Math.min(absDelta, width - absDelta);
+
+				if (diff < currentNode.value.role.factor / 2 + 0.00001) {
+					leaders.add(currentNode.value.publicKey.hashcode());
+					maybeIncrementMatured(currentNode.value.role);
+				} else {
+					diffs.push({ diff, rect: currentNode.value });
+				}
+
+				currentNode = currentNode.next;
+			}
+			if (matured === 0) {
+				diffs.sort((x, y) => x.diff - y.diff);
+				for (const node of diffs) {
+					leaders.add(node.rect.publicKey.hashcode());
+					maybeIncrementMatured(node.rect.role);
+					if (matured > 0) {
+						break;
+					}
+				}
+			}
+		}
+
+		return [...leaders];
+	}
+
+	/**
+	 *
+	 * @returns groups where at least one in any group will have the entry you are looking for
+	 */
+	getReplicatorUnion(roleAge: number = WAIT_FOR_ROLE_MATURITY) {
+		// Total replication "width"
+		const width = 1; //this.getParticipationSum(roleAge);
+
+		// How much width you need to "query" to
+
+		const peers = this.getReplicatorsSorted()!; // TODO types
+		const minReplicas = Math.min(
+			peers.length,
+			this.replicas.min.getValue(this)
+		);
+		const coveringWidth = width / minReplicas;
+
+		let walker = peers.head;
+		if (this.role instanceof Replicator) {
+			// start at our node (local first)
+			while (walker) {
+				if (walker.value.publicKey.equals(this.node.identity.publicKey)) {
+					break;
+				}
+				walker = walker.next;
+			}
+		} else {
+			const seed = Math.round(peers.length * Math.random()); // start at a random point
+			for (let i = 0; i < seed - 1; i++) {
+				if (walker?.next == null) {
+					break;
+				}
+				walker = walker.next;
+			}
+		}
+
+		const set: string[] = [];
+		let distance = 0;
+		const startNode = walker;
+		if (!startNode) {
+			return [];
+		}
+
+		let nextPoint = startNode.value.offset;
+		const t = +new Date();
+		while (walker && distance < coveringWidth) {
+			const absDelta = Math.abs(walker!.value.offset - nextPoint);
+			const diff = Math.min(absDelta, width - absDelta);
+
+			if (diff < walker!.value.role.factor / 2 + 0.00001) {
+				set.push(walker!.value.publicKey.hashcode());
+				if (
+					t - Number(walker!.value.role.timestamp) >
+					roleAge /* ||
+					walker!.value.publicKey.equals(this.node.identity.publicKey)) */
+				) {
+					nextPoint = (nextPoint + walker!.value.role.factor) % 1;
+					distance += walker!.value.role.factor;
+				}
+			}
+
+			walker = walker.next || peers.head;
+
+			if (
+				walker?.value.publicKey &&
+				startNode?.value.publicKey.equals(walker?.value.publicKey)
+			) {
+				break; // TODO throw error for failing to fetch ffull width
+			}
+		}
+
+		return set;
+	}
+
+	async replicator(
+		entry: Entry<any>,
+		options?: {
+			candidates?: string[];
+			roleAge?: number;
+		}
+	) {
+		return this.isLeader(
+			entry.gid,
+			decodeReplicas(entry).getValue(this),
+			options
+		);
+	}
+
+	private onRoleChange(
+		prev: Observer | Replicator | undefined,
+		role: Observer | Replicator,
+		publicKey: PublicSignKey
+	) {
+		this._lastSubscriptionMessageId += 1;
+		this.distribute();
+
+		if (role instanceof Replicator) {
+			const timer = setTimeout(() => {
+				this._closeController.signal.removeEventListener("abort", listener);
+				this.distribute();
+			}, WAIT_FOR_ROLE_MATURITY + 2000);
+
+			const listener = () => {
+				clearTimeout(timer);
+			};
+
+			this._closeController.signal.addEventListener("abort", listener);
+		}
+
+		this.events.dispatchEvent(
+			new CustomEvent<UpdateRoleEvent>("role", {
+				detail: { publicKey, role }
+			})
+		);
+	}
+
+	private async modifyReplicators(
+		role: Observer | Replicator,
+		publicKey: PublicSignKey
+	) {
+		const { prev, changed } = await this._modifyReplicators(role, publicKey);
+		if (changed) {
+			await this.rebalanceParticipation(false);
+			this.onRoleChange(prev, role, publicKey);
+			return true;
+		}
+		return false;
+	}
+
+	private async _modifyReplicators(
+		role: Observer | Replicator,
+		publicKey: PublicSignKey
+	): Promise<{ prev?: Replicator; changed: boolean }> {
 		if (
 			role instanceof Replicator &&
 			this._canReplicate &&
-			!(await this._canReplicate(publicKey))
+			!(await this._canReplicate(publicKey, role))
 		) {
-			return false;
+			return { changed: false };
 		}
 
 		const sortedPeer = this._sortedPeersCache;
@@ -804,10 +1022,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 			if (this.closed === false) {
 				throw new Error("Unexpected, sortedPeersCache is undefined");
 			}
-			return false;
+			return { changed: false };
 		}
-		const code = publicKey.hashcode();
-		if (role instanceof Replicator) {
+
+		if (role instanceof Replicator && role.factor > 0) {
 			// TODO use Set + list for fast lookup
 			// check also that peer is online
 
@@ -816,21 +1034,66 @@ export class SharedLog<T = Uint8Array> extends Program<
 				(await this.waitFor(publicKey, { signal: this._closeController.signal })
 					.then(() => true)
 					.catch(() => false));
-			if (isOnline && !sortedPeer.find((x) => x.hash === code)) {
-				sortedPeer.push({ hash: code, timestamp: +new Date() });
-				sortedPeer.sort((a, b) => a.hash.localeCompare(b.hash));
-				return true;
+
+			if (isOnline) {
+				// insert or if already there do nothing
+				const code = hashToUniformNumber(publicKey.bytes);
+				const rect: ReplicatorRect = {
+					publicKey,
+					offset: code,
+					role
+				};
+
+				let currentNode = sortedPeer.head;
+				if (!currentNode) {
+					sortedPeer.push(rect);
+					return { changed: true };
+				} else {
+					while (currentNode) {
+						if (currentNode.value.publicKey.equals(publicKey)) {
+							// update the value
+							// rect.timestamp = currentNode.value.timestamp;
+							const prev = currentNode.value;
+							currentNode.value = rect;
+							// TODO change detection and only do change stuff if diff?
+							return { prev: prev.role, changed: true };
+						}
+
+						if (code > currentNode.value.offset) {
+							const next = currentNode?.next;
+							if (next) {
+								currentNode = next;
+								continue;
+							} else {
+								break;
+							}
+						} else {
+							currentNode = currentNode.prev;
+							break;
+						}
+					}
+
+					const prev = currentNode;
+					if (!prev?.next?.value.publicKey.equals(publicKey)) {
+						_insertAfter(sortedPeer, prev || undefined, rect);
+					} else {
+						throw new Error("Unexpected");
+					}
+					return { changed: true };
+				}
 			} else {
-				return false;
+				return { changed: false };
 			}
 		} else {
-			const deleteIndex = sortedPeer.findIndex((x) => x.hash === code);
-			if (deleteIndex >= 0) {
-				sortedPeer.splice(deleteIndex, 1);
-				return true;
-			} else {
-				return false;
+			let currentNode = sortedPeer.head;
+			while (currentNode) {
+				if (currentNode.value.publicKey.equals(publicKey)) {
+					sortedPeer.removeNode(currentNode);
+					return { prev: currentNode.value.role, changed: true };
+				}
+				currentNode = currentNode.next;
 			}
+			return { changed: false };
 		}
 	}
 
@@ -845,10 +1108,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 					if (this.log.idString !== subscription) {
 						continue;
 					}
-					await this.rpc.send(new ResponseRoleMessage(this.role), {
-						to: [publicKey],
-						strict: true /* , mode: new SeekDelivery(2) */
-					});
+					this.rpc
+						.send(new ResponseRoleMessage(this.role), {
+							to: [publicKey],
+							strict: true,
+							mode: new AcknowledgeDelivery(1)
+						})
+						.catch((e) => logger.error(e.toString()));
 				}
 			}
 
@@ -858,62 +1124,23 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (this.log.idString !== topic) {
 					continue;
 				}
-				const change = await this.modifyReplicatorsCache(
-					new Observer(),
-					publicKey
-				);
-				if (change) {
-					this.replicationReorganization();
-				}
+
+				await this.modifyReplicators(new Observer(), publicKey);
 			}
 		}
-		// TODO why are we doing two loops?
-		/* const prev: boolean[] = [];
-		for (const subscription of changes) {
-			if (this.log.idString !== subscription.topic) {
-				continue;
-			}
-
-			if (
-				!subscription.data ||
-				!startsWith(subscription.data, REPLICATOR_TYPE_VARIANT)
-			) {
-				prev.push(await this.modifyReplicatorsCache(false, publicKey));
-				continue;
-			} else {
-				this._lastSubscriptionMessageId += 1;
-				prev.push(
-					await this.modifyReplicatorsCache(subscribed, publicKey)
-				);
-			}
-		} */
-
-		// TODO don't do this i fnot is replicator?
-		/* for (const [i, subscription] of changes.entries()) {
-			if (this.log.idString !== subscription.topic) {
-				continue;
-			}
-			if (subscription.data) {
-				try {
-					const type = deserialize(subscription.data, Role);
-
-					// Reorganize if the new subscriber is a replicator, or observers AND was replicator
-					if (type instanceof Replicator || prev[i]) {
-						await this.replicationReorganization();
-					}
-				} catch (error: any) {
-					logger.warn(
-						"Recieved subscription with invalid data on topic: " +
-						subscription.topic +
-						". Error: " +
-						error?.message
-					);
-				}
-			}
-		} */
 	}
 
-	pruneSafely(entries: Entry<any>[], options?: { timeout: number }) {
+	prune(
+		entries: Entry<any>[],
+		options?: { timeout?: number; unchecked?: boolean }
+	) {
+		if (options?.unchecked) {
+			return entries.map((x) =>
+				this.log.remove(x, {
+					recursively: true
+				})
+			);
+		}
 		// ask network if they have they entry,
 		// so I can delete it
 
@@ -927,14 +1154,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const filteredEntries: Entry<any>[] = [];
 		for (const entry of entries) {
 			const pendingPrev = this._pendingDeletes.get(entry.hash);
-
+			if (pendingPrev) {
+				promises.push(pendingPrev.promise.promise);
+				continue;
+			}
 			filteredEntries.push(entry);
 			const existCounter = new Set<string>();
 			const minReplicas = decodeReplicas(entry);
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
 			const clear = () => {
-				pendingPrev?.clear();
+				//pendingPrev?.clear();
 				const pending = this._pendingDeletes.get(entry.hash);
 				if (pending?.promise == deferredPromise) {
 					this._pendingDeletes.delete(entry.hash);
@@ -953,7 +1183,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			const timeout = setTimeout(
 				() => {
-					reject(new Error("Timeout"));
+					reject(new Error("Timeout for checked pruning"));
 				},
 				options?.timeout ?? 10 * 1000
 			);
@@ -968,7 +1198,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 					const minMinReplicasValue = this.replicas.max
 						? Math.min(minReplicasValue, this.replicas.max.getValue(this))
 						: minReplicasValue;
-					const l = await this.findLeaders(entry.gid, minReplicasValue);
+
+					const l = await this.findLeaders(entry.gid, minMinReplicasValue);
+
+					if (l.find((x) => x === this.node.identity.publicKey.hashcode())) {
+						reject(new Error("Failed to delete, is leader"));
+						return;
+					}
+
 					if (l.find((x) => x === publicKeyHash)) {
 						existCounter.add(publicKeyHash);
 						if (minMinReplicasValue <= existCounter.size) {
@@ -993,34 +1230,25 @@ export class SharedLog<T = Uint8Array> extends Program<
 				new RequestIHave({ hashes: filteredEntries.map((x) => x.hash) })
 			);
 		}
-
 		return promises;
 	}
 
-	/**
-	 * When a peers join the networkk and want to participate the leaders for particular log subgraphs might change, hence some might start replicating, might some stop
-	 * This method will go through my owned entries, and see whether I should share them with a new leader, and/or I should stop care about specific entries
-	 * @param channel
-	 */
-	/* _qqq: PQueue;
-	async replicationReorganization() {
-		const queue = this._qqq || (this._qqq = new PQueue({ concurrency: 1 }));
-		return queue.add(() => this._replicationReorganization());
-	}
- */
-	async replicationReorganization() {
+	async distribute() {
+		/**
+		 * TODO use information of new joined/leaving peer to create a subset of heads
+		 * that we potentially need to share with other peers
+		 */
 		const changed = false;
+		await this.log.trim();
 		const heads = await this.log.getHeads();
 		const groupedByGid = await groupByGid(heads);
-		let storeChanged = false;
+		const toDeliver: Map<string, Entry<any>[]> = new Map();
+		const allEntriesToDelete: Entry<any>[] = [];
 
 		for (const [gid, entries] of groupedByGid) {
 			if (this.closed) {
 				break;
 			}
-
-			const toSend: Map<string, Entry<any>> = new Map();
-			const newPeers: string[] = [];
 
 			if (entries.length === 0) {
 				continue; // TODO maybe close store?
@@ -1031,123 +1259,79 @@ export class SharedLog<T = Uint8Array> extends Program<
 				gid,
 				maxReplicas(this, entries) // pick max replication policy of all entries, so all information is treated equally important as the most important
 			);
+			const currentPeersSet = new Set(currentPeers);
+			this._gidPeersHistory.set(gid, currentPeersSet);
 
 			for (const currentPeer of currentPeers) {
-				if (
-					!oldPeersSet?.has(currentPeer) &&
-					currentPeer !== this.node.identity.publicKey.hashcode()
-				) {
-					storeChanged = true;
-					// second condition means that if the new peer is us, we should not do anything, since we are expecting to receive heads, not send
-					newPeers.push(currentPeer);
+				if (currentPeer == this.node.identity.publicKey.hashcode()) {
+					continue;
+				}
 
-					// send heads to the new peer
-					// console.log('new gid for peer', newPeers.length, this.id.toString(), newPeer, gid, entries.length, newPeers)
-					try {
-						logger.debug(
-							`${this.node.identity.publicKey.hashcode()}: Exchange heads ${
-								entries.length === 1 ? entries[0].hash : "#" + entries.length
-							}  on rebalance`
-						);
-						for (const entry of entries) {
-							toSend.set(entry.hash, entry);
-						}
-					} catch (error) {
-						if (error instanceof TimeoutError) {
-							console.error();
-							logger.error(
-								"Missing channel when reorg to peer: " + currentPeer.toString()
-							);
-							continue;
-						}
-						throw error;
+				if (!oldPeersSet?.has(currentPeer)) {
+					// second condition means that if the new peer is us, we should not do anything, since we are expecting to receive heads, not send
+					let arr = toDeliver.get(currentPeer);
+					if (!arr) {
+						arr = [];
+						toDeliver.set(currentPeer, arr);
+					}
+
+					for (const entry of entries) {
+						arr.push(entry);
 					}
 				}
 			}
 
-			// We don't need this clause anymore because we got the trim option!
 			if (
 				!currentPeers.find((x) => x === this.node.identity.publicKey.hashcode())
 			) {
-				let entriesToDelete = entries.filter((e) => !e.createdLocally);
-
-				if (this._sync) {
-					// dont delete entries which we wish to keep
-					entriesToDelete = await Promise.all(
-						entriesToDelete.map((x) => this._sync!(x))
-					).then((filter) => entriesToDelete.filter((v, ix) => !filter[ix]));
+				if (currentPeers.length > 0) {
+					// If we are observer, never prune locally created entries, since we dont really know who can store them
+					// if we are replicator, we will always persist entries that we need to so filtering on createdLocally will not make a difference
+					const entriesToDelete =
+						this._role instanceof Observer
+							? entries.filter((e) => !e.createdLocally)
+							: entries;
+					entriesToDelete.map((x) => this._gidPeersHistory.delete(x.meta.gid));
+					allEntriesToDelete.push(...entriesToDelete);
 				}
-
-				// delete entries since we are not suppose to replicate this anymore
-				// TODO add delay? freeze time? (to ensure resiliance for bad io)
-				if (entriesToDelete.length > 0) {
-					Promise.all(this.pruneSafely(entriesToDelete)).catch((e) => {
-						logger.error(e.toString());
-					});
+			} else {
+				for (const entry of entries) {
+					this._pendingDeletes
+						.get(entry.hash)
+						?.promise.reject(
+							new Error(
+								"Failed to delete, is leader: " +
+									this.role.constructor.name +
+									". " +
+									this.node.identity.publicKey.hashcode()
+							)
+						);
 				}
-
-				// TODO if length === 0 maybe close store?
 			}
-			this._gidPeersHistory.set(gid, new Set(currentPeers));
+		}
 
-			if (toSend.size === 0) {
-				continue;
-			}
-
+		for (const [target, entries] of toDeliver) {
 			const message = await createExchangeHeadsMessage(
 				this.log,
-				[...toSend.values()], // TODO send to peers directly
+				entries, // TODO send to peers directly
 				this._gidParentCache
 			);
-
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			await this.rpc.send(message, {
-				to: newPeers,
+				to: [target],
 				strict: true
 			});
 		}
-		if (storeChanged) {
-			await this.log.trim(); // because for entries createdLocally,we can have trim options that still allow us to delete them
-		}
-		return storeChanged || changed;
-	}
 
-	async ensureReplication(
-		peer: PublicSignKey,
-		hashes: string[],
-		abort: AbortSignal
-	) {
-		const reques = this.rpc.request(new RequestIHave({ hashes }));
-	}
+		this._lastSubscriptionMessageId += 1;
 
-	/**
-	 *
-	 * @returns groups where at least one in any group will have the entry you are looking for
-	 */
-	getDiscoveryGroups() {
-		// TODO Optimize this so we don't have to recreate the array all the time!
-		const minReplicas = this.replicas.min.getValue(this);
-		const replicators = this.getReplicatorsSorted();
-		if (!replicators) {
-			return []; // No subscribers and we are not replicating
-		}
-		const numberOfGroups = Math.min(
-			Math.ceil(replicators!.length / minReplicas)
-		);
-		const groups = new Array<{ hash: string; timestamp: number }[]>(
-			numberOfGroups
-		);
-		for (let i = 0; i < groups.length; i++) {
-			groups[i] = [];
-		}
-		for (let i = 0; i < replicators!.length; i++) {
-			groups[i % numberOfGroups].push(replicators![i]);
+		if (allEntriesToDelete.length > 0) {
+			Promise.all(this.prune(allEntriesToDelete)).catch((e) => {
+				logger.error(e.toString());
+			});
 		}
 
-		return groups;
-	}
-	async replicator(entry: Entry<any>) {
-		return this.isLeader(entry.gid, decodeReplicas(entry).getValue(this));
+		return changed;
 	}
 
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
@@ -1155,6 +1339,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
 				evt.detail.unsubscriptions.map((x) => x)
 			)}'`
+		);
+		this.latestRoleMessages.delete(evt.detail.from.hashcode());
+
+		this.events.dispatchEvent(
+			new CustomEvent<UpdateRoleEvent>("role", {
+				detail: { publicKey: evt.detail.from, role: new Observer() }
+			})
 		);
 
 		return this.handleSubscriptionChange(
@@ -1170,10 +1361,76 @@ export class SharedLog<T = Uint8Array> extends Program<
 				evt.detail.subscriptions.map((x) => x)
 			)}'`
 		);
+		this.remoteBlocks.onReachable(evt.detail.from);
+
 		return this.handleSubscriptionChange(
 			evt.detail.from,
 			evt.detail.subscriptions,
 			true
 		);
 	}
+
+	async rebalanceParticipation(onRoleChange = true) {
+		// update more participation rate to converge to the average expected rate or bounded by
+		// resources such as memory and or cpu
+		if (this.fixedParticipationRate) {
+			return false;
+		}
+
+		if (this._role instanceof Replicator) {
+			const canReplicate =
+				!this._canReplicate ||
+				(await this._canReplicate(this.node.identity.publicKey, this._role));
+			if (!canReplicate) {
+				return false;
+			}
+
+			const peers = this.getReplicatorsSorted();
+			const wantedFraction = 1 / peers!.length;
+			const relativeDifference =
+				Math.abs(this._role.factor - wantedFraction) / this._role.factor;
+
+			if (relativeDifference > 0.0001) {
+				await this.updateRole(
+					new Replicator({ factor: wantedFraction }),
+					onRoleChange
+				);
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
+function _insertAfter(
+	self: yallist<any>,
+	node: yallist.Node<ReplicatorRect> | undefined,
+	value: ReplicatorRect
+) {
+	const inserted = !node
+		? new yallist.Node(
+				value,
+				null as any,
+				self.head as yallist.Node<ReplicatorRect> | undefined,
+				self
+		  )
+		: new yallist.Node(
+				value,
+				node,
+				node.next as yallist.Node<ReplicatorRect> | undefined,
+				self
+		  );
+
+	// is tail
+	if (inserted.next === null) {
+		self.tail = inserted;
+	}
+
+	// is head
+	if (inserted.prev === null) {
+		self.head = inserted;
+	}
+
+	self.length++;
+	return inserted;
 }

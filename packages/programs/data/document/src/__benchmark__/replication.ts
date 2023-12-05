@@ -8,6 +8,7 @@ import { Documents, SetupOptions } from "../document-store.js";
 import { Replicator } from "@peerbit/shared-log";
 import { DirectSub } from "@peerbit/pubsub";
 import { mplex } from "@libp2p/mplex";
+import { delay } from "@peerbit/time";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
 // put x 1,009 ops/sec ±2.57% (80 runs sampled)
@@ -55,8 +56,8 @@ const peers = await Promise.all(
 			services: {
 				pubsub: (sub) =>
 					new DirectSub(sub, {
-						canRelayMessage: true,
-						connectionManager: false
+						canRelayMessage: true
+						/* connectionManager: true */
 					})
 			}
 		}),
@@ -67,8 +68,8 @@ const peers = await Promise.all(
 			services: {
 				pubsub: (sub) =>
 					new DirectSub(sub, {
-						canRelayMessage: true,
-						connectionManager: false
+						canRelayMessage: true
+						/* connectionManager: true */
 					})
 			}
 		}),
@@ -78,8 +79,8 @@ const peers = await Promise.all(
 			services: {
 				pubsub: (sub) =>
 					new DirectSub(sub, {
-						canRelayMessage: true,
-						connectionManager: false
+						canRelayMessage: true
+						/* connectionManager: true */
 					})
 			}
 		})
@@ -99,8 +100,9 @@ const readerResolver: Map<string, () => void> = new Map();
 for (const [i, client] of peers.entries()) {
 	const settings = {
 		//canPerform: (e: Entry<any>) => e.verifySignatures(),
-		sync: () => true,
-		role: new Replicator() /* i === peers.length - 1 ? new Replicator() : new Observer(), */
+		role: new Replicator({
+			factor: 1
+		}) /* i === peers.length - 1 ? new Replicator() : new Observer(), */
 	};
 	let store: TestStore;
 	if (address) {
@@ -115,9 +117,8 @@ for (const [i, client] of peers.entries()) {
 	}
 	if (i === 1) {
 		store.docs.events.addEventListener("change", (event) => {
-			//   console.log(event.detail.added)
 			event.detail.added.forEach((e) => {
-				readerResolver.get(e.id)!();
+				readerResolver.get(e.id)?.();
 				readerResolver.delete(e.id);
 			});
 		});
@@ -126,6 +127,20 @@ for (const [i, client] of peers.entries()) {
 	stores.push(store);
 }
 
+const createDoc = () =>
+	new Document({
+		id: uuid(),
+		name: uuid(),
+		number: 2341n
+	});
+
+// warmup
+for (let i = 0; i < 10; i++) {
+	await stores[0].docs.put(createDoc(), { unique: true });
+	await delay(1000);
+}
+
+await delay(5000);
 const suite = new B.Suite();
 suite
 	.add("put", {
