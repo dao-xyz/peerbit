@@ -393,6 +393,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private async _close() {
 		this._closeController.abort();
 
+		this.node.services.pubsub.removeEventListener(
+			"subscribe",
+			this._onSubscriptionFn
+		);
+
+		this._onUnsubscriptionFn = this._onUnsubscription.bind(this);
+		this.node.services.pubsub.removeEventListener(
+			"unsubscribe",
+			this._onUnsubscriptionFn
+		);
+
 		for (const [k, v] of this._pendingDeletes) {
 			v.clear();
 			v.promise.resolve(); // TODO or reject?
@@ -410,17 +421,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
 		this._loadedOnce = false;
-
-		this.node.services.pubsub.removeEventListener(
-			"subscribe",
-			this._onSubscriptionFn
-		);
-
-		this._onUnsubscriptionFn = this._onUnsubscription.bind(this);
-		this.node.services.pubsub.removeEventListener(
-			"unsubscribe",
-			this._onUnsubscriptionFn
-		);
 	}
 	async close(from?: Program): Promise<boolean> {
 		const superClosed = await super.close(from);
@@ -798,25 +798,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const cursor = hashToUniformNumber(seed); // bounded between 0 and 1
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
-
-	/* getParticipationSum(age: number) {
-		let sum = 0;
-		const t = +new Date;
-		let currentNode = this.getReplicatorsSorted()?.head;
-		while (currentNode) {
-
-			const value = currentNode.value;
-			if (t - value.timestamp > age || currentNode.value.publicKey.equals(this.node.identity.publicKey)) {
-				sum += value.length;
-			}
-			if (sum >= 1) {
-				return 1;
-			}
-			currentNode = currentNode.next
-		}
-
-		return sum;
-	} */
 
 	private findLeadersFromUniformNumber(
 		cursor: number,
