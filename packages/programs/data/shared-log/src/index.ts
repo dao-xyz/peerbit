@@ -168,16 +168,19 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this.role,
 			this.node.identity.publicKey
 		);
-		if (!this._loadedOnce) {
-			await this.log.load();
-			this._loadedOnce = true;
-		}
-		await this.rpc.subscribe();
-		await this.rpc.send(new ResponseRoleMessage(role));
+		if (!this.closed) {
+			if (!this._loadedOnce) {
+				await this.log.load();
+				this._loadedOnce = true;
+			}
+			await this.rpc.subscribe();
+			await this.rpc.send(new ResponseRoleMessage(role));
 
-		if (onRoleChange) {
-			this.onRoleChange(undefined, this._role, this.node.identity.publicKey);
+			if (onRoleChange) {
+				this.onRoleChange(undefined, this._role, this.node.identity.publicKey);
+			}
 		}
+
 		return changed;
 	}
 
