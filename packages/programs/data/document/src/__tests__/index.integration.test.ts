@@ -401,9 +401,17 @@ describe("index", () => {
 				});
 				for (const [i, peer] of session.peers.entries()) {
 					if (store.closed) {
-						stores.push(await peer.open(store));
+						stores.push(
+							await peer.open(store, {
+								args: { role: new Replicator({ factor: 1 }) }
+							})
+						);
 					} else {
-						stores.push(await TestStore.open(store.address, peer));
+						stores.push(
+							await TestStore.open(store.address, peer, {
+								args: { role: new Replicator({ factor: 1 }) }
+							})
+						);
 					}
 				}
 				for (const [i, store] of stores.entries()) {
