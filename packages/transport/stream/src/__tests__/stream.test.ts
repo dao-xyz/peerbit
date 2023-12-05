@@ -665,7 +665,7 @@ describe("streams", function () {
 			});
 
 			it("messages are only sent once to each peer", async () => {
-				let totalWrites = 1;
+				let totalWrites = 10;
 				expect(streams[0].ack).toHaveLength(0);
 
 				//  push one message to ensure paths are found
@@ -693,7 +693,7 @@ describe("streams", function () {
 					)
 				).toBeTrue();
 
-				// await waitForResolved(() => expect(streams[0].ack).toHaveLength(4)); TODO
+				streams[0].stream.routeSeekInterval = Number.MAX_VALUE; // disable seek so that we can check that the right amount of messages are sent below
 
 				const allWrites = streams.map((x) => collectDataWrites(x.stream));
 				streams[1].received = [];
