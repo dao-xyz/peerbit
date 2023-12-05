@@ -305,11 +305,11 @@ export class Routes {
 						session
 					);
 				}
+				map.delete(target);
+				return;
+			} else {
+				return;
 			}
-			/* 	if (map.size === 1) {
-					this.pendingRoutes.delete(session);
-					return;
-				} */
 		} else {
 			for (const [target, routes] of map) {
 				for (const route of routes) {

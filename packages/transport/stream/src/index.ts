@@ -1419,9 +1419,9 @@ export abstract class DirectStream<
 	): Promise<{ promise: Promise<void> }> {
 		const idString = toBase64(message.id);
 
-		const ppp = this._ackCallbacks.get(idString);
-		if (ppp) {
-			return { promise: ppp.promise };
+		const existing = this._ackCallbacks.get(idString);
+		if (existing) {
+			return { promise: existing.promise };
 		}
 
 		const allAckS: ACK[] = [];
