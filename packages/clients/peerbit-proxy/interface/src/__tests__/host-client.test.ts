@@ -258,51 +258,86 @@ describe("index", () => {
 			await client1.services.pubsub.waitFor(client2.peerId);
 		});
 
-		it("subscribe/unsubscribe", async () => {
-			await client2.services.pubsub.subscribe("topic");
-			let msg1 = false;
-			let msg1b = false;
-			let msg2 = false;
-			let msg2b = false;
+		describe("publish", () => {
+			it("multiple hosts", async () => {
+				await client2.services.pubsub.subscribe("topic");
+				let msg1 = false;
+				let msg1b = false;
+				let msg2 = false;
+				let msg2b = false;
 
-			await client1.services.pubsub.addEventListener("data", () => {
-				msg1 = true;
+				await client1.services.pubsub.addEventListener("data", () => {
+					msg1 = true;
+				});
+
+				await client1b.services.pubsub.addEventListener("data", () => {
+					msg1b = true;
+				});
+
+				await client2.services.pubsub.addEventListener("data", () => {
+					msg2 = true;
+				});
+
+				await client2b.services.pubsub.addEventListener("data", () => {
+					msg2b = true;
+				});
+
+				await client1.services.pubsub.requestSubscribers("topic");
+				await waitForResolved(async () =>
+					expect(
+						(await client1.services.pubsub.getSubscribers("topic"))!.length
+					).toEqual(1)
+				);
+				await client1.services.pubsub.publish(data, { topics: ["topic"] });
+				await waitForResolved(() => expect(msg2).toBeTrue());
+				expect(msg2b).toBeFalse();
+				await client2b.services.pubsub.subscribe("topic");
+				await client1.services.pubsub.publish(data, { topics: ["topic"] });
+				await waitForResolved(() => expect(msg2b).toBeTrue());
+
+				expect(msg1).toBeFalse();
+				expect(msg1b).toBeFalse();
+
+				await client2.services.pubsub.unsubscribe("topic");
+
+				msg2 = false;
+				await client1.services.pubsub.publish(data, { topics: ["topic"] });
+				await delay(3000);
+				expect(msg2).toBeFalse();
 			});
 
-			await client1b.services.pubsub.addEventListener("data", () => {
-				msg1b = true;
+			it("same host", async () => {
+				let msg1data = false;
+				let msg1publish = false;
+				let msg2data = false;
+				let msg2publish = false;
+
+				await client1.services.pubsub.addEventListener("data", () => {
+					msg1data = true;
+				});
+
+				await client1.services.pubsub.addEventListener("publish", () => {
+					msg1publish = true;
+				});
+
+				await client1b.services.pubsub.addEventListener("data", () => {
+					msg2data = true;
+				});
+
+				await client1b.services.pubsub.addEventListener("publish", () => {
+					msg2publish = true;
+				});
+
+				await client1.services.pubsub.subscribe("topic");
+				await client1b.services.pubsub.subscribe("topic");
+				await client1.services.pubsub.publish(data, { topics: ["topic"] });
+
+				expect(msg1data).toBeFalse();
+				expect(msg1publish).toBeTrue();
+				await waitForResolved(() => expect(msg2data).toBeTrue());
+
+				expect(msg2publish).toBeTrue(); // TODO expected?
 			});
-
-			await client2.services.pubsub.addEventListener("data", () => {
-				msg2 = true;
-			});
-
-			await client2b.services.pubsub.addEventListener("data", () => {
-				msg2b = true;
-			});
-
-			await client1.services.pubsub.requestSubscribers("topic");
-			await waitForResolved(async () =>
-				expect(
-					(await client1.services.pubsub.getSubscribers("topic"))!.length
-				).toEqual(1)
-			);
-			await client1.services.pubsub.publish(data, { topics: ["topic"] });
-			await waitForResolved(() => expect(msg2).toBeTrue());
-			expect(msg2b).toBeFalse();
-			await client2b.services.pubsub.subscribe("topic");
-			await client1.services.pubsub.publish(data, { topics: ["topic"] });
-			await waitForResolved(() => expect(msg2b).toBeTrue());
-
-			expect(msg1).toBeFalse();
-			expect(msg1b).toBeFalse();
-
-			await client2.services.pubsub.unsubscribe("topic");
-
-			msg2 = false;
-			await client1.services.pubsub.publish(data, { topics: ["topic"] });
-			await delay(3000);
-			expect(msg2).toBeFalse();
 		});
 
 		it("getSubscribers", async () => {
@@ -338,11 +373,6 @@ describe("index", () => {
 
 			await waitForResolved(() => expect(receivedMessages).toHaveLength(1));
 			expect(receivedMessages[0]).toBeInstanceOf(GetSubscribers);
-		});
-
-		it("emitSelf", () => {
-			expect(host1.services.pubsub.emitSelf).toBeFalse();
-			expect(client1.services.pubsub.emitSelf).toBeFalse();
 		});
 	});
 });

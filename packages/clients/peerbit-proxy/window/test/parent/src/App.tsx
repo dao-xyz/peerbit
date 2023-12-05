@@ -1,16 +1,8 @@
 import { createHost } from "@peerbit/proxy-window";
 import { Peerbit } from "peerbit";
-import { DirectSub } from "@peerbit/pubsub";
 import { useEffect, useState } from "react";
 
-const client = createHost(
-	await Peerbit.create({
-		libp2p: {
-			services: { pubsub: (c) => new DirectSub(c, { emitSelf: true }) }
-		}
-	}),
-	"*"
-);
+const client = createHost(await Peerbit.create(), "*");
 
 export const App = () => {
 	const queryParameters = new URLSearchParams(window.location.search);
