@@ -1320,15 +1320,16 @@ describe("join/leave", () => {
 			});
 
 			await waitForResolved(() =>
-				expect(streams[0].stream.peers.size).toEqual(2)
+				expect(
+					streams[0].stream.peers.has(streams[3].stream.publicKeyHash)
+				).toBeTrue()
 			);
 
-			expect(
-				streams[0].stream.peers.has(streams[3].stream.publicKeyHash)
-			).toBeTrue();
-			expect(
-				streams[3].stream.peers.has(streams[0].stream.publicKeyHash)
-			).toBeTrue();
+			await waitForResolved(() =>
+				expect(
+					streams[3].stream.peers.has(streams[0].stream.publicKeyHash)
+				).toBeTrue()
+			);
 
 			expect(streams[0].stream.peers.size).toEqual(2);
 			expect(streams[1].stream.peers.size).toEqual(2);
@@ -1472,7 +1473,7 @@ describe("join/leave", () => {
 				streams[0].stream.components.connectionManager.openConnection.bind(
 					streams[0].stream.components.connectionManager
 				);
-	
+		
 			let directlyDialded = false;
 			const filteredDial = (address: PeerId | Multiaddr | Multiaddr[]) => {
 				if (
@@ -1481,7 +1482,7 @@ describe("join/leave", () => {
 				) {
 					throw new Error("Mock fail"); // don't allow connect directly
 				}
-	
+		
 				let addresses: Multiaddr[] = Array.isArray(address)
 					? address
 					: [address as Multiaddr];
@@ -1498,11 +1499,11 @@ describe("join/leave", () => {
 						? multiaddr(x.toString().replace("/webrtc/", "/"))
 						: x
 				); // TODO use webrtc in node
-	
+		
 				directlyDialded = true;
 				return dialFn(addresses);
 			};
-	
+		
 			streams[0].stream.components.connectionManager.openConnection =
 				filteredDial;
 			expect(streams[0].stream.peers.size).toEqual(1);
