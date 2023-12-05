@@ -1544,7 +1544,7 @@ export abstract class DirectStream<
 							fastestNodesReached.set(targetHash, arr);
 						}
 						arr.push(ack);
-						uniqueAcks.add(targetHash + ack.seenCounter);
+						uniqueAcks.add(toBase64(ack.id) + ack.seenCounter);
 					}
 				}
 
