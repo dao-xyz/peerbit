@@ -168,17 +168,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this.role,
 			this.node.identity.publicKey
 		);
-		if (!this.closed) {
-			if (!this._loadedOnce) {
-				await this.log.load();
-				this._loadedOnce = true;
-			}
-			await this.rpc.subscribe();
-			await this.rpc.send(new ResponseRoleMessage(role));
 
-			if (onRoleChange) {
-				this.onRoleChange(undefined, this._role, this.node.identity.publicKey);
-			}
+		if (!this._loadedOnce) {
+			await this.log.load();
+			this._loadedOnce = true;
+		}
+		await this.rpc.subscribe();
+		await this.rpc.send(new ResponseRoleMessage(role));
+
+		if (onRoleChange) {
+			this.onRoleChange(undefined, this._role, this.node.identity.publicKey);
 		}
 
 		return changed;
@@ -1357,7 +1356,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	async rebalanceParticipation(onRoleChange = true) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
-		if (this.fixedParticipationRate) {
+		if (this.fixedParticipationRate || this.closed) {
 			return false;
 		}
 
