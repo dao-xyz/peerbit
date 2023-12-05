@@ -695,9 +695,19 @@ describe("streams", function () {
 
 				streams[0].stream.routeSeekInterval = Number.MAX_VALUE; // disable seek so that we can check that the right amount of messages are sent below
 
-				const allWrites = streams.map((x) => collectDataWrites(x.stream));
 				streams[1].received = [];
 				streams[2].received = [];
+				const allWrites = streams.map((x) => collectDataWrites(x.stream));
+
+				await waitForResolved(() =>
+					expect(streams[0].stream.routes.countAll()).toEqual(4)
+				);
+				await waitForResolved(() =>
+					expect(streams[1].stream.routes.countAll()).toEqual(3)
+				);
+				await waitForResolved(() =>
+					expect(streams[2].stream.routes.countAll()).toEqual(3)
+				);
 
 				// expect the data to be sent smartly
 				for (let i = 0; i < totalWrites; i++) {
@@ -823,6 +833,23 @@ describe("streams", function () {
 						streams[4].stream.publicKeyHash
 					)?.list
 				).toHaveLength(2);
+
+				await waitForResolved(() =>
+					expect(streams[0].stream.routes.countAll()).toEqual(6)
+				);
+				await waitForResolved(() =>
+					expect(streams[1].stream.routes.countAll()).toEqual(5)
+				);
+				await waitForResolved(() =>
+					expect(streams[2].stream.routes.countAll()).toEqual(5)
+				);
+				await waitForResolved(() =>
+					expect(streams[3].stream.routes.countAll()).toEqual(4)
+				);
+
+				await waitForResolved(() =>
+					expect(streams[4].stream.routes.countAll()).toEqual(4)
+				);
 
 				const allWrites = streams.map((x) => collectDataWrites(x.stream));
 
