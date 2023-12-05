@@ -35,7 +35,8 @@ describe("Create", function () {
 
 		it("block storage exist at path", async () => {
 			const location = (
-				client.libp2p.services.blocks["_localStore"] as AnyBlockStore
+				client.libp2p.services.blocks["remoteBlocks"]
+					.localStore as AnyBlockStore
 			)["_store"].store["location"];
 			expect(location).toEndWith(
 				path.join(client.directory!, "blocks").toString()

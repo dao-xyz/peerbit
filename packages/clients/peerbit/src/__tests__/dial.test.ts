@@ -34,21 +34,21 @@ describe(`dial`, function () {
 		expect(data && new Uint8Array(data)).toEqual(new Uint8Array([1]));
 	});
 
-	it("autodials by default", async () => {
+	it("dialer settings", async () => {
 		expect(
 			clients[0].services.pubsub.connectionManagerOptions.dialer
 		).toBeDefined();
 		expect(
 			clients[1].services.blocks.connectionManagerOptions.dialer
-		).toBeDefined();
+		).toBeUndefined();
 	});
 
-	it("autoprunes by default", async () => {
+	it("prune settings", async () => {
 		expect(
 			clients[0].services.pubsub.connectionManagerOptions.pruner
 		).toBeDefined();
 		expect(
 			clients[1].services.blocks.connectionManagerOptions.pruner
-		).toBeDefined();
+		).toBeUndefined();
 	});
 });
