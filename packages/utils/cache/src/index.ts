@@ -61,29 +61,6 @@ export class Cache<T = undefined> {
 			}
 		}
 	}
-	/* 
-
-		trim(time = +new Date()) {
-		const peek = this.list.head;
-		let outOfDate =
-			peek &&
-			this.ttl !== undefined &&
-			this._map.get(peek.value)!.time < time - this.ttl;
-		while (outOfDate || this.currentSize > this.max) {
-			const key = this.list.shift();
-			if (key !== undefined) {
-				const cacheValue = this.del(key);
-				if (cacheValue) {
-					outOfDate = this.ttl !== undefined && cacheValue.time < time - this.ttl;
-					this._map.delete(key);
-				}
-
-			} else {
-				break;
-			}
-		}
-	}
-	*/
 
 	del(key: string) {
 		const cacheValue = this._map.get(key)!;
