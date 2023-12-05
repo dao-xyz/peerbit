@@ -445,9 +445,9 @@ describe("streams", function () {
 				});
 
 				// since redundancy is set to 2 by default we wil receive 2 acks
-				await waitForResolved(() => expect(streams[0].ack).toHaveLength(2));
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(3));
 				await delay(2000);
-				await waitForResolved(() => expect(streams[0].ack).toHaveLength(2));
+				await waitForResolved(() => expect(streams[0].ack).toHaveLength(3));
 
 				streams[1].messages = [];
 				streams[3].received = [];
@@ -459,7 +459,10 @@ describe("streams", function () {
 							streams[3].stream.publicKeyHash
 						)
 						?.list?.map((x) => x.hash)
-				).toEqual([streams[2].stream.publicKeyHash]); // "2" is fastest route
+				).toEqual([
+					streams[2].stream.publicKeyHash,
+					streams[1].stream.publicKeyHash
+				]); // "2" is fastest route
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[3].stream.components.peerId]
@@ -668,7 +671,6 @@ describe("streams", function () {
 				let totalWrites = 10;
 				expect(streams[0].ack).toHaveLength(0);
 
-				await delay(3000);
 				//  push one message to ensure paths are found
 				await streams[0].stream.publish(data, {
 					to: [
@@ -694,20 +696,20 @@ describe("streams", function () {
 					)
 				).toBeTrue();
 
-				streams[0].stream.routeSeekInterval = Number.MAX_VALUE; // disable seek so that we can check that the right amount of messages are sent below
-				streams[1].received = [];
-				streams[2].received = [];
-				const allWrites = streams.map((x) => collectDataWrites(x.stream));
-
 				await waitForResolved(() =>
 					expect(streams[0].stream.routes.countAll()).toEqual(4)
 				);
 				await waitForResolved(() =>
-					expect(streams[1].stream.routes.countAll()).toEqual(3)
+					expect(streams[1].stream.routes.countAll()).toEqual(4)
 				);
 				await waitForResolved(() =>
-					expect(streams[2].stream.routes.countAll()).toEqual(3)
+					expect(streams[2].stream.routes.countAll()).toEqual(4)
 				);
+
+				streams[0].stream.routeSeekInterval = Number.MAX_VALUE; // disable seek so that we can check that the right amount of messages are sent below
+				streams[1].received = [];
+				streams[2].received = [];
+				const allWrites = streams.map((x) => collectDataWrites(x.stream));
 
 				// expect the data to be sent smartly
 				for (let i = 0; i < totalWrites; i++) {
@@ -737,22 +739,22 @@ describe("streams", function () {
 
 		describe("1->2->2", () => {
 			/** 
-		┌─────┐ 
-		│0    │ 
-		└┬───┬┘ 
-		┌▽─┐┌▽─┐
-		│2 ││1 │
-		└┬┬┘└┬┬┘
-		 ││  ││ 
-		 ││  ││ 
-		 ││  └│┐
-		 └│──┐││
-		 ┌│──│┘│
-		 ││  │┌┘
-		┌▽▽┐┌▽▽┐
-		│3 ││4 │ // 3 and 4 are connected also
-		└──┘└──┘
-		*/
+			┌─────┐ 
+			│0    │ 
+			└┬───┬┘ 
+			┌▽─┐┌▽─┐
+			│2 ││1 │
+			└┬┬┘└┬┬┘
+			││  ││ 
+			││  ││ 
+			││  └│┐
+			└│──┐││
+			┌│──│┘│
+			││  │┌┘
+			┌▽▽┐┌▽▽┐
+			│3 ││4 │ // 3 and 4 are connected also
+			└──┘└──┘
+			*/
 
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
@@ -844,11 +846,11 @@ describe("streams", function () {
 					expect(streams[2].stream.routes.countAll()).toEqual(5)
 				);
 				await waitForResolved(() =>
-					expect(streams[3].stream.routes.countAll()).toEqual(4)
+					expect(streams[3].stream.routes.countAll()).toEqual(5)
 				);
 
 				await waitForResolved(() =>
-					expect(streams[4].stream.routes.countAll()).toEqual(4)
+					expect(streams[4].stream.routes.countAll()).toEqual(5)
 				);
 
 				const allWrites = streams.map((x) => collectDataWrites(x.stream));

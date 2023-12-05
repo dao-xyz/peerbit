@@ -1118,9 +1118,9 @@ export abstract class DirectStream<
 			ackCache.push(async (ack) => {
 				ack.seenCounter += 1;
 				await ack.sign(this.sign);
-				const trace = this.traces.get(messageId);
-				const stream = trace ? this.peers.get(trace) : undefined;
-				stream && this.publishMessage(this.publicKey, ack, [stream]);
+				/* 	const trace = this.traces.get(messageId);
+					const stream = trace ? this.peers.get(trace) : undefined; */
+				peerStream && this.publishMessage(this.publicKey, ack, [peerStream]);
 			});
 			this.ackCache.add(messageId, ackCache);
 			return true;
