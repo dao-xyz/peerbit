@@ -77,12 +77,6 @@ export class Routes {
 		fromMap.set(target, prev);
 	}
 
-	/* 
-		add(neighbour: string, target: string, quality: number) {
-			this.routes.set(target, { neighbour, distance: quality })
-		}
-	 */
-
 	removeTarget(target: string) {
 		this.routes.delete(target);
 		for (const [fromMapKey, fromMap] of this.routes) {
@@ -153,9 +147,9 @@ export class Routes {
 		return dependent;
 	}
 
-	count() {
+	count(from = this.me) {
 		const set: Set<string> = new Set();
-		const map = this.routes.get(this.me);
+		const map = this.routes.get(from);
 		if (map) {
 			for (const [k, v] of map) {
 				set.add(k);
@@ -165,6 +159,16 @@ export class Routes {
 			}
 		}
 		return set.size;
+	}
+
+	countAll() {
+		let size = 0;
+		for (const [from, map] of this.routes) {
+			for (const [k, v] of map) {
+				size += v.list.length;
+			}
+		}
+		return size;
 	}
 
 	// for all tos if
