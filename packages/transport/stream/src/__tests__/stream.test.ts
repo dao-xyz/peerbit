@@ -668,6 +668,7 @@ describe("streams", function () {
 				let totalWrites = 10;
 				expect(streams[0].ack).toHaveLength(0);
 
+				await delay(3000);
 				//  push one message to ensure paths are found
 				await streams[0].stream.publish(data, {
 					to: [
@@ -694,7 +695,6 @@ describe("streams", function () {
 				).toBeTrue();
 
 				streams[0].stream.routeSeekInterval = Number.MAX_VALUE; // disable seek so that we can check that the right amount of messages are sent below
-
 				streams[1].received = [];
 				streams[2].received = [];
 				const allWrites = streams.map((x) => collectDataWrites(x.stream));
