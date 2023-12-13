@@ -834,7 +834,7 @@ describe("replication degree", () => {
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 		await expect(() =>
-			Promise.all(db1.log.prune([e1.entry], { timeout: 3000 }))
+			db1.log.prune([e1.entry], { timeout: 3000 })
 		).rejects.toThrowError("Failed to delete, is leader");
 		expect(db1.log.log.length).toEqual(1); // No deletions */
 	});
@@ -932,7 +932,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: new Observer()
+				role: new Replicator({ factor: 0 })
 			}
 		});
 
@@ -960,8 +960,8 @@ describe("replication degree", () => {
 			return onMessageFn(msg, cxt);
 		};
 		const { entry } = await db1.add("hello");
-		const expectPromise = expect(
-			() => db1.log.prune([entry], { timeout: 3000 })[0]
+		const expectPromise = expect(() =>
+			db1.log.prune([entry], { timeout: 3000 })
 		).rejects.toThrowError("Timeout");
 		await waitForResolved(() =>
 			expect(db2.log["_pendingIHave"].size).toEqual(1)

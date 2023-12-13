@@ -160,8 +160,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 	get role(): Observer | Replicator {
 		return this._role;
 	}
-
 	async updateRole(role: Observer | Replicator, onRoleChange = true) {
+		this.fixedParticipationRate = true;
+		return this._updateRole(role, onRoleChange);
+	}
+
+	private async _updateRole(role: Observer | Replicator, onRoleChange = true) {
 		this._role = role;
 		this._lastSubscriptionMessageId += 1;
 		const { changed } = await this._modifyReplicators(
@@ -221,9 +225,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this._gidParentCache
 			),
 			{
-				to: leaders,
-				strict: true,
-				mode: isLeader ? new SilentDelivery(1) : new AcknowledgeDelivery(1)
+				mode: isLeader
+					? new SilentDelivery({ redundancy: 1, to: leaders })
+					: new AcknowledgeDelivery({ redundancy: 1, to: leaders })
 			}
 		);
 
@@ -291,8 +295,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			local: localBlocks,
 			publish: (message, options) =>
 				this.rpc.send(new BlocksMessage(message), {
-					to: options?.to,
-					strict: options?.to && true
+					to: options?.to
 				}),
 			waitFor: this.rpc.waitFor.bind(this.rpc)
 		});
@@ -374,7 +377,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			topic: this.topic
 		});
 
-		await this.updateRole(role);
+		await this._updateRole(role);
 		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
@@ -544,7 +547,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					if (toMerge.length > 0) {
 						await this.log.join(toMerge);
 						toDelete &&
-							Promise.all(this.prune(toDelete)).catch((e) => {
+							this.prune(toDelete).catch((e) => {
 								logger.error(e.toString());
 							});
 					}
@@ -563,11 +566,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 								);
 
 								if (!isLeader) {
-									Promise.all(this.prune(entries.map((x) => x.entry))).catch(
-										(e) => {
-											logger.error(e.toString());
-										}
-									);
+									this.prune(entries.map((x) => x.entry)).catch((e) => {
+										logger.error(e.toString());
+									});
 								}
 							}
 						}
@@ -1093,9 +1094,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					}
 					this.rpc
 						.send(new ResponseRoleMessage(this.role), {
-							to: [publicKey],
-							strict: true,
-							mode: new AcknowledgeDelivery(1)
+							mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] })
 						})
 						.catch((e) => logger.error(e.toString()));
 				}
@@ -1113,15 +1112,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 	}
 
-	prune(
+	async prune(
 		entries: Entry<any>[],
 		options?: { timeout?: number; unchecked?: boolean }
-	) {
+	): Promise<any> {
 		if (options?.unchecked) {
-			return entries.map((x) =>
-				this.log.remove(x, {
-					recursively: true
-				})
+			return Promise.all(
+				entries.map((x) =>
+					this.log.remove(x, {
+						recursively: true
+					})
+				)
 			);
 		}
 		// ask network if they have they entry,
@@ -1208,12 +1209,29 @@ export class SharedLog<T = Uint8Array> extends Program<
 			});
 			promises.push(deferredPromise.promise);
 		}
-		if (filteredEntries.length > 0) {
-			this.rpc.send(
-				new RequestIHave({ hashes: filteredEntries.map((x) => x.hash) })
-			);
+		if (filteredEntries.length == 0) {
+			return;
 		}
-		return promises;
+
+		this.rpc.send(
+			new RequestIHave({ hashes: filteredEntries.map((x) => x.hash) })
+		);
+
+		const onNewPeer = async (e: CustomEvent<UpdateRoleEvent>) => {
+			if (e.detail.role instanceof Replicator) {
+				await this.rpc.send(
+					new RequestIHave({ hashes: filteredEntries.map((x) => x.hash) }),
+					{
+						to: [e.detail.publicKey.hashcode()]
+					}
+				);
+			}
+		};
+		// check joining peers
+		this.events.addEventListener("role", onNewPeer);
+		return Promise.all(promises).finally(() =>
+			this.events.removeEventListener("role", onNewPeer)
+		);
 	}
 
 	async distribute() {
@@ -1301,15 +1319,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 			);
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			await this.rpc.send(message, {
-				to: [target],
-				strict: true
+				to: [target]
 			});
 		}
 
 		this._lastSubscriptionMessageId += 1;
 
 		if (allEntriesToDelete.length > 0) {
-			Promise.all(this.prune(allEntriesToDelete)).catch((e) => {
+			this.prune(allEntriesToDelete).catch((e) => {
 				logger.error(e.toString());
 			});
 		}
@@ -1374,7 +1391,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				Math.abs(this._role.factor - wantedFraction) / this._role.factor;
 
 			if (relativeDifference > 0.0001) {
-				await this.updateRole(
+				await this._updateRole(
 					new Replicator({ factor: wantedFraction }),
 					onRoleChange
 				);

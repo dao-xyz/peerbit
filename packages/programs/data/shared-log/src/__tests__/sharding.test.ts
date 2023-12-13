@@ -4,7 +4,7 @@ import { EventStore } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../replication.js";
-import { Replicator } from "../role";
+import { Observer, Replicator } from "../role";
 import yallist from "yallist";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { Entry } from "@peerbit/log";
@@ -226,7 +226,7 @@ describe(`sharding`, () => {
 	});
 
 	it("2 peers write while joining", async () => {
-		const store = new /*  */ EventStore<Uint8Array>();
+		const store = new EventStore<Uint8Array>();
 
 		db1 = await session.peers[0].open(store, {
 			args: {
@@ -420,6 +420,82 @@ describe(`sharding`, () => {
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 		await db3.close();
 		await checkBounded(entryCount, 1, 1, db1, db2);
+	});
+
+	it("drops when no longer replicating as observer", async () => {
+		let COUNT = 10;
+		db1 = await session.peers[0].open(new EventStore<Uint8Array>(), {
+			args: {
+				role: new Replicator({ factor: 1 })
+			}
+		});
+
+		db2 = await EventStore.open<EventStore<Uint8Array>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: new Replicator({ factor: 1 })
+				}
+			}
+		);
+
+		for (let i = 0; i < COUNT; i++) {
+			await db1.add(new Uint8Array([i]), { meta: { next: [] } });
+		}
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(COUNT));
+		db3 = await EventStore.open<EventStore<Uint8Array>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: {
+					role: new Replicator({ factor: 1 })
+				}
+			}
+		);
+
+		await db2.log.updateRole(new Observer());
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(COUNT));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
+	});
+
+	it("drops when no longer replicating with factor 0", async () => {
+		let COUNT = 10;
+		db1 = await session.peers[0].open(new EventStore<Uint8Array>(), {
+			args: {
+				role: new Replicator({ factor: 1 })
+			}
+		});
+
+		db2 = await EventStore.open<EventStore<Uint8Array>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: new Replicator({ factor: 1 })
+				}
+			}
+		);
+
+		for (let i = 0; i < COUNT; i++) {
+			await db1.add(new Uint8Array([i]), { meta: { next: [] } });
+		}
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(COUNT));
+		db3 = await EventStore.open<EventStore<Uint8Array>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: {
+					role: new Replicator({ factor: 1 })
+				}
+			}
+		);
+
+		await db2.log.updateRole(new Replicator({ factor: 0 }));
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(COUNT));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
 	});
 
 	describe("union", () => {
