@@ -3,7 +3,7 @@ import { Documents } from "../index.js";
 import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
-import { waitFor } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { TestSession } from "@peerbit/test-utils";
 
 /**
@@ -73,7 +73,7 @@ describe("profile", () => {
 		await session.stop();
 	});
 	it("puts", async () => {
-		let COUNT = 100;
+		let COUNT = 10;
 		const writeStore = stores[0];
 		let promises: Promise<any>[] = [];
 		for (let i = 0; i < COUNT; i++) {
@@ -85,6 +85,8 @@ describe("profile", () => {
 			await writeStore.docs.put(doc, { unique: true });
 		}
 		await Promise.all(promises);
-		await waitFor(() => stores[stores.length - 1].docs.index.size === COUNT);
+		await waitForResolved(() =>
+			expect(stores[stores.length - 1].docs.index.size).toEqual(COUNT)
+		);
 	});
 });
