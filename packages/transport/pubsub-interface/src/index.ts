@@ -109,13 +109,11 @@ export type PublishOptions = (
 	| {
 			topics?: string[];
 			to?: (string | PublicSignKey | Libp2pPeerId)[];
-			strict?: false;
 			mode?: DeliveryMode | undefined;
 	  }
 	| {
 			topics: string[];
 			to: (string | PublicSignKey | Libp2pPeerId)[];
-			strict: true;
 			mode?: DeliveryMode | undefined;
 	  }
 ) & { client?: string };

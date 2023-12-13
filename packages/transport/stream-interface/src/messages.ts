@@ -14,15 +14,24 @@ import {
 	SignatureWithKey,
 	verify,
 	randomBytes,
-	sha256Base64
+	sha256Base64,
+	getPublicKeyFromPeerId
 } from "@peerbit/crypto";
+
+import type { PeerId } from "@libp2p/interface/peer-id";
+
+export const ID_LENGTH = 32;
+
+const WEEK_MS = 7 * 24 * 60 * 60 + 1000;
+
+const SIGNATURES_SIZE_ENCODING = "u8"; // with 7 steps you know everyone in the world?, so u8 *should* suffice
 
 /**
  * The default msgID implementation
  * Child class can override this.
  */
 export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
-	// first bytes is discriminator,
+	// first bytes fis discriminator,
 	// next 32 bytes should be an id
 	//return  Buffer.from(msg.slice(0, 33)).toString('base64');
 
@@ -50,11 +59,107 @@ if ((globalThis as any).Buffer) {
 	};
 }
 
-export const ID_LENGTH = 32;
+const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
+	const toHashes: string[] = [];
+	let i = 0;
 
-const WEEK_MS = 7 * 24 * 60 * 60 + 1000;
+	for (const to of tos) {
+		const hash =
+			to instanceof PublicSignKey
+				? to.hashcode()
+				: typeof to === "string"
+				? to
+				: getPublicKeyFromPeerId(to).hashcode();
 
-const SIGNATURES_SIZE_ENCODING = "u8"; // with 7 steps you know everyone in the world?, so u8 *should* suffice
+		toHashes[i++] = hash;
+	}
+	return toHashes;
+};
+
+export abstract class DeliveryMode {}
+
+/**
+ * when you just want to deliver at paths, but does not expect acknowledgement
+ */
+@variant(0)
+export class SilentDelivery extends DeliveryMode {
+	@field({ type: vec("string") })
+	to: string[];
+
+	@field({ type: "u8" })
+	redundancy: number;
+
+	constructor(properties: {
+		to: (string | PublicSignKey | PeerId)[] | Set<string>;
+		redundancy: number;
+	}) {
+		super();
+		this.to = coerceTo(properties.to);
+		this.redundancy = properties.redundancy;
+	}
+}
+
+/**
+ * Deliver and expect acknowledgement
+ */
+@variant(1)
+export class AcknowledgeDelivery extends DeliveryMode {
+	@field({ type: vec("string") })
+	to: string[];
+
+	@field({ type: "u8" })
+	redundancy: number;
+
+	constructor(properties: {
+		to: (string | PublicSignKey | PeerId)[] | Set<string>;
+		redundancy: number;
+	}) {
+		super();
+		this.to = coerceTo(properties.to);
+		this.redundancy = properties.redundancy;
+	}
+}
+
+/**
+ * Deliver but with greedy fanout so that we eventually reach our target
+ * Expect acknowledgement
+ */
+@variant(2)
+export class SeekDelivery extends DeliveryMode {
+	@field({ type: option(vec("string")) })
+	to?: string[];
+
+	@field({ type: "u8" })
+	redundancy: number;
+
+	constructor(properties: {
+		to?: (string | PublicSignKey | PeerId)[] | Set<string>;
+		redundancy: number;
+	}) {
+		super();
+		this.to = properties.to ? coerceTo(properties.to) : undefined;
+		this.redundancy = properties.redundancy;
+	}
+}
+
+@variant(3)
+export class TracedDelivery extends DeliveryMode {
+	@field({ type: vec("string") })
+	trace: string[];
+
+	constructor(trace: string[]) {
+		super();
+		this.trace = trace;
+	}
+}
+
+@variant(4)
+export class AnyWhere extends DeliveryMode {
+	constructor() {
+		super();
+	}
+}
+
 @variant(0)
 export class Signatures {
 	@field({ type: vec(SignatureWithKey, SIGNATURES_SIZE_ENCODING) })
@@ -90,7 +195,7 @@ export class MultiAddrinfo extends PeerInfo {
 }
 
 @variant(0)
-export class MessageHeader {
+export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	@field({ type: fixedArray("u8", ID_LENGTH) })
 	private _id: Uint8Array;
 
@@ -103,30 +208,26 @@ export class MessageHeader {
 	@field({ type: option(PeerInfo) })
 	private _origin?: MultiAddrinfo;
 
-	/**
-	 * This is field is not signed since a relay might want to mutate it
-	 * The downside is that a relay could theoretically leave to censoringproblems (A) and DDOS opportunities (B)
-	 * (A) - This problem is mitigated by using the redundancy parameter in the delivery method > 1
-	 * (B) - This problem can be mitigate by restricting the max size of 'to' and build some kind of reputation layer for relays
-	 */
-	@field({ type: vec("string") })
-	to: string[];
+	// Not signed, since we might want to modify it during transit
+	@field({ type: option(DeliveryMode) })
+	mode: T;
 
+	// Not signed, since we might want to modify it during transit
 	@field({ type: option(Signatures) })
-	public signatures: Signatures | undefined;
+	signatures: Signatures | undefined;
 
-	constructor(properties?: {
-		to?: string[];
+	constructor(properties: {
 		origin?: MultiAddrinfo;
 		expires?: bigint;
 		id?: Uint8Array;
+		mode: T;
 	}) {
 		this._id = properties?.id || randomBytes(ID_LENGTH);
 		this._expires = properties?.expires || BigInt(+new Date() + WEEK_MS);
 		this._timestamp = BigInt(+new Date());
 		this.signatures = new Signatures();
-		this.to = properties?.to || [];
 		this._origin = properties?.origin;
+		this.mode = properties.mode;
 	}
 
 	get id() {
@@ -162,15 +263,20 @@ const sign = async <T extends WithHeader>(
 	obj: T,
 	signer: (bytes: Uint8Array) => Promise<SignatureWithKey>
 ): Promise<T> => {
-	const to = obj.header.to;
-	obj.header.to = [];
+	const mode = obj.header.mode;
+	obj.header.mode = undefined as any;
 	const signatures = obj.header.signatures;
 	obj.header.signatures = undefined;
-	const signature = await signer(serialize(obj));
+	const bytes = serialize(obj);
+	// reassign properties if some other process expects them
+	obj.header.signatures = signatures;
+	obj.header.mode = mode;
+
+	const signature = await signer(bytes);
 	obj.header.signatures = new Signatures(
 		signatures ? [...signatures.signatures, signature] : [signature]
 	);
-	obj.header.to = to;
+	obj.header.mode = mode;
 	return obj;
 };
 
@@ -182,11 +288,11 @@ const verifyMultiSig = async (
 	if (!signatures || signatures.signatures.length === 0) {
 		return !expectSignatures;
 	}
-	const to = message.header.to;
-	message.header.to = [];
+	const to = message.header.mode;
+	message.header.mode = undefined as any;
 	message.header.signatures = undefined;
 	const bytes = serialize(message);
-	message.header.to = to;
+	message.header.mode = to;
 	message.header.signatures = signatures;
 
 	for (const signature of signatures.signatures) {
@@ -197,7 +303,7 @@ const verifyMultiSig = async (
 	return true;
 };
 
-export abstract class Message {
+export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 	static from(bytes: Uint8ArrayList) {
 		if (bytes.get(0) === DATA_VARIANT) {
 			// Data
@@ -212,7 +318,7 @@ export abstract class Message {
 		throw new Error("Unsupported");
 	}
 
-	abstract get header(): MessageHeader;
+	abstract get header(): MessageHeader<T>;
 
 	async sign(
 		signer: (bytes: Uint8Array) => Promise<SignatureWithKey>
@@ -232,92 +338,39 @@ export abstract class Message {
 	}
 }
 
-export abstract class DeliveryMode {
-	abstract get redundancy(): number;
-}
-
-/**
- * when you just want to deliver at paths, but does not expect acknowledgement
- */
-@variant(0)
-export class SilentDelivery extends DeliveryMode {
-	@field({ type: "u8" })
-	redundancy: number;
-
-	constructor(redundancy: number) {
-		super();
-		this.redundancy = redundancy;
-	}
-}
-
-/**
- * Deliver and expect acknowledgement
- */
-@variant(1)
-export class AcknowledgeDelivery extends DeliveryMode {
-	@field({ type: "u8" })
-	redundancy: number;
-
-	constructor(redundancy: number) {
-		super();
-		this.redundancy = redundancy;
-	}
-}
-
-/**
- * Deliver but with greedy fanout so that we eventually reach our target
- * Expect acknowledgement
- */
-@variant(2)
-export class SeekDelivery extends DeliveryMode {
-	@field({ type: "u8" })
-	redundancy: number;
-
-	constructor(redundancy: number) {
-		super();
-		this.redundancy = redundancy;
-	}
-}
-
 // I pack data with this message
 const DATA_VARIANT = 0;
 
 @variant(DATA_VARIANT)
-export class DataMessage extends Message {
+export class DataMessage<
+	T extends SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere =
+		| SilentDelivery
+		| SeekDelivery
+		| AcknowledgeDelivery
+		| AnyWhere
+> extends Message<T> {
 	@field({ type: MessageHeader })
-	private _header: MessageHeader;
-
-	@field({ type: DeliveryMode })
-	private _deliveryMode: DeliveryMode;
+	private _header: MessageHeader<T>;
 
 	@field({ type: option(Uint8Array) })
 	private _data?: Uint8Array;
 
-	constructor(properties: {
-		header?: MessageHeader;
-		data?: Uint8Array;
-		deliveryMode: DeliveryMode;
-	}) {
+	constructor(properties: { header: MessageHeader<T>; data?: Uint8Array }) {
 		super();
 		this._data = properties.data;
-		this._header = properties.header || new MessageHeader();
-		this._deliveryMode = properties.deliveryMode;
+		this._header = properties.header;
 	}
 
 	get id(): Uint8Array {
 		return this._header.id;
 	}
 
-	get header(): MessageHeader {
+	get header(): MessageHeader<T> {
 		return this._header;
 	}
 
 	get data(): Uint8Array | undefined {
 		return this._data;
-	}
-
-	get deliveryMode(): DeliveryMode {
-		return this._deliveryMode;
 	}
 
 	_serialized: Uint8Array | undefined;
@@ -349,7 +402,7 @@ const ACKNOWLEDGE_VARIANT = 1;
 @variant(ACKNOWLEDGE_VARIANT)
 export class ACK extends Message {
 	@field({ type: MessageHeader })
-	header: MessageHeader;
+	header: MessageHeader<TracedDelivery>;
 
 	@field({ type: fixedArray("u8", 32) })
 	messageIdToAcknowledge: Uint8Array;
@@ -360,33 +413,16 @@ export class ACK extends Message {
 	constructor(properties: {
 		messageIdToAcknowledge: Uint8Array;
 		seenCounter: number;
-		header: MessageHeader;
+		header: MessageHeader<TracedDelivery>;
 	}) {
 		super();
 		this.header = properties.header;
 		this.messageIdToAcknowledge = properties.messageIdToAcknowledge;
 		this.seenCounter = Math.min(255, properties.seenCounter);
 	}
+
 	get id() {
 		return this.header.id;
-	}
-
-	async sign(
-		signer: (bytes: Uint8Array) => Promise<SignatureWithKey>
-	): Promise<this> {
-		const seenCounter = this.seenCounter;
-		this.seenCounter = 0;
-		await sign(this, signer);
-		this.seenCounter = seenCounter;
-		return this;
-	}
-
-	async verify(expectSignatures: boolean): Promise<boolean> {
-		const seenCounter = this.seenCounter;
-		this.seenCounter = 0;
-		const verified = await super.verify(expectSignatures);
-		this.seenCounter = seenCounter;
-		return verified;
 	}
 
 	bytes() {
@@ -445,12 +481,15 @@ const GOODBYE_VARIANT = 3;
 @variant(GOODBYE_VARIANT)
 export class Goodbye extends Message {
 	@field({ type: MessageHeader })
-	header: MessageHeader;
+	header: MessageHeader<SilentDelivery>;
 
 	@field({ type: vec("string") })
 	leaving: string[];
 
-	constructor(properties: { leaving: string[]; header: MessageHeader }) {
+	constructor(properties: {
+		leaving: string[];
+		header: MessageHeader<SilentDelivery>;
+	}) {
 		super();
 		this.header = properties.header;
 		this.leaving = properties.leaving;

@@ -1,5 +1,6 @@
 import { PublicSignKey } from "@peerbit/crypto";
 
+export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER;
 export class Routes {
 	// END receiver -> Neighbour
 
@@ -117,7 +118,10 @@ export class Routes {
 	}
 
 	isReachable(from: string, target: string) {
-		return this.routes.get(from)?.has(target) === true;
+		return (
+			(this.routes.get(from)?.get(target)?.list[0]?.distance ??
+				Number.MAX_SAFE_INTEGER) < MAX_ROUTE_DISTANCE
+		);
 	}
 
 	hasShortestPath(target: string) {
@@ -209,15 +213,15 @@ export class Routes {
 						if (distance <= 0) {
 							foundClosest = true;
 						}
-						const fanout = (fanoutMap || (fanoutMap = new Map())).get(
-							neighbour.list[i].hash
-						);
+						const fanout: { to: string; timestamp: number }[] = (
+							fanoutMap || (fanoutMap = new Map())
+						).get(neighbour.list[i].hash);
 						if (!fanout) {
 							fanoutMap.set(neighbour.list[i].hash, [
 								{ to, timestamp: neighbour.session }
 							]);
 						} else {
-							fanout.push(to);
+							fanout.push({ to, timestamp: neighbour.session });
 						}
 					}
 					if (!foundClosest && from.hashcode() === this.me) {
@@ -262,7 +266,7 @@ export class Routes {
 		route: {
 			from: string;
 			neighbour: string;
-			target: PublicSignKey;
+			target: string;
 			distance: number;
 		}
 	) {
@@ -271,17 +275,18 @@ export class Routes {
 			map = new Map();
 			this.pendingRoutes.set(session, map);
 		}
-		let arr = map.get(route.target.hashcode());
+		let arr = map.get(route.target);
 		if (!arr) {
 			arr = [];
-			map.set(route.target.hashcode(), arr);
+			map.set(route.target, arr);
 		}
+
 		arr.push(route);
 
-		const neighbour = this.findNeighbor(route.from, route.target.hashcode());
+		const neighbour = this.findNeighbor(route.from, route.target);
 		if (!neighbour || neighbour.session === session) {
 			// Commit directly since we dont have any data at all (better have something than nothing)
-			this.commitPendingRouteConnection(session, route.target.hashcode());
+			this.commitPendingRouteConnection(session, route.target);
 		}
 	}
 

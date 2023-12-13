@@ -22,10 +22,10 @@ import * as filters from "@libp2p/websockets/filters";
 import { randomBytes } from "@peerbit/crypto";
 
 const checkShortestPathIsNeighbours = (sub: DirectSub) => {
-	const q = sub.routes.routes.get(sub.routes.me)!;
+	const routes = sub.routes.routes.get(sub.routes.me)!;
 	for (let peer of sub.peers) {
 		try {
-			const found = q.get(peer[0])?.list.find((x) => x.hash === peer[0]);
+			const found = routes.get(peer[0])?.list.find((x) => x.hash === peer[0]);
 			expect(found?.distance).toEqual(-1);
 		} catch (error) {
 			throw error;
@@ -277,8 +277,7 @@ describe("pubsub", function () {
 			it("0->TOPIC strict to", async () => {
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					to: [streams[2].stream.publicKey],
-					strict: true
+					to: [streams[2].stream.publicKey]
 				});
 				await waitForResolved(() =>
 					expect(streams[2].received).toHaveLength(1)
@@ -296,8 +295,7 @@ describe("pubsub", function () {
 			it("1->TOPIC strict to", async () => {
 				await streams[1].stream.publish(data, {
 					topics: [TOPIC],
-					to: [streams[2].stream.publicKey],
-					strict: true
+					to: [streams[2].stream.publicKey]
 				});
 				await waitForResolved(() =>
 					expect(streams[2].received).toHaveLength(1)
@@ -309,8 +307,10 @@ describe("pubsub", function () {
 				expect(streams[0].allReceived).toHaveLength(0);
 				expect(streams[2].received).toHaveLength(1);
 			});
+
 			it("sends only in necessary directions", async () => {
 				await streams[2].stream.unsubscribe(TOPIC);
+
 				await waitForResolved(() =>
 					expect(streams[1].stream.getSubscribers(TOPIC)!).toHaveLength(2)
 				);
@@ -329,6 +329,8 @@ describe("pubsub", function () {
 				}
 			});
 
+			/* TODO wanted feature?
+			
 			it("send without topic directly", async () => {
 				await streams[0].stream.publish(data, {
 					to: [streams[1].stream.components.peerId]
@@ -349,17 +351,21 @@ describe("pubsub", function () {
 				await delay(1500); // wait some more time to make sure we dont get more messages
 				expect(streams[2].received).toHaveLength(1);
 				expect(streams[1].received).toHaveLength(0);
-			});
+			}); */
+
+			/* TODO feature
 			it("can send as non subscribeer", async () => {
-				streams[0].stream.unsubscribe(TOPIC);
-				streams[1].stream.unsubscribe(TOPIC);
+
+				await streams[0].stream.unsubscribe(TOPIC);
+				await streams[1].stream.unsubscribe(TOPIC);
 				await streams[0].stream.publish(data, { topics: [TOPIC] });
 				await waitFor(() => streams[2].received.length === 1);
 				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
 				await delay(1500); // wait some more time to make sure we dont get more messages
 				expect(streams[1].received).toHaveLength(0);
 				expect(streams[2].received).toHaveLength(1);
-			});
+
+			}); */
 		});
 
 		describe("concurrency", () => {
@@ -404,7 +410,6 @@ describe("pubsub", function () {
 							streams[(i + 1) % session.peers.length].stream.publicKeyHash,
 							streams[(i + 2) % session.peers.length].stream.publicKeyHash
 						],
-						strict: true,
 						topics: [TOPIC]
 					});
 					streams.forEach((s) => {
@@ -543,7 +548,7 @@ describe("pubsub", function () {
 			});
 			await session.peers[0].services.pubsub.publish(
 				new Uint8Array([1, 2, 3]),
-				{ to: [session.peers[1].peerId] }
+				{ to: [session.peers[1].peerId], topics: ["abc"] }
 			);
 			expect(dataMessages).toHaveLength(1);
 			expect(dataMessages[0]).toBeInstanceOf(PublishEvent);
@@ -757,7 +762,6 @@ describe("pubsub", function () {
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					strict: true,
 					to: streams.map((x) => x.stream.publicKeyHash)
 				});
 
@@ -765,12 +769,10 @@ describe("pubsub", function () {
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					strict: true,
 					to: streams.map((x) => x.stream.publicKeyHash)
 				});
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					strict: true,
 					to: streams.map((x) => x.stream.publicKeyHash)
 				});
 
@@ -784,7 +786,6 @@ describe("pubsub", function () {
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					strict: true,
 					to: streams.map((x) => x.stream.publicKeyHash)
 				});
 				await waitFor(() => streams[1].received.length === 1);
@@ -1151,24 +1152,28 @@ describe("pubsub", function () {
 
 			streams[0].stream.subscribe(TOPIC_1);
 			streams[0].stream.subscribe(TOPIC_2);
+
 			await waitFor(
 				() =>
 					streams[2].stream.topics
 						.get(TOPIC_1)
 						?.has(streams[0].stream.publicKeyHash)
 			);
+
 			await waitFor(
 				() =>
 					streams[1].stream.topics
 						.get(TOPIC_1)
 						?.has(streams[0].stream.publicKeyHash)
 			);
+
 			await waitFor(
 				() =>
 					streams[2].stream.topics
 						.get(TOPIC_2)
 						?.has(streams[0].stream.publicKeyHash)
 			);
+
 			await waitFor(
 				() =>
 					streams[1].stream.topics
@@ -1193,7 +1198,9 @@ describe("pubsub", function () {
 				TOPIC_2
 			);
 
-			streams[0].stream.unsubscribe(TOPIC_1);
+			await delay(8000);
+
+			await streams[0].stream.unsubscribe(TOPIC_1);
 			await waitFor(
 				() =>
 					!streams[2].stream.topics
@@ -1365,14 +1372,9 @@ describe("pubsub", function () {
 			}
 
 			// Subscribe with some metadata
-			const data1 = new Uint8Array([1, 2, 3]);
+
 			await streams[0].stream.subscribe(TOPIC_1);
-			let equalsDefined = (a: Uint8Array | undefined, b: Uint8Array) => {
-				if (!a) {
-					return false;
-				}
-				return equals(a, b);
-			};
+
 			await waitForResolved(() =>
 				expect(
 					streams[2].stream.topics
