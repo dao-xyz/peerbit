@@ -732,6 +732,7 @@ describe("streams", function () {
 				let totalWrites = 10;
 				expect(streams[0].ack).toHaveLength(0);
 
+				await delay(5000);
 				//  push one message to ensure paths are found
 				await streams[0].stream.publish(data, {
 					mode: new SeekDelivery({

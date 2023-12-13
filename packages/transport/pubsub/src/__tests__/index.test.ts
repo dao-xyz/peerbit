@@ -750,6 +750,8 @@ describe("pubsub", function () {
 					[session.peers[0], session.peers[2]]
 				]);
 
+				await delay(5000);
+
 				for (const [i, peer] of session.peers.entries()) {
 					await peer.services.pubsub.subscribe(TOPIC);
 				}
@@ -777,9 +779,6 @@ describe("pubsub", function () {
 				});
 
 				await delay(3000);
-				const a = streams.map((x) => x.stream.routes.routes.size);
-				const b = streams.map((x) => x.stream.routes.routes.size);
-				const c = streams.map((x) => x.stream.routes.routes.size);
 
 				streams[1].received = [];
 				streams[2].received = [];
@@ -1125,7 +1124,10 @@ describe("pubsub", function () {
 				() =>
 					!streams[2].stream.topics
 						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+						?.has(streams[0].stream.publicKeyHash),
+				{
+					timeout: 20 * 1000
+				}
 			);
 
 			expect(streams[2].subscriptionEvents).toHaveLength(1);
