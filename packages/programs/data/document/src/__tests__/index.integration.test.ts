@@ -296,8 +296,9 @@ describe("index", () => {
 				await session.stop();
 			});
 
-			it("drops when no longer replicating", async () => {
+			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
+				await store.docs.updateRole(new Replicator({ factor: 1 }));
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
@@ -311,24 +312,44 @@ describe("index", () => {
 					expect(store2.docs.index.index.size).toEqual(COUNT)
 				);
 
-				store3 = await session.peers[2].open<TestStore>(store.clone());
-				await delay(3000);
-
-				const abc123 = store2.docs.log.topic;
-
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: new Replicator({ factor: 1 })
+				});
 				await store2.docs.updateRole(new Observer());
-				try {
-					await waitForResolved(() =>
-						expect(store2.docs.index.index.size).toEqual(0)
+				await waitForResolved(() =>
+					expect(store3.docs.index.index.size).toEqual(COUNT)
+				);
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(0)
+				);
+			});
+
+			it("drops when no longer replicating with factor 0", async () => {
+				let COUNT = 10;
+				await store.docs.updateRole(new Replicator({ factor: 1 }));
+				for (let i = 0; i < COUNT; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: "Hello world"
+						})
 					);
-					await waitForResolved(() =>
-						expect(store3.docs.index.index.size).toEqual(COUNT)
-					);
-				} catch (error) {
-					const y = 123;
 				}
 
-				const x = 123;
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(COUNT)
+				);
+
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: new Replicator({ factor: 1 })
+				});
+				await store2.docs.updateRole(new Replicator({ factor: 0 }));
+				await waitForResolved(() =>
+					expect(store3.docs.index.index.size).toEqual(COUNT)
+				);
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(0)
+				);
 			});
 		});
 
@@ -1014,7 +1035,6 @@ describe("index", () => {
 
 			describe("string", () => {
 				it("exact", async () => {
-					let q = stores[1].docs.log.getReplicatorsSorted();
 					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
 							query: [
