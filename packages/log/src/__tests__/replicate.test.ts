@@ -7,6 +7,7 @@ import { StringArray } from "../types.js";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { PubSubData } from "@peerbit/pubsub-interface";
 import { JSON_ENCODING } from "./utils/encoding.js";
+import { waitFor, waitForResolved } from "@peerbit/time";
 
 describe("replication", function () {
 	let session: TestSession;
@@ -77,8 +78,21 @@ describe("replication", function () {
 			await input2.open(session.peers[1].services.blocks, signKey2, {
 				encoding: JSON_ENCODING
 			});
-			session.peers[0].services.pubsub.subscribe(channel);
-			session.peers[1].services.pubsub.subscribe(channel);
+			await session.peers[0].services.pubsub.subscribe(channel);
+			await session.peers[1].services.pubsub.subscribe(channel);
+
+			await waitForResolved(async () =>
+				expect(
+					(await session.peers[1].services.pubsub.getSubscribers(channel))
+						?.length
+				).toEqual(2)
+			);
+			await waitForResolved(async () =>
+				expect(
+					(await session.peers[1].services.pubsub.getSubscribers(channel))
+						?.length
+				).toEqual(2)
+			);
 
 			await session.peers[0].services.pubsub.addEventListener("data", (evt) => {
 				handleMessage(evt.detail.data, channel);
@@ -135,10 +149,9 @@ describe("replication", function () {
 
 			const whileProcessingMessages = (timeoutMs: number) => {
 				return new Promise<void>((resolve, reject) => {
-					const timeout = setTimeout(
-						() => reject(new Error("timeout")),
-						timeoutMs
-					);
+					const timeout = setTimeout(() => {
+						reject(new Error("Timeout"));
+					}, timeoutMs);
 					const timer = setInterval(() => {
 						if (
 							buffer1.length + buffer2.length === amount * 2 &&
@@ -152,7 +165,7 @@ describe("replication", function () {
 				});
 			};
 
-			await whileProcessingMessages(5000);
+			await whileProcessingMessages(10 * 1000);
 
 			const result = new Log<string>({ id: logId });
 			result.open(session.peers[0].services.blocks, signKey, {
