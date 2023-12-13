@@ -1047,7 +1047,8 @@ describe("pubsub", function () {
 					pubsub: (c) =>
 						new DirectSub(c, {
 							canRelayMessage: true,
-							connectionManager: false
+							connectionManager: false,
+							seekTimeout: 5000 // set seekTimeout to make GoodBye/leaving events to take effect faster
 						})
 				}
 			});
