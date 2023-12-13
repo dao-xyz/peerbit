@@ -66,9 +66,6 @@ export class REQ_Publish extends PubSubMessage {
 	@field({ type: option(vec("string")) })
 	to?: string[]; // (string | PublicSignKey | Libp2pPeerId)[];
 
-	@field({ type: "bool" })
-	strict: boolean;
-
 	constructor(data: Uint8Array, options?: PublishOptions) {
 		super();
 		this.data = data;
@@ -80,7 +77,6 @@ export class REQ_Publish extends PubSubMessage {
 				? x.hashcode()
 				: getPublicKeyFromPeerId(x).hashcode()
 		);
-		this.strict = options?.strict || false;
 	}
 }
 
