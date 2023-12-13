@@ -84,11 +84,11 @@ export interface PeerStreamEvents {
 	close: CustomEvent<never>;
 }
 
-const SEEK_DELIVERY_TIMEOUT = 9e3;
+const SEEK_DELIVERY_TIMEOUT = 15e3;
 const MAX_DATA_LENGTH = 1e7 + 1000; // 10 mb and some metadata
 const MAX_QUEUED_BYTES = MAX_DATA_LENGTH * 50;
 
-const DEFAULT_PRUNE_CONNECTIONS_INTERVAL = 1e4;
+const DEFAULT_PRUNE_CONNECTIONS_INTERVAL = 2e4;
 const DEFAULT_MIN_CONNECTIONS = 2;
 const DEFAULT_MAX_CONNECTIONS = 300;
 
@@ -354,6 +354,7 @@ export type DirectStreamOptions = {
 	signaturePolicy?: SignaturePolicy;
 	connectionManager?: ConnectionManagerArguments;
 	routeSeekInterval?: number;
+	seekTimeout?: number;
 };
 
 export interface DirectStreamComponents extends Components {
@@ -412,6 +413,7 @@ export abstract class DirectStream<
 	private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
 	private prunedConnectionsCache?: Cache<string>;
 	routeSeekInterval: number;
+	seekTimeout: number;
 	closeController: AbortController;
 	private _ackCallbacks: Map<
 		string,
@@ -440,10 +442,12 @@ export abstract class DirectStream<
 			maxOutboundStreams,
 			signaturePolicy = "StictSign",
 			connectionManager,
-			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR
+			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR,
+			seekTimeout = SEEK_DELIVERY_TIMEOUT
 		} = options || {};
 
 		const signKey = getKeypairFromPeerId(components.peerId);
+		this.seekTimeout = seekTimeout;
 		this.sign = signKey.sign.bind(signKey);
 		this.peerId = components.peerId;
 		this.publicKey = signKey.publicKey;
@@ -1292,7 +1296,10 @@ export abstract class DirectStream<
 
 		if (filteredLeaving.length > 0) {
 			this.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({ to: filteredLeaving, redundancy: 2 })
+				mode: new SeekDelivery({
+					to: filteredLeaving,
+					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
+				})
 			}).catch((e) => {
 				if (e instanceof TimeoutError || e instanceof AbortError) {
 					// peer left or closed
@@ -1446,7 +1453,7 @@ export abstract class DirectStream<
 						to,
 						setTimeout(() => {
 							this.removeRouteConnection(to, false);
-						}, SEEK_DELIVERY_TIMEOUT)
+						}, this.seekTimeout + 5000)
 					);
 				}
 			}
@@ -1507,7 +1514,7 @@ export abstract class DirectStream<
 			} else {
 				deliveryDeferredPromise.resolve();
 			}
-		}, SEEK_DELIVERY_TIMEOUT);
+		}, this.seekTimeout);
 
 		this._ackCallbacks.set(idString, {
 			promise: deliveryDeferredPromise.promise,

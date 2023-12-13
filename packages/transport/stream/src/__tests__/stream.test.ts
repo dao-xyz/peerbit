@@ -124,11 +124,13 @@ class TestDirectStream extends DirectStream {
 		options: {
 			id?: string;
 			connectionManager?: ConnectionManagerArguments;
+			seekTimeout?: number;
 		} = {}
 	) {
 		super(components, [options.id || "/test/0.0.0"], {
 			canRelayMessage: true,
 			connectionManager: options.connectionManager,
+			seekTimeout: options.seekTimeout,
 			...options
 		});
 	}
@@ -1668,7 +1670,10 @@ describe("join/leave", () => {
 			session = await disconnected(4, {
 				services: {
 					directstream: (c) =>
-						new TestDirectStream(c, { connectionManager: false })
+						new TestDirectStream(c, {
+							connectionManager: false,
+							seekTimeout: 5000
+						})
 				}
 			});
 
@@ -1818,14 +1823,21 @@ describe("join/leave", () => {
 
 			await session.peers[2].stop();
 
-			await waitForResolved(() => {
-				expect(
-					streams[3].stream.routes.isReachable(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					)
-				).toEqual(false);
-			});
+			try {
+				await waitForResolved(
+					() => {
+						expect(
+							streams[3].stream.routes.isReachable(
+								streams[3].stream.publicKeyHash,
+								streams[2].stream.publicKeyHash
+							)
+						).toEqual(false);
+					},
+					{ timeout: 20 * 1000 }
+				);
+			} catch (error) {
+				throw error;
+			}
 
 			await waitForResolved(() => {
 				expect(
