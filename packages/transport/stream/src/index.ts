@@ -925,6 +925,12 @@ export abstract class DirectStream<
 	): PeerStreams {
 		const publicKeyHash = publicKey.hashcode();
 
+		const hc = this.healthChecks.get(publicKeyHash);
+		if (hc) {
+			clearTimeout(hc);
+			this.healthChecks.delete(publicKeyHash);
+		}
+
 		const existing = this.peers.get(publicKeyHash);
 
 		// If peer streams already exists, do nothing
