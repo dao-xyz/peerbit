@@ -17,5 +17,8 @@ export interface StreamEvents extends PeerEvents, MessageEvents {
 export * from "./messages.js";
 
 export interface WaitForPeer {
-	waitFor(peer: PeerId | PublicSignKey): Promise<void>;
+	waitFor(
+		peer: PeerId | PublicSignKey,
+		options?: { signal?: AbortSignal }
+	): Promise<void>;
 }

@@ -1724,21 +1724,27 @@ export abstract class DirectStream<
 		}
 	}
 
-	async waitFor(peer: PeerId | PublicSignKey) {
+	async waitFor(
+		peer: PeerId | PublicSignKey,
+		options?: { signal: AbortSignal }
+	) {
 		const hash = (
 			peer instanceof PublicSignKey ? peer : getPublicKeyFromPeerId(peer)
 		).hashcode();
 		try {
-			await waitFor(() => {
-				if (!this.peers.has(hash)) {
-					return false;
-				}
-				if (!this.routes.isReachable(this.publicKeyHash, hash)) {
-					return false;
-				}
+			await waitFor(
+				() => {
+					if (!this.peers.has(hash)) {
+						return false;
+					}
+					if (!this.routes.isReachable(this.publicKeyHash, hash)) {
+						return false;
+					}
 
-				return true;
-			});
+					return true;
+				},
+				{ signal: options?.signal }
+			);
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
@@ -1751,7 +1757,9 @@ export abstract class DirectStream<
 		}
 		const stream = this.peers.get(hash)!;
 		try {
-			await waitFor(() => stream.isReadable && stream.isWritable);
+			await waitFor(() => stream.isReadable && stream.isWritable, {
+				signal: options?.signal
+			});
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
