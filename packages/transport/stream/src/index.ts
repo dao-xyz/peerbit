@@ -1755,7 +1755,10 @@ export abstract class DirectStream<
 
 					return true;
 				},
-				{ signal: options?.signal }
+				{
+					signal: options?.signal,
+					timeout: 10 * 1000
+				}
 			);
 		} catch (error) {
 			throw new Error(
@@ -1770,7 +1773,8 @@ export abstract class DirectStream<
 		const stream = this.peers.get(hash)!;
 		try {
 			await waitFor(() => stream.isReadable && stream.isWritable, {
-				signal: options?.signal
+				signal: options?.signal,
+				timeout: 10 * 1000
 			});
 		} catch (error) {
 			throw new Error(
