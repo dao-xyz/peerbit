@@ -742,6 +742,14 @@ describe("streams", function () {
 			});
 
 			it("messages are only sent once to each peer", async () => {
+				streams.forEach((stream) => {
+					const processFn = stream.stream.processMessage.bind(stream.stream);
+					stream.stream.processMessage = async (a, b, c) => {
+						await delay(200);
+						return processFn(a, b, c);
+					};
+				});
+
 				let totalWrites = 10;
 				expect(streams[0].ack).toHaveLength(0);
 
