@@ -1,5 +1,5 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents } from "../index.js";
+import { Documents, Replicator, Role } from "../index.js";
 import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
@@ -30,7 +30,7 @@ class Document {
 	}
 }
 
-@variant("test_documents")
+@variant("test_documents_profiling")
 class TestStore extends Program {
 	@field({ type: Documents })
 	docs: Documents<Document>;
@@ -40,8 +40,8 @@ class TestStore extends Program {
 		this.docs = new Documents();
 	}
 
-	async open(): Promise<void> {
-		await this.docs.open({ type: Document });
+	async open(properties?: { role: Role }): Promise<void> {
+		await this.docs.open({ type: Document, role: properties?.role });
 	}
 }
 const RANDOM_BYTES = randomBytes(14 * 1000);
@@ -61,8 +61,12 @@ describe("profile", () => {
 		// Create store
 		for (const [i, client] of session.peers.entries()) {
 			const store: TestStore = await (stores.length === 0
-				? client.open(new TestStore())
-				: TestStore.open(stores[0].address, client));
+				? client.open(new TestStore(), {
+						args: { role: new Replicator({ factor: 1 }) }
+				  })
+				: TestStore.open(stores[0].address, client, {
+						args: { role: new Replicator({ factor: 1 }) }
+				  }));
 			stores.push(store);
 		}
 		await stores[0].waitFor(session.peers[1].peerId);
@@ -77,9 +81,6 @@ describe("profile", () => {
 		const writeStore = stores[0];
 		let promises: Promise<any>[] = [];
 		for (let i = 0; i < COUNT; i++) {
-			if (i === 0) {
-				await delay(5000);
-			}
 			const doc = new Document({
 				id: uuid(),
 				name: uuid(),
