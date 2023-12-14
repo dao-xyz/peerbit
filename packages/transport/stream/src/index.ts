@@ -188,6 +188,11 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	}
 
 	async waitForWrite(bytes: Uint8Array | Uint8ArrayList) {
+		if (this.closed) {
+			logger.error("Failed to send to stream: " + this.peerId + ". Closed");
+			return;
+		}
+
 		if (!this.isWritable) {
 			// Catch the event where the outbound stream is attach, but also abort if we shut down
 			const outboundPromise = new Promise<void>((rs, rj) => {
@@ -1049,6 +1054,10 @@ export abstract class DirectStream<
 		peerStream: PeerStreams,
 		msg: Uint8ArrayList
 	) {
+		if (!this.started) {
+			return;
+		}
+
 		// Ensure the message is valid before processing it
 		const message: Message | undefined = Message.from(msg);
 		this.dispatchEvent(
@@ -1062,7 +1071,6 @@ export abstract class DirectStream<
 			this._onDataMessage(from, peerStream, msg, message).catch(logError);
 		} else {
 			if (message instanceof ACK) {
-				/* 	await delay(3000 * Math.random()) */
 				this.onAck(from, peerStream, msg, message).catch(logError);
 			} else if (message instanceof Goodbye) {
 				this.onGoodBye(from, peerStream, msg, message).catch(logError);
