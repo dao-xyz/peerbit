@@ -33,7 +33,7 @@ describe("observer", () => {
 				if (i === j) {
 					continue;
 				}
-				await store.waitFor(peer.peerId);
+				await store.waitFor(peer.peerId, { timeout: 10 * 1000 });
 			}
 		}
 
