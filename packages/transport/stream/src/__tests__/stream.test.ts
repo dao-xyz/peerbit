@@ -512,11 +512,24 @@ describe("streams", function () {
 					streams[1].stream.publicKeyHash
 				]); // "2" is fastest route
 
+				await waitForResolved(() =>
+					expect(
+						streams[2].stream.routes
+							.findNeighbor(
+								streams[0].stream.publicKeyHash,
+								streams[3].stream.publicKeyHash
+							)
+							?.list?.map((x) => x.hash)
+					).toEqual([streams[3].stream.publicKeyHash])
+				);
+
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[3].stream.components.peerId]
 				});
 
-				await waitFor(() => streams[3].received.length === 1);
+				await waitForResolved(() =>
+					expect(streams[3].received).toHaveLength(1)
+				);
 
 				expect(streams[1].messages).toHaveLength(0); // Because shortest route is 0 -> 2 -> 3
 				expect(streams[1].stream.routes.count()).toEqual(2);

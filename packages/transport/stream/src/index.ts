@@ -420,8 +420,7 @@ export abstract class DirectStream<
 		{
 			promise: Promise<void>;
 			callback: (
-				messageTarget: PublicSignKey,
-				seenCounter: number,
+				ack: ACK,
 				messageThrough: PeerStreams,
 				messageFrom?: PeerStreams
 			) => void;
@@ -1063,6 +1062,7 @@ export abstract class DirectStream<
 			this._onDataMessage(from, peerStream, msg, message).catch(logError);
 		} else {
 			if (message instanceof ACK) {
+				/* 	await delay(3000 * Math.random()) */
 				this.onAck(from, peerStream, msg, message).catch(logError);
 			} else if (message instanceof Goodbye) {
 				this.onGoodBye(from, peerStream, msg, message).catch(logError);
@@ -1250,12 +1250,7 @@ export abstract class DirectStream<
 
 		this._ackCallbacks
 			.get(messageIdString)
-			?.callback(
-				message.header.signatures!.publicKeys[0],
-				message.seenCounter,
-				peerStream,
-				nextStream
-			);
+			?.callback(message, peerStream, nextStream);
 
 		// relay ACK ?
 		// send exactly backwards same route we got this message
@@ -1524,8 +1519,11 @@ export abstract class DirectStream<
 
 		this._ackCallbacks.set(idString, {
 			promise: deliveryDeferredPromise.promise,
-			callback: (messageTarget, seenCounter, messageThrough, messageFrom) => {
+			callback: (ack: ACK, messageThrough, messageFrom) => {
+				const messageTarget = ack.header.signatures!.publicKeys[0];
 				const messageTargetHash = messageTarget.hashcode();
+				const seenCounter = ack.seenCounter;
+
 				// remove the automatic removal of route timeout since we have observed lifesigns of a peer
 				const timer = this.healthChecks.get(messageTargetHash);
 				clearTimeout(timer);
@@ -1564,18 +1562,18 @@ export abstract class DirectStream<
 					}
 				}
 
+				// This if clause should never enter for relayed connections, since we don't
+				// know how many ACKs we will get
 				if (
-					filterMessageForSeenCounter != null
-						? uniqueAcks.size >= messageToSet.size * filterMessageForSeenCounter
-						: messageToSet.size === fastestNodesReached.size
+					filterMessageForSeenCounter != null &&
+					uniqueAcks.size >= messageToSet.size * filterMessageForSeenCounter
 				) {
 					if (messageToSet.size > 0) {
 						// this statement exist beacuse if we do SEEK and have to = [], then it means we try to reach as many as possible hence we never want to delete this ACK callback
+						// only remove callback function if we actually expected a expected amount of responses
 						clearTimeout(timeout);
 						finalize();
-						// only remove callback function if we actually expected a finite amount of responses
 					}
-
 					deliveryDeferredPromise.resolve();
 				}
 			},
