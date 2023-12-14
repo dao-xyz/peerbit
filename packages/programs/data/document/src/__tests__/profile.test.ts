@@ -3,7 +3,7 @@ import { Documents } from "../index.js";
 import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { TestSession } from "@peerbit/test-utils";
 
 /**
@@ -77,6 +77,9 @@ describe("profile", () => {
 		const writeStore = stores[0];
 		let promises: Promise<any>[] = [];
 		for (let i = 0; i < COUNT; i++) {
+			if (i === 0) {
+				await delay(5000);
+			}
 			const doc = new Document({
 				id: uuid(),
 				name: uuid(),
