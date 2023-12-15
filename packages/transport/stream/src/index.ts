@@ -94,7 +94,7 @@ const DEFAULT_MAX_CONNECTIONS = 300;
 
 const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
-const ROUTE_UPDATE_DELAY_FACTOR = 1e4;
+const ROUTE_UPDATE_DELAY_FACTOR = 3e4;
 
 type WithTo = {
 	to?: (string | PublicSignKey | PeerId)[] | Set<string>;
@@ -1080,19 +1080,35 @@ export abstract class DirectStream<
 		}
 	}
 
+	public shouldIgnore(message: DataMessage, seenBefore: number) {
+		const fromMe = message.header.signatures?.publicKeys.find((x) =>
+			x.equals(this.publicKey)
+		);
+
+		if (fromMe) {
+			return true;
+		}
+
+		if (
+			(seenBefore > 0 &&
+				message.header.mode instanceof SeekDelivery === false) ||
+			(message.header.mode instanceof SeekDelivery &&
+				seenBefore >= message.header.mode.redundancy)
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
 	public async onDataMessage(
 		from: PublicSignKey,
 		peerStream: PeerStreams,
 		message: DataMessage,
 		seenBefore: number
 	) {
-		const alreadySeen =
-			message instanceof SeekDelivery &&
-			message.header.signatures?.publicKeys.find((x) =>
-				x.equals(this.publicKey)
-			);
-		if (alreadySeen) {
-			return;
+		if (this.shouldIgnore(message, seenBefore)) {
+			return false;
 		}
 
 		let isForMe = false;
@@ -1140,11 +1156,7 @@ export abstract class DirectStream<
 		}
 
 		// Forward
-		if (
-			message.header.mode instanceof AnyWhere ||
-			message.header.mode instanceof SeekDelivery ||
-			seenBefore === 0
-		) {
+		if (message.header.mode instanceof SeekDelivery || seenBefore === 0) {
 			// DONT await this since it might introduce a dead-lock
 			if (message.header.mode instanceof SeekDelivery) {
 				if (seenBefore < message.header.mode.redundancy) {
@@ -1347,6 +1359,16 @@ export abstract class DirectStream<
 					redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
 			  });
 
+		if (
+			mode instanceof AcknowledgeDelivery ||
+			mode instanceof SilentDelivery ||
+			mode instanceof SeekDelivery
+		) {
+			if (mode.to?.find((x) => x === this.publicKeyHash)) {
+				mode.to = mode.to.filter((x) => x !== this.publicKeyHash);
+			}
+		}
+
 		if (mode instanceof AcknowledgeDelivery || mode instanceof SilentDelivery) {
 			const now = +new Date();
 			for (const hash of mode.to) {
@@ -1364,16 +1386,6 @@ export abstract class DirectStream<
 					});
 					break;
 				}
-			}
-		}
-
-		if (
-			mode instanceof AcknowledgeDelivery ||
-			mode instanceof SilentDelivery ||
-			mode instanceof SeekDelivery
-		) {
-			if (mode.to?.find((x) => x === this.publicKeyHash)) {
-				mode.to = mode.to.filter((x) => x !== this.publicKeyHash);
 			}
 		}
 
@@ -1517,7 +1529,9 @@ export abstract class DirectStream<
 							...messageToSet
 						]} delivery acknowledges from all nodes (${
 							fastestNodesReached.size
-						}/${messageToSet.size})`
+						}/${messageToSet.size}). Mode: ${
+							message.header.mode.constructor.name
+						}`
 					)
 				);
 			} else {

@@ -436,6 +436,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
 
+		if (this.shouldIgnore(message, seenBefore)) {
+			return false;
+		}
+
 		const pubsubMessage = PubSubMessage.from(message.data);
 		if (pubsubMessage instanceof PubSubData) {
 			if (message.header.mode instanceof AnyWhere) {
@@ -480,10 +484,6 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				}
 			}
 
-			if (seenBefore > 0) {
-				return false;
-			}
-
 			if (message.header.mode.to) {
 				message.header.mode.to = message.header.mode.to.filter(
 					(x) => x !== this.publicKeyHash
@@ -524,10 +524,6 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			}
 
 			await this.acknowledgeMessage(stream, message, seenBefore);
-
-			if (seenBefore > 0) {
-				return false;
-			}
 
 			const sender = message.header.signatures!.signatures[0].publicKey!;
 			const senderKey = sender.hashcode(); // Assume first signature is the one who is signing

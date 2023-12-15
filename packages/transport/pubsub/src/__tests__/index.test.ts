@@ -760,7 +760,6 @@ describe("pubsub", function () {
 						expect(peer.stream.getSubscribers(TOPIC)).toHaveLength(3)
 					); // all others (except 4 which is not subscribing)
 				}
-				await delay(11000);
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
@@ -849,7 +848,9 @@ describe("pubsub", function () {
 				for (const [i, peer] of streams.entries()) {
 					if ([0, 3].includes(i)) {
 						await peer.stream.requestSubscribers(TOPIC);
-						await waitFor(() => peer.stream.topics.get(TOPIC)?.size === 1);
+						await waitForResolved(() =>
+							expect(peer.stream.topics.get(TOPIC)?.size).toEqual(1)
+						);
 					}
 				}
 			});
@@ -858,7 +859,9 @@ describe("pubsub", function () {
 				await Promise.all(streams.map((peer) => peer.stream.stop()));
 				await session.stop();
 			});
-			it("_", () => {});
+			it("_", () => {
+				expect(true).toBeTrue();
+			});
 
 			/* TODO do we need this test 
 			
