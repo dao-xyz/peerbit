@@ -1,4 +1,3 @@
-import assert from "assert";
 import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
@@ -349,12 +348,6 @@ describe(`exchange`, function () {
 				await Promise.all([db1.add("hello-1-" + i), db2.add("hello-2-" + i)]);
 			};
 
-			// Open second instance again
-			db1.log.distribute = async () => {
-				return true; // do a noop becaus in this test we want to make sure that writes are only treated once
-				// and we don't want extra replication events
-			};
-
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
 				session.peers[1]
@@ -386,7 +379,7 @@ describe(`exchange`, function () {
 			const values2 = (await db2.iterator({ limit: -1 })).collect();
 			expect(values1.length).toEqual(values2.length);
 			for (let i = 0; i < values1.length; i++) {
-				assert(values1[i].equals(values2[i]));
+				expect(values1[i].equals(values2[i])).toBeTrue();
 			}
 			// All entries should be in the database
 			expect(values1.length).toEqual(entryCount * 2);
