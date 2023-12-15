@@ -129,10 +129,8 @@ export class PeerbitProxyClient implements ProgramClient {
 		> = new Map();
 		this._services = {
 			pubsub: {
-				emitSelf: false, // might be changed to true on connect()
 				addEventListener: async (type, lister, options) => {
 					pubsubEventEmitter.addEventListener(type, lister, options);
-
 					let subscription = eventListenerSubscribeCounter.get(type);
 					if (!subscription) {
 						const emitMessageId = randomBytes(32);
@@ -344,6 +342,13 @@ export class PeerbitProxyClient implements ProgramClient {
 					await this.request<memory.MemoryMessage<memory.api.RESP_Open>>(
 						new memory.MemoryMessage(new memory.api.REQ_Open({ level }))
 					);
+				},
+				size: async () => {
+					return (
+						await this.request<memory.MemoryMessage<memory.api.RESP_Size>>(
+							new memory.MemoryMessage(new memory.api.REQ_Size({ level }))
+						)
+					).message.size;
 				}
 			};
 		};
@@ -367,10 +372,6 @@ export class PeerbitProxyClient implements ProgramClient {
 				new network.REQ_GetMultiaddrs()
 			)
 		).multiaddr;
-
-		this.services.pubsub.emitSelf = (
-			await this.request<pubsub.RESP_EmitSelf>(new pubsub.REQ_EmitSelf())
-		).value;
 	}
 
 	getMultiaddrs(): Multiaddr[] {

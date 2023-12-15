@@ -1,11 +1,27 @@
-import { variant, deserialize, serialize, field } from "@dao-xyz/borsh";
+import {
+	variant,
+	deserialize,
+	serialize,
+	field,
+	option,
+	BinaryReader
+} from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
-import { Role } from "./role.js";
+import { Observer, Replicator, Role } from "./role.js";
+import { PublicSignKey } from "@peerbit/crypto";
+import yallist from "yallist";
+
 export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
+
+export type ReplicatorRect = {
+	publicKey: PublicSignKey;
+	offset: number;
+	role: Replicator;
+};
 
 interface SharedLog {
 	replicas: Partial<ReplicationLimits>;
-	getReplicatorsSorted(): { hash: string; timestamp: number }[] | undefined;
+	getReplicatorsSorted(): yallist<ReplicatorRect> | undefined;
 }
 
 export class MinReplicas {
@@ -35,13 +51,14 @@ export class RequestRoleMessage extends TransportMessage {
 	}
 }
 
-@variant([2, 0])
+@variant([1, 1])
 export class ResponseRoleMessage extends TransportMessage {
-	@field({ type: Role })
-	role: Role;
+	@field({ type: option(Role) })
+	role: Observer | Replicator;
 
-	constructor(role: Role) {
+	constructor(role: Observer | Replicator) {
 		super();
+
 		this.role = role;
 	}
 }
@@ -93,4 +110,11 @@ export const maxReplicas = (
 	const higher = log.replicas.max?.getValue(log) ?? Number.MAX_SAFE_INTEGER;
 	const numberOfLeaders = Math.max(Math.min(higher, max), lower);
 	return numberOfLeaders;
+};
+
+export const hashToUniformNumber = (hash: Uint8Array) => {
+	const seedNumber = new BinaryReader(
+		hash.subarray(hash.length - 4, hash.length)
+	).u32();
+	return seedNumber / 0xffffffff; // bounded between 0 and 1
 };

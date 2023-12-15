@@ -14,8 +14,8 @@ jobs:
        matrix:
         node-version: [18.x]
         test_cmd: 
-          - yarn playwright install --with-deps && yarn test:node --roots ./packages/clients --w 2 && yarn test:browser
-          - yarn test:node --roots ./packages/programs ./docs ./packages/log  --w 2
+          - yarn playwright install --with-deps && yarn test:node --roots ./docs ./packages/log ./packages/clients --w 2 && yarn test:browser
+          - yarn test:node --roots ./packages/programs --w 2
           - yarn test:node --roots ./packages/transport ./packages/utils --w 2
 
     if: github.event_name == 'push'

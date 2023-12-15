@@ -1,3 +1,4 @@
+import { SeekDelivery } from "@peerbit/stream-interface";
 import { Peerbit } from "../index.js";
 import { waitFor } from "@peerbit/time";
 describe(`dial`, function () {
@@ -28,27 +29,28 @@ describe(`dial`, function () {
 		});
 		await clients[0].dial(clients[1].getMultiaddrs()[0]);
 		await clients[0].services.pubsub.publish(new Uint8Array([1]), {
-			topics: [topic]
+			topics: [topic],
+			mode: new SeekDelivery({ redundancy: 1 })
 		});
 		await waitFor(() => !!data);
 		expect(data && new Uint8Array(data)).toEqual(new Uint8Array([1]));
 	});
 
-	it("autodials by default", async () => {
+	it("dialer settings", async () => {
 		expect(
 			clients[0].services.pubsub.connectionManagerOptions.dialer
 		).toBeDefined();
 		expect(
 			clients[1].services.blocks.connectionManagerOptions.dialer
-		).toBeDefined();
+		).toBeUndefined();
 	});
 
-	it("autoprunes by default", async () => {
+	it("prune settings", async () => {
 		expect(
 			clients[0].services.pubsub.connectionManagerOptions.pruner
 		).toBeDefined();
 		expect(
 			clients[1].services.blocks.connectionManagerOptions.pruner
-		).toBeDefined();
+		).toBeUndefined();
 	});
 });

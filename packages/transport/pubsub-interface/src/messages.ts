@@ -1,13 +1,6 @@
 import { Uint8ArrayList } from "uint8arraylist";
-import {
-	field,
-	vec,
-	variant,
-	serialize,
-	deserialize,
-	option
-} from "@dao-xyz/borsh";
-import { sha256Base64Sync } from "@peerbit/crypto";
+import { field, vec, variant, serialize, deserialize } from "@dao-xyz/borsh";
+
 export abstract class PubSubMessage {
 	abstract bytes(): Uint8Array | Uint8ArrayList;
 	static from(bytes: Uint8Array) {

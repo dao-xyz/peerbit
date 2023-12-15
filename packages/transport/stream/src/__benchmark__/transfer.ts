@@ -19,7 +19,6 @@ class TestStreamImpl extends DirectStream {
 	constructor(c: DirectStreamComponents) {
 		super(c, ["bench/0.0.0"], {
 			canRelayMessage: true,
-			emitSelf: true,
 			connectionManager: false
 		});
 	}
@@ -58,8 +57,10 @@ await waitForPeers(stream(1), stream(2));
 await waitForPeers(stream(2), stream(3));
 
 stream(0).publish(new Uint8Array([123]), {
-	to: [stream(session.peers.length - 1).publicKey],
-	mode: new SeekDelivery(1)
+	mode: new SeekDelivery({
+		redundancy: 1,
+		to: [stream(session.peers.length - 1).publicKey]
+	})
 });
 await waitForResolved(() =>
 	stream(0).routes.isReachable(stream(0).publicKeyHash, stream(3).publicKeyHash)

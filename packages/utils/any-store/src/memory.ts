@@ -64,4 +64,12 @@ export class MemoryStore implements AnyStore {
 		}
 		return sub;
 	}
+
+	size() {
+		let size = 0;
+		for (const [k, v] of this.store) {
+			size += v.byteLength;
+		}
+		return size;
+	}
 }

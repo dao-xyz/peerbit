@@ -33,6 +33,7 @@ export type RPCSetupOptions<Q, R> = {
 };
 export type RequestContext = {
 	from?: PublicSignKey;
+	timestamp: bigint;
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
@@ -141,10 +142,10 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
-								from: message.header.signatures!.publicKeys[0]
+								from: message.header.signatures!.publicKeys[0],
+								timestamp: message.header.timetamp
 							}
 						);
-
 						if (response && rpcMessage.respondTo) {
 							// send query and wait for replies in a generator like behaviour
 							const serializedResponse = serialize(response);
@@ -174,8 +175,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 								),
 								{
 									topics: [this.rpcTopic],
-									to: [message.header.signatures!.publicKeys[0]],
-									strict: true
+									to: [message.header.signatures!.publicKeys[0]]
 								}
 							);
 						}
@@ -201,6 +201,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					logger.error("Got message for a different namespace");
 					return;
 				}
+
 				logger.error(
 					"Error handling query: " +
 						(error?.message ? error?.message?.toString() : error)
@@ -247,7 +248,6 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 			? {
 					mode: options?.mode,
 					to: options.to,
-					strict: true,
 					topics: [this.rpcTopic]
 			  }
 			: { mode: options?.mode, topics: [this.rpcTopic] };
@@ -313,7 +313,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					return; // Ignore things we can not open
 				}
 
-				if (error instanceof BorshError && !options?.strict) {
+				if (error instanceof BorshError) {
 					logger.debug("Namespace error");
 					return; // Name space conflict most likely
 				}

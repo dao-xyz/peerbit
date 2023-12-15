@@ -72,7 +72,6 @@ export const createPeer = async (
 				}
 			},
 			pubsub: {
-				emitSelf: false,
 				subscribe: async (topic) => {
 					let map = state.subsribers.get(topic);
 					if (!map) {

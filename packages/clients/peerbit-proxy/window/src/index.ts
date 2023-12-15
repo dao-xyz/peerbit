@@ -74,13 +74,7 @@ export const createClient = async (targetOrigin = "*") => {
 	return client;
 };
 export const createHost = async (node: ProgramClient, targetOrigin = "*") => {
-	if (!node.services.pubsub.emitSelf) {
-		throw new Error(
-			"Host client property '.services.pubsub.emitSelf' needs to be true"
-		);
-	}
 	const client = new PeerbitProxyHost(node, new PostMessageNode(targetOrigin));
-
 	client.messages.start();
 	await client.init();
 	return client;

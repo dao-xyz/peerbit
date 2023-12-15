@@ -780,14 +780,15 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		}
 
 		if (remote) {
-			const peerMinAge = remote.minAge ?? DEFAULT_REPLICATOR_MIN_AGE;
-			const replicatorGroups = await this._log.getDiscoveryGroups?.();
+			const replicatorGroups = await this._log.getReplicatorUnion(
+				remote.minAge ?? DEFAULT_REPLICATOR_MIN_AGE
+			);
 			if (replicatorGroups) {
 				// Make sure we don't query peers that are "too" new
 				// TODO make this better
-				const date = +new Date();
-				const groupHashes: string[][] = [];
-				for (let i = 0; i < replicatorGroups.length; i++) {
+				//const date = +new Date();
+				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
+				/* for (let i = 0; i < replicatorGroups.length; i++) {
 					const filteredGroup = replicatorGroups[i].filter(
 						(x) => date - x.timestamp > peerMinAge
 					);
@@ -796,7 +797,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					} else {
 						groupHashes.push(replicatorGroups[i].map((x) => x.hash));
 					}
-				}
+				} */
 				const fn = async () => {
 					const rs: Results<T>[] = [];
 					const responseHandler = async (

@@ -177,7 +177,6 @@ describe("encryption", function () {
 			await log?.close();
 			await cache?.close();
 			await level?.close();
-			const q = 123;
 		});
 
 		it("loads encrypted entries", async () => {

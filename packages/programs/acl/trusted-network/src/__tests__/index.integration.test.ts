@@ -221,7 +221,8 @@ describe("index", () => {
 
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey,
-				session.peers[1].identity.publicKey
+				session.peers[1].identity.publicKey,
+				session.peers[3].identity.publicKey
 			);
 
 			// Try query with trusted

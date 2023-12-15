@@ -3,7 +3,7 @@ import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain, Ed25519Keypair } from "@peerbit/crypto";
-import { DataEvent, PubSub } from "@peerbit/pubsub-interface";
+import { DataEvent, PubSub, PublishEvent } from "@peerbit/pubsub-interface";
 import { ProgramClient } from "@peerbit/program";
 import * as blocks from "./blocks.js";
 import * as keychain from "./keychain.js";
@@ -14,7 +14,7 @@ import { Message } from "./message.js";
 import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
-
+import { CustomEvent } from "@libp2p/interface/events";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 
 const levelKey = (level: string[]) => JSON.stringify(level);
@@ -43,6 +43,20 @@ export class PeerbitProxyHost implements ProgramClient {
 		this._pubsubTopicSubscriptions = new Map();
 		this._memoryIterator = new Map();
 
+		const dispatchFunction = this.hostClient.services.pubsub.dispatchEvent.bind(
+			this.hostClient.services.pubsub
+		);
+
+		// Override pubsub dispatchEvent so that data that is published from one client
+		// appears in other clients as incoming data messages.
+		// this allows multiple clients to subscribe to share the same host and
+		// also have same databases open
+		this.hostClient.services.pubsub.dispatchEvent = (evt: CustomEvent<any>) => {
+			if (evt.type === "publish") {
+				dispatchFunction(new CustomEvent("data", { detail: evt.detail }));
+			}
+			return dispatchFunction(evt);
+		};
 		this.messages.start();
 	}
 
@@ -308,43 +322,54 @@ export class PeerbitProxyHost implements ProgramClient {
 				}
 				let subscription = map.get(message.type);
 				if (!subscription) {
-					subscription = {
-						counter: 1,
-						fn: async (e) => {
-							// TODO what if many clients whants the same data, dedup serialization invokations?
-							if (e.detail instanceof DataEvent) {
-								const subscriptions = this._pubsubTopicSubscriptions.get(
-									from.id
-								);
-								let found = false;
-								if (subscriptions) {
-									for (const topic of e.detail.data.topics) {
-										found = subscriptions.has(topic);
-										if (found) {
-											break;
-										}
-									}
-								}
+					const cb = async (e: CustomEvent<any>) => {
+						// TODO what if many clients whants the same data, dedup serialization invokations?
+						if (
+							e.detail instanceof PublishEvent &&
+							e.detail.client === from.id &&
+							message.type === "data"
+						) {
+							// ignore 'publish' events routed to 'data' events if the dispatcher is the same as the receiver
+							return;
+						}
 
-								if (!found) {
-									// Ignore this message, since the client is not subscribing to any of the topics
-									return;
+						if (
+							e.detail instanceof DataEvent ||
+							e.detail instanceof PublishEvent
+						) {
+							const subscriptions = this._pubsubTopicSubscriptions.get(from.id);
+							let found = false;
+							if (subscriptions) {
+								for (const topic of e.detail.data.topics) {
+									found = subscriptions.has(topic);
+									if (found) {
+										break;
+									}
 								}
 							}
 
-							const request = new pubsub.RESP_EmitEvent(
-								message.type,
-								serialize(e.detail)
-							);
-							request.messageId = message.emitMessageId; // Same message id so that receiver can subscribe to all events emitted from this listener
-							await this.messages.send(serialize(request), from.id);
+							if (!found) {
+								// Ignore this message, since the client is not subscribing to any of the topics
+								return;
+							}
 						}
+
+						const request = new pubsub.RESP_EmitEvent(
+							message.type,
+							serialize(e.detail)
+						);
+						request.messageId = message.emitMessageId; // Same message id so that receiver can subscribe to all events emitted from this listener
+						await this.messages.send(serialize(request), from.id);
 					};
+					subscription = {
+						counter: 1,
+						fn: cb
+					};
+
 					await this.services.pubsub.addEventListener(
 						message.type,
 						subscription.fn
 					);
-
 					map.set(message.type, subscription);
 				} else {
 					subscription.counter += 1;
@@ -378,11 +403,22 @@ export class PeerbitProxyHost implements ProgramClient {
 					message.type,
 					message.data
 				);
+				const dispatched =
+					await this.services.pubsub.dispatchEvent(customEvent);
+
+				/* 	
+				if (message.type === 'publish') {
+						await this.services.pubsub.dispatchEvent(
+							pubsub.createCustomEventFromType(
+								'data',
+								message.data
+							)
+						)
+					}
+				 */
 				await this.respond(
 					message,
-					new pubsub.RESP_DispatchEvent(
-						await this.services.pubsub.dispatchEvent(customEvent)
-					),
+					new pubsub.RESP_DispatchEvent(dispatched),
 					from
 				);
 			} else if (message instanceof pubsub.REQ_GetSubscribers) {
@@ -398,9 +434,9 @@ export class PeerbitProxyHost implements ProgramClient {
 					message,
 					new pubsub.RESP_Publish(
 						await this.services.pubsub.publish(message.data, {
-							strict: message.strict,
 							to: message.to!,
-							topics: message.topics!
+							topics: message.topics!,
+							client: from.id
 						})
 					),
 					from
@@ -433,12 +469,6 @@ export class PeerbitProxyHost implements ProgramClient {
 							data: message.data
 						})
 					),
-					from
-				);
-			} else if (message instanceof pubsub.REQ_EmitSelf) {
-				await this.respond(
-					message,
-					new pubsub.RESP_EmitSelf(this.services.pubsub.emitSelf),
 					from
 				);
 			} else {

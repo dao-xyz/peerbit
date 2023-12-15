@@ -43,6 +43,8 @@ describe("query", () => {
 				role: new Observer()
 			}
 		});
+
+		await observerStore.waitFor(writer.identity.publicKey);
 	});
 
 	afterEach(async () => {
@@ -68,7 +70,6 @@ describe("query", () => {
 				length: "world".length
 			})
 		);
-
 		let responses: AbstractSearchResult[] = (
 			await observerStore.query.request(
 				new SearchRequest({

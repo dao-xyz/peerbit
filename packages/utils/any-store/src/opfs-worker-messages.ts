@@ -182,6 +182,23 @@ export class REQ_Idle extends MemoryMessage {}
 export class RESP_Idle extends MemoryMessage {}
 
 @variant(22)
+export class REQ_Size extends MemoryMessage {}
+
+@variant(23)
+export class RESP_Size extends MemoryMessage {
+	@field({ type: "u64" })
+	private _size: bigint;
+
+	constructor(properties: { level: string[]; size: number }) {
+		super(properties);
+		this._size = BigInt(properties.size);
+	}
+	get size(): number {
+		return Number(this._size);
+	}
+}
+
+@variant(24)
 export class RESP_Error extends MemoryMessage {
 	@field({ type: "string" })
 	error: string;

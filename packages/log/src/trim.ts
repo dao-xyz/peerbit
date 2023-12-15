@@ -2,6 +2,7 @@ import { Cache } from "@peerbit/cache";
 import PQueue from "p-queue";
 import { Entry, ShallowEntry } from "./entry.js";
 import { EntryNode, Values } from "./values.js";
+import { HeadsIndex } from "./heads.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
 	if (a.type === b.type) {
@@ -78,6 +79,7 @@ export type TrimCanAppendOption = {
 export type TrimOptions = TrimCanAppendOption & TrimCondition;
 
 interface Log<T> {
+	headsIndex: HeadsIndex<T>;
 	values: () => Values<T>;
 	deleteNode: (node: EntryNode) => Promise<Entry<T> | undefined>;
 }
@@ -86,6 +88,8 @@ export class Trim<T> {
 	private _canTrimCacheLastNode: EntryNode | undefined | null;
 	private _trimLastHead: EntryNode | undefined | null;
 	private _trimLastTail: EntryNode | undefined | null;
+	private _trimLastLength = 0;
+
 	private _trimLastOptions: TrimOptions;
 	private _trimLastSeed: string | number | undefined;
 	private _canTrimCacheHashBreakpoint: Cache<boolean>;
@@ -177,9 +181,10 @@ export class Trim<T> {
 				!this._trimLastOptions ||
 				!trimOptionsEqual(this._trimLastOptions, option);
 
-			const changed =
+			changed =
 				this._trimLastHead !== values.head ||
 				this._trimLastTail !== values.tail ||
+				this._trimLastLength !== this._log.headsIndex.size ||
 				trimOptionsChanged;
 			if (!changed) {
 				return [];
@@ -250,6 +255,7 @@ export class Trim<T> {
 		this._canTrimCacheLastNode = node || lastNode;
 		this._trimLastHead = values.head;
 		this._trimLastTail = values.tail;
+		this._trimLastLength = this._log.headsIndex.size;
 		this._trimLastOptions = option;
 		this._trimLastSeed = seed;
 

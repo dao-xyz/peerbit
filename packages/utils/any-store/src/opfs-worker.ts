@@ -26,7 +26,6 @@ export class OPFSStoreWorker {
 
 			// 'open' | 'closed' is just a virtual thing since OPFS is always open as soone as we get the FileSystemDirectoryHandle
 			// TODO remove status? or assume not storage adapters can be closed?
-
 			const open = async () => {
 				isOpen = true;
 				m = m || (await navigator.storage.getDirectory());
@@ -41,7 +40,7 @@ export class OPFSStoreWorker {
 
 				del: async (key) => {
 					try {
-						return m.removeEntry(key, { recursive: true });
+						await m.removeEntry(key, { recursive: true });
 					} catch (error) {
 						if (
 							error instanceof DOMException &&
@@ -73,10 +72,22 @@ export class OPFSStoreWorker {
 				put: async (key, value) => {
 					const fileHandle = await m.getFileHandle(key, { create: true });
 					const writeFileHandle = await fileHandle.createSyncAccessHandle();
+
 					writeFileHandle.write(value);
 					writeFileHandle.close();
 				},
 
+				size: async () => {
+					let size = 0;
+					for await (const value of m.values()) {
+						if (value.kind === "file") {
+							const handle = await value.createSyncAccessHandle();
+							size += handle.getSize();
+							handle.close();
+						}
+					}
+					return size;
+				},
 				status: () => (isOpen ? "open" : "closed"),
 
 				sublevel: async (name) => {
@@ -186,6 +197,15 @@ export class OPFSStoreWorker {
 					await this.respond(
 						message,
 						new memory.RESP_Put({ level: message.level }),
+						postMessageFn
+					);
+				} else if (message instanceof memory.REQ_Size) {
+					await this.respond(
+						message,
+						new memory.RESP_Size({
+							size: await m.size(),
+							level: message.level
+						}),
 						postMessageFn
 					);
 				} else if (message instanceof memory.REQ_Status) {

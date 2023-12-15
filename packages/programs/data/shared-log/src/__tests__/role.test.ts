@@ -1,4 +1,4 @@
-import { waitFor } from "@peerbit/time";
+import { waitFor, waitForResolved } from "@peerbit/time";
 import { EventStore } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { Observer, Replicator } from "../role";
@@ -35,9 +35,12 @@ describe(`role`, () => {
 			db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
 				.counter
 		).toEqual(1);
-		expect(db1.log.getReplicatorsSorted()?.map((x) => x.hash)).toEqual([
-			db1.node.identity.publicKey.hashcode()
-		]);
+		expect(
+			db1.log
+				.getReplicatorsSorted()
+				?.toArray()
+				?.map((x) => x.publicKey.hashcode())
+		).toEqual([db1.node.identity.publicKey.hashcode()]);
 		expect(db1.log.role).toBeInstanceOf(Replicator);
 		await db1.log.updateRole(new Observer());
 		expect(db1.log.role).toBeInstanceOf(Observer);
@@ -93,31 +96,21 @@ describe(`role`, () => {
 		expect(db2.log.log.values.length).toEqual(1); // ... but will not receive entries
 	});
 
-	it("sync", async () => {
-		db2 = (await EventStore.open<EventStore<string>>(
-			db1.address!,
-			session.peers[1],
-			{
-				args: { role: new Observer(), sync: () => true }
-			}
-		))!;
-
-		await db1.waitFor(session.peers[1].peerId);
-
-		await db1.add("hello");
-		await db2.add("world");
-
-		await waitFor(() => db1.log.log.values.length === 2); // db2 can write ...
-		expect(
-			(await db1.log.log.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
-		).toContainAllValues(["hello", "world"]);
-
-		await waitFor(() => db2.log.log.values.length === 2); // ... since syncAll: true
-
-		await db2.log.replicationReorganization();
-		expect(db2.log.log.values.length).toEqual(2);
+	describe("replictor", () => {
+		it("even factors by default", async () => {
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1]
+			))!;
+			await waitForResolved(() =>
+				expect(
+					db2.log
+						.getReplicatorsSorted()
+						?.toArray()
+						?.map((x) => Math.abs(0.5 - x.role.factor) < 0.001)
+				).toEqual([true, true])
+			);
+		});
 	});
 });
 

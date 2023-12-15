@@ -83,7 +83,7 @@ export class TestSession<T> {
 					connectionManager: (options?.[i] || options)?.connectionManager ?? {
 						minConnections: 0
 					},
-
+					peerId: (options?.[i] || options)?.peerId,
 					datastore: (options?.[i] || options)?.datastore,
 					transports:
 						(options?.[i] || options)?.transports ??

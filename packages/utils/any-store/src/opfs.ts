@@ -118,6 +118,13 @@ export class OPFSStore implements AnyStore {
 				},
 				open: async () => {
 					await this.request<memory.RESP_Open>(new memory.REQ_Open({ level }));
+				},
+
+				size: async () => {
+					const size = await this.request<memory.RESP_Size>(
+						new memory.REQ_Size({ level })
+					);
+					return size.size;
 				}
 			};
 		};
@@ -165,6 +172,10 @@ export class OPFSStore implements AnyStore {
 	}
 	clear(): MaybePromise<void> {
 		return this.root.clear();
+	}
+
+	size(): MaybePromise<number> {
+		return this.root.size();
 	}
 
 	async request<T extends memory.MemoryRequest>(

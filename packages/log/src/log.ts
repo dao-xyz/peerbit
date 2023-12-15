@@ -173,6 +173,7 @@ export class Log<T> {
 		this._values = new Values(this._entryIndex, this._sortFn);
 		this._trim = new Trim(
 			{
+				headsIndex: this._headsIndex,
 				deleteNode: async (node: EntryNode) => {
 					// TODO check if we have before delete?
 					const entry = await this.get(node.value);
@@ -180,19 +181,20 @@ export class Log<T> {
 					const a = this.values.length;
 					if (entry) {
 						this.values.deleteNode(node);
-						await this.headsIndex.del(this.entryIndex.getShallow(node.value)!);
-						await this.entryIndex.delete(node.value);
+						await Promise.all([
+							this.headsIndex.del(this.entryIndex.getShallow(node.value)!),
+							this.entryIndex.delete(node.value)
+						]);
 						this.nextsIndex.delete(node.value);
 						await this.storage.rm(node.value);
 					}
 					const b = this.values.length;
 					if (a === b) {
-						throw new Error(
-							"UNexpected: " +
-								this.values.length +
-								"_-- " +
-								this.entryIndex._index.size
-						);
+						/* throw new Error(
+							"Unexpected miss match between log size and entry index size: " +
+							this.values.length +
+							this.entryIndex._index.size
+						); */
 					}
 					return entry;
 				},
@@ -581,7 +583,6 @@ export class Log<T> {
 		const removed = await this.processEntry(entry);
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
-		//	console.log('put entry', entry.hash, (await this._entryIndex._index.size));
 
 		const trimmed = await this.trim(options?.trim);
 
@@ -939,16 +940,15 @@ export class Log<T> {
 		const promises: Promise<void>[] = [];
 		let counter = 0;
 		const deleted: Entry<T>[] = [];
-		const deletedGids = new Set();
 
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
 			if ((counter > 0 || !skipFirst) && this.has(entry.hash)) {
 				// TODO test last argument: It is for when multiple heads point to the same entry, hence we might visit it multiple times? or a concurrent delete process is doing it before us.
 				this._trim.deleteFromCache(entry);
+				await this._headsIndex.del(entry);
 				await this._values.delete(entry);
 				await this._entryIndex.delete(entry.hash);
-				await this._headsIndex.del(entry);
 
 				this._nextsIndex.delete(entry.hash);
 				deleted.push(entry);
@@ -976,9 +976,9 @@ export class Log<T> {
 
 	async delete(entry: Entry<any>) {
 		this._trim.deleteFromCache(entry);
+		await this._headsIndex.del(entry);
 		await this._values.delete(entry);
 		await this._entryIndex.delete(entry.hash);
-		await this._headsIndex.del(entry);
 		this._nextsIndex.delete(entry.hash);
 		const newHeads: string[] = [];
 		for (const next of entry.next) {
@@ -1049,6 +1049,10 @@ export class Log<T> {
 	async drop() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
+
+		await Promise.all(
+			[...this.entryIndex._index.values()].map((x) => this.storage.rm(x.hash))
+		);
 		await this._headsIndex?.drop();
 		await this._entryCache?.clear();
 		await this._memory?.clear();

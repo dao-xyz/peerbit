@@ -296,8 +296,9 @@ describe("index", () => {
 				await session.stop();
 			});
 
-			it("drops when no longer replicating", async () => {
+			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
+				await store.docs.updateRole(new Replicator({ factor: 1 }));
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
@@ -311,24 +312,44 @@ describe("index", () => {
 					expect(store2.docs.index.index.size).toEqual(COUNT)
 				);
 
-				store3 = await session.peers[2].open<TestStore>(store.clone());
-				await delay(3000);
-
-				const abc123 = store2.docs.log.topic;
-
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: new Replicator({ factor: 1 })
+				});
 				await store2.docs.updateRole(new Observer());
-				try {
-					await waitForResolved(() =>
-						expect(store2.docs.index.index.size).toEqual(0)
+				await waitForResolved(() =>
+					expect(store3.docs.index.index.size).toEqual(COUNT)
+				);
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(0)
+				);
+			});
+
+			it("drops when no longer replicating with factor 0", async () => {
+				let COUNT = 10;
+				await store.docs.updateRole(new Replicator({ factor: 1 }));
+				for (let i = 0; i < COUNT; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: "Hello world"
+						})
 					);
-					await waitForResolved(() =>
-						expect(store3.docs.index.index.size).toEqual(COUNT)
-					);
-				} catch (error) {
-					const y = 123;
 				}
 
-				const x = 123;
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(COUNT)
+				);
+
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: new Replicator({ factor: 1 })
+				});
+				await store2.docs.updateRole(new Replicator({ factor: 0 }));
+				await waitForResolved(() =>
+					expect(store3.docs.index.index.size).toEqual(COUNT)
+				);
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(0)
+				);
 			});
 		});
 
@@ -401,11 +422,15 @@ describe("index", () => {
 				});
 				for (const [i, peer] of session.peers.entries()) {
 					if (store.closed) {
-						stores.push(await peer.open(store));
+						stores.push(
+							await peer.open(store, {
+								args: { role: new Replicator({ factor: 1 }) }
+							})
+						);
 					} else {
 						stores.push(
 							await TestStore.open(store.address, peer, {
-								args: { sync: () => true }
+								args: { role: new Replicator({ factor: 1 }) }
 							})
 						);
 					}
@@ -853,7 +878,7 @@ describe("index", () => {
 							  });
 					await session.peers[i].open(store, {
 						args: {
-							role: i === 0 ? new Replicator() : new Observer(),
+							role: i === 0 ? new Replicator({ factor: 1 }) : new Observer(),
 							index: {
 								canRead:
 									i === 0
@@ -1010,7 +1035,6 @@ describe("index", () => {
 
 			describe("string", () => {
 				it("exact", async () => {
-					let q = stores[1].docs.log.getReplicatorsSorted();
 					let responses: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
 							query: [
@@ -1793,7 +1817,7 @@ describe("index", () => {
 									return canRead[i] ? canRead[i]!(key) : true;
 								}
 							},
-							role: new Replicator(),
+							role: new Replicator({ factor: 1 }),
 							replicas: { min: 1 } // make sure documents only exist once
 						}
 					});
@@ -2227,7 +2251,7 @@ describe("index", () => {
 
 				await session.peers[i].open(store, {
 					args: {
-						role: i === 0 ? new Replicator() : new Observer(),
+						role: i === 0 ? new Replicator({ factor: 1 }) : new Observer(),
 						canOpen: () => true
 					}
 				});
@@ -2454,21 +2478,10 @@ describe("index", () => {
 			}); */
 
 			it("all", async () => {
-				stores[0].docs.log.getDiscoveryGroups = () => [
-					[
-						{
-							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						}
-					],
-					[
-						{
-							hash: stores[2].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						}
-					]
+				stores[0].docs.log.getReplicatorUnion = () => [
+					stores[1].node.identity.publicKey.hashcode(),
+					stores[2].node.identity.publicKey.hashcode()
 				];
-
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(1);
@@ -2476,7 +2489,7 @@ describe("index", () => {
 			});
 
 			it("will always query locally", async () => {
-				stores[0].docs.log.getDiscoveryGroups = () => [];
+				stores[0].docs.log.getReplicatorUnion = () => [];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
@@ -2484,13 +2497,8 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs.log.getDiscoveryGroups = () => [
-					[
-						{
-							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						}
-					]
+				stores[0].docs.log.getReplicatorUnion = () => [
+					stores[1].node.identity.publicKey.hashcode()
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
@@ -2499,19 +2507,9 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs.log.getDiscoveryGroups = () => [
-					[
-						{
-							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						}
-					],
-					[
-						{
-							hash: stores[2].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						}
-					]
+				stores[0].docs.log.getReplicatorUnion = () => [
+					stores[1].node.identity.publicKey.hashcode(),
+					stores[2].node.identity.publicKey.hashcode()
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 					local: false
@@ -2520,40 +2518,31 @@ describe("index", () => {
 				expect(counters[1]).toEqual(1);
 				expect(counters[2]).toEqual(1);
 			});
+
+			/*  TODO getReplicatorUnion to provide query alternatives
+		
 			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.log.getDiscoveryGroups = () => [
-					[
-						{
-							hash: stores[0].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						},
-						{
-							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: +new Date()
-						}
-					]
+				stores[0].docs.log.getReplicatorUnion = () => [
+					stores[0].node.identity.publicKey.hashcode(),
+					stores[1].node.identity.publicKey.hashcode()
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).toEqual(1);
 				expect(counters[1]).toEqual(0);
 				expect(counters[2]).toEqual(0);
-			});
+			}); */
 
+			/* TODO getReplicatorUnion to provide query alternatives 
+			
 			it("ignore myself if I am a new replicator", async () => {
 				// and the other peer has been around for longer
-				const now = +new Date();
-				stores[0].docs.log.getDiscoveryGroups = () => [
-					[
-						{
-							hash: stores[0].node.identity.publicKey.hashcode(),
-							timestamp: now
-						},
-						{
-							hash: stores[1].node.identity.publicKey.hashcode(),
-							timestamp: 0
-						}
-					]
-				];
+				await stores[0].docs.updateRole(new Observer())
+				await stores[1].docs.updateRole(new Replicator({ factor: 1 }))
+				await stores[2].docs.updateRole(new Replicator({ factor: 0 }))
+
+				await delay(2000)
+				await waitForResolved(() => expect(stores[0].docs.log.getReplicatorsSorted()?.toArray().map(x => x.publicKey.hashcode())).toContainAllValues([session.peers[1].identity.publicKey.hashcode(), session.peers[2].identity.publicKey.hashcode()]));
+
 				const t1 = +new Date();
 				const minAge = 1000;
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
@@ -2570,7 +2559,7 @@ describe("index", () => {
 				expect(counters[0]).toEqual(2); // will always query locally
 				expect(counters[1]).toEqual(1); // we don't have to query remote since local will suffice since minAge time has passed
 				expect(counters[2]).toEqual(0);
-			});
+			}); */
 
 			describe("errors", () => {
 				let fns: any[];
@@ -2588,19 +2577,9 @@ describe("index", () => {
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs.log.getDiscoveryGroups = () => [
-						[
-							{
-								hash: stores[1].node.identity.publicKey.hashcode(),
-								timestamp: +new Date()
-							}
-						],
-						[
-							{
-								hash: stores[2].node.identity.publicKey.hashcode(),
-								timestamp: +new Date()
-							}
-						]
+					stores[0].docs.log.getReplicatorUnion = () => [
+						stores[1].node.identity.publicKey.hashcode(),
+						stores[2].node.identity.publicKey.hashcode()
 					];
 
 					let failedOnce = false;
@@ -2627,19 +2606,9 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs.log.getDiscoveryGroups = () => [
-						[
-							{
-								hash: stores[1].node.identity.publicKey.hashcode(),
-								timestamp: +new Date()
-							}
-						],
-						[
-							{
-								hash: stores[2].node.identity.publicKey.hashcode(),
-								timestamp: +new Date()
-							}
-						]
+					stores[0].docs.log.getReplicatorUnion = () => [
+						stores[1].node.identity.publicKey.hashcode(),
+						stores[2].node.identity.publicKey.hashcode()
 					];
 					for (let i = 1; i < stores.length; i++) {
 						stores[i].docs.index.processFetchRequest = (a) => {

@@ -1,5 +1,6 @@
 import { PublicSignKey } from "@peerbit/crypto";
 
+export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER;
 export class Routes {
 	// END receiver -> Neighbour
 
@@ -8,10 +9,26 @@ export class Routes {
 		Map<string, { session: number; list: { hash: string; distance: number }[] }>
 	> = new Map();
 
-	constructor(readonly me: string) {}
+	pendingRoutes: Map<
+		number,
+		Map<
+			string,
+			{
+				from: string;
+				neighbour: string;
+				distance: number;
+			}[]
+		>
+	> = new Map();
+	latestSession: number;
+
+	constructor(readonly me: string) {
+		this.latestSession = 0;
+	}
 
 	clear() {
 		this.routes.clear();
+		this.pendingRoutes.clear();
 	}
 
 	add(
@@ -19,21 +36,30 @@ export class Routes {
 		neighbour: string,
 		target: string,
 		distance: number,
-		session?: number
+		session: number
 	) {
 		let fromMap = this.routes.get(from);
 		if (!fromMap) {
 			fromMap = new Map();
 			this.routes.set(from, fromMap);
 		}
+
 		let prev = fromMap.get(target) || {
 			session: session ?? +new Date(),
 			list: [] as { hash: string; distance: number }[]
 		};
-		if (session != null && prev.session < session) {
-			// second condition means that when we add new routes in a session that is newer
-			prev = { session, list: [] }; // reset route info how to reach this target
+
+		this.latestSession = Math.max(this.latestSession, session);
+
+		if (session != null) {
+			// this condition means that when we add new routes in a session that is newer
+			if (prev.session < session) {
+				prev = { session, list: [] }; // reset route info how to reach this target
+			} else if (prev.session > session) {
+				return; // new routing information superseedes this
+			}
 		}
+
 		if (from === this.me && neighbour === target) {
 			// force distance to neighbour as targets to always favor directly sending to them
 			// i.e. if target is our neighbour, always assume the shortest path to them is the direct path
@@ -51,12 +77,6 @@ export class Routes {
 		prev.list.sort((a, b) => a.distance - b.distance);
 		fromMap.set(target, prev);
 	}
-
-	/* 
-		add(neighbour: string, target: string, quality: number) {
-			this.routes.set(target, { neighbour, distance: quality })
-		}
-	 */
 
 	removeTarget(target: string) {
 		this.routes.delete(target);
@@ -93,64 +113,23 @@ export class Routes {
 		return [...maybeUnreachable].filter((x) => !this.isReachable(this.me, x));
 	}
 
-	/* removeTarget(to: string, neighbour?: string) {
-		for (const [fromMapKey, fromMap] of this.routes) {
-			let unreachable = true;
-			if(neighbour)
-			{
-				const neighbours = fromMap.get(to);
-				unreachable = neighbours?.list.find(x=>x.hash === neighbour)
-			}
-			if (unreachable) {
-				fromMap.delete(to)
-				if (fromMap.size === 0) {
-					this.routes.delete(fromMapKey);
-				}
-			}
-
-		}
-
-		this.removeNeighbour(to)
-	}
-
-	removeNeighbour(neighbour: string) {
-		const removed: string[] = [];
-		for (const [fromMapKey, fromMap] of this.routes) {
-			for (const [target, v] of fromMap) {
-				const keepRoutes: { hash: string; distance: number }[] = [];
-				for (const route of v.list) {
-					if (route.hash !== neighbour) {
-						keepRoutes.push(route);
-					}
-				}
-
-				if (keepRoutes.length === 0) {
-					fromMap.delete(target);
-					removed.push(target);
-				} else {
-					fromMap.set(target, { session: v.session, list: keepRoutes });
-				}
-			}
-
-			removed.push(neighbour);
-			fromMap.delete(neighbour);
-			if (fromMap.size === 0) {
-				this.routes.delete(fromMapKey);
-			}
-		}
-
-
-
-		// Return all unreachable
-		return removed.filter((x) => !this.routes.has(x));
-	} */
-
 	findNeighbor(from: string, target: string) {
 		return this.routes.get(from)?.get(target);
 	}
 
 	isReachable(from: string, target: string) {
-		return this.routes.get(from)?.has(target) === true;
+		return (
+			(this.routes.get(from)?.get(target)?.list[0]?.distance ??
+				Number.MAX_SAFE_INTEGER) < MAX_ROUTE_DISTANCE
+		);
+	}
+
+	hasShortestPath(target: string) {
+		const path = this.routes.get(this.me)?.get(target);
+		if (!path) {
+			return false;
+		}
+		return path.list[0].distance <= 0;
 	}
 
 	hasTarget(target: string) {
@@ -172,9 +151,9 @@ export class Routes {
 		return dependent;
 	}
 
-	count() {
+	count(from = this.me) {
 		const set: Set<string> = new Set();
-		const map = this.routes.get(this.me);
+		const map = this.routes.get(from);
 		if (map) {
 			for (const [k, v] of map) {
 				set.add(k);
@@ -186,17 +165,29 @@ export class Routes {
 		return set.size;
 	}
 
+	countAll() {
+		let size = 0;
+		for (const [from, map] of this.routes) {
+			for (const [k, v] of map) {
+				size += v.list.length;
+			}
+		}
+		return size;
+	}
+
 	// for all tos if
 	getFanout(
 		from: PublicSignKey,
 		tos: string[],
 		redundancy: number
-	): Map<string, string[]> | undefined {
+	): Map<string, { to: string; timestamp: number }[]> | undefined {
 		if (tos.length === 0) {
 			return undefined;
 		}
 
-		let fanoutMap: Map<string, string[]> | undefined = undefined;
+		let fanoutMap:
+			| Map<string, { to: string; timestamp: number }[]>
+			| undefined = undefined;
 
 		const fromKey = from.hashcode();
 
@@ -222,13 +213,15 @@ export class Routes {
 						if (distance <= 0) {
 							foundClosest = true;
 						}
-						const fanout = (fanoutMap || (fanoutMap = new Map())).get(
-							neighbour.list[i].hash
-						);
+						const fanout: { to: string; timestamp: number }[] = (
+							fanoutMap || (fanoutMap = new Map())
+						).get(neighbour.list[i].hash);
 						if (!fanout) {
-							fanoutMap.set(neighbour.list[i].hash, [to]);
+							fanoutMap.set(neighbour.list[i].hash, [
+								{ to, timestamp: neighbour.session }
+							]);
 						} else {
-							fanout.push(to);
+							fanout.push({ to, timestamp: neighbour.session });
 						}
 					}
 					if (!foundClosest && from.hashcode() === this.me) {
@@ -266,5 +259,76 @@ export class Routes {
 			});
 		}
 		return [];
+	}
+
+	public addPendingRouteConnection(
+		session: number,
+		route: {
+			from: string;
+			neighbour: string;
+			target: string;
+			distance: number;
+		}
+	) {
+		let map = this.pendingRoutes.get(session);
+		if (!map) {
+			map = new Map();
+			this.pendingRoutes.set(session, map);
+		}
+		let arr = map.get(route.target);
+		if (!arr) {
+			arr = [];
+			map.set(route.target, arr);
+		}
+
+		arr.push(route);
+
+		const neighbour = this.findNeighbor(route.from, route.target);
+		if (!neighbour || neighbour.session === session) {
+			// Commit directly since we dont have any data at all (better have something than nothing)
+			this.commitPendingRouteConnection(session, route.target);
+		}
+	}
+
+	// always commit if we dont know the peer yet
+	// do pending commits per remote (?)
+
+	public commitPendingRouteConnection(session: number, target?: string) {
+		const map = this.pendingRoutes.get(session);
+		if (!map) {
+			return;
+		}
+		if (target) {
+			const routes = map.get(target);
+			if (routes) {
+				for (const route of routes) {
+					this.add(
+						route.from,
+						route.neighbour,
+						target,
+						route.distance,
+						session
+					);
+				}
+				map.delete(target);
+				return;
+			} else {
+				return;
+			}
+		} else {
+			for (const [target, routes] of map) {
+				for (const route of routes) {
+					this.add(
+						route.from,
+						route.neighbour,
+						target,
+						route.distance,
+						session
+					);
+				}
+			}
+		}
+
+		this.pendingRoutes.delete(session);
 	}
 }

@@ -61,29 +61,18 @@ export class Values<T> {
 		return this._values.length;
 	}
 
-	private _putPromise: Map<string, Promise<any>> = new Map();
-
 	get entryIndex(): EntryIndex<T> {
 		return this._entryIndex;
 	}
-	async put(value: Entry<T>) {
-		let promise = this._putPromise.get(value.hash);
-		if (promise) {
-			return promise;
-		}
-		promise = this._put(value).then((v) => {
-			this._putPromise.delete(value.hash);
-			return v;
-		});
-		this._putPromise.set(value.hash, promise);
-		return promise;
+	put(value: Entry<T>) {
+		return this._put(value);
 	}
-	async _put(value: Entry<T>) {
+	_put(value: Entry<T>) {
 		// assume we want to insert at head (or somehere close)
 		let walker = this._values.head;
 		let last: EntryNode | undefined = undefined;
 		while (walker) {
-			const walkerValue = await this._entryIndex.getShallow(walker.value);
+			const walkerValue = this._entryIndex.getShallow(walker.value);
 			if (!walkerValue) {
 				throw new Error("Missing walker value");
 			}

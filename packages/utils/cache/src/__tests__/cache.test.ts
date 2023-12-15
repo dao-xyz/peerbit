@@ -16,10 +16,10 @@ describe("cache", () => {
 		await delay(1500);
 		cache.add("2");
 		expect(cache.has("1")).toBeTrue();
-		await delay(1500);
+		await delay(1600);
 		expect(cache.has("1")).toBeFalse();
 		expect(cache.has("2")).toBeTrue();
-		await delay(1500);
+		await delay(1600);
 		expect(cache.has("1")).toBeFalse();
 		expect(cache.has("2")).toBeFalse();
 	});

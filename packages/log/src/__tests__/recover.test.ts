@@ -3,7 +3,7 @@ import { Log } from "../log";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { createStore } from "@peerbit/any-store";
 
-describe("load", () => {
+describe("recover", () => {
 	let log: Log<Uint8Array>;
 	let store: AnyBlockStore;
 	beforeEach(async () => {

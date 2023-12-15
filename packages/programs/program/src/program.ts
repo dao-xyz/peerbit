@@ -365,7 +365,11 @@ export abstract class Program<
 		);
 
 		// make sure nodes are reachable
-		await Promise.all(ids.map((x) => this.node.services.pubsub.waitFor(x)));
+		await Promise.all(
+			ids.map((x) =>
+				this.node.services.pubsub.waitFor(x, { signal: options?.signal })
+			)
+		);
 
 		// wait for subscribing to topics
 		await waitFor(

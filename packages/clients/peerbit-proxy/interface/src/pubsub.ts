@@ -7,7 +7,7 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 	type PublishOptions,
-	SubscriptionData
+	PublishEvent
 } from "@peerbit/pubsub-interface";
 import { field, variant, vec, option, deserialize } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
@@ -66,9 +66,6 @@ export class REQ_Publish extends PubSubMessage {
 	@field({ type: option(vec("string")) })
 	to?: string[]; // (string | PublicSignKey | Libp2pPeerId)[];
 
-	@field({ type: "bool" })
-	strict: boolean;
-
 	constructor(data: Uint8Array, options?: PublishOptions) {
 		super();
 		this.data = data;
@@ -80,7 +77,6 @@ export class REQ_Publish extends PubSubMessage {
 				? x.hashcode()
 				: getPublicKeyFromPeerId(x).hashcode()
 		);
-		this.strict = options?.strict || false;
 	}
 }
 
@@ -226,19 +222,6 @@ export class RESP_DispatchEvent extends PubSubMessage {
 	}
 }
 
-@variant(19)
-export class REQ_EmitSelf extends PubSubMessage {}
-
-@variant(20)
-export class RESP_EmitSelf extends PubSubMessage {
-	@field({ type: "bool" })
-	value: boolean;
-	constructor(value: boolean) {
-		super();
-		this.value = value;
-	}
-}
-
 export const createCustomEventFromType = (
 	type: keyof PubSubEvents,
 	data: Uint8Array
@@ -246,6 +229,10 @@ export const createCustomEventFromType = (
 	if (type === "data") {
 		return new CustomEvent<DataEvent>("data", {
 			detail: deserialize(data, DataEvent)
+		});
+	} else if (type === "publish") {
+		return new CustomEvent<DataEvent>("publish", {
+			detail: deserialize(data, PublishEvent)
 		});
 	} else if (type === "message") {
 		return new CustomEvent<StreamMessage>("message", {

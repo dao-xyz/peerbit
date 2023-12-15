@@ -7,8 +7,7 @@ import { PublicSignKey, randomBytes } from "@peerbit/crypto";
 import {
 	AbsoluteReplicas,
 	ReplicationLimitsOptions,
-	SharedLog,
-	SyncFilter
+	SharedLog
 } from "../../..";
 import { Role } from "../../../role";
 import { JSON_ENCODING } from "./encoding";
@@ -35,9 +34,9 @@ type Args<T> = {
 	role?: Role;
 	trim?: TrimOptions;
 	replicas?: ReplicationLimitsOptions;
-	sync?: SyncFilter;
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
+	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 };
 @variant("event_store")
@@ -54,7 +53,7 @@ export class EventStore<T> extends Program<Args<T>> {
 	constructor(properties?: { id: Uint8Array }) {
 		super();
 		this.id = properties?.id || randomBytes(32);
-		this.log = new SharedLog();
+		this.log = new SharedLog({ id: this.id });
 	}
 
 	setCanAppend(canAppend: CanAppend<Operation<T>> | undefined) {
@@ -66,13 +65,16 @@ export class EventStore<T> extends Program<Args<T>> {
 		await this.log.open({
 			onChange: () => undefined,
 			canAppend: (entry) => {
-				return this._canAppend ? this._canAppend(entry) : true;
+				const a = this._canAppend ? this._canAppend(entry) : true;
+				if (!a) {
+					return false;
+				}
+				return properties?.canAppend ? properties.canAppend(entry) : true;
 			},
 			canReplicate: properties?.canReplicate,
 			role: properties?.role,
 			trim: properties?.trim,
 			replicas: properties?.replicas,
-			sync: properties?.sync,
 			encoding: properties?.encoding || JSON_ENCODING,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout
 		});
