@@ -1,5 +1,5 @@
 import { TestSession } from "../session.js";
-import { waitFor } from "@peerbit/time";
+import { waitFor, waitForResolved } from "@peerbit/time";
 
 describe("session", () => {
 	let session: TestSession;
@@ -24,17 +24,16 @@ describe("session", () => {
 		session.peers[2].services.pubsub.addEventListener("data", (evt) => {
 			result = evt.detail;
 		});
-		await waitFor(
-			async () =>
-				(await session.peers[0].services.pubsub.getSubscribers("x"))?.length ===
-				3
+		await waitForResolved(async () =>
+			expect(
+				(await session.peers[0].services.pubsub.getSubscribers("x"))?.length
+			).toEqual(3)
 		);
-		await waitFor(
-			async () =>
-				(await session.peers[1].services.pubsub.getSubscribers("x"))?.length ===
-				3
+		await waitForResolved(async () =>
+			expect(
+				(await session.peers[1].services.pubsub.getSubscribers("x"))?.length
+			).toEqual(3)
 		);
-
 		session.peers[0].services.pubsub.publish(new Uint8Array([1, 2, 3]), {
 			topics: ["x"]
 		});
