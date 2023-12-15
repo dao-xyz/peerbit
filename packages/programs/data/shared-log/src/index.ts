@@ -1183,14 +1183,19 @@ export class SharedLog<T = Uint8Array> extends Program<
 						? Math.min(minReplicasValue, this.replicas.max.getValue(this))
 						: minReplicasValue;
 
-					const l = await this.findLeaders(entry.gid, minMinReplicasValue);
+					const leaders = await this.findLeaders(
+						entry.gid,
+						minMinReplicasValue
+					);
 
-					if (l.find((x) => x === this.node.identity.publicKey.hashcode())) {
+					if (
+						leaders.find((x) => x === this.node.identity.publicKey.hashcode())
+					) {
 						reject(new Error("Failed to delete, is leader"));
 						return;
 					}
 
-					if (l.find((x) => x === publicKeyHash)) {
+					if (leaders.find((x) => x === publicKeyHash)) {
 						existCounter.add(publicKeyHash);
 						if (minMinReplicasValue <= existCounter.size) {
 							this.log
