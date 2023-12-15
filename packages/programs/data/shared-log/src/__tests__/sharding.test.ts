@@ -352,11 +352,16 @@ describe(`sharding`, () => {
 
 		const entryCount = sampleSize;
 
-		await waitFor(() => db1.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 3);
-		await waitFor(() => db3.log.getReplicatorsSorted()?.length === 3);
+		await waitForResolved(() =>
+			expect(db1.log.getReplicatorsSorted()?.length).toEqual(3)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()?.length).toEqual(3)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.getReplicatorsSorted()?.length).toEqual(3)
+		);
 
-		//await delay(3000)
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(db1.add(new Uint8Array([i]), { meta: { next: [] } }));
@@ -401,7 +406,6 @@ describe(`sharding`, () => {
 		}
 
 		await Promise.all(promises);
-
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 
 		await db3.close();
