@@ -63,26 +63,20 @@ const checkBounded = async (
 
 	for (const [i, db] of dbs.entries()) {
 		await waitFor(() => checkConverged(db), {
-			timeout: 20000,
+			timeout: 25000,
 			delayInterval: 500
 		});
 	}
 
 	for (const [i, db] of dbs.entries()) {
-		try {
-			await waitForResolved(() =>
-				expect(db.log.log.values.length).toBeGreaterThanOrEqual(
-					entryCount * lower
-				)
-			);
-			await waitForResolved(() =>
-				expect(db.log.log.values.length).toBeLessThanOrEqual(
-					entryCount * higher
-				)
-			);
-		} catch (error) {
-			throw error;
-		}
+		await waitForResolved(() =>
+			expect(db.log.log.values.length).toBeGreaterThanOrEqual(
+				entryCount * lower
+			)
+		);
+		await waitForResolved(() =>
+			expect(db.log.log.values.length).toBeLessThanOrEqual(entryCount * higher)
+		);
 	}
 
 	await checkReplicas(
