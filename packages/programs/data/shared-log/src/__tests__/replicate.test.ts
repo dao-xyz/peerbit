@@ -260,11 +260,6 @@ describe(`exchange`, function () {
 
 	describe("info", () => {
 		it("insertion", async () => {
-			db1.log.distribute = async () => {
-				return true; // do a noop becaus in this test we want to make sure that writes are only treated once
-				// and we don't want extra replication events
-			};
-
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
 				session.peers[1]
