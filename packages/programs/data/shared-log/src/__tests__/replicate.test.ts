@@ -371,7 +371,7 @@ describe(`exchange`, function () {
 
 			// All entries should be in the database
 			await waitForResolved(async () =>
-				expect((await db2.iterator({ limit: -1 })).collect()).toHaveLength(
+				expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
 					entryCount * 2
 				)
 			);
