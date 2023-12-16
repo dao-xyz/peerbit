@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState, useRef } from "react";
 import { createLibp2p } from "libp2p";
-import { circuitRelayTransport } from "libp2p/circuit-relay";
+import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { webRTC } from "@libp2p/webrtc";
 import { all } from "@libp2p/websockets/filters";
 import { webSockets } from "@libp2p/websockets";
@@ -8,7 +8,7 @@ import { multiaddr } from "@multiformats/multiaddr";
 import { ready } from "@peerbit/crypto";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { identifyService } from "libp2p/identify";
+import { identify } from "@libp2p/identify";
 import { TestDirectStream } from "./../../shared/utils.js";
 
 await ready;
@@ -16,7 +16,7 @@ await ready;
 const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	services: {
 		stream: (c) => new TestDirectStream(c),
-		identify: identifyService()
+		identify: identify()
 	},
 	connectionGater: {
 		denyDialMultiaddr: () => false

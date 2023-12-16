@@ -4,7 +4,8 @@ import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
 import { delay, waitForResolved } from "@peerbit/time";
 import { GetSubscribers } from "@peerbit/pubsub-interface";
 import { deserialize } from "@dao-xyz/borsh";
-import { EventEmitter } from "@libp2p/interface/events";
+import { TypedEventEmitter } from "@libp2p/interface";
+
 import { DataMessage } from "@peerbit/stream-interface";
 import { PeerbitProxyClient } from "../client.js";
 import { EventEmitterNode } from "./utils.js";
@@ -27,7 +28,7 @@ describe("index", () => {
 		hostWithClients = [];
 		session = await TestSession.disconnected(2);
 
-		const events = new EventEmitter();
+		const events = new TypedEventEmitter();
 		for (let i = 0; i < 2; i++) {
 			const host = new PeerbitProxyHost(
 				session.peers[i],

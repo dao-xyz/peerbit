@@ -1,6 +1,6 @@
 import * as connection from "../connection.js";
-import { CustomEvent } from "@libp2p/interface/events";
-import type { TypedEventTarget } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
+import type { TypedEventTarget } from "@libp2p/interface";
 
 export class EventEmitterNode extends connection.MessageNode {
 	constructor(

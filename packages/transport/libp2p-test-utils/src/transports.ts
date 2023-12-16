@@ -1,5 +1,5 @@
-import { circuitRelayTransport } from "libp2p/circuit-relay";
-import { circuitRelayServer } from "libp2p/circuit-relay";
+import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
+import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
 import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";

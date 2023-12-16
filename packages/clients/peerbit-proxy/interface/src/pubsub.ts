@@ -14,7 +14,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { Message } from "./message.js";
 import { Message as StreamMessage } from "@peerbit/stream-interface";
 
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 
 @variant(6)
 export abstract class PubSubMessage extends Message {}

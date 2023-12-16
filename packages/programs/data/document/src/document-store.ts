@@ -11,7 +11,7 @@ import { Program, ProgramEvents } from "@peerbit/program";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 import {
 	Role,
 	Observer,

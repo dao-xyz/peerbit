@@ -7,8 +7,8 @@ import { Datastore } from "interface-datastore";
 import { relay, transports } from "./transports.js";
 import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
 import { Components } from "libp2p/components";
-import { identifyService } from "libp2p/identify";
-import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
+import { identify } from "@libp2p/identify";
+import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import type { Transport } from "@libp2p/interface/transport";
 
@@ -90,7 +90,7 @@ export class TestSession<T> {
 						transports((options?.[i] || options)?.browser),
 					services: {
 						relay: (options?.[i] || options)?.browser ? undefined : relay(),
-						identify: identifyService(),
+						identify: identify(),
 						...(options?.[i] || options)?.services
 					},
 					connectionEncryption: [noise()],

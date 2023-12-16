@@ -168,7 +168,10 @@ export class Peerbit implements ProgramClient {
 			};
 		}
 
-		if (!libp2pExtended.isStarted()) {
+		if (
+			libp2pExtended.status === "stopped" ||
+			libp2pExtended.status === "stopping"
+		) {
 			await libp2pExtended.start();
 		}
 
@@ -265,7 +268,7 @@ export class Peerbit implements ProgramClient {
 	async start() {
 		await this._memory.open();
 
-		if (!this.libp2p.isStarted()) {
+		if (this.libp2p.status === "stopped" || this.libp2p.status === "stopping") {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
 			return this.libp2p.start();
 		}

@@ -1,6 +1,6 @@
-import { Keychain, Libp2pKeychain } from "../keychain";
+import { Keychain, Libp2pKeychain } from "../keychain.js";
 import { MemoryDatastore } from "datastore-core";
-import { DefaultKeyChain } from "@libp2p/keychain";
+import { keychain } from "@libp2p/keychain";
 import { Ed25519Keypair } from "../ed25519";
 import { X25519Keypair } from "../x25519";
 import { Cache } from "@peerbit/cache";
@@ -11,10 +11,16 @@ describe("keychain", () => {
 	beforeEach(() => {
 		keychains = [
 			new Libp2pKeychain(
-				new DefaultKeyChain({ datastore: new MemoryDatastore() }, {})
+				keychain()({
+					datastore: new MemoryDatastore(),
+					logger: undefined as any
+				})
 			),
 			new Libp2pKeychain(
-				new DefaultKeyChain({ datastore: new MemoryDatastore() }, {}),
+				keychain()({
+					datastore: new MemoryDatastore(),
+					logger: undefined as any
+				}),
 				{ cache: new Cache({ max: 1000 }) }
 			)
 		];

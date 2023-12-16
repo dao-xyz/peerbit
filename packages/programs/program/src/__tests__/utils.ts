@@ -9,7 +9,7 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 
 export const createPeer = async (
 	state: {

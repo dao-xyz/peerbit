@@ -33,7 +33,8 @@ import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
 import { v4 as uuid } from "uuid";
-import { EventEmitter } from "@libp2p/interface/events";
+import { TypedEventEmitter } from "@libp2p/interface";
+
 import { X25519Keypair } from "@peerbit/crypto";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 
@@ -122,7 +123,7 @@ export class PeerbitProxyClient implements ProgramClient {
 	private _handler: ProgramHandler;
 
 	constructor(readonly messages: connection.Node) {
-		const pubsubEventEmitter = new EventEmitter();
+		const pubsubEventEmitter = new TypedEventEmitter();
 		const eventListenerSubscribeCounter: Map<
 			string,
 			{ messageId: string; counter: number }

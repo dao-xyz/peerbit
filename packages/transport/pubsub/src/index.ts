@@ -32,7 +32,7 @@ import {
 	PublishEvent
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 import { PubSubEvents } from "@peerbit/pubsub-interface";
 
 export const logger = logFn({ module: "lazysub", level: "warn" });

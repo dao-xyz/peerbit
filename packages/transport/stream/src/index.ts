@@ -1,4 +1,4 @@
-import { EventEmitter, CustomEvent } from "@libp2p/interface/events";
+import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
 import { pipe } from "it-pipe";
 import Queue from "p-queue";
 import type { PeerId } from "@libp2p/interface/peer-id";
@@ -33,7 +33,7 @@ import {
 
 import { multiaddr } from "@multiformats/multiaddr";
 import { Components } from "libp2p/components";
-import type { TypedEventTarget } from "@libp2p/interface/events";
+import type { TypedEventTarget } from "@libp2p/interface";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
@@ -106,7 +106,7 @@ type WithMode = {
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
-export class PeerStreams extends EventEmitter<PeerStreamEvents> {
+export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public counter = 0;
 	public readonly peerId: PeerId;
 	public readonly publicKey: PublicSignKey;
@@ -381,7 +381,7 @@ export type ConnectionManagerArguments =
 export abstract class DirectStream<
 		Events extends { [s: string]: any } = StreamEvents
 	>
-	extends EventEmitter<Events>
+	extends TypedEventEmitter<Events>
 	implements WaitForPeer
 {
 	public peerId: PeerId;

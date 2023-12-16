@@ -7,7 +7,7 @@ import {
 	PeerEvents,
 	DeliveryMode
 } from "@peerbit/stream-interface";
-import { EventHandler } from "@libp2p/interface/events";
+import { EventHandler } from "@libp2p/interface";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import { field, vec } from "@dao-xyz/borsh";
 

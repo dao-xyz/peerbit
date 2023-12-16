@@ -62,7 +62,7 @@
 		"@types/tmp": "^0.2.3"
 	},
 	"dependencies": {
-		"@dao-xyz/libp2p-noise": "^13.0.1",
+		"@dao-xyz/libp2p-noise": "^14.1.1",
 		"axios": "^1.4.0",
 		"chalk": "^5.3.0",
 		"peerbit": "2.0.15",

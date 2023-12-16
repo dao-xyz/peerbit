@@ -4,8 +4,8 @@ import { DirectBlock } from "@peerbit/blocks";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { transports, relay, listen } from "./transports.js";
-import { identifyService } from "libp2p/identify";
-import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
+import { identify } from "@libp2p/identify";
+import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
 export type Libp2pExtendServices = {
@@ -34,7 +34,7 @@ export const createLibp2pExtended = (
 ): Promise<Libp2pExtended> => {
 	const relayIdentify = {
 		relay: relay(),
-		identify: identifyService()
+		identify: identify()
 	};
 
 	// https://github.com/libp2p/js-libp2p/issues/1757

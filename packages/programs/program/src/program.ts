@@ -2,7 +2,11 @@ import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Constructor, getSchema, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { CustomEvent, EventEmitter } from "@libp2p/interface/events";
+import {
+	TypedEventTarget,
+	CustomEvent,
+	TypedEventEmitter
+} from "@libp2p/interface";
 import { Client } from "./client.js";
 import { waitFor } from "@peerbit/time";
 import { Blocks } from "@peerbit/blocks-interface";
@@ -20,7 +24,6 @@ import {
 	ProgramInitializationOptions,
 	addParent
 } from "./handler.js";
-import type { TypedEventTarget } from "@libp2p/interface/events";
 
 const intersection = (
 	a: Set<string> | undefined,
@@ -120,7 +123,7 @@ export abstract class Program<
 	}
 
 	get events(): TypedEventTarget<Events> {
-		return this._events || (this._events = new EventEmitter());
+		return this._events || (this._events = new TypedEventEmitter());
 	}
 
 	get closed(): boolean {

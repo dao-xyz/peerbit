@@ -14,7 +14,7 @@ import { Message } from "./message.js";
 import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 
 const levelKey = (level: string[]) => JSON.stringify(level);

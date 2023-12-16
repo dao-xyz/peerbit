@@ -43,7 +43,7 @@ import {
 } from "./replication.js";
 import pDefer, { DeferredPromise } from "p-defer";
 import { Cache } from "@peerbit/cache";
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 import yallist from "yallist";
 import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
