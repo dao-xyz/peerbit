@@ -25,9 +25,11 @@ import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { LibP2POptions, TestSession } from "@peerbit/libp2p-test-utils";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import pDefer from "p-defer";
 import { jest } from "@jest/globals";
+import { Libp2pOptions } from "libp2p";
+
 const collectDataWrites = (client: DirectStream) => {
 	const writes: Map<string, DataMessage[]> = new Map();
 	for (const [name, peer] of client.peers) {
@@ -139,8 +141,8 @@ type TestSessionStream = TestSession<{ directstream: DirectStream }>;
 const connected = async (
 	n: number,
 	options?:
-		| LibP2POptions<{ directstream: TestDirectStream }>
-		| LibP2POptions<{ directstream: TestDirectStream }>[]
+		| Libp2pOptions<{ directstream: TestDirectStream }>
+		| Libp2pOptions<{ directstream: TestDirectStream }>[]
 ) => {
 	let session: TestSessionStream = await TestSession.connected(
 		n,
@@ -156,8 +158,8 @@ const connected = async (
 const disconnected = async (
 	n: number,
 	options?:
-		| LibP2POptions<{ directstream: TestDirectStream }>
-		| LibP2POptions<{ directstream: TestDirectStream }>[]
+		| Libp2pOptions<{ directstream: TestDirectStream }>
+		| Libp2pOptions<{ directstream: TestDirectStream }>[]
 ) => {
 	let session: TestSessionStream = await TestSession.disconnected(
 		n,
@@ -1947,11 +1949,11 @@ describe("join/leave", () => {
 							? new SeekDelivery({
 									redundancy: 1,
 									to: [slow.publicKey, fast.publicKey]
-							  })
+								})
 							: new SilentDelivery({
 									redundancy: 1,
 									to: [slow.publicKey, fast.publicKey]
-							  }) // undefined ?
+								}) // undefined ?
 					}
 				);
 

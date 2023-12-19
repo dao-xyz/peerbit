@@ -239,7 +239,7 @@ export class Documents<T extends Record<string, any>>
 		try {
 			entry.init({
 				encoding: this.log.log.encoding,
-				keychain: this.node.keychain
+				keychain: this.node.services.keychain
 			});
 			const operation =
 				entry._payload instanceof DecryptedThing
@@ -318,7 +318,7 @@ export class Documents<T extends Record<string, any>>
 						local: true,
 						remote: { sync: true } // only query remote if we know they exist
 					})
-			  )?.[0]?.results[0];
+				)?.[0]?.results[0];
 
 		return this.log.append(
 			new PutOperation({

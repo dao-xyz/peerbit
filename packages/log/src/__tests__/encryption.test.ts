@@ -1,39 +1,21 @@
 import { Log } from "../log.js";
-import {
-	Ed25519Keypair,
-	Ed25519PublicKey,
-	Keychain,
-	X25519Keypair,
-	X25519PublicKey
-} from "@peerbit/crypto";
+import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
 import { BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { AnyStore, createStore } from "@peerbit/any-store";
 import { JSON_ENCODING } from "./utils/encoding.js";
+import { DefaultKeychain } from "@peerbit/keychain";
 
 const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
 };
 
-const createKeychain = (keys: (Ed25519Keypair | X25519Keypair)[]) => {
-	return {
-		exportById: () => {
-			throw new Error("Not implemented");
-		},
-		exportByKey: <T extends Ed25519PublicKey | X25519PublicKey, Q>(
-			exportKey: T
-		) => {
-			for (const key of keys) {
-				if (key.publicKey.equals(exportKey)) {
-					return key as Q;
-				}
-			}
-			return undefined;
-		},
-		import: () => {
-			throw new Error("Not implemented");
-		}
-	} as Keychain;
+const createKeychain = async (...keys: (Ed25519Keypair | X25519Keypair)[]) => {
+	const keychain = new DefaultKeychain();
+	for (const key of keys) {
+		await keychain.import({ keypair: key });
+	}
+	return keychain;
 };
 
 describe("encryption", function () {
@@ -55,7 +37,7 @@ describe("encryption", function () {
 			receiverKey = await X25519Keypair.create();
 			const logOptions = {
 				encoding: JSON_ENCODING,
-				keychain: createKeychain([signKey, senderKey, receiverKey])
+				keychain: await createKeychain(signKey, senderKey, receiverKey)
 			};
 
 			log1 = new Log();
@@ -193,7 +175,7 @@ describe("encryption", function () {
 			cache = await level.sublevel("cache");
 
 			const logOptions = {
-				keychain: createKeychain([signingKey, encryptioKey]),
+				keychain: await createKeychain(signingKey, encryptioKey),
 				cache,
 				encoding: JSON_ENCODING
 			};

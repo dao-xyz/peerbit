@@ -114,7 +114,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * Write stream - it's preferable to use the write method
 	 */
-	public outboundStream?: Pushable<Uint8ArrayList>;
+	public outboundStream?: Pushable<Uint8Array>;
 	/**
 	 * Read stream
 	 */
@@ -183,7 +183,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.usedBandWidthTracker.add(data.byteLength);
 
 		this.outboundStream.push(
-			data instanceof Uint8Array ? new Uint8ArrayList(data) : data
+			data instanceof Uint8Array ? data : data.subarray()
 		);
 	}
 
@@ -276,8 +276,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		const _prevStream = this.outboundStream;
 
 		this._rawOutboundStream = stream;
-		this.outboundStream = pushable<Uint8ArrayList>({
-			objectMode: true,
+		this.outboundStream = pushable<Uint8Array>({
+			objectMode: false,
 			onEnd: () => {
 				return stream.close().then(() => {
 					if (this._rawOutboundStream === stream) {
@@ -499,7 +499,7 @@ export abstract class DirectStream<
 								interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
 								maxBuffer: MAX_QUEUED_BYTES,
 								...connectionManager?.pruner
-						  }
+							}
 						: undefined
 			};
 		}
@@ -508,14 +508,14 @@ export abstract class DirectStream<
 			? new Cache({
 					ttl: this.connectionManagerOptions.dialer.retryDelay,
 					max: 1e3
-			  })
+				})
 			: undefined;
 
 		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
 			? new Cache({
 					max: 1e6,
 					ttl: this.connectionManagerOptions.pruner.connectionTimeout
-			  })
+				})
 			: undefined;
 	}
 
@@ -527,19 +527,9 @@ export abstract class DirectStream<
 		await ready;
 
 		this.closeController = new AbortController();
+		this.started = true;
 
 		logger.debug("starting");
-
-		// register protocol with topology
-		// Topology callbacks called on connection manager changes
-		this._registrarTopologyIds = await Promise.all(
-			this.multicodecs.map((multicodec) =>
-				this.components.registrar.register(multicodec, {
-					onConnect: this.onPeerConnected.bind(this),
-					onDisconnect: this.onPeerDisconnected.bind(this)
-				})
-			)
-		);
 
 		// Incoming streams
 		// Called after a peer dials us
@@ -547,18 +537,23 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
-					maxOutboundStreams: this.maxOutboundStreams
+					maxOutboundStreams: this.maxOutboundStreams,
+					runOnTransientConnection: false
 				})
 			)
 		);
-		// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
-		this.components.events.addEventListener("connection:open", (e) => {
-			if (e.detail.multiplexer === "/webrtc") {
-				this.onPeerConnected(e.detail.remotePeer, e.detail);
-			}
-		});
 
-		this.started = true;
+		// register protocol with topology
+		// Topology callbacks called on connection manager changes
+		this._registrarTopologyIds = await Promise.all(
+			this.multicodecs.map((multicodec) =>
+				this.components.registrar.register(multicodec, {
+					onConnect: this.onPeerConnected.bind(this),
+					onDisconnect: this.onPeerDisconnected.bind(this),
+					notifyOnTransient: false
+				})
+			)
+		);
 
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
 		const peerToConnections: Map<string, Connection[]> = new Map();
@@ -581,7 +576,7 @@ export abstract class DirectStream<
 				}
 			}
 
-			await this.onPeerConnected(conn.remotePeer, conn, { fromExisting: true });
+			await this.onPeerConnected(conn.remotePeer, conn);
 		}
 		if (this.connectionManagerOptions.pruner) {
 			const pruneConnectionsLoop = () => {
@@ -684,16 +679,8 @@ export abstract class DirectStream<
 	/**
 	 * Registrar notifies an established connection with protocol
 	 */
-	public async onPeerConnected(
-		peerId: PeerId,
-		conn: Connection,
-		properties?: { fromExisting?: boolean }
-	) {
-		if (conn.transient) {
-			return;
-		}
-
-		if (!this.isStarted() || conn.status !== "open") {
+	public async onPeerConnected(peerId: PeerId, conn: Connection) {
+		if (!this.isStarted() || conn.transient || conn.status !== "open") {
 			return;
 		}
 		const peerKey = getPublicKeyFromPeerId(peerId);
@@ -702,40 +689,6 @@ export abstract class DirectStream<
 			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
 
-		try {
-			// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
-
-			const result = await waitFor(
-				async () => {
-					try {
-						const hasProtocol = await this.components.peerStore
-							.get(peerId)
-							.then((x) =>
-								this.multicodecs.find((y) => x.protocols.includes(y))
-							);
-						if (!hasProtocol) {
-							return;
-						}
-					} catch (error: any) {
-						if (error.code === "ERR_NOT_FOUND") {
-							return;
-						}
-						throw error;
-					}
-
-					return true;
-				},
-				{
-					timeout: 1e4,
-					signal: this.closeController.signal
-				}
-			);
-			if (!result) {
-				return;
-			}
-		} catch (error) {
-			return;
-		}
 		try {
 			for (const existingStreams of conn.streams) {
 				if (
@@ -1212,7 +1165,7 @@ export abstract class DirectStream<
 										this.components.addressManager
 											.getAddresses()
 											.map((x) => x.toString())
-								  )
+									)
 								: undefined
 					})
 				}).sign(this.sign),
@@ -1357,7 +1310,7 @@ export abstract class DirectStream<
 			: new SilentDelivery({
 					to: (options as WithTo).to!,
 					redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
-			  });
+				});
 
 		if (
 			mode instanceof AcknowledgeDelivery ||
@@ -1490,8 +1443,8 @@ export abstract class DirectStream<
 		const filterMessageForSeenCounter = relayed
 			? undefined
 			: message.header.mode instanceof SeekDelivery
-			? Math.min(this.peers.size, message.header.mode.redundancy)
-			: 1; /*  message.deliveryMode instanceof SeekDelivery ? Math.min(this.peers.size - (relayed ? 1 : 0), message.deliveryMode.redundancy) : 1 */
+				? Math.min(this.peers.size, message.header.mode.redundancy)
+				: 1; /*  message.deliveryMode instanceof SeekDelivery ? Math.min(this.peers.size - (relayed ? 1 : 0), message.deliveryMode.redundancy) : 1 */
 
 		const finalize = () => {
 			this._ackCallbacks.delete(idString);

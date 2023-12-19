@@ -55,7 +55,7 @@ class RPCTest extends Program<Args> {
 				args?.role instanceof Responder
 					? (hello, from) => {
 							return new World();
-					  }
+						}
 					: undefined // only create a response handler if we are to respond to requests
 		});
 	}

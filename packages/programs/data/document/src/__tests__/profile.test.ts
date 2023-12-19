@@ -63,10 +63,10 @@ describe("profile", () => {
 			const store: TestStore = await (stores.length === 0
 				? client.open(new TestStore(), {
 						args: { role: new Replicator({ factor: 1 }) }
-				  })
+					})
 				: TestStore.open(stores[0].address, client, {
 						args: { role: new Replicator({ factor: 1 }) }
-				  }));
+					}));
 			stores.push(store);
 		}
 		await stores[0].waitFor(session.peers[1].peerId);

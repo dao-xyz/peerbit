@@ -4,8 +4,6 @@ import { v4 as uuid } from "uuid";
 import { AnyStore } from "../interface.js";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
-import { delay } from "@peerbit/time";
-import { randomBytes } from "@peerbit/crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

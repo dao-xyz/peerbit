@@ -129,8 +129,8 @@ export const createClient = async (
 							typeof key === "string"
 								? key
 								: key instanceof PublicSignKey
-								? key.hashcode()
-								: getPublicKeyFromPeerId(key).hashcode()
+									? key.hashcode()
+									: getPublicKeyFromPeerId(key).hashcode()
 						),
 					undefined,
 					{ validateStatus }

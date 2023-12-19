@@ -178,6 +178,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this._loadedOnce = true;
 		}
 		await this.rpc.subscribe();
+
 		await this.rpc.send(new ResponseRoleMessage(role));
 
 		if (onRoleChange) {
@@ -303,7 +304,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		await this.remoteBlocks.start();
 
 		await this.log.open(this.remoteBlocks, this.node.identity, {
-			keychain: this.node.keychain,
+			keychain: this.node.services.keychain,
 			...this._logProperties,
 			onChange: (change) => {
 				if (this._pendingIHave.size > 0) {
@@ -656,7 +657,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					timeout: WAIT_FOR_REPLICATOR_TIMEOUT
 				})
 					.then(async () => {
-						//await delay(4000 + Math.random())
+						/* await delay(1000 * Math.random()) */
 
 						const prev = this.latestRoleMessages.get(context.from!.hashcode());
 						if (prev && prev > context.timestamp) {
@@ -1418,13 +1419,13 @@ function _insertAfter(
 				null as any,
 				self.head as yallist.Node<ReplicatorRect> | undefined,
 				self
-		  )
+			)
 		: new yallist.Node(
 				value,
 				node,
 				node.next as yallist.Node<ReplicatorRect> | undefined,
 				self
-		  );
+			);
 
 	// is tail
 	if (inserted.next === null) {

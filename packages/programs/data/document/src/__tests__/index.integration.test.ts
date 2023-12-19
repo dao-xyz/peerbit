@@ -872,10 +872,10 @@ describe("index", () => {
 							? (await TestStore.load<TestStore>(
 									stores[0].address!,
 									session.peers[i].services.blocks
-							  ))!
+								))!
 							: new TestStore({
 									docs: new Documents<Document>()
-							  });
+								});
 					await session.peers[i].open(store, {
 						args: {
 							role: i === 0 ? new Replicator({ factor: 1 }) : new Observer(),
@@ -884,13 +884,13 @@ describe("index", () => {
 									i === 0
 										? (obj, key) => {
 												return canRead[i] ? canRead[i]!(obj, key) : true;
-										  }
+											}
 										: undefined,
 								canSearch:
 									i === 0
 										? (query, key) => {
 												return canSearch[i] ? canSearch[i]!(query, key) : true;
-										  }
+											}
 										: undefined
 							}
 						}
@@ -1795,10 +1795,10 @@ describe("index", () => {
 							? (await TestStore.load<TestStore>(
 									stores[0].address!,
 									session.peers[i].services.blocks
-							  ))!
+								))!
 							: new TestStore({
 									docs: new Documents<Document>()
-							  });
+								});
 					store.docs.log.append = async (a, b) => {
 						// Omit synchronization so results are always the same (HACKY)
 						b = {
@@ -2244,10 +2244,10 @@ describe("index", () => {
 						? (await TestStoreSubPrograms.load<TestStoreSubPrograms>(
 								stores[0].store.address!,
 								session.peers[i].services.blocks
-						  ))!
+							))!
 						: new TestStoreSubPrograms({
 								docs: new Documents<SubProgram>()
-						  });
+							});
 
 				await session.peers[i].open(store, {
 					args: {
@@ -2434,10 +2434,10 @@ describe("index", () => {
 							? (await TestStore.load<TestStore>(
 									stores[0].address!,
 									session.peers[i].services.blocks
-							  ))!
+								))!
 							: new TestStore({
 									docs: new Documents<Document>()
-							  });
+								});
 					await session.peers[i].open(store);
 					stores.push(store);
 				}

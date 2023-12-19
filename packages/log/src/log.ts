@@ -3,7 +3,6 @@ import {
 	randomBytes,
 	sha256Base64Sync,
 	Identity,
-	Keychain,
 	X25519Keypair
 } from "@peerbit/crypto";
 import { Cache } from "@peerbit/cache";
@@ -37,6 +36,7 @@ import { Change } from "./change.js";
 import { EntryWithRefs } from "./entry-with-refs.js";
 import { Blocks } from "@peerbit/blocks-interface";
 import { cidifyString } from "@peerbit/blocks";
+import { Keychain } from "@peerbit/keychain";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 
@@ -556,7 +556,7 @@ export class Log<T> {
 						receiver: {
 							...options.encryption.receiver
 						}
-				  }
+					}
 				: undefined,
 			canAppend: this._canAppend
 		});
@@ -1111,7 +1111,7 @@ export class Log<T> {
 					timeout: opts.fetchEntryTimeout,
 					reload: opts.reload,
 					cache: { update: true, reset: true }
-			  });
+				});
 
 		if (heads) {
 			// Load the log

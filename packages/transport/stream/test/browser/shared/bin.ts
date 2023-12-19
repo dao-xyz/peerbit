@@ -1,4 +1,3 @@
-import { test, expect } from "@playwright/test";
 import { createLibp2p } from "libp2p";
 import { webSockets } from "@libp2p/websockets";
 import { circuitRelayServer } from "@libp2p/circuit-relay-v2";

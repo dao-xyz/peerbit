@@ -375,15 +375,41 @@ export abstract class Program<
 		);
 
 		// wait for subscribing to topics
-		await waitFor(
-			async () => {
-				return (
+		return new Promise<void>((resolve, reject) => {
+			const timeout = setTimeout(
+				() => {
+					this.node.services.pubsub.removeEventListener("subscribe", listener);
+					options?.signal?.removeEventListener("abort", abortListener);
+					reject(new Error("Timeout"));
+				},
+				options?.timeout || 10 * 1000
+			);
+
+			const abortListener = (e) => {
+				this.node.services.pubsub.removeEventListener("subscribe", listener);
+				clearTimeout(timeout);
+				reject(e);
+			};
+
+			options?.signal?.addEventListener("abort", abortListener);
+
+			const checkReady = async () => {
+				const ready =
 					intersection(expectedHashes, await this.getReady()).size ===
-					expectedHashes.size
-				);
-			},
-			{ signal: options?.signal, timeout: options?.timeout || 10 * 1000 }
-		); // 200 ms delay since this is an expensive op. TODO, make event based instead
+					expectedHashes.size;
+				if (ready) {
+					this.node.services.pubsub.removeEventListener("subscribe", listener);
+					clearTimeout(timeout);
+					options?.signal?.removeEventListener("abort", abortListener);
+					resolve();
+				}
+			};
+			const listener = () => {
+				return checkReady();
+			};
+			this.node.services.pubsub.addEventListener("subscribe", listener);
+			checkReady();
+		});
 	}
 
 	async getReady(): Promise<Set<string>> {

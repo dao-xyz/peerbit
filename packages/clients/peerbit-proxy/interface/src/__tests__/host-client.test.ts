@@ -177,34 +177,44 @@ describe("index", () => {
 		it("ed25519", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const id = new Uint8Array([1, 2, 3]);
-			await client1.keychain.import(keypair, id);
+			await client1.services.keychain.import({ keypair, id });
 			expect(
-				(await client1.keychain.exportById(id, "ed25519"))?.equals(keypair)
+				(
+					await client1.services.keychain.exportById(id, Ed25519Keypair)
+				)?.equals(keypair)
 			).toBeTrue();
 			expect(
-				(await host1.keychain.exportById(id, "ed25519"))?.equals(keypair)
+				(await host1.services.keychain.exportById(id, Ed25519Keypair))?.equals(
+					keypair
+				)
 			).toBeTrue();
 			expect(
-				(await client1.keychain.exportByKey(keypair.publicKey))?.equals(keypair)
+				(
+					await client1.services.keychain.exportByKey(keypair.publicKey)
+				)?.equals(keypair)
 			).toBeTrue();
 			expect(
-				(await host1.keychain.exportByKey(keypair.publicKey))?.equals(keypair)
+				(await host1.services.keychain.exportByKey(keypair.publicKey))?.equals(
+					keypair
+				)
 			).toBeTrue();
 		});
 
 		it("x25519", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const id = new Uint8Array([1, 2, 3]);
-			await client1.keychain.import(keypair, id);
+			await client1.services.keychain.import({ keypair, id });
 			const xkeypair = await X25519Keypair.from(keypair);
 			expect(
-				(await client1.keychain.exportByKey(xkeypair.publicKey))?.equals(
-					xkeypair
-				)
+				(
+					await client1.services.keychain.exportByKey(xkeypair.publicKey)
+				)?.equals(xkeypair)
 			).toBeTrue();
 
 			expect(
-				(await host1.keychain.exportByKey(xkeypair.publicKey))?.equals(xkeypair)
+				(await host1.services.keychain.exportByKey(xkeypair.publicKey))?.equals(
+					xkeypair
+				)
 			).toBeTrue();
 		});
 	});

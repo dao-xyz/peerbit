@@ -138,7 +138,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				if (rpcMessage instanceof RequestV0) {
 					if (this._responseHandler) {
 						const maybeEncrypted = rpcMessage.request;
-						const decrypted = await maybeEncrypted.decrypt(this.node.keychain);
+						const decrypted = await maybeEncrypted.decrypt(
+							this.node.services.keychain
+						);
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
@@ -163,7 +165,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 							maybeEncryptedMessage = await decryptedMessage.encrypt(
 								this._keypair,
-								rpcMessage.respondTo
+								[rpcMessage.respondTo]
 							);
 
 							await this.node.services.pubsub.publish(
@@ -231,7 +233,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		) {
 			maybeEncryptedMessage = await decryptedMessage.encrypt(
 				options.encryption.key,
-				...options.encryption.responders
+				options.encryption.responders
 			);
 		}
 
@@ -249,7 +251,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					mode: options?.mode,
 					to: options.to,
 					topics: [this.rpcTopic]
-			  }
+				}
 			: { mode: options?.mode, topics: [this.rpcTopic] };
 	}
 
@@ -359,7 +361,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 			options?.to && options.to.length > 0
 				? new Set(
 						options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
-				  )
+					)
 				: undefined;
 
 		const responders = new Set<string>();

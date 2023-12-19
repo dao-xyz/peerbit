@@ -7,10 +7,12 @@ import { transports, relay, listen } from "./transports.js";
 import { identify } from "@libp2p/identify";
 import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { yamux } from "@chainsafe/libp2p-yamux";
+import { DefaultKeychain, Keychain } from "@peerbit/keychain";
 
 export type Libp2pExtendServices = {
 	pubsub: DirectSub;
 	blocks: DirectBlock;
+	keychain: Keychain;
 };
 export type Libp2pExtended = Libp2p<
 	{ relay: CircuitRelayService; identify: any } & Libp2pExtendServices
@@ -28,7 +30,8 @@ export const createLibp2pExtended = (
 	opts: Libp2pCreateOptions = {
 		services: {
 			blocks: (c) => new DirectBlock(c),
-			pubsub: (c) => new DirectSub(c)
+			pubsub: (c) => new DirectSub(c),
+			keychain: (c) => new DefaultKeychain()
 		}
 	}
 ): Promise<Libp2pExtended> => {
@@ -69,6 +72,7 @@ export const createLibp2pExtended = (
 						// auto prune true
 					})),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
+			keychain: opts.services?.keychain || ((c) => new DefaultKeychain()),
 			...opts.services
 		}
 	});

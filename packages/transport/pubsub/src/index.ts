@@ -16,7 +16,7 @@ import {
 	DirectStreamOptions,
 	PeerStreams
 } from "@peerbit/stream";
-import { CodeError } from "@libp2p/interface/errors";
+import { CodeError } from "@libp2p/interface";
 import {
 	PubSubMessage,
 	Subscribe,
@@ -275,8 +275,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				x instanceof PublicSignKey
 					? x.hashcode()
 					: typeof x === "string"
-					? x
-					: getPublicKeyFromPeerId(x).hashcode()
+						? x
+						: getPublicKeyFromPeerId(x).hashcode()
 			) || this.getPeersOnTopics(topics);
 
 		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
@@ -285,7 +285,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					topics: topics.map((x) => x.toString()),
 					data,
 					strict: !!(options as { to: string[] })?.to
-			  })
+				})
 			: undefined;
 
 		const bytes = dataMessage?.bytes();

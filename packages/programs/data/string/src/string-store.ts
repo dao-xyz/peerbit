@@ -15,7 +15,7 @@ import {
 	SearchRequest,
 	StringResult
 } from "./query.js";
-import { CustomEvent } from "@libp2p/interfaces/events";
+import { CustomEvent } from "@libp2p/interface";
 import { concat, fromString } from "uint8arrays";
 
 import { Range } from "./range.js";

@@ -55,7 +55,6 @@
 		"@peerbit/stream": "1.0.20",
 		"@peerbit/logger": "1.0.1",
 		"@peerbit/uint8arrays": "3.0.1",
-		"@libp2p/interfaces": "^3.3.2",
-		"libp2p": "1.0.10"
+		"libp2p": "^1.0.11"
 	}
 }

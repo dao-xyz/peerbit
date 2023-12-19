@@ -1,7 +1,4 @@
-import {
-	TestSession as SSession,
-	LibP2POptions as SLibP2POptions
-} from "@peerbit/libp2p-test-utils";
+import { TestSession as SSession } from "@peerbit/libp2p-test-utils";
 import {
 	DirectStream,
 	waitForPeers as waitForPeersStreams
@@ -16,8 +13,10 @@ import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 import { ProgramClient } from "@peerbit/program";
 import { mplex } from "@libp2p/mplex";
+import { DefaultKeychain } from "@peerbit/keychain";
+import { Libp2pOptions } from "libp2p";
 
-export type LibP2POptions = SLibP2POptions<Libp2pExtendServices>;
+export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
 type CreateOptions = { libp2p?: Libp2pCreateOptions; directory?: string };
 export class TestSession {
@@ -61,6 +60,7 @@ export class TestSession {
 				services: {
 					blocks: (c) => new DirectBlock(c),
 					pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+					keychain: (c) => new DefaultKeychain(),
 					...o?.libp2p?.services
 				},
 				streamMuxers: [mplex({ disconnectThreshold: 10 })]

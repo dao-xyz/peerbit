@@ -1,6 +1,6 @@
 import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import {

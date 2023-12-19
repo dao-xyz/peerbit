@@ -5,7 +5,7 @@ import {
 	DirectStream,
 	waitForPeers
 } from "../index.js";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { tcp } from "@libp2p/tcp";
 import crypto from "crypto";
 import { SeekDelivery } from "@peerbit/stream-interface";

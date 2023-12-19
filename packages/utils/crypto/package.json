@@ -45,11 +45,11 @@
 	"dependencies": {
 		"@peerbit/cache": "^1.1.1",
 		"@dao-xyz/borsh": "^5.1.8",
+		"@stablelib/sha256": "^1.0.1",
 		"@peerbit/uint8arrays": "3.0.1",
 		"@ethersproject/wallet": "^5.7.0",
 		"@libp2p/crypto": "^3.0.2",
 		"@libp2p/peer-id": "^4.0.2",
-		"libsodium-wrappers": "^0.7.11",
-		"@libp2p/keychain": "^4.0.3"
+		"libsodium-wrappers": "^0.7.13"
 	}
 }

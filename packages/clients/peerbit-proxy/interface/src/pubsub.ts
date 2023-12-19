@@ -74,8 +74,8 @@ export class REQ_Publish extends PubSubMessage {
 			typeof x === "string"
 				? x
 				: x instanceof PublicSignKey
-				? x.hashcode()
-				: getPublicKeyFromPeerId(x).hashcode()
+					? x.hashcode()
+					: getPublicKeyFromPeerId(x).hashcode()
 		);
 	}
 }

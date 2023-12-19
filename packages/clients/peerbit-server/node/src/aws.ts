@@ -27,7 +27,7 @@ export const createRecord = async (options: {
 			? {
 					accessKeyId: options.credentials.accessKeyId,
 					secretAccessKey: options.credentials.secretAccessKey
-			  }
+				}
 			: undefined
 	});
 	const cmd = new ChangeResourceRecordSetsCommand({

@@ -7,7 +7,7 @@ describe(`identity`, function () {
 		let client: ProgramClient;
 
 		afterEach(async () => {
-			await client.stop();
+			await client?.stop();
 		});
 
 		it("disc", async () => {
@@ -16,7 +16,10 @@ describe(`identity`, function () {
 			const id1 = client.peerId;
 
 			const kp = await Ed25519Keypair.create();
-			await client.keychain?.import(kp, new Uint8Array([1, 2, 3]));
+			await client.services.keychain?.import({
+				keypair: kp,
+				id: new Uint8Array([1, 2, 3])
+			});
 
 			// stop
 			await client.stop();
@@ -26,7 +29,9 @@ describe(`identity`, function () {
 
 			expect(client.peerId.equals(id1)).toBeTrue();
 
-			const exportedKeypair = await client.keychain?.exportByKey(kp.publicKey);
+			const exportedKeypair = await client.services.keychain?.exportByKey(
+				kp.publicKey
+			);
 			expect(exportedKeypair!.equals(kp)).toBeTrue();
 		});
 
@@ -35,7 +40,10 @@ describe(`identity`, function () {
 			const id1 = client.peerId;
 
 			const kp = await Ed25519Keypair.create();
-			await client.keychain?.import(kp, new Uint8Array([1, 2, 3]));
+			await client.services.keychain?.import({
+				keypair: kp,
+				id: new Uint8Array([1, 2, 3])
+			});
 
 			// stop
 			await client.stop();
@@ -44,7 +52,7 @@ describe(`identity`, function () {
 			client = await Peerbit.create({});
 			expect(client.peerId.equals(id1)).toBeFalse();
 			await expect(
-				client.keychain?.exportByKey(kp.publicKey)
+				client.services.keychain?.exportByKey(kp.publicKey)
 			).resolves.toBeUndefined();
 		});
 	});

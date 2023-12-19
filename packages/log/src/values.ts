@@ -156,7 +156,7 @@ function _insertAfter(
 				null as any,
 				self.head as EntryNode | undefined,
 				self
-		  )
+			)
 		: new yallist.Node(value, node, node.next as EntryNode | undefined, self);
 
 	// is tail

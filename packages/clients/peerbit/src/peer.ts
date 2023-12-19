@@ -1,11 +1,7 @@
 import { AnyStore } from "../../../utils/any-store/lib/esm/index.js";
 import { multiaddr, Multiaddr, isMultiaddr } from "@multiformats/multiaddr";
 import type { Libp2p } from "libp2p";
-import {
-	Ed25519Keypair,
-	Ed25519PublicKey,
-	Libp2pKeychain
-} from "@peerbit/crypto";
+import { Ed25519Keypair, Ed25519PublicKey } from "@peerbit/crypto";
 import {
 	Program,
 	Address,
@@ -17,7 +13,6 @@ import sodium from "libsodium-wrappers";
 import path from "path-browserify";
 import { waitFor } from "@peerbit/time";
 import "@libp2p/peer-id";
-import { Cache } from "@peerbit/cache";
 
 import {
 	createLibp2pExtended,
@@ -31,6 +26,8 @@ import { logger as loggerFn } from "@peerbit/logger";
 import { OpenOptions } from "@peerbit/program";
 import { resolveBootstrapAddresses } from "./bootstrap.js";
 import { createStore } from "@peerbit/any-store";
+import { DefaultKeychain } from "@peerbit/keychain";
+import type { PeerId } from "@libp2p/interface";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -41,7 +38,6 @@ export type CreateOptions = {
 	directory?: string;
 	memory: AnyStore;
 	identity: Ed25519Keypair;
-	keychain: Libp2pKeychain;
 } & OptionalCreateOptions;
 
 type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
@@ -67,6 +63,8 @@ const createCache = async (
 	return cache;
 };
 
+const SELF_IDENTITY_KEY_ID = new TextEncoder().encode("__self__");
+
 export class Peerbit implements ProgramClient {
 	_libp2p: Libp2pExtended;
 
@@ -77,9 +75,8 @@ export class Peerbit implements ProgramClient {
 
 	// Libp2p peerid in Identity form
 	private _identity: Ed25519Keypair;
-
-	private _keychain: Libp2pKeychain; // Keychain + Caching + X25519 keys
 	private _handler: ProgramHandler;
+
 	constructor(libp2p: Libp2pExtended, options: CreateOptions) {
 		if (libp2p == null) {
 			throw new Error("Libp2p required");
@@ -97,8 +94,6 @@ export class Peerbit implements ProgramClient {
 		}
 
 		this._identity = options.identity;
-		this._keychain = options.keychain;
-
 		this.directory = options.directory;
 		this._memory = options.memory;
 		this._libp2pExternal = options.libp2pExternal;
@@ -111,54 +106,58 @@ export class Peerbit implements ProgramClient {
 			.libp2p as Libp2pExtended;
 		const asRelay = (options as SimpleLibp2pOptions).relay;
 
-		const blocksDirectory =
-			options["directory"] != null
-				? path.join(options["directory"], "/blocks").toString()
-				: undefined;
-		let libp2pExternal = false;
+		const directory = options.directory;
+		const hasDir = directory != null;
 
-		const datastore =
-			options["directory"] != null
-				? new LevelDatastore(
-						path.join(options["directory"], "/libp2p").toString()
-				  )
-				: undefined;
+		const memory = await createCache(
+			directory != null ? path.join(directory, "/cache") : undefined
+		);
+
+		const blocksDirectory = hasDir
+			? path.join(options["directory"], "/blocks").toString()
+			: undefined;
+
+		const keychainDirectory = hasDir
+			? path.join(options["directory"], "/keychain").toString()
+			: undefined;
+
+		const datastore = hasDir
+			? new LevelDatastore(
+					path.join(options["directory"], "/libp2p").toString()
+				)
+			: undefined;
+
 		if (datastore) {
 			await datastore.open();
 		}
 
-		if (!libp2pExtended) {
+		const libp2pExternal = libp2pExtended && isLibp2pInstance(libp2pExtended);
+		if (!libp2pExternal) {
+			const extendedOptions: ClientCreateOptions | undefined =
+				libp2pExtended as any as ClientCreateOptions;
+			const keychain = new DefaultKeychain({
+				store: createStore(keychainDirectory)
+			});
+			const peerId =
+				extendedOptions?.peerId ||
+				(await (
+					await keychain.exportById(SELF_IDENTITY_KEY_ID, Ed25519Keypair)
+				)?.toPeerId());
 			libp2pExtended = await createLibp2pExtended({
+				...extendedOptions,
+				peerId,
 				services: {
+					keychain: (c) => keychain,
 					blocks: (c) =>
 						new DirectBlock(c, {
 							canRelayMessage: asRelay,
 							directory: blocksDirectory
 						}),
-					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay })
+					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
+					...extendedOptions?.services
 				},
-				// If directory is passed, we store keys within that directory, else we will use memory datastore (which is the default behaviour)
 				datastore
 			});
-		} else {
-			if (isLibp2pInstance(libp2pExtended)) {
-				libp2pExternal = true; // libp2p was created outside
-			} else {
-				const extendedOptions = libp2pExtended as any as ClientCreateOptions;
-				libp2pExtended = await createLibp2pExtended({
-					...extendedOptions,
-					services: {
-						blocks: (c) =>
-							new DirectBlock(c, {
-								canRelayMessage: asRelay,
-								directory: blocksDirectory
-							}),
-						pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
-						...extendedOptions?.services
-					},
-					datastore
-				});
-			}
 		}
 		if (datastore) {
 			const stopFn = libp2pExtended.stop.bind(libp2pExtended);
@@ -182,20 +181,12 @@ export class Peerbit implements ProgramClient {
 			);
 		}
 
-		const directory = options.directory;
-		const memory = await createCache(
-			directory ? path.join(directory, "/cache") : undefined
-		);
-
 		const identity = Ed25519Keypair.fromPeerId(libp2pExtended.peerId);
-		const keychain = new Libp2pKeychain(libp2pExtended.keychain, {
-			cache: new Cache({ max: 1000 })
-		});
-
 		try {
-			const writer = new BinaryWriter();
-			writer.string("identity");
-			await keychain.import(identity, writer.finalize());
+			await libp2pExtended.services.keychain.import({
+				keypair: identity,
+				id: SELF_IDENTITY_KEY_ID
+			});
 		} catch (error: any) {
 			if (error.code == "ERR_KEY_ALREADY_EXISTS") {
 				// Do nothing
@@ -208,8 +199,7 @@ export class Peerbit implements ProgramClient {
 			directory,
 			memory: memory,
 			libp2pExternal,
-			identity,
-			keychain
+			identity
 		});
 		return peer;
 	}
@@ -229,10 +219,6 @@ export class Peerbit implements ProgramClient {
 		return this.libp2p.services;
 	}
 
-	get keychain(): Libp2pKeychain {
-		return this._keychain;
-	}
-
 	get handler(): ProgramHandler {
 		return this._handler;
 	}
@@ -250,8 +236,8 @@ export class Peerbit implements ProgramClient {
 			typeof address == "string"
 				? multiaddr(address)
 				: isMultiaddr(address) || Array.isArray(address)
-				? address
-				: address.getMultiaddrs();
+					? address
+					: address.getMultiaddrs();
 		const connection = await this.libp2p.dial(maddress);
 		const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 

@@ -43,7 +43,7 @@ class RPCTest extends Program {
 				? (query, from) => {
 						const resp = query;
 						return resp;
-				  }
+					}
 				: undefined
 		});
 	}

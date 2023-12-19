@@ -28,7 +28,7 @@ SOFTWARE.
 const _perfomancePolyfill = () => {
 	// based on https://gist.github.com/paulirish/5438650 copyright Paul Irish 2015.
 	if ("performance" in window === false) {
-		(window.performance as any) = {};
+		((window as any).performance as any) = {};
 	}
 
 	Date.now =
@@ -45,7 +45,7 @@ const _perfomancePolyfill = () => {
 			nowOffset = performance.timing.navigationStart;
 		}
 
-		window.performance.now = () => Date.now() - nowOffset;
+		(window.performance as any)["now"] = () => Date.now() - nowOffset;
 	}
 };
 

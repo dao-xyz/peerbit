@@ -68,8 +68,8 @@ const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
 			to instanceof PublicSignKey
 				? to.hashcode()
 				: typeof to === "string"
-				? to
-				: getPublicKeyFromPeerId(to).hashcode();
+					? to
+					: getPublicKeyFromPeerId(to).hashcode();
 
 		toHashes[i++] = hash;
 	}
