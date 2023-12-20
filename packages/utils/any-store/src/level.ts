@@ -31,13 +31,12 @@ export class LevelStore implements AnyStore {
 		if (this.status() !== "open") {
 			await this.store.open();
 			return Promise.resolve();
+		} else {
+			await this.store.open({ passive: true });
 		}
 	}
 
 	async get(key: string): Promise<Uint8Array | undefined> {
-		if (this.store.status !== "open") {
-			throw new Error("Cache store not open: " + this.store.status);
-		}
 		return new Promise<Uint8Array | undefined>((resolve, reject) => {
 			this.store.get(key, (err, result) => {
 				if (err) {

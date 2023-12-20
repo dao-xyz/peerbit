@@ -2,7 +2,7 @@ import { AnyStore } from "@peerbit/any-store";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
-import { Keychain, Ed25519Keypair } from "@peerbit/crypto";
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { DataEvent, PubSub, PublishEvent } from "@peerbit/pubsub-interface";
 import { ProgramClient } from "@peerbit/program";
 import * as blocks from "./blocks.js";
@@ -14,8 +14,9 @@ import { Message } from "./message.js";
 import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
-import { CustomEvent } from "@libp2p/interface/events";
-import { serialize, deserialize } from "@dao-xyz/borsh";
+import { CustomEvent } from "@libp2p/interface";
+import { serialize, deserialize, AbstractType } from "@dao-xyz/borsh";
+import { Keychain } from "@peerbit/keychain";
 
 const levelKey = (level: string[]) => JSON.stringify(level);
 
@@ -75,13 +76,9 @@ export class PeerbitProxyHost implements ProgramClient {
 		return this.hostClient.dial(address);
 	}
 
-	get services(): { pubsub: PubSub; blocks: Blocks } {
+	get services(): { pubsub: PubSub; blocks: Blocks; keychain: Keychain } {
 		return this.hostClient.services;
 	}
-	get keychain(): Keychain {
-		return this.hostClient.keychain;
-	}
-
 	get memory(): AnyStore {
 		return this.hostClient.memory;
 	}
@@ -145,7 +142,10 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new keychain.RESP_ExportKeypairById(
-						await this.keychain?.exportById(message.keyId, message.type)
+						await this.services.keychain?.exportById(
+							message.keyId,
+							message.type as AbstractType<any>
+						)
 					),
 					from
 				);
@@ -153,12 +153,15 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new keychain.RESP_ExportKeypairByKey(
-						await this.keychain?.exportByKey(message.publicKey.key)
+						await this.services.keychain?.exportByKey(message.publicKey.key)
 					),
 					from
 				);
 			} else if (message instanceof keychain.REQ_ImportKey) {
-				await this.keychain?.import(message.keypair, message.keyId);
+				await this.services.keychain?.import({
+					keypair: message.keypair,
+					id: message.keyId
+				});
 				await this.respond(
 					message,
 					new keychain.RESP_ImportKey(message.messageId),

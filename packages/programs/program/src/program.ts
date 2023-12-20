@@ -2,7 +2,11 @@ import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Constructor, getSchema, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import { CustomEvent, EventEmitter } from "@libp2p/interface/events";
+import {
+	TypedEventTarget,
+	CustomEvent,
+	TypedEventEmitter
+} from "@libp2p/interface";
 import { Client } from "./client.js";
 import { waitFor } from "@peerbit/time";
 import { Blocks } from "@peerbit/blocks-interface";
@@ -20,7 +24,6 @@ import {
 	ProgramInitializationOptions,
 	addParent
 } from "./handler.js";
-import type { TypedEventTarget } from "@libp2p/interface/events";
 
 const intersection = (
 	a: Set<string> | undefined,
@@ -120,7 +123,7 @@ export abstract class Program<
 	}
 
 	get events(): TypedEventTarget<Events> {
-		return this._events || (this._events = new EventEmitter());
+		return this._events || (this._events = new TypedEventEmitter());
 	}
 
 	get closed(): boolean {
@@ -372,15 +375,41 @@ export abstract class Program<
 		);
 
 		// wait for subscribing to topics
-		await waitFor(
-			async () => {
-				return (
+		return new Promise<void>((resolve, reject) => {
+			const timeout = setTimeout(
+				() => {
+					this.node.services.pubsub.removeEventListener("subscribe", listener);
+					options?.signal?.removeEventListener("abort", abortListener);
+					reject(new Error("Timeout"));
+				},
+				options?.timeout || 10 * 1000
+			);
+
+			const abortListener = (e) => {
+				this.node.services.pubsub.removeEventListener("subscribe", listener);
+				clearTimeout(timeout);
+				reject(e);
+			};
+
+			options?.signal?.addEventListener("abort", abortListener);
+
+			const checkReady = async () => {
+				const ready =
 					intersection(expectedHashes, await this.getReady()).size ===
-					expectedHashes.size
-				);
-			},
-			{ signal: options?.signal, timeout: options?.timeout || 10 * 1000 }
-		); // 200 ms delay since this is an expensive op. TODO, make event based instead
+					expectedHashes.size;
+				if (ready) {
+					this.node.services.pubsub.removeEventListener("subscribe", listener);
+					clearTimeout(timeout);
+					options?.signal?.removeEventListener("abort", abortListener);
+					resolve();
+				}
+			};
+			const listener = () => {
+				return checkReady();
+			};
+			this.node.services.pubsub.addEventListener("subscribe", listener);
+			checkReady();
+		});
 	}
 
 	async getReady(): Promise<Set<string>> {

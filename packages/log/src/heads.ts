@@ -2,7 +2,7 @@ import { Entry } from "./entry.js";
 import { AnyStore } from "@peerbit/any-store";
 import { HeadsCache } from "./heads-cache.js";
 import { Blocks } from "@peerbit/blocks-interface";
-import { Keychain } from "@peerbit/crypto";
+import { Keychain } from "@peerbit/keychain";
 import { Encoding } from "./encoding.js";
 import { Values } from "./values.js";
 import { logger } from "./logger.js";

@@ -47,7 +47,7 @@ export class PostMessageNode extends connection.MessageNode {
 												{ targetOrigin: "*" }
 											),
 										parent: ev.source === window.top
-								  }
+									}
 								: undefined
 						);
 					}

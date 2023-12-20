@@ -9,7 +9,7 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
-import { CustomEvent } from "@libp2p/interface/events";
+import { CustomEvent } from "@libp2p/interface";
 
 export const createPeer = async (
 	state: {
@@ -147,10 +147,10 @@ export const createPeer = async (
 					}
 				},
 				waitFor: () => Promise.resolve()
-			}
+			},
+			keychain: undefined as any // TODO
 		},
 		memory: undefined as any, // TODO
-		keychain: undefined as any, // TODO
 		start: () => Promise.resolve(),
 		stop: async () => {
 			return handler?.stop();

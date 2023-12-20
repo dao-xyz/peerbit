@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { createLibp2p } from "libp2p";
 import { webSockets } from "@libp2p/websockets";
-import { circuitRelayServer } from "libp2p/circuit-relay";
+import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
 import { delay, waitForResolved } from "@peerbit/time";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { identifyService } from "libp2p/identify";
+import { identify } from "@libp2p/identify";
 import { all } from "@libp2p/websockets/filters";
 import { TestDirectStream } from "../shared/utils";
 
@@ -22,7 +22,7 @@ test.describe("stream", () => {
 			},
 			services: {
 				relay: circuitRelayServer({ reservations: { maxReservations: 1000 } }),
-				identify: identifyService(),
+				identify: identify(),
 				stream: (c) => new TestDirectStream(c)
 			},
 			transports: [webSockets({ filter: all })],

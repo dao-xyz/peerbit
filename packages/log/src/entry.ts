@@ -20,16 +20,14 @@ import {
 	sha256Base64,
 	randomBytes,
 	Identity,
-	Keychain,
 	X25519Keypair
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
 import { compare, equals } from "@peerbit/uint8arrays";
 import { Encoding, NO_ENCODING } from "./encoding.js";
-import { StringArray } from "./types.js";
 import { logger } from "./logger.js";
 import { Blocks } from "@peerbit/blocks-interface";
-
+import { Keychain } from "@peerbit/keychain";
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
 	| X25519PublicKey[]
@@ -212,7 +210,7 @@ const maybeEncrypt = <Q>(
 		return new DecryptedThing<Q>({
 			data: serialize(thing),
 			value: thing
-		}).encrypt(keypair, ...receivers);
+		}).encrypt(keypair, receivers);
 	}
 	return new DecryptedThing<Q>({
 		data: serialize(thing),
@@ -560,8 +558,8 @@ export class Entry<T>
 					gid == null
 						? n.meta.gid
 						: n.meta.gid < (gid as string)
-						? n.meta.gid
-						: gid;
+							? n.meta.gid
+							: gid;
 			}
 		} else {
 			gid =
@@ -610,7 +608,7 @@ export class Entry<T>
 				? properties.encryption?.receiver?.signatures
 				: properties.encryption?.receiver?.signatures?.[
 						signature.publicKey.hashcode()
-				  ];
+					];
 			const signatureEncrypted = await maybeEncrypt(
 				signature,
 				properties.encryption?.keypair,

@@ -25,7 +25,7 @@ export const create = (properties: {
 					? [
 							`/dns4/${properties.domain}/tcp/4002`,
 							`/dns4/${properties.domain}/tcp/4003/wss`
-					  ]
+						]
 					: undefined,
 				listen: [
 					`/ip4/127.0.0.1/tcp/${listenPort}`,

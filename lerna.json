@@ -34,7 +34,8 @@
 		"packages/utils/uint8arrays",
 		"packages/utils/cache",
 		"packages/utils/time",
-		"packages/utils/logger"
+		"packages/utils/logger",
+		"packages/utils/keychain"
 	],
 	"version": "independent",
 	"npmClient": "yarn"

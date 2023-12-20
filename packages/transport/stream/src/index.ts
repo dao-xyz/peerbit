@@ -1,4 +1,4 @@
-import { EventEmitter, CustomEvent } from "@libp2p/interface/events";
+import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
 import { pipe } from "it-pipe";
 import Queue from "p-queue";
 import type { PeerId } from "@libp2p/interface/peer-id";
@@ -33,7 +33,7 @@ import {
 
 import { multiaddr } from "@multiformats/multiaddr";
 import { Components } from "libp2p/components";
-import type { TypedEventTarget } from "@libp2p/interface/events";
+import type { TypedEventTarget } from "@libp2p/interface";
 
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
@@ -106,7 +106,7 @@ type WithMode = {
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
-export class PeerStreams extends EventEmitter<PeerStreamEvents> {
+export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public counter = 0;
 	public readonly peerId: PeerId;
 	public readonly publicKey: PublicSignKey;
@@ -114,7 +114,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 	/**
 	 * Write stream - it's preferable to use the write method
 	 */
-	public outboundStream?: Pushable<Uint8ArrayList>;
+	public outboundStream?: Pushable<Uint8Array>;
 	/**
 	 * Read stream
 	 */
@@ -183,7 +183,7 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		this.usedBandWidthTracker.add(data.byteLength);
 
 		this.outboundStream.push(
-			data instanceof Uint8Array ? new Uint8ArrayList(data) : data
+			data instanceof Uint8Array ? data : data.subarray()
 		);
 	}
 
@@ -276,8 +276,8 @@ export class PeerStreams extends EventEmitter<PeerStreamEvents> {
 		const _prevStream = this.outboundStream;
 
 		this._rawOutboundStream = stream;
-		this.outboundStream = pushable<Uint8ArrayList>({
-			objectMode: true,
+		this.outboundStream = pushable<Uint8Array>({
+			objectMode: false,
 			onEnd: () => {
 				return stream.close().then(() => {
 					if (this._rawOutboundStream === stream) {
@@ -381,7 +381,7 @@ export type ConnectionManagerArguments =
 export abstract class DirectStream<
 		Events extends { [s: string]: any } = StreamEvents
 	>
-	extends EventEmitter<Events>
+	extends TypedEventEmitter<Events>
 	implements WaitForPeer
 {
 	public peerId: PeerId;
@@ -499,7 +499,7 @@ export abstract class DirectStream<
 								interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
 								maxBuffer: MAX_QUEUED_BYTES,
 								...connectionManager?.pruner
-						  }
+							}
 						: undefined
 			};
 		}
@@ -508,14 +508,14 @@ export abstract class DirectStream<
 			? new Cache({
 					ttl: this.connectionManagerOptions.dialer.retryDelay,
 					max: 1e3
-			  })
+				})
 			: undefined;
 
 		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
 			? new Cache({
 					max: 1e6,
 					ttl: this.connectionManagerOptions.pruner.connectionTimeout
-			  })
+				})
 			: undefined;
 	}
 
@@ -527,19 +527,9 @@ export abstract class DirectStream<
 		await ready;
 
 		this.closeController = new AbortController();
+		this.started = true;
 
 		logger.debug("starting");
-
-		// register protocol with topology
-		// Topology callbacks called on connection manager changes
-		this._registrarTopologyIds = await Promise.all(
-			this.multicodecs.map((multicodec) =>
-				this.components.registrar.register(multicodec, {
-					onConnect: this.onPeerConnected.bind(this),
-					onDisconnect: this.onPeerDisconnected.bind(this)
-				})
-			)
-		);
 
 		// Incoming streams
 		// Called after a peer dials us
@@ -547,18 +537,23 @@ export abstract class DirectStream<
 			this.multicodecs.map((multicodec) =>
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
-					maxOutboundStreams: this.maxOutboundStreams
+					maxOutboundStreams: this.maxOutboundStreams,
+					runOnTransientConnection: false
 				})
 			)
 		);
-		// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
-		this.components.events.addEventListener("connection:open", (e) => {
-			if (e.detail.multiplexer === "/webrtc") {
-				this.onPeerConnected(e.detail.remotePeer, e.detail);
-			}
-		});
 
-		this.started = true;
+		// register protocol with topology
+		// Topology callbacks called on connection manager changes
+		this._registrarTopologyIds = await Promise.all(
+			this.multicodecs.map((multicodec) =>
+				this.components.registrar.register(multicodec, {
+					onConnect: this.onPeerConnected.bind(this),
+					onDisconnect: this.onPeerDisconnected.bind(this),
+					notifyOnTransient: false
+				})
+			)
+		);
 
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
 		const peerToConnections: Map<string, Connection[]> = new Map();
@@ -581,10 +576,13 @@ export abstract class DirectStream<
 				}
 			}
 
-			await this.onPeerConnected(conn.remotePeer, conn, { fromExisting: true });
+			await this.onPeerConnected(conn.remotePeer, conn);
 		}
 		if (this.connectionManagerOptions.pruner) {
 			const pruneConnectionsLoop = () => {
+				if (!this.connectionManagerOptions.pruner) {
+					return;
+				}
 				this.pruneConnectionsTimeout = setTimeout(() => {
 					this.maybePruneConnections().finally(() => {
 						if (!this.started) {
@@ -592,7 +590,7 @@ export abstract class DirectStream<
 						}
 						pruneConnectionsLoop();
 					});
-				}, this.connectionManagerOptions.pruner!.interval);
+				}, this.connectionManagerOptions.pruner.interval);
 			};
 			pruneConnectionsLoop();
 		}
@@ -668,6 +666,7 @@ export abstract class DirectStream<
 
 		if (this.prunedConnectionsCache?.has(publicKey.hashcode())) {
 			await connection.close();
+			await this.components.peerStore.delete(peerId);
 			return;
 		}
 
@@ -684,60 +683,24 @@ export abstract class DirectStream<
 	/**
 	 * Registrar notifies an established connection with protocol
 	 */
-	public async onPeerConnected(
-		peerId: PeerId,
-		conn: Connection,
-		properties?: { fromExisting?: boolean }
-	) {
-		if (conn.transient) {
-			return;
-		}
-
-		if (!this.isStarted() || conn.status !== "open") {
+	public async onPeerConnected(peerId: PeerId, connection: Connection) {
+		if (
+			!this.isStarted() ||
+			connection.transient ||
+			connection.status !== "open"
+		) {
 			return;
 		}
 		const peerKey = getPublicKeyFromPeerId(peerId);
 
 		if (this.prunedConnectionsCache?.has(peerKey.hashcode())) {
+			await connection.close();
+			await this.components.peerStore.delete(peerId);
 			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
 
 		try {
-			// TODO remove/modify when https://github.com/libp2p/js-libp2p/issues/2036 is resolved
-
-			const result = await waitFor(
-				async () => {
-					try {
-						const hasProtocol = await this.components.peerStore
-							.get(peerId)
-							.then((x) =>
-								this.multicodecs.find((y) => x.protocols.includes(y))
-							);
-						if (!hasProtocol) {
-							return;
-						}
-					} catch (error: any) {
-						if (error.code === "ERR_NOT_FOUND") {
-							return;
-						}
-						throw error;
-					}
-
-					return true;
-				},
-				{
-					timeout: 1e4,
-					signal: this.closeController.signal
-				}
-			);
-			if (!result) {
-				return;
-			}
-		} catch (error) {
-			return;
-		}
-		try {
-			for (const existingStreams of conn.streams) {
+			for (const existingStreams of connection.streams) {
 				if (
 					existingStreams.protocol &&
 					this.multicodecs.includes(existingStreams.protocol) &&
@@ -761,12 +724,12 @@ export abstract class DirectStream<
 				}
 
 				try {
-					stream = await conn.newStream(this.multicodecs);
+					stream = await connection.newStream(this.multicodecs);
 					if (stream.protocol == null) {
 						stream.abort(new Error("Stream was not multiplexed"));
 						return;
 					}
-					peer = this.addPeer(peerId, peerKey, stream.protocol!, conn.id); // TODO types
+					peer = this.addPeer(peerId, peerKey, stream.protocol!, connection.id); // TODO types
 					await peer.attachOutboundStream(stream);
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
@@ -775,7 +738,7 @@ export abstract class DirectStream<
 					}
 
 					if (
-						conn.status !== "open" ||
+						connection.status !== "open" ||
 						error?.message === "Muxer already closed" ||
 						error.code === "ERR_STREAM_RESET"
 					) {
@@ -1212,7 +1175,7 @@ export abstract class DirectStream<
 										this.components.addressManager
 											.getAddresses()
 											.map((x) => x.toString())
-								  )
+									)
 								: undefined
 					})
 				}).sign(this.sign),
@@ -1357,7 +1320,7 @@ export abstract class DirectStream<
 			: new SilentDelivery({
 					to: (options as WithTo).to!,
 					redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
-			  });
+				});
 
 		if (
 			mode instanceof AcknowledgeDelivery ||
@@ -1490,8 +1453,8 @@ export abstract class DirectStream<
 		const filterMessageForSeenCounter = relayed
 			? undefined
 			: message.header.mode instanceof SeekDelivery
-			? Math.min(this.peers.size, message.header.mode.redundancy)
-			: 1; /*  message.deliveryMode instanceof SeekDelivery ? Math.min(this.peers.size - (relayed ? 1 : 0), message.deliveryMode.redundancy) : 1 */
+				? Math.min(this.peers.size, message.header.mode.redundancy)
+				: 1; /*  message.deliveryMode instanceof SeekDelivery ? Math.min(this.peers.size - (relayed ? 1 : 0), message.deliveryMode.redundancy) : 1 */
 
 		const finalize = () => {
 			this._ackCallbacks.delete(idString);
@@ -1786,7 +1749,8 @@ export abstract class DirectStream<
 		}
 		const stream = this.peers.get(hash)!;
 		try {
-			await waitFor(() => stream.isReadable && stream.isWritable, {
+			// Dontwait for readlable https://github.com/libp2p/js-libp2p/issues/2321
+			await waitFor(() => /* stream.isReadable && */ stream.isWritable, {
 				signal: options?.signal,
 				timeout: 10 * 1000
 			});
@@ -1810,24 +1774,27 @@ export abstract class DirectStream<
 
 	// make this into a job? run every few ms
 	maybePruneConnections(): Promise<void> {
-		if (this.connectionManagerOptions.pruner!.bandwidth != null) {
-			let usedBandwidth = 0;
-			for (const [_k, v] of this.peers) {
-				usedBandwidth += v.usedBandwidth;
-			}
-			usedBandwidth /= this.peers.size;
+		if (this.connectionManagerOptions.pruner) {
+			if (this.connectionManagerOptions.pruner.bandwidth != null) {
+				let usedBandwidth = 0;
+				for (const [_k, v] of this.peers) {
+					usedBandwidth += v.usedBandwidth;
+				}
+				usedBandwidth /= this.peers.size;
 
-			if (usedBandwidth > this.connectionManagerOptions.pruner!.bandwidth) {
-				// prune
-				return this.pruneConnections();
-			}
-		} else if (this.connectionManagerOptions.pruner!.maxBuffer != null) {
-			const queuedBytes = this.getQueuedBytes();
-			if (queuedBytes > this.connectionManagerOptions.pruner!.maxBuffer) {
-				// prune
-				return this.pruneConnections();
+				if (usedBandwidth > this.connectionManagerOptions.pruner.bandwidth) {
+					// prune
+					return this.pruneConnections();
+				}
+			} else if (this.connectionManagerOptions.pruner.maxBuffer != null) {
+				const queuedBytes = this.getQueuedBytes();
+				if (queuedBytes > this.connectionManagerOptions.pruner.maxBuffer) {
+					// prune
+					return this.pruneConnections();
+				}
 			}
 		}
+
 		return Promise.resolve();
 	}
 

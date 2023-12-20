@@ -511,7 +511,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 									}
 								],
 								kept: 0
-						  }
+							}
 						: { results: [], kept: 0 };
 				} else if (
 					firstQuery instanceof StringMatch &&
@@ -528,7 +528,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 									}
 								],
 								kept: 0
-						  }
+							}
 						: { results: [], kept: 0 };
 				}
 			}

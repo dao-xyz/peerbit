@@ -1,6 +1,7 @@
 import { Node } from "../connection.js";
 import { waitForResolved } from "@peerbit/time";
-import { EventEmitter } from "@libp2p/interface/events";
+import { TypedEventEmitter } from "@libp2p/interface";
+
 import { EventEmitterNode } from "./utils.js";
 
 const testNodes = async (a: Node, b: Node, c: Node) => {
@@ -43,7 +44,7 @@ const testNodes = async (a: Node, b: Node, c: Node) => {
 
 describe("index", () => {
 	it("event-emitter-node", async () => {
-		const events = new EventEmitter();
+		const events = new TypedEventEmitter();
 		const a = new EventEmitterNode(events);
 		const b = new EventEmitterNode(events);
 		const c = new EventEmitterNode(events);

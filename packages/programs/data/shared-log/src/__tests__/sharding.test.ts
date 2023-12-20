@@ -401,9 +401,7 @@ describe(`sharding`, () => {
 
 		await Promise.all(promises);
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
-
 		await db3.close();
-
 		await session.peers[2].open(db3);
 		await db3.close();
 		// adding some delay seems to make CI tests also fail here
@@ -416,6 +414,7 @@ describe(`sharding`, () => {
 		await db3.close();
 		await session.peers[2].open(db3);
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+
 		await db3.close();
 		await checkBounded(entryCount, 1, 1, db1, db2);
 	});

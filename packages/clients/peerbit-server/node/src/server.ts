@@ -112,7 +112,7 @@ export const startServerWithNode = async (properties: {
 			? new Level<string, Uint8Array>(sessionDirectory, {
 					valueEncoding: "view",
 					keyEncoding: "utf-8"
-			  })
+				})
 			: new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" })
 	);
 	if (!properties.newSession) {

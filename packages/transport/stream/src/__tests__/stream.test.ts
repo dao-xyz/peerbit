@@ -25,9 +25,11 @@ import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { LibP2POptions, TestSession } from "@peerbit/libp2p-test-utils";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import pDefer from "p-defer";
 import { jest } from "@jest/globals";
+import { Libp2pOptions } from "libp2p";
+
 const collectDataWrites = (client: DirectStream) => {
 	const writes: Map<string, DataMessage[]> = new Map();
 	for (const [name, peer] of client.peers) {
@@ -139,8 +141,8 @@ type TestSessionStream = TestSession<{ directstream: DirectStream }>;
 const connected = async (
 	n: number,
 	options?:
-		| LibP2POptions<{ directstream: TestDirectStream }>
-		| LibP2POptions<{ directstream: TestDirectStream }>[]
+		| Libp2pOptions<{ directstream: TestDirectStream }>
+		| Libp2pOptions<{ directstream: TestDirectStream }>[]
 ) => {
 	let session: TestSessionStream = await TestSession.connected(
 		n,
@@ -156,8 +158,8 @@ const connected = async (
 const disconnected = async (
 	n: number,
 	options?:
-		| LibP2POptions<{ directstream: TestDirectStream }>
-		| LibP2POptions<{ directstream: TestDirectStream }>[]
+		| Libp2pOptions<{ directstream: TestDirectStream }>
+		| Libp2pOptions<{ directstream: TestDirectStream }>[]
 ) => {
 	let session: TestSessionStream = await TestSession.disconnected(
 		n,
@@ -1140,7 +1142,13 @@ describe("streams", function () {
 					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
 				).toBeUndefined(); // beacuse stream[1] has received less data from stream[0] (least important)
 				streams[0].stream["prunedConnectionsCache"]?.clear();
+				session.peers[0].services.directstream.connectionManagerOptions.pruner =
+					undefined;
+				session.peers[1].services.directstream.connectionManagerOptions.pruner =
+					undefined;
 				await session.peers[1].dial(session.peers[0].getMultiaddrs());
+
+				await delay(3000);
 				await waitForResolved(() =>
 					expect(
 						streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
@@ -1947,11 +1955,11 @@ describe("join/leave", () => {
 							? new SeekDelivery({
 									redundancy: 1,
 									to: [slow.publicKey, fast.publicKey]
-							  })
+								})
 							: new SilentDelivery({
 									redundancy: 1,
 									to: [slow.publicKey, fast.publicKey]
-							  }) // undefined ?
+								}) // undefined ?
 					}
 				);
 

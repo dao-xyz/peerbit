@@ -1,7 +1,8 @@
 import type { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import { Blocks } from "@peerbit/blocks-interface";
 import { PubSub } from "@peerbit/pubsub-interface";
-import { Ed25519PublicKey, Identity, Keychain } from "@peerbit/crypto";
+import { Ed25519PublicKey, Identity } from "@peerbit/crypto";
+import { Keychain } from "@peerbit/keychain";
 import type { AnyStore } from "@peerbit/any-store";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Address } from "./address.js";
@@ -15,9 +16,9 @@ export interface Client<T extends Manageable<any>> {
 	services: {
 		pubsub: PubSub;
 		blocks: Blocks;
+		keychain: Keychain;
 	};
 	memory: AnyStore;
-	keychain: Keychain;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	open<S extends T & CanOpen<Args>, Args = any>(

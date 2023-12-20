@@ -15,7 +15,7 @@ import { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
 import { AbortError } from "@peerbit/time";
 import type { PeerId } from "@libp2p/interface/peer-id";
-import { EventEmitter, CustomEvent } from "@libp2p/interface/events";
+import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
 
 export class BlockMessage {}
 
@@ -56,7 +56,7 @@ export class RemoteBlocks implements IBlocks {
 		Promise<Block.Block<any, any, any, 1> | undefined> | undefined
 	>;
 	_open = false;
-	private _events: EventEmitter<{
+	private _events: TypedEventEmitter<{
 		"peer:reachable": CustomEvent<PublicSignKey>;
 	}>;
 	private closeController: AbortController;
@@ -164,7 +164,7 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	async start(): Promise<void> {
-		this._events = new EventEmitter();
+		this._events = new TypedEventEmitter();
 		this.closeController = new AbortController();
 		await this.localStore?.start();
 		this._open = true;

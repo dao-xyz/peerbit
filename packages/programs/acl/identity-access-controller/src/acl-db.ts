@@ -51,7 +51,7 @@ export class IdentityAccessController extends Program {
 			: new TrustedNetwork({
 					id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
 					rootTrust: opts.rootTrust
-			  });
+				});
 		this.identityGraphController = new IdentityGraph({
 			relationGraph: createIdentityGraphStore(
 				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])]))

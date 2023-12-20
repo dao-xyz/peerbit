@@ -3,10 +3,15 @@ import {
 	Ed25519Keypair,
 	Keypair,
 	X25519PublicKey,
-	X25519Keypair
+	X25519Keypair,
+	ByteKey,
+	PublicSignKey,
+	PublicKeyEncryptionKey,
+	Secp256k1Keypair
 } from "@peerbit/crypto";
-import { field, variant, option } from "@dao-xyz/borsh";
+import { field, variant, option, type AbstractType } from "@dao-xyz/borsh";
 import { Message } from "./message.js";
+import { Secp256k1PublicKey } from "@peerbit/crypto";
 
 @variant(8)
 export abstract class KeyChainMessage extends Message {}
@@ -30,15 +35,15 @@ export class REQ_ImportKey extends KeyChainMessage {
 export class RESP_ImportKey extends KeyChainMessage {}
 
 abstract class PublicKeyWrapped {
-	key: Ed25519PublicKey | X25519PublicKey;
+	key: PublicKeyEncryptionKey | PublicSignKey;
 }
 
 @variant(0)
 class PublicSignKeyWrapped extends PublicKeyWrapped {
-	@field({ type: Ed25519PublicKey })
-	key: Ed25519PublicKey;
+	@field({ type: PublicSignKey })
+	key: PublicSignKey;
 
-	constructor(key: Ed25519PublicKey) {
+	constructor(key: PublicSignKey) {
 		super();
 		this.key = key;
 	}
@@ -46,10 +51,36 @@ class PublicSignKeyWrapped extends PublicKeyWrapped {
 
 @variant(1)
 class EncryptionKeyWrapped extends PublicKeyWrapped {
-	@field({ type: X25519PublicKey })
-	key: X25519PublicKey;
+	@field({ type: PublicKeyEncryptionKey })
+	key: PublicKeyEncryptionKey;
 
-	constructor(key: X25519PublicKey) {
+	constructor(key: PublicKeyEncryptionKey) {
+		super();
+		this.key = key;
+	}
+}
+
+abstract class KeyOrKeypair {
+	key: Keypair | ByteKey;
+}
+
+@variant(0)
+class KeypairWrapped extends KeyOrKeypair {
+	@field({ type: Keypair })
+	key: Keypair;
+
+	constructor(key: Keypair) {
+		super();
+		this.key = key;
+	}
+}
+
+@variant(1)
+class PlainKeywrapped extends KeyOrKeypair {
+	@field({ type: ByteKey })
+	key: ByteKey;
+
+	constructor(key: ByteKey) {
 		super();
 		this.key = key;
 	}
@@ -60,10 +91,10 @@ export class REQ_ExportKeypairByKey extends KeyChainMessage {
 	@field({ type: PublicKeyWrapped })
 	publicKey: PublicKeyWrapped;
 
-	constructor(publicKey: Ed25519PublicKey | X25519PublicKey) {
+	constructor(publicKey: PublicSignKey | PublicKeyEncryptionKey) {
 		super();
 		this.publicKey =
-			publicKey instanceof Ed25519PublicKey
+			publicKey instanceof PublicSignKey
 				? new PublicSignKeyWrapped(publicKey)
 				: new EncryptionKeyWrapped(publicKey);
 	}
@@ -71,14 +102,47 @@ export class REQ_ExportKeypairByKey extends KeyChainMessage {
 
 @variant(3)
 export class RESP_ExportKeypairByKey extends KeyChainMessage {
-	@field({ type: option(Keypair) })
-	keypair?: X25519Keypair | Ed25519Keypair;
+	@field({ type: option(KeyOrKeypair) })
+	keypair?: KeyOrKeypair;
 
-	constructor(keypair?: X25519Keypair | Ed25519Keypair) {
+	constructor(keypair?: Keypair) {
 		super();
-		this.keypair = keypair;
+		if (keypair) {
+			this.keypair = new KeypairWrapped(keypair);
+		}
 	}
 }
+
+type KeyStringType = "ed25519" | "x25519" | "secp256k1" | "bytekey";
+const getKeyStringType = (
+	type: AbstractType<
+		Ed25519Keypair | Secp256k1Keypair | X25519Keypair | ByteKey
+	>
+): KeyStringType => {
+	if (type === Ed25519Keypair) {
+		return "ed25519";
+	} else if (type === Secp256k1Keypair) {
+		return "x25519";
+	} else if (type === X25519Keypair) {
+		return "secp256k1";
+	} else if (type === ByteKey) {
+		return "bytekey";
+	}
+	throw new Error("Unsupported key type: " + type?.name);
+};
+
+const getKeyTypeFromString = (type: KeyStringType) => {
+	if (type === "ed25519") {
+		return Ed25519Keypair;
+	} else if (type === "x25519") {
+		return X25519Keypair;
+	} else if (type === "secp256k1") {
+		return Secp256k1Keypair;
+	} else if (type === "bytekey") {
+		return ByteKey;
+	}
+	throw new Error("Unsupported key type: " + type);
+};
 
 @variant(4)
 export class REQ_ExportKeypairById extends KeyChainMessage {
@@ -86,22 +150,36 @@ export class REQ_ExportKeypairById extends KeyChainMessage {
 	keyId: Uint8Array;
 
 	@field({ type: "string" })
-	type: "ed25519" | "x25519";
+	private stringType: KeyStringType;
 
-	constructor(keyId: Uint8Array, type: "ed25519" | "x25519") {
+	constructor(
+		keyId: Uint8Array,
+		type: AbstractType<
+			Ed25519Keypair | Secp256k1Keypair | X25519Keypair | ByteKey
+		>
+	) {
 		super();
 		this.keyId = keyId;
-		this.type = type;
+		this.stringType = getKeyStringType(type);
+	}
+
+	get type() {
+		return getKeyTypeFromString(this.stringType);
 	}
 }
 
 @variant(5)
 export class RESP_ExportKeypairById extends KeyChainMessage {
-	@field({ type: option(Keypair) })
-	keypair?: X25519Keypair | Ed25519Keypair;
+	@field({ type: option(KeyOrKeypair) })
+	keypair?: KeyOrKeypair;
 
-	constructor(keypair?: X25519Keypair | Ed25519Keypair) {
+	constructor(keyOrKeypair?: Keypair | ByteKey) {
 		super();
-		this.keypair = keypair;
+		if (keyOrKeypair) {
+			this.keypair =
+				keyOrKeypair instanceof Keypair
+					? new KeypairWrapped(keyOrKeypair)
+					: new PlainKeywrapped(keyOrKeypair);
+		}
 	}
 }

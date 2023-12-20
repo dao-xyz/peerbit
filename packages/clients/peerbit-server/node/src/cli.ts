@@ -301,7 +301,7 @@ export const cli = async (args?: string[]) => {
 									? {
 											accessKeyId: args.accessKeyId,
 											secretAccessKey: args.secretAccessKey
-									  }
+										}
 									: undefined
 							});
 							await startCertbot(
@@ -390,7 +390,7 @@ export const cli = async (args?: string[]) => {
 												await (
 													await getKeypair(args.directory)
 												).publicKey.toPeerId()
-										  ];
+											];
 								const nodes = await launchNodes({
 									email: "marcus@dao.xyz",
 									count: args.count,

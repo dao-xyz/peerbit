@@ -1,27 +1,11 @@
-import { createLibp2p, Libp2p, ServiceFactoryMap } from "libp2p";
+import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { mplex } from "@libp2p/mplex";
 import { setMaxListeners } from "events";
-import { RecursivePartial } from "@libp2p/interfaces";
-import { Datastore } from "interface-datastore";
 import { relay, transports } from "./transports.js";
-import { ConnectionManagerInit } from "libp2p/dist/src/connection-manager";
-import { Components } from "libp2p/components";
-import { identifyService } from "libp2p/identify";
-import { CircuitRelayService } from "libp2p/dist/src/circuit-relay/index.js";
+import { identify } from "@libp2p/identify";
+import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import type { Multiaddr } from "@multiformats/multiaddr";
-import type { Transport } from "@libp2p/interface/transport";
-
-export type LibP2POptions<T extends Record<string, unknown>> = {
-	transports?:
-		| RecursivePartial<(components: Components) => Transport>[]
-		| undefined;
-	connectionManager?: RecursivePartial<ConnectionManagerInit>;
-	datastore?: RecursivePartial<Datastore> | undefined;
-	browser?: boolean;
-	services?: ServiceFactoryMap<T>;
-	start?: boolean;
-};
 
 type DefaultServices = { relay: CircuitRelayService; identify: any };
 type Libp2pWithServices<T> = Libp2p<T & DefaultServices>;
@@ -59,7 +43,7 @@ export class TestSession<T> {
 	}
 	static async connected<T extends Record<string, unknown>>(
 		n: number,
-		options?: LibP2POptions<T> | LibP2POptions<T>[]
+		options?: Libp2pOptions<T> | Libp2pOptions<T>[]
 	) {
 		const libs = (await TestSession.disconnected<T>(n, options)).peers;
 		return new TestSession(libs).connect();
@@ -67,7 +51,7 @@ export class TestSession<T> {
 
 	static async disconnected<T extends Record<string, unknown>>(
 		n: number,
-		options?: LibP2POptions<T> | LibP2POptions<T>[]
+		options?: Libp2pOptions<T> | Libp2pOptions<T>[]
 	) {
 		// Allow more than 11 listneers
 		setMaxListeners(Infinity);
@@ -90,7 +74,7 @@ export class TestSession<T> {
 						transports((options?.[i] || options)?.browser),
 					services: {
 						relay: (options?.[i] || options)?.browser ? undefined : relay(),
-						identify: identifyService(),
+						identify: identify(),
 						...(options?.[i] || options)?.services
 					},
 					connectionEncryption: [noise()],

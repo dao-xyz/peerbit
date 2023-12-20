@@ -93,7 +93,7 @@ export class ClockService extends Program<Args> {
 							return new Ok({
 								signature
 							});
-					  }
+						}
 					: undefined
 		});
 	}
