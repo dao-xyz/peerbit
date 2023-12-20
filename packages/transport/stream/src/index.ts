@@ -580,6 +580,9 @@ export abstract class DirectStream<
 		}
 		if (this.connectionManagerOptions.pruner) {
 			const pruneConnectionsLoop = () => {
+				if (!this.connectionManagerOptions.pruner) {
+					return;
+				}
 				this.pruneConnectionsTimeout = setTimeout(() => {
 					this.maybePruneConnections().finally(() => {
 						if (!this.started) {
@@ -587,7 +590,7 @@ export abstract class DirectStream<
 						}
 						pruneConnectionsLoop();
 					});
-				}, this.connectionManagerOptions.pruner!.interval);
+				}, this.connectionManagerOptions.pruner.interval);
 			};
 			pruneConnectionsLoop();
 		}
@@ -663,6 +666,7 @@ export abstract class DirectStream<
 
 		if (this.prunedConnectionsCache?.has(publicKey.hashcode())) {
 			await connection.close();
+			await this.components.peerStore.delete(peerId);
 			return;
 		}
 
@@ -679,18 +683,24 @@ export abstract class DirectStream<
 	/**
 	 * Registrar notifies an established connection with protocol
 	 */
-	public async onPeerConnected(peerId: PeerId, conn: Connection) {
-		if (!this.isStarted() || conn.transient || conn.status !== "open") {
+	public async onPeerConnected(peerId: PeerId, connection: Connection) {
+		if (
+			!this.isStarted() ||
+			connection.transient ||
+			connection.status !== "open"
+		) {
 			return;
 		}
 		const peerKey = getPublicKeyFromPeerId(peerId);
 
 		if (this.prunedConnectionsCache?.has(peerKey.hashcode())) {
+			await connection.close();
+			await this.components.peerStore.delete(peerId);
 			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
 
 		try {
-			for (const existingStreams of conn.streams) {
+			for (const existingStreams of connection.streams) {
 				if (
 					existingStreams.protocol &&
 					this.multicodecs.includes(existingStreams.protocol) &&
@@ -714,12 +724,12 @@ export abstract class DirectStream<
 				}
 
 				try {
-					stream = await conn.newStream(this.multicodecs);
+					stream = await connection.newStream(this.multicodecs);
 					if (stream.protocol == null) {
 						stream.abort(new Error("Stream was not multiplexed"));
 						return;
 					}
-					peer = this.addPeer(peerId, peerKey, stream.protocol!, conn.id); // TODO types
+					peer = this.addPeer(peerId, peerKey, stream.protocol!, connection.id); // TODO types
 					await peer.attachOutboundStream(stream);
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
@@ -728,7 +738,7 @@ export abstract class DirectStream<
 					}
 
 					if (
-						conn.status !== "open" ||
+						connection.status !== "open" ||
 						error?.message === "Muxer already closed" ||
 						error.code === "ERR_STREAM_RESET"
 					) {
@@ -1739,7 +1749,8 @@ export abstract class DirectStream<
 		}
 		const stream = this.peers.get(hash)!;
 		try {
-			await waitFor(() => stream.isReadable && stream.isWritable, {
+			// Dontwait for readlable https://github.com/libp2p/js-libp2p/issues/2321
+			await waitFor(() => /* stream.isReadable && */ stream.isWritable, {
 				signal: options?.signal,
 				timeout: 10 * 1000
 			});
@@ -1763,24 +1774,27 @@ export abstract class DirectStream<
 
 	// make this into a job? run every few ms
 	maybePruneConnections(): Promise<void> {
-		if (this.connectionManagerOptions.pruner!.bandwidth != null) {
-			let usedBandwidth = 0;
-			for (const [_k, v] of this.peers) {
-				usedBandwidth += v.usedBandwidth;
-			}
-			usedBandwidth /= this.peers.size;
+		if (this.connectionManagerOptions.pruner) {
+			if (this.connectionManagerOptions.pruner.bandwidth != null) {
+				let usedBandwidth = 0;
+				for (const [_k, v] of this.peers) {
+					usedBandwidth += v.usedBandwidth;
+				}
+				usedBandwidth /= this.peers.size;
 
-			if (usedBandwidth > this.connectionManagerOptions.pruner!.bandwidth) {
-				// prune
-				return this.pruneConnections();
-			}
-		} else if (this.connectionManagerOptions.pruner!.maxBuffer != null) {
-			const queuedBytes = this.getQueuedBytes();
-			if (queuedBytes > this.connectionManagerOptions.pruner!.maxBuffer) {
-				// prune
-				return this.pruneConnections();
+				if (usedBandwidth > this.connectionManagerOptions.pruner.bandwidth) {
+					// prune
+					return this.pruneConnections();
+				}
+			} else if (this.connectionManagerOptions.pruner.maxBuffer != null) {
+				const queuedBytes = this.getQueuedBytes();
+				if (queuedBytes > this.connectionManagerOptions.pruner.maxBuffer) {
+					// prune
+					return this.pruneConnections();
+				}
 			}
 		}
+
 		return Promise.resolve();
 	}
 

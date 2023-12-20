@@ -1142,7 +1142,13 @@ describe("streams", function () {
 					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
 				).toBeUndefined(); // beacuse stream[1] has received less data from stream[0] (least important)
 				streams[0].stream["prunedConnectionsCache"]?.clear();
+				session.peers[0].services.directstream.connectionManagerOptions.pruner =
+					undefined;
+				session.peers[1].services.directstream.connectionManagerOptions.pruner =
+					undefined;
 				await session.peers[1].dial(session.peers[0].getMultiaddrs());
+
+				await delay(3000);
 				await waitForResolved(() =>
 					expect(
 						streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
