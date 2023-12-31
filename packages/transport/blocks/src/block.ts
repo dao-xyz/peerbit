@@ -4,7 +4,7 @@ import * as dagCbor from "@ipld/dag-cbor";
 import { sha256 } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
 import * as Block from "multiformats/block";
-import type { MultihashHasher } from "multiformats/hashes/hasher";
+import type { MultihashHasher } from "multiformats/hashes/interface";
 
 const unsupportedCodecError = () => new Error("unsupported codec");
 
