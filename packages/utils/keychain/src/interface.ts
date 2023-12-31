@@ -8,8 +8,7 @@ import {
 	Secp256k1Keypair,
 	Secp256k1PublicKey,
 	PublicKeyEncryptionKey,
-	PublicSignKey,
-	DecryptProvider
+	PublicSignKey
 } from "@peerbit/crypto";
 import { AbstractType } from "@dao-xyz/borsh";
 
