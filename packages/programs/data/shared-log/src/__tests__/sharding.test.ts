@@ -542,7 +542,7 @@ describe(`sharding`, () => {
 					balance,
 					coverage,
 					memory
-				}) => 0.1 * coverage + 0.9 * memory;
+				}) => 0.01 * coverage + 0.99 * memory;
 
 				db1 = await session.peers[0].open(new EventStore<string>(), {
 					args: {
