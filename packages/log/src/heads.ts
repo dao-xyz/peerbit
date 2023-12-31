@@ -13,7 +13,7 @@ export type CacheUpdateOptions = {
 };
 
 interface Log<T> {
-	storage: Blocks;
+	blocks: Blocks;
 	keychain?: Keychain;
 	memory?: AnyStore;
 	encoding: Encoding<any>;

@@ -6,7 +6,7 @@ import { Blocks } from "@peerbit/blocks-interface";
 
 export class EntryIndex<T> {
 	_cache: Cache<Entry<T> | null>;
-	_store: Blocks;
+	_blocks: Blocks;
 	_init: (entry: Entry<T>) => void;
 	_index: Map<string, ShallowEntry>;
 
@@ -16,7 +16,7 @@ export class EntryIndex<T> {
 		cache: Cache<Entry<T>>;
 	}) {
 		this._cache = properties.cache;
-		this._store = properties.store;
+		this._blocks = properties.store;
 		this._init = properties.init;
 		this._index = new Map();
 	}
@@ -26,7 +26,7 @@ export class EntryIndex<T> {
 			const existingHash = v.hash;
 			v.hash = undefined as any;
 			try {
-				const hash = await Entry.toMultihash(this._store, v);
+				const hash = await Entry.toMultihash(this._blocks, v);
 				v.hash = existingHash;
 				if (v.hash === undefined) {
 					v.hash = hash; // can happen if you sync entries that you load directly from ipfs
@@ -73,13 +73,13 @@ export class EntryIndex<T> {
 		k: string,
 		options?: { replicate?: boolean; timeout?: number }
 	): Promise<Entry<T> | null> {
-		const value = await this._store.get(k, options);
+		const value = await this._blocks.get(k, options);
 		return value ? deserialize(value, Entry) : null;
 	}
 
 	async delete(k: string) {
 		this._cache.del(k);
 		this._index.delete(k);
-		return this._store.rm(k);
+		return this._blocks.rm(k);
 	}
 }
