@@ -119,7 +119,6 @@ export class PeerbitProxyClient implements ProgramClient {
 
 	private _multiaddr: Multiaddr[];
 	private _services: { pubsub: PubSub; blocks: Blocks; keychain: Keychain };
-	private _keychain: Keychain;
 	private _memory: AnyStore;
 	private _handler: ProgramHandler;
 
@@ -255,6 +254,13 @@ export class PeerbitProxyClient implements ProgramClient {
 					await this.request<blocks.RESP_BlockWaitFor>(
 						new blocks.REQ_BlockWaitFor(publicKey)
 					);
+				},
+				size: async () => {
+					return (
+						await this.request<blocks.RESP_BlockSize>(
+							new blocks.REQ_BlockSize()
+						)
+					).size;
 				}
 			},
 			keychain: {

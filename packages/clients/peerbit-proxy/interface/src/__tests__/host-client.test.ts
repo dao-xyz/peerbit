@@ -152,6 +152,14 @@ describe("index", () => {
 			expect(await host1.memory.get(key)).toEqual(undefined);
 		});
 
+		it("size", async () => {
+			const size1 = await client1.memory.size();
+			expect(size1).toEqual(0);
+			await client1.memory.put("key", data);
+			const size2 = await client1.memory.size();
+			expect(size2).toBeGreaterThan(0);
+		});
+
 		it("close", async () => {
 			await client1.memory.open();
 			expect(await client1.memory.status()).toEqual("open");
@@ -258,6 +266,14 @@ describe("index", () => {
 			};
 			await client1.dial(session.peers[1].getMultiaddrs());
 			await client1.services.blocks.waitFor(session.peers[1].peerId);
+		});
+
+		it("size", async () => {
+			const size1 = await client1.services.blocks.size();
+			expect(size1).toEqual(0);
+			await client1.services.blocks.put(data);
+			const size2 = await client1.services.blocks.size();
+			expect(size2).toBeGreaterThan(0);
 		});
 	});
 
