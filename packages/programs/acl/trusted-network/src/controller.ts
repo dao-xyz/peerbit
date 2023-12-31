@@ -24,6 +24,7 @@ import {
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface/peer-id";
+import { RoleOptions } from "@peerbit/shared-log";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey
@@ -76,7 +77,10 @@ const canPerformByRelation = async (
 	}
 };
 
-type IdentityGraphArgs = { canRead?: CanRead<IdentityRelation>; role?: Role };
+type IdentityGraphArgs = {
+	canRead?: CanRead<IdentityRelation>;
+	role?: RoleOptions;
+};
 
 @variant("relations")
 export class IdentityGraph extends Program<IdentityGraphArgs> {
@@ -137,7 +141,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
  * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
  */
 
-type TrustedNetworkArgs = { role?: Role };
+type TrustedNetworkArgs = { role?: RoleOptions };
 
 @variant("trusted_network")
 export class TrustedNetwork extends Program<TrustedNetworkArgs> {

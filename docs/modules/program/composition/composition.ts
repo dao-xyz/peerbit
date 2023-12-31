@@ -1,14 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
-import {
-	Observer,
-	Role,
-	DocumentIndex,
-	Documents,
-	SearchRequest
-} from "@peerbit/document";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
+import { RoleOptions } from "@peerbit/shared-log";
 
 @variant(0) // version 0
 class Post {
@@ -25,7 +20,7 @@ class Post {
 }
 
 // This class extends Program which allows it to be replicated amongst peers
-type Args = { role: Role };
+type Args = { role: RoleOptions };
 
 @variant("posts")
 class PostsDB extends Program<Args> {
@@ -115,7 +110,7 @@ await client2.dial(client.getMultiaddrs());
 
 // open the forum as a observer, i.e. not replication duties
 const forum2 = await client2.open<Forum>(forum.address, {
-	args: { role: new Observer() }
+	args: { role: "observer" }
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
@@ -126,10 +121,10 @@ const channels = await forum2.channels.index.search(new SearchRequest());
 expect(channels).toHaveLength(1);
 expect(channels[0].name).toEqual("general");
 
-// open this channel (if we would open the forum with role: new Replicator(), this would already be done)
+// open this channel (if we would open the forum with role: 'replicator', this would already be done)
 expect(channels[0].closed).toBeTrue();
 const channel2 = await client2.open<Channel>(channels[0], {
-	args: { role: new Observer() }
+	args: { role: "observer" }
 });
 
 // Wait for client 1 to be available (only needed for testing locally)

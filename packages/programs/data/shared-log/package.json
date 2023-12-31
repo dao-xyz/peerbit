@@ -35,7 +35,8 @@
 		"@peerbit/program": "2.4.2",
 		"@peerbit/log": "2.1.10",
 		"@peerbit/rpc": "2.1.17",
-		"@peerbit/time": "1.0.4"
+		"@peerbit/time": "1.0.4",
+		"p-debounce": "^4.0.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "^1.0.33"

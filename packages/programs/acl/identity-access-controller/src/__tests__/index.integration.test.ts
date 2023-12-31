@@ -1,25 +1,14 @@
-import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { delay, waitFor } from "@peerbit/time";
-import {
-	AccessError,
-	Ed25519Keypair,
-	Identity,
-	PublicSignKey,
-	randomBytes
-} from "@peerbit/crypto";
-import {
-	Documents,
-	SearchRequest,
-	StringMatch,
-	Observer,
-	Role
-} from "@peerbit/document";
+import { waitFor } from "@peerbit/time";
+import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
+import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
 import { PeerId } from "@libp2p/interface/peer-id";
+import { RoleOptions } from "@peerbit/shared-log";
 
 @variant("document")
 class Document {
@@ -33,16 +22,8 @@ class Document {
 	}
 }
 
-const createIdentity = async () => {
-	const ed = await Ed25519Keypair.create();
-	return {
-		publicKey: ed.publicKey,
-		sign: (data) => ed.sign(data)
-	} as Identity;
-};
-
 @variant("test_store")
-class TestStore extends Program<{ role: Role }> {
+class TestStore extends Program<{ role: RoleOptions }> {
 	@field({ type: Documents })
 	store: Documents<Document>;
 
@@ -57,7 +38,7 @@ class TestStore extends Program<{ role: Role }> {
 		});
 	}
 
-	async open(properties?: { role: Role }) {
+	async open(properties?: { role: RoleOptions }) {
 		await this.accessController.open(properties);
 		await this.store.open({
 			type: Document,
@@ -306,7 +287,7 @@ describe("index", () => {
 				})
 			);
 			const l0b = await TestStore.open(l0a.address!, session.peers[1], {
-				args: { role: new Observer() }
+				args: { role: "observer" }
 			});
 
 			await l0b.store.log.waitForReplicator(
@@ -376,7 +357,7 @@ describe("index", () => {
 
 		const l0b = await TestStore.open(l0a.address!, session.peers[1], {
 			args: {
-				role: new Observer()
+				role: "observer"
 			}
 		});
 

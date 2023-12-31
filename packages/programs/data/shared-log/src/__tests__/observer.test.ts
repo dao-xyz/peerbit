@@ -22,7 +22,7 @@ describe("observer", () => {
 		for (const [i, peer] of session.peers.entries()) {
 			const store = await peer.open(createStore(), {
 				args: {
-					role: i <= 1 ? new Replicator({ factor: 1 }) : new Observer()
+					role: i <= 1 ? { type: "replicator", factor: 1 } : "observer"
 				}
 			});
 			stores.push(store);

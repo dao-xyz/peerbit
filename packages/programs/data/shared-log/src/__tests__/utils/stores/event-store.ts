@@ -7,10 +7,11 @@ import { PublicSignKey, randomBytes } from "@peerbit/crypto";
 import {
 	AbsoluteReplicas,
 	ReplicationLimitsOptions,
+	RoleOptions,
 	SharedLog
 } from "../../..";
 import { Role } from "../../../role";
-import { JSON_ENCODING } from "./encoding";
+import { JSON_ENCODING } from "./encoding.js";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -30,8 +31,8 @@ export class EventIndex<T> {
 	}
 }
 
-type Args<T> = {
-	role?: Role;
+export type Args<T> = {
+	role?: RoleOptions;
 	trim?: TrimOptions;
 	replicas?: ReplicationLimitsOptions;
 	encoding?: Encoding<Operation<T>>;
@@ -75,7 +76,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			role: properties?.role,
 			trim: properties?.trim,
 			replicas: properties?.replicas,
-			encoding: properties?.encoding || JSON_ENCODING,
+			encoding: JSON_ENCODING,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout
 		});
 	}

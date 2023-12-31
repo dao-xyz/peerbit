@@ -1,21 +1,9 @@
 import { EventStore } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
-import { DirectSub } from "@peerbit/pubsub";
-import { DirectBlock } from "@peerbit/blocks";
 import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Observer, Replicator } from "../role.js";
 import { deserialize } from "@dao-xyz/borsh";
-
-const countTrue = (arr: boolean[]) => {
-	let c = 0;
-	for (const b of arr) {
-		if (b) {
-			c++;
-		}
-	}
-	return c;
-};
 
 describe(`leaders`, function () {
 	let session: TestSession;
@@ -138,7 +126,7 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { role: new Observer(), ...options.args }
+			args: { role: "observer", ...options.args }
 		});
 		db2 = (await EventStore.open(
 			db1.address!,
@@ -165,7 +153,7 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { role: new Observer(), ...options.args }
+			args: { role: "observer", ...options.args }
 		});
 		db2 = (await EventStore.open(
 			db1.address!,
@@ -214,15 +202,20 @@ describe(`leaders`, function () {
 			options
 		)) as EventStore<string>;
 
-		// One leader
 		await waitForResolved(() =>
-			expect((db1.log.role as Replicator).factor).toBeLessThan(0.4)
+			expect(Math.abs((db1.log.role as Replicator).factor - 0.33)).toBeLessThan(
+				0.05
+			)
 		);
 		await waitForResolved(() =>
-			expect((db2.log.role as Replicator).factor).toBeLessThan(0.4)
+			expect(Math.abs((db2.log.role as Replicator).factor - 0.33)).toBeLessThan(
+				0.05
+			)
 		);
 		await waitForResolved(() =>
-			expect((db3.log.role as Replicator).factor).toBeLessThan(0.4)
+			expect(Math.abs((db3.log.role as Replicator).factor - 0.33)).toBeLessThan(
+				0.05
+			)
 		);
 
 		let resolved = 0;
@@ -298,6 +291,22 @@ describe(`leaders`, function () {
 		)) as EventStore<string>;
 
 		await waitForResolved(() =>
+			expect(Math.abs((db1.log.role as Replicator).factor - 0.33)).toBeLessThan(
+				0.05
+			)
+		);
+		await waitForResolved(() =>
+			expect(Math.abs((db2.log.role as Replicator).factor - 0.33)).toBeLessThan(
+				0.05
+			)
+		);
+		await waitForResolved(() =>
+			expect(Math.abs((db3.log.role as Replicator).factor - 0.33)).toBeLessThan(
+				0.05
+			)
+		);
+
+		await waitForResolved(() =>
 			expect(db1.log.getReplicatorsSorted()).toHaveLength(3)
 		);
 		await waitForResolved(() =>
@@ -325,6 +334,47 @@ describe(`leaders`, function () {
 		expect(b).toBeLessThan(to);
 		expect(c).toBeGreaterThan(from);
 		expect(c).toBeLessThan(to);
+	});
+
+	describe("balance", () => {
+		it("small fractions means little replication", async () => {
+			db1 = await session.peers[0].open(new EventStore<string>(), {
+				args: {
+					role: { type: "replicator", factor: 0.05 } // cover 5%
+				}
+			});
+			db2 = await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						role: { type: "replicator", factor: 0.5 } // cover 50%  10x)
+					}
+				}
+			);
+
+			await waitForResolved(() =>
+				expect(db1.log.getReplicatorsSorted()).toHaveLength(2)
+			);
+
+			await waitForResolved(() =>
+				expect(db2.log.getReplicatorsSorted()).toHaveLength(2)
+			);
+
+			let a = 0,
+				b = 0;
+			const count = 10000;
+			for (let i = 0; i < count; i++) {
+				a += (await db1.log.isLeader(String(i), 1, { roleAge: 0 })) ? 1 : 0;
+				b += (await db2.log.isLeader(String(i), 1, { roleAge: 0 })) ? 1 : 0;
+			}
+
+			expect(a + b).toEqual(count);
+			expect(a / count).toBeGreaterThan(0.08);
+			expect(a / count).toBeLessThan(0.12);
+			expect(b / count).toBeGreaterThan(0.88);
+			expect(b / count).toBeLessThan(0.92);
+		});
 	});
 
 	it("leader always defined", async () => {

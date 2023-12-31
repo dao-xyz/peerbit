@@ -98,20 +98,24 @@ let address: string | undefined = undefined;
 const readerResolver: Map<string, () => void> = new Map();
 
 for (const [i, client] of peers.entries()) {
-	const settings = {
-		//canPerform: (e: Entry<any>) => e.verifySignatures(),
-		role: new Replicator({
-			factor: 1
-		}) /* i === peers.length - 1 ? new Replicator() : new Observer(), */
-	};
 	let store: TestStore;
 	if (address) {
-		store = await client.open<TestStore, any>(address, {
-			args: settings
+		store = await client.open<TestStore>(address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
 		});
 	} else {
 		store = await client.open(new TestStore(), {
-			args: settings
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
 		});
 		address = store.address;
 	}

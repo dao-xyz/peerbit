@@ -11,12 +11,10 @@ import {
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, Identity } from "@peerbit/crypto";
 import { Secp256k1PublicKey } from "@peerbit/crypto";
-import { Entry } from "@peerbit/log";
 import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Documents, SearchRequest, Operation } from "@peerbit/document";
-import { Observer } from "@peerbit/shared-log";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -189,7 +187,7 @@ describe("index", () => {
 				session.peers[2],
 				{
 					args: {
-						role: new Observer()
+						role: "observer"
 					}
 				}
 			);

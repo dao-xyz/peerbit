@@ -5,7 +5,7 @@ import { SignatureWithKey } from "@peerbit/crypto";
 import { Entry, HLC } from "@peerbit/log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Replicator, Role } from "@peerbit/shared-log";
+import { Replicator, Role, RoleOptions } from "@peerbit/shared-log";
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
@@ -37,18 +37,18 @@ export class SignError extends Result {
 	}
 }
 
-type Args = { role?: Role; maxTimeError?: number };
+type Args = { role?: RoleOptions; maxTimeError?: number };
 
 @variant("clock_service")
 export class ClockService extends Program<Args> {
 	@field({ type: RPC })
-	_remoteSigner: RPC<Uint8Array, Ok | SignError>;
+	private _remoteSigner: RPC<Uint8Array, Ok | SignError>;
 
 	@field({ type: TrustedNetwork })
-	_trustedNetwork: TrustedNetwork;
+	private _trustedNetwork: TrustedNetwork;
 
-	_hlc: HLC = new HLC();
-	_maxError: bigint; // 10 seconds
+	private _hlc: HLC = new HLC();
+	maxError: bigint; // 10 seconds
 
 	constructor(properties: {
 		trustedNetwork: TrustedNetwork;
@@ -63,7 +63,7 @@ export class ClockService extends Program<Args> {
 	 * @param maxError, in ms, defaults to 10 seconds
 	 */
 	async open(properties?: Args) {
-		this._maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
+		this.maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
 		await this._trustedNetwork.open({ role: properties?.role });
 		await this._remoteSigner.open({
 			topic: this._trustedNetwork.trustGraph.log.log.idString + "/clock", // TODO do better
@@ -81,7 +81,7 @@ export class ClockService extends Program<Args> {
 
 							const now = this._hlc.now().wallTime;
 							const cmp = (await entry.getClock()).timestamp.wallTime;
-							if (abs(now - cmp) > this._maxError) {
+							if (abs(now - cmp) > this.maxError) {
 								logger.info("Recieved an entry with an invalid timestamp");
 								return new SignError({
 									message: "Recieved an entry with an invalid timestamp"

@@ -72,6 +72,7 @@ export class Replicator extends Role {
 		const segment: ReplicationSegment = new ReplicationSegment(properties);
 		this.segments = [segment];
 	}
+
 	get factor(): number {
 		return this.segments[0]!.factor;
 	}
