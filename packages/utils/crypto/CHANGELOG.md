@@ -31,6 +31,32 @@
   * dependencies
     * @peerbit/cache bumped from ^1.1.0 to ^1.1.1
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.10...crypto-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+
+### Features
+
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from ^1.1.1 to ^2.0.0
+
 ## [1.0.10](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.9...crypto-v1.0.10) (2023-09-21)
 
 

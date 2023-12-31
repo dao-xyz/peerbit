@@ -108,6 +108,41 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.3.9...proxy-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* make sure pubsub data events a propagating between clients without emitSelf property
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* add size api ([d9df825](https://github.com/dao-xyz/peerbit/commit/d9df82577107c4fc6ca39babf5005a3ef59b40a1))
+* make sure pubsub data events a propagating between clients without emitSelf property ([0c460c3](https://github.com/dao-xyz/peerbit/commit/0c460c35e4060ad95c979962fa95fef7d6cd1203))
+* remove strict option ([59bf648](https://github.com/dao-xyz/peerbit/commit/59bf6488d16dba3583d55ae6ba146ee781798037))
+* rm redundant emit self property ([77dc3c7](https://github.com/dao-xyz/peerbit/commit/77dc3c7402ae6a3b5c67296b834e398f6a06d4a5))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^2.4.2 to ^3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.33 to 2.0.0
+
 ## [1.3.7](https://github.com/dao-xyz/peerbit/compare/proxy-v1.3.6...proxy-v1.3.7) (2023-09-21)
 
 

@@ -91,6 +91,45 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.19 to 1.0.20
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.7...blocks-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* add size property ([c3c56a2](https://github.com/dao-xyz/peerbit/commit/c3c56a289a1691defbd5bd024490949e2cbbde68))
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* improve assertions ([6cbceb4](https://github.com/dao-xyz/peerbit/commit/6cbceb4ed68b79c5ba9dc97faf3c459353ac980b))
+* refactor remote block retreival ([ee590f9](https://github.com/dao-xyz/peerbit/commit/ee590f96136315777c87406f66df306b91c1ac5b))
+* remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
+* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/stream bumped from 1.0.20 to 2.0.0
+    * @peerbit/blocks-interface bumped from 1.1.3 to 1.2.0
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
+
 ## [1.1.6](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.5...blocks-v1.1.6) (2023-09-21)
 
 

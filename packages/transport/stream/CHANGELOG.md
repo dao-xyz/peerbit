@@ -20,6 +20,68 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.20...stream-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* refactor delivery modes
+* lazy stream routing protocol
+
+### Features
+
+* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+* add countAll method for routes ([e5d19a3](https://github.com/dao-xyz/peerbit/commit/e5d19a3e6fe700a2aa4cc108e01d2ae9c8df268d))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+* refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
+
+
+### Bug Fixes
+
+* assert paths ([4f35dd2](https://github.com/dao-xyz/peerbit/commit/4f35dd2bc5ba2941a7270e7f931751338d156724))
+* cleanup comments ([21cca12](https://github.com/dao-xyz/peerbit/commit/21cca1216499a4db430de7e093e6f4c31e0fcef6))
+* clear healtcheck on reconnect ([035d47c](https://github.com/dao-xyz/peerbit/commit/035d47cc446293b0d9de3ce1c7eb58b66d4e75e7))
+* collect uniqueAcks by message id ([3e6976b](https://github.com/dao-xyz/peerbit/commit/3e6976bc636e08d4b1221f141f8fe1d6564f214e))
+* correctly handle ack cache cb ([ab1f8ce](https://github.com/dao-xyz/peerbit/commit/ab1f8ce9a456955afd9503578b4b5861c23a4512))
+* correctly handle routing when doing ack delivery ([a22021c](https://github.com/dao-xyz/peerbit/commit/a22021c85bd6c7cb9f831f9a8fa54161c1095dc5))
+* correctly ignore already seen messages ([3bf4fec](https://github.com/dao-xyz/peerbit/commit/3bf4fec81da428874259b0b1fe0344b76fd867f0))
+* disable route updates for redundance message checks ([241d009](https://github.com/dao-xyz/peerbit/commit/241d00916338c67a1ce9f1e2a565fafc18abb4af))
+* don't process messages if closed ([0888f53](https://github.com/dao-xyz/peerbit/commit/0888f53509864ead2c9addcbff9f546acc685e5d))
+* don't wait for readable ([854ced3](https://github.com/dao-xyz/peerbit/commit/854ced33799c84dea54c888d73c63e29289353a0))
+* dont process messages if not started ([6275062](https://github.com/dao-xyz/peerbit/commit/6275062b6a4e1425b48ed9dc3cde8e6e21df75bf))
+* force messages to be provessed slowly to ensure topology ([8a2b69e](https://github.com/dao-xyz/peerbit/commit/8a2b69e8c0707a72aac0906c506b82918569d6fb))
+* increase seek timeout ([d4cf164](https://github.com/dao-xyz/peerbit/commit/d4cf1641774f1f559c5da6e564bfb17c47fedd1c))
+* prevent route loss on commit on target route ([087e38b](https://github.com/dao-xyz/peerbit/commit/087e38b82b44489dd0454eb4ab09b01e8a7c92be))
+* remove log ([7768e13](https://github.com/dao-xyz/peerbit/commit/7768e139913ab03fc429ebc4c1fcfcd499e81a51))
+* remove log ([b6e92fe](https://github.com/dao-xyz/peerbit/commit/b6e92fed444fadad38e00b0950b8995b7165b559))
+* rm comment ([9bde1a8](https://github.com/dao-xyz/peerbit/commit/9bde1a86f71d3e8e5e8d93be3a5ac4d75c05840f))
+* test add delay ([410be43](https://github.com/dao-xyz/peerbit/commit/410be43bcec5de21051d39713a26aa23dbd0ff45))
+* test add delay ([daa9a13](https://github.com/dao-xyz/peerbit/commit/daa9a13a782271e059adb3a807ea188c97572ce2))
+* try to dial directly through all neighbours ([63802e4](https://github.com/dao-xyz/peerbit/commit/63802e4a133f1f4065e6320d0d4d95dc1ea7e906))
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+* update routing periodically ([e4f52df](https://github.com/dao-xyz/peerbit/commit/e4f52dfb9364e7ad251299f942ab3756bbdc6708))
+* update vite ([371bb8b](https://github.com/dao-xyz/peerbit/commit/371bb8b089873df36ff9e591b67046a7e8dab6ea))
+* use yamux ([8dd2dac](https://github.com/dao-xyz/peerbit/commit/8dd2dac5bf19e5fa6cbe2fb3ed89197af896ffc3))
+* wait for peer check ([a6a48e9](https://github.com/dao-xyz/peerbit/commit/a6a48e9d3456cdc2c42313d815f2a7a5ab62d5ef))
+* wait for routes ([e744096](https://github.com/dao-xyz/peerbit/commit/e7440963bd8b37e88599ccffbd261e34db58a52b))
+* wait until timeout for relayed ACKs ([398105e](https://github.com/dao-xyz/peerbit/commit/398105e7b39d56da2cf503f1f31365e91e47b72c))
+* waitFor timeout ([5407016](https://github.com/dao-xyz/peerbit/commit/540701683aed5227e165442440d15766641d057a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.1.1 to 2.0.0
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/stream-interface bumped from ^1.0.11 to ^2.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
+
 ## [1.0.20](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.19...stream-v1.0.20) (2023-09-24)
 
 

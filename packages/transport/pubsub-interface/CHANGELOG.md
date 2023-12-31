@@ -35,6 +35,35 @@
     * @peerbit/crypto bumped from 1.0.9 to 1.0.10
     * @peerbit/stream-interface bumped from ^1.0.10 to ^1.0.11
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.5...pubsub-interface-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* refactor delivery modes
+* simplify subscribe/unsubscribe messages
+* lazy stream routing protocol
+
+### Features
+
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
+
+
+### Bug Fixes
+
+* replace emitSelf property with PublishEvent ([8c080bf](https://github.com/dao-xyz/peerbit/commit/8c080bfe892d40bdd19ba951268c612cd57cf04f))
+* simplify subscribe/unsubscribe messages ([47577fe](https://github.com/dao-xyz/peerbit/commit/47577fed7dd943d748ded3d00a6e54fefeb2cff5))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/stream-interface bumped from ^1.0.11 to ^2.0.0
+
 ## [1.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.2...pubsub-interface-v1.1.3) (2023-09-06)
 
 

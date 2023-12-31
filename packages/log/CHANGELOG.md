@@ -175,6 +175,44 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/log-v2.1.10...log-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* correctly handle trim cache reset on log entry removal ([9e449e3](https://github.com/dao-xyz/peerbit/commit/9e449e3df5477f2d956550d8187dffaa338e1a24))
+* drop remove blocks ([0cae4ea](https://github.com/dao-xyz/peerbit/commit/0cae4ea8138e859a7774f1e0711681289066f5ca))
+* rename storage to blocks ([a738f2c](https://github.com/dao-xyz/peerbit/commit/a738f2c30c88f0b4de1033a80b9a666b154b5589))
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+* wait for setup ([1c6cd7a](https://github.com/dao-xyz/peerbit/commit/1c6cd7ac81d3a3aad6a21eea75ddeb9a2dd318a9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 1.1.1 to 2.0.0
+    * @peerbit/blocks-interface bumped from ^1.1.3 to ^1.2.0
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.33 to 2.0.0
+
 ## [2.1.8](https://github.com/dao-xyz/peerbit/compare/log-v2.1.7...log-v2.1.8) (2023-09-21)
 
 

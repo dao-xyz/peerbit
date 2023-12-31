@@ -220,6 +220,40 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/server-v4.1.4...server-v5.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* disable restart test ([8a3c79b](https://github.com/dao-xyz/peerbit/commit/8a3c79bc619371f1cd3db9ce07a588920b087ce4))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+* update linter ([b0e2e14](https://github.com/dao-xyz/peerbit/commit/b0e2e140cfbd0fb278e00bc1127219be6242c735))
+* update tests to work with the RemoteBlocks abstraction ([fba99b6](https://github.com/dao-xyz/peerbit/commit/fba99b61b87953367785ffdc4b228e0a0bd4e3f9))
+* use build js to run cli app ([59bd5f5](https://github.com/dao-xyz/peerbit/commit/59bd5f51592e3af17e7cf3dbe77a3c9f74ba9bba))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 2.0.15 to 3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.33 to 2.0.0
+
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/server-v4.1.1...server-v4.1.2) (2023-09-21)
 
 

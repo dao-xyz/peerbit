@@ -18,6 +18,36 @@
   * devDependencies
     * @peerbit/time bumped from 1.0.3 to 1.0.4
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.8...libp2p-test-utils-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+
+### Features
+
+* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+* add peer id option ([bda2378](https://github.com/dao-xyz/peerbit/commit/bda23789522b38e80aae30fb607f4e0fed41073c))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.7...libp2p-test-utils-v1.0.8) (2023-09-21)
 
 

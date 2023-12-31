@@ -306,6 +306,38 @@
     * @peerbit/document bumped from 3.1.11 to 3.2.0
     * @peerbit/trusted-network bumped from 2.0.20 to 2.0.21
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v2.0.21...identity-access-controller-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* adaptive replications settings based on memory constraints
+* modularize keychain
+* lazy stream routing protocol
+
+### Features
+
+* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* remove log ([b6e92fe](https://github.com/dao-xyz/peerbit/commit/b6e92fed444fadad38e00b0950b8995b7165b559))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 3.2.0 to 4.0.0
+    * @peerbit/trusted-network bumped from 2.0.21 to 3.0.0
+  * devDependencies
+    * @peerbit/time bumped from ^1.0.4 to ^2.0.0
+    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v2.0.16...identity-access-controller-v2.0.17) (2023-09-21)
 
 

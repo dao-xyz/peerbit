@@ -231,6 +231,64 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.32 to ^1.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.10...shared-log-v4.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* adaptive replications settings based on memory constraints
+* modularize keychain
+* dynamic sharding and block scopes
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+* dynamic sharding and block scopes ([97ad692](https://github.com/dao-xyz/peerbit/commit/97ad692d671bffad34b03239c79ae14b0f5f3153))
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* add timeout ([12a203a](https://github.com/dao-xyz/peerbit/commit/12a203aa194a96fe02ca08e90c6861346dfe5926))
+* allow update role while closed ([cafe432](https://github.com/dao-xyz/peerbit/commit/cafe432edfe722b9b7004d0436b09253756f0b21))
+* correctly handle role updates on pruning ([380468e](https://github.com/dao-xyz/peerbit/commit/380468e8bbf90f1a24566c2ef56c0f570d41a8d6))
+* debug error ([fa8c045](https://github.com/dao-xyz/peerbit/commit/fa8c045788b33d629411f76434b4de7b76fea753))
+* dont load log on updateRole when closed ([110517f](https://github.com/dao-xyz/peerbit/commit/110517fb426e2ef6916b96a6147a5e85d3f3747c))
+* improve assertion ([eae57b5](https://github.com/dao-xyz/peerbit/commit/eae57b5ea7dc6b3e044417fd517294e459190d04))
+* improve assertion ([ab72362](https://github.com/dao-xyz/peerbit/commit/ab7236211bec09ad310cd0db863d5c8377e08f8a))
+* improve assertion ([7c22c83](https://github.com/dao-xyz/peerbit/commit/7c22c83967242a58e58f737b2a0848cdde3ad2e6))
+* improve assertions ([6cbceb4](https://github.com/dao-xyz/peerbit/commit/6cbceb4ed68b79c5ba9dc97faf3c459353ac980b))
+* improve waitForIsLeader performance ([08469c0](https://github.com/dao-xyz/peerbit/commit/08469c0a57d2c6236fd6e2ac8587c43610ed08ea))
+* increase 'wait for replicator' timeout ([8b2673d](https://github.com/dao-xyz/peerbit/commit/8b2673d0a75269c28fa31365a57569f51a81b64a))
+* increase timeout ([b389cd3](https://github.com/dao-xyz/peerbit/commit/b389cd3f9cc842e3b1c211530385306c04b6c130))
+* refactor ([018b344](https://github.com/dao-xyz/peerbit/commit/018b344553befc65ccea821ce83d553bbfba87f6))
+* remove event listeners first on close ([6b107e4](https://github.com/dao-xyz/peerbit/commit/6b107e42428a20d01cbf03eb192b8656ecc139bc))
+* rm distribute override ([4f3df49](https://github.com/dao-xyz/peerbit/commit/4f3df492b50c848da81807e0498cc70a5ad0fb25))
+* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+* update compare limit ([fd727e0](https://github.com/dao-xyz/peerbit/commit/fd727e0f5033ef2a932cb8a9544800d8edc21d49))
+* update error function ([ba1e907](https://github.com/dao-xyz/peerbit/commit/ba1e907daa132762696378d71d445d016faf5d8d))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+* update test limits ([72617fa](https://github.com/dao-xyz/peerbit/commit/72617fa9cfde84cdab6f0f5cf046178d48e4406d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+    * @peerbit/program bumped from 2.4.2 to 3.0.0
+    * @peerbit/log bumped from 2.1.10 to 3.0.0
+    * @peerbit/rpc bumped from 2.1.17 to 3.0.0
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+
 ## [3.1.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.7...shared-log-v3.1.8) (2023-09-21)
 
 

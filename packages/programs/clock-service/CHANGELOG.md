@@ -325,6 +325,35 @@
   * dependencies
     * @peerbit/trusted-network bumped from 2.0.20 to 2.0.21
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.39...clock-service-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* adaptive replications settings based on memory constraints
+* modularize keychain
+
+### Features
+
+* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+    * @peerbit/rpc bumped from 2.1.17 to 3.0.0
+    * @peerbit/trusted-network bumped from 2.0.21 to 3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+
 ## [1.0.35](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.34...clock-service-v1.0.35) (2023-09-21)
 
 

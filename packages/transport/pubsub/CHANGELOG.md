@@ -94,6 +94,48 @@
   * dependencies
     * @peerbit/stream bumped from 1.0.19 to 1.0.20
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.13...pubsub-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* refactor delivery modes
+* simplify subscribe/unsubscribe messages
+* lazy stream routing protocol
+
+### Features
+
+* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+* refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
+* replace emitSelf property with publish event ([2230c75](https://github.com/dao-xyz/peerbit/commit/2230c75adf2d513b302101e69e0f8f1139ab4595))
+
+
+### Bug Fixes
+
+* correctly handle routing when doing ack delivery ([a22021c](https://github.com/dao-xyz/peerbit/commit/a22021c85bd6c7cb9f831f9a8fa54161c1095dc5))
+* correctly ignore already seen messages ([3bf4fec](https://github.com/dao-xyz/peerbit/commit/3bf4fec81da428874259b0b1fe0344b76fd867f0))
+* make sure my subscriptions are returned on Subscription message ([2b0c1f8](https://github.com/dao-xyz/peerbit/commit/2b0c1f86c9cc5490efb2708891cc4ed9bfa31eac))
+* remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
+* set seekTimeout ([07c80ee](https://github.com/dao-xyz/peerbit/commit/07c80eec08e5e48f09a4244011560545ea8f9c6a))
+* simplify subscribe/unsubscribe messages ([47577fe](https://github.com/dao-xyz/peerbit/commit/47577fed7dd943d748ded3d00a6e54fefeb2cff5))
+* test add delay ([410be43](https://github.com/dao-xyz/peerbit/commit/410be43bcec5de21051d39713a26aa23dbd0ff45))
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 1.0.20 to 2.0.0
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
+
 ## [1.1.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.11...pubsub-v1.1.12) (2023-09-21)
 
 
