@@ -8,11 +8,9 @@ import {
 	TypedEventEmitter
 } from "@libp2p/interface";
 import { Client } from "./client.js";
-import { waitFor } from "@peerbit/time";
 import { Blocks } from "@peerbit/blocks-interface";
 import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import {
-	PubSub,
 	SubscriptionEvent,
 	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
@@ -91,6 +89,8 @@ class ProgramHandler extends Handler<Program> {
 	}
 }
 export { ProgramHandler };
+
+type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 
 @variant(0)
 export abstract class Program<
@@ -500,18 +500,18 @@ export abstract class Program<
 		return der as P;
 	}
 
-	static async open<T extends Program<Args>, Args = any>(
+	static async open<T extends Program<ExtractArgs<T>>>(
 		this: Constructor<T>,
-		address: Address,
+		address: string,
 		node: ProgramClient,
-		options?: ProgramInitializationOptions<Args, T>
+		options?: ProgramInitializationOptions<ExtractArgs<T>, T>
 	): Promise<T> {
 		const p = await Program.load<T>(address, node.services.blocks);
 
 		if (!p) {
 			throw new Error("Failed to load program");
 		}
-		await node.open(p, options);
+		await node.open<T>(p, options as any); // TODO fix types
 		return p as T;
 	}
 }

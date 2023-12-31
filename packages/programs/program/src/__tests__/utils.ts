@@ -69,7 +69,8 @@ export const createPeer = async (
 				waitFor: () => Promise.resolve(),
 				iterator: () => {
 					return undefined as any; // TODO
-				}
+				},
+				size: () => Promise.resolve(0)
 			},
 			pubsub: {
 				subscribe: async (topic) => {
