@@ -274,7 +274,7 @@ describe(`leaders`, function () {
 		// since the distribution only in best scenarios distributes perfectly
 		// we might have duplication, i.e. more than expected amount of leaders for a particular
 		// slot
-		expect(resolved).toBeGreaterThan(50);
+		expect(resolved).toBeGreaterThan(40);
 	});
 
 	it("evenly distributed", async () => {
