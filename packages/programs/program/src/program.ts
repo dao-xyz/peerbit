@@ -422,16 +422,14 @@ export abstract class Program<
 					const subscribers =
 						await this.node.services.pubsub.getSubscribers(topic);
 					if (!subscribers) {
-						throw new Error(
-							`Client is not subscriber to topic ${topic}, do not have any info about peer readiness`
-						);
+						continue;
 					}
 					ready = intersection(ready, subscribers);
 				}
 			}
 		}
 		if (ready == null) {
-			throw new Error("Do not have any info about peer readiness");
+			return new Set();
 		}
 		return ready;
 	}
