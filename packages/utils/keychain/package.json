@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/keychain",
-	"version": "0.0.1",
+	"version": "1.0.0",
 	"description": "Utility functions for keychain",
 	"type": "module",
 	"sideEffects": false,
@@ -31,6 +31,6 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/crypto": "^2.0.0",
-		"@peerbit/any-store": "^1.0.0"
+		"@peerbit/any-store": "^1.0.1"
 	}
 }

@@ -33,6 +33,13 @@
     * @peerbit/pubsub-interface bumped from ^1.1.3 to ^1.1.4
     * @peerbit/lazy-level bumped from ^1.2.0 to ^1.2.1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/keychain bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/any-store bumped from ^1.0.0 to ^1.0.1
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/program-v2.4.2...program-v3.0.0) (2023-12-31)
 
 

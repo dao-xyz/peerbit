@@ -20,6 +20,14 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.0...stream-v2.0.1) (2023-12-31)
+
+
+### Bug Fixes
+
+* add wildcard dependency on test lib ([17ee002](https://github.com/dao-xyz/peerbit/commit/17ee002b7417e45a7c45dba280d02d07e5a14c27))
+* remove stream dep ([c632688](https://github.com/dao-xyz/peerbit/commit/c6326885b27ddabe5d9dca436ab3f238bcc87820))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v1.0.20...stream-v2.0.0) (2023-12-31)
 
 
