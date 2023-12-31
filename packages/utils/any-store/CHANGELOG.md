@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.0...any-store-v1.0.1) (2023-12-31)
+
+
+### Bug Fixes
+
+* add wildcard dependency on test lib ([17ee002](https://github.com/dao-xyz/peerbit/commit/17ee002b7417e45a7c45dba280d02d07e5a14c27))
+* remove keychain dep ([73f622f](https://github.com/dao-xyz/peerbit/commit/73f622f9a766bb562eb427cce5fc6c6c10e47bce))
+
 ## 1.0.0 (2023-12-31)
 
 
