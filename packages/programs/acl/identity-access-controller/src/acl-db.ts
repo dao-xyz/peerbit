@@ -1,8 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
-	DocumentIndex,
-	Role,
 	TransactionContext,
 	PutOperation,
 	DeleteOperation
@@ -15,12 +13,11 @@ import {
 	createIdentityGraphStore
 } from "@peerbit/trusted-network";
 import { Access, AccessType } from "./access";
-import { Entry } from "@peerbit/log";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
-import { RPC } from "@peerbit/rpc";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { concat } from "uint8arrays";
+import { RoleOptions } from "@peerbit/shared-log";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -168,7 +165,7 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async open(properties?: { role?: Role }) {
+	async open(properties?: { role?: RoleOptions }) {
 		await this.identityGraphController.open({
 			role: properties?.role,
 			canRead: this.canRead.bind(this)

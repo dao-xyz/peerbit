@@ -1,6 +1,5 @@
 import { AbstractLevel } from "abstract-level";
-import { AnyStore, MaybePromise } from "./interface.js";
-import { MemoryLevel } from "memory-level";
+import { AnyStore } from "./interface.js";
 import { ClassicLevel } from "classic-level";
 
 const isNotFoundError = (err) =>

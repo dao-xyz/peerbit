@@ -18,7 +18,8 @@ import {
 	Replicator,
 	SharedLog,
 	SharedLogOptions,
-	SharedAppendOptions
+	SharedAppendOptions,
+	RoleOptions
 } from "@peerbit/shared-log";
 
 export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
@@ -163,13 +164,13 @@ export class Documents<T extends Record<string, any>>
 		return typeof history === "string"
 			? (await this.log.log.get(history)) ||
 					(await Entry.fromMultihash<Operation<T>>(
-						this.log.log.storage,
+						this.log.log.blocks,
 						history
 					))
 			: history;
 	}
 
-	async updateRole(role: Replicator | Observer) {
+	async updateRole(role: RoleOptions) {
 		await this.log.updateRole(role);
 	}
 	get role(): Replicator | Observer {
@@ -215,7 +216,7 @@ export class Documents<T extends Record<string, any>>
 		const resolve = async (history: Entry<Operation<T>> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||
-						(await Entry.fromMultihash(this.log.log.storage, history))
+						(await Entry.fromMultihash(this.log.log.blocks, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {

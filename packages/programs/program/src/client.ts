@@ -8,7 +8,9 @@ import { Multiaddr } from "@multiformats/multiaddr";
 import { Address } from "./address.js";
 import { CanOpen, Manageable, OpenOptions } from "./handler.js";
 
-export interface Client<T extends Manageable<any>> {
+type ExtractArgs<T> = T extends CanOpen<infer Args> ? Args : never;
+
+export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	peerId: Libp2pPeerId;
 	identity: Identity<Ed25519PublicKey>;
 	getMultiaddrs: () => Multiaddr[];
@@ -21,8 +23,8 @@ export interface Client<T extends Manageable<any>> {
 	memory: AnyStore;
 	start(): Promise<void>;
 	stop(): Promise<void>;
-	open<S extends T & CanOpen<Args>, Args = any>(
+	open<S extends T & CanOpen<ExtractArgs<S>>>(
 		program: S | Address,
-		options?: OpenOptions<Args, S>
+		options?: OpenOptions<ExtractArgs<S>, S>
 	): Promise<S>;
 }

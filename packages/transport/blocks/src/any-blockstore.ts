@@ -107,4 +107,8 @@ export class AnyBlockStore implements Blocks {
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
 		return; // Offline storage // TODO this feels off resolving
 	}
+
+	async size() {
+		return this._store.size();
+	}
 }

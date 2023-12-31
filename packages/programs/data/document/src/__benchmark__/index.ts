@@ -60,8 +60,13 @@ const store = new TestStore({
 const client: ProgramClient = session.peers[0];
 await client.open(store, {
 	args: {
-		role: new Replicator({ factor: 1 }),
-		trim: { type: "length" as const, to: 100 }
+		role: {
+			type: "replicator",
+			factor: 1
+		},
+		log: {
+			trim: { type: "length" as const, to: 100 }
+		}
 	}
 });
 

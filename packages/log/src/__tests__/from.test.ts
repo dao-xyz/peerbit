@@ -13,7 +13,7 @@ const BadComparatorReturnsZero = (a: any, b: any) => 0;
 
 import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { BlockStore, AnyBlockStore, StoreStatus } from "@peerbit/blocks";
-import { Blocks, GetOptions, PutOptions } from "@peerbit/blocks-interface";
+import { Blocks, GetOptions } from "@peerbit/blocks-interface";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
@@ -64,6 +64,10 @@ class SlowBlockStore implements Blocks {
 
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
 		return this._store.waitFor(peer);
+	}
+
+	async size() {
+		return this._store.size();
 	}
 }
 

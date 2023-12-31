@@ -5,7 +5,7 @@ import { ProgramClient } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 import { Program } from "@peerbit/program";
-import { Replicator, SharedLog, Args } from "../index.js";
+import { SharedLog, Args } from "../index.js";
 import { mplex } from "@libp2p/mplex";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
@@ -70,9 +70,12 @@ const store = new TestStore({
 });
 
 const client: ProgramClient = session.peers[0];
-await client.open<TestStore, Args<Document>>(store, {
+await client.open<TestStore>(store, {
 	args: {
-		role: new Replicator({ factor: 1 }),
+		role: {
+			type: "replicator",
+			factor: 1
+		},
 		trim: { type: "length" as const, to: 100 },
 		onChange: (change) => {
 			change.added.forEach(async (entry) => {

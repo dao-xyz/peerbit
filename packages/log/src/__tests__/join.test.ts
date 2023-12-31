@@ -12,7 +12,7 @@ const last = (arr: any[]) => {
 
 const checkedStorage = async (log: Log<any>) => {
 	for (const value of await log.values.toArray()) {
-		expect(await log.storage.has(value.hash)).toBeTrue();
+		expect(await log.blocks.has(value.hash)).toBeTrue();
 	}
 };
 
@@ -261,7 +261,7 @@ describe("join", function () {
 						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage
+					store: log1.blocks
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
@@ -270,13 +270,13 @@ describe("join", function () {
 						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage
+					store: log1.blocks
 				});
 
 				// We need to store a1 somewhere else, becuse log1 will temporarely delete the block since due to the merge order
 				// TODO make this work even though there is not a third party helping
-				await log2.storage.get(a1.hash, { replicate: true });
-				expect(await log2.storage.get(a1.hash)).toBeDefined();
+				await log2.blocks.get(a1.hash, { replicate: true });
+				expect(await log2.blocks.get(a1.hash)).toBeDefined();
 				await log1.join([b1, b2]);
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
 					a1.hash,
@@ -294,7 +294,7 @@ describe("join", function () {
 						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage
+					store: log1.blocks
 				});
 				const b2 = await Entry.create({
 					data: new Uint8Array([1, 1]),
@@ -303,7 +303,7 @@ describe("join", function () {
 						next: [a1]
 					},
 					identity: log1.identity,
-					store: log1.storage
+					store: log1.blocks
 				});
 				await log1.join([b1, b2]);
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([

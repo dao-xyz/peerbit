@@ -24,7 +24,7 @@ describe("recover", () => {
 		await log.append(new Uint8Array([2]));
 		await log.append(new Uint8Array([3]), { meta: { next: [] } });
 
-		await log.storage["_store"].store.set("not a cid", new Uint8Array([4]));
+		await log.blocks["_store"].store.set("not a cid", new Uint8Array([4]));
 		expect(log.length).toEqual(3);
 		expect(await log.getHeads()).toHaveLength(2);
 
@@ -47,7 +47,7 @@ describe("recover", () => {
 		await log.append(new Uint8Array([2]));
 		await log.append(new Uint8Array([3]), { meta: { next: [] } });
 
-		await log.storage["_store"].store.set("not a cid", new Uint8Array([4]));
+		await log.blocks["_store"].store.set("not a cid", new Uint8Array([4]));
 		expect(log.length).toEqual(3);
 		expect(await log.getHeads()).toHaveLength(2);
 

@@ -373,16 +373,8 @@ export class DataMessage<
 		return this._data;
 	}
 
-	_serialized: Uint8Array | undefined;
-	get serialized(): Uint8Array | undefined {
-		return this.serialized;
-	}
-
 	/** Manually ser/der for performance gains */
 	bytes() {
-		/* if (this._serialized) {
-			return this._serialized;
-		} */
 		return serialize(this);
 	}
 
@@ -392,7 +384,6 @@ export class DataMessage<
 		}
 		const arr = bytes.subarray();
 		const ret = deserialize(arr, DataMessage);
-		ret._serialized = arr;
 		return ret;
 	}
 }

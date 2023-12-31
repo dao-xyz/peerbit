@@ -186,7 +186,7 @@ export class Log<T> {
 							this.entryIndex.delete(node.value)
 						]);
 						this.nextsIndex.delete(node.value);
-						await this.storage.rm(node.value);
+						await this.blocks.rm(node.value);
 					}
 					const b = this.values.length;
 					if (a === b) {
@@ -330,7 +330,7 @@ export class Log<T> {
 		return this._identity;
 	}
 
-	get storage(): Blocks {
+	get blocks(): Blocks {
 		return this._storage;
 	}
 
@@ -1051,7 +1051,7 @@ export class Log<T> {
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 
 		await Promise.all(
-			[...this.entryIndex._index.values()].map((x) => this.storage.rm(x.hash))
+			[...this.entryIndex._index.values()].map((x) => this.blocks.rm(x.hash))
 		);
 		await this._headsIndex?.drop();
 		await this._entryCache?.clear();

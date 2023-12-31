@@ -298,7 +298,10 @@ describe("index", () => {
 
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
-				await store.docs.updateRole(new Replicator({ factor: 1 }));
+				await store.docs.updateRole({
+					type: "replicator",
+					factor: 1
+				});
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
@@ -313,9 +316,14 @@ describe("index", () => {
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
-					args: new Replicator({ factor: 1 })
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
 				});
-				await store2.docs.updateRole(new Observer());
+				await store2.docs.updateRole("observer");
 				await waitForResolved(() =>
 					expect(store3.docs.index.index.size).toEqual(COUNT)
 				);
@@ -326,7 +334,10 @@ describe("index", () => {
 
 			it("drops when no longer replicating with factor 0", async () => {
 				let COUNT = 10;
-				await store.docs.updateRole(new Replicator({ factor: 1 }));
+				await store.docs.updateRole({
+					type: "replicator",
+					factor: 1
+				});
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
@@ -341,9 +352,14 @@ describe("index", () => {
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
-					args: new Replicator({ factor: 1 })
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
 				});
-				await store2.docs.updateRole(new Replicator({ factor: 0 }));
+				await store2.docs.updateRole({ type: "replicator", factor: 0 });
 				await waitForResolved(() =>
 					expect(store3.docs.index.index.size).toEqual(COUNT)
 				);
@@ -424,13 +440,23 @@ describe("index", () => {
 					if (store.closed) {
 						stores.push(
 							await peer.open(store, {
-								args: { role: new Replicator({ factor: 1 }) }
+								args: {
+									role: {
+										type: "replicator",
+										factor: 1
+									}
+								}
 							})
 						);
 					} else {
 						stores.push(
 							await TestStore.open(store.address, peer, {
-								args: { role: new Replicator({ factor: 1 }) }
+								args: {
+									role: {
+										type: "replicator",
+										factor: 1
+									}
+								}
 							})
 						);
 					}
@@ -689,9 +715,9 @@ describe("index", () => {
 				await session.peers[0].open(store, {
 					args: {
 						log: {
-							trim: { type: "length" as const, to: 1 }
+							trim: { type: "length", to: 1 }
 						},
-						role: new Observer() // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
+						role: "observer" // if we instead would do 'replicator' trimming will not be done unless other peers has joined
 					}
 				});
 
@@ -735,7 +761,7 @@ describe("index", () => {
 						log: {
 							trim: { type: "length" as const, to: 10 }
 						},
-						role: new Observer() // if we instead would do 'new Replicator()' trimming will not be done unless other peers has joined
+						role: "observer" // if we instead would do 'replicator' trimming will not be done unless other peers has joined
 					}
 				});
 
@@ -822,7 +848,7 @@ describe("index", () => {
 
 					await session.peers[1].open(store2, {
 						args: {
-							role: new Observer()
+							role: "observer"
 						}
 					});
 
@@ -878,7 +904,7 @@ describe("index", () => {
 								});
 					await session.peers[i].open(store, {
 						args: {
-							role: i === 0 ? new Replicator({ factor: 1 }) : new Observer(),
+							role: i === 0 ? { type: "replicator", factor: 1 } : "observer",
 							index: {
 								canRead:
 									i === 0
@@ -1298,7 +1324,7 @@ describe("index", () => {
 						const nestedStore2 =
 							await session.peers[1].open<NestedDocumentStore>(
 								nestedStore.address,
-								{ args: { role: new Observer() } }
+								{ args: { role: "observer" } }
 							);
 						await nestedStore2.documents.log.waitForReplicator(
 							session.peers[0].identity.publicKey
@@ -1376,7 +1402,7 @@ describe("index", () => {
 						const docsObserver =
 							await session.peers[1].open<MultiDimensionalDocStore>(
 								docs.address,
-								{ args: { role: new Observer() } }
+								{ args: { role: "observer" } }
 							);
 						await docsObserver.documents.log.waitForReplicator(
 							session.peers[0].identity.publicKey
@@ -1409,7 +1435,7 @@ describe("index", () => {
 						const docsObserver =
 							await session.peers[1].open<MultiDimensionalDocStore>(
 								docs.address,
-								{ args: { role: new Observer() } }
+								{ args: { role: "observer" } }
 							);
 						await docsObserver.documents.log.waitForReplicator(
 							session.peers[0].identity.publicKey
@@ -1445,7 +1471,7 @@ describe("index", () => {
 						const docsObserver =
 							await session.peers[1].open<MultiDimensionalDocStore>(
 								docs.address,
-								{ args: { role: new Observer() } }
+								{ args: { role: "observer" } }
 							);
 						await docsObserver.documents.log.waitForReplicator(
 							session.peers[0].identity.publicKey
@@ -1813,11 +1839,14 @@ describe("index", () => {
 					await session.peers[i].open(store, {
 						args: {
 							index: {
-								canRead: (key) => {
+								canRead: (_document, key) => {
 									return canRead[i] ? canRead[i]!(key) : true;
 								}
 							},
-							role: new Replicator({ factor: 1 }),
+							role: {
+								type: "replicator",
+								factor: 1
+							},
 							replicas: { min: 1 } // make sure documents only exist once
 						}
 					});
@@ -2175,7 +2204,7 @@ describe("index", () => {
 				(await Entry.create({
 					data: new PutOperation({ key: "key", data: randomBytes(32) }),
 					identity: store.node.identity,
-					store: store.docs.log.log.storage,
+					store: store.docs.log.log.blocks,
 					canAppend: () => true,
 					encoding: store.docs.log.log.encoding
 				})) as Entry<Operation<Document>>
@@ -2251,7 +2280,7 @@ describe("index", () => {
 
 				await session.peers[i].open(store, {
 					args: {
-						role: i === 0 ? new Replicator({ factor: 1 }) : new Observer(),
+						role: i === 0 ? { type: "replicator", factor: 1 } : "observer",
 						canOpen: () => true
 					}
 				});
@@ -2536,9 +2565,12 @@ describe("index", () => {
 			
 			it("ignore myself if I am a new replicator", async () => {
 				// and the other peer has been around for longer
-				await stores[0].docs.updateRole(new Observer())
-				await stores[1].docs.updateRole(new Replicator({ factor: 1 }))
-				await stores[2].docs.updateRole(new Replicator({ factor: 0 }))
+				await stores[0].docs.updateRole("observer")
+				await stores[1].docs.updateRole({
+			type: 'replicator',
+			factor: 1
+		})
+				await stores[2].docs.updateRole({type: 'replicator', factor: 1})
 
 				await delay(2000)
 				await waitForResolved(() => expect(stores[0].docs.log.getReplicatorsSorted()?.toArray().map(x => x.publicKey.hashcode())).toContainAllValues([session.peers[1].identity.publicKey.hashcode(), session.peers[2].identity.publicKey.hashcode()]));

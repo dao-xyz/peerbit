@@ -10,7 +10,6 @@ import {
 	AbstractSearchResult
 } from "../index.js";
 import { Range } from "../range.js";
-import { Observer } from "@peerbit/shared-log";
 import { ProgramClient } from "@peerbit/program";
 import { Change } from "@peerbit/log";
 import { waitForResolved } from "@peerbit/time";
@@ -40,7 +39,9 @@ describe("query", () => {
 
 		await observer.open(observerStore, {
 			args: {
-				role: new Observer()
+				log: {
+					role: "observer"
+				}
 			}
 		});
 
@@ -249,7 +250,9 @@ describe("events", () => {
 
 		await peer1.open(store2, {
 			args: {
-				role: new Observer()
+				log: {
+					role: "observer"
+				}
 			}
 		});
 	});

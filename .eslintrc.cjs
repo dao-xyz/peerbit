@@ -25,6 +25,9 @@ module.exports = {
 		"@typescript-eslint/no-empty-interface": "off",
 		"no-useless-escape": "off",
 		"no-return-await": "error",
+		"@typescript-eslint/no-unsafe-declaration-mergin": "off",
+		"@typescript-eslint/no-unused-vars": "off",
+		"@typescript-eslint/no-unsafe-declaration-merging": "off"
 		//"require-await": "error" TODO
 	},
 }

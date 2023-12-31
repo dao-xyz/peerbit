@@ -305,7 +305,6 @@ describe(`exchange`, function () {
 			}
 
 			const add = async (i: number) => {
-				process.stdout.write("\rWriting " + (i + 1) + " / " + entryCount + " ");
 				await db1.add("hello " + i);
 			};
 
@@ -339,7 +338,6 @@ describe(`exchange`, function () {
 			}
 
 			const add = async (i: number) => {
-				process.stdout.write("\rWriting " + (i + 1) + " / " + entryCount + " ");
 				await Promise.all([db1.add("hello-1-" + i), db2.add("hello-2-" + i)]);
 			};
 
@@ -510,7 +508,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: new Observer()
+				role: "observer"
 			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
@@ -642,7 +640,7 @@ describe("replication degree", () => {
 					min: minReplicas,
 					max: maxReplicas
 				},
-				role: new Observer()
+				role: "observer"
 			}
 		});
 		db2 = (await session.peers[1].open(db1.clone(), {
@@ -768,7 +766,7 @@ describe("replication degree", () => {
 				replicas: {
 					min: 10
 				},
-				role: new Observer()
+				role: "observer"
 			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
@@ -779,7 +777,10 @@ describe("replication degree", () => {
 					replicas: {
 						min: 10
 					},
-					role: new Replicator({ factor: 1 })
+					role: {
+						type: "replicator",
+						factor: 1
+					}
 				}
 			}
 		))!;
@@ -801,7 +802,10 @@ describe("replication degree", () => {
 				replicas: {
 					min: 10
 				},
-				role: new Replicator({ factor: 1 })
+				role: {
+					type: "replicator",
+					factor: 1
+				}
 			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
@@ -812,7 +816,10 @@ describe("replication degree", () => {
 					replicas: {
 						min: 10
 					},
-					role: new Replicator({ factor: 1 })
+					role: {
+						type: "replicator",
+						factor: 1
+					}
 				}
 			}
 		))!;
@@ -839,7 +846,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: new Observer()
+				role: "observer"
 			}
 		});
 
@@ -852,7 +859,7 @@ describe("replication degree", () => {
 						min,
 						max
 					},
-					role: new Observer()
+					role: "observer"
 				}
 			}
 		))!;
@@ -870,7 +877,10 @@ describe("replication degree", () => {
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		expect(db2ReorgCounter).toEqual(0);
-		await db2.log.updateRole(new Replicator({ factor: 1 }));
+		await db2.log.updateRole({
+			type: "replicator",
+			factor: 1
+		});
 		expect(db2ReorgCounter).toEqual(1);
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 
@@ -880,12 +890,14 @@ describe("replication degree", () => {
 
 		// peer 1 observer
 		// peer 2 replicator (has entry)
-		await db1.open({
-			replicas: {
-				min,
-				max
-			},
-			role: new Observer()
+		await session.peers[0].open(db1, {
+			args: {
+				replicas: {
+					min,
+					max
+				},
+				role: "observer"
+			}
 		});
 
 		// peer 1 observer
@@ -894,13 +906,17 @@ describe("replication degree", () => {
 		await delay(2000);
 		expect(db2ReorgCounter).toEqual(1);
 
-		await db2.log.updateRole(new Observer());
+		await db2.log.updateRole("observer");
 		expect(db2ReorgCounter).toEqual(2);
 		expect(db2.log.role instanceof Observer).toBeTrue();
 
 		// peer 1 replicator (will get entry)
 		// peer 2 observer (will safely delete the entry)
-		await db1.log.updateRole(new Replicator({ factor: 1 }));
+		await db1.log.updateRole({
+			type: "replicator",
+			factor: 1
+		});
+
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
 		// expect(db2ReorgCounter).toEqual(3); TODO
@@ -919,7 +935,10 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: new Replicator({ factor: 0 })
+				role: {
+					type: "replicator",
+					factor: 0
+				}
 			}
 		});
 
@@ -933,7 +952,10 @@ describe("replication degree", () => {
 						min,
 						max
 					},
-					role: new Replicator({ factor: 1 }),
+					role: {
+						type: "replicator",
+						factor: 1
+					},
 					respondToIHaveTimeout
 				}
 			}

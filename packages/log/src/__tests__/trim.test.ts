@@ -101,15 +101,15 @@ describe("trim", function () {
 		const { entry: a1 } = await log.append(new Uint8Array([1]));
 		const { entry: a2 } = await log.append(new Uint8Array([2]));
 		expect(await log.trim()).toHaveLength(0);
-		expect(await log.storage.get(a1.hash)).toBeDefined();
-		expect(await log.storage.get(a2.hash)).toBeDefined();
+		expect(await log.blocks.get(a1.hash)).toBeDefined();
+		expect(await log.blocks.get(a2.hash)).toBeDefined();
 		expect(log.length).toEqual(2);
 		const { entry: a3, removed } = await log.append(new Uint8Array([3]));
 		expect(removed.map((x) => x.hash)).toContainAllValues([a1.hash, a2.hash]);
 		expect(log.length).toEqual(1);
-		expect(await log.storage.get(a1.hash)).toBeUndefined();
-		expect(await log.storage.get(a2.hash)).toBeUndefined();
-		expect(await log.storage.get(a3.hash)).toBeDefined();
+		expect(await log.blocks.get(a1.hash)).toBeUndefined();
+		expect(await log.blocks.get(a2.hash)).toBeUndefined();
+		expect(await log.blocks.get(a3.hash)).toBeDefined();
 		expect((await log.toArray())[0].payload.getValue()).toEqual(
 			new Uint8Array([3])
 		);
@@ -166,19 +166,19 @@ describe("trim", function () {
 		);
 		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).toHaveLength(0);
-		expect(await log.storage.get(a1.hash)).toBeDefined();
+		expect(await log.blocks.get(a1.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
 			new Uint8Array([1])
 		]);
 		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]));
 		expect(r2.map((x) => x.hash)).toContainAllValues([a1.hash]);
-		expect(await log.storage.get(a2.hash)).toBeDefined();
+		expect(await log.blocks.get(a2.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
 			new Uint8Array([2])
 		]);
 		const { entry: a3, removed: r3 } = await log.append(new Uint8Array([3]));
 		expect(r3.map((x) => x.hash)).toContainAllValues([a2.hash]);
-		expect(await log.storage.get(a3.hash)).toBeDefined();
+		expect(await log.blocks.get(a3.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
 			new Uint8Array([3])
 		]);
@@ -187,10 +187,10 @@ describe("trim", function () {
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
 			new Uint8Array([4])
 		]);
-		expect(await log.storage.get(a1.hash)).toBeUndefined();
-		expect(await log.storage.get(a2.hash)).toBeUndefined();
-		expect(await log.storage.get(a3.hash)).toBeUndefined();
-		expect(await log.storage.get(a4.hash)).toBeDefined();
+		expect(await log.blocks.get(a1.hash)).toBeUndefined();
+		expect(await log.blocks.get(a2.hash)).toBeUndefined();
+		expect(await log.blocks.get(a3.hash)).toBeUndefined();
+		expect(await log.blocks.get(a4.hash)).toBeDefined();
 	});
 
 	it("trim to time", async () => {
@@ -207,7 +207,7 @@ describe("trim", function () {
 		let t0 = +new Date();
 		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).toHaveLength(0);
-		expect(await log.storage.get(a1.hash)).toBeDefined();
+		expect(await log.blocks.get(a1.hash)).toBeDefined();
 		expect((await log.toArray()).map((x) => x.payload.getValue())).toEqual([
 			new Uint8Array([1])
 		]);

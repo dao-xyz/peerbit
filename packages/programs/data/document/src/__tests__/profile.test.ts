@@ -1,10 +1,11 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, Replicator, Role } from "../index.js";
+import { Documents, Role } from "../index.js";
 import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { TestSession } from "@peerbit/test-utils";
+import { RoleOptions } from "@peerbit/shared-log";
 
 /**
  * A test meant for profiling purposes
@@ -40,7 +41,7 @@ class TestStore extends Program {
 		this.docs = new Documents();
 	}
 
-	async open(properties?: { role: Role }): Promise<void> {
+	async open(properties?: { role: RoleOptions }): Promise<void> {
 		await this.docs.open({ type: Document, role: properties?.role });
 	}
 }
@@ -62,10 +63,20 @@ describe("profile", () => {
 		for (const [i, client] of session.peers.entries()) {
 			const store: TestStore = await (stores.length === 0
 				? client.open(new TestStore(), {
-						args: { role: new Replicator({ factor: 1 }) }
+						args: {
+							role: {
+								type: "replicator",
+								factor: 1
+							}
+						}
 					})
 				: TestStore.open(stores[0].address, client, {
-						args: { role: new Replicator({ factor: 1 }) }
+						args: {
+							role: {
+								type: "replicator",
+								factor: 1
+							}
+						}
 					}));
 			stores.push(store);
 		}

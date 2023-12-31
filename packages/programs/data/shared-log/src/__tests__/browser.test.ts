@@ -29,7 +29,7 @@ describe(`browser`, function () {
 
 		await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
 
-		db2 = await await EventStore.open<EventStore<string>, any>(
+		db2 = await await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
 		);
@@ -61,7 +61,7 @@ describe(`browser`, function () {
 
 		db1 = await session.peers[0].open(new EventStore<string>());
 
-		db2 = await await EventStore.open<EventStore<string>, any>(
+		db2 = await await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
 		);
@@ -88,7 +88,7 @@ describe(`browser`, function () {
 		await db1.add("hello");
 		await db1.add("world");
 
-		db2 = await await EventStore.open<EventStore<string>, any>(
+		db2 = await await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
 		);
@@ -115,7 +115,7 @@ describe(`browser`, function () {
 		await db1.add("hello");
 		await db1.add("world");
 
-		db2 = await await EventStore.open<EventStore<string>, any>(
+		db2 = await await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
 		);

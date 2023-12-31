@@ -1,14 +1,61 @@
-import { waitFor, waitForResolved } from "@peerbit/time";
-import { EventStore } from "./utils/stores/event-store";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { EventStore, Operation } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { Observer, Replicator } from "../role";
+import { AbsoluteReplicas, Args } from "..";
+import { deserialize } from "@dao-xyz/borsh";
+import { Ed25519Keypair, randomBytes, toBase64 } from "@peerbit/crypto";
+import { BORSH_ENCODING } from "./utils/stores/encoding";
 
 describe(`role`, () => {
 	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 
 	beforeAll(async () => {
-		session = await TestSession.disconnected(3);
+		session = await TestSession.disconnected(3, [
+			{
+				libp2p: {
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192,
+							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
+							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
+							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
+							62, 133, 97, 57, 150, 187, 247, 215
+						]),
+						Ed25519Keypair
+					).toPeerId()
+				}
+			},
+			{
+				libp2p: {
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45,
+							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
+							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
+							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
+							112, 65, 202, 154, 27, 63, 15
+						]),
+						Ed25519Keypair
+					).toPeerId()
+				}
+			},
+			{
+				libp2p: {
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34, 23,
+							12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231,
+							155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84,
+							137, 152, 227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187,
+							239, 56, 174, 184, 34, 141, 45, 242
+						]),
+						Ed25519Keypair
+					).toPeerId()
+				}
+			}
+		]);
 		await session.connect([
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]]
@@ -30,55 +77,12 @@ describe(`role`, () => {
 		await db2?.drop();
 	});
 
-	it("can update", async () => {
-		expect(
-			db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
-				.counter
-		).toEqual(1);
-		expect(
-			db1.log
-				.getReplicatorsSorted()
-				?.toArray()
-				?.map((x) => x.publicKey.hashcode())
-		).toEqual([db1.node.identity.publicKey.hashcode()]);
-		expect(db1.log.role).toBeInstanceOf(Replicator);
-		await db1.log.updateRole(new Observer());
-		expect(db1.log.role).toBeInstanceOf(Observer);
-		expect(
-			db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
-				.counter
-		).toEqual(1);
-	});
-
-	it("observer", async () => {
-		db2 = (await EventStore.open<EventStore<string>>(
-			db1.address!,
-			session.peers[1],
-			{
-				args: { role: new Observer() }
-			}
-		))!;
-
-		await db1.waitFor(session.peers[1].peerId);
-
-		await db1.add("hello");
-		await db2.add("world");
-
-		await waitFor(() => db1.log.log.values.length === 2); // db2 can write ...
-		expect(
-			(await db1.log.log.values.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
-		).toContainAllValues(["hello", "world"]);
-		expect(db2.log.log.values.length).toEqual(1); // ... but will not receive entries
-	});
-
 	it("none", async () => {
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1],
 			{
-				args: { role: new Observer() }
+				args: { role: "observer" }
 			}
 		))!;
 
@@ -96,20 +100,90 @@ describe(`role`, () => {
 		expect(db2.log.log.values.length).toEqual(1); // ... but will not receive entries
 	});
 
+	describe("observer", () => {
+		it("can update", async () => {
+			expect(
+				db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
+					.counter
+			).toEqual(1);
+			expect(
+				db1.log
+					.getReplicatorsSorted()
+					?.toArray()
+					?.map((x) => x.publicKey.hashcode())
+			).toEqual([db1.node.identity.publicKey.hashcode()]);
+			expect(db1.log.role).toBeInstanceOf(Replicator);
+			await db1.log.updateRole("observer");
+			expect(db1.log.role).toBeInstanceOf(Observer);
+			expect(
+				db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
+					.counter
+			).toEqual(1);
+		});
+
+		it("observer", async () => {
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: { role: "observer" }
+				}
+			))!;
+
+			await db1.waitFor(session.peers[1].peerId);
+
+			await db1.add("hello");
+			await db2.add("world");
+
+			await waitFor(() => db1.log.log.values.length === 2); // db2 can write ...
+			expect(
+				(await db1.log.log.values.toArray()).map(
+					(x) => x.payload.getValue().value
+				)
+			).toContainAllValues(["hello", "world"]);
+			expect(db2.log.log.values.length).toEqual(1); // ... but will not receive entries
+		});
+	});
+
 	describe("replictor", () => {
-		it("even factors by default", async () => {
+		it("dynamic by default", async () => {
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
 				session.peers[1]
 			))!;
-			await waitForResolved(() =>
-				expect(
-					db2.log
-						.getReplicatorsSorted()
-						?.toArray()
-						?.map((x) => Math.abs(0.5 - x.role.factor) < 0.001)
-				).toEqual([true, true])
+			const roles: any[] = [];
+			db2.log.events.addEventListener("role", (change) => {
+				if (
+					change.detail.publicKey.equals(session.peers[1].identity.publicKey)
+				) {
+					roles.push(change.detail);
+				}
+			});
+			/// expect role to update a few times
+			await waitForResolved(() => expect(roles.length).toBeGreaterThan(3));
+		});
+
+		it("passing by string evens by default", async () => {
+			db2 = await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						role: "replicator"
+					}
+				}
 			);
+
+			const roles: any[] = [];
+			db2.log.events.addEventListener("role", (change) => {
+				if (
+					change.detail.publicKey.equals(session.peers[1].identity.publicKey)
+				) {
+					roles.push(change.detail);
+				}
+			});
+			/// expect role to update a few times
+			await waitForResolved(() => expect(roles.length).toBeGreaterThan(3));
 		});
 	});
 });

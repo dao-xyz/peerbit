@@ -7,7 +7,6 @@ import { v4 as uuid } from "uuid";
 import {
 	ByteMatchQuery,
 	DeleteOperation,
-	DocumentIndex,
 	Documents,
 	MissingField,
 	PutOperation,
@@ -69,7 +68,7 @@ class Reaction {
 	}
 }
 
-type ChannelArgs = { role?: Role };
+type ChannelArgs = { role?: RoleOptions };
 @variant("channel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
@@ -180,11 +179,11 @@ const peer2 = await Peerbit.create();
 await peer2.dial(peer.getMultiaddrs());
 
 const channelFromClient1 = await peer.open(new Channel());
-const channelFromClient2 = await peer2.open<Channel, ChannelArgs>(
+const channelFromClient2 = await peer2.open<Channel>(
 	channelFromClient1.address!,
 	{
 		// Observer will not store anything unless explicitly doing so
-		args: { role: new Observer() } // or new Replicator() (default))
+		args: { role: "observer" } // or 'replicator' (default))
 	}
 );
 
@@ -324,6 +323,7 @@ import {
 	Role
 } from "@peerbit/document";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
+import { RoleOptions } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [

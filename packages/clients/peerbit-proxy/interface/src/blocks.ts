@@ -136,3 +136,21 @@ export class REQ_BlockWaitFor extends BlocksMessage {
 
 @variant(11)
 export class RESP_BlockWaitFor extends BlocksMessage {}
+
+@variant(12)
+export class REQ_BlockSize extends BlocksMessage {}
+
+@variant(13)
+export class RESP_BlockSize extends BlocksMessage {
+	@field({ type: "u64" })
+	private _size: bigint;
+
+	constructor(size: number) {
+		super();
+		this._size = BigInt(size);
+	}
+
+	get size() {
+		return Number(this._size);
+	}
+}

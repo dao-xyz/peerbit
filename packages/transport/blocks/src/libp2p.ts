@@ -91,6 +91,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		await this.remoteBlocks.stop();
 	}
 
+	async size() {
+		return this.remoteBlocks?.size() || 0;
+	}
 	get status() {
 		return this.remoteBlocks?.status || this.started;
 	}

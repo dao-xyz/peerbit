@@ -8,7 +8,13 @@ import {
 	LogProperties
 } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { BinaryWriter, BorshError, field, variant } from "@dao-xyz/borsh";
+import {
+	BinaryWriter,
+	BorshError,
+	field,
+	serialize,
+	variant
+} from "@dao-xyz/borsh";
 import {
 	AccessError,
 	PublicSignKey,
@@ -48,6 +54,7 @@ import yallist from "yallist";
 import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { BlocksMessage } from "./blocks.js";
+import debounce from "p-debounce";
 
 export * from "./replication.js";
 
@@ -77,18 +84,62 @@ export type ReplicationLimitsOptions =
 	| Partial<ReplicationLimits>
 	| { min?: number; max?: number };
 
-export interface SharedLogOptions {
+type StringRoleOptions = "observer" | "replicator";
+
+export type ReplicationErrorFunction = (objectives: {
+	coverage: number;
+	balance: number;
+	memory: number;
+}) => number;
+
+type AdaptiveReplicatorOptions = {
+	type: "replicator";
+	limits?: { memory: number };
+	error?: ReplicationErrorFunction;
+};
+
+type FixedReplicatorOptions = {
+	type: "replicator";
+	factor: number;
+};
+
+type ObserverType = {
+	type: "observer";
+};
+
+export type RoleOptions =
+	| StringRoleOptions
+	| ObserverType
+	| FixedReplicatorOptions
+	| AdaptiveReplicatorOptions;
+
+const isAdaptiveReplicatorOption = (
+	options: FixedReplicatorOptions | AdaptiveReplicatorOptions
+): options is AdaptiveReplicatorOptions => {
+	if (
+		(options as AdaptiveReplicatorOptions).limits ||
+		(options as AdaptiveReplicatorOptions).error ||
+		(options as FixedReplicatorOptions).factor == null
+	) {
+		return true;
+	}
+	return false;
+};
+
+export type SharedLogOptions = {
+	role?: RoleOptions;
 	replicas?: ReplicationLimitsOptions;
-	role?: Role | number | { limits: { storage: number } };
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
-}
+};
 
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
+const REBALANCE_DEBOUNCE_INTERAVAL = 50;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
+
 export type SharedAppendOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
 };
@@ -111,9 +162,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	// options
 	private _role: Observer | Replicator;
+	private _roleOptions: AdaptiveReplicatorOptions | Observer | Replicator;
 
 	private _sortedPeersCache: yallist<ReplicatorRect> | undefined;
-	private _lastSubscriptionMessageId: number;
 	private _gidPeersHistory: Map<string, Set<string>>;
 
 	private _onSubscriptionFn: (arg: any) => any;
@@ -145,9 +196,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	private latestRoleMessages: Map<string, bigint>;
 
-	private fixedParticipationRate: boolean;
-
 	private remoteBlocks: RemoteBlocks;
+
+	private openTime: number;
+
+	private rebalanceParticipationDebounced:
+		| ReturnType<typeof debounce>
+		| undefined;
 
 	replicas: ReplicationLimits;
 
@@ -160,14 +215,72 @@ export class SharedLog<T = Uint8Array> extends Program<
 	get role(): Observer | Replicator {
 		return this._role;
 	}
-	async updateRole(role: Observer | Replicator, onRoleChange = true) {
-		this.fixedParticipationRate = true;
-		return this._updateRole(role, onRoleChange);
+
+	private setupRole(options?: RoleOptions) {
+		this.rebalanceParticipationDebounced = undefined;
+
+		const setupDebouncedRebalancing = (options?: AdaptiveReplicatorOptions) => {
+			this.replicationController = new ReplicationController({
+				targetMemoryLimit: options?.limits?.memory,
+				errorFunction: options?.error
+			});
+
+			this.rebalanceParticipationDebounced = debounce(
+				() => this.rebalanceParticipation(),
+				REBALANCE_DEBOUNCE_INTERAVAL // TODO make dynamic
+			);
+		};
+
+		if (options instanceof Observer || options instanceof Replicator) {
+			throw new Error("Unsupported role option type");
+		} else if (options === "observer") {
+			this._roleOptions = new Observer();
+		} else if (options === "replicator") {
+			setupDebouncedRebalancing();
+			this._roleOptions = { type: options };
+		} else if (options) {
+			if (options.type === "replicator") {
+				if (isAdaptiveReplicatorOption(options)) {
+					setupDebouncedRebalancing(options);
+					this._roleOptions = options;
+				} else {
+					this._roleOptions = new Replicator({ factor: options.factor });
+				}
+			} else {
+				this._roleOptions = new Observer();
+			}
+		} else {
+			// Default option
+			setupDebouncedRebalancing();
+			this._roleOptions = { type: "replicator" };
+		}
+
+		// setup the initial role
+		if (
+			this._roleOptions instanceof Replicator ||
+			this._roleOptions instanceof Observer
+		) {
+			this._role = this._roleOptions; // Fixed
+		} else {
+			this._role = new Replicator({
+				// initial role in a dynamic setup
+				factor: 1,
+				timestamp: BigInt(+new Date())
+			});
+		}
+
+		return this._role;
 	}
 
-	private async _updateRole(role: Observer | Replicator, onRoleChange = true) {
+	async updateRole(role: RoleOptions, onRoleChange = true) {
+		return this._updateRole(this.setupRole(role), onRoleChange);
+	}
+
+	private async _updateRole(
+		role: Observer | Replicator = this._role,
+		onRoleChange = true
+	) {
 		this._role = role;
-		this._lastSubscriptionMessageId += 1;
 		const { changed } = await this._modifyReplicators(
 			this.role,
 			this.node.identity.publicKey
@@ -181,7 +294,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		await this.rpc.send(new ResponseRoleMessage(role));
 
-		if (onRoleChange) {
+		if (onRoleChange && changed) {
 			this.onRoleChange(undefined, this._role, this.node.identity.publicKey);
 		}
 
@@ -232,6 +345,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 			}
 		);
 
+		this.rebalanceParticipationDebounced?.();
+
 		return result;
 	}
 
@@ -253,6 +368,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
 		this.latestRoleMessages = new Map();
+		this.openTime = +new Date();
 
 		this._gidParentCache = new Cache({ max: 1000 });
 		this._closeController = new AbortController();
@@ -260,16 +376,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._canReplicate = options?.canReplicate;
 		this._logProperties = options;
 
-		let role: Role;
-		if (options?.role) {
-			role = options?.role;
-			this.fixedParticipationRate = true;
-		} else {
-			role = new Replicator({ factor: 1, timestamp: BigInt(+new Date()) });
-			this.fixedParticipationRate = false;
-		}
+		this.setupRole(options?.role);
 
-		this._lastSubscriptionMessageId = 0;
 		this._onSubscriptionFn = this._onSubscription.bind(this);
 		this._sortedPeersCache = yallist.create();
 		this._gidPeersHistory = new Map();
@@ -348,24 +456,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			},
 			trim: this._logProperties?.trim && {
 				...this._logProperties?.trim
-				/* filter: {
-					canTrim: async (entry) => {
-						await this.warmUpPromise;
-						const isLeader = (await this.isLeader(
-							entry.meta.gid,
-							maxReplicas(this, [entry])
-						))
-						if (!isLeader) {
-							this.trims = (this.trims || 0) + 1;
-						}
-						else {
-							this.ntrims = (this.ntrims || 0) + 1;
-		
-						}
-						return !isLeader
-					},
-					cacheId: () => this._lastSubscriptionMessageId
-				} */
 			},
 			cache: cache
 		});
@@ -378,7 +468,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			topic: this.topic
 		});
 
-		await this._updateRole(role);
+		await this._updateRole();
 		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
@@ -389,6 +479,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 				this.handleSubscriptionChange(v, [this.topic], true);
 			}
+		);
+	}
+
+	async getMemoryUsage() {
+		return (
+			((await this.log.memory?.size()) || 0) + (await this.log.blocks.size())
 		);
 	}
 
@@ -545,12 +641,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 					}
 					await Promise.all(promises);
 
+					if (this.closed) {
+						return;
+					}
+
 					if (toMerge.length > 0) {
 						await this.log.join(toMerge);
 						toDelete &&
 							this.prune(toDelete).catch((e) => {
 								logger.error(e.toString());
 							});
+						this.rebalanceParticipationDebounced?.();
 					}
 
 					if (maybeDelete) {
@@ -819,7 +920,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		numberOfLeaders = Math.min(numberOfLeaders, peers.length);
 
 		const t = +new Date();
-		const roleAge = options?.roleAge ?? WAIT_FOR_ROLE_MATURITY;
+		const roleAge =
+			options?.roleAge ??
+			Math.min(WAIT_FOR_ROLE_MATURITY, +new Date() - this.openTime);
 
 		for (let i = 0; i < numberOfLeaders; i++) {
 			let matured = 0;
@@ -841,11 +944,18 @@ export class SharedLog<T = Uint8Array> extends Program<
 					leaders.add(currentNode.value.publicKey.hashcode());
 					maybeIncrementMatured(currentNode.value.role);
 				} else {
-					diffs.push({ diff, rect: currentNode.value });
+					diffs.push({
+						diff:
+							currentNode.value.role.factor > 0
+								? diff / currentNode.value.role.factor
+								: Number.MAX_SAFE_INTEGER,
+						rect: currentNode.value
+					});
 				}
 
 				currentNode = currentNode.next;
 			}
+
 			if (matured === 0) {
 				diffs.sort((x, y) => x.diff - y.diff);
 				for (const node of diffs) {
@@ -954,12 +1064,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 		role: Observer | Replicator,
 		publicKey: PublicSignKey
 	) {
-		this._lastSubscriptionMessageId += 1;
+		if (this.closed) {
+			return;
+		}
+
 		this.distribute();
 
 		if (role instanceof Replicator) {
-			const timer = setTimeout(() => {
+			const timer = setTimeout(async () => {
 				this._closeController.signal.removeEventListener("abort", listener);
+				await this.rebalanceParticipationDebounced?.();
 				this.distribute();
 			}, WAIT_FOR_ROLE_MATURITY + 2000);
 
@@ -983,7 +1097,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	) {
 		const { prev, changed } = await this._modifyReplicators(role, publicKey);
 		if (changed) {
-			await this.rebalanceParticipation(false);
+			await this.rebalanceParticipationDebounced?.(); // await this.rebalanceParticipation(false);
 			this.onRoleChange(prev, role, publicKey);
 			return true;
 		}
@@ -1245,6 +1359,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 		 * TODO use information of new joined/leaving peer to create a subset of heads
 		 * that we potentially need to share with other peers
 		 */
+
+		if (this.closed) {
+			return;
+		}
+
 		const changed = false;
 		await this.log.trim();
 		const heads = await this.log.getHeads();
@@ -1329,8 +1448,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			});
 		}
 
-		this._lastSubscriptionMessageId += 1;
-
 		if (allEntriesToDelete.length > 0) {
 			this.prune(allEntriesToDelete).catch((e) => {
 				logger.error(e.toString());
@@ -1375,34 +1492,98 @@ export class SharedLog<T = Uint8Array> extends Program<
 			true
 		);
 	}
+	replicationController: ReplicationController;
+
+	history: { usedMemory: number; factor: number }[];
+	async addToHistory(usedMemory: number, factor: number) {
+		(this.history || (this.history = [])).push({ usedMemory, factor });
+
+		// Keep only the last N entries in the history array (you can adjust N based on your needs)
+		const maxHistoryLength = 10;
+		if (this.history.length > maxHistoryLength) {
+			this.history.shift();
+		}
+	}
+
+	async calculateTrend() {
+		// Calculate the average change in factor per unit change in memory usage
+		const factorChanges = this.history.map((entry, index) => {
+			if (index > 0) {
+				const memoryChange =
+					entry.usedMemory - this.history[index - 1].usedMemory;
+				if (memoryChange !== 0) {
+					const factorChange = entry.factor - this.history[index - 1].factor;
+					return factorChange / memoryChange;
+				}
+			}
+			return 0;
+		});
+
+		// Return the average factor change per unit memory change
+		return (
+			factorChanges.reduce((sum, change) => sum + change, 0) /
+			factorChanges.length
+		);
+	}
+
+	private sumFactors() {
+		let sum = 0;
+		for (const element of this.getReplicatorsSorted()?.toArray() || []) {
+			sum += element.role.factor;
+		}
+
+		return sum;
+	}
 
 	async rebalanceParticipation(onRoleChange = true) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
-		if (this.fixedParticipationRate || this.closed) {
+
+		if (this.closed) {
 			return false;
 		}
 
-		if (this._role instanceof Replicator) {
-			const canReplicate =
-				!this._canReplicate ||
-				(await this._canReplicate(this.node.identity.publicKey, this._role));
-			if (!canReplicate) {
-				return false;
-			}
+		// The role is fixed (no changes depending on memory usage or peer count etc)
+		if (this._roleOptions instanceof Role) {
+			return false;
+		}
 
+		// TODO second condition: what if the current role is Observer?
+		if (
+			this._roleOptions.type == "replicator" &&
+			this._role instanceof Replicator
+		) {
 			const peers = this.getReplicatorsSorted();
-			const wantedFraction = 1 / peers!.length;
+			const usedMemory = await this.getMemoryUsage();
+
+			const newFactor =
+				await this.replicationController.adjustReplicationFactor(
+					usedMemory,
+					this._role.factor,
+					this.sumFactors(),
+					peers?.length || 1
+				);
+
+			const newRole = new Replicator({
+				factor: newFactor,
+				timestamp: this._role.timestamp
+			});
+
 			const relativeDifference =
-				Math.abs(this._role.factor - wantedFraction) / this._role.factor;
+				Math.abs(this._role.factor - newRole.factor) / this._role.factor;
 
 			if (relativeDifference > 0.0001) {
-				await this._updateRole(
-					new Replicator({ factor: wantedFraction }),
-					onRoleChange
-				);
+				const canReplicate =
+					!this._canReplicate ||
+					(await this._canReplicate(this.node.identity.publicKey, newRole));
+				if (!canReplicate) {
+					return false;
+				}
+
+				await this._updateRole(newRole, onRoleChange);
 				return true;
 			}
+			return false;
 		}
 		return false;
 	}
@@ -1439,4 +1620,118 @@ function _insertAfter(
 
 	self.length++;
 	return inserted;
+}
+
+class ReplicationController {
+	integral = 0;
+	prevError = 0;
+	prevMemoryUsage = 0;
+	lastTs = 0;
+	kp: number;
+	ki: number;
+	kd: number;
+	errorFunction: ReplicationErrorFunction;
+	targetMemoryLimit?: number;
+	constructor(
+		options: {
+			errorFunction?: ReplicationErrorFunction;
+			targetMemoryLimit?: number;
+			kp?: number;
+			ki?: number;
+			kd?: number;
+		} = {}
+	) {
+		const {
+			targetMemoryLimit,
+			kp = 0.1,
+			ki = 0 /* 0.01, */,
+			kd = 0.1,
+			errorFunction = ({ balance, coverage, memory }) =>
+				memory * 0.8 + balance * 0.1 + coverage * 0.1
+		} = options;
+		this.kp = kp;
+		this.ki = ki;
+		this.kd = kd;
+		this.targetMemoryLimit = targetMemoryLimit;
+		this.errorFunction = errorFunction;
+	}
+
+	async adjustReplicationFactor(
+		memoryUsage: number,
+		currentFactor: number,
+		totalFactor: number,
+		peerCount: number
+	) {
+		/* 	if (memoryUsage === this.prevMemoryUsage) {
+				return Math.max(Math.min(currentFactor, maxFraction), minFraction);
+			} */
+
+		this.prevMemoryUsage = memoryUsage;
+		if (memoryUsage <= 0) {
+			this.integral = 0;
+		}
+		const normalizedFactor = currentFactor / totalFactor;
+		/*const estimatedTotalSize = memoryUsage / normalizedFactor;
+
+		 const errorMemory =
+			currentFactor > 0 && memoryUsage > 0
+				? (Math.max(Math.min(maxFraction, this.targetMemoryLimit / estimatedTotalSize), minFraction) -
+					normalizedFactor) * totalFactor
+				: minFraction; */
+
+		const estimatedTotalSize = memoryUsage / currentFactor;
+		const errorCoverage = Math.min(1 - totalFactor, 1);
+
+		let errorMemory = 0;
+		const errorTarget = 1 / peerCount - currentFactor;
+
+		if (this.targetMemoryLimit != null) {
+			errorMemory =
+				currentFactor > 0 && memoryUsage > 0
+					? Math.max(
+							Math.min(1, this.targetMemoryLimit / estimatedTotalSize),
+							0
+						) - currentFactor
+					: 0.0001;
+
+			/* errorTarget = errorMemory + (1 / peerCount - currentFactor) / 10; */
+		}
+
+		// alpha * errorCoverage + (1 - alpha) * errorTarget;
+		const totalError = this.errorFunction({
+			balance: errorTarget,
+			coverage: errorCoverage,
+			memory: errorMemory
+		});
+
+		if (this.lastTs === 0) {
+			this.lastTs = +new Date();
+		}
+		const kpAdjusted = Math.min(
+			Math.max(this.kp, (+new Date() - this.lastTs) / 100),
+			0.8
+		);
+		const pTerm = kpAdjusted * totalError;
+
+		this.lastTs = +new Date();
+
+		// Integral term
+		this.integral += totalError;
+		const beta = 0.4;
+		this.integral = beta * totalError + (1 - beta) * this.integral;
+
+		const iTerm = this.ki * this.integral;
+
+		// Derivative term
+		const derivative = totalError - this.prevError;
+		const dTerm = this.kd * derivative;
+
+		// Calculate the new replication factor
+		const newFactor = currentFactor + pTerm + iTerm + dTerm;
+
+		// Update state for the next iteration
+		this.prevError = totalError;
+
+		return Math.max(Math.min(newFactor, 1), 0);
+	}
 }

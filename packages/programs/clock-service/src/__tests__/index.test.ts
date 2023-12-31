@@ -5,7 +5,6 @@ import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { ClockService } from "../controller";
 import { TrustedNetwork } from "@peerbit/trusted-network";
-import { Observer } from "@peerbit/shared-log";
 
 const maxTimeError = 3000;
 @variant("clock-test")
@@ -38,10 +37,10 @@ describe("clock", () => {
 		});
 
 		await session.peers[0].open(responder);
-		responder.clock._maxError = BigInt(maxTimeError * 1e6);
+		responder.clock.maxError = BigInt(maxTimeError * 1e6);
 
 		reader = deserialize(serialize(responder), P);
-		await session.peers[1].open(reader, { args: { role: new Observer() } });
+		await session.peers[1].open(reader, { args: { role: "observer" } });
 		await reader.waitFor(session.peers[0].peerId);
 	});
 	afterEach(async () => {

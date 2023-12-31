@@ -285,10 +285,27 @@ export class PeerbitProxyHost implements ProgramClient {
 						),
 						from
 					);
+				} else if (request instanceof memory.api.REQ_Size) {
+					await this.respond(
+						message,
+						new memory.MemoryMessage(
+							new memory.api.RESP_Size({
+								size: await m.size(),
+								level: request.level
+							})
+						),
+						from
+					);
 				}
 			} else if (message instanceof blocks.REQ_BlockWaitFor) {
 				await this.services.blocks.waitFor(message.publicKey);
 				await this.respond(message, new blocks.RESP_BlockWaitFor(), from);
+			} else if (message instanceof blocks.REQ_BlockSize) {
+				await this.respond(
+					message,
+					new blocks.RESP_BlockSize(await this.services.blocks.size()),
+					from
+				);
 			} else if (message instanceof blocks.REQ_GetBlock) {
 				await this.respond(
 					message,

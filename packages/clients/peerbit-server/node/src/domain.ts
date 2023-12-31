@@ -1,6 +1,6 @@
 import { waitFor } from "@peerbit/time";
 
-const isNode = typeof window === undefined || typeof window === "undefined";
+const isNode = typeof window === "undefined";
 
 const validateEmail = (email) => {
 	return String(email)
