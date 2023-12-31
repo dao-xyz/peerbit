@@ -284,6 +284,10 @@ export class RemoteBlocks implements IBlocks {
 		return this.options.waitFor(peer);
 	}
 
+	async size() {
+		return this.localStore.size();
+	}
+
 	get status() {
 		if (this._open) {
 			return this.localStore?.status();
