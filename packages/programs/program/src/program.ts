@@ -24,21 +24,21 @@ import {
 } from "./handler.js";
 
 const intersection = (
-	a: Set<string> | undefined,
-	b: Set<string> | PublicSignKey[]
+	a: Map<string, PublicSignKey> | undefined,
+	b: Map<string, PublicSignKey> | PublicSignKey[]
 ) => {
-	const newSet = new Set<string>();
+	const newSet = new Map<string, PublicSignKey>();
 
 	if (Array.isArray(b)) {
 		for (const el of b) {
 			if (!a || a.has(el.hashcode())) {
-				newSet.add(el.hashcode());
+				newSet.set(el.hashcode(), el);
 			}
 		}
 	} else {
-		for (const el of b) {
-			if (!a || a.has(el)) {
-				newSet.add(el);
+		for (const [key, el] of b) {
+			if (!a || a.has(key)) {
+				newSet.set(key, el);
 			}
 		}
 	}
@@ -394,9 +394,14 @@ export abstract class Program<
 			options?.signal?.addEventListener("abort", abortListener);
 
 			const checkReady = async () => {
-				const ready =
-					intersection(expectedHashes, await this.getReady()).size ===
-					expectedHashes.size;
+				let ready = true;
+				const allReadyHashes = await this.getReady();
+				for (const hash of expectedHashes) {
+					if (!allReadyHashes.has(hash)) {
+						ready = false;
+						break;
+					}
+				}
 				if (ready) {
 					this.node.services.pubsub.removeEventListener("subscribe", listener);
 					clearTimeout(timeout);
@@ -412,9 +417,9 @@ export abstract class Program<
 		});
 	}
 
-	async getReady(): Promise<Set<string>> {
+	async getReady(): Promise<Map<string, PublicSignKey>> {
 		// all peers that subscribe to all topics
-		let ready: Set<string> | undefined = undefined; // the interesection of all ready
+		let ready: Map<string, PublicSignKey> | undefined = undefined; // the interesection of all ready
 		for (const program of this.allPrograms) {
 			if (program.getTopics) {
 				const topics = program.getTopics();
@@ -429,7 +434,7 @@ export abstract class Program<
 			}
 		}
 		if (ready == null) {
-			return new Set();
+			return new Map();
 		}
 		return ready;
 	}
