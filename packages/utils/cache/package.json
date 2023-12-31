@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/cache",
-	"version": "1.1.1",
+	"version": "2.0.0",
 	"description": "Simple cache",
 	"type": "module",
 	"publishConfig": {
@@ -34,7 +34,7 @@
 	},
 	"license": "MIT",
 	"devDependencies": {
-		"@peerbit/time": "1.0.4",
+		"@peerbit/time": "2.0.0",
 		"@types/yallist": "^4.0.1"
 	},
 	"dependencies": {

@@ -293,6 +293,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.32 to ^1.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/string-v3.0.20...string-v4.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* adaptive replications settings based on memory constraints
+* modularize keychain
+
+### Features
+
+* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* wait for replicator ([366bcd9](https://github.com/dao-xyz/peerbit/commit/366bcd9b7be57003380469c58f2feeb6fec517d7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+    * @peerbit/program bumped from 2.4.2 to 3.0.0
+    * @peerbit/shared-log bumped from ^3.1.10 to ^4.0.0
+    * @peerbit/rpc bumped from 2.1.17 to 3.0.0
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+
 ## [3.0.20](https://github.com/dao-xyz/peerbit/compare/string-v3.0.19...string-v3.0.20) (2023-09-27)
 
 

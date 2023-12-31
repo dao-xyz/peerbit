@@ -213,6 +213,50 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/document-v3.2.0...document-v4.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* adaptive replications settings based on memory constraints
+* modularize keychain
+* dynamic sharding and block scopes
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+* dynamic sharding and block scopes ([97ad692](https://github.com/dao-xyz/peerbit/commit/97ad692d671bffad34b03239c79ae14b0f5f3153))
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* improve update role tests ([7fe0fef](https://github.com/dao-xyz/peerbit/commit/7fe0fef1380072e916c6b0fbdc60091a9fdfe09b))
+* replicator factor 1 ([bb61810](https://github.com/dao-xyz/peerbit/commit/bb6181033f8930dea9a9858c03e0414b5f695646))
+* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+* set replication factor ([e7ac7c4](https://github.com/dao-xyz/peerbit/commit/e7ac7c43ed13605dacdc1e7523d9082f222172f6))
+* test add delay ([250cbb2](https://github.com/dao-xyz/peerbit/commit/250cbb2d77e11000f08c6dd8ca6463651c2d5805))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+* update test ([be01253](https://github.com/dao-xyz/peerbit/commit/be012534ff9a25ac6c67c6e743363f9e6f1868d1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 2.4.2 to 3.0.0
+    * @peerbit/rpc bumped from 2.1.17 to 3.0.0
+    * @peerbit/shared-log bumped from 3.1.10 to 4.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.33 to 2.0.0
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+
 ## [3.2.0](https://github.com/dao-xyz/peerbit/compare/document-v3.1.11...document-v3.2.0) (2023-09-27)
 
 

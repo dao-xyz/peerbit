@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/crypto",
-	"version": "1.0.10",
+	"version": "2.0.0",
 	"description": "Crypto fn",
 	"type": "module",
 	"sideEffects": false,
@@ -43,7 +43,7 @@
 		"uint8arrays": "^4.0.4"
 	},
 	"dependencies": {
-		"@peerbit/cache": "^1.1.1",
+		"@peerbit/cache": "^2.0.0",
 		"@dao-xyz/borsh": "^5.1.8",
 		"@stablelib/sha256": "^1.0.1",
 		"@peerbit/uint8arrays": "3.0.1",

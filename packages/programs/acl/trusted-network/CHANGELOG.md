@@ -278,6 +278,36 @@
   * dependencies
     * @peerbit/document bumped from 3.1.11 to 3.2.0
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.21...trusted-network-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* adaptive replications settings based on memory constraints
+* lazy stream routing protocol
+
+### Features
+
+* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+
+
+### Bug Fixes
+
+* correctly handle ack cache cb ([ab1f8ce](https://github.com/dao-xyz/peerbit/commit/ab1f8ce9a456955afd9503578b4b5861c23a4512))
+* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/document bumped from 3.2.0 to 4.0.0
+  * devDependencies
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.16...trusted-network-v2.0.17) (2023-09-21)
 
 

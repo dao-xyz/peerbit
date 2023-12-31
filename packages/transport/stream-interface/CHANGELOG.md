@@ -36,6 +36,36 @@
   * dependencies
     * @peerbit/crypto bumped from 1.0.9 to 1.0.10
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v1.0.11...stream-interface-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* refactor delivery modes
+* lazy stream routing protocol
+
+### Features
+
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+* refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
+
+
+### Bug Fixes
+
+* add event object to interface ([fd82525](https://github.com/dao-xyz/peerbit/commit/fd82525849837da9abe0421e9387427934e10c32))
+* cleanup comments ([21cca12](https://github.com/dao-xyz/peerbit/commit/21cca1216499a4db430de7e093e6f4c31e0fcef6))
+* don't process messages if closed ([0888f53](https://github.com/dao-xyz/peerbit/commit/0888f53509864ead2c9addcbff9f546acc685e5d))
+* make signing function append signatures instead of replacing ([6f8f23a](https://github.com/dao-xyz/peerbit/commit/6f8f23a9ae8578b9b7a9f403b81877cfcf8000ab))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+
 ## [1.0.9](https://github.com/dao-xyz/peerbit/compare/stream-interface-v1.0.8...stream-interface-v1.0.9) (2023-09-06)
 
 

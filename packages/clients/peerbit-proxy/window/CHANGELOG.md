@@ -126,6 +126,34 @@
   * devDependencies
     * @peerbit/test-utils bumped from 1.0.32 to 1.0.33
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-window-v2.0.17...proxy-window-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* make sure pubsub data events a propagating between clients without emitSelf property
+
+### Features
+
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* make sure pubsub data events a propagating between clients without emitSelf property ([0c460c3](https://github.com/dao-xyz/peerbit/commit/0c460c35e4060ad95c979962fa95fef7d6cd1203))
+* rm redundant emit self property ([77dc3c7](https://github.com/dao-xyz/peerbit/commit/77dc3c7402ae6a3b5c67296b834e398f6a06d4a5))
+* update vite ([371bb8b](https://github.com/dao-xyz/peerbit/commit/371bb8b089873df36ff9e591b67046a7e8dab6ea))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped from ^1.3.9 to ^2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 1.0.33 to 2.0.0
+
 ## [2.0.15](https://github.com/dao-xyz/peerbit/compare/proxy-window-v2.0.14...proxy-window-v2.0.15) (2023-09-21)
 
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/time-v1.0.4...time-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* add AbortSignal for stopping
+
+### Features
+
+* add AbortSignal for stopping ([5d2fafc](https://github.com/dao-xyz/peerbit/commit/5d2fafc8ef39af5bfc44a8811072ba7feedc6f63))
+
+
+### Bug Fixes
+
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/time-v1.0.3...time-v1.0.4) (2023-09-10)
 
 

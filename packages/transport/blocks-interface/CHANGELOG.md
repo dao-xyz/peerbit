@@ -66,6 +66,28 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.7 to 1.0.8
 
+## [1.2.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.1.3...blocks-interface-v1.2.0) (2023-12-31)
+
+
+### Features
+
+* add size property ([c3c56a2](https://github.com/dao-xyz/peerbit/commit/c3c56a289a1691defbd5bd024490949e2cbbde68))
+
+
+### Bug Fixes
+
+* add 'from' property in GetOptions ([97c682c](https://github.com/dao-xyz/peerbit/commit/97c682c22769134298fb577bce7a234416f45678))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/stream-interface bumped from ^1.0.11 to ^2.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.1.0...blocks-interface-v1.1.1) (2023-09-06)
 
 

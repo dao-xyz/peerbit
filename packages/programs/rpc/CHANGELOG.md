@@ -202,6 +202,40 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^1.0.32 to ^1.0.33
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.17...rpc-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+
+### Features
+
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* add timestamp on RequestContext ([3d2f100](https://github.com/dao-xyz/peerbit/commit/3d2f100eeddf77f09da933348b09da482b067b8c))
+* remove requestSubscribers call on subscribe ([ba4bade](https://github.com/dao-xyz/peerbit/commit/ba4bade346ea8de0ba4d01dc2026a34bdee8095a))
+* remove strict option ([fef11e9](https://github.com/dao-xyz/peerbit/commit/fef11e9c9042ca45bca1abc40cbec99a3a1a1f21))
+* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+    * @peerbit/program bumped from 2.4.2 to 3.0.0
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+
 ## [2.1.15](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.14...rpc-v2.1.15) (2023-09-21)
 
 

@@ -187,6 +187,36 @@
   * dependencies
     * peerbit bumped from 2.0.14 to 2.0.15
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.33...test-utils-v2.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* improve assertion ([498537a](https://github.com/dao-xyz/peerbit/commit/498537a173b1efc04ec30f0eaf1994f2b7ae4931))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
+    * peerbit bumped from 2.0.15 to 3.0.0
+  * devDependencies
+    * @peerbit/time bumped from 1.0.4 to 2.0.0
+
 ## [1.0.31](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.30...test-utils-v1.0.31) (2023-09-21)
 
 

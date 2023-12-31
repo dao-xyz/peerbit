@@ -116,6 +116,44 @@
   * dependencies
     * @peerbit/program bumped from 2.4.1 to 2.4.2
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.15...peerbit-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* modularize keychain
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* program types and argument type inference ([309b7b3](https://github.com/dao-xyz/peerbit/commit/309b7b3db0d903e3be5e7882d14dc4acce2f62fa))
+* update dial test ([4a698f2](https://github.com/dao-xyz/peerbit/commit/4a698f2274422da349a8947073d8663fc45dedbb))
+* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+* update tests to work with the RemoteBlocks abstraction ([fba99b6](https://github.com/dao-xyz/peerbit/commit/fba99b61b87953367785ffdc4b228e0a0bd4e3f9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/logger bumped from 1.0.1 to 1.0.2
+    * @peerbit/program bumped from 2.4.2 to 3.0.0
+    * @peerbit/pubsub bumped from ^1.1.13 to ^2.0.0
+    * @peerbit/blocks bumped from ^1.1.7 to ^2.0.0
+
 ## [2.0.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.9...peerbit-v2.0.10) (2023-09-12)
 
 

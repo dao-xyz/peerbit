@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/trusted-network",
-	"version": "2.0.21",
+	"version": "3.0.0",
 	"description": "Access controller that operates on a DB",
 	"type": "module",
 	"sideEffects": false,
@@ -31,12 +31,12 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.1.8",
-		"@peerbit/crypto": "1.0.10",
-		"@peerbit/document": "3.2.0"
+		"@peerbit/crypto": "2.0.0",
+		"@peerbit/document": "4.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/time": "1.0.4",
+		"@peerbit/time": "2.0.0",
 		"@ethersproject/wallet": "^5.7.0",
-		"@peerbit/test-utils": "^1.0.33"
+		"@peerbit/test-utils": "^2.0.0"
 	}
 }

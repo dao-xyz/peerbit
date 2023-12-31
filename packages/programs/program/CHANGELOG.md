@@ -33,6 +33,44 @@
     * @peerbit/pubsub-interface bumped from ^1.1.3 to ^1.1.4
     * @peerbit/lazy-level bumped from ^1.2.0 to ^1.2.1
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/program-v2.4.2...program-v3.0.0) (2023-12-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* getReady returns a list of publickeys instead of hashes
+* modularize keychain
+* lazy stream routing protocol
+* File storage abstraction
+
+### Features
+
+* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+* getReady returns a list of publickeys instead of hashes ([061fb61](https://github.com/dao-xyz/peerbit/commit/061fb6107922d184ca46e5f2e42a4be1b43175ab))
+* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+
+
+### Bug Fixes
+
+* don't process messages if closed ([0888f53](https://github.com/dao-xyz/peerbit/commit/0888f53509864ead2c9addcbff9f546acc685e5d))
+* getReady dont throw when not subscribing ([09488e6](https://github.com/dao-xyz/peerbit/commit/09488e6dc5a53d0a8fe7332d45fe69aa02cc09c7))
+* program types and argument type inference ([309b7b3](https://github.com/dao-xyz/peerbit/commit/309b7b3db0d903e3be5e7882d14dc4acce2f62fa))
+* rm redundant emit self property ([77dc3c7](https://github.com/dao-xyz/peerbit/commit/77dc3c7402ae6a3b5c67296b834e398f6a06d4a5))
+* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    * @peerbit/blocks-interface bumped from ^1.1.3 to ^1.2.0
+    * @peerbit/pubsub-interface bumped from ^1.1.5 to ^2.0.0
+    * @peerbit/any-store bumped from ^0.0.1 to ^1.0.0
+
 ## [2.4.2](https://github.com/dao-xyz/peerbit/compare/program-v2.4.1...program-v2.4.2) (2023-09-24)
 
 
