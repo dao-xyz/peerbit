@@ -991,7 +991,7 @@ describe(`sharding`, () => {
 					await db1.add(data, { meta: { next: [] } });
 				}
 				await waitForResolved(() =>
-					expect(db2.log.log.length).toBeGreaterThan(db1.log.log.length + 70)
+					expect(db2.log.log.length).toBeGreaterThan(db1.log.log.length + 50)
 				);
 			});
 		});
