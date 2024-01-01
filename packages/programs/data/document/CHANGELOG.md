@@ -233,6 +233,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.1 to 2.0.2
 
+## [4.0.3](https://github.com/dao-xyz/peerbit/compare/document-v4.0.2...document-v4.0.3) (2024-01-01)
+
+
+### Bug Fixes
+
+* export RoleOptions ([e741b0a](https://github.com/dao-xyz/peerbit/commit/e741b0aab98c31708aa917dd2c339cf0d7728496))
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/document-v3.2.0...document-v4.0.0) (2023-12-31)
 
 

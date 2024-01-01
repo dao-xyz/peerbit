@@ -294,6 +294,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.1 to ^2.0.2
 
+## [3.0.3](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.2...trusted-network-v3.0.3) (2024-01-01)
+
+
+### Bug Fixes
+
+* export RoleOptions ([e741b0a](https://github.com/dao-xyz/peerbit/commit/e741b0aab98c31708aa917dd2c339cf0d7728496))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 4.0.2 to 4.0.3
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v2.0.21...trusted-network-v3.0.0) (2023-12-31)
 
 
