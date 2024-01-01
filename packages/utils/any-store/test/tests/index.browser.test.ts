@@ -11,7 +11,7 @@ test.describe("AnyLevel", () => {
 		return test.describe(type, () => {
 			let handle: JSHandle<AnyStore>;
 
-			let isSubLevelTest: string[][] = [[], ["sub"]];
+			let isSubLevelTest: string[][] = [[], ["sub/*& +"]];
 
 			return isSubLevelTest.map((testLevel) => {
 				return test.describe("sublevel: " + JSON.stringify(testLevel), () => {
@@ -125,6 +125,14 @@ test.describe("AnyLevel", () => {
 							return sub.status();
 						});
 						expect(result).toEqual("closed");
+					});
+
+					test("special characters", async () => {
+						await handle.evaluate((store) =>
+							store.put("* _ /", new Uint8Array([123]))
+						);
+						const result = await handle.evaluate((store) => store.get("* _ /"));
+						expect(result).toEqual(asObject(new Uint8Array([123])));
 					});
 				});
 			});

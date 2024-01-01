@@ -1,6 +1,20 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { AnyStore } from "./interface.js";
 import * as memory from "./opfs-worker-messages.js";
+import { fromBase64URL, toBase64URL } from "@peerbit/crypto";
+import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
+const encodeName = (name: string): string => {
+	// since "/" and perhaps other characters might not be allowed we do encode
+	const writer = new BinaryWriter();
+	writer.string(name);
+	return toBase64URL(writer.finalize());
+};
+
+const decodeName = (name: string): string => {
+	// since "/" and perhaps other characters might not be allowed we do encode
+	const writer = new BinaryReader(fromBase64URL(name));
+	return writer.string();
+};
 
 export class OPFSStoreWorker {
 	level: string[];
@@ -38,9 +52,9 @@ export class OPFSStoreWorker {
 					}
 				},
 
-				del: async (key) => {
+				del: async (key: string) => {
 					try {
-						await m.removeEntry(key, { recursive: true });
+						await m.removeEntry(encodeName(key), { recursive: true });
 					} catch (error) {
 						if (
 							error instanceof DOMException &&
@@ -53,9 +67,9 @@ export class OPFSStoreWorker {
 					}
 				},
 
-				get: async (key) => {
+				get: async (key: string) => {
 					try {
-						const fileHandle = await m.getFileHandle(key);
+						const fileHandle = await m.getFileHandle(encodeName(key));
 						const buffer = await (await fileHandle.getFile()).arrayBuffer();
 						return new Uint8Array(buffer);
 					} catch (error) {
@@ -69,8 +83,10 @@ export class OPFSStoreWorker {
 						}
 					}
 				},
-				put: async (key, value) => {
-					const fileHandle = await m.getFileHandle(key, { create: true });
+				put: async (key: string, value: Uint8Array) => {
+					const fileHandle = await m.getFileHandle(encodeName(key), {
+						create: true
+					});
 					const writeFileHandle = await fileHandle.createSyncAccessHandle();
 
 					writeFileHandle.write(value);
@@ -91,8 +107,11 @@ export class OPFSStoreWorker {
 				status: () => (isOpen ? "open" : "closed"),
 
 				sublevel: async (name) => {
-					const fileHandle = await m.getDirectoryHandle(name, { create: true });
-					const sublevel = [...level, name];
+					const encodedName = encodeName(name);
+					const fileHandle = await m.getDirectoryHandle(encodedName, {
+						create: true
+					});
+					const sublevel = [...level, encodedName];
 					const subMemory = createMemory(fileHandle, sublevel);
 					this._levels.set(memory.levelKey(sublevel), subMemory);
 					await subMemory.open();
@@ -103,7 +122,7 @@ export class OPFSStoreWorker {
 					for await (const v of m.values()) {
 						if (v.kind == "file") {
 							yield [
-								v.name,
+								decodeName(v.name),
 								new Uint8Array(await (await v.getFile()).arrayBuffer())
 							];
 						}
@@ -125,7 +144,9 @@ export class OPFSStoreWorker {
 				const m =
 					message.level.length === 0
 						? this._rootStore
-						: this._levels.get(memory.levelKey(message.level));
+						: this._levels.get(
+								memory.levelKey(message.level.map((x) => encodeName(x)))
+							);
 				if (!m) {
 					throw new Error("Recieved memory message for an undefined level");
 				} else if (message instanceof memory.REQ_Clear) {
