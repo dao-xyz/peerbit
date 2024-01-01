@@ -67,7 +67,7 @@ Peerbit is an open-source project, and we welcome contributions from developers 
 
 IMPORTANT: Peerbit uses yarn.
 
-1. Check yarn version: `yarn -v` should print 1.something
+1. Check yarn version: `yarn -v` should print something
 2. Install: `yarn`
 3. Build: `yarn build`
 4. Run tests: `yarn test`
