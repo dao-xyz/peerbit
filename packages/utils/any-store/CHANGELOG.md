@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.1...any-store-v1.0.2) (2024-01-01)
+
+
+### Bug Fixes
+
+* correctly espace illegal filename characters for OPFS ([5592761](https://github.com/dao-xyz/peerbit/commit/5592761d7b33b824655fd5a0b6deaae88eb11ccd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.0.0 to ^2.1.0
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.0...any-store-v1.0.1) (2023-12-31)
 
 
