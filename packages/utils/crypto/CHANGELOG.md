@@ -31,6 +31,13 @@
   * dependencies
     * @peerbit/cache bumped from ^1.1.0 to ^1.1.1
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.0.0...crypto-v2.1.0) (2024-01-01)
+
+
+### Features
+
+* add tobase64url encode/decode ([b3c10b8](https://github.com/dao-xyz/peerbit/commit/b3c10b87932d812f02ed242e36f2fa2b1c633322))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/crypto-v1.0.10...crypto-v2.0.0) (2023-12-31)
 
 

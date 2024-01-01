@@ -20,6 +20,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.0.0 to 2.1.0
+    * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.0...stream-v2.0.1) (2023-12-31)
 
 
