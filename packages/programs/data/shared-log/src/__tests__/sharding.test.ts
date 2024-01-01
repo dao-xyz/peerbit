@@ -38,20 +38,24 @@ const checkBounded = async (
 	...dbs: EventStore<string>[]
 ) => {
 	for (const [i, db] of dbs.entries()) {
-		try {
-			await waitForResolved(() =>
+		await waitForResolved(
+			() =>
 				expect(db.log.log.values.length).toBeGreaterThanOrEqual(
 					entryCount * lower
-				)
-			);
-			await waitForResolved(() =>
+				),
+			{
+				timeout: 20 * 1000
+			}
+		);
+		await waitForResolved(
+			() =>
 				expect(db.log.log.values.length).toBeLessThanOrEqual(
 					entryCount * higher
-				)
-			);
-		} catch (error) {
-			throw error;
-		}
+				),
+			{
+				timeout: 20 * 1000
+			}
+		);
 	}
 
 	const checkConverged = async (db: EventStore<any>) => {
@@ -257,6 +261,13 @@ describe(`sharding`, () => {
 			);
 		}
 
+		await waitForResolved(() =>
+			expect(db1.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+
 		return checkBounded(entryCount, 0.4, 0.6, db1, db2);
 	});
 
@@ -285,6 +296,17 @@ describe(`sharding`, () => {
 		}
 
 		await Promise.all(promises);
+
+		await waitForResolved(() =>
+			expect(db1.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 	});
 
@@ -401,14 +423,6 @@ describe(`sharding`, () => {
 
 		const entryCount = sampleSize;
 
-		/* await waitForResolved(() =>
-			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
-		);
-
-		await waitForResolved(() =>
-			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
-		); */
-
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(
@@ -430,15 +444,28 @@ describe(`sharding`, () => {
 		await session.peers[2].open(db3);
 		await db3.close();
 		await session.peers[2].open(db3);
-		try {
-			await delay(15000);
-			await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
-		} catch (error) {
-			throw error;
-		}
+
+		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+
+		await waitForResolved(() =>
+			expect(db1.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+		await waitForResolved(() =>
+			expect(db3.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
 
 		await db3.close();
 		await checkBounded(entryCount, 1, 1, db1, db2);
+
+		await waitForResolved(() =>
+			expect(db1.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.totalParticipation - 1).toBeLessThan(0.05)
+		);
 	});
 
 	it("drops when no longer replicating as observer", async () => {

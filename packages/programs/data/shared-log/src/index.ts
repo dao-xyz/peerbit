@@ -154,6 +154,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private _roleOptions: AdaptiveReplicatorOptions | Observer | Replicator;
 
 	private _sortedPeersCache: yallist<ReplicatorRect> | undefined;
+	private _totalParticipation: number;
 	private _gidPeersHistory: Map<string, Set<string>>;
 
 	private _onSubscriptionFn: (arg: any) => any;
@@ -203,6 +204,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	get role(): Observer | Replicator {
 		return this._role;
+	}
+
+	get totalParticipation(): number {
+		return this._totalParticipation;
 	}
 
 	private setupRole(options?: RoleOptions) {
@@ -368,6 +373,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.setupRole(options?.role);
 
 		this._onSubscriptionFn = this._onSubscription.bind(this);
+		this._totalParticipation = 0;
 		this._sortedPeersCache = yallist.create();
 		this._gidPeersHistory = new Map();
 
@@ -1135,6 +1141,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				let currentNode = sortedPeer.head;
 				if (!currentNode) {
 					sortedPeer.push(rect);
+					this._totalParticipation += rect.role.factor;
 					return { changed: true };
 				} else {
 					while (currentNode) {
@@ -1143,6 +1150,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 							// rect.timestamp = currentNode.value.timestamp;
 							const prev = currentNode.value;
 							currentNode.value = rect;
+							this._totalParticipation += rect.role.factor;
+							this._totalParticipation -= prev.role.factor;
 							// TODO change detection and only do change stuff if diff?
 							return { prev: prev.role, changed: true };
 						}
@@ -1163,6 +1172,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 					const prev = currentNode;
 					if (!prev?.next?.value.publicKey.equals(publicKey)) {
+						this._totalParticipation += rect.role.factor;
 						_insertAfter(sortedPeer, prev || undefined, rect);
 					} else {
 						throw new Error("Unexpected");
@@ -1177,6 +1187,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			while (currentNode) {
 				if (currentNode.value.publicKey.equals(publicKey)) {
 					sortedPeer.removeNode(currentNode);
+					this._totalParticipation -= currentNode.value.role.factor;
 					return { prev: currentNode.value.role, changed: true };
 				}
 				currentNode = currentNode.next;
@@ -1515,15 +1526,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 	}
 
-	private sumFactors() {
-		let sum = 0;
-		for (const element of this.getReplicatorsSorted()?.toArray() || []) {
-			sum += element.role.factor;
-		}
-
-		return sum;
-	}
-
 	async rebalanceParticipation(onRoleChange = true) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
@@ -1549,7 +1551,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				await this.replicationController.adjustReplicationFactor(
 					usedMemory,
 					this._role.factor,
-					this.sumFactors(),
+					this._totalParticipation,
 					peers?.length || 1
 				);
 
