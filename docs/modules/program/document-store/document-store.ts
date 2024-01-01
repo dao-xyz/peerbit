@@ -318,9 +318,7 @@ import {
 	Compare,
 	SortDirection,
 	Or,
-	And,
-	Observer,
-	Role
+	And
 } from "@peerbit/document";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { RoleOptions } from "@peerbit/shared-log";
