@@ -125,6 +125,21 @@
     * @peerbit/pubsub bumped from ^2.0.0 to ^2.0.1
     * @peerbit/blocks bumped from ^2.0.0 to ^2.0.1
 
+## [3.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.1...peerbit-v3.0.2) (2024-01-01)
+
+
+### Bug Fixes
+
+* re-enable bootstrap tests ([96ca266](https://github.com/dao-xyz/peerbit/commit/96ca266ea0443b71ef18afa88192a42cc737b9ff))
+* simply OpenOptions generics ([8f83c7d](https://github.com/dao-xyz/peerbit/commit/8f83c7db577f5c10a672c7603e78e40c5123d522))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.1 to 3.0.2
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v2.0.15...peerbit-v3.0.0) (2023-12-31)
 
 
