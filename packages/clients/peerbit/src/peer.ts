@@ -26,6 +26,7 @@ import { OpenOptions } from "@peerbit/program";
 import { resolveBootstrapAddresses } from "./bootstrap.js";
 import { createStore } from "@peerbit/any-store";
 import { DefaultKeychain } from "@peerbit/keychain";
+import { ExtractArgs } from "@peerbit/program";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -37,7 +38,6 @@ export type CreateOptions = {
 	memory: AnyStore;
 	identity: Ed25519Keypair;
 } & OptionalCreateOptions;
-type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
 type SimpleLibp2pOptions = { relay?: boolean };
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
@@ -286,7 +286,7 @@ export class Peerbit implements ProgramClient {
 
 	async open<S extends Program<ExtractArgs<S>>>(
 		storeOrAddress: S | Address | string,
-		options: OpenOptions<ExtractArgs<S>, S> = {}
+		options: OpenOptions<S> = {}
 	): Promise<S> {
 		return (
 			this._handler || (this._handler = new ProgramHandler({ client: this }))

@@ -6,9 +6,7 @@ import { Keychain } from "@peerbit/keychain";
 import type { AnyStore } from "@peerbit/any-store";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Address } from "./address.js";
-import { CanOpen, Manageable, OpenOptions } from "./handler.js";
-
-type ExtractArgs<T> = T extends CanOpen<infer Args> ? Args : never;
+import { CanOpen, ExtractArgs, Manageable, OpenOptions } from "./handler.js";
 
 export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	peerId: Libp2pPeerId;
@@ -25,6 +23,6 @@ export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	stop(): Promise<void>;
 	open<S extends T & CanOpen<ExtractArgs<S>>>(
 		program: S | Address,
-		options?: OpenOptions<ExtractArgs<S>, S>
+		options?: OpenOptions<S>
 	): Promise<S>;
 }

@@ -6,6 +6,7 @@ import { logger as loggerFn } from "@peerbit/logger";
 export const logger = loggerFn({ module: "program-handler" });
 
 type ProgramMergeStrategy = "replace" | "reject" | "reuse";
+export type ExtractArgs<T> = T extends CanOpen<infer Args> ? Args : never;
 
 export type EventOptions = {
 	onBeforeOpen?: (program: Manageable<any>) => Promise<void> | void;
@@ -14,10 +15,10 @@ export type EventOptions = {
 	onClose?: (program: Manageable<any>) => Promise<void> | void;
 };
 
-export type OpenOptions<Args, T extends Manageable<Args>> = {
+export type OpenOptions<T extends Manageable<ExtractArgs<T>>> = {
 	timeout?: number;
 	existing?: ProgramMergeStrategy;
-} & ProgramInitializationOptions<Args, T>;
+} & ProgramInitializationOptions<ExtractArgs<T>, T>;
 
 export type WithArgs<Args> = { args?: Args };
 export type WithParent<T> = { parent?: T };
@@ -127,9 +128,9 @@ export class Handler<T extends Manageable<any>> {
 		}
 	}
 
-	async open<S extends T, Args = any>(
+	async open<S extends T>(
 		storeOrAddress: S | Address | string,
-		options: OpenOptions<Args, S> = {}
+		options: OpenOptions<S> = {}
 	): Promise<S> {
 		const fn = async (): Promise<S> => {
 			// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?

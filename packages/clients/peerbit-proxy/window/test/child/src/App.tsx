@@ -18,22 +18,19 @@ export const App = () => {
 		}
 		mounted.current = true;
 		client
-			.open<SharedLog<Uint8Array>, Args<any>>(
-				new SharedLog({ id: new Uint8Array(32) }),
-				{
-					args: {
-						onChange: (change: Change<Uint8Array>) => {
-							forceUpdate();
-							setTimeout(() => {
-								dbRef.current?.log.load().then(() => {
-									forceUpdate();
-									console.log(client.messages.id, dbRef.current?.log.length);
-								});
-							}, 1000);
-						}
+			.open<SharedLog<Uint8Array>>(new SharedLog({ id: new Uint8Array(32) }), {
+				args: {
+					onChange: (change: Change<Uint8Array>) => {
+						forceUpdate();
+						setTimeout(() => {
+							dbRef.current?.log.load().then(() => {
+								forceUpdate();
+								console.log(client.messages.id, dbRef.current?.log.length);
+							});
+						}, 1000);
 					}
 				}
-			)
+			})
 			.then((x: any) => {
 				dbRef.current = x;
 				if (queryParameters.get("read") !== "true") {

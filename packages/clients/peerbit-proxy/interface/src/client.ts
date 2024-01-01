@@ -38,6 +38,7 @@ import { v4 as uuid } from "uuid";
 import { TypedEventEmitter } from "@libp2p/interface";
 import { serialize, deserialize, AbstractType } from "@dao-xyz/borsh";
 import { Keychain, KeypairFromPublicKey } from "@peerbit/keychain";
+import { ExtractArgs } from "@peerbit/program";
 
 const messageIdString = (messageId: Uint8Array) => sha256Base64(messageId);
 const levelKey = (level: string[]) => JSON.stringify(level);
@@ -414,9 +415,9 @@ export class PeerbitProxyClient implements ProgramClient {
 		await this._handler?.stop();
 		await this.request<lifecycle.RESP_Stop>(new lifecycle.REQ_Stop());
 	}
-	async open<S extends Program<Args>, Args = any>(
+	async open<S extends Program<ExtractArgs<S>>>(
 		storeOrAddress: S | Address | string,
-		options?: OpenOptions<Args, Program>
+		options?: OpenOptions<Program>
 	): Promise<S> {
 		return (
 			this._handler || (this._handler = new ProgramHandler({ client: this }))
