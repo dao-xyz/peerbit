@@ -8,13 +8,7 @@ import {
 	LogProperties
 } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
-import {
-	BinaryWriter,
-	BorshError,
-	field,
-	serialize,
-	variant
-} from "@dao-xyz/borsh";
+import { BinaryWriter, BorshError, field, variant } from "@dao-xyz/borsh";
 import {
 	AccessError,
 	PublicSignKey,
@@ -55,7 +49,8 @@ import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { BlocksMessage } from "./blocks.js";
 import debounce from "p-debounce";
-
+import { PIDReplicationController, ReplicationErrorFunction } from "./pid.js";
+export type { ReplicationErrorFunction };
 export * from "./replication.js";
 
 export { Observer, Replicator, Role };
@@ -85,12 +80,6 @@ export type ReplicationLimitsOptions =
 	| { min?: number; max?: number };
 
 type StringRoleOptions = "observer" | "replicator";
-
-export type ReplicationErrorFunction = (objectives: {
-	coverage: number;
-	balance: number;
-	memory: number;
-}) => number;
 
 type AdaptiveReplicatorOptions = {
 	type: "replicator";
@@ -220,7 +209,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.rebalanceParticipationDebounced = undefined;
 
 		const setupDebouncedRebalancing = (options?: AdaptiveReplicatorOptions) => {
-			this.replicationController = new ReplicationController({
+			this.replicationController = new PIDReplicationController({
 				targetMemoryLimit: options?.limits?.memory,
 				errorFunction: options?.error
 			});
@@ -1492,7 +1481,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			true
 		);
 	}
-	replicationController: ReplicationController;
+	replicationController: PIDReplicationController;
 
 	history: { usedMemory: number; factor: number }[];
 	async addToHistory(usedMemory: number, factor: number) {
@@ -1620,118 +1609,4 @@ function _insertAfter(
 
 	self.length++;
 	return inserted;
-}
-
-class ReplicationController {
-	integral = 0;
-	prevError = 0;
-	prevMemoryUsage = 0;
-	lastTs = 0;
-	kp: number;
-	ki: number;
-	kd: number;
-	errorFunction: ReplicationErrorFunction;
-	targetMemoryLimit?: number;
-	constructor(
-		options: {
-			errorFunction?: ReplicationErrorFunction;
-			targetMemoryLimit?: number;
-			kp?: number;
-			ki?: number;
-			kd?: number;
-		} = {}
-	) {
-		const {
-			targetMemoryLimit,
-			kp = 0.1,
-			ki = 0 /* 0.01, */,
-			kd = 0.1,
-			errorFunction = ({ balance, coverage, memory }) =>
-				memory * 0.8 + balance * 0.1 + coverage * 0.1
-		} = options;
-		this.kp = kp;
-		this.ki = ki;
-		this.kd = kd;
-		this.targetMemoryLimit = targetMemoryLimit;
-		this.errorFunction = errorFunction;
-	}
-
-	async adjustReplicationFactor(
-		memoryUsage: number,
-		currentFactor: number,
-		totalFactor: number,
-		peerCount: number
-	) {
-		/* 	if (memoryUsage === this.prevMemoryUsage) {
-				return Math.max(Math.min(currentFactor, maxFraction), minFraction);
-			} */
-
-		this.prevMemoryUsage = memoryUsage;
-		if (memoryUsage <= 0) {
-			this.integral = 0;
-		}
-		const normalizedFactor = currentFactor / totalFactor;
-		/*const estimatedTotalSize = memoryUsage / normalizedFactor;
-
-		 const errorMemory =
-			currentFactor > 0 && memoryUsage > 0
-				? (Math.max(Math.min(maxFraction, this.targetMemoryLimit / estimatedTotalSize), minFraction) -
-					normalizedFactor) * totalFactor
-				: minFraction; */
-
-		const estimatedTotalSize = memoryUsage / currentFactor;
-		const errorCoverage = Math.min(1 - totalFactor, 1);
-
-		let errorMemory = 0;
-		const errorTarget = 1 / peerCount - currentFactor;
-
-		if (this.targetMemoryLimit != null) {
-			errorMemory =
-				currentFactor > 0 && memoryUsage > 0
-					? Math.max(
-							Math.min(1, this.targetMemoryLimit / estimatedTotalSize),
-							0
-						) - currentFactor
-					: 0.0001;
-
-			/* errorTarget = errorMemory + (1 / peerCount - currentFactor) / 10; */
-		}
-
-		// alpha * errorCoverage + (1 - alpha) * errorTarget;
-		const totalError = this.errorFunction({
-			balance: errorTarget,
-			coverage: errorCoverage,
-			memory: errorMemory
-		});
-
-		if (this.lastTs === 0) {
-			this.lastTs = +new Date();
-		}
-		const kpAdjusted = Math.min(
-			Math.max(this.kp, (+new Date() - this.lastTs) / 100),
-			0.8
-		);
-		const pTerm = kpAdjusted * totalError;
-
-		this.lastTs = +new Date();
-
-		// Integral term
-		this.integral += totalError;
-		const beta = 0.4;
-		this.integral = beta * totalError + (1 - beta) * this.integral;
-
-		const iTerm = this.ki * this.integral;
-
-		// Derivative term
-		const derivative = totalError - this.prevError;
-		const dTerm = this.kd * derivative;
-
-		// Calculate the new replication factor
-		const newFactor = currentFactor + pTerm + iTerm + dTerm;
-
-		// Update state for the next iteration
-		this.prevError = totalError;
-
-		return Math.max(Math.min(newFactor, 1), 0);
-	}
 }
