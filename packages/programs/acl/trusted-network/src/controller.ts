@@ -4,8 +4,6 @@ import {
 	Documents,
 	Operation,
 	PutOperation,
-	Replicator,
-	Role,
 	CanRead,
 	TransactionContext
 } from "@peerbit/document";
@@ -24,7 +22,7 @@ import {
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface/peer-id";
-import { RoleOptions } from "@peerbit/shared-log";
+import { Replicator, RoleOptions } from "@peerbit/shared-log";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey

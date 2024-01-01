@@ -7,13 +7,7 @@ import {
 	variant,
 	vec
 } from "@dao-xyz/borsh";
-import {
-	Documents,
-	DocumentsChange,
-	SetupOptions,
-	Observer,
-	Replicator
-} from "../document-store";
+import { Documents, DocumentsChange, SetupOptions } from "../document-store";
 import {
 	IntegerCompare,
 	StringMatch,
@@ -50,6 +44,8 @@ import pDefer from "p-defer";
 
 import {
 	AbsoluteReplicas,
+	Observer,
+	Replicator,
 	decodeReplicas,
 	encodeReplicas
 } from "@peerbit/shared-log";

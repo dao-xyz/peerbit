@@ -1,5 +1,5 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, Role } from "../index.js";
+import { Documents } from "../index.js";
 import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";

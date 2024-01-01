@@ -13,16 +13,15 @@ import { logger as loggerFn } from "@peerbit/logger";
 import { AppendOptions } from "@peerbit/log";
 import { CustomEvent } from "@libp2p/interface";
 import {
-	Role,
+	RoleOptions,
 	Observer,
 	Replicator,
 	SharedLog,
 	SharedLogOptions,
-	SharedAppendOptions,
-	RoleOptions
+	SharedAppendOptions
 } from "@peerbit/shared-log";
 
-export { Role, Observer, Replicator }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
+export type { RoleOptions }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
 import {
 	IndexableFields,

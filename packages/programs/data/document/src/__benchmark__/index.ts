@@ -1,6 +1,6 @@
 import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, SetupOptions, Replicator } from "../document-store.js";
+import { Documents, SetupOptions } from "../document-store.js";
 import { TestSession } from "@peerbit/test-utils";
 import { ProgramClient } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
