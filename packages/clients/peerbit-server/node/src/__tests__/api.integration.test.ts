@@ -222,15 +222,14 @@ describe("server", () => {
 		});
 
 		it("bootstrap", async () => {
-			// TMP disable until bootstrap nodes have migrated
-			/* expect((session.peers[0] as Peerbit).services.pubsub.peers.size).toEqual(
+			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).toEqual(
 				0
 			);
 			const c = await client(session.peers[0].identity);
 			await c.network.bootstrap();
 			expect(
 				(session.peers[0] as Peerbit).services.pubsub.peers.size
-			).toBeGreaterThan(0); */
+			).toBeGreaterThan(0);
 		});
 
 		/* TODO how to test this properly? Seems to hang once we added 'sudo --prefix __dirname' to the npm install in the child_process

@@ -12,8 +12,7 @@ describe("bootstrap", () => {
 	});
 
 	it("remote", async () => {
-		// TMP disable until bootstrap nodes have migrated
-		/* await peer.bootstrap();
-		expect(peer.libp2p.services.pubsub.peers.size).toBeGreaterThan(0); */
+		await peer.bootstrap();
+		expect(peer.libp2p.services.pubsub.peers.size).toBeGreaterThan(0);
 	});
 });
