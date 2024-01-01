@@ -228,6 +228,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.0 to 2.0.1
 
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/server-v5.0.1...server-v5.0.2) (2024-01-01)
+
+
+### Bug Fixes
+
+* re-enable bootstrap tests ([96ca266](https://github.com/dao-xyz/peerbit/commit/96ca266ea0443b71ef18afa88192a42cc737b9ff))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 3.0.1 to 3.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.1 to 2.0.2
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/server-v4.1.4...server-v5.0.0) (2023-12-31)
 
 

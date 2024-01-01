@@ -241,6 +241,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.0 to ^2.0.1
 
+## [4.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.1...shared-log-v4.0.2) (2024-01-01)
+
+
+### Bug Fixes
+
+* calculate total participation only when participation changes ([dddf804](https://github.com/dao-xyz/peerbit/commit/dddf8040acfb6e421762b895d269c035d3fe7291))
+* refactor ReplicationController ([e9b59ba](https://github.com/dao-xyz/peerbit/commit/e9b59ba3e16813e93f1262bf165430e7e1b6ed81))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.1 to 3.0.2
+    * @peerbit/log bumped from 3.0.1 to 3.0.2
+    * @peerbit/rpc bumped from 3.0.1 to 3.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.1 to ^2.0.2
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.10...shared-log-v4.0.0) (2023-12-31)
 
 

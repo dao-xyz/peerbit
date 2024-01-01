@@ -116,6 +116,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.0 to 2.0.1
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.1...proxy-v2.0.2) (2024-01-01)
+
+
+### Bug Fixes
+
+* simply OpenOptions generics ([8f83c7d](https://github.com/dao-xyz/peerbit/commit/8f83c7db577f5c10a672c7603e78e40c5123d522))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^3.0.1 to ^3.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.1 to 2.0.2
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v1.3.9...proxy-v2.0.0) (2023-12-31)
 
 
