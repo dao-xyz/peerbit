@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.2...any-store-v1.0.3) (2024-01-02)
+
+
+### Bug Fixes
+
+* OPFS allow concurrent put ([e833b02](https://github.com/dao-xyz/peerbit/commit/e833b02e129c8f74981877ec764743452ff2c37e))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.1...any-store-v1.0.2) (2024-01-01)
 
 
