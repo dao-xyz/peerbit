@@ -113,6 +113,20 @@
   * dependencies
     * @peerbit/any-store bumped from ^1.0.2 to ^1.0.3
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.3...blocks-v2.0.4) (2024-01-02)
+
+
+### Bug Fixes
+
+* make blocks propagate over hops ([1474397](https://github.com/dao-xyz/peerbit/commit/147439700784d72d4944cfa3960a97dfa900a750))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 2.0.2 to 2.0.3
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/blocks-v1.1.7...blocks-v2.0.0) (2023-12-31)
 
 
