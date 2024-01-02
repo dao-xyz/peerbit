@@ -1,6 +1,6 @@
 import { test, expect, JSHandle } from "@playwright/test";
 import { AnyStore } from "../../src/index.js";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 
 const asObject = (any: any) => JSON.parse(JSON.stringify(any));
 
@@ -101,6 +101,20 @@ test.describe("AnyLevel", () => {
 							});
 							expect(result.sort()).toEqual(["x", "y", "z"]);
 						});
+					});
+
+					test("concurrent put", async () => {
+						await handle.evaluate(async (store) => {
+							store.put("y", new Uint8Array([1]));
+							store.put("y", new Uint8Array([2]));
+							store.put("y", new Uint8Array([3]));
+							store.put("y", new Uint8Array([4]));
+							const last = store.put("y", new Uint8Array([5]));
+							await last;
+						});
+
+						const result = await handle.evaluate((store) => store.get("y"));
+						expect(result).toEqual(asObject(new Uint8Array([5])));
 					});
 
 					test("sublevel", async () => {

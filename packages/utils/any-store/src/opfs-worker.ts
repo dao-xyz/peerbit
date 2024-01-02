@@ -71,6 +71,7 @@ export class OPFSStoreWorker {
 					try {
 						const fileHandle = await m.getFileHandle(encodeName(key));
 						const buffer = await (await fileHandle.getFile()).arrayBuffer();
+
 						return new Uint8Array(buffer);
 					} catch (error) {
 						if (
@@ -87,8 +88,7 @@ export class OPFSStoreWorker {
 					const fileHandle = await m.getFileHandle(encodeName(key), {
 						create: true
 					});
-					const writeFileHandle = await fileHandle.createSyncAccessHandle();
-
+					const writeFileHandle = await fileHandle.createWritable();
 					writeFileHandle.write(value);
 					writeFileHandle.close();
 				},
