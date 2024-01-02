@@ -80,31 +80,6 @@ export class RemoteBlocks implements IBlocks {
 		this.localStore = options?.local;
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
-		/* this._responseHandler = (async (evt: CustomEvent<DataMessage>) => {
-			if (!evt) {
-				return;
-			}
-			const message = evt.detail;
-			if (!message.data) {
-				return;
-			}
-
-			try {
-				const decoded = deserialize(message.data, BlockMessage);
-				if (decoded instanceof BlockRequest && this._localStore) {
-					this._loadFetchQueue.add(() =>
-						this.handleFetchRequest(decoded, localTimeout)
-					);
-				} else if (decoded instanceof BlockResponse) {
-					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-
-					this._resolvers.get(decoded.cid)?.(decoded.bytes);
-				}
-			} catch (error) {
-				console.error("Got error for libp2p block transport: ", error);
-				return; // timeout o r invalid cid
-			}
-		}) */
 
 		this._responseHandler = async (message: BlockMessage) => {
 			try {

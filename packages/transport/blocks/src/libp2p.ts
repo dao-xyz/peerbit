@@ -7,7 +7,7 @@ import { GetOptions } from "@peerbit/blocks-interface";
 import { createStore } from "@peerbit/any-store";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
 import { PublicSignKey } from "@peerbit/crypto";
-import { DataMessage } from "@peerbit/stream-interface";
+import { AnyWhere, DataMessage } from "@peerbit/stream-interface";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 
 export type DirectBlockComponents = DirectStreamComponents;
@@ -37,7 +37,8 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		});
 		this.remoteBlocks = new RemoteBlocks({
 			local: new AnyBlockStore(createStore(options?.directory)),
-			publish: (message) => this.publish(serialize(message)),
+			publish: (message) =>
+				this.publish(serialize(message), { mode: new AnyWhere() }),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			waitFor: this.waitFor.bind(this)
