@@ -1360,7 +1360,8 @@ export abstract class DirectStream<
 		if (
 			this.signaturePolicy === "StictSign" ||
 			mode instanceof SeekDelivery ||
-			mode instanceof AcknowledgeDelivery
+			mode instanceof AcknowledgeDelivery ||
+			mode instanceof AnyWhere
 		) {
 			await message.sign(this.sign);
 		}
@@ -1715,7 +1716,7 @@ export abstract class DirectStream<
 
 	async waitFor(
 		peer: PeerId | PublicSignKey,
-		options?: { signal: AbortSignal }
+		options?: { timeout?: number; signal?: AbortSignal; neighbour?: boolean }
 	) {
 		const hash = (
 			peer instanceof PublicSignKey ? peer : getPublicKeyFromPeerId(peer)
@@ -1723,10 +1724,11 @@ export abstract class DirectStream<
 		try {
 			await waitFor(
 				() => {
-					if (!this.peers.has(hash)) {
+					if (options?.neighbour && !this.peers.has(hash)) {
 						return false;
 					}
-					if (!this.routes.isReachable(this.publicKeyHash, hash)) {
+
+					if (!this.routes.isReachable(this.publicKeyHash, hash, 0)) {
 						return false;
 					}
 
@@ -1734,7 +1736,7 @@ export abstract class DirectStream<
 				},
 				{
 					signal: options?.signal,
-					timeout: 10 * 1000
+					timeout: options?.timeout ?? 10 * 1000
 				}
 			);
 		} catch (error) {
@@ -1744,25 +1746,27 @@ export abstract class DirectStream<
 					" does not exist. Connection exist: " +
 					this.peers.has(hash) +
 					". Route exist: " +
-					this.routes.isReachable(this.publicKeyHash, hash)
+					this.routes.isReachable(this.publicKeyHash, hash, 0)
 			);
 		}
-		const stream = this.peers.get(hash)!;
-		try {
-			// Dontwait for readlable https://github.com/libp2p/js-libp2p/issues/2321
-			await waitFor(() => /* stream.isReadable && */ stream.isWritable, {
-				signal: options?.signal,
-				timeout: 10 * 1000
-			});
-		} catch (error) {
-			throw new Error(
-				"Stream to " +
-					stream.publicKey.hashcode() +
-					" not ready. Readable: " +
-					stream.isReadable +
-					". Writable " +
-					stream.isWritable
-			);
+		if (options?.neighbour) {
+			const stream = this.peers.get(hash)!;
+			try {
+				// Dontwait for readlable https://github.com/libp2p/js-libp2p/issues/2321
+				await waitFor(() => /* stream.isReadable && */ stream.isWritable, {
+					signal: options?.signal,
+					timeout: options?.timeout ?? 10 * 1000
+				});
+			} catch (error) {
+				throw new Error(
+					"Stream to " +
+						stream.publicKey.hashcode() +
+						" not ready. Readable: " +
+						stream.isReadable +
+						". Writable " +
+						stream.isWritable
+				);
+			}
 		}
 	}
 

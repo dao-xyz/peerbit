@@ -55,22 +55,6 @@ const getWritesCount = (writes: Map<string, DataMessage[]>) => {
 	return sum;
 };
 
-const addDelay = (stream: DirectStream, ms: () => number) => {
-	const fn = stream.processMessage.bind(stream);
-	stream.processMessage = async (a, b, c) => {
-		await delay(ms());
-		return fn(a, b, c);
-	};
-};
-const getUniqueMessages = async (messages: Message[]) => {
-	const map: Map<string, Message> = new Map();
-	for (const message of messages) {
-		const id = await getMsgId(message.bytes());
-		map.set(id, message);
-	}
-	return [...map.values()];
-};
-
 const createMetrics = (stream: DirectStream) => {
 	const s: {
 		stream: TestDirectStream;
@@ -2062,6 +2046,52 @@ describe("start/stop", () => {
 		await delay(3000);
 		await session.peers[0].services.directstream.start();
 		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+	});
+
+	it("wait for only waits for reachable", async () => {
+		session = await disconnected(3, {
+			transports: [tcp()],
+			services: {
+				directstream: (c) =>
+					new TestDirectStream(c, {
+						connectionManager: { dialer: false, pruner: false }
+					})
+			}
+		});
+
+		await session.connect([
+			// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]]
+		]);
+		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForPeerStreams(stream(session, 1), stream(session, 2));
+
+		expect(
+			session.peers[0].services.directstream.routes.isReachable(
+				session.peers[0].services.directstream.publicKey.hashcode(),
+				session.peers[2].services.directstream.publicKey.hashcode()
+			)
+		).toBeFalse();
+		await session.peers[0].services.directstream.publish(new Uint8Array([0]), {
+			mode: new SeekDelivery({ redundancy: 1 })
+		});
+		await session.peers[0].services.directstream.waitFor(
+			session.peers[2].peerId
+		);
+		await expect(
+			session.peers[0].services.directstream.waitFor(session.peers[2].peerId, {
+				neighbour: true,
+				timeout: 1000
+			})
+		).rejects.toThrow();
+
+		await expect(
+			session.peers[0].services.directstream.waitFor(session.peers[1].peerId, {
+				neighbour: true,
+				timeout: 1000
+			})
+		);
 	});
 });
 

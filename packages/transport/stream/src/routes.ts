@@ -1,6 +1,6 @@
 import { PublicSignKey } from "@peerbit/crypto";
 
-export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER;
+export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER - 1;
 export class Routes {
 	// END receiver -> Neighbour
 
@@ -117,10 +117,10 @@ export class Routes {
 		return this.routes.get(from)?.get(target);
 	}
 
-	isReachable(from: string, target: string) {
+	isReachable(from: string, target: string, maxDistance = MAX_ROUTE_DISTANCE) {
 		return (
 			(this.routes.get(from)?.get(target)?.list[0]?.distance ??
-				Number.MAX_SAFE_INTEGER) < MAX_ROUTE_DISTANCE
+				Number.MAX_SAFE_INTEGER) <= maxDistance
 		);
 	}
 
