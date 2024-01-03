@@ -52,4 +52,11 @@ describe("Create", function () {
 		expect(client.peerId.equals(peerId)).toBeTrue();
 		await client.stop();
 	});
+
+	it("relays by default", async () => {
+		const client = await Peerbit.create();
+		expect(client.services.blocks.canRelayMessage).toEqual(true);
+		expect(client.services.pubsub.canRelayMessage).toEqual(true);
+		await client.stop();
+	});
 });
