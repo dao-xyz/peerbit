@@ -3,6 +3,7 @@ import { AnyStore } from "./interface.js";
 import * as memory from "./opfs-worker-messages.js";
 import { fromBase64URL, toBase64URL } from "@peerbit/crypto";
 import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
+import { waitForResolved } from "@peerbit/time";
 const encodeName = (name: string): string => {
 	// since "/" and perhaps other characters might not be allowed we do encode
 	const writer = new BinaryWriter();
@@ -16,6 +17,22 @@ const decodeName = (name: string): string => {
 	return writer.string();
 };
 
+const waitForSyncAcccess = async (
+	fileHandle: FileSystemFileHandle
+): Promise<FileSystemSyncAccessHandle> => {
+	try {
+		const handle = await fileHandle.createSyncAccessHandle();
+		return handle;
+	} catch (error) {
+		const handle = await waitForResolved(() =>
+			fileHandle.createSyncAccessHandle()
+		);
+		if (!handle) {
+			throw error;
+		}
+		return handle;
+	}
+};
 export class OPFSStoreWorker {
 	level: string[];
 	private _levels: Map<string, AnyStore>;
@@ -88,7 +105,7 @@ export class OPFSStoreWorker {
 					const fileHandle = await m.getFileHandle(encodeName(key), {
 						create: true
 					});
-					const writeFileHandle = await fileHandle.createWritable();
+					const writeFileHandle = await waitForSyncAcccess(fileHandle);
 					writeFileHandle.write(value);
 					writeFileHandle.close();
 				},
@@ -97,7 +114,7 @@ export class OPFSStoreWorker {
 					let size = 0;
 					for await (const value of m.values()) {
 						if (value.kind === "file") {
-							const handle = await value.createSyncAccessHandle();
+							const handle = await waitForSyncAcccess(value);
 							size += handle.getSize();
 							handle.close();
 						}
