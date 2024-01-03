@@ -77,9 +77,13 @@ export class Subscribe extends PubSubMessage {
 	@field({ type: vec("string") })
 	topics: string[];
 
-	constructor(options: { topics: string[] }) {
+	@field({ type: "bool" })
+	requestSubscribers: boolean;
+
+	constructor(options: { topics: string[]; requestSubscribers: boolean }) {
 		super();
 		this.topics = options.topics;
+		this.requestSubscribers = options.requestSubscribers;
 	}
 
 	private _serialized: Uint8ArrayList;

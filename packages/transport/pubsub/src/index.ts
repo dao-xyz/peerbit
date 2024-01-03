@@ -110,7 +110,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			const message = new DataMessage({
 				data: toUint8Array(
 					new Subscribe({
-						topics: newTopicsForTopicData
+						topics: newTopicsForTopicData,
+						requestSubscribers: true
 					}).bytes()
 				),
 				header: new MessageHeader({ mode: new SeekDelivery({ redundancy: 2 }) })
@@ -344,7 +345,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				await new DataMessage({
 					data: toUint8Array(
 						new Subscribe({
-							topics: [...this.subscriptions.keys()]
+							topics: [...this.subscriptions.keys()],
+							requestSubscribers: true
 						}).bytes()
 					),
 					header: new MessageHeader({
@@ -534,53 +536,50 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					return false;
 				}
 
-				if (!this.subscriptionMessageIsLatest(message, pubsubMessage)) {
-					logger.trace("Recieved old subscription message");
-					return false;
-				}
+				if (this.subscriptionMessageIsLatest(message, pubsubMessage)) {
+					const changed: string[] = [];
+					pubsubMessage.topics.forEach((topic) => {
+						const peers = this.topics.get(topic);
+						if (peers == null) {
+							return;
+						}
 
-				this.initializePeer(sender);
+						this.initializePeer(sender);
 
-				const changed: string[] = [];
-				pubsubMessage.topics.forEach((topic) => {
-					const peers = this.topics.get(topic);
-					if (peers == null) {
-						return;
-					}
+						// if no subscription data, or new subscription has data (and is newer) then overwrite it.
+						// subscription where data is undefined is not intended to replace existing data
+						const existingSubscription = peers.get(senderKey);
 
-					// if no subscription data, or new subscription has data (and is newer) then overwrite it.
-					// subscription where data is undefined is not intended to replace existing data
-					const existingSubscription = peers.get(senderKey);
+						if (
+							!existingSubscription ||
+							existingSubscription.timestamp < message.header.timetamp
+						) {
+							peers.set(
+								senderKey,
+								new SubscriptionData({
+									timestamp: message.header.timetamp, // TODO update timestamps on all messages?
+									publicKey: sender
+								})
+							);
+							if (!existingSubscription) {
+								changed.push(topic);
+							}
+						}
 
-					if (
-						!existingSubscription ||
-						existingSubscription.timestamp < message.header.timetamp
-					) {
-						peers.set(
-							senderKey,
-							new SubscriptionData({
-								timestamp: message.header.timetamp, // TODO update timestamps on all messages?
-								publicKey: sender
+						this.topicsToPeers.get(topic)?.add(senderKey);
+						this.peerToTopic.get(senderKey)?.add(topic);
+					});
+
+					if (changed.length > 0) {
+						this.dispatchEvent(
+							new CustomEvent<SubscriptionEvent>("subscribe", {
+								detail: new SubscriptionEvent(sender, changed)
 							})
 						);
-						if (!existingSubscription) {
-							changed.push(topic);
-						}
 					}
 
-					this.topicsToPeers.get(topic)?.add(senderKey);
-					this.peerToTopic.get(senderKey)?.add(topic);
-				});
-				if (changed.length > 0) {
-					this.dispatchEvent(
-						new CustomEvent<SubscriptionEvent>("subscribe", {
-							detail: new SubscriptionEvent(sender, changed)
-						})
-					);
-
-					// also send back a message telling the remote whether we are subsbscring
-					if (message.header.mode instanceof SeekDelivery) {
-						// only if Subscribe message is of 'seek' type we will respond with our subscriptions
+					if (pubsubMessage.requestSubscribers) {
+						// respond if we are subscribing
 						const mySubscriptions = changed
 							.map((x) => {
 								const subscription = this.subscriptions.get(x);
@@ -592,14 +591,15 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 							const response = new DataMessage({
 								data: toUint8Array(
 									new Subscribe({
-										topics: mySubscriptions
+										topics: mySubscriptions,
+										requestSubscribers: false
 									}).bytes()
 								),
 								// needs to be Ack or Silent else we will run into a infite message loop
 								header: new MessageHeader({
-									mode: new AcknowledgeDelivery({
+									mode: new SeekDelivery({
 										redundancy: 2,
-										to: [sender.hashcode()]
+										to: [senderKey]
 									})
 								})
 							});
@@ -616,40 +616,37 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				// DONT await this since it might introduce a dead-lock
 				this.relayMessage(from, message).catch(logError);
 			} else if (pubsubMessage instanceof Unsubscribe) {
-				if (!this.subscriptionMessageIsLatest(message, pubsubMessage)) {
-					logger.trace("Recieved old subscription message");
-					return false;
-				}
+				if (this.subscriptionMessageIsLatest(message, pubsubMessage)) {
+					const changed: string[] = [];
 
-				const changed: string[] = [];
-
-				for (const unsubscription of pubsubMessage.topics) {
-					const change = this.deletePeerFromTopic(unsubscription, senderKey);
-					if (change) {
-						changed.push(unsubscription);
+					for (const unsubscription of pubsubMessage.topics) {
+						const change = this.deletePeerFromTopic(unsubscription, senderKey);
+						if (change) {
+							changed.push(unsubscription);
+						}
 					}
-				}
 
-				if (changed.length > 0) {
-					this.dispatchEvent(
-						new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-							detail: new UnsubcriptionEvent(sender, changed)
-						})
-					);
-				}
+					if (changed.length > 0) {
+						this.dispatchEvent(
+							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
+								detail: new UnsubcriptionEvent(sender, changed)
+							})
+						);
+					}
 
-				// Forward
-				if (
-					message.header.mode instanceof SeekDelivery ||
-					message.header.mode instanceof SilentDelivery ||
-					message.header.mode instanceof AcknowledgeDelivery
-				) {
-					this.addPeersOnTopic(
-						message as DataMessage<
-							SeekDelivery | SilentDelivery | AcknowledgeDelivery
-						>,
-						pubsubMessage.topics
-					);
+					// Forwarding
+					if (
+						message.header.mode instanceof SeekDelivery ||
+						message.header.mode instanceof SilentDelivery ||
+						message.header.mode instanceof AcknowledgeDelivery
+					) {
+						this.addPeersOnTopic(
+							message as DataMessage<
+								SeekDelivery | SilentDelivery | AcknowledgeDelivery
+							>,
+							pubsubMessage.topics
+						);
+					}
 				}
 
 				// DONT await this since it might introduce a dead-lock
@@ -670,7 +667,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						await new DataMessage({
 							data: toUint8Array(
 								new Subscribe({
-									topics: subscriptionsToSend
+									topics: subscriptionsToSend,
+									requestSubscribers: false
 								}).bytes()
 							),
 							header: new MessageHeader({

@@ -75,25 +75,6 @@ const createSubscriptionMetrics = (pubsub: DirectSub) => {
 	return m;
 };
 
-const collectDataWrites = (client: DirectSub) => {
-	const writes: Map<string, PubSubData[]> = new Map();
-	for (const [name, peer] of client.peers) {
-		writes.set(name, []);
-		const writeFn = peer.write.bind(peer);
-		peer.write = (data) => {
-			const bytes = data instanceof Uint8Array ? data : data.subarray();
-			const message = deserialize(bytes, Message);
-			if (message instanceof DataMessage && message.data) {
-				const pubsubData = deserialize(message.data, PubSubMessage);
-				if (pubsubData instanceof PubSubData) {
-					writes.get(name)?.push(pubsubData);
-				}
-			}
-			return writeFn(data);
-		};
-	}
-	return writes;
-};
 const createMetrics = (pubsub: DirectSub) => {
 	const m: {
 		stream: DirectSub;
@@ -1033,7 +1014,26 @@ describe("pubsub", function () {
 			await streams[1].stream.subscribe(TOPIC_1);
 			await checkSubscriptions();
 		});
+
+		it("rejoin will re-emit subsriptions", async () => {
+			await streams[0].stream.subscribe(TOPIC_1);
+			await streams[1].stream.subscribe(TOPIC_1);
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+				[session.peers[0], session.peers[2]]
+			]);
+
+			await checkSubscriptions();
+			await session.peers[0].stop();
+			await session.peers[0].start();
+			await session.connect([[session.peers[0], session.peers[2]]]);
+
+			await streams[0].stream.subscribe(TOPIC_1);
+			await checkSubscriptions();
+		});
 	});
+
 	describe("subscription", () => {
 		let session: TestSession<{ pubsub: DirectSub }>;
 		let streams: ReturnType<typeof createMetrics>[];
