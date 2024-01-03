@@ -33,6 +33,14 @@ const waitForSyncAcccess = async (
 		return handle;
 	}
 };
+
+const createWriteHandle = async (fileHandle: FileSystemFileHandle) => {
+	if (fileHandle.createWritable != null) {
+		return fileHandle.createWritable({ keepExistingData: false });
+	}
+	return waitForSyncAcccess(fileHandle);
+};
+
 export class OPFSStoreWorker {
 	level: string[];
 	private _levels: Map<string, AnyStore>;
@@ -105,8 +113,8 @@ export class OPFSStoreWorker {
 					const fileHandle = await m.getFileHandle(encodeName(key), {
 						create: true
 					});
-					const writeFileHandle = await waitForSyncAcccess(fileHandle);
-					writeFileHandle.write(value);
+					const writeFileHandle = await createWriteHandle(fileHandle);
+					await writeFileHandle.write(value);
 					writeFileHandle.close();
 				},
 
