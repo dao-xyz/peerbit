@@ -262,6 +262,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.4 to 2.0.5
 
+## [4.0.7](https://github.com/dao-xyz/peerbit/compare/document-v4.0.6...document-v4.0.7) (2024-01-03)
+
+
+### Bug Fixes
+
+* use correct waitFor ([27390c2](https://github.com/dao-xyz/peerbit/commit/27390c2f5c3b85e3da6b0ddac01218c344f53101))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.4 to 3.0.5
+    * @peerbit/rpc bumped from 3.0.5 to 3.0.6
+    * @peerbit/shared-log bumped from 4.0.5 to 4.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.5 to 2.0.6
+
 ## [4.0.3](https://github.com/dao-xyz/peerbit/compare/document-v4.0.2...document-v4.0.3) (2024-01-01)
 
 

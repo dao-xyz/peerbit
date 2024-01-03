@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.3...any-store-v1.0.4) (2024-01-03)
+
+
+### Bug Fixes
+
+* make OPFS worker compatible with Safari ([8b11a44](https://github.com/dao-xyz/peerbit/commit/8b11a44f29e61f429ccea5928b1aad1d909b6f11))
+* OPFS use createWritable when available ([c18a930](https://github.com/dao-xyz/peerbit/commit/c18a930bb58886c1c8e3d1b0fad4dcc593fe7339))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.2...any-store-v1.0.3) (2024-01-02)
 
 

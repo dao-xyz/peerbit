@@ -112,6 +112,20 @@
   * dependencies
     * @peerbit/stream bumped from 2.0.2 to 2.0.3
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.3...pubsub-v2.0.4) (2024-01-03)
+
+
+### Bug Fixes
+
+* request subscribers in the Subscribe message ([53c81b0](https://github.com/dao-xyz/peerbit/commit/53c81b0c38181c3e58e2171caa2b1d124474f3aa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 2.0.3 to 2.0.4
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.13...pubsub-v2.0.0) (2023-12-31)
 
 

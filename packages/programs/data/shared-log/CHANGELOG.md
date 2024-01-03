@@ -270,6 +270,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.4 to ^2.0.5
 
+## [4.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.5...shared-log-v4.0.6) (2024-01-03)
+
+
+### Bug Fixes
+
+* add can wait for replicator as observer test ([a387df2](https://github.com/dao-xyz/peerbit/commit/a387df2c553dcd4bb85c7b19d3a4decb7f318ad6))
+* initialize remoteBlocks before handling subscription changes ([0f7a530](https://github.com/dao-xyz/peerbit/commit/0f7a5306a95417b70db1b66a0810ecde90f4f17c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.4 to 3.0.5
+    * @peerbit/log bumped from 3.0.5 to 3.0.6
+    * @peerbit/rpc bumped from 3.0.5 to 3.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.5 to ^2.0.6
+
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.1...shared-log-v4.0.2) (2024-01-01)
 
 

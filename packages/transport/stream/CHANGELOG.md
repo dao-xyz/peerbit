@@ -27,6 +27,13 @@
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
     * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.3...stream-v2.0.4) (2024-01-03)
+
+
+### Bug Fixes
+
+* canRelayTrue by default ([6af9d9f](https://github.com/dao-xyz/peerbit/commit/6af9d9fc3af10fab936da6e2c4677f429796a9e1))
+
 ## [2.0.3](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.2...stream-v2.0.3) (2024-01-02)
 
 
