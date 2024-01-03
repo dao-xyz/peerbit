@@ -372,6 +372,23 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		this.setupRole(options?.role);
 
+		const id = sha256Base64Sync(this.log.id);
+		const storage = await this.node.memory.sublevel(id);
+
+		const localBlocks = await new AnyBlockStore(
+			await storage.sublevel("blocks")
+		);
+		this.remoteBlocks = new RemoteBlocks({
+			local: localBlocks,
+			publish: (message, options) =>
+				this.rpc.send(new BlocksMessage(message), {
+					to: options?.to
+				}),
+			waitFor: this.rpc.waitFor.bind(this.rpc)
+		});
+
+		await this.remoteBlocks.start();
+
 		this._onSubscriptionFn = this._onSubscription.bind(this);
 		this._totalParticipation = 0;
 		this._sortedPeersCache = yallist.create();
@@ -388,23 +405,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this._onUnsubscriptionFn
 		);
 
-		const id = sha256Base64Sync(this.log.id);
-		const storage = await this.node.memory.sublevel(id);
-		const localBlocks = await new AnyBlockStore(
-			await storage.sublevel("blocks")
-		);
 		const cache = await storage.sublevel("cache");
-
-		this.remoteBlocks = new RemoteBlocks({
-			local: localBlocks,
-			publish: (message, options) =>
-				this.rpc.send(new BlocksMessage(message), {
-					to: options?.to
-				}),
-			waitFor: this.rpc.waitFor.bind(this.rpc)
-		});
-
-		await this.remoteBlocks.start();
 
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
