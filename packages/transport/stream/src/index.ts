@@ -440,7 +440,7 @@ export abstract class DirectStream<
 	) {
 		super();
 		const {
-			canRelayMessage = false,
+			canRelayMessage = true,
 			messageProcessingConcurrency = 10,
 			maxInboundStreams,
 			maxOutboundStreams,
@@ -1669,7 +1669,17 @@ export abstract class DirectStream<
 		let sentOnce = false;
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
+
+			// Dont sent back to the sender
 			if (id.publicKey.equals(from)) {
+				continue;
+			}
+			// Dont send message back to any of the signers (they have already seen the message)
+			if (
+				message.header.signatures?.publicKeys.find((x) =>
+					x.equals(id.publicKey)
+				)
+			) {
 				continue;
 			}
 
