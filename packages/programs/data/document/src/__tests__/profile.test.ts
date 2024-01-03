@@ -81,7 +81,7 @@ describe("profile", () => {
 			stores.push(store);
 		}
 		await stores[0].waitFor(session.peers[1].peerId);
-		await stores[0].waitFor(session.peers[2].peerId);
+		await stores[1].waitFor(session.peers[2].peerId);
 	});
 
 	afterEach(async () => {
