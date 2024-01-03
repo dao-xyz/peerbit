@@ -150,6 +150,23 @@
     * @peerbit/pubsub bumped from ^2.0.2 to ^2.0.3
     * @peerbit/blocks bumped from ^2.0.3 to ^2.0.4
 
+## [3.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.5...peerbit-v3.0.6) (2024-01-03)
+
+
+### Bug Fixes
+
+* test can relay be default ([d0ca05a](https://github.com/dao-xyz/peerbit/commit/d0ca05aee64b2e816210a1e3d0a7dd32147d25da))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^1.0.3 to ^1.0.4
+    * @peerbit/program bumped from 3.0.4 to 3.0.5
+    * @peerbit/pubsub bumped from ^2.0.3 to ^2.0.4
+    * @peerbit/blocks bumped from ^2.0.4 to ^2.0.5
+
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.1...peerbit-v3.0.2) (2024-01-01)
 
 

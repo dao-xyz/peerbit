@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub-interface",
-	"version": "2.0.1",
+	"version": "2.0.2",
 	"description": "Block store streaming",
 	"type": "module",
 	"sideEffects": false,

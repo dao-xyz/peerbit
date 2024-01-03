@@ -42,6 +42,13 @@
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
     * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.1...pubsub-interface-v2.0.2) (2024-01-03)
+
+
+### Bug Fixes
+
+* request subscribers in the Subscribe message ([53c81b0](https://github.com/dao-xyz/peerbit/commit/53c81b0c38181c3e58e2171caa2b1d124474f3aa))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.5...pubsub-interface-v2.0.0) (2023-12-31)
 
 
