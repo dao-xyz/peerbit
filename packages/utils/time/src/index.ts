@@ -23,6 +23,13 @@ export const delay = (ms: number, options?: { signal?: AbortSignal }) => {
 	});
 };
 
+const createTimeoutError = (options: { timeoutMessage?: string }) =>
+	new TimeoutError(
+		options?.timeoutMessage
+			? "Timed out: " + options?.timeoutMessage
+			: "Timed out"
+	);
+
 export const waitFor = async <T>(
 	fn: () => T | Promise<T>,
 	options: {
@@ -52,11 +59,7 @@ export const waitFor = async <T>(
 
 		await delay(delayInterval, options);
 	}
-	throw new TimeoutError(
-		options.timeoutMessage
-			? "Timed out: " + options.timeoutMessage
-			: "Timed out"
-	);
+	throw createTimeoutError(options);
 };
 
 export const waitForResolved = async <T>(
@@ -67,7 +70,7 @@ export const waitForResolved = async <T>(
 		delayInterval?: number;
 		timeoutMessage?: string;
 	} = { timeout: 10 * 1000, delayInterval: 50 }
-): Promise<T | undefined> => {
+): Promise<T> => {
 	const delayInterval = options.delayInterval || 50;
 	const timeout = options.timeout || 10 * 1000;
 
@@ -96,5 +99,5 @@ export const waitForResolved = async <T>(
 		await delay(delayInterval, options);
 	}
 
-	throw lastError;
+	throw lastError || createTimeoutError(options);
 };
