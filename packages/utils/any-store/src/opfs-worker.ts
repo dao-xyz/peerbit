@@ -35,9 +35,12 @@ const waitForSyncAcccess = async (
 };
 
 const createWriteHandle = async (fileHandle: FileSystemFileHandle) => {
+	//  In Chrome on GET DOMException: Failed to execute 'createWritable' on 'FileSystemFileHandle': Failed to create swap file
+	// hence below is not used for now
+	/*
 	if (fileHandle.createWritable != null) {
 		return fileHandle.createWritable({ keepExistingData: false });
-	}
+	} */
 	return waitForSyncAcccess(fileHandle);
 };
 
