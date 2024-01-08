@@ -42,6 +42,21 @@
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
     * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
+## [2.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.2...pubsub-interface-v2.0.3) (2024-01-08)
+
+
+### Bug Fixes
+
+* remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
+    * @peerbit/stream-interface bumped from ^2.0.1 to ^2.0.2
+
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.1...pubsub-interface-v2.0.2) (2024-01-03)
 
 

@@ -270,6 +270,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.4 to ^2.0.5
 
+## [4.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.6...shared-log-v4.0.7) (2024-01-08)
+
+
+### Bug Fixes
+
+* improve adaptive replication performance ([e4576b8](https://github.com/dao-xyz/peerbit/commit/e4576b8c0fdcfe1497217a9b1bcaf1cba65065f5))
+* only prune peers from gidPeerHistory when they are to prune ([4b23eca](https://github.com/dao-xyz/peerbit/commit/4b23eca3edfa8420eb25b6be43cf73ad984de42e))
+* refactor tests ([30a7366](https://github.com/dao-xyz/peerbit/commit/30a736614d534a0dbcccaf4887e783e27c766c36))
+* rm log ([49b9b98](https://github.com/dao-xyz/peerbit/commit/49b9b988cceb5a0185cc9e157c273f39582024c4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.5 to 3.0.6
+    * @peerbit/log bumped from 3.0.6 to 3.0.7
+    * @peerbit/rpc bumped from 3.0.6 to 3.0.7
+    * @peerbit/time bumped from 2.0.0 to 2.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.6 to ^2.0.7
+
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.5...shared-log-v4.0.6) (2024-01-03)
 
 

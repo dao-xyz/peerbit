@@ -262,6 +262,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.4 to 2.0.5
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/document-v4.0.7...document-v4.0.8) (2024-01-08)
+
+
+### Bug Fixes
+
+* add delivery modes ([c1e7b87](https://github.com/dao-xyz/peerbit/commit/c1e7b87c6356cdaca4d48a12dcd7ce2be36a8de5))
+* prevent sync for sort tests ([13e08c0](https://github.com/dao-xyz/peerbit/commit/13e08c04031fca91ea16e701455f237f7d5fa638))
+* set delivery modes for query responses ([345af94](https://github.com/dao-xyz/peerbit/commit/345af941ae5c2bda649be78f6fd8b629c87ac0eb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.5 to 3.0.6
+    * @peerbit/rpc bumped from 3.0.6 to 3.0.7
+    * @peerbit/shared-log bumped from 4.0.6 to 4.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.6 to 2.0.7
+    * @peerbit/time bumped from 2.0.0 to 2.0.1
+
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/document-v4.0.6...document-v4.0.7) (2024-01-03)
 
 

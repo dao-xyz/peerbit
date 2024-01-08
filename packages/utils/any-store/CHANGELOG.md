@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.4...any-store-v1.0.5) (2024-01-08)
+
+
+### Bug Fixes
+
+* OPFS disable createWritable ([a6d2a00](https://github.com/dao-xyz/peerbit/commit/a6d2a009165943d844aa11fe07bb90b3ab2fe5bc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.1.0 to ^2.1.1
+    * @peerbit/time bumped from 2.0.0 to 2.0.1
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.3...any-store-v1.0.4) (2024-01-03)
 
 
