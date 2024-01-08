@@ -27,6 +27,13 @@
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
     * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
+## [2.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.5...stream-v2.0.6) (2024-01-08)
+
+
+### Bug Fixes
+
+* add p-queue dep ([587427f](https://github.com/dao-xyz/peerbit/commit/587427f8194e74664e3318722d8c9af36b3f94cf))
+
 ## [2.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.4...stream-v2.0.5) (2024-01-08)
 
 
