@@ -50,6 +50,7 @@ import {
 	encodeReplicas
 } from "@peerbit/shared-log";
 import { Ed25519PublicKey } from "@peerbit/crypto";
+import { SilentDelivery } from "@peerbit/stream-interface";
 
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();
@@ -2085,7 +2086,10 @@ describe("index", () => {
 
 					// Try to send from another peer (that is not the owner of the iterator)
 					await stores[2].docs.index["_query"].send(closeRequest, {
-						to: [session.peers[0].identity.publicKey]
+						mode: new SilentDelivery({
+							to: [session.peers[0].identity.publicKey],
+							redundancy: 1
+						})
 					});
 
 					await delay(2000);
@@ -2095,7 +2099,10 @@ describe("index", () => {
 
 					// send from the owner
 					await stores[1].docs.index["_query"].send(closeRequest, {
-						to: [session.peers[0].identity.publicKey]
+						mode: new SilentDelivery({
+							to: [session.peers[0].identity.publicKey],
+							redundancy: 1
+						})
 					});
 
 					await waitForResolved(
