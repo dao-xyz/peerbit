@@ -385,10 +385,10 @@ export abstract class Program<
 				options?.timeout || 10 * 1000
 			);
 
-			const abortListener = (e) => {
+			const abortListener = (e: Event) => {
 				this.node.services.pubsub.removeEventListener("subscribe", listener);
 				clearTimeout(timeout);
-				reject(e);
+				reject(new Error("Aborted"));
 			};
 
 			options?.signal?.addEventListener("abort", abortListener);
