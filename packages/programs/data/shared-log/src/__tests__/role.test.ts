@@ -103,7 +103,7 @@ describe(`role`, () => {
 	describe("observer", () => {
 		it("can update", async () => {
 			expect(
-				db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
+				db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.topic)
 					.counter
 			).toEqual(1);
 			expect(
@@ -116,7 +116,7 @@ describe(`role`, () => {
 			await db1.log.updateRole("observer");
 			expect(db1.log.role).toBeInstanceOf(Observer);
 			expect(
-				db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.rpcTopic)
+				db1.log.node.services.pubsub["subscriptions"].get(db1.log.rpc.topic)
 					.counter
 			).toEqual(1);
 		});

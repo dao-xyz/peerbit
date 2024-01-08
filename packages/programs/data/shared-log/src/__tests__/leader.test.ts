@@ -2,7 +2,7 @@ import { EventStore } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { Observer, Replicator } from "../role.js";
+import { Replicator } from "../role.js";
 import { deserialize } from "@dao-xyz/borsh";
 
 describe(`leaders`, function () {

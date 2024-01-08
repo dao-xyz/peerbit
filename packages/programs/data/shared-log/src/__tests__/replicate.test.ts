@@ -9,10 +9,11 @@ import {
 	getPublicKeyFromPeerId
 } from "@peerbit/crypto";
 import { AbsoluteReplicas, decodeReplicas, maxReplicas } from "../replication";
-import { Observer, Replicator } from "../role";
+import { Observer } from "../role";
 import { ExchangeHeadsMessage } from "../exchange-heads";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { jest } from "@jest/globals";
+import { collectMessages, getReceivedHeads } from "./utils";
 
 describe(`exchange`, function () {
 	let session: TestSession;
@@ -21,10 +22,7 @@ describe(`exchange`, function () {
 	let fetchHashes: Set<string>;
 	let fromMultihash: any;
 	beforeAll(() => {
-		jest.retryTimes(5);
-
 		fromMultihash = Entry.fromMultihash;
-
 		// TODO monkeypatching might lead to sideeffects in other tests!
 		Entry.fromMultihash = (s, h, o) => {
 			fetchHashes.add(h);
@@ -215,33 +213,7 @@ describe(`exchange`, function () {
 			await db1.add("hello" + i);
 		}
 
-		/* 	const add = (i: number) => db1.add("hello" + i);
-			await mapSeries(entryArr, add); */
-
-		// Once db2 has finished replication, make sure it has all elements
-		// and process to the asserts below
-		try {
-			await waitForResolved(() =>
-				expect(db2.log.log.length).toEqual(entryCount)
-			);
-		} catch (error) {
-			console.error(
-				"Did not receive all entries, missing: " +
-					(db2.log.log.length - entryCount),
-				"Fetch events: " +
-					fetchEvents +
-					", fetch hashes size: " +
-					fetchHashes.size
-			);
-			const entries = (await db2.iterator({ limit: -1 })).collect();
-			console.error(
-				"Entries: (" +
-					entries.length +
-					"), " +
-					entries.map((x) => x.payload.getValue().value).join(", ")
-			);
-			throw error;
-		}
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(entryCount));
 
 		const entries = (await db2.iterator({ limit: -1 })).collect();
 		expect(entries.length).toEqual(entryCount);
@@ -258,8 +230,38 @@ describe(`exchange`, function () {
 		}
 	});
 
-	describe("info", () => {
-		it("insertion", async () => {
+	describe("redundancy", () => {
+		it("only sends entries once", async () => {
+			db1.log.updateRole({ type: "replicator", factor: 0 });
+			const message1 = collectMessages(db1.log);
+			let count = 1000;
+			for (let i = 0; i < count; i++) {
+				await db1.add("hello " + i, { meta: { next: [] } });
+			}
+			const interval = setInterval(() => {
+				db1.log.distribute();
+			}, 100);
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				}
+			))!;
+
+			const message2 = collectMessages(db2.log);
+			await delay(3000);
+			clearInterval(interval);
+			const dataMessages = getReceivedHeads(message2);
+			expect(dataMessages).toHaveLength(count);
+		});
+
+		it("no fetches needed when replicating live ", async () => {
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
 				session.peers[1]
@@ -295,7 +297,7 @@ describe(`exchange`, function () {
 			expect(fetchEvents).toEqual(fetchHashes.size);
 			expect(fetchEvents).toEqual(0); // becausel all entries were sent
 		});
-		it("open after insertion", async () => {
+		it("fetches only once after open", async () => {
 			const entryCount = 15;
 
 			// Trigger replication
@@ -327,57 +329,90 @@ describe(`exchange`, function () {
 			expect(fetchEvents).toEqual(fetchHashes.size);
 			expect(fetchEvents).toEqual(entryCount - 1); // - 1 because we also send some references for faster syncing (see exchange-heads.ts)
 		});
+	});
+});
 
-		it("two-way replication", async () => {
-			const entryCount = 15;
+describe(`start/stop`, function () {
+	let session: TestSession;
+	beforeEach(async () => {
+		session = await TestSession.connected(2);
+	});
 
-			// Trigger replication
-			const adds: number[] = [];
-			for (let i = 0; i < entryCount; i++) {
-				adds.push(i);
-			}
+	afterEach(async () => {
+		await session.stop();
+	});
 
-			const add = async (i: number) => {
-				await Promise.all([db1.add("hello-1-" + i), db2.add("hello-2-" + i)]);
-			};
+	it("starts replicating the database when peers connect", async () => {
+		const entryCount = 33;
+		const entryArr: number[] = [];
 
-			db2 = (await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1]
-			))!;
+		const db1 = await session.peers[0].open(new EventStore<string>());
+		const db3 = await session.peers[0].open(new EventStore<string>());
 
-			await db1.waitFor(session.peers[1].peerId);
-			await db2.waitFor(session.peers[0].peerId);
+		// Create the entries in the first database
+		for (let i = 0; i < entryCount; i++) {
+			entryArr.push(i);
+		}
 
-			expect(db1.address).toBeDefined();
-			expect(db2.address).toBeDefined();
-			expect(db1.address!.toString()).toEqual(db2.address!.toString());
+		await mapSeries(entryArr, (i) => db1.add("hello" + i));
 
-			await mapSeries(adds, add);
+		// Open the second database
+		const db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		))!;
 
-			// All entries should be in the database
-			await waitForResolved(async () =>
-				expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
-					entryCount * 2
-				)
-			);
+		const db4 = (await EventStore.open<EventStore<string>>(
+			db3.address!,
+			session.peers[1]
+		))!;
 
-			// Database values should match
+		await waitForResolved(async () =>
+			expect((await db2.iterator({ limit: -1 })).collect()).toHaveLength(
+				entryCount
+			)
+		);
 
-			await waitForResolved(() =>
-				expect(db1.log.log.values.length).toEqual(db2.log.log.values.length)
-			);
+		const result1 = (await db1.iterator({ limit: -1 })).collect();
+		const result2 = (await db2.iterator({ limit: -1 })).collect();
+		expect(result1.length).toEqual(result2.length);
+		for (let i = 0; i < result1.length; i++) {
+			expect(result1[i].equals(result2[i])).toBeTrue();
+		}
 
-			const values1 = (await db1.iterator({ limit: -1 })).collect();
-			const values2 = (await db2.iterator({ limit: -1 })).collect();
-			expect(values1.length).toEqual(values2.length);
-			for (let i = 0; i < values1.length; i++) {
-				expect(values1[i].equals(values2[i])).toBeTrue();
-			}
-			// All entries should be in the database
-			expect(values1.length).toEqual(entryCount * 2);
-			expect(values2.length).toEqual(entryCount * 2);
-		});
+		expect(db3.log.log.length).toEqual(0);
+		expect(db4.log.log.length).toEqual(0);
+	});
+
+	it("starts replicating the database when peers connect in write mode", async () => {
+		const entryCount = 1;
+		const entryArr: number[] = [];
+		const db1 = await session.peers[0].open(new EventStore<string>());
+
+		// Create the entries in the first database
+		for (let i = 0; i < entryCount; i++) {
+			entryArr.push(i);
+		}
+
+		await mapSeries(entryArr, (i) => db1.add("hello" + i));
+
+		// Open the second database
+		const db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		))!;
+
+		await waitForResolved(async () =>
+			expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
+				entryCount
+			)
+		);
+		const result1 = (await db1.iterator({ limit: -1 })).collect();
+		const result2 = (await db2.iterator({ limit: -1 })).collect();
+		expect(result1.length).toEqual(result2.length);
+		for (let i = 0; i < result1.length; i++) {
+			expect(result1[i].equals(result2[i])).toBeTrue();
+		}
 	});
 });
 
@@ -789,10 +824,10 @@ describe("replication degree", () => {
 
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
-		await delay(3000);
-		await expect(
-			async () => (await db1.log.prune([e1.entry], { timeout: 3000 }))[0]
-		).rejects.toThrowError("Timeout for checked pruning");
+
+		await expect(() =>
+			Promise.all(db1.log.prune([e1.entry], { timeout: 3000 }))
+		).rejects.toThrow("Timeout for checked pruning");
 		expect(db1.log.log.length).toEqual(1); // No deletions
 	});
 
@@ -828,8 +863,8 @@ describe("replication degree", () => {
 		await waitForResolved(() => expect(db1.log.log.length).toEqual(1));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 		await expect(() =>
-			db1.log.prune([e1.entry], { timeout: 3000 })
-		).rejects.toThrowError("Failed to delete, is leader");
+			Promise.all(db1.log.prune([e1.entry], { timeout: 3000 }))
+		).rejects.toThrow("Failed to delete, is leader");
 		expect(db1.log.log.length).toEqual(1); // No deletions */
 	});
 
@@ -970,8 +1005,8 @@ describe("replication degree", () => {
 		};
 		const { entry } = await db1.add("hello");
 		const expectPromise = expect(() =>
-			db1.log.prune([entry], { timeout: 3000 })
-		).rejects.toThrowError("Timeout");
+			Promise.all(db1.log.prune([entry], { timeout: 3000 }))
+		).rejects.toThrow("Timeout");
 		await waitForResolved(() =>
 			expect(db2.log["_pendingIHave"].size).toEqual(1)
 		);

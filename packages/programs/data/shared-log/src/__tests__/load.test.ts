@@ -4,7 +4,7 @@ import mapSeries from "p-each-series";
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
 
-describe(`Replicate and Load`, function () {
+describe("load", function () {
 	let session: TestSession;
 
 	beforeAll(async () => {
@@ -16,7 +16,7 @@ describe(`Replicate and Load`, function () {
 		await session.stop();
 	});
 
-	describe("two peers", function () {
+	describe("load", function () {
 		let db1: EventStore<string>, db2: EventStore<string>;
 
 		const openDatabases = async () => {

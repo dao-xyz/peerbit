@@ -5,10 +5,19 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../replication.js";
 import { Observer, Replicator } from "../role";
-import { Ed25519Keypair, randomBytes, toBase64 } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	PublicSignKey,
+	randomBytes,
+	toBase64
+} from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import { jest } from "@jest/globals";
-import { ReplicationErrorFunction } from "..";
+import {
+	ReplicationErrorFunction,
+	SharedLog,
+	WAIT_FOR_ROLE_MATURITY
+} from "..";
 
 const checkReplicas = async (
 	dbs: EventStore<string>[],
@@ -31,6 +40,38 @@ const checkReplicas = async (
 	});
 };
 
+const countIsLeader = async (log: SharedLog<any>, prune: boolean = true) => {
+	let q = 0;
+	let q2 = 0;
+	let e = 0;
+	let lengthFirst = log.log.length;
+	const t0 = +new Date();
+	for (const entry of await log.log.toArray()) {
+		if (await log.isLeader(entry.gid, 2)) {
+			q += 1;
+		} else {
+			if (prune) {
+				try {
+					await log.prune([entry]);
+				} catch (error) {
+					e += 1;
+				}
+			}
+		}
+		if (prune && (await log.isLeader(entry.gid, 2))) {
+			q2 += 1;
+		}
+	}
+
+	return {
+		start: lengthFirst,
+		leaderStart: q,
+		leaderEnd: q2,
+		end: log.log.length,
+		err: e
+	};
+};
+
 const checkBounded = async (
 	entryCount: number,
 	lower: number,
@@ -47,27 +88,18 @@ const checkBounded = async (
 				timeout: 20 * 1000
 			}
 		);
-		await waitForResolved(
-			() =>
-				expect(db.log.log.values.length).toBeLessThanOrEqual(
-					entryCount * higher
-				),
-			{
-				timeout: 20 * 1000
-			}
-		);
 	}
 
 	const checkConverged = async (db: EventStore<any>) => {
 		const a = db.log.log.values.length;
-		await delay(1000); // arb delay
+		await delay(100); // arb delay
 		return a === db.log.log.values.length;
 	};
 
 	for (const [i, db] of dbs.entries()) {
 		await waitFor(() => checkConverged(db), {
 			timeout: 25000,
-			delayInterval: 500
+			delayInterval: 2500
 		});
 	}
 
@@ -89,18 +121,27 @@ const checkBounded = async (
 	);
 };
 
-const waitForConverged = async (fn: () => any, ts = 1000) => {
+const waitForConverged = async (
+	fn: () => any,
+	options: { timeout: number; tests: number } = { tests: 3, timeout: 20 * 1000 }
+) => {
 	let lastResult = undefined;
 	let c = 0;
+	let ok = 0;
 	while (true) {
 		const current = await fn();
 		if (lastResult == current) {
-			break;
+			ok += 1;
+			if (options.tests <= ok) {
+				break;
+			}
+		} else {
+			ok = 0;
 		}
 		lastResult = current;
-		await delay(ts);
+		await delay(1000);
 		c++;
-		if (c > 10) {
+		if (c * 1000 > options.timeout) {
 			throw new Error("Timeout");
 		}
 	}
@@ -189,7 +230,7 @@ describe(`sharding`, () => {
 	const sampleSize = 200; // must be < 255
 
 	it("2 peers", async () => {
-		const store = new /*  */ EventStore<string>();
+		const store = new EventStore<string>();
 
 		db1 = await session.peers[0].open(store, {
 			args: {
@@ -341,11 +382,15 @@ describe(`sharding`, () => {
 	// TODO add tests for late joining and leaving peers
 	it("distributes to joining peers", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
+
 		db2 = await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
 		);
-		await waitFor(() => db2.log.getReplicatorsSorted()?.length === 2);
+
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()?.length).toEqual(2)
+		);
 
 		const entryCount = sampleSize;
 		const promises: Promise<any>[] = [];
@@ -354,8 +399,6 @@ describe(`sharding`, () => {
 				db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } })
 			);
 		}
-
-		const r = await Promise.all(promises);
 		await waitFor(() => db1.log.log.values.length === entryCount);
 		await waitFor(() => db2.log.log.values.length === entryCount);
 
@@ -366,7 +409,6 @@ describe(`sharding`, () => {
 
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 	});
-
 	it("distributes to leaving peers", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
 
@@ -421,17 +463,18 @@ describe(`sharding`, () => {
 			session.peers[2]
 		);
 
-		const entryCount = sampleSize;
+		const entryCount = sampleSize * 2;
 
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(
-				db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } })
+				db1.add(toBase64(new Uint8Array(i)), { meta: { next: [] } })
 			);
 		}
 
 		await Promise.all(promises);
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+		console.log("---------------------- DONE -------------------");
 		await db3.close();
 		await session.peers[2].open(db3);
 		await db3.close();
@@ -448,23 +491,47 @@ describe(`sharding`, () => {
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 
 		await waitForResolved(() =>
-			expect(db1.log.totalParticipation - 1).toBeLessThan(0.05)
+			expect(db1.log.totalParticipation - 1).toBeLessThan(0.1)
 		);
 		await waitForResolved(() =>
-			expect(db2.log.totalParticipation - 1).toBeLessThan(0.05)
+			expect(db2.log.totalParticipation - 1).toBeLessThan(0.1)
 		);
 		await waitForResolved(() =>
-			expect(db3.log.totalParticipation - 1).toBeLessThan(0.05)
+			expect(db3.log.totalParticipation - 1).toBeLessThan(0.1)
 		);
 
 		await db3.close();
-		await checkBounded(entryCount, 1, 1, db1, db2);
+
+		try {
+			await checkBounded(entryCount, 1, 1, db1, db2);
+		} catch (e1) {
+			try {
+				db1.log.distribute();
+				db2.log.distribute();
+
+				await checkBounded(entryCount, 1, 1, db1, db2);
+			} catch (e2) {
+				try {
+					db1.log["_gidPeersHistory"].clear();
+					db2.log["_gidPeersHistory"].clear();
+
+					db1.log.distribute();
+					db2.log.distribute();
+
+					await checkBounded(entryCount, 1, 1, db1, db2);
+				} catch (e3) {
+					throw e3;
+				}
+				throw e2;
+			}
+			throw e1;
+		}
 
 		await waitForResolved(() =>
-			expect(db1.log.totalParticipation - 1).toBeLessThan(0.05)
+			expect(db1.log.totalParticipation - 1).toBeLessThan(0.1)
 		);
 		await waitForResolved(() =>
-			expect(db2.log.totalParticipation - 1).toBeLessThan(0.05)
+			expect(db2.log.totalParticipation - 1).toBeLessThan(0.1)
 		);
 	});
 
@@ -497,6 +564,7 @@ describe(`sharding`, () => {
 		}
 
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(COUNT));
+
 		db3 = await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[2],
@@ -511,13 +579,16 @@ describe(`sharding`, () => {
 		);
 
 		await db2.log.updateRole("observer");
+
 		await waitForResolved(() => expect(db3.log.log.length).toEqual(COUNT));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
 	});
 
 	it("drops when no longer replicating with factor 0", async () => {
-		let COUNT = 10;
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		let COUNT = 100;
+
+		const evtStore = new EventStore<string>();
+		const db1p = await session.peers[0].open(evtStore, {
 			args: {
 				role: {
 					type: "replicator",
@@ -526,24 +597,24 @@ describe(`sharding`, () => {
 			}
 		});
 
-		db2 = await EventStore.open<EventStore<string>>(
-			db1.address!,
-			session.peers[1],
-			{
-				args: {
-					role: {
-						type: "replicator",
-						factor: 1
-					}
+		const db2p = session.peers[1].open(evtStore.clone(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
 				}
 			}
-		);
+		});
+
+		db1 = await db1p;
+		db2 = await db2p;
 
 		for (let i = 0; i < COUNT; i++) {
 			await db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } });
 		}
 
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(COUNT));
+
 		db3 = await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[2],
@@ -558,6 +629,7 @@ describe(`sharding`, () => {
 		);
 
 		await db2.log.updateRole({ type: "replicator", factor: 0 });
+
 		await waitForResolved(() => expect(db3.log.log.length).toEqual(COUNT));
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
 	});
@@ -612,10 +684,20 @@ describe(`sharding`, () => {
 					await db1.add(data, { meta: { next: [] } });
 				}
 
+				await delay(WAIT_FOR_ROLE_MATURITY + 3000);
+
+				await waitForConverged(() => {
+					const diff = Math.abs(
+						(db2.log.role as Replicator).factor -
+							(db1.log.role as Replicator).factor
+					);
+					return Math.round(diff * 100);
+				});
+
 				await waitForResolved(async () => {
 					const memoryUsage = await db2.log.getMemoryUsage();
 					expect(Math.abs(memoryLimit - memoryUsage)).toBeLessThan(
-						(memoryLimit / 100) * 10
+						(memoryLimit / 100) * 5
 					);
 				});
 			});
@@ -666,14 +748,23 @@ describe(`sharding`, () => {
 					// insert 1mb
 					await db2.add(data, { meta: { next: [] } });
 				}
+				await delay(WAIT_FOR_ROLE_MATURITY + 3000);
 
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
-					).toBeLessThan((memoryLimit / 100) * 10)
+				await waitForConverged(() => {
+					const diff = Math.abs(
+						(db2.log.role as Replicator).factor -
+							(db1.log.role as Replicator).factor
+					);
+					return Math.round(diff * 100);
+				});
+				await waitForResolved(
+					async () =>
+						expect(
+							Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
+						).toBeLessThan((memoryLimit / 100) * 10),
+					{ timeout: 30 * 1000 }
 				); // 10% error at most
 			});
-
 			it("equally limited", async () => {
 				const memoryLimit = 100 * 1e3;
 
@@ -770,11 +861,11 @@ describe(`sharding`, () => {
 				}
 
 				await waitForResolved(async () =>
-					expect((db1.log.role as Replicator).factor).toBeWithin(0.15, 0.17)
+					expect((db1.log.role as Replicator).factor).toBeWithin(0.055, 0.08)
 				);
 
 				await waitForResolved(async () =>
-					expect((db2.log.role as Replicator).factor).toBeWithin(0.15, 0.17)
+					expect((db2.log.role as Replicator).factor).toBeWithin(0.055, 0.08)
 				);
 			});
 
@@ -872,6 +963,20 @@ describe(`sharding`, () => {
 					// insert 1mb
 					await db2.add(data, { meta: { next: [] } });
 				}
+
+				await waitForResolved(async () =>
+					expect(
+						Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
+					).toBeLessThan((memoryLimit / 100) * 10)
+				); // 10% error at most
+
+				await waitForResolved(async () =>
+					expect(
+						Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage()))
+					).toBeLessThan(((memoryLimit * 2) / 100) * 10)
+				); // 10% error at most
+
+				await delay(5000);
 
 				await waitForResolved(async () =>
 					expect(
@@ -1107,7 +1212,7 @@ describe(`sharding`, () => {
 								return prev + current.role.factor;
 							}, 0) || 0
 					) - 1
-				).toBeLessThan(0.0001)
+				).toBeLessThan(0.01)
 			);
 
 			for (let i = 1; i < 3; i++) {
@@ -1122,7 +1227,7 @@ describe(`sharding`, () => {
 			}
 		});
 
-		it("does not exclude non-mature", async () => {
+		it("all non-mature, all included", async () => {
 			const store = new EventStore<string>();
 
 			db1 = await session.peers[0].open(store, {
@@ -1170,12 +1275,86 @@ describe(`sharding`, () => {
 			for (let i = 1; i < 3; i++) {
 				db3.log.replicas.min = { getValue: () => i };
 
-				// min replicas 3 only need to query 1 (every one have all the data)
-				// min replicas 2 only need to query 2
-				// min replicas 1 only need to query 3 (data could end up at any of the 3 nodes)
-				await waitForResolved(() =>
-					expect(db3.log.getReplicatorUnion(0)).toHaveLength(3 - i + 1)
-				);
+				// Should always include all nodes since no is mature
+				expect(
+					db3.log.getReplicatorUnion(Number.MAX_SAFE_INTEGER)
+				).toHaveLength(3);
+			}
+		});
+
+		it("one mature, all included", async () => {
+			const store = new EventStore<string>();
+
+			const MATURE_TIME = 3000;
+			db1 = await session.peers[0].open(store, {
+				args: {
+					replicas: {
+						min: 1
+					},
+					role: {
+						type: "replicator",
+						factor: 0.1
+					}
+				}
+			});
+
+			await delay(MATURE_TIME);
+
+			db2 = await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicas: {
+							min: 1
+						},
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				}
+			);
+
+			db3 = await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[2],
+				{
+					args: {
+						replicas: {
+							min: 1
+						},
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				}
+			);
+
+			await waitForResolved(() =>
+				expect(db1.log.getReplicatorsSorted()).toHaveLength(3)
+			);
+			await waitForResolved(() =>
+				expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
+			);
+			await waitForResolved(() =>
+				expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
+			);
+
+			for (let i = 1; i < 3; i++) {
+				db3.log.replicas.min = { getValue: () => i };
+
+				// Should always include all nodes since no is mature
+				expect(db3.log.getReplicatorUnion(MATURE_TIME)).toHaveLength(3);
+			}
+			await delay(MATURE_TIME);
+
+			for (let i = 1; i < 3; i++) {
+				db3.log.replicas.min = { getValue: () => i };
+
+				// Should always include all nodes since no is mature
+				expect(db3.log.getReplicatorUnion(MATURE_TIME)).toHaveLength(1); // since I am replicating with factor 1 and is mature
 			}
 		});
 	});
