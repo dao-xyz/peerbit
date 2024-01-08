@@ -40,6 +40,7 @@ import { Cache } from "@peerbit/cache";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { SharedLog } from "@peerbit/shared-log";
 import { concat, fromString } from "uint8arrays";
+import { SilentDelivery } from "@peerbit/stream-interface";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -387,6 +388,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 							canRead: properties.canRead
 						}
 					);
+
 					return new Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
 						results: results.results.map(
@@ -491,6 +493,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		}
 	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
+
 		if (query instanceof SearchRequest) {
 			// Special case querying ids
 			if (
@@ -815,7 +818,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					try {
 						if (queryRequest instanceof CloseIteratorRequest) {
 							// don't wait for responses
-							await this._query.request(queryRequest, { to: remote!.to });
+							await this._query.request(queryRequest, { mode: remote!.mode });
 						} else {
 							await queryAll(
 								this._query,
@@ -1045,7 +1048,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								.request(collectRequest, {
 									...options,
 									stopper: (fn) => stopperFns.push(fn),
-									to: [peer]
+									mode: new SilentDelivery({ to: [peer], redundancy: 1 })
 								})
 								.then((response) =>
 									introduceEntries(response, this.type, this._sync, options)
@@ -1177,7 +1180,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					promises.push(
 						this._query.send(closeRequest, {
 							...options,
-							to: [peer]
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 })
 						})
 					);
 				}
