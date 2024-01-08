@@ -39,10 +39,6 @@ describe("replication", function () {
 			}
 			buffer1.push(message.data);
 			processing++;
-			process.stdout.write("\r");
-			process.stdout.write(
-				`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`
-			);
 			await log1.join(deserialize(message.data, StringArray).arr);
 			processing--;
 		};
@@ -53,10 +49,6 @@ describe("replication", function () {
 			}
 			buffer2.push(message.data);
 			processing++;
-			process.stdout.write("\r");
-			process.stdout.write(
-				`> Buffer1: ${buffer1.length} - Buffer2: ${buffer2.length}`
-			);
 			await log2.join(deserialize(message.data, StringArray).arr);
 			processing--;
 		};
