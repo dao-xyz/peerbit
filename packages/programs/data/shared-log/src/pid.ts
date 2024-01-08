@@ -5,10 +5,10 @@ export type ReplicationErrorFunction = (objectives: {
 }) => number;
 
 export class PIDReplicationController {
-	integral = 0;
-	prevError = 0;
-	prevMemoryUsage = 0;
-	lastTs = 0;
+	integral: number;
+	prevError: number;
+	prevMemoryUsage: number;
+	lastTs: number;
 	kp: number;
 	ki: number;
 	kd: number;
@@ -25,12 +25,13 @@ export class PIDReplicationController {
 	) {
 		const {
 			targetMemoryLimit,
-			kp = 0.1,
-			ki = 0 /* 0.01, */,
-			kd = 0.1,
+			kp = 0.5,
+			ki = 0.1,
+			kd = 0.25,
 			errorFunction = ({ balance, coverage, memory }) =>
 				memory * 0.8 + balance * 0.1 + coverage * 0.1
 		} = options;
+		this.reset();
 		this.kp = kp;
 		this.ki = ki;
 		this.kd = kd;
@@ -45,12 +46,8 @@ export class PIDReplicationController {
 		peerCount: number
 	) {
 		this.prevMemoryUsage = memoryUsage;
-		if (memoryUsage <= 0) {
-			this.integral = 0;
-		}
 
 		const estimatedTotalSize = memoryUsage / currentFactor;
-		const errorCoverage = Math.min(1 - totalFactor, 1);
 
 		let errorMemory = 0;
 		const errorTarget = 1 / peerCount - currentFactor;
@@ -65,11 +62,24 @@ export class PIDReplicationController {
 					: 0.0001;
 		}
 
-		const totalError = this.errorFunction({
+		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
+		const includeCoverageError =
+			Math.max(Math.abs(errorTarget), Math.abs(errorMemory)) < 0.01;
+		const errorCoverage = includeCoverageError ? errorCoverageUnmodified : 0; /// 1 / (Math.max(Math.abs(errorTarget), Math.abs(errorMemory))) * errorCoverage / 100;
+
+		let totalError = this.errorFunction({
 			balance: errorTarget,
 			coverage: errorCoverage,
 			memory: errorMemory
 		});
+
+		if (totalError === 0 && !includeCoverageError) {
+			totalError = this.errorFunction({
+				balance: errorTarget,
+				coverage: errorCoverageUnmodified,
+				memory: errorMemory
+			});
+		}
 
 		if (this.lastTs === 0) {
 			this.lastTs = +new Date();
@@ -84,7 +94,7 @@ export class PIDReplicationController {
 
 		// Integral term
 		this.integral += totalError;
-		const beta = 0.4;
+		const beta = 0.5;
 		this.integral = beta * totalError + (1 - beta) * this.integral;
 
 		const iTerm = this.ki * this.integral;
@@ -94,11 +104,38 @@ export class PIDReplicationController {
 		const dTerm = this.kd * derivative;
 
 		// Calculate the new replication factor
-		const newFactor = currentFactor + pTerm + iTerm + dTerm;
+		const change = pTerm + iTerm + dTerm;
+		const newFactor = currentFactor + change;
 
 		// Update state for the next iteration
 		this.prevError = totalError;
 
+		if (newFactor < 0 || newFactor > 1) {
+			this.integral = 0;
+		}
+
+		/* console.log({
+			newFactor,
+			currentFactor,
+			pTerm,
+			dTerm,
+			iTerm,
+			kpAdjusted,
+			totalError,
+			errorTarget,
+			errorCoverage,
+			errorMemory,
+			peerCount,
+			totalFactor
+		}); */
+
 		return Math.max(Math.min(newFactor, 1), 0);
+	}
+
+	reset() {
+		this.prevError = 0;
+		this.integral = 0;
+		this.prevMemoryUsage = 0;
+		this.lastTs = 0;
 	}
 }
