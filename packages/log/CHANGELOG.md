@@ -214,6 +214,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.5 to 2.0.6
 
+## [3.0.7](https://github.com/dao-xyz/peerbit/compare/log-v3.0.6...log-v3.0.7) (2024-01-08)
+
+
+### Bug Fixes
+
+* remove log ([88cf9a9](https://github.com/dao-xyz/peerbit/commit/88cf9a9202d3001b04959b699737a95e13348515))
+* rm comment ([6b9cb92](https://github.com/dao-xyz/peerbit/commit/6b9cb92f692785692a4f11da59d5bde0d348b51f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.0 to 2.0.1
+    * @peerbit/blocks-interface bumped from ^1.2.1 to ^1.2.2
+    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.6 to 2.0.7
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/log-v2.1.10...log-v3.0.0) (2023-12-31)
 
 

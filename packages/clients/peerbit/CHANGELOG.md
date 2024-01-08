@@ -150,6 +150,16 @@
     * @peerbit/pubsub bumped from ^2.0.2 to ^2.0.3
     * @peerbit/blocks bumped from ^2.0.3 to ^2.0.4
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^1.0.4 to ^1.0.5
+    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
+    * @peerbit/program bumped from 3.0.5 to 3.0.6
+    * @peerbit/pubsub bumped from ^2.0.4 to ^2.0.5
+    * @peerbit/blocks bumped from ^2.0.5 to ^2.0.6
+
 ## [3.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.5...peerbit-v3.0.6) (2024-01-03)
 
 

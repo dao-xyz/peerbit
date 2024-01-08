@@ -65,6 +65,24 @@
     * @peerbit/pubsub-interface bumped from ^2.0.1 to ^2.0.2
     * @peerbit/any-store bumped from ^1.0.3 to ^1.0.4
 
+## [3.0.6](https://github.com/dao-xyz/peerbit/compare/program-v3.0.5...program-v3.0.6) (2024-01-08)
+
+
+### Bug Fixes
+
+* throw AbortError ([9aa5b1a](https://github.com/dao-xyz/peerbit/commit/9aa5b1a47c34db788e70231091744743d426e712))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
+    * @peerbit/keychain bumped from ^1.0.3 to ^1.0.4
+    * @peerbit/blocks-interface bumped from ^1.2.1 to ^1.2.2
+    * @peerbit/pubsub-interface bumped from ^2.0.2 to ^2.0.3
+    * @peerbit/any-store bumped from ^1.0.4 to ^1.0.5
+
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/program-v3.0.1...program-v3.0.2) (2024-01-01)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/time-v2.0.0...time-v2.0.1) (2024-01-08)
+
+
+### Bug Fixes
+
+* return type never undefined for waitFor ([20baa65](https://github.com/dao-xyz/peerbit/commit/20baa650028ebf8a435d251ac10e77667bf64d5c))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/time-v1.0.4...time-v2.0.0) (2023-12-31)
 
 

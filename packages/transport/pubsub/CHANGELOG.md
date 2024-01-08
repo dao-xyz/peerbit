@@ -112,6 +112,22 @@
   * dependencies
     * @peerbit/stream bumped from 2.0.2 to 2.0.3
 
+## [2.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.4...pubsub-v2.0.5) (2024-01-08)
+
+
+### Bug Fixes
+
+* remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 2.0.4 to 2.0.5
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.0 to 2.0.1
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.3...pubsub-v2.0.4) (2024-01-03)
 
 

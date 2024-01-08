@@ -146,6 +146,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.5 to 2.0.6
 
+## [2.0.7](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.6...proxy-v2.0.7) (2024-01-08)
+
+
+### Bug Fixes
+
+* remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^3.0.5 to ^3.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.6 to 2.0.7
+
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.1...proxy-v2.0.2) (2024-01-01)
 
 

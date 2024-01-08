@@ -249,6 +249,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.5 to ^2.0.6
 
+## [3.0.7](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.6...rpc-v3.0.7) (2024-01-08)
+
+
+### Bug Fixes
+
+* remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
+    * @peerbit/program bumped from 3.0.5 to 3.0.6
+    * @peerbit/time bumped from 2.0.0 to 2.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.6 to ^2.0.7
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/rpc-v2.1.17...rpc-v3.0.0) (2023-12-31)
 
 

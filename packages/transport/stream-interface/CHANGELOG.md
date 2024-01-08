@@ -42,6 +42,20 @@
   * dependencies
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/stream-interface-v2.0.1...stream-interface-v2.0.2) (2024-01-08)
+
+
+### Bug Fixes
+
+* continously update and invalidate routes ([26b424b](https://github.com/dao-xyz/peerbit/commit/26b424b3616869f6c10260a04817167b03d431a1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v1.0.11...stream-interface-v2.0.0) (2023-12-31)
 
 
