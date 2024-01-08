@@ -53,7 +53,8 @@ export class RequestHeadsMessage extends TransportMessage {
 }
 
 @variant([0, 2])
-export class RequestIHave extends TransportMessage {
+export class RequestIPrune extends TransportMessage {
+	// Hashes which I want to prune
 	@field({ type: vec("string") })
 	hashes: string[];
 
@@ -64,7 +65,8 @@ export class RequestIHave extends TransportMessage {
 }
 
 @variant([0, 3])
-export class ResponseIHave extends TransportMessage {
+export class ResponseIPrune extends TransportMessage {
+	// Hashes I am allowed to prune
 	@field({ type: vec("string") })
 	hashes: string[];
 

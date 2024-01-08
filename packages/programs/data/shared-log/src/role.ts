@@ -1,16 +1,26 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 
-export abstract class Role {}
+export abstract class Role {
+	abstract equals(other: Role);
+}
 
 export const NO_TYPE_VARIANT = new Uint8Array([0]);
 
 @variant(0)
-export class NoType extends Role {}
+export class NoType extends Role {
+	equals(other: Role) {
+		return other instanceof NoType;
+	}
+}
 
 export const OBSERVER_TYPE_VARIANT = new Uint8Array([1]);
 
 @variant(1)
-export class Observer extends Role {}
+export class Observer extends Role {
+	equals(other: Role) {
+		return other instanceof Observer;
+	}
+}
 
 export const REPLICATOR_TYPE_VARIANT = new Uint8Array([2]);
 
@@ -83,5 +93,13 @@ export class Replicator extends Role {
 
 	get timestamp(): bigint {
 		return this.segments[0]!.timestamp;
+	}
+
+	equals(other: Role) {
+		return (
+			other instanceof Replicator &&
+			other.factor === this.factor &&
+			other.offset === this.offset
+		);
 	}
 }

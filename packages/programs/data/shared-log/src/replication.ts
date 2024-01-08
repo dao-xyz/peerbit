@@ -56,10 +56,9 @@ export class ResponseRoleMessage extends TransportMessage {
 	@field({ type: option(Role) })
 	role: Observer | Replicator;
 
-	constructor(role: Observer | Replicator) {
+	constructor(properties: { role: Observer | Replicator }) {
 		super();
-
-		this.role = role;
+		this.role = properties.role;
 	}
 }
 
