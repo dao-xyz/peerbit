@@ -474,7 +474,6 @@ describe(`sharding`, () => {
 
 		await Promise.all(promises);
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
-		console.log("---------------------- DONE -------------------");
 		await db3.close();
 		await session.peers[2].open(db3);
 		await db3.close();
