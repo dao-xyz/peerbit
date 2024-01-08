@@ -454,7 +454,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					message,
 					new pubsub.RESP_Publish(
 						await this.services.pubsub.publish(message.data, {
-							to: message.to!,
+							mode: message.mode!,
 							topics: message.topics!,
 							client: from.id
 						})

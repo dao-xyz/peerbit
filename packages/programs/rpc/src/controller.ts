@@ -21,7 +21,11 @@ import {
 	PublishOptions as PubSubPublishOptions
 } from "@peerbit/pubsub-interface";
 import { Program } from "@peerbit/program";
-import { DataMessage } from "@peerbit/stream-interface";
+import {
+	DataMessage,
+	SilentDelivery,
+	deliveryModeHasReceiver
+} from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
 import { waitFor } from "@peerbit/time";
 
@@ -84,7 +88,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 	private async _close(from?: Program): Promise<void> {
 		if (this._subscribed) {
-			await this.node.services.pubsub.unsubscribe(this.rpcTopic);
+			await this.node.services.pubsub.unsubscribe(this.topic);
 			await this.node.services.pubsub.removeEventListener(
 				"data",
 				this._onMessageBinded
@@ -123,16 +127,16 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 		this.node.services.pubsub.addEventListener("data", this._onMessageBinded!);
 
-		this._subscribing = this.node.services.pubsub.subscribe(this.rpcTopic);
+		this._subscribing = this.node.services.pubsub.subscribe(this.topic);
 
 		await this._subscribing;
-		logger.debug("subscribing to query topic (responses): " + this.rpcTopic);
+		logger.debug("subscribing to query topic (responses): " + this.topic);
 	}
 
-	async _onMessage(evt: CustomEvent<DataEvent>): Promise<void> {
+	private async _onMessage(evt: CustomEvent<DataEvent>): Promise<void> {
 		const { data, message } = evt.detail;
 
-		if (data?.topics.find((x) => x === this.rpcTopic) != null) {
+		if (data?.topics.find((x) => x === this.topic) != null) {
 			try {
 				const rpcMessage = deserialize(data.data, RPCMessage);
 				if (rpcMessage instanceof RequestV0) {
@@ -176,8 +180,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 									})
 								),
 								{
-									topics: [this.rpcTopic],
-									to: [message.header.signatures!.publicKeys[0]]
+									topics: [this.topic],
+
+									/// TODO make redundancy parameter configurable?
+									mode: new SilentDelivery({
+										to: [message.header.signatures!.publicKeys[0]],
+										redundancy: 1
+									})
 								}
 							);
 						}
@@ -246,13 +255,10 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	}
 
 	private getPublishOptions(options?: PublishOptions): PubSubPublishOptions {
-		return options?.to
-			? {
-					mode: options?.mode,
-					to: options.to,
-					topics: [this.rpcTopic]
-				}
-			: { mode: options?.mode, topics: [this.rpcTopic] };
+		return {
+			mode: options?.mode,
+			topics: [this.topic]
+		};
 	}
 
 	/**
@@ -358,10 +364,8 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		);
 
 		const expectedResponders =
-			options?.to && options.to.length > 0
-				? new Set(
-						options.to.map((x) => (typeof x === "string" ? x : x.hashcode()))
-					)
+			options?.mode && deliveryModeHasReceiver(options.mode)
+				? new Set(options.mode.to)
 				: undefined;
 
 		const responders = new Set<string>();
@@ -401,7 +405,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		return allResults;
 	}
 
-	public get rpcTopic(): string {
+	public get topic(): string {
 		if (!this._rpcTopic) {
 			throw new Error("Not initialized");
 		}
@@ -409,6 +413,6 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	}
 
 	getTopics(): string[] {
-		return [this.rpcTopic];
+		return [this.topic];
 	}
 }

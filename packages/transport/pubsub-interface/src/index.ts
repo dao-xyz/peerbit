@@ -108,12 +108,10 @@ type MaybePromise<T> = Promise<T> | T;
 export type PublishOptions = (
 	| {
 			topics?: string[];
-			to?: (string | PublicSignKey | Libp2pPeerId)[];
 			mode?: DeliveryMode | undefined;
 	  }
 	| {
 			topics: string[];
-			to: (string | PublicSignKey | Libp2pPeerId)[];
 			mode?: DeliveryMode | undefined;
 	  }
 ) & { client?: string };

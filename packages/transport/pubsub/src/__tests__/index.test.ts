@@ -1,4 +1,9 @@
-import { DataMessage, Message } from "@peerbit/stream-interface";
+import {
+	AcknowledgeDelivery,
+	DataMessage,
+	Message,
+	SilentDelivery
+} from "@peerbit/stream-interface";
 import { waitForPeers } from "@peerbit/stream";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitFor, delay, waitForResolved } from "@peerbit/time";
@@ -191,162 +196,172 @@ describe("pubsub", function () {
 		const data = new Uint8Array([1, 2, 3]);
 		const TOPIC = "world";
 
-		describe("line", () => {
-			beforeEach(async () => {
-				// 0 and 2 not connected
-				session = await TestSession.disconnected(3, {
-					services: {
-						pubsub: (c) =>
-							new DirectSub(c, {
-								canRelayMessage: true,
-								connectionManager: false
-							})
+		describe("topology", () => {
+			describe("line", () => {
+				beforeEach(async () => {
+					// 0 and 2 not connected
+					session = await TestSession.disconnected(3, {
+						services: {
+							pubsub: (c) =>
+								new DirectSub(c, {
+									canRelayMessage: true,
+									connectionManager: false
+								})
+						}
+					});
+
+					/* 
+					┌─┐
+					│1│
+					└┬┘
+					┌▽┐
+					│2│
+					└┬┘
+					┌▽┐
+					│3│
+					└─┘
+					*/
+
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]]
+					]);
+
+					streams = [];
+					for (const peer of session.peers) {
+						streams.push(createMetrics(peer.services.pubsub));
+					}
+					await waitForPeers(streams[0].stream, streams[1].stream);
+					await waitForPeers(streams[1].stream, streams[2].stream);
+					await subscribAndWait(session, TOPIC);
+				});
+
+				afterEach(async () => {
+					for (let i = 0; i < streams.length; i++) {
+						streams[i].stream.unsubscribe(TOPIC);
+					}
+					for (let i = 0; i < streams.length; i++) {
+						await waitFor(
+							() => !streams[i].stream.getSubscribers(TOPIC)?.length
+						);
+						expect(streams[i].stream.topics.has(TOPIC)).toBeFalse();
+						expect(streams[i].stream.subscriptions.has(TOPIC)).toBeFalse();
+					}
+
+					await session.stop();
+				});
+
+				it("0->TOPIC", async () => {
+					await streams[0].stream.publish(data, { topics: [TOPIC] });
+					await waitFor(() => streams[1].received.length === 1);
+					expect(new Uint8Array(streams[1].received[0].data)).toEqual(data);
+					expect(streams[1].received[0].topics).toEqual([TOPIC]);
+					await waitFor(() => streams[2].received.length === 1);
+					expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+					await delay(1500); // wait some more time to make sure we dont get more messages
+					expect(streams[1].received).toHaveLength(1);
+					expect(streams[2].received).toHaveLength(1);
+				});
+
+				it("0->TOPIC strict to", async () => {
+					await streams[0].stream.publish(data, {
+						topics: [TOPIC],
+						mode: new SilentDelivery({
+							to: [streams[2].stream.publicKey],
+							redundancy: 1
+						})
+					});
+					await waitForResolved(() =>
+						expect(streams[2].received).toHaveLength(1)
+					);
+					expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+					expect(streams[2].received[0].topics).toEqual([TOPIC]);
+					expect(streams[1].received).toHaveLength(0);
+					expect(streams[1].allReceived).toHaveLength(1); // because the message has to travel through this node
+
+					await delay(1500); // wait some more time to make sure we dont get more messages
+					expect(streams[1].received).toHaveLength(0);
+					expect(streams[1].allReceived).toHaveLength(1); // because the message has to travel through this node
+					expect(streams[2].received).toHaveLength(1);
+				});
+				it("1->TOPIC strict to", async () => {
+					await streams[1].stream.publish(data, {
+						topics: [TOPIC],
+						mode: new SilentDelivery({
+							to: [streams[2].stream.publicKey],
+							redundancy: 1
+						})
+					});
+					await waitForResolved(() =>
+						expect(streams[2].received).toHaveLength(1)
+					);
+					expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+					expect(streams[2].received[0].topics).toEqual([TOPIC]);
+					expect(streams[0].allReceived).toHaveLength(0);
+					await delay(1500); // wait some more time to make sure we dont get more messages
+					expect(streams[0].allReceived).toHaveLength(0);
+					expect(streams[2].received).toHaveLength(1);
+				});
+
+				it("sends only in necessary directions", async () => {
+					await streams[2].stream.unsubscribe(TOPIC);
+
+					await waitForResolved(() =>
+						expect(streams[1].stream.getSubscribers(TOPIC)!).toHaveLength(2)
+					);
+
+					const sendBytes = randomBytes(32);
+					await streams[1].stream.publish(sendBytes, { topics: [TOPIC] });
+
+					await waitFor(() => streams[0].received.length === 1);
+					await delay(1500); // wait some more time to make sure we dont get more messages
+
+					// Make sure we never received the data message in node 2
+					for (const message of streams[2].allReceived) {
+						expect(
+							equals(new Uint8Array(message.data), new Uint8Array(sendBytes))
+						).toBeFalse();
 					}
 				});
 
-				/* 
-				┌─┐
-				│1│
-				└┬┘
-				┌▽┐
-				│2│
-				└┬┘
-				┌▽┐
-				│3│
-				└─┘
-				*/
-
-				await session.connect([
-					[session.peers[0], session.peers[1]],
-					[session.peers[1], session.peers[2]]
-				]);
-
-				streams = [];
-				for (const peer of session.peers) {
-					streams.push(createMetrics(peer.services.pubsub));
-				}
-				await waitForPeers(streams[0].stream, streams[1].stream);
-				await waitForPeers(streams[1].stream, streams[2].stream);
-				await subscribAndWait(session, TOPIC);
-			});
-
-			afterEach(async () => {
-				for (let i = 0; i < streams.length; i++) {
-					streams[i].stream.unsubscribe(TOPIC);
-				}
-				for (let i = 0; i < streams.length; i++) {
-					await waitFor(() => !streams[i].stream.getSubscribers(TOPIC)?.length);
-					expect(streams[i].stream.topics.has(TOPIC)).toBeFalse();
-					expect(streams[i].stream.subscriptions.has(TOPIC)).toBeFalse();
-				}
-
-				await session.stop();
-			});
-
-			it("0->TOPIC", async () => {
-				await streams[0].stream.publish(data, { topics: [TOPIC] });
-				await waitFor(() => streams[1].received.length === 1);
-				expect(new Uint8Array(streams[1].received[0].data)).toEqual(data);
-				expect(streams[1].received[0].topics).toEqual([TOPIC]);
-				await waitFor(() => streams[2].received.length === 1);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
-				await delay(1500); // wait some more time to make sure we dont get more messages
-				expect(streams[1].received).toHaveLength(1);
-				expect(streams[2].received).toHaveLength(1);
-			});
-
-			it("0->TOPIC strict to", async () => {
-				await streams[0].stream.publish(data, {
-					topics: [TOPIC],
-					to: [streams[2].stream.publicKey]
+				/* TODO wanted feature?
+				
+				it("send without topic directly", async () => {
+					await streams[0].stream.publish(data, {
+						to: [streams[1].stream.components.peerId]
+					});
+					await waitFor(() => streams[1].received.length === 1);
+					expect(new Uint8Array(streams[1].received[0].data)).toEqual(data);
+					await delay(1500); // wait some more time to make sure we dont get more messages
+					expect(streams[1].received).toHaveLength(1);
+					expect(streams[2].received).toHaveLength(0);
 				});
-				await waitForResolved(() =>
-					expect(streams[2].received).toHaveLength(1)
-				);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
-				expect(streams[2].received[0].topics).toEqual([TOPIC]);
-				expect(streams[1].received).toHaveLength(0);
-				expect(streams[1].allReceived).toHaveLength(1); // because the message has to travel through this node
+	
+				it("send without topic over relay", async () => {
+					await streams[0].stream.publish(data, {
+						to: [streams[2].stream.components.peerId]
+					});
+					await waitFor(() => streams[2].received.length === 1);
+					expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+					await delay(1500); // wait some more time to make sure we dont get more messages
+					expect(streams[2].received).toHaveLength(1);
+					expect(streams[1].received).toHaveLength(0);
+				}); */
 
-				await delay(1500); // wait some more time to make sure we dont get more messages
-				expect(streams[1].received).toHaveLength(0);
-				expect(streams[1].allReceived).toHaveLength(1); // because the message has to travel through this node
-				expect(streams[2].received).toHaveLength(1);
+				/* TODO feature
+				it("can send as non subscribeer", async () => {
+	
+					await streams[0].stream.unsubscribe(TOPIC);
+					await streams[1].stream.unsubscribe(TOPIC);
+					await streams[0].stream.publish(data, { topics: [TOPIC] });
+					await waitFor(() => streams[2].received.length === 1);
+					expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
+					await delay(1500); // wait some more time to make sure we dont get more messages
+					expect(streams[1].received).toHaveLength(0);
+					expect(streams[2].received).toHaveLength(1);
+	
+				}); */
 			});
-			it("1->TOPIC strict to", async () => {
-				await streams[1].stream.publish(data, {
-					topics: [TOPIC],
-					to: [streams[2].stream.publicKey]
-				});
-				await waitForResolved(() =>
-					expect(streams[2].received).toHaveLength(1)
-				);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
-				expect(streams[2].received[0].topics).toEqual([TOPIC]);
-				expect(streams[0].allReceived).toHaveLength(0);
-				await delay(1500); // wait some more time to make sure we dont get more messages
-				expect(streams[0].allReceived).toHaveLength(0);
-				expect(streams[2].received).toHaveLength(1);
-			});
-
-			it("sends only in necessary directions", async () => {
-				await streams[2].stream.unsubscribe(TOPIC);
-
-				await waitForResolved(() =>
-					expect(streams[1].stream.getSubscribers(TOPIC)!).toHaveLength(2)
-				);
-
-				const sendBytes = randomBytes(32);
-				await streams[1].stream.publish(sendBytes, { topics: [TOPIC] });
-
-				await waitFor(() => streams[0].received.length === 1);
-				await delay(1500); // wait some more time to make sure we dont get more messages
-
-				// Make sure we never received the data message in node 2
-				for (const message of streams[2].allReceived) {
-					expect(
-						equals(new Uint8Array(message.data), new Uint8Array(sendBytes))
-					).toBeFalse();
-				}
-			});
-
-			/* TODO wanted feature?
-			
-			it("send without topic directly", async () => {
-				await streams[0].stream.publish(data, {
-					to: [streams[1].stream.components.peerId]
-				});
-				await waitFor(() => streams[1].received.length === 1);
-				expect(new Uint8Array(streams[1].received[0].data)).toEqual(data);
-				await delay(1500); // wait some more time to make sure we dont get more messages
-				expect(streams[1].received).toHaveLength(1);
-				expect(streams[2].received).toHaveLength(0);
-			});
-
-			it("send without topic over relay", async () => {
-				await streams[0].stream.publish(data, {
-					to: [streams[2].stream.components.peerId]
-				});
-				await waitFor(() => streams[2].received.length === 1);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
-				await delay(1500); // wait some more time to make sure we dont get more messages
-				expect(streams[2].received).toHaveLength(1);
-				expect(streams[1].received).toHaveLength(0);
-			}); */
-
-			/* TODO feature
-			it("can send as non subscribeer", async () => {
-
-				await streams[0].stream.unsubscribe(TOPIC);
-				await streams[1].stream.unsubscribe(TOPIC);
-				await streams[0].stream.publish(data, { topics: [TOPIC] });
-				await waitFor(() => streams[2].received.length === 1);
-				expect(new Uint8Array(streams[2].received[0].data)).toEqual(data);
-				await delay(1500); // wait some more time to make sure we dont get more messages
-				expect(streams[1].received).toHaveLength(0);
-				expect(streams[2].received).toHaveLength(1);
-
-			}); */
 		});
 
 		describe("concurrency", () => {
@@ -387,10 +402,13 @@ describe("pubsub", function () {
 				const fn = async (i: number) => {
 					const d = randomBytes(999);
 					await streams[i % 3].stream.publish(d, {
-						to: [
-							streams[(i + 1) % session.peers.length].stream.publicKeyHash,
-							streams[(i + 2) % session.peers.length].stream.publicKeyHash
-						],
+						mode: new SilentDelivery({
+							to: [
+								streams[(i + 1) % session.peers.length].stream.publicKeyHash,
+								streams[(i + 2) % session.peers.length].stream.publicKeyHash
+							],
+							redundancy: 1
+						}),
 						topics: [TOPIC]
 					});
 					streams.forEach((s) => {
@@ -501,6 +519,39 @@ describe("pubsub", function () {
 				}
 			});
 		});
+		describe("mode", () => {
+			beforeEach(async () => {
+				// 0 and 2 not connected
+				session = await TestSession.connected(2, {
+					services: {
+						pubsub: (c) =>
+							new DirectSub(c, {
+								canRelayMessage: true,
+								connectionManager: false
+							})
+					}
+				});
+				streams = [];
+				for (const peer of session.peers) {
+					streams.push(createMetrics(peer.services.pubsub));
+				}
+				await waitForPeers(streams[0].stream, streams[1].stream);
+			});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+
+			it("will acknowledge even if not subscribing", async () => {
+				await streams[0].stream.publish(new Uint8Array([0]), {
+					topics: ["topic"],
+					mode: new AcknowledgeDelivery({
+						to: [streams[1].stream.publicKeyHash],
+						redundancy: 1
+					})
+				});
+			});
+		});
 	});
 
 	describe("events", () => {
@@ -529,7 +580,13 @@ describe("pubsub", function () {
 			});
 			await session.peers[0].services.pubsub.publish(
 				new Uint8Array([1, 2, 3]),
-				{ to: [session.peers[1].peerId], topics: ["abc"] }
+				{
+					mode: new SilentDelivery({
+						to: [session.peers[1].peerId],
+						redundancy: 1
+					}),
+					topics: ["abc"]
+				}
 			);
 			expect(dataMessages).toHaveLength(1);
 			expect(dataMessages[0]).toBeInstanceOf(PublishEvent);
@@ -744,18 +801,27 @@ describe("pubsub", function () {
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					to: streams.map((x) => x.stream.publicKeyHash)
+					mode: new SilentDelivery({
+						to: streams.map((x) => x.stream.publicKeyHash),
+						redundancy: 1
+					})
 				});
 
 				await delay(3000);
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					to: streams.map((x) => x.stream.publicKeyHash)
+					mode: new SilentDelivery({
+						to: streams.map((x) => x.stream.publicKeyHash),
+						redundancy: 1
+					})
 				});
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					to: streams.map((x) => x.stream.publicKeyHash)
+					mode: new SilentDelivery({
+						to: streams.map((x) => x.stream.publicKeyHash),
+						redundancy: 1
+					})
 				});
 
 				await delay(3000);
@@ -765,7 +831,10 @@ describe("pubsub", function () {
 
 				await streams[0].stream.publish(data, {
 					topics: [TOPIC],
-					to: streams.map((x) => x.stream.publicKeyHash)
+					mode: new SilentDelivery({
+						to: streams.map((x) => x.stream.publicKeyHash),
+						redundancy: 1
+					})
 				});
 				await waitFor(() => streams[1].received.length === 1);
 				await waitFor(() => streams[2].received.length === 1);
@@ -1019,16 +1088,17 @@ describe("pubsub", function () {
 			await streams[0].stream.subscribe(TOPIC_1);
 			await streams[1].stream.subscribe(TOPIC_1);
 			await session.connect([
-				[session.peers[0], session.peers[1]],
-				[session.peers[1], session.peers[2]],
-				[session.peers[0], session.peers[2]]
+				[session.peers[0], session.peers[2]],
+				[session.peers[1], session.peers[2]]
 			]);
 
 			await checkSubscriptions();
 			await session.peers[0].stop();
 			await session.peers[0].start();
 			await session.connect([[session.peers[0], session.peers[2]]]);
-
+			await waitForResolved(() =>
+				expect(session.peers[0].services.pubsub.peers.size).toEqual(1)
+			);
 			await streams[0].stream.subscribe(TOPIC_1);
 			await checkSubscriptions();
 		});
@@ -1075,6 +1145,7 @@ describe("pubsub", function () {
 			for (const peer of session.peers) {
 				streams.push(createMetrics(peer.services.pubsub));
 			}
+
 			await waitForPeers(streams[0].stream, streams[1].stream);
 			await waitForPeers(streams[1].stream, streams[2].stream);
 		});
@@ -1082,6 +1153,33 @@ describe("pubsub", function () {
 		afterEach(async () => {
 			await Promise.all(streams.map((peer) => peer.stream.stop()));
 			await session.stop();
+		});
+
+		it("concurrent", async () => {
+			await session.peers[1].stop();
+			await session.peers[1].start();
+			streams[0].stream.subscribe(TOPIC_1);
+			streams[2].stream.subscribe(TOPIC_1);
+
+			expect(session.peers[1].services.pubsub.peers.size).toEqual(0);
+			session.connect([[session.peers[1], session.peers[2]]]);
+			session.connect([[session.peers[0], session.peers[1]]]);
+
+			await waitForResolved(() =>
+				expect(
+					streams[0].stream.topics
+						.get(TOPIC_1)
+						?.has(streams[2].stream.publicKeyHash)
+				).toBeTrue()
+			);
+			await waitForResolved(() =>
+				expect(
+					streams[2].stream.topics
+						.get(TOPIC_1)
+						?.has(streams[0].stream.publicKeyHash)
+				).toBeTrue()
+			);
+			expect(session.peers[1].services.pubsub.peers.size).toEqual(2);
 		});
 
 		it("it can track subscriptions across peers", async () => {

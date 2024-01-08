@@ -12,7 +12,10 @@ import {
 import { field, variant, vec, option, deserialize } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
 import { Message } from "./message.js";
-import { Message as StreamMessage } from "@peerbit/stream-interface";
+import {
+	DeliveryMode,
+	Message as StreamMessage
+} from "@peerbit/stream-interface";
 
 import { CustomEvent } from "@libp2p/interface";
 
@@ -63,20 +66,14 @@ export class REQ_Publish extends PubSubMessage {
 	@field({ type: option(vec("string")) })
 	topics?: string[];
 
-	@field({ type: option(vec("string")) })
-	to?: string[]; // (string | PublicSignKey | Libp2pPeerId)[];
+	@field({ type: option(DeliveryMode) })
+	mode?: DeliveryMode;
 
 	constructor(data: Uint8Array, options?: PublishOptions) {
 		super();
 		this.data = data;
 		this.topics = options?.topics;
-		this.to = options?.to?.map((x) =>
-			typeof x === "string"
-				? x
-				: x instanceof PublicSignKey
-					? x.hashcode()
-					: getPublicKeyFromPeerId(x).hashcode()
-		);
+		this.mode = options?.mode;
 	}
 }
 

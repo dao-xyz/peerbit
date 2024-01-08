@@ -8,7 +8,8 @@ import {
 	Message,
 	MessageHeader,
 	SeekDelivery,
-	SilentDelivery
+	SilentDelivery,
+	deliveryModeHasReceiver
 } from "@peerbit/stream-interface";
 import {
 	DirectStream,
@@ -256,7 +257,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		options?: (
 			| {
 					topics: string[];
-					to?: (string | PublicSignKey | PeerId)[];
+					mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery;
 			  }
 			| {
 					topics: string[];
@@ -271,21 +272,18 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		const topics =
 			(options as { topics: string[] }).topics?.map((x) => x.toString()) || [];
 
-		const tos =
-			(options as { to: (string | PublicSignKey | PeerId)[] })?.to?.map((x) =>
-				x instanceof PublicSignKey
-					? x.hashcode()
-					: typeof x === "string"
-						? x
-						: getPublicKeyFromPeerId(x).hashcode()
-			) || this.getPeersOnTopics(topics);
+		const hasExplicitTOs =
+			options?.mode && deliveryModeHasReceiver(options.mode);
+		const tos = hasExplicitTOs
+			? options.mode?.to
+			: this.getPeersOnTopics(topics);
 
 		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
 		const dataMessage = data
 			? new PubSubData({
 					topics: topics.map((x) => x.toString()),
 					data,
-					strict: !!(options as { to: string[] })?.to
+					strict: hasExplicitTOs
 				})
 			: undefined;
 
@@ -452,28 +450,35 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			 * See if we know more subscribers of the message topics. If so, add aditional end receivers of the message
 			 */
 
+			const meInTOs = !!message.header.mode.to?.find(
+				(x) => this.publicKeyHash === x
+			);
+
 			let isForMe: boolean;
 			if (pubsubMessage.strict) {
 				isForMe =
 					!!pubsubMessage.topics.find((topic) =>
 						this.subscriptions.has(topic)
-					) && !!message.header.mode.to?.find((x) => this.publicKeyHash === x);
+					) && meInTOs;
 			} else {
 				isForMe =
 					!!pubsubMessage.topics.find((topic) =>
 						this.subscriptions.has(topic)
 					) ||
-					(pubsubMessage.topics.length === 0 &&
-						!!message.header.mode.to?.find((x) => this.publicKeyHash === x));
+					(pubsubMessage.topics.length === 0 && meInTOs);
 			}
+
 			if (isForMe) {
 				if ((await this.maybeVerifyMessage(message)) === false) {
 					logger.warn("Recieved message that did not verify PubSubData");
 					return false;
 				}
-
+			}
+			if (meInTOs) {
 				await this.acknowledgeMessage(stream, message, seenBefore);
+			}
 
+			if (isForMe) {
 				if (seenBefore === 0) {
 					this.dispatchEvent(
 						new CustomEvent("data", {
@@ -570,7 +575,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						this.peerToTopic.get(senderKey)?.add(topic);
 					});
 
-					if (changed.length > 0) {
+					if (changed.length > 0 && seenBefore === 0) {
 						this.dispatchEvent(
 							new CustomEvent<SubscriptionEvent>("subscribe", {
 								detail: new SubscriptionEvent(sender, changed)
@@ -580,7 +585,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 					if (pubsubMessage.requestSubscribers) {
 						// respond if we are subscribing
-						const mySubscriptions = changed
+						const mySubscriptions = pubsubMessage.topics
 							.map((x) => {
 								const subscription = this.subscriptions.get(x);
 								return subscription ? x : undefined;
@@ -626,7 +631,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						}
 					}
 
-					if (changed.length > 0) {
+					if (changed.length > 0 && seenBefore === 0) {
 						this.dispatchEvent(
 							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
 								detail: new UnsubcriptionEvent(sender, changed)

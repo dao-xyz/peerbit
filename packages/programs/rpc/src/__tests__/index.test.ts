@@ -5,6 +5,7 @@ import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { DirectSub, PeerId } from "@peerbit/pubsub";
+import { SilentDelivery } from "@peerbit/stream-interface";
 
 @variant("payload")
 class Body {
@@ -64,7 +65,6 @@ describe("rpc", () => {
 			reader = deserialize(serialize(responder), RPCTest);
 			await session.peers[1].open(reader);
 
-			//await waitForSubscribers(reader.libp2p, responder.libp2p, reader.query.rpcTopic);
 			await reader.waitFor(session.peers[0].peerId);
 			await responder.waitFor(session.peers[1].peerId);
 		});
@@ -112,16 +112,25 @@ describe("rpc", () => {
 					new Body({
 						arr: new Uint8Array([0, 1, 2])
 					}),
-					{ timeout: 3000, amount: 1, to: [] }
+					{ timeout: 3000, amount: 1 }
 				)
 			).map((x) => x.response);
-			expect(results.length).toEqual(0);
+			// TODO should requesting without receivers yield any results?
+			// + ease of use
+			// - performance reason, message my be read by peers that does not need it
+			expect(results.length).toEqual(1); // for now assume all peers should get it, hence we get 1 result here
+
 			results = (
 				await reader.query.request(
 					new Body({
 						arr: new Uint8Array([0, 1, 2])
 					}),
-					{ to: [responder.node.identity.publicKey] }
+					{
+						mode: new SilentDelivery({
+							to: [responder.node.identity.publicKey],
+							redundancy: 1
+						})
+					}
 				)
 			).map((x) => x.response);
 			await waitFor(() => results.length === 1);

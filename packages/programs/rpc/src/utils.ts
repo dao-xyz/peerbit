@@ -1,3 +1,4 @@
+import { SilentDelivery } from "@peerbit/stream-interface";
 import { RPC } from "./controller";
 import { RPCOptions, RPCResponse } from "./io";
 export class MissingResponsesError extends Error {
@@ -34,7 +35,7 @@ export const queryAll = <Q, R>(
 			if (peersToQuery.length > 0) {
 				const results = await rpc.request(request, {
 					...options,
-					to: peersToQuery
+					mode: new SilentDelivery({ to: peersToQuery, redundancy: 1 }) // TODO configuration redundancy?
 				});
 
 				for (const result of results) {

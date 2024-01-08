@@ -12,7 +12,6 @@ export type RPCOptions<R> = {
 	amount?: number;
 	timeout?: number;
 	isTrusted?: (publicKey: PublicSignKey) => Promise<boolean>;
-	strict?: boolean;
 	onResponse?: (response: R, from?: PublicSignKey) => void;
 	stopper?: (stopper: () => void) => void;
 } & PublishOptions;
@@ -22,7 +21,6 @@ export type PublishOptions = {
 		key: X25519Keypair;
 		responders?: (X25519PublicKey | Ed25519PublicKey)[];
 	};
-	to?: PublicSignKey[] | string[];
 	strict?: boolean;
 	mode?: DeliveryMode;
 };
