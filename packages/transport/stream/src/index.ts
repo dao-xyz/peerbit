@@ -85,6 +85,7 @@ export interface PeerStreamEvents {
 }
 
 const SEEK_DELIVERY_TIMEOUT = 15e3;
+const ROUTE_MAX_RETANTION_PERIOD = 10 * 1000;
 const MAX_DATA_LENGTH = 1e7 + 1000; // 10 mb and some metadata
 const MAX_QUEUED_BYTES = MAX_DATA_LENGTH * 50;
 
@@ -360,6 +361,7 @@ export type DirectStreamOptions = {
 	connectionManager?: ConnectionManagerArguments;
 	routeSeekInterval?: number;
 	seekTimeout?: number;
+	routeMaxRetentionPeriod?: number;
 };
 
 export interface DirectStreamComponents extends Components {
@@ -417,6 +419,7 @@ export abstract class DirectStream<
 	private healthChecks: Map<string, ReturnType<typeof setTimeout>>;
 	private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
 	private prunedConnectionsCache?: Cache<string>;
+	private routeMaxRetentionPeriod: number;
 	routeSeekInterval: number;
 	seekTimeout: number;
 	closeController: AbortController;
@@ -447,7 +450,8 @@ export abstract class DirectStream<
 			signaturePolicy = "StictSign",
 			connectionManager,
 			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR,
-			seekTimeout = SEEK_DELIVERY_TIMEOUT
+			seekTimeout = SEEK_DELIVERY_TIMEOUT,
+			routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD
 		} = options || {};
 
 		const signKey = getKeypairFromPeerId(components.peerId);
@@ -459,7 +463,6 @@ export abstract class DirectStream<
 		this.multicodecs = multicodecs;
 		this.started = false;
 		this.peers = new Map<string, PeerStreams>();
-		this.routes = new Routes(this.publicKeyHash);
 		this.canRelayMessage = canRelayMessage;
 		this.healthChecks = new Map();
 		this.routeSeekInterval = routeSeekInterval;
@@ -467,7 +470,7 @@ export abstract class DirectStream<
 		this.maxInboundStreams = maxInboundStreams;
 		this.maxOutboundStreams = maxOutboundStreams;
 		this.seenCache = new Cache({ max: 1e6, ttl: 10 * 60 * 1e3 });
-
+		this.routeMaxRetentionPeriod = routeMaxRetentionPeriod;
 		this.peerKeyHashToPublicKey = new Map();
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
@@ -527,6 +530,12 @@ export abstract class DirectStream<
 		await ready;
 
 		this.closeController = new AbortController();
+
+		this.routes = new Routes(this.publicKeyHash, {
+			routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
+			signal: this.closeController.signal
+		});
+
 		this.started = true;
 
 		logger.debug("starting");
@@ -757,7 +766,7 @@ export abstract class DirectStream<
 				this.publicKeyHash,
 				peerKey.hashcode(),
 				peerKey,
-				0,
+				-1,
 				+new Date()
 			);
 		} catch (err: any) {
@@ -828,24 +837,15 @@ export abstract class DirectStream<
 		neighbour: string,
 		target: PublicSignKey,
 		distance: number,
-		session: number,
-		pending = false
+		session: number
 	) {
 		const targetHash = typeof target === "string" ? target : target.hashcode();
 		const wasReachable =
 			from === this.publicKeyHash
 				? this.routes.isReachable(from, targetHash)
 				: true;
-		if (pending) {
-			this.routes.addPendingRouteConnection(session, {
-				distance,
-				from,
-				neighbour,
-				target: targetHash
-			});
-		} else {
-			this.routes.add(from, neighbour, targetHash, distance, session);
-		}
+
+		this.routes.add(from, neighbour, targetHash, distance, session);
 
 		const newPeer =
 			wasReachable === false && this.routes.isReachable(from, targetHash);
@@ -892,11 +892,7 @@ export abstract class DirectStream<
 	): PeerStreams {
 		const publicKeyHash = publicKey.hashcode();
 
-		const hc = this.healthChecks.get(publicKeyHash);
-		if (hc) {
-			clearTimeout(hc);
-			this.healthChecks.delete(publicKeyHash);
-		}
+		this.clearHealthcheckTimer(publicKeyHash);
 
 		const existing = this.peers.get(publicKeyHash);
 
@@ -932,6 +928,7 @@ export abstract class DirectStream<
 	protected async _removePeer(publicKey: PublicSignKey) {
 		const hash = publicKey.hashcode();
 		const peerStreams = this.peers.get(hash);
+		this.clearHealthcheckTimer(hash);
 
 		if (peerStreams == null) {
 			return;
@@ -1212,7 +1209,7 @@ export abstract class DirectStream<
 			(bytes) => sha256Base64(bytes)
 		);
 
-		if (seenBefore > 1) {
+		if (seenBefore > 0) {
 			logger.debug(
 				"Received message already seen of type: " + message.constructor.name
 			);
@@ -1240,6 +1237,9 @@ export abstract class DirectStream<
 		if (nextStream) {
 			await this.publishMessage(this.publicKey, message, [nextStream], true);
 		} else {
+			if (myIndex !== 0) {
+				throw new Error("Unexpected");
+			}
 			// if origin exist (we can connect to remote peer) && we have autodialer turned on
 			if (message.header.origin && this.connectionManagerOptions.dialer) {
 				this.maybeConnectDirectly(
@@ -1340,7 +1340,7 @@ export abstract class DirectStream<
 					?.get(hash);
 				if (
 					!neighbourRoutes ||
-					now - neighbourRoutes.session >
+					now - neighbourRoutes.latestSession >
 						neighbourRoutes.list.length * this.routeSeekInterval
 				) {
 					mode = new SeekDelivery({
@@ -1381,8 +1381,13 @@ export abstract class DirectStream<
 			throw new Error("Not started");
 		}
 
-		const message = await this.createMessage(data, options);
+		if ((options as WithMode).mode && (options as WithTo).to) {
+			throw new Error(
+				"Expecting either 'to' or 'mode' to be provided not both"
+			);
+		}
 
+		const message = await this.createMessage(data, options);
 		await this.publishMessage(this.publicKey, message, undefined);
 		return message.id;
 	}
@@ -1406,6 +1411,12 @@ export abstract class DirectStream<
 		} else {
 			logger.debug("Received a message to relay but canRelayMessage is false");
 		}
+	}
+
+	private clearHealthcheckTimer(to: string) {
+		const timer = this.healthChecks.get(to);
+		clearTimeout(timer);
+		this.healthChecks.delete(to);
 	}
 
 	private async createDeliveryPromise(
@@ -1459,13 +1470,11 @@ export abstract class DirectStream<
 
 		const finalize = () => {
 			this._ackCallbacks.delete(idString);
-			if (message.header.mode instanceof SeekDelivery) {
-				this.routes.commitPendingRouteConnection(session);
-			}
 		};
 
 		const uniqueAcks = new Set();
 		const session = +new Date();
+
 		const timeout = setTimeout(async () => {
 			let hasAll = true;
 			finalize();
@@ -1495,7 +1504,7 @@ export abstract class DirectStream<
 							fastestNodesReached.size
 						}/${messageToSet.size}). Mode: ${
 							message.header.mode.constructor.name
-						}`
+						}. Redundancy: ${message.header.mode["redundancy"]}`
 					)
 				);
 			} else {
@@ -1511,9 +1520,7 @@ export abstract class DirectStream<
 				const seenCounter = ack.seenCounter;
 
 				// remove the automatic removal of route timeout since we have observed lifesigns of a peer
-				const timer = this.healthChecks.get(messageTargetHash);
-				clearTimeout(timer);
-				this.healthChecks.delete(messageTargetHash);
+				this.clearHealthcheckTimer(messageTargetHash);
 
 				// if the target is not inside the original message to, we still ad the target to our routes
 				// this because a relay might modify the 'to' list and we might receive more answers than initially set
@@ -1523,8 +1530,7 @@ export abstract class DirectStream<
 						messageThrough.publicKey.hashcode(),
 						messageTarget,
 						seenCounter,
-						session,
-						true
+						session
 					); // we assume the seenCounter = distance. The more the message has been seen by the target the longer the path is to the target
 				}
 
@@ -1630,7 +1636,7 @@ export abstract class DirectStream<
 				message.header.mode.to
 			) {
 				const fanout = this.routes.getFanout(
-					from,
+					from.hashcode(),
 					message.header.mode.to,
 					message.header.mode.redundancy
 				);
@@ -1817,6 +1823,8 @@ export abstract class DirectStream<
 		if (this.peers.size <= this.connectionManagerOptions.minConnections) {
 			return;
 		}
+		console.log("PRUNE CONNECTIONS");
+
 		const sorted = [...this.peers.values()]
 			.sort((x, y) => x.usedBandwidth - y.usedBandwidth)
 			.map((x) => x.publicKey.hashcode());

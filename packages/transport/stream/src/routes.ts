@@ -1,36 +1,68 @@
-import { PublicSignKey } from "@peerbit/crypto";
+import { AbortError, delay } from "@peerbit/time";
 
 export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER - 1;
+type RouteInfo = {
+	session: number;
+	hash: string;
+	expireAt?: number;
+	distance: number;
+};
 export class Routes {
 	// END receiver -> Neighbour
 
 	routes: Map<
 		string,
-		Map<string, { session: number; list: { hash: string; distance: number }[] }>
-	> = new Map();
-
-	pendingRoutes: Map<
-		number,
 		Map<
 			string,
 			{
-				from: string;
-				neighbour: string;
-				distance: number;
-			}[]
+				latestSession: number;
+				list: RouteInfo[];
+			}
 		>
 	> = new Map();
-	latestSession: number;
 
-	constructor(readonly me: string) {
-		this.latestSession = 0;
+	routeMaxRetentionPeriod: number;
+	signal: AbortSignal;
+
+	constructor(
+		readonly me: string,
+		options: { routeMaxRetentionPeriod: number; signal: AbortSignal }
+	) {
+		this.routeMaxRetentionPeriod = options.routeMaxRetentionPeriod;
+		this.signal = options.signal;
 	}
 
 	clear() {
 		this.routes.clear();
-		this.pendingRoutes.clear();
 	}
 
+	private cleanup(from: string, to: string) {
+		const fromMap = this.routes.get(from);
+		if (fromMap) {
+			const map = fromMap.get(to);
+			if (map) {
+				const now = +new Date();
+				const keepRoutes: RouteInfo[] = [];
+				for (const route of map.list) {
+					// delete all routes after a while
+					if (route.expireAt != null && route.expireAt < now) {
+						// expired
+					} else {
+						keepRoutes.push(route);
+					}
+				}
+
+				if (keepRoutes.length > 0) {
+					map.list = keepRoutes;
+				} else {
+					fromMap.delete(to);
+					if (fromMap.size === 1) {
+						this.routes.delete(from);
+					}
+				}
+			}
+		}
+	}
 	add(
 		from: string,
 		neighbour: string,
@@ -44,20 +76,11 @@ export class Routes {
 			this.routes.set(from, fromMap);
 		}
 
-		let prev = fromMap.get(target) || {
-			session: session ?? +new Date(),
-			list: [] as { hash: string; distance: number }[]
-		};
+		let prev = fromMap.get(target);
 
-		this.latestSession = Math.max(this.latestSession, session);
-
-		if (session != null) {
-			// this condition means that when we add new routes in a session that is newer
-			if (prev.session < session) {
-				prev = { session, list: [] }; // reset route info how to reach this target
-			} else if (prev.session > session) {
-				return; // new routing information superseedes this
-			}
+		if (!prev) {
+			prev = { latestSession: 0, list: [] as RouteInfo[] };
+			fromMap.set(target, prev);
 		}
 
 		if (from === this.me && neighbour === target) {
@@ -66,16 +89,60 @@ export class Routes {
 			distance = -1;
 		}
 
-		for (const route of prev.list) {
-			if (route.hash === neighbour) {
-				route.distance = Math.min(route.distance, distance);
-				prev.list.sort((a, b) => a.distance - b.distance);
-				return;
+		// Update routes and cleanup all old routes that are older than latest session - some threshold
+		const isNewSession = session > prev.latestSession;
+		prev.latestSession = Math.max(session, prev.latestSession);
+
+		if (isNewSession) {
+			// Mark previous routes as old
+
+			const expireAt = +new Date() + this.routeMaxRetentionPeriod;
+			for (const route of prev.list) {
+				// delete all routes after a while
+				if (!route.expireAt) {
+					route.expireAt = expireAt;
+				}
+			}
+
+			// Initiate cleanup
+			if (distance !== -1) {
+				delay(this.routeMaxRetentionPeriod + 100, { signal: this.signal })
+					.then(() => {
+						this.cleanup(from, target);
+					})
+					.catch((e) => {
+						if (e instanceof AbortError) {
+							// skip
+							return;
+						}
+						throw e;
+					});
 			}
 		}
-		prev.list.push({ distance, hash: neighbour });
+
+		// Modify list for new/update route
+		for (const route of prev.list) {
+			if (route.hash === neighbour) {
+				// if route is faster or just as fast, update existing route
+				if (route.distance > distance) {
+					route.distance = distance;
+					route.session = session;
+					route.expireAt = undefined; // remove expiry since we updated
+					prev.list.sort((a, b) => a.distance - b.distance);
+					return;
+				} else if (route.distance === distance) {
+					route.session = session;
+					route.expireAt = undefined; // remove expiry since we updated
+					return;
+				}
+
+				// else break and push the route as a new route (that ought to be longer)
+				break;
+			}
+		}
+
+		prev.list.push({ distance, session, hash: neighbour });
 		prev.list.sort((a, b) => a.distance - b.distance);
-		fromMap.set(target, prev);
 	}
 
 	removeTarget(target: string) {
@@ -177,54 +244,62 @@ export class Routes {
 
 	// for all tos if
 	getFanout(
-		from: PublicSignKey,
+		from: string,
 		tos: string[],
 		redundancy: number
-	): Map<string, { to: string; timestamp: number }[]> | undefined {
+	): Map<string, Map<string, { to: string; timestamp: number }>> | undefined {
 		if (tos.length === 0) {
 			return undefined;
 		}
 
 		let fanoutMap:
-			| Map<string, { to: string; timestamp: number }[]>
+			| Map<string, Map<string, { to: string; timestamp: number }>>
 			| undefined = undefined;
-
-		const fromKey = from.hashcode();
 
 		// Message to > 0
 		if (tos.length > 0) {
 			for (const to of tos) {
-				if (to === this.me || fromKey === to) {
+				if (to === this.me || from === to) {
 					continue; // don't send to me or backwards
 				}
 
-				const neighbour = this.findNeighbor(fromKey, to);
+				const neighbour = this.findNeighbor(from, to);
 				if (neighbour) {
 					let foundClosest = false;
-					for (
-						let i = 0;
-						i < Math.min(neighbour.list.length, redundancy);
-						i++
-					) {
-						const distance = neighbour.list[i].distance;
-						if (distance >= redundancy) {
+					let redundancyModified = redundancy;
+					for (let i = 0; i < neighbour.list.length; i++) {
+						const { distance, session } = neighbour.list[i];
+						if (distance >= redundancyModified) {
 							break; // because neighbour listis sorted
 						}
-						if (distance <= 0) {
-							foundClosest = true;
-						}
-						const fanout: { to: string; timestamp: number }[] = (
+
+						let fanout: Map<string, { to: string; timestamp: number }> = (
 							fanoutMap || (fanoutMap = new Map())
 						).get(neighbour.list[i].hash);
 						if (!fanout) {
-							fanoutMap.set(neighbour.list[i].hash, [
-								{ to, timestamp: neighbour.session }
-							]);
-						} else {
-							fanout.push({ to, timestamp: neighbour.session });
+							fanout = new Map();
+							fanoutMap.set(neighbour.list[i].hash, fanout);
+						}
+
+						fanout.set(to, { to, timestamp: session });
+
+						if (
+							(distance == 0 && session === neighbour.latestSession) ||
+							distance == -1
+						) {
+							foundClosest = true;
+
+							if (distance == -1) {
+								// remove 1 from the expected redunancy since we got a route with negative 1 distance
+								// if we do not do this, we would get 2 routes if redundancy = 1, {-1, 0}, while it should just be
+								// {-1} in this case
+								redundancyModified -= 1;
+								break;
+							}
 						}
 					}
-					if (!foundClosest && from.hashcode() === this.me) {
+
+					if (!foundClosest && from === this.me) {
 						return undefined; // we dont have the shortest path to our target (yet). Send to all
 					}
 
@@ -259,76 +334,5 @@ export class Routes {
 			});
 		}
 		return [];
-	}
-
-	public addPendingRouteConnection(
-		session: number,
-		route: {
-			from: string;
-			neighbour: string;
-			target: string;
-			distance: number;
-		}
-	) {
-		let map = this.pendingRoutes.get(session);
-		if (!map) {
-			map = new Map();
-			this.pendingRoutes.set(session, map);
-		}
-		let arr = map.get(route.target);
-		if (!arr) {
-			arr = [];
-			map.set(route.target, arr);
-		}
-
-		arr.push(route);
-
-		const neighbour = this.findNeighbor(route.from, route.target);
-		if (!neighbour || neighbour.session === session) {
-			// Commit directly since we dont have any data at all (better have something than nothing)
-			this.commitPendingRouteConnection(session, route.target);
-		}
-	}
-
-	// always commit if we dont know the peer yet
-	// do pending commits per remote (?)
-
-	public commitPendingRouteConnection(session: number, target?: string) {
-		const map = this.pendingRoutes.get(session);
-		if (!map) {
-			return;
-		}
-		if (target) {
-			const routes = map.get(target);
-			if (routes) {
-				for (const route of routes) {
-					this.add(
-						route.from,
-						route.neighbour,
-						target,
-						route.distance,
-						session
-					);
-				}
-				map.delete(target);
-				return;
-			} else {
-				return;
-			}
-		} else {
-			for (const [target, routes] of map) {
-				for (const route of routes) {
-					this.add(
-						route.from,
-						route.neighbour,
-						target,
-						route.distance,
-						session
-					);
-				}
-			}
-		}
-
-		this.pendingRoutes.delete(session);
 	}
 }

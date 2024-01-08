@@ -76,6 +76,21 @@ const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
 	return toHashes;
 };
 
+export const deliveryModeHasReceiver = (
+	mode: DeliveryMode
+): mode is { to: string[] } => {
+	if (mode instanceof SilentDelivery && mode.to.length > 0) {
+		return true;
+	}
+	if (mode instanceof SeekDelivery && mode.to?.length && mode.to?.length > 0) {
+		return true;
+	}
+	if (mode instanceof AcknowledgeDelivery && mode.to.length > 0) {
+		return true;
+	}
+	return false;
+};
+
 export abstract class DeliveryMode {}
 
 /**
