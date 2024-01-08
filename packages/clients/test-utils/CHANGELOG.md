@@ -232,6 +232,12 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.0 to 2.0.1
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 3.0.7 to 3.0.8
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.33...test-utils-v2.0.0) (2023-12-31)
 
 

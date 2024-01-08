@@ -214,6 +214,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.5 to 2.0.6
 
+## [3.0.8](https://github.com/dao-xyz/peerbit/compare/log-v3.0.7...log-v3.0.8) (2024-01-08)
+
+
+### Bug Fixes
+
+* add p-queue dep ([587427f](https://github.com/dao-xyz/peerbit/commit/587427f8194e74664e3318722d8c9af36b3f94cf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.7 to 2.0.8
+
 ## [3.0.7](https://github.com/dao-xyz/peerbit/compare/log-v3.0.6...log-v3.0.7) (2024-01-08)
 
 
