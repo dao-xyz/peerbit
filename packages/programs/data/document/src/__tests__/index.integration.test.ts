@@ -1833,6 +1833,10 @@ describe("index", () => {
 						};
 						return store.docs.log.log.append(a, b);
 					};
+
+					// Omit synchronization so results are always the same (HACKY)
+					store.docs.log.distribute = async () => {};
+
 					await session.peers[i].open(store, {
 						args: {
 							index: {
