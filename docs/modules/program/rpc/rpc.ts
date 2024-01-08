@@ -62,7 +62,7 @@ class RPCTest extends Program<Args> {
 
 	async getAllResponders(): Promise<PublicSignKey[]> {
 		const allSubscribers = await this.node.services.pubsub.getSubscribers(
-			this.rpc.rpcTopic
+			this.rpc.topic
 		);
 		return allSubscribers || [];
 	}
