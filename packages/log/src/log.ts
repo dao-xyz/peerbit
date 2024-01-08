@@ -282,9 +282,6 @@ export class Log<T> {
 		return this._memory;
 	}
 
-	/**
-	 * Don't use this anywhere performance matters
-	 */
 	async getHeads(): Promise<Entry<T>[]> {
 		const heads: Promise<Entry<T> | undefined>[] = new Array(
 			this.headsIndex.index.size
