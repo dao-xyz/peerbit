@@ -37,7 +37,7 @@
 		"@peerbit/crypto": "2.1.1",
 		"@peerbit/logger": "1.0.2",
 		"libp2p": "^1.1.0",
-		"p-queue": "^7.3.3",
+		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
 		"yallist": "^4.0.0",
 		"uuid": "^9.0.0"

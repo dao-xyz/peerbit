@@ -54,6 +54,7 @@
 		"@types/yallist": "^4.0.1"
 	},
 	"dependencies": {
+		"p-queue": "^8.0.1",
 		"@dao-xyz/borsh": "^5.1.8",
 		"@peerbit/cache": "2.0.1",
 		"@peerbit/crypto": "2.1.1",
