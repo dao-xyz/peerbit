@@ -26,7 +26,7 @@ describe("replicators", () => {
 		);
 
 		// Adding a delay is necessary so that old subscription messages are not flowing around
-		// so that we are sure the we are "really" using existing subsriptions on start to build replicator set
+		// so that we are sure the we are "really" using existing subscriptions on start to build replicator set
 		await delay(1000);
 
 		const db2 = await session.peers[1].open(store.clone());
