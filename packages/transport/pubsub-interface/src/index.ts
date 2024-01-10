@@ -8,7 +8,6 @@ import {
 	DeliveryMode
 } from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interface";
-import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
 import { field, vec } from "@dao-xyz/borsh";
 
 export class SubscriptionEvent {
@@ -75,10 +74,18 @@ export class SubscriptionData {
 	publicKey: PublicSignKey;
 
 	@field({ type: "u64" })
+	session: bigint;
+
+	@field({ type: "u64" })
 	timestamp: bigint;
 
-	constructor(properties: { publicKey: PublicSignKey; timestamp: bigint }) {
+	constructor(properties: {
+		publicKey: PublicSignKey;
+		session: bigint;
+		timestamp: bigint;
+	}) {
 		this.publicKey = properties.publicKey;
+		this.session = properties.session;
 		this.timestamp = properties.timestamp;
 	}
 }
