@@ -42,6 +42,21 @@
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
     * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.3...pubsub-interface-v2.0.4) (2024-01-10)
+
+
+### Bug Fixes
+
+* add session info to SubscriptionData ([b8bcf14](https://github.com/dao-xyz/peerbit/commit/b8bcf14be25d262ca9129a7bb31b7ee1cc32b36c))
+* make _serialized private ([c9e7b6e](https://github.com/dao-xyz/peerbit/commit/c9e7b6e10de5fd85a363bc7c69e3a69cafa408bf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^2.0.2 to ^3.0.0
+
 ## [2.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.2...pubsub-interface-v2.0.3) (2024-01-08)
 
 

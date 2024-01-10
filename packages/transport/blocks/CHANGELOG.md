@@ -137,6 +137,13 @@
   * dependencies
     * @peerbit/stream bumped from 2.0.5 to 2.0.6
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 2.0.6 to 3.0.0
+    * @peerbit/blocks-interface bumped from 1.2.2 to 1.2.3
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.3...blocks-v2.0.4) (2024-01-02)
 
 

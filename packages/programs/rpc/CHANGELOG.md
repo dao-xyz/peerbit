@@ -255,6 +255,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [3.0.9](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.8...rpc-v3.0.9) (2024-01-10)
+
+
+### Bug Fixes
+
+* property name typo ([00d757e](https://github.com/dao-xyz/peerbit/commit/00d757e3ad263ea2bf523d932e3a44d7df406e13))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.6 to 3.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.8 to ^2.0.9
+
 ## [3.0.7](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.6...rpc-v3.0.7) (2024-01-08)
 
 

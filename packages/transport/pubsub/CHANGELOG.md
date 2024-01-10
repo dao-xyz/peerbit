@@ -118,6 +118,20 @@
   * dependencies
     * @peerbit/stream bumped from 2.0.5 to 2.0.6
 
+## [2.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.6...pubsub-v2.0.7) (2024-01-10)
+
+
+### Bug Fixes
+
+* reset subscription on remote session updates ([3eea1c4](https://github.com/dao-xyz/peerbit/commit/3eea1c453232bfb27e1e72a5b59042f6790290b3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 2.0.6 to 3.0.0
+
 ## [2.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.4...pubsub-v2.0.5) (2024-01-08)
 
 

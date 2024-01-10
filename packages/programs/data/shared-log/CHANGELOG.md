@@ -279,6 +279,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [4.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.8...shared-log-v4.0.9) (2024-01-10)
+
+
+### Bug Fixes
+
+* add extra delay ([6cb5322](https://github.com/dao-xyz/peerbit/commit/6cb5322cab6dee79b7175ed0079ee2159d1aef30))
+* comment ([e750a96](https://github.com/dao-xyz/peerbit/commit/e750a9678282a3cc39322e166a1e8b0e7b9165c7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.6 to 3.0.7
+    * @peerbit/log bumped from 3.0.8 to 3.0.9
+    * @peerbit/rpc bumped from 3.0.8 to 3.0.9
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.8 to ^2.0.9
+
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.6...shared-log-v4.0.7) (2024-01-08)
 
 
