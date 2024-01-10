@@ -1,27 +1,29 @@
 import { AbortError, delay } from "@peerbit/time";
 
 export const MAX_ROUTE_DISTANCE = Number.MAX_SAFE_INTEGER - 1;
-type RouteInfo = {
+
+type RelayInfo = {
 	session: number;
 	hash: string;
 	expireAt?: number;
 	distance: number;
 };
+type RouteInfo = {
+	remoteSession: number;
+	session: number;
+	list: RelayInfo[];
+};
+
 export class Routes {
-	// END receiver -> Neighbour
+	// FROM -> TO -> { ROUTE INFO, A list of neighbours that we can send data through to reach to}
+	routes: Map<string, Map<string, RouteInfo>> = new Map();
 
-	routes: Map<
-		string,
-		Map<
-			string,
-			{
-				latestSession: number;
-				list: RouteInfo[];
-			}
-		>
-	> = new Map();
+	remoteInfo: Map<string, { session?: number }> = new Map();
 
+	// Maximum amount of time to retain routes that are not valid anymore
+	// once we receive new route info to reach a specific target
 	routeMaxRetentionPeriod: number;
+
 	signal: AbortSignal;
 
 	constructor(
@@ -42,7 +44,7 @@ export class Routes {
 			const map = fromMap.get(to);
 			if (map) {
 				const now = +new Date();
-				const keepRoutes: RouteInfo[] = [];
+				const keepRoutes: RelayInfo[] = [];
 				for (const route of map.list) {
 					// delete all routes after a while
 					if (route.expireAt != null && route.expireAt < now) {
@@ -68,8 +70,9 @@ export class Routes {
 		neighbour: string,
 		target: string,
 		distance: number,
-		session: number
-	) {
+		session: number,
+		remoteSession: number
+	): "new" | "updated" | "restart" {
 		let fromMap = this.routes.get(from);
 		if (!fromMap) {
 			fromMap = new Map();
@@ -77,22 +80,42 @@ export class Routes {
 		}
 
 		let prev = fromMap.get(target);
-
+		const routeDidExist = prev;
+		const isNewSession = !prev || session > prev.session;
 		if (!prev) {
-			prev = { latestSession: 0, list: [] as RouteInfo[] };
+			prev = { session, remoteSession, list: [] as RelayInfo[] };
 			fromMap.set(target, prev);
 		}
 
-		if (from === this.me && neighbour === target) {
-			// force distance to neighbour as targets to always favor directly sending to them
-			// i.e. if target is our neighbour, always assume the shortest path to them is the direct path
-			distance = -1;
+		if (neighbour === target) {
+			if (from === this.me) {
+				// force distance to neighbour as targets to always favor directly sending to them
+				// i.e. if target is our neighbour, always assume the shortest path to them is the direct path
+				distance = -1;
+			}
+
+			// we do this since don't care about remote session if the
+			//peer is our neighbour since we will always be up to date by connect/disconnect events
+			remoteSession = -1;
 		}
 
-		// Update routes and cleanup all old routes that are older than latest session - some threshold
-		const isNewSession = session > prev.latestSession;
-		prev.latestSession = Math.max(session, prev.latestSession);
+		let isNewRemoteSession = false;
+		if (routeDidExist) {
+			if (prev.remoteSession != -1) {
+				// if the remote session is later, we consider that the remote has 'restarted'
+				isNewRemoteSession = remoteSession > (prev.remoteSession || -1);
+				prev.remoteSession =
+					remoteSession === -1
+						? remoteSession
+						: Math.max(remoteSession, prev.remoteSession || -1);
+			} else {
+				isNewRemoteSession = false;
+			}
+		}
 
+		prev.session = Math.max(session, prev.session);
+
+		// Update routes and cleanup all old routes that are older than latest session - some threshold
 		if (isNewSession) {
 			// Mark previous routes as old
 
@@ -121,6 +144,7 @@ export class Routes {
 		}
 
 		// Modify list for new/update route
+		let exist = false;
 		for (const route of prev.list) {
 			if (route.hash === neighbour) {
 				// if route is faster or just as fast, update existing route
@@ -129,13 +153,14 @@ export class Routes {
 					route.session = session;
 					route.expireAt = undefined; // remove expiry since we updated
 					prev.list.sort((a, b) => a.distance - b.distance);
-					return;
+					return isNewRemoteSession ? "restart" : "updated";
 				} else if (route.distance === distance) {
 					route.session = session;
 					route.expireAt = undefined; // remove expiry since we updated
-					return;
+					return isNewRemoteSession ? "restart" : "updated";
 				}
 
+				exist = true;
 				// else break and push the route as a new route (that ought to be longer)
 				break;
 			}
@@ -143,21 +168,10 @@ export class Routes {
 
 		prev.list.push({ distance, session, hash: neighbour });
 		prev.list.sort((a, b) => a.distance - b.distance);
+		return exist ? (isNewRemoteSession ? "restart" : "updated") : "new";
 	}
 
 	removeTarget(target: string) {
-		this.routes.delete(target);
-		for (const [fromMapKey, fromMap] of this.routes) {
-			// delete target
-			fromMap.delete(target);
-			if (fromMap.size === 0) {
-				this.routes.delete(fromMapKey);
-			}
-		}
-		return [target];
-	}
-
-	removeNeighbour(target: string) {
 		this.routes.delete(target);
 		const maybeUnreachable: Set<string> = new Set([target]);
 		for (const [fromMapKey, fromMap] of this.routes) {
@@ -169,7 +183,12 @@ export class Routes {
 				neighbours.list = neighbours.list.filter((x) => x.hash !== target);
 				if (neighbours.list.length === 0) {
 					fromMap.delete(remote);
-					maybeUnreachable.add(remote);
+
+					if (fromMapKey === this.me) {
+						// TODO we only return maybeUnreachable if the route starts from me.
+						// expected?
+						maybeUnreachable.add(remote);
+					}
 				}
 			}
 
@@ -177,6 +196,7 @@ export class Routes {
 				this.routes.delete(fromMapKey);
 			}
 		}
+		this.remoteInfo.delete(target);
 		return [...maybeUnreachable].filter((x) => !this.isReachable(this.me, x));
 	}
 
@@ -185,18 +205,29 @@ export class Routes {
 	}
 
 	isReachable(from: string, target: string, maxDistance = MAX_ROUTE_DISTANCE) {
-		return (
-			(this.routes.get(from)?.get(target)?.list[0]?.distance ??
-				Number.MAX_SAFE_INTEGER) <= maxDistance
-		);
-	}
-
-	hasShortestPath(target: string) {
-		const path = this.routes.get(this.me)?.get(target);
-		if (!path) {
+		const remoteInfo = this.remoteInfo.get(target);
+		const routeInfo = this.routes.get(from)?.get(target);
+		if (!routeInfo) {
 			return false;
 		}
-		return path.list[0].distance <= 0;
+		if (!remoteInfo) {
+			return false;
+		}
+		if (
+			routeInfo.remoteSession == undefined ||
+			remoteInfo.session === undefined
+		) {
+			return false;
+		}
+
+		if (routeInfo.remoteSession < remoteInfo.session) {
+			// route info is older than remote info
+			return false;
+		}
+
+		return (
+			(routeInfo?.list[0]?.distance ?? Number.MAX_SAFE_INTEGER) <= maxDistance
+		);
 	}
 
 	hasTarget(target: string) {
@@ -208,11 +239,68 @@ export class Routes {
 		return false;
 	}
 
-	getDependent(target: string) {
+	updateSession(remote: string, session?: number) {
+		if (session == null) {
+			this.remoteInfo.delete(remote);
+			return false;
+		}
+
+		const remoteInfo = this.remoteInfo.get(remote);
+		if (remoteInfo) {
+			// remote has restartet, mark all routes originating from me to the remote as 'old'
+			if (remoteInfo.session === -1) {
+				return false;
+			}
+			if (session === -1) {
+				remoteInfo.session = -1;
+				return false;
+			} else {
+				if (session > (remoteInfo.session || -1)) {
+					remoteInfo.session = session;
+					return true;
+				}
+				return false;
+			}
+		} else if (session !== undefined) {
+			this.remoteInfo.set(remote, { session });
+			return true;
+		}
+		return false;
+	}
+
+	getSession(remote: string): number | undefined {
+		return this.remoteInfo.get(remote)?.session;
+	}
+
+	isUpToDate(target: string, route: RouteInfo) {
+		const peerInfo = this.remoteInfo.get(target);
+		return peerInfo?.session != null && route.remoteSession >= peerInfo.session;
+	}
+
+	getDependent(peer: string) {
 		const dependent: string[] = [];
-		for (const [fromMapKey, fromMap] of this.routes) {
-			if (fromMapKey !== this.me && fromMap.has(target)) {
+
+		outer: for (const [fromMapKey, fromMap] of this.routes) {
+			if (fromMapKey !== this.me) {
+				continue; // skip this because these routes are starting from me. We are looking for routes that affect others
+			}
+
+			// If the route is to the target
+			// tell 'from' that it is no longer reachable
+			if (fromMap.has(peer)) {
 				dependent.push(fromMapKey);
+				continue outer;
+			}
+
+			// If the relay is dependent of peer
+			// tell 'from' that it is no longer reachable
+			for (const [_to, through] of fromMap) {
+				for (const neighbour of through.list) {
+					if (neighbour.hash === peer) {
+						dependent.push(fromMapKey);
+						continue outer;
+					}
+				}
 			}
 		}
 		return dependent;
@@ -284,7 +372,7 @@ export class Routes {
 						fanout.set(to, { to, timestamp: session });
 
 						if (
-							(distance == 0 && session === neighbour.latestSession) ||
+							(distance == 0 && session === neighbour.session) ||
 							distance == -1
 						) {
 							foundClosest = true;

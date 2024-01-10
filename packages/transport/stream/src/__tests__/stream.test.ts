@@ -12,6 +12,7 @@ import {
 	AcknowledgeDelivery,
 	AnyWhere,
 	DataMessage,
+	Goodbye,
 	Message,
 	MessageHeader,
 	SeekDelivery,
@@ -26,7 +27,6 @@ import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import pDefer from "p-defer";
 import { jest } from "@jest/globals";
 import { Libp2pOptions } from "libp2p";
 
@@ -61,29 +61,41 @@ const createMetrics = (stream: DirectStream) => {
 		messages: Message[];
 		received: DataMessage[];
 		ack: ACK[];
+		goodbye: Goodbye[];
 		reachable: PublicSignKey[];
 		unrechable: PublicSignKey[];
+		session: PublicSignKey[];
 		processed: Map<string, number>;
 	} = {
+		reachable: [],
+		unrechable: [],
 		messages: [],
 		received: [],
-		reachable: [],
+		session: [],
 		ack: [],
-		unrechable: [],
+		goodbye: [],
 		processed: new Map(),
 		stream
 	};
+
 	s.stream.addEventListener("message", (msg) => {
 		s.messages.push(msg.detail);
 	});
+
 	s.stream.addEventListener("data", (msg) => {
 		s.received.push(msg.detail);
 	});
+
 	s.stream.addEventListener("peer:reachable", (msg) => {
 		s.reachable.push(msg.detail);
 	});
+
 	s.stream.addEventListener("peer:unreachable", (msg) => {
 		s.unrechable.push(msg.detail);
+	});
+
+	s.stream.addEventListener("peer:session", (msg) => {
+		s.session.push(msg.detail);
 	});
 
 	let processMessage = s.stream.processMessage.bind(s.stream);
@@ -102,6 +114,12 @@ const createMetrics = (stream: DirectStream) => {
 		return ackFn(a, b, c, d);
 	};
 
+	const goodByeFn = s.stream.onGoodBye.bind(s.stream);
+	s.stream.onGoodBye = (a, b, c, d) => {
+		s.goodbye.push(d);
+		return goodByeFn(a, b, c, d);
+	};
+
 	return s;
 };
 const resetMetrics = (streams: ReturnType<typeof createMetrics>[]) => {
@@ -111,6 +129,13 @@ const resetMetrics = (streams: ReturnType<typeof createMetrics>[]) => {
 		x.received = [];
 		x.unrechable = [];
 	});
+};
+const collectMetrics = (session: TestSession<any>) => {
+	let streams: ReturnType<typeof createMetrics>[] = [];
+	for (const peer of session.peers) {
+		streams.push(createMetrics(peer.services.directstream));
+	}
+	return streams;
 };
 
 class TestDirectStream extends DirectStream {
@@ -212,10 +237,7 @@ describe("streams", function () {
 				└─┘
 				*/
 
-				streams = [];
-				for (const peer of session.peers) {
-					streams.push(createMetrics(peer.services.directstream));
-				}
+				streams = collectMetrics(session);
 				await session.connect([
 					// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
 					[session.peers[0], session.peers[1]],
@@ -276,10 +298,8 @@ describe("streams", function () {
 				└─┘
 				*/
 
-				streams = [];
-				for (const peer of session.peers) {
-					streams.push(createMetrics(peer.services.directstream));
-				}
+				streams = collectMetrics(session);
+
 				await session.connect([
 					// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
 					[session.peers[0], session.peers[1]],
@@ -411,7 +431,8 @@ describe("streams", function () {
 					streams[1].stream.publicKeyHash,
 					streams[2].stream.publicKeyHash,
 					0,
-					+new Date()
+					+new Date(),
+					-1
 				);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
@@ -679,10 +700,8 @@ describe("streams", function () {
 							new TestDirectStream(c, { connectionManager: false })
 					}
 				});
-				streams = [];
-				for (const peer of session.peers) {
-					streams.push(createMetrics(peer.services.directstream));
-				}
+
+				streams = collectMetrics(session);
 
 				await waitForPeerStreams(streams[0].stream, streams[1].stream);
 			});
@@ -695,6 +714,7 @@ describe("streams", function () {
 				const msg = new DataMessage({
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
+						session: +new Date(),
 						mode: new SeekDelivery({ redundancy: 1 })
 					})
 				});
@@ -725,6 +745,7 @@ describe("streams", function () {
 				const msg = new DataMessage({
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
+						session: +new Date(),
 						mode: new SeekDelivery({
 							to: [
 								streams[0].stream.publicKeyHash,
@@ -754,6 +775,7 @@ describe("streams", function () {
 				const msg = new DataMessage({
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
+						session: +new Date(),
 						mode: new SilentDelivery({
 							to: [streams[0].stream.publicKeyHash],
 							redundancy: 1
@@ -774,6 +796,7 @@ describe("streams", function () {
 				const msg = new DataMessage({
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
+						session: +new Date(),
 						mode: new SilentDelivery({
 							to: [streams[0].stream.publicKeyHash],
 							redundancy: 1
@@ -800,6 +823,7 @@ describe("streams", function () {
 				const msg = new DataMessage({
 					data: new Uint8Array([0]),
 					header: new MessageHeader({
+						session: +new Date(),
 						mode: new SeekDelivery({
 							to: [streams[2].stream.publicKeyHash],
 							redundancy: 1
@@ -857,14 +881,14 @@ describe("streams", function () {
 								)
 							);
 						}
-						streams = [];
+						streams = collectMetrics(session);
+
 						for (const peer of session.peers) {
 							await waitForResolved(() =>
 								expect(peer.services.directstream.peers.size).toEqual(
 									session.peers.length - 1
 								)
 							);
-							streams.push(createMetrics(peer.services.directstream));
 						}
 					});
 
@@ -914,14 +938,13 @@ describe("streams", function () {
 									new TestDirectStream(c, { connectionManager: false })
 							}
 						});
-						streams = [];
+						streams = collectMetrics(session);
 						for (const peer of session.peers) {
 							await waitForResolved(() =>
 								expect(peer.services.directstream.peers.size).toEqual(
 									session.peers.length - 1
 								)
 							);
-							streams.push(createMetrics(peer.services.directstream));
 						}
 					});
 
@@ -1043,10 +1066,8 @@ describe("streams", function () {
 									new TestDirectStream(c, { connectionManager: false })
 							}
 						});
-						streams = [];
-						for (const peer of session.peers) {
-							streams.push(createMetrics(peer.services.directstream));
-						}
+						streams = collectMetrics(session);
+
 						await session.connect([
 							// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
 							[session.peers[0], session.peers[1]],
@@ -1356,14 +1377,16 @@ describe("streams", function () {
 						neighbour.hashcode(),
 						neighbour.hashcode(),
 						0,
-						+new Date()
+						+new Date(),
+						-1
 					);
 					session.peers[0].services.directstream.routes.add(
 						session.peers[0].services.directstream.publicKey.hashcode(),
 						neighbour.hashcode(),
 						neighbour.hashcode(),
 						0,
-						+new Date()
+						+new Date(),
+						-1
 					);
 					expect(
 						session.peers[0].services.directstream.routes
@@ -1407,7 +1430,8 @@ describe("streams", function () {
 						neighbour.hashcode(),
 						remote.hashcode(),
 						0,
-						now - 100
+						now - 100,
+						-1
 					);
 
 					// New route is longer
@@ -1416,7 +1440,8 @@ describe("streams", function () {
 						neighbour.hashcode(),
 						remote.hashcode(),
 						1,
-						now
+						now,
+						-1
 					);
 
 					expect(
@@ -1453,10 +1478,7 @@ describe("streams", function () {
 							})
 					}
 				});
-				streams = [];
-				for (const peer of session.peers) {
-					streams.push(createMetrics(peer.services.directstream));
-				}
+				streams = collectMetrics(session);
 
 				await waitForPeerStreams(streams[0].stream, streams[1].stream);
 				await waitForPeerStreams(streams[0].stream, streams[2].stream);
@@ -1483,8 +1505,12 @@ describe("streams", function () {
 				});
 
 				// messages can still deliver
-				expect(streams[1].received).toHaveLength(2);
-				expect(streams[2].received).toHaveLength(2);
+				expect(
+					streams[1].received.filter((x) => x.data?.length || 0 > 0)
+				).toHaveLength(2);
+				expect(
+					streams[2].received.filter((x) => x.data?.length || 0 > 0)
+				).toHaveLength(2);
 			});
 
 			it("max queued buffer pruning", async () => {
@@ -1616,10 +1642,7 @@ describe("streams", function () {
 						new TestDirectStream(c, { connectionManager: false })
 				}
 			});
-			streams = [];
-			for (const peer of session.peers) {
-				streams.push(createMetrics(peer.services.directstream));
-			}
+			streams = collectMetrics(session);
 
 			await waitForPeerStreams(streams[0].stream, streams[2].stream);
 			await waitForPeerStreams(streams[0].stream, streams[1].stream);
@@ -1692,7 +1715,8 @@ describe("join/leave", () => {
 					};
 				})
 			); // Second arg is due to https://github.com/transport/js-libp2p/issues/1690
-			streams = [];
+
+			streams = collectMetrics(session);
 
 			for (const [i, peer] of session.peers.entries()) {
 				if (i === 0) {
@@ -1704,8 +1728,6 @@ describe("join/leave", () => {
 						!!peer.services.directstream.connectionManagerOptions.dialer
 					).toBeFalse();
 				}
-
-				streams.push(createMetrics(peer.services.directstream));
 			}
 
 			// slowly connect to that the route maps are deterministic
@@ -2081,6 +2103,7 @@ describe("join/leave", () => {
 			).toEqual([streams[0].stream.publicKeyHash]);
 			await session.connect([[session.peers[2], session.peers[3]]]);
 			await waitForPeerStreams(streams[2].stream, streams[3].stream);
+
 			await streams[3].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
@@ -2150,21 +2173,17 @@ describe("join/leave", () => {
 
 			await session.peers[2].stop();
 
-			try {
-				await waitForResolved(
-					() => {
-						expect(
-							streams[3].stream.routes.isReachable(
-								streams[3].stream.publicKeyHash,
-								streams[2].stream.publicKeyHash
-							)
-						).toEqual(false);
-					},
-					{ timeout: 20 * 1000 }
-				);
-			} catch (error) {
-				throw error;
-			}
+			await waitForResolved(
+				() => {
+					expect(
+						streams[3].stream.routes.isReachable(
+							streams[3].stream.publicKeyHash,
+							streams[2].stream.publicKeyHash
+						)
+					).toEqual(false);
+				},
+				{ timeout: 20 * 1000 }
+			);
 
 			await waitForResolved(() => {
 				expect(
@@ -2179,7 +2198,13 @@ describe("join/leave", () => {
 
 	describe("invalidation", () => {
 		let extraSession: TestSessionStream;
-		beforeEach(async () => {
+		beforeEach(async () => {});
+		afterEach(async () => {
+			await session?.stop();
+			await extraSession?.stop();
+		});
+
+		it("will not get blocked for slow writes", async () => {
 			session = await connected(3);
 
 			for (let i = 0; i < session.peers.length; i++) {
@@ -2189,13 +2214,6 @@ describe("join/leave", () => {
 					)
 				);
 			}
-		});
-		afterEach(async () => {
-			await session?.stop();
-			await extraSession?.stop();
-		});
-
-		it("will not get blocked for slow writes", async () => {
 			let slowPeer = [1, 2];
 			let fastPeer = [2, 1];
 			let seekDelivery = [true, false];
@@ -2263,11 +2281,7 @@ describe("join/leave", () => {
 				);
 
 				await waitForResolved(() => expect(t1).toBeDefined());
-				try {
-					expect(t1! - t0).toBeLessThan(3000);
-				} catch (error) {
-					throw error;
-				}
+				expect(t1! - t0).toBeLessThan(3000);
 
 				// reset
 				abortController.abort();
@@ -2278,6 +2292,75 @@ describe("join/leave", () => {
 				);
 				await p;
 			}
+		});
+		it("reset route info on rejoiing peers", async () => {
+			session = await disconnected(4);
+			let streams = collectMetrics(session);
+
+			await session.connect([
+				// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+				[session.peers[2], session.peers[3]]
+			]);
+			await waitForPeerStreams(stream(session, 0), stream(session, 1));
+			await waitForPeerStreams(stream(session, 1), stream(session, 2));
+			await waitForPeerStreams(stream(session, 2), stream(session, 3));
+
+			await session.peers[0].services.directstream.publish(
+				new Uint8Array([0]),
+				{
+					mode: new SeekDelivery({
+						redundancy: 1,
+						to: [session.peers[3].services.directstream.publicKeyHash]
+					})
+				}
+			);
+
+			await waitForResolved(() => expect(streams[2].ack).toHaveLength(1));
+			await waitForResolved(() => expect(streams[3].received).toHaveLength(1));
+			await waitForResolved(() =>
+				expect(
+					session.peers[2].services.directstream.routes.countAll()
+				).toEqual(3)
+			);
+
+			expect(streams[0].reachable.map((x) => x.hashcode())).toEqual([
+				streams[1].stream.publicKeyHash,
+				streams[3].stream.publicKeyHash
+			]);
+
+			expect(streams[0].session.map((x) => x.hashcode())).toEqual([
+				streams[1].stream.publicKeyHash,
+				//	streams[2].stream.publicKeyHash, peer 2 will never emit any messages
+				streams[3].stream.publicKeyHash
+			]);
+
+			await session.peers[3].stop();
+			await waitForResolved(() => expect(streams[0].goodbye).toHaveLength(1));
+			await session.peers[3].start();
+			await session.connect([[session.peers[2], session.peers[3]]]);
+			streams[0].reachable = [];
+			await session.peers[0].services.directstream.publish(
+				new Uint8Array([0]),
+				{
+					mode: new SilentDelivery({
+						redundancy: 1,
+						to: [session.peers[3].services.directstream.publicKeyHash]
+					})
+				}
+			);
+			await waitForResolved(() => expect(streams[3].received).toHaveLength(2));
+			await waitForResolved(() =>
+				expect(streams[0].session.map((x) => x.hashcode())).toEqual([
+					streams[1].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash, // sent us a goodbye message for node 3
+					streams[3].stream.publicKeyHash // the new session (the restart)
+				])
+			);
+			expect(streams[0].unrechable.length).toEqual(0);
+			expect(streams[0].reachable.length).toEqual(0);
 		});
 	});
 });

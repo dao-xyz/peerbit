@@ -38,10 +38,9 @@ import type { TypedEventTarget } from "@libp2p/interface";
 export type SignaturePolicy = "StictSign" | "StrictNoSign";
 
 import { logger } from "./logger.js";
-
 export { logger };
-
 import { Cache } from "@peerbit/cache";
+
 import type { Libp2pEvents } from "@libp2p/interface";
 import { ready } from "@peerbit/crypto";
 import {
@@ -104,11 +103,11 @@ type WithTo = {
 type WithMode = {
 	mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere;
 };
+
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
 export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
-	public counter = 0;
 	public readonly peerId: PeerId;
 	public readonly publicKey: PublicSignKey;
 	public readonly protocol: string;
@@ -149,7 +148,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.inboundAbortController = new AbortController();
 		this.closed = false;
 		this.connId = init.connId;
-		this.counter = 1;
 		this.usedBandWidthTracker = new MovingAverageTracker();
 	}
 
@@ -407,7 +405,6 @@ export abstract class DirectStream<
 	 * if publish should emit to self, if subscribed
 	 */
 
-	public signaturePolicy: SignaturePolicy;
 	public queue: Queue;
 	public multicodecs: string[];
 	public seenCache: Cache<number>;
@@ -423,6 +420,8 @@ export abstract class DirectStream<
 	routeSeekInterval: number;
 	seekTimeout: number;
 	closeController: AbortController;
+	session: number;
+
 	private _ackCallbacks: Map<
 		string,
 		{
@@ -434,7 +433,7 @@ export abstract class DirectStream<
 			) => void;
 			timeout: ReturnType<typeof setTimeout>;
 		}
-	> = new Map();
+	>;
 
 	constructor(
 		readonly components: DirectStreamComponents,
@@ -475,7 +474,7 @@ export abstract class DirectStream<
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
 		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
-		this.signaturePolicy = signaturePolicy;
+		this._ackCallbacks = new Map();
 
 		if (connectionManager === false || connectionManager === null) {
 			this.connectionManagerOptions = {
@@ -527,6 +526,7 @@ export abstract class DirectStream<
 			return;
 		}
 
+		this.session = +new Date();
 		await ready;
 
 		this.closeController = new AbortController();
@@ -767,7 +767,8 @@ export abstract class DirectStream<
 				peerKey.hashcode(),
 				peerKey,
 				-1,
-				+new Date()
+				+new Date(),
+				-1
 			);
 		} catch (err: any) {
 			logger.error(err);
@@ -804,7 +805,7 @@ export abstract class DirectStream<
 
 			// Notify network
 			const dependent = this.routes.getDependent(peerKeyHash);
-			this.removeRouteConnection(peerKeyHash, true);
+			this.removeRouteConnection(peerKeyHash);
 
 			if (dependent.length > 0) {
 				await this.publishMessage(
@@ -812,6 +813,7 @@ export abstract class DirectStream<
 					await new Goodbye({
 						leaving: [peerKeyHash],
 						header: new MessageHeader({
+							session: this.session,
 							mode: new SilentDelivery({ to: dependent, redundancy: 2 })
 						})
 					}).sign(this.sign)
@@ -822,10 +824,8 @@ export abstract class DirectStream<
 		logger.debug("connection ended:" + peerKey.toString());
 	}
 
-	public removeRouteConnection(hash: string, neigbour: boolean) {
-		const unreachable = neigbour
-			? this.routes.removeNeighbour(hash)
-			: this.routes.removeTarget(hash);
+	public removeRouteConnection(hash: string) {
+		const unreachable = this.routes.removeTarget(hash);
 		for (const node of unreachable) {
 			this.onPeerUnreachable(node); // TODO types
 			this.peerKeyHashToPublicKey.delete(node);
@@ -837,21 +837,27 @@ export abstract class DirectStream<
 		neighbour: string,
 		target: PublicSignKey,
 		distance: number,
-		session: number
+		session: number,
+		remoteSession: number
 	) {
 		const targetHash = typeof target === "string" ? target : target.hashcode();
-		const wasReachable =
-			from === this.publicKeyHash
-				? this.routes.isReachable(from, targetHash)
-				: true;
 
-		this.routes.add(from, neighbour, targetHash, distance, session);
+		const update = this.routes.add(
+			from,
+			neighbour,
+			targetHash,
+			distance,
+			session,
+			remoteSession
+		);
 
-		const newPeer =
-			wasReachable === false && this.routes.isReachable(from, targetHash);
-		if (newPeer) {
-			this.peerKeyHashToPublicKey.set(target.hashcode(), target);
-			this.onPeerReachable(target); // TODO types
+		// second condition is that we don't want to emit 'reachable' events for routes where we act only as a relay
+		// in this case, from is != this.publicKeyhash
+		if (from === this.publicKeyHash) {
+			if (update === "new") {
+				this.peerKeyHashToPublicKey.set(target.hashcode(), target);
+				this.onPeerReachable(target);
+			}
 		}
 	}
 
@@ -881,6 +887,24 @@ export abstract class DirectStream<
 		);
 	}
 
+	public updateSession(key: PublicSignKey, session?: number) {
+		if (this.routes.updateSession(key.hashcode(), session)) {
+			return this.onPeerSession(key, session!);
+		}
+	}
+	public invalidateSession(key: string) {
+		this.routes.updateSession(key, undefined);
+	}
+
+	public onPeerSession(key: PublicSignKey, session: number) {
+		this.dispatchEvent(
+			// TODO types
+			new CustomEvent("peer:session", {
+				detail: key
+			})
+		);
+	}
+
 	/**
 	 * Notifies the router that a peer has been connected
 	 */
@@ -898,7 +922,6 @@ export abstract class DirectStream<
 
 		// If peer streams already exists, do nothing
 		if (existing != null) {
-			existing.counter += 1;
 			existing.connId = connId;
 			return existing;
 		}
@@ -915,6 +938,8 @@ export abstract class DirectStream<
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
+		this.updateSession(publicKey, -1);
+
 		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
 			once: true
 		});
@@ -1084,7 +1109,7 @@ export abstract class DirectStream<
 		}
 
 		if (isForMe) {
-			if ((await this.maybeVerifyMessage(message)) === false) {
+			if (!(await this.verifyAndProcess(message))) {
 				// we don't verify messages we don't dispatch because of the performance penalty // TODO add opts for this
 				logger.warn("Recieved message with invalid signature or timestamp");
 				return false;
@@ -1136,8 +1161,19 @@ export abstract class DirectStream<
 		}
 	}
 
-	public async maybeVerifyMessage(message: DataMessage) {
-		return message.verify(this.signaturePolicy === "StictSign");
+	public async verifyAndProcess(message: Message<any>) {
+		const verified = await message.verify(true);
+		if (!verified) {
+			return false;
+		}
+
+		const from = message.header.signatures!.publicKeys[0];
+		if (this.peers.has(from.hashcode())) {
+			// do nothing
+		} else {
+			this.updateSession(from, Number(message.header.session));
+		}
+		return true;
 	}
 
 	async acknowledgeMessage(
@@ -1145,6 +1181,12 @@ export abstract class DirectStream<
 		message: DataMessage,
 		seenBefore: number
 	) {
+		const signers = message.header.signatures!.publicKeys.map((x) =>
+			x.hashcode()
+		);
+		const from = signers[0];
+
+		this.routes.remoteInfo.get(from)?.session;
 		if (
 			(message.header.mode instanceof SeekDelivery ||
 				message.header.mode instanceof AcknowledgeDelivery) &&
@@ -1155,12 +1197,10 @@ export abstract class DirectStream<
 				await new ACK({
 					messageIdToAcknowledge: message.id,
 					seenCounter: seenBefore,
-
 					// TODO only give origin info to peers we want to connect to us
 					header: new MessageHeader({
-						mode: new TracedDelivery(
-							message.header.signatures!.publicKeys.map((x) => x.hashcode())
-						),
+						mode: new TracedDelivery(signers),
+						session: this.session,
 
 						// include our origin if message is SeekDelivery and we have not recently pruned a connection to this peer
 						origin:
@@ -1216,7 +1256,7 @@ export abstract class DirectStream<
 			return false;
 		}
 
-		if (!(await message.verify(true))) {
+		if (!(await this.verifyAndProcess(message))) {
 			logger.warn(`Recieved ACK message that did not verify`);
 			return false;
 		}
@@ -1238,7 +1278,9 @@ export abstract class DirectStream<
 			await this.publishMessage(this.publicKey, message, [nextStream], true);
 		} else {
 			if (myIndex !== 0) {
-				throw new Error("Unexpected");
+				// TODO should we throw something, or log?
+				// we could arrive here if the ACK target does not exist any more...
+				return;
 			}
 			// if origin exist (we can connect to remote peer) && we have autodialer turned on
 			if (message.header.origin && this.connectionManagerOptions.dialer) {
@@ -1269,7 +1311,7 @@ export abstract class DirectStream<
 			return;
 		}
 
-		if (!(await message.verify(true))) {
+		if (!(await this.verifyAndProcess(message))) {
 			logger.warn(`Recieved ACK message that did not verify`);
 			return false;
 		}
@@ -1277,6 +1319,10 @@ export abstract class DirectStream<
 		const filteredLeaving = message.leaving.filter((x) =>
 			this.routes.hasTarget(x)
 		);
+
+		for (const remote of filteredLeaving) {
+			this.invalidateSession(remote);
+		}
 
 		if (filteredLeaving.length > 0) {
 			this.publish(new Uint8Array(0), {
@@ -1338,10 +1384,12 @@ export abstract class DirectStream<
 				const neighbourRoutes = this.routes.routes
 					.get(this.publicKeyHash)
 					?.get(hash);
+
 				if (
 					!neighbourRoutes ||
-					now - neighbourRoutes.latestSession >
-						neighbourRoutes.list.length * this.routeSeekInterval
+					now - neighbourRoutes.session >
+						neighbourRoutes.list.length * this.routeSeekInterval ||
+					!this.routes.isUpToDate(hash, neighbourRoutes)
 				) {
 					mode = new SeekDelivery({
 						to: mode.to,
@@ -1354,18 +1402,11 @@ export abstract class DirectStream<
 
 		const message = new DataMessage({
 			data: data instanceof Uint8ArrayList ? data.subarray() : data,
-			header: new MessageHeader({ mode })
+			header: new MessageHeader({ mode, session: this.session })
 		});
 
-		if (
-			this.signaturePolicy === "StictSign" ||
-			mode instanceof SeekDelivery ||
-			mode instanceof AcknowledgeDelivery ||
-			mode instanceof AnyWhere
-		) {
-			await message.sign(this.sign);
-		}
-
+		// TODO allow messages to also be sent unsigned (signaturePolicy property)
+		await message.sign(this.sign);
 		return message;
 	}
 	/**
@@ -1448,7 +1489,7 @@ export abstract class DirectStream<
 					this.healthChecks.set(
 						to,
 						setTimeout(() => {
-							this.removeRouteConnection(to, false);
+							this.removeRouteConnection(to);
 						}, this.seekTimeout + 5000)
 					);
 				}
@@ -1530,7 +1571,8 @@ export abstract class DirectStream<
 						messageThrough.publicKey.hashcode(),
 						messageTarget,
 						seenCounter,
-						session
+						session,
+						Number(ack.header.session)
 					); // we assume the seenCounter = distance. The more the message has been seen by the target the longer the path is to the target
 				}
 
@@ -1790,8 +1832,6 @@ export abstract class DirectStream<
 		return this._ackCallbacks.size > 0;
 	}
 
-	lastQueuedBytes = 0;
-
 	// make this into a job? run every few ms
 	maybePruneConnections(): Promise<void> {
 		if (this.connectionManagerOptions.pruner) {
@@ -1823,8 +1863,6 @@ export abstract class DirectStream<
 		if (this.peers.size <= this.connectionManagerOptions.minConnections) {
 			return;
 		}
-		console.log("PRUNE CONNECTIONS");
-
 		const sorted = [...this.peers.values()]
 			.sort((x, y) => x.usedBandwidth - y.usedBandwidth)
 			.map((x) => x.publicKey.hashcode());

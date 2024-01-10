@@ -1,5 +1,3 @@
-import { PublicSignKey } from "@peerbit/crypto";
-
 export class MovingAverageTracker {
 	private lastTS = 0;
 

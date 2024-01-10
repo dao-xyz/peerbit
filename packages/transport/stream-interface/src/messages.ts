@@ -7,7 +7,6 @@ import {
 	fixedArray,
 	option
 } from "@dao-xyz/borsh";
-import { equals } from "uint8arrays";
 import { Uint8ArrayList } from "uint8arraylist";
 import {
 	PublicSignKey,
@@ -215,10 +214,13 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	private _id: Uint8Array;
 
 	@field({ type: "u64" })
-	private _timestamp: bigint;
+	timestamp: bigint;
 
 	@field({ type: "u64" })
-	private _expires: bigint;
+	session: bigint;
+
+	@field({ type: "u64" })
+	expires: bigint;
 
 	@field({ type: option(PeerInfo) })
 	private _origin?: MultiAddrinfo;
@@ -233,13 +235,15 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 
 	constructor(properties: {
 		origin?: MultiAddrinfo;
-		expires?: bigint;
+		expires?: number;
+		session: number;
 		id?: Uint8Array;
 		mode: T;
 	}) {
 		this._id = properties?.id || randomBytes(ID_LENGTH);
-		this._expires = properties?.expires || BigInt(+new Date() + WEEK_MS);
-		this._timestamp = BigInt(+new Date());
+		this.expires = BigInt(properties?.expires || +new Date() + WEEK_MS);
+		this.timestamp = BigInt(+new Date());
+		this.session = BigInt(properties.session);
 		this.signatures = new Signatures();
 		this._origin = properties?.origin;
 		this.mode = properties.mode;
@@ -249,20 +253,8 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		return this._id;
 	}
 
-	get expires() {
-		return this._expires;
-	}
-
-	get timetamp() {
-		return this._timestamp;
-	}
-
 	get origin(): MultiAddrinfo | undefined {
 		return this._origin;
-	}
-
-	equals(other: MessageHeader) {
-		return this._expires === other.expires && equals(this._id, other.id);
 	}
 
 	verify() {

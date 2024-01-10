@@ -3,6 +3,7 @@ import type { PeerId } from "@libp2p/interface/peer-id";
 import { DataMessage, Message } from "./messages.js";
 
 export interface PeerEvents {
+	"peer:session": CustomEvent<PublicSignKey>;
 	"peer:reachable": CustomEvent<PublicSignKey>;
 	"peer:unreachable": CustomEvent<PublicSignKey>;
 }
