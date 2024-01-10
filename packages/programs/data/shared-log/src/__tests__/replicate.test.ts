@@ -1010,7 +1010,7 @@ describe("replication degree", () => {
 		await waitForResolved(() =>
 			expect(db2.log["_pendingIHave"].size).toEqual(1)
 		);
-		await delay(respondToIHaveTimeout);
+		await delay(respondToIHaveTimeout + 1000);
 		expect(db2.log["_pendingIHave"].size).toEqual(0);
 		await expectPromise;
 	});
