@@ -149,7 +149,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 							this._getRequestValueFn(decrypted),
 							{
 								from: message.header.signatures!.publicKeys[0],
-								timestamp: message.header.timetamp
+								timestamp: message.header.timestamp
 							}
 						);
 						if (response && rpcMessage.respondTo) {
