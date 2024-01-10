@@ -5,7 +5,6 @@ import { v4 as uuid } from "uuid";
 import { Peerbit, createLibp2pExtended } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { Documents, SetupOptions } from "../document-store.js";
-import { Replicator } from "@peerbit/shared-log";
 import { DirectSub } from "@peerbit/pubsub";
 import { mplex } from "@libp2p/mplex";
 import { delay } from "@peerbit/time";
