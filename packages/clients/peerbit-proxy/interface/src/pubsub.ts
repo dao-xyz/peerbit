@@ -235,6 +235,10 @@ export const createCustomEventFromType = (
 		return new CustomEvent<StreamMessage>("message", {
 			detail: deserialize(data, StreamMessage)
 		});
+	} else if (type === "peer:session") {
+		return new CustomEvent<PublicSignKey>("peer:session", {
+			detail: deserialize(data, PublicSignKey)
+		});
 	} else if (type === "peer:reachable") {
 		return new CustomEvent<PublicSignKey>("peer:reachable", {
 			detail: deserialize(data, PublicSignKey)
