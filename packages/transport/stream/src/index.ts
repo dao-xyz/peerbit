@@ -824,8 +824,8 @@ export abstract class DirectStream<
 		logger.debug("connection ended:" + peerKey.toString());
 	}
 
-	public removeRouteConnection(hash: string) {
-		const unreachable = this.routes.removeTarget(hash);
+	public removeRouteConnection(hash: string, asNeigh = true) {
+		const unreachable = this.routes.remove(hash);
 		for (const node of unreachable) {
 			this.onPeerUnreachable(node); // TODO types
 			this.peerKeyHashToPublicKey.delete(node);
@@ -1489,7 +1489,7 @@ export abstract class DirectStream<
 					this.healthChecks.set(
 						to,
 						setTimeout(() => {
-							this.removeRouteConnection(to);
+							this.removeRouteConnection(to, false);
 						}, this.seekTimeout + 5000)
 					);
 				}

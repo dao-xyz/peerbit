@@ -2156,6 +2156,15 @@ describe("join/leave", () => {
 		});
 
 		it("distant drop", async () => {
+			console.log(streams.map((x) => x.stream.publicKeyHash));
+			expect(
+				streams[3].stream.routes
+					.findNeighbor(
+						streams[3].stream.publicKeyHash,
+						streams[2].stream.publicKeyHash
+					)
+					?.list?.map((x) => x.hash)
+			).toBeUndefined();
 			await streams[3].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
@@ -2171,28 +2180,43 @@ describe("join/leave", () => {
 					?.list?.map((x) => x.hash)
 			).toEqual([streams[0].stream.publicKeyHash]);
 
+			await waitForResolved(() =>
+				expect(streams[3].reachable.map((x) => x.hashcode())).toEqual([
+					streams[0].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash
+				])
+			);
+			await waitForResolved(() =>
+				expect(streams[0].reachable.map((x) => x.hashcode())).toEqual([
+					streams[1].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash
+				])
+			);
+
 			await session.peers[2].stop();
 
 			await waitForResolved(
-				() => {
-					expect(
-						streams[3].stream.routes.isReachable(
-							streams[3].stream.publicKeyHash,
-							streams[2].stream.publicKeyHash
-						)
-					).toEqual(false);
-				},
+				() =>
+					expect(streams[3].unrechable.map((x) => x.hashcode())).toEqual([
+						streams[2].stream.publicKeyHash
+					]),
 				{ timeout: 20 * 1000 }
 			);
+			expect(streams[0].unrechable.map((x) => x.hashcode())).toEqual([]); // because node 2 was never "reachable" directly from 2, just as a relay
 
-			await waitForResolved(() => {
-				expect(
-					streams[3].stream.routes.findNeighbor(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					)
-				).toBeUndefined();
-			});
+			expect(
+				streams[3].stream.routes.isReachable(
+					streams[3].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash
+				)
+			).toEqual(false);
+
+			expect(
+				streams[3].stream.routes.findNeighbor(
+					streams[3].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash
+				)
+			).toBeUndefined();
 		});
 	});
 

@@ -24,14 +24,15 @@ export class Routes {
 	// once we receive new route info to reach a specific target
 	routeMaxRetentionPeriod: number;
 
-	signal: AbortSignal;
+	signal?: AbortSignal;
 
 	constructor(
 		readonly me: string,
-		options: { routeMaxRetentionPeriod: number; signal: AbortSignal }
+		options?: { routeMaxRetentionPeriod?: number; signal?: AbortSignal }
 	) {
-		this.routeMaxRetentionPeriod = options.routeMaxRetentionPeriod;
-		this.signal = options.signal;
+		this.routeMaxRetentionPeriod =
+			options?.routeMaxRetentionPeriod ?? 10 * 1000;
+		this.signal = options?.signal;
 	}
 
 	clear() {
@@ -171,16 +172,25 @@ export class Routes {
 		return exist ? (isNewRemoteSession ? "restart" : "updated") : "new";
 	}
 
-	removeTarget(target: string) {
+	/**
+	 *
+	 * @param target
+	 * @returns unreachable nodes (from me) after removal
+	 */
+	remove(target: string) {
 		this.routes.delete(target);
-		const maybeUnreachable: Set<string> = new Set([target]);
+		const maybeUnreachable: Set<string> = new Set();
+		let targetRemoved = false;
 		for (const [fromMapKey, fromMap] of this.routes) {
 			// delete target
-			fromMap.delete(target);
+			const deletedAsTarget = fromMap.delete(target);
+			targetRemoved =
+				targetRemoved || (deletedAsTarget && fromMapKey === this.me);
 
 			// delete this as neighbour
 			for (const [remote, neighbours] of fromMap) {
-				neighbours.list = neighbours.list.filter((x) => x.hash !== target);
+				const filtered = neighbours.list.filter((x) => x.hash !== target);
+				neighbours.list = filtered;
 				if (neighbours.list.length === 0) {
 					fromMap.delete(remote);
 
@@ -197,6 +207,10 @@ export class Routes {
 			}
 		}
 		this.remoteInfo.delete(target);
+
+		if (targetRemoved) {
+			maybeUnreachable.add(target);
+		}
 		return [...maybeUnreachable].filter((x) => !this.isReachable(this.me, x));
 	}
 
