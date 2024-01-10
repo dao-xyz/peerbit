@@ -30,11 +30,11 @@ import {
 	PubSub,
 	DataEvent,
 	SubscriptionData,
-	PublishEvent
+	PublishEvent,
+	PubSubEvents
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interface";
-import { PubSubEvents } from "@peerbit/pubsub-interface";
 
 export const logger = logFn({ module: "lazysub", level: "warn" });
 const logError = (e?: { message: string }) => logger.error(e?.message);
@@ -95,13 +95,14 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		}
 
 		const newTopicsForTopicData: string[] = [];
-		const prev = this.subscriptions.get(topic);
+		let prev = this.subscriptions.get(topic);
 		if (prev) {
 			prev.counter += 1;
 		} else {
-			this.subscriptions.set(topic, {
+			prev = {
 				counter: 1
-			});
+			};
+			this.subscriptions.set(topic, prev);
 
 			newTopicsForTopicData.push(topic);
 			this.listenForSubscribers(topic);
@@ -115,7 +116,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						requestSubscribers: true
 					}).bytes()
 				),
-				header: new MessageHeader({ mode: new SeekDelivery({ redundancy: 2 }) })
+				header: new MessageHeader({
+					mode: new SeekDelivery({ redundancy: 2 }),
+					session: this.session
+				})
 			});
 
 			await this.publishMessage(this.publicKey, await message.sign(this.sign));
@@ -142,27 +146,34 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			`unsubscribe from ${topic} - am subscribed with subscriptions ${subscriptions}`
 		);
 
-		if (subscriptions?.counter && subscriptions?.counter >= 0) {
-			subscriptions.counter -= 1;
-		}
-
 		const peersOnTopic = this.topicsToPeers.get(topic);
 		if (peersOnTopic) {
 			for (const peer of peersOnTopic) {
 				this.lastSubscriptionMessages.delete(peer);
 			}
 		}
-		if (!subscriptions?.counter || options?.force) {
+
+		if (!subscriptions) {
+			return false;
+		}
+
+		if (subscriptions?.counter && subscriptions?.counter >= 0) {
+			subscriptions.counter -= 1;
+		}
+
+		if (!subscriptions.counter || options?.force) {
 			await this.publishMessage(
 				this.publicKey,
 				await new DataMessage({
 					header: new MessageHeader({
-						mode: new AnyWhere(/* {
-							redundancy: 2,
-							to: [...this.getPeersOnTopics([topic])]
-						} */)
+						mode: new AnyWhere(), // TODO make this better
+						session: this.session
 					}),
-					data: toUint8Array(new Unsubscribe({ topics: [topic] }).bytes())
+					data: toUint8Array(
+						new Unsubscribe({
+							topics: [topic]
+						}).bytes()
+					)
 				}).sign(this.sign)
 			);
 
@@ -224,7 +235,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					mode: new SeekDelivery({
 						to: to ? [to.hashcode()] : [],
 						redundancy: 2
-					})
+					}),
+					session: this.session
 				})
 			}).sign(this.sign)
 		);
@@ -234,7 +246,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		const newPeers: Set<string> = new Set();
 		if (topics?.length) {
 			for (const topic of topics) {
-				const peersOnTopic = this.topicsToPeers.get(topic.toString());
+				const peersOnTopic = this.topicsToPeers.get(topic);
 				if (peersOnTopic) {
 					peersOnTopic.forEach((peer) => {
 						newPeers.add(peer);
@@ -327,13 +339,32 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		return change;
 	}
 
+	private getSubscriptionOverlap(topics?: string[]) {
+		const subscriptions: string[] = [];
+		if (topics) {
+			for (const topic of topics) {
+				const subscription = this.subscriptions.get(topic);
+				if (subscription) {
+					subscriptions.push(topic);
+				}
+			}
+		} else {
+			for (const [topic, _subscription] of this.subscriptions) {
+				subscriptions.push(topic);
+			}
+		}
+		return subscriptions;
+	}
+
+	public onPeerSession(key: PublicSignKey, session: number): void {
+		// reset subs, the peer has restarted
+		this.removeSubscriptions(key.hashcode());
+	}
+
 	public async onPeerReachable(publicKey: PublicSignKey) {
 		// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
 		// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
-		/* await this.requestSubscribers([...this.topics.keys()], publicKey); */
-
 		const resp = super.onPeerReachable(publicKey);
-
 		const stream = this.peers.get(publicKey.hashcode());
 		if (stream && this.subscriptions.size > 0) {
 			// is new neighbour
@@ -343,12 +374,13 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				await new DataMessage({
 					data: toUint8Array(
 						new Subscribe({
-							topics: [...this.subscriptions.keys()],
+							topics: this.getSubscriptionOverlap(),
 							requestSubscribers: true
 						}).bytes()
 					),
 					header: new MessageHeader({
-						mode: new SeekDelivery({ redundancy: 2 })
+						mode: new SeekDelivery({ redundancy: 2 }),
+						session: this.session
 					})
 				}).sign(this.sign)
 			),
@@ -360,7 +392,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	public onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
+		this.removeSubscriptions(publicKeyHash);
+	}
 
+	private removeSubscriptions(publicKeyHash: string) {
 		const peerTopics = this.peerToTopic.get(publicKeyHash);
 
 		const changed: string[] = [];
@@ -396,8 +431,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		for (const topic of pubsubMessage.topics) {
 			const lastTimestamp = this.lastSubscriptionMessages
 				.get(subscriberKey)
-				?.get(topic)?.header.timetamp;
-			if (lastTimestamp != null && lastTimestamp > message.header.timetamp) {
+				?.get(topic)?.header.timestamp;
+			if (lastTimestamp != null && lastTimestamp > message.header.timestamp) {
 				return false; // message is old
 			}
 		}
@@ -469,7 +504,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			}
 
 			if (isForMe) {
-				if ((await this.maybeVerifyMessage(message)) === false) {
+				if ((await this.verifyAndProcess(message)) === false) {
 					logger.warn("Recieved message that did not verify PubSubData");
 					return false;
 				}
@@ -520,7 +555,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				this.relayMessage(from, message).catch(logError);
 			}
 		} else {
-			if (!(await message.verify(true))) {
+			if ((await this.verifyAndProcess(message)) === false) {
 				logger.warn("Recieved message that did not verify Unsubscribe");
 				return false;
 			}
@@ -541,7 +576,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					return false;
 				}
 
-				if (this.subscriptionMessageIsLatest(message, pubsubMessage)) {
+				if (
+					seenBefore === 0 &&
+					this.subscriptionMessageIsLatest(message, pubsubMessage)
+				) {
 					const changed: string[] = [];
 					pubsubMessage.topics.forEach((topic) => {
 						const peers = this.topics.get(topic);
@@ -557,25 +595,27 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 						if (
 							!existingSubscription ||
-							existingSubscription.timestamp < message.header.timetamp
+							existingSubscription.session < message.header.session
 						) {
 							peers.set(
 								senderKey,
 								new SubscriptionData({
-									timestamp: message.header.timetamp, // TODO update timestamps on all messages?
+									session: message.header.session,
+									timestamp: message.header.timestamp, // TODO update timestamps on all messages?
 									publicKey: sender
 								})
 							);
-							if (!existingSubscription) {
-								changed.push(topic);
-							}
+
+							changed.push(topic);
 						}
 
-						this.topicsToPeers.get(topic)?.add(senderKey);
-						this.peerToTopic.get(senderKey)?.add(topic);
+						if (!existingSubscription) {
+							this.topicsToPeers.get(topic)?.add(senderKey);
+							this.peerToTopic.get(senderKey)?.add(topic);
+						}
 					});
 
-					if (changed.length > 0 && seenBefore === 0) {
+					if (changed.length > 0) {
 						this.dispatchEvent(
 							new CustomEvent<SubscriptionEvent>("subscribe", {
 								detail: new SubscriptionEvent(sender, changed)
@@ -585,13 +625,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 					if (pubsubMessage.requestSubscribers) {
 						// respond if we are subscribing
-						const mySubscriptions = pubsubMessage.topics
-							.map((x) => {
-								const subscription = this.subscriptions.get(x);
-								return subscription ? x : undefined;
-							})
-							.filter((x) => !!x) as string[];
-
+						const mySubscriptions = this.getSubscriptionOverlap(
+							pubsubMessage.topics
+						);
 						if (mySubscriptions.length > 0) {
 							const response = new DataMessage({
 								data: toUint8Array(
@@ -602,6 +638,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 								),
 								// needs to be Ack or Silent else we will run into a infite message loop
 								header: new MessageHeader({
+									session: this.session,
 									mode: new SeekDelivery({
 										redundancy: 2,
 										to: [senderKey]
@@ -657,14 +694,9 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				// DONT await this since it might introduce a dead-lock
 				this.relayMessage(from, message).catch(logError);
 			} else if (pubsubMessage instanceof GetSubscribers) {
-				const subscriptionsToSend: string[] = [];
-				for (const topic of pubsubMessage.topics) {
-					const subscription = this.subscriptions.get(topic);
-					if (subscription) {
-						subscriptionsToSend.push(topic);
-					}
-				}
-
+				const subscriptionsToSend: string[] = this.getSubscriptionOverlap(
+					pubsubMessage.topics
+				);
 				if (subscriptionsToSend.length > 0) {
 					// respond
 					this.publishMessage(
@@ -680,7 +712,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 								mode: new SilentDelivery({
 									redundancy: 2,
 									to: [sender.hashcode()]
-								})
+								}),
+								session: this.session
 							})
 						}).sign(this.sign),
 						[stream]

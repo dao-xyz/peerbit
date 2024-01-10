@@ -24,7 +24,7 @@ import { equals } from "uint8arrays";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
-import { randomBytes } from "@peerbit/crypto";
+import { PublicSignKey, randomBytes } from "@peerbit/crypto";
 
 const checkShortestPathIsNeighbours = (sub: DirectSub) => {
 	const routes = sub.routes.routes.get(sub.routes.me)!;
@@ -87,11 +87,16 @@ const createMetrics = (pubsub: DirectSub) => {
 		messages: Message[];
 		received: PubSubData[];
 		allReceived: PubSubData[];
+
+		reachable: PublicSignKey[];
+		unrechable: PublicSignKey[];
 		subscriptionEvents: SubscriptionEvent[];
 		unsubscriptionEvents: UnsubcriptionEvent[];
 	} = {
 		messages: [],
 		received: [],
+		reachable: [],
+		unrechable: [],
 		relayedData: [],
 		allReceived: [],
 		stream: pubsub,
@@ -110,6 +115,13 @@ const createMetrics = (pubsub: DirectSub) => {
 	pubsub.addEventListener("unsubscribe", (msg) => {
 		m.unsubscriptionEvents.push(msg.detail);
 	});
+	pubsub.addEventListener("peer:reachable", (msg) => {
+		m.reachable.push(msg.detail);
+	});
+	pubsub.addEventListener("peer:unreachable", (msg) => {
+		m.unrechable.push(msg.detail);
+	});
+
 	const onDataMessageFn = pubsub.onDataMessage.bind(pubsub);
 	pubsub.onDataMessage = (from, stream, message, seenBefore) => {
 		const pubsubMessage = message.data
@@ -847,153 +859,6 @@ describe("pubsub", function () {
 				expect(streams[2].received).toHaveLength(1);
 			});
 		});
-
-		describe("4 connected", () => {
-			/* 
-			┌───┐ 
-			│ 0 │ 
-			└┬─┬┘ 
-			 │┌▽┐ 
-			 ││1│ 
-			 │└┬┘ 
-			┌▽┐│  
-			│2││  
-			└┬┘│  
-			┌▽─▽─┐
-			│ 3  │
-			└────┘
-			 */
-
-			let session: TestSession<{ pubsub: DirectSub }>;
-			let streams: ReturnType<typeof createMetrics>[];
-
-			const TOPIC = "topic";
-			beforeEach(async () => {
-				session = await TestSession.disconnected(4, {
-					services: {
-						pubsub: (c) =>
-							new DirectSub(c, {
-								canRelayMessage: true,
-								connectionManager: false
-							})
-					}
-				});
-
-				await session.connect([
-					[session.peers[0], session.peers[1]],
-					[session.peers[0], session.peers[2]],
-					[session.peers[1], session.peers[3]],
-					[session.peers[2], session.peers[3]]
-				]);
-
-				streams = [];
-
-				for (const [i, peer] of session.peers.entries()) {
-					streams.push(createMetrics(peer.services.pubsub));
-					if ([0, 3].includes(i)) {
-						await peer.services.pubsub.subscribe(TOPIC);
-					}
-				}
-
-				for (const [i, peer] of streams.entries()) {
-					if ([0, 3].includes(i)) {
-						await peer.stream.requestSubscribers(TOPIC);
-						await waitForResolved(() =>
-							expect(peer.stream.topics.get(TOPIC)?.size).toEqual(1)
-						);
-					}
-				}
-			});
-
-			afterEach(async () => {
-				await Promise.all(streams.map((peer) => peer.stream.stop()));
-				await session.stop();
-			});
-			it("_", () => {
-				expect(true).toBeTrue();
-			});
-
-			/* TODO do we need this test 
-			
-			it("will not send messages back another route", async () => {
-				// if '0' pushes data on TOPIC to '3'
-				// there is no point for '3' to send messages back to '0'
-	
-				const allWrites = streams.map((stream) =>
-					collectDataWrites(stream.stream)
-				);
-				console.log(streams[0].stream.publicKeyHash);
-	
-				await delay(PING_INTERVAL * 6);
-	
-				for (const stream of streams) {
-					for (let i = 0; i < streams.length; i++) {
-						for (let j = 0; j < streams.length; j++) {
-							if (j !== i) {
-								const data = stream.stream.routes.getLinkData(
-									streams[i].stream.publicKeyHash,
-									streams[j].stream.publicKeyHash
-								);
-								if (data) {
-									expect(data?.weight).toBeLessThan(1e4);
-								}
-							}
-						}
-					}
-				}
-	
-				let count = 1;
-				for (let i = 0; i < count; i++) {
-					await streams[0].stream.publish(data, { topics: [TOPIC] });
-				}
-	
-				await waitForResolved(() =>
-					expect(streams[3].received).toHaveLength(count)
-				);
-	
-				const p330 = streams[3].stream.routes.getPath(
-					streams[3].stream.publicKeyHash,
-					streams[0].stream.publicKeyHash
-				);
-				const p320 = streams[3].stream.routes.getPath(
-					streams[2].stream.publicKeyHash,
-					streams[0].stream.publicKeyHash
-				);
-				const p310 = streams[3].stream.routes.getPath(
-					streams[1].stream.publicKeyHash,
-					streams[0].stream.publicKeyHash
-				);
-	
-				const p230 = streams[2].stream.routes.getPath(
-					streams[3].stream.publicKeyHash,
-					streams[0].stream.publicKeyHash
-				);
-				const p220 = streams[2].stream.routes.getPath(
-					streams[2].stream.publicKeyHash,
-					streams[0].stream.publicKeyHash
-				);
-	
-				for (const stream of streams) {
-					for (let i = 0; i < streams.length; i++) {
-						for (let j = 0; j < streams.length; j++) {
-							if (j !== i) {
-								const data = stream.stream.routes.getLinkData(
-									streams[i].stream.publicKeyHash,
-									streams[j].stream.publicKeyHash
-								);
-								if (data) {
-									expect(data?.weight).toBeLessThan(1e4);
-								}
-							}
-						}
-					}
-				}
-	
-				for (const [peer, writes] of allWrites[3]) {
-					expect(writes).toHaveLength(0);
-				}
-			}); */
-		});
 	});
 
 	// test sending "0" to "3" only 1 message should appear even though not in strict mode
@@ -1014,7 +879,7 @@ describe("pubsub", function () {
 						})
 				}
 			});
-			for (const peer of session.peers.slice(0, 2)) {
+			for (const peer of session.peers) {
 				streams.push(createMetrics(peer.services.pubsub));
 			}
 		});
@@ -1084,23 +949,87 @@ describe("pubsub", function () {
 			await checkSubscriptions();
 		});
 
-		it("rejoin will re-emit subsriptions", async () => {
+		it("rejoin will re-emit subscriptions", async () => {
+			const subscription0: SubscriptionEvent[] = [];
+
+			streams[0].stream.addEventListener("subscribe", (e) => {
+				subscription0.push(e.detail);
+			});
+
+			const subscription1: SubscriptionEvent[] = [];
+
+			streams[1].stream.addEventListener("subscribe", (e) => {
+				subscription1.push(e.detail);
+			});
+
 			await streams[0].stream.subscribe(TOPIC_1);
 			await streams[1].stream.subscribe(TOPIC_1);
+
 			await session.connect([
 				[session.peers[0], session.peers[2]],
 				[session.peers[1], session.peers[2]]
 			]);
 
 			await checkSubscriptions();
+
+			await waitForResolved(() =>
+				expect(subscription0.map((x) => x.from.hashcode())).toEqual([
+					streams[1].stream.publicKeyHash
+				])
+			);
+			await waitForResolved(() =>
+				expect(subscription1.map((x) => x.from.hashcode())).toEqual([
+					streams[0].stream.publicKeyHash
+				])
+			);
+
 			await session.peers[0].stop();
+
 			await session.peers[0].start();
+
 			await session.connect([[session.peers[0], session.peers[2]]]);
+
 			await waitForResolved(() =>
 				expect(session.peers[0].services.pubsub.peers.size).toEqual(1)
 			);
+
 			await streams[0].stream.subscribe(TOPIC_1);
+
+			await waitForResolved(() =>
+				expect(subscription0.map((x) => x.from.hashcode())).toEqual([
+					streams[1].stream.publicKeyHash,
+					streams[1].stream.publicKeyHash
+				])
+			);
+			await waitForResolved(() =>
+				expect(subscription1.map((x) => x.from.hashcode())).toEqual([
+					streams[0].stream.publicKeyHash,
+					streams[0].stream.publicKeyHash
+				])
+			);
+
 			await checkSubscriptions();
+		});
+
+		it("rejoin with different subscriptions", async () => {
+			await streams[0].stream.subscribe("a");
+			await streams[1].stream.subscribe("a");
+
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			await session.peers[0].stop();
+			await session.peers[0].start();
+			await streams[0].stream.subscribe("b");
+			await streams[1].stream.subscribe("b");
+
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			await waitForResolved(() => {
+				expect(streams[0].stream.topics.get("b")?.size || 0).toEqual(1);
+				expect(streams[1].stream.topics.get("b")?.size || 0).toEqual(1);
+				expect(streams[0].stream.topics.get("a")?.size || 0).toEqual(0);
+				expect(streams[1].stream.topics.get("a")?.size || 0).toEqual(0);
+			});
 		});
 	});
 
