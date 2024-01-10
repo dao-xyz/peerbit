@@ -27,6 +27,25 @@
     * @peerbit/crypto bumped from 2.0.0 to 2.1.0
     * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.6...stream-v3.0.0) (2024-01-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* use session info to invalidate routes
+
+### Bug Fixes
+
+* ensure routes.remove only returns unreachable targets ([bc42787](https://github.com/dao-xyz/peerbit/commit/bc4278790662052feee09515d77c2fb0fd5afe2a))
+* use session info to invalidate routes ([390112a](https://github.com/dao-xyz/peerbit/commit/390112a6e567ebd1085fdb2a8e1176c08dc43875))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^2.0.2 to ^3.0.0
+
 ## [2.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v2.0.5...stream-v2.0.6) (2024-01-08)
 
 

@@ -271,6 +271,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.7 to 2.0.8
 
+## [4.0.10](https://github.com/dao-xyz/peerbit/compare/document-v4.0.9...document-v4.0.10) (2024-01-10)
+
+
+### Bug Fixes
+
+* rm unused import ([1dc3433](https://github.com/dao-xyz/peerbit/commit/1dc34333cf0441b5178031d5f982096642d2e5a7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.6 to 3.0.7
+    * @peerbit/rpc bumped from 3.0.8 to 3.0.9
+    * @peerbit/shared-log bumped from 4.0.8 to 4.0.9
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.8 to 2.0.9
+
 ## [4.0.8](https://github.com/dao-xyz/peerbit/compare/document-v4.0.7...document-v4.0.8) (2024-01-08)
 
 

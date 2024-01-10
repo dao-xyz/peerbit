@@ -152,6 +152,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.7 to 2.0.8
 
+## [2.0.9](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.8...proxy-v2.0.9) (2024-01-10)
+
+
+### Bug Fixes
+
+* add 'peer:session' event type ([513f4e0](https://github.com/dao-xyz/peerbit/commit/513f4e00d1108afc741cab361ee9b317dcdbc016))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^3.0.6 to ^3.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.8 to 2.0.9
+
 ## [2.0.7](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.6...proxy-v2.0.7) (2024-01-08)
 
 
