@@ -382,6 +382,12 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.8 to ^2.0.9
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from ^4.0.10 to ^4.0.11
+
 ## [4.0.10](https://github.com/dao-xyz/peerbit/compare/string-v4.0.9...string-v4.0.10) (2024-01-12)
 
 
