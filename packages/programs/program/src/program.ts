@@ -324,7 +324,6 @@ export abstract class Program<
 				this.parents.splice(parentIdx, 1); // We splice this here because this._end depends on this parent to exist
 			}
 		}
-
 		return end;
 	}
 	async close(from?: Program): Promise<boolean> {
@@ -344,7 +343,7 @@ export abstract class Program<
 		if (parents) {
 			if (this.parents) {
 				for (const parent of this.parents) {
-					parent?.emitEvent(event);
+					parent?.emitEvent(event, parents);
 				}
 			}
 		}

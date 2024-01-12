@@ -11,6 +11,7 @@ import { getValuesWithType } from "../utils.js";
 import { randomBytes } from "@peerbit/crypto";
 
 import { createPeer } from "./utils.js";
+import { delay } from "@peerbit/time";
 
 @variant(0)
 class Log {}
@@ -49,16 +50,16 @@ class P2 extends Program {
 	log?: ExtendedEmbeddedStore[];
 
 	@field({ type: P1 })
-	program: P1;
+	child: P1;
 
 	constructor(log: Log) {
 		super();
 		this.log = [new ExtendedEmbeddedStore({ log: log })];
-		this.program = new P1();
+		this.child = new P1();
 	}
 
 	async open(): Promise<void> {
-		await this.program.open();
+		await this.child.open();
 	}
 }
 
@@ -78,7 +79,7 @@ class P3 extends Program {
 	}
 
 	async close(from?: Program | undefined): Promise<boolean> {
-		this.node.services.pubsub.unsubscribe(P3.TOPIC);
+		await this.node.services.pubsub.unsubscribe(P3.TOPIC);
 		return super.close(from);
 	}
 
@@ -92,15 +93,15 @@ class P3 extends Program {
 @variant("p4")
 class P4 extends Program {
 	@field({ type: P2 })
-	program: P2;
+	child: P2;
 
 	constructor() {
 		super();
-		this.program = new P2(new Log());
+		this.child = new P2(new Log());
 	}
 
 	async open(): Promise<void> {
-		await this.program.open();
+		await this.child.open();
 	}
 }
 
@@ -194,14 +195,38 @@ describe("program", () => {
 				expect(p.closed).toBeFalse();
 			});
 			it("can re-open from closed", async () => {
-				const p = new P3();
+				const p = new P4();
+
+				let closeEvents: Program[] = [];
+				let subCloseEvents: Program[] = [];
+
+				p.events.addEventListener("close", (ev) => {
+					closeEvents.push(ev.detail);
+				});
+
+				p.child.events.addEventListener("close", (ev) => {
+					subCloseEvents.push(ev.detail);
+				});
+
 				await peer.open(p);
 
 				expect(p.closed).toBeFalse();
 				await p.close();
+
+				await delay(3000);
+				expect(closeEvents).toEqual([p, p.child, p.child.child]);
+				expect(subCloseEvents).toEqual([p.child, p.child.child]);
 				expect(p.closed).toBeTrue();
+
+				closeEvents = [];
+				subCloseEvents = [];
 				await peer.open(p);
 				expect(p.closed).toBeFalse();
+				await p.close();
+
+				expect(closeEvents).toEqual([p, p.child, p.child.child]);
+				expect(subCloseEvents).toEqual([p.child, p.child.child]);
+				expect(p.closed).toBeTrue();
 			});
 
 			it("can resolve programs", () => {
@@ -211,17 +236,19 @@ describe("program", () => {
 				// programs
 				const programs = p.programs;
 				expect(programs).toHaveLength(1);
-				expect(programs[0]).toEqual(p.program);
+				expect(programs[0]).toEqual(p.child);
 			});
 
 			it("open/closes children", async () => {
 				let p = new P4();
+
 				await peer.open(p);
 				expect(p.closed).toBeFalse();
-				expect(p.program.closed).toBeFalse();
+
+				expect(p.child.closed).toBeFalse();
 				await p.close();
 				expect(p.closed).toBeTrue();
-				expect(p.program.closed).toBeTrue();
+				expect(p.child.closed).toBeTrue();
 			});
 		});
 
@@ -274,6 +301,7 @@ describe("program", () => {
 				};
 				await p.drop();
 				expect(p.closed).toBeTrue();
+				expect(cleared).toBeTrue();
 			});
 		});
 
@@ -380,7 +408,24 @@ describe("program", () => {
 			it("can drop", async () => {
 				let p = new P4();
 				await peer.open(p);
+				const closeEvents: Program[] = [];
+				const dropEvents: Program[] = [];
+				expect(p.closed).toBeFalse();
+				expect(p.child.closed).toBeFalse();
+				expect(p.child.child.closed).toBeFalse();
+				p.events.addEventListener("close", (ev) => {
+					closeEvents.push(ev.detail);
+				});
+				p.events.addEventListener("drop", (ev) => {
+					dropEvents.push(ev.detail);
+				});
+
 				await p.drop();
+				expect(p.closed).toBeTrue();
+				expect(p.child.closed).toBeTrue();
+				expect(p.child.child.closed).toBeTrue();
+				expect(closeEvents).toHaveLength(0);
+				expect(dropEvents).toEqual([p, p.child, p.child.child]);
 			});
 		});
 	});
