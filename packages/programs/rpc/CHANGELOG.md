@@ -255,6 +255,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [3.0.10](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.9...rpc-v3.0.10) (2024-01-12)
+
+
+### Bug Fixes
+
+* abort requests when closing ([ab7e73b](https://github.com/dao-xyz/peerbit/commit/ab7e73b681ac7aa9d98a571547ec4adf884d1cbb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.1 to 2.1.2
+    * @peerbit/program bumped from 3.0.7 to 3.0.8
+    * @peerbit/time bumped from 2.0.1 to 2.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.9 to ^2.0.10
+
 ## [3.0.9](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.8...rpc-v3.0.9) (2024-01-10)
 
 

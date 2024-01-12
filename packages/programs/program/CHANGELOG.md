@@ -72,6 +72,24 @@
     * @peerbit/blocks-interface bumped from ^1.2.2 to ^1.2.3
     * @peerbit/pubsub-interface bumped from ^2.0.3 to ^2.0.4
 
+## [3.0.8](https://github.com/dao-xyz/peerbit/compare/program-v3.0.7...program-v3.0.8) (2024-01-12)
+
+
+### Bug Fixes
+
+* correcty emit close events to all parents ([261150c](https://github.com/dao-xyz/peerbit/commit/261150ca9fd1db631a8b2427d28de5b3217f9f40))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.1 to 2.1.2
+    * @peerbit/keychain bumped from ^1.0.4 to ^1.0.5
+    * @peerbit/blocks-interface bumped from ^1.2.3 to ^1.2.4
+    * @peerbit/pubsub-interface bumped from ^2.0.4 to ^2.0.5
+    * @peerbit/any-store bumped from ^1.0.5 to ^1.0.6
+
 ## [3.0.6](https://github.com/dao-xyz/peerbit/compare/program-v3.0.5...program-v3.0.6) (2024-01-08)
 
 

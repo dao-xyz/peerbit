@@ -271,6 +271,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.7 to 2.0.8
 
+## [4.0.11](https://github.com/dao-xyz/peerbit/compare/document-v4.0.10...document-v4.0.11) (2024-01-12)
+
+
+### Bug Fixes
+
+* abort requests when closing ([ab7e73b](https://github.com/dao-xyz/peerbit/commit/ab7e73b681ac7aa9d98a571547ec4adf884d1cbb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.7 to 3.0.8
+    * @peerbit/rpc bumped from 3.0.9 to 3.0.10
+    * @peerbit/shared-log bumped from 4.0.9 to 4.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.9 to 2.0.10
+    * @peerbit/time bumped from 2.0.1 to 2.0.2
+
 ## [4.0.10](https://github.com/dao-xyz/peerbit/compare/document-v4.0.9...document-v4.0.10) (2024-01-10)
 
 
