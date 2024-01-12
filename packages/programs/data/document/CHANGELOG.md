@@ -277,6 +277,12 @@
   * dependencies
     * @peerbit/shared-log bumped from 4.0.10 to 4.0.11
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 4.0.11 to 4.0.12
+
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/document-v4.0.10...document-v4.0.11) (2024-01-12)
 
 
