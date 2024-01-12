@@ -1,6 +1,6 @@
 import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
-import { delay, waitForResolved } from "@peerbit/time";
+import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import {
@@ -1013,6 +1013,70 @@ describe("replication degree", () => {
 		await delay(respondToIHaveTimeout + 1000);
 		expect(db2.log["_pendingIHave"].size).toEqual(0);
 		await expectPromise;
+	});
+
+	it("does not get blocked by slow sends", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		await waitForResolved(() =>
+			expect(db1.log.getReplicatorsSorted()?.length).toEqual(2)
+		);
+
+		let db1Delay = 0;
+		const db1Send = db1.log.rpc.send.bind(db1.log.rpc);
+		db1.log.rpc.send = async (message, options) => {
+			const controller = new AbortController();
+			db1.log.rpc.events.addEventListener("close", () => {
+				controller.abort(new AbortError());
+			});
+			db1.log.rpc.events.addEventListener("drop", () => {
+				controller.abort(new AbortError());
+			});
+			try {
+				await delay(db1Delay, { signal: controller.signal });
+			} catch (error) {
+				return;
+			}
+			return db1Send(message, options);
+		};
+
+		db1Delay = 1e4;
+
+		db1.add("hello");
+
+		await delay(1000); // make sure we have gotten "stuck" into the rpc.send unction
+
+		let t0 = +new Date();
+		db3 = await session.peers[2].open<EventStore<any>>(db1.address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		db1Delay = 0;
+
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+		let t1 = +new Date();
+		expect(t1 - t0).toBeLessThan(2000);
 	});
 
 	/*  TODO feat

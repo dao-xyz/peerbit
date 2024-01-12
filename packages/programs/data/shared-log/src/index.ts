@@ -1552,6 +1552,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		for (const [target, entries] of uncheckedDeliver) {
+			const promise: Promise<any> = Promise.resolve();
+
+			// TODO better choice of step size
 			for (let i = 0; i < entries.length; i += 100) {
 				const message = await createExchangeHeadsMessage(
 					this.log,
@@ -1559,7 +1562,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 					this._gidParentCache
 				);
 				// TODO perhaps send less messages to more receivers for performance reasons?
-				await this.rpc.send(message, {
+				// TODO wait for previous send to target before trying to send more?
+				this.rpc.send(message, {
 					mode: new SilentDelivery({ to: [target], redundancy: 1 })
 				});
 			}
