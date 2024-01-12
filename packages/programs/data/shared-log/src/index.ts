@@ -172,7 +172,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	private _logProperties?: LogProperties<T> & LogEvents<T>;
 	private _closeController: AbortController;
-	private _loadedOnce = false;
 	private _gidParentCache: Cache<Entry<any>[]>;
 	private _respondToIHaveTimeout;
 	private _pendingDeletes: Map<
@@ -299,10 +298,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this.node.identity.publicKey
 		);
 
-		if (!this._loadedOnce) {
-			await this.log.load();
-			this._loadedOnce = true;
-		}
 		await this.rpc.subscribe();
 
 		await this.rpc.send(new ResponseRoleMessage({ role: this._role }), {
@@ -489,6 +484,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 			topic: this.topic
 		});
 
+		await this.log.load();
+	}
+
+	async afterOpen(): Promise<void> {
+		await super.afterOpen();
+
+		// We do this here, because these calls requires this.closed == false
 		await this._updateRole();
 		await this.rebalanceParticipation();
 
@@ -502,7 +504,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			}
 		);
 	}
-
 	async getMemoryUsage() {
 		return (
 			((await this.log.memory?.size()) || 0) + (await this.log.blocks.size())
@@ -543,7 +544,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
-		this._loadedOnce = false;
 	}
 	async close(from?: Program): Promise<boolean> {
 		const superClosed = await super.close(from);
@@ -938,6 +938,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 			roleAge?: number;
 		}
 	): Promise<string[]> {
+		if (this.closed) {
+			return [this.node.identity.publicKey.hashcode()]; // Assumption: if the store is closed, always assume we have responsibility over the data
+		}
+
 		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
 		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
 
@@ -1027,7 +1031,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 	) {
 		const leaders: Set<string> = new Set();
-		const width = 1; // this.getParticipationSum(roleAge);
+		const width = 1;
 		const peers = this.getReplicatorsSorted();
 		if (!peers || peers?.length === 0) {
 			return [];
@@ -1061,6 +1065,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 	 * @returns groups where at least one in any group will have the entry you are looking for
 	 */
 	getReplicatorUnion(roleAge: number = WAIT_FOR_ROLE_MATURITY) {
+		if (this.closed === true) {
+			throw new Error("Closed");
+		}
+
 		// Total replication "width"
 		const width = 1; //this.getParticipationSum(roleAge);
 
