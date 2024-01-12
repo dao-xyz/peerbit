@@ -41,6 +41,7 @@ import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { SharedLog } from "@peerbit/shared-log";
 import { concat, fromString } from "uint8arrays";
 import { SilentDelivery } from "@peerbit/stream-interface";
+import { AbortError } from "@peerbit/time";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -910,7 +911,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		let first = false;
 
 		// TODO handle join/leave while iterating
-		let stopperFns: (() => void)[] = [];
+		const controller = new AbortController();
 
 		const peerBuffers = (): {
 			value: T;
@@ -978,8 +979,8 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			}
 
 			const promises: Promise<any>[] = [];
-			stopperFns = [];
 			let resultsLeft = 0;
+
 			for (const [peer, buffer] of peerBufferMap) {
 				if (buffer.buffer.length < n) {
 					if (buffer.kept === 0) {
@@ -1047,7 +1048,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 							this._query
 								.request(collectRequest, {
 									...options,
-									stopper: (fn) => stopperFns.push(fn),
+									signal: controller.signal,
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 })
 								})
 								.then((response) =>
@@ -1156,9 +1157,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		};
 
 		const close = async () => {
-			for (const fn of stopperFns) {
-				fn();
-			}
+			controller.abort(new AbortError("Iterator closed"));
 
 			const closeRequest = new CloseIteratorRequest({ id: queryRequest.id });
 			const promises: Promise<any>[] = [];

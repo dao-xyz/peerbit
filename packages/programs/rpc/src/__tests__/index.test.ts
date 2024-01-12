@@ -1,10 +1,10 @@
-import { delay, waitForResolved, waitFor } from "@peerbit/time";
+import { delay, waitForResolved, waitFor, AbortError } from "@peerbit/time";
 import { TestSession } from "@peerbit/test-utils";
 import { RPC, RPCResponse, queryAll } from "../index.js";
 import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { DirectSub, PeerId } from "@peerbit/pubsub";
+import { PeerId } from "@peerbit/pubsub";
 import { SilentDelivery } from "@peerbit/stream-interface";
 
 @variant("payload")
@@ -26,6 +26,8 @@ class RPCTest extends Program {
 	@field({ type: vec(PublicSignKey) })
 	responders: PublicSignKey[];
 
+	delay: number;
+
 	constructor(responders: PeerId[]) {
 		super();
 		this.responders = responders.map((x) =>
@@ -41,7 +43,17 @@ class RPCTest extends Program {
 			responseHandler: this.responders.find((x) =>
 				this.node.identity.publicKey.equals(x)
 			)
-				? (query, from) => {
+				? async (query, _from) => {
+						if (this.delay) {
+							const controller = new AbortController();
+							this.events.addEventListener("close", () => {
+								controller.abort(new AbortError("Closed"));
+							});
+							this.events.addEventListener("drop", () => {
+								controller.abort(new AbortError("Dropped"));
+							});
+							await delay(this.delay, { signal: controller.signal });
+						}
 						const resp = query;
 						return resp;
 					}
@@ -370,260 +382,67 @@ describe("queryAll", () => {
 		}
 		await Promise.all(promises);
 	});
-});
+	it("aborts when closing", async () => {
+		let r: RPCResponse<Body>[][] = [];
 
-/* it("amount", async () => {
-	let amount = 2;
-	let timeout = 2000;
-
-	const topic = uuid();
-	const kp = await X25519Keypair.create();
-
-	for (let i = 1; i < 3; i++) {
-		session.peers[i].services.pubsub.subscribe(topic);
-		session.peers[i].services.pubsub.addEventListener(
-			"data",
-			async (evt: CustomEvent<PubSubData>) => {
-				const message = evt.detail;
-				if (message && message.topics.includes(topic)) {
-					try {
-						let { result: request } = await decryptVerifyInto(
-							message.data,
-							RPCMessage,
-							kp
-						);
-						if (request instanceof RequestV0) {
-							await respond(
-								session.peers[i],
-								topic,
-								request,
-								new ResponseV0({
-									response: serialize(
-										new Body({
-											arr: new Uint8Array([0, 1, 2]),
-										})
-									),
-									context: Buffer.from("context"),
-								})
-							);
-						}
-					} catch (error) {
-						if (error instanceof AccessError) {
-							return;
-						}
-						throw error;
-					}
-				}
+		let t1 = +new Date();
+		const promise = queryAll(
+			clients[0].query,
+			[[clients[1].node.identity.publicKey.hashcode()]],
+			new Body({ arr: new Uint8Array([1]) }),
+			(e) => {
+				r.push(e);
 			}
 		);
-	}
 
-	await waitForPeers(
-		session.peers[0],
-		[session.peers[1].peerId, session.peers[2].peerId],
-		topic
-	);
+		clients[1].delay = 1e4; // make sure client 1 never responds
 
-	let results: Body[] = [];
-	await send(
-		session.peers[0],
-		topic,
-		topic,
-		new RequestV0({
-			request: serialize(new Body({ arr: new Uint8Array([0, 1, 2]) })),
-			respondTo: kp.publicKey,
-			context: Buffer.from("context")
-		}),
-		Body,
-		kp,
-		{
-			timeout,
-			amount,
-			onResponse: (resp) => {
-				results.push(resp);
-			},
-		}
-	);
+		await delay(500); // make sure the request is sent
+		clients[0].close();
 
-	await waitFor(() => results.length == amount);
-});
+		await expect(promise).rejects.toThrow(AbortError);
+		expect(+new Date() - t1).toBeLessThan(1000);
+	});
 
-it("signed", async () => {
-	let amount = 1;
+	it("aborts already closed", async () => {
+		let r: RPCResponse<Body>[][] = [];
 
-	let timeout = 3000;
-
-	const sender = await createIdentity();
-	const responder = await createIdentity();
-	const topic = uuid();
-	let x = false;
-	await session.peers[1].services.pubsub.subscribe(topic);
-	session.peers[1].services.pubsub.addEventListener(
-		"data",
-		async (evt: CustomEvent<PubSubData>) => {
-			const message = evt.detail;
-			if (message && message.topics.includes(topic)) {
-				try {
-					let { result: request, from } = await decryptVerifyInto(
-						message.data,
-						RPCMessage,
-						() => Promise.resolve(undefined)
-					);
-					if (request instanceof RequestV0) {
-						x = true;
-
-						// Check that it was signed by the sender
-						expect(from).toBeInstanceOf(Ed25519PublicKey);
-						expect(
-							(from as Ed25519PublicKey).equals(sender.publicKey)
-						).toBeTrue();
-
-						await respond(
-							session.peers[1],
-							topic,
-							request,
-							new ResponseV0({
-								context: Buffer.from("context"),
-								response: serialize(
-									new Body({ arr: new Uint8Array([0, 1, 2]) })
-								),
-							}),
-							{ signer: responder.sign.bind(responder) }
-						);
-					}
-				} catch (error) {
-					console.error(error);
-					if (error instanceof AccessError) {
-						return;
-					}
-					throw error;
-				}
+		let t1 = +new Date();
+		await clients[0].close();
+		const promise = queryAll(
+			clients[0].query,
+			[[clients[1].node.identity.publicKey.hashcode()]],
+			new Body({ arr: new Uint8Array([1]) }),
+			(e) => {
+				r.push(e);
 			}
-		}
-	);
+		);
 
-	await waitForPeers(session.peers[0], [session.peers[1].peerId], topic);
+		await expect(promise).rejects.toThrow(AbortError);
+		expect(+new Date() - t1).toBeLessThan(1000);
+	});
 
-	let results: Body[] = [];
-	const kp = await X25519Keypair.create();
+	it("signal", async () => {
+		let r: RPCResponse<Body>[][] = [];
 
-	await send(
-		session.peers[0],
-		topic,
-		topic,
-		new RequestV0({
-			context: Buffer.from("context"),
-			request: new Uint8Array([0, 1, 2]),
-			respondTo: kp.publicKey,
-		}),
-		Body,
-		kp,
-		{
-			timeout: timeout,
-			amount,
-			signer: sender,
-			onResponse: (resp, from) => {
-				if (!from) {
-					return; // from message
-				}
-
-				// Check that it was signed by the responder
-				expect(from).toBeInstanceOf(Ed25519PublicKey);
-				expect(
-					(from as Ed25519PublicKey).equals(responder.publicKey)
-				).toBeTrue();
-				results.push(resp);
+		const controller = new AbortController();
+		let t1 = +new Date();
+		const promise = queryAll(
+			clients[0].query,
+			[[clients[1].node.identity.publicKey.hashcode()]],
+			new Body({ arr: new Uint8Array([1]) }),
+			(e) => {
+				r.push(e);
 			},
-		}
-	);
+			{ signal: controller.signal }
+		);
 
-	try {
-		await waitFor(() => results.length == amount);
-	} catch (error) {
-		throw error;
-	}
+		clients[1].delay = 1e4; // make sure client 1 never responds
+
+		await delay(500); // make sure the request is sent
+		controller.abort(new Error("TestAborted"));
+
+		await expect(promise).rejects.toThrow("TestAborted");
+		expect(+new Date() - t1).toBeLessThan(1000);
+	});
 });
-
-it("encrypted", async () => {
-	// query encrypted and respond encrypted
-	let amount = 1;
-	let timeout = 3000;
-
-	const responder = await createIdentity();
-	const requester = await createIdentity();
-	const topic = uuid();
-	await session.peers[1].services.pubsub.subscribe(topic);
-	session.peers[1].services.pubsub.addEventListener(
-		"data",
-		async (evt: CustomEvent<PubSubData>) => {
-			//  if (evt.detail.type === "signed")
-			{
-				const message = evt.detail;
-				if (message) {
-					try {
-						let { result: request } = await decryptVerifyInto(
-							message.data,
-							RequestV0,
-							async (keys) => {
-								return {
-									index: 0,
-									keypair: await X25519Keypair.from(
-										new Ed25519Keypair({ ...responder })
-									),
-								};
-							}
-						);
-						if (request instanceof RequestV0) {
-							await respond(
-								session.peers[1],
-								topic,
-								request,
-								new ResponseV0({
-									context: Buffer.from("context"),
-									response: serialize(
-										new Body({ arr: new Uint8Array([0, 1, 2]) })
-									),
-								})
-							);
-						}
-					} catch (error) {
-						if (error instanceof AccessError) {
-							return;
-						}
-						throw error;
-					}
-				}
-			}
-		}
-	);
-
-	await waitForPeers(session.peers[0], [session.peers[1].peerId], topic);
-
-	let results: Body[] = [];
-	await send(
-		session.peers[0],
-		topic,
-		topic,
-		new RequestV0({
-			context: Buffer.from("context"),
-			request: new Uint8Array([0, 1, 2]),
-			respondTo: await X25519PublicKey.from(requester.publicKey),
-		}),
-		Body,
-		await X25519Keypair.from(new Ed25519Keypair({ ...requester })),
-		{
-			timeout,
-			amount,
-			signer: requester,
-			onResponse: (resp) => {
-				results.push(resp);
-			},
-			encryption: {
-				key: () => new Ed25519Keypair({ ...requester }),
-				responders: [await X25519PublicKey.from(responder.publicKey)],
-			},
-		}
-	);
-
-	await waitFor(() => results.length == amount);
-}); */

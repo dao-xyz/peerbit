@@ -27,7 +27,7 @@ import {
 	deliveryModeHasReceiver
 } from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
-import { waitFor } from "@peerbit/time";
+import { AbortError, TimeoutError, waitFor } from "@peerbit/time";
 
 export type RPCSetupOptions<Q, R> = {
 	topic: string;
@@ -346,22 +346,37 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
 		const keypair = await X25519Keypair.create();
 
-		// send query and wait for replies in a generator like behaviour
-		let timeoutFn: any = undefined;
-
 		const requestMessage = await this.seal(request, keypair.publicKey, options);
 		const requestBytes = serialize(requestMessage);
 
 		const allResults: RPCResponse<R>[] = [];
 
 		const deferredPromise = pDefer();
-		options?.stopper && options.stopper(deferredPromise.resolve);
-		timeoutFn = setTimeout(
+
+		if (this.closed) {
+			throw new AbortError("Closed");
+		}
+		const timeoutFn = setTimeout(
 			() => {
 				deferredPromise.resolve();
 			},
 			options?.timeout || 10 * 1000
 		);
+
+		const abortListener = (err: Event) => {
+			deferredPromise.reject(err.target?.["reason"] || new AbortError());
+		};
+		options?.signal?.addEventListener("abort", abortListener);
+
+		const closeListener = () => {
+			deferredPromise.reject(new AbortError("Closed"));
+		};
+		const dropListener = () => {
+			deferredPromise.reject(new AbortError("Dropped"));
+		};
+
+		this.events.addEventListener("close", closeListener);
+		this.events.addEventListener("drop", dropListener);
 
 		const expectedResponders =
 			options?.mode && deliveryModeHasReceiver(options.mode)
@@ -391,17 +406,18 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		try {
 			await deferredPromise.promise;
 		} catch (error: any) {
-			// timeout
-			if (error.constructor.name != "TimeoutError") {
-				throw new Error(
-					"Got unexpected error when query: " + error.constructor.name
-				);
+			if (error instanceof TimeoutError === false) {
+				throw error;
 			}
+			// Ignore timeout errors only
 		} finally {
 			clearTimeout(timeoutFn);
+			this.events.removeEventListener("close", closeListener);
+			this.events.removeEventListener("drop", dropListener);
+			options?.signal?.removeEventListener("abort", abortListener);
+			this._responseResolver.delete(id);
 		}
 
-		this._responseResolver.delete(id);
 		return allResults;
 	}
 

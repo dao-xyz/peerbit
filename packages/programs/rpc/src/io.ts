@@ -13,7 +13,7 @@ export type RPCOptions<R> = {
 	timeout?: number;
 	isTrusted?: (publicKey: PublicSignKey) => Promise<boolean>;
 	onResponse?: (response: R, from?: PublicSignKey) => void;
-	stopper?: (stopper: () => void) => void;
+	signal?: AbortSignal;
 } & PublishOptions;
 
 export type PublishOptions = {
