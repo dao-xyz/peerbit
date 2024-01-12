@@ -279,6 +279,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.12...shared-log-v4.1.0) (2024-01-12)
+
+
+### Features
+
+* add option for targeting observers when appending ([0b994e7](https://github.com/dao-xyz/peerbit/commit/0b994e74094ad73b1e544915672e8cf469aca926))
+
 ## [4.0.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.11...shared-log-v4.0.12) (2024-01-12)
 
 

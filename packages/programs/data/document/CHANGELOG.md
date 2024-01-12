@@ -283,6 +283,20 @@
   * dependencies
     * @peerbit/shared-log bumped from 4.0.11 to 4.0.12
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/document-v4.0.13...document-v4.1.0) (2024-01-12)
+
+
+### Features
+
+* add option for targeting observers when appending ([0b994e7](https://github.com/dao-xyz/peerbit/commit/0b994e74094ad73b1e544915672e8cf469aca926))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 4.0.12 to 4.1.0
+
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/document-v4.0.10...document-v4.0.11) (2024-01-12)
 
 
