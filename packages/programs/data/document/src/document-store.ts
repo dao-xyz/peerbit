@@ -76,7 +76,7 @@ export type SetupOptions<T> = {
 	log?: {
 		trim?: TrimOptions;
 	};
-} & SharedLogOptions;
+} & SharedLogOptions<Operation<T>>;
 
 @variant("documents")
 export class Documents<T extends Record<string, any>>

@@ -51,7 +51,7 @@ export type CanPerform = (
 export type Args = {
 	canRead?: CanRead;
 	canPerform?: CanPerform;
-	log?: SharedLogOptions;
+	log?: SharedLogOptions<StringOperation>;
 };
 
 export type TransactionContext = {

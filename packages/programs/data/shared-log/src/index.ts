@@ -48,7 +48,7 @@ import { CustomEvent } from "@libp2p/interface";
 import yallist from "yallist";
 import {
 	AcknowledgeDelivery,
-	AnyWhere,
+	DeliveryMode,
 	SeekDelivery,
 	SilentDelivery
 } from "@peerbit/stream-interface";
@@ -121,11 +121,12 @@ const isAdaptiveReplicatorOption = (
 	return false;
 };
 
-export type SharedLogOptions = {
+export type SharedLogOptions<T> = {
 	role?: RoleOptions;
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
+	sync?: (entry: Entry<T>) => boolean;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -133,10 +134,11 @@ export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
 const REBALANCE_DEBOUNCE_INTERAVAL = 30;
 
-export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions;
+export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions<T>;
 
 export type SharedAppendOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
+	target?: "all" | "replicators";
 };
 
 type UpdateRoleEvent = { publicKey: PublicSignKey; role: Role };
@@ -194,6 +196,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private remoteBlocks: RemoteBlocks;
 
 	private openTime: number;
+
+	private sync?: (entry: Entry<T>) => boolean;
 
 	private rebalanceParticipationDebounced:
 		| ReturnType<typeof debounce>
@@ -338,11 +342,20 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		const result = await this.log.append(data, appendOptions);
-		const leaders = await this.findLeaders(
-			result.entry.meta.gid,
-			decodeReplicas(result.entry).getValue(this)
-		);
-		const isLeader = leaders.includes(this.node.identity.publicKey.hashcode());
+		let mode: DeliveryMode | undefined = undefined;
+
+		if (options?.target === "replicators" || !options?.target) {
+			const leaders = await this.findLeaders(
+				result.entry.meta.gid,
+				decodeReplicas(result.entry).getValue(this)
+			);
+			const isLeader = leaders.includes(
+				this.node.identity.publicKey.hashcode()
+			);
+			mode = isLeader
+				? new SilentDelivery({ redundancy: 1, to: leaders })
+				: new AcknowledgeDelivery({ redundancy: 1, to: leaders });
+		}
 
 		await this.rpc.send(
 			await createExchangeHeadsMessage(
@@ -351,9 +364,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this._gidParentCache
 			),
 			{
-				mode: isLeader
-					? new SilentDelivery({ redundancy: 1, to: leaders })
-					: new AcknowledgeDelivery({ redundancy: 1, to: leaders })
+				mode
 			}
 		);
 
@@ -386,6 +397,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._closeController = new AbortController();
 
 		this._canReplicate = options?.canReplicate;
+		this.sync = options?.sync;
 		this._logProperties = options;
 
 		this.setupRole(options?.role);
@@ -612,8 +624,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 					const groupedByGid = await groupByGid(filteredHeads);
 					const promises: Promise<void>[] = [];
 
-					/// console.log("ADD CACHE", this.node.identity.publicKey.hashcode(), context.from!.hashcode(), groupedByGid.size)
-
 					for (const [gid, entries] of groupedByGid) {
 						const fn = async () => {
 							const headsWithGid = this.log.headsIndex.gids.get(gid);
@@ -628,10 +638,15 @@ export class SharedLog<T = Uint8Array> extends Program<
 								entries.map((x) => x.entry)
 							);
 
-							const leaders = await this.waitForIsLeader(
-								gid,
-								Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
-							);
+							const leaders = await (this.role instanceof Observer
+								? this.findLeaders(
+										gid,
+										Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
+									)
+								: this.waitForIsLeader(
+										gid,
+										Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
+									));
 							const isLeader = !!leaders;
 							if (isLeader) {
 								if (leaders.find((x) => x === context.from!.hashcode())) {
@@ -649,7 +664,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							}
 
 							outer: for (const entry of entries) {
-								if (isLeader) {
+								if (isLeader || this.sync?.(entry.entry)) {
 									toMerge.push(entry);
 								} else {
 									for (const ref of entry.references) {

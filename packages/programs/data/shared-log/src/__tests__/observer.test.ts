@@ -3,7 +3,6 @@ import { EventStore } from "./utils/stores";
 import { Observer, Replicator } from "../role";
 import { waitForResolved } from "@peerbit/time";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-const replicatorBelowIndex = [0, 1];
 
 describe("observer", () => {
 	let session: TestSession;
@@ -14,7 +13,7 @@ describe("observer", () => {
 		await session.stop();
 	});
 
-	it("observers will not receive heads", async () => {
+	it("observers will not receive heads by default", async () => {
 		session = await TestSession.disconnected(3);
 		session.connect([
 			[session.peers[0], session.peers[1]],
@@ -53,7 +52,7 @@ describe("observer", () => {
 
 		const hashes: string[] = [];
 		for (let i = 0; i < 100; i++) {
-			hashes.push((await stores[0].add(String("i"))).entry.hash);
+			hashes.push((await stores[0].add(String(i))).entry.hash);
 		}
 
 		for (let i = 0; i < hashes.length; i++) {
@@ -67,6 +66,43 @@ describe("observer", () => {
 				}
 			}
 		}
+	});
+
+	it("target all will make heads reach observers", async () => {
+		session = await TestSession.connected(2);
+		await session.connect([[session.peers[0], session.peers[1]]]);
+
+		const s = new EventStore<string>();
+		const createStore = () => deserialize(serialize(s), EventStore);
+
+		const replicator = await session.peers[0].open(createStore(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		const observer = await session.peers[1].open(createStore(), {
+			args: {
+				role: "observer",
+				sync: () => true
+			}
+		});
+		await waitForResolved(() =>
+			expect(replicator.log.getReplicatorsSorted()?.length).toEqual(1)
+		);
+		await waitForResolved(() =>
+			expect(observer.log.getReplicatorsSorted()?.length).toEqual(1)
+		);
+
+		await replicator.add("a", { target: "all" });
+		/* await replicator.add("b", { target: 'replicators' }) */
+		/* 
+				await waitForResolved(() => expect(replicator.log.log.length).toEqual(2)); */
+		await waitForResolved(() => expect(observer.log.log.length).toEqual(1));
+		const l = 123;
 	});
 
 	it("can wait for replicator", async () => {
