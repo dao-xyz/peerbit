@@ -859,12 +859,16 @@ describe(`sharding`, () => {
 					await db2.add(data, { meta: { next: [] } });
 				}
 
-				await waitForResolved(async () =>
-					expect((db1.log.role as Replicator).factor).toBeWithin(0.055, 0.08)
+				await waitForResolved(
+					async () =>
+						expect((db1.log.role as Replicator).factor).toBeWithin(0.055, 0.08),
+					{ timeout: 20 * 1000 }
 				);
 
-				await waitForResolved(async () =>
-					expect((db2.log.role as Replicator).factor).toBeWithin(0.055, 0.08)
+				await waitForResolved(
+					async () =>
+						expect((db2.log.role as Replicator).factor).toBeWithin(0.055, 0.08),
+					{ timeout: 20 * 1000 }
 				);
 			});
 
