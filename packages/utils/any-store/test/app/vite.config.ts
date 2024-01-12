@@ -7,7 +7,8 @@ export default defineConfig({
 	optimizeDeps: {
 		esbuildOptions: {
 			target: "esnext"
-		}
+		},
+		exclude: ["@peerbit/any-store"] // https://github.com/vitejs/vite/issues/11672
 	},
 	build: {
 		target: "esnext"
