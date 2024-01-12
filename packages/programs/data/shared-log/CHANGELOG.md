@@ -279,6 +279,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [4.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.10...shared-log-v4.0.11) (2024-01-12)
+
+
+### Bug Fixes
+
+* prevent block on distribute ([63c02e0](https://github.com/dao-xyz/peerbit/commit/63c02e05412b2c4f66688733e7a8d855ac025f4a))
+
 ## [4.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.9...shared-log-v4.0.10) (2024-01-12)
 
 
