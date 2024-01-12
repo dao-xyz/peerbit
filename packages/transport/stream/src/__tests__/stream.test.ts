@@ -2156,7 +2156,6 @@ describe("join/leave", () => {
 		});
 
 		it("distant drop", async () => {
-			console.log(streams.map((x) => x.stream.publicKeyHash));
 			expect(
 				streams[3].stream.routes
 					.findNeighbor(
