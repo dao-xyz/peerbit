@@ -1306,29 +1306,28 @@ export class SharedLog<T = Uint8Array> extends Program<
 		changes: string[],
 		subscribed: boolean
 	) {
+		for (const topic of changes) {
+			if (this.log.idString !== topic) {
+				continue;
+			}
+		}
+
+		if (!subscribed) {
+			for (const [_a, b] of this._gidPeersHistory) {
+				b.delete(publicKey.hashcode());
+			}
+		}
+
 		if (subscribed) {
 			if (this.role instanceof Replicator) {
-				for (const subscription of changes) {
-					if (this.log.idString !== subscription) {
-						continue;
-					}
-					this.rpc
-						.send(new ResponseRoleMessage({ role: this._role }), {
-							mode: new SeekDelivery({ redundancy: 1, to: [publicKey] })
-						})
-						.catch((e) => logger.error(e.toString()));
-				}
+				this.rpc
+					.send(new ResponseRoleMessage({ role: this._role }), {
+						mode: new SeekDelivery({ redundancy: 1, to: [publicKey] })
+					})
+					.catch((e) => logger.error(e.toString()));
 			}
-
-			//if(evt.detail.subscriptions.map((x) => x.topic).includes())
 		} else {
-			for (const topic of changes) {
-				if (this.log.idString !== topic) {
-					continue;
-				}
-
-				await this.modifyReplicators(new Observer(), publicKey);
-			}
+			await this.modifyReplicators(new Observer(), publicKey);
 		}
 	}
 
@@ -1507,6 +1506,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				gid,
 				maxReplicas(this, entries) // pick max replication policy of all entries, so all information is treated equally important as the most important
 			);
+
 			const isLeader = currentPeers.find(
 				(x) => x === this.node.identity.publicKey.hashcode()
 			);
@@ -1552,8 +1552,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		for (const [target, entries] of uncheckedDeliver) {
-			const promise: Promise<any> = Promise.resolve();
-
 			// TODO better choice of step size
 			for (let i = 0; i < entries.length; i += 100) {
 				const message = await createExchangeHeadsMessage(

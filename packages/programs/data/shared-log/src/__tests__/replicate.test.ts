@@ -1079,6 +1079,41 @@ describe("replication degree", () => {
 		expect(t1 - t0).toBeLessThan(2000);
 	});
 
+	it("restarting node will receive entries", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+		console.log(session.peers[0].identity.publicKey.hashcode());
+		await db1.add("hello");
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await db2.drop();
+		await session.peers[1].stop();
+		await session.peers[1].start();
+		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+	});
+
 	/*  TODO feat
 	it("will reject early if leaders does not have entry", async () => {
 		await init(1);

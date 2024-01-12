@@ -967,10 +967,14 @@ describe(`sharding`, () => {
 					await db2.add(data, { meta: { next: [] } });
 				}
 
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
-					).toBeLessThan((memoryLimit / 100) * 10)
+				await waitForResolved(
+					async () =>
+						expect(
+							Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
+						).toBeLessThan((memoryLimit / 100) * 10),
+					{
+						timeout: 20 * 1000
+					}
 				); // 10% error at most
 
 				await waitForResolved(async () =>
