@@ -279,6 +279,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [4.0.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.11...shared-log-v4.0.12) (2024-01-12)
+
+
+### Bug Fixes
+
+* clear gidPeerHistory on unsubscription ([4a33030](https://github.com/dao-xyz/peerbit/commit/4a3303017389ddf05ca51d37eebd978a95477814))
+
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.10...shared-log-v4.0.11) (2024-01-12)
 
 
