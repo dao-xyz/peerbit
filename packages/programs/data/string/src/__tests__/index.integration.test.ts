@@ -338,7 +338,7 @@ describe("load", () => {
 		await store.close();
 		expect(store._index.string).toEqual("");
 		expect(store._index._log).toBeUndefined();
-		await store.open();
+		await session.peers[0].open(store);
 		expect(await store.getValue()).toEqual(data);
 	});
 });
