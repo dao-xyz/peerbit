@@ -72,13 +72,11 @@ export default defineConfig({
 	webServer: [
 		{
 			command: "yarn --cwd ./child start",
-			url: "http://localhost:5201",
-			reuseExistingServer: !process.env.CI
+			url: "http://localhost:5201"
 		},
 		{
 			command: "yarn --cwd ./parent start",
-			url: "http://localhost:5202",
-			reuseExistingServer: !process.env.CI
+			url: "http://localhost:5202"
 		}
 	]
 });

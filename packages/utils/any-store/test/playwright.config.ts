@@ -54,8 +54,7 @@ export default defineConfig({
 	webServer: [
 		{
 			command: "yarn --cwd ./app start",
-			url: "http://localhost:5205",
-			reuseExistingServer: !process.env.CI
+			url: "http://localhost:5205"
 		}
 	]
 });
