@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/time-v2.0.1...time-v2.0.2) (2024-01-12)
+
+
+### Bug Fixes
+
+* add message to AbortError ([4bc50c7](https://github.com/dao-xyz/peerbit/commit/4bc50c76d4a496d674b47266f020b0a526819097))
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/time-v2.0.0...time-v2.0.1) (2024-01-08)
 
 

@@ -279,6 +279,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [4.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.9...shared-log-v4.0.10) (2024-01-12)
+
+
+### Bug Fixes
+
+* bump timeout ([33a87b4](https://github.com/dao-xyz/peerbit/commit/33a87b4fcb62ad93ee57419750d87d7db4a29847))
+* load log before open ([d0d0e60](https://github.com/dao-xyz/peerbit/commit/d0d0e6090be1625c77ee99a7bab1c3e6bdebe114))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.7 to 3.0.8
+    * @peerbit/log bumped from 3.0.9 to 3.0.10
+    * @peerbit/rpc bumped from 3.0.9 to 3.0.10
+    * @peerbit/time bumped from 2.0.1 to 2.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.9 to ^2.0.10
+
 ## [4.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.8...shared-log-v4.0.9) (2024-01-10)
 
 

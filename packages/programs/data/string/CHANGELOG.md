@@ -382,6 +382,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.8 to ^2.0.9
 
+## [4.0.10](https://github.com/dao-xyz/peerbit/compare/string-v4.0.9...string-v4.0.10) (2024-01-12)
+
+
+### Bug Fixes
+
+* improve load test ([a1a4916](https://github.com/dao-xyz/peerbit/commit/a1a4916b3999522c92b061c6563a0526d9de2f83))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.7 to 3.0.8
+    * @peerbit/shared-log bumped from ^4.0.9 to ^4.0.10
+    * @peerbit/rpc bumped from 3.0.9 to 3.0.10
+    * @peerbit/time bumped from 2.0.1 to 2.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.9 to ^2.0.10
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/string-v3.0.20...string-v4.0.0) (2023-12-31)
 
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.5...any-store-v1.0.6) (2024-01-12)
+
+
+### Bug Fixes
+
+* don't reuse existing vite server ([7cbb34e](https://github.com/dao-xyz/peerbit/commit/7cbb34eb099fb5f34233ce3fbb99f32acf2e47bb))
+* exclude any-store from optimizeDeps ([a14751e](https://github.com/dao-xyz/peerbit/commit/a14751e6e8ede7a96537ca353af6be416958029a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.1.1 to ^2.1.2
+    * @peerbit/time bumped from 2.0.1 to 2.0.2
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.4...any-store-v1.0.5) (2024-01-08)
 
 

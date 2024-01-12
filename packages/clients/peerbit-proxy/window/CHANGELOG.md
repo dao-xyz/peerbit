@@ -190,6 +190,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.8 to 2.0.9
 
+## [3.0.10](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.9...proxy-window-v3.0.10) (2024-01-12)
+
+
+### Bug Fixes
+
+* don't reuse existing vite server ([7cbb34e](https://github.com/dao-xyz/peerbit/commit/7cbb34eb099fb5f34233ce3fbb99f32acf2e47bb))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped from ^2.0.9 to ^2.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.9 to 2.0.10
+
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.1...proxy-window-v3.0.2) (2024-01-01)
 
 
