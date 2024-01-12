@@ -1,12 +1,12 @@
 export class TimeoutError extends Error {
-	constructor(message: string) {
+	constructor(message?: string) {
 		super(message);
 	}
 }
 
 export class AbortError extends Error {
-	constructor() {
-		super();
+	constructor(message?: string) {
+		super(message);
 	}
 }
 export const delay = (ms: number, options?: { signal?: AbortSignal }) => {
