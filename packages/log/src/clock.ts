@@ -25,7 +25,7 @@ SOFTWARE.
 
 import { field, variant } from "@dao-xyz/borsh";
 import { compare, equals } from "@peerbit/uint8arrays";
-import hrtime from "./hrtime.js";
+import { hrtime } from "@peerbit/time";
 
 const hrTimeNow = hrtime.bigint();
 const startTime = BigInt(Date.now()) * BigInt(1e6) - hrTimeNow;
