@@ -410,8 +410,8 @@ describe(`leaders`, function () {
 	});
 
 	describe("get replicators sorted", () => {
-		const checkSorted = (values: { offset: number }[]) => {
-			const sorted = [...values].sort((a, b) => a.offset - b.offset);
+		const checkSorted = (values: { role: { offset: number } }[]) => {
+			const sorted = [...values].sort((a, b) => a.role.offset - b.role.offset);
 			expect(sorted).toEqual(values);
 		};
 		it("can handle peers leaving and joining", async () => {

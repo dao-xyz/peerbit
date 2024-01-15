@@ -127,12 +127,13 @@ export type SharedLogOptions<T> = {
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	sync?: (entry: Entry<T>) => boolean;
+	timeUntilRoleMaturity?: number;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
-const REBALANCE_DEBOUNCE_INTERAVAL = 30;
+const REBALANCE_DEBOUNCE_INTERVAL = 100;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions<T>;
 
@@ -205,6 +206,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	replicas: ReplicationLimits;
 
+	timeUntilRoleMaturity: number;
+
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
 		this.log = new Log(properties);
@@ -223,9 +226,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.rebalanceParticipationDebounced = debounce(
 			() => this.rebalanceParticipation(),
 			Math.max(
-				REBALANCE_DEBOUNCE_INTERAVAL,
-				(this.getReplicatorsSorted()?.length || 0) *
-					REBALANCE_DEBOUNCE_INTERAVAL
+				REBALANCE_DEBOUNCE_INTERVAL,
+				(this.getReplicatorsSorted()?.length || 0) * REBALANCE_DEBOUNCE_INTERVAL
 			)
 		);
 	}
@@ -233,10 +235,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.rebalanceParticipationDebounced = undefined;
 
 		const setupDebouncedRebalancing = (options?: AdaptiveReplicatorOptions) => {
-			this.replicationController = new PIDReplicationController({
-				targetMemoryLimit: options?.limits?.memory,
-				errorFunction: options?.error
-			});
+			this.replicationController = new PIDReplicationController(
+				this.node.identity.publicKey.hashcode(),
+				{
+					targetMemoryLimit: options?.limits?.memory,
+					errorFunction: options?.error
+				}
+			);
 
 			this.setupRebalanceDebounceFunction();
 		};
@@ -254,7 +259,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 					setupDebouncedRebalancing(options);
 					this._roleOptions = options;
 				} else {
-					this._roleOptions = new Replicator({ factor: options.factor });
+					this._roleOptions = new Replicator({
+						factor: options.factor,
+						offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
+					});
 				}
 			} else {
 				this._roleOptions = new Observer();
@@ -276,11 +284,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 			if (this._roleOptions.limits) {
 				this._role = new Replicator({
 					// initial role in a dynamic setup
-					factor: 1
+					factor: 1,
+					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
 				});
 			} else {
 				this._role = new Replicator({
-					factor: 1
+					factor: 1,
+					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
 				});
 			}
 		}
@@ -392,7 +402,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._pendingIHave = new Map();
 		this.latestRoleMessages = new Map();
 		this.openTime = +new Date();
-
+		this.timeUntilRoleMaturity =
+			options?.timeUntilRoleMaturity || WAIT_FOR_ROLE_MATURITY;
 		this._gidParentCache = new Cache({ max: 1000 });
 		this._closeController = new AbortController();
 
@@ -425,17 +436,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._totalParticipation = 0;
 		this._sortedPeersCache = yallist.create();
 		this._gidPeersHistory = new Map();
-
-		await this.node.services.pubsub.addEventListener(
-			"subscribe",
-			this._onSubscriptionFn
-		);
-
-		this._onUnsubscriptionFn = this._onUnsubscription.bind(this);
-		await this.node.services.pubsub.addEventListener(
-			"unsubscribe",
-			this._onUnsubscriptionFn
-		);
 
 		const cache = await storage.sublevel("cache");
 
@@ -495,6 +495,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 			responseHandler: this._onMessage.bind(this),
 			topic: this.topic
 		});
+
+		await this.node.services.pubsub.addEventListener(
+			"subscribe",
+			this._onSubscriptionFn
+		);
+
+		this._onUnsubscriptionFn = this._onUnsubscription.bind(this);
+		await this.node.services.pubsub.addEventListener(
+			"unsubscribe",
+			this._onUnsubscriptionFn
+		);
 
 		await this.log.load();
 	}
@@ -769,7 +780,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 								}
 
 								prevPendingIHave && prevPendingIHave.callback(entry);
-
 								this._pendingIHave.delete(entry.hash);
 							}
 						};
@@ -819,8 +829,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 					timeout: WAIT_FOR_REPLICATOR_TIMEOUT
 				})
 					.then(async () => {
-						/* await delay(1000 * Math.random()) */
-
 						const prev = this.latestRoleMessages.get(context.from!.hashcode());
 						if (prev && prev > context.timestamp) {
 							return;
@@ -997,7 +1005,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const startNode = currentNode;
 		const diffs: { diff: number; rect: ReplicatorRect }[] = [];
 		while (currentNode && !done()) {
-			const start = currentNode.value.offset % width;
+			const start = currentNode.value.role.offset % width;
 			const absDelta = Math.abs(start - point());
 			const diff = Math.min(absDelta, width - absDelta);
 
@@ -1056,7 +1064,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const t = +new Date();
 		const roleAge =
 			options?.roleAge ??
-			Math.min(WAIT_FOR_ROLE_MATURITY, +new Date() - this.openTime);
+			Math.min(this.timeUntilRoleMaturity, +new Date() - this.openTime);
 
 		for (let i = 0; i < numberOfLeaders; i++) {
 			const point = ((cursor + i / numberOfLeaders) % 1) * width;
@@ -1079,7 +1087,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	 *
 	 * @returns groups where at least one in any group will have the entry you are looking for
 	 */
-	getReplicatorUnion(roleAge: number = WAIT_FOR_ROLE_MATURITY) {
+	getReplicatorUnion(roleAge: number = this.timeUntilRoleMaturity) {
 		if (this.closed === true) {
 			throw new Error("Closed");
 		}
@@ -1127,7 +1135,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			return [];
 		}
 
-		let nextPoint = startNode.value.offset;
+		let nextPoint = startNode.value.role.offset;
 		const t = +new Date();
 		this.collectNodesAroundPoint(
 			t,
@@ -1173,7 +1181,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this._closeController.signal.removeEventListener("abort", listener);
 				await this.rebalanceParticipationDebounced?.();
 				this.distribute();
-			}, WAIT_FOR_ROLE_MATURITY + 2000);
+			}, this.timeUntilRoleMaturity + 2000);
 
 			const listener = () => {
 				clearTimeout(timer);
@@ -1194,14 +1202,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		publicKey: PublicSignKey
 	) {
 		const update = await this._modifyReplicators(role, publicKey);
+
 		if (update.changed !== "none") {
 			if (update.changed === "added" || update.changed === "removed") {
 				this.setupRebalanceDebounceFunction();
 			}
 
-			if (this.rebalanceParticipationDebounced) {
-				await this.rebalanceParticipationDebounced?.(); /* await this.rebalanceParticipation(false); */
-			}
+			await this.rebalanceParticipationDebounced?.(); /* await this.rebalanceParticipation(false); */
 			if (update.changed === "added") {
 				await this.rpc.send(new ResponseRoleMessage({ role: this._role }), {
 					mode: new SeekDelivery({
@@ -1251,10 +1258,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			if (isOnline) {
 				// insert or if already there do nothing
-				const code = hashToUniformNumber(publicKey.bytes);
 				const rect: ReplicatorRect = {
 					publicKey,
-					offset: code,
 					role
 				};
 
@@ -1276,7 +1281,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							return { prev: prev.role, changed: "updated" };
 						}
 
-						if (code > currentNode.value.offset) {
+						if (role.offset > currentNode.value.role.offset) {
 							const next = currentNode?.next;
 							if (next) {
 								currentNode = next;
@@ -1483,7 +1488,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	_queue: PQueue;
 	async distribute() {
 		if (this._queue?.size > 0) {
-			return;
+			return this._queue.onEmpty();
 		}
 		(this._queue || (this._queue = new PQueue({ concurrency: 1 }))).add(() =>
 			this._distribute()
@@ -1659,10 +1664,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 	}
 
+	xxx: number;
 	async rebalanceParticipation(onRoleChange = true) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 
+		const t = +new Date();
+		// console.log(t - this.xxx)
+		this.xxx = t;
 		if (this.closed) {
 			return false;
 		}
@@ -1688,15 +1697,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 					peers?.length || 1
 				);
 
-			const newRole = new Replicator({
-				factor: newFactor,
-				timestamp: this._role.timestamp
-			});
-
 			const relativeDifference =
-				Math.abs(this._role.factor - newRole.factor) / this._role.factor;
+				Math.abs(this._role.factor - newFactor) / this._role.factor;
 
 			if (relativeDifference > 0.0001) {
+				const newRole = new Replicator({
+					factor: newFactor,
+					timestamp: this._role.timestamp,
+					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
+				});
+
 				const canReplicate =
 					!this._canReplicate ||
 					(await this._canReplicate(this.node.identity.publicKey, newRole));
@@ -1705,7 +1715,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				await this._updateRole(newRole, onRoleChange);
+				this.rebalanceParticipationDebounced?.();
+
 				return true;
+			} else {
+				this.rebalanceParticipationDebounced?.();
 			}
 			return false;
 		}

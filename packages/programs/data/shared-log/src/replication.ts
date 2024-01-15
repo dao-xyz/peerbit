@@ -15,7 +15,6 @@ export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
 
 export type ReplicatorRect = {
 	publicKey: PublicSignKey;
-	offset: number;
 	role: Replicator;
 };
 

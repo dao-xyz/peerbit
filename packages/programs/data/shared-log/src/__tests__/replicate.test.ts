@@ -957,7 +957,7 @@ describe("replication degree", () => {
 		// expect(db2ReorgCounter).toEqual(3); TODO
 	});
 
-	it("time out when pending IHave are never resolve", async () => {
+	it("time out when pending IHave are never resolved", async () => {
 		let min = 1;
 		let max = 1;
 
@@ -996,6 +996,9 @@ describe("replication degree", () => {
 			}
 		);
 
+		// TODO this test is flaky because background prune calls are intefering with assertions
+		// Todo make sure no background prunes are done (?)
+
 		const onMessageFn = db2.log._onMessage.bind(db2.log);
 		db2.log.rpc["_responseHandler"] = async (msg, cxt) => {
 			if (msg instanceof ExchangeHeadsMessage) {
@@ -1005,13 +1008,17 @@ describe("replication degree", () => {
 		};
 		const { entry } = await db1.add("hello");
 		const expectPromise = expect(() =>
-			Promise.all(db1.log.prune([entry], { timeout: 3000 }))
+			Promise.all(
+				db1.log.prune([entry], { timeout: db1.log.timeUntilRoleMaturity })
+			)
 		).rejects.toThrow("Timeout");
 		await waitForResolved(() =>
 			expect(db2.log["_pendingIHave"].size).toEqual(1)
 		);
 		await delay(respondToIHaveTimeout + 1000);
-		expect(db2.log["_pendingIHave"].size).toEqual(0);
+		await waitForResolved(() =>
+			expect(db2.log["_pendingIHave"].size).toEqual(0)
+		); // shoulld clear up
 		await expectPromise;
 	});
 

@@ -8,13 +8,14 @@ export class PIDReplicationController {
 	integral: number;
 	prevError: number;
 	prevMemoryUsage: number;
-	lastTs: number;
+	prevTotalFactor: number;
 	kp: number;
 	ki: number;
 	kd: number;
 	errorFunction: ReplicationErrorFunction;
 	targetMemoryLimit?: number;
 	constructor(
+		readonly id: string,
 		options: {
 			errorFunction?: ReplicationErrorFunction;
 			targetMemoryLimit?: number;
@@ -25,11 +26,14 @@ export class PIDReplicationController {
 	) {
 		const {
 			targetMemoryLimit,
-			kp = 0.5,
-			ki = 0.1,
-			kd = 0.25,
-			errorFunction = ({ balance, coverage, memory }) =>
-				memory * 0.8 + balance * 0.1 + coverage * 0.1
+			kp = 0.7,
+			ki = 0.025,
+			kd = 0.05,
+			errorFunction = ({ balance, coverage, memory }) => {
+				return memory < 0
+					? memory * 0.9 + balance * 0.06 + coverage * 0.04
+					: balance * 0.6 + coverage * 0.4;
+			}
 		} = options;
 		this.reset();
 		this.kp = kp;
@@ -39,18 +43,27 @@ export class PIDReplicationController {
 		this.errorFunction = errorFunction;
 	}
 
+	/**
+	 * Call this function on a period interval since it does not track time passed
+	 * @param memoryUsage
+	 * @param currentFactor
+	 * @param totalFactor
+	 * @param peerCount
+	 * @returns
+	 */
 	async adjustReplicationFactor(
 		memoryUsage: number,
 		currentFactor: number,
 		totalFactor: number,
 		peerCount: number
 	) {
+		const totalFactorDiff = totalFactor - this.prevTotalFactor;
+		this.prevTotalFactor = totalFactor;
 		this.prevMemoryUsage = memoryUsage;
 
 		const estimatedTotalSize = memoryUsage / currentFactor;
 
 		let errorMemory = 0;
-		const errorTarget = 1 / peerCount - currentFactor;
 
 		if (this.targetMemoryLimit != null) {
 			errorMemory =
@@ -59,42 +72,39 @@ export class PIDReplicationController {
 							Math.min(1, this.targetMemoryLimit / estimatedTotalSize),
 							0
 						) - currentFactor
-					: 0.0001;
+					: 0;
 		}
 
 		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
-		const includeCoverageError =
-			Math.max(Math.abs(errorTarget), Math.abs(errorMemory)) < 0.01;
-		const errorCoverage = includeCoverageError ? errorCoverageUnmodified : 0; /// 1 / (Math.max(Math.abs(errorTarget), Math.abs(errorMemory))) * errorCoverage / 100;
+		const errorCoverage =
+			(this.targetMemoryLimit ? 1 - Math.sqrt(Math.abs(errorMemory)) : 1) *
+			errorCoverageUnmodified;
 
-		let totalError = this.errorFunction({
-			balance: errorTarget,
+		const errorFromEven = 1 / peerCount - currentFactor;
+
+		const balanceErrorScaler = this.targetMemoryLimit
+			? Math.abs(errorMemory)
+			: 1 - Math.abs(errorCoverage);
+
+		const errorBalance = (this.targetMemoryLimit ? errorMemory > -0.01 : true)
+			? errorFromEven > 0
+				? balanceErrorScaler * errorFromEven
+				: 0
+			: 0;
+
+		const totalError = this.errorFunction({
+			balance: errorBalance,
 			coverage: errorCoverage,
 			memory: errorMemory
 		});
 
-		if (totalError === 0 && !includeCoverageError) {
-			totalError = this.errorFunction({
-				balance: errorTarget,
-				coverage: errorCoverageUnmodified,
-				memory: errorMemory
-			});
-		}
-
-		if (this.lastTs === 0) {
-			this.lastTs = +new Date();
-		}
-		const kpAdjusted = Math.min(
-			Math.max(this.kp, (+new Date() - this.lastTs) / 100),
-			0.8
-		);
-		const pTerm = kpAdjusted * totalError;
-
-		this.lastTs = +new Date();
+		const pTerm = this.kp * totalError;
 
 		// Integral term
 		this.integral += totalError;
-		const beta = 0.5;
+
+		// Beta controls how much of the accumulated error we should forget
+		const beta = 0.8;
 		this.integral = beta * totalError + (1 - beta) * this.integral;
 
 		const iTerm = this.ki * this.integral;
@@ -114,19 +124,30 @@ export class PIDReplicationController {
 			this.integral = 0;
 		}
 
+		// prevent drift when everone wants to do less
+		/* if (newFactor < currentFactor && totalFactorDiff < 0 && totalFactor < 0.5) {
+			newFactor = currentFactor;
+			this.integral = 0;
+		}
+			*/
+
 		/* console.log({
-			newFactor,
+			id: this.id,
 			currentFactor,
+			newFactor,
+			factorDiff: newFactor - currentFactor,
 			pTerm,
 			dTerm,
 			iTerm,
-			kpAdjusted,
 			totalError,
-			errorTarget,
+			errorTarget: errorBalance,
 			errorCoverage,
 			errorMemory,
 			peerCount,
-			totalFactor
+			totalFactor,
+			totalFactorDiff,
+			targetScaler: balanceErrorScaler,
+			estimatedTotalSize
 		}); */
 
 		return Math.max(Math.min(newFactor, 1), 0);
@@ -136,6 +157,5 @@ export class PIDReplicationController {
 		this.prevError = 0;
 		this.integral = 0;
 		this.prevMemoryUsage = 0;
-		this.lastTs = 0;
 	}
 }

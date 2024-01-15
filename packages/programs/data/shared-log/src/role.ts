@@ -31,13 +31,13 @@ class ReplicationSegment {
 	@field({ type: "u32" })
 	private factorNominator: number;
 
-	@field({ type: option("u32") })
-	private offsetNominator?: number;
+	@field({ type: "u32" })
+	private offsetNominator: number;
 
 	constructor(properties: {
 		factor: number;
+		offset: number;
 		timestamp?: bigint;
-		offset?: number;
 	}) {
 		const { factor, timestamp, offset } = properties;
 		if (factor > 1 || factor < 0) {
@@ -47,24 +47,18 @@ class ReplicationSegment {
 		this.timestamp = timestamp ?? BigInt(+new Date());
 		this.factorNominator = Math.round(4294967295 * factor);
 
-		if (offset != null) {
-			if (offset > 1 || offset < 0) {
-				throw new Error(
-					"Expecting offset to be between 0 and 1, got: " + offset
-				);
-			}
-			this.offsetNominator = Math.round(4294967295 * offset);
+		if (offset > 1 || offset < 0) {
+			throw new Error("Expecting offset to be between 0 and 1, got: " + offset);
 		}
+		this.offsetNominator = Math.round(4294967295 * offset);
 	}
 
 	get factor(): number {
 		return this.factorNominator / 4294967295;
 	}
 
-	get offset(): number | undefined {
-		return this.offsetNominator != null
-			? this.offsetNominator / 4294967295
-			: undefined;
+	get offset(): number {
+		return this.offsetNominator / 4294967295;
 	}
 }
 
@@ -76,7 +70,7 @@ export class Replicator extends Role {
 	constructor(properties: {
 		factor: number;
 		timestamp?: bigint;
-		offset?: number;
+		offset: number;
 	}) {
 		super();
 		const segment: ReplicationSegment = new ReplicationSegment(properties);
@@ -87,7 +81,7 @@ export class Replicator extends Role {
 		return this.segments[0]!.factor;
 	}
 
-	get offset(): number | undefined {
+	get offset(): number {
 		return this.segments[0]!.offset;
 	}
 
