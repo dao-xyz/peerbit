@@ -72,6 +72,16 @@
     * @peerbit/blocks-interface bumped from ^1.2.2 to ^1.2.3
     * @peerbit/pubsub-interface bumped from ^2.0.3 to ^2.0.4
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.2 to 2.1.3
+    * @peerbit/keychain bumped from ^1.0.5 to ^1.0.6
+    * @peerbit/blocks-interface bumped from ^1.2.4 to ^1.2.5
+    * @peerbit/pubsub-interface bumped from ^2.0.5 to ^2.0.6
+    * @peerbit/any-store bumped from ^1.0.6 to ^1.0.7
+
 ## [3.0.8](https://github.com/dao-xyz/peerbit/compare/program-v3.0.7...program-v3.0.8) (2024-01-12)
 
 
