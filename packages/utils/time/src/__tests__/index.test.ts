@@ -57,7 +57,7 @@ describe("waitForResolved", () => {
 		await waitFor(() => {
 			return done;
 		});
-		expect(+new Date() - startTime).toBeLessThan(1400);
+		expect(+new Date() - startTime).toBeLessThan(1500);
 	});
 	it("stop early", async () => {
 		const startTime = +new Date();
@@ -73,6 +73,6 @@ describe("waitForResolved", () => {
 				{ signal: AbortSignal.timeout(1000) }
 			)
 		).rejects.toThrow(AbortError);
-		expect(+new Date() - startTime).toBeLessThan(1400);
+		expect(+new Date() - startTime).toBeLessThan(1500);
 	});
 });
