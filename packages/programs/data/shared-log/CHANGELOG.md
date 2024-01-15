@@ -279,6 +279,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.1.0...shared-log-v5.0.0) (2024-01-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* force replicators to provide segment offset by default
+
+### Bug Fixes
+
+* force replicators to provide segment offset by default ([1577762](https://github.com/dao-xyz/peerbit/commit/15777623c54a7f6d994329db3d30f8d87e6567c8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.8 to 3.0.9
+    * @peerbit/log bumped from 3.0.10 to 3.0.11
+    * @peerbit/rpc bumped from 3.0.10 to 3.0.11
+    * @peerbit/time bumped from 2.0.2 to 2.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.10 to ^2.0.11
+
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.12...shared-log-v4.1.0) (2024-01-12)
 
 
