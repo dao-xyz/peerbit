@@ -45,7 +45,8 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
-			data.detail?.data &&
+			data.detail?.data?.length &&
+				data.detail?.data.length > 0 &&
 				this.remoteBlocks.onMessage(
 					deserialize(data.detail.data!, BlockMessage)
 				);

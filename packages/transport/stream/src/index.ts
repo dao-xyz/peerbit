@@ -60,7 +60,7 @@ import {
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
-import { MovingAverageTracker } from "./metrics.js";
+import { MovingAverageTracker } from "@peerbit/time";
 
 const logError = (e?: { message: string }) => {
 	return logger.error(e?.message);
