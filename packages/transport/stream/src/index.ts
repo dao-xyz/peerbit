@@ -84,7 +84,7 @@ export interface PeerStreamEvents {
 	close: CustomEvent<never>;
 }
 
-const SEEK_DELIVERY_TIMEOUT = 15e3;
+const SEEK_DELIVERY_TIMEOUT = 10e3;
 const ROUTE_MAX_RETANTION_PERIOD = 10 * 1000;
 const MAX_DATA_LENGTH = 1e7 + 1000; // 10 mb and some metadata
 const MAX_QUEUED_BYTES = MAX_DATA_LENGTH * 50;
