@@ -54,6 +54,20 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.2 to 2.1.3
 
+## [3.0.3](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.2...stream-interface-v3.0.3) (2024-01-16)
+
+
+### Bug Fixes
+
+* improved route invalidation ([2467ff7](https://github.com/dao-xyz/peerbit/commit/2467ff7d59e7c7319dd15930474c28da53e49f06))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.3 to 2.1.4
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v2.0.2...stream-interface-v3.0.0) (2024-01-10)
 
 

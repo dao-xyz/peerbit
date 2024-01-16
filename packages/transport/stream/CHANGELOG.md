@@ -37,6 +37,26 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.3](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.2...stream-v3.0.3) (2024-01-16)
+
+
+### Bug Fixes
+
+* improved route invalidation ([2467ff7](https://github.com/dao-xyz/peerbit/commit/2467ff7d59e7c7319dd15930474c28da53e49f06))
+* lower default seek timeout ([5d28120](https://github.com/dao-xyz/peerbit/commit/5d281204f367eb6a3b524f6c12c12ddde19d91a5))
+* move movering average tracker to time package ([0376928](https://github.com/dao-xyz/peerbit/commit/0376928b6929e97366e993ca3e927348d804ae32))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.3 to 2.0.4
+    * @peerbit/crypto bumped from 2.1.3 to 2.1.4
+    * @peerbit/stream-interface bumped from ^3.0.2 to ^3.0.3
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.3 to 2.0.4
+
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.0...stream-v3.0.1) (2024-01-12)
 
 

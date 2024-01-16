@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/time-v2.0.3...time-v2.0.4) (2024-01-16)
+
+
+### Bug Fixes
+
+* move hrtime to time package ([61881f6](https://github.com/dao-xyz/peerbit/commit/61881f6fc847d5f55292abc5c54a110b0ff98eb6))
+* move movering average tracker to time package ([0376928](https://github.com/dao-xyz/peerbit/commit/0376928b6929e97366e993ca3e927348d804ae32))
+* rm log from test ([67a88b0](https://github.com/dao-xyz/peerbit/commit/67a88b0dbc62a35f55113939764d6fb14376e691))
+* test using interval ([516f9e0](https://github.com/dao-xyz/peerbit/commit/516f9e00434037e39dcf4b53765b1350eda8b04e))
+
 ## [2.0.3](https://github.com/dao-xyz/peerbit/compare/time-v2.0.2...time-v2.0.3) (2024-01-15)
 
 

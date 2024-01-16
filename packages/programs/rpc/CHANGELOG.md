@@ -265,6 +265,16 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.10 to ^2.0.11
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.3 to 2.1.4
+    * @peerbit/program bumped from 3.0.9 to 3.0.10
+    * @peerbit/time bumped from 2.0.3 to 2.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
+
 ## [3.0.10](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.9...rpc-v3.0.10) (2024-01-12)
 
 
