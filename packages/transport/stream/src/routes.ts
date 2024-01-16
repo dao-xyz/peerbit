@@ -121,15 +121,17 @@ export class Routes {
 			// Mark previous routes as old
 
 			const expireAt = +new Date() + this.routeMaxRetentionPeriod;
+			let foundNodeToExpire = false;
 			for (const route of prev.list) {
 				// delete all routes after a while
 				if (!route.expireAt) {
+					foundNodeToExpire = true;
 					route.expireAt = expireAt;
 				}
 			}
 
 			// Initiate cleanup
-			if (distance !== -1) {
+			if (distance !== -1 && foundNodeToExpire) {
 				delay(this.routeMaxRetentionPeriod + 100, { signal: this.signal })
 					.then(() => {
 						this.cleanup(from, target);
@@ -295,7 +297,7 @@ export class Routes {
 		const dependent: string[] = [];
 
 		outer: for (const [fromMapKey, fromMap] of this.routes) {
-			if (fromMapKey !== this.me) {
+			if (fromMapKey === this.me) {
 				continue; // skip this because these routes are starting from me. We are looking for routes that affect others
 			}
 

@@ -27,4 +27,17 @@ describe("routes", () => {
 			expect(routes.remove(a)).toEqual([]);
 		});
 	});
+
+	describe("getDependent", () => {
+		it("neighbour", async () => {
+			const routes = new Routes(me);
+			routes.add(a, b, c, 0, +new Date(), +new Date());
+			expect(routes.getDependent(b)).toEqual([a]);
+		});
+		it("remote", async () => {
+			const routes = new Routes(me);
+			routes.add(a, b, c, 0, +new Date(), +new Date());
+			expect(routes.getDependent(c)).toEqual([a]);
+		});
+	});
 });

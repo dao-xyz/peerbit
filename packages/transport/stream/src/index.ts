@@ -61,6 +61,7 @@ import {
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
 import { MovingAverageTracker } from "@peerbit/time";
+import { serialize } from "@dao-xyz/borsh";
 
 const logError = (e?: { message: string }) => {
 	return logger.error(e?.message);
@@ -390,7 +391,7 @@ export abstract class DirectStream<
 	public sign: (bytes: Uint8Array) => Promise<SignatureWithKey>;
 
 	public started: boolean;
-
+	public stopping: boolean;
 	/**
 	 * Map of peer streams
 	 */
@@ -431,7 +432,7 @@ export abstract class DirectStream<
 				messageThrough: PeerStreams,
 				messageFrom?: PeerStreams
 			) => void;
-			timeout: ReturnType<typeof setTimeout>;
+			clear: () => void;
 		}
 	>;
 
@@ -537,7 +538,7 @@ export abstract class DirectStream<
 		});
 
 		this.started = true;
-
+		this.stopping = false;
 		logger.debug("starting");
 
 		// Incoming streams
@@ -612,7 +613,11 @@ export abstract class DirectStream<
 		if (!this.started) {
 			return;
 		}
+
+		// reset and clear up
+
 		this.started = false;
+
 		this.closeController.abort();
 
 		clearTimeout(this.pruneConnectionsTimeout);
@@ -645,10 +650,12 @@ export abstract class DirectStream<
 		this.peerKeyHashToPublicKey.clear();
 
 		for (const [k, v] of this._ackCallbacks) {
-			clearTimeout(v.timeout);
+			v.clear();
 		}
+
 		this._ackCallbacks.clear();
 		logger.debug("stopped");
+		this.stopping = false;
 	}
 
 	isStarted() {
@@ -782,7 +789,6 @@ export abstract class DirectStream<
 		// PeerId could be me, if so, it means that I am disconnecting
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
-
 		const connections = this.components.connectionManager
 			.getConnectionsMap()
 			.get(peerId);
@@ -824,7 +830,7 @@ export abstract class DirectStream<
 		logger.debug("connection ended:" + peerKey.toString());
 	}
 
-	public removeRouteConnection(hash: string, asNeigh = true) {
+	public removeRouteConnection(hash: string) {
 		const unreachable = this.routes.remove(hash);
 		for (const node of unreachable) {
 			this.onPeerUnreachable(node); // TODO types
@@ -1178,7 +1184,7 @@ export abstract class DirectStream<
 
 	async acknowledgeMessage(
 		peerStream: PeerStreams,
-		message: DataMessage,
+		message: DataMessage | Goodbye,
 		seenBefore: number
 	) {
 		const signers = message.header.signatures!.publicKeys.map((x) =>
@@ -1316,39 +1322,52 @@ export abstract class DirectStream<
 			return false;
 		}
 
+		await this.acknowledgeMessage(peerStream, message, seenBefore);
+
 		const filteredLeaving = message.leaving.filter((x) =>
 			this.routes.hasTarget(x)
 		);
 
-		for (const remote of filteredLeaving) {
-			this.invalidateSession(remote);
-		}
-
-		if (filteredLeaving.length > 0) {
-			this.publish(new Uint8Array(0), {
-				mode: new SeekDelivery({
-					to: filteredLeaving,
-					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
-				})
-			}).catch((e) => {
-				if (e instanceof TimeoutError || e instanceof AbortError) {
-					// peer left or closed
-				} else {
-					throw e;
-				}
-			}); // this will remove the target if it is still not reable
-		}
-
+		// Forward to all dependent
 		for (const target of message.leaving) {
 			// relay message to every one who previously talked to this peer
 			const dependent = this.routes.getDependent(target);
-			message.header.mode.to = [...message.header.mode.to, ...dependent];
-			message.header.mode.to = message.header.mode.to.filter(
-				(x) => x !== this.publicKeyHash
-			);
+
+			let newTo = [...message.header.mode.to, ...dependent];
+			newTo = newTo.filter((x) => x !== this.publicKeyHash);
+			message.header.mode = new SilentDelivery({ to: newTo, redundancy: 1 });
 
 			if (message.header.mode.to.length > 0) {
 				await this.publishMessage(publicKey, message, undefined, true);
+			}
+		}
+
+		// Handle deletion (if message is sign by the peer who left)
+		// or invalidation followed up with an attempt to re-establish a connection
+		for (const remote of filteredLeaving) {
+			if (
+				message.header.signatures?.publicKeys.find(
+					(x) => x.hashcode() === remote
+				)
+			) {
+				this.removeRouteConnection(remote);
+			} else {
+				this.invalidateSession(remote);
+
+				if (filteredLeaving.length > 0) {
+					this.publish(new Uint8Array(0), {
+						mode: new SeekDelivery({
+							to: filteredLeaving,
+							redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
+						})
+					}).catch((e) => {
+						if (e instanceof TimeoutError || e instanceof AbortError) {
+							// peer left or closed
+						} else {
+							throw e;
+						}
+					}); // this will remove the target if it is still not reable
+				}
 			}
 		}
 	}
@@ -1462,7 +1481,7 @@ export abstract class DirectStream<
 
 	private async createDeliveryPromise(
 		from: PublicSignKey,
-		message: DataMessage,
+		message: DataMessage | Goodbye,
 		relayed?: boolean
 	): Promise<{ promise: Promise<void> }> {
 		if (message.header.mode instanceof AnyWhere) {
@@ -1489,14 +1508,14 @@ export abstract class DirectStream<
 					this.healthChecks.set(
 						to,
 						setTimeout(() => {
-							this.removeRouteConnection(to, false);
+							this.removeRouteConnection(to);
 						}, this.seekTimeout + 5000)
 					);
 				}
 			}
 		}
-
-		if (messageToSet.size === 0) {
+		const haveReceivers = messageToSet.size > 0;
+		if (!haveReceivers) {
 			deliveryDeferredPromise.resolve(); // we dont know how many answer to expect, just resolve immediately
 		}
 
@@ -1509,16 +1528,25 @@ export abstract class DirectStream<
 				? Math.min(this.peers.size, message.header.mode.redundancy)
 				: 1; /*  message.deliveryMode instanceof SeekDelivery ? Math.min(this.peers.size - (relayed ? 1 : 0), message.deliveryMode.redundancy) : 1 */
 
-		const finalize = () => {
-			this._ackCallbacks.delete(idString);
-		};
-
 		const uniqueAcks = new Set();
 		const session = +new Date();
 
+		const onUnreachable = (ev) => {
+			messageToSet.delete(ev.detail.hashcode());
+			const done = checkDone();
+		};
+		this.addEventListener("peer:unreachable", onUnreachable);
+
+		const clear = () => {
+			clearTimeout(timeout);
+			this.removeEventListener("peer:unreachable", onUnreachable);
+			this._ackCallbacks.delete(idString);
+		};
+
 		const timeout = setTimeout(async () => {
+			clear();
+
 			let hasAll = true;
-			finalize();
 
 			// peer not reachable (?)!
 			for (const to of messageToSet) {
@@ -1552,6 +1580,24 @@ export abstract class DirectStream<
 				deliveryDeferredPromise.resolve();
 			}
 		}, this.seekTimeout);
+
+		const checkDone = () => {
+			// This if clause should never enter for relayed connections, since we don't
+			// know how many ACKs we will get
+			if (
+				filterMessageForSeenCounter != null &&
+				uniqueAcks.size >= messageToSet.size * filterMessageForSeenCounter
+			) {
+				if (haveReceivers) {
+					// this statement exist beacuse if we do SEEK and have to = [], then it means we try to reach as many as possible hence we never want to delete this ACK callback
+					// only remove callback function if we actually expected a expected amount of responses
+					clear();
+				}
+				deliveryDeferredPromise.resolve();
+				return true;
+			}
+			return false;
+		};
 
 		this._ackCallbacks.set(idString, {
 			promise: deliveryDeferredPromise.promise,
@@ -1596,22 +1642,12 @@ export abstract class DirectStream<
 					}
 				}
 
-				// This if clause should never enter for relayed connections, since we don't
-				// know how many ACKs we will get
-				if (
-					filterMessageForSeenCounter != null &&
-					uniqueAcks.size >= messageToSet.size * filterMessageForSeenCounter
-				) {
-					if (messageToSet.size > 0) {
-						// this statement exist beacuse if we do SEEK and have to = [], then it means we try to reach as many as possible hence we never want to delete this ACK callback
-						// only remove callback function if we actually expected a expected amount of responses
-						clearTimeout(timeout);
-						finalize();
-					}
-					deliveryDeferredPromise.resolve();
-				}
+				checkDone();
 			},
-			timeout
+			clear: () => {
+				clear();
+				deliveryDeferredPromise.resolve();
+			}
 		});
 		return deliveryDeferredPromise;
 	}
@@ -1622,6 +1658,10 @@ export abstract class DirectStream<
 		to?: PeerStreams[] | Map<string, PeerStreams>,
 		relayed?: boolean
 	): Promise<void> {
+		if (this.stopping) {
+			return;
+		}
+
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 
 		if (
@@ -1645,12 +1685,12 @@ export abstract class DirectStream<
 			to = this.peers; // seek delivery will not work unless we try all possible paths
 		}
 
-		if (message instanceof AcknowledgeDelivery) {
+		if (message.header.mode instanceof AcknowledgeDelivery) {
 			to = undefined;
 		}
 
 		if (
-			message instanceof DataMessage &&
+			(message instanceof DataMessage || message instanceof Goodbye) &&
 			(message.header.mode instanceof SeekDelivery ||
 				message.header.mode instanceof AcknowledgeDelivery)
 		) {
@@ -1685,12 +1725,17 @@ export abstract class DirectStream<
 
 				if (fanout) {
 					if (fanout.size > 0) {
+						const promises: Promise<any>[] = [];
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
-							stream?.waitForWrite(bytes).catch((e) => {
-								logger.error("Failed to publish message: " + e.message);
-							});
+							stream &&
+								promises.push(
+									stream.waitForWrite(bytes).catch((e) => {
+										logger.error("Failed to publish message: " + e.message);
+									})
+								);
 						}
+						await Promise.all(promises);
 						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
 					}
 
@@ -1715,6 +1760,7 @@ export abstract class DirectStream<
 		}
 
 		let sentOnce = false;
+		const promises: Promise<any>[] = [];
 		for (const stream of peers.values()) {
 			const id = stream as PeerStreams;
 
@@ -1733,10 +1779,13 @@ export abstract class DirectStream<
 
 			sentOnce = true;
 
-			id.waitForWrite(bytes).catch((e) => {
-				logger.error("Failed to publish message: " + e.message);
-			});
+			promises.push(
+				id.waitForWrite(bytes).catch((e) => {
+					logger.error("Failed to publish message: " + e.message);
+				})
+			);
 		}
+		await Promise.all(promises);
 
 		if (!sentOnce) {
 			if (!relayed) {

@@ -2347,7 +2347,6 @@ describe("join/leave", () => {
 					session.peers[2].services.directstream.routes.countAll()
 				).toEqual(3)
 			);
-
 			expect(streams[0].reachable.map((x) => x.hashcode())).toEqual([
 				streams[1].stream.publicKeyHash,
 				streams[3].stream.publicKeyHash
@@ -2360,6 +2359,7 @@ describe("join/leave", () => {
 			]);
 
 			await session.peers[3].stop();
+
 			await waitForResolved(() => expect(streams[0].goodbye).toHaveLength(1));
 			await session.peers[3].start();
 			await session.connect([[session.peers[2], session.peers[3]]]);
