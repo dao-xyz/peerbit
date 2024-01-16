@@ -479,14 +479,14 @@ const GOODBYE_VARIANT = 3;
 @variant(GOODBYE_VARIANT)
 export class Goodbye extends Message {
 	@field({ type: MessageHeader })
-	header: MessageHeader<SilentDelivery>;
+	header: MessageHeader<SilentDelivery | AcknowledgeDelivery>;
 
 	@field({ type: vec("string") })
 	leaving: string[];
 
 	constructor(properties: {
 		leaving: string[];
-		header: MessageHeader<SilentDelivery>;
+		header: MessageHeader<SilentDelivery | AcknowledgeDelivery>;
 	}) {
 		super();
 		this.header = properties.header;

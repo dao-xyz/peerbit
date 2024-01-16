@@ -295,7 +295,7 @@ export class Routes {
 		const dependent: string[] = [];
 
 		outer: for (const [fromMapKey, fromMap] of this.routes) {
-			if (fromMapKey !== this.me) {
+			if (fromMapKey === this.me) {
 				continue; // skip this because these routes are starting from me. We are looking for routes that affect others
 			}
 

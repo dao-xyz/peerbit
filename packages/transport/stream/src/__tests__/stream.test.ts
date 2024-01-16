@@ -209,7 +209,7 @@ describe("streams", function () {
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			beforeAll(async () => {});
+			beforeAll(async () => { });
 
 			beforeEach(async () => {
 				// 0 and 2 not connected
@@ -269,7 +269,7 @@ describe("streams", function () {
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			beforeAll(async () => {});
+			beforeAll(async () => { });
 
 			beforeEach(async () => {
 				// 0 and 2 not connected
@@ -555,7 +555,7 @@ describe("streams", function () {
 				) => {
 					delay(3000, { signal: streams[0].stream.closeController.signal })
 						.then(() => write02(data))
-						.catch(() => {});
+						.catch(() => { });
 				};
 
 				// Reseek again and check that path 0 -> 1 -> 2 -> 3 is "fastest"
@@ -691,7 +691,7 @@ describe("streams", function () {
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			beforeAll(async () => {});
+			beforeAll(async () => { });
 
 			beforeEach(async () => {
 				session = await connected(3, {
@@ -870,7 +870,7 @@ describe("streams", function () {
 					let session: TestSessionStream;
 					let streams: ReturnType<typeof createMetrics>[];
 
-					beforeAll(async () => {});
+					beforeAll(async () => { });
 
 					beforeEach(async () => {
 						session = await connected(4);
@@ -929,7 +929,7 @@ describe("streams", function () {
 					let streams: ReturnType<typeof createMetrics>[];
 					const data = new Uint8Array([1, 2, 3]);
 
-					beforeAll(async () => {});
+					beforeAll(async () => { });
 
 					beforeEach(async () => {
 						session = await connected(3, {
@@ -1057,7 +1057,7 @@ describe("streams", function () {
 					let streams: ReturnType<typeof createMetrics>[];
 					const data = new Uint8Array([1, 2, 3]);
 
-					beforeAll(async () => {});
+					beforeAll(async () => { });
 
 					beforeEach(async () => {
 						session = await disconnected(5, {
@@ -1271,7 +1271,7 @@ describe("streams", function () {
 			describe("invalidation", () => {
 				let session: TestSessionStream;
 
-				beforeAll(async () => {});
+				beforeAll(async () => { });
 
 				afterEach(async () => {
 					await session.stop();
@@ -1633,7 +1633,7 @@ describe("streams", function () {
 		let streams: ReturnType<typeof createMetrics>[];
 		let timer: ReturnType<typeof setTimeout>;
 
-		beforeAll(async () => {});
+		beforeAll(async () => { });
 
 		beforeEach(async () => {
 			session = await connected(3, {
@@ -2221,7 +2221,7 @@ describe("join/leave", () => {
 
 	describe("invalidation", () => {
 		let extraSession: TestSessionStream;
-		beforeEach(async () => {});
+		beforeEach(async () => { });
 		afterEach(async () => {
 			await session?.stop();
 			await extraSession?.stop();
@@ -2293,13 +2293,13 @@ describe("join/leave", () => {
 					{
 						mode: seekDelivery[i]
 							? new SeekDelivery({
-									redundancy: 1,
-									to: [slow.publicKey, fast.publicKey]
-								})
+								redundancy: 1,
+								to: [slow.publicKey, fast.publicKey]
+							})
 							: new SilentDelivery({
-									redundancy: 1,
-									to: [slow.publicKey, fast.publicKey]
-								}) // undefined ?
+								redundancy: 1,
+								to: [slow.publicKey, fast.publicKey]
+							}) // undefined ?
 					}
 				);
 
@@ -2330,6 +2330,7 @@ describe("join/leave", () => {
 			await waitForPeerStreams(stream(session, 1), stream(session, 2));
 			await waitForPeerStreams(stream(session, 2), stream(session, 3));
 
+			console.log("X")
 			await session.peers[0].services.directstream.publish(
 				new Uint8Array([0]),
 				{
@@ -2339,6 +2340,7 @@ describe("join/leave", () => {
 					})
 				}
 			);
+			console.log("Y")
 
 			await waitForResolved(() => expect(streams[2].ack).toHaveLength(1));
 			await waitForResolved(() => expect(streams[3].received).toHaveLength(1));
@@ -2347,7 +2349,7 @@ describe("join/leave", () => {
 					session.peers[2].services.directstream.routes.countAll()
 				).toEqual(3)
 			);
-
+			console.log("Z")
 			expect(streams[0].reachable.map((x) => x.hashcode())).toEqual([
 				streams[1].stream.publicKeyHash,
 				streams[3].stream.publicKeyHash
@@ -2359,8 +2361,12 @@ describe("join/leave", () => {
 				streams[3].stream.publicKeyHash
 			]);
 
+			console.log("STOP")
 			await session.peers[3].stop();
+			console.log("WAIT GOODBYES")
+
 			await waitForResolved(() => expect(streams[0].goodbye).toHaveLength(1));
+			console.log("START!")
 			await session.peers[3].start();
 			await session.connect([[session.peers[2], session.peers[3]]]);
 			streams[0].reachable = [];
@@ -2513,6 +2519,54 @@ describe("start/stop", () => {
 				timeout: 1000
 			})
 		);
+	});
+
+	it("says goodbye on shutdown", async () => {
+		session = await disconnected(3, {
+			transports: [tcp()],
+			services: {
+				directstream: (c) =>
+					new TestDirectStream(c, {
+						connectionManager: { dialer: false, pruner: false }
+					})
+			}
+		});
+
+		await session.connect([
+			// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+			[session.peers[0], session.peers[1]],
+			[session.peers[1], session.peers[2]]
+		]);
+		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForPeerStreams(stream(session, 1), stream(session, 2));
+
+		await stream(session, 0).publish(new Uint8Array([0]), {
+			mode: new SeekDelivery({
+				redundancy: 1,
+				to: [session.peers[2].services.directstream.publicKeyHash]
+			})
+		});
+
+		expect(session.peers[0].services.directstream.routes.count()).toEqual(2);
+		expect(session.peers[1].services.directstream.routes.countAll()).toEqual(3);
+		console.log(
+			"MIDDLE",
+			stream(session, 1).publicKeyHash,
+			session.peers[1].services.directstream.routes.countAll()
+		);
+		console.log("CLOSING", stream(session, 2).publicKeyHash);
+		console.log(
+			"FIRST",
+			stream(session, 0).publicKeyHash,
+			stream(session, 0).peers.size
+		);
+
+		const t0 = +new Date();
+		await session.peers[2].stop();
+		await waitForResolved(() =>
+			expect(session.peers[0].services.directstream.routes.count()).toEqual(1)
+		);
+		expect(+new Date() - t0).toBeLessThan(5000);
 	});
 });
 

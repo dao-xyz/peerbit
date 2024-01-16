@@ -27,7 +27,7 @@ const jestConfig: JestConfigWithTsJest = {
 		"[A-Za-z0-9-/]+(\\.integration)?\\.(?<!browser\\.)(test|spec)\\.ts$"
 	],
 	moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
-	testTimeout: 60000,
+	testTimeout: 30000,
 	setupFilesAfterEnv: ["jest-extended/all"]
 	/*   coverageReporters: ["lcov"] */
 };
