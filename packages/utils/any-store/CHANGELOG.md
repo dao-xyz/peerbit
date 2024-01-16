@@ -7,6 +7,21 @@
     * @peerbit/crypto bumped from ^2.1.2 to ^2.1.3
     * @peerbit/time bumped from 2.0.2 to 2.0.3
 
+## [1.0.8](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.7...any-store-v1.0.8) (2024-01-16)
+
+
+### Bug Fixes
+
+* move movering average tracker to time package ([0376928](https://github.com/dao-xyz/peerbit/commit/0376928b6929e97366e993ca3e927348d804ae32))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.1.3 to ^2.1.4
+    * @peerbit/time bumped from 2.0.3 to 2.0.4
+
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.5...any-store-v1.0.6) (2024-01-12)
 
 

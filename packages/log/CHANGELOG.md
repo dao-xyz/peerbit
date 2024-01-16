@@ -242,6 +242,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.10 to 2.0.11
 
+## [3.0.12](https://github.com/dao-xyz/peerbit/compare/log-v3.0.11...log-v3.0.12) (2024-01-16)
+
+
+### Bug Fixes
+
+* move hrtime to time package ([61881f6](https://github.com/dao-xyz/peerbit/commit/61881f6fc847d5f55292abc5c54a110b0ff98eb6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.3 to 2.0.4
+    * @peerbit/blocks-interface bumped from ^1.2.5 to ^1.2.6
+    * @peerbit/crypto bumped from 2.1.3 to 2.1.4
+    * @peerbit/time bumped from 2.0.3 to 2.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.11 to 2.0.12
+
 ## [3.0.8](https://github.com/dao-xyz/peerbit/compare/log-v3.0.7...log-v3.0.8) (2024-01-08)
 
 

@@ -30,6 +30,12 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.2 to 2.0.3
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 2.0.3 to 2.0.4
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/cache-v1.1.1...cache-v2.0.0) (2023-12-31)
 
 
