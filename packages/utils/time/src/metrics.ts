@@ -10,7 +10,7 @@ export class MovingAverageTracker {
 	}
 	add(number: number) {
 		const now = hrtime.bigint();
-		const diff = Number(now - this.lastTS);
+		const diff = Number(now - this.lastTS) || 1;
 		const dt = diff / 1e9;
 		this.lastTS = now;
 		const alpha_t = 1 - Math.exp(-dt / this.tau);

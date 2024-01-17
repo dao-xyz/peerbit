@@ -1664,14 +1664,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 	}
 
-	xxx: number;
 	async rebalanceParticipation(onRoleChange = true) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 
-		const t = +new Date();
-		// console.log(t - this.xxx)
-		this.xxx = t;
 		if (this.closed) {
 			return false;
 		}

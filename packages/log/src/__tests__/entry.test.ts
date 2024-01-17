@@ -1,6 +1,6 @@
 import assert from "assert";
 import { Entry, Payload } from "../entry.js";
-import { deserialize, serialize } from "@dao-xyz/borsh";
+import { deserialize, serialize, variant, field } from "@dao-xyz/borsh";
 import { Ed25519PublicKey, X25519Keypair } from "@peerbit/crypto";
 import sodium from "libsodium-wrappers";
 import { LamportClock, Timestamp } from "../clock.js";
@@ -22,17 +22,34 @@ describe("entry", function () {
 	afterAll(async () => {
 		await store.stop();
 	});
-	describe("endocing", () => {
-		it("can serialize and deserialialize", async () => {
-			const entry = await Entry.create({
+	describe("encoding", () => {
+		@variant(0)
+		class NestedEntry {
+			@field({ type: Entry })
+			entry: Entry<any>;
+
+			constructor(entry: Entry<any>) {
+				this.entry = entry;
+			}
+		}
+		const create = () =>
+			Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a")
 				},
-				data: new Uint8Array([1])
+				data: new Uint8Array(10000)
 			});
-			deserialize(serialize(entry), Entry);
+		it("root", async () => {
+			const entry = await create()
+			const bytes = serialize(entry);
+			deserialize(bytes, Entry);
+
+		});
+		it("nested", async () => {
+			const bytes = serialize(new NestedEntry(await create()));
+			deserialize(bytes, NestedEntry);
 		});
 	});
 

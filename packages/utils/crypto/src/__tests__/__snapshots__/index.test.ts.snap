@@ -1,0 +1,3 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Ed25519 ser/der 1`] = `"AADqtK4m5Nd0bR5zDCc/LnstxZuhg07H/CmvOYznbo+jswDqtK4m5Nd0bR5zDCc/LnstxZuhg07H/CmvOYznbo+jswB5tGeUT5sqWME2yA5ljox+scsrGjCv2Sm+PcZ0InQ5eg=="`;

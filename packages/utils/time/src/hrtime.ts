@@ -41,8 +41,8 @@ const _perfomancePolyfill = () => {
 	if ("now" in window.performance === false) {
 		let nowOffset = Date.now();
 
-		if (performance.timing && performance.timing.navigationStart) {
-			nowOffset = performance.timing.navigationStart;
+		if (performance.timeOrigin) {
+			nowOffset = performance.timeOrigin;
 		}
 
 		(window.performance as any)["now"] = () => Date.now() - nowOffset;

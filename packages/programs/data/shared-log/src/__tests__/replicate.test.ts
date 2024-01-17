@@ -6,7 +6,9 @@ import { TestSession } from "@peerbit/test-utils";
 import {
 	Ed25519Keypair,
 	PublicSignKey,
-	getPublicKeyFromPeerId
+	getPublicKeyFromPeerId,
+	randomBytes,
+	toBase64
 } from "@peerbit/crypto";
 import { AbsoluteReplicas, decodeReplicas, maxReplicas } from "../replication";
 import { Observer } from "../role";
@@ -1121,6 +1123,31 @@ describe("replication degree", () => {
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 	});
 
+	it("can handle many large messages", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		// append more than 30 mb
+		const count = 5;
+		for (let i = 0; i < count; i++) {
+			await db1.add(toBase64(randomBytes(6e6)), { meta: { next: [] } });
+		}
+		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(count));
+	});
 	/*  TODO feat
 	it("will reject early if leaders does not have entry", async () => {
 		await init(1);

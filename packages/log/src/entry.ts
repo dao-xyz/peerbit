@@ -1,3 +1,4 @@
+
 import { HLC, LamportClock as Clock, Timestamp } from "./clock.js";
 import {
 	variant,
@@ -6,7 +7,8 @@ import {
 	deserialize,
 	option,
 	vec,
-	fixedArray
+	fixedArray,
+	BinaryWriter
 } from "@dao-xyz/borsh";
 
 import {
@@ -28,6 +30,7 @@ import { Encoding, NO_ENCODING } from "./encoding.js";
 import { logger } from "./logger.js";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain } from "@peerbit/keychain";
+
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
 	| X25519PublicKey[]
@@ -196,7 +199,8 @@ export class Signatures {
 const maybeEncrypt = <Q>(
 	thing: Q,
 	keypair?: X25519Keypair,
-	receiver?: MaybeEncryptionPublicKey
+	receiver?: MaybeEncryptionPublicKey,
+	writer?: BinaryWriter
 ): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
 	const receivers = receiver
 		? Array.isArray(receiver)
@@ -208,12 +212,12 @@ const maybeEncrypt = <Q>(
 			throw new Error("Keypair not provided");
 		}
 		return new DecryptedThing<Q>({
-			data: serialize(thing),
+			data: serialize(thing, writer),
 			value: thing
 		}).encrypt(keypair, receivers);
 	}
 	return new DecryptedThing<Q>({
-		data: serialize(thing),
+		data: serialize(thing, writer),
 		value: thing
 	});
 };
@@ -229,6 +233,11 @@ export interface ShallowEntry {
 	};
 	payloadByteLength: number;
 }
+
+type SerializationCache = {
+	bytes: Uint8Array;
+	type: "all" | "signed" | "unsigned";
+};
 
 @variant(0)
 export class Entry<T>
@@ -261,20 +270,22 @@ export class Entry<T>
 		reserved?: Uint8Array; // intentational type 0  (not used)h
 		hash?: string;
 		createdLocally?: boolean;
+		serialized?: SerializationCache;
 	}) {
 		this._meta = obj.meta;
 		this._payload = obj.payload;
 		this._signatures = obj.signatures;
 		this._reserved = new Uint8Array([0, 0, 0, 0]);
 		this.createdLocally = obj.createdLocally;
+		this.serialized = obj.serialized;
 	}
 
 	init(
 		props:
 			| {
-					keychain?: Keychain;
-					encoding: Encoding<T>;
-			  }
+				keychain?: Keychain;
+				encoding: Encoding<T>;
+			}
 			| Entry<T>
 	): Entry<T> {
 		if (props instanceof Entry) {
@@ -352,6 +363,92 @@ export class Entry<T>
 		return (await this.getMeta()).next;
 	}
 
+	private serialized?: SerializationCache;
+	/* 
+		@serializer()
+		private _serializer(
+			writer: BinaryWriter,
+			serializeRecursive: (obj: this) => Uint8Array
+		) {
+			if (this.serialized) {
+				if (this.serialized.type === "all") {
+					// nothing to do
+				} else if (this.serialized.type === "unsigned") {
+					// check if signed and with/wo hash
+					if (this.signatures) {
+						const tempWriter = new BinaryWriter();
+						tempWriter.set(
+							this.serialized.bytes.subarray(0, this.serialized.bytes.length - 2)
+						);
+						this.serializeSignatures(tempWriter);
+						this.serializeHash(tempWriter);
+						if (this.hash) {
+							this.serialized.type = "all";
+						} else {
+							this.serialized.type = "signed";
+						}
+						this.serialized.bytes = tempWriter.finalize();
+					}
+				} else if (this.serialized.type === "signed") {
+					if (this.hash) {
+						const tempWriter = new BinaryWriter();
+						tempWriter.set(
+							this.serialized.bytes.subarray(0, this.serialized.bytes.length - 1)
+						);
+						this.serializeHash(tempWriter);
+						this.serialized.bytes = tempWriter.finalize();
+						this.serialized.type = "all";
+					} else {
+						// nothing to do
+					}
+				}
+			} else {
+				let type: "all" | "signed" | "unsigned";
+				// no cache exist
+				if (this._signatures) {
+					if (this.hash) {
+						type = "all";
+					} else {
+						type = "signed";
+					}
+				} else {
+					if (this.hash) {
+						throw new Error("Not expecting hash without signatures");
+					}
+					type = "unsigned";
+				}
+				this.serialized = {
+					type,
+					bytes: serializeRecursive(this)
+				};
+			}
+	
+			writer.set(this.serialized.bytes.subarray(1)); // remove discriminator with .subarray since it is already in writer
+		} */
+
+	private serializeSignatures(writer: BinaryWriter) {
+		if (!this._signatures) {
+			writer.bool(false);
+		} else {
+			writer.bool(true);
+			writer.set(serialize(this._signatures));
+		}
+	}
+	private serializeHash(writer: BinaryWriter) {
+		if (!this.hash) {
+			writer.bool(false);
+		} else {
+			writer.bool(true);
+			writer.string(this.hash);
+		}
+	}
+
+	get size(): number {
+		if (this.serialized) {
+			return this.serialized.bytes.length;
+		}
+		return serialize(this).length; // this._serialized will exist next time
+	}
 	/**
 	 * Will only return signatures I can decrypt
 	 * @returns signatures
@@ -401,27 +498,33 @@ export class Entry<T>
 			return false;
 		}
 
+		const signable = Entry.toSignable(this);
+		const signableBytes = serialize(signable);
+		if (!this.serialized) {
+			this.serialized = signable.serialized;
+		}
 		for (const signature of signatures) {
-			if (!(await verify(signature, Entry.toSignable(this)))) {
+			if (!(await verify(signature, signableBytes))) {
 				return false;
 			}
 		}
 		return true;
 	}
 
-	static toSignable(entry: Entry<any>): Uint8Array {
+	static toSignable(entry: Entry<any>): Entry<any> {
 		// TODO fix types
 		const trimmed = new Entry({
 			meta: entry._meta,
 			payload: entry._payload,
 			reserved: entry._reserved,
 			signatures: undefined,
-			hash: undefined
+			hash: undefined,
+			serialized: entry.serialized
 		});
-		return serialize(trimmed);
+		return entry;
 	}
 
-	toSignable(): Uint8Array {
+	toSignable(): Entry<any> {
 		if (this._signatures) {
 			throw new Error("Expected signatures to be undefined");
 		}
@@ -525,19 +628,14 @@ export class Entry<T>
 				if (Timestamp.compare(n.meta.clock.timestamp, cv.timestamp) >= 0) {
 					throw new Error(
 						"Expecting next(s) to happen before entry, got: " +
-							n.meta.clock.timestamp +
-							" > " +
-							cv.timestamp
+						n.meta.clock.timestamp +
+						" > " +
+						cv.timestamp
 					);
 				}
 			}
 		}
 
-		const payload = await maybeEncrypt(
-			payloadToSave,
-			properties.encryption?.keypair,
-			properties.encryption?.receiver.payload
-		);
 
 		const nextHashes: string[] = [];
 		let maxChainLength = 0n;
@@ -581,10 +679,17 @@ export class Entry<T>
 			properties.encryption?.receiver.meta
 		);
 
+		const payload = await maybeEncrypt(
+			payloadToSave,
+			properties.encryption?.keypair,
+			properties.encryption?.receiver.payload
+		);
+
+
 		// Sign id, encrypted payload, clock, nexts, refs
 		const entry: Entry<T> = new Entry<T>({
-			payload,
 			meta: metadataEncrypted,
+			payload,
 			signatures: undefined,
 			createdLocally: true
 		});
@@ -593,8 +698,9 @@ export class Entry<T>
 			properties.identity.sign.bind(properties.identity)
 		];
 		const signable = entry.toSignable();
+		const signableBytes = serialize(signable);
 		let signatures = await Promise.all(
-			signers.map((signer) => signer(signable))
+			signers.map((signer) => signer(signableBytes))
 		);
 		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
 
@@ -607,8 +713,8 @@ export class Entry<T>
 			const encryptionRecievers = encryptAllSignaturesWithSameKey
 				? properties.encryption?.receiver?.signatures
 				: properties.encryption?.receiver?.signatures?.[
-						signature.publicKey.hashcode()
-					];
+				signature.publicKey.hashcode()
+				];
 			const signatureEncrypted = await maybeEncrypt(
 				signature,
 				properties.encryption?.keypair,
@@ -625,7 +731,7 @@ export class Entry<T>
 			throw new AccessError();
 		}
 
-		// Append hash and signature
+		// Append hash 
 		entry.hash = await Entry.toMultihash(properties.store, entry);
 
 		entry.init({ encoding: properties.encoding });
@@ -658,12 +764,12 @@ export class Entry<T>
 	 * console.log(multihash)
 	 * // "Qm...Foo"
 	 */
-	static async toMultihash<T>(store: Blocks, entry: Entry<T>): Promise<string> {
+	static async toMultihash<T>(store: Blocks, entry: Entry<T>, writer: BinaryWriter = new BinaryWriter()): Promise<string> {
 		if (entry.hash) {
 			throw new Error("Expected hash to be missing");
 		}
 
-		const result = store.put(serialize(entry));
+		const result = store.put(serialize(entry, writer));
 		return result;
 	}
 

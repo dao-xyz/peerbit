@@ -7,7 +7,8 @@ import {
 	verify,
 	Ed25519PublicKey,
 	SignatureWithKey,
-	Ed25519PrivateKey
+	Ed25519PrivateKey,
+	toBase64
 } from "../index.js";
 import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
@@ -27,7 +28,8 @@ import { PreHash } from "../prehash.js";
 describe("Ed25519", () => {
 	it("ser/der", async () => {
 		const keypair = await Ed25519Keypair.create();
-		const derser = deserialize(serialize(keypair), Ed25519Keypair);
+		const bytes = serialize(keypair)
+		const derser = deserialize(bytes, Ed25519Keypair);
 		expect(new Uint8Array(derser.publicKey.publicKey)).toEqual(
 			keypair.publicKey.publicKey
 		);
