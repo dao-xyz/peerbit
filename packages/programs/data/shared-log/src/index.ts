@@ -50,7 +50,8 @@ import {
 	AcknowledgeDelivery,
 	DeliveryMode,
 	SeekDelivery,
-	SilentDelivery
+	SilentDelivery,
+	NotStartedError
 } from "@peerbit/stream-interface";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { BlocksMessage } from "./blocks.js";
@@ -205,6 +206,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		| ReturnType<typeof debounce>
 		| undefined;
 
+	private distributeInterval: ReturnType<typeof setInterval>;
 	replicas: ReplicationLimits;
 
 	timeUntilRoleMaturity: number;
@@ -229,7 +231,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 			() => this.rebalanceParticipation(),
 			Math.max(
 				REBALANCE_DEBOUNCE_INTERVAL,
-				(this.getReplicatorsSorted()?.length || 0) * REBALANCE_DEBOUNCE_INTERVAL
+				Math.log(
+					(this.getReplicatorsSorted()?.length || 0) *
+						REBALANCE_DEBOUNCE_INTERVAL
+				)
 			)
 		);
 	}
@@ -520,6 +525,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 
 		await this.log.load();
+
+		// TODO (do better)
+		// we do this distribution interval to eliminate the sideeffects arriving from updating roles and joining entries continously.
+		// an alternative to this would be to call distribute/maybe prune after every join if our role has changed
+		this.distributeInterval = setInterval(() => {
+			this.distribute();
+		}, 7.5 * 1000);
 	}
 
 	async afterOpen(): Promise<void> {
@@ -550,6 +562,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	private async _close() {
+		clearInterval(this.distributeInterval);
 		this._closeController.abort();
 
 		this.node.services.pubsub.removeEventListener(
@@ -854,6 +867,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 					})
 					.catch((e) => {
 						if (e instanceof AbortError) {
+							return;
+						}
+						if (e instanceof NotStartedError) {
 							return;
 						}
 						logger.error(
@@ -1497,13 +1513,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return promises;
 	}
 
-	_queue: PQueue;
+	private _queue: PQueue;
 	async distribute() {
 		if (this._queue?.size > 0) {
 			return this._queue.onEmpty();
 		}
-		(this._queue || (this._queue = new PQueue({ concurrency: 1 }))).add(() =>
-			this._distribute()
+		return (this._queue || (this._queue = new PQueue({ concurrency: 1 }))).add(
+			() => this._distribute()
 		);
 	}
 
