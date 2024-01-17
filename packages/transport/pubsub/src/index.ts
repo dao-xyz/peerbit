@@ -9,7 +9,8 @@ import {
 	MessageHeader,
 	SeekDelivery,
 	SilentDelivery,
-	deliveryModeHasReceiver
+	deliveryModeHasReceiver,
+	NotStartedError
 } from "@peerbit/stream-interface";
 import {
 	DirectStream,
@@ -91,7 +92,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	 */
 	async subscribe(topic: string) {
 		if (!this.started) {
-			throw new Error("Pubsub has not started");
+			throw new NotStartedError();
 		}
 
 		const newTopicsForTopicData: string[] = [];
@@ -137,7 +138,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		options?: { force: boolean; data: Uint8Array }
 	) {
 		if (!this.started) {
-			throw new Error("Pubsub is not started");
+			throw new NotStartedError();
 		}
 
 		const subscriptions = this.subscriptions.get(topic);
@@ -278,7 +279,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		) & { client?: string }
 	): Promise<Uint8Array> {
 		if (!this.started) {
-			throw new Error("Not started");
+			throw new NotStartedError();
 		}
 
 		const topics =

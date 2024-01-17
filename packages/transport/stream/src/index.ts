@@ -56,7 +56,8 @@ import {
 	Goodbye,
 	StreamEvents,
 	TracedDelivery,
-	AnyWhere
+	AnyWhere,
+	NotStartedError
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
@@ -1441,7 +1442,7 @@ export abstract class DirectStream<
 		}
 	): Promise<Uint8Array> {
 		if (!this.started) {
-			throw new Error("Not started");
+			throw new NotStartedError();
 		}
 
 		if ((options as WithMode).mode && (options as WithTo).to) {
