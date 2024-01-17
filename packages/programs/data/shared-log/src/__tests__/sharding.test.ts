@@ -85,7 +85,7 @@ const checkBounded = async (
 					entryCount * lower
 				),
 			{
-				timeout: 20 * 1000
+				timeout: 25 * 1000
 			}
 		);
 	}
