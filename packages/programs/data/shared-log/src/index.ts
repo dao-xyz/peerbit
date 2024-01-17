@@ -22,7 +22,7 @@ import {
 	ExchangeHeadsMessage,
 	RequestIPrune,
 	ResponseIPrune,
-	createExchangeHeadsMessage
+	createExchangeHeadsMessages
 } from "./exchange-heads.js";
 import {
 	SubscriptionEvent,
@@ -128,6 +128,7 @@ export type SharedLogOptions<T> = {
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	sync?: (entry: Entry<T>) => boolean;
 	timeUntilRoleMaturity?: number;
+	waitForReplicatorTimeout?: number;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -207,6 +208,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	replicas: ReplicationLimits;
 
 	timeUntilRoleMaturity: number;
+	waitForReplicatorTimeout: number;
 
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
@@ -354,30 +356,38 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const result = await this.log.append(data, appendOptions);
 		let mode: DeliveryMode | undefined = undefined;
 
-		if (options?.target === "replicators" || !options?.target) {
-			const leaders = await this.findLeaders(
-				result.entry.meta.gid,
-				decodeReplicas(result.entry).getValue(this)
-			);
-			const isLeader = leaders.includes(
-				this.node.identity.publicKey.hashcode()
-			);
-			mode = isLeader
-				? new SilentDelivery({ redundancy: 1, to: leaders })
-				: new AcknowledgeDelivery({ redundancy: 1, to: leaders });
-		}
-
-		await this.rpc.send(
-			await createExchangeHeadsMessage(
-				this.log,
-				[result.entry],
-				this._gidParentCache
-			),
-			{
-				mode
+		for (const message of await createExchangeHeadsMessages(
+			this.log,
+			[result.entry],
+			this._gidParentCache
+		)) {
+			if (options?.target === "replicators" || !options?.target) {
+				const minReplicas = decodeReplicas(result.entry).getValue(this);
+				let leaders: string[] | Set<string> = await this.findLeaders(
+					result.entry.meta.gid,
+					minReplicas
+				);
+				const isLeader = leaders.includes(
+					this.node.identity.publicKey.hashcode()
+				);
+				if (message.heads[0].gidRefrences.length > 0) {
+					const newAndOldLeaders = new Set(leaders);
+					for (const ref of message.heads[0].gidRefrences) {
+						for (const hash of await this.findLeaders(ref, minReplicas)) {
+							newAndOldLeaders.add(hash);
+						}
+					}
+					leaders = newAndOldLeaders;
+				}
+				mode = isLeader
+					? new SilentDelivery({ redundancy: 1, to: leaders })
+					: new AcknowledgeDelivery({ redundancy: 1, to: leaders });
 			}
-		);
 
+			await this.rpc.send(message, {
+				mode
+			});
+		}
 		this.rebalanceParticipationDebounced?.();
 
 		return result;
@@ -404,6 +414,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.openTime = +new Date();
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity || WAIT_FOR_ROLE_MATURITY;
+		this.waitForReplicatorTimeout =
+			options?.waitForReplicatorTimeout || WAIT_FOR_REPLICATOR_TIMEOUT;
 		this._gidParentCache = new Cache({ max: 1000 });
 		this._closeController = new AbortController();
 
@@ -628,7 +640,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 						return;
 					}
 
-					const toMerge: EntryWithRefs<any>[] = [];
+					const toMerge: Entry<any>[] = [];
 					let toDelete: Entry<any>[] | undefined = undefined;
 					let maybeDelete: EntryWithRefs<any>[][] | undefined = undefined;
 
@@ -658,7 +670,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 										gid,
 										Math.max(maxReplicasFromHead, maxReplicasFromNewEntries)
 									));
+
 							const isLeader = !!leaders;
+
 							if (isLeader) {
 								if (leaders.find((x) => x === context.from!.hashcode())) {
 									let peerSet = this._gidPeersHistory.get(gid);
@@ -676,14 +690,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 							outer: for (const entry of entries) {
 								if (isLeader || this.sync?.(entry.entry)) {
-									toMerge.push(entry);
+									toMerge.push(entry.entry);
 								} else {
-									for (const ref of entry.references) {
-										const map = this.log.headsIndex.gids.get(
-											await ref.getGid()
-										);
+									for (const ref of entry.gidRefrences) {
+										const map = this.log.headsIndex.gids.get(ref);
 										if (map && map.size > 0) {
-											toMerge.push(entry);
+											toMerge.push(entry.entry);
 											(toDelete || (toDelete = [])).push(entry.entry);
 											continue outer;
 										}
@@ -826,7 +838,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 				this.waitFor(context.from, {
 					signal: this._closeController.signal,
-					timeout: WAIT_FOR_REPLICATOR_TIMEOUT
+					timeout: this.waitForReplicatorTimeout
 				})
 					.then(async () => {
 						const prev = this.latestRoleMessages.get(context.from!.hashcode());
@@ -914,7 +926,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private async waitForIsLeader(
 		slot: { toString(): string },
 		numberOfLeaders: number,
-		timeout = WAIT_FOR_REPLICATOR_TIMEOUT
+		timeout = this.waitForReplicatorTimeout
 	): Promise<string[] | false> {
 		return new Promise((res, rej) => {
 			const removeListeners = () => {
@@ -1573,14 +1585,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		for (const [target, entries] of uncheckedDeliver) {
 			// TODO better choice of step size
-			for (let i = 0; i < entries.length; i += 100) {
-				const message = await createExchangeHeadsMessage(
-					this.log,
-					entries.slice(i, i + 100),
-					this._gidParentCache
-				);
-				// TODO perhaps send less messages to more receivers for performance reasons?
-				// TODO wait for previous send to target before trying to send more?
+			const messages = await createExchangeHeadsMessages(
+				this.log,
+				entries,
+				this._gidParentCache
+			);
+			// TODO perhaps send less messages to more receivers for performance reasons?
+			// TODO wait for previous send to target before trying to send more?
+			for (const message of messages) {
 				this.rpc.send(message, {
 					mode: new SilentDelivery({ to: [target], redundancy: 1 })
 				});
@@ -1664,14 +1676,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 	}
 
-	xxx: number;
 	async rebalanceParticipation(onRoleChange = true) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 
-		const t = +new Date();
-		// console.log(t - this.xxx)
-		this.xxx = t;
 		if (this.closed) {
 			return false;
 		}
