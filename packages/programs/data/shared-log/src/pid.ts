@@ -31,7 +31,7 @@ export class PIDReplicationController {
 			kd = 0.05,
 			errorFunction = ({ balance, coverage, memory }) => {
 				return memory < 0
-					? memory * 0.9 + balance * 0.06 + coverage * 0.04
+					? memory * 0.9 + balance * 0.07 + coverage * 0.03
 					: balance * 0.6 + coverage * 0.4;
 			}
 		} = options;
@@ -147,6 +147,7 @@ export class PIDReplicationController {
 			totalFactor,
 			totalFactorDiff,
 			targetScaler: balanceErrorScaler,
+			memoryUsage,
 			estimatedTotalSize
 		}); */
 
