@@ -2,6 +2,7 @@
 
 exports[`signature has the correct identity 1`] = `
 Ed25519PublicKey {
+  "_bytes": undefined,
   "publicKey": Uint8Array [
     5,
     149,
