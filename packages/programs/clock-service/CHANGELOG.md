@@ -457,6 +457,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [2.0.17](https://github.com/dao-xyz/peerbit/compare/clock-service-v2.0.16...clock-service-v2.0.17) (2024-01-17)
+
+
+### Bug Fixes
+
+* adjust for toSignable returning Entry ([22357c6](https://github.com/dao-xyz/peerbit/commit/22357c6f53e184de04cd0f337dcb55c7394b7260))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 3.0.12 to 3.0.13
+    * @peerbit/trusted-network bumped from 3.0.16 to 3.0.17
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/clock-service-v1.0.39...clock-service-v2.0.0) (2023-12-31)
 
 

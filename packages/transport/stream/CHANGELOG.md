@@ -37,6 +37,27 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.4](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.3...stream-v3.0.4) (2024-01-17)
+
+
+### Bug Fixes
+
+* make bandwidth tracker to reset to 0 after a while ([ec552c9](https://github.com/dao-xyz/peerbit/commit/ec552c903e993223fe86fc14e74aadc3359ee8e7))
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+* update inbound and outbound limits ([a2f2495](https://github.com/dao-xyz/peerbit/commit/a2f249570f1c8cc7ad6e2f5f3acc715968172e7d))
+* use NotStartedError ([5a15540](https://github.com/dao-xyz/peerbit/commit/5a155406ab5782f84dfc73ccec78333528f566f4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.4 to 2.0.5
+    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
+    * @peerbit/stream-interface bumped from ^3.0.3 to ^3.0.4
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.4 to 2.0.5
+
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.2...stream-v3.0.3) (2024-01-16)
 
 

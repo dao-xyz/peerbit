@@ -166,6 +166,25 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [2.0.12](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.11...blocks-v2.0.12) (2024-01-17)
+
+
+### Bug Fixes
+
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^1.0.8 to ^1.0.9
+    * @peerbit/stream bumped from 3.0.3 to 3.0.4
+    * @peerbit/blocks-interface bumped from 1.2.6 to 1.2.7
+    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.4 to 2.0.5
+
 ## [2.0.11](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.10...blocks-v2.0.11) (2024-01-16)
 
 

@@ -446,6 +446,24 @@
     * @peerbit/time bumped from ^2.0.3 to ^2.0.4
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [3.0.17](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v3.0.16...identity-access-controller-v3.0.17) (2024-01-17)
+
+
+### Bug Fixes
+
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 4.1.2 to 4.1.3
+    * @peerbit/trusted-network bumped from 3.0.16 to 3.0.17
+  * devDependencies
+    * @peerbit/time bumped from ^2.0.4 to ^2.0.5
+    * @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v2.0.21...identity-access-controller-v3.0.0) (2023-12-31)
 
 

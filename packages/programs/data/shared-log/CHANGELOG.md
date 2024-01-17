@@ -290,6 +290,35 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [6.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v5.0.1...shared-log-v6.0.0) (2024-01-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* make sure that old leaders get new heads
+
+### Bug Fixes
+
+* adjust pid parameters ([37bac7f](https://github.com/dao-xyz/peerbit/commit/37bac7f9cb57eb46b1d3ebc6a3099aebe064e52d))
+* adjut beta ([e5a4d64](https://github.com/dao-xyz/peerbit/commit/e5a4d64d8d5caddc36f37e847f873db4c565acb1))
+* distribute on interval ([79c9219](https://github.com/dao-xyz/peerbit/commit/79c9219df3575c1fb65930f807066198bac7653e))
+* increase timeout ([863a536](https://github.com/dao-xyz/peerbit/commit/863a536dc398d6fa7eaeb57d63470cdbd28c86ce))
+* make convergence test easier ([84c8034](https://github.com/dao-xyz/peerbit/commit/84c8034803ccd793e350203fa7bd4aa75a3dcce8))
+* make sure that old leaders get new heads ([3c58469](https://github.com/dao-xyz/peerbit/commit/3c584694e51a8c59b7f4b1cee6f9085b3c065113))
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.10 to 3.0.11
+    * @peerbit/log bumped from 3.0.12 to 3.0.13
+    * @peerbit/rpc bumped from 3.0.12 to 3.0.13
+    * @peerbit/time bumped from 2.0.4 to 2.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.1.0...shared-log-v5.0.0) (2024-01-15)
 
 
