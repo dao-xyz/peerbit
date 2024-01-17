@@ -6,6 +6,7 @@ import { Entry, HLC } from "@peerbit/log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 import { logger as loggerFn } from "@peerbit/logger";
 import { Replicator, Role, RoleOptions } from "@peerbit/shared-log";
+import { serialize } from "@dao-xyz/borsh";
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n) => (n < 0n ? -n : n);
 
@@ -88,7 +89,7 @@ export class ClockService extends Program<Args> {
 								});
 							}
 							const signature = await this.node.identity.sign(
-								entry.toSignable()
+								serialize(entry.toSignable())
 							);
 							return new Ok({
 								signature
