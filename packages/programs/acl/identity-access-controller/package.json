@@ -30,7 +30,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.1.8",
+		"@dao-xyz/borsh": "^5.2.1",
 		"@peerbit/document": "4.1.2",
 		"@peerbit/trusted-network": "3.0.16"
 	},
