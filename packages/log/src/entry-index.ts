@@ -74,7 +74,12 @@ export class EntryIndex<T> {
 		options?: { replicate?: boolean; timeout?: number }
 	): Promise<Entry<T> | null> {
 		const value = await this._blocks.get(k, options);
-		return value ? deserialize(value, Entry) : null;
+		if (value) {
+			const entry = deserialize(value, Entry);
+			entry.size = value.length;
+			return entry;
+		}
+		return null;
 	}
 
 	async delete(k: string) {

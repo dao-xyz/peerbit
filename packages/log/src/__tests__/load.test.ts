@@ -27,4 +27,12 @@ describe("load", () => {
 		expect(log.length).toEqual(1);
 		expect(await log.getHeads()).toHaveLength(1);
 	});
+
+	it("sets size on load", async () => {
+		await log.append(new Uint8Array([1]));
+		await log.close();
+		await log.load();
+		const [entry] = await log.toArray();
+		expect(entry.size).toEqual(245);
+	});
 });

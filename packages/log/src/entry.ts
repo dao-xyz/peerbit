@@ -6,7 +6,9 @@ import {
 	deserialize,
 	option,
 	vec,
-	fixedArray
+	fixedArray,
+	BinaryWriter,
+	serializer
 } from "@dao-xyz/borsh";
 
 import {
@@ -28,6 +30,7 @@ import { Encoding, NO_ENCODING } from "./encoding.js";
 import { logger } from "./logger.js";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Keychain } from "@peerbit/keychain";
+
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
 	| X25519PublicKey[]
@@ -352,6 +355,20 @@ export class Entry<T>
 		return (await this.getMeta()).next;
 	}
 
+	private _size: number;
+
+	set size(number: number) {
+		this._size = number;
+	}
+
+	get size(): number {
+		if (this._size == null) {
+			throw new Error(
+				"Size not set. Size is set when entry is, created, loaded or joined"
+			);
+		}
+		return this._size;
+	}
 	/**
 	 * Will only return signatures I can decrypt
 	 * @returns signatures
@@ -401,15 +418,17 @@ export class Entry<T>
 			return false;
 		}
 
+		const signable = Entry.toSignable(this);
+		const signableBytes = serialize(signable);
 		for (const signature of signatures) {
-			if (!(await verify(signature, Entry.toSignable(this)))) {
+			if (!(await verify(signature, signableBytes))) {
 				return false;
 			}
 		}
 		return true;
 	}
 
-	static toSignable(entry: Entry<any>): Uint8Array {
+	static toSignable(entry: Entry<any>): Entry<any> {
 		// TODO fix types
 		const trimmed = new Entry({
 			meta: entry._meta,
@@ -418,10 +437,10 @@ export class Entry<T>
 			signatures: undefined,
 			hash: undefined
 		});
-		return serialize(trimmed);
+		return trimmed;
 	}
 
-	toSignable(): Uint8Array {
+	toSignable(): Entry<any> {
 		if (this._signatures) {
 			throw new Error("Expected signatures to be undefined");
 		}
@@ -533,12 +552,6 @@ export class Entry<T>
 			}
 		}
 
-		const payload = await maybeEncrypt(
-			payloadToSave,
-			properties.encryption?.keypair,
-			properties.encryption?.receiver.payload
-		);
-
 		const nextHashes: string[] = [];
 		let maxChainLength = 0n;
 		let gid: string | null = null;
@@ -581,10 +594,16 @@ export class Entry<T>
 			properties.encryption?.receiver.meta
 		);
 
+		const payload = await maybeEncrypt(
+			payloadToSave,
+			properties.encryption?.keypair,
+			properties.encryption?.receiver.payload
+		);
+
 		// Sign id, encrypted payload, clock, nexts, refs
 		const entry: Entry<T> = new Entry<T>({
-			payload,
 			meta: metadataEncrypted,
+			payload,
 			signatures: undefined,
 			createdLocally: true
 		});
@@ -593,8 +612,9 @@ export class Entry<T>
 			properties.identity.sign.bind(properties.identity)
 		];
 		const signable = entry.toSignable();
+		const signableBytes = serialize(signable);
 		let signatures = await Promise.all(
-			signers.map((signer) => signer(signable))
+			signers.map((signer) => signer(signableBytes))
 		);
 		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
 
@@ -625,7 +645,7 @@ export class Entry<T>
 			throw new AccessError();
 		}
 
-		// Append hash and signature
+		// Append hash
 		entry.hash = await Entry.toMultihash(properties.store, entry);
 
 		entry.init({ encoding: properties.encoding });
@@ -663,7 +683,9 @@ export class Entry<T>
 			throw new Error("Expected hash to be missing");
 		}
 
-		const result = store.put(serialize(entry));
+		const bytes = serialize(entry);
+		entry.size = bytes.length;
+		const result = store.put(bytes);
 		return result;
 	}
 
@@ -686,6 +708,7 @@ export class Entry<T>
 		}
 		const entry = deserialize(bytes, Entry);
 		entry.hash = hash;
+		entry.size = bytes.length;
 		return entry as Entry<T>;
 	}
 
