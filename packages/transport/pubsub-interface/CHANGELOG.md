@@ -63,6 +63,21 @@
     * @peerbit/crypto bumped from 2.1.3 to 2.1.4
     * @peerbit/stream-interface bumped from ^3.0.2 to ^3.0.3
 
+## [2.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.7...pubsub-interface-v2.0.8) (2024-01-17)
+
+
+### Bug Fixes
+
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
+    * @peerbit/stream-interface bumped from ^3.0.3 to ^3.0.4
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.3...pubsub-interface-v2.0.4) (2024-01-10)
 
 

@@ -242,6 +242,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.10 to 2.0.11
 
+## [3.0.13](https://github.com/dao-xyz/peerbit/compare/log-v3.0.12...log-v3.0.13) (2024-01-17)
+
+
+### Bug Fixes
+
+* add bench ([958f693](https://github.com/dao-xyz/peerbit/commit/958f69373d438b820dd3eb92d08ea9b193e98714))
+* add size property ([6c9eaad](https://github.com/dao-xyz/peerbit/commit/6c9eaadff12c0c9ca28bd0429f04ee9c9408b38a))
+* cache pubkey bytes ([22956ac](https://github.com/dao-xyz/peerbit/commit/22956acfcb6f9f823252dd66c7dd4c1d68ad79b3))
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.4 to 2.0.5
+    * @peerbit/blocks-interface bumped from ^1.2.6 to ^1.2.7
+    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
+    * @peerbit/time bumped from 2.0.4 to 2.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.12 to 2.0.13
+
 ## [3.0.12](https://github.com/dao-xyz/peerbit/compare/log-v3.0.11...log-v3.0.12) (2024-01-16)
 
 

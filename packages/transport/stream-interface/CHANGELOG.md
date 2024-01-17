@@ -54,6 +54,21 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.2 to 2.1.3
 
+## [3.0.4](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.3...stream-interface-v3.0.4) (2024-01-17)
+
+
+### Bug Fixes
+
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+* use NotStartedError ([5a15540](https://github.com/dao-xyz/peerbit/commit/5a155406ab5782f84dfc73ccec78333528f566f4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
+
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.2...stream-interface-v3.0.3) (2024-01-16)
 
 

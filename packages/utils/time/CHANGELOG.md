@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.5](https://github.com/dao-xyz/peerbit/compare/time-v2.0.4...time-v2.0.5) (2024-01-17)
+
+
+### Bug Fixes
+
+* bump timeout ([4f10ac7](https://github.com/dao-xyz/peerbit/commit/4f10ac7b9f9183f1bd39e640716f18c552e32160))
+* improve moving average precision ([329eacd](https://github.com/dao-xyz/peerbit/commit/329eacde97329f30be8c125db91ff06b45d9975d))
+
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/time-v2.0.3...time-v2.0.4) (2024-01-16)
 
 

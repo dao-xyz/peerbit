@@ -401,6 +401,24 @@
     * @peerbit/time bumped from 2.0.3 to 2.0.4
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [3.0.17](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.16...trusted-network-v3.0.17) (2024-01-17)
+
+
+### Bug Fixes
+
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
+    * @peerbit/document bumped from 4.1.2 to 4.1.3
+  * devDependencies
+    * @peerbit/time bumped from 2.0.4 to 2.0.5
+    * @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
+
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.2...trusted-network-v3.0.3) (2024-01-01)
 
 

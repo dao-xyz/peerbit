@@ -416,6 +416,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [4.1.3](https://github.com/dao-xyz/peerbit/compare/string-v4.1.2...string-v4.1.3) (2024-01-17)
+
+
+### Bug Fixes
+
+* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.10 to 3.0.11
+    * @peerbit/shared-log bumped from ^5.0.1 to ^6.0.0
+    * @peerbit/rpc bumped from 3.0.12 to 3.0.13
+    * @peerbit/time bumped from 2.0.4 to 2.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
+
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/string-v4.0.12...string-v4.1.0) (2024-01-12)
 
 
