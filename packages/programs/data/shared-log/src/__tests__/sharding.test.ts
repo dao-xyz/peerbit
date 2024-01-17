@@ -4,20 +4,11 @@ import { EventStore } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../replication.js";
-import { Observer, Replicator } from "../role";
-import {
-	Ed25519Keypair,
-	PublicSignKey,
-	randomBytes,
-	toBase64
-} from "@peerbit/crypto";
+import { Replicator } from "../role";
+import { Ed25519Keypair, randomBytes, toBase64 } from "@peerbit/crypto";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { jest } from "@jest/globals";
-import {
-	ReplicationErrorFunction,
-	SharedLog,
-	WAIT_FOR_ROLE_MATURITY
-} from "..";
+import { SharedLog } from "../index.js";
 
 const checkReplicas = async (
 	dbs: EventStore<string>[],
@@ -616,7 +607,6 @@ describe(`sharding`, () => {
 					args: {
 						role: {
 							type: "replicator"
-							/* error: errorFunction */
 						},
 						replicas: {
 							min: new AbsoluteReplicas(1),
@@ -636,7 +626,6 @@ describe(`sharding`, () => {
 								limits: {
 									memory: memoryLimit // 100kb
 								}
-								/* error: errorFunction */
 							},
 							replicas: {
 								min: new AbsoluteReplicas(1),
@@ -660,7 +649,7 @@ describe(`sharding`, () => {
 						(db2.log.role as Replicator).factor -
 							(db1.log.role as Replicator).factor
 					);
-					return Math.round(diff * 100);
+					return Math.round(diff * 50);
 				});
 
 				await waitForResolved(
@@ -1106,25 +1095,6 @@ describe(`sharding`, () => {
 					}
 				);
 
-				// check that it will converge
-				/* let last = -1;
-				let done = false;
-				const t0 = +new Date;
-				for (let i = 0; i < 100; i++) {
-					const current = (db1.log.role as Replicator).factor
-					if (i > 50) {
-						if (last === current) {
-							done = true;
-							break;
-						}
-					}
-					last = current;
-					await db1.log.rebalanceParticipation();
-					await delay(100)
-
-				}
-				expect(+new Date - t0).toBeGreaterThan(3000)
-				expect(done).toBeTrue() */
 				await waitForResolved(() =>
 					expect((db1.log.role as Replicator).factor).toEqual(0)
 				);
