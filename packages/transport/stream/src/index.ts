@@ -60,8 +60,7 @@ import {
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
-import { MovingAverageTracker } from "@peerbit/time";
-import { serialize } from "@dao-xyz/borsh";
+import { BandwidthTracker } from "./stats.js";
 
 const logError = (e?: { message: string }) => {
 	return logger.error(e?.message);
@@ -86,8 +85,10 @@ export interface PeerStreamEvents {
 
 const SEEK_DELIVERY_TIMEOUT = 10e3;
 const ROUTE_MAX_RETANTION_PERIOD = 10 * 1000;
-const MAX_DATA_LENGTH = 1e7 + 1000; // 10 mb and some metadata
-const MAX_QUEUED_BYTES = MAX_DATA_LENGTH * 50;
+const MAX_DATA_LENGTH_IN = 15e6 + 1000; // 15 mb and some metadata
+const MAX_DATA_LENGTH_OUT = 1e7 + 1000; // 10 mb and some metadata
+
+const MAX_QUEUED_BYTES = MAX_DATA_LENGTH_IN * 50;
 
 const DEFAULT_PRUNE_CONNECTIONS_INTERVAL = 2e4;
 const DEFAULT_MIN_CONNECTIONS = 2;
@@ -139,7 +140,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 	public seekedOnce: boolean;
 
-	private usedBandWidthTracker: MovingAverageTracker;
+	private usedBandWidthTracker: BandwidthTracker;
 	constructor(init: PeerStreamsInit) {
 		super();
 
@@ -149,7 +150,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.inboundAbortController = new AbortController();
 		this.closed = false;
 		this.connId = init.connId;
-		this.usedBandWidthTracker = new MovingAverageTracker();
+		this.usedBandWidthTracker = new BandwidthTracker();
 	}
 
 	/**
@@ -175,6 +176,13 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Throws if there is no `stream` to write to available.
 	 */
 	write(data: Uint8Array | Uint8ArrayList) {
+		if (data.length > MAX_DATA_LENGTH_OUT) {
+			throw new Error(
+				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
+					MAX_DATA_LENGTH_OUT * 1e-6
+				} mb`
+			);
+		}
 		if (this.outboundStream == null) {
 			logger.error("No writable connection to " + this.peerId.toString());
 			throw new Error("No writable connection to " + this.peerId.toString());
@@ -229,12 +237,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 					this.write(bytes);
 				})
 				.catch((error) => {
-					logger.error(
-						"Failed to send to stream: " +
-							this.peerId +
-							". " +
-							(error?.message || error?.toString())
-					);
+					throw error;
 				});
 		} else {
 			this.write(bytes);
@@ -252,7 +255,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this._rawInboundStream = stream;
 		this.inboundStream = abortableSource(
 			pipe(this._rawInboundStream, (source) =>
-				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH })
+				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN })
 			),
 			this.inboundAbortController.signal,
 			{
@@ -1728,12 +1731,7 @@ export abstract class DirectStream<
 						const promises: Promise<any>[] = [];
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
-							stream &&
-								promises.push(
-									stream.waitForWrite(bytes).catch((e) => {
-										logger.error("Failed to publish message: " + e.message);
-									})
-								);
+							stream && promises.push(stream.waitForWrite(bytes));
 						}
 						await Promise.all(promises);
 						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
@@ -1779,11 +1777,7 @@ export abstract class DirectStream<
 
 			sentOnce = true;
 
-			promises.push(
-				id.waitForWrite(bytes).catch((e) => {
-					logger.error("Failed to publish message: " + e.message);
-				})
-			);
+			promises.push(id.waitForWrite(bytes));
 		}
 		await Promise.all(promises);
 
