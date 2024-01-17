@@ -563,6 +563,10 @@ export class Log<T> {
 		}
 
 		for (const e of nexts) {
+			if (!this.has(e.hash)) {
+				await this.join([e]);
+			}
+
 			let nextIndexSet = this._nextsIndex.get(e.hash);
 			if (!nextIndexSet) {
 				nextIndexSet = new Set();

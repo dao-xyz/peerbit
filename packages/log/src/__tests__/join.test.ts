@@ -349,7 +349,7 @@ describe("join", function () {
 			});
 
 			expect(log1.length).toEqual(1);
-			expect(log2.length).toEqual(1);
+			expect(log2.length).toEqual(2);
 
 			await log1.join(await log2.getHeads());
 			const expectedData = [new Uint8Array([0, 1]), new Uint8Array([1, 0])];
@@ -811,6 +811,7 @@ describe("join", function () {
 				expect(joinEntryCounter).toEqual(2);
 			});
 		});
+
 		// TODO move this into the prune test file
 		describe("join and prune", () => {
 			beforeEach(async () => {
@@ -893,6 +894,21 @@ describe("join", function () {
 				).toEqual(expectedData);
 				expect(lastEntry.next.length).toEqual(1);
 			});
+		});
+
+		it("sets size on join", async () => {
+			const n1 = await Entry.create({
+				store: session.peers[0].services.blocks,
+				identity: {
+					...signKey,
+					sign: async (data: Uint8Array) => await signKey.sign(data)
+				},
+				data: new Uint8Array([0])
+			});
+			n1.size = undefined as any;
+			await log1.join([n1]);
+			const [entry] = await log1.toArray();
+			expect(entry.size).toEqual(245);
 		});
 	});
 });

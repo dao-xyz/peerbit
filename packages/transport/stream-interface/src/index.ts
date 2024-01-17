@@ -23,3 +23,5 @@ export interface WaitForPeer {
 		options?: { signal?: AbortSignal }
 	): Promise<void>;
 }
+
+export class NotStartedError extends Error {}

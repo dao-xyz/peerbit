@@ -31,7 +31,7 @@ export class PIDReplicationController {
 			kd = 0.05,
 			errorFunction = ({ balance, coverage, memory }) => {
 				return memory < 0
-					? memory * 0.9 + balance * 0.06 + coverage * 0.04
+					? memory * 0.9 + balance * 0.07 + coverage * 0.03
 					: balance * 0.6 + coverage * 0.4;
 			}
 		} = options;
@@ -104,7 +104,7 @@ export class PIDReplicationController {
 		this.integral += totalError;
 
 		// Beta controls how much of the accumulated error we should forget
-		const beta = 0.8;
+		const beta = 0.3;
 		this.integral = beta * totalError + (1 - beta) * this.integral;
 
 		const iTerm = this.ki * this.integral;
@@ -120,35 +120,41 @@ export class PIDReplicationController {
 		// Update state for the next iteration
 		this.prevError = totalError;
 
-		if (newFactor < 0 || newFactor > 1) {
+		// reset integral term if we are "way" out of bounds
+		if (newFactor < 0 && this.integral < 0) {
+			this.integral = 0;
+		} else if (newFactor > 1 && this.integral > 0) {
 			this.integral = 0;
 		}
-
 		// prevent drift when everone wants to do less
-		/* if (newFactor < currentFactor && totalFactorDiff < 0 && totalFactor < 0.5) {
-			newFactor = currentFactor;
-			this.integral = 0;
-		}
-			*/
+		/* 	if (newFactor < currentFactor && totalFactorDiff < 0 && totalFactor < 0.5) {
+				newFactor = currentFactor;
+				this.integral = 0;
+			} */
 
-		/* console.log({
-			id: this.id,
-			currentFactor,
-			newFactor,
-			factorDiff: newFactor - currentFactor,
-			pTerm,
-			dTerm,
-			iTerm,
-			totalError,
-			errorTarget: errorBalance,
-			errorCoverage,
-			errorMemory,
-			peerCount,
-			totalFactor,
-			totalFactorDiff,
-			targetScaler: balanceErrorScaler,
-			estimatedTotalSize
-		}); */
+		/* 	*/
+
+		/* {
+			console.log({
+				id: this.id,
+				currentFactor,
+				newFactor,
+				factorDiff: newFactor - currentFactor,
+				pTerm,
+				dTerm,
+				iTerm,
+				totalError,
+				errorTarget: errorBalance,
+				errorCoverage,
+				errorMemory,
+				peerCount,
+				totalFactor,
+				totalFactorDiff,
+				targetScaler: balanceErrorScaler,
+				memoryUsage,
+				estimatedTotalSize
+			});
+		} */
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

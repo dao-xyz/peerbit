@@ -6,7 +6,9 @@ import { TestSession } from "@peerbit/test-utils";
 import {
 	Ed25519Keypair,
 	PublicSignKey,
-	getPublicKeyFromPeerId
+	getPublicKeyFromPeerId,
+	randomBytes,
+	toBase64
 } from "@peerbit/crypto";
 import { AbsoluteReplicas, decodeReplicas, maxReplicas } from "../replication";
 import { Observer } from "../role";
@@ -39,7 +41,36 @@ describe(`exchange`, function () {
 	beforeEach(async () => {
 		fetchEvents = 0;
 		fetchHashes = new Set();
-		session = await TestSession.connected(2);
+		session = await TestSession.connected(2, [
+			{
+				libp2p: {
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192,
+							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
+							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
+							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
+							62, 133, 97, 57, 150, 187, 247, 215
+						]),
+						Ed25519Keypair
+					).toPeerId()
+				}
+			},
+			{
+				libp2p: {
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45,
+							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
+							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
+							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
+							112, 65, 202, 154, 27, 63, 15
+						]),
+						Ed25519Keypair
+					).toPeerId()
+				}
+			}
+		]);
 
 		db1 = await session.peers[0].open(new EventStore<string>());
 	});
@@ -88,58 +119,111 @@ describe(`exchange`, function () {
 		expect(verified).toBeFalse();
 	});
 
-	it("references all gids on exchange", async () => {
-		const { entry: entryA } = await db1.add("a", { meta: { next: [] } });
-		const { entry: entryB } = await db1.add("b", { meta: { next: [] } });
-		const { entry: entryAB } = await db1.add("ab", {
-			meta: { next: [entryA, entryB] }
-		});
+	describe("references", () => {
+		it("joins by references", async () => {
+			db1.log.replicas = { min: new AbsoluteReplicas(1) };
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicas: {
+							min: 1
+						},
+						waitForReplicatorTimeout: 2000
+					}
+				}
+			))!;
+			db1.log.updateRole({ type: "replicator", factor: 0.5 });
+			db2.log.updateRole({ type: "replicator", factor: 0.5 });
 
-		expect(entryA.meta.gid).not.toEqual(entryB.gid);
-		expect(
-			entryAB.meta.gid === entryA.meta.gid ||
-				entryAB.meta.gid === entryB.meta.gid
-		).toBeTrue();
-
-		let entryWithNotSameGid =
-			entryAB.meta.gid === entryA.meta.gid ? entryB : entryA;
-
-		const sendFn = db1.log.rpc.send.bind(db1.log.rpc);
-
-		db1.log.rpc.send = async (msg, options) => {
-			if (msg instanceof ExchangeHeadsMessage) {
-				expect(msg.heads.map((x) => x.entry.hash)).toEqual([entryAB.hash]);
+			await waitForResolved(() =>
 				expect(
-					msg.heads.map((x) => x.references.map((y) => y.hash)).flat()
-				).toEqual([entryWithNotSameGid.hash]);
-			}
-			return sendFn(msg, options);
-		};
+					db1.log
+						.getReplicatorsSorted()
+						?.toArray()
+						.map((x) => Math.round(x.role.factor * 2))
+				).toEqual([1, 1])
+			);
+			await waitForResolved(() =>
+				expect(
+					db2.log
+						.getReplicatorsSorted()
+						?.toArray()
+						.map((x) => Math.round(x.role.factor * 2))
+				).toEqual([1, 1])
+			);
 
-		let cacheLookups: Entry<any>[][] = [];
-		let db1GetShallowFn = db1.log["_gidParentCache"].get.bind(
-			db1.log["_gidParentCache"]
-		);
-		db1.log["_gidParentCache"].get = (k) => {
-			const result = db1GetShallowFn(k);
-			cacheLookups.push(result!);
-			return result;
-		};
+			const { entry: entryA } = await db1.add("a", {
+				meta: { next: [], gidSeed: new Uint8Array([1]) }
+			});
+			const { entry: entryB } = await db1.add("b", {
+				meta: { next: [], gidSeed: new Uint8Array([0]) }
+			});
+			await db1.add("ab", {
+				meta: { next: [entryA, entryB] }
+			});
 
-		db2 = (await EventStore.open<EventStore<string>>(
-			db1.address!,
-			session.peers[1]
-		))!;
+			await waitForResolved(() => {
+				expect(Math.max(db1.log.log.length, db2.log.log.length)).toEqual(3); // one is now responsible for everything
+				expect(Math.min(db1.log.log.length, db2.log.log.length)).toEqual(0); // one has to do nothing
+			});
+		});
+		it("references all gids on exchange", async () => {
+			const { entry: entryA } = await db1.add("a", { meta: { next: [] } });
+			const { entry: entryB } = await db1.add("b", { meta: { next: [] } });
+			const { entry: entryAB } = await db1.add("ab", {
+				meta: { next: [entryA, entryB] }
+			});
 
-		await waitForResolved(() => expect(db2.log.log.length).toEqual(3));
+			expect(entryA.meta.gid).not.toEqual(entryB.gid);
+			expect(
+				entryAB.meta.gid === entryA.meta.gid ||
+					entryAB.meta.gid === entryB.meta.gid
+			).toBeTrue();
 
-		expect(cacheLookups).toHaveLength(1);
-		expect(
-			cacheLookups.map((x) => x.map((y) => y.hash)).flat()
-		).toContainAllValues([entryWithNotSameGid.hash, entryAB.hash]);
+			let entryWithNotSameGid =
+				entryAB.meta.gid === entryA.meta.gid
+					? entryB.meta.gid
+					: entryA.meta.gid;
 
-		await db1.close();
-		expect(db1.log["_gidParentCache"].size).toEqual(0);
+			const sendFn = db1.log.rpc.send.bind(db1.log.rpc);
+
+			db1.log.rpc.send = async (msg, options) => {
+				if (msg instanceof ExchangeHeadsMessage) {
+					expect(msg.heads.map((x) => x.entry.hash)).toEqual([entryAB.hash]);
+					expect(
+						msg.heads.map((x) => x.gidRefrences.map((y) => y)).flat()
+					).toEqual([entryWithNotSameGid]);
+				}
+				return sendFn(msg, options);
+			};
+
+			let cacheLookups: Entry<any>[][] = [];
+			let db1GetShallowFn = db1.log["_gidParentCache"].get.bind(
+				db1.log["_gidParentCache"]
+			);
+			db1.log["_gidParentCache"].get = (k) => {
+				const result = db1GetShallowFn(k);
+				cacheLookups.push(result!);
+				return result;
+			};
+
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1]
+			))!;
+
+			await waitForResolved(() => expect(db2.log.log.length).toEqual(3));
+
+			expect(cacheLookups).toHaveLength(1);
+			expect(
+				cacheLookups.map((x) => x.map((y) => y.gid)).flat()
+			).toContainAllValues([entryWithNotSameGid, entryAB.meta.gid]);
+
+			await db1.close();
+			expect(db1.log["_gidParentCache"].size).toEqual(0);
+		});
 	});
 
 	it("replicates database of 1 entry", async () => {
@@ -1104,7 +1188,6 @@ describe("replication degree", () => {
 				}
 			}
 		});
-		console.log(session.peers[0].identity.publicKey.hashcode());
 		await db1.add("hello");
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 		await db2.drop();
@@ -1121,6 +1204,31 @@ describe("replication degree", () => {
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 	});
 
+	it("can handle many large messages", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		// append more than 30 mb
+		const count = 5;
+		for (let i = 0; i < count; i++) {
+			await db1.add(toBase64(randomBytes(6e6)), { meta: { next: [] } });
+		}
+		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(count));
+	});
 	/*  TODO feat
 	it("will reject early if leaders does not have entry", async () => {
 		await init(1);

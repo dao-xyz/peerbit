@@ -38,6 +38,7 @@ export type Args<T> = {
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
+	waitForReplicatorTimeout?: number;
 	sync?: (entry: Entry<Operation<T>>) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
@@ -78,6 +79,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			role: properties?.role,
 			trim: properties?.trim,
 			replicas: properties?.replicas,
+			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,
 			encoding: JSON_ENCODING,
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 1000,
 			sync: properties?.sync,
@@ -92,6 +94,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			receiver?: EncryptionTemplateMaybeEncrypted;
 			meta?: {
 				next?: Entry<any>[];
+				gidSeed?: Uint8Array;
 			};
 			replicas?: AbsoluteReplicas;
 			target?: "all" | "replicators";

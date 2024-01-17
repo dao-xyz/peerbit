@@ -1687,6 +1687,39 @@ describe("streams", function () {
 			await p;
 		});
 	});
+
+	describe("limits", () => {
+		let session: TestSessionStream;
+
+		beforeAll(async () => {});
+
+		beforeEach(async () => {
+			session = await connected(2);
+			await waitForPeerStreams(
+				session.peers[0].services.directstream,
+				session.peers[1].services.directstream
+			);
+		});
+
+		afterEach(async () => {
+			await session.stop();
+		});
+		it("max message size", async () => {
+			await expect(
+				session.peers[0].services.directstream.publish(
+					new Uint8Array(1e7 + 1001),
+					{
+						mode: new SeekDelivery({
+							to: [session.peers[1].services.directstream.publicKeyHash],
+							redundancy: 1
+						})
+					}
+				)
+			).rejects.toThrow(
+				"Message too large (10.001227) mb). Needs to be less than 10.001 mb"
+			);
+		});
+	});
 });
 
 // TODO test that messages are not sent backward, triangles etc

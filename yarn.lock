@@ -923,10 +923,10 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@dao-xyz/borsh@^5.1.8":
-  version "5.1.8"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.1.8.tgz#74b1bd54a40fc312daa6d9cd3b705858a75f340a"
-  integrity sha512-JGQDfRgTNmy4z8xVteUry3NrclkEb1R0nM5ZoWiZy53TmCb0LaEvSs5MQj1LElafaq/9NpPbPQvoaVtXpBrA3g==
+"@dao-xyz/borsh@^5.2.1":
+  version "5.2.1"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.2.1.tgz#365fd5e7decc8bfb87bb1f9d41e26366a0e7d2ca"
+  integrity sha512-jfhp91rePGmB5KFdLHEr6+Lw6KY4/6asVYXM0LhcCaF22/fHBGovW2PDw0LWI2z5JGee+Jn1kMDKkS9I2Ytniw==
   dependencies:
     "@protobufjs/float" "^1.0.2"
     "@protobufjs/utf8" "^1.1.0"

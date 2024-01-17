@@ -55,7 +55,7 @@
 	},
 	"dependencies": {
 		"p-queue": "^8.0.1",
-		"@dao-xyz/borsh": "^5.1.8",
+		"@dao-xyz/borsh": "^5.2.1",
 		"@peerbit/cache": "2.0.4",
 		"@peerbit/crypto": "2.1.4",
 		"@peerbit/stream-interface": "^3.0.3",

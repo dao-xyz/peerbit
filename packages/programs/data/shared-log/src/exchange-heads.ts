@@ -17,12 +17,12 @@ export class EntryWithRefs<T> {
 	@field({ type: Entry })
 	entry: Entry<T>;
 
-	@field({ type: vec(Entry) })
-	references: Entry<T>[]; // are some parents to the entry
+	@field({ type: vec("string") })
+	gidRefrences: string[]; // are some parents to the entry
 
-	constructor(properties: { entry: Entry<T>; references: Entry<T>[] }) {
+	constructor(properties: { entry: Entry<T>; gidRefrences: string[] }) {
 		this.entry = properties.entry;
-		this.references = properties.references;
+		this.gidRefrences = properties.gidRefrences;
 	}
 }
 
@@ -75,27 +75,60 @@ export class ResponseIPrune extends TransportMessage {
 		this.hashes = props.hashes;
 	}
 }
+const MAX_EXCHANGE_MESSAGE_SIZE = 5e6; // 5mb (since stream limits are 10mb)
 
-export const createExchangeHeadsMessage = async (
+export const createExchangeHeadsMessages = async (
 	log: Log<any>,
 	heads: Entry<any>[],
 	gidParentCache: Cache<Entry<any>[]>
-) => {
-	const headsSet = new Set(heads);
-	const headsWithRefs = await Promise.all(
-		heads.map(async (head) => {
-			const refs = (await allEntriesWithUniqueGids(log, head, gidParentCache)) // 1mb total limit split on all heads
-				.filter((r) => !headsSet.has(r));
-			return new EntryWithRefs({
-				entry: head,
-				references: refs
-			});
-		})
-	);
-	logger.debug(`Send latest heads of '${log.id}'`);
-	return new ExchangeHeadsMessage({
-		heads: headsWithRefs
-	});
+): Promise<ExchangeHeadsMessage<any>[]> => {
+	const messages: ExchangeHeadsMessage<any>[] = [];
+	let size = 0;
+	let current: EntryWithRefs<any>[] = [];
+	const visitedHeads = new Set<string>();
+	for (const fromHead of heads) {
+		visitedHeads.add(fromHead.hash);
+
+		// TODO eventually we don't want to load all refs
+		// since majority of the old leader would not be interested in these anymore
+		const refs = (
+			await allEntriesWithUniqueGids(log, fromHead, gidParentCache)
+		).filter((x) => {
+			if (visitedHeads.has(x.hash)) {
+				return false;
+			}
+			visitedHeads.add(x.hash);
+			return true;
+		});
+		if (refs.length > 1000) {
+			logger.warn("Large refs count: ", refs.length);
+		}
+		current.push(
+			new EntryWithRefs({
+				entry: fromHead,
+				gidRefrences: refs.map((x) => x.meta.gid)
+			})
+		);
+
+		size += fromHead.size;
+		if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+			messages.push(
+				new ExchangeHeadsMessage({
+					heads: current
+				})
+			);
+			current = [];
+			continue;
+		}
+	}
+	if (current.length > 0) {
+		messages.push(
+			new ExchangeHeadsMessage({
+				heads: current
+			})
+		);
+	}
+	return messages;
 };
 
 export const allEntriesWithUniqueGids = async (
@@ -120,7 +153,10 @@ export const allEntriesWithUniqueGids = async (
 					for (const next of element.meta.next) {
 						const indexedEntry = log.entryIndex.getShallow(next);
 						if (!indexedEntry) {
-							logger.error("Failed to find indexed entry for hash: " + next);
+							logger.error(
+								"Failed to find indexed entry for hash when fetching references: " +
+									next
+							);
 						} else {
 							nexts.push(indexedEntry);
 						}

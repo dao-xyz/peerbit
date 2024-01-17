@@ -1,4 +1,4 @@
-import { field, serialize } from "@dao-xyz/borsh";
+import { BinaryWriter, field, serialize, serializer } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "./hash.js";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { compare } from "@peerbit/uint8arrays";
@@ -29,8 +29,9 @@ export abstract class Keypair {
 // ---- SIGNATURE KEYS -----
 export interface PublicSignKey extends Key {}
 export abstract class PublicSignKey implements Key {
+	private _bytes: Uint8Array;
 	get bytes(): Uint8Array {
-		return serialize(this);
+		return this._bytes || this._bytes || serialize(this);
 	}
 
 	hashcode(): string {
