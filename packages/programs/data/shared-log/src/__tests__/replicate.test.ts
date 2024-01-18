@@ -313,6 +313,27 @@ describe(`exchange`, function () {
 			}
 		}
 	});
+	it("replicates database of large entries", async () => {
+		let count = 10;
+		for (let i = 0; i < count; i++) {
+			const value = toBase64(randomBytes(4e6));
+			await db1.add(value, { meta: { next: [] } }); // force unique heads
+		}
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		))!;
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(count));
+	});
 
 	describe("redundancy", () => {
 		it("only sends entries once", async () => {
