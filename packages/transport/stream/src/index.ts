@@ -1662,8 +1662,8 @@ export abstract class DirectStream<
 		to?: PeerStreams[] | Map<string, PeerStreams>,
 		relayed?: boolean
 	): Promise<void> {
-		if (this.stopping) {
-			return;
+		if (this.stopping || !this.started) {
+			throw new NotStartedError();
 		}
 
 		let delivereyPromise: Promise<void> | undefined = undefined as any;

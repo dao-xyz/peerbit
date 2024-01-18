@@ -24,4 +24,8 @@ export interface WaitForPeer {
 	): Promise<void>;
 }
 
-export class NotStartedError extends Error {}
+export class NotStartedError extends Error {
+	constructor() {
+		super("Not started");
+	}
+}

@@ -38,7 +38,12 @@ import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interface";
 
 export const logger = logFn({ module: "lazysub", level: "warn" });
-const logError = (e?: { message: string }) => logger.error(e?.message);
+const logError = (e?: { message: string }) => {
+	logger.error(e?.message);
+};
+const logErrorIfStarted = (e?: { message: string }) => {
+	e instanceof NotStartedError === false && logError(e);
+};
 
 export interface PeerStreamsInit {
 	id: Libp2pPeerId;
@@ -553,7 +558,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				message.header.mode instanceof SeekDelivery
 			) {
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logError);
+				this.relayMessage(from, message).catch(logErrorIfStarted);
 			}
 		} else {
 			if ((await this.verifyAndProcess(message)) === false) {
@@ -657,7 +662,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 				// Forward
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logError);
+				this.relayMessage(from, message).catch(logErrorIfStarted);
 			} else if (pubsubMessage instanceof Unsubscribe) {
 				if (this.subscriptionMessageIsLatest(message, pubsubMessage)) {
 					const changed: string[] = [];
@@ -693,7 +698,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				}
 
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logError);
+				this.relayMessage(from, message).catch(logErrorIfStarted);
 			} else if (pubsubMessage instanceof GetSubscribers) {
 				const subscriptionsToSend: string[] = this.getSubscriptionOverlap(
 					pubsubMessage.topics
@@ -723,7 +728,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 				// Forward
 				// DONT await this since it might introduce a dead-lock
-				this.relayMessage(from, message).catch(logError);
+				this.relayMessage(from, message).catch(logErrorIfStarted);
 			}
 		}
 		return true;
