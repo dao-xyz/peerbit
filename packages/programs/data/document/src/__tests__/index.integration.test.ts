@@ -864,335 +864,245 @@ describe("index", () => {
 		});
 
 		describe("search", () => {
-			let peersCount = 3,
-				stores: TestStore[] = [],
-				writeStore: TestStore,
-				canRead: (
-					| undefined
-					| ((obj: any, publicKey: PublicSignKey) => Promise<boolean>)
-				)[] = [],
-				canSearch: (
-					| undefined
-					| ((
-							query: AbstractSearchRequest,
-							publicKey: PublicSignKey
-					  ) => Promise<boolean>)
-				)[] = [];
-			beforeAll(async () => {
-				session = await TestSession.connected(peersCount);
-			});
+			describe("fields", () => {
+				let peersCount = 3,
+					stores: TestStore[] = [],
+					writeStore: TestStore,
+					canRead: (
+						| undefined
+						| ((obj: any, publicKey: PublicSignKey) => Promise<boolean>)
+					)[] = [],
+					canSearch: (
+						| undefined
+						| ((
+								query: AbstractSearchRequest,
+								publicKey: PublicSignKey
+						  ) => Promise<boolean>)
+					)[] = [];
+				beforeAll(async () => {
+					session = await TestSession.connected(peersCount);
+				});
 
-			afterAll(async () => {
-				await session.stop();
-			});
+				afterAll(async () => {
+					await session.stop();
+				});
 
-			beforeEach(async () => {
-				stores = [];
-				// Create store
-				for (let i = 0; i < peersCount; i++) {
-					const store =
-						i > 0
-							? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks
-								))!
-							: new TestStore({
-									docs: new Documents<Document>()
-								});
-					await session.peers[i].open(store, {
-						args: {
-							role: i === 0 ? { type: "replicator", factor: 1 } : "observer",
-							index: {
-								canRead:
-									i === 0
-										? (obj, key) => {
-												return canRead[i] ? canRead[i]!(obj, key) : true;
-											}
-										: undefined,
-								canSearch:
-									i === 0
-										? (query, key) => {
-												return canSearch[i] ? canSearch[i]!(query, key) : true;
-											}
-										: undefined
+				beforeEach(async () => {
+					stores = [];
+					// Create store
+					for (let i = 0; i < peersCount; i++) {
+						const store =
+							i > 0
+								? (await TestStore.load<TestStore>(
+										stores[0].address!,
+										session.peers[i].services.blocks
+									))!
+								: new TestStore({
+										docs: new Documents<Document>()
+									});
+						await session.peers[i].open(store, {
+							args: {
+								role: i === 0 ? { type: "replicator", factor: 1 } : "observer",
+								index: {
+									canRead:
+										i === 0
+											? (obj, key) => {
+													return canRead[i] ? canRead[i]!(obj, key) : true;
+												}
+											: undefined,
+									canSearch:
+										i === 0
+											? (query, key) => {
+													return canSearch[i]
+														? canSearch[i]!(query, key)
+														: true;
+												}
+											: undefined
+								}
 							}
-						}
+						});
+						stores.push(store);
+					}
+
+					writeStore = stores[0];
+
+					let doc = new Document({
+						id: Buffer.from("1"),
+						name: "hello",
+						number: 1n
 					});
-					stores.push(store);
-				}
 
-				writeStore = stores[0];
+					let docEdit = new Document({
+						id: Buffer.from("1"),
+						name: "hello world",
+						number: 1n,
+						bool: true,
+						data: new Uint8Array([1])
+					});
 
-				let doc = new Document({
-					id: Buffer.from("1"),
-					name: "hello",
-					number: 1n
-				});
+					let doc2 = new Document({
+						id: Buffer.from("2"),
+						name: "hello world",
+						number: 4n
+					});
 
-				let docEdit = new Document({
-					id: Buffer.from("1"),
-					name: "hello world",
-					number: 1n,
-					bool: true,
-					data: new Uint8Array([1])
-				});
+					let doc2Edit = new Document({
+						id: Buffer.from("2"),
+						name: "Hello World",
+						number: 2n,
+						data: new Uint8Array([2])
+					});
 
-				let doc2 = new Document({
-					id: Buffer.from("2"),
-					name: "hello world",
-					number: 4n
-				});
+					let doc3 = new Document({
+						id: Buffer.from("3"),
+						name: "foo",
+						number: 3n,
+						data: new Uint8Array([3])
+					});
 
-				let doc2Edit = new Document({
-					id: Buffer.from("2"),
-					name: "Hello World",
-					number: 2n,
-					data: new Uint8Array([2])
-				});
+					let doc4 = new Document({
+						id: Buffer.from("4"),
+						name: undefined,
+						number: undefined
+					});
 
-				let doc3 = new Document({
-					id: Buffer.from("3"),
-					name: "foo",
-					number: 3n,
-					data: new Uint8Array([3])
-				});
+					await writeStore.docs.put(doc);
+					await waitFor(() => writeStore.docs.index.size === 1);
+					await writeStore.docs.put(docEdit);
+					await writeStore.docs.put(doc2);
+					await waitFor(() => writeStore.docs.index.size === 2);
+					await writeStore.docs.put(doc2Edit);
+					await writeStore.docs.put(doc3);
+					await writeStore.docs.put(doc4);
+					await waitFor(() => writeStore.docs.index.size === 4);
 
-				let doc4 = new Document({
-					id: Buffer.from("4"),
-					name: undefined,
-					number: undefined
-				});
-
-				await writeStore.docs.put(doc);
-				await waitFor(() => writeStore.docs.index.size === 1);
-				await writeStore.docs.put(docEdit);
-				await writeStore.docs.put(doc2);
-				await waitFor(() => writeStore.docs.index.size === 2);
-				await writeStore.docs.put(doc2Edit);
-				await writeStore.docs.put(doc3);
-				await writeStore.docs.put(doc4);
-				await waitFor(() => writeStore.docs.index.size === 4);
-
-				expect(stores[0].docs.log.role).toBeInstanceOf(Replicator);
-				expect(stores[1].docs.log.role).toBeInstanceOf(Observer);
-				await stores[1].waitFor(session.peers[0].peerId);
-				await stores[1].docs.log.waitForReplicator(
-					session.peers[0].identity.publicKey
-				);
-				await stores[0].waitFor(session.peers[1].peerId);
-				canRead = new Array(stores.length).fill(undefined);
-				canSearch = new Array(stores.length).fill(undefined);
-			});
-
-			afterEach(async () => {
-				await Promise.all(stores.map((x) => x.drop()));
-			});
-
-			it("no-args", async () => {
-				let results: Document[] = await stores[0].docs.index.search(
-					new SearchRequest({ query: [] })
-				);
-				expect(results).toHaveLength(4);
-			});
-
-			it("match locally", async () => {
-				let results: Document[] = await stores[0].docs.index.search(
-					new SearchRequest({
-						query: []
-					}),
-					{ remote: false }
-				);
-				expect(results).toHaveLength(4);
-			});
-
-			it("match all", async () => {
-				let results: Document[] = await stores[1].docs.index.search(
-					new SearchRequest({
-						query: []
-					}),
-					{ remote: { amount: 1 } }
-				);
-				expect(results).toHaveLength(4);
-			});
-
-			describe("sync", () => {
-				it("can match sync", async () => {
-					expect(stores[1].docs.index.size).toEqual(0);
-					let canPerformEvents = 0;
-					let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
-						stores[1].docs
+					expect(stores[0].docs.log.role).toBeInstanceOf(Replicator);
+					expect(stores[1].docs.log.role).toBeInstanceOf(Observer);
+					await stores[1].waitFor(session.peers[0].peerId);
+					await stores[1].docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey
 					);
-					let syncEvents = 0;
-					let sync = stores[1].docs.index["_sync"].bind(stores[1].docs.index);
-					stores[1].docs.index["_sync"] = async (r) => {
-						syncEvents += 1;
-						return sync(r);
-					};
-					stores[1].docs["_optionCanPerform"] = async (a, b) => {
-						canPerformEvents += 1;
-						return !canPerform || canPerform(a, b);
-					};
+					await stores[0].waitFor(session.peers[1].peerId);
+					canRead = new Array(stores.length).fill(undefined);
+					canSearch = new Array(stores.length).fill(undefined);
+				});
 
-					await stores[1].docs.index.search(
+				afterEach(async () => {
+					await Promise.all(stores.map((x) => x.drop()));
+				});
+
+				it("no-args", async () => {
+					let results: Document[] = await stores[0].docs.index.search(
+						new SearchRequest({ query: [] })
+					);
+					expect(results).toHaveLength(4);
+				});
+
+				it("match locally", async () => {
+					let results: Document[] = await stores[0].docs.index.search(
 						new SearchRequest({
 							query: []
 						}),
-						{ remote: { amount: 1, sync: true } }
+						{ remote: false }
 					);
-					await waitFor(() => stores[1].docs.index.size === 4);
-					expect(stores[1].docs.log.log.length).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
-					expect(canPerformEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
-					expect(syncEvents).toEqual(1);
+					expect(results).toHaveLength(4);
+				});
 
-					await stores[1].docs.index.search(
+				it("match all", async () => {
+					let results: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
 							query: []
-						}),
-						{ remote: { amount: 1, sync: true } }
-					);
-					await waitFor(() => syncEvents == 2);
-					expect(canPerformEvents).toEqual(6); // no new checks, since all docs already added
-				});
-				it("will not sync already existing", async () => {});
-			});
-
-			describe("string", () => {
-				it("exact", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "name",
-									value: "hello world",
-									caseInsensitive: true
-								})
-							]
-						})
-					);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString())
-					).toContainAllValues(["1", "2"]);
-				});
-
-				it("exact-case-insensitive", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "name",
-									value: "Hello World",
-									caseInsensitive: true
-								})
-							]
-						})
-					);
-					expect(responses).toHaveLength(2);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["1", "2"]);
-				});
-
-				it("exact case sensitive", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "name",
-									value: "Hello World",
-									caseInsensitive: false
-								})
-							]
-						})
-					);
-					expect(responses).toHaveLength(1);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["2"]);
-					responses = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "name",
-									value: "hello world",
-									caseInsensitive: false
-								})
-							]
-						})
-					);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["1"]);
-				});
-				it("prefix", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "name",
-									value: "hel",
-									method: StringMatchMethod.prefix,
-									caseInsensitive: true
-								})
-							]
 						}),
 						{ remote: { amount: 1 } }
 					);
-					expect(responses).toHaveLength(2);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["1", "2"]);
+					expect(results).toHaveLength(4);
 				});
 
-				it("contains", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "name",
-									value: "ello",
-									method: StringMatchMethod.contains,
-									caseInsensitive: true
-								})
-							]
-						})
-					);
-					expect(responses).toHaveLength(2);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["1", "2"]);
+				describe("sync", () => {
+					it("can match sync", async () => {
+						expect(stores[1].docs.index.size).toEqual(0);
+						let canPerformEvents = 0;
+						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
+							stores[1].docs
+						);
+						let syncEvents = 0;
+						let sync = stores[1].docs.index["_sync"].bind(stores[1].docs.index);
+						stores[1].docs.index["_sync"] = async (r) => {
+							syncEvents += 1;
+							return sync(r);
+						};
+						stores[1].docs["_optionCanPerform"] = async (a, b) => {
+							canPerformEvents += 1;
+							return !canPerform || canPerform(a, b);
+						};
+
+						await stores[1].docs.index.search(
+							new SearchRequest({
+								query: []
+							}),
+							{ remote: { amount: 1, sync: true } }
+						);
+						await waitFor(() => stores[1].docs.index.size === 4);
+						expect(stores[1].docs.log.log.length).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
+						expect(canPerformEvents).toEqual(6); // 4 documents where 2 have been edited once (4 + 2)
+						expect(syncEvents).toEqual(1);
+
+						await stores[1].docs.index.search(
+							new SearchRequest({
+								query: []
+							}),
+							{ remote: { amount: 1, sync: true } }
+						);
+						await waitFor(() => syncEvents == 2);
+						expect(canPerformEvents).toEqual(6); // no new checks, since all docs already added
+					});
+					it("will not sync already existing", async () => {});
 				});
 
-				describe("arr", () => {
-					let docArray1 = new Document({
-						id: Buffer.from("a"),
-						name: "_",
-						number: undefined,
-						tags: ["Hello", "World"]
-					});
-
-					let docArray2 = new Document({
-						id: Buffer.from("b"),
-						name: "__",
-						number: undefined,
-						tags: ["Hello"]
-					});
-					beforeEach(async () => {
-						await writeStore.docs.put(docArray1);
-						await writeStore.docs.put(docArray2);
-					});
-					afterEach(async () => {
-						await writeStore.docs.del(docArray1.id);
-						await writeStore.docs.del(docArray2.id);
-					});
-					it("arr", async () => {
+				describe("string", () => {
+					it("exact", async () => {
 						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [
 									new StringMatch({
-										key: "tags",
-										value: "world",
-										method: StringMatchMethod.contains,
+										key: "name",
+										value: "hello world",
 										caseInsensitive: true
+									})
+								]
+							})
+						);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString())
+						).toContainAllValues(["1", "2"]);
+					});
+
+					it("exact-case-insensitive", async () => {
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new StringMatch({
+										key: "name",
+										value: "Hello World",
+										caseInsensitive: true
+									})
+								]
+							})
+						);
+						expect(responses).toHaveLength(2);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						).toContainAllValues(["1", "2"]);
+					});
+
+					it("exact case sensitive", async () => {
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new StringMatch({
+										key: "name",
+										value: "Hello World",
+										caseInsensitive: false
 									})
 								]
 							})
@@ -1200,558 +1110,712 @@ describe("index", () => {
 						expect(responses).toHaveLength(1);
 						expect(
 							responses.map((x) => Buffer.from(x.id).toString("utf8"))
-						).toContainAllValues(["a"]);
-					});
-				});
-			});
-
-			it("missing", async () => {
-				let responses: Document[] = await stores[1].docs.index.search(
-					new SearchRequest({
-						query: [
-							new MissingField({
-								key: "name"
-							})
-						]
-					}),
-					{ remote: { amount: 1 } }
-				);
-				expect(responses).toHaveLength(1);
-				expect(
-					responses.map((x) => Buffer.from(x.id).toString("utf8"))
-				).toEqual(["4"]);
-			});
-
-			it("bytes", async () => {
-				let responses: Document[] = await stores[1].docs.index.search(
-					new SearchRequest({
-						query: [
-							new ByteMatchQuery({
-								key: "data",
-								value: Buffer.from([1])
-							})
-						]
-					})
-				);
-				expect(responses).toHaveLength(1);
-				expect(
-					responses.map((x) => Buffer.from(x.id).toString("utf8"))
-				).toEqual(["1"]);
-			});
-
-			it("bool", async () => {
-				let responses: Document[] = await stores[1].docs.index.search(
-					new SearchRequest({
-						query: [
-							new BoolQuery({
-								key: "bool",
-								value: true
-							})
-						]
-					}),
-					{ remote: { amount: 1 } }
-				);
-				expect(responses).toHaveLength(1);
-				expect(
-					responses.map((x) => Buffer.from(x.id).toString("utf8"))
-				).toEqual(["1"]);
-			});
-
-			describe("array", () => {
-				describe("nested store", () => {
-					@variant("test-nested-document-store")
-					class NestedDocument extends Program<any> {
-						@field({ type: Uint8Array })
-						id: Uint8Array;
-
-						@field({ type: Documents })
-						documents: Documents<Document>;
-
-						constructor(document: Documents<Document>) {
-							super();
-							this.id = randomBytes(32);
-							this.documents = document;
-						}
-						open(args?: any): Promise<void> {
-							return this.documents.open({ type: Document });
-						}
-					}
-
-					@variant("test-nested-nested-document-store")
-					class NestedDocumentStore extends Program<
-						Partial<SetupOptions<Document>>
-					> {
-						@field({ type: Uint8Array })
-						id: Uint8Array;
-
-						@field({ type: Documents })
-						documents: Documents<NestedDocument>;
-
-						constructor(properties: { docs: Documents<NestedDocument> }) {
-							super();
-							this.id = randomBytes(32);
-							this.documents = properties.docs;
-						}
-
-						async open(
-							options?: Partial<SetupOptions<Document>>
-						): Promise<void> {
-							await this.documents.open({
-								...options,
-								type: NestedDocument,
-								index: { ...options?.index, key: "id" },
-								canOpen: () => true
-							});
-						}
-					}
-
-					it("nested document store", async () => {
-						const nestedStore = await session.peers[0].open(
-							new NestedDocumentStore({ docs: new Documents() })
-						);
-						const nestedDoc = new NestedDocument(new Documents());
-						await session.peers[0].open(nestedDoc);
-						const document = new Document({
-							id: randomBytes(32),
-							name: "hello"
-						});
-						await nestedDoc.documents.put(document);
-						await nestedStore.documents.put(nestedDoc);
-
-						const nestedStore2 =
-							await session.peers[1].open<NestedDocumentStore>(
-								nestedStore.address,
-								{ args: { role: "observer" } }
-							);
-						await nestedStore2.documents.log.waitForReplicator(
-							session.peers[0].identity.publicKey
-						);
-						const results = await nestedStore2.documents.index.search(
+						).toContainAllValues(["2"]);
+						responses = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [
 									new StringMatch({
-										key: ["documents", "name"],
-										value: "hello"
+										key: "name",
+										value: "hello world",
+										caseInsensitive: false
 									})
 								]
 							})
 						);
-						expect(results.length).toEqual(1);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						).toContainAllValues(["1"]);
+					});
+					it("prefix", async () => {
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new StringMatch({
+										key: "name",
+										value: "hel",
+										method: StringMatchMethod.prefix,
+										caseInsensitive: true
+									})
+								]
+							}),
+							{ remote: { amount: 1 } }
+						);
+						expect(responses).toHaveLength(2);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						).toContainAllValues(["1", "2"]);
+					});
+
+					it("contains", async () => {
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new StringMatch({
+										key: "name",
+										value: "ello",
+										method: StringMatchMethod.contains,
+										caseInsensitive: true
+									})
+								]
+							})
+						);
+						expect(responses).toHaveLength(2);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						).toContainAllValues(["1", "2"]);
+					});
+
+					describe("arr", () => {
+						let docArray1 = new Document({
+							id: Buffer.from("a"),
+							name: "_",
+							number: undefined,
+							tags: ["Hello", "World"]
+						});
+
+						let docArray2 = new Document({
+							id: Buffer.from("b"),
+							name: "__",
+							number: undefined,
+							tags: ["Hello"]
+						});
+						beforeEach(async () => {
+							await writeStore.docs.put(docArray1);
+							await writeStore.docs.put(docArray2);
+						});
+						afterEach(async () => {
+							await writeStore.docs.del(docArray1.id);
+							await writeStore.docs.del(docArray2.id);
+						});
+						it("arr", async () => {
+							let responses: Document[] = await stores[1].docs.index.search(
+								new SearchRequest({
+									query: [
+										new StringMatch({
+											key: "tags",
+											value: "world",
+											method: StringMatchMethod.contains,
+											caseInsensitive: true
+										})
+									]
+								})
+							);
+							expect(responses).toHaveLength(1);
+							expect(
+								responses.map((x) => Buffer.from(x.id).toString("utf8"))
+							).toContainAllValues(["a"]);
+						});
 					});
 				});
 
-				describe("multi-dimensional", () => {
-					class MultiDimensionalDoc {
-						@field({ type: Uint8Array })
-						id: Uint8Array;
+				it("missing", async () => {
+					let responses: Document[] = await stores[1].docs.index.search(
+						new SearchRequest({
+							query: [
+								new MissingField({
+									key: "name"
+								})
+							]
+						}),
+						{ remote: { amount: 1 } }
+					);
+					expect(responses).toHaveLength(1);
+					expect(
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
+					).toEqual(["4"]);
+				});
 
-						@field({ type: option(vec(Uint8Array)) })
-						bytesArrays?: Uint8Array[];
+				it("bytes", async () => {
+					let responses: Document[] = await stores[1].docs.index.search(
+						new SearchRequest({
+							query: [
+								new ByteMatchQuery({
+									key: "data",
+									value: Buffer.from([1])
+								})
+							]
+						})
+					);
+					expect(responses).toHaveLength(1);
+					expect(
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
+					).toEqual(["1"]);
+				});
 
-						@field({ type: option(vec(vec("u32"))) })
-						matrix?: number[][];
+				it("bool", async () => {
+					let responses: Document[] = await stores[1].docs.index.search(
+						new SearchRequest({
+							query: [
+								new BoolQuery({
+									key: "bool",
+									value: true
+								})
+							]
+						}),
+						{ remote: { amount: 1 } }
+					);
+					expect(responses).toHaveLength(1);
+					expect(
+						responses.map((x) => Buffer.from(x.id).toString("utf8"))
+					).toEqual(["1"]);
+				});
 
-						@field({ type: option(vec(Document)) })
-						documents?: Document[];
+				describe("array", () => {
+					describe("nested store", () => {
+						@variant("test-nested-document-store")
+						class NestedDocument extends Program<any> {
+							@field({ type: Uint8Array })
+							id: Uint8Array;
 
-						constructor(properties?: {
+							@field({ type: Documents })
+							documents: Documents<Document>;
+
+							constructor(document: Documents<Document>) {
+								super();
+								this.id = randomBytes(32);
+								this.documents = document;
+							}
+							open(args?: any): Promise<void> {
+								return this.documents.open({ type: Document });
+							}
+						}
+
+						@variant("test-nested-nested-document-store")
+						class NestedDocumentStore extends Program<
+							Partial<SetupOptions<Document>>
+						> {
+							@field({ type: Uint8Array })
+							id: Uint8Array;
+
+							@field({ type: Documents })
+							documents: Documents<NestedDocument>;
+
+							constructor(properties: { docs: Documents<NestedDocument> }) {
+								super();
+								this.id = randomBytes(32);
+								this.documents = properties.docs;
+							}
+
+							async open(
+								options?: Partial<SetupOptions<Document>>
+							): Promise<void> {
+								await this.documents.open({
+									...options,
+									type: NestedDocument,
+									index: { ...options?.index, key: "id" },
+									canOpen: () => true
+								});
+							}
+						}
+
+						it("nested document store", async () => {
+							const nestedStore = await session.peers[0].open(
+								new NestedDocumentStore({ docs: new Documents() })
+							);
+							const nestedDoc = new NestedDocument(new Documents());
+							await session.peers[0].open(nestedDoc);
+							const document = new Document({
+								id: randomBytes(32),
+								name: "hello"
+							});
+							await nestedDoc.documents.put(document);
+							await nestedStore.documents.put(nestedDoc);
+
+							const nestedStore2 =
+								await session.peers[1].open<NestedDocumentStore>(
+									nestedStore.address,
+									{ args: { role: "observer" } }
+								);
+							await nestedStore2.documents.log.waitForReplicator(
+								session.peers[0].identity.publicKey
+							);
+							const results = await nestedStore2.documents.index.search(
+								new SearchRequest({
+									query: [
+										new StringMatch({
+											key: ["documents", "name"],
+											value: "hello"
+										})
+									]
+								})
+							);
+							expect(results.length).toEqual(1);
+						});
+					});
+
+					describe("multi-dimensional", () => {
+						class MultiDimensionalDoc {
+							@field({ type: Uint8Array })
+							id: Uint8Array;
+
+							@field({ type: option(vec(Uint8Array)) })
 							bytesArrays?: Uint8Array[];
+
+							@field({ type: option(vec(vec("u32"))) })
 							matrix?: number[][];
+
+							@field({ type: option(vec(Document)) })
 							documents?: Document[];
-						}) {
-							this.id = randomBytes(32);
-							this.matrix = properties?.matrix;
-							this.bytesArrays = properties?.bytesArrays;
-							this.documents = properties?.documents;
+
+							constructor(properties?: {
+								bytesArrays?: Uint8Array[];
+								matrix?: number[][];
+								documents?: Document[];
+							}) {
+								this.id = randomBytes(32);
+								this.matrix = properties?.matrix;
+								this.bytesArrays = properties?.bytesArrays;
+								this.documents = properties?.documents;
+							}
 						}
-					}
 
-					@variant("test-multidim-doc-store")
-					class MultiDimensionalDocStore extends Program<any> {
-						@field({ type: Documents })
-						documents: Documents<MultiDimensionalDoc>;
+						@variant("test-multidim-doc-store")
+						class MultiDimensionalDocStore extends Program<any> {
+							@field({ type: Documents })
+							documents: Documents<MultiDimensionalDoc>;
 
-						constructor() {
-							super();
-							this.documents = new Documents<MultiDimensionalDoc>();
+							constructor() {
+								super();
+								this.documents = new Documents<MultiDimensionalDoc>();
+							}
+							open(args?: Partial<SetupOptions<any>>): Promise<void> {
+								return this.documents.open({
+									...args,
+									type: MultiDimensionalDoc
+								});
+							}
 						}
-						open(args?: Partial<SetupOptions<any>>): Promise<void> {
-							return this.documents.open({
-								...args,
-								type: MultiDimensionalDoc
-							});
-						}
-					}
 
-					it("uint8array[]", async () => {
-						const docs = await session.peers[0].open(
-							new MultiDimensionalDocStore()
-						);
-
-						const d1 = new MultiDimensionalDoc({
-							bytesArrays: [new Uint8Array([1]), new Uint8Array([2])]
-						});
-						await docs.documents.put(d1);
-						await docs.documents.put(
-							new MultiDimensionalDoc({ bytesArrays: [new Uint8Array([3])] })
-						);
-
-						const docsObserver =
-							await session.peers[1].open<MultiDimensionalDocStore>(
-								docs.address,
-								{ args: { role: "observer" } }
+						it("uint8array[]", async () => {
+							const docs = await session.peers[0].open(
+								new MultiDimensionalDocStore()
 							);
-						await docsObserver.documents.log.waitForReplicator(
-							session.peers[0].identity.publicKey
-						);
 
-						const results = await docsObserver.documents.index.search(
+							const d1 = new MultiDimensionalDoc({
+								bytesArrays: [new Uint8Array([1]), new Uint8Array([2])]
+							});
+							await docs.documents.put(d1);
+							await docs.documents.put(
+								new MultiDimensionalDoc({ bytesArrays: [new Uint8Array([3])] })
+							);
+
+							const docsObserver =
+								await session.peers[1].open<MultiDimensionalDocStore>(
+									docs.address,
+									{ args: { role: "observer" } }
+								);
+							await docsObserver.documents.log.waitForReplicator(
+								session.peers[0].identity.publicKey
+							);
+
+							const results = await docsObserver.documents.index.search(
+								new SearchRequest({
+									query: [
+										new ByteMatchQuery({
+											key: "bytesArrays",
+											value: new Uint8Array([2])
+										})
+									]
+								})
+							);
+							expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+						});
+
+						it("number[][]", async () => {
+							const docs = await session.peers[0].open(
+								new MultiDimensionalDocStore()
+							);
+
+							const d1 = new MultiDimensionalDoc({ matrix: [[1, 2], [3]] });
+							await docs.documents.put(d1);
+							await docs.documents.put(
+								new MultiDimensionalDoc({ matrix: [[4, 5]] })
+							);
+
+							const docsObserver =
+								await session.peers[1].open<MultiDimensionalDocStore>(
+									docs.address,
+									{ args: { role: "observer" } }
+								);
+							await docsObserver.documents.log.waitForReplicator(
+								session.peers[0].identity.publicKey
+							);
+
+							const results = await docsObserver.documents.index.search(
+								new SearchRequest({
+									query: new IntegerCompare({
+										key: "matrix",
+										compare: Compare.Equal,
+										value: 2
+									})
+								})
+							);
+							expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+						});
+
+						it("Document[]", async () => {
+							const docs = await session.peers[0].open(
+								new MultiDimensionalDocStore()
+							);
+
+							const d1 = new MultiDimensionalDoc({
+								documents: [new Document({ id: randomBytes(32), number: 123n })]
+							});
+							await docs.documents.put(d1);
+							await docs.documents.put(
+								new MultiDimensionalDoc({
+									documents: [
+										new Document({ id: randomBytes(32), number: 124n })
+									]
+								})
+							);
+
+							const docsObserver =
+								await session.peers[1].open<MultiDimensionalDocStore>(
+									docs.address,
+									{ args: { role: "observer" } }
+								);
+							await docsObserver.documents.log.waitForReplicator(
+								session.peers[0].identity.publicKey
+							);
+
+							const results = await docsObserver.documents.index.search(
+								new SearchRequest({
+									query: new IntegerCompare({
+										key: ["documents", "number"],
+										compare: Compare.Equal,
+										value: 123n
+									})
+								})
+							);
+							expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+						});
+					});
+				});
+
+				describe("canRead", () => {
+					it("no read access will return a response with 0 results", async () => {
+						const canReadInvocation: [Document, PublicSignKey][] = [];
+						canRead[0] = (a, b) => {
+							canReadInvocation.push([a, b]);
+							return Promise.resolve(false);
+						};
+						let allResponses: AbstractSearchResult<Document>[] = [];
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: []
+							}),
+							{
+								local: false,
+								remote: {
+									onResponse: (r) => {
+										allResponses.push(r);
+									}
+								}
+							}
+						);
+						expect(responses).toHaveLength(0);
+						expect(allResponses).toHaveLength(1);
+						expect(allResponses[0]).toBeInstanceOf(Results);
+						expect(canReadInvocation).toHaveLength(4); // 4 documents in store
+						expect(canReadInvocation[0][0]).toBeInstanceOf(Document);
+						expect(canReadInvocation[0][1]).toBeInstanceOf(Ed25519PublicKey);
+					});
+				});
+
+				describe("canSearch", () => {
+					it("no search access will return an error response", async () => {
+						const canSearchInvocations: [
+							AbstractSearchRequest,
+							PublicSignKey
+						][] = [];
+						canSearch[0] = (a, b) => {
+							canSearchInvocations.push([a, b]);
+							return Promise.resolve(false);
+						};
+						let allResponses: AbstractSearchResult<Document>[] = [];
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: []
+							}),
+							{
+								local: false,
+								remote: {
+									amount: 1,
+									onResponse: (r) => {
+										allResponses.push(r);
+									}
+								}
+							}
+						);
+						expect(responses).toHaveLength(0);
+						expect(allResponses).toHaveLength(1);
+						expect(allResponses[0]).toBeInstanceOf(NoAccess);
+						expect(canSearchInvocations).toHaveLength(1);
+						expect(canSearchInvocations[0][0]).toBeInstanceOf(SearchRequest);
+						expect(canSearchInvocations[0][1]).toBeInstanceOf(Ed25519PublicKey);
+					});
+				});
+
+				describe("logical", () => {
+					it("and", async () => {
+						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [
-									new ByteMatchQuery({
-										key: "bytesArrays",
-										value: new Uint8Array([2])
+									new And([
+										new StringMatch({
+											key: "name",
+											value: "hello",
+											caseInsensitive: true,
+											method: StringMatchMethod.contains
+										}),
+										new StringMatch({
+											key: "name",
+											value: "world",
+											caseInsensitive: true,
+											method: StringMatchMethod.contains
+										})
+									])
+								]
+							}),
+							{ remote: { amount: 1 } }
+						);
+						expect(responses).toHaveLength(2);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						).toContainAllValues(["1", "2"]);
+					});
+
+					it("or", async () => {
+						let responses: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new Or([
+										new ByteMatchQuery({
+											key: "id",
+											value: Buffer.from("1")
+										}),
+										new ByteMatchQuery({
+											key: "id",
+											value: Buffer.from("2")
+										})
+									])
+								]
+							}),
+							{ remote: { amount: 1 } }
+						);
+						expect(responses).toHaveLength(2);
+						expect(
+							responses.map((x) => Buffer.from(x.id).toString("utf8"))
+						).toContainAllValues(["1", "2"]);
+					});
+				});
+
+				describe("number", () => {
+					it("equal", async () => {
+						let response: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new IntegerCompare({
+										key: "number",
+										compare: Compare.Equal,
+										value: 2n
 									})
 								]
-							})
+							}),
+							{ remote: { amount: 1 } }
 						);
-						expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+						expect(response).toHaveLength(1);
+						expect(response[0].number).toEqual(2n);
 					});
 
-					it("number[][]", async () => {
-						const docs = await session.peers[0].open(
-							new MultiDimensionalDocStore()
-						);
-
-						const d1 = new MultiDimensionalDoc({ matrix: [[1, 2], [3]] });
-						await docs.documents.put(d1);
-						await docs.documents.put(
-							new MultiDimensionalDoc({ matrix: [[4, 5]] })
-						);
-
-						const docsObserver =
-							await session.peers[1].open<MultiDimensionalDocStore>(
-								docs.address,
-								{ args: { role: "observer" } }
-							);
-						await docsObserver.documents.log.waitForReplicator(
-							session.peers[0].identity.publicKey
-						);
-
-						const results = await docsObserver.documents.index.search(
+					it("gt", async () => {
+						let response: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
-								query: new IntegerCompare({
-									key: "matrix",
-									compare: Compare.Equal,
-									value: 2
-								})
-							})
+								query: [
+									new IntegerCompare({
+										key: "number",
+										compare: Compare.Greater,
+										value: 2n
+									})
+								]
+							}),
+							{ remote: { amount: 1 } }
 						);
-						expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
+						expect(response).toHaveLength(1);
+						expect(response[0].number).toEqual(3n);
 					});
 
-					it("Document[]", async () => {
-						const docs = await session.peers[0].open(
-							new MultiDimensionalDocStore()
+					it("gte", async () => {
+						let response: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new IntegerCompare({
+										key: "number",
+										compare: Compare.GreaterOrEqual,
+										value: 2n
+									})
+								]
+							}),
+							{ remote: { amount: 1 } }
 						);
+						response.sort((a, b) =>
+							bigIntSort(a.number as bigint, b.number as bigint)
+						);
+						expect(response).toHaveLength(2);
+						expect(response[0].number).toEqual(2n);
+						expect(response[1].number).toEqual(3n);
+					});
 
-						const d1 = new MultiDimensionalDoc({
-							documents: [new Document({ id: randomBytes(32), number: 123n })]
+					it("lt", async () => {
+						let response: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new IntegerCompare({
+										key: "number",
+										compare: Compare.Less,
+										value: 2n
+									})
+								]
+							}),
+							{ remote: { amount: 1 } }
+						);
+						expect(response).toHaveLength(1);
+						expect(response[0].number).toEqual(1n);
+					});
+
+					it("lte", async () => {
+						let response: Document[] = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [
+									new IntegerCompare({
+										key: "number",
+										compare: Compare.LessOrEqual,
+										value: 2n
+									})
+								]
+							}),
+							{ remote: { amount: 1 } }
+						);
+						response.sort((a, b) =>
+							bigIntSort(a.number as bigint, b.number as bigint)
+						);
+						expect(response).toHaveLength(2);
+						expect(response[0].number).toEqual(1n);
+						expect(response[1].number).toEqual(2n);
+					});
+				});
+
+				describe("concurrently", () => {
+					it("can query concurrently", async () => {
+						// TODO add more concurrency
+						let promises: Promise<Document[]>[] = [];
+						let concurrency = 100;
+						for (let i = 0; i < concurrency; i++) {
+							if (i % 2 === 0) {
+								promises.push(
+									stores[1].docs.index.search(
+										new SearchRequest({
+											query: [
+												new IntegerCompare({
+													key: "number",
+													compare: Compare.GreaterOrEqual,
+													value: 2n
+												})
+											]
+										}),
+										{ remote: { amount: 1 } }
+									)
+								);
+							} else {
+								promises.push(
+									stores[1].docs.index.search(
+										new SearchRequest({
+											query: [
+												new IntegerCompare({
+													key: "number",
+													compare: Compare.Less,
+													value: 2n
+												})
+											]
+										}),
+										{ remote: { amount: 1 } }
+									)
+								);
+							}
+						}
+
+						let results = await Promise.all(promises);
+						for (let i = 0; i < concurrency; i++) {
+							if (i % 2 === 0) {
+								// query1
+								expect(results[i]).toHaveLength(2);
+								results[i].sort((a, b) => Number(a.number! - b.number!));
+								expect(results[i][0].number === 2n).toBeTrue(); // Jest can't seem to output BN if error, so we do equals manually
+								expect(results[i][1].number === 3n).toBeTrue(); // Jest can't seem to output BN if error, so we do equals manually
+							} else {
+								// query2
+								expect(results[i]).toHaveLength(1);
+								expect(results[i][0].number === 1n).toBeTrue();
+							}
+						}
+					});
+				});
+			});
+
+			describe("limited", () => {
+				let peersCount = 2;
+				let writeStore: TestStore;
+				let readStore: TestStore;
+				beforeAll(async () => {
+					session = await TestSession.connected(peersCount);
+				});
+
+				afterAll(async () => {
+					await session.stop();
+				});
+
+				beforeEach(async () => {
+					writeStore = new TestStore({
+						docs: new Documents<Document>()
+					});
+					await session.peers[0].open(writeStore, {
+						args: {
+							role: {
+								type: "replicator",
+								factor: 1
+							}
+						}
+					});
+					readStore = await session.peers[1].open<TestStore>(
+						writeStore.address,
+						{
+							args: {
+								role: "observer"
+							}
+						}
+					);
+				});
+				afterEach(async () => {
+					await writeStore.close();
+					await readStore.close();
+				});
+
+				it("can handle large document limits", async () => {
+					for (let i = 0; i < 10; i++) {
+						const doc = new Document({
+							id: new Uint8Array([i]),
+							data: randomBytes(5e6)
 						});
-						await docs.documents.put(d1);
-						await docs.documents.put(
-							new MultiDimensionalDoc({
-								documents: [new Document({ id: randomBytes(32), number: 124n })]
-							})
-						);
-
-						const docsObserver =
-							await session.peers[1].open<MultiDimensionalDocStore>(
-								docs.address,
-								{ args: { role: "observer" } }
-							);
-						await docsObserver.documents.log.waitForReplicator(
-							session.peers[0].identity.publicKey
-						);
-
-						const results = await docsObserver.documents.index.search(
-							new SearchRequest({
-								query: new IntegerCompare({
-									key: ["documents", "number"],
-									compare: Compare.Equal,
-									value: 123n
-								})
-							})
-						);
-						expect(results.map((x) => x.id)).toEqual([new Uint8Array(d1.id)]);
-					});
-				});
-			});
-
-			describe("canRead", () => {
-				it("no read access will return a response with 0 results", async () => {
-					const canReadInvocation: [Document, PublicSignKey][] = [];
-					canRead[0] = (a, b) => {
-						canReadInvocation.push([a, b]);
-						return Promise.resolve(false);
-					};
-					let allResponses: AbstractSearchResult<Document>[] = [];
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: []
-						}),
-						{
-							local: false,
-							remote: {
-								onResponse: (r) => {
-									allResponses.push(r);
-								}
-							}
-						}
-					);
-					expect(responses).toHaveLength(0);
-					expect(allResponses).toHaveLength(1);
-					expect(allResponses[0]).toBeInstanceOf(Results);
-					expect(canReadInvocation).toHaveLength(4); // 4 documents in store
-					expect(canReadInvocation[0][0]).toBeInstanceOf(Document);
-					expect(canReadInvocation[0][1]).toBeInstanceOf(Ed25519PublicKey);
-				});
-			});
-
-			describe("canSearch", () => {
-				it("no search access will return an error response", async () => {
-					const canSearchInvocations: [AbstractSearchRequest, PublicSignKey][] =
-						[];
-					canSearch[0] = (a, b) => {
-						canSearchInvocations.push([a, b]);
-						return Promise.resolve(false);
-					};
-					let allResponses: AbstractSearchResult<Document>[] = [];
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: []
-						}),
-						{
-							local: false,
-							remote: {
-								amount: 1,
-								onResponse: (r) => {
-									allResponses.push(r);
-								}
-							}
-						}
-					);
-					expect(responses).toHaveLength(0);
-					expect(allResponses).toHaveLength(1);
-					expect(allResponses[0]).toBeInstanceOf(NoAccess);
-					expect(canSearchInvocations).toHaveLength(1);
-					expect(canSearchInvocations[0][0]).toBeInstanceOf(SearchRequest);
-					expect(canSearchInvocations[0][1]).toBeInstanceOf(Ed25519PublicKey);
-				});
-			});
-
-			describe("logical", () => {
-				it("and", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new And([
-									new StringMatch({
-										key: "name",
-										value: "hello",
-										caseInsensitive: true,
-										method: StringMatchMethod.contains
-									}),
-									new StringMatch({
-										key: "name",
-										value: "world",
-										caseInsensitive: true,
-										method: StringMatchMethod.contains
-									})
-								])
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(responses).toHaveLength(2);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["1", "2"]);
-				});
-
-				it("or", async () => {
-					let responses: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new Or([
-									new ByteMatchQuery({
-										key: "id",
-										value: Buffer.from("1")
-									}),
-									new ByteMatchQuery({
-										key: "id",
-										value: Buffer.from("2")
-									})
-								])
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(responses).toHaveLength(2);
-					expect(
-						responses.map((x) => Buffer.from(x.id).toString("utf8"))
-					).toContainAllValues(["1", "2"]);
-				});
-			});
-
-			describe("number", () => {
-				it("equal", async () => {
-					let response: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new IntegerCompare({
-									key: "number",
-									compare: Compare.Equal,
-									value: 2n
-								})
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(response).toHaveLength(1);
-					expect(response[0].number).toEqual(2n);
-				});
-
-				it("gt", async () => {
-					let response: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new IntegerCompare({
-									key: "number",
-									compare: Compare.Greater,
-									value: 2n
-								})
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(response).toHaveLength(1);
-					expect(response[0].number).toEqual(3n);
-				});
-
-				it("gte", async () => {
-					let response: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new IntegerCompare({
-									key: "number",
-									compare: Compare.GreaterOrEqual,
-									value: 2n
-								})
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					response.sort((a, b) =>
-						bigIntSort(a.number as bigint, b.number as bigint)
-					);
-					expect(response).toHaveLength(2);
-					expect(response[0].number).toEqual(2n);
-					expect(response[1].number).toEqual(3n);
-				});
-
-				it("lt", async () => {
-					let response: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new IntegerCompare({
-									key: "number",
-									compare: Compare.Less,
-									value: 2n
-								})
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(response).toHaveLength(1);
-					expect(response[0].number).toEqual(1n);
-				});
-
-				it("lte", async () => {
-					let response: Document[] = await stores[1].docs.index.search(
-						new SearchRequest({
-							query: [
-								new IntegerCompare({
-									key: "number",
-									compare: Compare.LessOrEqual,
-									value: 2n
-								})
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					response.sort((a, b) =>
-						bigIntSort(a.number as bigint, b.number as bigint)
-					);
-					expect(response).toHaveLength(2);
-					expect(response[0].number).toEqual(1n);
-					expect(response[1].number).toEqual(2n);
-				});
-			});
-
-			describe("concurrently", () => {
-				it("can query concurrently", async () => {
-					// TODO add more concurrency
-					let promises: Promise<Document[]>[] = [];
-					let concurrency = 100;
-					for (let i = 0; i < concurrency; i++) {
-						if (i % 2 === 0) {
-							promises.push(
-								stores[1].docs.index.search(
-									new SearchRequest({
-										query: [
-											new IntegerCompare({
-												key: "number",
-												compare: Compare.GreaterOrEqual,
-												value: 2n
-											})
-										]
-									}),
-									{ remote: { amount: 1 } }
-								)
-							);
-						} else {
-							promises.push(
-								stores[1].docs.index.search(
-									new SearchRequest({
-										query: [
-											new IntegerCompare({
-												key: "number",
-												compare: Compare.Less,
-												value: 2n
-											})
-										]
-									}),
-									{ remote: { amount: 1 } }
-								)
-							);
-						}
+						await writeStore.docs.put(doc);
 					}
-
-					let results = await Promise.all(promises);
-					for (let i = 0; i < concurrency; i++) {
-						if (i % 2 === 0) {
-							// query1
-							expect(results[i]).toHaveLength(2);
-							results[i].sort((a, b) => Number(a.number! - b.number!));
-							expect(results[i][0].number === 2n).toBeTrue(); // Jest can't seem to output BN if error, so we do equals manually
-							expect(results[i][1].number === 3n).toBeTrue(); // Jest can't seem to output BN if error, so we do equals manually
-						} else {
-							// query2
-							expect(results[i]).toHaveLength(1);
-							expect(results[i][0].number === 1n).toBeTrue();
-						}
-					}
+					await readStore.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey
+					);
+					const collected = await readStore.docs.index.search(
+						new SearchRequest()
+					);
+					expect(collected).toHaveLength(10);
 				});
 			});
 		});

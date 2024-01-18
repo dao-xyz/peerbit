@@ -26,6 +26,7 @@ import {
 	getKeypairFromPeerId,
 	getPublicKeyFromPeerId,
 	PublicSignKey,
+	randomBytes,
 	sha256Base64,
 	SignatureWithKey,
 	toBase64
@@ -57,12 +58,13 @@ import {
 	StreamEvents,
 	TracedDelivery,
 	AnyWhere,
-	NotStartedError
+	NotStartedError,
+	MessageGroup,
+	MultiAddrinfo
 } from "@peerbit/stream-interface";
 
-import { MultiAddrinfo } from "@peerbit/stream-interface";
 import { BandwidthTracker } from "./stats.js";
-
+import { concat } from 'uint8arrays'
 const logError = (e?: { message: string }) => {
 	return logger.error(e?.message);
 };
@@ -88,6 +90,7 @@ const SEEK_DELIVERY_TIMEOUT = 10e3;
 const ROUTE_MAX_RETANTION_PERIOD = 10 * 1000;
 const MAX_DATA_LENGTH_IN = 15e6 + 1000; // 15 mb and some metadata
 const MAX_DATA_LENGTH_OUT = 1e7 + 1000; // 10 mb and some metadata
+const MAX_MESSAGE_LENGTH_OUT = 5e6; // 5mb
 
 const MAX_QUEUED_BYTES = MAX_DATA_LENGTH_IN * 50;
 
@@ -141,7 +144,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 	public seekedOnce: boolean;
 
+
 	private usedBandWidthTracker: BandwidthTracker;
+
 	constructor(init: PeerStreamsInit) {
 		super();
 
@@ -179,8 +184,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	write(data: Uint8Array | Uint8ArrayList) {
 		if (data.length > MAX_DATA_LENGTH_OUT) {
 			throw new Error(
-				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
-					MAX_DATA_LENGTH_OUT * 1e-6
+				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${MAX_DATA_LENGTH_OUT * 1e-6
 				} mb`
 			);
 		}
@@ -378,17 +382,16 @@ export interface DirectStreamComponents extends Components {
 
 export type ConnectionManagerArguments =
 	| (Partial<Pick<ConnectionManagerOptions, "minConnections">> &
-			Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
-				pruner?: Partial<PrunerOptions> | false;
-			} & { dialer?: Partial<DialerOptions> | false })
+		Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
+			pruner?: Partial<PrunerOptions> | false;
+		} & { dialer?: Partial<DialerOptions> | false })
 	| false;
 
 export abstract class DirectStream<
-		Events extends { [s: string]: any } = StreamEvents
-	>
+	Events extends { [s: string]: any } = StreamEvents
+>
 	extends TypedEventEmitter<Events>
-	implements WaitForPeer
-{
+	implements WaitForPeer {
 	public peerId: PeerId;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
@@ -426,6 +429,7 @@ export abstract class DirectStream<
 	seekTimeout: number;
 	closeController: AbortController;
 	session: number;
+	private groupMessageCollection: Map<string, { messages: DataMessage[], timestamp: number }>;
 
 	private _ackCallbacks: Map<
 		string,
@@ -495,34 +499,34 @@ export abstract class DirectStream<
 				...connectionManager,
 				dialer:
 					connectionManager?.dialer !== false &&
-					connectionManager?.dialer !== null
+						connectionManager?.dialer !== null
 						? { retryDelay: 60 * 1000, ...connectionManager?.dialer }
 						: undefined,
 				pruner:
 					connectionManager?.pruner !== false &&
-					connectionManager?.pruner !== null
+						connectionManager?.pruner !== null
 						? {
-								connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
-								interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
-								maxBuffer: MAX_QUEUED_BYTES,
-								...connectionManager?.pruner
-							}
+							connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
+							interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
+							maxBuffer: MAX_QUEUED_BYTES,
+							...connectionManager?.pruner
+						}
 						: undefined
 			};
 		}
 
 		this.recentDials = this.connectionManagerOptions.dialer
 			? new Cache({
-					ttl: this.connectionManagerOptions.dialer.retryDelay,
-					max: 1e3
-				})
+				ttl: this.connectionManagerOptions.dialer.retryDelay,
+				max: 1e3
+			})
 			: undefined;
 
 		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
 			? new Cache({
-					max: 1e6,
-					ttl: this.connectionManagerOptions.pruner.connectionTimeout
-				})
+				max: 1e6,
+				ttl: this.connectionManagerOptions.pruner.connectionTimeout
+			})
 			: undefined;
 	}
 
@@ -997,9 +1001,9 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			logger.error(
 				"error on processing messages to id: " +
-					peerStreams.peerId.toString() +
-					". " +
-					err?.message
+				peerStreams.peerId.toString() +
+				". " +
+				err?.message
 			);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
@@ -1094,6 +1098,29 @@ export abstract class DirectStream<
 		}
 
 		return false;
+	}
+
+	public collectDataMessage(message: DataMessage): Uint8Array | undefined {
+
+		if (message.group) {
+			const groupId = toBase64(message.group.id)
+			let inProgress = this.groupMessageCollection.get(groupId);
+			if (!inProgress) {
+				inProgress = {
+					messages: [],
+					timestamp: +new Date
+				}
+				this.groupMessageCollection.set(groupId, inProgress)
+			}
+			inProgress.messages[message.group.index] = message;
+
+			if (inProgress.messages.length === message.group.total) {
+				return concat(inProgress.messages.map(x => x.bytes()))
+			}
+		}
+		else {
+			return message.bytes()
+		}
 	}
 
 	public async onDataMessage(
@@ -1215,14 +1242,14 @@ export abstract class DirectStream<
 						// include our origin if message is SeekDelivery and we have not recently pruned a connection to this peer
 						origin:
 							message.header.mode instanceof SeekDelivery &&
-							!message.header.signatures!.publicKeys.find(
-								(x) => this.prunedConnectionsCache?.has(x.hashcode())
-							)
+								!message.header.signatures!.publicKeys.find(
+									(x) => this.prunedConnectionsCache?.has(x.hashcode())
+								)
 								? new MultiAddrinfo(
-										this.components.addressManager
-											.getAddresses()
-											.map((x) => x.toString())
-									)
+									this.components.addressManager
+										.getAddresses()
+										.map((x) => x.toString())
+								)
 								: undefined
 					})
 				}).sign(this.sign),
@@ -1376,9 +1403,31 @@ export abstract class DirectStream<
 		}
 	}
 
-	async createMessage(
+	async createMessages(
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: WithTo | WithMode
+	): Promise<DataMessage[]> {
+		if (data && data.byteLength > MAX_DATA_LENGTH_OUT) {
+			const segments = Math.ceil(data.byteLength / MAX_MESSAGE_LENGTH_OUT)
+			let messages: DataMessage[] = []
+			let groupId = randomBytes(32);
+			for (let i = 0; i < segments; i++) {
+				messages.push(await this.createMessagePart(data.subarray(
+					i * MAX_MESSAGE_LENGTH_OUT,
+					Math.min((i + 1) * MAX_MESSAGE_LENGTH_OUT, data.byteLength)
+				), options, new MessageGroup({ id: groupId, index: i, total: segments })))
+			}
+			return messages;
+		}
+		else {
+			return [await this.createMessagePart(data, options)]
+		}
+	}
+
+	private async createMessagePart(
+		data: Uint8Array | Uint8ArrayList | undefined,
+		options: WithTo | WithMode,
+		group?: MessageGroup
 	) {
 		// dispatch the event if we are interested
 
@@ -1387,9 +1436,9 @@ export abstract class DirectStream<
 		).mode
 			? (options as WithMode).mode!
 			: new SilentDelivery({
-					to: (options as WithTo).to!,
-					redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
-				});
+				to: (options as WithTo).to!,
+				redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
+			});
 
 		if (
 			mode instanceof AcknowledgeDelivery ||
@@ -1411,7 +1460,7 @@ export abstract class DirectStream<
 				if (
 					!neighbourRoutes ||
 					now - neighbourRoutes.session >
-						neighbourRoutes.list.length * this.routeSeekInterval ||
+					neighbourRoutes.list.length * this.routeSeekInterval ||
 					!this.routes.isUpToDate(hash, neighbourRoutes)
 				) {
 					mode = new SeekDelivery({
@@ -1425,7 +1474,8 @@ export abstract class DirectStream<
 
 		const message = new DataMessage({
 			data: data instanceof Uint8ArrayList ? data.subarray() : data,
-			header: new MessageHeader({ mode, session: this.session })
+			header: new MessageHeader({ mode, session: this.session }),
+			group
 		});
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
@@ -1440,7 +1490,7 @@ export abstract class DirectStream<
 		options: WithMode | WithTo = {
 			mode: new SeekDelivery({ redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY })
 		}
-	): Promise<Uint8Array> {
+	): Promise<Uint8Array[]> {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
@@ -1451,9 +1501,11 @@ export abstract class DirectStream<
 			);
 		}
 
-		const message = await this.createMessage(data, options);
-		await this.publishMessage(this.publicKey, message, undefined);
-		return message.id;
+		const messages = await this.createMessages(data, options);
+		for (const message of messages) {
+			await this.publishMessage(this.publicKey, message, undefined);
+		}
+		return messages.map(x => x.id);
 	}
 
 	public async relayMessage(
@@ -1569,14 +1621,11 @@ export abstract class DirectStream<
 			if (!hasAll && willGetAllAcknowledgements) {
 				deliveryDeferredPromise.reject(
 					new TimeoutError(
-						`${
-							this.publicKeyHash
+						`${this.publicKeyHash
 						} Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
 							...messageToSet
-						]} delivery acknowledges from all nodes (${
-							fastestNodesReached.size
-						}/${messageToSet.size}). Mode: ${
-							message.header.mode.constructor.name
+						]} delivery acknowledges from all nodes (${fastestNodesReached.size
+						}/${messageToSet.size}). Mode: ${message.header.mode.constructor.name
 						}. Redundancy: ${message.header.mode["redundancy"]}`
 					)
 				);
@@ -1808,9 +1857,9 @@ export abstract class DirectStream<
 			} catch (error: any) {
 				logger.info(
 					"Failed to connect directly to: " +
-						JSON.stringify(addresses.map((x) => x.toString())) +
-						". " +
-						error?.message
+					JSON.stringify(addresses.map((x) => x.toString())) +
+					". " +
+					error?.message
 				);
 			}
 		}
@@ -1844,11 +1893,11 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					hash +
-					" does not exist. Connection exist: " +
-					this.peers.has(hash) +
-					". Route exist: " +
-					this.routes.isReachable(this.publicKeyHash, hash, 0)
+				hash +
+				" does not exist. Connection exist: " +
+				this.peers.has(hash) +
+				". Route exist: " +
+				this.routes.isReachable(this.publicKeyHash, hash, 0)
 			);
 		}
 		if (options?.neighbour) {
@@ -1862,11 +1911,11 @@ export abstract class DirectStream<
 			} catch (error) {
 				throw new Error(
 					"Stream to " +
-						stream.publicKey.hashcode() +
-						" not ready. Readable: " +
-						stream.isReadable +
-						". Writable " +
-						stream.isWritable
+					stream.publicKey.hashcode() +
+					" not ready. Readable: " +
+					stream.isReadable +
+					". Writable " +
+					stream.isWritable
 				);
 			}
 		}

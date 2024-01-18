@@ -112,6 +112,7 @@ export const createExchangeHeadsMessages = async (
 
 		size += fromHead.size;
 		if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+			size = 0;
 			messages.push(
 				new ExchangeHeadsMessage({
 					heads: current

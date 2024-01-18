@@ -1,6 +1,6 @@
 import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { asString, Keyable } from "./utils.js";
-import { BORSH_ENCODING, Encoding } from "@peerbit/log";
+import { BORSH_ENCODING, Encoding, Entry } from "@peerbit/log";
 import { equals } from "@peerbit/uint8arrays";
 import { Program } from "@peerbit/program";
 import {
@@ -58,7 +58,7 @@ const stringArraysEquals = (a: string[] | string, b: string[] | string) => {
 };
 
 @variant(0)
-export class Operation<T> {}
+export class Operation<T> { }
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
@@ -127,7 +127,7 @@ export interface IndexedValue<T> {
 	key: string;
 	value: Record<string, any> | T; // decrypted, decoded
 	context: Context;
-	reference?: T;
+	reference?: ValueWithHead<T>;
 }
 
 export type RemoteQueryOptions<R> = RPCOptions<R> & {
@@ -144,11 +144,15 @@ export type IndexableFields<T> = (
 	context: Context
 ) => Record<string, any> | Promise<Record<string, any>>;
 
+
 export type ResultsIterator<T> = {
 	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
 };
+type ValueWithHead<T> = {
+	value: T, head: PutOperation<Operation<T>>
+}
 
 const sortCompare = (av: any, bv: any) => {
 	if (typeof av === "string" && typeof bv === "string") {
@@ -189,7 +193,7 @@ const extractSortCompare = (
 	return 0;
 };
 
-const resolvedSort = async <T, Q extends { value: T; context: Context }>(
+const resolvedSort = async <T, Q extends { value: { value: T }; context: Context }>(
 	arr: Q[],
 	index: IndexableFields<T>,
 	sorts: Sort[]
@@ -197,7 +201,7 @@ const resolvedSort = async <T, Q extends { value: T; context: Context }>(
 	await Promise.all(
 		arr.map(
 			async (result) =>
-				(result[SORT_TMP_KEY] = await index(result.value, result.context))
+				(result[SORT_TMP_KEY] = await index(result.value.value[0], result.context))
 		)
 	);
 	arr.sort((a, b) =>
@@ -266,6 +270,24 @@ const DEFAULT_REPLICATOR_MIN_AGE = 10 * 1000; // how long, until we consider a p
 if (!(await this.canRead(message.sender))) {
 	throw new AccessError();
 } */
+const MAX_RETURN_SIZE = 5e6;
+
+const getBatchFromResults = <T>(results: { value: ValueWithHead<T>, context: Context }[], wantedSize: number, maxSize: number = MAX_RETURN_SIZE) => {
+	let batch: { value: ValueWithHead<T>, context: Context }[] = []
+	let size = 0;
+	for (let result of results) {
+		batch.push(result);
+		size += result.value.head.data.length;
+		if (size > maxSize) {
+			break;
+		}
+		if (wantedSize >= batch.length) {
+			break
+		}
+	}
+	results.splice(0, batch.length);
+	return batch;
+}
 
 export type CanSearch = (
 	request: SearchRequest | CollectNextRequest,
@@ -277,11 +299,11 @@ export type CanRead<T> = (
 	from: PublicSignKey
 ) => Promise<boolean> | boolean;
 
-export type IndexedDB<T> = { index: DocumentIndex<T> };
+export type InMemoryIndex<T> = { index: DocumentIndex<T> };
 
 export type OpenOptions<T> = {
 	type: AbstractType<T>;
-	dbType: AbstractType<IndexedDB<T>>;
+	dbType: AbstractType<InMemoryIndex<T>>;
 	log: SharedLog<Operation<T>>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
@@ -296,7 +318,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	_query: RPC<AbstractSearchRequest, AbstractSearchResult<T>>;
 
 	type: AbstractType<T>;
-	dbType: AbstractType<IndexedDB<T>>;
+	dbType: AbstractType<InMemoryIndex<T>>;
 
 	// Index key
 	private _indexBy: string | string[];
@@ -314,7 +336,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private _index: Map<string, IndexedValue<T>>;
 	private _resultsCollectQueue: Cache<{
 		from: PublicSignKey;
-		arr: { value: T; context: Context }[];
+		arr: { value: ValueWithHead<T>; context: Context }[];
 	}>;
 
 	private _log: SharedLog<Operation<T>>;
@@ -450,36 +472,37 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	async getDocument(value: {
-		reference?: T;
+		reference?: ValueWithHead<T>;
 		context: { head: string };
-	}): Promise<T> {
+	}): Promise<ValueWithHead<T>> {
 		if (value.reference) {
 			return value.reference;
 		}
 
-		const payloadValue = await (await this._log.log.get(
+		const head = await (await this._log.log.get(
 			value.context.head
-		))!.getPayloadValue();
+		))!
+		const payloadValue = head.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
-			return payloadValue.getValue(this.valueEncoding);
+			return { value: payloadValue.getValue(this.valueEncoding), head: payloadValue };
 		}
 
 		throw new Error(
 			"Unexpected value type when getting document: " +
-				payloadValue?.constructor?.name || typeof payloadValue
+			payloadValue?.constructor?.name || typeof payloadValue
 		);
 	}
 
 	async _queryDocuments(
 		filter: (doc: IndexedValue<T>) => Promise<boolean>
-	): Promise<{ context: Context; value: T }[]> {
+	): Promise<{ context: Context; value: ValueWithHead<T> }[]> {
 		// Whether we return the full operation data or just the db value
-		const results: { context: Context; value: T }[] = [];
+		const results: { context: Context; value: ValueWithHead<T> }[] = [];
 		for (const value of this._index.values()) {
 			if (await filter(value)) {
 				results.push({
 					context: value.context,
-					value: await this.getDocument(value)
+					value: (await this.getDocument(value))
 				});
 			}
 		}
@@ -492,7 +515,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		options?: {
 			canRead?: CanRead<T>;
 		}
-	): Promise<{ results: { context: Context; value: T }[]; kept: number }> {
+	): Promise<{ results: { context: Context; value: ValueWithHead<T> }[]; kept: number }> {
 		// We do special case for querying the id as we can do it faster than iterating
 
 		if (query instanceof SearchRequest) {
@@ -508,14 +531,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					const doc = this._index.get(asString(firstQuery.value)); // TODO could there be a issue with types here?
 					return doc
 						? {
-								results: [
-									{
-										value: await this.getDocument(doc),
-										context: doc.context
-									}
-								],
-								kept: 0
-							}
+							results: [
+								{
+									value: await this.getDocument(doc),
+									context: doc.context
+								}
+							],
+							kept: 0
+						}
 						: { results: [], kept: 0 };
 				} else if (
 					firstQuery instanceof StringMatch &&
@@ -525,14 +548,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					const doc = this._index.get(firstQuery.value); // TODO could there be a issue with types here?
 					return doc
 						? {
-								results: [
-									{
-										value: await this.getDocument(doc),
-										context: doc.context
-									}
-								],
-								kept: 0
-							}
+							results: [
+								{
+									value: await this.getDocument(doc),
+									context: doc.context
+								}
+							],
+							kept: 0
+						}
 						: { results: [], kept: 0 };
 				}
 			}
@@ -549,7 +572,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 			if (options?.canRead) {
 				const keepFilter = await Promise.all(
-					results.map((x) => options?.canRead!(x.value, from))
+					results.map((x) => options?.canRead!(x.value.value, from))
 				);
 				results = results.filter((x, i) => keepFilter[i]);
 			}
@@ -557,7 +580,8 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			// Sort
 			await resolvedSort(results, this._toIndex, query.sort);
 
-			const batch = results.splice(0, query.fetch);
+			const batch = getBatchFromResults(results, query.fetch)
+
 			if (results.length > 0) {
 				this._resultsCollectQueue.add(query.idString, {
 					arr: results,
@@ -575,7 +599,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				};
 			}
 
-			const batch = results.arr.splice(0, query.amount);
+			const batch = getBatchFromResults(results.arr, query.amount)
 
 			if (results.arr.length === 0) {
 				this._resultsCollectQueue.del(query.idString); // TODO add tests for proper cleanup/timeouts
@@ -630,7 +654,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			if (obj instanceof this.dbType) {
 				const queryCloned = f.clone();
 				queryCloned.key.splice(0, i + 1); // remove key path until the document store
-				const results = await (obj as any as IndexedDB<any>).index.search(
+				const results = await (obj as any as InMemoryIndex<any>).index.search(
 					new SearchRequest({ query: [queryCloned] })
 				);
 				return results.length > 0 ? true : false; // TODO return INNER HITS?
@@ -765,13 +789,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 							if (payloadValue instanceof PutOperation) {
 								return new ResultWithSource({
 									context: r.context,
-									value: r.value,
-									source: payloadValue.data
+									value: r.value.value,
+									source: r.value.head.data
 								});
 							}
 							throw new Error(
 								"Unexpected value type on local results: " +
-									payloadValue?.constructor.name || typeof payloadValue
+								payloadValue?.constructor.name || typeof payloadValue
 							);
 						})
 					),
@@ -902,7 +926,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			string,
 			{
 				kept: number;
-				buffer: { value: T; context: Context; from: PublicSignKey }[];
+				buffer: { value: { value: T }; context: Context; from: PublicSignKey }[];
 			}
 		> = new Map();
 		const visited = new Set<string>();
@@ -914,7 +938,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		const controller = new AbortController();
 
 		const peerBuffers = (): {
-			value: T;
+			value: { value: T };
 			from: PublicSignKey;
 			context: Context;
 		}[] => {
@@ -1027,7 +1051,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 												.map((x) => {
 													visited.add(asString(this.indexByResolver(x.value)));
 													return {
-														value: x.value,
+														value: x.value[0],
 														context: x.context,
 														from: this.node.identity.publicKey
 													};
@@ -1084,7 +1108,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 																	asString(this.indexByResolver(x.value))
 																);
 																return {
-																	value: x.value,
+																	value: { value: x.value },
 																	context: x.context,
 																	from: response.from!
 																};
@@ -1096,9 +1120,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 										.catch((e) => {
 											logger.error(
 												"Failed to collect sorted results from: " +
-													peer +
-													". " +
-													e?.message
+												peer +
+												". " +
+												e?.message
 											);
 											peerBufferMap.delete(peer);
 										})
@@ -1151,7 +1175,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 			done = fetchedAll && !pendingMoreResults;
 			return dedup(
-				batch.map((x) => x.value),
+				batch.map((x) => x.value.value),
 				this.indexByResolver
 			);
 		};

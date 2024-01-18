@@ -32,7 +32,7 @@ import {
 	PutOperation,
 	CanSearch,
 	CanRead,
-	IndexedDB
+	InMemoryIndex
 } from "./document-index.js";
 import { asString, checkKeyable, Keyable } from "./utils.js";
 import { Context, Results } from "./query.js";
@@ -81,7 +81,7 @@ export type SetupOptions<T> = {
 @variant("documents")
 export class Documents<T extends Record<string, any>>
 	extends Program<SetupOptions<T>, DocumentEvents<T> & ProgramEvents>
-	implements IndexedDB<T>
+	implements InMemoryIndex<T>
 {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation<T>>;

@@ -90,7 +90,7 @@ export const deliveryModeHasReceiver = (
 	return false;
 };
 
-export abstract class DeliveryMode {}
+export abstract class DeliveryMode { }
 
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
@@ -195,7 +195,7 @@ export class Signatures {
 	}
 }
 
-abstract class PeerInfo {}
+abstract class PeerInfo { }
 
 @variant(0)
 export class MultiAddrinfo extends PeerInfo {
@@ -340,8 +340,27 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 		return this._verified != null
 			? this._verified
 			: (this._verified =
-					(await this.header.verify()) &&
-					(await verifyMultiSig(this, expectSignatures)));
+				(await this.header.verify()) &&
+				(await verifyMultiSig(this, expectSignatures)));
+	}
+}
+
+@variant(0)
+export class MessageGroup {
+
+	@field({ type: fixedArray('u8', 32) })
+	id: Uint8Array;
+
+	@field({ type: 'u32' })
+	index: number;
+
+	@field({ type: 'u32' })
+	total: number;
+
+	constructor(properties: { id: Uint8Array, index: number, total: number }) {
+		this.id = properties.id;
+		this.index = properties.index;
+		this.total = properties.total;
 	}
 }
 
@@ -351,10 +370,10 @@ const DATA_VARIANT = 0;
 @variant(DATA_VARIANT)
 export class DataMessage<
 	T extends SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere =
-		| SilentDelivery
-		| SeekDelivery
-		| AcknowledgeDelivery
-		| AnyWhere
+	| SilentDelivery
+	| SeekDelivery
+	| AcknowledgeDelivery
+	| AnyWhere
 > extends Message<T> {
 	@field({ type: MessageHeader })
 	private _header: MessageHeader<T>;
@@ -362,10 +381,14 @@ export class DataMessage<
 	@field({ type: option(Uint8Array) })
 	private _data?: Uint8Array;
 
-	constructor(properties: { header: MessageHeader<T>; data?: Uint8Array }) {
+	@field({ type: option(MessageGroup) })
+	group?: MessageGroup;
+
+	constructor(properties: { header: MessageHeader<T>; data?: Uint8Array, group?: MessageGroup }) {
 		super();
 		this._data = properties.data;
 		this._header = properties.header;
+		this.group = properties.group;
 	}
 
 	get id(): Uint8Array {
