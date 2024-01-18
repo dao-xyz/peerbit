@@ -32,10 +32,12 @@ import {
 	PutOperation,
 	CanSearch,
 	CanRead,
-	IndexedDB
+	InMemoryIndex,
+	MAX_DOCUMENT_SIZE
 } from "./document-index.js";
 import { asString, checkKeyable, Keyable } from "./utils.js";
 import { Context, Results } from "./query.js";
+export { MAX_DOCUMENT_SIZE };
 
 const logger = loggerFn({ module: "document" });
 
@@ -81,7 +83,7 @@ export type SetupOptions<T> = {
 @variant("documents")
 export class Documents<T extends Record<string, any>>
 	extends Program<SetupOptions<T>, DocumentEvents<T> & ProgramEvents>
-	implements IndexedDB<T>
+	implements InMemoryIndex<T>
 {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation<T>>;
@@ -311,6 +313,14 @@ export class Documents<T extends Record<string, any>>
 		const key = this._index.indexByResolver(doc as any as Keyable);
 		checkKeyable(key);
 		const ser = serialize(doc);
+		if (ser.length > MAX_DOCUMENT_SIZE) {
+			throw new Error(
+				`Document is too large (${
+					ser.length * 1e-6
+				}) mb). Needs to be less than ${MAX_DOCUMENT_SIZE * 1e-6} mb`
+			);
+		}
+
 		const existingDocument = options?.unique
 			? undefined
 			: (
@@ -449,7 +459,7 @@ export class Documents<T extends Record<string, any>>
 						context,
 						reference:
 							valueToIndex === value || value instanceof Program
-								? value
+								? { value, last: payload }
 								: undefined
 					});
 				} else if (
