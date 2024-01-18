@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub",
-	"version": "2.0.11",
+	"version": "2.0.12",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"sideEffects": false,
@@ -52,7 +52,7 @@
 		"@peerbit/libp2p-test-utils": "2.0.5"
 	},
 	"dependencies": {
-		"@peerbit/stream": "3.0.4",
+		"@peerbit/stream": "3.0.5",
 		"@peerbit/logger": "1.0.2",
 		"@peerbit/uint8arrays": "3.0.1",
 		"libp2p": "^1.1.0"

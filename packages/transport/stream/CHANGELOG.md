@@ -37,6 +37,21 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.4...stream-v3.0.5) (2024-01-18)
+
+
+### Bug Fixes
+
+* cleanly close protocol ([7bb41fc](https://github.com/dao-xyz/peerbit/commit/7bb41fc8f148d5ff6f32f6e8824556d0e585aea2))
+* don't log NotStarted errors when relaying ([057762a](https://github.com/dao-xyz/peerbit/commit/057762a72873d9a26a615a8631607254b891cf94))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^3.0.4 to ^3.0.5
+
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.3...stream-v3.0.4) (2024-01-17)
 
 

@@ -54,6 +54,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.2 to 2.1.3
 
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.4...stream-interface-v3.0.5) (2024-01-18)
+
+
+### Bug Fixes
+
+* don't log NotStarted errors when relaying ([057762a](https://github.com/dao-xyz/peerbit/commit/057762a72873d9a26a615a8631607254b891cf94))
+
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.3...stream-interface-v3.0.4) (2024-01-17)
 
 
