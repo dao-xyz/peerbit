@@ -142,6 +142,20 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.3 to 2.0.4
 
+## [2.0.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.11...pubsub-v2.0.12) (2024-01-18)
+
+
+### Bug Fixes
+
+* don't log NotStarted errors when relaying ([057762a](https://github.com/dao-xyz/peerbit/commit/057762a72873d9a26a615a8631607254b891cf94))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 3.0.4 to 3.0.5
+
 ## [2.0.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.10...pubsub-v2.0.11) (2024-01-17)
 
 

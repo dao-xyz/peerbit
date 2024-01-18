@@ -305,6 +305,24 @@
     * @peerbit/test-utils bumped from 2.0.11 to 2.0.12
     * @peerbit/time bumped from 2.0.3 to 2.0.4
 
+## [4.1.4](https://github.com/dao-xyz/peerbit/compare/document-v4.1.3...document-v4.1.4) (2024-01-18)
+
+
+### Bug Fixes
+
+* allow documents of at most 5mb size ([d1d48c9](https://github.com/dao-xyz/peerbit/commit/d1d48c95858428a766315df4241c97f6b458682a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.11 to 3.0.12
+    * @peerbit/rpc bumped from 3.0.13 to 3.0.14
+    * @peerbit/shared-log bumped from 6.0.0 to 6.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.13 to 2.0.14
+
 ## [4.1.3](https://github.com/dao-xyz/peerbit/compare/document-v4.1.2...document-v4.1.3) (2024-01-17)
 
 
