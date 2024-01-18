@@ -62,6 +62,7 @@ import {
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
 import { BandwidthTracker } from "./stats.js";
+export { BandwidthTracker }; // might be useful for others
 
 const logError = (e?: { message: string }) => {
 	return logger.error(e?.message);
@@ -618,27 +619,11 @@ export abstract class DirectStream<
 			return;
 		}
 
-		// reset and clear up
-
-		this.started = false;
-
-		this.closeController.abort();
-
 		clearTimeout(this.pruneConnectionsTimeout);
 
 		await Promise.all(
 			this.multicodecs.map((x) => this.components.registrar.unhandle(x))
 		);
-
-		logger.debug("stopping");
-		for (const peerStreams of this.peers.values()) {
-			await peerStreams.close();
-		}
-		for (const [k, v] of this.healthChecks) {
-			clearTimeout(v);
-		}
-		this.healthChecks.clear();
-		this.prunedConnectionsCache?.clear();
 
 		// unregister protocol and handlers
 		if (this._registrarTopologyIds != null) {
@@ -646,6 +631,22 @@ export abstract class DirectStream<
 				this.components.registrar.unregister(id)
 			);
 		}
+
+		// reset and clear up
+		this.started = false;
+
+		this.closeController.abort();
+
+		logger.debug("stopping");
+		for (const peerStreams of this.peers.values()) {
+			await peerStreams.close();
+		}
+
+		for (const [k, v] of this.healthChecks) {
+			clearTimeout(v);
+		}
+		this.healthChecks.clear();
+		this.prunedConnectionsCache?.clear();
 
 		this.queue.clear();
 		this.peers.clear();
