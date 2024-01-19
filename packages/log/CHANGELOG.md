@@ -250,6 +250,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.13 to 2.0.14
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.5 to 2.0.6
+    * @peerbit/blocks-interface bumped from ^1.2.8 to ^1.2.9
+    * @peerbit/crypto bumped from 2.1.5 to 2.1.6
+    * @peerbit/time bumped from 2.0.5 to 2.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.14 to 2.0.15
+
 ## [3.0.13](https://github.com/dao-xyz/peerbit/compare/log-v3.0.12...log-v3.0.13) (2024-01-17)
 
 

@@ -37,6 +37,24 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.5...stream-v3.0.6) (2024-01-19)
+
+
+### Bug Fixes
+
+* make sure stream bandwidth tracker to eventually ([f49e1c4](https://github.com/dao-xyz/peerbit/commit/f49e1c4e7b7266cfba8914df7ecf4456c68a677d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.5 to 2.0.6
+    * @peerbit/crypto bumped from 2.1.5 to 2.1.6
+    * @peerbit/stream-interface bumped from ^3.0.5 to ^3.0.6
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.5 to 2.0.6
+
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.4...stream-v3.0.5) (2024-01-18)
 
 
