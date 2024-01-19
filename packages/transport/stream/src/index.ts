@@ -152,7 +152,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.inboundAbortController = new AbortController();
 		this.closed = false;
 		this.connId = init.connId;
-		this.usedBandWidthTracker = new BandwidthTracker();
+		this.usedBandWidthTracker = new BandwidthTracker(10);
+		this.usedBandWidthTracker.start();
 	}
 
 	/**
@@ -331,10 +332,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			await this._rawInboundStream?.close();
 		}
 
+		this.usedBandWidthTracker.stop();
+
 		this.dispatchEvent(new CustomEvent("close"));
+
 		this._rawOutboundStream = undefined;
 		this.outboundStream = undefined;
-
 		this._rawInboundStream = undefined;
 		this.inboundStream = undefined;
 	}

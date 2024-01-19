@@ -1489,6 +1489,42 @@ describe("streams", function () {
 				await session.stop();
 			});
 
+			it("tracks stream usage over time", async () => {
+				expect(
+					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
+						?.usedBandwidth
+				).toEqual(0);
+				expect(
+					streams[0].stream.peers.get(streams[2].stream.publicKey.hashcode())
+						?.usedBandwidth
+				).toEqual(0);
+
+				await streams[0].stream.publish(new Uint8Array(100), {
+					to: [streams[1].stream.publicKey, streams[2].stream.publicKey]
+				});
+
+				expect(
+					streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
+						?.usedBandwidth
+				).toBeGreaterThan(30);
+				expect(
+					streams[0].stream.peers.get(streams[2].stream.publicKey.hashcode())
+						?.usedBandwidth
+				).toBeGreaterThan(30);
+				await waitForResolved(() =>
+					expect(
+						streams[0].stream.peers.get(streams[1].stream.publicKey.hashcode())
+							?.usedBandwidth
+					).toBeLessThan(30)
+				);
+				await waitForResolved(() =>
+					expect(
+						streams[0].stream.peers.get(streams[2].stream.publicKey.hashcode())
+							?.usedBandwidth
+					).toBeLessThan(30)
+				);
+			});
+
 			it("bandwidth limits pruning", async () => {
 				expect(streams[0].stream.peers.size).toEqual(2);
 				streams[0].stream.connectionManagerOptions.pruner!.bandwidth = 1;

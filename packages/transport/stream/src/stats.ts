@@ -3,8 +3,8 @@ import { MovingAverageTracker } from "@peerbit/time";
 export class BandwidthTracker {
 	private ma: MovingAverageTracker;
 	private interval: ReturnType<typeof setInterval>;
-	constructor() {
-		this.ma = new MovingAverageTracker(0.2);
+	constructor(tau = 0.2) {
+		this.ma = new MovingAverageTracker(tau);
 	}
 	start() {
 		// Add 0 every second to make the tracker go to 0 over time
