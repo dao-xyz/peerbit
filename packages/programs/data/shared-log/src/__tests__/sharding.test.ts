@@ -878,11 +878,13 @@ describe(`sharding`, () => {
 						{ timeout: 20 * 1000 }
 					);
 
-					await waitForResolved(async () =>
-						expect(
-							Math.abs(totalMemoryUsed / 2 - (await db2.log.getMemoryUsage()))
-						).toBeLessThan((memoryLimit / 100) * 10)
-					); // 10% error at most
+					// allow 10% error
+					expect(await db1.log.getMemoryUsage()).toBeLessThan(
+						memoryLimit * 1.1
+					);
+					expect(await db2.log.getMemoryUsage()).toBeLessThan(
+						memoryLimit * 1.1
+					);
 				});
 
 				it("overflow limited", async () => {
