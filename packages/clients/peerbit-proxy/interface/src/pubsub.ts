@@ -1,4 +1,3 @@
-import { AnyStore } from "@peerbit/any-store";
 import type { PeerId } from "@libp2p/interface/peer-id";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
