@@ -290,6 +290,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [6.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.1.0...shared-log-v6.1.1) (2024-01-19)
+
+
+### Bug Fixes
+
+* CPUUsage monitor optional ([cde096f](https://github.com/dao-xyz/peerbit/commit/cde096fa46e929692fadfb4206e37b7f8b3597b9))
+* make sliding window forget old items ([934d11c](https://github.com/dao-xyz/peerbit/commit/934d11cd3967d8086c39664e2e38a5109b07d69c))
+* relax test memory underflow constraints ([aca5465](https://github.com/dao-xyz/peerbit/commit/aca5465e7fc3a73dd6f9a0e12c6953d0f5ddbd3d))
+
 ## [6.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.0.1...shared-log-v6.1.0) (2024-01-19)
 
 

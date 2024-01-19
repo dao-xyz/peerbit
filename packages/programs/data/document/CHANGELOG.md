@@ -316,6 +316,12 @@
     * @peerbit/test-utils bumped from 2.0.14 to 2.0.15
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 6.1.0 to 6.1.1
+
 ## [4.1.4](https://github.com/dao-xyz/peerbit/compare/document-v4.1.3...document-v4.1.4) (2024-01-18)
 
 
