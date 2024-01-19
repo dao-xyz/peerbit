@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.6](https://github.com/dao-xyz/peerbit/compare/time-v2.0.5...time-v2.0.6) (2024-01-19)
+
+
+### Bug Fixes
+
+* convergence test bounds more relaxed ([4b74f1c](https://github.com/dao-xyz/peerbit/commit/4b74f1ca72af48398797e504437415b8177d44c3))
+
 ## [2.0.5](https://github.com/dao-xyz/peerbit/compare/time-v2.0.4...time-v2.0.5) (2024-01-17)
 
 

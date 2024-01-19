@@ -290,6 +290,30 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [6.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.0.1...shared-log-v6.1.0) (2024-01-19)
+
+
+### Features
+
+* limit replication by cpu usage ([b933ee4](https://github.com/dao-xyz/peerbit/commit/b933ee40c7fb33c37c94f2cfa6e283742693efb3))
+
+
+### Bug Fixes
+
+* rm import ([662b9dd](https://github.com/dao-xyz/peerbit/commit/662b9dd12698de40d9ac003d3056f707954920f0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.12 to 3.0.13
+    * @peerbit/log bumped from 3.0.14 to 3.0.15
+    * @peerbit/rpc bumped from 3.0.14 to 3.0.15
+    * @peerbit/time bumped from 2.0.5 to 2.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.14 to ^2.0.15
+
 ## [6.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.0.0...shared-log-v6.0.1) (2024-01-18)
 
 

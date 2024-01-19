@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/keychain",
-	"version": "1.0.8",
+	"version": "1.0.9",
 	"description": "Utility functions for keychain",
 	"type": "module",
 	"sideEffects": false,
@@ -30,7 +30,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/crypto": "^2.1.5",
-		"@peerbit/any-store": "^1.0.9"
+		"@peerbit/crypto": "^2.1.6",
+		"@peerbit/any-store": "^1.0.10"
 	}
 }
