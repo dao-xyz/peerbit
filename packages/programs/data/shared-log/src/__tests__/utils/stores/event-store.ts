@@ -10,7 +10,6 @@ import {
 	RoleOptions,
 	SharedLog
 } from "../../..";
-import { Role } from "../../../role";
 import { JSON_ENCODING } from "./encoding.js";
 
 // TODO: generalize the Iterator functions and spin to its own module
