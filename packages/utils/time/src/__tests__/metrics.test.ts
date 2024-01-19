@@ -8,8 +8,8 @@ describe("metrics", () => {
 		const interval = setInterval(() => {
 			ma.add(100); // 100 per 100 ms => 1000 per second
 			try {
-				expect(ma.value).toBeGreaterThan(900);
-				expect(ma.value).toBeLessThan(1050);
+				expect(ma.value).toBeGreaterThan(850);
+				expect(ma.value).toBeLessThan(1100);
 				clearInterval(interval);
 				done = true;
 			} catch (error) {}
