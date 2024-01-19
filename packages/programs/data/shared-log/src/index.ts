@@ -93,7 +93,7 @@ type AdaptiveReplicatorOptions = {
 	type: "replicator";
 	limits?: {
 		memory?: number;
-		cpu?: number | { max: number; monitor: CPUUsage };
+		cpu?: number | { max: number; monitor?: CPUUsage };
 	};
 };
 
@@ -265,10 +265,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 							: undefined
 				}
 			);
+			const q = [];
 
 			this.cpuUsage =
 				options?.limits?.cpu && typeof options?.limits?.cpu === "object"
-					? options?.limits?.cpu.monitor || new CPUUsageIntervalLag()
+					? options?.limits?.cpu?.monitor || new CPUUsageIntervalLag()
 					: new CPUUsageIntervalLag();
 			this.cpuUsage?.start?.();
 
