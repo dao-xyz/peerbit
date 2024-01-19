@@ -1,7 +1,8 @@
-export type ReplicationErrorFunction = (objectives: {
+type ReplicationErrorFunction = (objectives: {
 	coverage: number;
 	balance: number;
 	memory: number;
+	cpu: number;
 }) => number;
 
 export class PIDReplicationController {
@@ -12,35 +13,25 @@ export class PIDReplicationController {
 	kp: number;
 	ki: number;
 	kd: number;
-	errorFunction: ReplicationErrorFunction;
-	targetMemoryLimit?: number;
+	maxMemoryLimit?: number;
+	maxCPUUsage?: number;
 	constructor(
 		readonly id: string,
 		options: {
-			errorFunction?: ReplicationErrorFunction;
-			targetMemoryLimit?: number;
+			memory?: { max: number };
+			cpu?: { max: number };
 			kp?: number;
 			ki?: number;
 			kd?: number;
 		} = {}
 	) {
-		const {
-			targetMemoryLimit,
-			kp = 0.7,
-			ki = 0.025,
-			kd = 0.05,
-			errorFunction = ({ balance, coverage, memory }) => {
-				return memory < 0
-					? memory * 0.9 + balance * 0.07 + coverage * 0.03
-					: balance * 0.6 + coverage * 0.4;
-			}
-		} = options;
-		this.reset();
+		const { memory, cpu, kp = 0.7, ki = 0.025, kd = 0.05 } = options;
 		this.kp = kp;
 		this.ki = ki;
 		this.kd = kd;
-		this.targetMemoryLimit = targetMemoryLimit;
-		this.errorFunction = errorFunction;
+		this.maxMemoryLimit = memory?.max;
+		this.maxCPUUsage = cpu?.max;
+		this.reset();
 	}
 
 	/**
@@ -51,13 +42,13 @@ export class PIDReplicationController {
 	 * @param peerCount
 	 * @returns
 	 */
-	async adjustReplicationFactor(
+	step(
 		memoryUsage: number,
 		currentFactor: number,
 		totalFactor: number,
-		peerCount: number
+		peerCount: number,
+		cpuUsage: number | undefined
 	) {
-		const totalFactorDiff = totalFactor - this.prevTotalFactor;
 		this.prevTotalFactor = totalFactor;
 		this.prevMemoryUsage = memoryUsage;
 
@@ -65,39 +56,60 @@ export class PIDReplicationController {
 
 		let errorMemory = 0;
 
-		if (this.targetMemoryLimit != null) {
+		if (this.maxMemoryLimit != null) {
 			errorMemory =
 				currentFactor > 0 && memoryUsage > 0
-					? Math.max(
-							Math.min(1, this.targetMemoryLimit / estimatedTotalSize),
-							0
-						) - currentFactor
+					? Math.max(Math.min(1, this.maxMemoryLimit / estimatedTotalSize), 0) -
+						currentFactor
 					: 0;
 		}
 
 		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
 		const errorCoverage =
-			(this.targetMemoryLimit ? 1 - Math.sqrt(Math.abs(errorMemory)) : 1) *
+			(this.maxMemoryLimit ? 1 - Math.sqrt(Math.abs(errorMemory)) : 1) *
 			errorCoverageUnmodified;
 
 		const errorFromEven = 1 / peerCount - currentFactor;
 
-		const balanceErrorScaler = this.targetMemoryLimit
+		const balanceErrorScaler = this.maxMemoryLimit
 			? Math.abs(errorMemory)
 			: 1 - Math.abs(errorCoverage);
 
-		const errorBalance = (this.targetMemoryLimit ? errorMemory > -0.01 : true)
+		const errorBalance = (this.maxMemoryLimit ? errorMemory > 0 : true)
 			? errorFromEven > 0
 				? balanceErrorScaler * errorFromEven
 				: 0
 			: 0;
 
-		const totalError = this.errorFunction({
-			balance: errorBalance,
-			coverage: errorCoverage,
-			memory: errorMemory
-		});
+		const errorCPU = peerCount > 1 ? -1 * (cpuUsage || 0) : 0;
 
+		// Calculate the total error
+		// Hardcoded parameters are set by optimizing how fast the sharding tests pass
+		// TODO make these self-optimizing
+
+		let totalError: number;
+		const errorMemoryFactor = 0.9;
+		const errorBalanceFactor = 0.6;
+
+		totalError =
+			errorBalance * errorBalanceFactor +
+			errorCoverage * (1 - errorBalanceFactor);
+
+		// Computer is getting too full?
+		if (errorMemory < 0) {
+			totalError =
+				errorMemory * errorMemoryFactor + totalError * (1 - errorMemoryFactor);
+		}
+
+		// Computer is getting too hot?
+		if (this.maxCPUUsage != null && (cpuUsage || 0) > this.maxCPUUsage) {
+			const errorCpuFactor = 0.5;
+			totalError =
+				totalError * (1 - errorCpuFactor) +
+				errorCpuFactor * (errorCPU - this.maxCPUUsage!);
+		}
+
+		// Update p term
 		const pTerm = this.kp * totalError;
 
 		// Integral term
@@ -121,40 +133,33 @@ export class PIDReplicationController {
 		this.prevError = totalError;
 
 		// reset integral term if we are "way" out of bounds
+		// does not make sense having a lagging integral term if we
+		// are out of bounds
 		if (newFactor < 0 && this.integral < 0) {
 			this.integral = 0;
 		} else if (newFactor > 1 && this.integral > 0) {
 			this.integral = 0;
 		}
-		// prevent drift when everone wants to do less
-		/* 	if (newFactor < currentFactor && totalFactorDiff < 0 && totalFactor < 0.5) {
-				newFactor = currentFactor;
-				this.integral = 0;
-			} */
 
-		/* 	*/
-
-		/* {
-			console.log({
-				id: this.id,
-				currentFactor,
-				newFactor,
-				factorDiff: newFactor - currentFactor,
-				pTerm,
-				dTerm,
-				iTerm,
-				totalError,
-				errorTarget: errorBalance,
-				errorCoverage,
-				errorMemory,
-				peerCount,
-				totalFactor,
-				totalFactorDiff,
-				targetScaler: balanceErrorScaler,
-				memoryUsage,
-				estimatedTotalSize
-			});
-		} */
+		/* 		console.log({
+					id: this.id,
+					currentFactor,
+					newFactor,
+					factorDiff: newFactor - currentFactor,
+					pTerm,
+					dTerm,
+					iTerm,
+					totalError,
+					errorTarget: errorBalance,
+					errorCoverage,
+					errorMemory,
+					errorCPU,
+					peerCount,
+					totalFactor,
+					targetScaler: balanceErrorScaler,
+					memoryUsage,
+					estimatedTotalSize
+				}); */
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

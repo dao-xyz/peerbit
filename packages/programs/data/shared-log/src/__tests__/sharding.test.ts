@@ -602,437 +602,9 @@ describe(`sharding`, () => {
 
 	describe("distribution", () => {
 		describe("objectives", () => {
-			it("inserting half limited", async () => {
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator"
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				const memoryLimit = 100 * 1e3;
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit // 100kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-
-				for (let i = 0; i < 1000; i++) {
-					// insert 1mb
-					await db1.add(data, { meta: { next: [] } });
-				}
-
-				await delay(db1.log.timeUntilRoleMaturity + 1000);
-
-				await waitForConverged(() => {
-					const diff = Math.abs(
-						(db2.log.role as Replicator).factor -
-							(db1.log.role as Replicator).factor
-					);
-					return Math.round(diff * 50);
-				});
-
-				await waitForResolved(
-					async () => {
-						const memoryUsage = await db2.log.getMemoryUsage();
-						expect(Math.abs(memoryLimit - memoryUsage)).toBeLessThan(
-							(memoryLimit / 100) * 5
-						);
-					},
-					{ timeout: 20 * 1000 }
-				);
-			});
-
-			it("joining half limited", async () => {
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						},
-						role: {
-							type: "replicator"
-						}
-					}
-				});
-
-				const memoryLimit = 100 * 1e3;
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit // 100kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-
-				for (let i = 0; i < 1000; i++) {
-					// insert 1mb
-					await db2.add(data, { meta: { next: [] } });
-				}
-
-				await waitForConverged(() => {
-					const diff = Math.abs(
-						(db2.log.role as Replicator).factor -
-							(db1.log.role as Replicator).factor
-					);
-					return Math.round(diff * 100);
-				});
-				await waitForResolved(
-					async () =>
-						expect(
-							Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
-						).toBeLessThan((memoryLimit / 100) * 10),
-					{ timeout: 30 * 1000 }
-				); // 10% error at most
-			});
-
-			it("underflow limited", async () => {
-				const memoryLimit = 100 * 1e3;
-
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator",
-							limits: {
-								memory: memoryLimit // 100kb
-							}
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit // 100kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-				let entrySize = 0;
-				let entryCount = 150;
-				for (let i = 0; i < entryCount; i++) {
-					// insert 1mb
-					const entry = await db2.add(data, { meta: { next: [] } });
-					entrySize = entrySize > 0 ? entrySize : serialize(entry.entry).length;
-				}
-				let totalMemoryUsed = entryCount * entrySize;
-
-				await waitForResolved(
-					async () => {
-						expect((db1.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
-						expect((db2.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
-					},
-					{ timeout: 20 * 1000 }
-				);
-
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(totalMemoryUsed / 2 - (await db2.log.getMemoryUsage()))
-					).toBeLessThan((memoryLimit / 100) * 10)
-				); // 10% error at most
-			});
-
-			it("overflow limited", async () => {
-				const memoryLimit = 100 * 1e3;
-
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator",
-							limits: {
-								memory: memoryLimit // 100kb
-							}
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit // 100kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-
-				for (let i = 0; i < 1000; i++) {
-					// insert 1mb
-					await db2.add(data, { meta: { next: [] } });
-				}
-
-				await waitForConverged(() =>
-					Math.round((db1.log.role as Replicator).factor * 500)
-				);
-				await waitForConverged(() =>
-					Math.round((db2.log.role as Replicator).factor * 500)
-				);
-				expect((db1.log.role as Replicator).factor).toBeWithin(0.03, 0.05);
-				expect((db1.log.role as Replicator).factor).toBeWithin(0.03, 0.05);
-			});
-
-			it("evenly if limited when not constrained", async () => {
-				const memoryLimit = 100 * 1e3;
-
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator",
-							limits: {
-								memory: memoryLimit // 100kb
-							}
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit * 3 // 300kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-
-				for (let i = 0; i < 100; i++) {
-					// insert 1mb
-					await db2.add(data, { meta: { next: [] } });
-				}
-
-				await waitForResolved(() => {
-					expect((db1.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
-					expect((db2.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
-				});
-			});
-
-			it("unequally limited", async () => {
-				const memoryLimit = 100 * 1e3;
-
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator",
-							limits: {
-								memory: memoryLimit // 100kb
-							}
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit * 2 // 200kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-
-				for (let i = 0; i < 300; i++) {
-					// insert 1mb
-					await db2.add(data, { meta: { next: [] } });
-				}
-
-				await waitForResolved(
-					async () =>
-						expect(
-							Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
-						).toBeLessThan((memoryLimit / 100) * 10),
-					{
-						timeout: 20 * 1000
-					}
-				); // 10% error at most
-
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage()))
-					).toBeLessThan(((memoryLimit * 2) / 100) * 10)
-				); // 10% error at most
-
-				await delay(5000);
-
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
-					).toBeLessThan((memoryLimit / 100) * 10)
-				); // 10% error at most
-
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage()))
-					).toBeLessThan(((memoryLimit * 2) / 100) * 10)
-				); // 10% error at most
-			});
-
-			it("greatly limited", async () => {
-				const memoryLimit = 100 * 1e3;
-
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator",
-							limits: {
-								memory: 0 // 0kb
-							}
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
-						args: {
-							role: {
-								type: "replicator",
-								limits: {
-									memory: memoryLimit // 100kb
-								}
-							},
-							replicas: {
-								min: new AbsoluteReplicas(1),
-								max: new AbsoluteReplicas(1)
-							}
-						}
-					}
-				);
-
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
-
-				for (let i = 0; i < 100; i++) {
-					// insert 1mb
-					await db2.add(data, { meta: { next: [] } });
-				}
-				await delay(db1.log.timeUntilRoleMaturity);
-
-				await waitForResolved(async () =>
-					expect(await db1.log.getMemoryUsage()).toBeLessThan(10 * 1e3)
-				); // 10% error at most
-
-				await waitForResolved(async () =>
-					expect(
-						Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
-					).toBeLessThan((memoryLimit / 100) * 10)
-				); // 10% error at most
-			});
-
-			it("even if unlimited", async () => {
-				db1 = await session.peers[0].open(new EventStore<string>(), {
-					args: {
-						role: {
-							type: "replicator"
-						},
-						replicas: {
-							min: new AbsoluteReplicas(1),
-							max: new AbsoluteReplicas(1)
-						}
-					}
-				});
-
-				db2 = await EventStore.open<EventStore<string>>(
-					db1.address!,
-					session.peers[1],
-					{
+			describe("cpu", () => {
+				it("no cpu usage allowed", async () => {
+					db1 = await session.peers[0].open(new EventStore<string>(), {
 						args: {
 							role: {
 								type: "replicator"
@@ -1042,19 +614,552 @@ describe(`sharding`, () => {
 								max: new AbsoluteReplicas(1)
 							}
 						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										cpu: {
+											max: 0,
+											monitor: {
+												value: () => 0.5 // fixed 50% usage
+											}
+										} // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					await waitForConverged(() => {
+						const diff = Math.abs((db2.log.role as Replicator).factor);
+						return Math.round(diff * 100);
+					});
+
+					expect((db2.log.role as Replicator).factor).toEqual(0); // because the CPU error from fixed usage (0.5) is always greater than max (0)
+				});
+
+				it("below limit", async () => {
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator"
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										cpu: {
+											max: 0.4,
+											monitor: {
+												value: () => 0.3 // fixed 50% usage
+											}
+										} // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					await waitForConverged(() => {
+						const diff = Math.abs((db1.log.role as Replicator).factor);
+						return Math.round(diff * 100);
+					});
+					await waitForConverged(() => {
+						const diff = Math.abs((db2.log.role as Replicator).factor);
+						return Math.round(diff * 100);
+					});
+
+					expect((db1.log.role as Replicator).factor).toBeWithin(0.45, 0.55); // because the CPU error from fixed usage (0.5) is always greater than max (0)
+					expect((db2.log.role as Replicator).factor).toBeWithin(0.45, 0.55); // because the CPU error from fixed usage (0.5) is always greater than max (0)
+				});
+			});
+			describe("memory", () => {
+				it("inserting half limited", async () => {
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator"
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					const memoryLimit = 100 * 1e3;
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 1000; i++) {
+						// insert 1mb
+						await db1.add(data, { meta: { next: [] } });
 					}
-				);
 
-				const data = toBase64(randomBytes(5.5e2)); // about 1kb
+					await delay(db1.log.timeUntilRoleMaturity + 1000);
 
-				for (let i = 0; i < 1000; i++) {
-					// insert 1mb
-					await db2.add(data, { meta: { next: [] } });
-				}
+					await waitForConverged(() => {
+						const diff = Math.abs(
+							(db2.log.role as Replicator).factor -
+								(db1.log.role as Replicator).factor
+						);
+						return Math.round(diff * 50);
+					});
 
-				await waitForResolved(() => {
-					expect((db1.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
-					expect((db2.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
+					await waitForResolved(
+						async () => {
+							const memoryUsage = await db2.log.getMemoryUsage();
+							expect(Math.abs(memoryLimit - memoryUsage)).toBeLessThan(
+								(memoryLimit / 100) * 5
+							);
+						},
+						{ timeout: 20 * 1000 }
+					);
+				});
+
+				it("joining half limited", async () => {
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							},
+							role: {
+								type: "replicator"
+							}
+						}
+					});
+
+					const memoryLimit = 100 * 1e3;
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 1000; i++) {
+						// insert 1mb
+						await db2.add(data, { meta: { next: [] } });
+					}
+
+					await waitForConverged(() => {
+						const diff = Math.abs(
+							(db2.log.role as Replicator).factor -
+								(db1.log.role as Replicator).factor
+						);
+						return Math.round(diff * 100);
+					});
+					await waitForResolved(
+						async () =>
+							expect(
+								Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
+							).toBeLessThan((memoryLimit / 100) * 10),
+						{ timeout: 30 * 1000 }
+					); // 10% error at most
+				});
+
+				it("underflow limited", async () => {
+					const memoryLimit = 100 * 1e3;
+
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator",
+								limits: {
+									memory: memoryLimit // 100kb
+								}
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+					let entrySize = 0;
+					let entryCount = 150;
+					for (let i = 0; i < entryCount; i++) {
+						// insert 1mb
+						const entry = await db2.add(data, { meta: { next: [] } });
+						entrySize =
+							entrySize > 0 ? entrySize : serialize(entry.entry).length;
+					}
+					let totalMemoryUsed = entryCount * entrySize;
+
+					await waitForResolved(
+						async () => {
+							expect((db1.log.role as Replicator).factor).toBeWithin(
+								0.45,
+								0.55
+							);
+							expect((db2.log.role as Replicator).factor).toBeWithin(
+								0.45,
+								0.55
+							);
+						},
+						{ timeout: 20 * 1000 }
+					);
+
+					await waitForResolved(async () =>
+						expect(
+							Math.abs(totalMemoryUsed / 2 - (await db2.log.getMemoryUsage()))
+						).toBeLessThan((memoryLimit / 100) * 10)
+					); // 10% error at most
+				});
+
+				it("overflow limited", async () => {
+					const memoryLimit = 100 * 1e3;
+
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator",
+								limits: {
+									memory: memoryLimit // 100kb
+								}
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 1000; i++) {
+						// insert 1mb
+						await db2.add(data, { meta: { next: [] } });
+					}
+
+					await waitForConverged(() =>
+						Math.round((db1.log.role as Replicator).factor * 500)
+					);
+					await waitForConverged(() =>
+						Math.round((db2.log.role as Replicator).factor * 500)
+					);
+					expect((db1.log.role as Replicator).factor).toBeWithin(0.03, 0.05);
+					expect((db1.log.role as Replicator).factor).toBeWithin(0.03, 0.05);
+				});
+
+				it("evenly if limited when not constrained", async () => {
+					const memoryLimit = 100 * 1e3;
+
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator",
+								limits: {
+									memory: memoryLimit // 100kb
+								}
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit * 3 // 300kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 100; i++) {
+						// insert 1mb
+						await db2.add(data, { meta: { next: [] } });
+					}
+
+					await waitForResolved(() => {
+						expect((db1.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
+						expect((db2.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
+					});
+				});
+
+				it("unequally limited", async () => {
+					const memoryLimit = 100 * 1e3;
+
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator",
+								limits: {
+									memory: memoryLimit // 100kb
+								}
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit * 2 // 200kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 300; i++) {
+						// insert 1mb
+						await db2.add(data, { meta: { next: [] } });
+					}
+
+					await waitForResolved(
+						async () =>
+							expect(
+								Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
+							).toBeLessThan((memoryLimit / 100) * 10),
+						{
+							timeout: 20 * 1000
+						}
+					); // 10% error at most
+
+					await waitForResolved(async () =>
+						expect(
+							Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage()))
+						).toBeLessThan(((memoryLimit * 2) / 100) * 10)
+					); // 10% error at most
+
+					await delay(5000);
+
+					await waitForResolved(async () =>
+						expect(
+							Math.abs(memoryLimit - (await db1.log.getMemoryUsage()))
+						).toBeLessThan((memoryLimit / 100) * 10)
+					); // 10% error at most
+
+					await waitForResolved(async () =>
+						expect(
+							Math.abs(memoryLimit * 2 - (await db2.log.getMemoryUsage()))
+						).toBeLessThan(((memoryLimit * 2) / 100) * 10)
+					); // 10% error at most
+				});
+
+				it("greatly limited", async () => {
+					const memoryLimit = 100 * 1e3;
+
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator",
+								limits: {
+									memory: 0 // 0kb
+								}
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator",
+									limits: {
+										memory: memoryLimit // 100kb
+									}
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 100; i++) {
+						// insert 1mb
+						await db2.add(data, { meta: { next: [] } });
+					}
+					await delay(db1.log.timeUntilRoleMaturity);
+
+					await waitForResolved(async () =>
+						expect(await db1.log.getMemoryUsage()).toBeLessThan(10 * 1e3)
+					); // 10% error at most
+
+					await waitForResolved(async () =>
+						expect(
+							Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
+						).toBeLessThan((memoryLimit / 100) * 10)
+					); // 10% error at most
+				});
+
+				it("even if unlimited", async () => {
+					db1 = await session.peers[0].open(new EventStore<string>(), {
+						args: {
+							role: {
+								type: "replicator"
+							},
+							replicas: {
+								min: new AbsoluteReplicas(1),
+								max: new AbsoluteReplicas(1)
+							}
+						}
+					});
+
+					db2 = await EventStore.open<EventStore<string>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								role: {
+									type: "replicator"
+								},
+								replicas: {
+									min: new AbsoluteReplicas(1),
+									max: new AbsoluteReplicas(1)
+								}
+							}
+						}
+					);
+
+					const data = toBase64(randomBytes(5.5e2)); // about 1kb
+
+					for (let i = 0; i < 1000; i++) {
+						// insert 1mb
+						await db2.add(data, { meta: { next: [] } });
+					}
+
+					await waitForResolved(() => {
+						expect((db1.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
+						expect((db2.log.role as Replicator).factor).toBeWithin(0.45, 0.55);
+					});
 				});
 			});
 		});

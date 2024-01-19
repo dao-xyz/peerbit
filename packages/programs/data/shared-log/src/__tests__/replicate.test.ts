@@ -1,6 +1,6 @@
 import mapSeries from "p-each-series";
 import { Entry } from "@peerbit/log";
-import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
+import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
 import {
@@ -15,7 +15,8 @@ import { Observer } from "../role";
 import { ExchangeHeadsMessage } from "../exchange-heads";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { jest } from "@jest/globals";
-import { collectMessages, getReceivedHeads } from "./utils";
+import { collectMessages, getReceivedHeads } from "./utils.js";
+import { PIDReplicationController } from "../pid.js";
 
 describe(`exchange`, function () {
 	let session: TestSession;
@@ -1075,10 +1076,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: {
-					type: "replicator",
-					factor: 0
-				}
+				role: "observer"
 			}
 		});
 
@@ -1272,4 +1270,54 @@ describe("replication degree", () => {
 		);
 		expect(db2.log.log.length).toEqual(1);
 	}); */
+});
+
+describe("controller", () => {
+	describe("cpu", () => {
+		it("bounded by cpu available", () => {
+			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
+			let cpuUsage = 1;
+			expect(controller.step(0, 0, 1, 2, cpuUsage)).toEqual(0);
+			cpuUsage = 0;
+			expect(controller.step(0, 0.5, 1, 2, cpuUsage)).toBeWithin(0.4, 0.6); // no change
+		});
+
+		it("respects peer count of 1", () => {
+			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
+			let cpuUsage = 1;
+			expect(controller.step(0, 1, 1, 1, cpuUsage)).toEqual(1);
+			expect(controller.step(0, 1, 1, 1, cpuUsage)).toEqual(1);
+			expect(controller.step(0, 1, 1, 1, cpuUsage)).toEqual(1);
+		});
+
+		it("coverges to zero of cpu usage is max", () => {
+			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
+			let cpuUsage = 1;
+			let f = 1;
+			for (let i = 0; i < 10; i++) {
+				f = controller.step(0, f, 1, 2, cpuUsage);
+			}
+			expect(f).toEqual(0);
+		});
+
+		it("ignores balance if cpu usage is max", () => {
+			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
+			let cpuUsage = 1;
+			let f = 1;
+			for (let i = 0; i < 10; i++) {
+				f = controller.step(0, f, 0.666, 2, cpuUsage);
+			}
+			expect(f).toEqual(0);
+		});
+
+		it("respects cpu limit", () => {
+			const controller = new PIDReplicationController("", {
+				cpu: { max: 0.5 }
+			});
+			let cpuUsage = 0.4; // < 0.5
+			expect(controller.step(0, 1, 1, 2, cpuUsage)).toEqual(1);
+			cpuUsage = 0.6;
+			expect(controller.step(0, 1, 1, 2, cpuUsage)).toBeLessThan(1);
+		});
+	});
 });

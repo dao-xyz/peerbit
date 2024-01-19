@@ -56,10 +56,11 @@ import {
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { BlocksMessage } from "./blocks.js";
 import debounce from "p-debounce";
-import { PIDReplicationController, ReplicationErrorFunction } from "./pid.js";
-export type { ReplicationErrorFunction };
+import { PIDReplicationController } from "./pid.js";
 export * from "./replication.js";
 import PQueue from "p-queue";
+import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
+export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
 export const logger = loggerFn({ module: "shared-log" });
@@ -90,8 +91,10 @@ type StringRoleOptions = "observer" | "replicator";
 
 type AdaptiveReplicatorOptions = {
 	type: "replicator";
-	limits?: { memory: number };
-	error?: ReplicationErrorFunction;
+	limits?: {
+		memory?: number;
+		cpu?: number | { max: number; monitor: CPUUsage };
+	};
 };
 
 type FixedReplicatorOptions = {
@@ -114,7 +117,6 @@ const isAdaptiveReplicatorOption = (
 ): options is AdaptiveReplicatorOptions => {
 	if (
 		(options as AdaptiveReplicatorOptions).limits ||
-		(options as AdaptiveReplicatorOptions).error ||
 		(options as FixedReplicatorOptions).factor == null
 	) {
 		return true;
@@ -209,6 +211,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private distributeInterval: ReturnType<typeof setInterval>;
 	replicas: ReplicationLimits;
 
+	private cpuUsage?: CPUUsage;
+
 	timeUntilRoleMaturity: number;
 	waitForReplicatorTimeout: number;
 
@@ -242,13 +246,31 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.rebalanceParticipationDebounced = undefined;
 
 		const setupDebouncedRebalancing = (options?: AdaptiveReplicatorOptions) => {
+			this.cpuUsage?.stop?.();
 			this.replicationController = new PIDReplicationController(
 				this.node.identity.publicKey.hashcode(),
 				{
-					targetMemoryLimit: options?.limits?.memory,
-					errorFunction: options?.error
+					memory:
+						options?.limits?.memory != null
+							? { max: options?.limits?.memory }
+							: undefined,
+					cpu:
+						options?.limits?.cpu != null
+							? {
+									max:
+										typeof options?.limits?.cpu === "object"
+											? options.limits.cpu.max
+											: options?.limits?.cpu
+								}
+							: undefined
 				}
 			);
+
+			this.cpuUsage =
+				options?.limits?.cpu && typeof options?.limits?.cpu === "object"
+					? options?.limits?.cpu.monitor || new CPUUsageIntervalLag()
+					: new CPUUsageIntervalLag();
+			this.cpuUsage?.start?.();
 
 			this.setupRebalanceDebounceFunction();
 		};
@@ -288,15 +310,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 		) {
 			this._role = this._roleOptions as Replicator | Observer;
 		} else {
-			if (this._roleOptions.limits) {
+			// initial role in a dynamic setup
+
+			if (this._roleOptions?.limits) {
 				this._role = new Replicator({
-					// initial role in a dynamic setup
-					factor: 1,
+					factor: this._role instanceof Replicator ? this._role.factor : 1,
 					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
 				});
 			} else {
 				this._role = new Replicator({
-					factor: 1,
+					factor: this._role instanceof Replicator ? this._role.factor : 1,
 					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
 				});
 			}
@@ -423,7 +446,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			options?.waitForReplicatorTimeout || WAIT_FOR_REPLICATOR_TIMEOUT;
 		this._gidParentCache = new Cache({ max: 1000 });
 		this._closeController = new AbortController();
-
 		this._canReplicate = options?.canReplicate;
 		this.sync = options?.sync;
 		this._logProperties = options;
@@ -592,6 +614,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
+		this.cpuUsage?.stop?.();
 	}
 	async close(from?: Program): Promise<boolean> {
 		const superClosed = await super.close(from);
@@ -1274,7 +1297,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			return { changed: "none" };
 		}
 
-		if (role instanceof Replicator && role.factor > 0) {
+		if (role instanceof Replicator) {
 			// TODO use Set + list for fast lookup
 			// check also that peer is online
 
@@ -1713,13 +1736,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const peers = this.getReplicatorsSorted();
 			const usedMemory = await this.getMemoryUsage();
 
-			const newFactor =
-				await this.replicationController.adjustReplicationFactor(
-					usedMemory,
-					this._role.factor,
-					this._totalParticipation,
-					peers?.length || 1
-				);
+			const newFactor = this.replicationController.step(
+				usedMemory,
+				this._role.factor,
+				this._totalParticipation,
+				peers?.length || 1,
+				this.cpuUsage?.value()
+			);
 
 			const relativeDifference =
 				Math.abs(this._role.factor - newFactor) / this._role.factor;
