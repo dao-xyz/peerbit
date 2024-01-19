@@ -11,7 +11,7 @@ export interface CPUUsage {
  */
 
 export class CPUUsageIntervalLag implements CPUUsage {
-	ts: number[];
+	dt: number[];
 	interval: ReturnType<typeof setInterval>;
 	constructor(
 		readonly properties: {
@@ -22,16 +22,13 @@ export class CPUUsageIntervalLag implements CPUUsage {
 	) {}
 	private mean() {
 		let sum = 0;
-		for (const t of this.ts) {
+		for (const t of this.dt) {
 			sum += t;
 		}
-		return sum / this.ts.length;
+		return sum / this.dt.length;
 	}
 
 	value() {
-		this.ts = new Array<number>(this.properties.windowSize).fill(
-			this.properties.intervalTime
-		);
 		return (
 			Math.min(
 				Math.max(this.mean() - this.properties.intervalTime, 0),
@@ -41,12 +38,14 @@ export class CPUUsageIntervalLag implements CPUUsage {
 	}
 
 	start() {
-		this.ts = [];
+		this.dt = new Array<number>(this.properties.windowSize).fill(
+			this.properties.intervalTime
+		);
 		let ts = +new Date();
 		this.interval = setInterval(() => {
 			const now = +new Date();
-			this.ts.push(now - ts);
-			this.ts.slice(0, this.properties.windowSize);
+			this.dt.shift();
+			this.dt.push(now - ts);
 			ts = now;
 		}, this.properties.intervalTime);
 	}
