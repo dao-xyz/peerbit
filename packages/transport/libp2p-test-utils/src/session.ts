@@ -41,6 +41,30 @@ export class TestSession<T> {
 		await Promise.all(connectPromises);
 		return this;
 	}
+
+	async connectLine(
+		groups?: {
+			getMultiaddrs: () => Multiaddr[];
+			dial: (addres: Multiaddr[]) => Promise<any>;
+		}[][]
+	) {
+		const connectPromises: Promise<any>[] = [];
+		if (!groups) {
+			groups = [this.peers];
+		}
+		for (const group of groups) {
+			for (let i = 0; i < group.length - 1; i++) {
+				const toDial = group[i + 1]
+					.getMultiaddrs()
+					.filter((x) => x.protoCodes().includes(290) === false);
+				connectPromises.push(group[i].dial(toDial)); // By default don't connect to relayed (p2p-circuit) peers
+			}
+		}
+
+		await Promise.all(connectPromises);
+		return this;
+	}
+
 	static async connected<T extends Record<string, unknown>>(
 		n: number,
 		options?: Libp2pOptions<T> | Libp2pOptions<T>[]
