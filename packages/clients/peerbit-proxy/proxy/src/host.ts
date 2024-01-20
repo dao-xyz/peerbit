@@ -19,6 +19,8 @@ import { serialize, deserialize, AbstractType } from "@dao-xyz/borsh";
 import { Keychain } from "@peerbit/keychain";
 
 const levelKey = (level: string[]) => JSON.stringify(level);
+const CUSTOM_EVENT_ORIGIN_PROPERTY = "__origin";
+const CUSTOM_EVENT_ORIGIN_PROXY = "proxy";
 
 export class PeerbitProxyHost implements ProgramClient {
 	private _levels: Map<string, AnyStore>;
@@ -53,7 +55,7 @@ export class PeerbitProxyHost implements ProgramClient {
 		// this allows multiple clients to subscribe to share the same host and
 		// also have same databases open
 		this.hostClient.services.pubsub.dispatchEvent = (evt: CustomEvent<any>) => {
-			if (evt.type === "publish") {
+			if (evt.type === "publish" && evt.detail.client) {
 				dispatchFunction(new CustomEvent("data", { detail: evt.detail }));
 			}
 			return dispatchFunction(evt);
@@ -423,19 +425,10 @@ export class PeerbitProxyHost implements ProgramClient {
 					message.type,
 					message.data
 				);
+				customEvent[CUSTOM_EVENT_ORIGIN_PROPERTY] = CUSTOM_EVENT_ORIGIN_PROXY;
 				const dispatched =
 					await this.services.pubsub.dispatchEvent(customEvent);
 
-				/* 	
-				if (message.type === 'publish') {
-						await this.services.pubsub.dispatchEvent(
-							pubsub.createCustomEventFromType(
-								'data',
-								message.data
-							)
-						)
-					}
-				 */
 				await this.respond(
 					message,
 					new pubsub.RESP_DispatchEvent(dispatched),

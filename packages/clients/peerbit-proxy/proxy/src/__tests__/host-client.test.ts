@@ -365,6 +365,19 @@ describe("index", () => {
 
 				expect(msg2publish).toBeTrue(); // TODO expected?
 			});
+
+			it("publish will not emit to data", async () => {
+				let data = false;
+
+				host1.services.pubsub.addEventListener("data", (evt) => {
+					data = true;
+				});
+
+				await host1.services.pubsub.subscribe("topic");
+				await host1.services.pubsub.publish(new Uint8Array([123]), {
+					topics: ["topic"]
+				});
+			});
 		});
 
 		it("getSubscribers", async () => {
