@@ -22,9 +22,11 @@ describe("CPUUsageIntervalLag", () => {
 		// Replace the assertions with your own based on the expected behavior of your class
 		expect(cpuUsage.value()).toEqual(0);
 
-		// inttroduce lag
+		// inttroduce lag (TODO do this beter, like real testing somehow with a slow system? (child process with limited cpu (?)))
 		cpuUsage.dt.push(1e3);
-		cpuUsage.dt.shift();
+		cpuUsage.sum += 1e3;
+		cpuUsage.sum -= cpuUsage.dt.shift()!;
+
 		expect(cpuUsage.value()).toBeGreaterThan(0);
 		const c0 = cpuUsage.value();
 

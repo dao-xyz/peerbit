@@ -854,15 +854,10 @@ describe(`sharding`, () => {
 					);
 
 					const data = toBase64(randomBytes(5.5e2)); // about 1kb
-					let entrySize = 0;
 					let entryCount = 150;
 					for (let i = 0; i < entryCount; i++) {
-						// insert 1mb
-						const entry = await db2.add(data, { meta: { next: [] } });
-						entrySize =
-							entrySize > 0 ? entrySize : serialize(entry.entry).length;
+						await db2.add(data, { meta: { next: [] } });
 					}
-					let totalMemoryUsed = entryCount * entrySize;
 
 					await waitForResolved(
 						async () => {
@@ -879,12 +874,14 @@ describe(`sharding`, () => {
 					);
 
 					// allow 10% error
-					expect(await db1.log.getMemoryUsage()).toBeLessThan(
-						memoryLimit * 1.1
-					);
-					expect(await db2.log.getMemoryUsage()).toBeLessThan(
-						memoryLimit * 1.1
-					);
+					await waitForResolved(async () => {
+						expect(await db1.log.getMemoryUsage()).toBeLessThan(
+							memoryLimit * 1.1
+						);
+						expect(await db2.log.getMemoryUsage()).toBeLessThan(
+							memoryLimit * 1.1
+						);
+					});
 				});
 
 				it("overflow limited", async () => {
