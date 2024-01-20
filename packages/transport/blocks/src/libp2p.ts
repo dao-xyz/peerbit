@@ -27,7 +27,6 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		}
 	) {
 		super(components, ["/lazyblock/0.0.0"], {
-			signaturePolicy: "StrictNoSign",
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			canRelayMessage: options?.canRelayMessage ?? true,
 			connectionManager: {

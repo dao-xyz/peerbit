@@ -66,8 +66,7 @@ export const createLibp2pExtended = (
 				opts.services?.pubsub ||
 				((c) =>
 					new DirectSub(c, {
-						canRelayMessage: true,
-						signaturePolicy: "StrictNoSign"
+						canRelayMessage: true
 						// auto dial true
 						// auto prune true
 					})),
