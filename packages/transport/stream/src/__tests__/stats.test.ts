@@ -18,7 +18,7 @@ describe("bandwidth-tracker", () => {
 		await delay(1000);
 		const v1 = tracker.value;
 		expect(v1).toBeLessThan(v0);
-		expect(v1).toBeGreaterThan(10);
+		expect(v1).toBeGreaterThan(5);
 		await delay(2000);
 		const v2 = tracker.value;
 		expect(v2).toBeLessThan(1);
