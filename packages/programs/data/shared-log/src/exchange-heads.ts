@@ -41,18 +41,28 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 }
 
 @variant([0, 1])
-export class RequestHeadsMessage extends TransportMessage {
-	@field({ type: "string" })
-	address: string;
+export class RequestMaybeSync extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
 
-	constructor(props: { address: string }) {
+	constructor(props: { hashes: string[] }) {
 		super();
-		this.address = props.address;
-		throw new Error("Unsupported"); // This message should not be used yet
+		this.hashes = props.hashes;
 	}
 }
 
 @variant([0, 2])
+export class ResponseMaybeSync extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	constructor(props: { hashes: string[] }) {
+		super();
+		this.hashes = props.hashes;
+	}
+}
+
+@variant([0, 3])
 export class RequestIPrune extends TransportMessage {
 	// Hashes which I want to prune
 	@field({ type: vec("string") })
@@ -64,7 +74,7 @@ export class RequestIPrune extends TransportMessage {
 	}
 }
 
-@variant([0, 3])
+@variant([0, 4])
 export class ResponseIPrune extends TransportMessage {
 	// Hashes I am allowed to prune
 	@field({ type: vec("string") })
@@ -75,6 +85,7 @@ export class ResponseIPrune extends TransportMessage {
 		this.hashes = props.hashes;
 	}
 }
+
 const MAX_EXCHANGE_MESSAGE_SIZE = 5e6; // 5mb (since stream limits are 10mb)
 
 export const createExchangeHeadsMessages = async (

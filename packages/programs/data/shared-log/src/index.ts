@@ -21,7 +21,9 @@ import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
 	RequestIPrune,
+	RequestMaybeSync,
 	ResponseIPrune,
+	ResponseMaybeSync,
 	createExchangeHeadsMessages
 } from "./exchange-heads.js";
 import {
@@ -265,7 +267,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 							: undefined
 				}
 			);
-			const q = [];
 
 			this.cpuUsage =
 				options?.limits?.cpu && typeof options?.limits?.cpu === "object"
@@ -570,6 +571,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (v.equals(this.node.identity.publicKey)) {
 					return;
 				}
+
 				this.handleSubscriptionChange(v, [this.topic], true);
 			}
 		);
@@ -647,6 +649,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 		context: RequestContext
 	): Promise<TransportMessage | undefined> {
 		try {
+			if (!context.from) {
+				throw new Error("Missing from in update role message");
+			}
+
 			if (msg instanceof ExchangeHeadsMessage) {
 				/**
 				 * I have received heads from someone else.
@@ -801,7 +807,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					) {
 						this._gidPeersHistory
 							.get(indexedEntry.meta.gid)
-							?.delete(context.from!.hashcode());
+							?.delete(context.from.hashcode());
 						hasAndIsLeader.push(hash);
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
@@ -844,31 +850,49 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				await this.rpc.send(new ResponseIPrune({ hashes: hasAndIsLeader }), {
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 })
+					mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
 				});
 			} else if (msg instanceof ResponseIPrune) {
 				for (const hash of msg.hashes) {
-					this._pendingDeletes.get(hash)?.resolve(context.from!.hashcode());
+					this._pendingDeletes.get(hash)?.resolve(context.from.hashcode());
+				}
+			} else if (msg instanceof RequestMaybeSync) {
+				await this.rpc.send(
+					new ResponseMaybeSync({
+						hashes: msg.hashes.filter((x) => !this.log.has(x))
+					}),
+					{
+						mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
+					}
+				);
+			} else if (msg instanceof ResponseMaybeSync) {
+				// TODO better choice of step size
+				const entries = (
+					await Promise.all(msg.hashes.map((x) => this.log.get(x)))
+				).filter((x): x is Entry<any> => !!x);
+				const messages = await createExchangeHeadsMessages(
+					this.log,
+					entries,
+					this._gidParentCache
+				);
+				// TODO perhaps send less messages to more receivers for performance reasons?
+				// TODO wait for previous send to target before trying to send more?
+				for (const message of messages) {
+					this.rpc.send(message, {
+						mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
+					});
 				}
 			} else if (msg instanceof BlocksMessage) {
 				await this.remoteBlocks.onMessage(msg.message);
 			} else if (msg instanceof RequestRoleMessage) {
-				if (!context.from) {
-					throw new Error("Missing form in update role message");
-				}
-
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
 
 				await this.rpc.send(new ResponseRoleMessage({ role: this.role }), {
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 })
+					mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
 				});
 			} else if (msg instanceof ResponseRoleMessage) {
-				if (!context.from) {
-					throw new Error("Missing form in update role message");
-				}
-
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
@@ -1624,19 +1648,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		for (const [target, entries] of uncheckedDeliver) {
-			// TODO better choice of step size
-			const messages = await createExchangeHeadsMessages(
-				this.log,
-				entries,
-				this._gidParentCache
-			);
-			// TODO perhaps send less messages to more receivers for performance reasons?
-			// TODO wait for previous send to target before trying to send more?
-			for (const message of messages) {
-				this.rpc.send(message, {
+			this.rpc.send(
+				new RequestMaybeSync({ hashes: entries.map((x) => x.hash) }),
+				{
 					mode: new SilentDelivery({ to: [target], redundancy: 1 })
-				});
-			}
+				}
+			);
 		}
 
 		if (allEntriesToDelete.length > 0) {
