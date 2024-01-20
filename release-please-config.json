@@ -15,7 +15,7 @@
 		"packages/log": {},
 		"packages/clients/peerbit": {},
 		"packages/clients/peerbit-proxy/window": {},
-		"packages/clients/peerbit-proxy/interface": {},
+		"packages/clients/peerbit-proxy/proxy": {},
 		"packages/clients/peerbit-server/node": {},
 		"packages/clients/test-utils": {},
 		"packages/programs/rpc": {},

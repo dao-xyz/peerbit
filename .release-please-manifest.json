@@ -10,7 +10,7 @@
     "packages/log": "3.0.16",
     "packages/utils/logger": "1.0.2",
     "packages/programs/program": "3.0.14",
-    "packages/clients/peerbit-proxy/interface": "2.0.16",
+    "packages/clients/peerbit-proxy/proxy": "2.0.16",
     "packages/transport/pubsub": "2.0.14",
     "packages/transport/pubsub-interface": "2.0.10",
     "packages/programs/rpc": "3.0.16",

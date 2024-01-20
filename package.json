@@ -21,7 +21,7 @@
 			"packages/transport/libp2p-test-utils",
 			"packages/log",
 			"packages/clients/peerbit",
-			"packages/clients/peerbit-proxy/interface",
+			"packages/clients/peerbit-proxy/proxy",
 			"packages/clients/peerbit-proxy/window",
 			"packages/clients/peerbit-proxy/window/test/",
 			"packages/clients/peerbit-proxy/window/test/child",
