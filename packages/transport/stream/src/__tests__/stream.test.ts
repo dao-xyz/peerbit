@@ -442,8 +442,10 @@ describe("streams", function () {
 			it("publishes on direct stream, even path is longer", async () => {
 				await session.connect([[session.peers[0], session.peers[2]]]);
 				await waitForPeerStreams(streams[0].stream, streams[2].stream);
-
-				// mark 0 -> 1 -> 2 as shortest route...
+				expect(
+					streams[1].messages.filter((x) => x instanceof DataMessage)
+				).toHaveLength(0);
+				// mark 0 -> 1 -> 2 as a short route (0)
 
 				streams[0].stream.routes.add(
 					streams[0].stream.publicKeyHash,
@@ -451,7 +453,7 @@ describe("streams", function () {
 					streams[2].stream.publicKeyHash,
 					0,
 					+new Date(),
-					-1
+					+new Date()
 				);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
@@ -2203,16 +2205,44 @@ describe("join/leave", () => {
 
 			await session.peers[1].stop();
 
-			await waitForResolved(() => {
-				expect(
-					streams[0].stream.routes
-						.findNeighbor(
-							streams[0].stream.publicKeyHash,
-							streams[3].stream.publicKeyHash
-						)
-						?.list?.map((x) => x.hash)
-				).toEqual([streams[1].stream.publicKeyHash]);
+			await waitForResolved(() =>
+				expect(streams[0].unrechable.map((x) => x.hashcode())).toContainValues([
+					streams[1].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash
+				])
+			);
+		});
+		it("neighbour drop but maybe reachable", async () => {
+			// V shape
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			await waitForPeerStreams(streams[0].stream, streams[1].stream);
+			await session.connect([[session.peers[0], session.peers[2]]]);
+			await waitForPeerStreams(streams[0].stream, streams[2].stream);
+
+			await streams[0].stream.publish(new Uint8Array(0), {
+				mode: new SeekDelivery({
+					redundancy: 2,
+					to: [streams[1].stream.publicKeyHash]
+				})
 			});
+			expect(
+				streams[0].stream.routes
+					.findNeighbor(
+						streams[0].stream.publicKeyHash,
+						streams[1].stream.publicKeyHash
+					)
+					?.list?.map((x) => x.hash)
+			).toEqual([streams[1].stream.publicKeyHash]);
+
+			const seekTimeout = 2e3;
+			streams[0].stream.seekTimeout = seekTimeout;
+			let t0 = +new Date();
+			await session.peers[1].stop();
+
+			// will immediately become unreachable
+			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainValues([
+				streams[1].stream.publicKeyHash
+			]);
 		});
 
 		it("re-seeks on connection drop", async () => {
@@ -2235,10 +2265,10 @@ describe("join/leave", () => {
 			await session.connect([[session.peers[0], session.peers[3]]]);
 			await waitForPeerStreams(streams[0].stream, streams[3].stream);
 
-			await streams[3].stream.publish(new Uint8Array(0), {
+			await streams[0].stream.publish(new Uint8Array([123]), {
 				mode: new SeekDelivery({
 					redundancy: 2,
-					to: [streams[2].stream.publicKeyHash]
+					to: [streams[3].stream.publicKeyHash]
 				})
 			});
 			expect(
@@ -2248,12 +2278,18 @@ describe("join/leave", () => {
 						streams[3].stream.publicKeyHash
 					)
 					?.list?.map((x) => x.hash)
-			).toEqual([streams[3].stream.publicKeyHash]);
+			).toContainValues([
+				streams[1].stream.publicKeyHash,
+				streams[3].stream.publicKeyHash
+			]);
 
-			/* 			const rmNeighbour = session.peers[0].services.directstream.routes.removeNeighbour.bind
-			 */ await session.peers[0].hangUp(session.peers[3].peerId);
+			expect(streams[3].received).toHaveLength(1);
 
-			// the route should now be the long route
+			streams[0].unrechable = [];
+			streams[0].reachable = [];
+
+			await session.peers[0].hangUp(session.peers[3].peerId);
+
 			await waitForResolved(() => {
 				expect(
 					streams[0].stream.routes
@@ -2264,6 +2300,25 @@ describe("join/leave", () => {
 						?.list?.map((x) => x.hash)
 				).toEqual([streams[1].stream.publicKeyHash]);
 			});
+
+			// will emit unreachable and reachable events (again)
+			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainValues([
+				streams[3].stream.publicKeyHash
+			]);
+			expect(streams[0].reachable.map((x) => x.hashcode())).toContainValues([
+				streams[3].stream.publicKeyHash
+			]);
+
+			// the route should now be the long route
+			await streams[0].stream.publish(new Uint8Array([234]), {
+				mode: new SilentDelivery({
+					redundancy: 1,
+					to: [streams[3].stream.publicKeyHash]
+				})
+			});
+
+			await waitForResolved(() => expect(streams[3].received).toHaveLength(2));
+			expect(streams[3].received[1].header.mode).toBeInstanceOf(SilentDelivery);
 		});
 
 		it("distant drop", async () => {
@@ -2382,7 +2437,6 @@ describe("join/leave", () => {
 
 				let abortController = new AbortController();
 				slow.waitForWrite = async (bytes) => {
-					const t0 = +new Date();
 					try {
 						await delay(3000, { signal: abortController.signal });
 					} catch (error) {

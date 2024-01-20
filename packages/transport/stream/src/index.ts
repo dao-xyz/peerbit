@@ -35,8 +35,6 @@ import { multiaddr } from "@multiformats/multiaddr";
 import { Components } from "libp2p/components";
 import type { TypedEventTarget } from "@libp2p/interface";
 
-export type SignaturePolicy = "StictSign" | "StrictNoSign";
-
 import { logger } from "./logger.js";
 export { logger };
 import { Cache } from "@peerbit/cache";
@@ -364,7 +362,6 @@ export type DirectStreamOptions = {
 	messageProcessingConcurrency?: number;
 	maxInboundStreams?: number;
 	maxOutboundStreams?: number;
-	signaturePolicy?: SignaturePolicy;
 	connectionManager?: ConnectionManagerArguments;
 	routeSeekInterval?: number;
 	seekTimeout?: number;
@@ -455,7 +452,6 @@ export abstract class DirectStream<
 			messageProcessingConcurrency = 10,
 			maxInboundStreams,
 			maxOutboundStreams,
-			signaturePolicy = "StictSign",
 			connectionManager,
 			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR,
 			seekTimeout = SEEK_DELIVERY_TIMEOUT,
@@ -817,14 +813,8 @@ export abstract class DirectStream<
 		if (!this.publicKey.equals(peerKey)) {
 			await this._removePeer(peerKey);
 
-			// Notify network
-			const dependent = this.routes.getDependent(peerKeyHash);
-
-			this.routes.removeNeighbour(peerKeyHash);
-
-			this.maybeDeleteRemoteRoutes([peerKeyHash]);
-
 			// tell dependent peers that there is a node that might have left
+			const dependent = this.routes.getDependent(peerKeyHash);
 			if (dependent.length > 0) {
 				await this.publishMessage(
 					this.publicKey,
@@ -837,6 +827,10 @@ export abstract class DirectStream<
 					}).sign(this.sign)
 				);
 			}
+
+			// make neighbour unreachables
+			this.removePeerFromRoutes(peerKeyHash);
+			this.checkIsAlive([peerKeyHash]);
 		}
 
 		logger.debug("connection ended:" + peerKey.toString());
@@ -1366,20 +1360,28 @@ export abstract class DirectStream<
 		this.checkIsAlive(remotes);
 	}
 	private async checkIsAlive(remotes: string[]) {
+		if (this.peers.size === 0) {
+			return false;
+		}
 		if (remotes.length > 0) {
-			await this.publish(new Uint8Array(0), {
+			return this.publish(undefined, {
 				mode: new SeekDelivery({
 					to: remotes,
 					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
 				})
-			}).catch((e) => {
-				if (e instanceof TimeoutError || e instanceof AbortError) {
-					// peer left or closed
-				} else {
-					throw e;
-				}
-			}); // this will remove the target if it is still not reable
+			})
+				.then(() => true)
+				.catch((e) => {
+					if (e instanceof TimeoutError) {
+						return false;
+					} else if (e instanceof AbortError || e instanceof NotStartedError) {
+						return false;
+					} else {
+						throw e;
+					}
+				}); // this will remove the target if it is still not reable
 		}
+		return false;
 	}
 
 	async createMessage(
@@ -1519,7 +1521,7 @@ export abstract class DirectStream<
 						to,
 						setTimeout(() => {
 							this.removePeerFromRoutes(to);
-						}, this.seekTimeout + 5000)
+						}, this.seekTimeout)
 					);
 				}
 			}

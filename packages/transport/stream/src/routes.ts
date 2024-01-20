@@ -94,24 +94,13 @@ export class Routes {
 				// i.e. if target is our neighbour, always assume the shortest path to them is the direct path
 				distance = -1;
 			}
-
-			// we do this since don't care about remote session if the
-			//peer is our neighbour since we will always be up to date by connect/disconnect events
-			remoteSession = -1;
 		}
 
 		let isNewRemoteSession = false;
 		if (routeDidExist) {
-			if (prev.remoteSession != -1) {
-				// if the remote session is later, we consider that the remote has 'restarted'
-				isNewRemoteSession = remoteSession > (prev.remoteSession || -1);
-				prev.remoteSession =
-					remoteSession === -1
-						? remoteSession
-						: Math.max(remoteSession, prev.remoteSession || -1);
-			} else {
-				isNewRemoteSession = false;
-			}
+			// if the remote session is later, we consider that the remote has 'restarted'
+			isNewRemoteSession = remoteSession > (prev.remoteSession || -1);
+			prev.remoteSession = Math.max(remoteSession, prev.remoteSession || -1);
 		}
 
 		prev.session = Math.max(session, prev.session);
@@ -119,7 +108,6 @@ export class Routes {
 		// Update routes and cleanup all old routes that are older than latest session - some threshold
 		if (isNewSession) {
 			// Mark previous routes as old
-
 			const expireAt = +new Date() + this.routeMaxRetentionPeriod;
 			let foundNodeToExpire = false;
 			for (const route of prev.list) {
@@ -400,8 +388,8 @@ export class Routes {
 						fanout.set(to, { to, timestamp: session });
 
 						if (
-							(distance == 0 && session === neighbour.session) ||
-							distance == -1
+							distance <= 0 &&
+							session <= neighbour.session // (<) will never be the case, but we do add routes in the tests with later session timestamps
 						) {
 							foundClosest = true;
 
