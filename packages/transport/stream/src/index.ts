@@ -1543,15 +1543,19 @@ export abstract class DirectStream<
 		const uniqueAcks = new Set();
 		const session = +new Date();
 
-		const onUnreachable = (ev) => {
-			messageToSet.delete(ev.detail.hashcode());
-			const done = checkDone();
-		};
-		this.addEventListener("peer:unreachable", onUnreachable);
+		const onUnreachable =
+			!relayed &&
+			((ev) => {
+				messageToSet.delete(ev.detail.hashcode());
+				checkDone();
+			});
+
+		onUnreachable && this.addEventListener("peer:unreachable", onUnreachable);
 
 		const clear = () => {
 			clearTimeout(timeout);
-			this.removeEventListener("peer:unreachable", onUnreachable);
+			onUnreachable &&
+				this.removeEventListener("peer:unreachable", onUnreachable);
 			this._ackCallbacks.delete(idString);
 		};
 
