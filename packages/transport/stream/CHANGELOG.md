@@ -37,6 +37,21 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.6...stream-v3.0.7) (2024-01-20)
+
+
+### Bug Fixes
+
+* check if neighbours are reachable even if the connection closes ([436ed2e](https://github.com/dao-xyz/peerbit/commit/436ed2ecac75ae1dd71d0508d923a1aaa428d6b0))
+* re-seek alternative routes on neighbour connection drop ([f2adc12](https://github.com/dao-xyz/peerbit/commit/f2adc1298c489f1f6624fa3e401d3e96ef17d5fd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.6 to 2.1.0
+
 ## [3.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.5...stream-v3.0.6) (2024-01-19)
 
 

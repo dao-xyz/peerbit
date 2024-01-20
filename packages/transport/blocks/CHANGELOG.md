@@ -184,6 +184,23 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.5 to 2.0.6
 
+## [2.0.15](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.14...blocks-v2.0.15) (2024-01-20)
+
+
+### Bug Fixes
+
+* rm signaturePolicy property ([003556c](https://github.com/dao-xyz/peerbit/commit/003556c1475a6a68dda08fc1560d70dde1f5ad17))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 3.0.6 to 3.0.7
+    * @peerbit/blocks-interface bumped from 1.2.9 to 1.2.10
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.0.6 to 2.1.0
+
 ## [2.0.12](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.11...blocks-v2.0.12) (2024-01-17)
 
 
