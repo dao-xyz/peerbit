@@ -30,6 +30,35 @@ import { TestSession } from "@peerbit/libp2p-test-utils";
 import { jest } from "@jest/globals";
 import { Libp2pOptions } from "libp2p";
 
+type TestSessionStream = TestSession<{ directstream: DirectStream }>;
+
+const connectLine = async (session: TestSessionStream) => {
+	await session.connectLine();
+	for (let i = 0; i < session.peers.length - 1; i++) {
+		await waitForPeerStreams(
+			session.peers[i].services.directstream,
+			session.peers[i + 1].services.directstream
+		);
+	}
+	for (let i = 1; i < session.peers.length - 1; i++) {
+		expect([
+			...session.peers[i].services.directstream.peers.keys()
+		]).toContainValues([
+			session.peers[i - 1].services.directstream.publicKeyHash,
+			session.peers[i + 1].services.directstream.publicKeyHash
+		]);
+	}
+	expect([...session.peers[0].services.directstream.peers.keys()]).toEqual([
+		session.peers[1].services.directstream.publicKeyHash
+	]);
+	expect([
+		...session.peers[
+			session.peers.length - 1
+		].services.directstream.peers.keys()
+	]).toEqual([
+		session.peers[session.peers.length - 2].services.directstream.publicKeyHash
+	]);
+};
 const collectDataWrites = (client: DirectStream) => {
 	const writes: Map<string, DataMessage[]> = new Map();
 	for (const [name, peer] of client.peers) {
@@ -159,7 +188,6 @@ class TestDirectStream extends DirectStream {
 		});
 	}
 }
-type TestSessionStream = TestSession<{ directstream: DirectStream }>;
 const connected = async (
 	n: number,
 	options?:
@@ -300,16 +328,7 @@ describe("streams", function () {
 
 				streams = collectMetrics(session);
 
-				await session.connect([
-					// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
-					[session.peers[0], session.peers[1]],
-					[session.peers[1], session.peers[2]],
-					[session.peers[2], session.peers[3]]
-				]);
-
-				await waitForPeerStreams(streams[0].stream, streams[1].stream);
-				await waitForPeerStreams(streams[1].stream, streams[2].stream);
-				await waitForPeerStreams(streams[2].stream, streams[3].stream);
+				await connectLine(session);
 			});
 
 			afterEach(async () => {
@@ -1534,19 +1553,26 @@ describe("streams", function () {
 				await waitForResolved(() =>
 					expect(streams[0].stream.peers.size).toEqual(1)
 				);
-				await delay(2000);
-				expect(streams[0].stream.peers.size).toEqual(1);
+				expect(
+					streams[1].received.filter((x) => x.data?.length || 0 > 0)
+				).toHaveLength(1);
+				expect(
+					streams[2].received.filter((x) => x.data?.length || 0 > 0)
+				).toHaveLength(1);
+
 				await streams[0].stream.publish(new Uint8Array(101), {
 					to: [streams[1].stream.publicKey, streams[2].stream.publicKey]
 				});
 
 				// messages can still deliver
-				expect(
-					streams[1].received.filter((x) => x.data?.length || 0 > 0)
-				).toHaveLength(2);
-				expect(
-					streams[2].received.filter((x) => x.data?.length || 0 > 0)
-				).toHaveLength(2);
+				await waitForResolved(() => {
+					expect(
+						streams[1].received.filter((x) => x.data?.length || 0 > 0)
+					).toHaveLength(2);
+					expect(
+						streams[2].received.filter((x) => x.data?.length || 0 > 0)
+					).toHaveLength(2);
+				});
 			});
 
 			it("max queued buffer pruning", async () => {
@@ -1766,7 +1792,7 @@ describe("join/leave", () => {
 	const data = new Uint8Array([1, 2, 3]);
 	let autoDialRetryDelay = 5 * 1000;
 
-	describe("direct connections", () => {
+	describe("auto dialer", () => {
 		beforeEach(async () => {
 			session = await disconnected(
 				4,
@@ -1799,13 +1825,7 @@ describe("join/leave", () => {
 				}
 			}
 
-			// slowly connect to that the route maps are deterministic
-			await session.connect([[session.peers[0], session.peers[1]]]);
-			await session.connect([[session.peers[1], session.peers[2]]]);
-			await session.connect([[session.peers[2], session.peers[3]]]);
-			await waitForPeerStreams(streams[0].stream, streams[1].stream);
-			await waitForPeerStreams(streams[1].stream, streams[2].stream);
-			await waitForPeerStreams(streams[2].stream, streams[3].stream);
+			await connectLine(session);
 		});
 
 		afterEach(async () => {
@@ -2079,7 +2099,7 @@ describe("join/leave", () => {
 		}); */
 	});
 
-	describe("4", () => {
+	describe("re-route", () => {
 		beforeEach(async () => {
 			session = await disconnected(4, {
 				services: {
@@ -2091,49 +2111,10 @@ describe("join/leave", () => {
 				}
 			});
 
-			/* 
-			┌─┐
-			│3│
-			└┬┘
-			┌▽┐
-			│0│
-			└┬┘
-			┌▽┐
-			│1│
-			└┬┘
-			┌▽┐
-			│2│
-			└─┘
-			
-			 */
-
 			streams = [];
 			for (const peer of session.peers) {
 				streams.push(createMetrics(peer.services.directstream));
 			}
-
-			// slowly connect to that the route maps are deterministic
-			await session.connect([[session.peers[0], session.peers[1]]]);
-			await session.connect([[session.peers[1], session.peers[2]]]);
-			await session.connect([[session.peers[0], session.peers[3]]]);
-			await waitForPeerStreams(streams[0].stream, streams[1].stream);
-			await waitForPeerStreams(streams[1].stream, streams[2].stream);
-			await waitForPeerStreams(streams[0].stream, streams[3].stream);
-
-			expect([...streams[0].stream.peers.keys()]).toEqual([
-				streams[1].stream.publicKeyHash,
-				streams[3].stream.publicKeyHash
-			]);
-			expect([...streams[1].stream.peers.keys()]).toEqual([
-				streams[0].stream.publicKeyHash,
-				streams[2].stream.publicKeyHash
-			]);
-			expect([...streams[2].stream.peers.keys()]).toEqual([
-				streams[1].stream.publicKeyHash
-			]);
-			expect([...streams[3].stream.peers.keys()]).toEqual([
-				streams[0].stream.publicKeyHash
-			]); // peer has recevied reachable event from everone
 		});
 
 		afterEach(async () => {
@@ -2141,64 +2122,119 @@ describe("join/leave", () => {
 		});
 
 		it("re-route new connection", async () => {
-			/* 					
-			┌───┐ 
-			│3  │ 
-			└┬─┬┘ 
-			│┌▽┐ 
-			││0│ 
-			│└┬┘ 
-			│┌▽─┐
-			││1 │
-			│└┬─┘
-			┌▽─▽┐ 
-			│2  │ 
-			└───┘ 
-			 */
+			// line topology
+			await connectLine(session);
 
-			await streams[3].stream.publish(new Uint8Array(0), {
+			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
-					to: [streams[2].stream.publicKeyHash]
+					to: [streams[3].stream.publicKeyHash]
 				})
 			});
 			expect(
-				streams[3].stream.routes
+				streams[0].stream.routes
 					.findNeighbor(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash
 					)
 					?.list?.map((x) => x.hash)
-			).toEqual([streams[0].stream.publicKeyHash]);
-			await session.connect([[session.peers[2], session.peers[3]]]);
-			await waitForPeerStreams(streams[2].stream, streams[3].stream);
+			).toEqual([streams[1].stream.publicKeyHash]);
 
-			await streams[3].stream.publish(new Uint8Array(0), {
+			/* 					
+			┌───┐ 
+			│0  │ 
+			└┬─┬┘ 
+			│┌▽┐ 
+			││1│ 
+			│└┬┘ 
+			│┌▽─┐
+			││2 │
+			│└┬─┘
+			┌▽─▽┐ 
+			│3  │ 
+			└───┘ 
+			*/
+
+			await session.connect([[session.peers[0], session.peers[3]]]);
+			await waitForPeerStreams(streams[0].stream, streams[3].stream);
+
+			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
-					to: [streams[2].stream.publicKeyHash]
+					to: [streams[3].stream.publicKeyHash]
 				})
 			});
 
 			await waitForResolved(() => {
 				expect(
-					streams[3].stream.routes
+					streams[0].stream.routes
 						.findNeighbor(
-							streams[3].stream.publicKeyHash,
-							streams[2].stream.publicKeyHash
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
 						)
-						?.list.map((x) => {
+						?.list?.map((x) => {
 							return { hash: x.hash, distance: x.distance };
 						})
 				).toEqual([
-					{ distance: -1, hash: streams[2].stream.publicKeyHash },
-					{ distance: 0, hash: streams[0].stream.publicKeyHash },
-					{ distance: 1, hash: streams[0].stream.publicKeyHash }
+					{ distance: -1, hash: streams[3].stream.publicKeyHash },
+					{ distance: 0, hash: streams[1].stream.publicKeyHash },
+					{ distance: 1, hash: streams[1].stream.publicKeyHash }
 				]);
 			});
 		});
 
 		it("neighbour drop", async () => {
+			await connectLine(session);
+
+			await streams[0].stream.publish(new Uint8Array(0), {
+				mode: new SeekDelivery({
+					redundancy: 2,
+					to: [streams[3].stream.publicKeyHash]
+				})
+			});
+			expect(
+				streams[0].stream.routes
+					.findNeighbor(
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash
+					)
+					?.list?.map((x) => x.hash)
+			).toEqual([streams[1].stream.publicKeyHash]);
+
+			await session.peers[1].stop();
+
+			await waitForResolved(() => {
+				expect(
+					streams[0].stream.routes
+						.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)
+						?.list?.map((x) => x.hash)
+				).toEqual([streams[1].stream.publicKeyHash]);
+			});
+		});
+
+		it("re-seeks on connection drop", async () => {
+			/* 					
+			┌───┐ 
+			│0  │ 
+			└┬─┬┘ 
+			│┌▽┐ 
+			││1│ 
+			│└┬┘ 
+			│┌▽─┐
+			││2 │
+			│└┬─┘
+			┌▽─▽┐ 
+			│3  │ 
+			└───┘ 
+			*/
+
+			await connectLine(session);
+			await session.connect([[session.peers[0], session.peers[3]]]);
+			await waitForPeerStreams(streams[0].stream, streams[3].stream);
+
 			await streams[3].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
@@ -2206,83 +2242,92 @@ describe("join/leave", () => {
 				})
 			});
 			expect(
-				streams[3].stream.routes
+				streams[0].stream.routes
 					.findNeighbor(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash
 					)
 					?.list?.map((x) => x.hash)
-			).toEqual([streams[0].stream.publicKeyHash]);
-			await session.peers[0].stop();
+			).toEqual([streams[3].stream.publicKeyHash]);
+
+			/* 			const rmNeighbour = session.peers[0].services.directstream.routes.removeNeighbour.bind
+			 */ await session.peers[0].hangUp(session.peers[3].peerId);
+
+			// the route should now be the long route
 			await waitForResolved(() => {
 				expect(
-					streams[3].stream.routes.findNeighbor(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
-					)
-				).toBeUndefined();
+					streams[0].stream.routes
+						.findNeighbor(
+							streams[0].stream.publicKeyHash,
+							streams[3].stream.publicKeyHash
+						)
+						?.list?.map((x) => x.hash)
+				).toEqual([streams[1].stream.publicKeyHash]);
 			});
 		});
 
 		it("distant drop", async () => {
+			// line topology
+			await connectLine(session);
+
 			expect(
-				streams[3].stream.routes
+				streams[0].stream.routes
 					.findNeighbor(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash
 					)
 					?.list?.map((x) => x.hash)
 			).toBeUndefined();
-			await streams[3].stream.publish(new Uint8Array(0), {
+			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
-					to: [streams[2].stream.publicKeyHash]
+					to: [streams[3].stream.publicKeyHash]
 				})
 			});
 			expect(
-				streams[3].stream.routes
+				streams[0].stream.routes
 					.findNeighbor(
-						streams[3].stream.publicKeyHash,
-						streams[2].stream.publicKeyHash
+						streams[0].stream.publicKeyHash,
+						streams[3].stream.publicKeyHash
 					)
 					?.list?.map((x) => x.hash)
-			).toEqual([streams[0].stream.publicKeyHash]);
+			).toEqual([streams[1].stream.publicKeyHash]);
 
-			await waitForResolved(() =>
-				expect(streams[3].reachable.map((x) => x.hashcode())).toEqual([
-					streams[0].stream.publicKeyHash,
-					streams[2].stream.publicKeyHash
-				])
-			);
 			await waitForResolved(() =>
 				expect(streams[0].reachable.map((x) => x.hashcode())).toEqual([
 					streams[1].stream.publicKeyHash,
 					streams[3].stream.publicKeyHash
 				])
 			);
+			await waitForResolved(() =>
+				expect(streams[1].reachable.map((x) => x.hashcode())).toEqual([
+					streams[0].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash
+				])
+			);
 
-			await session.peers[2].stop();
+			await session.peers[3].stop();
 
 			await waitForResolved(
 				() =>
-					expect(streams[3].unrechable.map((x) => x.hashcode())).toEqual([
-						streams[2].stream.publicKeyHash
+					expect(streams[0].unrechable.map((x) => x.hashcode())).toEqual([
+						streams[3].stream.publicKeyHash
 					]),
 				{ timeout: 20 * 1000 }
 			);
-			expect(streams[0].unrechable.map((x) => x.hashcode())).toEqual([]); // because node 2 was never "reachable" directly from 2, just as a relay
+			expect(streams[1].unrechable.map((x) => x.hashcode())).toEqual([]); // because node 3 was never "reachable" directly from 2, just as a relay
 
 			expect(
-				streams[3].stream.routes.isReachable(
-					streams[3].stream.publicKeyHash,
-					streams[2].stream.publicKeyHash
+				streams[0].stream.routes.isReachable(
+					streams[0].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash
 				)
 			).toEqual(false);
 
 			expect(
-				streams[3].stream.routes.findNeighbor(
-					streams[3].stream.publicKeyHash,
-					streams[2].stream.publicKeyHash
+				streams[0].stream.routes.findNeighbor(
+					streams[0].stream.publicKeyHash,
+					streams[3].stream.publicKeyHash
 				)
 			).toBeUndefined();
 		});
@@ -2389,15 +2434,7 @@ describe("join/leave", () => {
 			session = await disconnected(4);
 			let streams = collectMetrics(session);
 
-			await session.connect([
-				// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
-				[session.peers[0], session.peers[1]],
-				[session.peers[1], session.peers[2]],
-				[session.peers[2], session.peers[3]]
-			]);
-			await waitForPeerStreams(stream(session, 0), stream(session, 1));
-			await waitForPeerStreams(stream(session, 1), stream(session, 2));
-			await waitForPeerStreams(stream(session, 2), stream(session, 3));
+			await connectLine(session);
 
 			await session.peers[0].services.directstream.publish(
 				new Uint8Array([0]),

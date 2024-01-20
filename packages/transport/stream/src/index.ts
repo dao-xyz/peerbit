@@ -819,8 +819,12 @@ export abstract class DirectStream<
 
 			// Notify network
 			const dependent = this.routes.getDependent(peerKeyHash);
-			this.removeRouteConnection(peerKeyHash);
 
+			this.routes.removeNeighbour(peerKeyHash);
+
+			this.maybeDeleteRemoteRoutes([peerKeyHash]);
+
+			// tell dependent peers that there is a node that might have left
 			if (dependent.length > 0) {
 				await this.publishMessage(
 					this.publicKey,
@@ -838,7 +842,7 @@ export abstract class DirectStream<
 		logger.debug("connection ended:" + peerKey.toString());
 	}
 
-	public removeRouteConnection(hash: string) {
+	public removePeerFromRoutes(hash: string) {
 		const unreachable = this.routes.remove(hash);
 		for (const node of unreachable) {
 			this.onPeerUnreachable(node); // TODO types
@@ -1350,33 +1354,31 @@ export abstract class DirectStream<
 			}
 		}
 
+		await this.maybeDeleteRemoteRoutes(filteredLeaving);
+	}
+
+	private maybeDeleteRemoteRoutes(remotes: string[]) {
 		// Handle deletion (if message is sign by the peer who left)
 		// or invalidation followed up with an attempt to re-establish a connection
-		for (const remote of filteredLeaving) {
-			if (
-				message.header.signatures?.publicKeys.find(
-					(x) => x.hashcode() === remote
-				)
-			) {
-				this.removeRouteConnection(remote);
-			} else {
-				this.invalidateSession(remote);
-
-				if (filteredLeaving.length > 0) {
-					this.publish(new Uint8Array(0), {
-						mode: new SeekDelivery({
-							to: filteredLeaving,
-							redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
-						})
-					}).catch((e) => {
-						if (e instanceof TimeoutError || e instanceof AbortError) {
-							// peer left or closed
-						} else {
-							throw e;
-						}
-					}); // this will remove the target if it is still not reable
+		for (const remote of remotes) {
+			this.invalidateSession(remote);
+		}
+		this.checkIsAlive(remotes);
+	}
+	private async checkIsAlive(remotes: string[]) {
+		if (remotes.length > 0) {
+			await this.publish(new Uint8Array(0), {
+				mode: new SeekDelivery({
+					to: remotes,
+					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
+				})
+			}).catch((e) => {
+				if (e instanceof TimeoutError || e instanceof AbortError) {
+					// peer left or closed
+				} else {
+					throw e;
 				}
-			}
+			}); // this will remove the target if it is still not reable
 		}
 	}
 
@@ -1516,7 +1518,7 @@ export abstract class DirectStream<
 					this.healthChecks.set(
 						to,
 						setTimeout(() => {
-							this.removeRouteConnection(to);
+							this.removePeerFromRoutes(to);
 						}, this.seekTimeout + 5000)
 					);
 				}

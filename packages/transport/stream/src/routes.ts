@@ -216,6 +216,18 @@ export class Routes {
 		return [...maybeUnreachable].filter((x) => !this.isReachable(this.me, x));
 	}
 
+	removeNeighbour(neighbour: string) {
+		this.routes.delete(neighbour);
+		for (const [_fromMapKey, fromMap] of this.routes) {
+			for (const [key, routes] of fromMap) {
+				routes.list = routes.list.filter((x) => x.hash !== neighbour);
+				if (routes.list.length === 0) {
+					fromMap.delete(key);
+				}
+			}
+		}
+	}
+
 	findNeighbor(from: string, target: string) {
 		return this.routes.get(from)?.get(target);
 	}
