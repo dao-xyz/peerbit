@@ -54,6 +54,13 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.0.6...libp2p-test-utils-v2.1.0) (2024-01-20)
+
+
+### Features
+
+* connectLine utility ([2b27cab](https://github.com/dao-xyz/peerbit/commit/2b27cabf4f479ddbf39bb37816288b9f943c5e9c))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.8...libp2p-test-utils-v2.0.0) (2023-12-31)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy-window",
-	"version": "3.0.15",
+	"version": "3.0.16",
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -30,10 +30,10 @@
 		"import": "./lib/esm/index.js"
 	},
 	"dependencies": {
-		"@peerbit/proxy": "^2.0.15"
+		"@peerbit/proxy": "^2.0.16"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.0.15"
+		"@peerbit/test-utils": "2.0.16"
 	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",

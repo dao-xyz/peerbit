@@ -290,6 +290,33 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [7.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.1.1...shared-log-v7.0.0) (2024-01-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* request missing hashes before exchanging heads
+
+### Features
+
+* request missing hashes before exchanging heads ([908e5a5](https://github.com/dao-xyz/peerbit/commit/908e5a5aaeaa310277aefe76328852ab99ec6e0a))
+
+
+### Bug Fixes
+
+* improve perf and change default window size ([80f271b](https://github.com/dao-xyz/peerbit/commit/80f271bccb30eda84d7f42e210379894efdb3622))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.13 to 3.0.14
+    * @peerbit/log bumped from 3.0.15 to 3.0.16
+    * @peerbit/rpc bumped from 3.0.15 to 3.0.16
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.15 to ^2.0.16
+
 ## [6.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.1.0...shared-log-v6.1.1) (2024-01-19)
 
 

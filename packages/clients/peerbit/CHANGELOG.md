@@ -223,6 +223,22 @@
     * @peerbit/pubsub bumped from ^2.0.12 to ^2.0.13
     * @peerbit/blocks bumped from ^2.0.13 to ^2.0.14
 
+## [3.0.16](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.15...peerbit-v3.0.16) (2024-01-20)
+
+
+### Bug Fixes
+
+* rm signaturePolicy property ([003556c](https://github.com/dao-xyz/peerbit/commit/003556c1475a6a68dda08fc1560d70dde1f5ad17))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.13 to 3.0.14
+    * @peerbit/pubsub bumped from ^2.0.13 to ^2.0.14
+    * @peerbit/blocks bumped from ^2.0.14 to ^2.0.15
+
 ## [3.0.13](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.12...peerbit-v3.0.13) (2024-01-17)
 
 
