@@ -23,9 +23,6 @@ export abstract class PubSubMessage {
 	}
 }
 
-export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
-	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
-
 @variant(0)
 export class PubSubData extends PubSubMessage {
 	@field({ type: vec("string") })
