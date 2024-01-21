@@ -395,7 +395,7 @@ describe("redundancy", () => {
 		expect(dataMessages).toHaveLength(count);
 	});
 
-	it("xxxonly sends entries once,3 peers", async () => {
+	it("only sends entries once,3 peers", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
 				role: {
