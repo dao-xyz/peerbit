@@ -290,6 +290,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [7.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.0...shared-log-v7.0.1) (2024-01-21)
+
+
+### Bug Fixes
+
+* deduplicate heads exchange when there are many replicators ([81d9d21](https://github.com/dao-xyz/peerbit/commit/81d9d212d96ab8509f63dccb7612669449d4118b))
+* make sure manually synced entries don't get pruned ([8ee3773](https://github.com/dao-xyz/peerbit/commit/8ee3773d75dde2ff9577c4dc5ce7eb2ffd057634))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 3.0.16 to 3.0.17
+    * @peerbit/rpc bumped from 3.0.16 to 3.0.17
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.16 to ^2.0.17
+
 ## [7.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.1.1...shared-log-v7.0.0) (2024-01-20)
 
 

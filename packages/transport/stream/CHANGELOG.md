@@ -37,6 +37,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.8](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.7...stream-v3.0.8) (2024-01-21)
+
+
+### Bug Fixes
+
+* dont listen for unreachable events on relayed messages ([64aab0b](https://github.com/dao-xyz/peerbit/commit/64aab0b7628fa1d8e4e39ba5c4a7260b5cb308ac))
+
 ## [3.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.6...stream-v3.0.7) (2024-01-20)
 
 

@@ -208,6 +208,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.15 to 2.0.16
 
+## [2.0.17](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.16...proxy-v2.0.17) (2024-01-21)
+
+
+### Bug Fixes
+
+* prevent publish events to emit to data events on host ([3731f9e](https://github.com/dao-xyz/peerbit/commit/3731f9ef4c7e8acdad20f6d845bd3911d9a57a7c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.16 to 2.0.17
+
 ## [2.0.9](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.8...proxy-v2.0.9) (2024-01-10)
 
 
