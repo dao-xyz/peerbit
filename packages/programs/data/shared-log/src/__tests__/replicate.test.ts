@@ -1350,3 +1350,57 @@ describe("replication degree", () => {
 		expect(db2.log.log.length).toEqual(1);
 	}); */
 });
+
+describe("sync", () => {
+	let session: TestSession;
+	let db1: EventStore<string>, db2: EventStore<string>;
+
+	beforeAll(async () => {
+		session = await TestSession.connected(3);
+	});
+	afterAll(async () => {
+		await session.stop();
+	});
+
+	afterEach(async () => {
+		if (db1) await db1.drop();
+		if (db2) await db2.drop();
+	});
+
+	it("manually synced entries will not get pruned", async () => {
+		db1 = await session.peers[0].open<EventStore<string>>(new EventStore(), {
+			args: {
+				sync: () => true,
+				replicas: {
+					min: 1
+				},
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		})!;
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					sync: () => true,
+					replicas: {
+						min: 1
+					},
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		))!;
+		await db1.add("data");
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+		await db2.log.updateRole("observer");
+		await delay(3000);
+		expect(db2.log.log.length).toEqual(1);
+	});
+});

@@ -1702,10 +1702,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (currentPeers.length > 0) {
 					// If we are observer, never prune locally created entries, since we dont really know who can store them
 					// if we are replicator, we will always persist entries that we need to so filtering on createdLocally will not make a difference
-					const entriesToDelete =
+					let entriesToDelete =
 						this._role instanceof Observer
 							? entries.filter((e) => !e.createdLocally)
 							: entries;
+
+					if (this.sync) {
+						entriesToDelete = entriesToDelete.filter(
+							(entry) => this.sync!(entry) === false
+						);
+					}
 					allEntriesToDelete.push(...entriesToDelete);
 				}
 			} else {
