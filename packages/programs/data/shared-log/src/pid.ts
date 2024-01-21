@@ -36,19 +36,16 @@ export class PIDReplicationController {
 
 	/**
 	 * Call this function on a period interval since it does not track time passed
-	 * @param memoryUsage
-	 * @param currentFactor
-	 * @param totalFactor
-	 * @param peerCount
-	 * @returns
 	 */
-	step(
-		memoryUsage: number,
-		currentFactor: number,
-		totalFactor: number,
-		peerCount: number,
-		cpuUsage: number | undefined
-	) {
+	step(properties: {
+		memoryUsage: number;
+		currentFactor: number;
+		totalFactor: number;
+		peerCount: number;
+		cpuUsage: number | undefined;
+	}) {
+		const { memoryUsage, totalFactor, peerCount, cpuUsage, currentFactor } =
+			properties;
 		this.prevTotalFactor = totalFactor;
 		this.prevMemoryUsage = memoryUsage;
 

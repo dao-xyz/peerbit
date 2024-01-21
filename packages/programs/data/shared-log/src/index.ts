@@ -206,11 +206,19 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	private sync?: (entry: Entry<T>) => boolean;
 
+	// A fn that we can call many times that recalculates the participation role
 	private rebalanceParticipationDebounced:
 		| ReturnType<typeof debounce>
 		| undefined;
 
+	// regular distribution checks
 	private distributeInterval: ReturnType<typeof setInterval>;
+
+	// Syncing and dedeplucation work
+	private syncMoreInterval?: ReturnType<typeof setTimeout>;
+	private syncInFlightQueue: Map<string, PublicSignKey[]>;
+	private syncInFlightQueueInverted: Map<string, Set<string>>;
+
 	replicas: ReplicationLimits;
 
 	private cpuUsage?: CPUUsage;
@@ -441,6 +449,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
 		this.latestRoleMessages = new Map();
+		this.syncInFlightQueue = new Map();
+		this.syncInFlightQueueInverted = new Map();
 		this.openTime = +new Date();
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity || WAIT_FOR_ROLE_MATURITY;
@@ -484,14 +494,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 			keychain: this.node.services.keychain,
 			...this._logProperties,
 			onChange: (change) => {
-				if (this._pendingIHave.size > 0) {
-					for (const added of change.added) {
-						const ih = this._pendingIHave.get(added.hash);
-						if (ih) {
-							ih.clear();
-							ih.callback(added);
-						}
-					}
+				for (const added of change.added) {
+					this.onEntryAdded(added);
+				}
+				for (const removed of change.removed) {
+					this.onEntryRemoved(removed.hash);
 				}
 				return this._logProperties?.onChange?.(change);
 			},
@@ -556,6 +563,44 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.distributeInterval = setInterval(() => {
 			this.distribute();
 		}, 7.5 * 1000);
+
+		const requestSync = () => {
+			/**
+			 * This method fetches entries that we potentially want.
+			 * In a case in which we become replicator of a segment,
+			 * multiple remote peers might want to send us entries
+			 * This method makes sure that we only request on entry from the remotes at a time
+			 * so we don't get flooded with the same entry
+			 */
+			const requestHashes: string[] = [];
+			const from: Set<string> = new Set();
+			for (const [key, value] of this.syncInFlightQueue) {
+				if (value.length > 0) {
+					requestHashes.push(key);
+					from.add(value.shift()!.hashcode());
+				}
+
+				if (value.length === 0) {
+					this.syncInFlightQueue.delete(key); // no-one more to ask for this entry
+				}
+			}
+			this.rpc
+				.send(
+					new ResponseMaybeSync({
+						hashes: requestHashes
+					}),
+					{
+						mode: new SilentDelivery({ to: from, redundancy: 1 })
+					}
+				)
+				.finally(() => {
+					if (this.closed) {
+						return;
+					}
+					this.syncMoreInterval = setTimeout(requestSync, 1e4);
+				});
+		};
+		requestSync();
 	}
 
 	async afterOpen(): Promise<void> {
@@ -588,6 +633,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	private async _close() {
 		clearInterval(this.distributeInterval);
+		clearTimeout(this.syncMoreInterval);
+
 		this._closeController.abort();
 
 		this.node.services.pubsub.removeEventListener(
@@ -611,11 +658,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		await this.remoteBlocks.stop();
 		this._gidParentCache.clear();
-		this._pendingDeletes = new Map();
-		this._pendingIHave = new Map();
+		this._pendingDeletes.clear();
+		this._pendingIHave.clear();
+		this.syncInFlightQueue.clear();
+		this.syncInFlightQueueInverted.clear();
 		this.latestRoleMessages.clear();
+		this._gidPeersHistory.clear();
 
-		this._gidPeersHistory = new Map();
 		this._sortedPeersCache = undefined;
 		this.cpuUsage?.stop?.();
 	}
@@ -857,9 +906,31 @@ export class SharedLog<T = Uint8Array> extends Program<
 					this._pendingDeletes.get(hash)?.resolve(context.from.hashcode());
 				}
 			} else if (msg instanceof RequestMaybeSync) {
+				const requestHashes: string[] = [];
+				for (const hash of msg.hashes) {
+					const inFlight = this.syncInFlightQueue.get(hash);
+					if (inFlight) {
+						inFlight.push(context.from);
+						let inverted = this.syncInFlightQueueInverted.get(
+							context.from.hashcode()
+						);
+						if (!inverted) {
+							inverted = new Set();
+							this.syncInFlightQueueInverted.set(
+								context.from.hashcode(),
+								inverted
+							);
+						}
+						inverted.add(hash);
+					} else {
+						this.syncInFlightQueue.set(hash, []);
+						requestHashes.push(hash);
+					}
+				}
+
 				await this.rpc.send(
 					new ResponseMaybeSync({
-						hashes: msg.hashes.filter((x) => !this.log.has(x))
+						hashes: requestHashes
 					}),
 					{
 						mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
@@ -1615,7 +1686,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				if (!oldPeersSet?.has(currentPeer)) {
-					// second condition means that if the new peer is us, we should not do anything, since we are expecting to receive heads, not send
 					let arr = uncheckedDeliver.get(currentPeer);
 					if (!arr) {
 						arr = [];
@@ -1754,13 +1824,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const peers = this.getReplicatorsSorted();
 			const usedMemory = await this.getMemoryUsage();
 
-			const newFactor = this.replicationController.step(
-				usedMemory,
-				this._role.factor,
-				this._totalParticipation,
-				peers?.length || 1,
-				this.cpuUsage?.value()
-			);
+			const newFactor = this.replicationController.step({
+				memoryUsage: usedMemory,
+				currentFactor: this._role.factor,
+				totalFactor: this._totalParticipation,
+				peerCount: peers?.length || 1,
+				cpuUsage: this.cpuUsage?.value()
+			});
 
 			const relativeDifference =
 				Math.abs(this._role.factor - newFactor) / this._role.factor;
@@ -1789,6 +1859,35 @@ export class SharedLog<T = Uint8Array> extends Program<
 			return false;
 		}
 		return false;
+	}
+
+	private clearSyncProcess(hash: string) {
+		const inflight = this.syncInFlightQueue.get(hash);
+		if (inflight) {
+			for (const key of inflight) {
+				const map = this.syncInFlightQueueInverted.get(key.hashcode());
+				if (map) {
+					map.delete(hash);
+					if (map.size === 0) {
+						this.syncInFlightQueueInverted.delete(key.hashcode());
+					}
+				}
+			}
+
+			this.syncInFlightQueue.delete(hash);
+		}
+	}
+	private onEntryAdded(entry: Entry<any>) {
+		const ih = this._pendingIHave.get(entry.hash);
+		if (ih) {
+			ih.clear();
+			ih.callback(entry);
+		}
+		this.clearSyncProcess(entry.hash);
+	}
+
+	onEntryRemoved(hash: string) {
+		this.clearSyncProcess(hash);
 	}
 }
 

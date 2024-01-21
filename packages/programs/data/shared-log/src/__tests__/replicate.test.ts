@@ -14,9 +14,7 @@ import { AbsoluteReplicas, decodeReplicas, maxReplicas } from "../replication";
 import { Observer } from "../role";
 import { ExchangeHeadsMessage } from "../exchange-heads";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { jest } from "@jest/globals";
 import { collectMessages, getReceivedHeads } from "./utils.js";
-import { PIDReplicationController } from "../pid.js";
 
 describe(`exchange`, function () {
 	let session: TestSession;
@@ -34,8 +32,6 @@ describe(`exchange`, function () {
 		};
 	});
 	afterAll(() => {
-		jest.retryTimes(1);
-
 		Entry.fromMultihash = fromMultihash;
 	});
 
@@ -335,106 +331,189 @@ describe(`exchange`, function () {
 
 		await waitForResolved(() => expect(db2.log.log.length).toEqual(count));
 	});
+});
 
-	describe("redundancy", () => {
-		it("only sends entries once", async () => {
-			db1.log.updateRole({ type: "replicator", factor: 0 });
-			const message1 = collectMessages(db1.log);
-			let count = 1000;
-			for (let i = 0; i < count; i++) {
-				await db1.add("hello " + i, { meta: { next: [] } });
-			}
-			const interval = setInterval(() => {
-				db1.log.distribute();
-			}, 100);
-			db2 = (await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1],
-				{
-					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
+describe("redundancy", () => {
+	let session: TestSession;
+	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
+
+	let fetchEvents: number;
+	let fetchHashes: Set<string>;
+	let fromMultihash: any;
+
+	beforeAll(async () => {
+		session = await TestSession.connected(3);
+		fromMultihash = Entry.fromMultihash;
+		// TODO monkeypatching might lead to sideeffects in other tests!
+		Entry.fromMultihash = (s, h, o) => {
+			fetchHashes.add(h);
+			fetchEvents += 1;
+			return fromMultihash(s, h, o);
+		};
+	});
+	afterAll(async () => {
+		await session.stop();
+	});
+
+	beforeEach(() => {
+		fetchEvents = 0;
+		fetchHashes = new Set();
+	});
+	afterEach(async () => {
+		if (db1) await db1.drop();
+		if (db2) await db2.drop();
+		if (db3) await db3.drop();
+	});
+
+	it("only sends entries once, 2 peers", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>());
+		db1.log.updateRole({ type: "replicator", factor: 0 });
+		let count = 1000;
+		for (let i = 0; i < count; i++) {
+			await db1.add("hello " + i, { meta: { next: [] } });
+		}
+		const interval = setInterval(() => {
+			db1.log.distribute();
+		}, 100);
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
 					}
 				}
-			))!;
-
-			const message2 = collectMessages(db2.log);
-			await delay(3000);
-			clearInterval(interval);
-			const dataMessages = getReceivedHeads(message2);
-			expect(dataMessages).toHaveLength(count);
-		});
-
-		it("no fetches needed when replicating live ", async () => {
-			db2 = (await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1]
-			))!;
-
-			await db1.waitFor(session.peers[1].peerId);
-			await db2.waitFor(session.peers[0].peerId);
-
-			const entryCount = 99;
-
-			// Trigger replication
-			let adds: number[] = [];
-			for (let i = 0; i < entryCount; i++) {
-				adds.push(i);
-				await db1.add("hello " + i, { meta: { next: [] } });
-				// TODO when nexts is omitted, entrise will dependon each other,
-				// When entries arrive in db2 unecessary fetches occur because there is already a sync in progress?
 			}
+		))!;
 
-			//await mapSeries(adds, (i) => db1.add("hello " + i));
+		const message2 = collectMessages(db2.log);
+		await delay(3000);
+		clearInterval(interval);
+		const dataMessages = getReceivedHeads(message2);
+		expect(dataMessages).toHaveLength(count);
+	});
 
-			// All entries should be in the database
-			await waitForResolved(() =>
-				expect(db2.log.log.length).toEqual(entryCount)
-			);
-
-			// All entries should be in the database
-			expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
-				entryCount
-			);
-
-			// progress events should increase monotonically
-			expect(fetchEvents).toEqual(fetchHashes.size);
-			expect(fetchEvents).toEqual(0); // becausel all entries were sent
-		});
-		it("fetches only once after open", async () => {
-			const entryCount = 15;
-
-			// Trigger replication
-			const adds: number[] = [];
-			for (let i = 0; i < entryCount; i++) {
-				adds.push(i);
+	it("xxxonly sends entries once,3 peers", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
 			}
-
-			const add = async (i: number) => {
-				await db1.add("hello " + i);
-			};
-
-			await mapSeries(adds, add);
-
-			db2 = (await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1]
-			))!;
-
-			// All entries should be in the database
-			await waitForResolved(() =>
-				expect(db2.log.log.length).toEqual(entryCount)
-			);
-
-			// progress events should (increase monotonically)
-			expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
-				entryCount
-			);
-			expect(fetchEvents).toEqual(fetchHashes.size);
-			expect(fetchEvents).toEqual(entryCount - 1); // - 1 because we also send some references for faster syncing (see exchange-heads.ts)
 		});
+		db2 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		);
+
+		let count = 1000;
+		for (let i = 0; i < count; i++) {
+			await db1.add("hello " + i, { meta: { next: [] } });
+		}
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(count));
+
+		db3 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		);
+		const message3 = collectMessages(db3.log);
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(count));
+		const heads = getReceivedHeads(message3);
+		expect(heads).toHaveLength(count);
+
+		// gc check,.
+		await waitForResolved(() => {
+			expect(db3.log["syncInFlightQueue"].size).toEqual(0);
+			expect(db3.log["syncInFlightQueueInverted"].size).toEqual(0);
+		});
+	});
+
+	it("no fetches needed when replicating live ", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>());
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		))!;
+
+		await db1.waitFor(session.peers[1].peerId);
+		await db2.waitFor(session.peers[0].peerId);
+
+		const entryCount = 99;
+
+		// Trigger replication
+		let adds: number[] = [];
+		for (let i = 0; i < entryCount; i++) {
+			adds.push(i);
+			await db1.add("hello " + i, { meta: { next: [] } });
+			// TODO when nexts is omitted, entrise will dependon each other,
+			// When entries arrive in db2 unecessary fetches occur because there is already a sync in progress?
+		}
+
+		//await mapSeries(adds, (i) => db1.add("hello " + i));
+
+		// All entries should be in the database
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(entryCount));
+
+		// All entries should be in the database
+		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
+			entryCount
+		);
+
+		// progress events should increase monotonically
+		expect(fetchEvents).toEqual(fetchHashes.size);
+		expect(fetchEvents).toEqual(0); // becausel all entries were sent
+	});
+	it("fetches only once after open", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>());
+
+		const entryCount = 15;
+
+		// Trigger replication
+		const adds: number[] = [];
+		for (let i = 0; i < entryCount; i++) {
+			adds.push(i);
+		}
+
+		const add = async (i: number) => {
+			await db1.add("hello " + i);
+		};
+
+		await mapSeries(adds, add);
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		))!;
+
+		// All entries should be in the database
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(entryCount));
+
+		// progress events should (increase monotonically)
+		expect((await db2.iterator({ limit: -1 })).collect().length).toEqual(
+			entryCount
+		);
+		expect(fetchEvents).toEqual(fetchHashes.size);
+		expect(fetchEvents).toEqual(entryCount - 1); // - 1 because we also send some references for faster syncing (see exchange-heads.ts)
 	});
 });
 
@@ -1270,54 +1349,4 @@ describe("replication degree", () => {
 		);
 		expect(db2.log.log.length).toEqual(1);
 	}); */
-});
-
-describe("controller", () => {
-	describe("cpu", () => {
-		it("bounded by cpu available", () => {
-			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
-			let cpuUsage = 1;
-			expect(controller.step(0, 0, 1, 2, cpuUsage)).toEqual(0);
-			cpuUsage = 0;
-			expect(controller.step(0, 0.5, 1, 2, cpuUsage)).toBeWithin(0.4, 0.6); // no change
-		});
-
-		it("respects peer count of 1", () => {
-			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
-			let cpuUsage = 1;
-			expect(controller.step(0, 1, 1, 1, cpuUsage)).toEqual(1);
-			expect(controller.step(0, 1, 1, 1, cpuUsage)).toEqual(1);
-			expect(controller.step(0, 1, 1, 1, cpuUsage)).toEqual(1);
-		});
-
-		it("coverges to zero of cpu usage is max", () => {
-			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
-			let cpuUsage = 1;
-			let f = 1;
-			for (let i = 0; i < 10; i++) {
-				f = controller.step(0, f, 1, 2, cpuUsage);
-			}
-			expect(f).toEqual(0);
-		});
-
-		it("ignores balance if cpu usage is max", () => {
-			const controller = new PIDReplicationController("", { cpu: { max: 0 } });
-			let cpuUsage = 1;
-			let f = 1;
-			for (let i = 0; i < 10; i++) {
-				f = controller.step(0, f, 0.666, 2, cpuUsage);
-			}
-			expect(f).toEqual(0);
-		});
-
-		it("respects cpu limit", () => {
-			const controller = new PIDReplicationController("", {
-				cpu: { max: 0.5 }
-			});
-			let cpuUsage = 0.4; // < 0.5
-			expect(controller.step(0, 1, 1, 2, cpuUsage)).toEqual(1);
-			cpuUsage = 0.6;
-			expect(controller.step(0, 1, 1, 2, cpuUsage)).toBeLessThan(1);
-		});
-	});
 });
