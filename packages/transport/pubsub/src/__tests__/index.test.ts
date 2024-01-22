@@ -1031,6 +1031,31 @@ describe("pubsub", function () {
 				expect(streams[1].stream.topics.get("a")?.size || 0).toEqual(0);
 			});
 		});
+
+		it("can handle direct connection drop", async () => {
+			await session.connect();
+			await streams[0].stream.subscribe("a");
+			await streams[1].stream.subscribe("a");
+
+			await waitForResolved(() => {
+				expect(streams[0].stream.topics.get("a")?.size || 0).toEqual(1);
+				expect(streams[1].stream.topics.get("a")?.size || 0).toEqual(1);
+			});
+
+			await delay(3000); // wait for all Subscribe message to have propagated in the network
+			await session.peers[0].hangUp(session.peers[1].peerId);
+
+			await waitForResolved(() =>
+				expect(streams[0].stream.peers.size).toEqual(1)
+			);
+			await waitForResolved(() =>
+				expect(streams[1].stream.peers.size).toEqual(1)
+			);
+			await waitForResolved(() => {
+				expect(streams[0].stream.topics.get("a")?.size || 0).toEqual(1);
+				expect(streams[1].stream.topics.get("a")?.size || 0).toEqual(1);
+			});
+		});
 	});
 
 	describe("subscription", () => {
@@ -1446,6 +1471,8 @@ describe("pubsub", function () {
 			it("uses timestamp to ignore old events", async () => {
 				const pubsubMetrics0 = createSubscriptionMetrics(streams[0].stream);
 				const pubsubMetrics1 = createSubscriptionMetrics(streams[1].stream);
+				const pubsubMetrics2 = createSubscriptionMetrics(streams[2].stream);
+
 				await streams[1].stream.requestSubscribers(TOPIC_1);
 
 				await waitForResolved(() =>
@@ -1455,8 +1482,12 @@ describe("pubsub", function () {
 				pubsubMetrics1.subscriptions = [];
 
 				await streams[0].stream.subscribe(TOPIC_1);
-				await waitForResolved(() =>
-					expect(pubsubMetrics1.subscriptions).toHaveLength(1)
+				await waitForResolved(
+					() => expect(pubsubMetrics1.subscriptions).toHaveLength(2) // one Subscribe message to this and one that is relayed to 2
+				);
+
+				await waitForResolved(
+					() => expect(pubsubMetrics2.subscriptions).toHaveLength(2) // one Subscribe message to this and one that is sent once this node becomes reachable
 				);
 
 				expect(streams[1].stream.topics.get(TOPIC_1)!.size).toEqual(1);

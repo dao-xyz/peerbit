@@ -4,8 +4,6 @@ import {
 	AcknowledgeDelivery,
 	AnyWhere,
 	DataMessage,
-	DeliveryMode,
-	Message,
 	MessageHeader,
 	SeekDelivery,
 	SilentDelivery,
@@ -23,7 +21,6 @@ import {
 	PubSubMessage,
 	Subscribe,
 	PubSubData,
-	toUint8Array,
 	Unsubscribe,
 	GetSubscribers,
 	UnsubcriptionEvent,
@@ -36,6 +33,9 @@ import {
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interface";
+import { Uint8ArrayList } from "uint8arraylist";
+export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
+	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
 
 export const logger = logFn({ module: "lazysub", level: "warn" });
 const logError = (e?: { message: string }) => {
@@ -364,33 +364,40 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	public onPeerSession(key: PublicSignKey, session: number): void {
 		// reset subs, the peer has restarted
-		this.removeSubscriptions(key.hashcode());
+		this.removeSubscriptions(key);
 	}
 
 	public async onPeerReachable(publicKey: PublicSignKey) {
 		// Aggregate subscribers for my topics through this new peer because if we don't do this we might end up with a situtation where
 		// we act as a relay and relay messages for a topic, but don't forward it to this new peer because we never learned about their subscriptions
+
 		const resp = super.onPeerReachable(publicKey);
 		const stream = this.peers.get(publicKey.hashcode());
-		if (stream && this.subscriptions.size > 0) {
-			// is new neighbour
+		const isNeigbour = !!stream;
+
+		if (this.subscriptions.size > 0) {
 			// tell the peer about all topics we subscribe to
 			this.publishMessage(
 				this.publicKey,
 				await new DataMessage({
 					data: toUint8Array(
 						new Subscribe({
-							topics: this.getSubscriptionOverlap(),
+							topics: this.getSubscriptionOverlap(), // TODO make the protocol more efficient, do we really need to share *everything* ?
 							requestSubscribers: true
 						}).bytes()
 					),
 					header: new MessageHeader({
-						mode: new SeekDelivery({ redundancy: 2 }),
+						// is new neighbour ? then send to all, though that connection (potentially find new peers)
+						// , else just try to reach the remote
+						mode: new SeekDelivery({
+							redundancy: 2,
+							to: isNeigbour ? undefined : [publicKey.hashcode()]
+						}),
 						session: this.session
 					})
 				}).sign(this.sign)
 			),
-				[stream];
+				isNeigbour ? [stream] : undefined;
 		}
 
 		return resp;
@@ -398,30 +405,27 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	public onPeerUnreachable(publicKeyHash: string) {
 		super.onPeerUnreachable(publicKeyHash);
-		this.removeSubscriptions(publicKeyHash);
+		this.removeSubscriptions(this.peerKeyHashToPublicKey.get(publicKeyHash)!);
 	}
 
-	private removeSubscriptions(publicKeyHash: string) {
-		const peerTopics = this.peerToTopic.get(publicKeyHash);
+	private removeSubscriptions(publicKey: PublicSignKey) {
+		const peerTopics = this.peerToTopic.get(publicKey.hashcode());
 
 		const changed: string[] = [];
 		if (peerTopics) {
 			for (const topic of peerTopics) {
-				const change = this.deletePeerFromTopic(topic, publicKeyHash);
+				const change = this.deletePeerFromTopic(topic, publicKey.hashcode());
 				if (change) {
 					changed.push(topic);
 				}
 			}
 		}
-		this.lastSubscriptionMessages.delete(publicKeyHash);
+		this.lastSubscriptionMessages.delete(publicKey.hashcode());
 
 		if (changed.length > 0) {
 			this.dispatchEvent(
 				new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-					detail: new UnsubcriptionEvent(
-						this.peerKeyHashToPublicKey.get(publicKeyHash)!,
-						changed
-					)
+					detail: new UnsubcriptionEvent(publicKey, changed)
 				})
 			);
 		}
