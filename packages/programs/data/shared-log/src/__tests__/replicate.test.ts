@@ -616,6 +616,10 @@ describe("canReplicate", () => {
 					min,
 					max
 				},
+				role: {
+					type: "replicator",
+					factor: 1
+				},
 				canReplicate
 			}
 		});
@@ -627,6 +631,10 @@ describe("canReplicate", () => {
 					replicas: {
 						min,
 						max
+					},
+					role: {
+						type: "replicator",
+						factor: 1
 					},
 					canReplicate
 				}
@@ -641,6 +649,10 @@ describe("canReplicate", () => {
 					replicas: {
 						min,
 						max
+					},
+					role: {
+						type: "replicator",
+						factor: 1
 					},
 					canReplicate
 				}
@@ -677,41 +689,43 @@ describe("canReplicate", () => {
 			session.peers[2].identity.publicKey.hashcode()
 		];
 
-		await waitForResolved(() =>
-			expect(
-				db1.log
-					.getReplicatorsSorted()!
-					.toArray()
-					.map((x) => x.publicKey.hashcode())
-			).toContainAllValues(expectedReplicators)
+		await Promise.all(
+			[db1, db2, db3].map((log) =>
+				waitForResolved(() =>
+					expect(
+						log.log
+							.getReplicatorsSorted()!
+							.toArray()
+							.map((x) => x.publicKey.hashcode())
+					).toContainAllValues(expectedReplicators)
+				)
+			)
 		);
-		await waitForResolved(() =>
-			expect(
-				db2.log
-					.getReplicatorsSorted()!
-					.toArray()
-					.map((x) => x.publicKey.hashcode())
-			).toContainAllValues(expectedReplicators)
-		);
-		await waitForResolved(() =>
-			expect(
-				db3.log
-					.getReplicatorsSorted()!
-					.toArray()
-					.map((x) => x.publicKey.hashcode())
-			).toContainAllValues(expectedReplicators)
+
+		const union1 = db1.log.getReplicatorUnion(0);
+		expect(union1).toHaveLength(1);
+		expect([
+			db2.node.identity.publicKey.hashcode(),
+			db3.node.identity.publicKey.hashcode()
+		]).toContain(union1[0]); // only 1 needs to be present, since both 2 and 3 are replicating with factor 1
+
+		await Promise.all(
+			[db2, db3].map((log) =>
+				waitForResolved(
+					() =>
+						expect(log.log.getReplicatorUnion(0)).toContainValues([
+							log.node.identity.publicKey.hashcode()
+						]) // I only need to query muself to access all data
+				)
+			)
 		);
 
 		await db2.add("hello");
 
-		const groups1 = db2.log.getReplicatorUnion(0);
-		expect(groups1).toHaveLength(1); // min replicas = 2 (because only 2 peers in network), which means we only need to query 1 peer to find all docs
-
-		const groups2 = db2.log.getReplicatorUnion(0);
-		expect(groups2).toHaveLength(1); // min replicas = 2 (because only 2 peers in network), which means we only need to query 1 peer to find all docs
-
-		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
-		await waitForResolved(() => expect(db3.log.log.length).toEqual(1));
+		await waitForResolved(() => {
+			expect(db2.log.log.length).toEqual(1);
+			expect(db3.log.log.length).toEqual(1);
+		});
 		await delay(1000); // Add some delay so that all replication events most likely have occured
 		expect(db1.log.log.length).toEqual(0); // because not trusted for replication job
 	});

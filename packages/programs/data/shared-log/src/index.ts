@@ -1265,6 +1265,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 				walker = walker.next;
 			}
+			if (!walker) {
+				walker = peers.head;
+			}
 		} else {
 			const seed = Math.round(peers.length * Math.random()); // start at a random point
 			for (let i = 0; i < seed - 1; i++) {
