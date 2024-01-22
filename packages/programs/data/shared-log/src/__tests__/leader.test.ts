@@ -80,17 +80,17 @@ describe(`leaders`, function () {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await session.peers[0].open(new EventStore<string>(), options);
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: { ...options.args, role: { type: "replicator", factor: 0.5 } }
+		});
 		const isLeaderAOneLeader = await db1.log.isLeader(123, 1);
 		expect(isLeaderAOneLeader);
 		const isLeaderATwoLeader = await db1.log.isLeader(123, 2);
 		expect(isLeaderATwoLeader);
 
-		db2 = (await EventStore.open(
-			db1.address!,
-			session.peers[1],
-			options
-		)) as EventStore<string>;
+		db2 = (await EventStore.open(db1.address!, session.peers[1], {
+			args: { ...options.args, role: { type: "replicator", factor: 0.5 } }
+		})) as EventStore<string>;
 
 		await waitForResolved(() =>
 			expect(db1.log.getReplicatorsSorted()).toHaveLength(2)
@@ -155,16 +155,12 @@ describe(`leaders`, function () {
 		db1 = await session.peers[0].open(store, {
 			args: { role: "observer", ...options.args }
 		});
-		db2 = (await EventStore.open(
-			db1.address!,
-			session.peers[1],
-			options
-		)) as EventStore<string>;
-		db3 = (await EventStore.open(
-			db1.address!,
-			session.peers[2],
-			options
-		)) as EventStore<string>;
+		db2 = (await EventStore.open(db1.address!, session.peers[1], {
+			args: { ...options.args, role: { type: "replicator", factor: 0.5 } }
+		})) as EventStore<string>;
+		db3 = (await EventStore.open(db1.address!, session.peers[2], {
+			args: { ...options.args, role: { type: "replicator", factor: 0.5 } }
+		})) as EventStore<string>;
 
 		await waitForResolved(() =>
 			expect(db2.log.getReplicatorsSorted()).toHaveLength(2)
@@ -190,32 +186,39 @@ describe(`leaders`, function () {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
-		db1 = await session.peers[0].open(new EventStore<string>());
-		db2 = (await EventStore.open(
-			db1.address!,
-			session.peers[1],
-			options
-		)) as EventStore<string>;
-		db3 = (await EventStore.open(
-			db1.address!,
-			session.peers[2],
-			options
-		)) as EventStore<string>;
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 0.3333
+				}
+			}
+		});
+		db2 = (await EventStore.open(db1.address!, session.peers[1], {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 0.3333
+				}
+			}
+		})) as EventStore<string>;
+		db3 = (await EventStore.open(db1.address!, session.peers[2], {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 0.3333
+				}
+			}
+		})) as EventStore<string>;
 
 		await waitForResolved(() =>
-			expect(Math.abs((db1.log.role as Replicator).factor - 0.33)).toBeLessThan(
-				0.05
-			)
+			expect(db1.log.getReplicatorsSorted()).toHaveLength(3)
 		);
 		await waitForResolved(() =>
-			expect(Math.abs((db2.log.role as Replicator).factor - 0.33)).toBeLessThan(
-				0.05
-			)
+			expect(db2.log.getReplicatorsSorted()).toHaveLength(3)
 		);
 		await waitForResolved(() =>
-			expect(Math.abs((db3.log.role as Replicator).factor - 0.33)).toBeLessThan(
-				0.05
-			)
+			expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
 		);
 
 		let resolved = 0;
@@ -292,17 +295,17 @@ describe(`leaders`, function () {
 
 		await waitForResolved(() =>
 			expect(Math.abs((db1.log.role as Replicator).factor - 0.33)).toBeLessThan(
-				0.05
+				0.02
 			)
 		);
 		await waitForResolved(() =>
 			expect(Math.abs((db2.log.role as Replicator).factor - 0.33)).toBeLessThan(
-				0.05
+				0.02
 			)
 		);
 		await waitForResolved(() =>
 			expect(Math.abs((db3.log.role as Replicator).factor - 0.33)).toBeLessThan(
-				0.05
+				0.02
 			)
 		);
 
@@ -378,17 +381,33 @@ describe(`leaders`, function () {
 	});
 
 	it("leader always defined", async () => {
-		db1 = await session.peers[0].open(new EventStore<string>());
-		db2 = (await EventStore.open(
-			db1.address!,
-			session.peers[1],
-			options
-		)) as EventStore<string>;
-		db3 = (await EventStore.open(
-			db1.address!,
-			session.peers[2],
-			options
-		)) as EventStore<string>;
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					...options.args,
+					type: "replicator",
+					factor: 0.3333
+				}
+			}
+		});
+		db2 = (await EventStore.open(db1.address!, session.peers[1], {
+			args: {
+				...options.args,
+				role: {
+					type: "replicator",
+					factor: 0.3333
+				}
+			}
+		})) as EventStore<string>;
+		db3 = (await EventStore.open(db1.address!, session.peers[2], {
+			args: {
+				...options.args,
+				role: {
+					type: "replicator",
+					factor: 0.3333
+				}
+			}
+		})) as EventStore<string>;
 
 		await waitForResolved(() =>
 			expect(db1.log.getReplicatorsSorted()).toHaveLength(3)

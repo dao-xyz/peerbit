@@ -324,12 +324,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			if (this._roleOptions?.limits) {
 				this._role = new Replicator({
-					factor: this._role instanceof Replicator ? this._role.factor : 1,
+					factor: this._role instanceof Replicator ? this._role.factor : 0,
 					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
 				});
 			} else {
 				this._role = new Replicator({
-					factor: this._role instanceof Replicator ? this._role.factor : 1,
+					factor: this._role instanceof Replicator ? this._role.factor : 0,
 					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
 				});
 			}
