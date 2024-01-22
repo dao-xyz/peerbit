@@ -60,6 +60,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.5 to 2.1.6
 
+## [3.0.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.6...stream-interface-v3.0.7) (2024-01-22)
+
+
+### Bug Fixes
+
+* add error handling for empty to ([272543c](https://github.com/dao-xyz/peerbit/commit/272543c5766f982dd200e5a73aba2d2d5f2bcf08))
+
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.4...stream-interface-v3.0.5) (2024-01-18)
 
 

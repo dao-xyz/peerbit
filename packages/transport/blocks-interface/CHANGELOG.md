@@ -136,6 +136,12 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.6 to 2.1.0
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^3.0.6 to ^3.0.7
+
 ## [1.2.7](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.2.6...blocks-interface-v1.2.7) (2024-01-17)
 
 

@@ -290,6 +290,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
 
+## [7.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.1...shared-log-v7.0.2) (2024-01-22)
+
+
+### Bug Fixes
+
+* make geteReplicatorUnion respect if canReplicate is false for this node ([69eac97](https://github.com/dao-xyz/peerbit/commit/69eac97f4370ce26e18835c1eea52c5936a25f28))
+* start replicate with factor 0 only if limited ([1eb0770](https://github.com/dao-xyz/peerbit/commit/1eb07700f6b89677dc196e95921d7615f2b1c667))
+* start replicating with a factor of 0 when adaptive ([7927230](https://github.com/dao-xyz/peerbit/commit/7927230cb42167d336ac25c42a75a336d8bdea6a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.14 to 3.0.15
+    * @peerbit/log bumped from 3.0.17 to 3.0.18
+    * @peerbit/rpc bumped from 3.0.17 to 3.0.18
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.17 to ^2.0.18
+
 ## [7.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.0...shared-log-v7.0.1) (2024-01-21)
 
 

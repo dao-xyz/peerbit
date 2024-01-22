@@ -441,6 +441,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.16 to ^2.0.17
 
+## [3.0.23](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.22...trusted-network-v3.0.23) (2024-01-22)
+
+
+### Bug Fixes
+
+* always replicate acl data with factor 1 by default ([bbb81a9](https://github.com/dao-xyz/peerbit/commit/bbb81a9147b5c837d2e41232d71a0accf5f97301))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 4.1.8 to 4.1.9
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.17 to ^2.0.18
+
 ## [3.0.17](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.16...trusted-network-v3.0.17) (2024-01-17)
 
 
