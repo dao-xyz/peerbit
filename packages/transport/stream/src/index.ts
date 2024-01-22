@@ -55,7 +55,8 @@ import {
 	StreamEvents,
 	TracedDelivery,
 	AnyWhere,
-	NotStartedError
+	NotStartedError,
+	deliveryModeHasReceiver
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
@@ -1129,7 +1130,7 @@ export abstract class DirectStream<
 				return false;
 			}
 
-			await this.acknowledgeMessage(peerStream, message, seenBefore);
+			await this.maybeAcknowledgeMessage(peerStream, message, seenBefore);
 
 			if (seenBefore === 0 && message.data) {
 				this.dispatchEvent(
@@ -1190,22 +1191,25 @@ export abstract class DirectStream<
 		return true;
 	}
 
-	async acknowledgeMessage(
+	async maybeAcknowledgeMessage(
 		peerStream: PeerStreams,
 		message: DataMessage | Goodbye,
 		seenBefore: number
 	) {
-		const signers = message.header.signatures!.publicKeys.map((x) =>
-			x.hashcode()
-		);
-		const from = signers[0];
-
-		this.routes.remoteInfo.get(from)?.session;
 		if (
 			(message.header.mode instanceof SeekDelivery ||
 				message.header.mode instanceof AcknowledgeDelivery) &&
 			seenBefore < message.header.mode.redundancy
 		) {
+			const shouldAcknowldege =
+				message.header.mode.to == null ||
+				message.header.mode.to.includes(this.publicKeyHash);
+			if (!shouldAcknowldege) {
+				return;
+			}
+			const signers = message.header.signatures!.publicKeys.map((x) =>
+				x.hashcode()
+			);
 			await this.publishMessage(
 				this.publicKey,
 				await new ACK({
@@ -1330,7 +1334,7 @@ export abstract class DirectStream<
 			return false;
 		}
 
-		await this.acknowledgeMessage(peerStream, message, seenBefore);
+		await this.maybeAcknowledgeMessage(peerStream, message, seenBefore);
 
 		const filteredLeaving = message.leaving.filter((x) =>
 			this.routes.hasTarget(x)
@@ -1478,6 +1482,14 @@ export abstract class DirectStream<
 					message.header.mode instanceof SeekDelivery
 				) {
 					await message.sign(this.sign);
+				}
+			}
+			if (deliveryModeHasReceiver(message.header.mode)) {
+				message.header.mode.to = message.header.mode.to.filter(
+					(x) => x !== this.publicKeyHash
+				);
+				if (message.header.mode.to.length === 0) {
+					return; // non to send to
 				}
 			}
 
