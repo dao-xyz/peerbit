@@ -37,6 +37,20 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.9](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.8...stream-v3.0.9) (2024-01-22)
+
+
+### Bug Fixes
+
+* onPeerDisconnected remove route connection before emitting goodbyes to other ([e493984](https://github.com/dao-xyz/peerbit/commit/e493984ddac5bf3de2edbbd53d8d293403ff5d28))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^3.0.6 to ^3.0.7
+
 ## [3.0.8](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.7...stream-v3.0.8) (2024-01-21)
 
 

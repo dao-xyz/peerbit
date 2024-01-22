@@ -164,6 +164,21 @@
   * dependencies
     * @peerbit/stream bumped from 3.0.7 to 3.0.8
 
+## [2.0.16](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.15...pubsub-v2.0.16) (2024-01-22)
+
+
+### Bug Fixes
+
+* make sure subscriptions are recovered after a neighbour connection drop ([67acb52](https://github.com/dao-xyz/peerbit/commit/67acb525511ab9ba1e688ece6fb73550877d74de))
+* prevent deadlock on suback ([8a6c7c2](https://github.com/dao-xyz/peerbit/commit/8a6c7c2253d6f002a15963a5214fef697468b916))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 3.0.8 to 3.0.9
+
 ## [2.0.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.11...pubsub-v2.0.12) (2024-01-18)
 
 
