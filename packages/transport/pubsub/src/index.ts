@@ -239,7 +239,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				data: toUint8Array(new GetSubscribers({ topics }).bytes()),
 				header: new MessageHeader({
 					mode: new SeekDelivery({
-						to: to ? [to.hashcode()] : [],
+						to: to ? [to.hashcode()] : undefined,
 						redundancy: 2
 					}),
 					session: this.session
@@ -396,8 +396,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						session: this.session
 					})
 				}).sign(this.sign)
-			),
-				isNeigbour ? [stream] : undefined;
+			);
 		}
 
 		return resp;
@@ -519,9 +518,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					return false;
 				}
 			}
-			if (meInTOs) {
-				await this.acknowledgeMessage(stream, message, seenBefore);
-			}
+
+			await this.maybeAcknowledgeMessage(stream, message, seenBefore);
 
 			if (isForMe) {
 				if (seenBefore === 0) {
@@ -534,12 +532,6 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						})
 					);
 				}
-			}
-
-			if (message.header.mode.to) {
-				message.header.mode.to = message.header.mode.to.filter(
-					(x) => x !== this.publicKeyHash
-				);
 			}
 
 			// Forward
@@ -557,7 +549,6 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			// If we are not subscribing ourselves, then we don't have enough information to "stop" message propagation here
 			if (
 				message.header.mode.to?.length ||
-				0 > 0 ||
 				!pubsubMessage.topics.find((topic) => this.topics.has(topic)) ||
 				message.header.mode instanceof SeekDelivery
 			) {
@@ -575,20 +566,16 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				return false;
 			}
 
-			await this.acknowledgeMessage(stream, message, seenBefore);
+			await this.maybeAcknowledgeMessage(stream, message, seenBefore);
 
 			const sender = message.header.signatures!.signatures[0].publicKey!;
 			const senderKey = sender.hashcode(); // Assume first signature is the one who is signing
 
 			if (pubsubMessage instanceof Subscribe) {
-				if (pubsubMessage.topics.length === 0) {
-					logger.info("Recieved subscription message with no topics");
-					return false;
-				}
-
 				if (
 					seenBefore === 0 &&
-					this.subscriptionMessageIsLatest(message, pubsubMessage)
+					this.subscriptionMessageIsLatest(message, pubsubMessage) &&
+					pubsubMessage.topics.length > 0
 				) {
 					const changed: string[] = [];
 					pubsubMessage.topics.forEach((topic) => {
@@ -656,7 +643,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 								})
 							});
 
-							await this.publishMessage(
+							this.publishMessage(
 								this.publicKey,
 								await response.sign(this.sign)
 							);
