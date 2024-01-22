@@ -159,7 +159,10 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		await this.trustGraph.open({
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
-			role: options?.role,
+			role: options?.role || {
+				type: "replicator",
+				factor: 1
+			},
 			index: {
 				canRead: this.canRead.bind(this),
 				fields: (obj, _entry) => {

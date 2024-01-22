@@ -1,13 +1,7 @@
 import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
-import {
-	Documents,
-	DocumentIndex,
-	SearchRequest,
-	StringMatch
-} from "@peerbit/document";
+import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { PublicSignKey } from "@peerbit/crypto";
 import { concat } from "uint8arrays";
-import { RPC } from "@peerbit/rpc";
 import { sha256Sync } from "@peerbit/crypto";
 
 export type RelationResolver = {
@@ -29,11 +23,7 @@ export const getFromByTo: RelationResolver = {
 							value: to.hashcode()
 						})
 					]
-				}),
-				{
-					local: true,
-					remote: false
-				}
+				})
 			)
 		);
 	},
@@ -51,11 +41,7 @@ export const getToByFrom: RelationResolver = {
 							value: from.hashcode()
 						})
 					]
-				}),
-				{
-					local: true,
-					remote: false
-				}
+				})
 			)
 		);
 	},

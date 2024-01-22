@@ -2,13 +2,15 @@ import { field, serialize, variant } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { waitFor } from "@peerbit/time";
+import { delay, waitFor } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
 import { PeerId } from "@libp2p/interface/peer-id";
 import { RoleOptions } from "@peerbit/shared-log";
+import { Role } from "@peerbit/shared-log";
+import { Replicator } from "@peerbit/shared-log";
 
 @variant("document")
 class Document {
@@ -39,7 +41,7 @@ class TestStore extends Program<{ role: RoleOptions }> {
 	}
 
 	async open(properties?: { role: RoleOptions }) {
-		await this.accessController.open(properties);
+		await this.accessController.open();
 		await this.store.open({
 			type: Document,
 			canPerform: (operation, context) =>
@@ -74,6 +76,18 @@ describe("index", () => {
 			rootTrust: key
 		});
 		expect(serialize(t1)).toEqual(serialize(t2));
+	});
+
+	it("replicates by default", async () => {
+		const s = new TestStore({ publicKey: session.peers[0].peerId });
+		const l0a = await session.peers[0].open(s);
+		const checkRole = (role: Role) => {
+			expect(role).toBeInstanceOf(Replicator);
+			expect((role as Replicator).factor).toEqual(1);
+		};
+		checkRole(l0a.accessController.access.log.role);
+		checkRole(l0a.accessController.identityGraphController.relationGraph.role);
+		checkRole(l0a.accessController.trustedNetwork.trustGraph.role);
 	});
 
 	it("can write from trust web", async () => {

@@ -167,11 +167,11 @@ export class IdentityAccessController extends Program {
 
 	async open(properties?: { role?: RoleOptions }) {
 		await this.identityGraphController.open({
-			role: properties?.role,
+			role: properties?.role || { type: "replicator", factor: 1 },
 			canRead: this.canRead.bind(this)
 		});
 		await this.access.open({
-			role: properties?.role,
+			role: properties?.role || { type: "replicator", factor: 1 },
 			type: Access,
 			canPerform: this.canPerform.bind(this),
 			index: {

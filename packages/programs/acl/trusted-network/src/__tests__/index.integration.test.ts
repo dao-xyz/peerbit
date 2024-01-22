@@ -15,6 +15,7 @@ import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Documents, SearchRequest, Operation } from "@peerbit/document";
+import { Replicator } from "@peerbit/shared-log";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -41,7 +42,7 @@ describe("index", () => {
 		let session: TestSession, identites: Identity[], programs: Program[];
 
 		beforeAll(async () => {
-			session = await TestSession.connected(1);
+			session = await TestSession.connected(2);
 			identites = [];
 			programs = [];
 
@@ -146,6 +147,33 @@ describe("index", () => {
 			trustingB = await getFromByTo.resolve(b, store.relationGraph);
 			expect(trustingB).toHaveLength(0);
 		});
+
+		it("can get path as observer", async () => {
+			const replicator = new AnyCanAppendIdentityGraph({
+				relationGraph: createIdentityGraphStore()
+			});
+			await session.peers[0].open(replicator);
+			const ab = new IdentityRelation({
+				to: (await Ed25519Keypair.create()).publicKey,
+				from: (await Ed25519Keypair.create()).publicKey
+			});
+			await replicator.relationGraph.put(ab);
+
+			const observer = await AnyCanAppendIdentityGraph.open(
+				replicator.address,
+				session.peers[1],
+				{ args: { role: { type: "observer" } } }
+			);
+			await observer.relationGraph.log.waitForReplicator(
+				session.peers[0].identity.publicKey
+			);
+
+			let pathFrom = await getFromByTo.resolve(ab.to, observer.relationGraph);
+			expect(pathFrom).toHaveLength(1);
+
+			let pathTo = await getToByFrom.resolve(ab.from, observer.relationGraph);
+			expect(pathTo).toHaveLength(1);
+		});
 	});
 
 	describe("TrustedNetwork", () => {
@@ -167,6 +195,15 @@ describe("index", () => {
 			const t2 = new TrustedNetwork({ id: key.publicKey, rootTrust: key });
 
 			expect(serialize(t1)).toEqual(serialize(t2));
+		});
+
+		it("replicates by default", async () => {
+			const l0a = new TrustedNetwork({
+				rootTrust: session.peers[0].peerId
+			});
+			await session.peers[0].open(l0a);
+			expect(l0a.trustGraph.log.role).toBeInstanceOf(Replicator);
+			expect((l0a.trustGraph.log.role as Replicator).factor).toEqual(1);
 		});
 
 		it("trusted by chain", async () => {
