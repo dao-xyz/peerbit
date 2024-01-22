@@ -129,6 +129,11 @@ export class AcknowledgeDelivery extends DeliveryMode {
 		redundancy: number;
 	}) {
 		super();
+		if (this.to?.length === 0) {
+			throw new Error(
+				"Invalud value of property 'to', expecting either undefined or an array with more than one element"
+			);
+		}
 		this.to = coerceTo(properties.to);
 		this.redundancy = properties.redundancy;
 	}
@@ -151,6 +156,11 @@ export class SeekDelivery extends DeliveryMode {
 		redundancy: number;
 	}) {
 		super();
+		if (this.to?.length === 0) {
+			throw new Error(
+				"Invalud value of property 'to', expecting either undefined or an array with more than one element"
+			);
+		}
 		this.to = properties.to ? coerceTo(properties.to) : undefined;
 		this.redundancy = properties.redundancy;
 	}
