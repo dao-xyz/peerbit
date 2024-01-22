@@ -149,11 +149,7 @@ suite
 	.add("put", {
 		fn: async (deferred) => {
 			const writeStore = stores[0];
-			const doc = new Document({
-				id: uuid(),
-				name: uuid(),
-				number: 2341n
-			});
+			const doc = createDoc();
 			// wait for reading
 			readerResolver.set(doc.id, deferred.resolve.bind(deferred));
 			await writeStore.docs.put(doc, { unique: true });
