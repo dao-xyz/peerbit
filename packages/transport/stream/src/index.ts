@@ -815,6 +815,10 @@ export abstract class DirectStream<
 
 			// tell dependent peers that there is a node that might have left
 			const dependent = this.routes.getDependent(peerKeyHash);
+
+			// make neighbour unreachables
+			this.removePeerFromRoutes(peerKeyHash);
+
 			if (dependent.length > 0) {
 				await this.publishMessage(
 					this.publicKey,
@@ -828,8 +832,6 @@ export abstract class DirectStream<
 				);
 			}
 
-			// make neighbour unreachables
-			this.removePeerFromRoutes(peerKeyHash);
 			this.checkIsAlive([peerKeyHash]);
 		}
 
