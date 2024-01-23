@@ -1,9 +1,10 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { AnyStore } from "./interface.js";
 import * as memory from "./opfs-worker-messages.js";
-import { fromBase64URL, toBase64URL } from "@peerbit/crypto";
+import { fromBase64URL, toBase64URL, ready } from "@peerbit/crypto";
 import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
 import { waitForResolved } from "@peerbit/time";
+
 const encodeName = (name: string): string => {
 	// since "/" and perhaps other characters might not be allowed we do encode
 	const writer = new BinaryWriter();
@@ -45,7 +46,6 @@ const createWriteHandle = async (fileHandle: FileSystemFileHandle) => {
 };
 
 export class OPFSStoreWorker {
-	level: string[];
 	private _levels: Map<string, AnyStore>;
 	private _rootStore: AnyStore;
 
@@ -58,17 +58,18 @@ export class OPFSStoreWorker {
 		const postMessageFn = postMessage;
 		this._memoryIterator = new Map();
 		this._levels = new Map();
+		let isOpen = false;
+
 		const createMemory = (
 			root?: FileSystemDirectoryHandle,
 			level: string[] = []
 		): AnyStore => {
-			let isOpen = false;
-
 			let m: FileSystemDirectoryHandle = root!;
 
 			// 'open' | 'closed' is just a virtual thing since OPFS is always open as soone as we get the FileSystemDirectoryHandle
 			// TODO remove status? or assume not storage adapters can be closed?
 			const open = async () => {
+				await ready;
 				isOpen = true;
 				m = m || (await navigator.storage.getDirectory());
 			};
@@ -106,7 +107,7 @@ export class OPFSStoreWorker {
 							error instanceof DOMException &&
 							error.name === "NotFoundError"
 						) {
-							return;
+							return undefined;
 						} else {
 							throw error;
 						}
@@ -169,113 +170,132 @@ export class OPFSStoreWorker {
 
 		self.addEventListener("message", async (ev) => {
 			const message = deserialize(ev["data"], memory.MemoryRequest);
-			if (message instanceof memory.MemoryMessage) {
-				const m =
-					message.level.length === 0
-						? this._rootStore
-						: this._levels.get(
-								memory.levelKey(message.level.map((x) => encodeName(x)))
-							);
-				if (!m) {
-					throw new Error("Recieved memory message for an undefined level");
-				} else if (message instanceof memory.REQ_Clear) {
-					await m.clear();
-					await this.respond(
-						message,
-						new memory.RESP_Clear({ level: message.level }),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Close) {
-					await m.close();
-					await this.respond(
-						message,
-						new memory.RESP_Close({ level: message.level }),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Del) {
-					await m.del(message.key);
-					await this.respond(
-						message,
-						new memory.RESP_Del({ level: message.level }),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Iterator_Next) {
-					let iterator = this._memoryIterator.get(message.id);
-					if (!iterator) {
-						iterator = m.iterator()[Symbol.asyncIterator]();
-						this._memoryIterator.set(message.id, iterator);
+			try {
+				if (message instanceof memory.MemoryMessage) {
+					if (message instanceof memory.REQ_Open) {
+						if (isOpen) {
+							throw new Error("Already open");
+						}
+						await this._rootStore.open();
+						for (const level of message.level) {
+							this._rootStore = await this._rootStore.sublevel(level);
+						}
+						await this.respond(
+							message,
+							new memory.RESP_Open({ level: message.level }),
+							postMessageFn
+						);
 					}
-					const next = await iterator.next();
-					await this.respond(
-						message,
-						new memory.RESP_Iterator_Next({
-							keys: next.done ? [] : [next.value[0]],
-							values: next.done ? [] : [new Uint8Array(next.value[1])],
-							level: message.level
-						}),
-						postMessageFn
-					);
-					if (next.done) {
-						this._memoryIterator.delete(message.id);
-					}
-				} else if (message instanceof memory.REQ_Iterator_Stop) {
-					this._memoryIterator.delete(message.id);
-					await this.respond(
-						message,
-						new memory.RESP_Iterator_Stop({ level: message.level }),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Get) {
-					const value = await m.get(message.key);
-					await this.respond(
-						message,
-						new memory.RESP_Get({
-							bytes: value ? new Uint8Array(value) : undefined,
-							level: message.level
-						}),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Open) {
-					await m.open();
-					await this.respond(
-						message,
-						new memory.RESP_Open({ level: message.level }),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Put) {
-					await m.put(message.key, message.bytes);
-					await this.respond(
-						message,
-						new memory.RESP_Put({ level: message.level }),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Size) {
-					await this.respond(
-						message,
-						new memory.RESP_Size({
-							size: await m.size(),
-							level: message.level
-						}),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Status) {
-					await this.respond(
-						message,
-						new memory.RESP_Status({
-							status: await m.status(),
-							level: message.level
-						}),
-						postMessageFn
-					);
-				} else if (message instanceof memory.REQ_Sublevel) {
-					await m.sublevel(message.name);
 
-					await this.respond(
-						message,
-						new memory.RESP_Sublevel({ level: message.level }),
-						postMessageFn
-					);
+					const m =
+						message.level.length === 0
+							? this._rootStore
+							: this._levels.get(
+									memory.levelKey(message.level.map((x) => encodeName(x)))
+								);
+					if (!m) {
+						throw new Error("Recieved memory message for an undefined level");
+					} else if (message instanceof memory.REQ_Clear) {
+						await m.clear();
+						await this.respond(
+							message,
+							new memory.RESP_Clear({ level: message.level }),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Close) {
+						await m.close();
+						await this.respond(
+							message,
+							new memory.RESP_Close({ level: message.level }),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Del) {
+						await m.del(message.key);
+						await this.respond(
+							message,
+							new memory.RESP_Del({ level: message.level }),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Iterator_Next) {
+						let iterator = this._memoryIterator.get(message.id);
+						if (!iterator) {
+							iterator = m.iterator()[Symbol.asyncIterator]();
+							this._memoryIterator.set(message.id, iterator);
+						}
+						const next = await iterator.next();
+						await this.respond(
+							message,
+							new memory.RESP_Iterator_Next({
+								keys: next.done ? [] : [next.value[0]],
+								values: next.done ? [] : [new Uint8Array(next.value[1])],
+								level: message.level
+							}),
+							postMessageFn
+						);
+						if (next.done) {
+							this._memoryIterator.delete(message.id);
+						}
+					} else if (message instanceof memory.REQ_Iterator_Stop) {
+						this._memoryIterator.delete(message.id);
+						await this.respond(
+							message,
+							new memory.RESP_Iterator_Stop({ level: message.level }),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Get) {
+						const value = await m.get(message.key);
+						await this.respond(
+							message,
+							new memory.RESP_Get({
+								bytes: value ? new Uint8Array(value) : undefined,
+								level: message.level
+							}),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Put) {
+						await m.put(message.key, message.bytes);
+						await this.respond(
+							message,
+							new memory.RESP_Put({ level: message.level }),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Size) {
+						await this.respond(
+							message,
+							new memory.RESP_Size({
+								size: await m.size(),
+								level: message.level
+							}),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Status) {
+						await this.respond(
+							message,
+							new memory.RESP_Status({
+								status: await m.status(),
+								level: message.level
+							}),
+							postMessageFn
+						);
+					} else if (message instanceof memory.REQ_Sublevel) {
+						await m.sublevel(message.name);
+
+						await this.respond(
+							message,
+							new memory.RESP_Sublevel({ level: message.level }),
+							postMessageFn
+						);
+					}
 				}
+			} catch (error) {
+				await this.respond(
+					message,
+					new memory.RESP_Error({
+						error: error?.["message"] || error?.constructor.name,
+						level: message["level"] || []
+					}),
+					postMessageFn
+				);
 			}
 		});
 	}

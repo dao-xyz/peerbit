@@ -2,9 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { createStore } from "@peerbit/any-store";
 
-(window as any)["create"] = async (type: "disc" | "memory") => {
+(window as any)["create"] = async (
+	type: "disc" | "memory",
+	dir?: string | undefined
+) => {
 	const store = createStore(
-		type === "disc" ? "./tmp/" + (+new Date()).toString() : undefined
+		type === "disc" ? dir || "./tmp/" + (+new Date()).toString() : undefined
 	);
 	await store.open();
 	(window as any)["store"] = store;

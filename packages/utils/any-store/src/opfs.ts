@@ -140,7 +140,7 @@ export class OPFSStore implements AnyStore {
 	}
 	async open(): Promise<void> {
 		if (!this.worker) {
-			this.root = this._createMemory([]);
+			this.root = this._createMemory(this.level);
 			this.worker = createWorker();
 			this.worker.addEventListener("message", async (ev) => {
 				const message = deserialize(ev.data, memory.MemoryMessage);
@@ -149,16 +149,16 @@ export class OPFSStore implements AnyStore {
 			await this.root.open();
 		}
 	}
-	async get(key: string): Promise<Uint8Array | undefined> {
+	get(key: string): MaybePromise<Uint8Array | undefined> {
 		return this.root.get(key);
 	}
-	async put(key: string, value: Uint8Array) {
+	put(key: string, value: Uint8Array) {
 		return this.root.put(key, value);
 	}
 	del(key: any): MaybePromise<void> {
 		return this.root.del(key);
 	}
-	sublevel(name: string): AnyStore | Promise<AnyStore> {
+	sublevel(name: string): AnyStore | MaybePromise<AnyStore> {
 		return this.root.sublevel(name);
 	}
 	iterator(): {
@@ -185,7 +185,7 @@ export class OPFSStore implements AnyStore {
 			const onResponse = (message: memory.MemoryRequest) => {
 				this._responseCallbacks.delete(request.messageId);
 				if (message instanceof memory.RESP_Error) {
-					reject(message.error);
+					reject(new Error(message.error));
 				} else {
 					resolve(message as T);
 				}
