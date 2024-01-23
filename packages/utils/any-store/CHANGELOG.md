@@ -21,6 +21,13 @@
     * @peerbit/crypto bumped from ^2.1.5 to ^2.1.6
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [1.0.11](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.10...any-store-v1.0.11) (2024-01-23)
+
+
+### Bug Fixes
+
+* opfs open in a non-root directory ([bb5570b](https://github.com/dao-xyz/peerbit/commit/bb5570be627b0cd1635006bd62b339bfe26d7edd))
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.7...any-store-v1.0.8) (2024-01-16)
 
 
