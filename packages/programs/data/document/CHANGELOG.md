@@ -351,6 +351,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.17 to 2.0.18
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/document-v4.1.9...document-v5.0.0) (2024-01-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* persist manually synced entries
+
+### Bug Fixes
+
+* persist manually synced entries ([12d52cd](https://github.com/dao-xyz/peerbit/commit/12d52cdb0a28da524d55a3c7342848a502bf8e19))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.15 to 3.0.16
+    * @peerbit/rpc bumped from 3.0.18 to 3.0.19
+    * @peerbit/shared-log bumped from 7.0.2 to 7.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.18 to 2.0.19
+
 ## [4.1.4](https://github.com/dao-xyz/peerbit/compare/document-v4.1.3...document-v4.1.4) (2024-01-18)
 
 
