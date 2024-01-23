@@ -97,6 +97,7 @@ export class Documents<T extends Record<string, any>>
 	private _clazz: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
+	private _manuallySynced: Set<string>;
 
 	canOpen?: (
 		program: T,
@@ -134,6 +135,8 @@ export class Documents<T extends Record<string, any>>
 
 		this._optionCanPerform = options.canPerform;
 
+		this._manuallySynced = new Set();
+
 		await this._index.open({
 			type: this._clazz,
 			log: this.log,
@@ -141,8 +144,17 @@ export class Documents<T extends Record<string, any>>
 			canSearch: options.index?.canSearch,
 			fields: options.index?.fields || ((obj) => obj),
 			indexBy: options.index?.key,
-			sync: async (result: Results<T>) =>
-				this.log.log.join(result.results.map((x) => x.context.head)),
+			sync: async (result: Results<T>) => {
+				// here we arrive for all the results we want to persist.
+				// we we need to do here is
+				// 1. add the entry to a list of entries that we should persist through prunes
+				let heads: string[] = [];
+				for (const entry of result.results) {
+					this._manuallySynced.add(entry.context.gid);
+					heads.push(entry.context.head);
+				}
+				return this.log.log.join(heads);
+			},
 			dbType: this.constructor
 		});
 
@@ -153,7 +165,12 @@ export class Documents<T extends Record<string, any>>
 			onChange: this.handleChanges.bind(this),
 			trim: options?.log?.trim,
 			role: options?.role,
-			replicas: options?.replicas
+			replicas: options?.replicas,
+			sync: (entry) => {
+				// here we arrive when ever a insertion/pruning behaviour processes an entry
+				// returning true means that it should persist
+				return this._manuallySynced.has(entry.gid);
+			}
 		});
 	}
 
@@ -348,7 +365,7 @@ export class Documents<T extends Record<string, any>>
 		);
 	}
 
-	async del(key: Keyable, options?: AppendOptions<Operation<T>>) {
+	async del(key: Keyable, options?: SharedAppendOptions<Operation<T>>) {
 		const existing = (
 			await this._index.getDetailed(key, {
 				local: true,
@@ -449,7 +466,8 @@ export class Documents<T extends Record<string, any>>
 							this._index.index.get(key)?.context.created ||
 							item.meta.clock.timestamp.wallTime,
 						modified: item.meta.clock.timestamp.wallTime,
-						head: item.hash
+						head: item.hash,
+						gid: item.gid
 					});
 
 					const valueToIndex = this._index.toIndex(value, context);
@@ -467,6 +485,8 @@ export class Documents<T extends Record<string, any>>
 					payload instanceof PutOperation ||
 					removedSet.has(item.hash)
 				) {
+					this._manuallySynced.delete(item.gid);
+
 					const key = (payload as DeleteOperation | PutOperation<T>).key;
 					if (!this.index.index.has(key)) {
 						continue;

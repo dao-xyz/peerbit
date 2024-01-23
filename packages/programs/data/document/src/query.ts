@@ -391,16 +391,19 @@ export class Context {
 	@field({ type: "string" })
 	head: string;
 
-	constructor(properties?: {
+	@field({ type: "string" })
+	gid: string;
+
+	constructor(properties: {
 		created: bigint;
 		modified: bigint;
 		head: string;
+		gid: string;
 	}) {
-		if (properties) {
-			this.created = properties.created;
-			this.modified = properties.modified;
-			this.head = properties.head;
-		}
+		this.created = properties.created;
+		this.modified = properties.modified;
+		this.head = properties.head;
+		this.gid = properties.gid;
 	}
 }
 

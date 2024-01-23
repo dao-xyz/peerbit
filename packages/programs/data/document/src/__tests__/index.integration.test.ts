@@ -1085,7 +1085,50 @@ describe("index", () => {
 						await waitFor(() => syncEvents == 2);
 						expect(canPerformEvents).toEqual(6); // no new checks, since all docs already added
 					});
-					it("will not sync already existing", async () => {});
+					it("will persist synced entries through prunes", async () => {
+						stores[0].docs.log.replicas = {
+							min: new AbsoluteReplicas(1)
+						};
+						stores[1].docs.log.replicas = {
+							min: new AbsoluteReplicas(1)
+						};
+
+						// add new doc, now wirth min replicas set to 1
+						await stores[0].docs.put(new Document({ id: uuid() }));
+
+						await stores[1].docs.updateRole({ type: "replicator", factor: 0 });
+						expect(stores[1].docs.index.size).toEqual(0);
+						await stores[1].docs.index.search(
+							new SearchRequest({
+								query: []
+							}),
+							{ remote: { sync: true } }
+						);
+						expect(stores[1].docs.index.size).toEqual(5);
+						await stores[1].docs.log.distribute();
+						await delay(2000); // wait some time so that pruningacn take place
+						expect(stores[1].docs.index.size).toEqual(5);
+					});
+
+					it("removes sync cache when delete", async () => {
+						await stores[1].docs.index.search(
+							new SearchRequest({
+								query: []
+							}),
+							{ remote: { sync: true } }
+						);
+
+						expect(stores[1].docs["_manuallySynced"].size).toEqual(4);
+						for (const [k, v] of stores[0].docs.index.index) {
+							await stores[0].docs.del(k, { target: "all" });
+						}
+						await waitForResolved(
+							() => expect(stores[1].docs["_manuallySynced"].size).toEqual(0),
+							{
+								timeout: 3e4
+							}
+						);
+					});
 				});
 
 				describe("string", () => {
