@@ -5,6 +5,8 @@ import { fromBase64URL, toBase64URL, ready } from "@peerbit/crypto";
 import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
 import { waitForResolved } from "@peerbit/time";
 
+const directory = location.hash.split("#")?.[1];
+
 const encodeName = (name: string): string => {
 	// since "/" and perhaps other characters might not be allowed we do encode
 	const writer = new BinaryWriter();
@@ -62,7 +64,7 @@ export class OPFSStoreWorker {
 
 		const createMemory = (
 			root?: FileSystemDirectoryHandle,
-			level: string[] = []
+			levels: string[] = []
 		): AnyStore => {
 			let m: FileSystemDirectoryHandle = root!;
 
@@ -70,10 +72,15 @@ export class OPFSStoreWorker {
 			// TODO remove status? or assume not storage adapters can be closed?
 			const open = async () => {
 				await ready;
-				isOpen = true;
-				m = m || (await navigator.storage.getDirectory());
+				if (!m) {
+					m = await navigator.storage.getDirectory();
+					if (directory) {
+						m = await m.getDirectoryHandle(encodeName(directory), {
+							create: true
+						});
+					}
+				}
 			};
-
 			return {
 				clear: async () => {
 					for await (const key of m.keys()) {
@@ -141,7 +148,7 @@ export class OPFSStoreWorker {
 					const fileHandle = await m.getDirectoryHandle(encodedName, {
 						create: true
 					});
-					const sublevel = [...level, encodedName];
+					const sublevel = [...levels, name];
 					const subMemory = createMemory(fileHandle, sublevel);
 					this._levels.set(memory.levelKey(sublevel), subMemory);
 					await subMemory.open();
@@ -173,26 +180,22 @@ export class OPFSStoreWorker {
 			try {
 				if (message instanceof memory.MemoryMessage) {
 					if (message instanceof memory.REQ_Open) {
-						if (isOpen) {
-							throw new Error("Already open");
-						}
-						await this._rootStore.open();
-						for (const level of message.level) {
-							this._rootStore = await this._rootStore.sublevel(level);
+						if (!isOpen) {
+							await this._rootStore.open();
+							isOpen = true;
 						}
 						await this.respond(
 							message,
 							new memory.RESP_Open({ level: message.level }),
 							postMessageFn
 						);
+						return;
 					}
 
 					const m =
 						message.level.length === 0
 							? this._rootStore
-							: this._levels.get(
-									memory.levelKey(message.level.map((x) => encodeName(x)))
-								);
+							: this._levels.get(memory.levelKey(message.level));
 					if (!m) {
 						throw new Error("Recieved memory message for an undefined level");
 					} else if (message instanceof memory.REQ_Clear) {

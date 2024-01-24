@@ -50,13 +50,13 @@ function memoryIterator(
 	};
 }
 
-const workerURL = new URL("./opfs-worker.js", import.meta.url);
+const createWorker = (directory) => {
+	const workerURL = new URL("./opfs-worker.js#" + directory, import.meta.url);
+	return new Worker(workerURL, { type: "module" });
+};
 
-/* new Worker(workerURL, { type: 'module' }) */
-const createWorker = () => new Worker(workerURL, { type: "module" });
 export class OPFSStore implements AnyStore {
 	worker: Worker;
-	level: string[];
 	levelMap: Map<string, AnyStore>;
 	root: AnyStore;
 
@@ -66,8 +66,7 @@ export class OPFSStore implements AnyStore {
 	> = new Map();
 
 	private _createMemory: (level: string[]) => AnyStore;
-	constructor(level: string[] = []) {
-		this.level = level;
+	constructor(readonly directory?: string) {
 		this.levelMap = new Map();
 		this._createMemory = (level: string[] = []): AnyStore => {
 			return {
@@ -100,9 +99,7 @@ export class OPFSStore implements AnyStore {
 						)
 					).status,
 				sublevel: async (name) => {
-					await this.request<memory.RESP_Sublevel>(
-						new memory.REQ_Sublevel({ level, name })
-					);
+					await this.request(new memory.REQ_Sublevel({ level, name }));
 					const newLevels = [...level, name];
 					const sublevel = this._createMemory(newLevels);
 					this.levelMap.set(memory.levelKey(newLevels), sublevel);
@@ -140,8 +137,8 @@ export class OPFSStore implements AnyStore {
 	}
 	async open(): Promise<void> {
 		if (!this.worker) {
-			this.root = this._createMemory(this.level);
-			this.worker = createWorker();
+			this.worker = createWorker(this.directory);
+			this.root = this._createMemory([]);
 			this.worker.addEventListener("message", async (ev) => {
 				const message = deserialize(ev.data, memory.MemoryMessage);
 				this._responseCallbacks.get(message.messageId)!.fn(message);
