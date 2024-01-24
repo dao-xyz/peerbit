@@ -160,7 +160,7 @@ describe("replication", function () {
 			await whileProcessingMessages(10 * 1000);
 
 			const result = new Log<string>({ id: logId });
-			result.open(session.peers[0].services.blocks, signKey, {
+			await result.open(session.peers[0].services.blocks, signKey, {
 				encoding: JSON_ENCODING
 			});
 
