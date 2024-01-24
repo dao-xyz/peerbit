@@ -289,6 +289,21 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.18 to 2.0.19
 
+## [3.0.20](https://github.com/dao-xyz/peerbit/compare/log-v3.0.19...log-v3.0.20) (2024-01-24)
+
+
+### Bug Fixes
+
+* make sure heads cache is updated after deleting recursively ([8d7c7d9](https://github.com/dao-xyz/peerbit/commit/8d7c7d98376a40ec2a60fc3faa78cc81ffc2d144))
+* throw error on loading when closed ([55cae75](https://github.com/dao-xyz/peerbit/commit/55cae75c2d7fd107b39d64c2682e81aee1eb4cb0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.19 to 2.0.20
+
 ## [3.0.13](https://github.com/dao-xyz/peerbit/compare/log-v3.0.12...log-v3.0.13) (2024-01-17)
 
 
