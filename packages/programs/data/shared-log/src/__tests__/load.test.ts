@@ -90,8 +90,6 @@ describe("load", function () {
 		const lengthBeforeClose = db1.log.log.length;
 		await waitForConverged(() => db2.log.log.length);
 		await session.peers[1].stop();
-		const heads = await db1.log.log.getHeads();
-		const abc = 123;
 		await db1.close();
 		db1 = await EventStore.open<EventStore<string>>(
 			db1.address!,
