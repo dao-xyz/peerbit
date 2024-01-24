@@ -1114,6 +1114,10 @@ export class Log<T> {
 			ignoreMissing?: boolean;
 		} = { reload: true }
 	) {
+		if (this.closed) {
+			throw new Error("Closed");
+		}
+
 		const providedCustomHeads = Array.isArray(opts["heads"]);
 		const heads = providedCustomHeads
 			? (opts["heads"] as Array<Entry<T>>)
