@@ -252,6 +252,19 @@ describe("join", function () {
 				]);
 			});
 
+			it("ignores entry after cut", async () => {
+				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
+				await log1.append(new Uint8Array([1, 0]), {
+					meta: {
+						next: [a1],
+						type: EntryType.CUT
+					}
+				});
+				expect(log1.length).toEqual(1);
+				await log1.join([a1]);
+				expect(log1.length).toEqual(1);
+			});
+
 			it("will not reset if joining conflicting", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const b1 = await Entry.create({

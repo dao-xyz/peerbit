@@ -294,11 +294,11 @@ export class Log<T> {
 			heads[i++] = this._entryIndex.get(hash).then((x) => x?.init(this));
 		}
 		const resolved = await Promise.all(heads);
-		const defined = resolved.filter((x) => !!x);
+		const defined = resolved.filter((x): x is Entry<T> => !!x);
 		if (defined.length !== resolved.length) {
 			logger.error("Failed to resolve all heads");
 		}
-		return defined as Entry<T>[];
+		return defined;
 	}
 
 	/**
@@ -871,6 +871,15 @@ export class Log<T> {
 
 		if (!e.hash) {
 			throw new Error("Unexpected");
+		}
+
+		const headsWithGid = this.headsIndex.gids.get(e.gid);
+		if (headsWithGid) {
+			for (const [_k, v] of headsWithGid) {
+				if (v.meta.type === EntryType.CUT && v.next.includes(e.hash)) {
+					return; // already deleted
+				}
+			}
 		}
 
 		if (!this.has(e.hash)) {
