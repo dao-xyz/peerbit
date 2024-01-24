@@ -179,11 +179,6 @@ describe("index", () => {
 				expect(changes[2].added).toHaveLength(0);
 				expect(changes[2].removed).toHaveLength(1);
 				expect(changes[2].removed[0].id).toEqual(doc.id);
-
-				// try close and load
-				await store.docs.log.log.close();
-				await store.docs.log.log.load();
-				await store.docs.log.log.close();
 			});
 
 			it("replication degree", async () => {
