@@ -302,7 +302,7 @@ export class Documents<T extends Record<string, any>>
 				const existingDocument = this._index.index.get(operation.key);
 				if (!existingDocument) {
 					// already deleted
-					return false;
+					return true; // assume ok
 				}
 				let doc = await this.log.log.get(existingDocument.context.head);
 				if (!doc) {

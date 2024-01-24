@@ -432,6 +432,29 @@ describe("index", () => {
 				);
 				expect(store.docs.index.size).toEqual(0);
 			});
+
+			it("preserves tombstone", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>()
+				});
+
+				await session.peers[0].open(store);
+
+				const id = uuid();
+
+				const { entry } = await store.docs.put(
+					new Document({
+						id,
+						name: "Hello world"
+					})
+				);
+				await store.docs.del(id);
+				await store.close();
+
+				store = await session.peers[0].open<TestStore>(store.address);
+				await store.docs.log.log.join([entry]);
+				expect(store.docs.index.size).toEqual(0);
+			});
 		});
 
 		describe("events", () => {
