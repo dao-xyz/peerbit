@@ -129,6 +129,13 @@
     * @peerbit/keychain bumped from ^1.0.9 to ^1.0.10
     * @peerbit/any-store bumped from ^1.0.10 to ^1.0.11
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/keychain bumped from ^1.0.10 to ^1.0.11
+    * @peerbit/any-store bumped from ^1.0.11 to ^1.0.12
+
 ## [3.0.11](https://github.com/dao-xyz/peerbit/compare/program-v3.0.10...program-v3.0.11) (2024-01-17)
 
 

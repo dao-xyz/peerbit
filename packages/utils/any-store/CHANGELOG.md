@@ -21,6 +21,13 @@
     * @peerbit/crypto bumped from ^2.1.5 to ^2.1.6
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [1.0.12](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.11...any-store-v1.0.12) (2024-01-24)
+
+
+### Bug Fixes
+
+* create a webworker for each OPFSStore directory ([1b9c17a](https://github.com/dao-xyz/peerbit/commit/1b9c17ae52299c73d1935203e0860024858ede08))
+
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.10...any-store-v1.0.11) (2024-01-23)
 
 

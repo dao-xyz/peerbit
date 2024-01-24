@@ -246,6 +246,14 @@
     * @peerbit/program bumped from 3.0.15 to 3.0.16
     * @peerbit/blocks bumped from ^2.0.17 to ^2.0.18
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^1.0.11 to ^1.0.12
+    * @peerbit/program bumped from 3.0.16 to 3.0.17
+    * @peerbit/blocks bumped from ^2.0.18 to ^2.0.19
+
 ## [3.0.16](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.15...peerbit-v3.0.16) (2024-01-20)
 
 
