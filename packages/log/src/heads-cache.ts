@@ -210,6 +210,8 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 				);
 				this._lastRemovedHeadsPath = update.newPath;
 				this._lastRemovedHeadsCount = update.counter;
+
+				// if removed counter is 2 times larger than the amount of heads, then reset the heads cache
 				if (
 					update.counter > 0n &&
 					2n * update.counter >= this._lastHeadsCount

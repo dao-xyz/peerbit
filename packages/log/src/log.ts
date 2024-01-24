@@ -244,10 +244,13 @@ export class Log<T> {
 	 * Returns the length of the log.
 	 */
 	get length() {
-		return this._values.length;
+		return this.values.length;
 	}
 
 	get values(): Values<T> {
+		if (this.closed) {
+			throw new Error("Closed");
+		}
 		return this._values;
 	}
 	get canAppend() {
@@ -977,7 +980,11 @@ export class Log<T> {
 
 	async delete(entry: Entry<any>) {
 		this._trim.deleteFromCache(entry);
-		await this._headsIndex.del(entry);
+		await this._headsIndex.del(entry, {
+			cache: {
+				update: false
+			}
+		}); // cache is not updated here, but at *
 		await this._values.delete(entry);
 		await this._entryIndex.delete(entry.hash);
 		this._nextsIndex.delete(entry.hash);
@@ -996,7 +1003,8 @@ export class Log<T> {
 		await this._headsIndex.updateHeadsCache({
 			added: newHeads,
 			removed: [entry.hash]
-		});
+		}); // * here
+
 		return entry.delete(this._storage);
 	}
 
@@ -1045,6 +1053,10 @@ export class Log<T> {
 		await this._entryCache?.clear();
 		await this._headsIndex?.close();
 		await this._memory?.close();
+		this._entryCache = undefined as any;
+		this._headsIndex = undefined as any;
+		this._memory = undefined as any;
+		this._values = undefined as any;
 	}
 
 	async drop() {
@@ -1095,38 +1107,39 @@ export class Log<T> {
 	}
 
 	async load(
-		opts: (
-			| (
-					| {
-							/* amount?: number  TODO */
-					  }
-					| { heads?: true }
-			  )
-			| { heads: Entry<T>[] }
-		) & { fetchEntryTimeout?: number; reload: boolean } = { reload: true }
+		opts: {
+			heads?: Entry<T>[];
+			fetchEntryTimeout?: number;
+			reload: boolean;
+			ignoreMissing?: boolean;
+		} = { reload: true }
 	) {
-		const heads = Array.isArray(opts["heads"])
-			? opts["heads"]
+		const providedCustomHeads = Array.isArray(opts["heads"]);
+		const heads = providedCustomHeads
+			? (opts["heads"] as Array<Entry<T>>)
 			: await this.headsIndex.load({
 					replicate: true, // TODO this.replication.replicate(x) => true/false
 					timeout: opts.fetchEntryTimeout,
 					reload: opts.reload,
+					ignoreMissing: opts.ignoreMissing,
 					cache: { update: true, reset: true }
 				});
 
 		if (heads) {
 			// Load the log
-			if ((opts as { heads?: true }).heads != null) {
+			if (providedCustomHeads) {
 				await this.reset(heads);
 			} else {
+				/*
+				TODO feat amount load
 				const amount = (opts as { amount?: number }).amount;
 				if (amount != null && amount >= 0 && amount < heads.length) {
 					throw new Error(
 						"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
-							amount +
-							" entries"
+						amount +
+						" entries"
 					);
-				}
+				} */
 
 				await this.join(heads instanceof Entry ? [heads] : heads, {
 					/* length: amount, */

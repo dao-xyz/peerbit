@@ -192,7 +192,7 @@ describe(`head-cache`, function () {
 			await log.headsIndex.headsCache!.getCachedHeads()
 		).toContainAllValues([e2.hash, e3.hash]);
 
-		/// Check that memeory is correctly stored
+		/// Check that memory is correctly stored
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [
 			[e3.hash],
 			[e2.hash],
@@ -289,7 +289,7 @@ describe(`head-cache`, function () {
 		await init(cache);
 		await log.load();
 
-		// Make sure that all hashes are in the first "file", since its reseted
+		// Make sure that all hashes are in the first "file", since it should be resetted by now
 		await checkHashes(log, log.headsIndex.headsCache!.headsPath, [
 			entries.reverse().map((x) => x.hash)
 		]);

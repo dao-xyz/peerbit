@@ -53,6 +53,7 @@ export class HeadsIndex<T> {
 			timeout?: number;
 			replicate?: boolean;
 			reload?: boolean;
+			ignoreMissing?: boolean;
 		} & CacheUpdateOptions
 	): Promise<Entry<T>[] | undefined> {
 		if (!this._headsCache || (this._headsCache.loaded && !options?.reload)) {
@@ -68,15 +69,20 @@ export class HeadsIndex<T> {
 			heads.map(async (x) => {
 				const entry = await this._config.entryIndex.get(x, { load: true });
 				if (!entry) {
-					logger.error("Failed to load entry from head with hash: " + x);
-					return;
+					if (options?.ignoreMissing) {
+						logger.error("Failed to load entry from head with hash: " + x);
+						return;
+					} else {
+						throw new Error("Failed to load entry from head with hash: " + x);
+					}
 				}
 				await entry.getMeta(); // TODO types,decrypt gid
 				return entry;
 			})
 		);
-		await this.reset(entries.filter((x) => !!x) as Entry<any>[]);
-		return entries as Entry<any>[];
+		const filtered = entries.filter((x): x is Entry<any> => !!x);
+		await this.reset(filtered);
+		return filtered;
 	}
 
 	get headsCache(): HeadsCache<T> | undefined {
@@ -130,15 +136,15 @@ export class HeadsIndex<T> {
 
 	async put(entry: Entry<T>, options?: CacheUpdateOptions) {
 		await this._putOne(entry);
-		if (options?.cache?.update) {
-			await this._headsCache?.queue({ added: [entry] }, options.cache.reset);
+		if (!options?.cache || options?.cache?.update) {
+			await this._headsCache?.queue({ added: [entry] }, options?.cache?.reset);
 		}
 	}
 
 	async putAll(entries: Entry<T>[], options?: CacheUpdateOptions) {
 		await this._putAll(entries);
-		if (options?.cache?.update) {
-			await this._headsCache?.queue({ added: entries }, options.cache.reset);
+		if (!options?.cache || options?.cache?.update) {
+			await this._headsCache?.queue({ added: entries }, options?.cache?.reset);
 		}
 	}
 
@@ -179,7 +185,7 @@ export class HeadsIndex<T> {
 		for (const next of entry.next) {
 			const indexedEntry = this._config.entryIndex.getShallow(next);
 			if (indexedEntry) {
-				await this.del(indexedEntry);
+				await this.del(indexedEntry, { cache: { update: false } }); // we dont update cache here because the put will update the cache that is calling _putOne
 			}
 		}
 	}
@@ -214,10 +220,10 @@ export class HeadsIndex<T> {
 			await this._onGidRemoved?.([...removedGids]);
 		}
 
-		if (wasHead && options?.cache?.update) {
+		if (wasHead && !(options?.cache || options?.cache?.update)) {
 			await this._headsCache?.queue(
 				{ removed: [entry.hash] },
-				options.cache.reset
+				options?.cache?.reset
 			);
 		}
 
