@@ -3,100 +3,110 @@ import mapSeries from "p-each-series";
 
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { AbsoluteReplicas } from "../replication";
+import { waitForConverged } from "./utils";
+import { v4 as uuid } from "uuid";
 
 describe("load", function () {
-	let session: TestSession;
+	let db1: EventStore<string>, db2: EventStore<string>;
 
-	beforeAll(async () => {
-		session = await TestSession.connected(2);
-		// Connect the peers manually to speed up test times
-	});
+	let session: TestSession;
 
 	afterAll(async () => {
 		await session.stop();
 	});
 
-	describe("load", function () {
-		let db1: EventStore<string>, db2: EventStore<string>;
+	afterAll(async () => {
+		if (db1) {
+			await db1.drop();
+		}
 
-		const openDatabases = async () => {
-			// Set write access for both clients
-			db1 = await session.peers[0].open(new EventStore<string>());
-			db2 = await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1]
+		if (db2) {
+			await db2.drop();
+		}
+	});
+
+	it("load after replicate", async () => {
+		session = await TestSession.connected(2);
+
+		db1 = await session.peers[0].open(new EventStore<string>());
+		db2 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		);
+
+		const entryCount = 100;
+		const entryArr: number[] = [];
+
+		for (let i = 0; i < entryCount; i++) entryArr.push(i);
+
+		await mapSeries(entryArr, (i) => db1.add("hello" + i));
+
+		await waitForResolved(async () => {
+			const items = (await db2.iterator({ limit: -1 })).collect();
+			expect(items.length).toEqual(entryCount);
+			expect(items[0].payload.getValue().value).toEqual("hello0");
+			expect(items[items.length - 1].payload.getValue().value).toEqual(
+				"hello" + (items.length - 1)
 			);
-		};
-
-		beforeAll(async () => {
-			await openDatabases();
-
-			expect(db1.address!.toString()).toEqual(db2.address!.toString());
-
-			await db1.waitFor(session.peers[1].peerId);
-			await db2.waitFor(session.peers[0].peerId);
 		});
+	});
 
-		afterAll(async () => {
-			if (db1) {
-				await db1.drop();
-			}
+	it("load after prune", async () => {
+		session = await TestSession.connected(2, [
+			{ directory: "./tmp/shared-log/load-after-prune/" + uuid() },
+			{ directory: "./tmp/shared-log/load-after-prune/" + uuid() }
+		]);
 
-			if (db2) {
-				await db2.drop();
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: { type: "replicator", factor: 0.5 },
+				replicas: {
+					min: 1
+				}
 			}
 		});
 
-		it("replicates database of 100 entries and loads it from the disk", async () => {
-			const entryCount = 100;
-			const entryArr: number[] = [];
-			let timer: any;
+		for (let i = 0; i < 100; i++) {
+			await db1.add("hello" + i, { meta: { next: [] } });
+		}
 
-			for (let i = 0; i < entryCount; i++) entryArr.push(i);
-
-			await mapSeries(entryArr, (i) => db1.add("hello" + i));
-
-			return new Promise((resolve, reject) => {
-				timer = setInterval(async () => {
-					if (db2.log.log.length === entryCount) {
-						clearInterval(timer);
-
-						const items = (await db2.iterator({ limit: -1 })).collect();
-						expect(items.length).toEqual(entryCount);
-						expect(items[0].payload.getValue().value).toEqual("hello0");
-						expect(items[items.length - 1].payload.getValue().value).toEqual(
-							"hello" + (items.length - 1)
-						);
-
-						try {
-							// Get the previous address to make sure nothing mutates it
-							/* TODO, since new changes, below might not be applicable 
-
-								// Open the database again (this time from the disk)
-								options = Object.assign({}, options, { directory: dbPath1, create: false })
-								const db3 = await client1.open<EventStore<string>>(await EventStore.load<EventStore<string>>(client1.libp2p, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
-								// Set 'localOnly' flag on and it'll error if the database doesn't exist locally
-								options = Object.assign({}, options, { directory: dbPath2, localOnly: true })
-								const db4 = await client2.open<EventStore<string>>(await EventStore.load<EventStore<string>>(client2.libp2p, db1.address), { replicationTopic, ...options }) // We set replicationTopic to "_" because if the replication topic is the same, then error will be thrown for opening the same store
-
-								await db3.load()
-								await db4.load()
-
-								// Make sure we have all the entries in the databases
-								const result1 = db3.iterator({ limit: -1 }).collect()
-								const result2 = db4.iterator({ limit: -1 }).collect()
-								expect(result1.length).toEqual(entryCount)
-								expect(result2.length).toEqual(entryCount)
-
-								await db3.drop()
-								await db4.drop() */
-						} catch (e: any) {
-							reject(e);
-						}
-						resolve(true);
+		db2 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: { type: "replicator", factor: 0.5 },
+					replicas: {
+						min: 1
 					}
-				}, 1000);
-			});
-		});
+				}
+			}
+		);
+
+		await waitForResolved(() => expect(db1.log.log.length).toBeLessThan(100)); // pruning started
+		await waitForConverged(() => db1.log.log.length); // pruning done
+		const lengthBeforeClose = db1.log.log.length;
+		await waitForConverged(() => db2.log.log.length);
+		await session.peers[1].stop();
+		const heads = await db1.log.log.getHeads();
+		const abc = 123;
+		await db1.close();
+		db1 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[0],
+			{
+				args: {
+					role: { type: "replicator", factor: 0.5 },
+					replicas: {
+						min: 1
+					}
+				}
+			}
+		);
+		let lengthAfterClose = db1.log.log.length;
+		expect(lengthBeforeClose).toEqual(lengthAfterClose);
+		expect(lengthAfterClose).toBeGreaterThan(0);
 	});
 });
