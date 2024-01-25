@@ -265,7 +265,7 @@ describe("join", function () {
 				expect(log1.length).toEqual(1);
 			});
 
-			it("will not reset if joining conflicting", async () => {
+			it("can not resurrect", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const b1 = await Entry.create({
 					data: new Uint8Array([1, 0]),
@@ -292,9 +292,9 @@ describe("join", function () {
 				expect(await log2.blocks.get(a1.hash)).toBeDefined();
 				await log1.join([b1, b2]);
 				expect((await log1.toArray()).map((e) => e.hash)).toEqual([
-					a1.hash,
 					b1.hash,
 					b2.hash
+					// a1 is missing here, this is expected
 				]);
 			});
 
