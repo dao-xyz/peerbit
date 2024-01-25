@@ -257,7 +257,15 @@ describe(`exchange`, function () {
 
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
-				session.peers[1]
+				session.peers[1],
+				{
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				}
 			))!;
 
 			await waitForResolved(() => expect(db2.log.log.length).toEqual(3));
