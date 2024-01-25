@@ -304,7 +304,14 @@ describe("index", () => {
 					docs: new Documents<Document>()
 				});
 				await session.peers[0].open(store);
-				store2 = await session.peers[1].open<TestStore>(store.clone());
+				store2 = await session.peers[1].open<TestStore>(store.clone(), {
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				});
 			});
 
 			afterEach(async () => {
@@ -315,6 +322,42 @@ describe("index", () => {
 
 			afterAll(async () => {
 				await session.stop();
+			});
+
+			it("drops when no longer replicating as observer", async () => {
+				let COUNT = 10;
+				await store.docs.updateRole({
+					type: "replicator",
+					factor: 1
+				});
+				for (let i = 0; i < COUNT; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: "Hello world"
+						})
+					);
+				}
+
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(COUNT)
+				);
+
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				});
+				await store2.docs.updateRole("observer");
+				await waitForResolved(() =>
+					expect(store3.docs.index.index.size).toEqual(COUNT)
+				);
+				await waitForResolved(() =>
+					expect(store2.docs.index.index.size).toEqual(0)
+				);
 			});
 
 			it("drops when no longer replicating as observer", async () => {
@@ -1906,6 +1949,91 @@ describe("index", () => {
 						new SearchRequest()
 					);
 					expect(collected).toHaveLength(10);
+				});
+			});
+
+			describe("redundancy", () => {
+				let peersCount = 3;
+				beforeAll(async () => {
+					session = await TestSession.connected(peersCount);
+				});
+
+				afterAll(async () => {
+					await session.stop();
+				});
+
+				it("can handle large document limits", async () => {
+					const store = new TestStore({
+						docs: new Documents<Document>()
+					});
+					const store1 = await session.peers[0].open(store.clone(), {
+						args: {
+							role: {
+								type: "replicator",
+								factor: 0.111
+							},
+							replicas: {
+								min: 1
+							}
+						}
+					});
+
+					const store2 = await session.peers[1].open(store.clone(), {
+						args: {
+							role: {
+								type: "replicator",
+								factor: 0.1
+							},
+							replicas: {
+								min: 1
+							}
+						}
+					});
+
+					const store3 = await session.peers[2].open(store.clone(), {
+						args: {
+							role: {
+								type: "replicator",
+								factor: 0.2
+							},
+							replicas: {
+								min: 1
+							}
+						}
+					});
+
+					await waitForResolved(() =>
+						expect(
+							store1.docs.log.getReplicatorsSorted()?.toArray().length
+						).toEqual(3)
+					);
+
+					const count = 1000;
+					for (let i = 0; i < count; i++) {
+						const doc = new Document({
+							id: randomBytes(32),
+							data: randomBytes(10)
+						});
+						await store1.docs.put(doc);
+					}
+					await waitForResolved(() =>
+						expect(store1.docs.log.log.length).toBeLessThan(count * 0.99)
+					);
+
+					for (const store of [store1, store2, store3]) {
+						const collected = await store.docs.index.search(
+							new SearchRequest()
+						);
+						expect(collected).toHaveLength(count);
+					}
+					await delay(5000);
+
+					for (const store of [store1, store2, store3]) {
+						const collected = await store.docs.index.search(
+							new SearchRequest()
+						);
+						expect(collected).toHaveLength(count);
+					}
 				});
 			});
 		});
