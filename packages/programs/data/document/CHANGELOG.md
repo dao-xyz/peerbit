@@ -361,6 +361,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.19 to 2.0.20
 
+## [5.0.2](https://github.com/dao-xyz/peerbit/compare/document-v5.0.1...document-v5.0.2) (2024-01-25)
+
+
+### Bug Fixes
+
+* make sure old documents can not be re-joined after deletion ([6d9d34a](https://github.com/dao-xyz/peerbit/commit/6d9d34abc7f70da966e1b103a4d39e6d9bc15793))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 7.0.4 to 7.0.5
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/document-v4.1.9...document-v5.0.0) (2024-01-23)
 
 
