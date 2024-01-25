@@ -1,5 +1,34 @@
-import { field, option, variant, vec } from "@dao-xyz/borsh";
+import { field, variant, vec } from "@dao-xyz/borsh";
 
+export const containsPoint = (
+	rect: { offset: number; factor: number },
+	point: number
+) => {
+	if (rect.factor === 0) {
+		return false;
+	}
+	const start = rect.offset;
+	const endUnwrapped = rect.offset + rect.factor;
+	let end = endUnwrapped;
+	let wrapped = false;
+	if (endUnwrapped > 1) {
+		end = endUnwrapped % 1;
+		wrapped = true;
+	}
+
+	const inFirstInterval = point >= start && point < Math.min(endUnwrapped, 1);
+	const inSecondInterval =
+		!inFirstInterval && wrapped && point >= 0 && point < end;
+
+	return inFirstInterval || inSecondInterval;
+};
+
+const overlaps = (x1: number, x2: number, y1: number, y2: number) => {
+	if (x1 <= y2 && y1 <= x2) {
+		return true;
+	}
+	return false;
+};
 export abstract class Role {
 	abstract equals(other: Role);
 }
@@ -24,7 +53,7 @@ export class Observer extends Role {
 
 export const REPLICATOR_TYPE_VARIANT = new Uint8Array([2]);
 
-class ReplicationSegment {
+export class ReplicationSegment {
 	@field({ type: "u64" })
 	timestamp: bigint;
 
@@ -59,6 +88,31 @@ class ReplicationSegment {
 
 	get offset(): number {
 		return this.offsetNominator / 4294967295;
+	}
+
+	overlaps(other: ReplicationSegment) {
+		let x1 = this.offset;
+		let x2 = this.offset + this.factor;
+		let y1 = other.offset;
+		let y2 = other.offset + other.factor;
+		if (overlaps(x1, x2, y1, y2)) {
+			return true;
+		}
+
+		if (x2 > 1 || y2 > 1) {
+			if (x2 > 1) {
+				x1 = 0;
+				x2 = x2 % 1;
+			}
+			if (y2 > 1) {
+				y1 = 0;
+				y2 = y2 % 1;
+			}
+			if (overlaps(x1, x2, y1, y2)) {
+				return true;
+			}
+		}
+		return false;
 	}
 }
 

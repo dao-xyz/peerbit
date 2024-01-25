@@ -62,6 +62,7 @@ import { PIDReplicationController } from "./pid.js";
 export * from "./replication.js";
 import PQueue from "p-queue";
 import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
+import { collectNodesAroundPoint, getCover } from "./ranges.js";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
@@ -1126,73 +1127,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
-	private collectNodesAroundPoint(
-		time: number,
-		roleAge: number,
-		peers: yallist<ReplicatorRect>,
-		currentNode: yallist.Node<ReplicatorRect> | null,
-		width: number,
-		collector: Set<string>,
-		point: () => number,
-		done = () => false,
-		onMatured: (node: ReplicatorRect) => void = () => {}
-	) {
-		let matured = 0;
-
-		const maybeIncrementMatured = (role: Replicator) => {
-			if (time - Number(role.timestamp) > roleAge) {
-				matured++;
-				return true;
-			}
-
-			return false;
-		};
-
-		// Assume peers does not mutate during this loop
-		const startNode = currentNode;
-		const diffs: { diff: number; rect: ReplicatorRect }[] = [];
-		while (currentNode && !done()) {
-			const start = currentNode.value.role.offset % width;
-			const absDelta = Math.abs(start - point());
-			const diff = Math.min(absDelta, width - absDelta);
-
-			if (diff < currentNode.value.role.factor / 2 + 0.00001) {
-				collector.add(currentNode.value.publicKey.hashcode());
-				if (maybeIncrementMatured(currentNode.value.role)) {
-					onMatured(currentNode.value);
-				}
-			} else {
-				diffs.push({
-					diff:
-						currentNode.value.role.factor > 0
-							? diff / currentNode.value.role.factor
-							: Number.MAX_SAFE_INTEGER,
-					rect: currentNode.value
-				});
-			}
-
-			currentNode = currentNode.next || peers.head;
-
-			if (
-				currentNode?.value.publicKey &&
-				startNode?.value.publicKey.equals(currentNode?.value.publicKey)
-			) {
-				break; // TODO throw error for failing to fetch ffull width
-			}
-		}
-
-		if (matured === 0) {
-			diffs.sort((x, y) => x.diff - y.diff);
-			for (const node of diffs) {
-				collector.add(node.rect.publicKey.hashcode());
-				maybeIncrementMatured(node.rect.role);
-				if (matured > 0) {
-					break;
-				}
-			}
-		}
-	}
-
 	private findLeadersFromUniformNumber(
 		cursor: number,
 		numberOfLeaders: number,
@@ -1211,20 +1145,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const t = +new Date();
 		const roleAge =
 			options?.roleAge ??
-			Math.min(this.timeUntilRoleMaturity, +new Date() - this.openTime);
+			Math.min(this.timeUntilRoleMaturity, +new Date() - this.openTime - 500); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 
 		for (let i = 0; i < numberOfLeaders; i++) {
 			const point = ((cursor + i / numberOfLeaders) % 1) * width;
 			const currentNode = peers.head;
-			this.collectNodesAroundPoint(
-				t,
-				roleAge,
-				peers,
-				currentNode,
-				width,
-				leaders,
-				() => point
-			);
+			collectNodesAroundPoint(t, roleAge, peers, currentNode, leaders, point);
 		}
 
 		return [...leaders];
@@ -1256,53 +1182,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 		// the entry we are looking for
 		const coveringWidth = width / minReplicas;
 
-		let walker = peers.head;
-		if (this.role instanceof Replicator) {
-			// start at our node (local first)
-			while (walker) {
-				if (walker.value.publicKey.equals(this.node.identity.publicKey)) {
-					break;
-				}
-				walker = walker.next;
-			}
-			if (!walker) {
-				walker = peers.head;
-			}
-		} else {
-			const seed = Math.round(peers.length * Math.random()); // start at a random point
-			for (let i = 0; i < seed - 1; i++) {
-				if (walker?.next == null) {
-					break;
-				}
-				walker = walker.next;
-			}
-		}
-
-		const set: Set<string> = new Set();
-		let distance = 0;
-		const startNode = walker;
-		if (!startNode) {
-			return [];
-		}
-
-		let nextPoint = startNode.value.role.offset;
-		const t = +new Date();
-		this.collectNodesAroundPoint(
-			t,
-			roleAge,
+		return getCover(
+			coveringWidth,
 			peers,
-			walker,
-			width,
-			set,
-			() => nextPoint,
-			() => distance >= coveringWidth,
-			(node) => {
-				distance += node.role.factor;
-				nextPoint = (nextPoint + walker!.value.role.factor) % width;
-			}
+			roleAge,
+			this.role instanceof Replicator ? this.node.identity.publicKey : undefined
 		);
-
-		return [...set];
 	}
 
 	async replicator(

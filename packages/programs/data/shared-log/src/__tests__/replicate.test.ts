@@ -69,7 +69,14 @@ describe(`exchange`, function () {
 			}
 		]);
 
-		db1 = await session.peers[0].open(new EventStore<string>());
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
 	});
 
 	afterEach(async () => {
@@ -114,6 +121,48 @@ describe(`exchange`, function () {
 		};
 		await db2.log.log.join([clonedEntry]);
 		expect(verified).toBeFalse();
+	});
+
+	it("logs are unique", async () => {
+		const entryCount = 33;
+		const entryArr: number[] = [];
+
+		const db1 = await session.peers[0].open(new EventStore<string>());
+		const db3 = await session.peers[0].open(new EventStore<string>());
+
+		// Create the entries in the first database
+		for (let i = 0; i < entryCount; i++) {
+			entryArr.push(i);
+		}
+
+		await mapSeries(entryArr, (i) => db1.add("hello" + i));
+
+		// Open the second database
+		const db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1]
+		))!;
+
+		const db4 = (await EventStore.open<EventStore<string>>(
+			db3.address!,
+			session.peers[1]
+		))!;
+
+		await waitForResolved(async () =>
+			expect((await db2.iterator({ limit: -1 })).collect()).toHaveLength(
+				entryCount
+			)
+		);
+
+		const result1 = (await db1.iterator({ limit: -1 })).collect();
+		const result2 = (await db2.iterator({ limit: -1 })).collect();
+		expect(result1.length).toEqual(result2.length);
+		for (let i = 0; i < result1.length; i++) {
+			expect(result1[i].equals(result2[i])).toBeTrue();
+		}
+
+		expect(db3.log.log.length).toEqual(0);
+		expect(db4.log.log.length).toEqual(0);
 	});
 
 	describe("references", () => {
@@ -287,7 +336,7 @@ describe(`exchange`, function () {
 		await db1.waitFor(session.peers[1].peerId);
 		await db2.waitFor(session.peers[0].peerId);
 
-		const entryCount = 100;
+		const entryCount = 1000;
 
 		for (let i = 0; i < entryCount; i++) {
 			//	entryArr.push(i);
@@ -310,6 +359,7 @@ describe(`exchange`, function () {
 			}
 		}
 	});
+
 	it("replicates database of large entries", async () => {
 		let count = 10;
 		for (let i = 0; i < count; i++) {
@@ -527,52 +577,17 @@ describe(`start/stop`, function () {
 		await session.stop();
 	});
 
-	it("starts replicating the database when peers connect", async () => {
-		const entryCount = 33;
-		const entryArr: number[] = [];
-
-		const db1 = await session.peers[0].open(new EventStore<string>());
-		const db3 = await session.peers[0].open(new EventStore<string>());
-
-		// Create the entries in the first database
-		for (let i = 0; i < entryCount; i++) {
-			entryArr.push(i);
-		}
-
-		await mapSeries(entryArr, (i) => db1.add("hello" + i));
-
-		// Open the second database
-		const db2 = (await EventStore.open<EventStore<string>>(
-			db1.address!,
-			session.peers[1]
-		))!;
-
-		const db4 = (await EventStore.open<EventStore<string>>(
-			db3.address!,
-			session.peers[1]
-		))!;
-
-		await waitForResolved(async () =>
-			expect((await db2.iterator({ limit: -1 })).collect()).toHaveLength(
-				entryCount
-			)
-		);
-
-		const result1 = (await db1.iterator({ limit: -1 })).collect();
-		const result2 = (await db2.iterator({ limit: -1 })).collect();
-		expect(result1.length).toEqual(result2.length);
-		for (let i = 0; i < result1.length; i++) {
-			expect(result1[i].equals(result2[i])).toBeTrue();
-		}
-
-		expect(db3.log.log.length).toEqual(0);
-		expect(db4.log.log.length).toEqual(0);
-	});
-
 	it("starts replicating the database when peers connect in write mode", async () => {
-		const entryCount = 1;
+		const entryCount = 1000;
 		const entryArr: number[] = [];
-		const db1 = await session.peers[0].open(new EventStore<string>());
+		const db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
 
 		// Create the entries in the first database
 		for (let i = 0; i < entryCount; i++) {
@@ -584,7 +599,15 @@ describe(`start/stop`, function () {
 		// Open the second database
 		const db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
-			session.peers[1]
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
 		))!;
 
 		await waitForResolved(async () =>
@@ -701,13 +724,12 @@ describe("canReplicate", () => {
 				)
 			)
 		);
-
 		const union1 = db1.log.getReplicatorUnion(0);
-		expect(union1).toHaveLength(1);
 		expect([
 			db2.node.identity.publicKey.hashcode(),
 			db3.node.identity.publicKey.hashcode()
 		]).toContain(union1[0]); // only 1 needs to be present, since both 2 and 3 are replicating with factor 1
+		expect(union1).toHaveLength(1);
 
 		await Promise.all(
 			[db2, db3].map((log) =>
