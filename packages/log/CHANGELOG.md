@@ -289,6 +289,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.18 to 2.0.19
 
+## [3.0.21](https://github.com/dao-xyz/peerbit/compare/log-v3.0.20...log-v3.0.21) (2024-01-25)
+
+
+### Bug Fixes
+
+* ignores join of old entry after cut ([d50d20f](https://github.com/dao-xyz/peerbit/commit/d50d20fc1954d1f37069045e90abf9de9cd1dcbb))
+
 ## [3.0.20](https://github.com/dao-xyz/peerbit/compare/log-v3.0.19...log-v3.0.20) (2024-01-24)
 
 

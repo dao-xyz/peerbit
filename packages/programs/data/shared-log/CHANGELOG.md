@@ -310,6 +310,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.19 to ^2.0.20
 
+## [7.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.4...shared-log-v7.0.5) (2024-01-25)
+
+
+### Bug Fixes
+
+* make sure union calculation respects boundaries and skips unmature nodes ([1daf279](https://github.com/dao-xyz/peerbit/commit/1daf2799526d1c53b6c4e901f9b3de268d2873b0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 3.0.20 to 3.0.21
+
 ## [7.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.1...shared-log-v7.0.2) (2024-01-22)
 
 
