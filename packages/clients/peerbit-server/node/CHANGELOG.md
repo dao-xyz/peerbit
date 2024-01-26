@@ -372,6 +372,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.19 to 2.0.20
 
+## [5.0.21](https://github.com/dao-xyz/peerbit/compare/server-v5.0.20...server-v5.0.21) (2024-01-26)
+
+
+### Bug Fixes
+
+* update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 3.0.20 to 3.0.21
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.20 to 2.0.21
+
 ## [5.0.2](https://github.com/dao-xyz/peerbit/compare/server-v5.0.1...server-v5.0.2) (2024-01-01)
 
 

@@ -60,6 +60,20 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.5 to 2.1.6
 
+## [3.0.8](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.7...stream-interface-v3.0.8) (2024-01-26)
+
+
+### Bug Fixes
+
+* update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.6 to 2.1.7
+
 ## [3.0.7](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.6...stream-interface-v3.0.7) (2024-01-22)
 
 

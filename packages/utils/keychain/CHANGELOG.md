@@ -73,6 +73,13 @@
   * dependencies
     * @peerbit/any-store bumped from ^1.0.11 to ^1.0.12
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
+    * @peerbit/any-store bumped from ^1.0.12 to ^1.0.13
+
 ## 1.0.0 (2023-12-31)
 
 

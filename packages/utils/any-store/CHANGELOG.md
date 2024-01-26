@@ -21,6 +21,12 @@
     * @peerbit/crypto bumped from ^2.1.5 to ^2.1.6
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
+
 ## [1.0.12](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.11...any-store-v1.0.12) (2024-01-24)
 
 
