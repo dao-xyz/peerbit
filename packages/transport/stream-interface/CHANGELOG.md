@@ -60,6 +60,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.5 to 2.1.6
 
+## [3.0.9](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.8...stream-interface-v3.0.9) (2024-01-26)
+
+
+### Bug Fixes
+
+* don't remove route to unresponsive neighbour until connection drop ([734419e](https://github.com/dao-xyz/peerbit/commit/734419ece5bc344e2526716422b8f6c756db8e1a))
+
 ## [3.0.8](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.7...stream-interface-v3.0.8) (2024-01-26)
 
 
