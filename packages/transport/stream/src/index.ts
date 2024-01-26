@@ -278,19 +278,15 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	async attachOutboundStream(stream: Stream) {
 		// If an outbound stream already exists, gently close it
 		const _prevStream = this.outboundStream;
-
+		if (_prevStream) {
+			logger.info(
+				`Stream already exist. This can be due to that you are opening two or more connections to ${this.peerId.toString()}. A stream will only be created for the first succesfully created connection`
+			);
+			return;
+		}
 		this._rawOutboundStream = stream;
 		this.outboundStream = pushable<Uint8Array>({
-			objectMode: false,
-			onEnd: () => {
-				return stream.close().then(() => {
-					if (this._rawOutboundStream === stream) {
-						this.dispatchEvent(new CustomEvent("close"));
-						this._rawOutboundStream = undefined;
-						this.outboundStream = undefined;
-					}
-				});
-			}
+			objectMode: false
 		});
 
 		pipe(
@@ -302,10 +298,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		// Emit if the connection is new
 		this.dispatchEvent(new CustomEvent("stream:outbound"));
 
-		if (_prevStream != null) {
-			// End the stream without emitting a close event
-			await _prevStream.end();
-		}
 		return this.outboundStream;
 	}
 
@@ -1569,6 +1561,7 @@ export abstract class DirectStream<
 			((ev) => {
 				const deletedReceiver = messageToSet.delete(ev.detail.hashcode());
 				if (deletedReceiver) {
+					// Only reject if we are the sender
 					clear();
 					deliveryDeferredPromise.reject(
 						new DeliveryError(
