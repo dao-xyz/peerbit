@@ -9,7 +9,7 @@ import {
 } from "@libp2p/interface";
 import { Client } from "./client.js";
 import { Blocks } from "@peerbit/blocks-interface";
-import { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
+import { PeerId as Libp2pPeerId } from "@libp2p/interface";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent

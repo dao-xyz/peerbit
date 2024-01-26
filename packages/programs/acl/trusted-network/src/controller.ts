@@ -21,7 +21,7 @@ import {
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { Replicator, RoleOptions } from "@peerbit/shared-log";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {

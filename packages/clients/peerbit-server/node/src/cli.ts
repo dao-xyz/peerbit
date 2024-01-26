@@ -29,7 +29,7 @@ import { toBase64 } from "@peerbit/crypto";
 import { DEFAULT_REMOTE_GROUP, RemoteObject, Remotes } from "./remotes.js";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { LOCAL_API_PORT } from "./routes.js";
-import { type PeerId } from "@libp2p/interface/peer-id";
+import { type PeerId } from "@libp2p/interface";
 import Table from "tty-table";
 
 const colors = [

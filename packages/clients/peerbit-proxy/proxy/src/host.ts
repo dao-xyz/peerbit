@@ -1,5 +1,5 @@
 import { AnyStore } from "@peerbit/any-store";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { Blocks } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";

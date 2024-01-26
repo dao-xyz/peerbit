@@ -15,7 +15,7 @@ import {
 import { Access, AccessType } from "./access";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { concat } from "uint8arrays";
 import { RoleOptions } from "@peerbit/shared-log";
 

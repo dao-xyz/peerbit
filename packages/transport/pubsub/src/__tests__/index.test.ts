@@ -1143,17 +1143,15 @@ describe("pubsub", function () {
 			}
 
 			await streams[0].stream.subscribe(TOPIC_1);
-			await waitFor(
-				() =>
-					streams[2].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[2].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
-			await waitFor(
-				() =>
-					streams[1].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[1].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 			expect(streams[2].subscriptionEvents).toHaveLength(1);
 			expect(streams[1].subscriptionEvents).toHaveLength(1);
@@ -1211,32 +1209,28 @@ describe("pubsub", function () {
 			streams[0].stream.subscribe(TOPIC_1);
 			streams[0].stream.subscribe(TOPIC_2);
 
-			await waitFor(
-				() =>
-					streams[2].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[2].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 
-			await waitFor(
-				() =>
-					streams[1].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[1].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 
-			await waitFor(
-				() =>
-					streams[2].stream.topics
-						.get(TOPIC_2)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[2].stream.topics
+					.get(TOPIC_2)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 
-			await waitFor(
-				() =>
-					streams[1].stream.topics
-						.get(TOPIC_2)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[1].stream.topics
+					.get(TOPIC_2)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 
 			expect(streams[2].subscriptionEvents).toHaveLength(2);
@@ -1271,17 +1265,15 @@ describe("pubsub", function () {
 						.get(TOPIC_1)
 						?.has(streams[0].stream.publicKeyHash)
 			);
-			await waitFor(
-				() =>
-					streams[2].stream.topics
-						.get(TOPIC_2)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[2].stream.topics
+					.get(TOPIC_2)
+					?.has(streams[0].stream.publicKeyHash)
 			);
-			await waitFor(
-				() =>
-					streams[1].stream.topics
-						.get(TOPIC_2)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[1].stream.topics
+					.get(TOPIC_2)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 			expect(streams[2].unsubscriptionEvents).toHaveLength(1);
 			expect(streams[1].unsubscriptionEvents).toHaveLength(1);
@@ -1345,32 +1337,28 @@ describe("pubsub", function () {
 			streams[0].stream.subscribe(TOPIC_1); // 2
 			streams[0].stream.subscribe(TOPIC_1); // 3
 
-			await waitFor(
-				() =>
-					streams[2].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[2].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
-			await waitFor(
-				() =>
-					streams[1].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[1].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 			streams[0].stream.unsubscribe(TOPIC_1); // 3
 			streams[0].stream.unsubscribe(TOPIC_1); // 2
 			await delay(3000); // allow some communications
-			await waitFor(
-				() =>
-					streams[2].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[2].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
-			await waitFor(
-				() =>
-					streams[1].stream.topics
-						.get(TOPIC_1)
-						?.has(streams[0].stream.publicKeyHash)
+			await waitFor(() =>
+				streams[1].stream.topics
+					.get(TOPIC_1)
+					?.has(streams[0].stream.publicKeyHash)
 			);
 			await streams[0].stream.unsubscribe(TOPIC_1); // 1
 			await waitFor(

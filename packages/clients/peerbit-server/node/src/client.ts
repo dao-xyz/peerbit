@@ -23,7 +23,7 @@ import {
 	PublicSignKey,
 	getPublicKeyFromPeerId
 } from "@peerbit/crypto";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { waitForResolved } from "@peerbit/time";
 import { RemoteOrigin } from "./remotes.js";
 

@@ -2,7 +2,7 @@ import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 import path from "path";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 
 export const LIBP2P_LISTEN_PORT = 8001;
 export const create = (properties: {

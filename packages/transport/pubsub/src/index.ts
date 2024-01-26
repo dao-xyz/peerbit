@@ -1,4 +1,4 @@
-import type { PeerId as Libp2pPeerId } from "@libp2p/interface/peer-id";
+import type { PeerId as Libp2pPeerId } from "@libp2p/interface";
 import { logger as logFn } from "@peerbit/logger";
 import {
 	AcknowledgeDelivery,

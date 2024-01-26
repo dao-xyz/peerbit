@@ -1,23 +1,20 @@
 import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
 import { pipe } from "it-pipe";
 import Queue from "p-queue";
-import type { PeerId } from "@libp2p/interface/peer-id";
-import type { Connection } from "@libp2p/interface/connection";
+import type { PeerId } from "@libp2p/interface";
+import type { Connection } from "@libp2p/interface";
 import type { Pushable } from "it-pushable";
 import { pushable } from "it-pushable";
-import type { Stream } from "@libp2p/interface/connection";
+import type { Stream } from "@libp2p/interface";
 import { Uint8ArrayList } from "uint8arraylist";
 import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
 import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
-import type {
-	IncomingStreamData,
-	Registrar
-} from "@libp2p/interface-internal/registrar";
-import type { AddressManager } from "@libp2p/interface-internal/address-manager";
-import type { ConnectionManager } from "@libp2p/interface-internal/connection-manager";
+import type { IncomingStreamData, Registrar } from "@libp2p/interface-internal";
+import type { AddressManager } from "@libp2p/interface-internal";
+import type { ConnectionManager } from "@libp2p/interface-internal";
 
-import { PeerStore } from "@libp2p/interface/peer-store";
+import { PeerStore } from "@libp2p/interface";
 import pDefer from "p-defer";
 
 import { AbortError, delay, TimeoutError, waitFor } from "@peerbit/time";
@@ -1223,8 +1220,8 @@ export abstract class DirectStream<
 						// include our origin if message is SeekDelivery and we have not recently pruned a connection to this peer
 						origin:
 							message.header.mode instanceof SeekDelivery &&
-							!message.header.signatures!.publicKeys.find(
-								(x) => this.prunedConnectionsCache?.has(x.hashcode())
+							!message.header.signatures!.publicKeys.find((x) =>
+								this.prunedConnectionsCache?.has(x.hashcode())
 							)
 								? new MultiAddrinfo(
 										this.components.addressManager

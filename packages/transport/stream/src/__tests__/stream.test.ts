@@ -20,7 +20,7 @@ import {
 	getMsgId
 } from "@peerbit/stream-interface";
 import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";

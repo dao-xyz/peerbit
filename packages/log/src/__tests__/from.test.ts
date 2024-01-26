@@ -14,7 +14,7 @@ const BadComparatorReturnsZero = (a: any, b: any) => 0;
 import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { BlockStore, AnyBlockStore, StoreStatus } from "@peerbit/blocks";
 import { Blocks, GetOptions } from "@peerbit/blocks-interface";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { JSON_ENCODING } from "./utils/encoding.js";
 
 const last = <T>(arr: T[]): T => {

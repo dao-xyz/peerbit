@@ -7,7 +7,7 @@ import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../acl-db";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { RoleOptions } from "@peerbit/shared-log";
 import { Role } from "@peerbit/shared-log";
 import { Replicator } from "@peerbit/shared-log";

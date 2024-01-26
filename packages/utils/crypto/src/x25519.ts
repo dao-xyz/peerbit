@@ -13,7 +13,7 @@ import {
 	Ed25519PrivateKey
 } from "./ed25519.js";
 import { toHexString } from "./utils.js";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
 	@field({ type: fixedArray("u8", 32) })

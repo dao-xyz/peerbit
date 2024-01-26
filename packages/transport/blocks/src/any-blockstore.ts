@@ -8,7 +8,7 @@ import {
 } from "./block.js";
 import * as Block from "multiformats/block";
 import { waitFor } from "@peerbit/time";
-import { PeerId } from "@libp2p/interface/peer-id";
+import { PeerId } from "@libp2p/interface";
 import { PublicSignKey } from "@peerbit/crypto";
 import { AnyStore, createStore } from "@peerbit/any-store";
 

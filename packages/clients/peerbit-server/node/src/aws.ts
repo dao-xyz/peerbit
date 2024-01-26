@@ -1,5 +1,5 @@
 import { delay } from "@peerbit/time";
-import { type PeerId } from "@libp2p/interface/peer-id";
+import { type PeerId } from "@libp2p/interface";
 
 export const createRecord = async (options: {
 	domain: string;

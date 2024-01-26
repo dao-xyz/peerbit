@@ -14,7 +14,7 @@ import { AnyBlockStore } from "./any-blockstore.js";
 import { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
 import { AbortError } from "@peerbit/time";
-import type { PeerId } from "@libp2p/interface/peer-id";
+import type { PeerId } from "@libp2p/interface";
 import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
 
 export class BlockMessage {}
