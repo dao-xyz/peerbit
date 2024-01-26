@@ -8,7 +8,8 @@ import {
 	SeekDelivery,
 	SilentDelivery,
 	deliveryModeHasReceiver,
-	NotStartedError
+	NotStartedError,
+	DeliveryError
 } from "@peerbit/stream-interface";
 import {
 	DirectStream,
@@ -43,6 +44,13 @@ const logError = (e?: { message: string }) => {
 };
 const logErrorIfStarted = (e?: { message: string }) => {
 	e instanceof NotStartedError === false && logError(e);
+};
+
+const dontThrowIfDeliveryError = (e: any) => {
+	if (e instanceof DeliveryError) {
+		return;
+	}
+	throw e;
 };
 
 export interface PeerStreamsInit {
@@ -646,7 +654,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 							this.publishMessage(
 								this.publicKey,
 								await response.sign(this.sign)
-							);
+							).catch(dontThrowIfDeliveryError);
 						}
 					}
 				}
@@ -714,7 +722,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 							})
 						}).sign(this.sign),
 						[stream]
-					); // send back to same stream
+					).catch(dontThrowIfDeliveryError); // send back to same stream
 				}
 
 				// Forward
