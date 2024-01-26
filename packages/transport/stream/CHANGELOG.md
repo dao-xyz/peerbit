@@ -37,6 +37,21 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.11](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.10...stream-v3.0.11) (2024-01-26)
+
+
+### Bug Fixes
+
+* don't remove route to unresponsive neighbour until connection drop ([734419e](https://github.com/dao-xyz/peerbit/commit/734419ece5bc344e2526716422b8f6c756db8e1a))
+* log if stream already exist, instead of terminating it ([a035365](https://github.com/dao-xyz/peerbit/commit/a03536510291cfe850c1aaeb3307e75a50e4a617))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^3.0.8 to ^3.0.9
+
 ## [3.0.10](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.9...stream-v3.0.10) (2024-01-26)
 
 

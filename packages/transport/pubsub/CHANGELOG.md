@@ -164,6 +164,20 @@
   * dependencies
     * @peerbit/stream bumped from 3.0.7 to 3.0.8
 
+## [2.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.17...pubsub-v2.0.18) (2024-01-26)
+
+
+### Bug Fixes
+
+* dont throw when failing to deliver GetSubscribers response ([6c583bd](https://github.com/dao-xyz/peerbit/commit/6c583bd1f8b3d5558b945a209fdd30a4c26dd212))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 3.0.10 to 3.0.11
+
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.16...pubsub-v2.0.17) (2024-01-26)
 
 
