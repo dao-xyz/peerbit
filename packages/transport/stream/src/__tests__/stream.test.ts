@@ -29,6 +29,7 @@ import { deserialize, serialize } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { jest } from "@jest/globals";
 import { Libp2pOptions } from "libp2p";
+import { DeliveryError } from "@peerbit/stream-interface";
 
 type TestSessionStream = TestSession<{ directstream: DirectStream }>;
 
@@ -1298,6 +1299,43 @@ describe("streams", function () {
 					await session.stop();
 				});
 
+				it("always keeps a route to direct connections", async () => {
+					session = await connected(2, {
+						services: {
+							directstream: (c) =>
+								new TestDirectStream(c, {
+									connectionManager: false,
+									seekTimeout: 3e3
+								})
+						}
+					});
+					await waitForPeerStreams(
+						session.peers[0].services.directstream,
+						session.peers[1].services.directstream
+					);
+
+					// make it so that one node is responsive
+					session.peers[1].services.directstream.publishMessage =
+						(() => {}) as any;
+
+					// now route should persist even if peer can't reach
+					await expect(
+						session.peers[0].services.directstream.publish(new Uint8Array(0), {
+							mode: new SeekDelivery({
+								redundancy: 1,
+								to: [session.peers[1].peerId]
+							})
+						})
+					).rejects.toThrow();
+					expect(
+						session.peers[0].services.directstream.routes.isReachable(
+							session.peers[0].services.directstream.publicKeyHash,
+							session.peers[1].services.directstream.publicKeyHash,
+							0
+						)
+					).toBeTrue();
+				});
+
 				it("keeps old routes until timeout", async () => {
 					const routeMaxRetentionPeriod = 2e3;
 					session = await disconnected(4, {
@@ -1993,7 +2031,7 @@ describe("join/leave", () => {
 					to: [streams[3].stream.publicKeyHash]
 				})
 			});
-			await expect(publishToMissing).rejects.toThrow(TimeoutError);
+			await expect(publishToMissing).rejects.toThrow(DeliveryError);
 			expect(missedOne).toBeTrue();
 			expect(unreachable).toHaveLength(0); // because the next message reached the node before the first message timed out
 		});
@@ -2103,15 +2141,84 @@ describe("join/leave", () => {
 
 	describe("re-route", () => {
 		beforeEach(async () => {
-			session = await disconnected(4, {
-				services: {
-					directstream: (c) =>
-						new TestDirectStream(c, {
-							connectionManager: false,
-							seekTimeout: 5000
-						})
+			session = await disconnected(4, [
+				{
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192,
+							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
+							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
+							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
+							62, 133, 97, 57, 150, 187, 247, 215
+						]),
+						Ed25519Keypair
+					).toPeerId(),
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: false,
+								seekTimeout: 5000
+							})
+					}
+				},
+				{
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45,
+							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
+							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
+							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
+							112, 65, 202, 154, 27, 63, 15
+						]),
+						Ed25519Keypair
+					).toPeerId(),
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: false,
+								seekTimeout: 5000
+							})
+					}
+				},
+				{
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34, 23,
+							12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231,
+							155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84,
+							137, 152, 227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187,
+							239, 56, 174, 184, 34, 141, 45, 242
+						]),
+						Ed25519Keypair
+					).toPeerId(),
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: false,
+								seekTimeout: 5000
+							})
+					}
+				},
+				{
+					peerId: await deserialize(
+						new Uint8Array([
+							0, 0, 89, 189, 223, 17, 89, 221, 173, 81, 113, 69, 226, 180, 190,
+							119, 201, 16, 59, 208, 95, 19, 142, 231, 71, 166, 43, 90, 10, 250,
+							109, 68, 89, 118, 0, 27, 51, 234, 79, 160, 31, 81, 189, 54, 105,
+							205, 202, 34, 30, 101, 16, 64, 52, 113, 222, 160, 31, 73, 148,
+							161, 240, 201, 36, 71, 121, 134, 83
+						]),
+						Ed25519Keypair
+					).toPeerId(),
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, {
+								connectionManager: false,
+								seekTimeout: 5000
+							})
+					}
 				}
-			});
+			]);
 
 			streams = [];
 			for (const peer of session.peers) {
@@ -2627,6 +2734,36 @@ describe("start/stop", () => {
 		await delay(3000);
 		await session.peers[0].services.directstream.start();
 		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+	});
+
+	it("one peer can restart line", async () => {
+		session = await disconnected(2, {
+			transports: [tcp() /* , webSockets({ filter: filters.all }) */],
+			services: {
+				directstream: (c) => new TestDirectStream(c)
+			}
+		});
+		await connectLine(session);
+		await delay(2000);
+		await session.peers[0].services.directstream.publish(new Uint8Array(0), {
+			mode: new SeekDelivery({
+				redundancy: 2,
+				to: [session.peers[1].services.directstream.publicKeyHash]
+			})
+		});
+		/* 	session.peers[0].services.directstream.peers.get(session.peers[1].services.directstream.publicKeyHash)?.write(new Uint8Array(0))
+			session.peers[1].services.directstream.peers.get(session.peers[0].services.directstream.publicKeyHash)?.write(new Uint8Array(0))
+	 */
+		await session.peers[1].stop();
+
+		await session.peers[1].start();
+
+		await session.connect([[session.peers[1], session.peers[0]]]);
+		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForPeerStreams(stream(session, 1), stream(session, 0));
+
+		/* 	await delay(13000)
+			await waitForPeerStreams(stream(session, 0), stream(session, 1)); */
 	});
 
 	it("wait for only waits for reachable", async () => {

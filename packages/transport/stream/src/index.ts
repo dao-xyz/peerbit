@@ -53,7 +53,8 @@ import {
 	TracedDelivery,
 	AnyWhere,
 	NotStartedError,
-	deliveryModeHasReceiver
+	deliveryModeHasReceiver,
+	DeliveryError
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
@@ -63,6 +64,7 @@ export { BandwidthTracker }; // might be useful for others
 const logError = (e?: { message: string }) => {
 	return logger.error(e?.message);
 };
+
 export interface PeerStreamsInit {
 	peerId: PeerId;
 	publicKey: PublicSignKey;
@@ -815,7 +817,7 @@ export abstract class DirectStream<
 			const dependent = this.routes.getDependent(peerKeyHash);
 
 			// make neighbour unreachables
-			this.removePeerFromRoutes(peerKeyHash);
+			this.removePeerFromRoutes(peerKeyHash, true);
 
 			if (dependent.length > 0) {
 				await this.publishMessage(
@@ -836,7 +838,11 @@ export abstract class DirectStream<
 		logger.debug("connection ended:" + peerKey.toString());
 	}
 
-	public removePeerFromRoutes(hash: string) {
+	public removePeerFromRoutes(hash: string, deleteIfNeighbour = false) {
+		if (this.peers.has(hash) && !deleteIfNeighbour) {
+			return;
+		}
+
 		const unreachable = this.routes.remove(hash);
 		for (const node of unreachable) {
 			this.onPeerUnreachable(node); // TODO types
@@ -1375,9 +1381,13 @@ export abstract class DirectStream<
 			})
 				.then(() => true)
 				.catch((e) => {
-					if (e instanceof TimeoutError) {
+					if (e instanceof DeliveryError) {
 						return false;
-					} else if (e instanceof AbortError || e instanceof NotStartedError) {
+					} else if (e instanceof NotStartedError) {
+						return false;
+					} else if (e instanceof TimeoutError) {
+						return false;
+					} else if (e instanceof AbortError) {
 						return false;
 					} else {
 						throw e;
@@ -1557,8 +1567,16 @@ export abstract class DirectStream<
 		const onUnreachable =
 			!relayed &&
 			((ev) => {
-				messageToSet.delete(ev.detail.hashcode());
-				checkDone();
+				const deletedReceiver = messageToSet.delete(ev.detail.hashcode());
+				if (deletedReceiver) {
+					clear();
+					deliveryDeferredPromise.reject(
+						new DeliveryError(
+							"At least one recipent became unreachable while delivering: " +
+								ev.detail.hashcode()
+						)
+					);
+				}
 			});
 
 		onUnreachable && this.addEventListener("peer:unreachable", onUnreachable);
@@ -1591,7 +1609,7 @@ export abstract class DirectStream<
 
 			if (!hasAll && willGetAllAcknowledgements) {
 				deliveryDeferredPromise.reject(
-					new TimeoutError(
+					new DeliveryError(
 						`${
 							this.publicKeyHash
 						} Failed to get message ${idString} ${filterMessageForSeenCounter} ${[

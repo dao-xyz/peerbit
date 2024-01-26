@@ -29,3 +29,9 @@ export class NotStartedError extends Error {
 		super("Not started");
 	}
 }
+
+export class DeliveryError extends Error {
+	constructor(message?: string) {
+		super(message);
+	}
+}
