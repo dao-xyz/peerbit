@@ -330,6 +330,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.21 to ^2.0.22
 
+## [7.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.7...shared-log-v7.0.8) (2024-01-26)
+
+
+### Bug Fixes
+
+* make sure entries are not requested if already have them ([ee1902b](https://github.com/dao-xyz/peerbit/commit/ee1902b2ad50d0ced2e22e0a8a436544c7a1bf22))
+
 ## [7.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.4...shared-log-v7.0.5) (2024-01-25)
 
 
