@@ -37,6 +37,23 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.0.10](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.9...stream-v3.0.10) (2024-01-26)
+
+
+### Bug Fixes
+
+* update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.6 to 2.1.7
+    * @peerbit/stream-interface bumped from ^3.0.7 to ^3.0.8
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.0 to 2.1.1
+
 ## [3.0.9](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.8...stream-v3.0.9) (2024-01-22)
 
 

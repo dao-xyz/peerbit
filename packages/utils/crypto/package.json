@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/crypto",
-	"version": "2.1.6",
+	"version": "2.1.7",
 	"description": "Crypto fn",
 	"type": "module",
 	"sideEffects": false,

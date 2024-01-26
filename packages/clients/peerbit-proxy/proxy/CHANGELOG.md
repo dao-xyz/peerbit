@@ -232,6 +232,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.19 to 2.0.20
 
+## [2.0.21](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.20...proxy-v2.0.21) (2024-01-26)
+
+
+### Bug Fixes
+
+* update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^3.0.17 to ^3.0.18
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.20 to 2.0.21
+
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.16...proxy-v2.0.17) (2024-01-21)
 
 

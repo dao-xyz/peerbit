@@ -82,6 +82,13 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^3.0.6 to ^3.0.7
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.6 to 2.1.7
+    * @peerbit/stream-interface bumped from ^3.0.7 to ^3.0.8
+
 ## [2.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.7...pubsub-interface-v2.0.8) (2024-01-17)
 
 
