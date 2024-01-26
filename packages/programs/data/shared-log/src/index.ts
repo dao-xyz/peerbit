@@ -576,13 +576,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const requestHashes: string[] = [];
 			const from: Set<string> = new Set();
 			for (const [key, value] of this.syncInFlightQueue) {
-				if (value.length > 0) {
-					requestHashes.push(key);
-					from.add(value.shift()!.hashcode());
-				}
-
-				if (value.length === 0) {
-					this.syncInFlightQueue.delete(key); // no-one more to ask for this entry
+				if (!this.log.has(key)) {
+					// TODO test that this if statement actually does anymeaningfull
+					if (value.length > 0) {
+						requestHashes.push(key);
+						from.add(value.shift()!.hashcode());
+					}
+					if (value.length === 0) {
+						this.syncInFlightQueue.delete(key); // no-one more to ask for this entry
+					}
+				} else {
+					this.syncInFlightQueue.delete(key);
 				}
 			}
 			this.rpc
@@ -923,7 +927,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							);
 						}
 						inverted.add(hash);
-					} else {
+					} else if (!this.log.has(hash)) {
 						this.syncInFlightQueue.set(hash, []);
 						requestHashes.push(hash);
 					}
@@ -950,7 +954,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				// TODO perhaps send less messages to more receivers for performance reasons?
 				// TODO wait for previous send to target before trying to send more?
 				for (const message of messages) {
-					this.rpc.send(message, {
+					await this.rpc.send(message, {
 						mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
 					});
 				}

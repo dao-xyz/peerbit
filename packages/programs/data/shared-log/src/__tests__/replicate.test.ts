@@ -423,13 +423,50 @@ describe("redundancy", () => {
 		if (db3) await db3.drop();
 	});
 
-	it("only sends entries once, 2 peers", async () => {
+	it("only sends entries once, 2 peers dynamic", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
-		db1.log.updateRole({ type: "replicator", factor: 0 });
+		db1.log.updateRole({ type: "replicator" });
 		let count = 1000;
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello " + i, { meta: { next: [] } });
 		}
+		const message1 = collectMessages(db1.log);
+
+		const interval = setInterval(() => {
+			db1.log.distribute();
+		}, 100);
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator"
+					}
+				}
+			}
+		))!;
+
+		const message2 = collectMessages(db2.log);
+		await delay(3000);
+		clearInterval(interval);
+
+		const dataMessages2 = getReceivedHeads(message2);
+		await waitForResolved(() => expect(dataMessages2).toHaveLength(count));
+
+		const dataMessages1 = getReceivedHeads(message1);
+		expect(dataMessages1).toHaveLength(0); // no data is sent back
+	});
+
+	it("only sends entries once, 2 peers fixed", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>());
+		db1.log.updateRole({ type: "replicator", factor: 1 });
+		let count = 1000;
+		for (let i = 0; i < count; i++) {
+			await db1.add("hello " + i, { meta: { next: [] } });
+		}
+		const message1 = collectMessages(db1.log);
+
 		const interval = setInterval(() => {
 			db1.log.distribute();
 		}, 100);
@@ -449,8 +486,12 @@ describe("redundancy", () => {
 		const message2 = collectMessages(db2.log);
 		await delay(3000);
 		clearInterval(interval);
-		const dataMessages = getReceivedHeads(message2);
-		expect(dataMessages).toHaveLength(count);
+
+		const dataMessages2 = getReceivedHeads(message2);
+		await waitForResolved(() => expect(dataMessages2).toHaveLength(count));
+
+		const dataMessages1 = getReceivedHeads(message1);
+		expect(dataMessages1).toHaveLength(0); // no data is sent back
 	});
 
 	it("only sends entries once,3 peers", async () => {
@@ -462,6 +503,8 @@ describe("redundancy", () => {
 				}
 			}
 		});
+		const message1 = collectMessages(db1.log);
+
 		db2 = await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1],
@@ -474,6 +517,7 @@ describe("redundancy", () => {
 				}
 			}
 		);
+		const message2 = collectMessages(db2.log);
 
 		let count = 1000;
 		for (let i = 0; i < count; i++) {
@@ -495,8 +539,74 @@ describe("redundancy", () => {
 		);
 		const message3 = collectMessages(db3.log);
 		await waitForResolved(() => expect(db3.log.log.length).toEqual(count));
+
 		const heads = getReceivedHeads(message3);
 		expect(heads).toHaveLength(count);
+
+		expect(getReceivedHeads(message1)).toHaveLength(0);
+		expect(getReceivedHeads(message2)).toHaveLength(count);
+
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(count));
+
+		// gc check,.
+		await waitForResolved(() => {
+			expect(db3.log["syncInFlightQueue"].size).toEqual(0);
+			expect(db3.log["syncInFlightQueueInverted"].size).toEqual(0);
+		});
+	});
+	it("only sends entries once,3 peers", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+		const message1 = collectMessages(db1.log);
+
+		db2 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		);
+		const message2 = collectMessages(db2.log);
+
+		let count = 1000;
+		for (let i = 0; i < count; i++) {
+			await db1.add("hello " + i, { meta: { next: [] } });
+		}
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(count));
+
+		db3 = await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		);
+		const message3 = collectMessages(db3.log);
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(count));
+
+		const heads = getReceivedHeads(message3);
+		expect(heads).toHaveLength(count);
+
+		expect(getReceivedHeads(message1)).toHaveLength(0);
+		expect(getReceivedHeads(message2)).toHaveLength(count);
+
+		await waitForResolved(() => expect(db3.log.log.length).toEqual(count));
 
 		// gc check,.
 		await waitForResolved(() => {
