@@ -1,9 +1,9 @@
-import { CID } from "multiformats/cid";
+import { CID } from "multiformats";
 import * as raw from "multiformats/codecs/raw";
 import * as dagCbor from "@ipld/dag-cbor";
 import { sha256 } from "multiformats/hashes/sha2";
 import { base58btc } from "multiformats/bases/base58";
-import * as Block from "multiformats/block";
+import { type Block, encode, decode } from "multiformats/block";
 import type { MultihashHasher } from "multiformats/hashes/interface";
 
 const unsupportedCodecError = () => new Error("unsupported codec");
@@ -44,11 +44,11 @@ export const checkDecodeBlock = async (
 	expectedCID: CID | string,
 	bytes: Uint8Array,
 	options: { hasher?: any; codec?: any }
-): Promise<Block.Block<any, any, any, any>> => {
+): Promise<Block<any, any, any, any>> => {
 	const cidObject =
 		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
 	const codec = options.codec || codecCodes[cidObject.code];
-	const block = await Block.decode({
+	const block = await decode({
 		bytes: bytes,
 		codec,
 		hasher: options?.hasher || defaultHasher
@@ -56,10 +56,10 @@ export const checkDecodeBlock = async (
 	if (!block.cid.equals(cidObject)) {
 		throw new Error("CID does not match");
 	}
-	return block as Block.Block<any, any, any, 1>;
+	return block as Block<any, any, any, 1>;
 };
 export const getBlockValue = async <T>(
-	block: Block.Block<T, any, any, any>,
+	block: Block<T, any, any, any>,
 	links?: string[]
 ): Promise<T> => {
 	if (block.cid.code === dagCbor.code) {
@@ -102,13 +102,13 @@ export const createBlock = async (
 		hasher?: MultihashHasher<number>;
 		links?: string[];
 	}
-): Promise<Block.Block<any, any, any, any>> => {
+): Promise<Block<any, any, any, any>> => {
 	const codec = codecMap[format];
 	value = prepareBlockWrite(value, codec, options?.links);
-	const block = await Block.encode({
+	const block = await encode({
 		value,
 		codec,
 		hasher: options?.hasher || defaultHasher
 	});
-	return block as Block.Block<any, any, any, any>;
+	return block as Block<any, any, any, any>;
 };

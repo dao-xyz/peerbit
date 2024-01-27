@@ -1,5 +1,4 @@
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { getBlockValue } from "../block.js";
 import { DirectBlock } from "..";
 import { waitForPeers } from "@peerbit/stream";
 import { jest } from "@jest/globals";

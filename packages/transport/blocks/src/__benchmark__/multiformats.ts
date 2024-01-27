@@ -2,7 +2,7 @@ import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import B from "benchmark";
 import crypto from "crypto";
 import { sha256 } from "multiformats/hashes/sha2";
-import * as Block from "multiformats/block";
+import { encode } from "multiformats/block";
 import {
 	checkDecodeBlock,
 	cidifyString,
@@ -72,7 +72,7 @@ for (const size of sizes) {
 		fn: async (deferred) => {
 			{
 				const rng = getSample(size);
-				const cid = await Block.encode({
+				const cid = await encode({
 					value: rng,
 					codec,
 					hasher: sha256

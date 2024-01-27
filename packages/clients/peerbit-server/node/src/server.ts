@@ -45,7 +45,7 @@ import {
 import { Session } from "./session.js";
 import fs from "fs";
 import { exit } from "process";
-import { spawn, fork, execSync } from "child_process";
+import { spawn, execSync } from "child_process";
 import tmp from "tmp";
 import path from "path";
 import { base58btc } from "multiformats/bases/base58";
@@ -55,7 +55,6 @@ import { Level } from "level";
 import { MemoryLevel } from "memory-level";
 import { Trust } from "./trust.js";
 import { getBody, verifyRequest } from "./signes-request.js";
-import { cli } from "./cli.js";
 import { peerIdFromString } from "@libp2p/peer-id";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

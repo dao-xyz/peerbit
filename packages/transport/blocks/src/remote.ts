@@ -6,9 +6,9 @@ import {
 	codecCodes,
 	checkDecodeBlock
 } from "./block.js";
-import { variant, field, serialize, deserialize } from "@dao-xyz/borsh";
-import { CID } from "multiformats/cid";
-import * as Block from "multiformats/block";
+import { variant, field } from "@dao-xyz/borsh";
+import { CID } from "multiformats";
+import { type Block } from "multiformats/block";
 import { PublicSignKey } from "@peerbit/crypto";
 import { AnyBlockStore } from "./any-blockstore.js";
 import { GetOptions } from "@peerbit/blocks-interface";
@@ -53,7 +53,7 @@ export class RemoteBlocks implements IBlocks {
 	private _loadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<
 		string,
-		Promise<Block.Block<any, any, any, 1> | undefined> | undefined
+		Promise<Block<any, any, any, 1> | undefined> | undefined
 	>;
 	_open = false;
 	private _events: TypedEventEmitter<{
@@ -176,7 +176,7 @@ export class RemoteBlocks implements IBlocks {
 		const codec = codecCodes[cidObject.code];
 		let promise = this._readFromPeersPromises.get(cidString);
 		if (!promise) {
-			promise = new Promise<Block.Block<any, any, any, 1> | undefined>(
+			promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					const timeoutCallback = setTimeout(
 						() => {

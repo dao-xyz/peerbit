@@ -6,7 +6,7 @@ import {
 	defaultHasher,
 	stringifyCid
 } from "./block.js";
-import * as Block from "multiformats/block";
+import { decode, type Block } from "multiformats/block";
 import { waitFor } from "@peerbit/time";
 import { PeerId } from "@libp2p/interface";
 import { PublicSignKey } from "@peerbit/crypto";
@@ -37,12 +37,12 @@ export class AnyBlockStore implements Blocks {
 				return undefined;
 			}
 			const codec = codecCodes[cidObject.code];
-			const block = await Block.decode({
+			const block = await decode({
 				bytes,
 				codec,
 				hasher: options?.hasher || defaultHasher
 			});
-			return (block as Block.Block<Uint8Array, any, any, any>).bytes;
+			return (block as Block<Uint8Array, any, any, any>).bytes;
 		} catch (error: any) {
 			if (
 				typeof error?.code === "string" &&

@@ -58,6 +58,7 @@
 		"@peerbit/blocks-interface": "1.2.13",
 		"@peerbit/crypto": "2.1.7",
 		"@ipld/dag-cbor": "^9.0.2",
-		"libp2p": "^1.2.1"
+		"libp2p": "^1.2.1",
+		"multiformats": "^13.0.1"
 	}
 }
