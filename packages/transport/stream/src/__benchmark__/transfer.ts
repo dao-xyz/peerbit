@@ -12,6 +12,7 @@ import { SeekDelivery } from "@peerbit/stream-interface";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
 
+// size: 100byte x 1,727 ops/sec ±2.61% (83 runs sampled)
 // size: 1kb x 1,727 ops/sec ±2.61% (83 runs sampled)
 // size: 1000kb x 104 ops/sec ±2.46% (83 runs sampled)
 
@@ -73,7 +74,7 @@ const msgMap: Map<string, { resolve: () => any }> = new Map();
 const msgIdFn = (msg: Uint8Array) =>
 	crypto.createHash("sha1").update(msg.subarray(0, 20)).digest("base64");
 
-const sizes = [1e3, 1e6];
+const sizes = [100, 1e3, 1e6];
 for (const size of sizes) {
 	suite = suite.add("size: " + size / 1e3 + "kb", {
 		defer: true,

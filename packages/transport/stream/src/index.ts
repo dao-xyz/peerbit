@@ -3,8 +3,7 @@ import { pipe } from "it-pipe";
 import Queue from "p-queue";
 import type { PeerId } from "@libp2p/interface";
 import type { Connection } from "@libp2p/interface";
-import type { Pushable } from "it-pushable";
-import { pushable } from "it-pushable";
+import { PushableLanes, pushableLanes } from "./pushable-lanes.js";
 import type { Stream } from "@libp2p/interface";
 import { Uint8ArrayList } from "uint8arraylist";
 import { abortableSource } from "abortable-iterator";
@@ -13,7 +12,6 @@ import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
 import type { IncomingStreamData, Registrar } from "@libp2p/interface-internal";
 import type { AddressManager } from "@libp2p/interface-internal";
 import type { ConnectionManager } from "@libp2p/interface-internal";
-
 import { PeerStore } from "@libp2p/interface";
 import pDefer from "p-defer";
 
@@ -116,7 +114,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * Write stream - it's preferable to use the write method
 	 */
-	public outboundStream?: Pushable<Uint8Array>;
+	public outboundStream?: PushableLanes<Uint8Array>;
+
 	/**
 	 * Read stream
 	 */
@@ -124,11 +123,11 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * The raw outbound stream, as retrieved from conn.newStream
 	 */
-	public _rawOutboundStream?: Stream;
+	public rawOutboundStream?: Stream;
 	/**
 	 * The raw inbound stream, as retrieved from the callback from libp2p.handle
 	 */
-	public _rawInboundStream?: Stream;
+	public rawInboundStream?: Stream;
 	/**
 	 * An AbortController for controlled shutdown of the  treams
 	 */
@@ -176,7 +175,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Send a message to this peer.
 	 * Throws if there is no `stream` to write to available.
 	 */
-	write(data: Uint8Array | Uint8ArrayList) {
+	write(data: Uint8Array | Uint8ArrayList, priority = false) {
 		if (data.length > MAX_DATA_LENGTH_OUT) {
 			throw new Error(
 				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
@@ -190,13 +189,13 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		}
 
 		this.usedBandWidthTracker.add(data.byteLength);
-
 		this.outboundStream.push(
-			data instanceof Uint8Array ? data : data.subarray()
+			data instanceof Uint8Array ? data : data.subarray(),
+			priority || this.outboundStream.getReadableLength(0) === 0 ? 0 : 1
 		);
 	}
 
-	async waitForWrite(bytes: Uint8Array | Uint8ArrayList) {
+	async waitForWrite(bytes: Uint8Array | Uint8ArrayList, priority = false) {
 		if (this.closed) {
 			logger.error("Failed to send to stream: " + this.peerId + ". Closed");
 			return;
@@ -235,13 +234,13 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 			await outboundPromise
 				.then(() => {
-					this.write(bytes);
+					this.write(bytes, priority);
 				})
 				.catch((error) => {
 					throw error;
 				});
 		} else {
-			this.write(bytes);
+			this.write(bytes, priority);
 		}
 	}
 
@@ -253,9 +252,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		// The inbound stream is:
 		// - abortable, set to only return on abort, rather than throw
 		// - transformed with length-prefix transform
-		this._rawInboundStream = stream;
+		this.rawInboundStream = stream;
 		this.inboundStream = abortableSource(
-			pipe(this._rawInboundStream, (source) =>
+			pipe(this.rawInboundStream, (source) =>
 				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN })
 			),
 			this.inboundAbortController.signal,
@@ -284,21 +283,17 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			);
 			return;
 		}
-		this._rawOutboundStream = stream;
-		this.outboundStream = pushable<Uint8Array>({
-			objectMode: false
-		});
+		this.rawOutboundStream = stream;
+		this.outboundStream = pushableLanes({ lanes: 2 });
 
 		pipe(
 			this.outboundStream,
 			(source) => lp.encode(source),
-			this._rawOutboundStream
+			this.rawOutboundStream
 		).catch(logError);
 
 		// Emit if the connection is new
 		this.dispatchEvent(new CustomEvent("stream:outbound"));
-
-		return this.outboundStream;
 	}
 
 	/**
@@ -314,21 +309,23 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		// End the outbound stream
 		if (this.outboundStream != null) {
 			await this.outboundStream.return();
-			await this._rawOutboundStream?.close();
+			await this.rawOutboundStream?.abort(new AbortError("Closed"));
 		}
+
 		// End the inbound stream
 		if (this.inboundStream != null) {
 			this.inboundAbortController.abort();
-			await this._rawInboundStream?.close();
+			await this.rawInboundStream?.close();
 		}
 
 		this.usedBandWidthTracker.stop();
 
 		this.dispatchEvent(new CustomEvent("close"));
 
-		this._rawOutboundStream = undefined;
+		this.rawOutboundStream = undefined;
 		this.outboundStream = undefined;
-		this._rawInboundStream = undefined;
+
+		this.rawInboundStream = undefined;
 		this.inboundStream = undefined;
 	}
 }
@@ -1565,8 +1562,7 @@ export abstract class DirectStream<
 					clear();
 					deliveryDeferredPromise.reject(
 						new DeliveryError(
-							"At least one recipent became unreachable while delivering: " +
-								ev.detail.hashcode()
+							`At least one recipent became unreachable while delivering messsage of type$ ${message.constructor.name}} to ${ev.detail.hashcode()}`
 						)
 					);
 				}
@@ -1603,9 +1599,7 @@ export abstract class DirectStream<
 			if (!hasAll && willGetAllAcknowledgements) {
 				deliveryDeferredPromise.reject(
 					new DeliveryError(
-						`${
-							this.publicKeyHash
-						} Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
+						`Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
 							...messageToSet
 						]} delivery acknowledges from all nodes (${
 							fastestNodesReached.size
@@ -1699,6 +1693,11 @@ export abstract class DirectStream<
 		if (this.stopping || !this.started) {
 			throw new NotStartedError();
 		}
+		const isPriorityMessage =
+			message.header.mode instanceof SilentDelivery ||
+			message.header.mode instanceof AnyWhere
+				? false
+				: true;
 
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 
@@ -1766,7 +1765,8 @@ export abstract class DirectStream<
 						const promises: Promise<any>[] = [];
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
-							stream && promises.push(stream.waitForWrite(bytes));
+							stream &&
+								promises.push(stream.waitForWrite(bytes, isPriorityMessage));
 						}
 						await Promise.all(promises);
 						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
@@ -1812,7 +1812,7 @@ export abstract class DirectStream<
 
 			sentOnce = true;
 
-			promises.push(id.waitForWrite(bytes));
+			promises.push(id.waitForWrite(bytes, isPriorityMessage));
 		}
 		await Promise.all(promises);
 
@@ -1959,7 +1959,8 @@ export abstract class DirectStream<
 	getQueuedBytes(): number {
 		let sum = 0;
 		for (const peer of this.peers) {
-			sum += peer[1].outboundStream?.readableLength || 0;
+			const out = peer[1].outboundStream;
+			sum += out ? out.readableLength : 0;
 		}
 		return sum;
 	}

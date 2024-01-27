@@ -19,7 +19,7 @@ import {
 	SilentDelivery,
 	getMsgId
 } from "@peerbit/stream-interface";
-import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
+import { Ed25519Keypair, PublicSignKey, randomBytes } from "@peerbit/crypto";
 import { PeerId } from "@libp2p/interface";
 import { Multiaddr } from "@multiformats/multiaddr";
 import { tcp } from "@libp2p/tcp";
@@ -30,6 +30,9 @@ import { TestSession } from "@peerbit/libp2p-test-utils";
 import { jest } from "@jest/globals";
 import { Libp2pOptions } from "libp2p";
 import { DeliveryError } from "@peerbit/stream-interface";
+import { yamux } from "@chainsafe/libp2p-yamux";
+import { YamuxStream } from "@chainsafe/libp2p-yamux/stream";
+import { equals } from "uint8arrays";
 
 type TestSessionStream = TestSession<{ directstream: DirectStream }>;
 
@@ -2629,8 +2632,12 @@ describe("join/leave", () => {
 
 			await waitForResolved(() => expect(streams[0].goodbye).toHaveLength(1));
 			await session.peers[3].start();
-			await session.connect([[session.peers[2], session.peers[3]]]);
+			await session.connect([[session.peers[3], session.peers[2]]]);
+			await waitForResolved(() =>
+				expect(session.peers[2].services.directstream.peers.size).toEqual(2)
+			);
 			streams[0].reachable = [];
+
 			await session.peers[0].services.directstream.publish(
 				new Uint8Array([0]),
 				{
@@ -2640,6 +2647,7 @@ describe("join/leave", () => {
 					})
 				}
 			);
+
 			await waitForResolved(() => expect(streams[3].received).toHaveLength(2));
 			await waitForResolved(() =>
 				expect(streams[0].session.map((x) => x.hashcode())).toEqual([
@@ -2651,6 +2659,77 @@ describe("join/leave", () => {
 			);
 			expect(streams[0].unrechable.length).toEqual(0);
 			expect(streams[0].reachable.length).toEqual(0);
+		});
+	});
+
+	describe("prioritization", () => {
+		afterEach(async () => {
+			await session?.stop();
+		});
+
+		// https://www.youtube.com/watch?v=kdv_4RHAatQ
+		it("seeking in fast lane", async () => {
+			session = await disconnected(3, {
+				// we use yamux since mplex does not support backpressure. This means that mplex would consume all outbound messages even though mplex can't handle them :(
+				streamMuxers: [yamux()],
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: { dialer: false, pruner: false }
+						})
+				}
+			});
+			await connectLine(session);
+			await session.peers[0].services.directstream.publish(new Uint8Array(0), {
+				to: [session.peers[2].peerId]
+			});
+			const stream = session.peers[1].services.directstream.peers.get(
+				session.peers[2].services.directstream.publicKeyHash
+			)!.rawOutboundStream as YamuxStream;
+			const sendFn = stream.sendData.bind(stream);
+			const abortContoller = new AbortController();
+
+			/**
+			 * introduce lag in the relay
+			 */
+			let lag = 300;
+			stream.sendData = async (data) => {
+				await delay(lag, { signal: abortContoller.signal });
+				return sendFn(data);
+			};
+
+			const metric = createMetrics(session.peers[2].services.directstream);
+
+			let t0 = +new Date();
+
+			/**
+			 * Send a bunch of data (potentially clog the really)
+			 */
+			let dataMessageCount = 100;
+			for (let i = 0; i < dataMessageCount; i++) {
+				await session.peers[0].services.directstream.publish(randomBytes(1e2), {
+					mode: new SilentDelivery({
+						to: [session.peers[2].peerId],
+						redundancy: 1
+					})
+				});
+			}
+
+			const seekMessageData = randomBytes(1e3);
+
+			// Send a seek that we really need to get through in time
+			await session.peers[0].services.directstream.publish(seekMessageData, {
+				mode: new SeekDelivery({ to: [session.peers[2].peerId], redundancy: 1 })
+			});
+
+			let t1 = +new Date();
+			expect(t1 - t0).toBeLessThan(5000); // it would have taken lag * dataMessageCount time if we to wait for seek ack if we didn't prioritize it
+			expect(
+				metric.received.findIndex(
+					(x) => x.data && equals(x.data, seekMessageData)
+				)
+			).toBeLessThan(dataMessageCount / 10); // if no prioritization this would be at index dataMessageCount
+			abortContoller.abort(new Error("Done"));
 		});
 	});
 });
@@ -2810,6 +2889,14 @@ describe("start/stop", () => {
 				timeout: 1000
 			})
 		);
+	});
+
+	it("start and stop", async () => {
+		session = await disconnected(2);
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await delay(1000); /// TODO remove when https://github.com/ChainSafe/js-libp2p-yamux/issues/72 fixed
+		await session.peers[0].stop();
+		await session.peers[0].start();
 	});
 });
 
