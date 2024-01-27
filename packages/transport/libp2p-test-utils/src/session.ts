@@ -1,11 +1,11 @@
 import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
 import { noise } from "@dao-xyz/libp2p-noise";
-import { mplex } from "@libp2p/mplex";
 import { setMaxListeners } from "events";
 import { relay, transports } from "./transports.js";
 import { identify } from "@libp2p/identify";
 import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import type { Multiaddr } from "@multiformats/multiaddr";
+import { yamux } from "@chainsafe/libp2p-yamux";
 
 type DefaultServices = { relay: CircuitRelayService; identify: any };
 type Libp2pWithServices<T> = Libp2p<T & DefaultServices>;
@@ -84,26 +84,28 @@ export class TestSession<T> {
 		const promises: Promise<Libp2p<T>>[] = [];
 		for (let i = 0; i < n; i++) {
 			const result = async () => {
+				const definedOptions: Libp2pOptions<T> | undefined =
+					options?.[i] || options;
 				const node = await createLibp2p<T>({
 					addresses: {
 						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"]
 					},
-					connectionManager: (options?.[i] || options)?.connectionManager ?? {
+					connectionManager: definedOptions?.connectionManager ?? {
 						minConnections: 0
 					},
-					peerId: (options?.[i] || options)?.peerId,
-					datastore: (options?.[i] || options)?.datastore,
+					peerId: definedOptions?.peerId,
+					datastore: definedOptions?.datastore,
 					transports:
-						(options?.[i] || options)?.transports ??
-						transports((options?.[i] || options)?.browser),
+						definedOptions?.transports ??
+						transports(definedOptions?.["browser"]),
 					services: {
-						relay: (options?.[i] || options)?.browser ? undefined : relay(),
+						relay: definedOptions?.["browser"] ? undefined : relay(),
 						identify: identify(),
-						...(options?.[i] || options)?.services
-					},
+						...definedOptions?.services
+					} as any,
 					connectionEncryption: [noise()],
-					streamMuxers: [mplex({ disconnectThreshold: 10 })],
-					start: (options?.[i] || options)?.start
+					streamMuxers: definedOptions?.streamMuxers || [yamux()],
+					start: definedOptions?.start
 				});
 				return node;
 			};

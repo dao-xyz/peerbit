@@ -12,9 +12,9 @@ import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
 import { ProgramClient } from "@peerbit/program";
-import { mplex } from "@libp2p/mplex";
 import { DefaultKeychain } from "@peerbit/keychain";
 import { Libp2pOptions } from "libp2p";
+import { yamux } from "@chainsafe/libp2p-yamux";
 
 export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
@@ -63,7 +63,7 @@ export class TestSession {
 					keychain: (c) => new DefaultKeychain(),
 					...o?.libp2p?.services
 				},
-				streamMuxers: [mplex({ disconnectThreshold: 10 })]
+				streamMuxers: [yamux()]
 			};
 		};
 		let optionsWithServices:

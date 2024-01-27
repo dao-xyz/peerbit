@@ -1016,7 +1016,7 @@ describe("pubsub", function () {
 			await streams[1].stream.subscribe("a");
 
 			await session.connect([[session.peers[0], session.peers[1]]]);
-
+			await delay(1000); /// TODO remove when https://github.com/ChainSafe/js-libp2p-yamux/issues/72 fixed
 			await session.peers[0].stop();
 			await session.peers[0].start();
 			await streams[0].stream.subscribe("b");

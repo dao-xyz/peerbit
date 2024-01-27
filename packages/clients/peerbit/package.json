@@ -44,7 +44,6 @@
 		"@peerbit/uint8arrays": "3.0.1",
 		"datastore-level": "^10.1.5",
 		"@dao-xyz/libp2p-noise": "^14.1.2",
-		"@libp2p/mplex": "^10.0.13",
 		"@chainsafe/libp2p-yamux": "^6.0.1",
 		"@libp2p/webrtc": "^4.0.17",
 		"@libp2p/websockets": "^8.0.9",
