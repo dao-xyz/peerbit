@@ -6,11 +6,11 @@ import { Peerbit, createLibp2pExtended } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { Documents, SetupOptions } from "../document-store.js";
 import { DirectSub } from "@peerbit/pubsub";
-import { mplex } from "@libp2p/mplex";
+import { yamux } from "@chainsafe/libp2p-yamux";
 import { delay } from "@peerbit/time";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
-// put x 1,009 ops/sec ±2.57% (80 runs sampled)
+// put x 862 ops/sec ±4.75% (75 runs sampled)
 
 @variant("document")
 class Document {
@@ -51,7 +51,7 @@ const peers = await Promise.all(
 	[
 		await createLibp2pExtended({
 			transports: [tcp()],
-			streamMuxers: [mplex()],
+			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub) =>
 					new DirectSub(sub, {
@@ -63,7 +63,7 @@ const peers = await Promise.all(
 		await createLibp2pExtended({
 			connectionManager: {},
 			transports: [tcp()],
-			streamMuxers: [mplex()],
+			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub) =>
 					new DirectSub(sub, {
@@ -74,7 +74,7 @@ const peers = await Promise.all(
 		}),
 		await createLibp2pExtended({
 			transports: [tcp()],
-			streamMuxers: [mplex()],
+			streamMuxers: [yamux()],
 			services: {
 				pubsub: (sub) =>
 					new DirectSub(sub, {
