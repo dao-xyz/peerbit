@@ -404,7 +404,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						session: this.session
 					})
 				}).sign(this.sign)
-			);
+			).catch(dontThrowIfDeliveryError); // peer might have become unreachable immediately
 		}
 
 		return resp;
