@@ -339,6 +339,21 @@
   * dependencies
     * peerbit bumped from 3.0.21 to 3.0.22
 
+## [2.0.23](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.0.22...test-utils-v2.0.23) (2024-01-27)
+
+
+### Bug Fixes
+
+* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.1 to 2.1.2
+    * peerbit bumped from 3.0.22 to 3.0.23
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/test-utils-v1.0.33...test-utils-v2.0.0) (2023-12-31)
 
 

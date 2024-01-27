@@ -54,6 +54,13 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.1.2](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.1...libp2p-test-utils-v2.1.2) (2024-01-27)
+
+
+### Bug Fixes
+
+* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
+
 ## [2.1.1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.0...libp2p-test-utils-v2.1.1) (2024-01-26)
 
 

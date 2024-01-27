@@ -37,6 +37,20 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.1.0](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.11...stream-v3.1.0) (2024-01-27)
+
+
+### Features
+
+* higher prioritization for message with Seed, Acknowledge, Trace message modes ([3759be6](https://github.com/dao-xyz/peerbit/commit/3759be62dbe3456709bf7ccffa455330acf4fa65))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.1 to 2.1.2
+
 ## [3.0.11](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.10...stream-v3.0.11) (2024-01-26)
 
 
