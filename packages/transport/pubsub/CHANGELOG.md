@@ -164,6 +164,23 @@
   * dependencies
     * @peerbit/stream bumped from 3.0.7 to 3.0.8
 
+## [2.0.19](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.18...pubsub-v2.0.19) (2024-01-27)
+
+
+### Bug Fixes
+
+* dontThrowIfDeliveryError for reachable response ([719a8a1](https://github.com/dao-xyz/peerbit/commit/719a8a138795b926b5f8a60b14148d229c3f3ff1))
+* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 3.0.11 to 3.1.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.1 to 2.1.2
+
 ## [2.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.17...pubsub-v2.0.18) (2024-01-26)
 
 

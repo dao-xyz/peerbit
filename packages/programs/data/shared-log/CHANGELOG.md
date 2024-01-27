@@ -330,6 +330,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.21 to ^2.0.22
 
+## [7.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.8...shared-log-v7.0.9) (2024-01-27)
+
+
+### Bug Fixes
+
+* dont use waitFor in modifyReplicators to ensure ordering ([81794c2](https://github.com/dao-xyz/peerbit/commit/81794c2bddb6cf81b4089c2753798e9ed4f16671))
+* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.19 to 3.0.20
+    * @peerbit/log bumped from 3.0.23 to 3.0.24
+    * @peerbit/rpc bumped from 3.0.22 to 3.0.23
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.22 to ^2.0.23
+
 ## [7.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.7...shared-log-v7.0.8) (2024-01-26)
 
 

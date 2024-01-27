@@ -262,6 +262,22 @@
     * @peerbit/pubsub bumped from ^2.0.17 to ^2.0.18
     * @peerbit/blocks bumped from ^2.0.20 to ^2.0.21
 
+## [3.0.23](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.22...peerbit-v3.0.23) (2024-01-27)
+
+
+### Bug Fixes
+
+* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.19 to 3.0.20
+    * @peerbit/pubsub bumped from ^2.0.18 to ^2.0.19
+    * @peerbit/blocks bumped from ^2.0.21 to ^2.0.22
+
 ## [3.0.21](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.20...peerbit-v3.0.21) (2024-01-26)
 
 
