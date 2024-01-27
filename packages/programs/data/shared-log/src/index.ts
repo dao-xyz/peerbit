@@ -423,6 +423,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					: new AcknowledgeDelivery({ redundancy: 1, to: leaders });
 			}
 
+			// TODO do we really want to wait here?
 			await this.rpc.send(message, {
 				mode
 			});
@@ -953,10 +954,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 				);
 				// TODO perhaps send less messages to more receivers for performance reasons?
 				// TODO wait for previous send to target before trying to send more?
+				let p = Promise.resolve();
 				for (const message of messages) {
-					await this.rpc.send(message, {
-						mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
-					});
+					p = p.then(() =>
+						this.rpc.send(message, {
+							mode: new SilentDelivery({ to: [context.from!], redundancy: 1 })
+						})
+					); // push in series, if one fails, then we should just stop
 				}
 			} else if (msg instanceof BlocksMessage) {
 				await this.remoteBlocks.onMessage(msg.message);
@@ -973,11 +977,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 					return;
 				}
 
+				// we have this statement because peers might have changed/announced their role,
+				// but we don't know them as "subscribers" yet. i.e. they are not online
 				this.waitFor(context.from, {
 					signal: this._closeController.signal,
 					timeout: this.waitForReplicatorTimeout
 				})
 					.then(async () => {
+						// peer should not be online (for us)
 						const prev = this.latestRoleMessages.get(context.from!.hashcode());
 						if (prev && prev > context.timestamp) {
 							return;
@@ -986,7 +993,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 							context.from!.hashcode(),
 							context.timestamp
 						);
-
 						await this.modifyReplicators(msg.role, context.from!);
 					})
 					.catch((e) => {
@@ -1241,7 +1247,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		publicKey: PublicSignKey
 	) {
 		const update = await this._modifyReplicators(role, publicKey);
-
 		if (update.changed !== "none") {
 			if (update.changed === "added" || update.changed === "removed") {
 				this.setupRebalanceDebounceFunction();
@@ -1269,6 +1274,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		| { changed: "added" | "none" }
 		| { prev: Replicator; changed: "updated" | "removed" }
 	> {
+		// TODO can this call create race condition? _modifyReplicators might have to be queued
+		// TODO should we remove replicators if they are already added?
 		if (
 			role instanceof Replicator &&
 			this._canReplicate &&
@@ -1291,60 +1298,58 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			const isOnline =
 				this.node.identity.publicKey.equals(publicKey) ||
-				(await this.waitFor(publicKey, { signal: this._closeController.signal })
-					.then(() => true)
-					.catch(() => false));
+				(await this.getReady()).has(publicKey.hashcode());
+			if (!isOnline) {
+				// TODO should we remove replicators if they are already added?
+				return { changed: "none" };
+			}
 
-			if (isOnline) {
-				// insert or if already there do nothing
-				const rect: ReplicatorRect = {
-					publicKey,
-					role
-				};
+			// insert or if already there do nothing
+			const rect: ReplicatorRect = {
+				publicKey,
+				role
+			};
 
-				let currentNode = sortedPeer.head;
-				if (!currentNode) {
-					sortedPeer.push(rect);
-					this._totalParticipation += rect.role.factor;
-					return { changed: "added" };
-				} else {
-					while (currentNode) {
-						if (currentNode.value.publicKey.equals(publicKey)) {
-							// update the value
-							// rect.timestamp = currentNode.value.timestamp;
-							const prev = currentNode.value;
-							currentNode.value = rect;
-							this._totalParticipation += rect.role.factor;
-							this._totalParticipation -= prev.role.factor;
-							// TODO change detection and only do change stuff if diff?
-							return { prev: prev.role, changed: "updated" };
-						}
+			let currentNode = sortedPeer.head;
+			if (!currentNode) {
+				sortedPeer.push(rect);
+				this._totalParticipation += rect.role.factor;
+				return { changed: "added" };
+			} else {
+				while (currentNode) {
+					if (currentNode.value.publicKey.equals(publicKey)) {
+						// update the value
+						// rect.timestamp = currentNode.value.timestamp;
+						const prev = currentNode.value;
+						currentNode.value = rect;
+						this._totalParticipation += rect.role.factor;
+						this._totalParticipation -= prev.role.factor;
+						// TODO change detection and only do change stuff if diff?
+						return { prev: prev.role, changed: "updated" };
+					}
 
-						if (role.offset > currentNode.value.role.offset) {
-							const next = currentNode?.next;
-							if (next) {
-								currentNode = next;
-								continue;
-							} else {
-								break;
-							}
+					if (role.offset > currentNode.value.role.offset) {
+						const next = currentNode?.next;
+						if (next) {
+							currentNode = next;
+							continue;
 						} else {
-							currentNode = currentNode.prev;
 							break;
 						}
-					}
-
-					const prev = currentNode;
-					if (!prev?.next?.value.publicKey.equals(publicKey)) {
-						this._totalParticipation += rect.role.factor;
-						_insertAfter(sortedPeer, prev || undefined, rect);
 					} else {
-						throw new Error("Unexpected");
+						currentNode = currentNode.prev;
+						break;
 					}
-					return { changed: "added" };
 				}
-			} else {
-				return { changed: "none" };
+
+				const prev = currentNode;
+				if (!prev?.next?.value.publicKey.equals(publicKey)) {
+					this._totalParticipation += rect.role.factor;
+					_insertAfter(sortedPeer, prev || undefined, rect);
+				} else {
+					throw new Error("Unexpected");
+				}
+				return { changed: "added" };
 			}
 		} else {
 			let currentNode = sortedPeer.head;
