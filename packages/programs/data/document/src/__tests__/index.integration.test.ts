@@ -2009,6 +2009,7 @@ describe("index", () => {
 					);
 
 					const count = 1000;
+
 					for (let i = 0; i < count; i++) {
 						const doc = new Document({
 							id: randomBytes(32),
@@ -2016,23 +2017,35 @@ describe("index", () => {
 						});
 						await store1.docs.put(doc);
 					}
-					await waitForResolved(() =>
-						expect(store1.docs.log.log.length).toBeLessThan(count * 0.99)
-					);
+					let lastLength = -1;
 
-					for (const store of [store1, store2, store3]) {
-						const collected = await store.docs.index.search(
-							new SearchRequest()
-						);
-						expect(collected).toHaveLength(count);
-					}
-					await delay(5000);
-
-					for (const store of [store1, store2, store3]) {
-						const collected = await store.docs.index.search(
-							new SearchRequest()
-						);
-						expect(collected).toHaveLength(count);
+					// search while it is distributing/syncing
+					for (let i = 0; i < 10; i++) {
+						if (store1.docs.log.log.length === lastLength) {
+							break;
+						}
+						lastLength = store1.docs.log.log.length;
+						for (const store of [store1, store2, store3]) {
+							let t0 = +new Date();
+							const collected = await store.docs.index.search(
+								new SearchRequest()
+							);
+							try {
+								expect(collected).toHaveLength(count);
+							} catch (error) {
+								throw new Error(
+									`Failed to collect all messages ${collected} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}. Matured: ${store.docs.log
+										.getReplicatorsSorted()
+										?.toArray()
+										.map(
+											(x) =>
+												Number(x.role.timestamp) - t0 >
+												store.docs.log.timeUntilRoleMaturity
+										)}`
+								);
+							}
+						}
+						await delay(100);
 					}
 				});
 			});
