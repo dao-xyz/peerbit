@@ -296,7 +296,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 			if (buffer instanceof Uint8arrayPriorityQueue) {
 				return buffer.lanes[lane].size;
 			}
-			throw new Error("Missing lane info");
+			return buffer.size; // we can only arrive here if we are "done" or "err" or "end" where we reasign the buffer to a simple one and put 1 message into it
 		},
 		onEmpty: async (options?: AbortOptions) => {
 			const signal = options?.signal;

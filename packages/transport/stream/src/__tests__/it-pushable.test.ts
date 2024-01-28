@@ -393,5 +393,15 @@ describe("it-pushable", () => {
 			]);
 			expect(source.readableLength).toEqual(0);
 		});
+
+		it("can get size after end", async () => {
+			const source = pushableLanes({ lanes: 3 });
+			source.end(new Error("Test error"));
+			expect(source.readableLength).toEqual(0); // no actual data in the error
+			expect(source.getReadableLength(2)).toEqual(0); // no actual data in the error
+			await expect(source.next()).rejects.toThrow("Test error");
+			expect(source.readableLength).toEqual(0);
+			expect(source.getReadableLength(2)).toEqual(0);
+		});
 	});
 });
