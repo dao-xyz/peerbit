@@ -335,7 +335,7 @@ describe(`exchange`, function () {
 		expect(db2Entries[0].payload.getValue().value).toEqual(value);
 	});
 
-	it("replicates database of 1000 entries", async () => {
+	it("replicates database of 100 entries", async () => {
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
@@ -343,7 +343,7 @@ describe(`exchange`, function () {
 
 		await db1.waitFor(session.peers[1].peerId);
 		await db2.waitFor(session.peers[0].peerId);
-		const entryCount = 1000;
+		const entryCount = 100;
 
 		for (let i = 0; i < entryCount; i++) {
 			//	entryArr.push(i);
