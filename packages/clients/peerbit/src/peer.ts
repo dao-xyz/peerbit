@@ -273,7 +273,25 @@ export class Peerbit implements ProgramClient {
 		if (addresses.length === 0) {
 			throw new Error("Failed to find any addresses to dial");
 		}
-		return Promise.all(addresses.map((x) => this.dial(x)));
+		const settled = await Promise.allSettled(
+			addresses.map((x) => this.dial(x))
+		);
+		let once = false;
+		for (const [i, result] of settled.entries()) {
+			if (result.status === "fulfilled") {
+				once = true;
+			} else {
+				logger.warn(
+					"Failed to dial bootstrap address(s): " +
+						JSON.stringify(addresses[i]) +
+						". Reason: " +
+						result.reason
+				);
+			}
+		}
+		if (!once) {
+			throw new Error("Failed to succefully dial any bootstrap node");
+		}
 	}
 
 	/**
