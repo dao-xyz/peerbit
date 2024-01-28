@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy",
-	"version": "2.0.23",
+	"version": "2.0.24",
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -34,7 +34,7 @@
 		"uuid": "^9.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.0.23"
+		"@peerbit/test-utils": "2.0.24"
 	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",

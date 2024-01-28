@@ -37,6 +37,13 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.1.1](https://github.com/dao-xyz/peerbit/compare/stream-v3.1.0...stream-v3.1.1) (2024-01-28)
+
+
+### Bug Fixes
+
+* dont throw error when getting size after pushable end or error ([6efc72b](https://github.com/dao-xyz/peerbit/commit/6efc72bfa8536602f062b252af1187552bea2819))
+
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/stream-v3.0.11...stream-v3.1.0) (2024-01-27)
 
 

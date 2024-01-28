@@ -262,6 +262,21 @@
     * @peerbit/pubsub bumped from ^2.0.17 to ^2.0.18
     * @peerbit/blocks bumped from ^2.0.20 to ^2.0.21
 
+## [3.0.24](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.23...peerbit-v3.0.24) (2024-01-28)
+
+
+### Bug Fixes
+
+* allow bad addresses in bootstrap list ([085854a](https://github.com/dao-xyz/peerbit/commit/085854a1bda1140d1a8e3c142fce98fe086e77dc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub bumped from ^2.0.19 to ^2.0.20
+    * @peerbit/blocks bumped from ^2.0.22 to ^2.0.23
+
 ## [3.0.23](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.22...peerbit-v3.0.23) (2024-01-27)
 
 
