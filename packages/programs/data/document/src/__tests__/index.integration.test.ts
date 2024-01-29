@@ -2130,7 +2130,6 @@ describe("index", () => {
 					};
 
 					// Omit synchronization so results are always the same (HACKY)
-					store.docs.log.distribute = async () => {};
 
 					await session.peers[i].open(store, {
 						args: {
@@ -2140,8 +2139,9 @@ describe("index", () => {
 								}
 							},
 							role: {
+								// TODO choose offset so data is perfectly distributed
 								type: "replicator",
-								factor: 1
+								factor: 1 / session.peers.length
 							},
 							replicas: { min: 1 } // make sure documents only exist once
 						}
@@ -2190,8 +2190,7 @@ describe("index", () => {
 			it("multiple peers", async () => {
 				await put(0, 0);
 				await put(0, 1);
-				let e2 = await put(0, 2);
-				await stores[1].docs.log.log.join([e2.entry]); // some overlap
+				await put(0, 2);
 				await put(1, 3);
 				await put(1, 4);
 				for (let i = 0; i < session.peers.length; i++) {
