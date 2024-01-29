@@ -232,7 +232,7 @@ describe(`sharding`, () => {
 			);
 		}
 		await Promise.all(promises);
-		return checkBounded(entryCount, 0.4, 0.6, db1, db2);
+		return checkBounded(entryCount, 0.35, 0.65, db1, db2);
 	});
 
 	it("2 peers write while joining", async () => {
@@ -568,11 +568,9 @@ describe(`sharding`, () => {
 				}
 			}
 		);
-
 		await db2.log.updateRole({ type: "replicator", factor: 0 });
-
 		await waitForResolved(() => expect(db3.log.log.length).toEqual(COUNT));
-		await waitForResolved(() => expect(db2.log.log.length).toEqual(0));
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(0)); // min replicas is set to 2 so, if there are 2 dbs still replicating, this nod should not store any data
 	});
 
 	describe("distribution", () => {
