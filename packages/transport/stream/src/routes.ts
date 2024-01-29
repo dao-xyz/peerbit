@@ -360,6 +360,8 @@ export class Routes {
 			| Map<string, Map<string, { to: string; timestamp: number }>>
 			| undefined = undefined;
 
+		const relaying = from !== this.me;
+
 		// Message to > 0
 		if (tos.length > 0) {
 			for (const to of tos) {
@@ -372,7 +374,14 @@ export class Routes {
 					let foundClosest = false;
 					let redundancyModified = redundancy;
 					for (let i = 0; i < neighbour.list.length; i++) {
-						const { distance, session } = neighbour.list[i];
+						const { distance, session, expireAt } = neighbour.list[i];
+
+						if (expireAt && !relaying) {
+							// don't send on old paths if not relaying
+							// TODO there could be a benifit of doing this (?)
+							continue;
+						}
+
 						if (distance >= redundancyModified) {
 							break; // because neighbour listis sorted
 						}
