@@ -443,37 +443,6 @@ describe("streams", function () {
 				expect(streams[1].received).toHaveLength(0);
 			});
 
-			it("publishes on direct stream, even path is longer", async () => {
-				await session.connect([[session.peers[0], session.peers[2]]]);
-				await waitForPeerStreams(streams[0].stream, streams[2].stream);
-				expect(
-					streams[1].messages.filter((x) => x instanceof DataMessage)
-				).toHaveLength(0);
-				// mark 0 -> 1 -> 2 as a short route (0)
-
-				streams[0].stream.routes.add(
-					streams[0].stream.publicKeyHash,
-					streams[1].stream.publicKeyHash,
-					streams[2].stream.publicKeyHash,
-					0,
-					+new Date(),
-					+new Date()
-				);
-
-				await streams[0].stream.publish(crypto.randomBytes(1e2), {
-					to: [streams[2].stream.components.peerId]
-				});
-				streams[1].messages = [];
-				await waitForResolved(() =>
-					expect(streams[2].received).toHaveLength(1)
-				);
-
-				// ...yet make sure the data has not travelled this path
-				expect(
-					streams[1].messages.filter((x) => x instanceof DataMessage)
-				).toHaveLength(0);
-			});
-
 			it("will favor shortest path", async () => {
 				/* 
 				┌───┐
@@ -887,10 +856,101 @@ describe("streams", function () {
 					).toEqual([streams[2].stream.publicKey.hashcode()]);
 				});
 			});
+
+			// TODO do we want this feat? will this leave to uneceessary messages?
+			/* it("always relays if target is neighbour", async () => {
+				await session.peers[0].hangUp(session.peers[2].peerId);
+				streams.map(x => x.stream.routes.clear());
+
+				// 0 -> 1 -> 2 still works
+				streams[0].stream.routes.add(
+					streams[0].stream.publicKeyHash,
+					streams[1].stream.publicKeyHash,
+					streams[2].stream.publicKeyHash,
+					0,
+					+new Date(),
+					+new Date()
+				);
+
+				await streams[0].stream.publish(crypto.randomBytes(1e2), {
+					to: [streams[2].stream.components.peerId]
+				});
+				await waitForResolved(() =>
+					expect(streams[2].received).toHaveLength(1)
+				);
+
+				// ...yet make sure the data has not travelled this path
+				expect(
+					streams[1].messages.filter((x) => x instanceof DataMessage)
+				).toHaveLength(0);
+			}); */
 		});
 
 		describe("routes", () => {
 			describe("redundancy", () => {
+				describe("direct routes", () => {
+					let session: TestSessionStream;
+					let streams: ReturnType<typeof createMetrics>[];
+
+					beforeAll(async () => {});
+
+					beforeEach(async () => {
+						session = await disconnected(3);
+						streams = collectMetrics(session);
+					});
+
+					afterEach(async () => {
+						await session.stop();
+					});
+
+					it("only uses direct routes on new connections", async () => {
+						await session.connect([[session.peers[0], session.peers[1]]]);
+						await session.connect([[session.peers[1], session.peers[2]]]);
+						await waitForResolved(() =>
+							expect(session.peers[1].services.directstream.peers.size).toEqual(
+								2
+							)
+						);
+						await session.peers[0].services.directstream.publish(
+							new Uint8Array([0]),
+							{
+								mode: new SilentDelivery({
+									to: [session.peers[2].peerId],
+									redundancy: 1
+								})
+							}
+						);
+						await waitForResolved(() =>
+							waitForResolved(() => expect(streams[2].received).toHaveLength(1))
+						);
+						expect(
+							streams[1].messages.filter((x) => x instanceof DataMessage)
+						).toHaveLength(1);
+						await session.connect([[session.peers[0], session.peers[2]]]);
+						await waitForResolved(() =>
+							expect(session.peers[0].services.directstream.peers.size).toEqual(
+								2
+							)
+						);
+						await session.peers[0].services.directstream.publish(
+							new Uint8Array([0]),
+							{
+								mode: new SilentDelivery({
+									to: [session.peers[2].peerId],
+									redundancy: 1
+								})
+							}
+						);
+						await waitForResolved(() =>
+							waitForResolved(() => expect(streams[2].received).toHaveLength(2))
+						);
+						expect(
+							streams[1].messages.filter((x) => x instanceof DataMessage)
+						).toHaveLength(1); // because there is a direct route to 2 from 0 so no point more message should arrive here
+						const q = 123;
+					});
+				});
+
 				describe("1->3", () => {
 					let session: TestSessionStream;
 					let streams: ReturnType<typeof createMetrics>[];
@@ -2316,7 +2376,9 @@ describe("join/leave", () => {
 			await session.peers[1].stop();
 
 			await waitForResolved(() =>
-				expect(streams[0].unrechable.map((x) => x.hashcode())).toContainValues([
+				expect(
+					streams[0].unrechable.map((x) => x.hashcode())
+				).toContainAllValues([
 					streams[1].stream.publicKeyHash,
 					streams[3].stream.publicKeyHash
 				])
@@ -2350,9 +2412,9 @@ describe("join/leave", () => {
 			await session.peers[1].stop();
 
 			// will immediately become unreachable
-			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainValues([
-				streams[1].stream.publicKeyHash
-			]);
+			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainAllValues(
+				[streams[1].stream.publicKeyHash]
+			);
 		});
 
 		it("re-seeks on connection drop", async () => {
@@ -2412,10 +2474,10 @@ describe("join/leave", () => {
 			});
 
 			// will emit unreachable and reachable events (again)
-			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainValues([
-				streams[3].stream.publicKeyHash
-			]);
-			expect(streams[0].reachable.map((x) => x.hashcode())).toContainValues([
+			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainAllValues(
+				[streams[3].stream.publicKeyHash]
+			);
+			expect(streams[0].reachable.map((x) => x.hashcode())).toContainAllValues([
 				streams[3].stream.publicKeyHash
 			]);
 
