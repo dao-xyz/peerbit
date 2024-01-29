@@ -1144,6 +1144,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
+	private getDefaultMinRoleAge() {
+		// TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
+		return Math.min(
+			this.timeUntilRoleMaturity,
+			+new Date() - this.openTime - 500
+		);
+	}
 	private findLeadersFromUniformNumber(
 		cursor: number,
 		numberOfLeaders: number,
@@ -1151,9 +1158,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			roleAge?: number;
 		}
 	) {
-		const roleAge =
-			options?.roleAge ??
-			Math.min(this.timeUntilRoleMaturity, +new Date() - this.openTime - 500); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
+		const roleAge = options?.roleAge ?? this.getDefaultMinRoleAge(); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 
 		const sampes = getSamples(
 			cursor,
@@ -1172,7 +1177,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	 *
 	 * @returns groups where at least one in any group will have the entry you are looking for
 	 */
-	getReplicatorUnion(roleAge: number = this.timeUntilRoleMaturity) {
+	getReplicatorUnion(roleAge: number = this.getDefaultMinRoleAge()) {
 		if (this.closed === true) {
 			throw new Error("Closed");
 		}
