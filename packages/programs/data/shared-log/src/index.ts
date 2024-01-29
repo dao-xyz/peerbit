@@ -51,7 +51,6 @@ import yallist from "yallist";
 import {
 	AcknowledgeDelivery,
 	DeliveryMode,
-	SeekDelivery,
 	SilentDelivery,
 	NotStartedError
 } from "@peerbit/stream-interface";
@@ -62,7 +61,7 @@ import { PIDReplicationController } from "./pid.js";
 export * from "./replication.js";
 import PQueue from "p-queue";
 import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
-import { collectNodesAroundPoint, getCover } from "./ranges.js";
+import { getCover, getSamples } from "./ranges.js";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
@@ -301,7 +300,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				} else {
 					this._roleOptions = new Replicator({
 						factor: options.factor,
-						offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
+						offset: this.getReplicationOffset()
 					});
 				}
 			} else {
@@ -326,12 +325,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 			if (this._roleOptions?.limits) {
 				this._role = new Replicator({
 					factor: this._role instanceof Replicator ? this._role.factor : 0,
-					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
+					offset: this.getReplicationOffset()
 				});
 			} else {
 				this._role = new Replicator({
 					factor: this._role instanceof Replicator ? this._role.factor : 1,
-					offset: hashToUniformNumber(this.node.identity.publicKey.bytes)
+					offset: this.getReplicationOffset()
 				});
 			}
 		}
@@ -354,12 +353,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 
 		await this.rpc.subscribe();
-
-		await this.rpc.send(new ResponseRoleMessage({ role: this._role }), {
-			mode: new SeekDelivery({
-				redundancy: 1
-			})
-		});
+		await this.rpc.send(new ResponseRoleMessage({ role: this._role }));
 
 		if (onRoleChange && changed !== "none") {
 			this.onRoleChange(this._role, this.node.identity.publicKey);
@@ -417,6 +411,15 @@ export class SharedLog<T = Uint8Array> extends Program<
 						}
 					}
 					leaders = newAndOldLeaders;
+				}
+				let set = this._gidPeersHistory.get(result.entry.meta.gid);
+				if (!set) {
+					set = new Set(leaders);
+					this._gidPeersHistory.set(result.entry.meta.gid, set);
+				} else {
+					for (const receiver of leaders) {
+						set.add(receiver);
+					}
 				}
 				mode = isLeader
 					? new SilentDelivery({ redundancy: 1, to: leaders })
@@ -1069,6 +1072,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return !!isLeader;
 	}
 
+	private getReplicationOffset() {
+		return hashToUniformNumber(this.node.identity.publicKey.bytes);
+	}
+
 	private async waitForIsLeader(
 		slot: { toString(): string },
 		numberOfLeaders: number,
@@ -1144,26 +1151,21 @@ export class SharedLog<T = Uint8Array> extends Program<
 			roleAge?: number;
 		}
 	) {
-		const leaders: Set<string> = new Set();
-		const width = 1;
-		const peers = this.getReplicatorsSorted();
-		if (!peers || peers?.length === 0) {
-			return [];
-		}
-		numberOfLeaders = Math.min(numberOfLeaders, peers.length);
-
-		const t = +new Date();
 		const roleAge =
 			options?.roleAge ??
 			Math.min(this.timeUntilRoleMaturity, +new Date() - this.openTime - 500); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 
-		for (let i = 0; i < numberOfLeaders; i++) {
-			const point = ((cursor + i / numberOfLeaders) % 1) * width;
-			const currentNode = peers.head;
-			collectNodesAroundPoint(t, roleAge, peers, currentNode, leaders, point);
-		}
+		const sampes = getSamples(
+			cursor,
+			this.getReplicatorsSorted()!,
+			numberOfLeaders,
+			roleAge,
+			this.role instanceof Replicator && this.role.factor === 0
+				? this.node.identity.publicKey.hashcode()
+				: undefined
+		);
 
-		return [...leaders];
+		return sampes;
 	}
 
 	/**
@@ -1255,7 +1257,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			await this.rebalanceParticipationDebounced?.(); /* await this.rebalanceParticipation(false); */
 			if (update.changed === "added") {
 				await this.rpc.send(new ResponseRoleMessage({ role: this._role }), {
-					mode: new SeekDelivery({
+					mode: new SilentDelivery({
 						to: [publicKey.hashcode()],
 						redundancy: 1
 					})
@@ -1386,7 +1388,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			if (this.role instanceof Replicator) {
 				this.rpc
 					.send(new ResponseRoleMessage({ role: this._role }), {
-						mode: new SeekDelivery({ redundancy: 1, to: [publicKey] })
+						mode: new SilentDelivery({ redundancy: 1, to: [publicKey] })
 					})
 					.catch((e) => logger.error(e.toString()));
 			}

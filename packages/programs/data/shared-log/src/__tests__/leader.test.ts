@@ -5,6 +5,9 @@ import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Replicator } from "../role.js";
 import { deserialize } from "@dao-xyz/borsh";
 
+/**
+ * TOOD make these test part of ranges.test.ts
+ */
 describe(`leaders`, function () {
 	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
@@ -340,48 +343,6 @@ describe(`leaders`, function () {
 	});
 
 	describe("union", () => {
-		it("covers content width", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>(), {
-				args: {
-					role: {
-						type: "replicator",
-						factor: 0.1
-					},
-					replicas: {
-						min: 1 // this means every replicator needs be part of the union
-					}
-				}
-			});
-			db2 = (await EventStore.open(db1.address!, session.peers[1], {
-				args: {
-					role: {
-						type: "replicator",
-						factor: 0.1
-					},
-					replicas: {
-						min: 1 // this means every replicator needs be part of the union
-					}
-				}
-			})) as EventStore<string>;
-			db3 = (await EventStore.open(db1.address!, session.peers[2], {
-				args: {
-					role: {
-						type: "replicator",
-						factor: 0.1
-					},
-					replicas: {
-						min: 1 // this means every replicator needs be part of the union
-					}
-				}
-			})) as EventStore<string>;
-
-			await waitForResolved(() =>
-				expect(db1.log.getReplicatorsSorted()).toHaveLength(3)
-			);
-
-			const leaders = db1.log.getReplicatorUnion(0);
-			expect(leaders.length).toEqual(3);
-		});
 		it("local first", async () => {
 			const store = new EventStore<string>();
 			db1 = await session.peers[0].open(store, {
@@ -497,7 +458,7 @@ describe(`leaders`, function () {
 			}
 		});
 
-		it("all non-mature, all included", async () => {
+		it("all non-mature, only me included", async () => {
 			const store = new EventStore<string>();
 
 			db1 = await session.peers[0].open(store, {
@@ -560,7 +521,7 @@ describe(`leaders`, function () {
 				// Should always include all nodes since no is mature
 				expect(
 					db3.log.getReplicatorUnion(Number.MAX_SAFE_INTEGER)
-				).toHaveLength(3);
+				).toHaveLength(1);
 			}
 		});
 
@@ -623,6 +584,10 @@ describe(`leaders`, function () {
 			await waitForResolved(() =>
 				expect(db3.log.getReplicatorsSorted()).toHaveLength(3)
 			);
+
+			// TODO not sure if db2 results should be included here
+			// db2 is not mature from db3 perspective (?). Might be (?)
+			// this test is kind of pointless anyway since we got the range.test.ts that tests all the cases
 
 			for (let i = 1; i < 3; i++) {
 				db3.log.replicas.min = { getValue: () => i };

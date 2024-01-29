@@ -335,7 +335,7 @@ describe(`exchange`, function () {
 		expect(db2Entries[0].payload.getValue().value).toEqual(value);
 	});
 
-	it("replicates database of 100 entries", async () => {
+	it("replicates database of 1000 entries", async () => {
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
 			session.peers[1]
@@ -343,8 +343,8 @@ describe(`exchange`, function () {
 
 		await db1.waitFor(session.peers[1].peerId);
 		await db2.waitFor(session.peers[0].peerId);
-		const entryCount = 100;
 
+		const entryCount = 1000;
 		for (let i = 0; i < entryCount; i++) {
 			//	entryArr.push(i);
 			await db1.add("hello" + i);
@@ -485,6 +485,49 @@ describe("redundancy", () => {
 		const message2 = collectMessages(db2.log);
 		await delay(3000);
 		clearInterval(interval);
+
+		const dataMessages2 = getReceivedHeads(message2);
+		await waitForResolved(() => expect(dataMessages2).toHaveLength(count));
+
+		const dataMessages1 = getReceivedHeads(message1);
+		expect(dataMessages1).toHaveLength(0); // no data is sent back
+	});
+
+	it("only sends entries once, 2 peers fixed, write after open", async () => {
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: { type: "replicator", factor: 1 }
+			}
+		});
+		let count = 1;
+		const message1 = collectMessages(db1.log);
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		))!;
+
+		const message2 = collectMessages(db2.log);
+
+		await waitForResolved(() =>
+			expect(db1.log.getReplicatorsSorted()?.length).toEqual(2)
+		);
+		await waitForResolved(() =>
+			expect(db2.log.getReplicatorsSorted()?.length).toEqual(2)
+		);
+
+		await db1.add("hello", { meta: { next: [] } });
+		await db1.log.distribute(); // manually call distribute to make sure no more messages are sent
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
 
 		const dataMessages2 = getReceivedHeads(message2);
 		await waitForResolved(() => expect(dataMessages2).toHaveLength(count));
@@ -739,6 +782,50 @@ describe(`start/stop`, function () {
 			expect(result1[i].equals(result2[i])).toBeTrue();
 		}
 	});
+
+	it("can restart replicate", async () => {
+		const db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				role: {
+					type: "replicator",
+					factor: 1
+				}
+			}
+		});
+
+		await db1.add("hello");
+
+		let db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		))!;
+
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(1));
+
+		await db2.close();
+		await db1.add("world");
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			}
+		))!;
+		await waitForResolved(() => expect(db2.log.log.length).toEqual(2));
+	});
 });
 
 describe("canReplicate", () => {
@@ -852,7 +939,7 @@ describe("canReplicate", () => {
 			[db2, db3].map((log) =>
 				waitForResolved(
 					() =>
-						expect(log.log.getReplicatorUnion(0)).toContainValues([
+						expect(log.log.getReplicatorUnion(0)).toContainAllValues([
 							log.node.identity.publicKey.hashcode()
 						]) // I only need to query muself to access all data
 				)

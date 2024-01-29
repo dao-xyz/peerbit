@@ -1,16 +1,9 @@
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { EventStore, Operation } from "./utils/stores/event-store";
 import { TestSession } from "@peerbit/test-utils";
-import {
-	Observer,
-	ReplicationSegment,
-	Replicator,
-	containsPoint
-} from "../role";
-import { AbsoluteReplicas, Args } from "..";
+import { Observer, ReplicationSegment, Replicator } from "../role";
 import { deserialize } from "@dao-xyz/borsh";
 import { Ed25519Keypair, randomBytes, toBase64 } from "@peerbit/crypto";
-import { BORSH_ENCODING } from "./utils/stores/encoding";
 
 describe(`role`, () => {
 	let session: TestSession;
@@ -219,29 +212,6 @@ describe("segment", () => {
 			const s2 = new ReplicationSegment({ offset: 0.1, factor: 0.1 });
 			expect(s1.overlaps(s2)).toBeTrue();
 			expect(s2.overlaps(s1)).toBeTrue();
-		});
-	});
-	describe("containsPoint", () => {
-		it("length 0", () => {
-			expect(containsPoint({ factor: 0, offset: 0 }, 0)).toBeFalse();
-			expect(containsPoint({ factor: 0, offset: 0 }, 0.1)).toBeFalse();
-			expect(containsPoint({ factor: 0, offset: 0.1 }, 0)).toBeFalse();
-		});
-
-		it("length 1", () => {
-			expect(containsPoint({ factor: 1, offset: 0 }, 0)).toBeTrue();
-			expect(containsPoint({ factor: 1, offset: 0 }, 0.1)).toBeTrue();
-			expect(containsPoint({ factor: 1, offset: 0.1 }, 0)).toBeTrue();
-		});
-
-		it("wrapped", () => {
-			expect(containsPoint({ factor: 0.3, offset: 0.8 }, 0.1)).toBeTrue();
-			expect(containsPoint({ factor: 0.3, offset: 0.8 }, 0.2)).toBeFalse();
-		});
-
-		it("unwrapped", () => {
-			expect(containsPoint({ factor: 0.1, offset: 0.8 }, 0.89)).toBeTrue();
-			expect(containsPoint({ factor: 0.1, offset: 0.8 }, 0.91)).toBeFalse();
 		});
 	});
 });
