@@ -379,28 +379,24 @@ describe("index", () => {
 		await l0b.accessController.access.log.waitForReplicator(
 			session.peers[0].identity.publicKey
 		);
-		await l0b.accessController.access.log.log.join(
-			await l0a.accessController.access.log.log.getHeads()
-		);
+
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);
 		await l0b.accessController.access.log.waitForReplicator(
 			l0a.node.identity.publicKey
 		);
 
+		// since we are replicator by default of the access index (even though opened the db as observer)
+		// we will be able to query ourselves
+		// TODO should we really be replicator of the access index?
+		// can we create a solution where this is not the case?
 		let results: Document[] = await l0b.accessController.access.index.search(
 			new SearchRequest({
 				query: []
-			}),
-			{
-				remote: {
-					amount: 1
-				},
-				local: false
-			}
+			})
 		);
 
-		await waitForResolved(() => expect(results.length).toBeGreaterThan(0));
+		expect(results.length).toBeGreaterThan(0);
 
 		// Now trusted because append all is 'true'c
 	});
