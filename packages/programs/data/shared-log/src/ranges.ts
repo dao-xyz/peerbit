@@ -88,7 +88,7 @@ const collectNodesAroundPoint = (
 	}
 };
 
-const isMatured = (role: Replicator, now: number, minAge: number) => {
+export const isMatured = (role: Replicator, now: number, minAge: number) => {
 	return now - Number(role.timestamp) >= minAge;
 };
 

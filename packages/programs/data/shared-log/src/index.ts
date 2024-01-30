@@ -61,7 +61,7 @@ import { PIDReplicationController } from "./pid.js";
 export * from "./replication.js";
 import PQueue from "p-queue";
 import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
-import { getCoverSet, getSamples } from "./ranges.js";
+import { getCoverSet, getSamples, isMatured } from "./ranges.js";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
@@ -1056,10 +1056,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 	async waitForReplicator(...keys: PublicSignKey[]) {
 		const check = () => {
 			for (const k of keys) {
+				const rect = this.getReplicatorsSorted()
+					?.toArray()
+					?.find((x) => x.publicKey.equals(k));
 				if (
-					!this.getReplicatorsSorted()
-						?.toArray()
-						?.find((x) => x.publicKey.equals(k))
+					!rect ||
+					!isMatured(rect.role, +new Date(), this.getDefaultMinRoleAge())
 				) {
 					return false;
 				}
@@ -1155,11 +1157,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
-	private getDefaultMinRoleAge() {
+	getDefaultMinRoleAge() {
 		// TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
 		return Math.min(
 			this.timeUntilRoleMaturity,
-			+new Date() - this.openTime - 500
+			+new Date() - this.openTime - 5000
 		);
 	}
 	private findLeadersFromUniformNumber(

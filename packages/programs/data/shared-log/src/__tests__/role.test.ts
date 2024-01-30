@@ -183,6 +183,32 @@ describe(`role`, () => {
 			/// expect role to update a few times
 			await waitForResolved(() => expect(roles.length).toBeGreaterThan(3));
 		});
+
+		it("waitForReplicator waits until maturity", async () => {
+			const store = new EventStore<string>();
+
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			});
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: {
+					role: {
+						type: "replicator",
+						factor: 1
+					}
+				}
+			});
+			db2.log.getDefaultMinRoleAge = () => 3e3;
+			const t0 = +new Date();
+			await db2.log.waitForReplicator(db1.node.identity.publicKey);
+			const t1 = +new Date();
+			expect(t1 - t0).toBeGreaterThan(db2.log.getDefaultMinRoleAge());
+		});
 	});
 });
 
