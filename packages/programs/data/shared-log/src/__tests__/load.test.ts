@@ -3,8 +3,7 @@ import mapSeries from "p-each-series";
 
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
-import { AbsoluteReplicas } from "../replication";
+import { waitForResolved } from "@peerbit/time";
 import { waitForConverged } from "./utils";
 import { v4 as uuid } from "uuid";
 

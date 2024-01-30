@@ -4,6 +4,8 @@ import { delay, waitForResolved } from "@peerbit/time";
 import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Replicator } from "../role.js";
 import { deserialize } from "@dao-xyz/borsh";
+import { slowDownSend } from "./utils";
+import { ExchangeHeadsMessage } from "../exchange-heads";
 
 /**
  * TOOD make these test part of ranges.test.ts
@@ -388,6 +390,73 @@ describe(`leaders`, function () {
 				session.peers[0].identity.publicKey.hashcode()
 			]);
 
+			expect(db2.log.getReplicatorUnion(0)).toEqual([
+				session.peers[1].identity.publicKey.hashcode()
+			]);
+		});
+
+		it("will consider in flight", async () => {
+			const store = new EventStore<string>();
+
+			db1 = await session.peers[0].open(store.clone(), {
+				args: {
+					role: {
+						type: "replicator",
+						factor: 0.5
+					},
+					replicas: {
+						min: 2
+					},
+					timeUntilRoleMaturity: 10 * 1000
+				}
+			});
+
+			const abortController = new AbortController();
+			await db1.add("hello!");
+			slowDownSend(db1.log, ExchangeHeadsMessage, 1e4, abortController.signal);
+
+			db2 = await session.peers[1].open(store, {
+				args: {
+					role: {
+						type: "replicator",
+						factor: 0.5
+					},
+					replicas: {
+						min: 2
+					},
+					timeUntilRoleMaturity: 10 * 1000
+				}
+			});
+
+			await waitForResolved(() => {
+				expect(db1.log.getReplicatorsSorted()?.length).toEqual(2);
+			});
+
+			await waitForResolved(() => {
+				expect(db2.log.getReplicatorsSorted()?.length).toEqual(2);
+			});
+
+			await waitForResolved(() =>
+				expect(
+					db2.log["syncInFlight"].has(db1.node.identity.publicKey.hashcode())
+				).toBeTrue()
+			);
+
+			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
+			// for these
+			expect(db2.log.getReplicatorUnion(0)).toContainAllValues([
+				session.peers[0].identity.publicKey.hashcode(),
+				session.peers[1].identity.publicKey.hashcode()
+			]);
+
+			abortController.abort("Start sending now");
+			await waitForResolved(() =>
+				expect(
+					db2.log["syncInFlight"].has(db1.node.identity.publicKey.hashcode())
+				).toBeFalse()
+			);
+
+			// no more inflight
 			expect(db2.log.getReplicatorUnion(0)).toEqual([
 				session.peers[1].identity.publicKey.hashcode()
 			]);

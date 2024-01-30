@@ -61,7 +61,7 @@ import { PIDReplicationController } from "./pid.js";
 export * from "./replication.js";
 import PQueue from "p-queue";
 import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
-import { getCover, getSamples } from "./ranges.js";
+import { getCoverSet, getSamples } from "./ranges.js";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
@@ -218,6 +218,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private syncMoreInterval?: ReturnType<typeof setTimeout>;
 	private syncInFlightQueue: Map<string, PublicSignKey[]>;
 	private syncInFlightQueueInverted: Map<string, Set<string>>;
+	private syncInFlight: Map<string, Map<string, { timestamp: number }>>;
 
 	replicas: ReplicationLimits;
 
@@ -456,6 +457,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.latestRoleMessages = new Map();
 		this.syncInFlightQueue = new Map();
 		this.syncInFlightQueueInverted = new Map();
+		this.syncInFlight = new Map();
 		this.openTime = +new Date();
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity || WAIT_FOR_ROLE_MATURITY;
@@ -593,21 +595,25 @@ export class SharedLog<T = Uint8Array> extends Program<
 					this.syncInFlightQueue.delete(key);
 				}
 			}
-			this.rpc
-				.send(
-					new ResponseMaybeSync({
-						hashes: requestHashes
-					}),
-					{
-						mode: new SilentDelivery({ to: from, redundancy: 1 })
+
+			const nowMin10s = +new Date() - 1e4;
+			for (const [key, map] of this.syncInFlight) {
+				// cleanup "old" missing syncs
+				for (const [hash, { timestamp }] of map) {
+					if (timestamp < nowMin10s) {
+						map.delete(hash);
 					}
-				)
-				.finally(() => {
-					if (this.closed) {
-						return;
-					}
-					this.syncMoreInterval = setTimeout(requestSync, 1e4);
-				});
+				}
+				if (map.size === 0) {
+					this.syncInFlight.delete(key);
+				}
+			}
+			this.requestSync(requestHashes, from).finally(() => {
+				if (this.closed) {
+					return;
+				}
+				this.syncMoreInterval = setTimeout(requestSync, 1e4);
+			});
 		};
 		requestSync();
 	}
@@ -671,6 +677,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._pendingIHave.clear();
 		this.syncInFlightQueue.clear();
 		this.syncInFlightQueueInverted.clear();
+		this.syncInFlight.clear();
 		this.latestRoleMessages.clear();
 		this._gidPeersHistory.clear();
 
@@ -727,6 +734,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
 					for (const head of heads) {
+						const set = this.syncInFlight.get(context.from.hashcode());
+						if (set) {
+							set.delete(head.entry.hash);
+							if (set?.size === 0) {
+								this.syncInFlight.delete(context.from.hashcode());
+							}
+						}
+
 						if (!this.log.has(head.entry.hash)) {
 							head.entry.init({
 								// we need to init because we perhaps need to decrypt gid
@@ -933,18 +948,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 						inverted.add(hash);
 					} else if (!this.log.has(hash)) {
 						this.syncInFlightQueue.set(hash, []);
-						requestHashes.push(hash);
+						requestHashes.push(hash); // request immediately (first time we have seen this hash)
 					}
 				}
 
-				await this.rpc.send(
-					new ResponseMaybeSync({
-						hashes: requestHashes
-					}),
-					{
-						mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
-					}
-				);
+				await this.requestSync(requestHashes, [context.from.hashcode()]);
 			} else if (msg instanceof ResponseMaybeSync) {
 				// TODO better choice of step size
 				const entries = (
@@ -1199,12 +1207,18 @@ export class SharedLog<T = Uint8Array> extends Program<
 		// the entry we are looking for
 		const coveringWidth = width / minReplicas;
 
-		return getCover(
+		const set = getCoverSet(
 			coveringWidth,
 			peers,
 			roleAge,
 			this.role instanceof Replicator ? this.node.identity.publicKey : undefined
 		);
+
+		// add all in flight
+		for (const [key, _] of this.syncInFlight) {
+			set.add(key);
+		}
+		return [...set];
 	}
 
 	async replicator(
@@ -1387,6 +1401,22 @@ export class SharedLog<T = Uint8Array> extends Program<
 			for (const [_a, b] of this._gidPeersHistory) {
 				b.delete(publicKey.hashcode());
 			}
+			this.syncInFlight.delete(publicKey.hashcode());
+			const waitingHashes = this.syncInFlightQueueInverted.get(
+				publicKey.hashcode()
+			);
+			if (waitingHashes) {
+				for (const hash of waitingHashes) {
+					let arr = this.syncInFlightQueue.get(hash);
+					if (arr) {
+						arr = arr.filter((x) => !x.equals(publicKey));
+					}
+					if (this.syncInFlightQueue.size === 0) {
+						this.syncInFlightQueue.delete(hash);
+					}
+				}
+			}
+			this.syncInFlightQueueInverted.delete(publicKey.hashcode());
 		}
 
 		if (subscribed) {
@@ -1642,6 +1672,29 @@ export class SharedLog<T = Uint8Array> extends Program<
 			});
 		}
 		return changed;
+	}
+
+	private async requestSync(hashes: string[], to: Set<string> | string[]) {
+		const now = +new Date();
+		for (const node of to) {
+			let map = this.syncInFlight.get(node);
+			if (!map) {
+				map = new Map();
+				this.syncInFlight.set(node, map);
+			}
+			for (const hash of hashes) {
+				map.set(hash, { timestamp: now });
+			}
+		}
+
+		await this.rpc.send(
+			new ResponseMaybeSync({
+				hashes: hashes
+			}),
+			{
+				mode: new SilentDelivery({ to, redundancy: 1 })
+			}
+		);
 	}
 
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {

@@ -85,7 +85,13 @@ await store.posts.log.waitForReplicator(peer2.identity.publicKey);
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({
 		query: [] // query all
-	})
+	}),
+	{
+		local: true,
+		remote: {
+			minAge: 0
+		}
+	}
 );
 expect(responses).toHaveLength(1);
 expect(responses.map((x) => x.message)).toEqual(["hello world"]);

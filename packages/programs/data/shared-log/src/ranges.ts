@@ -149,7 +149,15 @@ export const getCover = (
 	peers: yallist<ReplicatorRect>,
 	roleAge: number,
 	startNodeIdentity?: PublicSignKey
-) => {
+): string[] => {
+	return [...getCoverSet(coveringWidth, peers, roleAge, startNodeIdentity)];
+};
+export const getCoverSet = (
+	coveringWidth: number,
+	peers: yallist<ReplicatorRect>,
+	roleAge: number,
+	startNodeIdentity?: PublicSignKey
+): Set<string> => {
 	// find a good starting point
 	let walker = peers.head;
 	if (startNodeIdentity) {
@@ -175,7 +183,7 @@ export const getCover = (
 
 	const startNode = walker;
 	if (!startNode) {
-		return [];
+		return new Set();
 	}
 
 	//
@@ -323,5 +331,5 @@ export const getCover = (
 			// TODO add more elements?
 		}
 	}
-	return [...set];
+	return set;
 };

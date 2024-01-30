@@ -3,6 +3,7 @@ import { TransportMessage } from "../message";
 import { SharedLog } from "..";
 import { EntryWithRefs, ExchangeHeadsMessage } from "../exchange-heads";
 import { delay } from "@peerbit/time";
+import { Constructor } from "@dao-xyz/borsh";
 
 export const collectMessages = (log: SharedLog<any>) => {
 	const messages: [TransportMessage, PublicSignKey][] = [];
@@ -14,6 +15,26 @@ export const collectMessages = (log: SharedLog<any>) => {
 		return onMessage(msg, ctx);
 	};
 	return messages;
+};
+
+export const slowDownSend = (
+	log: SharedLog<any>,
+	type: Constructor<TransportMessage>,
+	tms: number,
+	abortSignal?: AbortSignal
+) => {
+	// TODO types
+	const sendFn = log.rpc.send.bind(log.rpc);
+	log.rpc.send = async (msg, options) => {
+		if (msg.constructor === type) {
+			try {
+				await delay(tms, { signal: abortSignal });
+			} catch (error) {
+				// dont do anything because we might want to send, but immediately
+			}
+		}
+		return sendFn(msg, options);
+	};
 };
 
 export const getReceivedHeads = (
