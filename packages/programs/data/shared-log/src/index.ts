@@ -734,14 +734,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
 					for (const head of heads) {
-						const set = this.syncInFlight.get(context.from.hashcode());
-						if (set) {
-							set.delete(head.entry.hash);
-							if (set?.size === 0) {
-								this.syncInFlight.delete(context.from.hashcode());
-							}
-						}
-
 						if (!this.log.has(head.entry.hash)) {
 							head.entry.init({
 								// we need to init because we perhaps need to decrypt gid
@@ -840,6 +832,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 								logger.info(e.toString());
 							});
 						this.rebalanceParticipationDebounced?.();
+					}
+
+					/// we clear sync in flight here because we want to join before that, so that entries are totally accounted for
+					for (const head of heads) {
+						const set = this.syncInFlight.get(context.from.hashcode());
+						if (set) {
+							set.delete(head.entry.hash);
+							if (set?.size === 0) {
+								this.syncInFlight.delete(context.from.hashcode());
+							}
+						}
 					}
 
 					if (maybeDelete) {
