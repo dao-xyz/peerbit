@@ -2066,7 +2066,29 @@ describe("index", () => {
 					name: String(id),
 					number: BigInt(id)
 				});
-				return stores[storeIndex].docs.put(doc);
+				const resp = await stores[storeIndex].docs.put(doc);
+				// --- wait for all others to "want" this entry ---
+
+				await stores[storeIndex].docs.log.distribute(); //  we need to call this to make other peers know that they are missing out of this hashes
+				// because we have overriding the append to not send entries right away
+
+				for (let i = 0; i < stores.length; i++) {
+					if (i === storeIndex) {
+						continue;
+					}
+					// when blow is true, we will be "forced" to query the other node for the data.
+					// this allows use to test sorting where data is determenstically distributed
+					// i.e put(1,123) will put a document at store 1 with id 123, and will never leave that store
+					// store 0 and 2 who want to fetch all data will always have to ask node 1
+					await waitForResolved(() =>
+						expect(
+							stores[i].docs.log["syncInFlight"]
+								.get(stores[storeIndex].node.identity.publicKey.hashcode())
+								.has(resp.entry.hash)
+						).toBeTrue()
+					);
+				}
+				return resp;
 			};
 
 			const checkIterate = async (
@@ -2129,8 +2151,6 @@ describe("index", () => {
 						return store.docs.log.log.append(a, b);
 					};
 
-					// Omit synchronization so results are always the same (HACKY)
-
 					await session.peers[i].open(store, {
 						args: {
 							index: {
@@ -2141,11 +2161,23 @@ describe("index", () => {
 							role: {
 								// TODO choose offset so data is perfectly distributed
 								type: "replicator",
-								factor: 1 / session.peers.length
+								factor: 1
 							},
+							timeUntilRoleMaturity: 0,
 							replicas: { min: 1 } // make sure documents only exist once
 						}
 					});
+
+					// Omit synchronization so results are always the same (HACKY)
+					// TODO types
+					const onMessage = store.docs.log.rpc["_responseHandler"];
+					store.docs.log.rpc["_responseHandler"] = (msg, ctx) => {
+						if (msg.constructor.name === "ExchangeHeadsMessage") {
+							return;
+						}
+						return onMessage(msg, ctx);
+					};
+
 					stores.push(store);
 				}
 				// Wait for ack that everone can connect to each outher through the rpc topic
@@ -2190,7 +2222,8 @@ describe("index", () => {
 			it("multiple peers", async () => {
 				await put(0, 0);
 				await put(0, 1);
-				await put(0, 2);
+				let e2 = await put(0, 2);
+				await stores[1].docs.log.log.join([e2.entry]);
 				await put(1, 3);
 				await put(1, 4);
 				for (let i = 0; i < session.peers.length; i++) {
@@ -2325,8 +2358,8 @@ describe("index", () => {
 				await put(0, 0);
 				await put(1, 1);
 				await put(1, 2);
-				canRead[0] = () => Promise.resolve(false);
 
+				canRead[0] = () => Promise.resolve(false);
 				const iterator = await stores[2].docs.index.iterate(
 					new SearchRequest({
 						query: [],
