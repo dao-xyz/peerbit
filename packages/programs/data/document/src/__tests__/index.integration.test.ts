@@ -1962,7 +1962,7 @@ describe("index", () => {
 					await session.stop();
 				});
 
-				it("can handle large document limits", async () => {
+				it("can search while keeping minimum amount of replicas", async () => {
 					const store = new TestStore({
 						docs: new Documents<Document>()
 					});
@@ -2031,7 +2031,7 @@ describe("index", () => {
 								new SearchRequest()
 							);
 							try {
-								expect(collected).toHaveLength(count);
+								expect(collected.length).toEqual(count);
 							} catch (error) {
 								throw new Error(
 									`Failed to collect all messages ${collected} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}. Matured: ${store.docs.log
