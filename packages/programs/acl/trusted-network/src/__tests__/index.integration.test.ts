@@ -267,7 +267,6 @@ describe("index", () => {
 				})
 			);
 
-			// TODO test this properly!
 			expect(responses).toHaveLength(2);
 
 			// Try query with untrusted
