@@ -361,7 +361,9 @@ describe(`sharding`, () => {
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(
-				db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } })
+				db1.add(toBase64(new Uint8Array([i])), {
+					meta: { next: [], gidSeed: new Uint8Array([i]) }
+				})
 			);
 		}
 		await waitFor(() => db1.log.log.values.length === entryCount);
@@ -401,7 +403,9 @@ describe(`sharding`, () => {
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(
-				db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } })
+				db1.add(toBase64(new Uint8Array([i])), {
+					meta: { next: [], gidSeed: new Uint8Array([i]) }
+				})
 			);
 		}
 
@@ -433,7 +437,9 @@ describe(`sharding`, () => {
 		const promises: Promise<any>[] = [];
 		for (let i = 0; i < entryCount; i++) {
 			promises.push(
-				db1.add(toBase64(new Uint8Array(i)), { meta: { next: [] } })
+				db1.add(toBase64(new Uint8Array(i)), {
+					meta: { next: [], gidSeed: new Uint8Array([i]) }
+				})
 			);
 		}
 
