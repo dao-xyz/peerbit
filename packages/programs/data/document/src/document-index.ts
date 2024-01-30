@@ -267,8 +267,6 @@ const dedup = <T>(
 
 const DEFAULT_INDEX_BY = "id";
 
-const DEFAULT_REPLICATOR_MIN_AGE = 10 * 1000; // how long, until we consider a peer unreliable
-
 /* 
 if (!(await this.canRead(message.sender))) {
 	throw new AccessError();
@@ -829,7 +827,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 		if (remote) {
 			const replicatorGroups = await this._log.getReplicatorUnion(
-				remote.minAge ?? DEFAULT_REPLICATOR_MIN_AGE
+				remote.minAge
 			);
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
