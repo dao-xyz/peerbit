@@ -82,6 +82,7 @@ const store2 = await peer2.open<PostsDB>(store.address!);
 // Wait for peer1 to be reachable for query
 await store.posts.log.waitForReplicator(peer2.identity.publicKey);
 
+const union = store2.posts.log.getReplicatorUnion(0);
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({
 		query: [] // query all
@@ -93,8 +94,23 @@ const responses: Post[] = await store2.posts.index.search(
 		}
 	}
 );
-expect(responses).toHaveLength(1);
-expect(responses.map((x) => x.message)).toEqual(["hello world"]);
+
+try {
+	expect(responses).toHaveLength(1);
+	expect(responses.map((x) => x.message)).toEqual(["hello world"]);
+} catch (error) {
+	console.log(
+		store2.posts.log.log.length,
+		store2.posts.log["syncInFlight"].size,
+		store2.posts.index.size,
+		store.posts.index.size
+	);
+	console.log(store2.posts.log.getReplicatorUnion(0));
+	const union2 = store2.posts.log.getReplicatorUnion(0);
+	console.log(union, union2);
+
+	throw error;
+}
 /// [another-client]
 
 /// [disconnecting]
