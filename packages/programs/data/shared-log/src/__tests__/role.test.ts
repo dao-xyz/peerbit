@@ -4,6 +4,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { Observer, ReplicationSegment, Replicator } from "../role";
 import { deserialize } from "@dao-xyz/borsh";
 import { Ed25519Keypair, randomBytes, toBase64 } from "@peerbit/crypto";
+import { isMatured } from "../ranges";
 
 describe(`role`, () => {
 	let session: TestSession;
@@ -208,6 +209,77 @@ describe(`role`, () => {
 			await db2.log.waitForReplicator(db1.node.identity.publicKey);
 			const t1 = +new Date();
 			expect(t1 - t0).toBeGreaterThan(db2.log.getDefaultMinRoleAge());
+		});
+		describe("getDefaultMinRoleAge", () => {
+			it("oldest is always mature", async () => {
+				const store = new EventStore<string>();
+
+				const db1 = await session.peers[0].open(store.clone(), {
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				});
+				const tsm = 100;
+
+				await delay(tsm);
+				const db2 = await session.peers[1].open(store.clone(), {
+					args: {
+						role: {
+							type: "replicator",
+							factor: 1
+						}
+					}
+				});
+				await waitForResolved(() =>
+					expect(db1.log.getReplicatorsSorted()?.length).toEqual(2)
+				);
+				await waitForResolved(() =>
+					expect(db2.log.getReplicatorsSorted()?.length).toEqual(2)
+				);
+
+				const db1MinRoleAge = db1.log.getDefaultMinRoleAge();
+				const db2MinRoleAge = db2.log.getDefaultMinRoleAge();
+
+				expect(db1MinRoleAge).toEqual(db2MinRoleAge); // db1 sets the minRole age because it is the oldest
+				expect(db1MinRoleAge).toBeGreaterThan(tsm);
+				const now = +new Date();
+
+				// Mature because if "first"
+				let selfMatured = isMatured(
+					db1.log.role as Replicator,
+					now,
+					db1.log.getDefaultMinRoleAge()
+				);
+				expect(selfMatured).toBeTrue();
+				expect(
+					db1.log
+						.getReplicatorsSorted()
+						?.toArray()
+						.filter((x) =>
+							isMatured(x.role, now, db1.log.getDefaultMinRoleAge())
+						)
+						.map((x) => x.publicKey.hashcode())
+				).toEqual([db1.node.identity.publicKey.hashcode()]);
+
+				// assume other nodes except me are mature if the open before me
+				selfMatured = isMatured(
+					db2.log.role as Replicator,
+					now,
+					db2.log.getDefaultMinRoleAge()
+				);
+				expect(selfMatured).toBeFalse();
+				expect(
+					db2.log
+						.getReplicatorsSorted()
+						?.toArray()
+						.map((x) => isMatured(x.role, now, db2.log.getDefaultMinRoleAge()))
+				).toContainAllValues([false, true]);
+			});
+
+			// TODO more tests for behaviours of getDefaultMinRoleAge
 		});
 	});
 });

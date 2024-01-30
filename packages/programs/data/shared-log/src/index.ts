@@ -203,6 +203,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private remoteBlocks: RemoteBlocks;
 
 	private openTime: number;
+	private oldestOpenTime: number;
 
 	private sync?: (entry: Entry<T>) => boolean;
 
@@ -459,6 +460,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.syncInFlightQueueInverted = new Map();
 		this.syncInFlight = new Map();
 		this.openTime = +new Date();
+		this.oldestOpenTime = this.openTime;
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity || WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
@@ -1157,12 +1159,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
-	getDefaultMinRoleAge() {
-		// TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
+	getDefaultMinRoleAge(): number {
+		const now = +new Date();
+		const replLength = this.getReplicatorsSorted()!.length;
+		const diffToOldest =
+			replLength > 1 ? now - this.oldestOpenTime : Number.MAX_SAFE_INTEGER;
 		return Math.min(
 			this.timeUntilRoleMaturity,
-			+new Date() - this.openTime - 5000
-		);
+			diffToOldest,
+			(this.timeUntilRoleMaturity * Math.log(replLength)) / 3
+		); // / 3 so that if 2 replicators and timeUntilRoleMaturity = 1e4 the result will be 1
 	}
 	private findLeadersFromUniformNumber(
 		cursor: number,
@@ -1329,6 +1335,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 				// TODO should we remove replicators if they are already added?
 				return { changed: "none" };
 			}
+			this.oldestOpenTime = Math.min(
+				this.oldestOpenTime,
+				Number(role.timestamp)
+			);
 
 			// insert or if already there do nothing
 			const rect: ReplicatorRect = {
