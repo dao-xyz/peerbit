@@ -2,7 +2,7 @@ import { field, serialize, variant } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { delay, waitFor } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { Program } from "@peerbit/program";
@@ -384,6 +384,9 @@ describe("index", () => {
 		);
 		await waitFor(() => l0a.accessController.access.index.size === 1);
 		await waitFor(() => l0b.accessController.access.index.size === 1);
+		await l0b.accessController.access.log.waitForReplicator(
+			l0a.node.identity.publicKey
+		);
 
 		let results: Document[] = await l0b.accessController.access.index.search(
 			new SearchRequest({
@@ -397,7 +400,7 @@ describe("index", () => {
 			}
 		);
 
-		await waitFor(() => results.length > 0);
+		await waitForResolved(() => expect(results.length).toBeGreaterThan(0));
 
 		// Now trusted because append all is 'true'c
 	});
