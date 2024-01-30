@@ -8,14 +8,13 @@ import { ExchangeHeadsMessage, RequestMaybeSync } from "../exchange-heads";
 describe("replicators", () => {
 	let session: TestSession;
 
-	beforeEach(async () => {
-		session = await TestSession.connected(3);
-	});
 	afterEach(async () => {
 		await session.stop();
 	});
 
 	it("uses existing subsription", async () => {
+		session = await TestSession.connected(2);
+
 		const store = new EventStore();
 		const db1 = await session.peers[0].open(store);
 		await session.peers[1].services.pubsub.requestSubscribers(db1.log.topic);
@@ -56,6 +55,8 @@ describe("replicators", () => {
 
 	it("clears in flight info when leaving", async () => {
 		const store = new EventStore<string>();
+
+		session = await TestSession.connected(3);
 
 		const db1 = await session.peers[0].open(store.clone(), {
 			args: {
