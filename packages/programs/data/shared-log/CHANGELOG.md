@@ -339,6 +339,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.23 to ^2.0.24
 
+## [7.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.10...shared-log-v7.0.11) (2024-01-30)
+
+
+### Bug Fixes
+
+* clear sync in flight after join ([4d19d4b](https://github.com/dao-xyz/peerbit/commit/4d19d4b0a04bfe2858a5fd78607e179259d2c56d))
+* getDefaultMinRoleAge to be used both for replicator union and samples ([ac26950](https://github.com/dao-xyz/peerbit/commit/ac269505b700a24a643c042e3e1776d6d037da79))
+* improve search node aggregation to find a smaller set ([aa0c46a](https://github.com/dao-xyz/peerbit/commit/aa0c46af1976217c2d86f71e6be65a828cdf5a9e))
+* make getDefaultMinRoleAge adaptive ([5a8ac1d](https://github.com/dao-xyz/peerbit/commit/5a8ac1d760f586ec3984d5f8a6f7f4b12647e279))
+* make union include nodes who have entries you are waiting for ([a661408](https://github.com/dao-xyz/peerbit/commit/a6614087093892fab2dcd463c8a22188dc5d95c2))
+* wait for maturity when waiting for replicator ([61c2c23](https://github.com/dao-xyz/peerbit/commit/61c2c2333ca72dfff749165b328c817820d8cda5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 3.0.25 to 3.0.26
+    * @peerbit/rpc bumped from 3.0.24 to 3.0.25
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.24 to ^2.0.25
+
 ## [7.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.8...shared-log-v7.0.9) (2024-01-27)
 
 

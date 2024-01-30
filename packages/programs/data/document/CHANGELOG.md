@@ -406,6 +406,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.23 to 2.0.24
 
+## [5.0.8](https://github.com/dao-xyz/peerbit/compare/document-v5.0.7...document-v5.0.8) (2024-01-30)
+
+
+### Bug Fixes
+
+* fallback to shared-log default minRoleAge ([039976a](https://github.com/dao-xyz/peerbit/commit/039976af5993e25379d7540cef9e70182dd34e4c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 3.0.24 to 3.0.25
+    * @peerbit/shared-log bumped from 7.0.10 to 7.0.11
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.24 to 2.0.25
+
 ## [5.0.2](https://github.com/dao-xyz/peerbit/compare/document-v5.0.1...document-v5.0.2) (2024-01-25)
 
 

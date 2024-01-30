@@ -37,6 +37,14 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [3.1.2](https://github.com/dao-xyz/peerbit/compare/stream-v3.1.1...stream-v3.1.2) (2024-01-30)
+
+
+### Bug Fixes
+
+* just do relay activities on old routes ([d9a2b2c](https://github.com/dao-xyz/peerbit/commit/d9a2b2cc231c86ff3a4112a05e2c7e85e310376e))
+* reduce route retention period ([c8ad5e1](https://github.com/dao-xyz/peerbit/commit/c8ad5e1b5613202cede265f57d5be37fcb53c23d))
+
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/stream-v3.1.0...stream-v3.1.1) (2024-01-28)
 
 
