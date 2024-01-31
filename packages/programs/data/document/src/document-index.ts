@@ -29,10 +29,10 @@ import {
 } from "./query.js";
 import {
 	RPC,
-	RPCOptions,
 	RPCResponse,
 	queryAll,
-	MissingResponsesError
+	MissingResponsesError,
+	RPCRequestAllOptions
 } from "@peerbit/rpc";
 import { Results } from "./query.js";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -130,7 +130,7 @@ export interface IndexedValue<T> {
 	reference?: ValueWithLastOperation<T>;
 }
 
-export type RemoteQueryOptions<R> = RPCOptions<R> & {
+export type RemoteQueryOptions<R> = RPCRequestAllOptions<R> & {
 	sync?: boolean;
 	minAge?: number;
 };

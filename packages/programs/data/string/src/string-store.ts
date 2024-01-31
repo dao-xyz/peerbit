@@ -3,7 +3,7 @@ import { AppendOptions, CanAppend, Change, Entry } from "@peerbit/log";
 import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { Program, ProgramEvents } from "@peerbit/program";
-import { RPCOptions, RPC, RequestContext } from "@peerbit/rpc";
+import { RPCRequestOptions, RPC, RequestContext } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {
@@ -212,7 +212,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	async getValue(options?: {
 		remote: {
 			callback: (string: string) => any;
-			queryOptions: RPCOptions<AbstractSearchResult>;
+			queryOptions: RPCRequestOptions<AbstractSearchResult>;
 		};
 	}): Promise<string | undefined> {
 		if (options?.remote) {

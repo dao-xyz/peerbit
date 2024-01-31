@@ -15,7 +15,13 @@ import {
 	X25519Keypair
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
-import { RPCOptions, logger, RPCResponse, PublishOptions } from "./io.js";
+import {
+	logger,
+	RPCResponse,
+	EncryptionOptions,
+	RPCRequestOptions,
+	WithMode
+} from "./io.js";
 import {
 	DataEvent,
 	PublishOptions as PubSubPublishOptions
@@ -23,6 +29,7 @@ import {
 import { Program } from "@peerbit/program";
 import {
 	DataMessage,
+	DeliveryMode,
 	SilentDelivery,
 	deliveryModeHasReceiver
 } from "@peerbit/stream-interface";
@@ -224,7 +231,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	private async seal(
 		request: Q,
 		respondTo?: X25519PublicKey,
-		options?: PublishOptions
+		options?: EncryptionOptions
 	) {
 		const requestData = this._requestTypeIsUint8Array
 			? (request as Uint8Array)
@@ -254,7 +261,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		return requestMessage;
 	}
 
-	private getPublishOptions(options?: PublishOptions): PubSubPublishOptions {
+	private getPublishOptions(
+		options?: EncryptionOptions & WithMode
+	): PubSubPublishOptions {
 		return {
 			mode: options?.mode,
 			topics: [this.topic]
@@ -266,7 +275,10 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	 * @param message
 	 * @param options
 	 */
-	public async send(message: Q, options?: PublishOptions): Promise<void> {
+	public async send(
+		message: Q,
+		options?: EncryptionOptions & WithMode
+	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
 			this.getPublishOptions(options)
@@ -279,7 +291,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		allResults: RPCResponse<R>[],
 		responders: Set<string>,
 		expectedResponders?: Set<string>,
-		options?: RPCOptions<R>
+		options?: RPCRequestOptions<R>
 	) {
 		return async (properties: {
 			response: ResponseV0;
@@ -340,7 +352,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	 */
 	public async request(
 		request: Q,
-		options?: RPCOptions<R>
+		options?: RPCRequestOptions<R>
 	): Promise<RPCResponse<R>[]> {
 		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
 		// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!

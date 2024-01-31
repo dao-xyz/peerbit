@@ -1,23 +1,32 @@
-import { SilentDelivery } from "@peerbit/stream-interface";
+import { DeliveryMode, SilentDelivery } from "@peerbit/stream-interface";
 import { RPC } from "./controller";
-import { RPCOptions, RPCResponse } from "./io";
+import {
+	EncryptionOptions,
+	RPCRequestResponseOptions,
+	RPCResponse
+} from "./io";
+import { Constructor } from "@dao-xyz/borsh";
 export class MissingResponsesError extends Error {
 	constructor(message: string) {
 		super(message);
 	}
 }
+export type RPCRequestAllOptions<R> = RPCRequestResponseOptions<R> &
+	EncryptionOptions & { mode?: Constructor<DeliveryMode> };
+
 export const queryAll = <Q, R>(
 	rpc: RPC<Q, R>,
 	groups: string[][],
 	request: Q,
 	responseHandler: (response: RPCResponse<R>[]) => Promise<void> | void,
-	options?: RPCOptions<R> | undefined
+	options?: RPCRequestAllOptions<R> | undefined
 ) => {
 	// In each shard/group only query a subset
 	groups = [...groups].filter(
 		(x) => !x.find((y) => y === rpc.node.identity.publicKey.hashcode())
 	);
 
+	const sendModeType = options?.mode || SilentDelivery;
 	let rng = Math.round(Math.random() * groups.length);
 	const startRng = rng;
 	const fn = async () => {
@@ -35,7 +44,7 @@ export const queryAll = <Q, R>(
 			if (peersToQuery.length > 0) {
 				const results = await rpc.request(request, {
 					...options,
-					mode: new SilentDelivery({ to: peersToQuery, redundancy: 1 }) // TODO configuration redundancy?
+					mode: new sendModeType({ to: peersToQuery, redundancy: 1 }) // TODO configuration redundancy?
 				});
 
 				for (const result of results) {
