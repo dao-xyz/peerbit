@@ -86,7 +86,7 @@ export class ResponseIPrune extends TransportMessage {
 	}
 }
 
-const MAX_EXCHANGE_MESSAGE_SIZE = 5e6; // 5mb (since stream limits are 10mb)
+const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
 
 export const createExchangeHeadsMessages = async (
 	log: Log<any>,
