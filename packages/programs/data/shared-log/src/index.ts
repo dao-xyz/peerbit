@@ -91,20 +91,20 @@ export type ReplicationLimitsOptions =
 
 type StringRoleOptions = "observer" | "replicator";
 
-type AdaptiveReplicatorOptions = {
+export type AdaptiveReplicatorOptions = {
 	type: "replicator";
 	limits?: {
-		memory?: number;
+		storage?: number;
 		cpu?: number | { max: number; monitor?: CPUUsage };
 	};
 };
 
-type FixedReplicatorOptions = {
+export type FixedReplicatorOptions = {
 	type: "replicator";
 	factor: number;
 };
 
-type ObserverType = {
+export type ObserverType = {
 	type: "observer";
 };
 
@@ -166,7 +166,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	// options
 	private _role: Observer | Replicator;
-	private _roleOptions: AdaptiveReplicatorOptions | Observer | Replicator;
+	private _roleConfig: AdaptiveReplicatorOptions | Observer | Replicator;
 	private _sortedPeersCache: yallist<ReplicatorRect> | undefined;
 	private _totalParticipation: number;
 	private _gidPeersHistory: Map<string, Set<string>>;
@@ -234,8 +234,18 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.rpc = new RPC();
 	}
 
+	/**
+	 * Returns the current role
+	 */
 	get role(): Observer | Replicator {
 		return this._role;
+	}
+
+	/**
+	 * Return the
+	 */
+	get roleConfig(): Observer | Replicator | AdaptiveReplicatorOptions {
+		return this._roleConfig;
 	}
 
 	get totalParticipation(): number {
@@ -262,9 +272,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this.replicationController = new PIDReplicationController(
 				this.node.identity.publicKey.hashcode(),
 				{
-					memory:
-						options?.limits?.memory != null
-							? { max: options?.limits?.memory }
+					storage:
+						options?.limits?.storage != null
+							? { max: options?.limits?.storage }
 							: undefined,
 					cpu:
 						options?.limits?.cpu != null
@@ -290,41 +300,41 @@ export class SharedLog<T = Uint8Array> extends Program<
 		if (options instanceof Observer || options instanceof Replicator) {
 			throw new Error("Unsupported role option type");
 		} else if (options === "observer") {
-			this._roleOptions = new Observer();
+			this._roleConfig = new Observer();
 		} else if (options === "replicator") {
 			setupDebouncedRebalancing();
-			this._roleOptions = { type: options };
+			this._roleConfig = { type: options };
 		} else if (options) {
 			if (options.type === "replicator") {
 				if (isAdaptiveReplicatorOption(options)) {
 					setupDebouncedRebalancing(options);
-					this._roleOptions = options;
+					this._roleConfig = options;
 				} else {
-					this._roleOptions = new Replicator({
+					this._roleConfig = new Replicator({
 						factor: options.factor,
 						offset: this.getReplicationOffset()
 					});
 				}
 			} else {
-				this._roleOptions = new Observer();
+				this._roleConfig = new Observer();
 			}
 		} else {
 			// Default option
 			setupDebouncedRebalancing();
-			this._roleOptions = { type: "replicator" };
+			this._roleConfig = { type: "replicator" };
 		}
 
 		// setup the initial role
 
 		if (
-			this._roleOptions instanceof Replicator ||
-			this._roleOptions instanceof Observer
+			this._roleConfig instanceof Replicator ||
+			this._roleConfig instanceof Observer
 		) {
-			this._role = this._roleOptions as Replicator | Observer;
+			this._role = this._roleConfig as Replicator | Observer;
 		} else {
 			// initial role in a dynamic setup
 
-			if (this._roleOptions?.limits) {
+			if (this._roleConfig?.limits) {
 				this._role = new Replicator({
 					factor: this._role instanceof Replicator ? this._role.factor : 0,
 					offset: this.getReplicationOffset()
@@ -1790,13 +1800,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		// The role is fixed (no changes depending on memory usage or peer count etc)
-		if (this._roleOptions instanceof Role) {
+		if (this._roleConfig instanceof Role) {
 			return false;
 		}
 
 		// TODO second condition: what if the current role is Observer?
 		if (
-			this._roleOptions.type == "replicator" &&
+			this._roleConfig.type == "replicator" &&
 			this._role instanceof Replicator
 		) {
 			const peers = this.getReplicatorsSorted();

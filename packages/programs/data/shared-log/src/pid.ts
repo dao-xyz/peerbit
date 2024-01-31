@@ -1,10 +1,3 @@
-type ReplicationErrorFunction = (objectives: {
-	coverage: number;
-	balance: number;
-	memory: number;
-	cpu: number;
-}) => number;
-
 export class PIDReplicationController {
 	integral: number;
 	prevError: number;
@@ -18,14 +11,14 @@ export class PIDReplicationController {
 	constructor(
 		readonly id: string,
 		options: {
-			memory?: { max: number };
+			storage?: { max: number };
 			cpu?: { max: number };
 			kp?: number;
 			ki?: number;
 			kd?: number;
 		} = {}
 	) {
-		const { memory, cpu, kp = 0.7, ki = 0.025, kd = 0.05 } = options;
+		const { storage: memory, cpu, kp = 0.7, ki = 0.025, kd = 0.05 } = options;
 		this.kp = kp;
 		this.ki = ki;
 		this.kd = kd;

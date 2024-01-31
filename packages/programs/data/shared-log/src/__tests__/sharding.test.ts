@@ -700,7 +700,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit // 100kb
+										storage: memoryLimit // 100kb
 									}
 								},
 								replicas: {
@@ -761,7 +761,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit // 100kb
+										storage: memoryLimit // 100kb
 									}
 								},
 								replicas: {
@@ -803,7 +803,7 @@ describe(`sharding`, () => {
 							role: {
 								type: "replicator",
 								limits: {
-									memory: memoryLimit // 100kb
+									storage: memoryLimit // 100kb
 								}
 							},
 							replicas: {
@@ -821,7 +821,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit // 100kb
+										storage: memoryLimit // 100kb
 									}
 								},
 								replicas: {
@@ -871,7 +871,7 @@ describe(`sharding`, () => {
 							role: {
 								type: "replicator",
 								limits: {
-									memory: memoryLimit // 100kb
+									storage: memoryLimit // 100kb
 								}
 							},
 							replicas: {
@@ -889,7 +889,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit // 100kb
+										storage: memoryLimit // 100kb
 									}
 								},
 								replicas: {
@@ -925,7 +925,7 @@ describe(`sharding`, () => {
 							role: {
 								type: "replicator",
 								limits: {
-									memory: memoryLimit // 100kb
+									storage: memoryLimit // 100kb
 								}
 							},
 							replicas: {
@@ -943,7 +943,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit * 3 // 300kb
+										storage: memoryLimit * 3 // 300kb
 									}
 								},
 								replicas: {
@@ -975,7 +975,7 @@ describe(`sharding`, () => {
 							role: {
 								type: "replicator",
 								limits: {
-									memory: memoryLimit // 100kb
+									storage: memoryLimit // 100kb
 								}
 							},
 							replicas: {
@@ -993,7 +993,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit * 2 // 200kb
+										storage: memoryLimit * 2 // 200kb
 									}
 								},
 								replicas: {
@@ -1050,7 +1050,7 @@ describe(`sharding`, () => {
 							role: {
 								type: "replicator",
 								limits: {
-									memory: 0 // 0kb
+									storage: 0 // 0kb
 								}
 							},
 							replicas: {
@@ -1068,7 +1068,7 @@ describe(`sharding`, () => {
 								role: {
 									type: "replicator",
 									limits: {
-										memory: memoryLimit // 100kb
+										storage: memoryLimit // 100kb
 									}
 								},
 								replicas: {
