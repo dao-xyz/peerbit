@@ -484,7 +484,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.setupRole(options?.role);
 
 		const id = sha256Base64Sync(this.log.id);
-		const storage = await this.node.memory.sublevel(id);
+		const storage = await this.node.storage.sublevel(id);
 
 		const localBlocks = await new AnyBlockStore(
 			await storage.sublevel("blocks")

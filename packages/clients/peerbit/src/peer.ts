@@ -35,7 +35,7 @@ export type OptionalCreateOptions = {
 };
 export type CreateOptions = {
 	directory?: string;
-	memory: AnyStore;
+	storage: AnyStore;
 	identity: Ed25519Keypair;
 } & OptionalCreateOptions;
 type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
@@ -68,7 +68,7 @@ export class Peerbit implements ProgramClient {
 
 	directory?: string;
 
-	private _memory: AnyStore;
+	private _storage: AnyStore;
 	private _libp2pExternal?: boolean = false;
 
 	// Libp2p peerid in Identity form
@@ -93,7 +93,7 @@ export class Peerbit implements ProgramClient {
 
 		this._identity = options.identity;
 		this.directory = options.directory;
-		this._memory = options.memory;
+		this._storage = options.storage;
 		this._libp2pExternal = options.libp2pExternal;
 	}
 
@@ -107,7 +107,7 @@ export class Peerbit implements ProgramClient {
 		const directory = options.directory;
 		const hasDir = directory != null;
 
-		const memory = await createCache(
+		const storage = await createCache(
 			directory != null ? path.join(directory, "/cache") : undefined
 		);
 
@@ -195,7 +195,7 @@ export class Peerbit implements ProgramClient {
 
 		const peer = new Peerbit(libp2pExtended, {
 			directory,
-			memory: memory,
+			storage: storage,
 			libp2pExternal,
 			identity
 		});
@@ -250,7 +250,7 @@ export class Peerbit implements ProgramClient {
 	}
 
 	async start() {
-		await this._memory.open();
+		await this._storage.open();
 
 		if (this.libp2p.status === "stopped" || this.libp2p.status === "stopping") {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
@@ -259,7 +259,7 @@ export class Peerbit implements ProgramClient {
 	}
 	async stop() {
 		await this._handler?.stop();
-		await this._memory.close();
+		await this._storage.close();
 
 		// Close libp2p (after above)
 		if (!this._libp2pExternal) {
@@ -311,7 +311,7 @@ export class Peerbit implements ProgramClient {
 		).open(storeOrAddress, options);
 	}
 
-	get memory() {
-		return this._memory;
+	get storage() {
+		return this._storage;
 	}
 }

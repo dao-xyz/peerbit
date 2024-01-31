@@ -28,7 +28,7 @@ import { sha256Base64 } from "@peerbit/crypto";
 import * as blocks from "./blocks.js";
 import * as keychain from "./keychain.js";
 import * as lifecycle from "./lifecycle.js";
-import * as memory from "./memory.js";
+import * as memory from "./storage.js";
 import * as native from "./native.js";
 import { Message } from "./message.js";
 import * as network from "./network.js";
@@ -71,9 +71,9 @@ function memoryIterator(
 			return {
 				next: async () => {
 					const resp = await client.request<
-						memory.MemoryMessage<memory.api.RESP_Iterator_Next>
+						memory.StorageMessage<memory.api.RESP_Iterator_Next>
 					>(
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.REQ_Iterator_Next({ id: iteratorId, level })
 						)
 					);
@@ -98,9 +98,9 @@ function memoryIterator(
 				},
 				async return() {
 					await client.request<
-						memory.MemoryMessage<memory.api.RESP_Iterator_Next>
+						memory.StorageMessage<memory.api.RESP_Iterator_Next>
 					>(
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.REQ_Iterator_Stop({ id: iteratorId, level })
 						)
 					);
@@ -120,7 +120,7 @@ export class PeerbitProxyClient implements ProgramClient {
 
 	private _multiaddr: Multiaddr[];
 	private _services: { pubsub: PubSub; blocks: Blocks; keychain: Keychain };
-	private _memory: AnyStore;
+	private _storage: AnyStore;
 	private _handler: ProgramHandler;
 
 	constructor(readonly messages: connection.Node) {
@@ -300,72 +300,72 @@ export class PeerbitProxyClient implements ProgramClient {
 			}
 		};
 		const levelMap: Map<string, AnyStore> = new Map();
-		const createMemory = (level: string[] = []): AnyStore => {
+		const createStorage = (level: string[] = []): AnyStore => {
 			return {
 				clear: async () => {
-					await this.request<memory.MemoryMessage<memory.api.RESP_Clear>>(
-						new memory.MemoryMessage(new memory.api.REQ_Clear({ level }))
+					await this.request<memory.StorageMessage<memory.api.RESP_Clear>>(
+						new memory.StorageMessage(new memory.api.REQ_Clear({ level }))
 					);
 				},
 				del: async (key) => {
-					await this.request<memory.MemoryMessage<memory.api.RESP_Del>>(
-						new memory.MemoryMessage(new memory.api.REQ_Del({ level, key }))
+					await this.request<memory.StorageMessage<memory.api.RESP_Del>>(
+						new memory.StorageMessage(new memory.api.REQ_Del({ level, key }))
 					);
 				},
 				get: async (key) => {
 					return (
-						await this.request<memory.MemoryMessage<memory.api.RESP_Get>>(
-							new memory.MemoryMessage(new memory.api.REQ_Get({ level, key }))
+						await this.request<memory.StorageMessage<memory.api.RESP_Get>>(
+							new memory.StorageMessage(new memory.api.REQ_Get({ level, key }))
 						)
 					).message.bytes;
 				},
 				put: async (key, value) => {
-					await this.request<memory.MemoryMessage<memory.api.RESP_Put>>(
-						new memory.MemoryMessage(
+					await this.request<memory.StorageMessage<memory.api.RESP_Put>>(
+						new memory.StorageMessage(
 							new memory.api.REQ_Put({ level, key, bytes: value })
 						)
 					);
 				},
 				status: async () =>
 					(
-						await this.request<memory.MemoryMessage<memory.api.RESP_Status>>(
-							new memory.MemoryMessage(new memory.api.REQ_Status({ level }))
+						await this.request<memory.StorageMessage<memory.api.RESP_Status>>(
+							new memory.StorageMessage(new memory.api.REQ_Status({ level }))
 						)
 					).message.status,
 				sublevel: async (name) => {
-					await this.request<memory.MemoryMessage<memory.api.RESP_Sublevel>>(
-						new memory.MemoryMessage(
+					await this.request<memory.StorageMessage<memory.api.RESP_Sublevel>>(
+						new memory.StorageMessage(
 							new memory.api.REQ_Sublevel({ level, name })
 						)
 					);
 					const newLevels = [...level, name];
-					const sublevel = createMemory(newLevels);
+					const sublevel = createStorage(newLevels);
 					levelMap.set(levelKey(newLevels), sublevel);
 					return sublevel;
 				},
 
 				iterator: () => memoryIterator(this, level),
 				close: async () => {
-					await this.request<memory.MemoryMessage<memory.api.RESP_Close>>(
-						new memory.MemoryMessage(new memory.api.REQ_Close({ level }))
+					await this.request<memory.StorageMessage<memory.api.RESP_Close>>(
+						new memory.StorageMessage(new memory.api.REQ_Close({ level }))
 					);
 					levelMap.delete(levelKey(level));
 				},
 				open: async () => {
-					await this.request<memory.MemoryMessage<memory.api.RESP_Open>>(
-						new memory.MemoryMessage(new memory.api.REQ_Open({ level }))
+					await this.request<memory.StorageMessage<memory.api.RESP_Open>>(
+						new memory.StorageMessage(new memory.api.REQ_Open({ level }))
 					);
 				},
 				size: async () => {
 					return (
-						await this.request<memory.MemoryMessage<memory.api.RESP_Size>>(
-							new memory.MemoryMessage(new memory.api.REQ_Size({ level }))
+						await this.request<memory.StorageMessage<memory.api.RESP_Size>>(
+							new memory.StorageMessage(new memory.api.REQ_Size({ level }))
 						)
 					).message.size;
 				}
 			};
 		};
-		this._memory = createMemory();
+		this._storage = createStorage();
 	}
 
 	async connect() {
@@ -402,8 +402,8 @@ export class PeerbitProxyClient implements ProgramClient {
 		return this._services;
 	}
 
-	get memory(): AnyStore {
-		return this._memory;
+	get storage(): AnyStore {
+		return this._storage;
 	}
 
 	async start(): Promise<void> {

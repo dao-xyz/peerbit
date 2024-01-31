@@ -8,7 +8,7 @@ import { ProgramClient } from "@peerbit/program";
 import * as blocks from "./blocks.js";
 import * as keychain from "./keychain.js";
 import * as lifecycle from "./lifecycle.js";
-import * as memory from "./memory.js";
+import * as memory from "./storage.js";
 import * as native from "./native.js";
 import { Message } from "./message.js";
 import * as network from "./network.js";
@@ -81,8 +81,8 @@ export class PeerbitProxyHost implements ProgramClient {
 	get services(): { pubsub: PubSub; blocks: Blocks; keychain: Keychain } {
 		return this.hostClient.services;
 	}
-	get memory(): AnyStore {
-		return this.hostClient.memory;
+	get storage(): AnyStore {
+		return this.hostClient.storage;
 	}
 
 	start(): Promise<void> {
@@ -169,11 +169,11 @@ export class PeerbitProxyHost implements ProgramClient {
 					new keychain.RESP_ImportKey(message.messageId),
 					from
 				);
-			} else if (message instanceof memory.MemoryMessage) {
+			} else if (message instanceof memory.StorageMessage) {
 				const request = message.message as memory.api.MemoryMessage;
 				const m =
 					request.level.length === 0
-						? this.memory
+						? this.storage
 						: this._levels.get(levelKey(request.level));
 				if (!m) {
 					throw new Error("Recieved memory message for an undefined level");
@@ -181,7 +181,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					await m.clear();
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Clear({ level: request.level })
 						),
 						from
@@ -190,7 +190,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					await m.close();
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Close({ level: request.level })
 						),
 						from
@@ -199,7 +199,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					await m.del(request.key);
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Del({ level: request.level })
 						),
 						from
@@ -213,7 +213,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					const next = await iterator.next();
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Iterator_Next({
 								keys: next.done ? [] : [next.value[0]],
 								values: next.done ? [] : [next.value[1]],
@@ -229,7 +229,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					this._memoryIterator.delete(request.id);
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Iterator_Stop({ level: request.level })
 						),
 						from
@@ -237,7 +237,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				} else if (request instanceof memory.api.REQ_Get) {
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Get({
 								bytes: await m.get(request.key),
 								level: request.level
@@ -249,7 +249,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					await m.open();
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Open({ level: request.level })
 						),
 						from
@@ -258,7 +258,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					await m.put(request.key, request.bytes);
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Put({ level: request.level })
 						),
 						from
@@ -266,7 +266,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				} else if (request instanceof memory.api.REQ_Status) {
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Status({
 								status: await m.status(),
 								level: request.level
@@ -282,7 +282,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					);
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Sublevel({ level: request.level })
 						),
 						from
@@ -290,7 +290,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				} else if (request instanceof memory.api.REQ_Size) {
 					await this.respond(
 						message,
-						new memory.MemoryMessage(
+						new memory.StorageMessage(
 							new memory.api.RESP_Size({
 								size: await m.size(),
 								level: request.level

@@ -6,7 +6,7 @@ import { variant } from "@dao-xyz/borsh";
 @variant("test-start-stop")
 class TestP extends Program {
 	async open(args?: any): Promise<void> {
-		await (await this.node.memory.sublevel("test")).open();
+		await (await this.node.storage.sublevel("test")).open();
 	}
 }
 describe("start-stop", () => {

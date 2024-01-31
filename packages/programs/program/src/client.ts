@@ -18,7 +18,7 @@ export interface Client<T extends Manageable<ExtractArgs<T>>> {
 		blocks: Blocks;
 		keychain: Keychain;
 	};
-	memory: AnyStore;
+	storage: AnyStore;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	open<S extends T & CanOpen<ExtractArgs<S>>>(

@@ -83,43 +83,43 @@ describe("index", () => {
 		let data = new Uint8Array([1, 2, 3]);
 
 		it("open", async () => {
-			await client1.memory.close();
-			expect(await client1.memory.status()).toEqual("closed");
-			expect(await host1.memory.status()).toEqual("closed");
-			await client1.memory.open();
-			expect(await client1.memory.status()).toEqual("open");
-			expect(await host1.memory.status()).toEqual("open");
+			await client1.storage.close();
+			expect(await client1.storage.status()).toEqual("closed");
+			expect(await host1.storage.status()).toEqual("closed");
+			await client1.storage.open();
+			expect(await client1.storage.status()).toEqual("open");
+			expect(await host1.storage.status()).toEqual("open");
 		});
 
 		it("put", async () => {
-			expect(await client1.memory.get(key)).toEqual(undefined);
-			expect(await host1.memory.get(key)).toEqual(undefined);
-			await client1.memory.put(key, data);
-			expect(new Uint8Array((await client1.memory.get(key))!)).toEqual(data);
-			expect(new Uint8Array((await host1.memory.get(key))!)).toEqual(data);
+			expect(await client1.storage.get(key)).toEqual(undefined);
+			expect(await host1.storage.get(key)).toEqual(undefined);
+			await client1.storage.put(key, data);
+			expect(new Uint8Array((await client1.storage.get(key))!)).toEqual(data);
+			expect(new Uint8Array((await host1.storage.get(key))!)).toEqual(data);
 		});
 
 		it("del", async () => {
-			await client1.memory.put(key, data);
+			await client1.storage.put(key, data);
 
-			expect(new Uint8Array((await client1.memory.get(key))!)).toEqual(data);
-			expect(new Uint8Array((await host1.memory.get(key))!)).toEqual(data);
+			expect(new Uint8Array((await client1.storage.get(key))!)).toEqual(data);
+			expect(new Uint8Array((await host1.storage.get(key))!)).toEqual(data);
 
-			await client1.memory.del(key);
+			await client1.storage.del(key);
 
-			expect(await client1.memory.get(key)).toEqual(undefined);
-			expect(await host1.memory.get(key)).toEqual(undefined);
+			expect(await client1.storage.get(key)).toEqual(undefined);
+			expect(await host1.storage.get(key)).toEqual(undefined);
 		});
 		it("iterator", async () => {
 			const keys = [key, key + "-2"];
 			const datas = [data, new Uint8Array([1])];
-			await client1.memory.put(key, data);
+			await client1.storage.put(key, data);
 			await Promise.all(
-				keys.map((key, ix) => client1.memory.put(key, datas[ix]))
+				keys.map((key, ix) => client1.storage.put(key, datas[ix]))
 			);
 
 			let c = 0;
-			for await (const iter of client1.memory.iterator()) {
+			for await (const iter of client1.storage.iterator()) {
 				expect(iter[0]).toEqual(keys[c]);
 				expect(new Uint8Array(iter[1])).toEqual(datas[c]);
 
@@ -132,51 +132,51 @@ describe("index", () => {
 		it("iterator early break no leak", async () => {
 			const keys = [key, key + "-2"];
 			const datas = [data, new Uint8Array([1])];
-			await client1.memory.put(key, data);
+			await client1.storage.put(key, data);
 			await Promise.all(
-				keys.map((key, ix) => client1.memory.put(key, datas[ix]))
+				keys.map((key, ix) => client1.storage.put(key, datas[ix]))
 			);
 
 			let c = 0;
-			for await (const iter of client1.memory.iterator()) {
+			for await (const iter of client1.storage.iterator()) {
 				break;
 			}
 			expect(host1["_memoryIterator"].size).toEqual(0);
 		});
 
 		it("clear", async () => {
-			await client1.memory.put(key, data);
-			await client1.memory.clear();
+			await client1.storage.put(key, data);
+			await client1.storage.clear();
 
-			expect(await client1.memory.get(key)).toEqual(undefined);
-			expect(await host1.memory.get(key)).toEqual(undefined);
+			expect(await client1.storage.get(key)).toEqual(undefined);
+			expect(await host1.storage.get(key)).toEqual(undefined);
 		});
 
 		it("size", async () => {
-			const size1 = await client1.memory.size();
+			const size1 = await client1.storage.size();
 			expect(size1).toEqual(0);
-			await client1.memory.put("key", data);
-			const size2 = await client1.memory.size();
+			await client1.storage.put("key", data);
+			const size2 = await client1.storage.size();
 			expect(size2).toBeGreaterThan(0);
 		});
 
 		it("close", async () => {
-			await client1.memory.open();
-			expect(await client1.memory.status()).toEqual("open");
-			expect(await host1.memory.status()).toEqual("open");
-			await client1.memory.close();
-			expect(await client1.memory.status()).toEqual("closed");
-			expect(await host1.memory.status()).toEqual("closed");
+			await client1.storage.open();
+			expect(await client1.storage.status()).toEqual("open");
+			expect(await host1.storage.status()).toEqual("open");
+			await client1.storage.close();
+			expect(await client1.storage.status()).toEqual("closed");
+			expect(await host1.storage.status()).toEqual("closed");
 		});
 
 		it("sublevel", async () => {
-			const sublevel = await client1.memory.sublevel("sublevel");
+			const sublevel = await client1.storage.sublevel("sublevel");
 			await waitForResolved(async () =>
 				expect(await sublevel.status()).toEqual("open")
 			);
 			await sublevel.put(key, data);
 			expect(new Uint8Array((await sublevel.get(key))!)).toEqual(data);
-			await client1.memory.clear();
+			await client1.storage.clear();
 			expect(await sublevel.get(key)).toBeUndefined();
 		});
 	});

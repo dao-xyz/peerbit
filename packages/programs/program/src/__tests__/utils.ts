@@ -151,7 +151,7 @@ export const createPeer = async (
 			},
 			keychain: undefined as any // TODO
 		},
-		memory: undefined as any, // TODO
+		storage: undefined as any, // TODO
 		start: () => Promise.resolve(),
 		stop: async () => {
 			return handler?.stop();
