@@ -65,10 +65,10 @@ export class OPFSStore implements AnyStore {
 		{ fn: (message: memory.MemoryRequest) => any; once: boolean }
 	> = new Map();
 
-	private _createMemory: (level: string[]) => AnyStore;
+	private _createStorage: (level: string[]) => AnyStore;
 	constructor(readonly directory?: string) {
 		this.levelMap = new Map();
-		this._createMemory = (level: string[] = []): AnyStore => {
+		this._createStorage = (level: string[] = []): AnyStore => {
 			return {
 				clear: async () => {
 					await this.request<memory.RESP_Clear>(
@@ -101,7 +101,7 @@ export class OPFSStore implements AnyStore {
 				sublevel: async (name) => {
 					await this.request(new memory.REQ_Sublevel({ level, name }));
 					const newLevels = [...level, name];
-					const sublevel = this._createMemory(newLevels);
+					const sublevel = this._createStorage(newLevels);
 					this.levelMap.set(memory.levelKey(newLevels), sublevel);
 					return sublevel;
 				},
@@ -138,7 +138,7 @@ export class OPFSStore implements AnyStore {
 	async open(): Promise<void> {
 		if (!this.worker) {
 			this.worker = createWorker(this.directory);
-			this.root = this._createMemory([]);
+			this.root = this._createStorage([]);
 			this.worker.addEventListener("message", async (ev) => {
 				const message = deserialize(ev.data, memory.MemoryMessage);
 				this._responseCallbacks.get(message.messageId)!.fn(message);
