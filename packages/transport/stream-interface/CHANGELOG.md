@@ -60,6 +60,17 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.5 to 2.1.6
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v4.0.0...stream-interface-v5.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* make priority optional
+
+### Bug Fixes
+
+* make priority optional ([f2faf1b](https://github.com/dao-xyz/peerbit/commit/f2faf1b3929b858198ac6c9e2687265da48d295c))
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.9...stream-interface-v4.0.0) (2024-02-01)
 
 

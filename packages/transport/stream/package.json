@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream",
-	"version": "4.0.0",
+	"version": "4.0.1",
 	"description": "A building block for direct streaming protocols",
 	"type": "module",
 	"sideEffects": false,
@@ -60,7 +60,7 @@
 		"@dao-xyz/borsh": "^5.2.1",
 		"@peerbit/cache": "2.0.6",
 		"@peerbit/crypto": "2.1.7",
-		"@peerbit/stream-interface": "^4.0.0",
+		"@peerbit/stream-interface": "^5.0.0",
 		"libp2p": "^1.2.1",
 		"yallist": "^4.0.0",
 		"abortable-iterator": "^5.0.1"
