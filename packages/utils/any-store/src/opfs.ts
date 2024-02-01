@@ -137,6 +137,12 @@ export class OPFSStore implements AnyStore {
 	}
 	async open(): Promise<void> {
 		if (!this.worker) {
+			if (
+				!globalThis["__playwright_test__"] &&
+				(await navigator.storage.persist()) === false
+			) {
+				throw new Error("OPFS not allowed to persist data");
+			}
 			this.worker = createWorker(this.directory);
 			this.root = this._createStorage([]);
 			this.worker.addEventListener("message", async (ev) => {

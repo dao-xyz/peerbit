@@ -17,7 +17,11 @@ test.describe("AnyLevel", () => {
 				return test.describe(
 					"directory: " + (directory ? JSON.stringify(directory) : "root"),
 					() => {
-						test.beforeEach(async ({ page }) => {
+						test.beforeEach(async ({ page, context }) => {
+							await context.addInitScript(
+								() => (window["__playwright_test__"] = true)
+							);
+
 							await page.goto("http://localhost:5205");
 							await page.waitForFunction(() => window["create"]);
 							await page.evaluateHandle(
@@ -51,9 +55,11 @@ test.describe("AnyLevel", () => {
 						});
 
 						test("del", async () => {
+							expect(await handle.evaluate((store) => store.size())).toEqual(1);
 							await handle.evaluate((store) => store.del("x"));
 							const result = await handle.evaluate((store) => store.get("x"));
 							expect(result).toBeUndefined();
+							expect(await handle.evaluate((store) => store.size())).toEqual(0);
 						});
 
 						/* TODO make this one work on FireFox (we got "Not modifications allowed" error) */
@@ -73,6 +79,18 @@ test.describe("AnyLevel", () => {
 
 						test("del missing", async () => {
 							await handle.evaluate((store) => store.del("y"));
+							expect(await handle.evaluate((store) => store.size())).toEqual(1);
+						});
+
+						test("replace-delete", async () => {
+							await handle.evaluate((store) =>
+								store.put("x", new Uint8Array([2, 3]))
+							);
+							expect(await handle.evaluate((store) => store.size())).toEqual(2);
+							await handle.evaluate((store) => store.del("x"));
+							const result = await handle.evaluate((store) => store.get("x"));
+							expect(result).toBeUndefined();
+							expect(await handle.evaluate((store) => store.size())).toEqual(0);
 						});
 
 						test("clear", async () => {
@@ -81,6 +99,7 @@ test.describe("AnyLevel", () => {
 							await handle.evaluate((store) => store.clear());
 							result = await handle.evaluate((store) => store.get("x"));
 							expect(result).toBeUndefined();
+							expect(await handle.evaluate((store) => store.size())).toEqual(0);
 						});
 
 						test("status", async () => {
@@ -130,6 +149,24 @@ test.describe("AnyLevel", () => {
 
 							const result = await handle.evaluate((store) => store.get("y"));
 							expect(result).toEqual(asObject(new Uint8Array([5])));
+
+							expect(await handle.evaluate((store) => store.size())).toEqual(2);
+						});
+
+						test("concurrent delete", async () => {
+							await handle.evaluate(async (store) => {
+								store.del("x");
+								store.del("x");
+								store.del("x");
+								store.del("x");
+								store.del("x");
+								const last = store.del("x");
+								await last;
+							});
+
+							const result = await handle.evaluate((store) => store.get("x"));
+							expect(result).toBeUndefined();
+							expect(await handle.evaluate((store) => store.size())).toEqual(0);
 						});
 
 						test("sublevel", async () => {

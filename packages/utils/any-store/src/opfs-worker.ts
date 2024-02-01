@@ -67,11 +67,31 @@ export class OPFSStoreWorker {
 			levels: string[] = []
 		): AnyStore => {
 			let m: FileSystemDirectoryHandle = root!;
+			let sizeCache: number;
+			const sizeMap: Map<string, number> = new Map(); // files size per key
 
+			const calculateSize = async () => {
+				sizeCache = 0;
+				for await (const value of m.values()) {
+					if (value.kind === "file") {
+						try {
+							const handle = await waitForSyncAcccess(value);
+							const handleSize = handle.getSize();
+							sizeMap.set(value.name, handleSize);
+							sizeCache += handleSize;
+							handle.close();
+						} catch (error) {
+							// TODO better error handling.
+							// most commonly error can be thrown when we are invoking getSize and files does not exist (anymore)
+						}
+					}
+				}
+			};
 			// 'open' | 'closed' is just a virtual thing since OPFS is always open as soone as we get the FileSystemDirectoryHandle
 			// TODO remove status? or assume not storage adapters can be closed?
 			const open = async () => {
 				await ready;
+
 				if (!m) {
 					m = await navigator.storage.getDirectory();
 					if (directory) {
@@ -79,6 +99,7 @@ export class OPFSStoreWorker {
 							create: true
 						});
 					}
+					await calculateSize();
 				}
 			};
 			return {
@@ -86,20 +107,25 @@ export class OPFSStoreWorker {
 					for await (const key of m.keys()) {
 						m.removeEntry(key, { recursive: true });
 					}
+					sizeCache = 0;
+					sizeMap.clear();
 				},
 
 				del: async (key: string) => {
+					const encodedKey = encodeName(key);
 					try {
-						await m.removeEntry(encodeName(key), { recursive: true });
+						await m.removeEntry(encodedKey, { recursive: true });
 					} catch (error) {
-						if (
-							error instanceof DOMException &&
-							error.name === "NotFoundError"
-						) {
+						if (error instanceof DOMException) {
 							return;
 						} else {
 							throw error;
 						}
+					}
+					const prevSize = sizeMap.get(encodedKey);
+					if (prevSize != null) {
+						sizeCache -= prevSize;
+						sizeMap.delete(encodedKey);
 					}
 				},
 
@@ -115,31 +141,34 @@ export class OPFSStoreWorker {
 							error.name === "NotFoundError"
 						) {
 							return undefined;
+						} else if (error) {
+							return undefined;
 						} else {
 							throw error;
 						}
 					}
 				},
 				put: async (key: string, value: Uint8Array) => {
-					const fileHandle = await m.getFileHandle(encodeName(key), {
+					const encodedKey = encodeName(key);
+
+					const fileHandle = await m.getFileHandle(encodedKey, {
 						create: true
 					});
 					const writeFileHandle = await createWriteHandle(fileHandle);
 					writeFileHandle.write(value);
 					writeFileHandle.flush();
 					writeFileHandle.close();
+
+					const prevSize = sizeMap.get(encodedKey);
+					if (prevSize) {
+						sizeCache -= prevSize;
+					}
+					sizeCache += value.byteLength;
+					sizeMap.set(encodedKey, value.byteLength);
 				},
 
 				size: async () => {
-					let size = 0;
-					for await (const value of m.values()) {
-						if (value.kind === "file") {
-							const handle = await waitForSyncAcccess(value);
-							size += handle.getSize();
-							handle.close();
-						}
-					}
-					return size;
+					return sizeCache;
 				},
 				status: () => (isOpen ? "open" : "closed"),
 
@@ -166,6 +195,7 @@ export class OPFSStoreWorker {
 					}
 				},
 				close: async () => {
+					sizeCache = undefined as any; // TODO types
 					isOpen = false;
 					this._memoryIterator.clear();
 				},
