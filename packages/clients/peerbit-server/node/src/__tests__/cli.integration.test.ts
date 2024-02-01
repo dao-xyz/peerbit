@@ -278,7 +278,7 @@ describe("cli", () => {
 				try {
 					await waitForResolved(() =>
 						expect(processes[0].out[processes[0].out.length - 1]).toEqual(
-							"Shutting down node"
+							"Shutting down node (exit)"
 						)
 					);
 				} catch (error) {

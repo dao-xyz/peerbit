@@ -154,7 +154,7 @@ export const startServerWithNode = async (properties: {
 		["SIGTERM", "SIGINT", "SIGUSR1", "SIGUSR2"].forEach((code) => {
 			process.on(code, async () => {
 				if (server.listening) {
-					console.log("Shutting down node");
+					console.log("Shutting down node: " + code);
 					await stopAndWait(server);
 					await controller.stop();
 				}
@@ -163,7 +163,7 @@ export const startServerWithNode = async (properties: {
 		});
 		process.on("exit", async () => {
 			if (server.listening) {
-				console.log("Shutting down node");
+				console.log("Shutting down node (exit)");
 				await stopAndWait(server);
 				await controller.stop();
 			}
