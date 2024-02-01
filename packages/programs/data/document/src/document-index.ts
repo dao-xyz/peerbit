@@ -486,12 +486,16 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private async getDocumentWithLastOperation(value: {
 		reference?: ValueWithLastOperation<T>;
 		context: { head: string };
-	}): Promise<ValueWithLastOperation<T>> {
+	}): Promise<ValueWithLastOperation<T> | undefined> {
 		if (value.reference) {
 			return value.reference;
 		}
 
-		const head = await (await this._log.log.get(value.context.head))!;
+		const head = await await this._log.log.get(value.context.head);
+		if (!head) {
+			return undefined; // we could end up here if we recently pruned the document and other peers never persisted the entry
+			// TODO update changes in index before removing entries from log entry storage
+		}
 		const payloadValue = await head.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
 			return {
@@ -510,7 +514,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		reference?: ValueWithLastOperation<T>;
 		context: { head: string };
 	}) {
-		return this.getDocumentWithLastOperation(value).then((r) => r.value);
+		return this.getDocumentWithLastOperation(value).then((r) => r?.value);
 	}
 
 	async _queryDocuments(
@@ -521,10 +525,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			[];
 		for (const value of this._index.values()) {
 			if (await filter(value)) {
-				results.push({
-					context: value.context,
-					value: await this.getDocumentWithLastOperation(value)
-				});
+				const topDoc = await this.getDocumentWithLastOperation(value);
+				topDoc &&
+					results.push({
+						context: value.context,
+						value: topDoc
+					});
 			}
 		}
 		return results;
@@ -552,12 +558,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			) {
 				const firstQuery = query.query[0];
 				if (firstQuery instanceof ByteMatchQuery) {
-					const doc = this._index.get(asString(firstQuery.value)); // TODO could there be a issue with types here?
-					return doc
+					const doc = this._index.get(asString(firstQuery.value));
+					const topDoc = doc && (await this.getDocumentWithLastOperation(doc));
+					return topDoc
 						? {
 								results: [
 									{
-										value: await this.getDocumentWithLastOperation(doc),
+										value: topDoc,
 										context: doc.context
 									}
 								],
@@ -569,12 +576,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					firstQuery.method === StringMatchMethod.exact &&
 					firstQuery.caseInsensitive === false
 				) {
-					const doc = this._index.get(firstQuery.value); // TODO could there be a issue with types here?
-					return doc
+					const doc = this._index.get(firstQuery.value);
+					const topDoc = doc && (await this.getDocumentWithLastOperation(doc));
+					return topDoc
 						? {
 								results: [
 									{
-										value: await this.getDocumentWithLastOperation(doc),
+										value: topDoc,
 										context: doc.context
 									}
 								],
@@ -1112,6 +1120,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								.request(collectRequest, {
 									...options,
 									signal: controller.signal,
+									priority: 1,
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 })
 								})
 								.then((response) =>
@@ -1238,7 +1247,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						)
 					);
 				} else {
-					// Fetch remotely
+					// Close remote
 					promises.push(
 						this._query.send(closeRequest, {
 							...options,
