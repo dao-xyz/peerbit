@@ -57,12 +57,12 @@ For simplictly we consider that every peer can only have one range. And that ran
 
 A piece of data that needs to be stored is to be stored at a location that depends on its hash. But instead of using the hash, we are transforming it into a number bounded by [0,1]. 
 
-
 If the vertical line interescts with a range, that peer will be responsible to replicate this data. If there is a gap, then the closet node will be choosen in the following way
 
 <p align="center">
-<img width="800" src="./topics/sharding/p2.svg" alt="p2">
+<img width="800" src="./topics/sharding/p3.svg" alt="p3">
 </p> 
+
 
 A nice consequence of this, is that peers can participate with different degrees of trust in how much work other will perorm 
 
