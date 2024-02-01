@@ -1605,11 +1605,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 		if (this._distributeTimeout) {
 			return;
 		}
-		this._distributeTimeout = setTimeout(() => {
-			this._distribute().finally(() => {
-				this._distributeTimeout = undefined;
-			});
-		}, 500); // TODO options, maybe depend on log length
+		this._distributeTimeout = setTimeout(
+			() => {
+				this._distribute().finally(() => {
+					this._distributeTimeout = undefined;
+				});
+			},
+			Math.min(this.log.length, 500)
+		); // TODO options, maybe depend on log length
 	}
 
 	async _distribute() {
