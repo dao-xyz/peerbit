@@ -51,7 +51,7 @@ The idea of the solution is based on that instead of peers representing points o
 For simplicity, we consider that every peer can only have one range. And that range has a "width" that represents how much they need to replicate at least. If the width is 0.5, it means they need to store 50% of all data.
 
 <p align="center">
-<img width="800" src="./topics/sharding/p2.svg" alt="p2">
+<img width="800" src="p1.png" alt="p2">
 </p>
 
 A piece of data that needs to be stored is to be stored at a location that depends on its hash. But instead of using the hash, we are transforming it into a number bounded by [0,1].
