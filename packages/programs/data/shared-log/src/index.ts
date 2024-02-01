@@ -134,12 +134,14 @@ export type SharedLogOptions<T> = {
 	sync?: (entry: Entry<T>) => boolean;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
+	distributionDebounceTime?: number;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
 const REBALANCE_DEBOUNCE_INTERVAL = 100;
+const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 
 export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions<T>;
 
@@ -214,6 +216,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	// regular distribution checks
 	private distributeInterval: ReturnType<typeof setInterval>;
+	private distributeTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	// Syncing and dedeplucation work
 	private syncMoreInterval?: ReturnType<typeof setTimeout>;
@@ -227,6 +230,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	timeUntilRoleMaturity: number;
 	waitForReplicatorTimeout: number;
+	distributionDebounceTime: number;
 
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
@@ -473,6 +477,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this.syncInFlight = new Map();
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
+		this.distributionDebounceTime =
+			options?.distributionDebounceTime || DEFAULT_DISTRIBUTION_DEBOUNCE_TIME;
 		this.timeUntilRoleMaturity =
 			options?.timeUntilRoleMaturity || WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
@@ -661,8 +667,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	private async _close() {
-		clearInterval(this.distributeInterval);
 		clearTimeout(this.syncMoreInterval);
+		clearInterval(this.distributeInterval);
+		clearTimeout(this.distributeTimeout);
 
 		this._closeController.abort();
 
@@ -1599,20 +1606,21 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return promises;
 	}
 
-	private _distributeTimeout: ReturnType<typeof setTimeout> | undefined;
-
 	async distribute() {
-		if (this._distributeTimeout) {
+		if (this.distributeTimeout) {
 			return;
 		}
-		this._distributeTimeout = setTimeout(
+		if (this.closed) {
+			return;
+		}
+		this.distributeTimeout = setTimeout(
 			() => {
 				this._distribute().finally(() => {
-					this._distributeTimeout = undefined;
+					this.distributeTimeout = undefined;
 				});
 			},
-			Math.min(this.log.length, 500)
-		); // TODO options, maybe depend on log length
+			Math.min(this.log.length, this.distributionDebounceTime)
+		);
 	}
 
 	async _distribute() {

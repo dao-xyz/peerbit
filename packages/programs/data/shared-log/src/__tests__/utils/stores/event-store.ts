@@ -82,7 +82,8 @@ export class EventStore<T> extends Program<Args<T>> {
 			encoding: JSON_ENCODING,
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 1000,
 			sync: properties?.sync,
-			respondToIHaveTimeout: properties?.respondToIHaveTimeout
+			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
+			distributionDebounceTime: 1 // to make tests fast
 		});
 	}
 
