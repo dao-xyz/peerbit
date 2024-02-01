@@ -263,16 +263,16 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	@field({ type: "u64" })
 	expires: bigint;
 
+	// Priority. Lower hgher. used for implementing optimistic tx mempool behaviour
+	@field({ type: option("u32") })
+	priority?: number;
+
 	@field({ type: option(PeerInfo) })
 	private _origin?: MultiAddrinfo;
 
 	// Not signed, since we might want to modify it during transit
 	@field({ type: option(DeliveryMode) })
 	mode: T;
-
-	// Priority. Lower hgher. used for implementing optimistic empool behaviour
-	@field({ type: "u32" })
-	priority?: number;
 
 	// Not signed, since we might want to modify it during transit
 	@field({ type: option(Signatures) })
