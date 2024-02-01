@@ -269,6 +269,22 @@
     * @peerbit/pubsub bumped from ^2.0.20 to ^2.0.21
     * @peerbit/blocks bumped from ^2.0.23 to ^2.0.24
 
+## [4.0.1](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.0...peerbit-v4.0.1) (2024-02-01)
+
+
+### Bug Fixes
+
+* update default bootstrap addresses lookup address ([67f9313](https://github.com/dao-xyz/peerbit/commit/67f9313e405ff56bb0954a75e2aeff0861b92010))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.0 to 4.0.1
+    * @peerbit/pubsub bumped from ^3.0.0 to ^3.0.1
+    * @peerbit/blocks bumped from ^2.0.25 to ^2.0.26
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v3.0.25...peerbit-v4.0.0) (2024-02-01)
 
 
