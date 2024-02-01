@@ -149,6 +149,25 @@
   * dependencies
     * @peerbit/blocks-interface bumped from ^1.2.13 to ^1.2.14
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/program-v3.0.20...program-v4.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename node "memory" property to "storage"
+
+### Bug Fixes
+
+* rename node "memory" property to "storage" ([815f30c](https://github.com/dao-xyz/peerbit/commit/815f30c9250768acfd384e0249f9c5133bf1c7e1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.2.14 to ^1.2.15
+    * @peerbit/pubsub-interface bumped from ^2.0.13 to ^3.0.0
+
 ## [3.0.18](https://github.com/dao-xyz/peerbit/compare/program-v3.0.17...program-v3.0.18) (2024-01-26)
 
 

@@ -60,6 +60,17 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.5 to 2.1.6
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.9...stream-interface-v4.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* discrete message prioritization protocol
+
+### Features
+
+* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
+
 ## [3.0.9](https://github.com/dao-xyz/peerbit/compare/stream-interface-v3.0.8...stream-interface-v3.0.9) (2024-01-26)
 
 
