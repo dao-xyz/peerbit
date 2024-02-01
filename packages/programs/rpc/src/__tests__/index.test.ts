@@ -397,7 +397,7 @@ describe("queryAll", () => {
 
 		clients[1].delay = 1e4; // make sure client 1 never responds
 
-		await delay(500); // make sure the request is sent
+		await delay(200); // make sure the request is sent
 		clients[0].close();
 
 		await expect(promise).rejects.toThrow(AbortError);
