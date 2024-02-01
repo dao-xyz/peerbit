@@ -1173,7 +1173,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const now = +new Date();
 		const replLength = this.getReplicatorsSorted()!.length;
 		const diffToOldest =
-			replLength > 1 ? now - this.oldestOpenTime : Number.MAX_SAFE_INTEGER;
+			replLength > 1 ? now - this.oldestOpenTime - 1 : Number.MAX_SAFE_INTEGER;
 		return Math.min(
 			this.timeUntilRoleMaturity,
 			diffToOldest,

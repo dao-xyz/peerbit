@@ -218,6 +218,37 @@ export class MultiAddrinfo extends PeerInfo {
 	}
 }
 
+export type WithTo = {
+	to?: (string | PublicSignKey | PeerId)[] | Set<string>;
+};
+
+export type WithMode = {
+	mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere;
+};
+
+export type PriorityOptions = {
+	priority?: number;
+};
+const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
+	if (mode instanceof SilentDelivery) {
+		return 0;
+	}
+	if (mode instanceof AnyWhere) {
+		return 0;
+	}
+	if (mode instanceof SeekDelivery) {
+		return 1;
+	}
+
+	if (mode instanceof AcknowledgeDelivery) {
+		return 1;
+	}
+	if (mode instanceof TracedDelivery) {
+		return 1;
+	}
+	throw new Error("Unexpected mode: " + mode.constructor.name);
+};
+
 @variant(0)
 export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	@field({ type: fixedArray("u8", ID_LENGTH) })
@@ -239,6 +270,10 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 	@field({ type: option(DeliveryMode) })
 	mode: T;
 
+	// Priority. Lower hgher. used for implementing optimistic empool behaviour
+	@field({ type: "u32" })
+	priority?: number;
+
 	// Not signed, since we might want to modify it during transit
 	@field({ type: option(Signatures) })
 	signatures: Signatures | undefined;
@@ -249,6 +284,7 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		session: number;
 		id?: Uint8Array;
 		mode: T;
+		priority?: number;
 	}) {
 		this._id = properties?.id || randomBytes(ID_LENGTH);
 		this.expires = BigInt(properties?.expires || +new Date() + WEEK_MS);
@@ -257,6 +293,10 @@ export class MessageHeader<T extends DeliveryMode = DeliveryMode> {
 		this.signatures = new Signatures();
 		this._origin = properties?.origin;
 		this.mode = properties.mode;
+		this.priority =
+			properties.priority != null
+				? properties.priority
+				: getDefaultPriorityFromMode(this.mode);
 	}
 
 	get id() {

@@ -68,13 +68,13 @@ const collectDataWrites = (client: DirectStream) => {
 	for (const [name, peer] of client.peers) {
 		writes.set(name, []);
 		const writeFn = peer.write.bind(peer);
-		peer.write = (data) => {
+		peer.write = (data, priority) => {
 			const bytes = data instanceof Uint8Array ? data : data.subarray();
 			const message = deserialize(bytes, Message);
 			if (message instanceof DataMessage) {
 				writes.get(name)?.push(message);
 			}
-			return writeFn(data);
+			return writeFn(data, priority);
 		};
 	}
 	return writes;
@@ -545,10 +545,11 @@ describe("streams", function () {
 					);
 
 				streams[0].stream.peers.get(streams[2].stream.publicKeyHash)!.write = (
-					data
+					data,
+					priority
 				) => {
 					delay(3000, { signal: streams[0].stream.closeController.signal })
-						.then(() => write02(data))
+						.then(() => write02(data, priority))
 						.catch(() => {});
 				};
 
@@ -947,7 +948,6 @@ describe("streams", function () {
 						expect(
 							streams[1].messages.filter((x) => x instanceof DataMessage)
 						).toHaveLength(1); // because there is a direct route to 2 from 0 so no point more message should arrive here
-						const q = 123;
 					});
 				});
 
@@ -1880,9 +1880,7 @@ describe("streams", function () {
 						})
 					}
 				)
-			).rejects.toThrow(
-				"Message too large (10.001227) mb). Needs to be less than 10.001 mb"
-			);
+			).rejects.toThrow(/^Message too large/);
 		});
 	});
 });

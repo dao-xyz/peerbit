@@ -40,7 +40,7 @@ import { v4 as uuid } from "uuid";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { Operation, PutOperation } from "../document-index.js";
 import { Program } from "@peerbit/program";
-import pDefer from "p-defer";
+import pDefer, { DeferredPromise } from "p-defer";
 
 import {
 	AbsoluteReplicas,
@@ -50,7 +50,8 @@ import {
 	encodeReplicas
 } from "@peerbit/shared-log";
 import { Ed25519PublicKey } from "@peerbit/crypto";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
+import { DirectSub } from "@peerbit/pubsub";
 
 BigInt.prototype["toJSON"] = function () {
 	return this.toString();
@@ -2049,6 +2050,170 @@ describe("index", () => {
 					}
 				});
 			});
+
+			describe("concurrency", () => {
+				beforeAll(async () => {});
+
+				let abortController: AbortController,
+					interval: ReturnType<typeof setInterval>;
+				afterEach(() => {
+					clearTimeout(interval);
+					abortController.abort();
+				});
+
+				afterAll(async () => {
+					await session.stop();
+				});
+
+				it("query during sync load", async () => {
+					session = await TestSession.disconnected(3, {
+						libp2p: {
+							services: {
+								pubsub: (c) =>
+									new DirectSub(c, {
+										connectionManager: { dialer: false, pruner: false }
+									}) // prevent autodialing
+							}
+						}
+					});
+
+					const writeStore = await session.peers[0].open(
+						new TestStore({
+							docs: new Documents<Document>()
+						}),
+						{
+							args: {
+								role: {
+									type: "replicator",
+									factor: 1
+								},
+								timeUntilRoleMaturity: 1000
+							}
+						}
+					);
+
+					for (let i = 0; i < session.peers.length - 1; i++) {
+						await session.connect([[session.peers[i], session.peers[i + 1]]]);
+					}
+					const readStore = await session.peers[
+						session.peers.length - 1
+					].open<TestStore>(writeStore.address, {
+						args: {
+							role: {
+								type: "replicator",
+								factor: 1
+							},
+							timeUntilRoleMaturity: 1000
+						}
+					});
+
+					await waitForResolved(() =>
+						expect(writeStore.docs.log.getReplicatorsSorted()?.length).toEqual(
+							2
+						)
+					);
+					await waitForResolved(() =>
+						expect(readStore.docs.log.getReplicatorsSorted()?.length).toEqual(2)
+					);
+
+					/**
+					 * introduce lag in the relay
+					 */
+					let lag = 500;
+					const rawOutboundStream = session.peers[1].services.pubsub[
+						"peers"
+					].get(
+						session.peers[2].identity.publicKey.hashcode()
+					)!.rawOutboundStream;
+
+					const sendFn = rawOutboundStream.sendData.bind(rawOutboundStream);
+					abortController = new AbortController();
+					rawOutboundStream.sendData = async (data) => {
+						await delay(lag, { signal: abortController.signal });
+						return sendFn(data);
+					};
+
+					// start insertion rapidly
+					const ids: string[] = [];
+
+					// Omit sending entries directly and rely on the sync mechanism instead
+					// We do this so we know for sure trhat reader will query writer (reader needs to know they are "missing out" on something
+					// and the sync protocol have this info)
+					writeStore.docs.log.append = async (a, b) => {
+						b = {
+							...b,
+							meta: {
+								...b?.meta,
+								data: encodeReplicas(new AbsoluteReplicas(1))
+							}
+						};
+						return writeStore.docs.log.log.append(a, b);
+					};
+
+					const outboundStream = session.peers[1].services.pubsub["peers"].get(
+						session.peers[2].identity.publicKey.hashcode()
+					)!.outboundStream;
+
+					let msgSize = 1e4;
+
+					const insertFn = async () => {
+						const id = uuid();
+						ids.push(id);
+						await writeStore.docs.put(
+							new Document({ id, data: randomBytes(msgSize) })
+						);
+						await writeStore.docs.log.distribute();
+						interval = setTimeout(() => insertFn(), lag / 2);
+					};
+					insertFn();
+
+					await waitForResolved(() =>
+						expect(outboundStream.readableLength).toBeGreaterThan(msgSize * 5)
+					);
+					await waitForResolved(() =>
+						expect(readStore.docs.log["syncInFlight"].size).toBeGreaterThan(0)
+					);
+
+					// try two searches, one default (should work anyway)
+					// and now less prioritized, should fail because clogging
+					const prioritizedSearchByDefault = readStore.docs.index.search(
+						new SearchRequest({
+							query: new StringMatch({
+								key: ["id"],
+								value: ids[ids.length - 1]
+							})
+						}),
+						{
+							remote: {
+								mode: AcknowledgeDelivery,
+								throwOnMissing: true,
+								timeout: 5e3
+							}
+						}
+					);
+
+					await expect(
+						readStore.docs.index.search(
+							new SearchRequest({
+								query: new StringMatch({
+									key: ["id"],
+									value: ids[ids.length - 1]
+								})
+							}),
+							{
+								remote: {
+									mode: AcknowledgeDelivery,
+									throwOnMissing: true,
+									priority: 0,
+									timeout: 5e3
+								}
+							} // query will low prio and see that we reach an error
+						)
+					).rejects.toThrow("Did not receive responses from all shards");
+
+					expect(await prioritizedSearchByDefault).toHaveLength(1);
+				});
+			});
 		});
 
 		describe("sort", () => {
@@ -2905,10 +3070,10 @@ describe("index", () => {
 			factor: 1
 		})
 				await stores[2].docs.updateRole({type: 'replicator', factor: 1})
-	
+		
 				await delay(2000)
 				await waitForResolved(() => expect(stores[0].docs.log.getReplicatorsSorted()?.toArray().map(x => x.publicKey.hashcode())).toContainAllValues([session.peers[1].identity.publicKey.hashcode(), session.peers[2].identity.publicKey.hashcode()]));
-	
+		
 				const t1 = +new Date();
 				const minAge = 1000;
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
@@ -2918,7 +3083,7 @@ describe("index", () => {
 				expect(counters[1]).toEqual(1); // but now also remotely since we can not trust local only
 				expect(counters[2]).toEqual(0);
 				await waitFor(() => +new Date() - t1 > minAge + 100);
-	
+		
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 					remote: { minAge }
 				});

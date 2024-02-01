@@ -19,8 +19,7 @@ import {
 	logger,
 	RPCResponse,
 	EncryptionOptions,
-	RPCRequestOptions,
-	WithMode
+	RPCRequestOptions
 } from "./io.js";
 import {
 	DataEvent,
@@ -30,7 +29,9 @@ import { Program } from "@peerbit/program";
 import {
 	DataMessage,
 	DeliveryMode,
+	PriorityOptions,
 	SilentDelivery,
+	WithMode,
 	deliveryModeHasReceiver
 } from "@peerbit/stream-interface";
 import pDefer, { DeferredPromise } from "p-defer";
@@ -188,6 +189,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 								),
 								{
 									topics: [this.topic],
+									priority: message.header.priority, // send back with same priority. TODO, make this better in the future
 
 									/// TODO make redundancy parameter configurable?
 									mode: new SilentDelivery({
@@ -262,9 +264,10 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	}
 
 	private getPublishOptions(
-		options?: EncryptionOptions & WithMode
+		options?: EncryptionOptions & WithMode & PriorityOptions
 	): PubSubPublishOptions {
 		return {
+			priority: options?.priority,
 			mode: options?.mode,
 			topics: [this.topic]
 		};
@@ -277,7 +280,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	 */
 	public async send(
 		message: Q,
-		options?: EncryptionOptions & WithMode
+		options?: EncryptionOptions & WithMode & PriorityOptions
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),

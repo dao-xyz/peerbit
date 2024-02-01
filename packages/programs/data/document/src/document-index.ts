@@ -133,6 +133,7 @@ export interface IndexedValue<T> {
 export type RemoteQueryOptions<R> = RPCRequestAllOptions<R> & {
 	sync?: boolean;
 	minAge?: number;
+	throwOnMissing?: boolean;
 };
 export type QueryOptions<R> = {
 	remote?: boolean | RemoteQueryOptions<AbstractSearchResult<R>>;
@@ -217,8 +218,8 @@ const SORT_TMP_KEY = "__sort_ref";
 
 type QueryDetailedOptions<T> = QueryOptions<T> & {
 	onResponse?: (response: AbstractSearchResult<T>, from: PublicSignKey) => void;
-	excludePeerAgeThreshold?: number;
 };
+
 const introduceEntries = async <T>(
 	responses: RPCResponse<AbstractSearchResult<T>>[],
 	type: AbstractType<T>,
@@ -788,6 +789,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		} else {
 			remote = options?.remote || {};
 		}
+		if (remote && remote.priority == null) {
+			// give queries higher priority than other "normal" data activities
+			// without this, we might have a scenario that a peer joina  network with large amount of data to be synced, but can not query anything before that is done
+			// this will lead to bad UX as you usually want to list/expore whats going on before doing any replication work
+			remote.priority = 1;
+		}
 
 		const promises: Promise<Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
@@ -860,7 +867,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						}
 					} catch (error) {
 						if (error instanceof MissingResponsesError) {
-							logger.error("Did not reciveve responses from all shard");
+							logger.warn("Did not reciveve responses from all shard");
+							if (remote?.throwOnMissing) {
+								throw error;
+							}
+						} else {
+							throw error;
 						}
 					}
 					return rs;

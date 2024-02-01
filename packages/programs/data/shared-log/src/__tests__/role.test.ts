@@ -243,7 +243,7 @@ describe(`role`, () => {
 				const db1MinRoleAge = db1.log.getDefaultMinRoleAge();
 				const db2MinRoleAge = db2.log.getDefaultMinRoleAge();
 
-				expect(db1MinRoleAge).toEqual(db2MinRoleAge); // db1 sets the minRole age because it is the oldest
+				expect(db1MinRoleAge - db2MinRoleAge).toBeLessThanOrEqual(1); // db1 sets the minRole age because it is the oldest. So both dbs get same minRole age limit (including some error margin)
 				expect(db1MinRoleAge).toBeGreaterThan(tsm);
 				const now = +new Date();
 

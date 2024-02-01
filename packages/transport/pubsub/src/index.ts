@@ -9,7 +9,9 @@ import {
 	SilentDelivery,
 	deliveryModeHasReceiver,
 	NotStartedError,
-	DeliveryError
+	DeliveryError,
+	WithMode,
+	PriorityOptions
 } from "@peerbit/stream-interface";
 import {
 	DirectStream,
@@ -280,16 +282,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 	async publish(
 		data: Uint8Array | undefined,
-		options?: (
-			| {
-					topics: string[];
-					mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery;
-			  }
-			| {
-					topics: string[];
-					mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery;
-			  }
-		) & { client?: string }
+		options?: {
+			topics: string[];
+		} & { client?: string } & {
+			mode?: SilentDelivery | AcknowledgeDelivery | SeekDelivery;
+		} & PriorityOptions
 	): Promise<Uint8Array> {
 		if (!this.started) {
 			throw new NotStartedError();

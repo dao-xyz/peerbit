@@ -1,4 +1,8 @@
-import { DeliveryMode, SilentDelivery } from "@peerbit/stream-interface";
+import {
+	DeliveryMode,
+	PriorityOptions,
+	SilentDelivery
+} from "@peerbit/stream-interface";
 import { RPC } from "./controller";
 import {
 	EncryptionOptions,
@@ -12,7 +16,7 @@ export class MissingResponsesError extends Error {
 	}
 }
 export type RPCRequestAllOptions<R> = RPCRequestResponseOptions<R> &
-	EncryptionOptions & { mode?: Constructor<DeliveryMode> };
+	EncryptionOptions & { mode?: Constructor<DeliveryMode> } & PriorityOptions;
 
 export const queryAll = <Q, R>(
 	rpc: RPC<Q, R>,

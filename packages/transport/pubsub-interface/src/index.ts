@@ -5,7 +5,8 @@ import {
 	DataMessage,
 	WaitForPeer,
 	PeerEvents,
-	DeliveryMode
+	DeliveryMode,
+	PriorityOptions
 } from "@peerbit/stream-interface";
 import { EventHandler } from "@libp2p/interface";
 import { field, vec } from "@dao-xyz/borsh";
@@ -121,7 +122,7 @@ export type PublishOptions = (
 			topics: string[];
 			mode?: DeliveryMode | undefined;
 	  }
-) & { client?: string };
+) & { client?: string } & PriorityOptions;
 
 export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
 	getSubscribers(topic: string): MaybePromise<PublicSignKey[] | undefined>;

@@ -52,7 +52,10 @@ import {
 	AnyWhere,
 	NotStartedError,
 	deliveryModeHasReceiver,
-	DeliveryError
+	DeliveryError,
+	WithTo,
+	WithMode,
+	PriorityOptions
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
@@ -96,14 +99,12 @@ const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
 const ROUTE_UPDATE_DELAY_FACTOR = 3e4;
 
-type WithTo = {
-	to?: (string | PublicSignKey | PeerId)[] | Set<string>;
+const getLaneFromPriority = (priority: number) => {
+	if (priority > 0) {
+		return 0;
+	}
+	return 1;
 };
-
-type WithMode = {
-	mode?: SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere;
-};
-
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
@@ -175,7 +176,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Send a message to this peer.
 	 * Throws if there is no `stream` to write to available.
 	 */
-	write(data: Uint8Array | Uint8ArrayList, priority = false) {
+	write(data: Uint8Array | Uint8ArrayList, priority: number) {
 		if (data.length > MAX_DATA_LENGTH_OUT) {
 			throw new Error(
 				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
@@ -191,11 +192,13 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.usedBandWidthTracker.add(data.byteLength);
 		this.outboundStream.push(
 			data instanceof Uint8Array ? data : data.subarray(),
-			priority || this.outboundStream.getReadableLength(0) === 0 ? 0 : 1
+			this.outboundStream.getReadableLength(0) === 0
+				? 0
+				: getLaneFromPriority(priority) // TODO use more lanes
 		);
 	}
 
-	async waitForWrite(bytes: Uint8Array | Uint8ArrayList, priority = false) {
+	async waitForWrite(bytes: Uint8Array | Uint8ArrayList, priority: number = 0) {
 		if (this.closed) {
 			logger.error("Failed to send to stream: " + this.peerId + ". Closed");
 			return;
@@ -1388,7 +1391,7 @@ export abstract class DirectStream<
 
 	async createMessage(
 		data: Uint8Array | Uint8ArrayList | undefined,
-		options: WithTo | WithMode
+		options: (WithTo | WithMode) & PriorityOptions
 	) {
 		// dispatch the event if we are interested
 
@@ -1435,7 +1438,11 @@ export abstract class DirectStream<
 
 		const message = new DataMessage({
 			data: data instanceof Uint8ArrayList ? data.subarray() : data,
-			header: new MessageHeader({ mode, session: this.session })
+			header: new MessageHeader({
+				mode,
+				session: this.session,
+				priority: options.priority
+			})
 		});
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
@@ -1447,7 +1454,7 @@ export abstract class DirectStream<
 	 */
 	async publish(
 		data: Uint8Array | Uint8ArrayList | undefined,
-		options: WithMode | WithTo = {
+		options: (WithMode | WithTo) & PriorityOptions = {
 			mode: new SeekDelivery({ redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY })
 		}
 	): Promise<Uint8Array> {
@@ -1693,11 +1700,6 @@ export abstract class DirectStream<
 		if (this.stopping || !this.started) {
 			throw new NotStartedError();
 		}
-		const isPriorityMessage =
-			message.header.mode instanceof SilentDelivery ||
-			message.header.mode instanceof AnyWhere
-				? false
-				: true;
 
 		let delivereyPromise: Promise<void> | undefined = undefined as any;
 
@@ -1766,7 +1768,9 @@ export abstract class DirectStream<
 						for (const [neighbour, _distantPeers] of fanout) {
 							const stream = this.peers.get(neighbour);
 							stream &&
-								promises.push(stream.waitForWrite(bytes, isPriorityMessage));
+								promises.push(
+									stream.waitForWrite(bytes, message.header.priority)
+								);
 						}
 						await Promise.all(promises);
 						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
@@ -1812,7 +1816,7 @@ export abstract class DirectStream<
 
 			sentOnce = true;
 
-			promises.push(id.waitForWrite(bytes, isPriorityMessage));
+			promises.push(id.waitForWrite(bytes, message.header.priority));
 		}
 		await Promise.all(promises);
 
