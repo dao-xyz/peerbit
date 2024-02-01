@@ -60,6 +60,7 @@ import {
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
 import { BandwidthTracker } from "./stats.js";
+import { IdentificationOptions } from "@peerbit/stream-interface";
 export { BandwidthTracker }; // might be useful for others
 
 const logError = (e?: { message: string }) => {
@@ -1396,7 +1397,7 @@ export abstract class DirectStream<
 
 	async createMessage(
 		data: Uint8Array | Uint8ArrayList | undefined,
-		options: (WithTo | WithMode) & PriorityOptions
+		options: (WithTo | WithMode) & PriorityOptions & IdentificationOptions
 	) {
 		// dispatch the event if we are interested
 
@@ -1444,6 +1445,7 @@ export abstract class DirectStream<
 		const message = new DataMessage({
 			data: data instanceof Uint8ArrayList ? data.subarray() : data,
 			header: new MessageHeader({
+				id: options.id,
 				mode,
 				session: this.session,
 				priority: options.priority

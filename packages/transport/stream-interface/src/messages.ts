@@ -229,6 +229,11 @@ export type WithMode = {
 export type PriorityOptions = {
 	priority?: number;
 };
+
+export type IdentificationOptions = {
+	id?: Uint8Array;
+};
+
 const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
 	if (mode instanceof SilentDelivery) {
 		return 0;
