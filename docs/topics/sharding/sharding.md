@@ -1,5 +1,3 @@
-Here's the corrected version with spelling and grammar errors fixed:
-
 # Resource-Aware Sharding
 
 In distributed systems, sharding is a crucial mechanism to distribute and manage data across multiple nodes. Adaptive sharding is a dynamic approach that adjusts the distribution of data based on various factors to optimize performance and resource utilization. This article explores the implementation of adaptive sharding with Peerbit.
