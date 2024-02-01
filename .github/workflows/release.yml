@@ -2,7 +2,8 @@ on:
     push:
       branches:
         - master
-  
+      paths:
+          - packages/**
 permissions:
   contents: write
   pull-requests: write
