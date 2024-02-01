@@ -12,7 +12,8 @@ import {
 	toBase64,
 	AccessError,
 	X25519PublicKey,
-	X25519Keypair
+	X25519Keypair,
+	randomBytes
 } from "@peerbit/crypto";
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import {
@@ -202,11 +203,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					}
 				} else if (rpcMessage instanceof ResponseV0) {
 					const id = toBase64(rpcMessage.requestId);
-					let handler = this._responseResolver.get(id);
-					if (!handler) {
-						handler = await waitFor(() => this._responseResolver.get(id));
-					}
-					handler!({
+					const handler = this._responseResolver.get(id);
+					// TODO evaluate when and how handler can be missing
+					handler?.({
 						message,
 						response: rpcMessage
 					});
@@ -264,9 +263,11 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	}
 
 	private getPublishOptions(
+		id?: Uint8Array,
 		options?: EncryptionOptions & WithMode & PriorityOptions
 	): PubSubPublishOptions {
 		return {
+			id,
 			priority: options?.priority,
 			mode: options?.mode,
 			topics: [this.topic]
@@ -284,7 +285,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
-			this.getPublishOptions(options)
+			this.getPublishOptions(undefined, options)
 		);
 	}
 
@@ -400,12 +401,8 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 		const responders = new Set<string>();
 
-		const id = toBase64(
-			await this.node.services.pubsub.publish(
-				requestBytes,
-				this.getPublishOptions(options)
-			)
-		);
+		const messageId = randomBytes(32);
+		const id = toBase64(messageId);
 		this._responseResolver.set(
 			id,
 			this.createResponseHandler(
@@ -419,6 +416,10 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		);
 
 		try {
+			await this.node.services.pubsub.publish(
+				requestBytes,
+				this.getPublishOptions(messageId, options)
+			);
 			await deferredPromise.promise;
 		} catch (error: any) {
 			if (error instanceof TimeoutError === false) {
