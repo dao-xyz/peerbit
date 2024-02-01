@@ -36,7 +36,7 @@ const db = peer.open("address", {
 For (A), we already have a lot of solutions that work well but generally do not consider (B) and (C). For example, in common DHT systems, we can use the identities of the participants to distribute content and picking neighbors to satisfy the minimum replication degree constraint.
 
 <p align="center">
-<img width="800" src="./topics/sharding/p1.svg" alt="p1">
+<img width="800" src="./topics/sharding/p1.png" alt="p1">
 </p>
 
 However, once you mix in constraints from (B), this quickly becomes more challenging because no longer can you rely on that your neighbors are ready to help you out with replication. If you then need to "skip" neighbors for this reason, it might become challenging to actually keep up-to-date info where all the replicas are hanging around.
@@ -51,7 +51,7 @@ The idea of the solution is based on that instead of peers representing points o
 For simplicity, we consider that every peer can only have one range. And that range has a "width" that represents how much they need to replicate at least. If the width is 0.5, it means they need to store 50% of all data.
 
 <p align="center">
-<img width="800" src="p1.png" alt="p2">
+<img width="800" src="./topics/sharding/p2.svg" alt="p2">
 </p>
 
 A piece of data that needs to be stored is to be stored at a location that depends on its hash. But instead of using the hash, we are transforming it into a number bounded by [0,1].
