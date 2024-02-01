@@ -80,7 +80,7 @@ If you think of content space as a circle, this would represent a rotation of `3
 
 But we are going to stick with the line for now on because it will be easier to visualize (consider that everything just wraps around at 1 instead).
 
-## (B) Resource Awareness
+### (B) Resource Awareness
 
 With this in (A) place, now it is time to consider constraint (B). The innovative step here is that we adjust our width to satisfy any resource constraint. Is the memory or CPU usage too high? Just reduce the width of your responsibility until satisfied. Do you have capacity? Then perhaps it would be helpful for others if you increase your width of responsibility.
 
@@ -104,7 +104,7 @@ Simplified, we can say we are using [Lagrange relaxation](https://en.wikipedia.o
 
 When everything works well, the width will converge to a number for every peer over time.
 
-## (C) Efficient Aggregation
+### (C) Efficient Aggregation
 
 This is the final piece in the puzzle. How can we, with the solution outlined in (A), efficiently aggregate all unique data points to find all dog photos?
 
@@ -114,8 +114,8 @@ What is nice about this walk is that we can make it "local first" by starting to
 
 IMAGE
 
-# Future Work and Improvements
-## Scaling with Many Peers
+## Future Work and Improvements
+### Scaling with Many Peers
 When the number of replicators (or more specifically ranges/segments) is large, we will eventually run into a scaling problem, where everyone needs to know about everyone else (which will not be feasible). This is not a problem in general for existing DHT solutions which utilize the peer IDs and content address to make it possible size route table logarithmically with participation count.
 
 For this system, we have lost the opportunity to use peer IDs this way because allowed peers to choose their "points" to be anywhere. But there is a nice solution around this because we have unlocked (C) and use recursion. The idea is that we create one or more databases that track replication ranges of peers:
@@ -126,7 +126,7 @@ Consider we create a database that contains all the responsibility ranges of ano
 
 Do the "The loop" to define databases that describe the replication of the next database. Eventually, the "head" database will be very small, and when it is small enough we can consider it as our "root" db. Now to interact with the database where content is actually stored, we can efficiently aggregate replicator ranges using (C) iteratively down the database chain until we reach the data. The solution will behave similarly as how partial routing tables work with common DHT systems, but the difference here is that we can control the replication of the partial routing tables as well.
 
-## Numerical Optimizers
+### Numerical Optimizers
 
 Previously described, the resource optimization problem was solved with a PID controller, under the assumption the problem has nice "convex" properties. This assumption might hold for many cases, but there might be scenarios where more robust (and more resource-heavy) solvers will be preferable. E.g. when non-numerical properties and non-linear features are used, an [RNN](https://en.wikipedia.org/wiki/Recurrent_neural_network) could work better.
 
