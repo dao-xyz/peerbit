@@ -802,6 +802,11 @@ export abstract class DirectStream<
 			return;
 		}
 
+		if (!this.peers.has(peerKeyHash)) {
+			// TODO remove when https://github.com/libp2p/js-libp2p/issues/2369 fixed
+			// TODO this code should work even if onPeerDisconnected events are emitted wrongfully. i.e. disconnection should occur and rediscover should be smooth?
+			return;
+		}
 		if (!this.publicKey.equals(peerKey)) {
 			await this._removePeer(peerKey);
 
@@ -995,8 +1000,8 @@ export abstract class DirectStream<
 				}
 			});
 		} catch (err: any) {
-			logger.error(
-				"error on processing messages to id: " +
+			logger.warn(
+				"Failed processing messages to id: " +
 					peerStreams.peerId.toString() +
 					". " +
 					err?.message
@@ -1569,7 +1574,7 @@ export abstract class DirectStream<
 					clear();
 					deliveryDeferredPromise.reject(
 						new DeliveryError(
-							`At least one recipent became unreachable while delivering messsage of type$ ${message.constructor.name}} to ${ev.detail.hashcode()}`
+							`At least one recipent became unreachable while delivering messsage of type ${message.constructor.name}} to ${ev.detail.hashcode()}`
 						)
 					);
 				}
