@@ -97,7 +97,7 @@ export class AnyBlockStore implements Blocks {
 
 	async stop(): Promise<void> {
 		this._onClose && this._onClose();
-		this._closeController.abort();
+		this._closeController?.abort();
 		return this._store.close();
 	}
 
