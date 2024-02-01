@@ -133,6 +133,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					}).bytes()
 				),
 				header: new MessageHeader({
+					priority: 1,
 					mode: new SeekDelivery({ redundancy: 2 }),
 					session: this.session
 				})
@@ -183,7 +184,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 				await new DataMessage({
 					header: new MessageHeader({
 						mode: new AnyWhere(), // TODO make this better
-						session: this.session
+						session: this.session,
+						priority: 1
 					}),
 					data: toUint8Array(
 						new Unsubscribe({
@@ -252,7 +254,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 						to: to ? [to.hashcode()] : undefined,
 						redundancy: 2
 					}),
-					session: this.session
+					session: this.session,
+					priority: 1
 				})
 			}).sign(this.sign)
 		);
@@ -394,6 +397,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					header: new MessageHeader({
 						// is new neighbour ? then send to all, though that connection (potentially find new peers)
 						// , else just try to reach the remote
+						priority: 1,
 						mode: new SeekDelivery({
 							redundancy: 2,
 							to: isNeigbour ? undefined : [publicKey.hashcode()]
@@ -641,6 +645,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 								// needs to be Ack or Silent else we will run into a infite message loop
 								header: new MessageHeader({
 									session: this.session,
+									priority: 1,
 									mode: new SeekDelivery({
 										redundancy: 2,
 										to: [senderKey]
@@ -711,6 +716,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 								}).bytes()
 							),
 							header: new MessageHeader({
+								priority: 1,
 								mode: new SilentDelivery({
 									redundancy: 2,
 									to: [sender.hashcode()]
