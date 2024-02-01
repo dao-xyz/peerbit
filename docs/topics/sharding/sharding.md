@@ -42,7 +42,7 @@ However, once you mix in constraints from (B), this quickly becomes more challen
 Additionally, imagine the data that is stored are images, and you want to find all images that represent dogs. How many peers do you need to ask at least if min replicas are 1, 2, 3... to make sure you will certainly find all dogs? (Asking every peer will always work, but will not be feasible when the network is large)
 
 ## The Solution
-The idea of the solution is based on that instead of peers representing points on a line that loops around (or a circle). Peers are responsible for *ranges*. And instead of making the point/range start at their "id" we allow peers to place themselves anywhere they please. Below is a walkthrough of how this solves (A), (B), and (C). Afterwards, challenges and future work are discussed.
+The idea of the solution is based on that instead of peers representing points on a line that loops around (or a circle). Peers are responsible for *ranges*. And instead of making the point/range start at their "id" we allow peers to place themselves anywhere they please. Below is a walkthrough of how this solves (A), (B), and (C). Afterwards, some challenges and future work are discussed.
 
 ### (A) Satisfy Replication Degree
 
