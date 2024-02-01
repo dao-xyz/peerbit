@@ -62,6 +62,9 @@ export class REQ_Publish extends PubSubMessage {
 	@field({ type: Uint8Array })
 	data: Uint8Array;
 
+	@field({ type: option(Uint8Array) })
+	id?: Uint8Array;
+
 	@field({ type: option(vec("string")) })
 	topics?: string[];
 
@@ -73,6 +76,7 @@ export class REQ_Publish extends PubSubMessage {
 		this.data = data;
 		this.topics = options?.topics;
 		this.mode = options?.mode;
+		this.id = options?.id;
 	}
 }
 
