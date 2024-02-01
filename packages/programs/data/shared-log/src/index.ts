@@ -365,7 +365,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 
 		await this.rpc.subscribe();
-		await this.rpc.send(new ResponseRoleMessage({ role: this._role }));
+		await this.rpc.send(new ResponseRoleMessage({ role: this._role }), {
+			priority: 1
+		});
 
 		if (onRoleChange && changed !== "none") {
 			this.onRoleChange(this._role, this.node.identity.publicKey);
@@ -438,8 +440,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 					: new AcknowledgeDelivery({ redundancy: 1, to: leaders });
 			}
 
-			// TODO do we really want to wait here?
-			await this.rpc.send(message, {
+			// TODO add options for waiting ?
+			this.rpc.send(message, {
 				mode
 			});
 		}
@@ -918,7 +920,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 										mode: new SilentDelivery({
 											to: [context.from!],
 											redundancy: 1
-										})
+										}),
+										priority: 1
 									});
 								}
 
@@ -938,7 +941,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				await this.rpc.send(new ResponseIPrune({ hashes: hasAndIsLeader }), {
-					mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
+					mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
+					priority: 1
 				});
 			} else if (msg instanceof ResponseIPrune) {
 				for (const hash of msg.hashes) {
@@ -996,7 +1000,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				await this.rpc.send(new ResponseRoleMessage({ role: this.role }), {
-					mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
+					mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
+					priority: 1
 				});
 			} else if (msg instanceof ResponseRoleMessage) {
 				if (context.from.equals(this.node.identity.publicKey)) {
@@ -1300,7 +1305,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 					mode: new SilentDelivery({
 						to: [publicKey.hashcode()],
 						redundancy: 1
-					})
+					}),
+					priority: 1
 				});
 			}
 			this.onRoleChange(role, publicKey);
@@ -1566,7 +1572,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		this.rpc.send(
-			new RequestIPrune({ hashes: filteredEntries.map((x) => x.hash) })
+			new RequestIPrune({ hashes: filteredEntries.map((x) => x.hash) }),
+			{ priority: 1 }
 		);
 
 		const onNewPeer = async (e: CustomEvent<UpdateRoleEvent>) => {
@@ -1577,7 +1584,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 						mode: new SilentDelivery({
 							to: [e.detail.publicKey.hashcode()],
 							redundancy: 1
-						})
+						}),
+						priority: 1
 					}
 				);
 			}
@@ -1591,14 +1599,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return promises;
 	}
 
-	private _queue: PQueue;
+	private _distributeTimeout: ReturnType<typeof setTimeout> | undefined;
+
 	async distribute() {
-		if (this._queue?.size > 0) {
-			return this._queue.onEmpty();
+		if (this._distributeTimeout) {
+			return;
 		}
-		return (this._queue || (this._queue = new PQueue({ concurrency: 1 }))).add(
-			() => this._distribute()
-		);
+		this._distributeTimeout = setTimeout(() => {
+			this._distribute().finally(() => {
+				this._distributeTimeout = undefined;
+			});
+		}, 500); // TODO options, maybe depend on log length
 	}
 
 	async _distribute() {
@@ -1717,6 +1728,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				hashes: hashes
 			}),
 			{
+				priority: 1,
 				mode: new SilentDelivery({ to, redundancy: 1 })
 			}
 		);
