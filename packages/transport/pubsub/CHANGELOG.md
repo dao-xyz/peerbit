@@ -176,6 +176,24 @@
   * dependencies
     * @peerbit/stream bumped from 3.1.1 to 3.1.2
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.21...pubsub-v3.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* discrete message prioritization protocol
+
+### Features
+
+* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 3.1.2 to 4.0.0
+
 ## [2.0.19](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.18...pubsub-v2.0.19) (2024-01-27)
 
 

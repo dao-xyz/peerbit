@@ -37,6 +37,24 @@
   * devDependencies
     * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v3.1.2...stream-v4.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* discrete message prioritization protocol
+
+### Features
+
+* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^3.0.9 to ^4.0.0
+
 ## [3.1.2](https://github.com/dao-xyz/peerbit/compare/stream-v3.1.1...stream-v3.1.2) (2024-01-30)
 
 

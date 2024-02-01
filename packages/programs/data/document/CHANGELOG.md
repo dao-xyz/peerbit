@@ -406,6 +406,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.23 to 2.0.24
 
+## [6.0.0](https://github.com/dao-xyz/peerbit/compare/document-v5.0.8...document-v6.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* discrete message prioritization protocol
+
+### Features
+
+* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.20 to 4.0.0
+    * @peerbit/rpc bumped from 3.0.25 to 4.0.0
+    * @peerbit/shared-log bumped from 7.0.11 to 8.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.25 to 2.0.26
+
 ## [5.0.8](https://github.com/dao-xyz/peerbit/compare/document-v5.0.7...document-v5.0.8) (2024-01-30)
 
 

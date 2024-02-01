@@ -260,6 +260,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.24 to 2.0.25
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.25...proxy-v3.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename node "memory" property to "storage"
+
+### Bug Fixes
+
+* rename node "memory" property to "storage" ([815f30c](https://github.com/dao-xyz/peerbit/commit/815f30c9250768acfd384e0249f9c5133bf1c7e1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^3.0.20 to ^4.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.25 to 2.0.26
+
 ## [2.0.21](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.20...proxy-v2.0.21) (2024-01-26)
 
 

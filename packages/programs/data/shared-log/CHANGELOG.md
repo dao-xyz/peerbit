@@ -339,6 +339,37 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.23 to ^2.0.24
 
+## [8.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.11...shared-log-v8.0.0) (2024-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* discrete message prioritization protocol
+* rename node "memory" property to "storage"
+* rename limit "memory" property to "storage"
+
+### Features
+
+* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
+
+
+### Bug Fixes
+
+* reduce MAX_EXCHANGE_MESSAGE_SIZE to 100kb ([7dbb6f9](https://github.com/dao-xyz/peerbit/commit/7dbb6f9a4e60bfd662fbeb5e063f328f258b7804))
+* rename limit "memory" property to "storage" ([5c147eb](https://github.com/dao-xyz/peerbit/commit/5c147eb088dd38ce1ed8b4a258f99c465a6ea306))
+* rename node "memory" property to "storage" ([815f30c](https://github.com/dao-xyz/peerbit/commit/815f30c9250768acfd384e0249f9c5133bf1c7e1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 3.0.20 to 4.0.0
+    * @peerbit/log bumped from 3.0.26 to 3.0.27
+    * @peerbit/rpc bumped from 3.0.25 to 4.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.25 to ^2.0.26
+
 ## [7.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.10...shared-log-v7.0.11) (2024-01-30)
 
 
