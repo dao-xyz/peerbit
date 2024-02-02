@@ -67,7 +67,7 @@ export class OPFSStoreWorker {
 			levels: string[] = []
 		): AnyStore => {
 			let m: FileSystemDirectoryHandle = root!;
-			let sizeCache: number;
+			let sizeCache: number = 0;
 			const sizeMap: Map<string, number> = new Map(); // files size per key
 
 			const calculateSize = async () => {
