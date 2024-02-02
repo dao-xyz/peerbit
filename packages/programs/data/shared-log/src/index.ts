@@ -30,7 +30,7 @@ import {
 	SubscriptionEvent,
 	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
-import { AbortError, waitFor } from "@peerbit/time";
+import { AbortError, delay, waitFor } from "@peerbit/time";
 import { Observer, Replicator, Role } from "./role.js";
 import {
 	AbsoluteReplicas,
@@ -216,7 +216,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	// regular distribution checks
 	private distributeInterval: ReturnType<typeof setInterval>;
-	private distributeTimeout: ReturnType<typeof setTimeout> | undefined;
+	private distributeQueue?: PQueue;
 
 	// Syncing and dedeplucation work
 	private syncMoreInterval?: ReturnType<typeof setTimeout>;
@@ -669,7 +669,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private async _close() {
 		clearTimeout(this.syncMoreInterval);
 		clearInterval(this.distributeInterval);
-		clearTimeout(this.distributeTimeout);
+		this.distributeQueue?.clear();
 
 		this._closeController.abort();
 
@@ -927,8 +927,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 										mode: new SilentDelivery({
 											to: [context.from!],
 											redundancy: 1
-										}),
-										priority: 1
+										})
 									});
 								}
 
@@ -948,8 +947,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				await this.rpc.send(new ResponseIPrune({ hashes: hasAndIsLeader }), {
-					mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
-					priority: 1
+					mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
 				});
 			} else if (msg instanceof ResponseIPrune) {
 				for (const hash of msg.hashes) {
@@ -1007,8 +1005,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 
 				await this.rpc.send(new ResponseRoleMessage({ role: this.role }), {
-					mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
-					priority: 1
+					mode: new SilentDelivery({ to: [context.from], redundancy: 1 })
 				});
 			} else if (msg instanceof ResponseRoleMessage) {
 				if (context.from.equals(this.node.identity.publicKey)) {
@@ -1280,10 +1277,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this._closeController.signal.removeEventListener("abort", listener);
 				await this.rebalanceParticipationDebounced?.();
 				this.distribute();
-			}, this.timeUntilRoleMaturity + 2000);
+			}, this.getDefaultMinRoleAge() + 100);
 
 			const listener = () => {
 				clearTimeout(timer);
+				this._closeController.signal.removeEventListener("abort", listener);
 			};
 
 			this._closeController.signal.addEventListener("abort", listener);
@@ -1308,6 +1306,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			await this.rebalanceParticipationDebounced?.(); /* await this.rebalanceParticipation(false); */
 			if (update.changed === "added") {
+				// TODO this message can be redudant, only send this when necessary (see conditions when rebalanceParticipation sends messages)
 				await this.rpc.send(new ResponseRoleMessage({ role: this._role }), {
 					mode: new SilentDelivery({
 						to: [publicKey.hashcode()],
@@ -1579,8 +1578,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		this.rpc.send(
-			new RequestIPrune({ hashes: filteredEntries.map((x) => x.hash) }),
-			{ priority: 1 }
+			new RequestIPrune({ hashes: filteredEntries.map((x) => x.hash) })
 		);
 
 		const onNewPeer = async (e: CustomEvent<UpdateRoleEvent>) => {
@@ -1591,8 +1589,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 						mode: new SilentDelivery({
 							to: [e.detail.publicKey.hashcode()],
 							redundancy: 1
-						}),
-						priority: 1
+						})
 					}
 				);
 			}
@@ -1607,20 +1604,23 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	async distribute() {
-		if (this.distributeTimeout) {
-			return;
+		// if there is one or more items waiting for run, don't bother adding a new item just wait for the queue to empty
+		if (this.distributeQueue && this.distributeQueue?.size > 0) {
+			return this.distributeQueue.onEmpty();
 		}
 		if (this.closed) {
 			return;
 		}
-		this.distributeTimeout = setTimeout(
-			() => {
-				this._distribute().finally(() => {
-					this.distributeTimeout = undefined;
-				});
-			},
-			Math.min(this.log.length, this.distributionDebounceTime)
-		);
+		const queue =
+			this.distributeQueue ||
+			(this.distributeQueue = new PQueue({ concurrency: 1 }));
+		return queue
+			.add(() =>
+				delay(Math.min(this.log.length, this.distributionDebounceTime), {
+					signal: this._closeController.signal
+				}).then(() => this._distribute())
+			)
+			.catch(() => {}); // catch ignore abort errror
 	}
 
 	async _distribute() {
@@ -1739,7 +1739,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 				hashes: hashes
 			}),
 			{
-				priority: 1,
 				mode: new SilentDelivery({ to, redundancy: 1 })
 			}
 		);
