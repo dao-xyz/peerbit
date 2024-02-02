@@ -2,7 +2,7 @@ import { AnyStore, MaybePromise } from "./interface.js";
 import * as memory from "./opfs-worker-messages.js";
 import { v4 as uuid } from "uuid";
 import { serialize, deserialize } from "@dao-xyz/borsh";
-import workerUrl from "./opfs-worker.js?worker&url";
+import workerUrl from "./opfs-worker?worker&url";
 
 function memoryIterator(
 	client: {
