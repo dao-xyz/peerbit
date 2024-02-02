@@ -264,6 +264,12 @@
   * dependencies
     * @peerbit/any-store bumped from ^1.0.15 to ^2.0.0
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.0.0 to ^2.0.1
+
 ## [2.0.27](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.26...blocks-v2.0.27) (2024-02-02)
 
 
