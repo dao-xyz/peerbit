@@ -22,9 +22,9 @@ Modules
 
 Topics
 - [Wallet integration](/topics/wallet-integration/)
-- [Peerbit vs [?]](/topics/difference/difference.md)
-- [Data integrity](/topics/integrity/integrity.md)
 - [Sharding](/topics/sharding/sharding.md)
+- [Data integrity](/topics/integrity/integrity.md)
+- [Peerbit vs [?]](/topics/difference/difference.md)
 
 
 
