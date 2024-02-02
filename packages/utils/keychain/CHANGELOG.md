@@ -86,6 +86,12 @@
   * dependencies
     * @peerbit/any-store bumped from ^1.0.13 to ^1.0.14
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^1.0.14 to ^1.0.15
+
 ## 1.0.0 (2023-12-31)
 
 

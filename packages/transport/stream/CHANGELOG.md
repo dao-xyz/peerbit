@@ -43,6 +43,13 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.3](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.2...stream-v4.0.3) (2024-02-02)
+
+
+### Bug Fixes
+
+* ignore write errors on close ([11cd158](https://github.com/dao-xyz/peerbit/commit/11cd158f9fd7b186353d871942eef3bc34bbc9da))
+
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.1...stream-v4.0.2) (2024-02-02)
 
 

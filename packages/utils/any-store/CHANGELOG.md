@@ -27,6 +27,13 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
 
+## [1.0.15](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.14...any-store-v1.0.15) (2024-02-02)
+
+
+### Bug Fixes
+
+* set sizeCache to 0 before initialization ([38dd8d2](https://github.com/dao-xyz/peerbit/commit/38dd8d2884e5bf17d53aae5530963d73374c9790))
+
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.13...any-store-v1.0.14) (2024-02-02)
 
 
