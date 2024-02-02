@@ -333,6 +333,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.26 to 2.0.27
 
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.2.16 to ^1.2.17
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.27 to 2.0.28
+
 ## [3.0.22](https://github.com/dao-xyz/peerbit/compare/log-v3.0.21...log-v3.0.22) (2024-01-26)
 
 

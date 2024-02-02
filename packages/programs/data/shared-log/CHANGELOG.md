@@ -349,6 +349,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.26 to ^2.0.27
 
+## [8.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.1...shared-log-v8.0.2) (2024-02-02)
+
+
+### Bug Fixes
+
+* add option to control distribution debounce time ([437043e](https://github.com/dao-xyz/peerbit/commit/437043ea96d1782544451df9137065dc9516e608))
+* distribute sync requests with lower priority ([29ec5b5](https://github.com/dao-xyz/peerbit/commit/29ec5b59d7075ec0bf4324186dd0279b86690a45))
+* make distribute timeout dependent on log length ([dbe1834](https://github.com/dao-xyz/peerbit/commit/dbe1834886e0c5b852b4285f4ad17b3e9f45c59d))
+* set higher priority for meta messages ([1c1793f](https://github.com/dao-xyz/peerbit/commit/1c1793fccb665f6d31cfff0ab5583f72932f95b6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.1 to 4.0.2
+    * @peerbit/log bumped from 3.0.28 to 3.0.29
+    * @peerbit/rpc bumped from 4.0.1 to 4.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.27 to ^2.0.28
+
 ## [8.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.11...shared-log-v8.0.0) (2024-02-01)
 
 

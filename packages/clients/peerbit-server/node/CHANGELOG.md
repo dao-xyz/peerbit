@@ -420,6 +420,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.26 to 2.0.27
 
+## [5.0.28](https://github.com/dao-xyz/peerbit/compare/server-v5.0.27...server-v5.0.28) (2024-02-02)
+
+
+### Bug Fixes
+
+* add shutown codes to message ([0fea0b8](https://github.com/dao-xyz/peerbit/commit/0fea0b81ccfd1374473d6c0ebc8e2d59a662aad7))
+* don't redirect on acme challange ([e22d953](https://github.com/dao-xyz/peerbit/commit/e22d953de3866beec85120bdd9d5d4d48848051e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.0.1 to 4.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.27 to 2.0.28
+
 ## [5.0.21](https://github.com/dao-xyz/peerbit/compare/server-v5.0.20...server-v5.0.21) (2024-01-26)
 
 

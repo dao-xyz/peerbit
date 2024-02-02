@@ -251,6 +251,22 @@
     * @peerbit/stream bumped from 4.0.0 to 4.0.1
     * @peerbit/blocks-interface bumped from 1.2.15 to 1.2.16
 
+## [2.0.27](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.26...blocks-v2.0.27) (2024-02-02)
+
+
+### Bug Fixes
+
+* prevent nullpointer when stopping when already stopped ([70b2ad9](https://github.com/dao-xyz/peerbit/commit/70b2ad904e41d92baa84bfa7be72057eb95ae5f1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^1.0.13 to ^1.0.14
+    * @peerbit/stream bumped from 4.0.1 to 4.0.2
+    * @peerbit/blocks-interface bumped from 1.2.16 to 1.2.17
+
 ## [2.0.20](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.19...blocks-v2.0.20) (2024-01-26)
 
 
