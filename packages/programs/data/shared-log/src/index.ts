@@ -1620,7 +1620,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					signal: this._closeController.signal
 				}).then(() => this._distribute())
 			)
-			.catch(() => {}); // catch ignore abort errror
+			.catch(() => {}); // catch ignore delay abort errror
 	}
 
 	async _distribute() {
