@@ -170,16 +170,15 @@ The [file-sharing](https://files.dao.xyz) app showcases how this technology beha
 
 First we can see that peers get some segments in the content space. We choose starting points indenpendetly based on the public key. 
 
-IMAGE
+When memory limitation is enabled, we can see that the ranges only update once data is added. This is expected because this limitation is not constraining if no data is present. 
+
+[storage-toggle](./storage-toggle.mp4 ':include :type=video controls')
 
 
 When CPU limitation is enabled we can see that if we minimize the tab of a client, it will stop replicating data. This because, a minimized tab is generally heavily throttled, which means processing capacity becomes limited. Once we re-open the tab again, we can see that everything returns to the previous optimal state. 
 
-IMAGE
+[cpu-toggle](./cpu-toggle.webm ':include :type=video controls')
 
-When memory limitation is enabled, we can see that the ranges only update once data is added. This is expected because this limitation is not constraining if no data is present. 
-
-IMAGE
 
 Try it ourself and read the source code [here](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share)
 
