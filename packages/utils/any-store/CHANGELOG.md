@@ -27,6 +27,17 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.15...any-store-v2.0.0) (2024-02-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* This will make AnyStore in the browser only work with Vite builds as default
+
+### Bug Fixes
+
+* import worker url with vite url format ([8770b91](https://github.com/dao-xyz/peerbit/commit/8770b91b66a3023400dfed57bc3f87e602403966))
+
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.14...any-store-v1.0.15) (2024-02-02)
 
 
