@@ -27,6 +27,13 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-v2.0.0...any-store-v2.0.1) (2024-02-02)
+
+
+### Bug Fixes
+
+* prevent vite optimizeDeps from optimizing worker path ([1630244](https://github.com/dao-xyz/peerbit/commit/1630244a4aa45a3582d5c5ddb146ed8766abcd44))
+
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/any-store-v1.0.15...any-store-v2.0.0) (2024-02-02)
 
 
