@@ -223,7 +223,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				}, 3 * 1000); // TODO if this timeout > 10s we run into issues in the tests when running in CI
 				const abortHandler = () => {
 					this.removeEventListener("close", abortHandler);
-					reject(new Error("Aborted"));
+					reject(new AbortError("Closed"));
 				};
 				this.addEventListener("close", abortHandler);
 
@@ -241,6 +241,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 					this.write(bytes, priority);
 				})
 				.catch((error) => {
+					if (this.closed) {
+						return; // ignore
+					}
+					if (error instanceof AbortError) {
+						//return;
+					}
 					throw error;
 				});
 		} else {
