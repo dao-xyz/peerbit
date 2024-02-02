@@ -182,6 +182,21 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.0 to 4.0.1
 
+## [3.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.1...pubsub-v3.0.2) (2024-02-02)
+
+
+### Bug Fixes
+
+* add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
+* increase priority of pubsub meta data messages ([2d28912](https://github.com/dao-xyz/peerbit/commit/2d28912f1a4767669f43aaf3f889afe7e7d6d52d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.0.1 to 4.0.2
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.21...pubsub-v3.0.0) (2024-02-01)
 
 

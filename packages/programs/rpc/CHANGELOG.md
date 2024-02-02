@@ -376,6 +376,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.26 to ^2.0.27
 
+## [4.0.2](https://github.com/dao-xyz/peerbit/compare/rpc-v4.0.1...rpc-v4.0.2) (2024-02-02)
+
+
+### Bug Fixes
+
+* don't wait for response handler ([6419800](https://github.com/dao-xyz/peerbit/commit/6419800b74cf54d9d3ed5beaf4fef42b13263f6f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.1 to 4.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.27 to ^2.0.28
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/rpc-v3.0.25...rpc-v4.0.0) (2024-02-01)
 
 

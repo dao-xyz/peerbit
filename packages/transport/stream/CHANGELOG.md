@@ -43,6 +43,21 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.2](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.1...stream-v4.0.2) (2024-02-02)
+
+
+### Bug Fixes
+
+* add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
+* typo ([1d9dac1](https://github.com/dao-xyz/peerbit/commit/1d9dac16f1f6e641d0741059e86a8b625f3e29ca))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^5.0.0 to ^5.0.1
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/stream-v3.1.2...stream-v4.0.0) (2024-02-01)
 
 

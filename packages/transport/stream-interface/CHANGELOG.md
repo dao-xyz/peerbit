@@ -60,6 +60,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.5 to 2.1.6
 
+## [5.0.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.0...stream-interface-v5.0.1) (2024-02-02)
+
+
+### Bug Fixes
+
+* add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v4.0.0...stream-interface-v5.0.0) (2024-02-01)
 
 

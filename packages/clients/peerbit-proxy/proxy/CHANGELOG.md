@@ -268,6 +268,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.26 to 2.0.27
 
+## [3.0.2](https://github.com/dao-xyz/peerbit/compare/proxy-v3.0.1...proxy-v3.0.2) (2024-02-02)
+
+
+### Bug Fixes
+
+* add id option to publish fn ([31abdc6](https://github.com/dao-xyz/peerbit/commit/31abdc69d2f46ab2facfe34f2f9cf5e7d8cd9608))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^4.0.1 to ^4.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.27 to 2.0.28
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v2.0.25...proxy-v3.0.0) (2024-02-01)
 
 
