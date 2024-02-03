@@ -169,11 +169,13 @@ Initially, we observe peers receiving segments within the content space, with st
 
 
 
-<video src="/topics/sharding/storage-toggle.mp4" controls muted ></video>
+<video src="/topics/sharding/storage-toggle.mp4" controls muted style="width: 100%" ></video>
+
 When memory limitation is enabled, the ranges are observed to update accordingly to what we set the limit to. Also note on the top left "Used storage" and how that changes with the limit set.
 
 Upon enabling CPU limitation, it's noticeable that minimizing a client's tab halts data replication. This occurs because a minimized tab is typically subject to significant throttling, thereby constraining processing capacity. However, once the tab is reopened, operations resume to their optimal state.
-<video src="/topics/sharding/cpu-toggle.mp4" controls muted ></video>
+
+<video src="/topics/sharding/cpu-toggle.mp4" controls muted  style="width: 100%"></video>
 
 Explore this yourself and review the source code [here](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share).
 
