@@ -123,81 +123,82 @@ A simplified mathematical representation of the iterator looks like this:
 </p>
 
 
+Simplified, we use [Lagrange relaxation](https://en.wikipedia.org/wiki/Lagrangian_relaxation) to combine constraints into a single comprehensive objective function.
 
-Simplified, we can say we are using [Lagrange relaxation](https://en.wikipedia.org/wiki/Lagrangian_relaxation) to combine the constraints into one big objective function.
-
-When everything works well, the width will converge to a number for every peer over time.
+When everything functions correctly, the width will converge to a specific number for each peer over time.
 
 <p align="center">
 <img width="800" src="./topics/sharding/p15.png" alt="p15">
 </p>
 
-If it is helpful for understanding: conceptually this is equivalent of that we are trying to regulate the heat in three houses at the same time, where the controller in one house depends on the other houses (if someone else is to do less replication work, I might have to do more work instead)
+For better understanding, consider this analogy: it's as if we're trying to regulate the temperature in three houses simultaneously, where the thermostat in one house is influenced by the others. But the twist is that if one house requires less heating, another might need to compensate by heating more.
 
- 
-Source code for the PID controller can be found [here](https://github.com/dao-xyz/peerbit/blob/master/packages/programs/data/shared-log/src/pid.ts).
+The source code for the PID controller is available [here](https://github.com/dao-xyz/peerbit/blob/master/packages/programs/data/shared-log/src/pid.ts).
 
 ### (C) Efficient Aggregation
 
-This is the final piece in the puzzle. How can we, with the solution outlined in (A), efficiently aggregate all unique data points to find all dog photos?
+This is the final component of the solution. How can we, using the method described in (A), efficiently aggregate all unique data points to locate all dog photos?
 
-Simplified, by the way we have done the distribution by jumping with `1 / min replicas` for every replication. We know that if we "walk" along the axis with `1 / min replicas` distance we have actually had the opportunity to see all the data (!). (Though there will be edge cases for handling gaps, round the boundaries of the start and end point of our walk).
+Simplified, the distribution method involves jumping by `1 / min replicas` for each replication. This ensures that if we "walk" along the axis with a distance of `1 / min replicas`, we will have the chance to encounter all the data (!).(Though there will be edge cases for handling gaps, around the boundaries of the start and end point of our walk).
 
-What is nice about this walk is that we can make it "local first" by starting to walk on our "range". For every step we take, we only need 1 node (unless you want to have redundancy in the search), so if multiple are overlapping we just consider the one with the longest width (so we have to consider few nodes as possible).
+A notable aspect of this approach is its "local first" nature. We begin our journey within our "range." For each step taken, we only require one node (unless redundancy in the search is desired), so if multiple ranges overlap, we consider only the one with the greatest width, minimizing the number of nodes we need to involve.
 
-Consider the figure below for how aggregation is performed
+Below are illustrations of how aggregation is executed:
 
 Start "local first":
 <p align="center">
 <img width="500" src="./topics/sharding/p16.png" alt="p16">
 </p>
 
-Calculate how long you have too "walk":
+Determine the length of your "walk":
 <p align="center">
 <img width="500" src="./topics/sharding/p17.png" alt="p17">
 </p>
 
-Aggregate every range, but don't consider more than one range per "step":
+Aggregate every range and note its owner, but avoid considering more than one range per "step":
 <p align="center">
 <img width="500" src="./topics/sharding/p18.png" alt="p18">
 </p>
- 
-Source code for the aggregation can be found [here](https://github.com/dao-xyz/peerbit/blob/95420cd37cb8d2ced4733495b6901b2b5e445e01/packages/programs/data/shared-log/src/ranges.ts#L155) 
 
+The source code for the aggregation is accessible [here](https://github.com/dao-xyz/peerbit/blob/95420cd37cb8d2ced4733495b6901b2b5e445e01/packages/programs/data/shared-log/src/ranges.ts#L155).
 
 ## Demo
-The [file-sharing](https://files.dao.xyz) app showcases how this technology behaves in practice. 
+The [file-sharing](https://files.dao.xyz) application demonstrates how this technology operates in real scenarios.
 
-First we can see that peers get some segments in the content space. We choose starting points indenpendetly based on the public key. 
-
-When memory limitation is enabled, we can see that the ranges only update once data is added. This is expected because this limitation is not constraining if no data is present. 
-
-[storage-toggle](./storage-toggle.mp4 ':include :type=video controls')
+Initially, we observe peers receiving segments within the content space, with starting points independently determined based on the public key.
 
 
-When CPU limitation is enabled we can see that if we minimize the tab of a client, it will stop replicating data. This because, a minimized tab is generally heavily throttled, which means processing capacity becomes limited. Once we re-open the tab again, we can see that everything returns to the previous optimal state. 
 
-[cpu-toggle](./cpu-toggle.webm ':include :type=video controls')
+<video src="/topics/sharding/storage-toggle.webm" controls muted ></video>
+When memory limitation is enabled, the ranges are observed to update accordingly to what we set the limit to. Also note on the top left "Used storage" and how that changes with the limit set.
 
+Upon enabling CPU limitation, it's noticeable that minimizing a client's tab halts data replication. This occurs because a minimized tab is typically subject to significant throttling, thereby constraining processing capacity. However, once the tab is reopened, operations resume to their optimal state.
+<video src="/topics/sharding/cpu-toggle.webm" controls muted ></video>
 
-Try it ourself and read the source code [here](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share)
+Explore this yourself and review the source code [here](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share).
 
+## How to use this?
+For example on how to use this in your app, read more [here](/modules/program/document-store/?id=role)
 
 ## Future Work and Improvements
-### Scaling with Many Peers
-When the number of replicators (or more specifically ranges/segments) is large, we will eventually run into a scaling problem, where everyone needs to know about everyone else (which will not be feasible). This is not a problem in general for existing DHT solutions which utilize the peer IDs and content address to make it possible size route table logarithmically with participation count.
+### Scaling with Peers
+As the number of replicators (or ranges/segments) increases, a scaling issue arises due to the necessity for each participant to be aware of all others, which becomes impractical. This challenge doesn't generally affect existing DHT solutions that leverage peer IDs and content addresses for logarithmic scaling of the size of routing tables with participation count.
 
-For this system, we have lost the opportunity to use peer IDs this way because allowed peers to choose their "points" to be anywhere. But there is a nice solution around this because we have unlocked (C) and use recursion. The idea is that we create one or more databases that track replication ranges of peers:
+In this system, the opportunity to utilize peer IDs in this manner is lost since peers are allowed to choose their "points" freely. However, a promising solution involves using recursion, as unlocked in (C). The concept involves creating one or more databases to monitor the replication ranges of peers:
 
 "The loop":
 
-Consider we create a database that contains all the responsibility ranges of another database as documents. Since there is realistically less data in this database, we should not need as many replicators. This means that the amount of metadata that describes the responsibilities of this database will be LESS.
+Imagine constructing a database encompassing all responsibility ranges of another database as documents. With less data in this database, fewer replicators are needed, consequently reducing the metadata describing this database's responsibilities.
 
-Do the "The loop" to define databases that describe the replication of the next database. Eventually, the "head" database will be very small, and when it is small enough we can consider it as our "root" db. Now to interact with the database where content is actually stored, we can efficiently aggregate replicator ranges using (C) iteratively down the database chain until we reach the data. The solution will behave similarly as how partial routing tables work with common DHT systems, but the difference here is that we can control the replication of the partial routing tables as well.
+Apply "The loop" to define databases that outline the replication of the subsequent database. Ultimately, the "head" database becomes sufficiently small to serve as our "root" database. To interact with the database where actual content is stored, we can efficiently aggregate replicator ranges using (C) iteratively down the database chain until we reach the data. This solution resembles how partial routing tables function in common DHT systems but with controllable replication of these tables.
+
+### Optimize Adjustment Frequencies
+
+The gossip required to maintain an optimal setup depends on how quickly we want to reach a solution. While converging quickly can be beneficial, too much gossip will eventually become an overhead and impair performance. The current implementation needs future improvements to ensure that the convergence is correctly balanced against this overhead.
+
+The parameters for the PID regulator might need to be adaptive, depending on network dynamics. In volatile networks, it might not be advisable to adjust your parameters too quickly in response to others. Finding optimal `Kp`, `Ki`, and `Kd` values that minimize convergence time and unnecessary data transfers would most likely require a more robust estimator capable of handling the probable non-linear properties. Therefore, neural network models would naturally be a suitable candidate here.
 
 ### Numerical Optimizers
 
-Previously described, the resource optimization problem was solved with a PID controller, under the assumption the problem has nice "convex" properties. This assumption might hold for many cases, but there might be scenarios where more robust (and more resource-heavy) solvers will be preferable. E.g. when non-numerical properties and non-linear features are used, an [RNN](https://en.wikipedia.org/wiki/Recurrent_neural_network) could work better.
-
-Additionally, the parameters for the PID regulator perhaps need to be adaptive depending on network dynamics. For volatile networks, you might not want to too quickly adjust your width to others. Finding optimal `Kp`, `Ki` and `Kd`that minimizes convergence time, and unecessary data transfers would most likeli need a more robust estimator that can handle the most likeli non-linear properties. Therefore neural network models will naturallly be a good candidate here. 
+As previously described, the resource optimization problem was solved with a PID controller, under the assumption that the problem has desirable "convex" properties. While this assumption may hold in many cases, there might be scenarios where more robust (and more resource-intensive) solvers would be preferable. For instance, when non-numerical properties and non-linear features are involved, a [Recurrent Neural Network (RNN)](https://en.wikipedia.org/wiki/Recurrent_neural_network) might perform better.
 

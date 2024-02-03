@@ -88,9 +88,7 @@ const responses: Post[] = await store2.posts.index.search(
 	}),
 	{
 		local: true,
-		remote: {
-			minAge: 0
-		}
+		remote: true
 	}
 );
 

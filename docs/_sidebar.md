@@ -22,7 +22,7 @@ Modules
 
 Topics
 - [Wallet integration](/topics/wallet-integration/)
-- [Sharding](/topics/sharding/sharding.md)
+- [Resource-aware sharding](/topics/sharding/sharding.md)
 - [Data integrity](/topics/integrity/integrity.md)
 - [Peerbit vs [?]](/topics/difference/difference.md)
 

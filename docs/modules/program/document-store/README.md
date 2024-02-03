@@ -73,6 +73,11 @@ You can also delete documents.
 
 [delete](./document-store.ts ':include :fragment=delete')
 
+## Role 
+There are different kinds of roles you can participate with
+
+[roles](./roles.ts ':include :fragment=set-role')
+
 
 ## Searching
 Now from another client, let's connect, and try to find our documents.
