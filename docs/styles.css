@@ -5,7 +5,6 @@
 /* scrollbar color */
 ::-webkit-scrollbar {
 	background: #262e32;
-	width: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
