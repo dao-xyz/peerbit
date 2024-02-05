@@ -33,6 +33,11 @@ const db = peer.open("address", {
 
 For (A), we already have many solutions that work well but generally do not consider (B) and (C). For instance, in common DHT systems, we can use the identities of the participants to distribute content and pick neighbors to satisfy the minimum replication degree constraint.
 
+<p align="center">
+<img width="800" src="./topics/sharding/p1.png" alt="p1">
+</p>
+
+
 However, once you mix in constraints from (B), this quickly becomes more challenging because you can no longer rely on your neighbors being ready to help you with replication. If you then need to "skip" neighbors for this reason, it might become challenging to keep up-to-date information on where all the replicas are located.
 
 Additionally, imagine the data being stored are images, and you want to find all images that represent dogs. How many peers do you need to ask at least if the minimum number of replicas is 1, 2, 3... to ensure you will certainly find all dogs? (Asking every peer will always work, but will not be feasible when the network is large)
