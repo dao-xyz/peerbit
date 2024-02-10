@@ -1063,7 +1063,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					// TODO batch to multiple 'to's
 					const collectRequest = new CollectNextRequest({
 						id: queryRequest.id,
-						amount: 10 //n - buffer.buffer.length,
+						amount: n - buffer.buffer.length
 					});
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {

@@ -2397,6 +2397,46 @@ describe("index", () => {
 				}
 			});
 
+			it("observer mixed sort", async () => {
+				// TODO separate setup so we don't need to close store 2 test here
+				await stores[2].close();
+				await stores[0].docs.updateRole({ type: "observer" });
+				await waitForResolved(() =>
+					expect(
+						stores[0].docs.log.getReplicatorsSorted()?.toArray().length
+					).toEqual(1)
+				);
+				let data: number[] = [];
+				for (let i = 0; i < 100; i++) {
+					let doc = new Document({
+						id: Buffer.from(String(i)),
+						name: String(i),
+						number: BigInt(i)
+					});
+					data.push(i);
+					const { entry } = await stores[1].docs.put(doc, { target: "all" });
+					if (i > 30) await stores[0].docs.log.log.join([entry]); // only join some entries to the observer
+				}
+
+				const req = new SearchRequest({
+					query: [
+						new IntegerCompare({
+							key: "number",
+							compare: Compare.GreaterOrEqual,
+							value: 0n
+						})
+					],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })]
+				});
+				const iterator = stores[0].docs.index.iterate(req);
+				let acc: Document[] = [];
+				while (iterator.done() === false) {
+					const v = await iterator.next(20);
+					acc = [...acc, ...v];
+				}
+				expect(acc.map((x) => Number(x.number))).toEqual(data);
+			});
+
 			it("deduplication on first entry", async () => {
 				let e0 = await put(0, 0);
 				await put(0, 1);
