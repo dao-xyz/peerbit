@@ -6,14 +6,14 @@
 	"scripts": {
 		"dev": "vite",
 		"start": "vite",
-		"build": "tsc && vite --force build",
+		"build": "tsc && vite build",
 		"preview": "vite preview"
 	},
 	"dependencies": {
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0",
 		"@peerbit/stream": "*",
-		"libp2p": "^1.2.1"
+		"libp2p": "^1.2.3"
 	},
 	"devDependencies": {
 		"@types/react": "^18.2.12",

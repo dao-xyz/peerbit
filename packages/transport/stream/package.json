@@ -61,7 +61,7 @@
 		"@peerbit/cache": "2.0.6",
 		"@peerbit/crypto": "2.1.7",
 		"@peerbit/stream-interface": "^5.0.1",
-		"libp2p": "^1.2.1",
+		"libp2p": "^1.2.3",
 		"yallist": "^4.0.0",
 		"abortable-iterator": "^5.0.1"
 	}

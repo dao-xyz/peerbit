@@ -37,7 +37,7 @@
 		"@peerbit/crypto": "2.1.7",
 		"@peerbit/logger": "1.0.2",
 		"@peerbit/time": "2.0.6",
-		"libp2p": "^1.2.1",
+		"libp2p": "^1.2.3",
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
 		"yallist": "^4.0.0",
