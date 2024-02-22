@@ -657,7 +657,7 @@ describe("index", () => {
 					await expect(
 						(store as TestIndexStore).docs.put(doc)
 					).rejects.toThrowError(
-						"The provided key value is null or undefined, expecting string or Uint8array"
+						"Unexpected index key: undefined, expected: string, number, bigint or Uint8Array"
 					);
 				});
 
@@ -716,7 +716,7 @@ describe("index", () => {
 			});
 
 			describe("bytes", () => {
-				class SimpleDocument {
+				class DocumentUin8arrayId {
 					@field({ type: Uint8Array })
 					id: Uint8Array;
 
@@ -729,15 +729,15 @@ describe("index", () => {
 					}
 				}
 
-				@variant("test_simple_store")
-				class TestSimpleStore extends Program {
+				@variant("test_uint8array_id_store")
+				class TestUint8arrayIdStore extends Program {
 					@field({ type: Uint8Array })
 					id: Uint8Array;
 
 					@field({ type: Documents })
-					docs: Documents<SimpleDocument>;
+					docs: Documents<DocumentUin8arrayId>;
 
-					constructor(properties: { docs: Documents<SimpleDocument> }) {
+					constructor(properties: { docs: Documents<DocumentUin8arrayId> }) {
 						super();
 
 						this.id = randomBytes(32);
@@ -745,30 +745,95 @@ describe("index", () => {
 					}
 					async open(): Promise<void> {
 						await this.docs.open({
-							type: SimpleDocument,
-							index: { key: "id" }
+							type: DocumentUin8arrayId
 						});
 					}
 				}
 
 				it("index as Uint8array", async () => {
-					store = new TestSimpleStore({
-						docs: new Documents<SimpleDocument>()
+					store = new TestUint8arrayIdStore({
+						docs: new Documents<DocumentUin8arrayId>()
 					});
 					await session.peers[0].open(store);
 
 					const id = new Uint8Array([1, 2, 3]);
-					let doc = new SimpleDocument({
+					let doc = new DocumentUin8arrayId({
 						id,
 						value: "Hello world"
 					});
 
-					await (store as TestSimpleStore).docs.put(doc);
-					const results = await (store as TestSimpleStore).docs.index.search(
+					await (store as TestUint8arrayIdStore).docs.put(doc);
+					const results = await (
+						store as TestUint8arrayIdStore
+					).docs.index.search(
 						new SearchRequest({
 							query: [
 								new ByteMatchQuery({
 									key: "id",
+									value: id
+								})
+							]
+						})
+					);
+					expect(results).toHaveLength(1);
+				});
+			});
+
+			describe("bigint", () => {
+				class DocumentBigintId {
+					@field({ type: "u64" })
+					id: bigint;
+
+					@field({ type: "string" })
+					value: string;
+
+					constructor(properties: { id: bigint; value: string }) {
+						this.id = properties.id;
+						this.value = properties.value;
+					}
+				}
+
+				@variant("test_bigint_id_store")
+				class TestBigintIdStore extends Program {
+					@field({ type: Uint8Array })
+					id: Uint8Array;
+
+					@field({ type: Documents })
+					docs: Documents<DocumentBigintId>;
+
+					constructor(properties: { docs: Documents<DocumentBigintId> }) {
+						super();
+
+						this.id = randomBytes(32);
+						this.docs = properties.docs;
+					}
+					async open(): Promise<void> {
+						await this.docs.open({
+							type: DocumentBigintId
+						});
+					}
+				}
+
+				it("index as bigint", async () => {
+					store = new TestBigintIdStore({
+						docs: new Documents<DocumentBigintId>()
+					});
+					await session.peers[0].open(store);
+
+					const id = 123456789n;
+					let doc = new DocumentBigintId({
+						id,
+						value: "Hello world"
+					});
+
+					const fff = serialize(doc);
+					await (store as TestBigintIdStore).docs.put(doc);
+					const results = await (store as TestBigintIdStore).docs.index.search(
+						new SearchRequest({
+							query: [
+								new IntegerCompare({
+									key: "id",
+									compare: Compare.Equal,
 									value: id
 								})
 							]
@@ -1416,7 +1481,7 @@ describe("index", () => {
 
 						@variant("test-nested-nested-document-store")
 						class NestedDocumentStore extends Program<
-							Partial<SetupOptions<Document>>
+							Partial<SetupOptions<NestedDocument>>
 						> {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
@@ -1431,7 +1496,7 @@ describe("index", () => {
 							}
 
 							async open(
-								options?: Partial<SetupOptions<Document>>
+								options?: Partial<SetupOptions<NestedDocument>>
 							): Promise<void> {
 								await this.documents.open({
 									...options,
@@ -2724,9 +2789,7 @@ describe("index", () => {
 				})
 			);
 			await expect(
-				store.docs.log.log.append(
-					new PutOperation({ key: "key", data: randomBytes(32) })
-				)
+				store.docs.log.log.append(new PutOperation({ data: randomBytes(32) }))
 			).rejects.toThrowError(AccessError);
 		});
 
@@ -2741,7 +2804,7 @@ describe("index", () => {
 
 			const canAppend = await store.docs.canAppend(
 				(await Entry.create({
-					data: new PutOperation({ key: "key", data: randomBytes(32) }),
+					data: new PutOperation({ data: randomBytes(32) }),
 					identity: store.node.identity,
 					store: store.docs.log.log.blocks,
 					canAppend: () => true,

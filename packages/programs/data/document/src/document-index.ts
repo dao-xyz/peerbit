@@ -1,6 +1,5 @@
-import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
-import { asString, Keyable } from "./utils.js";
-import { BORSH_ENCODING, Encoding, Entry } from "@peerbit/log";
+import { AbstractType, field, variant } from "@dao-xyz/borsh";
+import { BORSH_ENCODING, Encoding } from "@peerbit/log";
 import { equals } from "@peerbit/uint8arrays";
 import { Program } from "@peerbit/program";
 import {
@@ -42,6 +41,7 @@ import { SharedLog } from "@peerbit/shared-log";
 import { concat, fromString } from "uint8arrays";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
+import { IndexKey, Keyable, keyAsString } from "./types.js";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -62,20 +62,19 @@ export class Operation<T> {}
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
+/**
+ * Put a complete document at a key
+ */
 @variant(0)
 export class PutOperation<T> extends Operation<T> {
-	@field({ type: "string" })
-	key: string;
-
 	@field({ type: Uint8Array })
 	data: Uint8Array;
 
 	_value?: T;
 
-	constructor(props?: { key: string; data: Uint8Array; value?: T }) {
+	constructor(props?: { data: Uint8Array; value?: T }) {
 		super();
 		if (props) {
-			this.key = props.key;
 			this.data = props.data;
 			this._value = props.value;
 		}
@@ -110,16 +109,18 @@ export class PutAllOperation<T> extends Operation<T> {
 	}
 }
  */
+
+/**
+ * Delete a document at a key
+ */
 @variant(2)
 export class DeleteOperation extends Operation<any> {
-	@field({ type: "string" })
-	key: string;
+	@field({ type: IndexKey })
+	key: IndexKey;
 
-	constructor(props?: { key: string }) {
+	constructor(props: { key: IndexKey }) {
 		super();
-		if (props) {
-			this.key = props.key;
-		}
+		this.key = props.key;
 	}
 }
 
@@ -251,12 +252,12 @@ const introduceEntries = async <T>(
 
 const dedup = <T>(
 	allResult: T[],
-	dedupBy: (obj: any) => string | Uint8Array
+	dedupBy: (obj: any) => string | Uint8Array | number | bigint
 ) => {
 	const unique: Set<Keyable> = new Set();
 	const dedup: T[] = [];
 	for (const result of allResult) {
-		const key = asString(dedupBy(result));
+		const key = keyAsString(dedupBy(result));
 		if (unique.has(key)) {
 			continue;
 		}
@@ -331,7 +332,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private _indexByArr: string[];
 
 	// Resolve doc value by index key
-	indexByResolver: (obj: any) => string | Uint8Array;
+	indexByResolver: (obj: any) => string | Uint8Array | number | bigint;
 
 	// Indexed (transforms an docuemnt into an obj with fields that ought to be indexed)
 	private _toIndex: IndexableFields<T>;
@@ -443,14 +444,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	public async get(
-		key: Keyable,
+		key: Keyable | IndexKey,
 		options?: QueryOptions<T>
 	): Promise<T | undefined> {
 		return (await this.getDetailed(key, options))?.[0]?.results[0]?.value;
 	}
 
 	public async getDetailed(
-		key: Keyable,
+		key: Keyable | IndexKey,
 		options?: QueryOptions<T>
 	): Promise<Results<T>[] | undefined> {
 		let results: Results<T>[] | undefined;
@@ -462,7 +463,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				options
 			);
 		} else {
-			const stringValue = asString(key);
+			const stringValue = keyAsString(key);
 			results = await this.queryDetailed(
 				new SearchRequest({
 					query: [
@@ -558,7 +559,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			) {
 				const firstQuery = query.query[0];
 				if (firstQuery instanceof ByteMatchQuery) {
-					const doc = this._index.get(asString(firstQuery.value));
+					const doc = this._index.get(keyAsString(firstQuery.value));
 					const topDoc = doc && (await this.getDocumentWithLastOperation(doc));
 					return topDoc
 						? {
@@ -1011,10 +1012,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						peerBufferMap.set(from.hashcode(), {
 							buffer: results.results
 								.filter(
-									(x) => !visited.has(asString(this.indexByResolver(x.value)))
+									(x) =>
+										!visited.has(keyAsString(this.indexByResolver(x.value)))
 								)
 								.map((x) => {
-									visited.add(asString(this.indexByResolver(x.value)));
+									visited.add(keyAsString(this.indexByResolver(x.value)));
 									return {
 										from,
 										value: { value: x.value },
@@ -1090,12 +1092,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 												.filter(
 													(x) =>
 														!visited.has(
-															asString(this.indexByResolver(x.value.value))
+															keyAsString(this.indexByResolver(x.value.value))
 														)
 												)
 												.map((x) => {
 													visited.add(
-														asString(this.indexByResolver(x.value.value))
+														keyAsString(this.indexByResolver(x.value.value))
 													);
 													return {
 														value: x.value,
@@ -1148,12 +1150,12 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 															.filter(
 																(x) =>
 																	!visited.has(
-																		asString(this.indexByResolver(x.value))
+																		keyAsString(this.indexByResolver(x.value))
 																	)
 															)
 															.map((x) => {
 																visited.add(
-																	asString(this.indexByResolver(x.value))
+																	keyAsString(this.indexByResolver(x.value))
 																);
 																return {
 																	value: { value: x.value },
