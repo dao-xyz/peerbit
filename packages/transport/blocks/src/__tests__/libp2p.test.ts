@@ -2,6 +2,7 @@ import { TestSession } from "@peerbit/libp2p-test-utils";
 import { DirectBlock } from "..";
 import { waitForPeers } from "@peerbit/stream";
 import { jest } from "@jest/globals";
+import { delay } from "@peerbit/time";
 
 const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
@@ -29,7 +30,7 @@ describe("transport", function () {
 		await waitForPeers(store(session, 0), store(session, 1));
 	}); */
 
-	it("rw", async () => {
+	it("write then read over relay", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) }
 		});
@@ -51,6 +52,32 @@ describe("transport", function () {
 
 		expect(cid).toEqual("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 		const readData = await store(session, 2).get(cid);
+		expect(new Uint8Array(readData!)).toEqual(data);
+	});
+
+	it("read while join over relay", async () => {
+		session = await TestSession.disconnected(3, {
+			services: { blocks: (c) => new DirectBlock(c) }
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([[session.peers[0], session.peers[1]]]);
+
+		await waitForPeers(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).toEqual("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const readDataPromise = store(session, 2).get(cid, { timeout: 5000 });
+		await delay(1000);
+		await session.connect([[session.peers[1], session.peers[2]]]);
+
+		const readData = await readDataPromise;
+		expect(readData).toBeDefined();
 		expect(new Uint8Array(readData!)).toEqual(data);
 	});
 
