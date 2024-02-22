@@ -62,6 +62,7 @@ export * from "./replication.js";
 import PQueue from "p-queue";
 import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import { getCoverSet, getSamples, isMatured } from "./ranges.js";
+import { error } from "console";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
@@ -1089,7 +1090,15 @@ export class SharedLog<T = Uint8Array> extends Program<
 			}
 			return true;
 		};
-		return waitFor(() => check(), { signal: this._closeController.signal });
+		return waitFor(() => check(), {
+			signal: this._closeController.signal
+		}).catch((e) => {
+			if (e instanceof AbortError) {
+				// ignore error
+				return;
+			}
+			throw e;
+		});
 	}
 
 	async isLeader(
