@@ -393,11 +393,6 @@ export class Documents<T extends Record<string, any>>
 	}
 
 	async handleChanges(change: Change<Operation<T>>): Promise<void> {
-		console.log(
-			"change",
-			change.added.map((x) => x.hash),
-			change.removed.map((x) => x.hash)
-		);
 		const removed = [...(change.removed || [])];
 		const removedSet = new Map<string, Entry<Operation<T>>>();
 		for (const r of removed) {
