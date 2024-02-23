@@ -112,7 +112,7 @@ export class IdentityAccessController extends Program {
 	}
 
 	async canPerform(
-		_operation: PutOperation<Access> | DeleteOperation,
+		_operation: PutOperation<any> | DeleteOperation, // TODO types
 		context: TransactionContext<Access>
 	): Promise<boolean> {
 		// TODO, improve, caching etc
