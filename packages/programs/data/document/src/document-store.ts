@@ -273,7 +273,8 @@ export class Documents<T extends Record<string, any>>
 				const key = asKey(keyValue);
 
 				const existingDocument = this.index.index.get(key.indexKey);
-				if (existingDocument) {
+				if (existingDocument && existingDocument.context.head !== entry.hash) {
+					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
 						return false;
@@ -392,6 +393,11 @@ export class Documents<T extends Record<string, any>>
 	}
 
 	async handleChanges(change: Change<Operation<T>>): Promise<void> {
+		console.log(
+			"change",
+			change.added.map((x) => x.hash),
+			change.removed.map((x) => x.hash)
+		);
 		const removed = [...(change.removed || [])];
 		const removedSet = new Map<string, Entry<Operation<T>>>();
 		for (const r of removed) {

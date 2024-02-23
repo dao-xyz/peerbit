@@ -3373,7 +3373,9 @@ describe("index", () => {
 			await db1.close();
 			let canPerform = false;
 			db1 = await session.peers[0].open(db1.clone(), {
-				args: { canPerform: () => canPerform }
+				args: {
+					canPerform: () => canPerform
+				}
 			});
 			expect(db1.docs.index.size).toEqual(0);
 			await db1.docs.log.log.headsIndex["_index"].clear();
