@@ -10,7 +10,6 @@ import { Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
-import { AppendOptions } from "@peerbit/log";
 import { CustomEvent } from "@libp2p/interface";
 import {
 	RoleOptions,
@@ -36,7 +35,7 @@ import {
 	MAX_DOCUMENT_SIZE
 } from "./document-index.js";
 import { Context, Results } from "./query.js";
-import { Keyable, asKey, checkKeyable, keyAsString } from "./types.js";
+import { Keyable, asKey, checkKeyable, keyAsIndexable } from "./types.js";
 export { MAX_DOCUMENT_SIZE };
 
 const logger = loggerFn({ module: "document" });
@@ -273,7 +272,7 @@ export class Documents<T extends Record<string, any>>
 				);
 				const key = asKey(keyValue);
 
-				const existingDocument = this.index.index.get(key.string);
+				const existingDocument = this.index.index.get(key.indexKey);
 				if (existingDocument) {
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
@@ -298,7 +297,7 @@ export class Documents<T extends Record<string, any>>
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = this._index.index.get(operation.key.string);
+				const existingDocument = this._index.index.get(operation.key.indexKey);
 				if (!existingDocument) {
 					// already deleted
 					return true; // assume ok
@@ -410,7 +409,7 @@ export class Documents<T extends Record<string, any>>
 			removed: []
 		};
 
-		let modified: Set<string> = new Set();
+		let modified: Set<string | number | bigint> = new Set();
 
 		for (const item of sortedEntries) {
 			try {
@@ -426,7 +425,7 @@ export class Documents<T extends Record<string, any>>
 					const key = asKey(keyObject);
 
 					// document is already updated with more recent entry
-					if (modified.has(key.string)) {
+					if (modified.has(key.indexKey)) {
 						continue;
 					}
 
@@ -448,7 +447,7 @@ export class Documents<T extends Record<string, any>>
 
 					const context = new Context({
 						created:
-							this._index.index.get(key.string)?.context.created ||
+							this._index.index.get(key.indexKey)?.context.created ||
 							item.meta.clock.timestamp.wallTime,
 						modified: item.meta.clock.timestamp.wallTime,
 						head: item.hash,
@@ -456,8 +455,8 @@ export class Documents<T extends Record<string, any>>
 					});
 
 					const valueToIndex = this._index.toIndex(value, context);
-					this._index.index.set(key.string, {
-						key: key.string,
+					this._index.index.set(key.indexKey, {
+						key: key,
 						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
 						context,
 						reference:
@@ -466,7 +465,7 @@ export class Documents<T extends Record<string, any>>
 								: undefined
 					});
 
-					modified.add(key.string);
+					modified.add(key.indexKey);
 				} else if (
 					(payload instanceof DeleteOperation && !removedSet.has(item.hash)) ||
 					payload instanceof PutOperation ||
@@ -475,17 +474,17 @@ export class Documents<T extends Record<string, any>>
 					this._manuallySynced.delete(item.gid);
 
 					let value: T;
-					let key: string;
+					let key: string | number | bigint;
 
 					if (payload instanceof PutOperation) {
 						value = this.deserializeOrPass(payload);
-						key = keyAsString(this._index.indexByResolver(value));
+						key = keyAsIndexable(this._index.indexByResolver(value));
 						// document is already updated with more recent entry
 						if (modified.has(key)) {
 							continue;
 						}
 					} else if (payload instanceof DeleteOperation) {
-						key = payload.key.string;
+						key = payload.key.indexKey;
 						// document is already updated with more recent entry
 						if (modified.has(key)) {
 							continue;
@@ -511,6 +510,8 @@ export class Documents<T extends Record<string, any>>
 
 					// update index
 					this._index.index.delete(key);
+
+					modified.add(key);
 				} else {
 					// Unknown operation
 				}

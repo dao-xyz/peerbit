@@ -24,7 +24,8 @@ import {
 	SortDirection,
 	CloseIteratorRequest,
 	NoAccess,
-	AbstractSearchResult
+	AbstractSearchResult,
+	Compare
 } from "./query.js";
 import {
 	RPC,
@@ -41,7 +42,7 @@ import { SharedLog } from "@peerbit/shared-log";
 import { concat, fromString } from "uint8arrays";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
-import { IndexKey, Keyable, keyAsString } from "./types.js";
+import { IndexKey, Keyable, keyAsIndexable } from "./types.js";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -125,7 +126,7 @@ export class DeleteOperation extends Operation<any> {
 }
 
 export interface IndexedValue<T> {
-	key: string;
+	key: IndexKey;
 	value: Record<string, any> | T; // decrypted, decoded
 	context: Context;
 	reference?: ValueWithLastOperation<T>;
@@ -257,7 +258,7 @@ const dedup = <T>(
 	const unique: Set<Keyable> = new Set();
 	const dedup: T[] = [];
 	for (const result of allResult) {
-		const key = keyAsString(dedupBy(result));
+		const key = keyAsIndexable(dedupBy(result));
 		if (unique.has(key)) {
 			continue;
 		}
@@ -340,7 +341,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private _valueEncoding: Encoding<T>;
 
 	private _sync: (result: Results<T>) => Promise<void>;
-	private _index: Map<string, IndexedValue<T>>;
+	private _index: Map<string | bigint | number, IndexedValue<T>>;
 	private _resultsCollectQueue: Cache<{
 		from: PublicSignKey;
 		arr: { value: ValueWithLastOperation<T>; context: Context }[];
@@ -355,7 +356,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		this._query = properties?.query || new RPC();
 	}
 
-	get index(): Map<string, IndexedValue<T>> {
+	get index(): Map<string | bigint | number, IndexedValue<T>> {
 		return this._index;
 	}
 
@@ -463,18 +464,37 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				options
 			);
 		} else {
-			const stringValue = keyAsString(key);
-			results = await this.queryDetailed(
-				new SearchRequest({
-					query: [
-						new StringMatch({
-							key: this._indexByArr,
-							value: stringValue
-						})
-					]
-				}),
-				options
-			);
+			const indexableKey = keyAsIndexable(key);
+
+			if (
+				typeof indexableKey === "number" ||
+				typeof indexableKey === "bigint"
+			) {
+				results = await this.queryDetailed(
+					new SearchRequest({
+						query: [
+							new IntegerCompare({
+								key: this._indexByArr,
+								compare: Compare.Equal,
+								value: indexableKey
+							})
+						]
+					}),
+					options
+				);
+			} else {
+				results = await this.queryDetailed(
+					new SearchRequest({
+						query: [
+							new StringMatch({
+								key: this._indexByArr,
+								value: indexableKey
+							})
+						]
+					}),
+					options
+				);
+			}
 		}
 
 		return results;
@@ -559,7 +579,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			) {
 				const firstQuery = query.query[0];
 				if (firstQuery instanceof ByteMatchQuery) {
-					const doc = this._index.get(keyAsString(firstQuery.value));
+					const doc = this._index.get(keyAsIndexable(firstQuery.value));
 					const topDoc = doc && (await this.getDocumentWithLastOperation(doc));
 					return topDoc
 						? {
@@ -970,7 +990,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}[];
 			}
 		> = new Map();
-		const visited = new Set<string>();
+		const visited = new Set<string | number | bigint>();
 
 		let done = false;
 		let first = false;
@@ -1013,10 +1033,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 							buffer: results.results
 								.filter(
 									(x) =>
-										!visited.has(keyAsString(this.indexByResolver(x.value)))
+										!visited.has(keyAsIndexable(this.indexByResolver(x.value)))
 								)
 								.map((x) => {
-									visited.add(keyAsString(this.indexByResolver(x.value)));
+									visited.add(keyAsIndexable(this.indexByResolver(x.value)));
 									return {
 										from,
 										value: { value: x.value },
@@ -1092,12 +1112,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 												.filter(
 													(x) =>
 														!visited.has(
-															keyAsString(this.indexByResolver(x.value.value))
+															keyAsIndexable(
+																this.indexByResolver(x.value.value)
+															)
 														)
 												)
 												.map((x) => {
 													visited.add(
-														keyAsString(this.indexByResolver(x.value.value))
+														keyAsIndexable(this.indexByResolver(x.value.value))
 													);
 													return {
 														value: x.value,
@@ -1150,12 +1172,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 															.filter(
 																(x) =>
 																	!visited.has(
-																		keyAsString(this.indexByResolver(x.value))
+																		keyAsIndexable(
+																			this.indexByResolver(x.value)
+																		)
 																	)
 															)
 															.map((x) => {
 																visited.add(
-																	keyAsString(this.indexByResolver(x.value))
+																	keyAsIndexable(this.indexByResolver(x.value))
 																);
 																return {
 																	value: { value: x.value },

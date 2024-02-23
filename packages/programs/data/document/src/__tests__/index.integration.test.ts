@@ -33,14 +33,13 @@ import {
 	AccessError,
 	PublicSignKey,
 	randomBytes,
-	sha256Base64Sync,
 	toBase64
 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { Operation, PutOperation } from "../document-index.js";
 import { Program } from "@peerbit/program";
-import pDefer, { DeferredPromise } from "p-defer";
+import pDefer from "p-defer";
 
 import {
 	AbsoluteReplicas,
@@ -585,7 +584,7 @@ describe("index", () => {
 			});
 		});
 		describe("indexBy", () => {
-			let store: Program;
+			let store: Program & { docs: Documents<any> };
 			let store2: Program;
 
 			beforeAll(async () => {
@@ -599,6 +598,19 @@ describe("index", () => {
 			afterAll(async () => {
 				await session.stop();
 			});
+
+			const testIndex = async (
+				store: Program & { docs: Documents<any> },
+				doc: any
+			) => {
+				await store.docs.put(doc);
+				let result = await store.docs.index.get(doc.id);
+				expect(result).toBeDefined();
+				await store.docs.del(doc.id);
+				expect(store.docs.index.size).toEqual(0);
+				result = await store.docs.index.get(doc.id);
+				expect(result).toBeUndefined();
+			};
 
 			describe("string", () => {
 				class SimpleDocument {
@@ -657,7 +669,7 @@ describe("index", () => {
 					await expect(
 						(store as TestIndexStore).docs.put(doc)
 					).rejects.toThrowError(
-						"Unexpected index key: undefined, expected: string, number, bigint or Uint8Array"
+						"The provided key value is null or undefined, expecting string, number, bigint, or Uint8array"
 					);
 				});
 
@@ -761,21 +773,56 @@ describe("index", () => {
 						id,
 						value: "Hello world"
 					});
+					await testIndex(store, doc);
+				});
+			});
+			describe("number", () => {
+				class DocumentNumberId {
+					@field({ type: "u32" })
+					id: number;
 
-					await (store as TestUint8arrayIdStore).docs.put(doc);
-					const results = await (
-						store as TestUint8arrayIdStore
-					).docs.index.search(
-						new SearchRequest({
-							query: [
-								new ByteMatchQuery({
-									key: "id",
-									value: id
-								})
-							]
-						})
-					);
-					expect(results).toHaveLength(1);
+					@field({ type: "string" })
+					value: string;
+
+					constructor(properties: { id: number; value: string }) {
+						this.id = properties.id;
+						this.value = properties.value;
+					}
+				}
+
+				@variant("test_bigint_id_store")
+				class TestNumberIdStore extends Program {
+					@field({ type: Uint8Array })
+					id: Uint8Array;
+
+					@field({ type: Documents })
+					docs: Documents<DocumentNumberId>;
+
+					constructor(properties: { docs: Documents<DocumentNumberId> }) {
+						super();
+
+						this.id = randomBytes(32);
+						this.docs = properties.docs;
+					}
+					async open(): Promise<void> {
+						await this.docs.open({
+							type: DocumentNumberId
+						});
+					}
+				}
+				it("index as number", async () => {
+					store = new TestNumberIdStore({
+						docs: new Documents<DocumentNumberId>()
+					});
+					await session.peers[0].open(store);
+
+					const id = 123456789;
+					let doc = new DocumentNumberId({
+						id,
+						value: "Hello world"
+					});
+
+					await testIndex(store, doc);
 				});
 			});
 
@@ -825,21 +872,7 @@ describe("index", () => {
 						id,
 						value: "Hello world"
 					});
-
-					const fff = serialize(doc);
-					await (store as TestBigintIdStore).docs.put(doc);
-					const results = await (store as TestBigintIdStore).docs.index.search(
-						new SearchRequest({
-							query: [
-								new IntegerCompare({
-									key: "id",
-									compare: Compare.Equal,
-									value: id
-								})
-							]
-						})
-					);
-					expect(results).toHaveLength(1);
+					await testIndex(store, doc);
 				});
 			});
 		});
@@ -3353,10 +3386,10 @@ describe("index", () => {
 			await db1.docs.recover();
 			expect(db1.docs.index.size).toEqual(4);
 
-			// recovering multi0ple time should work
+			// recovering multiple time should work
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
-
+			expect(db1.docs.index.size).toEqual(4);
 			await db1.docs.recover();
 			expect(db1.docs.index.size).toEqual(4);
 

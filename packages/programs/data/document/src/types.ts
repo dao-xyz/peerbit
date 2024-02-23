@@ -1,6 +1,10 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { toBase64 } from "@peerbit/crypto";
-
+import {
+	decodeUint8Array,
+	encodeUint8Array,
+	encodingLength
+} from "uint8-varint";
 export abstract class PrimitiveValue {}
 
 @variant(0)
@@ -62,7 +66,7 @@ export class BigUnsignedIntegerValue extends IntegerValue {
 }
 
 export abstract class IndexKey {
-	abstract get string();
+	abstract get indexKey(): string | number | bigint;
 }
 
 @variant(0)
@@ -74,7 +78,7 @@ export class StringKey extends IndexKey {
 		super();
 		this.key = key;
 	}
-	get string() {
+	get indexKey() {
 		return this.key;
 	}
 }
@@ -90,23 +94,37 @@ export class Uint8ArrayKey extends IndexKey {
 	}
 
 	private _keyString: string;
-	get string(): string {
+	get indexKey(): string {
 		return this._keyString || (this._keyString = toBase64(this.key));
 	}
 }
 
+const varint53 = {
+	deserialize: (reader) => {
+		const number = decodeUint8Array(reader._buf, reader._offset);
+		const len = encodingLength(number);
+		reader._offset += len;
+		return number;
+	},
+	serialize: (value, writer) => {
+		const offset = writer.totalSize;
+		writer["_writes"] = writer["_writes"].next = () =>
+			encodeUint8Array(value, writer["_buf"], offset);
+		writer.totalSize += encodingLength(value);
+	}
+};
 @variant(2)
 export class IntegerKey extends IndexKey {
-	@field({ type: IntegerValue })
-	private key: IntegerValue;
+	@field(varint53) // max value is 2^53 - 1 (9007199254740991)
+	private key: number;
 
-	constructor(key: IntegerValue) {
+	constructor(key: number) {
 		super();
 		this.key = key;
 	}
 
-	get string() {
-		return this.key.value.toString();
+	get indexKey() {
+		return this.key;
 	}
 }
 
@@ -119,10 +137,15 @@ export const asKey = (obj: Keyable): IndexKey => {
 		return new StringKey(obj);
 	}
 	if (typeof obj === "number") {
-		return new IntegerKey(new UnsignedIntegerValue(obj));
+		return new IntegerKey(obj);
 	}
 	if (typeof obj === "bigint") {
-		return new IntegerKey(new BigUnsignedIntegerValue(obj));
+		if (obj <= Number.MAX_SAFE_INTEGER && obj >= 0) {
+			return new IntegerKey(Number(obj));
+		}
+		throw new Error(
+			"BigInt is not less than 2^53. Max value is 9007199254740991"
+		);
 	}
 	if (obj instanceof Uint8Array) {
 		return new Uint8ArrayKey(obj);
@@ -134,9 +157,11 @@ export const asKey = (obj: Keyable): IndexKey => {
 	);
 };
 
-export const keyAsString = (key: IndexKey | Keyable) => {
+export const keyAsIndexable = (
+	key: IndexKey | Keyable
+): string | number | bigint => {
 	if (key instanceof IndexKey) {
-		return key.string;
+		return key.indexKey;
 	}
 
 	if (typeof key === "string") {
@@ -144,31 +169,31 @@ export const keyAsString = (key: IndexKey | Keyable) => {
 	}
 
 	if (typeof key === "number") {
-		return key.toString();
+		return key;
 	}
 
 	if (typeof key === "bigint") {
-		return key.toString();
+		return key;
 	}
 
 	if (key instanceof Uint8Array) {
 		return toBase64(key);
 	}
+
+	throw new Error("Unexpected index key: " + typeof key);
 };
 
 export const checkKeyable = (obj: Keyable) => {
 	if (obj == null) {
 		throw new Error(
-			`The provided key value is null or undefined, expecting string or Uint8array`
+			`The provided key value is null or undefined, expecting string, number, bigint, or Uint8array`
 		);
 	}
 	const type = typeof obj;
 
 	if (type === "number") {
 		if (Number.isInteger(obj) === false) {
-			throw new Error(
-				`The provided key value is not an integer, expecting string or Uint8array`
-			);
+			throw new Error(`The provided key number value is not an integer`);
 		}
 	}
 
