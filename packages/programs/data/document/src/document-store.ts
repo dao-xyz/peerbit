@@ -462,7 +462,7 @@ export class Documents<T extends Record<string, any>>
 						context,
 						reference:
 							valueToIndex === value || value instanceof Program
-								? { value, last: payload }
+								? { value, size: payload.data.byteLength }
 								: undefined
 					});
 

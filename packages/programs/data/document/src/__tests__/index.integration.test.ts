@@ -3107,10 +3107,10 @@ describe("index", () => {
 				}
 
 				for (let i = 0; i < stores.length; i++) {
-					const fn = stores[i].docs.index.processFetchRequest.bind(
+					const fn = stores[i].docs.index.processQuery.bind(
 						stores[i].docs.index
 					);
-					stores[i].docs.index.processFetchRequest = (a, b, c) => {
+					stores[i].docs.index.processQuery = (a, b, c) => {
 						counters[i] += 1;
 						return fn(a, b, c);
 					};
@@ -3232,14 +3232,12 @@ describe("index", () => {
 				let fns: any[];
 
 				beforeEach(() => {
-					fns = stores.map((x) =>
-						x.docs.index.processFetchRequest.bind(x.docs.index)
-					);
+					fns = stores.map((x) => x.docs.index.processQuery.bind(x.docs.index));
 				});
 
 				afterEach(() => {
 					stores.forEach((x, ix) => {
-						x.docs.index.processFetchRequest = fns[ix];
+						x.docs.index.processQuery = fns[ix];
 					});
 				});
 
@@ -3251,10 +3249,10 @@ describe("index", () => {
 
 					let failedOnce = false;
 					for (let i = 1; i < stores.length; i++) {
-						const fn = stores[i].docs.index.processFetchRequest.bind(
+						const fn = stores[i].docs.index.processQuery.bind(
 							stores[1].docs.index
 						);
-						stores[i].docs.index.processFetchRequest = (a, b, c) => {
+						stores[i].docs.index.processQuery = (a, b, c) => {
 							if (!failedOnce) {
 								failedOnce = true;
 								throw new Error("Expected error");
@@ -3278,7 +3276,7 @@ describe("index", () => {
 						stores[2].node.identity.publicKey.hashcode()
 					];
 					for (let i = 1; i < stores.length; i++) {
-						stores[i].docs.index.processFetchRequest = (a) => {
+						stores[i].docs.index.processQuery = (a) => {
 							throw new Error("Expected error");
 						};
 					}

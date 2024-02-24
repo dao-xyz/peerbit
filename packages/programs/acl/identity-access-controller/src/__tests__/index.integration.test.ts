@@ -2,7 +2,7 @@ import { field, serialize, variant } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitFor } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { Program } from "@peerbit/program";

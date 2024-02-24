@@ -1,4 +1,4 @@
-import { AbstractType, field, variant } from "@dao-xyz/borsh";
+import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { BORSH_ENCODING, Encoding } from "@peerbit/log";
 import { equals } from "@peerbit/uint8arrays";
 import { Program } from "@peerbit/program";
@@ -129,7 +129,7 @@ export interface IndexedValue<T> {
 	key: IndexKey;
 	value: Record<string, any> | T; // decrypted, decoded
 	context: Context;
-	reference?: ValueWithLastOperation<T>;
+	reference?: ValueWithSize<T>;
 }
 
 export type RemoteQueryOptions<R> = RPCRequestAllOptions<R> & {
@@ -152,9 +152,9 @@ export type ResultsIterator<T> = {
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
 };
-type ValueWithLastOperation<T> = {
+type ValueWithSize<T> = {
 	value: T;
-	last: PutOperation<Operation<T>>;
+	size: number;
 };
 
 const sortCompare = (av: any, bv: any) => {
@@ -277,15 +277,15 @@ if (!(await this.canRead(message.sender))) {
 export const MAX_DOCUMENT_SIZE = 5e6;
 
 const getBatchFromResults = <T>(
-	results: { value: ValueWithLastOperation<T>; context: Context }[],
+	results: { value: ValueWithSize<T>; context: Context }[],
 	wantedSize: number,
 	maxSize: number = MAX_DOCUMENT_SIZE
 ) => {
-	const batch: { value: ValueWithLastOperation<T>; context: Context }[] = [];
+	const batch: { value: ValueWithSize<T>; context: Context }[] = [];
 	let size = 0;
 	for (const result of results) {
 		batch.push(result);
-		size += result.value.last.data.length;
+		size += result.value.size;
 		if (size > maxSize) {
 			break;
 		}
@@ -344,7 +344,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private _index: Map<string | bigint | number, IndexedValue<T>>;
 	private _resultsCollectQueue: Cache<{
 		from: PublicSignKey;
-		arr: { value: ValueWithLastOperation<T>; context: Context }[];
+		arr: { value: ValueWithSize<T>; context: Context }[];
 	}>;
 
 	private _log: SharedLog<Operation<T>>;
@@ -412,7 +412,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				if (query instanceof CloseIteratorRequest) {
 					this.processCloseIteratorRequest(query, ctx.from);
 				} else {
-					const results = await this.processFetchRequest(
+					const results = await this.processQuery(
 						query as SearchRequest | SearchRequest | CollectNextRequest,
 						ctx.from,
 						{
@@ -423,15 +423,8 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					return new Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
 						results: results.results.map((r) => {
-							if (r.value.last instanceof PutOperation === false) {
-								throw new Error(
-									"Unexpected value type on local results: " +
-										(r.value.last as any)?.constructor.name ||
-										typeof r.value.last
-								);
-							}
 							return new ResultWithSource({
-								source: r.value.last.data,
+								source: serialize(r.value.value),
 								context: r.context
 							});
 						}),
@@ -504,10 +497,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return this._index.size;
 	}
 
-	private async getDocumentWithLastOperation(value: {
-		reference?: ValueWithLastOperation<T>;
+	private async resolveDocument(value: {
+		reference?: ValueWithSize<T>;
 		context: { head: string };
-	}): Promise<ValueWithLastOperation<T> | undefined> {
+	}): Promise<ValueWithSize<T> | undefined> {
 		if (value.reference) {
 			return value.reference;
 		}
@@ -521,7 +514,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		if (payloadValue instanceof PutOperation) {
 			return {
 				value: payloadValue.getValue(this.valueEncoding),
-				last: payloadValue
+				size: payloadValue.data.byteLength
 			};
 		}
 
@@ -532,21 +525,20 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	getDocument(value: {
-		reference?: ValueWithLastOperation<T>;
+		reference?: ValueWithSize<T>;
 		context: { head: string };
 	}) {
-		return this.getDocumentWithLastOperation(value).then((r) => r?.value);
+		return this.resolveDocument(value).then((r) => r?.value);
 	}
 
 	async _queryDocuments(
 		filter: (doc: IndexedValue<T>) => Promise<boolean>
-	): Promise<{ context: Context; value: ValueWithLastOperation<T> }[]> {
+	): Promise<{ context: Context; value: ValueWithSize<T> }[]> {
 		// Whether we return the full operation data or just the db value
-		const results: { context: Context; value: ValueWithLastOperation<T> }[] =
-			[];
+		const results: { context: Context; value: ValueWithSize<T> }[] = [];
 		for (const value of this._index.values()) {
 			if (await filter(value)) {
-				const topDoc = await this.getDocumentWithLastOperation(value);
+				const topDoc = await this.resolveDocument(value);
 				topDoc &&
 					results.push({
 						context: value.context,
@@ -557,14 +549,14 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return results;
 	}
 
-	async processFetchRequest(
+	async processQuery(
 		query: SearchRequest | CollectNextRequest,
 		from: PublicSignKey,
 		options?: {
 			canRead?: CanRead<T>;
 		}
 	): Promise<{
-		results: { context: Context; value: ValueWithLastOperation<T> }[];
+		results: { context: Context; value: ValueWithSize<T> }[];
 		kept: number;
 	}> {
 		// We do special case for querying the id as we can do it faster than iterating
@@ -580,7 +572,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				const firstQuery = query.query[0];
 				if (firstQuery instanceof ByteMatchQuery) {
 					const doc = this._index.get(keyAsIndexable(firstQuery.value));
-					const topDoc = doc && (await this.getDocumentWithLastOperation(doc));
+					const topDoc = doc && (await this.resolveDocument(doc));
 					return topDoc
 						? {
 								results: [
@@ -598,7 +590,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					firstQuery.caseInsensitive === false
 				) {
 					const doc = this._index.get(firstQuery.value);
-					const topDoc = doc && (await this.getDocumentWithLastOperation(doc));
+					const topDoc = doc && (await this.resolveDocument(doc));
 					return topDoc
 						? {
 								results: [
@@ -834,23 +826,17 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		const allResults: Results<T>[] = [];
 
 		if (local) {
-			const results = await this.processFetchRequest(
+			const results = await this.processQuery(
 				queryRequest,
 				this.node.identity.publicKey
 			);
 			if (results.results.length > 0) {
 				const resultsObject = new Results<T>({
 					results: results.results.map((r) => {
-						if (r.value.last instanceof PutOperation === false) {
-							throw new Error(
-								"Unexpected value type on local results: " +
-									(r.value.last as any)?.constructor.name || typeof r.value.last
-							);
-						}
 						return new ResultWithSource({
 							context: r.context,
 							value: r.value.value,
-							source: r.value.last.data
+							source: serialize(r.value.value)
 						});
 					}),
 					kept: BigInt(results.kept)
@@ -1090,10 +1076,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
 						promises.push(
-							this.processFetchRequest(
-								collectRequest,
-								this.node.identity.publicKey
-							)
+							this.processQuery(collectRequest, this.node.identity.publicKey)
 								.then((results) => {
 									resultsLeft += results.kept;
 
