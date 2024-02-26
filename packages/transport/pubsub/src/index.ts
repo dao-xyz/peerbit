@@ -315,6 +315,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			: undefined;
 
 		const bytes = dataMessage?.bytes();
+		const silentDelivery = options?.mode instanceof SilentDelivery;
 		const message = await this.createMessage(bytes, { ...options, to: tos });
 
 		if (dataMessage) {
@@ -330,7 +331,18 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		}
 
 		// send to all the other peers
-		await this.publishMessage(this.publicKey, message, undefined);
+		try {
+			await this.publishMessage(this.publicKey, message, undefined);
+		} catch (error) {
+			if (error instanceof DeliveryError) {
+				if (silentDelivery === false) {
+					// If we are not in silent mode, we should throw the error
+					throw error;
+				}
+				return message.id;
+			}
+			throw error;
+		}
 
 		return message.id;
 	}

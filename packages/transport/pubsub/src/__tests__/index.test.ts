@@ -24,7 +24,7 @@ import { equals } from "uint8arrays";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
-import { PublicSignKey, randomBytes } from "@peerbit/crypto";
+import { Ed25519Keypair, PublicSignKey, randomBytes } from "@peerbit/crypto";
 
 const checkShortestPathIsNeighbours = (sub: DirectSub) => {
 	const routes = sub.routes.routes.get(sub.routes.me)!;
@@ -554,11 +554,21 @@ describe("pubsub", function () {
 				await session.stop();
 			});
 
-			it("will acknowledge even if not subscribing", async () => {
+			it("acknowledges even if not subscribing", async () => {
 				await streams[0].stream.publish(new Uint8Array([0]), {
 					topics: ["topic"],
 					mode: new AcknowledgeDelivery({
 						to: [streams[1].stream.publicKeyHash],
+						redundancy: 1
+					})
+				});
+			});
+
+			it("rejects when silent delivery to a peer that does not exist", async () => {
+				await streams[0].stream.publish(new Uint8Array([0]), {
+					topics: ["topic"],
+					mode: new SilentDelivery({
+						to: [(await Ed25519Keypair.create()).publicKey.hashcode()],
 						redundancy: 1
 					})
 				});
