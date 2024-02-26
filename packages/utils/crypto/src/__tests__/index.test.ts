@@ -33,15 +33,26 @@ describe("Ed25519", () => {
 		);
 	});
 
-	it("PeerId", async () => {
-		const kp = await Ed25519Keypair.create();
-		const peerId = await kp.toPeerId();
-		const privateKeyFromPeerId = Ed25519PrivateKey.fromPeerID(peerId);
-		const keyPairFromPeerId = Ed25519Keypair.fromPeerId(peerId);
-		expect(keyPairFromPeerId.equals(kp)).toBeTrue();
-		expect(
-			privateKeyFromPeerId.equals(keyPairFromPeerId.privateKey)
-		).toBeTrue();
+	it("PeerId", async () => {});
+
+	describe("PeerId", () => {
+		it("keypair", async () => {
+			const kp = await Ed25519Keypair.create();
+			const peerId = await kp.toPeerId();
+			const privateKeyFromPeerId = Ed25519PrivateKey.fromPeerID(peerId);
+			const keyPairFromPeerId = Ed25519Keypair.fromPeerId(peerId);
+			expect(keyPairFromPeerId.equals(kp)).toBeTrue();
+			expect(
+				privateKeyFromPeerId.equals(keyPairFromPeerId.privateKey)
+			).toBeTrue();
+		});
+
+		it("publickey", async () => {
+			const kp = await Ed25519Keypair.create();
+			const peerId = await kp.publicKey.toPeerId();
+			const kpFrom = Ed25519PublicKey.fromPeerId(peerId);
+			expect(kp.publicKey.equals(kpFrom)).toBeTrue();
+		});
 	});
 
 	describe("native", () => {
@@ -215,12 +226,20 @@ describe("Sepck2561k1", () => {
 		expect(await verifySignatureSecp256k1(signature, data)).toBeTrue();
 	});
 
-	it("PeerId", async () => {
-		const kp = await Secp256k1Keypair.create();
-		const peerId = await kp.toPeerId();
-		expect(Secp256k1Keypair.fromPeerId(peerId).equals(kp));
-	});
+	describe("PeerId", () => {
+		it("keypair", async () => {
+			const kp = await Secp256k1Keypair.create();
+			const peerId = await kp.toPeerId();
+			expect(Secp256k1Keypair.fromPeerId(peerId).equals(kp));
+		});
 
+		it("publickey", async () => {
+			const kp = await Secp256k1Keypair.create();
+			const peerId = await kp.publicKey.toPeerId();
+			const pk = Secp256k1PublicKey.fromPeerId(peerId);
+			expect(pk.equals(kp.publicKey));
+		});
+	});
 	it("ser/der", async () => {
 		const wallet = await Wallet.createRandom();
 		const pk = await Secp256k1PublicKey.recover(wallet);

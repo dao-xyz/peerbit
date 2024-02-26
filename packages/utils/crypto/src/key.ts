@@ -37,6 +37,10 @@ export abstract class PublicSignKey implements Key {
 	hashcode(): string {
 		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
+
+	toPeerId(): Promise<PeerId> {
+		throw new Error("Not implemented");
+	}
 }
 
 export interface PrivateSignKey extends Key {}

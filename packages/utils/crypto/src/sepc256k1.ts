@@ -60,7 +60,13 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		return "sepc256k1/" + toHexString(this.publicKey);
 	}
 
-	static from(id: PeerId) {
+	toPeerId(): Promise<PeerId> {
+		return peerIdFromKeys(
+			new supportedKeys["secp256k1"].Secp256k1PublicKey(this.publicKey).bytes
+		);
+	}
+
+	static fromPeerId(id: PeerId) {
 		if (!id.publicKey) {
 			throw new Error("Missing public key");
 		}
@@ -177,7 +183,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	static fromPeerId(peerId: PeerId) {
 		return new Secp256k1Keypair({
 			privateKey: Secp256k1PrivateKey.from(peerId),
-			publicKey: Secp256k1PublicKey.from(peerId)
+			publicKey: Secp256k1PublicKey.fromPeerId(peerId)
 		});
 	}
 

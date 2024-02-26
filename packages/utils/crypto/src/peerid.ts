@@ -21,7 +21,7 @@ export const getPublicKeyFromPeerId = (
 		return Ed25519PublicKey.fromPeerId(peerId);
 	}
 	if (peerId.type === "secp256k1") {
-		return Secp256k1PublicKey.from(peerId);
+		return Secp256k1PublicKey.fromPeerId(peerId);
 	}
 	throw new Error("Unsupported key type");
 };
