@@ -260,6 +260,8 @@ describe("index", () => {
 				session.peers[3].identity.publicKey
 			);
 
+			await delay(1000); // TODO fix test flakeness
+
 			// Try query with trusted
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
 				new SearchRequest({
