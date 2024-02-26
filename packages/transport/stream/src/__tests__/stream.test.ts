@@ -679,6 +679,31 @@ describe("streams", function () {
 				);
 			});
 		});
+
+		describe("seek", () => {
+			let session: TestSessionStream;
+
+			beforeAll(async () => {});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+			it("will resolve immediately of no neighbours", async () => {
+				session = await disconnected(1);
+				await expect(
+					session.peers[0].services.directstream.publish(
+						new Uint8Array([1, 2, 3]),
+						{
+							mode: new SeekDelivery({
+								redundancy: 1,
+								to: [(await Ed25519Keypair.create()).publicKey]
+							})
+						}
+					)
+				).rejects.toThrow(DeliveryError);
+				expect(session.peers[0].services.directstream.pending).toBeFalse();
+			});
+		});
 	});
 
 	describe("fanout", () => {

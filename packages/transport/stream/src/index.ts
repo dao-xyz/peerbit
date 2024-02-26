@@ -1536,7 +1536,6 @@ export abstract class DirectStream<
 			return { promise: existing.promise };
 		}
 
-		const deliveryDeferredPromise = pDefer<void>();
 		const fastestNodesReached = new Map<string, number[]>();
 		const messageToSet: Set<string> = new Set();
 		if (message.header.mode.to) {
@@ -1557,6 +1556,18 @@ export abstract class DirectStream<
 			}
 		}
 		const haveReceivers = messageToSet.size > 0;
+
+		if (haveReceivers && this.peers.size === 0) {
+			return {
+				promise: Promise.reject(
+					new DeliveryError(
+						"Cannnot deliver message to peers because there are no peers to deliver to"
+					)
+				)
+			};
+		}
+
+		const deliveryDeferredPromise = pDefer<void>();
 		if (!haveReceivers) {
 			deliveryDeferredPromise.resolve(); // we dont know how many answer to expect, just resolve immediately
 		}
@@ -1806,7 +1817,7 @@ export abstract class DirectStream<
 			(peers instanceof Map && peers.size === 0)
 		) {
 			logger.debug("No peers to send to");
-			return;
+			return delivereyPromise;
 		}
 
 		let sentOnce = false;
