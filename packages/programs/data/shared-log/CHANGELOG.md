@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [8.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.6...shared-log-v8.0.7) (2024-02-26)
+
+
+### Bug Fixes
+
+* ignore abort errors when waiting for replicator ([6e52d0d](https://github.com/dao-xyz/peerbit/commit/6e52d0dfb4cde6877694eac889a71a20b14791b4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.6 to 4.0.7
+    * @peerbit/log bumped from 3.0.33 to 3.0.34
+    * @peerbit/rpc bumped from 4.0.6 to 4.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
+
 ## [8.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.1...shared-log-v8.0.2) (2024-02-02)
 
 

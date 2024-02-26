@@ -188,6 +188,20 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.4...pubsub-v3.0.5) (2024-02-26)
+
+
+### Bug Fixes
+
+* don't throw when failing to deliver silently and mode was upgraded ([eec77e0](https://github.com/dao-xyz/peerbit/commit/eec77e0d246b01f96b5cbc198a7442e31cf9b285))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.0.4 to 4.0.5
+
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.3...pubsub-v3.0.4) (2024-02-10)
 
 
