@@ -43,6 +43,21 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.4...stream-v4.0.5) (2024-02-26)
+
+
+### Bug Fixes
+
+* prevent pending timeout when seek publishing when no neighbours are present ([c88fe07](https://github.com/dao-xyz/peerbit/commit/c88fe07a3978f4cdbea90694dea13f2d6d0229ef))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.1.7 to 2.2.0
+    * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
+
 ## [4.0.4](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.3...stream-v4.0.4) (2024-02-10)
 
 

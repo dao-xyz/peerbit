@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.33](https://github.com/dao-xyz/peerbit/compare/server-v5.0.32...server-v5.0.33) (2024-02-26)
+
+
+### Bug Fixes
+
+* catch uncaughtException ([03d1825](https://github.com/dao-xyz/peerbit/commit/03d18254e3a165987dbb486cfb795a7b8a290f8d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.0.6 to 4.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
+
 ## [5.0.28](https://github.com/dao-xyz/peerbit/compare/server-v5.0.27...server-v5.0.28) (2024-02-02)
 
 

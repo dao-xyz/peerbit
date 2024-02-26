@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.1.7...crypto-v2.2.0) (2024-02-26)
+
+
+### Features
+
+* add PeerId utility methods ([62a5040](https://github.com/dao-xyz/peerbit/commit/62a5040a8ae009bf4aece3e92866dd2710e638a9))
+
 ## [2.1.7](https://github.com/dao-xyz/peerbit/compare/crypto-v2.1.6...crypto-v2.1.7) (2024-01-26)
 
 
