@@ -161,9 +161,15 @@ export const startServerWithNode = async (properties: {
 				exit();
 			});
 		});
+
+		process.on("uncaughtException", (err) => {
+			console.error("Uncaught exception", err);
+		});
+
 		process.on("exit", async () => {
 			if (server.listening) {
 				console.log("Shutting down node (exit)");
+
 				await stopAndWait(server);
 				await controller.stop();
 			}
@@ -443,6 +449,7 @@ export const startApiServer = async (
 											res.end(program.address.toString());
 										})
 										.catch((error) => {
+											console.error(error);
 											res.writeHead(400);
 											res.end("Failed to open program: " + error.toString());
 										});
