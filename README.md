@@ -39,6 +39,11 @@ Peerbit is performant, so performant in fact you can use it for [streaming video
 
 [<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/many-chat-rooms/demo.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/many-chat-rooms/)
 
+## [Blog platform](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/blog-platform/)
+
+[<img src="https://github.com/dao-xyz/peerbit-examples/blob/master/packages/blog-platform/demo-cli.gif" width="600" />](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/blog-platform/)
+
+
 ### [Sync files](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
 
 #### [React app](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share/)
