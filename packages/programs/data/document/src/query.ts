@@ -360,11 +360,17 @@ export class ResultWithSource<T> extends Result {
 	context: Context;
 
 	_type: AbstractType<T>;
-	constructor(opts: { source: Uint8Array; context: Context; value?: T }) {
+	constructor(opts: {
+		source: Uint8Array;
+		context: Context;
+		value?: T;
+		indexed?: Record<string, any>;
+	}) {
 		super();
 		this._source = opts.source;
 		this.context = opts.context;
 		this._value = opts.value;
+		this.indexed = opts.indexed;
 	}
 
 	init(type: AbstractType<T>) {
@@ -382,6 +388,8 @@ export class ResultWithSource<T> extends Result {
 		this._value = deserialize(this._source, this._type);
 		return this._value;
 	}
+
+	indexed?: Record<string, any>;
 }
 
 export abstract class AbstractSearchResult<T> {}

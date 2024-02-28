@@ -1,3 +1,4 @@
-export * from "./document-store.js";
-export * from "./document-index.js";
+export * from "./program.js";
+export * from "./search-index.js";
 export * from "./query.js";
+export { MAX_DOCUMENT_SIZE } from "./constants.js";

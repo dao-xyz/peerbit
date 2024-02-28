@@ -12,13 +12,14 @@ export enum AccessType {
 @variant(0)
 export class AccessData {}
 
+export const ACCESS_TYPE_PROPERTY = "accessTypes";
 @variant(0)
 export class Access extends AccessData {
 	@field({ type: option("string") })
 	id: string;
 
 	@field({ type: vec("u8") })
-	accessTypes: AccessType[];
+	[ACCESS_TYPE_PROPERTY]: AccessType[];
 
 	@field({ type: AccessCondition })
 	accessCondition: AccessCondition<any>;

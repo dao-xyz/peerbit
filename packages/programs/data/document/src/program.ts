@@ -30,13 +30,11 @@ import {
 	Operation,
 	PutOperation,
 	CanSearch,
-	CanRead,
-	InMemoryIndex,
-	MAX_DOCUMENT_SIZE
-} from "./document-index.js";
-import { Context, Results } from "./query.js";
+	CanRead
+} from "./search-index.js";
+import { Results } from "./query.js";
 import { Keyable, asKey, checkKeyable, keyAsIndexable } from "./types.js";
-export { MAX_DOCUMENT_SIZE };
+import { MAX_DOCUMENT_SIZE } from "./constants.js";
 
 const logger = loggerFn({ module: "document" });
 
@@ -80,10 +78,10 @@ export type SetupOptions<T> = {
 } & SharedLogOptions<Operation<T>>;
 
 @variant("documents")
-export class Documents<T extends Record<string, any>>
-	extends Program<SetupOptions<T>, DocumentEvents<T> & ProgramEvents>
-	implements InMemoryIndex<T>
-{
+export class Documents<T extends Record<string, any>> extends Program<
+	SetupOptions<T>,
+	DocumentEvents<T> & ProgramEvents
+> {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation<T>>;
 
@@ -272,7 +270,7 @@ export class Documents<T extends Record<string, any>>
 				);
 				const key = asKey(keyValue);
 
-				const existingDocument = this.index.index.get(key.indexKey);
+				const existingDocument = await this.index.engine.get(key.indexKey);
 				if (existingDocument && existingDocument.context.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
@@ -298,7 +296,9 @@ export class Documents<T extends Record<string, any>>
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = this._index.index.get(operation.key.indexKey);
+				const existingDocument = await this._index.engine.get(
+					operation.key.indexKey
+				);
 				if (!existingDocument) {
 					// already deleted
 					return true; // assume ok
@@ -445,26 +445,7 @@ export class Documents<T extends Record<string, any>>
 						}
 					}
 					documentsChanged.added.push(value);
-
-					const context = new Context({
-						created:
-							this._index.index.get(key.indexKey)?.context.created ||
-							item.meta.clock.timestamp.wallTime,
-						modified: item.meta.clock.timestamp.wallTime,
-						head: item.hash,
-						gid: item.gid
-					});
-
-					const valueToIndex = this._index.toIndex(value, context);
-					this._index.index.set(key.indexKey, {
-						key: key,
-						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
-						context,
-						reference:
-							valueToIndex === value || value instanceof Program
-								? { value, size: payload.data.byteLength }
-								: undefined
-					});
+					this._index.put(value, item, key);
 
 					modified.add(key.indexKey);
 				} else if (
@@ -490,11 +471,10 @@ export class Documents<T extends Record<string, any>>
 						if (modified.has(key)) {
 							continue;
 						}
-						const fromIndex = this._index.index.get(key);
-						if (!fromIndex) {
-							continue;
-						}
-						const document = await this._index.getDocument(fromIndex);
+						const document = await this._index.get(key, {
+							local: true,
+							remote: false
+						});
 						if (!document) {
 							continue;
 						}
@@ -510,7 +490,7 @@ export class Documents<T extends Record<string, any>>
 					}
 
 					// update index
-					this._index.index.delete(key);
+					this._index.del(key);
 
 					modified.add(key);
 				} else {
@@ -537,8 +517,4 @@ export class Documents<T extends Record<string, any>>
 			return value._value!;
 		}
 	}
-}
-
-function isPromise(value): value is Promise<any> {
-	return Boolean(value && typeof value.then === "function");
 }

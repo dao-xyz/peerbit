@@ -1,10 +1,11 @@
-import { field, fixedArray, variant } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { toBase64 } from "@peerbit/crypto";
 import {
 	decodeUint8Array,
 	encodeUint8Array,
 	encodingLength
 } from "uint8-varint";
+
 export abstract class PrimitiveValue {}
 
 @variant(0)
@@ -65,8 +66,10 @@ export class BigUnsignedIntegerValue extends IntegerValue {
 	}
 }
 
+export type IndexKeyPrimitiveType = string | number | bigint;
+
 export abstract class IndexKey {
-	abstract get indexKey(): string | number | bigint;
+	abstract get indexKey(): IndexKeyPrimitiveType;
 }
 
 @variant(0)
