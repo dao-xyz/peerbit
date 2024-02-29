@@ -74,9 +74,17 @@ If there is a gap, then the closest node will be chosen in the following way:
 
 This means that even if the longer range is further away by measuring from the closest edge, it still needs to replicate the data due to that the transformed distance gets shorter because of the wider range. This property is important, because we wan't to make sure that someone who replicates with width 0 does not get delegated any replication work.
 
+The “min replicas” (A) constraint is satisfied by delegating replicator responsibilities at `min replicas` amount, equidistant points, where the distance is `1 / min replicas`. If a replicator range covers one of these points, the replicator is responsible for persisting this entry.
+
+The formula for the calculating the location of point `i` can be described as 
+
+```point_i = (hash(content) + i / min replicas) mod 1```
+
+and to find all points, do the calculation for
+
+```i = {0, 1, ..., min replicas - 1}```
 
 
-The "min replicas" (A) constraint is satisfied by inserting `min replicas` times starting from the starting point, where each jump is of length `1 / min replicas`.
 <p align="center">
 <img width="800" src="./topics/sharding/p7.png" alt="p7">
 </p>
