@@ -1,13 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
-	TransactionContext,
-	PutOperation,
-	DeleteOperation,
 	SearchRequest,
 	IntegerCompare,
 	Compare,
-	Or
+	Or,
+	CanPerformOperations
 } from "@peerbit/document";
 import {
 	getPathGenerator,
@@ -132,10 +130,7 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async canPerform(
-		_operation: PutOperation<any> | DeleteOperation, // TODO types
-		context: TransactionContext<Access>
-	): Promise<boolean> {
+	async canPerform(properties: CanPerformOperations<any>): Promise<boolean> {
 		// TODO, improve, caching etc
 
 		// Check whether it is trusted by trust web
@@ -196,7 +191,7 @@ export class IdentityAccessController extends Program {
 			return false;
 		};
 
-		for (const key of await context.entry.getPublicKeys()) {
+		for (const key of await properties.entry.getPublicKeys()) {
 			if (await canPerformByKey(key)) {
 				return true;
 			}

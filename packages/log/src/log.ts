@@ -40,8 +40,8 @@ import { Keychain } from "@peerbit/keychain";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 
-export type LogEvents<T> = {
-	onChange?: (change: Change<T>) => void;
+export type LogEvents<T, R = undefined> = {
+	onChange?: (change: Change<T>, reference?: R) => void;
 	onGidRemoved?: (gids: string[]) => Promise<void> | void;
 };
 
@@ -81,7 +81,14 @@ export type AppendOptions<T> = {
 		keypair: X25519Keypair;
 		receiver: EncryptionTemplateMaybeEncrypted;
 	};
+	onChange?: OnChange<T>;
+	canAppend?: CanAppend<T>;
 };
+
+type OnChange<T> = (
+	change: Change<T>,
+	reference?: undefined
+) => void | Promise<void>;
 
 @variant(0)
 export class Log<T> {
@@ -108,7 +115,7 @@ export class Log<T> {
 	private _entryCache: Cache<Entry<T>>;
 
 	private _canAppend?: CanAppend<T>;
-	private _onChange?: (change: Change<T>) => void;
+	private _onChange?: OnChange<T>;
 	private _closed = true;
 	private _memory?: AnyStore;
 	private _joining: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
@@ -549,7 +556,6 @@ export class Log<T> {
 			},
 
 			encoding: this._encoding,
-
 			encryption: options.encryption
 				? {
 						keypair: options.encryption.keypair,
@@ -558,7 +564,7 @@ export class Log<T> {
 						}
 					}
 				: undefined,
-			canAppend: this._canAppend
+			canAppend: options.canAppend || this._canAppend
 		});
 
 		if (!entry.hash) {
@@ -590,8 +596,10 @@ export class Log<T> {
 
 		const trimmed = await this.trim(options?.trim);
 
-		for (const entry of trimmed) {
-			removed.push(entry);
+		if (trimmed) {
+			for (const entry of trimmed) {
+				removed.push(entry);
+			}
 		}
 
 		const changes: Change<T> = {
@@ -600,7 +608,7 @@ export class Log<T> {
 		};
 
 		await this._headsIndex.updateHeadsCache(changes); // * here
-		await this._onChange?.(changes);
+		await (options?.onChange || this._onChange)?.(changes);
 		return { entry, removed };
 	}
 
@@ -920,8 +928,10 @@ export class Log<T> {
 			const removed = await this.processEntry(e);
 			const trimmed = await this.trim(options?.trim);
 
-			for (const entry of trimmed) {
-				removed.push(entry);
+			if (trimmed) {
+				for (const entry of trimmed) {
+					removed.push(entry);
+				}
 			}
 
 			await this?._onChange?.({ added: [e], removed: removed });

@@ -2,7 +2,7 @@ import { field, serialize, variant } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/test-utils";
 import { Access, AccessType } from "../access";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../condition";
-import { delay, waitFor } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { Program } from "@peerbit/program";
@@ -44,8 +44,7 @@ class TestStore extends Program<{ role: RoleOptions }> {
 		await this.accessController.open();
 		await this.store.open({
 			type: Document,
-			canPerform: (operation, context) =>
-				this.accessController.canPerform(operation, context),
+			canPerform: (properties) => this.accessController.canPerform(properties),
 			index: {
 				canRead: this.accessController.canRead.bind(this.accessController)
 			},
@@ -128,8 +127,12 @@ describe("index", () => {
 		await l0a.store.log.log.join(await l0b.store.log.log.getHeads());
 		await l0b.store.log.log.join(await l0a.store.log.log.getHeads());
 
-		await waitFor(() => l0a.store.index.size === 2);
-		await waitFor(() => l0b.store.index.size === 2);
+		await waitForResolved(async () =>
+			expect(await l0a.store.index.getSize()).toEqual(2)
+		);
+		await waitForResolved(async () =>
+			expect(await l0b.store.index.getSize()).toEqual(2)
+		);
 	});
 
 	describe("conditions", () => {
@@ -150,7 +153,10 @@ describe("index", () => {
 
 			await l0b.store.log.log.join(await l0a.store.log.log.getHeads());
 
-			await waitFor(() => l0b.store.index.size === 1);
+			await waitForResolved(async () =>
+				expect(await l0b.store.index.getSize()).toEqual(1)
+			);
+
 			await expect(
 				l0b.store.put(
 					new Document({
@@ -171,7 +177,10 @@ describe("index", () => {
 			await l0b.accessController.access.log.log.join(
 				await l0a.accessController.access.log.log.getHeads()
 			);
-			await waitFor(() => l0b.accessController.access.index.size === 1);
+			await waitForResolved(async () =>
+				expect(await l0b.store.index.getSize()).toEqual(1)
+			);
+
 			await l0b.store.put(
 				new Document({
 					id: "2"
@@ -227,7 +236,10 @@ describe("index", () => {
 				)
 			).rejects.toBeInstanceOf(AccessError); // Not trusted
 
-			await waitFor(() => l0b.accessController.access.index.size == 1);
+			await waitForResolved(async () =>
+				expect(await l0b.accessController.access.index.getSize()).toEqual(1)
+			);
+
 			await l0b.accessController.identityGraphController.addRelation(
 				session.peers[2].peerId
 			);
@@ -235,11 +247,12 @@ describe("index", () => {
 				await l0b.accessController.identityGraphController.relationGraph.log.log.getHeads()
 			);
 
-			await waitFor(
-				() =>
-					l0c.accessController.identityGraphController.relationGraph.index
-						.size === 1
+			await waitForResolved(async () =>
+				expect(
+					await l0c.accessController.identityGraphController.relationGraph.index.getSize()
+				).toEqual(1)
 			);
+
 			await l0c.store.put(
 				new Document({
 					id: "2"
@@ -280,7 +293,9 @@ describe("index", () => {
 				await l0a.accessController.access.log.log.getHeads()
 			);
 
-			await waitFor(() => l0b.accessController.access.index.size === 1);
+			await waitForResolved(async () =>
+				expect(await l0b.accessController.access.index.getSize()).toEqual(1)
+			);
 			await l0b.store.put(
 				new Document({
 					id: "2"
@@ -336,7 +351,9 @@ describe("index", () => {
 			await l0b.accessController.access.log.log.join(
 				await l0a.accessController.access.log.log.getHeads()
 			);
-			await waitFor(() => l0b.accessController.access.index.size === 1);
+			await waitForResolved(async () =>
+				expect(await l0b.accessController.access.index.getSize()).toEqual(1)
+			);
 
 			const result = await q();
 			expect(result.length).toBeGreaterThan(0); // Because read access
@@ -380,8 +397,13 @@ describe("index", () => {
 			session.peers[0].identity.publicKey
 		);
 
-		await waitFor(() => l0a.accessController.access.index.size === 1);
-		await waitFor(() => l0b.accessController.access.index.size === 1);
+		await waitForResolved(async () =>
+			expect(await l0a.accessController.access.index.getSize()).toEqual(1)
+		);
+		await waitForResolved(async () =>
+			expect(await l0b.accessController.access.index.getSize()).toEqual(1)
+		);
+
 		await l0b.accessController.access.log.waitForReplicator(
 			l0a.node.identity.publicKey
 		);
