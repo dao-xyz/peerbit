@@ -38,16 +38,16 @@ class PostStore extends Program {
 	async open(args?: any): Promise<void> {
 		await this.posts.open({
 			type: AbstractPost, // Use base class here
-			canPerform: (operation, contenxt) => {
-				if (operation instanceof PutOperation) {
+			canPerform: (properties) => {
+				if (properties.type === "put") {
 					// Because bytes 0 and 1 was prepended to the post on serialization
 					// we can distinguish between them
 					// here after loading from disc
 
-					if (operation.value instanceof PostV0) {
+					if (properties.value instanceof PostV0) {
 						// Validate something with the 'old' post type
 						return true;
-					} else if (operation.value instanceof PostV1) {
+					} else if (properties.value instanceof PostV1) {
 						// Validate something with the 'new' post type
 						return true;
 					} else {

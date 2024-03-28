@@ -20,10 +20,8 @@ export class RangeMetadatas {
 	@field({ type: vec(RangeMetadata) })
 	metadatas: RangeMetadata[];
 
-	constructor(opts?: { metadatas: RangeMetadata[] }) {
-		if (opts) {
-			this.metadatas = opts.metadatas;
-		}
+	constructor(opts: { metadatas: RangeMetadata[] }) {
+		this.metadatas = opts.metadatas;
 	}
 }
 
@@ -37,10 +35,9 @@ export class StringMatch {
 	@field({ type: "u8" })
 	exactMatch: boolean;
 
-	constructor(properties?: { value: string; exactMatch: boolean }) {
-		if (properties) {
-			Object.assign(this, properties);
-		}
+	constructor(properties: { value: string; exactMatch: boolean }) {
+		this.value = properties.value;
+		this.exactMatch = properties.exactMatch;
 	}
 	preprocess(string: string): string {
 		if (this.exactMatch) {
@@ -55,10 +52,8 @@ export class SearchRequest {
 	@field({ type: vec(StringMatch) })
 	query!: StringMatch[];
 
-	constructor(properties?: { query: StringMatch[] }) {
-		if (properties) {
-			this.query = properties.query;
-		}
+	constructor(properties: { query: StringMatch[] }) {
+		this.query = properties.query;
 	}
 }
 

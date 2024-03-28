@@ -5,7 +5,7 @@ import {
 	Operation,
 	PutOperation,
 	CanRead,
-	TransactionContext
+	CanPerformOperations
 } from "@peerbit/document";
 import { AppendOptions } from "@peerbit/log";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
@@ -30,49 +30,39 @@ const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 		: getPublicKeyFromPeerId(publicKey);
 };
 const canPerformByRelation = async (
-	operation: PutOperation<IdentityRelation> | DeleteOperation,
-	context: TransactionContext<IdentityRelation>,
+	properties: CanPerformOperations<IdentityRelation>,
 	isTrusted?: (key: PublicSignKey) => Promise<boolean>
 ): Promise<boolean> => {
 	// verify the payload
-	if (
-		operation instanceof PutOperation ||
-		operation instanceof DeleteOperation
-	) {
-		/*  const relation: Relation = operation.value || deserialize(operation.data, Relation); */
+	const keys = await properties.entry.getPublicKeys();
+	const checkKey = async (key: PublicSignKey): Promise<boolean> => {
+		if (properties.type === "put") {
+			// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canPerform method does not know what the payload will
+			// be, upon deserialization. There should be known in the `canPerform` method whether we are appending to the identityGraph.
 
-		const keys = await context.entry.getPublicKeys();
-		const checkKey = async (key: PublicSignKey): Promise<boolean> => {
-			if (operation instanceof PutOperation) {
-				// TODO, this clause is only applicable when we modify the identityGraph, but it does not make sense that the canPerform method does not know what the payload will
-				// be, upon deserialization. There should be known in the `canPerform` method whether we are appending to the identityGraph.
-
-				const relation = operation.value;
-				if (relation instanceof IdentityRelation) {
-					if (!relation.from.equals(key)) {
-						return false;
-					}
+			const relation = properties.value;
+			if (relation instanceof IdentityRelation) {
+				if (!relation.from.equals(key)) {
+					return false;
 				}
+			}
 
-				// else assume the payload is accepted
-			}
-			if (isTrusted) {
-				const trusted = await isTrusted(key);
-				return trusted;
-			} else {
-				return true;
-			}
-		};
-		for (const key of keys) {
-			const result = await checkKey(key);
-			if (result) {
-				return true;
-			}
+			// else assume the payload is accepted
 		}
-		return false;
-	} else {
-		return false;
+		if (isTrusted) {
+			const trusted = await isTrusted(key);
+			return trusted;
+		} else {
+			return true;
+		}
+	};
+	for (const key of keys) {
+		const result = await checkKey(key);
+		if (result) {
+			return true;
+		}
 	}
+	return false;
 };
 
 type IdentityGraphArgs = {
@@ -97,10 +87,9 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 	}
 
 	async canPerform(
-		operation: PutOperation<IdentityRelation> | DeleteOperation,
-		context: TransactionContext<IdentityRelation>
+		properties: CanPerformOperations<IdentityRelation>
 	): Promise<boolean> {
-		return canPerformByRelation(operation, context);
+		return canPerformByRelation(properties);
 	}
 
 	async open(options?: IdentityGraphArgs) {
@@ -122,7 +111,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 
 	async addRelation(
 		to: PublicSignKey | PeerId,
-		options?: AppendOptions<Operation<IdentityRelation>>
+		options?: AppendOptions<Operation>
 	) {
 		/*  trustee = PublicKey.from(trustee); */
 		await this.relationGraph.put(
@@ -176,12 +165,9 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	}
 
 	async canPerform(
-		operation: PutOperation<IdentityRelation> | DeleteOperation,
-		context: TransactionContext<IdentityRelation>
+		properties: CanPerformOperations<IdentityRelation>
 	): Promise<boolean> {
-		return canPerformByRelation(operation, context, (key) =>
-			this.isTrusted(key)
-		);
+		return canPerformByRelation(properties, (key) => this.isTrusted(key));
 	}
 
 	async canRead(relation: any, publicKey?: PublicSignKey): Promise<boolean> {

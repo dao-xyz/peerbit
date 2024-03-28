@@ -55,7 +55,6 @@ class PostsDB extends Program {
 				min: 2
 			},
 			index: {
-				key: "id",
 				canRead: (post, publicKey) => {
 					// can publicKey read this particular post?
 					return true;
@@ -66,16 +65,7 @@ class PostsDB extends Program {
 				}
 			},
 			canReplicate: (publicKey) =>
-				!!ALL_MEMBERS.find((x) => x.equals(publicKey)),
-
-			canPerform: async (operation, _context) => {
-				if (operation instanceof PutOperation) {
-					return true;
-				} else if (operation instanceof DeleteOperation) {
-					return false;
-				}
-				return true;
-			}
+				!!ALL_MEMBERS.find((x) => x.equals(publicKey))
 		});
 	}
 }

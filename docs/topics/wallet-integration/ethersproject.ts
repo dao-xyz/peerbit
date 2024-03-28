@@ -63,9 +63,9 @@ class PostStore extends Program {
 	async open(args?: any): Promise<void> {
 		await this.posts.open({
 			type: Post,
-			canPerform: (operation, context) => {
+			canPerform: (properties) => {
 				// This canPerfom will only return true if the post was signed by the wallet
-				const publicKeys = context.entry.publicKeys;
+				const publicKeys = properties.entry.publicKeys;
 				if (publicKeys.find((publicKey) => publicKey.equals(walletPublicKey))) {
 					return true;
 				}
@@ -83,5 +83,5 @@ await db.posts.put(new Post("Hello world!"), {
 	signers: [walletIdentity.sign.bind(walletIdentity)]
 });
 
-expect(db.posts.index.size).toEqual(1); // Post was appproved
+expect(await db.posts.index.getSize()).toEqual(1); // Post was appproved
 await peer.stop();

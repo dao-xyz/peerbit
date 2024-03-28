@@ -1,11 +1,10 @@
 import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, SetupOptions } from "../document-store.js";
+import { Documents, SetupOptions } from "../program.js";
 import { TestSession } from "@peerbit/test-utils";
-import { ProgramClient } from "@peerbit/program";
+import { ProgramClient, Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
-import { Program } from "@peerbit/program";
 
 // Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
 // put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))
@@ -46,7 +45,7 @@ class TestStore extends Program<Partial<SetupOptions<Document>>> {
 		}
 	}
 	async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
-		await this.docs.open({ ...options, type: Document, index: { key: "id" } });
+		await this.docs.open({ ...options, type: Document });
 	}
 }
 

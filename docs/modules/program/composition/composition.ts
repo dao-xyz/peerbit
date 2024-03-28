@@ -90,7 +90,7 @@ class Forum extends Program<Args> {
 			canPerform: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
 			index: {
-				key: NAME_PROPERTY
+				idProperty: NAME_PROPERTY
 			},
 			role: args?.role
 		});

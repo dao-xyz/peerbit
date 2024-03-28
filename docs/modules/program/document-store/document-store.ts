@@ -99,18 +99,18 @@ export class Channel extends Program<ChannelArgs> {
 		await this.posts.open({
 			type: Post,
 			role: properties?.role,
-			canPerform: async (operation, { entry }) => {
+			canPerform: async (properties) => {
 				// Determine whether an operation, based on an entry should be allowed
 
 				// You can use the entry to get properties of the operation
 				// like signers
 
-				const signers = await entry.getPublicKeys();
+				const signers = await properties.entry.getPublicKeys();
 
-				if (operation instanceof PutOperation) {
+				if (properties.type === "put") {
 					// do some behaviour
 					return true;
-				} else if (operation instanceof DeleteOperation) {
+				} else if (properties.type === "delete") {
 					// do some other behaviour
 					return true;
 				}
@@ -119,7 +119,7 @@ export class Channel extends Program<ChannelArgs> {
 
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
-				key: POST_ID_PROPERTY,
+				idProperty: POST_ID_PROPERTY,
 
 				// You can tailor what fields should be indexed,
 				// everything else will be stored on disc (if you use disc storage with the client)
@@ -157,11 +157,8 @@ export class Channel extends Program<ChannelArgs> {
 		});
 
 		await this.reactions.open({
-			type: Reaction,
-			index: {
-				// Primary key is default 'id', but we can assign it manually here
-				key: REACTION_ID_PROPERTY
-			}
+			type: Reaction
+
 			// we don't provide an index here, which means we will index all fields of Reaction
 		});
 	}
@@ -169,7 +166,7 @@ export class Channel extends Program<ChannelArgs> {
 /// [definition]
 
 /// [insert]
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 
 // Start two clients that ought to talk to each other
 const peer = await Peerbit.create();
@@ -208,8 +205,8 @@ await channelFromClient2.posts.put(message3, {
 });
 
 // Since the first node is a replicator, it will eventually get all messages
-await waitForResolved(() =>
-	expect(channelFromClient1.posts.index.size).toEqual(3)
+await waitForResolved(async () =>
+	expect(await channelFromClient1.posts.index.getSize()).toEqual(3)
 );
 
 // And to do some reactions
@@ -228,16 +225,16 @@ await channelFromClient1.reactions.put(
 /// [delete]
 const anotherPost = new Post("I will delete this in a moment");
 await channelFromClient2.posts.put(anotherPost);
-await waitForResolved(() =>
-	expect(channelFromClient1.posts.index.size).toEqual(4)
+await waitForResolved(async () =>
+	expect(await channelFromClient1.posts.index.getSize()).toEqual(4)
 );
 
 // Delete with no arg (will permantly delete)
 await channelFromClient2.posts.del(anotherPost.id);
 
 // The delete will eventually propagate to the first client (the replicator)
-await waitForResolved(() =>
-	expect(channelFromClient1.posts.index.size).toEqual(3)
+await waitForResolved(async () =>
+	expect(await channelFromClient1.posts.index.getSize()).toEqual(3)
 );
 
 /// [delete]

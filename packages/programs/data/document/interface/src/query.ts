@@ -8,8 +8,12 @@ import {
 	vec
 } from "@dao-xyz/borsh";
 
-import { asString } from "./utils.js";
-import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
+import { randomBytes, sha256Base64Sync, toBase64 } from "@peerbit/crypto";
+import {
+	BigUnsignedIntegerValue,
+	IntegerValue,
+	UnsignedIntegerValue
+} from "./id.js";
 
 export enum Compare {
 	Equal = 0,
@@ -187,66 +191,6 @@ export class StateFieldQuery extends StateQuery {
 	}
 }
 
-export abstract class PrimitiveValue {}
-
-@variant(0)
-export class StringValue extends PrimitiveValue {
-	@field({ type: "string" })
-	string: string;
-
-	constructor(string: string) {
-		super();
-		this.string = string;
-	}
-}
-
-@variant(1)
-abstract class NumberValue extends PrimitiveValue {
-	abstract get value(): number | bigint;
-}
-
-@variant(0)
-abstract class IntegerValue extends NumberValue {}
-
-@variant(0)
-export class UnsignedIntegerValue extends IntegerValue {
-	@field({ type: "u32" })
-	number: number;
-
-	constructor(number: number) {
-		super();
-		if (
-			Number.isInteger(number) === false ||
-			number > 4294967295 ||
-			number < 0
-		) {
-			throw new Error("Number is not u32");
-		}
-		this.number = number;
-	}
-
-	get value() {
-		return this.number;
-	}
-}
-
-@variant(1)
-export class BigUnsignedIntegerValue extends IntegerValue {
-	@field({ type: "u64" })
-	number: bigint;
-
-	constructor(number: bigint) {
-		super();
-		if (number > 18446744073709551615n || number < 0) {
-			throw new Error("Number is not u32");
-		}
-		this.number = number;
-	}
-	get value() {
-		return this.number;
-	}
-}
-
 @variant(1)
 export class ByteMatchQuery extends StateFieldQuery {
 	@field({ type: Uint8Array })
@@ -266,7 +210,7 @@ export class ByteMatchQuery extends StateFieldQuery {
 	 * value `asString`
 	 */
 	get valueString() {
-		return this._valueString ?? (this._valueString = asString(this.value));
+		return this._valueString ?? (this._valueString = toBase64(this.value));
 	}
 }
 
@@ -416,11 +360,17 @@ export class ResultWithSource<T> extends Result {
 	context: Context;
 
 	_type: AbstractType<T>;
-	constructor(opts: { source: Uint8Array; context: Context; value?: T }) {
+	constructor(opts: {
+		source: Uint8Array;
+		context: Context;
+		value?: T;
+		indexed?: Record<string, any>;
+	}) {
 		super();
 		this._source = opts.source;
 		this.context = opts.context;
 		this._value = opts.value;
+		this.indexed = opts.indexed;
 	}
 
 	init(type: AbstractType<T>) {
@@ -438,6 +388,8 @@ export class ResultWithSource<T> extends Result {
 		this._value = deserialize(this._source, this._type);
 		return this._value;
 	}
+
+	indexed?: Record<string, any>;
 }
 
 export abstract class AbstractSearchResult<T> {}

@@ -88,9 +88,10 @@ describe("profile", () => {
 		await session.stop();
 	});
 	it("puts", async () => {
-		let COUNT = 10;
+		let COUNT = 100;
 		const writeStore = stores[0];
 		let promises: Promise<any>[] = [];
+		const l0 = 1;
 		for (let i = 0; i < COUNT; i++) {
 			const doc = new Document({
 				id: uuid(),
@@ -99,9 +100,13 @@ describe("profile", () => {
 			});
 			await writeStore.docs.put(doc, { unique: true });
 		}
+		const l1 = 1;
+
 		await Promise.all(promises);
-		await waitForResolved(() =>
-			expect(stores[stores.length - 1].docs.index.size).toEqual(COUNT)
+		await waitForResolved(async () =>
+			expect(await stores[stores.length - 1].docs.index.getSize()).toEqual(
+				COUNT
+			)
 		);
 	});
 });

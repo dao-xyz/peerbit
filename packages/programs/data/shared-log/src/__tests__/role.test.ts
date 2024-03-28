@@ -254,15 +254,17 @@ describe(`role`, () => {
 					db1.log.getDefaultMinRoleAge()
 				);
 				expect(selfMatured).toBeTrue();
-				expect(
-					db1.log
-						.getReplicatorsSorted()
-						?.toArray()
-						.filter((x) =>
-							isMatured(x.role, now, db1.log.getDefaultMinRoleAge())
-						)
-						.map((x) => x.publicKey.hashcode())
-				).toEqual([db1.node.identity.publicKey.hashcode()]);
+				await waitForResolved(() =>
+					expect(
+						db1.log
+							.getReplicatorsSorted()
+							?.toArray()
+							.filter((x) =>
+								isMatured(x.role, now, db1.log.getDefaultMinRoleAge())
+							)
+							.map((x) => x.publicKey.hashcode())
+					).toEqual([db1.node.identity.publicKey.hashcode()])
+				);
 
 				// assume other nodes except me are mature if the open before me
 				selfMatured = isMatured(

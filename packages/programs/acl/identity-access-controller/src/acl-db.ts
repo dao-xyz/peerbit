@@ -1,9 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
-	TransactionContext,
-	PutOperation,
-	DeleteOperation
+	SearchRequest,
+	IntegerCompare,
+	Compare,
+	Or,
+	CanPerformOperations
 } from "@peerbit/document";
 import {
 	getPathGenerator,
@@ -12,7 +14,7 @@ import {
 	IdentityGraph,
 	createIdentityGraphStore
 } from "@peerbit/trusted-network";
-import { Access, AccessType } from "./access";
+import { ACCESS_TYPE_PROPERTY, Access, AccessType } from "./access";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { PeerId } from "@libp2p/interface";
@@ -77,8 +79,25 @@ export class IdentityAccessController extends Program {
 
 		// Else check whether its trusted by this access controller
 		const canReadCheck = async (key: PublicSignKey) => {
-			for (const value of this.access.index.index.values()) {
-				const access = value.value;
+			const accessReadOrAny = await this.access.index.search(
+				new SearchRequest({
+					query: [
+						new Or([
+							new IntegerCompare({
+								key: ACCESS_TYPE_PROPERTY,
+								compare: Compare.Equal,
+								value: AccessType.Any
+							}),
+							new IntegerCompare({
+								key: ACCESS_TYPE_PROPERTY,
+								compare: Compare.Equal,
+								value: AccessType.Read
+							})
+						])
+					]
+				})
+			);
+			for (const access of accessReadOrAny) {
 				if (access instanceof Access) {
 					if (
 						access.accessTypes.find(
@@ -111,10 +130,7 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async canPerform(
-		_operation: PutOperation<Access> | DeleteOperation,
-		context: TransactionContext<Access>
-	): Promise<boolean> {
+	async canPerform(properties: CanPerformOperations<any>): Promise<boolean> {
 		// TODO, improve, caching etc
 
 		// Check whether it is trusted by trust web
@@ -124,8 +140,26 @@ export class IdentityAccessController extends Program {
 			}
 			// Else check whether its trusted by this access controller
 			const canPerformCheck = async (key: PublicSignKey) => {
-				for (const value of this.access.index.index.values()) {
-					const access = value.value;
+				const accessWritedOrAny = await this.access.index.search(
+					new SearchRequest({
+						query: [
+							new Or([
+								new IntegerCompare({
+									key: ACCESS_TYPE_PROPERTY,
+									compare: Compare.Equal,
+									value: AccessType.Any
+								}),
+								new IntegerCompare({
+									key: ACCESS_TYPE_PROPERTY,
+									compare: Compare.Equal,
+									value: AccessType.Write
+								})
+							])
+						]
+					})
+				);
+
+				for (const access of accessWritedOrAny) {
 					if (access instanceof Access) {
 						if (
 							access.accessTypes.find(
@@ -157,7 +191,7 @@ export class IdentityAccessController extends Program {
 			return false;
 		};
 
-		for (const key of await context.entry.getPublicKeys()) {
+		for (const key of await properties.entry.getPublicKeys()) {
 			if (await canPerformByKey(key)) {
 				return true;
 			}

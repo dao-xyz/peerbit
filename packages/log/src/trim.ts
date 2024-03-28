@@ -267,7 +267,10 @@ export class Trim<T> {
 	 */
 	async trim(
 		option: TrimOptions | undefined = this._trim
-	): Promise<Entry<T>[]> {
+	): Promise<Entry<T>[] | undefined> {
+		if (!option) {
+			return;
+		}
 		const result = await this._queue.add(() => this.trimTask(option));
 		if (result instanceof Object) {
 			return result;

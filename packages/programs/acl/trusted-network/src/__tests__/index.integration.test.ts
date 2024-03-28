@@ -33,7 +33,7 @@ class AnyCanAppendIdentityGraph extends IdentityGraph {
 	}) {
 		super(props);
 	}
-	async canPerform(operation, context): Promise<boolean> {
+	async canPerform(_props): Promise<boolean> {
 		return true;
 	}
 }
@@ -243,7 +243,9 @@ describe("index", () => {
 				await l0a.trustGraph.log.log.getHeads()
 			);
 
-			await waitForResolved(() => expect(l0b.trustGraph.index.size).toEqual(1));
+			await waitForResolved(async () =>
+				expect(await l0b.trustGraph.index.getSize()).toEqual(1)
+			);
 
 			await l0b.add(session.peers[2].peerId); // Will only work if peer2 is trusted
 
@@ -251,8 +253,12 @@ describe("index", () => {
 				await l0b.trustGraph.log.log.getHeads()
 			);
 
-			await waitFor(() => l0b.trustGraph.index.size == 2);
-			await waitFor(() => l0a.trustGraph.index.size == 2);
+			await waitForResolved(async () =>
+				expect(await l0b.trustGraph.index.getSize()).toEqual(2)
+			);
+			await waitForResolved(async () =>
+				expect(await l0a.trustGraph.index.getSize()).toEqual(2)
+			);
 
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey,

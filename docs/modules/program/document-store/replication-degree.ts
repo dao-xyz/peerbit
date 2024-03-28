@@ -42,8 +42,8 @@ export class TextDocuments extends Program<Args> {
 			},
 
 			// Don't allow operations to be appended if the have too high replication degree
-			canPerform: (_operation, context) => {
-				const replicationConfig = decodeReplicas(context.entry);
+			canPerform: (properties) => {
+				const replicationConfig = decodeReplicas(properties.entry);
 				if (replicationConfig.getValue(db.documents.log) > 10) {
 					return false;
 				}

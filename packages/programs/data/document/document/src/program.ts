@@ -10,7 +10,6 @@ import { Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
 import { Program, ProgramEvents } from "@peerbit/program";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
-import { AppendOptions } from "@peerbit/log";
 import { CustomEvent } from "@libp2p/interface";
 import {
 	RoleOptions,
@@ -20,6 +19,7 @@ import {
 	SharedLogOptions,
 	SharedAppendOptions
 } from "@peerbit/shared-log";
+import * as types from "@peerbit/document-interface";
 
 export type { RoleOptions }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
@@ -31,13 +31,9 @@ import {
 	Operation,
 	PutOperation,
 	CanSearch,
-	CanRead,
-	InMemoryIndex,
-	MAX_DOCUMENT_SIZE
-} from "./document-index.js";
-import { asString, checkKeyable, Keyable } from "./utils.js";
-import { Context, Results } from "./query.js";
-export { MAX_DOCUMENT_SIZE };
+	CanRead
+} from "./search.js";
+import { MAX_BATCH_SIZE } from "./constants.js";
 
 const logger = loggerFn({ module: "document" });
 
@@ -54,39 +50,49 @@ export interface DocumentEvents<T> {
 	change: CustomEvent<DocumentsChange<T>>;
 }
 
-export type TransactionContext<T> = {
-	entry: Entry<Operation<T>>;
+type MaybePromise<T> = Promise<T> | T;
+
+type CanPerformPut<T> = {
+	type: "put";
+	value: T;
+	operation: PutOperation;
+	entry: Entry<PutOperation>;
 };
 
-type MaybePromise = Promise<boolean> | boolean;
+type CanPerformDelete<T> = {
+	type: "delete";
+	operation: DeleteOperation;
+	entry: Entry<DeleteOperation>;
+};
 
+export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete<T>;
 export type CanPerform<T> = (
-	operation: PutOperation<T> | DeleteOperation,
-	context: TransactionContext<T>
-) => MaybePromise;
+	properties: CanPerformOperations<T>
+) => MaybePromise<boolean>;
 
 export type SetupOptions<T> = {
 	type: AbstractType<T>;
-	canOpen?: (program: T) => MaybePromise;
+	canOpen?: (program: T) => MaybePromise<boolean>;
 	canPerform?: CanPerform<T>;
+	id?: (obj: any) => types.IdPrimitive;
 	index?: {
-		key?: string | string[];
-		fields?: IndexableFields<T>;
+		idProperty?: string | string[];
 		canSearch?: CanSearch;
 		canRead?: CanRead<T>;
+		fields?: IndexableFields<T>;
 	};
 	log?: {
 		trim?: TrimOptions;
 	};
-} & SharedLogOptions<Operation<T>>;
+} & SharedLogOptions<Operation>;
 
 @variant("documents")
-export class Documents<T extends Record<string, any>>
-	extends Program<SetupOptions<T>, DocumentEvents<T> & ProgramEvents>
-	implements InMemoryIndex<T>
-{
+export class Documents<T> extends Program<
+	SetupOptions<T>,
+	DocumentEvents<T> & ProgramEvents
+> {
 	@field({ type: SharedLog })
-	log: SharedLog<Operation<T>>;
+	log: SharedLog<Operation>;
 
 	@field({ type: "bool" })
 	immutable: boolean; // "Can I overwrite a document?"
@@ -98,11 +104,9 @@ export class Documents<T extends Record<string, any>>
 
 	private _optionCanPerform?: CanPerform<T>;
 	private _manuallySynced: Set<string>;
+	private idResolver: (any: any) => types.IdPrimitive;
 
-	canOpen?: (
-		program: T,
-		entry: Entry<Operation<T>>
-	) => Promise<boolean> | boolean;
+	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
 
 	constructor(properties?: {
 		id?: Uint8Array;
@@ -134,17 +138,34 @@ export class Documents<T extends Record<string, any>>
 		}
 
 		this._optionCanPerform = options.canPerform;
-
 		this._manuallySynced = new Set();
+		const idProperty = options.index?.idProperty || "id";
+		const idResolver =
+			options.id ||
+			(typeof idProperty === "string"
+				? (obj) => obj[idProperty as string]
+				: (obj: any) => types.extractFieldValue(obj, idProperty as string[]));
 
+		this.idResolver = idResolver;
+
+		let transform: IndexableFields<T>;
+		if (options.index?.fields) {
+			if (typeof options.index.fields === "function") {
+				transform = options.index.fields;
+			} else {
+				transform = options.index.fields;
+			}
+		} else {
+			transform = (obj) => obj as Record<string, any>; // TODO check types
+		}
 		await this._index.open({
 			type: this._clazz,
 			log: this.log,
 			canRead: options?.index?.canRead,
 			canSearch: options.index?.canSearch,
-			fields: options.index?.fields || ((obj) => obj),
-			indexBy: options.index?.key,
-			sync: async (result: Results<T>) => {
+			fields: transform,
+			indexBy: idProperty,
+			sync: async (result: types.Results<T>) => {
 				// here we arrive for all the results we want to persist.
 				// we we need to do here is
 				// 1. add the entry to a list of entries that we should persist through prunes
@@ -178,13 +199,10 @@ export class Documents<T extends Record<string, any>>
 		return this.log.recover();
 	}
 
-	private async _resolveEntry(history: Entry<Operation<T>> | string) {
+	private async _resolveEntry(history: Entry<Operation> | string) {
 		return typeof history === "string"
 			? (await this.log.log.get(history)) ||
-					(await Entry.fromMultihash<Operation<T>>(
-						this.log.log.blocks,
-						history
-					))
+					(await Entry.fromMultihash<Operation>(this.log.log.blocks, history))
 			: history;
 	}
 
@@ -195,25 +213,48 @@ export class Documents<T extends Record<string, any>>
 		return this.log.role;
 	}
 
-	async canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
-		const l0 = await this._canAppend(entry);
+	async canAppend(
+		entry: Entry<Operation>,
+		reference?: { document: T; operation: PutOperation }
+	): Promise<boolean> {
+		const l0 = await this._canAppend(entry as Entry<Operation>, reference);
 		if (!l0) {
 			return false;
 		}
 
 		try {
-			const payload = await entry.getPayloadValue();
-			if (payload instanceof PutOperation) {
-				(payload as PutOperation<T>).getValue(this.index.valueEncoding); // Decode they value so callbacks can jsut do .value
+			let operation: PutOperation | DeleteOperation = l0;
+			let document: T | undefined = reference?.document;
+			if (!document) {
+				if (l0 instanceof PutOperation) {
+					document = this._index.valueEncoding.decoder(l0.data);
+					if (!document) {
+						return false;
+					}
+				} else if (l0 instanceof DeleteOperation) {
+					// Nothing to do here by default
+					// checking if the document exists is not necessary
+					// since it might already be deleted
+				} else {
+					throw new Error("Unsupported operation");
+				}
 			}
 
 			if (this._optionCanPerform) {
 				if (
 					!(await this._optionCanPerform(
-						payload as PutOperation<T> | DeleteOperation,
-						{
-							entry
-						}
+						operation instanceof PutOperation
+							? {
+									type: "put",
+									value: document!,
+									operation,
+									entry: entry as any as Entry<PutOperation>
+								}
+							: {
+									type: "delete",
+									operation,
+									entry: entry as any as Entry<DeleteOperation>
+								}
 					))
 				) {
 					return false;
@@ -230,14 +271,17 @@ export class Documents<T extends Record<string, any>>
 		return true;
 	}
 
-	async _canAppend(entry: Entry<Operation<T>>): Promise<boolean> {
-		const resolve = async (history: Entry<Operation<T>> | string) => {
+	async _canAppend(
+		entry: Entry<Operation>,
+		reference?: { document: T; operation: PutOperation }
+	): Promise<PutOperation | DeleteOperation | false> {
+		const resolve = async (history: Entry<Operation> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||
 						(await Entry.fromMultihash(this.log.log.blocks, history))
 				: history;
 		};
-		const pointsToHistory = async (history: Entry<Operation<T>> | string) => {
+		const pointsToHistory = async (history: Entry<Operation> | string) => {
 			// make sure nexts only points to this document at some point in history
 			let current = await resolve(history);
 
@@ -261,21 +305,22 @@ export class Documents<T extends Record<string, any>>
 				keychain: this.node.services.keychain
 			});
 			const operation =
-				entry._payload instanceof DecryptedThing
+				reference?.operation || entry._payload instanceof DecryptedThing
 					? entry.payload.getValue(entry.encoding)
 					: await entry.getPayloadValue();
 			if (operation instanceof PutOperation) {
 				// check nexts
-				const putOperation = operation as PutOperation<T>;
+				const putOperation = operation as PutOperation;
+				let value =
+					reference?.document ??
+					this.index.valueEncoding.decoder(putOperation.data);
+				const keyValue = this.idResolver(value);
 
-				const key = this._index.indexByResolver(
-					putOperation.getValue(this.index.valueEncoding)
-				) as Keyable;
+				const key = types.toId(keyValue);
 
-				checkKeyable(key);
-
-				const existingDocument = this.index.index.get(asString(key));
-				if (existingDocument) {
+				const existingDocument = await this.index.engine.get(key);
+				if (existingDocument && existingDocument.context.head !== entry.hash) {
+					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
 						return false;
@@ -289,7 +334,8 @@ export class Documents<T extends Record<string, any>>
 						logger.error("Failed to find Document from head");
 						return false;
 					}
-					return pointsToHistory(doc);
+					const referenceHistoryCorrectly = await pointsToHistory(doc);
+					return referenceHistoryCorrectly ? putOperation : false;
 				} else {
 					if (entry.next.length !== 0) {
 						return false;
@@ -299,18 +345,26 @@ export class Documents<T extends Record<string, any>>
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = this._index.index.get(operation.key);
+				const existingDocument = await this._index.engine.get(operation.key);
 				if (!existingDocument) {
 					// already deleted
-					return true; // assume ok
+					return operation; // assume ok
 				}
 				let doc = await this.log.log.get(existingDocument.context.head);
 				if (!doc) {
 					logger.error("Failed to find Document from head");
 					return false;
 				}
-				return pointsToHistory(doc); // references the existing document
+				if (await pointsToHistory(doc)) {
+					// references the existing document
+					return operation;
+				}
+				return false;
+			} else {
+				throw new Error("Unsupported operation");
 			}
+
+			return operation;
 		} catch (error) {
 			if (error instanceof AccessError) {
 				return false; // we cant index because we can not decrypt
@@ -320,65 +374,73 @@ export class Documents<T extends Record<string, any>>
 			}
 			throw error;
 		}
-		return true;
 	}
 
 	public async put(
 		doc: T,
-		options?: SharedAppendOptions<Operation<T>> & { unique?: boolean }
+		options?: SharedAppendOptions<Operation> & { unique?: boolean }
 	) {
-		const key = this._index.indexByResolver(doc as any as Keyable);
-		checkKeyable(key);
+		const keyValue = this.idResolver(doc);
+
+		// type check the key
+		types.checkId(keyValue);
+
 		const ser = serialize(doc);
-		if (ser.length > MAX_DOCUMENT_SIZE) {
+		if (ser.length > MAX_BATCH_SIZE) {
 			throw new Error(
 				`Document is too large (${
 					ser.length * 1e-6
-				}) mb). Needs to be less than ${MAX_DOCUMENT_SIZE * 1e-6} mb`
+				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`
 			);
 		}
 
 		const existingDocument = options?.unique
 			? undefined
 			: (
-					await this._index.getDetailed(key, {
+					await this._index.getDetailed(keyValue, {
 						local: true,
 						remote: { sync: true } // only query remote if we know they exist
 					})
 				)?.[0]?.results[0];
 
-		return this.log.append(
-			new PutOperation({
-				key: asString(key),
-				data: ser,
-				value: doc
-			}),
-			{
-				...options,
-				meta: {
-					next: existingDocument
-						? [await this._resolveEntry(existingDocument.context.head)]
-						: [],
-					...options?.meta
-				} //
+		const operation = new PutOperation({
+			data: ser
+		});
+		const appended = await this.log.append(operation, {
+			...options,
+			meta: {
+				next: existingDocument
+					? [await this._resolveEntry(existingDocument.context.head)]
+					: [],
+				...options?.meta
+			},
+			canAppend: (entry) => {
+				return this.canAppend(entry, { document: doc, operation });
+			},
+			onChange: (change) => {
+				return this.handleChanges(change, { document: doc, operation });
 			}
-		);
+		});
+
+		return appended;
 	}
 
-	async del(key: Keyable, options?: SharedAppendOptions<Operation<T>>) {
+	async del(id: types.Ideable, options?: SharedAppendOptions<Operation>) {
+		const key = types.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {
 				local: true,
 				remote: { sync: true }
 			})
 		)?.[0]?.results[0];
+
 		if (!existing) {
 			throw new Error(`No entry with key '${key}' in the database`);
 		}
 
 		return this.log.append(
 			new DeleteOperation({
-				key: asString(key)
+				key
 			}),
 			{
 				...options,
@@ -391,59 +453,54 @@ export class Documents<T extends Record<string, any>>
 		);
 	}
 
-	async handleChanges(change: Change<Operation<T>>): Promise<void> {
+	async handleChanges(
+		change: Change<Operation>,
+		reference?: { document: T; operation: PutOperation }
+	): Promise<void> {
+		const isAppendOperation =
+			change?.added.length === 1 ? !!change.added[0] : false;
+
 		const removed = [...(change.removed || [])];
-		const removedSet = new Map<string, Entry<Operation<T>>>();
+		const removedSet = new Map<string, Entry<Operation>>();
 		for (const r of removed) {
 			removedSet.set(r.hash, r);
 		}
-		const entries = [...change.added, ...(removed || [])]
+		const sortedEntries = [...change.added, ...(removed || [])]
 			.sort(this.log.log.sortFn)
 			.reverse(); // sort so we get newest to oldest
 
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
 		// in combination with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
 
-		let visited = new Map<string, Entry<Operation<T>>[]>();
-		for (const item of entries) {
-			const payload =
-				item._payload instanceof DecryptedThing
-					? item.payload.getValue(item.encoding)
-					: await item.getPayloadValue();
-			let itemKey: string;
-			if (
-				payload instanceof PutOperation ||
-				payload instanceof DeleteOperation
-			) {
-				itemKey = payload.key;
-			} else {
-				throw new Error("Unsupported operation type");
-			}
-
-			let arr = visited.get(itemKey);
-			if (!arr) {
-				arr = [];
-				visited.set(itemKey, arr);
-			}
-			arr.push(item);
-		}
-
 		let documentsChanged: DocumentsChange<T> = {
 			added: [],
 			removed: []
 		};
 
-		for (const [_key, entries] of visited) {
+		let modified: Set<string | number | bigint> = new Set();
+		for (const item of sortedEntries) {
 			try {
-				const item = entries[0];
 				const payload =
 					item._payload instanceof DecryptedThing
 						? item.payload.getValue(item.encoding)
 						: await item.getPayloadValue();
-				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
-					const key = payload.key;
 
-					let value = this.deserializeOrPass(payload);
+				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
+					let value =
+						(isAppendOperation &&
+							reference?.operation === payload &&
+							reference?.document) ||
+						this.index.valueEncoding.decoder(payload.data);
+
+					// get index key from value
+					const keyObject = this.idResolver(value);
+
+					const key = types.toId(keyObject);
+
+					// document is already updated with more recent entry
+					if (modified.has(key.primitive)) {
+						continue;
+					}
 
 					// Program specific
 					if (value instanceof Program) {
@@ -460,26 +517,8 @@ export class Documents<T extends Record<string, any>>
 						}
 					}
 					documentsChanged.added.push(value);
-
-					const context = new Context({
-						created:
-							this._index.index.get(key)?.context.created ||
-							item.meta.clock.timestamp.wallTime,
-						modified: item.meta.clock.timestamp.wallTime,
-						head: item.hash,
-						gid: item.gid
-					});
-
-					const valueToIndex = this._index.toIndex(value, context);
-					this._index.index.set(key, {
-						key: payload.key,
-						value: isPromise(valueToIndex) ? await valueToIndex : valueToIndex,
-						context,
-						reference:
-							valueToIndex === value || value instanceof Program
-								? { value, last: payload }
-								: undefined
-					});
+					this._index.put(value, item, key);
+					modified.add(key.primitive);
 				} else if (
 					(payload instanceof DeleteOperation && !removedSet.has(item.hash)) ||
 					payload instanceof PutOperation ||
@@ -487,16 +526,30 @@ export class Documents<T extends Record<string, any>>
 				) {
 					this._manuallySynced.delete(item.gid);
 
-					const key = (payload as DeleteOperation | PutOperation<T>).key;
-					if (!this.index.index.has(key)) {
-						continue;
-					}
-
 					let value: T;
+					let key: string | number | bigint;
+
 					if (payload instanceof PutOperation) {
-						value = this.deserializeOrPass(payload);
+						value = this.index.valueEncoding.decoder(payload.data);
+						key = types.toIdeable(this.idResolver(value));
+						// document is already updated with more recent entry
+						if (modified.has(key)) {
+							continue;
+						}
 					} else if (payload instanceof DeleteOperation) {
-						value = await this.getDocumentFromEntry(entries[1]!);
+						key = payload.key.primitive;
+						// document is already updated with more recent entry
+						if (modified.has(key)) {
+							continue;
+						}
+						const document = await this._index.get(key, {
+							local: true,
+							remote: false
+						});
+						if (!document) {
+							continue;
+						}
+						value = document;
 					} else {
 						throw new Error("Unexpected");
 					}
@@ -508,7 +561,9 @@ export class Documents<T extends Record<string, any>>
 					}
 
 					// update index
-					this._index.index.delete(key);
+					this._index.del(key);
+
+					modified.add(key);
 				} else {
 					// Unknown operation
 				}
@@ -524,24 +579,4 @@ export class Documents<T extends Record<string, any>>
 			new CustomEvent("change", { detail: documentsChanged })
 		);
 	}
-
-	private async getDocumentFromEntry(entry: Entry<Operation<T>>) {
-		const payloadValue = await entry.getPayloadValue();
-		if (payloadValue instanceof PutOperation) {
-			return payloadValue.getValue(this.index.valueEncoding);
-		}
-		throw new Error("Unexpected");
-	}
-	deserializeOrPass(value: PutOperation<T>): T {
-		if (value._value) {
-			return value._value;
-		} else {
-			value._value = deserialize(value.data, this.index.type);
-			return value._value!;
-		}
-	}
-}
-
-function isPromise(value) {
-	return Boolean(value && typeof value.then === "function");
 }

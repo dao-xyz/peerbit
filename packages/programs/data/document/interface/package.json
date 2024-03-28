@@ -1,7 +1,7 @@
 {
-	"name": "@peerbit/document",
+	"name": "@peerbit/document-interface",
 	"version": "6.0.7",
-	"description": "Document Store for orbit-db with binary ser/der",
+	"description": "Document store interface",
 	"type": "module",
 	"sideEffects": false,
 	"module": "lib/esm/index.js",
@@ -25,9 +25,9 @@
 	"scripts": {
 		"clean": "shx rm -rf lib/*",
 		"build": "yarn clean && tsc -p tsconfig.json",
-		"test": "node ../../../../node_modules/.bin/jest test  -c  ../../../../jest.config.ts --runInBand --forceExit",
-		"test:unit": "node ../../../../node_modules/.bin/jest test  -c  ../../../../jest.config.unit.ts --runInBand --forceExit",
-		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../../jest.config.integration.ts --runInBand --forceExit"
+		"test": "node ../../../../../node_modules/.bin/jest test  -c  ../../../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../../../node_modules/.bin/jest test  -c  ../../../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../../../../jest.config.integration.ts --runInBand --forceExit"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",

@@ -2407,6 +2407,7 @@ describe("join/leave", () => {
 				])
 			);
 		});
+
 		it("neighbour drop but maybe reachable", async () => {
 			// V shape
 			await session.connect([[session.peers[0], session.peers[1]]]);
@@ -2431,12 +2432,13 @@ describe("join/leave", () => {
 
 			const seekTimeout = 2e3;
 			streams[0].stream.seekTimeout = seekTimeout;
-			let t0 = +new Date();
 			await session.peers[1].stop();
 
 			// will immediately become unreachable
-			expect(streams[0].unrechable.map((x) => x.hashcode())).toContainAllValues(
-				[streams[1].stream.publicKeyHash]
+			await waitForResolved(() =>
+				expect(
+					streams[0].unrechable.map((x) => x.hashcode())
+				).toContainAllValues([streams[1].stream.publicKeyHash])
 			);
 		});
 

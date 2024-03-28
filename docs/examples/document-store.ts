@@ -56,8 +56,7 @@ class PostsDB extends Program {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
-			type: Post,
-			index: { key: "id" }
+			type: Post
 			// You can add more properties here, like
 			/* canPerform: (entry) => true */
 		});

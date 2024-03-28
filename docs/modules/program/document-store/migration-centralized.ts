@@ -54,9 +54,9 @@ class PostStore extends Program {
 	async open(args?: any): Promise<void> {
 		await this.posts.open({
 			type: AbstractPost, // Use base class here
-			canPerform: (operation, context) => {
+			canPerform: (props) => {
 				// Signed by the CENTRAL_AUTHORITY, just trust it?
-				if (context.entry.publicKeys.find((x) => x.equals(CENTRAL_AUTHORITY))) {
+				if (props.entry.publicKeys.find((x) => x.equals(CENTRAL_AUTHORITY))) {
 					return true;
 				}
 

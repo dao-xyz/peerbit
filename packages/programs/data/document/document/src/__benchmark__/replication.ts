@@ -4,7 +4,7 @@ import { Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import { Peerbit, createLibp2pExtended } from "peerbit";
 import { tcp } from "@libp2p/tcp";
-import { Documents, SetupOptions } from "../document-store.js";
+import { Documents, SetupOptions } from "../program.js";
 import { DirectSub } from "@peerbit/pubsub";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { delay } from "@peerbit/time";

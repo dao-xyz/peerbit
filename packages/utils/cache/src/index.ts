@@ -2,10 +2,11 @@
 import yallist from "yallist";
 
 export type CacheData<T> = { value?: T | null; time: number; size: number };
+type Key = string | bigint | number;
 export class Cache<T = undefined> {
-	private _map: Map<string, CacheData<T>>;
-	private deleted: Set<string>;
-	private list: yallist<string>;
+	private _map: Map<Key, CacheData<T>>;
+	private deleted: Set<Key>;
+	private list: yallist<Key>;
 	currentSize: number;
 	deletedSize: number;
 
@@ -19,7 +20,7 @@ export class Cache<T = undefined> {
 		this.ttl = options.ttl;
 		this.clear();
 	}
-	has(key: string) {
+	has(key: Key) {
 		this.trim();
 		if (this.deleted.has(key)) {
 			return false;
@@ -27,11 +28,11 @@ export class Cache<T = undefined> {
 		return this._map.has(key);
 	}
 
-	get map(): Map<string, CacheData<T>> {
+	get map(): Map<Key, CacheData<T>> {
 		return this._map;
 	}
 
-	get(key: string): T | null | undefined {
+	get(key: Key): T | null | undefined {
 		this.trim();
 		if (this.deleted.has(key)) {
 			return undefined;
@@ -62,7 +63,7 @@ export class Cache<T = undefined> {
 		}
 	}
 
-	del(key: string) {
+	del(key: Key) {
 		const cacheValue = this._map.get(key)!;
 		if (cacheValue && !this.deleted.has(key)) {
 			this.deleted.add(key);
@@ -72,7 +73,7 @@ export class Cache<T = undefined> {
 		return undefined;
 	}
 
-	add(key: string, value?: T, size = 1) {
+	add(key: Key, value?: T, size = 1) {
 		this.deleted.delete(key);
 		const time = +new Date();
 		if (!this._map.has(key)) {

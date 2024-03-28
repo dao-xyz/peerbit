@@ -1,0 +1,40 @@
+{
+	"name": "@peerbit/document-index-simple",
+	"version": "0.0.1",
+	"description": "Simple in memory index for document store",
+	"type": "module",
+	"sideEffects": false,
+	"module": "lib/esm/index.js",
+	"types": "lib/esm/index.d.ts",
+	"exports": {
+		"import": "./lib/esm/index.js",
+		"require": "./lib/cjs/index.js"
+	},
+	"files": [
+		"lib",
+		"src",
+		"!src/**/__tests__",
+		"!lib/**/__tests__",
+		"!src/**/__benchmark__",
+		"!lib/**/__benchmark__",
+		"LICENSE"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "shx rm -rf lib/*",
+		"build": "yarn clean && tsc -p tsconfig.json",
+		"test": "node ../../../../../../node_modules/.bin/jest test  -c  ../../../../../../jest.config.ts --runInBand --forceExit",
+		"test:unit": "node ../../../../../../node_modules/.bin/jest test  -c  ../../../../../../jest.config.unit.ts --runInBand --forceExit",
+		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../../../../jest.config.integration.ts --runInBand --forceExit"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"@peerbit/document-interface": "^6.0.7"
+	},
+	"devDependencies": {
+		"@peerbit/document-tests": "^0.0.1"
+	}
+}
