@@ -2,6 +2,7 @@ import { RequestContext, RPC } from "@peerbit/rpc";
 import { TransportMessage } from "./message.js";
 import {
 	AppendOptions,
+	Change,
 	Entry,
 	Log,
 	LogEvents,
@@ -62,7 +63,6 @@ export * from "./replication.js";
 import PQueue from "p-queue";
 import { CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import { getCoverSet, getSamples, isMatured } from "./ranges.js";
-import { error } from "console";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
 
@@ -404,6 +404,19 @@ export class SharedLog<T = Uint8Array> extends Program<
 		} else {
 			appendOptions.meta.data = minReplicasData;
 		}
+		if (options?.canAppend) {
+			appendOptions.canAppend = async (entry) => {
+				await this.canAppend(entry);
+				return options.canAppend!(entry);
+			};
+		}
+
+		if (options?.onChange) {
+			appendOptions.onChange = async (change) => {
+				await this.onChange(change);
+				return options.onChange!(change);
+			};
+		}
 
 		const result = await this.log.append(data, appendOptions);
 		let mode: DeliveryMode | undefined = undefined;
@@ -522,40 +535,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 			keychain: this.node.services.keychain,
 			...this._logProperties,
 			onChange: (change) => {
-				for (const added of change.added) {
-					this.onEntryAdded(added);
-				}
-				for (const removed of change.removed) {
-					this.onEntryRemoved(removed.hash);
-				}
+				this.onChange(change);
 				return this._logProperties?.onChange?.(change);
 			},
 			canAppend: async (entry) => {
-				try {
-					if (!entry.meta.data) {
-						logger.warn("Received entry without meta data, skipping");
-						return false;
-					}
-					const replicas = decodeReplicas(entry).getValue(this);
-					if (Number.isFinite(replicas) === false) {
-						return false;
-					}
-
-					// Don't verify entries that we have created (TODO should we? perf impact?)
-					if (!entry.createdLocally && !(await entry.verifySignatures())) {
-						return false;
-					}
-				} catch (error) {
-					if (
-						error instanceof BorshError ||
-						error instanceof ReplicationError
-					) {
-						logger.warn("Received payload that could not be decoded, skipping");
-						return false;
-					}
-					throw error;
+				if (!(await this.canAppend(entry))) {
+					return false;
 				}
-
 				return this._logProperties?.canAppend?.(entry) ?? true;
 			},
 			trim: this._logProperties?.trim && {
@@ -665,6 +651,40 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	get topic() {
 		return this.log.idString;
+	}
+
+	async onChange(change: Change<T>) {
+		for (const added of change.added) {
+			this.onEntryAdded(added);
+		}
+		for (const removed of change.removed) {
+			this.onEntryRemoved(removed.hash);
+		}
+	}
+
+	async canAppend(entry: Entry<T>) {
+		try {
+			if (!entry.meta.data) {
+				logger.warn("Received entry without meta data, skipping");
+				return false;
+			}
+			const replicas = decodeReplicas(entry).getValue(this);
+			if (Number.isFinite(replicas) === false) {
+				return false;
+			}
+
+			// Don't verify entries that we have created (TODO should we? perf impact?)
+			if (!entry.createdLocally && !(await entry.verifySignatures())) {
+				return false;
+			}
+			return true;
+		} catch (error) {
+			if (error instanceof BorshError || error instanceof ReplicationError) {
+				logger.warn("Received payload that could not be decoded, skipping");
+				return false;
+			}
+			throw error;
+		}
 	}
 
 	private async _close() {
