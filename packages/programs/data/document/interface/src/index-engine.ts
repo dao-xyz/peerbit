@@ -5,8 +5,8 @@ import {
 	Context,
 	SearchRequest
 } from "./query.js";
-import { IdKey, IdPrimitive } from "./id.js";
-import { Constructor } from "@dao-xyz/borsh";
+import { IdKey, type IdPrimitive } from "./id.js";
+import { type Constructor } from "@dao-xyz/borsh";
 
 export interface IndexedResult {
 	id: IdKey;

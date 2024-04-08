@@ -1,7 +1,7 @@
 import { Cache } from "@peerbit/cache";
 import PQueue from "p-queue";
-import { Entry, ShallowEntry } from "./entry.js";
-import { EntryNode, Values } from "./values.js";
+import { Entry, type ShallowEntry } from "./entry.js";
+import { type EntryNode, Values } from "./values.js";
 import { HeadsIndex } from "./heads.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
@@ -90,7 +90,7 @@ export class Trim<T> {
 	private _trimLastTail: EntryNode | undefined | null;
 	private _trimLastLength = 0;
 
-	private _trimLastOptions: TrimOptions;
+	private _trimLastOptions?: TrimOptions;
 	private _trimLastSeed: string | number | undefined;
 	private _canTrimCacheHashBreakpoint: Cache<boolean>;
 	private _log: Log<T>;
@@ -223,8 +223,11 @@ export class Trim<T> {
 
 			// Delete, and update current node
 			if (deleteAble) {
-				// Do this before deleteNode, else prev/next might be gone!
+				// Do this before deleteNode, else prev/next might be gone
+
+				// @ts-ignore
 				const prev = node.prev;
+				// @ts-ignore
 				const next = node.next;
 
 				const entry = await this._log.deleteNode(node);

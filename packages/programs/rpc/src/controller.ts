@@ -1,5 +1,5 @@
 import {
-	AbstractType,
+	type AbstractType,
 	BorshError,
 	deserialize,
 	serialize,
@@ -18,25 +18,24 @@ import {
 import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
 import {
 	logger,
-	RPCResponse,
-	EncryptionOptions,
-	RPCRequestOptions
+	type RPCResponse,
+	type EncryptionOptions,
+	type RPCRequestOptions
 } from "./io.js";
 import {
 	DataEvent,
-	PublishOptions as PubSubPublishOptions
+	type PublishOptions as PubSubPublishOptions
 } from "@peerbit/pubsub-interface";
 import { Program } from "@peerbit/program";
 import {
 	DataMessage,
-	DeliveryMode,
-	PriorityOptions,
+	type PriorityOptions,
 	SilentDelivery,
-	WithMode,
+	type WithMode,
 	deliveryModeHasReceiver
 } from "@peerbit/stream-interface";
-import pDefer, { DeferredPromise } from "p-defer";
-import { AbortError, TimeoutError, waitFor } from "@peerbit/time";
+import pDefer, { type DeferredPromise } from "p-defer";
+import { AbortError, TimeoutError } from "@peerbit/time";
 
 export type RPCSetupOptions<Q, R> = {
 	topic: string;
@@ -67,20 +66,19 @@ const createValueResolver = <T>(
 export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	private _subscribed = false;
 	private _responseHandler?: ResponseHandler<Q, (R | undefined) | R>;
-	private _responseResolver: Map<
+	private _responseResolver!: Map<
 		string,
 		(properties: { response: ResponseV0; message: DataMessage }) => any
 	>;
-	private _requestType: AbstractType<Q> | Uint8ArrayConstructor;
-	private _requestTypeIsUint8Array: boolean;
-	private _responseType: AbstractType<R>;
-	private _rpcTopic: string | undefined;
+	private _requestType!: AbstractType<Q> | Uint8ArrayConstructor;
+	private _requestTypeIsUint8Array!: boolean;
+	private _responseType!: AbstractType<R>;
+	private _rpcTopic!: string;
 	private _onMessageBinded: ((arg: any) => any) | undefined = undefined;
+	private _keypair!: X25519Keypair;
+	private _getResponseValueFn!: (decrypted: DecryptedThing<R>) => R;
+	private _getRequestValueFn!: (decrypted: DecryptedThing<Q>) => Q;
 
-	private _keypair: X25519Keypair;
-
-	private _getResponseValueFn: (decrypted: DecryptedThing<R>) => R;
-	private _getRequestValueFn: (decrypted: DecryptedThing<Q>) => Q;
 	async open(args: RPCSetupOptions<Q, R>): Promise<void> {
 		this._rpcTopic = args.topic ?? this._rpcTopic;
 		this._responseHandler = args.responseHandler;
@@ -123,7 +121,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		return true;
 	}
 
-	private _subscribing: Promise<void> | void;
+	private _subscribing: Promise<void> | void | undefined;
 	async subscribe(): Promise<void> {
 		await this._subscribing;
 		if (this._subscribed) {
@@ -223,7 +221,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 				logger.error(
 					"Error handling query: " +
-						(error?.message ? error?.message?.toString() : error)
+					(error?.message ? error?.message?.toString() : error)
 				);
 			}
 		}
@@ -380,7 +378,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		);
 
 		const abortListener = (err: Event) => {
-			deferredPromise.reject(err.target?.["reason"] || new AbortError());
+			deferredPromise.reject((err.target as any)?.["reason"] || new AbortError());
 		};
 		options?.signal?.addEventListener("abort", abortListener);
 

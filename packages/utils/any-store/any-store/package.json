@@ -1,0 +1,81 @@
+{
+	"name": "@peerbit/any-store",
+	"version": "2.0.2",
+	"description": "Level with lazy transactions",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "ipfs",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"browser": {
+		"./dist/src/store.js": "./dist/src/store.browser.js"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/dao-xyz/peerbit"
+	},
+	"homepage": "https://github.com/dao-xyz/peerbit",
+	"bugs": "https://github.com/dao-xyz/peerbit/issues",
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build  --no-bundle",
+		"test": "aegir test"
+	},
+	"license": "MIT",
+	"dependencies": {
+		"@peerbit/crypto": "^2.2.0",
+		"@peerbit/logger": "1.0.2",
+		"@peerbit/any-store-opfs": "^2.0.2",
+		"@peerbit/any-store-interface": "^2.0.2",
+		"@peerbit/time": "2.0.6",
+		"level": "^8.0.0",
+		"uuid": "^9.0.0"
+	},
+	"devDependencies": {
+		"@types/uuid": "^9.0.8"
+	},
+	"localMaintainers": [
+		"dao.xyz"
+	]
+}

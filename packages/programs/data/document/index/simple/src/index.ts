@@ -1,17 +1,8 @@
 import * as types from "@peerbit/document-interface";
 import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
-import { equals } from "@peerbit/uint8arrays";
+import { equals } from "uint8arrays";
 import { logger as loggerFn } from "@peerbit/logger";
-
-declare module "expect" {
-	interface AsymmetricMatchers {
-		toBeWithinRange(floor: number, ceiling: number): void;
-	}
-	interface Matchers<R> {
-		toBeWithinRange(floor: number, ceiling: number): R;
-	}
-}
 
 const logger = loggerFn({ module: "simple-index-engine" });
 
@@ -37,8 +28,7 @@ const getBatchFromResults = (
 };
 
 export class HashmapIndexEngine<T extends Record<string, any>, N = any>
-	implements types.IndexEngine
-{
+	implements types.IndexEngine {
 	private _index: Map<string | bigint | number, types.IndexedValue>;
 
 	private _resultsCollectQueue: Cache<{
@@ -104,9 +94,9 @@ export class HashmapIndexEngine<T extends Record<string, any>, N = any>
 				const doc = this._index.get(types.toIdeable(firstQuery.value));
 				return doc
 					? {
-							results: [doc],
-							kept: 0
-						}
+						results: [doc],
+						kept: 0
+					}
 					: { results: [], kept: 0 };
 			} else if (
 				firstQuery instanceof types.StringMatch &&
@@ -116,9 +106,9 @@ export class HashmapIndexEngine<T extends Record<string, any>, N = any>
 				const doc = this._index.get(firstQuery.value);
 				return doc
 					? {
-							results: [doc],
-							kept: 0
-						}
+						results: [doc],
+						kept: 0
+					}
 					: { results: [], kept: 0 };
 			}
 		}

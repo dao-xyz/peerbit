@@ -1,11 +1,10 @@
-import { AnyStore } from "../../../utils/any-store/lib/esm/index.js";
-import { multiaddr, Multiaddr, isMultiaddr } from "@multiformats/multiaddr";
+import { multiaddr, type Multiaddr, isMultiaddr } from "@multiformats/multiaddr";
 import type { Libp2p } from "libp2p";
 import { Ed25519Keypair, Ed25519PublicKey } from "@peerbit/crypto";
 import {
 	Program,
-	Address,
-	ProgramClient,
+	type Address,
+	type ProgramClient,
 	ProgramHandler
 } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
@@ -16,17 +15,17 @@ import "@libp2p/peer-id";
 
 import {
 	createLibp2pExtended,
-	Libp2pExtended,
-	Libp2pCreateOptions as ClientCreateOptions
+	type Libp2pExtended,
+	type Libp2pCreateOptions as ClientCreateOptions
 } from "./libp2p.js";
 import { DirectBlock } from "@peerbit/blocks";
 import { LevelDatastore } from "datastore-level";
 import { logger as loggerFn } from "@peerbit/logger";
-import { OpenOptions } from "@peerbit/program";
+import { type OpenOptions } from "@peerbit/program";
 import { resolveBootstrapAddresses } from "./bootstrap.js";
-import { createStore } from "@peerbit/any-store";
+import { type AnyStore, createStore } from "@peerbit/any-store";
 import { DefaultKeychain } from "@peerbit/keychain";
-import { ExtractArgs } from "@peerbit/program";
+import { type ExtractArgs } from "@peerbit/program";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -83,7 +82,7 @@ export class Peerbit implements ProgramClient {
 		if (this.libp2p.peerId.type !== "Ed25519") {
 			throw new Error(
 				"Unsupported id type, expecting Ed25519 but got " +
-					this.libp2p.peerId.type
+				this.libp2p.peerId.type
 			);
 		}
 
@@ -112,17 +111,17 @@ export class Peerbit implements ProgramClient {
 		);
 
 		const blocksDirectory = hasDir
-			? path.join(options["directory"], "/blocks").toString()
+			? path.join(directory, "/blocks").toString()
 			: undefined;
 
 		const keychainDirectory = hasDir
-			? path.join(options["directory"], "/keychain").toString()
+			? path.join(directory, "/keychain").toString()
 			: undefined;
 
 		const datastore = hasDir
 			? new LevelDatastore(
-					path.join(options["directory"], "/libp2p").toString()
-				)
+				path.join(directory, "/libp2p").toString()
+			)
 			: undefined;
 
 		if (datastore) {
@@ -175,7 +174,7 @@ export class Peerbit implements ProgramClient {
 		if (libp2pExtended.peerId.type !== "Ed25519") {
 			throw new Error(
 				"Unsupported id type, expecting Ed25519 but got " +
-					libp2pExtended.peerId.type
+				libp2pExtended.peerId.type
 			);
 		}
 
@@ -283,9 +282,9 @@ export class Peerbit implements ProgramClient {
 			} else {
 				logger.warn(
 					"Failed to dial bootstrap address(s): " +
-						JSON.stringify(addresses[i]) +
-						". Reason: " +
-						result.reason
+					JSON.stringify(addresses[i]) +
+					". Reason: " +
+					result.reason
 				);
 			}
 		}

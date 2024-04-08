@@ -1,5 +1,5 @@
 import { variant, field, vec, fixedArray } from "@dao-xyz/borsh";
-import { Entry, EntryType, ShallowEntry } from "@peerbit/log";
+import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
@@ -167,7 +167,7 @@ export const allEntriesWithUniqueGids = async (
 						if (!indexedEntry) {
 							logger.error(
 								"Failed to find indexed entry for hash when fetching references: " +
-									next
+								next
 							);
 						} else {
 							nexts.push(indexedEntry);

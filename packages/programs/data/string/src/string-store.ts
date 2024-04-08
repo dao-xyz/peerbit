@@ -1,9 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { AppendOptions, CanAppend, Change, Entry } from "@peerbit/log";
-import { SharedLog, SharedLogOptions } from "@peerbit/shared-log";
+import { type AppendOptions, type Change, Entry } from "@peerbit/log";
+import { SharedLog, type SharedLogOptions } from "@peerbit/shared-log";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
-import { Program, ProgramEvents } from "@peerbit/program";
-import { RPCRequestOptions, RPC, RequestContext } from "@peerbit/rpc";
+import { Program, type ProgramEvents } from "@peerbit/program";
+import { type RPCRequestOptions, RPC, type RequestContext } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
 import { StringOperation, StringIndex, encoding } from "./string-index.js";
 import {

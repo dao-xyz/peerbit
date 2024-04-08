@@ -106,6 +106,6 @@ let responses: Document[] = await store2.docs.index.search(
         ],
     })
 );
-expect(responses]).toHaveLength(2);
-expect(responses.map((x) => x.value.id)).toEqual(["1", "2"]);
+expect(responses]).to.have.length(2);
+expect(responses.map((x) => x.value.id)).to.deep.equal(["1", "2"]);
 ```

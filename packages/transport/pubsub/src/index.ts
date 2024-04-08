@@ -10,13 +10,13 @@ import {
 	deliveryModeHasReceiver,
 	NotStartedError,
 	DeliveryError,
-	IdentificationOptions,
-	PriorityOptions
+	type IdentificationOptions,
+	type PriorityOptions
 } from "@peerbit/stream-interface";
 import {
 	DirectStream,
-	DirectStreamComponents,
-	DirectStreamOptions,
+	type DirectStreamComponents,
+	type DirectStreamOptions,
 	PeerStreams
 } from "@peerbit/stream";
 import { CodeError } from "@libp2p/interface";
@@ -28,11 +28,11 @@ import {
 	GetSubscribers,
 	UnsubcriptionEvent,
 	SubscriptionEvent,
-	PubSub,
+	type PubSub,
 	DataEvent,
 	SubscriptionData,
 	PublishEvent,
-	PubSubEvents
+	type PubSubEvents
 } from "@peerbit/pubsub-interface";
 import { getPublicKeyFromPeerId, PublicSignKey } from "@peerbit/crypto";
 import { CustomEvent } from "@libp2p/interface";
@@ -308,10 +308,10 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		// Embedd topic info before the data so that peers/relays can also use topic info to route messages efficiently
 		const dataMessage = data
 			? new PubSubData({
-					topics: topics.map((x) => x.toString()),
-					data,
-					strict: hasExplicitTOs
-				})
+				topics: topics.map((x) => x.toString()),
+				data,
+				strict: hasExplicitTOs
+			})
 			: undefined;
 
 		const bytes = dataMessage?.bytes();
@@ -769,7 +769,7 @@ export const waitForSubscribers = async (
 		if (typeof peer === "string") {
 			return peer;
 		}
-		const id: PublicSignKey | Libp2pPeerId = peer["peerId"] || peer;
+		const id: PublicSignKey | Libp2pPeerId = (peer as any)["peerId"] || peer;
 		if (typeof id === "string") {
 			return id;
 		}

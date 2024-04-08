@@ -1,4 +1,4 @@
-import { InstallDependency, StartProgram } from "./types.js";
+import type { InstallDependency, StartProgram } from "./types.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
@@ -13,19 +13,19 @@ import {
 	REMOTE_API_PORT,
 	PROGRAM_VARIANTS_PATH
 } from "./routes.js";
-import { Address } from "@peerbit/program";
 import { multiaddr } from "@multiformats/multiaddr";
-import { signRequest } from "./signes-request.js";
+import { signRequest } from "./signed-request.js";
 import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
-	Identity,
+	type Identity,
 	PublicSignKey,
 	getPublicKeyFromPeerId
 } from "@peerbit/crypto";
-import { PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 import { waitForResolved } from "@peerbit/time";
-import { RemoteOrigin } from "./remotes.js";
+import type { RemoteOrigin } from "./remotes.js";
+import type { Address } from "@peerbit/program";
 
 export const createClient = async (
 	keypair: Identity<Ed25519PublicKey>,
@@ -77,22 +77,7 @@ export const createClient = async (
 		}
 		return resp;
 	};
-	const getBodyByStatus = <
-		D extends { toString(): string },
-		T extends { status: number; data: D }
-	>(
-		resp: T
-	): D | undefined => {
-		if (resp.status === 404) {
-			return;
-		}
-		if (resp.status == 200) {
-			return resp.data;
-		}
-		throw new Error(
-			typeof resp.data === "string" ? resp.data : resp.data.toString()
-		);
-	};
+
 	const getId = async () =>
 		throwIfNot200(
 			await axiosInstance.get(endpoint + PEER_ID_PATH, {
@@ -123,15 +108,15 @@ export const createClient = async (
 			allow: async (key: PublicSignKey | PeerId | string) => {
 				const result = await axiosInstance.put(
 					endpoint +
-						TRUST_PATH +
-						"/" +
-						encodeURIComponent(
-							typeof key === "string"
-								? key
-								: key instanceof PublicSignKey
-									? key.hashcode()
-									: getPublicKeyFromPeerId(key).hashcode()
-						),
+					TRUST_PATH +
+					"/" +
+					encodeURIComponent(
+						typeof key === "string"
+							? key
+							: key instanceof PublicSignKey
+								? key.hashcode()
+								: getPublicKeyFromPeerId(key).hashcode()
+					),
 					undefined,
 					{ validateStatus }
 				);
@@ -143,13 +128,13 @@ export const createClient = async (
 			deny: async (key: PublicSignKey | PeerId) => {
 				const result = await axiosInstance.delete(
 					endpoint +
-						TRUST_PATH +
-						"/" +
-						encodeURIComponent(
-							key instanceof PublicSignKey
-								? key.hashcode()
-								: getPublicKeyFromPeerId(key).hashcode()
-						),
+					TRUST_PATH +
+					"/" +
+					encodeURIComponent(
+						key instanceof PublicSignKey
+							? key.hashcode()
+							: getPublicKeyFromPeerId(key).hashcode()
+					),
 					{ validateStatus }
 				);
 				if (result.status !== 200 && result.status !== 404) {
@@ -162,9 +147,9 @@ export const createClient = async (
 			has: async (address: Address | string): Promise<boolean> => {
 				const result = await axiosInstance.head(
 					endpoint +
-						PROGRAM_PATH +
-						"/" +
-						encodeURIComponent(address.toString()),
+					PROGRAM_PATH +
+					"/" +
+					encodeURIComponent(address.toString()),
 					{ validateStatus }
 				);
 				if (result.status !== 200 && result.status !== 404) {
@@ -190,9 +175,9 @@ export const createClient = async (
 				throwIfNot200(
 					await axiosInstance.delete(
 						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()),
+						PROGRAM_PATH +
+						"/" +
+						encodeURIComponent(address.toString()),
 						{
 							validateStatus
 						}
@@ -204,10 +189,10 @@ export const createClient = async (
 				throwIfNot200(
 					await axiosInstance.delete(
 						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()) +
-							"?delete=true",
+						PROGRAM_PATH +
+						"/" +
+						encodeURIComponent(address.toString()) +
+						"?delete=true",
 						{
 							validateStatus
 						}

@@ -1,4 +1,4 @@
-import { AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
+import { type AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
 
 export interface Encoding<T> {
 	encoder: (data: T) => Uint8Array;
@@ -9,7 +9,7 @@ export const NO_ENCODING: Encoding<any> = {
 		if (obj instanceof Uint8Array === false) {
 			throw new Error(
 				"With NO_ENCODING only Uint8arrays are allowed, received: " +
-					(obj?.["constructor"]?.["name"] || typeof obj)
+				(obj?.["constructor"]?.["name"] || typeof obj)
 			);
 		}
 		return obj;

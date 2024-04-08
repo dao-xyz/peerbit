@@ -1,9 +1,8 @@
-import { BlockStore } from "./interface.js";
-import { Blocks as IBlocks } from "@peerbit/blocks-interface";
+import { type Blocks as IBlocks } from "@peerbit/blocks-interface";
 import { DirectStream } from "@peerbit/stream";
-import { DirectStreamComponents } from "@peerbit/stream";
+import { type DirectStreamComponents } from "@peerbit/stream";
 import { AnyBlockStore } from "./any-blockstore.js";
-import { GetOptions } from "@peerbit/blocks-interface";
+import type { GetOptions } from "@peerbit/blocks-interface";
 import { createStore } from "@peerbit/any-store";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
 import { PublicSignKey } from "@peerbit/crypto";

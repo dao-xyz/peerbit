@@ -1,5 +1,5 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, Change, Log } from "@peerbit/log";
+import { BORSH_ENCODING, type Change, Log } from "@peerbit/log";
 import { Entry } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import { Range } from "./range.js";

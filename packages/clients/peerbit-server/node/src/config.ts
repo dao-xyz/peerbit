@@ -6,7 +6,7 @@ import { Duplex } from "stream"; // Native Node Module
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { dirname } from "path";
 
-const bufferToStream = (myBuffer) => {
+const bufferToStream = (myBuffer: any) => {
 	const tmp = new Duplex();
 	tmp.push(myBuffer);
 	tmp.push(null);
@@ -84,8 +84,8 @@ export const getPackageName = async (
 			const extract = tar.extract();
 			let data = "";
 
-			extract.on("entry", function (header, stream, cb) {
-				stream.on("data", function (chunk) {
+			extract.on("entry", function (header: any, stream: any, cb: any) {
+				stream.on("data", function (chunk: any) {
 					if (header.name == "package/package.json") data += chunk;
 				});
 
@@ -105,7 +105,7 @@ export const getPackageName = async (
 				}
 			});
 
-			extract.on("error", (e) => {
+			extract.on("error", (e: any) => {
 				reject(e);
 			});
 
@@ -120,4 +120,4 @@ export const getPackageName = async (
 	});
 };
 
-export class NotFoundError extends Error {}
+export class NotFoundError extends Error { }

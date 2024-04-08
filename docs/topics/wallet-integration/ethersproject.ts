@@ -83,5 +83,5 @@ await db.posts.put(new Post("Hello world!"), {
 	signers: [walletIdentity.sign.bind(walletIdentity)]
 });
 
-expect(await db.posts.index.getSize()).toEqual(1); // Post was appproved
+expect(await db.posts.index.getSize()).equal(1); // Post was appproved
 await peer.stop();

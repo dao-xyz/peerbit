@@ -11,16 +11,17 @@ export interface CPUUsage {
  */
 
 export class CPUUsageIntervalLag implements CPUUsage {
-	dt: number[];
-	interval: ReturnType<typeof setInterval>;
-	sum: number;
+	dt: number[] = [];
+	interval?: ReturnType<typeof setInterval>;
+	sum: number = 0;
+
 	constructor(
 		readonly properties: {
 			windowSize: number;
 			intervalTime: number;
 			upperBoundLag: number;
 		} = { windowSize: 50, intervalTime: 100, upperBoundLag: 1000 }
-	) {}
+	) { }
 	private mean() {
 		return this.sum / this.dt.length;
 	}

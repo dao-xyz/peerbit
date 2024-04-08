@@ -5,7 +5,7 @@ import {
 	IntegerCompare,
 	Compare,
 	Or,
-	CanPerformOperations
+	type CanPerformOperations
 } from "@peerbit/document";
 import {
 	getPathGenerator,
@@ -14,12 +14,12 @@ import {
 	IdentityGraph,
 	createIdentityGraphStore
 } from "@peerbit/trusted-network";
-import { ACCESS_TYPE_PROPERTY, Access, AccessType } from "./access";
+import { ACCESS_TYPE_PROPERTY, Access, AccessType } from "./access.js";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
-import { PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 import { concat } from "uint8arrays";
-import { RoleOptions } from "@peerbit/shared-log";
+import { type RoleOptions } from "@peerbit/shared-log";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -48,9 +48,9 @@ export class IdentityAccessController extends Program {
 		this.trustedNetwork = opts.trustedNetwork
 			? opts.trustedNetwork
 			: new TrustedNetwork({
-					id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
-					rootTrust: opts.rootTrust
-				});
+				id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
+				rootTrust: opts.rootTrust
+			});
 		this.identityGraphController = new IdentityGraph({
 			relationGraph: createIdentityGraphStore(
 				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])]))

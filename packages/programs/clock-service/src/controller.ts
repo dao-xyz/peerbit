@@ -1,16 +1,16 @@
 import { field, deserialize, variant, option } from "@dao-xyz/borsh";
-import { RPC, RPCResponse } from "@peerbit/rpc";
+import { RPC, type RPCResponse } from "@peerbit/rpc";
 import { Program } from "@peerbit/program";
 import { SignatureWithKey } from "@peerbit/crypto";
 import { Entry, HLC } from "@peerbit/log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Replicator, Role, RoleOptions } from "@peerbit/shared-log";
+import { Replicator, type RoleOptions } from "@peerbit/shared-log";
 import { serialize } from "@dao-xyz/borsh";
 const logger = loggerFn({ module: "clock-signer" });
-const abs = (n) => (n < 0n ? -n : n);
+const abs = (n: number | bigint) => (n < 0n ? -n : n);
 
-export abstract class Result {}
+export abstract class Result { }
 
 @variant(0)
 export class Ok extends Result {
@@ -73,28 +73,28 @@ export class ClockService extends Program<Args> {
 			responseHandler:
 				!properties?.role || properties?.role instanceof Replicator
 					? async (arr, context) => {
-							const entry = deserialize(arr, Entry);
-							if (entry.hash) {
-								logger.warn("Recieved entry with hash, unexpected");
-							}
+						const entry = deserialize(arr, Entry);
+						if (entry.hash) {
+							logger.warn("Recieved entry with hash, unexpected");
+						}
 
-							entry._signatures = undefined; // because we dont want to sign signatures
+						entry._signatures = undefined; // because we dont want to sign signatures
 
-							const now = this._hlc.now().wallTime;
-							const cmp = (await entry.getClock()).timestamp.wallTime;
-							if (abs(now - cmp) > this.maxError) {
-								logger.info("Recieved an entry with an invalid timestamp");
-								return new SignError({
-									message: "Recieved an entry with an invalid timestamp"
-								});
-							}
-							const signature = await this.node.identity.sign(
-								serialize(entry.toSignable())
-							);
-							return new Ok({
-								signature
+						const now = this._hlc.now().wallTime;
+						const cmp = (await entry.getClock()).timestamp.wallTime;
+						if (abs(now - cmp) > this.maxError) {
+							logger.info("Recieved an entry with an invalid timestamp");
+							return new SignError({
+								message: "Recieved an entry with an invalid timestamp"
 							});
 						}
+						const signature = await this.node.identity.sign(
+							serialize(entry.toSignable())
+						);
+						return new Ok({
+							signature
+						});
+					}
 					: undefined
 		});
 	}

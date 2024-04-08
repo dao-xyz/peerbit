@@ -2,7 +2,7 @@ import pino from "pino";
 
 const isNode = typeof window === "undefined";
 
-export const getEnv = (key) => {
+export const getEnv = (key: any) => {
 	if (isNode) {
 		// node
 		return process.env[key];
@@ -19,9 +19,9 @@ export const getLogLevel = () => {
 	if (levels.indexOf(level) === -1) {
 		throw new Error(
 			"Unexpected LOG_LEVEL: " +
-				level +
-				". Expecting one of: " +
-				JSON.stringify(levels)
+			level +
+			". Expecting one of: " +
+			JSON.stringify(levels)
 		);
 	}
 	return level;

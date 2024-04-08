@@ -1,24 +1,25 @@
+
 import { PublicSignKey } from "@peerbit/crypto";
 import {
-	IndexEngine,
-	IndexedResult,
-	IndexedResults,
+	type IndexEngine,
+	type IndexedResult,
+	type IndexedResults,
 	SearchRequest,
 	CollectNextRequest,
 	CloseIteratorRequest,
-	IndexEngineInitProperties
+	type IndexEngineInitProperties
 } from "@peerbit/document-interface";
 import * as types from "@peerbit/document-interface";
-import { type sqlite3, type Database, type Statement } from "sqlite3";
-import defer from "p-defer";
 import {
-	Table,
+	type Table,
 	coerceSQLType,
 	convertSearchRequestToQuery,
 	getSQLTable,
 	resolveFieldValues,
-	resolveTable
+	resolveTable,
+	coerceSQLIndexType
 } from "./schema.js";
+import type { Statement, SQLLite, Database } from "./types.js";
 
 export class SQLLiteEngine implements IndexEngine {
 	db: Database;
@@ -43,7 +44,7 @@ export class SQLLiteEngine implements IndexEngine {
 	rootTableName = "test";
 	closed = true;
 	constructor(
-		readonly sqllite: sqlite3,
+		readonly sqllite: SQLLite,
 		options?: { iteratorTimeout?: number }
 	) {
 		this.iteratorTimeout = options?.iteratorTimeout || 1e4;
@@ -69,12 +70,7 @@ export class SQLLiteEngine implements IndexEngine {
 			throw new Error("Already started");
 		}
 		this.closed = false;
-		const startPromise = defer();
-		this.db = new this.sqllite.Database(":memory:", (err) => {
-			if (err) startPromise.reject(err);
-			else startPromise.resolve();
-		});
-		await startPromise.promise;
+		this.db = await this.sqllite.createDatabase(undefined);
 
 		const tables = getSQLTable(
 			this.properties.schema!,
@@ -84,33 +80,20 @@ export class SQLLiteEngine implements IndexEngine {
 
 		this.rootTableName = tables[0].name;
 		for (const table of tables) {
-			const deferred = defer();
+			const sql = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")})`
+			this.db.exec(sql);
 
-			this.db.exec(
-				`create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")})`,
-				(err) => {
-					if (err) {
-						deferred.reject(err);
-					} else {
-						deferred.resolve();
-					}
-				}
-			);
-
-			await deferred.promise;
 		}
 
 		this.putStatement = new Map();
 		this.tables = new Map();
 		for (const table of tables) {
 			const sqlPut = `insert or replace into ${table.name} (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
-			this.putStatement.set(table.name, this.db.prepare(sqlPut));
+
+			this.putStatement.set(table.name, await this.db.prepare(sqlPut));
 			this.tables.set(table.name, table);
 		}
 		this.cursor = new Map();
-		// this.sqlInstance.open_v2('/mydb.sqlite3')
-		/*  this.db = new this.sqlInstance.oo1.DB('/mydb.sqlite3', 'ct');
-	   ; */
 	}
 
 	async stop(): Promise<void> {
@@ -118,44 +101,27 @@ export class SQLLiteEngine implements IndexEngine {
 			return;
 		}
 		this.closed = true;
-		for (const [k, v] of this.putStatement) {
-			v.finalize();
+		for (const [_k, v] of this.putStatement) {
+			v.finalize?.();
 		}
 		this.putStatement.clear();
 		this.tables.clear();
 
-		for (const [k, v] of this.cursor) {
+		for (const [k, _v] of this.cursor) {
 			this.clearupIterator(k);
 		}
-		const deferred = defer();
-		this.db.close((err) => {
-			if (err) deferred.reject(err);
-			else deferred.resolve();
-		});
-		await deferred.promise;
-		/*  return this.sqllite.close(); */
+		await this.db.close();
 	}
 
 	async get(id: types.IdKey): Promise<IndexedResult | undefined> {
 		const sql = `select * from ${this.rootTableName} where ${this.primaryKeyArr[0]} = ? `;
-		const stmt = this.db.prepare(sql);
-		const deferred = defer<IndexedResult | undefined>();
-		stmt.get([coerceSQLType(id.key)], (err, row) => {
-			if (err) {
-				deferred.reject(err);
-			} else {
-				if (row) {
-					deferred.resolve({ indexed: row, id, context: {} as any });
-				} else {
-					deferred.resolve(undefined);
-				}
-			}
-		});
-		stmt.finalize();
-		return deferred.promise;
+		const stmt = await this.db.prepare(sql);
+		const rows = await stmt.get([coerceSQLIndexType(id.key)]);
+		stmt.finalize?.();
+		return rows ? { indexed: rows, id, context: {} as any } : undefined;
+
 	}
 	async put(value: types.IndexedValue<Record<string, any>>): Promise<void> {
-		const deferred = defer();
 		const valuesToPut = resolveFieldValues(
 			value.indexed,
 			[],
@@ -168,32 +134,16 @@ export class SQLLiteEngine implements IndexEngine {
 			if (!statement) {
 				throw new Error("No statement found");
 			}
-			statement.run(values, (err) => {
-				if (err) {
-					deferred.reject(err);
-				} else {
-					deferred.resolve();
-				}
-			});
-			statement.reset();
-			await deferred.promise;
+			await statement.run(values.map(x => typeof x === 'boolean' ? (x ? 1 : 0) : x));
 		}
+
+
 	}
 	async del(id: types.IdKey): Promise<void> {
-		const deferred = defer<void>();
-		this.db.run(
-			`delete from ${this.rootTableName} where ${this.primaryKeyArr[0]} = ?`,
-			[coerceSQLType(id.key)],
-			(err) => {
-				if (err) {
-					deferred.reject(err);
-				} else {
-					deferred.resolve();
-				}
-			}
-		);
+		let statement = await this.db.prepare(`delete from ${this.rootTableName} where ${this.primaryKeyArr[0]} = ?`)
+		await statement.run([coerceSQLType(id.key)])
+		await statement.finalize?.();
 
-		return deferred.promise;
 	}
 	async query(
 		request: SearchRequest,
@@ -209,18 +159,18 @@ export class SQLLiteEngine implements IndexEngine {
 
 		const query = `${join ? join : ""} ${where ? where : ""}`;
 		const sqlFetch = `select ${this.rootTableName}.* from  ${this.rootTableName} ${query} ${orderBy ? orderBy : ""} limit ? offset ?`;
-		const stmt = this.db.prepare(sqlFetch);
+		const stmt = await this.db.prepare(sqlFetch);
 		const totalCountKey = "__total_count";
 		const sqlTotalCount = `select count(*) as ${totalCountKey} from ${this.rootTableName} ${query}`;
-		const countStmt = this.db.prepare(sqlTotalCount);
+		const countStmt = await this.db.prepare(sqlTotalCount);
 
 		let offset = 0;
 		let first = false;
 
 		const fetch = async (amount: number) => {
 			if (!first) {
-				stmt.reset();
-				countStmt.reset();
+				stmt.reset?.();
+				countStmt.reset?.();
 
 				// Bump timeout timer
 				clearTimeout(iterator.timeout);
@@ -232,34 +182,15 @@ export class SQLLiteEngine implements IndexEngine {
 
 			first = true;
 			const offsetStart = offset;
-			stmt.bind([amount, offsetStart]);
-			const deferred = defer<IndexedResult[]>();
-			stmt.all([], (err, rows: any) => {
-				if (err) {
-					deferred.reject(err);
-				} else {
-					deferred.resolve(
-						rows.map((row) => ({
-							indexed: row,
-							id: types.toId(row.id),
-							context: {} as any
-						}))
-					);
-				}
-			});
-			const results = await deferred.promise;
+			let results = stmt.all([amount, offsetStart]).map((row: any) => ({
+				indexed: row,
+				id: types.toId(row.id),
+				context: {} as any
+			}));
 			offset += amount;
 
 			if (results.length > 0) {
-				const deferred = defer<number>();
-				countStmt.all([], (err, row: { [key: string]: number }) => {
-					if (err) {
-						deferred.reject(err);
-					} else {
-						deferred.resolve(row[0][totalCountKey]);
-					}
-				});
-				const totalCount = await deferred.promise;
+				const totalCount = countStmt.get()[totalCountKey];
 				iterator.kept = totalCount - results.length - offsetStart;
 			} else {
 				iterator.kept = 0;
@@ -316,8 +247,8 @@ export class SQLLiteEngine implements IndexEngine {
 			}
 		}
 		clearTimeout(cache.timeout);
-		cache.countStatement.finalize();
-		cache.fetchStatement.finalize();
+		cache.countStatement.finalize?.();
+		cache.fetchStatement.finalize?.();
 		this.cursor.delete(id);
 	}
 	iterator(): IterableIterator<
@@ -326,18 +257,10 @@ export class SQLLiteEngine implements IndexEngine {
 		throw new Error("Method not implemented.");
 	}
 	async getSize(): Promise<number> {
-		const deferred = defer<number>();
-		this.db.get(
-			`select count(*) as total from ${this.rootTableName}`,
-			(err, res: { total: number }) => {
-				if (err) {
-					deferred.reject(err);
-				} else {
-					deferred.resolve(res.total);
-				}
-			}
-		);
-		return deferred.promise;
+		const stmt = await this.db.prepare(`select count(*) as total from ${this.rootTableName}`);
+		const result = stmt.get()
+		stmt.finalize?.();
+		return result.total
 	}
 	getPending(cursorId: string): number | undefined {
 		const cursor = this.cursor.get(cursorId);

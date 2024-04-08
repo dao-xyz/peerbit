@@ -1,6 +1,6 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { serialize } from "@dao-xyz/borsh";
-import { AccessCondition } from "./condition";
+import { AccessCondition } from "./condition.js";
 import { toBase64 } from "@peerbit/crypto";
 
 export enum AccessType {
@@ -10,7 +10,7 @@ export enum AccessType {
 }
 
 @variant(0)
-export class AccessData {}
+export class AccessData { }
 
 export const ACCESS_TYPE_PROPERTY = "accessTypes";
 @variant(0)

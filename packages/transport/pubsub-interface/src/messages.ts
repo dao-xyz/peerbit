@@ -48,7 +48,7 @@ export class PubSubData extends PubSubMessage {
 		this.strict = options.strict ?? false;
 	}
 
-	private _serialized: Uint8ArrayList;
+	private _serialized!: Uint8ArrayList;
 
 	bytes() {
 		if (this._serialized) {
@@ -83,7 +83,7 @@ export class Subscribe extends PubSubMessage {
 		this.requestSubscribers = options.requestSubscribers;
 	}
 
-	private _serialized: Uint8ArrayList;
+	private _serialized!: Uint8ArrayList;
 
 	bytes() {
 		if (this._serialized) {
@@ -113,7 +113,7 @@ export class Unsubscribe extends PubSubMessage {
 		this.topics = options.topics;
 	}
 
-	private _serialized: Uint8ArrayList;
+	private _serialized!: Uint8ArrayList;
 
 	bytes() {
 		if (this._serialized) {
@@ -146,7 +146,7 @@ export class GetSubscribers extends PubSubMessage {
 		this.topics = options.topics;
 	}
 
-	_serialized: Uint8ArrayList;
+	_serialized!: Uint8ArrayList;
 
 	bytes() {
 		if (this._serialized) {

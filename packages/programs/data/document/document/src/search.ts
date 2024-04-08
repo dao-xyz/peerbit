@@ -1,13 +1,13 @@
-import { AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, Encoding, Entry } from "@peerbit/log";
+import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
+import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import * as types from "@peerbit/document-interface";
 import {
 	RPC,
-	RPCResponse,
+	type RPCResponse,
 	queryAll,
 	MissingResponsesError,
-	RPCRequestAllOptions
+	type RPCRequestAllOptions
 } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
@@ -29,7 +29,7 @@ type BufferedResult<T> = {
 };
 
 @variant(0)
-export class Operation /* <T> */ {}
+export class Operation /* <T> */ { }
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
@@ -287,9 +287,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				} else {
 					const results = await this.processQuery(
 						query as
-							| types.SearchRequest
-							| types.SearchRequest
-							| types.CollectNextRequest,
+						| types.SearchRequest
+						| types.SearchRequest
+						| types.CollectNextRequest,
 						ctx.from,
 						{
 							canRead: properties.canRead
@@ -459,7 +459,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 		throw new Error(
 			"Unexpected value type when getting document: " +
-				payloadValue?.constructor?.name || typeof payloadValue
+			payloadValue?.constructor?.name || typeof payloadValue
 		);
 	}
 
@@ -896,9 +896,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 										.catch((e) => {
 											logger.error(
 												"Failed to collect sorted results from: " +
-													peer +
-													". " +
-													e?.message
+												peer +
+												". " +
+												e?.message
 											);
 											peerBufferMap.delete(peer);
 										})

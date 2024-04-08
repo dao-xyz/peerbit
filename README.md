@@ -89,7 +89,7 @@ To create a new package, follow the following steps:
 6. Update root lerna.json `workspaces.packages` field
 7. run yarn once in root
 
-We recommend running tests with the VS Code integration though: https://marketplace.visualstudio.com/items?itemName=firsttris.vscode-jest-runner
+We recommend running tests with the VS Code integration though: https://github.com/CoderLine/mocha-vscode
 
 ## Let's Get Coding!
 

@@ -1,7 +1,7 @@
-import { Entry, ShallowEntry } from "./entry";
-import { ISortFunction } from "./log-sorting";
+import { Entry } from "./entry.js";
+import { type ISortFunction } from "./log-sorting.js";
 import yallist from "yallist";
-import { EntryIndex } from "./entry-index";
+import { EntryIndex } from "./entry-index.js";
 
 export type EntryNode = yallist.Node<string>;
 
@@ -117,10 +117,10 @@ export class Values<T> {
 		}
 		throw new Error(
 			"Failed to delete, entry does not exist" +
-				" ??? " +
-				this.length +
-				" ??? " +
-				hash
+			" ??? " +
+			this.length +
+			" ??? " +
+			hash
 		);
 	}
 
@@ -152,11 +152,11 @@ function _insertAfter(
 ) {
 	const inserted = !node
 		? new yallist.Node(
-				value,
-				null as any,
-				self.head as EntryNode | undefined,
-				self
-			)
+			value,
+			null as any,
+			self.head as EntryNode | undefined,
+			self
+		)
 		: new yallist.Node(value, node, node.next as EntryNode | undefined, self);
 
 	// is tail

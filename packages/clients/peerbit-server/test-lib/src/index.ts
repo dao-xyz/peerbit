@@ -2,7 +2,7 @@ import { field, variant, vec } from "@dao-xyz/borsh";
 import { Ed25519PublicKey, PublicSignKey } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { DString } from "@peerbit/string";
-import { PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 
 @variant("permissioned_string")
 export class PermissionedString extends Program {

@@ -1,6 +1,6 @@
 import {
-	AbstractType,
-	Constructor,
+	type AbstractType,
+	type Constructor,
 	getSchema,
 	StructKind
 } from "@dao-xyz/borsh";
@@ -47,7 +47,7 @@ export const getValuesWithType = <T>(
 			if (!value) {
 				continue;
 			}
-			const p = (element) => {
+			const p = (element: any) => {
 				if (element && element instanceof type) {
 					values.push(element as T);
 				} else if (typeof element === "object") {

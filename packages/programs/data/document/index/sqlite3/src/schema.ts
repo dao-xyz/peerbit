@@ -1,21 +1,19 @@
 import {
-	Constructor,
+	type Constructor,
 	getSchema,
-	FieldType,
+	type FieldType,
 	OptionKind,
-	VecKind,
-	StructKind
+	VecKind
 } from "@dao-xyz/borsh";
 import { SearchRequest } from "@peerbit/document-interface";
 import * as types from "@peerbit/document-interface";
-import { Field, field as fieldDecalaration, variant } from "@dao-xyz/borsh";
+import { type Field, field as fieldDecalaration } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";
-import { get } from "http";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { toHexString } from "@peerbit/crypto";
 export const logger = loggerFn({ module: "sqlite3-schema" });
 
-const SQLConversionMap = {
+const SQLConversionMap: any = {
 	u8: "INTEGER",
 	u16: "INTEGER",
 	u32: "INTEGER",
@@ -31,19 +29,34 @@ const SQLConversionMap = {
 	Uint8Array: "BLOB",
 	Date: "TEXT"
 };
+export type SQLLiteValue =
+	| string
+	| number
+	| null
+	| bigint
+	| Uint8Array
+	| Int8Array
+	| ArrayBuffer;
+
+export type BindableValue = string | bigint | number | Uint8Array | Int8Array | ArrayBuffer | null
+
+export const coerceSQLIndexType = (
+	value: SQLLiteValue,
+	type?: FieldType
+): SQLLiteValue => {
+	return value
+};
+
 export const coerceSQLType = (
 	value: boolean | bigint | string | number | Uint8Array,
 	type?: FieldType
-): boolean | string | number | Uint8Array => {
+): BindableValue => {
 	// add bigint when https://github.com/TryGhost/node-sqlite3/pull/1501 fixed
 
 	if (type === "bool") {
-		return value == null ? false : (value as boolean);
+		return value == null ? 0 : 1;
 	}
-	if (typeof value === "bigint") {
-		return Number(value);
-	}
-	return value;
+	return value as BindableValue;
 };
 
 export const toSQLType = (type: FieldType, isOptional = false) => {
@@ -177,7 +190,7 @@ export const getSQLFields = (
 
 		const subtables = getSQLTable(chilCtor, path, CHILD_TABLE_ID, subTableName);
 
-		const parentPrimaryField = primaryField || CHILD_TABLE_ID;
+		const parentPrimaryFieldName = primaryField?.key || CHILD_TABLE_ID;
 		const parentPrimaryFieldType = primaryField
 			? toSQLType(primaryField.type)
 			: "INTEGER";
@@ -201,7 +214,7 @@ export const getSQLFields = (
 		];
 
 		subtables[0].constraints.push({
-			definition: `FOREIGN KEY(${PARENT_TABLE_ID}) REFERENCES ${tableName}(${parentPrimaryField})`
+			definition: `FOREIGN KEY(${PARENT_TABLE_ID}) REFERENCES ${tableName}(${parentPrimaryFieldName}) ON DELETE CASCADE`
 		});
 
 		for (const table of subtables) {
@@ -211,7 +224,7 @@ export const getSQLFields = (
 		}
 	};
 
-	const handleSimpleField = (key: string, type: FieldType, isOptional) => {
+	const handleSimpleField = (key: string, type: FieldType, isOptional: boolean) => {
 		const isPrimary = primaryKey === key;
 		foundPrimary = foundPrimary || isPrimary;
 		const fieldType = toSQLType(type, isOptional);

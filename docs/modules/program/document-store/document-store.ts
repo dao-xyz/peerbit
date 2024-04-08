@@ -205,8 +205,10 @@ await channelFromClient2.posts.put(message3, {
 });
 
 // Since the first node is a replicator, it will eventually get all messages
+import { expect } from "chai";
+
 await waitForResolved(async () =>
-	expect(await channelFromClient1.posts.index.getSize()).toEqual(3)
+	expect(await channelFromClient1.posts.index.getSize()).equal(3)
 );
 
 // And to do some reactions
@@ -226,7 +228,7 @@ await channelFromClient1.reactions.put(
 const anotherPost = new Post("I will delete this in a moment");
 await channelFromClient2.posts.put(anotherPost);
 await waitForResolved(async () =>
-	expect(await channelFromClient1.posts.index.getSize()).toEqual(4)
+	expect(await channelFromClient1.posts.index.getSize()).equal(4)
 );
 
 // Delete with no arg (will permantly delete)
@@ -234,7 +236,7 @@ await channelFromClient2.posts.del(anotherPost.id);
 
 // The delete will eventually propagate to the first client (the replicator)
 await waitForResolved(async () =>
-	expect(await channelFromClient1.posts.index.getSize()).toEqual(3)
+	expect(await channelFromClient1.posts.index.getSize()).equal(3)
 );
 
 /// [delete]
@@ -248,8 +250,8 @@ const posts: Post[] = await channelFromClient2.posts.index.search(
 		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	})
 );
-expect(posts).toHaveLength(3);
-expect(posts.map((x) => x.message)).toEqual([
+expect(posts).to.have.length(3);
+expect(posts.map((x) => x.message)).to.deep.equal([
 	"hello world",
 	"The Shoebill is terrifying",
 	"No, it just a big duck"
@@ -268,8 +270,8 @@ const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 		local: true
 	}
 );
-expect(postsLocally).toHaveLength(1);
-expect(postsLocally.map((x) => x.message)).toEqual(["No, it just a big duck"]);
+expect(postsLocally).to.have.length(1);
+expect(postsLocally.map((x) => x.message)).to.deep.equal(["No, it just a big duck"]);
 /// [search-locally]
 
 /// [search-from-one]
@@ -284,8 +286,8 @@ const postsFromClient1: Post[] = await channelFromClient2.posts.index.search(
 		]
 	})
 );
-expect(postsFromClient1).toHaveLength(2);
-expect(postsFromClient1.map((x) => x.message)).toEqual([
+expect(postsFromClient1).to.have.length(2);
+expect(postsFromClient1.map((x) => x.message)).to.deep.equal([
 	"hello world",
 	"The Shoebill is terrifying"
 ]);
@@ -302,8 +304,8 @@ const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
 	})
 );
 
-expect(reactions).toHaveLength(1);
-expect(reactions[0][REACTION_TYPE_PROPERTY]).toEqual(ReactionType.HAHA);
+expect(reactions).to.have.length(1);
+expect(reactions[0][REACTION_TYPE_PROPERTY]).equal(ReactionType.HAHA);
 /// [reactions-one]
 
 /// [query-detailed]
@@ -318,7 +320,7 @@ import {
 	And
 } from "@peerbit/document";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { RoleOptions } from "@peerbit/shared-log";
+import { type RoleOptions } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [
@@ -414,8 +416,8 @@ const iterator = channelFromClient2.posts.index.iterate(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) })
 );
 const postsFromIterator = await iterator.next(2); // fetch (at most) 2 posts
-expect(postsFromIterator).toHaveLength(2);
-expect(iterator.done()).toBeFalse(); // There should be 3 posts in total and we only fetched 2
+expect(postsFromIterator).to.have.length(2);
+expect(iterator.done()).to.be.false; // There should be 3 posts in total and we only fetched 2
 
 // You can close the iterator once you are done
 // This will notify peers that you are doing iterating

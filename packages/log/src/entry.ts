@@ -7,8 +7,6 @@ import {
 	option,
 	vec,
 	fixedArray,
-	BinaryWriter,
-	serializer
 } from "@dao-xyz/borsh";
 
 import {
@@ -21,15 +19,16 @@ import {
 	Ed25519PublicKey,
 	sha256Base64,
 	randomBytes,
-	Identity,
+	type Identity,
 	X25519Keypair
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
-import { compare, equals } from "@peerbit/uint8arrays";
-import { Encoding, NO_ENCODING } from "./encoding.js";
+import { compare } from "uint8arrays";
+import { type Encoding, NO_ENCODING } from "./encoding.js";
 import { logger } from "./logger.js";
-import { Blocks } from "@peerbit/blocks-interface";
-import { Keychain } from "@peerbit/keychain";
+import { type Blocks } from "@peerbit/blocks-interface";
+import { type Keychain } from "@peerbit/keychain";
+import { equals } from "./utils.js";
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -155,27 +154,25 @@ export class Meta {
 	@field({ type: option(Uint8Array) })
 	data?: Uint8Array; // Optional metadata
 
-	constructor(properties?: {
+	constructor(properties: {
 		gid: string;
 		clock: Clock;
 		type: EntryType;
 		data?: Uint8Array;
 		next: string[];
 	}) {
-		if (properties) {
-			this.gid = properties.gid;
-			this.clock = properties.clock;
-			this.type = properties.type;
-			this.data = properties.data;
-			this.next = properties.next;
-		}
+		this.gid = properties.gid;
+		this.clock = properties.clock;
+		this.type = properties.type;
+		this.data = properties.data;
+		this.next = properties.next;
 	}
 }
 
 @variant(0)
 export class Signatures {
 	@field({ type: vec(MaybeEncrypted) })
-	signatures: MaybeEncrypted<SignatureWithKey>[];
+	signatures!: MaybeEncrypted<SignatureWithKey>[];
 
 	constructor(properties?: { signatures: MaybeEncrypted<SignatureWithKey>[] }) {
 		if (properties) {
@@ -250,7 +247,7 @@ export class Entry<T>
 	_signatures?: Signatures;
 
 	@field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to receive the hash, which we later set
-	hash: string; // "zd...Foo", we'll set the hash after persisting the entry
+	hash!: string; // "zd...Foo", we'll set the hash after persisting the entry
 
 	createdLocally?: boolean;
 
@@ -275,9 +272,9 @@ export class Entry<T>
 	init(
 		props:
 			| {
-					keychain?: Keychain;
-					encoding: Encoding<T>;
-			  }
+				keychain?: Keychain;
+				encoding: Encoding<T>;
+			}
 			| Entry<T>
 	): Entry<T> {
 		if (props instanceof Entry) {
@@ -355,7 +352,7 @@ export class Entry<T>
 		return (await this.getMeta()).next;
 	}
 
-	private _size: number;
+	private _size!: number;
 
 	set size(number: number) {
 		this._size = number;
@@ -544,9 +541,9 @@ export class Entry<T>
 				if (Timestamp.compare(n.meta.clock.timestamp, cv.timestamp) >= 0) {
 					throw new Error(
 						"Expecting next(s) to happen before entry, got: " +
-							n.meta.clock.timestamp +
-							" > " +
-							cv.timestamp
+						n.meta.clock.timestamp +
+						" > " +
+						cv.timestamp
 					);
 				}
 			}
@@ -626,9 +623,9 @@ export class Entry<T>
 		for (const signature of signatures) {
 			const encryptionRecievers = encryptAllSignaturesWithSameKey
 				? properties.encryption?.receiver?.signatures
-				: properties.encryption?.receiver?.signatures?.[
-						signature.publicKey.hashcode()
-					];
+				: (properties.encryption?.receiver?.signatures as any)?.[ // TODO types
+				signature.publicKey.hashcode()
+				];
 			const signatureEncrypted = await maybeEncrypt(
 				signature,
 				properties.encryption?.keypair,

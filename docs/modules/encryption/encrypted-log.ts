@@ -2,8 +2,9 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { SharedLog } from "@peerbit/shared-log";
 import { Peerbit } from "peerbit";
-import { waitForResolved } from "../../../packages/utils/time/src";
+import { waitForResolved } from "../../../packages/utils/time/src/index.js";
 import { X25519Keypair } from "@peerbit/crypto";
+import assert from "node:assert";
 
 // This class extends Program which allows it to be replicated amongst peers
 @variant("simple_store")
@@ -63,11 +64,11 @@ await store.log.append(payload, {
 
 // A peer that can open
 const store2 = await client2.open<SimpleStore>(store.address!);
-await waitForResolved(() => expect(store2.log.log.length).toEqual(1));
+await waitForResolved(() => assert.equal(store2.log.log.length, 1));
 const entry = (await store2.log.log.values.toArray())[0];
 
 // use .getPayload() instead of .payload to decrypt the payload
-expect((await entry.getPayload()).getValue()).toEqual(payload);
+assert.equal((await entry.getPayload()).getValue(), payload);
 
 await client.stop();
 await client2.stop();

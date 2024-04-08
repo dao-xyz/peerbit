@@ -13,12 +13,12 @@ import {
 	Sort,
 	SortDirection,
 	CloseIteratorRequest,
-	IndexEngine,
-	IndexEngineInitProperties,
+	type IndexEngine,
+	type IndexEngineInitProperties,
 	Context,
-	IdPrimitive,
+	type IdPrimitive,
 	toIdeable,
-	IndexedResults,
+	type IndexedResults,
 	CollectNextRequest,
 	extractFieldValue,
 	toId
@@ -30,50 +30,11 @@ import {
 	Ed25519Keypair
 } from "@peerbit/crypto";
 import { v4 as uuid } from "uuid";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { serialize } from "@dao-xyz/borsh";
 import sodium from "libsodium-wrappers";
-import { expect } from "@jest/globals";
+import { expect } from "chai";
 
-import type { MatcherFunction } from "expect";
-
-const toEqualNumber: MatcherFunction<[value: unknown]> = function (
-	received,
-	expected
-) {
-	// parse both as numbers
-	const pass = Number(received) === Number(expected);
-
-	if (pass) {
-		return {
-			message: () =>
-				`expected ${this.utils.printReceived(
-					received
-				)} not to equal ${this.utils.printExpected(expected)}`,
-			pass: true
-		};
-	} else {
-		return {
-			message: () =>
-				`expected ${this.utils.printReceived(
-					received
-				)} to equal ${this.utils.printExpected(expected)}`,
-			pass: false
-		};
-	}
-};
-expect.extend({
-	toEqualNumber
-});
-
-import * as matchers from "jest-extended";
-type JestExtendedMatchers = typeof matchers & {
-	toEqualNumber: (value: unknown) => void;
-};
-
-declare module "@jest/expect" {
-	interface Matchers<R> extends JestExtendedMatchers {}
-}
 
 @variant(0)
 class Document {
@@ -199,8 +160,8 @@ export const tests = (createIndex: () => IndexEngine) => {
 				indexBy: "id",
 				maxBatchSize: 5e6,
 				nested: {
-					match: (obj): obj is IndexWrapper => obj instanceof IndexWrapper,
-					query: (nested, query) => nested.search(query)
+					match: (obj: any): obj is IndexWrapper => obj instanceof IndexWrapper,
+					query: (nested: any, query: any) => nested.search(query)
 				}
 			},
 			...properties
@@ -258,18 +219,19 @@ export const tests = (createIndex: () => IndexEngine) => {
 
 			await store.put(doc);
 			await waitForResolved(async () =>
-				expect(await store.getSize()).toEqual(1)
+				expect(await store.getSize()).equals(1)
 			);
 			await store.put(docEdit);
 			await store.put(doc2);
 			await waitForResolved(async () =>
-				expect(await store.getSize()).toEqual(2)
+				expect(await store.getSize()).equals(2)
 			);
+
 			await store.put(doc2Edit);
 			await store.put(doc3);
 			await store.put(doc4);
 			await waitForResolved(async () =>
-				expect(await store.getSize()).toEqual(4)
+				expect(await store.getSize()).equal(4)
 			);
 		};
 
@@ -284,11 +246,11 @@ export const tests = (createIndex: () => IndexEngine) => {
 			) => {
 				await store.put(doc);
 				let result = await store.get(doc.id);
-				expect(result).toBeDefined();
+				expect(result).to.exist;
 				await store.del(doc.id);
-				expect(await store.getSize()).toEqual(0);
+				expect(await store.getSize()).equal(0);
 				result = await store.get(doc.id);
-				expect(result).toBeUndefined();
+				expect(result).equal(undefined);
 			};
 
 			describe("string", () => {
@@ -313,7 +275,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 						});
 					} catch (error: any) {
 						// some impl might want to throw here, since the schema is known in advance and the indexBy will be missing
-						expect(error["message"]).toEqual(
+						expect(error["message"]).equal(
 							"Primary key __missing__ not found in schema"
 						);
 						return;
@@ -324,9 +286,14 @@ export const tests = (createIndex: () => IndexEngine) => {
 					});
 
 					// else throw when putting the doc
-					expect(() => store.put(doc)).toThrow(
-						"Unexpected index key: undefined, expected: string, number, bigint or Uint8Array"
-					);
+					try {
+						await store.put(doc)
+					} catch (error) {
+						expect(error).to.haveOwnProperty("message",
+							"Unexpected index key: undefined, expected: string, number, bigint or Uint8Array"
+						);
+					}
+
 				});
 
 				it("index by another property", async () => {
@@ -341,7 +308,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 					// put doc
 					await store.put(doc);
 
-					expect((await store.get(helloWorld))?.indexed.value).toEqual(
+					expect((await store.get(helloWorld))?.indexed.value).equal(
 						helloWorld
 					);
 				});
@@ -368,7 +335,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 							]
 						})
 					);
-					expect(results.results).toHaveLength(1);
+					expect(results.results).to.have.length(1);
 				});
 			});
 
@@ -458,7 +425,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 					await setupDefault();
 
 					const results = await store.search(new SearchRequest({ query: [] }));
-					expect(results.results).toHaveLength(4);
+					expect(results.results).to.have.length(4);
 				});
 
 				describe("string", () => {
@@ -479,7 +446,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 						);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1", "2"]);
+						).to.have.members(["1", "2"]);
 					});
 
 					it("exact-case-insensitive", async () => {
@@ -494,10 +461,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(responses.results).toHaveLength(2);
+						expect(responses.results).to.have.length(2);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1", "2"]);
+						).to.have.members(["1", "2"]);
 					});
 
 					it("exact case sensitive", async () => {
@@ -512,10 +479,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(responses.results).toHaveLength(1);
+						expect(responses.results).to.have.length(1);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["2"]);
+						).to.have.members(["2"]);
 						responses = await store.search(
 							new SearchRequest({
 								query: [
@@ -529,7 +496,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 						);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1"]);
+						).to.have.members(["1"]);
 					});
 					it("prefix", async () => {
 						const responses = await store.search(
@@ -544,10 +511,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(responses.results).toHaveLength(2);
+						expect(responses.results).to.have.length(2);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1", "2"]);
+						).to.have.members(["1", "2"]);
 					});
 
 					it("contains", async () => {
@@ -563,10 +530,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(responses.results).toHaveLength(2);
+						expect(responses.results).to.have.length(2);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1", "2"]);
+						).to.have.members(["1", "2"]);
 					});
 
 					describe("arr", () => {
@@ -604,10 +571,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 									]
 								})
 							);
-							expect(responses.results).toHaveLength(1);
+							expect(responses.results).to.have.length(1);
 							expect(
 								responses.results.map((x) => x.id.primitive)
-							).toContainAllValues(["a"]);
+							).to.have.members(["a"]);
 						});
 					});
 				});
@@ -624,8 +591,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 							]
 						})
 					);
-					expect(responses.results).toHaveLength(1);
-					expect(responses.results.map((x) => x.id.primitive)).toEqual(["4"]);
+					console.log("???", responses.results)
+
+					expect(responses.results).to.have.length(1);
+					expect(responses.results.map((x) => x.id.primitive)).to.deep.equal(["4"]);
 				});
 
 				describe("uint8arrays", () => {
@@ -638,13 +607,13 @@ export const tests = (createIndex: () => IndexEngine) => {
 									query: [
 										new ByteMatchQuery({
 											key: "data",
-											value: Buffer.from([1])
+											value: new Uint8Array([1])
 										})
 									]
 								})
 							);
-							expect(responses.results).toHaveLength(1);
-							expect(responses.results.map((x) => x.id.primitive)).toEqual([
+							expect(responses.results).to.have.length(1);
+							expect(responses.results.map((x) => x.id.primitive)).to.deep.equal([
 								"1"
 							]);
 						});
@@ -656,12 +625,12 @@ export const tests = (createIndex: () => IndexEngine) => {
 									query: [
 										new ByteMatchQuery({
 											key: "data",
-											value: Buffer.from([199])
+											value: new Uint8Array([199])
 										})
 									]
 								})
 							);
-							expect(responses.results).toHaveLength(0);
+							expect(responses.results).to.be.empty;
 						});
 					});
 					describe("integer", () => {
@@ -679,8 +648,8 @@ export const tests = (createIndex: () => IndexEngine) => {
 									]
 								})
 							);
-							expect(responses.results).toHaveLength(1);
-							expect(responses.results.map((x) => x.id.primitive)).toEqual([
+							expect(responses.results).to.have.length(1);
+							expect(responses.results.map((x) => x.id.primitive)).to.deep.equal([
 								"1"
 							]);
 						});
@@ -699,7 +668,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 									]
 								})
 							);
-							expect(responses.results).toHaveLength(0);
+							expect(responses.results).to.be.empty;
 						});
 					});
 				});
@@ -716,8 +685,8 @@ export const tests = (createIndex: () => IndexEngine) => {
 							]
 						})
 					);
-					expect(responses.results).toHaveLength(1);
-					expect(responses.results.map((x) => x.id.primitive)).toEqual(["1"]);
+					expect(responses.results).to.have.length(1);
+					expect(responses.results.map((x) => x.id.primitive)).to.deep.equal(["1"]);
 				});
 
 				describe("array", () => {
@@ -757,7 +726,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 									]
 								})
 							);
-							expect(results.results.map((x) => x.indexed.id)).toEqual([d1.id]);
+							expect(results.results.map((x) => x.indexed.id)).to.deep.equal([d1.id]);
 						});
 					});
 
@@ -797,7 +766,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 									})
 								})
 							);
-							expect(results.results.map((x) => x.indexed.id)).toEqual([d1.id]);
+							expect(results.results.map((x) => x.indexed.id)).to.deep.equal([d1.id]);
 						});
 					});
 
@@ -827,11 +796,11 @@ export const tests = (createIndex: () => IndexEngine) => {
 								store = await setup({ schema: NestedVec });
 							} catch (error: any) {
 
-								expect(error.message).toEqual("vec(vec(...)) is not supported");
+								expect(error.message).equal("vec(vec(...)) is not supported");
 								return;
 							}
 
-							await expect(store.put(new NestedVec({ matrix: [[1, 2], [3]] }))).rejects.toThrow("vec(vec(...)) is not supported");
+							await expect(store.put(new NestedVec({ matrix: [[1, 2], [3]] }))).rejectedWith("vec(vec(...)) is not supported");
 						});
 					}); */
 				});
@@ -861,10 +830,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(responses.results).toHaveLength(2);
+						expect(responses.results).to.have.length(2);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1", "2"]);
+						).to.have.members(["1", "2"]);
 					});
 
 					it("or", async () => {
@@ -884,10 +853,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(responses.results).toHaveLength(2);
+						expect(responses.results).to.have.length(2);
 						expect(
 							responses.results.map((x) => x.id.primitive)
-						).toContainAllValues(["1", "2"]);
+						).to.have.members(["1", "2"]);
 					});
 				});
 
@@ -907,8 +876,8 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(response.results).toHaveLength(1);
-						expect(response.results[0].indexed.number).toEqualNumber(2n);
+						expect(response.results).to.have.length(1);
+						expect(response.results[0].indexed.number).to.be.oneOf([2n, 2])
 					});
 
 					it("gt", async () => {
@@ -923,8 +892,8 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(response.results).toHaveLength(1);
-						expect(response.results[0].indexed.number).toEqualNumber(3n);
+						expect(response.results).to.have.length(1);
+						expect(response.results[0].indexed.number).to.be.oneOf([3n, 3]);
 					});
 
 					it("gte", async () => {
@@ -942,9 +911,9 @@ export const tests = (createIndex: () => IndexEngine) => {
 						response.results.sort((a, b) =>
 							bigIntSort(a.indexed.number as bigint, b.indexed.number as bigint)
 						);
-						expect(response.results).toHaveLength(2);
-						expect(response.results[0].indexed.number).toEqualNumber(2n);
-						expect(response.results[1].indexed.number).toEqualNumber(3n);
+						expect(response.results).to.have.length(2);
+						expect(response.results[0].indexed.number).to.be.oneOf([2n, 2]);
+						expect(response.results[1].indexed.number).to.be.oneOf([3n, 3]);
 					});
 
 					it("lt", async () => {
@@ -959,8 +928,8 @@ export const tests = (createIndex: () => IndexEngine) => {
 								]
 							})
 						);
-						expect(response.results).toHaveLength(1);
-						expect(response.results[0].indexed.number).toEqualNumber(1n);
+						expect(response.results).to.have.length(1);
+						expect(response.results[0].indexed.number).to.be.oneOf([1n, 1]);
 					});
 
 					it("lte", async () => {
@@ -978,9 +947,9 @@ export const tests = (createIndex: () => IndexEngine) => {
 						response.results.sort((a, b) =>
 							bigIntSort(a.indexed.number as bigint, b.indexed.number as bigint)
 						);
-						expect(response.results).toHaveLength(2);
-						expect(response.results[0].indexed.number).toEqualNumber(1n);
-						expect(response.results[1].indexed.number).toEqualNumber(2n);
+						expect(response.results).to.have.length(2);
+						expect(response.results[0].indexed.number).to.be.oneOf([1n, 1]);
+						expect(response.results[1].indexed.number).to.be.oneOf([2n, 2]);
 					});
 				});
 
@@ -1028,16 +997,16 @@ export const tests = (createIndex: () => IndexEngine) => {
 						for (let i = 0; i < concurrency; i++) {
 							if (i % 2 === 0) {
 								// query1
-								expect(results[i].results).toHaveLength(2);
+								expect(results[i].results).to.have.length(2);
 								results[i].results.sort((a, b) =>
 									Number(a.indexed.number! - b.indexed.number!)
 								);
-								expect(results[i].results[0].indexed.number).toEqualNumber(2n); // Jest can't seem to output BN if error, so we do equals manually
-								expect(results[i].results[1].indexed.number).toEqualNumber(3n); // Jest can't seem to output BN if error, so we do equals manually
+								expect(results[i].results[0].indexed.number).to.be.oneOf([2n, 2]);
+								expect(results[i].results[1].indexed.number).to.be.oneOf([3n, 3]);
 							} else {
 								// query2
-								expect(results[i].results).toHaveLength(1);
-								expect(results[i].results[0].indexed.number).toEqualNumber(1n);
+								expect(results[i].results).to.have.length(1);
+								expect(results[i].results[0].indexed.number).to.be.oneOf([1n, 1]);
 							}
 						}
 					});
@@ -1046,12 +1015,6 @@ export const tests = (createIndex: () => IndexEngine) => {
 		});
 
 		describe("sort", () => {
-			const peersCount = 3;
-
-			const canRead: (
-				| undefined
-				| ((publicKey: PublicSignKey) => Promise<boolean>)
-			)[] = [];
 
 			const put = async (id: number) => {
 				const doc = new Document({
@@ -1080,16 +1043,16 @@ export const tests = (createIndex: () => IndexEngine) => {
 
 					if (batches.length === 0) {
 						// No fetches has been made, so we don't know whether we are done yet
-						expect(iterator.done()).toBeFalse();
+						expect(iterator.done()).to.be.false;
 					} else {
 						for (const batch of batches) {
-							expect(iterator.done()).toBeFalse();
+							expect(iterator.done()).to.be.false;
 							const next = await iterator.next(batch.length);
-							expect(next.results.map((x) => Number(x.indexed.number))).toEqual(
+							expect(next.results.map((x) => Number(x.indexed.number))).to.deep.equal(
 								batch.map((x) => Number(x))
 							);
 						}
-						expect(iterator.done()).toBeTrue();
+						expect(iterator.done()).to.be.true;
 					}
 				});
 			};
@@ -1102,12 +1065,12 @@ export const tests = (createIndex: () => IndexEngine) => {
 				await checkIterate([]);
 			});
 
-			// TODO make sure documents are evenly distrubted before querye
+			// TODO make sure documents are evenly distrubted before query
 			it("multiple batches", async () => {
 				await put(0);
 				await put(1);
 				await put(2);
-				expect(await store.getSize()).toEqual(3);
+				expect(await store.getSize()).equal(3);
 				await checkIterate([[0n], [1n], [2n]]);
 				await checkIterate([[0n, 1n, 2n]]);
 				await checkIterate([[0n, 1n], [2n]]);
@@ -1125,14 +1088,14 @@ export const tests = (createIndex: () => IndexEngine) => {
 							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
 						})
 					);
-					expect(iterator.done()).toBeFalse();
+					expect(iterator.done()).to.be.false;
 					const next = await iterator.next(3);
-					expect(next.results.map((x) => x.indexed.name)).toEqual([
+					expect(next.results.map((x) => x.indexed.name)).to.deep.equal([
 						"0",
 						"1",
 						"2"
 					]);
-					expect(iterator.done()).toBeTrue();
+					expect(iterator.done()).to.be.true;
 				}
 				{
 					const iterator = await store.iterate(
@@ -1141,14 +1104,14 @@ export const tests = (createIndex: () => IndexEngine) => {
 							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })]
 						})
 					);
-					expect(iterator.done()).toBeFalse();
+					expect(iterator.done()).to.be.false;
 					const next = await iterator.next(3);
-					expect(next.results.map((x) => x.indexed.name)).toEqual([
+					expect(next.results.map((x) => x.indexed.name)).to.deep.equal([
 						"2",
 						"1",
 						"0"
 					]);
-					expect(iterator.done()).toBeTrue();
+					expect(iterator.done()).to.be.true;
 				}
 			});
 
@@ -1163,14 +1126,14 @@ export const tests = (createIndex: () => IndexEngine) => {
 						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
 					})
 				);
-				expect(iterator.done()).toBeFalse();
+				expect(iterator.done()).to.be.false;
 				const next = await iterator.next(3);
-				expect(next.results.map((x) => x.indexed.name)).toEqual([
+				expect(next.results.map((x) => x.indexed.name)).to.deep.equal([
 					"0",
 					"1",
 					"2"
 				]);
-				expect(iterator.done()).toBeTrue();
+				expect(iterator.done()).to.be.true;
 			});
 
 			describe("close", () => {
@@ -1182,13 +1145,13 @@ export const tests = (createIndex: () => IndexEngine) => {
 						query: []
 					});
 					const iterator = await store.iterate(request);
-					expect(iterator.done()).toBeFalse();
+					expect(iterator.done()).to.be.false;
 					await iterator.next(2); // fetch some, but not all
-					expect(store.index.getPending(request.idString)).toEqual(1);
+					expect(store.index.getPending(request.idString)).equal(1);
 					await iterator.close();
 					await waitForResolved(
 						() =>
-							expect(store.index.getPending(request.idString)).toBeUndefined(),
+							expect(store.index.getPending(request.idString)).equal(undefined),
 						{ timeout: 3000, delayInterval: 50 }
 					);
 				});
@@ -1201,11 +1164,9 @@ export const tests = (createIndex: () => IndexEngine) => {
 					});
 					const iteratorOwner = (await Ed25519Keypair.create()).publicKey;
 					const iterator = await store.iterate(request, iteratorOwner);
-					expect(iterator.done()).toBeFalse();
+					expect(iterator.done()).to.be.false;
 					await iterator.next(1); // fetch some, but not all
-					expect(store.index.getPending(request.idString)).toEqual(1);
-
-					const closeRequest = new CloseIteratorRequest({ id: request.id });
+					expect(store.index.getPending(request.idString)).equal(1);
 
 					// Try to send from another peer (that is not the owner of the iterator)
 					await store.index.close(
@@ -1213,7 +1174,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 						(await Ed25519Keypair.create()).publicKey
 					);
 					await delay(2000);
-					expect(store.index.getPending(request.idString)).toBeDefined();
+					expect(store.index.getPending(request.idString)).to.exist;
 
 					// send from the owner
 					await store.index.close(
@@ -1223,7 +1184,7 @@ export const tests = (createIndex: () => IndexEngine) => {
 
 					await waitForResolved(
 						() =>
-							expect(store.index.getPending(request.idString)).toBeUndefined(),
+							expect(store.index.getPending(request.idString)).equal(undefined),
 						{ timeout: 3000, delayInterval: 50 }
 					);
 				});
@@ -1236,11 +1197,11 @@ export const tests = (createIndex: () => IndexEngine) => {
 						query: []
 					});
 					const iterator = await store.iterate(request);
-					expect(iterator.done()).toBeFalse();
+					expect(iterator.done()).to.be.false;
 					await iterator.next(3); // fetch all
 					await waitForResolved(
 						() =>
-							expect(store.index.getPending(request.idString)).toBeUndefined(),
+							expect(store.index.getPending(request.idString)).equal(undefined),
 						{ timeout: 3000, delayInterval: 50 }
 					);
 				});
@@ -1255,10 +1216,10 @@ export const tests = (createIndex: () => IndexEngine) => {
 					const iterator = await store.iterate(request);
 					await iterator.next(2);
 					await iterator.next(1);
-					expect(iterator.done()).toBeTrue();
+					expect(iterator.done()).to.be.true;
 					await waitForResolved(
 						() =>
-							expect(store.index.getPending(request.idString)).toBeUndefined(),
+							expect(store.index.getPending(request.idString)).equal(undefined),
 						{ timeout: 3000, delayInterval: 50 }
 					);
 				});

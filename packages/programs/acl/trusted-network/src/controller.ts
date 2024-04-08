@@ -1,15 +1,13 @@
-import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
 import {
 	SearchRequest,
 	Documents,
 	Operation,
-	PutOperation,
-	CanRead,
-	CanPerformOperations
+	type CanRead,
+	type CanPerformOperations
 } from "@peerbit/document";
-import { AppendOptions } from "@peerbit/log";
+import { type AppendOptions } from "@peerbit/log";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { DeleteOperation } from "@peerbit/document";
 import {
 	IdentityRelation,
 	createIdentityGraphStore,
@@ -21,8 +19,8 @@ import {
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";
-import { PeerId } from "@libp2p/interface";
-import { Replicator, RoleOptions } from "@peerbit/shared-log";
+import { type PeerId } from "@libp2p/interface";
+import { Replicator, type RoleOptions } from "@peerbit/shared-log";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey

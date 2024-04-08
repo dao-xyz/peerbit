@@ -1,8 +1,6 @@
 import {
-	Ed25519PublicKey,
 	Ed25519Keypair,
 	Keypair,
-	X25519PublicKey,
 	X25519Keypair,
 	ByteKey,
 	PublicSignKey,
@@ -11,10 +9,9 @@ import {
 } from "@peerbit/crypto";
 import { field, variant, option, type AbstractType } from "@dao-xyz/borsh";
 import { Message } from "./message.js";
-import { Secp256k1PublicKey } from "@peerbit/crypto";
 
 @variant(8)
-export abstract class KeyChainMessage extends Message {}
+export abstract class KeyChainMessage extends Message { }
 
 @variant(0)
 export class REQ_ImportKey extends KeyChainMessage {
@@ -32,11 +29,16 @@ export class REQ_ImportKey extends KeyChainMessage {
 }
 
 @variant(1)
-export class RESP_ImportKey extends KeyChainMessage {}
+export class RESP_ImportKey extends KeyChainMessage { }
 
-abstract class PublicKeyWrapped {
+interface PublicKeyWrapped {
 	key: PublicKeyEncryptionKey | PublicSignKey;
 }
+
+abstract class PublicKeyWrapped implements PublicKeyWrapped {
+}
+
+
 
 @variant(0)
 class PublicSignKeyWrapped extends PublicKeyWrapped {
@@ -60,9 +62,9 @@ class EncryptionKeyWrapped extends PublicKeyWrapped {
 	}
 }
 
-abstract class KeyOrKeypair {
-	key: Keypair | ByteKey;
-}
+interface KeyOrKeypair { key: Keypair | ByteKey; }
+
+abstract class KeyOrKeypair implements KeyOrKeypair { }
 
 @variant(0)
 class KeypairWrapped extends KeyOrKeypair {

@@ -24,14 +24,14 @@ SOFTWARE.
  */
 
 import { field, variant } from "@dao-xyz/borsh";
-import { compare, equals } from "@peerbit/uint8arrays";
+import { compare, equals } from "uint8arrays";
 import { hrtime } from "@peerbit/time";
 
 const hrTimeNow = hrtime.bigint();
 const startTime = BigInt(Date.now()) * BigInt(1e6) - hrTimeNow;
 const bigintTime = () => startTime + hrtime.bigint();
 
-export function fromBits(low, high, unsigned, target?) {
+export function fromBits(low: any, high: any, unsigned: any, target?: any) {
 	if (target === undefined || target === null) {
 		return {
 			low: low | 0,
@@ -49,7 +49,7 @@ const n1e6 = BigInt(1e6);
 const UINT64_MAX = 18446744073709551615n;
 const UINT32_MAX = 0xffffffff;
 
-function bigIntCoerce(input, fallback) {
+function bigIntCoerce(input: any, fallback: any) {
 	if (typeof input === "bigint") return input;
 	if (typeof input === "number" || typeof input === "string")
 		return BigInt(input);
@@ -64,11 +64,9 @@ export class Timestamp {
 	@field({ type: "u32" })
 	logical: number;
 
-	constructor(properties?: { wallTime: bigint; logical?: number }) {
-		if (properties) {
-			this.wallTime = properties.wallTime;
-			this.logical = properties.logical || 0;
-		}
+	constructor(properties: { wallTime: bigint; logical?: number }) {
+		this.wallTime = properties.wallTime;
+		this.logical = properties.logical || 0;
 	}
 
 	static compare(a: Timestamp, b: Timestamp) {
@@ -176,10 +174,8 @@ export class ClockOffsetError extends Error {
 	maxOffset: bigint;
 	constructor(offset: bigint, maxOffset: bigint) {
 		super(
-			`The received time is ${
-				offset / n1e6
-			}ms ahead of the wall time, exceeding the 'maxOffset' limit of ${
-				maxOffset / n1e6
+			`The received time is ${offset / n1e6
+			}ms ahead of the wall time, exceeding the 'maxOffset' limit of ${maxOffset / n1e6
 			}ms.`
 		);
 		this.offset = offset;
@@ -192,8 +188,7 @@ export class WallTimeOverflowError extends Error {
 	maxTime: bigint;
 	constructor(time: bigint, maxTime: bigint) {
 		super(
-			`The wall time ${time / n1e6}ms exceeds the max time of ${
-				maxTime / n1e6
+			`The wall time ${time / n1e6}ms exceeds the max time of ${maxTime / n1e6
 			}ms.`
 		);
 		this.time = time;
@@ -206,8 +201,7 @@ export class ForwardJumpError extends Error {
 	tolerance: bigint;
 	constructor(timejump: bigint, tolerance: bigint) {
 		super(
-			`Detected a forward time jump of ${
-				timejump / n1e6
+			`Detected a forward time jump of ${timejump / n1e6
 			}ms, which exceed the allowed tolerance of ${tolerance / n1e6}ms.`
 		);
 		this.timejump = timejump;

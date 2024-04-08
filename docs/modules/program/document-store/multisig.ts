@@ -65,6 +65,8 @@ await db.posts.put(new Post("Hello world!"), {
 	]
 });
 
-expect(await db.posts.index.getSize()).toEqual(1); // Post was appproved
+import { expect } from "chai";
+
+expect(await db.posts.index.getSize()).equal(1); // Post was appproved
 
 await peer.stop();

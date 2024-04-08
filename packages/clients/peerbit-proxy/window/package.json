@@ -4,30 +4,59 @@
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
+	"sideEffects": false,
 	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/e2e",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "ipfs",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/dao-xyz/peerbit"
 	},
 	"engines": {
 		"node": ">=16.15.1"
-	},
-	"files": [
-		"lib",
-		"src",
-		"!src/**/__tests__",
-		"!lib/**/__tests__",
-		"!src/**/__benchmark__",
-		"!lib/**/__benchmark__",
-		"LICENSE"
-	],
-	"publishConfig": {
-		"access": "public"
-	},
-	"module": "lib/esm/index.js",
-	"types": "lib/esm/index.d.ts",
-	"exports": {
-		"import": "./lib/esm/index.js"
 	},
 	"dependencies": {
 		"@peerbit/proxy": "^3.0.7"
@@ -36,8 +65,9 @@
 		"@peerbit/test-utils": "2.0.33"
 	},
 	"scripts": {
-		"clean": "shx rm -rf lib/*",
-		"build": "yarn clean && tsc -p tsconfig.json"
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": "yarn --cwd ./e2e/browser test"
 	},
 	"localMaintainers": [
 		"dao.xyz"

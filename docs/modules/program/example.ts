@@ -3,6 +3,7 @@
 import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
 import { Observer, Replicator, SharedLog, Role } from "@peerbit/shared-log";
+import assert from 'node:assert'
 
 // The line below will make sure that every time the database manifest
 // gets serialized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
@@ -47,7 +48,7 @@ const store = await client.open(new MyDatabase(), { args: { role: Observer } });
 
 /// [append]
 const { entry } = await store.log.append(new Uint8Array([1, 2, 3]));
-expect(entry.getPayloadValue()).toEqual(new Uint8Array([1, 2, 3]));
+assert.equal(entry.getPayloadValue(), (new Uint8Array([1, 2, 3])));
 /// [append]
 
 await client.stop();

@@ -2,38 +2,62 @@
 	"name": "@peerbit/document-tests",
 	"version": "0.0.1",
 	"description": "Tests document store index engines",
-	"type": "module",
 	"sideEffects": false,
-	"private": true,
-	"module": "lib/esm/index.js",
-	"types": "lib/esm/index.d.ts",
-	"exports": {
-		"import": "./lib/esm/index.js",
-		"require": "./lib/cjs/index.js"
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
 	},
 	"files": [
-		"lib",
 		"src",
-		"!src/**/__tests__",
-		"!lib/**/__tests__",
-		"!src/**/__benchmark__",
-		"!lib/**/__benchmark__",
-		"LICENSE"
+		"dist",
+		"!dist/e2e",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
 	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "ipfs",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
 	"publishConfig": {
 		"access": "public"
 	},
 	"scripts": {
-		"clean": "shx rm -rf lib/*",
-		"build": "yarn clean && tsc -p tsconfig.json",
-		"test": "node ../../../../../../node_modules/.bin/jest test  -c  ../../../../../../jest.config.ts --runInBand --forceExit",
-		"test:unit": "node ../../../../../../node_modules/.bin/jest test  -c  ../../../../../../jest.config.unit.ts --runInBand --forceExit",
-		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../../../../jest.config.integration.ts --runInBand --forceExit"
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": ""
 	},
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/document-interface": "^6.0.7"
-	},
-	"devDependencies": {}
+		"@peerbit/document-interface": "^6.0.7",
+		"@types/uuid": "^9.0.8"
+	}
 }

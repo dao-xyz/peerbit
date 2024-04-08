@@ -5,12 +5,15 @@ orbitdb
 /orbit-db
 orbit-db-stores
 lib
+**/dist
 /peerbit
 .vscode
 /keystore/
 keystore-test
 **/__tests__/**/tmp
+**/test/**/tmp
 /tmp
+**/tmp/
 nginx_secrets
 nginx
 coverage

@@ -4,15 +4,15 @@ import {
 	field,
 	option,
 	serialize,
-	AbstractType
+	type AbstractType
 } from "@dao-xyz/borsh";
-import { equals } from "@peerbit/uint8arrays";
+import { compare, equals } from "uint8arrays";
 import { verifySignatureEd25519 } from "./ed25519-sign.js";
 import { Ed25519PublicKey } from "./ed25519.js";
 import { PublicSignKey } from "./key.js";
 import { PreHash } from "./prehash.js";
 import { Secp256k1PublicKey, verifySignatureSecp256k1 } from "./sepc256k1.js";
-import { SignWithKey } from "./signer.js";
+import { type SignWithKey } from "./signer.js";
 
 @variant(0)
 export class SignatureWithKey {
@@ -42,8 +42,8 @@ export class SignatureWithKey {
 			return false;
 		}
 		return (
-			Buffer.compare(serialize(this.publicKey), serialize(other.publicKey)) ===
-				0 && this.prehash == other.prehash
+			compare(serialize(this.publicKey), serialize(other.publicKey)) ===
+			0 && this.prehash == other.prehash
 		);
 	}
 }

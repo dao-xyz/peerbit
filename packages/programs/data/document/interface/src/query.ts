@@ -1,5 +1,5 @@
 import {
-	AbstractType,
+	type AbstractType,
 	deserialize,
 	field,
 	fixedArray,
@@ -76,7 +76,7 @@ export class Sort {
 	}
 }
 
-export abstract class AbstractSearchRequest {}
+export abstract class AbstractSearchRequest { }
 
 /**
  * Search with query and collect with sort conditionss
@@ -153,7 +153,7 @@ export class CloseIteratorRequest extends AbstractSearchRequest {
 }
 
 @variant(1)
-export abstract class LogicalQuery extends Query {}
+export abstract class LogicalQuery extends Query { }
 
 @variant(0)
 export class And extends LogicalQuery {
@@ -178,7 +178,7 @@ export class Or extends LogicalQuery {
 }
 
 @variant(2)
-export abstract class StateQuery extends Query {}
+export abstract class StateQuery extends Query { }
 
 @variant(1)
 export class StateFieldQuery extends StateQuery {
@@ -197,6 +197,7 @@ export class ByteMatchQuery extends StateFieldQuery {
 	value: Uint8Array;
 
 	@field({ type: "u8" })
+	// @ts-ignore: unused
 	private _reserved: number; // Replcate MemoryCompare query with this?
 
 	constructor(props: { key: string[] | string; value: Uint8Array }) {
@@ -322,7 +323,7 @@ export class MemoryCompareQuery extends Query {
 
 /// ----- RESULTS -----
 
-export abstract class Result {}
+export abstract class Result { }
 
 @variant(0)
 export class Context {
@@ -392,7 +393,7 @@ export class ResultWithSource<T> extends Result {
 	indexed?: Record<string, any>;
 }
 
-export abstract class AbstractSearchResult<T> {}
+export abstract class AbstractSearchResult<T> { }
 
 @variant(0)
 export class Results<T> extends AbstractSearchResult<T> {
@@ -410,7 +411,7 @@ export class Results<T> extends AbstractSearchResult<T> {
 }
 
 @variant(1)
-export class NoAccess extends AbstractSearchResult<any> {}
+export class NoAccess extends AbstractSearchResult<any> { }
 
 /* @variant(5)
 export class LogQuery extends Query { } */

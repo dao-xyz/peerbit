@@ -16,6 +16,8 @@ import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
+import assert from 'node:assert'
+
 /// [imports]
 
 /// [client]
@@ -91,8 +93,8 @@ const responses: Post[] = await store2.posts.index.search(
 	}
 );
 
-expect(responses).toHaveLength(1);
-expect(responses.map((x) => x.message)).toEqual(["hello world"]);
+assert.equal(responses.length, 1);
+assert.equal(responses.map((x) => x.message), ["hello world"]);
 /// [another-client]
 
 /// [disconnecting]

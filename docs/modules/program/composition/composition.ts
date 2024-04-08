@@ -3,7 +3,7 @@ import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
-import { RoleOptions } from "@peerbit/shared-log";
+import { type RoleOptions } from "@peerbit/shared-log";
 
 @variant(0) // version 0
 class Post {
@@ -118,11 +118,11 @@ await forum2.channels.log.waitForReplicator(client.identity.publicKey);
 
 // find channels from the forum from client2 perspective
 const channels = await forum2.channels.index.search(new SearchRequest());
-expect(channels).toHaveLength(1);
-expect(channels[0].name).toEqual("general");
+expect(channels).to.have.length(1);
+expect(channels[0].name).equal("general");
 
 // open this channel (if we would open the forum with role: 'replicator', this would already be done)
-expect(channels[0].closed).toBeTrue();
+expect(channels[0].closed).to.be.true;
 const channel2 = await client2.open<Channel>(channels[0], {
 	args: { role: "observer" }
 });
@@ -132,8 +132,8 @@ await channel2.db.posts.log.waitForReplicator(client.identity.publicKey);
 
 // find messages
 const messages = await channel2.db.posts.index.search(new SearchRequest());
-expect(messages).toHaveLength(1);
-expect(messages[0].message).toEqual("Hello world!");
+expect(messages).to.have.length(1);
+expect(messages[0].message).equal("Hello world!");
 
 await client.stop();
 await client2.stop();

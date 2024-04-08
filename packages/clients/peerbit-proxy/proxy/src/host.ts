@@ -1,10 +1,10 @@
-import { AnyStore } from "@peerbit/any-store";
-import { PeerId } from "@libp2p/interface";
-import { Multiaddr } from "@multiformats/multiaddr";
-import { Blocks } from "@peerbit/blocks-interface";
+import { type AnyStore } from "@peerbit/any-store-interface";
+import { type PeerId } from "@libp2p/interface";
+import { type Multiaddr } from "@multiformats/multiaddr";
+import { type Blocks } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { DataEvent, PubSub, PublishEvent } from "@peerbit/pubsub-interface";
-import { ProgramClient } from "@peerbit/program";
+import { DataEvent, type PubSub, PublishEvent } from "@peerbit/pubsub-interface";
+import { type ProgramClient } from "@peerbit/program";
 import * as blocks from "./blocks.js";
 import * as keychain from "./keychain.js";
 import * as lifecycle from "./lifecycle.js";
@@ -15,8 +15,8 @@ import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
 import { CustomEvent } from "@libp2p/interface";
-import { serialize, deserialize, AbstractType } from "@dao-xyz/borsh";
-import { Keychain } from "@peerbit/keychain";
+import { serialize, deserialize, type AbstractType } from "@dao-xyz/borsh";
+import { type Keychain } from "@peerbit/keychain";
 
 const levelKey = (level: string[]) => JSON.stringify(level);
 const CUSTOM_EVENT_ORIGIN_PROPERTY = "__origin";
@@ -95,7 +95,7 @@ export class PeerbitProxyHost implements ProgramClient {
 		this._pubsubTopicSubscriptions.clear();
 	}
 
-	async open(program, options) {
+	async open(program: any, options: any) {
 		await this.messages.start();
 		return this.hostClient.open(program, options);
 	}
@@ -210,7 +210,7 @@ export class PeerbitProxyHost implements ProgramClient {
 						iterator = m.iterator()[Symbol.asyncIterator]();
 						this._memoryIterator.set(request.id, iterator);
 					}
-					const next = await iterator.next();
+					const next: any = await iterator.next();
 					await this.respond(
 						message,
 						new memory.StorageMessage(
@@ -421,7 +421,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					from
 				);
 			} else if (message instanceof pubsub.REQ_DispatchEvent) {
-				const customEvent = pubsub.createCustomEventFromType(
+				const customEvent: any = pubsub.createCustomEventFromType(
 					message.type,
 					message.data
 				);

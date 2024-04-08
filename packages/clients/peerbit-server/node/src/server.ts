@@ -1,20 +1,18 @@
 import http from "http";
 import {
 	fromBase64,
-	getKeypairFromPeerId,
 	getPublicKeyFromPeerId
 } from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import {
 	Program,
-	ProgramClient,
+	type ProgramClient,
 	getProgramFromVariant,
 	getProgramFromVariants
 } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
 import { v4 as uuid } from "uuid";
 import {
-	getHomeConfigDir,
 	getNodePath,
 	getKeypair,
 	getTrustPath
@@ -23,7 +21,7 @@ import { setMaxListeners } from "events";
 import { create } from "./peerbit.js";
 import { Peerbit } from "peerbit";
 import { getSchema } from "@dao-xyz/borsh";
-import {
+import type {
 	InstallDependency,
 	StartByBase64,
 	StartByVariant,
@@ -54,7 +52,7 @@ import { fileURLToPath } from "url";
 import { Level } from "level";
 import { MemoryLevel } from "memory-level";
 import { Trust } from "./trust.js";
-import { getBody, verifyRequest } from "./signes-request.js";
+import { getBody, verifyRequest } from "./signed-request.js";
 import { peerIdFromString } from "@libp2p/peer-id";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -109,9 +107,9 @@ export const startServerWithNode = async (properties: {
 	const session = new Session(
 		sessionDirectory
 			? new Level<string, Uint8Array>(sessionDirectory, {
-					valueEncoding: "view",
-					keyEncoding: "utf-8"
-				})
+				valueEncoding: "view",
+				keyEncoding: "utf-8"
+			})
 			: new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" })
 	);
 	if (!properties.newSession) {
@@ -297,7 +295,7 @@ export const startApiServer = async (
 					try {
 						body =
 							req.url.startsWith(PEER_ID_PATH) ||
-							req.url.startsWith(ADDRESS_PATH)
+								req.url.startsWith(ADDRESS_PATH)
 								? await getBody(req)
 								: await getVerifiedBody(req);
 					} catch (error: any) {
@@ -315,7 +313,7 @@ export const startApiServer = async (
 						switch (req.method) {
 							case "GET":
 								try {
-									const ref = (client as Peerbit).handler?.items?.keys() || [];
+									const ref: any = (client as Peerbit).handler?.items?.keys() || [];
 									const keys = JSON.stringify([...ref]);
 									res.setHeader("Content-Type", "application/json");
 									res.writeHead(200);
@@ -426,7 +424,7 @@ export const startApiServer = async (
 											res.writeHead(400);
 											res.end(
 												"Missing program with variant: " +
-													(startArguments as StartByVariant).variant
+												(startArguments as StartByVariant).variant
 											);
 											return;
 										}
@@ -516,9 +514,9 @@ export const startApiServer = async (
 										res.writeHead(400);
 										res.end(
 											"Failed to install library: " +
-												packageName +
-												". " +
-												error.toString()
+											packageName +
+											". " +
+											error.toString()
 										);
 										clear?.();
 										return;

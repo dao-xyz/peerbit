@@ -3,7 +3,9 @@
 	"last-release-sha": "c3343e8e19a44343036ed20ed6f15bd13beddf6f",
 	"bump-minor-pre-major": true,
 	"bump-patch-for-minor-pre-major": true,
-	"plugins": ["node-workspace"],
+	"plugins": [
+		"node-workspace"
+	],
 	"packages": {
 		"packages/transport/blocks": {},
 		"packages/transport/blocks-interface": {},
@@ -28,7 +30,6 @@
 		"packages/programs/data/shared-log": {},
 		"packages/utils/crypto": {},
 		"packages/utils/any-store": {},
-		"packages/utils/uint8arrays": {},
 		"packages/utils/cache": {},
 		"packages/utils/time": {},
 		"packages/utils/logger": {},

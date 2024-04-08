@@ -6,7 +6,7 @@ import {
 	encodingLength
 } from "uint8-varint";
 
-export abstract class PrimitiveValue {}
+export abstract class PrimitiveValue { }
 
 @variant(0)
 export class StringValue extends PrimitiveValue {
@@ -25,7 +25,7 @@ export abstract class NumberValue extends PrimitiveValue {
 }
 
 @variant(0)
-export abstract class IntegerValue extends NumberValue {}
+export abstract class IntegerValue extends NumberValue { }
 
 @variant(0)
 export class UnsignedIntegerValue extends IntegerValue {
@@ -104,13 +104,13 @@ export class Uint8ArrayKey extends IdKey {
 }
 
 const varint53 = {
-	deserialize: (reader) => {
+	deserialize: (reader: any) => {
 		const number = decodeUint8Array(reader._buf, reader._offset);
 		const len = encodingLength(number);
 		reader._offset += len;
 		return number;
 	},
-	serialize: (value, writer) => {
+	serialize: (value: any, writer: any) => {
 		const offset = writer.totalSize;
 		writer["_writes"] = writer["_writes"].next = () =>
 			encodeUint8Array(value, writer["_buf"], offset);
@@ -156,8 +156,8 @@ export const toId = (obj: Ideable): IdKey => {
 	}
 	throw new Error(
 		"Unexpected index key: " +
-			typeof obj +
-			", expected: string, number, bigint or Uint8Array"
+		typeof obj +
+		", expected: string, number, bigint or Uint8Array"
 	);
 };
 

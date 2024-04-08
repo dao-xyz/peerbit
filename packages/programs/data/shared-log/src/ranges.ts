@@ -1,5 +1,5 @@
 import yallist from "yallist";
-import { ReplicatorRect } from "./replication.js";
+import { type ReplicatorRect } from "./replication.js";
 import { Replicator } from "./role.js";
 import { PublicSignKey } from "@peerbit/crypto";
 
@@ -96,8 +96,7 @@ export const getSamples = (
 	cursor: number,
 	peers: yallist<ReplicatorRect>,
 	amount: number,
-	roleAge: number,
-	dbg?: string
+	roleAge: number
 ) => {
 	const leaders: Set<string> = new Set();
 	const width = 1;
@@ -108,7 +107,6 @@ export const getSamples = (
 
 	const t = +new Date();
 
-	const matured = 0;
 
 	const maturedLeaders = new Set();
 	for (let i = 0; i < amount; i++) {

@@ -1,37 +1,36 @@
 import {
-	AbstractType,
+	type AbstractType,
 	BorshError,
-	deserialize,
 	field,
 	serialize,
 	variant
 } from "@dao-xyz/borsh";
-import { Change, Entry, EntryType, TrimOptions } from "@peerbit/log";
-import { Program, ProgramEvents } from "@peerbit/program";
+import { type Change, Entry, EntryType, type TrimOptions } from "@peerbit/log";
+import { Program, type ProgramEvents } from "@peerbit/program";
 import { AccessError, DecryptedThing } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { CustomEvent } from "@libp2p/interface";
 import {
-	RoleOptions,
+	type RoleOptions,
 	Observer,
 	Replicator,
 	SharedLog,
-	SharedLogOptions,
-	SharedAppendOptions
+	type SharedLogOptions,
+	type SharedAppendOptions
 } from "@peerbit/shared-log";
 import * as types from "@peerbit/document-interface";
 
 export type { RoleOptions }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
 import {
-	IndexableFields,
+	type IndexableFields,
 	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
 	DocumentIndex,
 	Operation,
 	PutOperation,
-	CanSearch,
-	CanRead
+	type CanSearch,
+	type CanRead
 } from "./search.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 
@@ -143,7 +142,7 @@ export class Documents<T> extends Program<
 		const idResolver =
 			options.id ||
 			(typeof idProperty === "string"
-				? (obj) => obj[idProperty as string]
+				? (obj: any) => obj[idProperty as string]
 				: (obj: any) => types.extractFieldValue(obj, idProperty as string[]));
 
 		this.idResolver = idResolver;
@@ -187,7 +186,7 @@ export class Documents<T> extends Program<
 			trim: options?.log?.trim,
 			role: options?.role,
 			replicas: options?.replicas,
-			sync: (entry) => {
+			sync: (entry: any) => {
 				// here we arrive when ever a insertion/pruning behaviour processes an entry
 				// returning true means that it should persist
 				return this._manuallySynced.has(entry.gid);
@@ -202,7 +201,7 @@ export class Documents<T> extends Program<
 	private async _resolveEntry(history: Entry<Operation> | string) {
 		return typeof history === "string"
 			? (await this.log.log.get(history)) ||
-					(await Entry.fromMultihash<Operation>(this.log.log.blocks, history))
+			(await Entry.fromMultihash<Operation>(this.log.log.blocks, history))
 			: history;
 	}
 
@@ -245,16 +244,16 @@ export class Documents<T> extends Program<
 					!(await this._optionCanPerform(
 						operation instanceof PutOperation
 							? {
-									type: "put",
-									value: document!,
-									operation,
-									entry: entry as any as Entry<PutOperation>
-								}
+								type: "put",
+								value: document!,
+								operation,
+								entry: entry as any as Entry<PutOperation>
+							}
 							: {
-									type: "delete",
-									operation,
-									entry: entry as any as Entry<DeleteOperation>
-								}
+								type: "delete",
+								operation,
+								entry: entry as any as Entry<DeleteOperation>
+							}
 					))
 				) {
 					return false;
@@ -278,7 +277,7 @@ export class Documents<T> extends Program<
 		const resolve = async (history: Entry<Operation> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||
-						(await Entry.fromMultihash(this.log.log.blocks, history))
+				(await Entry.fromMultihash(this.log.log.blocks, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation> | string) => {
@@ -388,8 +387,7 @@ export class Documents<T> extends Program<
 		const ser = serialize(doc);
 		if (ser.length > MAX_BATCH_SIZE) {
 			throw new Error(
-				`Document is too large (${
-					ser.length * 1e-6
+				`Document is too large (${ser.length * 1e-6
 				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`
 			);
 		}
@@ -397,11 +395,11 @@ export class Documents<T> extends Program<
 		const existingDocument = options?.unique
 			? undefined
 			: (
-					await this._index.getDetailed(keyValue, {
-						local: true,
-						remote: { sync: true } // only query remote if we know they exist
-					})
-				)?.[0]?.results[0];
+				await this._index.getDetailed(keyValue, {
+					local: true,
+					remote: { sync: true } // only query remote if we know they exist
+				})
+			)?.[0]?.results[0];
 
 		const operation = new PutOperation({
 			data: ser

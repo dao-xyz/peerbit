@@ -4,9 +4,7 @@ export class StringArray {
 	@field({ type: vec("string") })
 	arr: string[];
 
-	constructor(properties?: { arr: string[] }) {
-		if (properties) {
-			this.arr = properties.arr;
-		}
+	constructor(properties: { arr: string[] }) {
+		this.arr = properties.arr;
 	}
 }

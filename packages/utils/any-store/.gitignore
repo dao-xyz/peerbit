@@ -1,5 +1,0 @@
-dump.rdb
-orbitdb.json
-node_modules
-redis-stable*
-test/browser/bundle.js*

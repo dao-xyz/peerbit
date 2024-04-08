@@ -4,16 +4,16 @@ import {
 	waitForPeers as waitForPeersStreams
 } from "@peerbit/stream";
 import {
-	Libp2pCreateOptions,
-	Libp2pExtendServices,
-	Libp2pCreateOptionsWithServices
+	type Libp2pCreateOptions,
+	type Libp2pExtendServices,
+	type Libp2pCreateOptionsWithServices
 } from "peerbit";
 import { DirectBlock } from "@peerbit/blocks";
 import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
-import { ProgramClient } from "@peerbit/program";
+import { type ProgramClient } from "@peerbit/program";
 import { DefaultKeychain } from "@peerbit/keychain";
-import { Libp2pOptions } from "libp2p";
+import { type Libp2pOptions } from "libp2p";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
 export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
@@ -69,8 +69,8 @@ export class TestSession {
 		let optionsWithServices:
 			| Libp2pCreateOptionsWithServices
 			| Libp2pCreateOptionsWithServices[] = Array.isArray(options)
-			? options.map(m)
-			: m(options);
+				? options.map(m)
+				: m(options);
 		const session = await SSession.disconnected(n, optionsWithServices);
 		return new TestSession(
 			session,

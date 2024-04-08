@@ -2,21 +2,21 @@ import {
 	SignatureWithKey,
 	randomBytes,
 	sha256Base64Sync,
-	Identity,
+	type Identity,
 	X25519Keypair
 } from "@peerbit/crypto";
 import { Cache } from "@peerbit/cache";
-import { AnyStore } from "@peerbit/any-store";
+import { type AnyStore } from "@peerbit/any-store";
 
 import { EntryIndex } from "./entry-index.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import { findUniques } from "./find-uniques.js";
 import {
-	EncryptionTemplateMaybeEncrypted,
+	type EncryptionTemplateMaybeEncrypted,
 	Entry,
 	Payload,
-	CanAppend,
+	type CanAppend,
 	EntryType
 } from "./entry.js";
 import {
@@ -27,16 +27,16 @@ import {
 } from "./clock.js";
 
 import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
-import { Encoding, NO_ENCODING } from "./encoding.js";
-import { CacheUpdateOptions, HeadsIndex } from "./heads.js";
-import { EntryNode, Values } from "./values.js";
-import { Trim, TrimOptions } from "./trim.js";
+import { type Encoding, NO_ENCODING } from "./encoding.js";
+import { type CacheUpdateOptions, HeadsIndex } from "./heads.js";
+import { type EntryNode, Values } from "./values.js";
+import { Trim, type TrimOptions } from "./trim.js";
 import { logger } from "./logger.js";
-import { Change } from "./change.js";
-import { EntryWithRefs } from "./entry-with-refs.js";
-import { Blocks } from "@peerbit/blocks-interface";
+import { type Change } from "./change.js";
+import { type EntryWithRefs } from "./entry-with-refs.js";
+import { type Blocks } from "@peerbit/blocks-interface";
 import { cidifyString } from "@peerbit/blocks";
-import { Keychain } from "@peerbit/keychain";
+import { type Keychain } from "@peerbit/keychain";
 
 const { LastWriteWins, NoZeroes } = Sorting;
 
@@ -95,30 +95,30 @@ export class Log<T> {
 	@field({ type: fixedArray("u8", 32) })
 	private _id: Uint8Array;
 
-	private _sortFn: Sorting.ISortFunction;
-	private _storage: Blocks;
-	private _hlc: HLC;
+	private _sortFn!: Sorting.ISortFunction;
+	private _storage!: Blocks;
+	private _hlc!: HLC;
 
 	// Identity
-	private _identity: Identity;
+	private _identity!: Identity;
 
 	// Keeping track of entries
-	private _entryIndex: EntryIndex<T>;
-	private _headsIndex: HeadsIndex<T>;
-	private _values: Values<T>;
+	private _entryIndex!: EntryIndex<T>;
+	private _headsIndex!: HeadsIndex<T>;
+	private _values!: Values<T>;
 
 	// Index of all next pointers in this log
-	private _nextsIndex: Map<string, Set<string>>;
+	private _nextsIndex!: Map<string, Set<string>>;
 	private _keychain?: Keychain;
-	private _encoding: Encoding<T>;
-	private _trim: Trim<T>;
-	private _entryCache: Cache<Entry<T>>;
+	private _encoding!: Encoding<T>;
+	private _trim!: Trim<T>;
+	private _entryCache!: Cache<Entry<T>>;
 
 	private _canAppend?: CanAppend<T>;
 	private _onChange?: OnChange<T>;
 	private _closed = true;
 	private _memory?: AnyStore;
-	private _joining: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
+	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
@@ -558,11 +558,11 @@ export class Log<T> {
 			encoding: this._encoding,
 			encryption: options.encryption
 				? {
-						keypair: options.encryption.keypair,
-						receiver: {
-							...options.encryption.receiver
-						}
+					keypair: options.encryption.keypair,
+					receiver: {
+						...options.encryption.receiver
 					}
+				}
 				: undefined,
 			canAppend: options.canAppend || this._canAppend
 		});
@@ -666,7 +666,7 @@ export class Log<T> {
 		const from = options?.from || "tail";
 		const amount = typeof options?.amount === "number" ? options?.amount : -1;
 		let next = from === "tail" ? this._values.tail : this._values.head;
-		const nextFn = from === "tail" ? (e) => e.prev : (e) => e.next;
+		const nextFn = from === "tail" ? (e: any) => e.prev : (e: any) => e.next;
 		return (function* () {
 			let counter = 0;
 			while (next) {
@@ -1141,12 +1141,12 @@ export class Log<T> {
 		const heads = providedCustomHeads
 			? (opts["heads"] as Array<Entry<T>>)
 			: await this.headsIndex.load({
-					replicate: true, // TODO this.replication.replicate(x) => true/false
-					timeout: opts.fetchEntryTimeout,
-					reload: opts.reload,
-					ignoreMissing: opts.ignoreMissing,
-					cache: { update: true, reset: true }
-				});
+				replicate: true, // TODO this.replication.replicate(x) => true/false
+				timeout: opts.fetchEntryTimeout,
+				reload: opts.reload,
+				ignoreMissing: opts.ignoreMissing,
+				cache: { update: true, reset: true }
+			});
 
 		if (heads) {
 			// Load the log

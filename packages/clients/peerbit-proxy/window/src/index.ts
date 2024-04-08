@@ -1,9 +1,10 @@
-import { ProgramClient } from "@peerbit/program";
+import { type ProgramClient } from "@peerbit/program";
 import {
 	PeerbitProxyClient,
 	PeerbitProxyHost,
 	connection
 } from "@peerbit/proxy";
+
 type WindowFunctions = {
 	addEventListener: <K extends keyof WindowEventMap>(
 		type: K,
@@ -33,21 +34,21 @@ export class PostMessageNode extends connection.MessageNode {
 							ev.data.message,
 							ev.source
 								? {
-										id: (
-											ev.data.message as
-												| connection.Hello
-												| connection.DataMessage
-										).from,
-										publishMessage: (msg) =>
-											ev.source?.postMessage(
-												{
-													type: PostMessageNode.messagePrefixKey + msg.type,
-													message: msg
-												},
-												{ targetOrigin: "*" }
-											),
-										parent: ev.source === window.top
-									}
+									id: (
+										ev.data.message as
+										| connection.Hello
+										| connection.DataMessage
+									).from,
+									publishMessage: (msg) =>
+										ev.source?.postMessage(
+											{
+												type: PostMessageNode.messagePrefixKey + msg.type,
+												message: msg
+											},
+											{ targetOrigin: "*" }
+										),
+									parent: ev.source === window.top
+								}
 								: undefined
 						);
 					}

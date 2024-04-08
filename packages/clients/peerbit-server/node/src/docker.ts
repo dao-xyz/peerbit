@@ -6,7 +6,7 @@ export const installDocker = async () => {
 	// check if docker is installed
 	const dockerExist = async () => {
 		try {
-			const out = await new Promise((resolve, reject) => {
+			await new Promise((resolve, reject) => {
 				exec("docker --version", (error, stdout, stderr) => {
 					if (error || stderr) {
 						reject();
@@ -49,7 +49,7 @@ export const startContainer = async (cmd: string, errorMessage?: string) => {
 				if (error) {
 					reject(
 						(errorMessage || "Failed to start docker container: ") +
-							error.message
+						error.message
 					);
 				}
 				resolve(stdout);

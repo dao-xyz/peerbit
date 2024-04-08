@@ -1,9 +1,9 @@
-import { AnyStore } from "@peerbit/any-store";
-import { PeerId } from "@libp2p/interface";
-import { Multiaddr } from "@multiformats/multiaddr";
-import { Blocks } from "@peerbit/blocks-interface";
+import { type AnyStore } from "@peerbit/any-store";
+import { type PeerId } from "@libp2p/interface";
+import type { Multiaddr } from "@multiformats/multiaddr";
+import { type Blocks } from "@peerbit/blocks-interface";
 import {
-	Identity,
+	type Identity,
 	Ed25519PublicKey,
 	PublicSignKey,
 	X25519PublicKey,
@@ -16,14 +16,14 @@ import {
 	X25519Keypair,
 	ByteKey
 } from "@peerbit/crypto";
-import { PubSub, PubSubEvents } from "@peerbit/pubsub-interface";
+import { type PubSub, type PubSubEvents } from "@peerbit/pubsub-interface";
 import {
-	Address,
-	OpenOptions,
+	type Address,
+	type OpenOptions,
 	Program,
 	ProgramHandler
 } from "@peerbit/program";
-import { ProgramClient } from "@peerbit/program";
+import { type ProgramClient } from "@peerbit/program";
 import { sha256Base64 } from "@peerbit/crypto";
 import * as blocks from "./blocks.js";
 import * as keychain from "./keychain.js";
@@ -36,9 +36,9 @@ import * as pubsub from "./pubsub.js";
 import * as connection from "./connection.js";
 import { v4 as uuid } from "uuid";
 import { TypedEventEmitter } from "@libp2p/interface";
-import { serialize, deserialize, AbstractType } from "@dao-xyz/borsh";
-import { Keychain, KeypairFromPublicKey } from "@peerbit/keychain";
-import { ExtractArgs } from "@peerbit/program";
+import { serialize, deserialize, type AbstractType } from "@dao-xyz/borsh";
+import type { Keychain, KeypairFromPublicKey } from "@peerbit/keychain";
+import { type ExtractArgs } from "@peerbit/program";
 
 const messageIdString = (messageId: Uint8Array) => sha256Base64(messageId);
 const levelKey = (level: string[]) => JSON.stringify(level);
@@ -278,11 +278,11 @@ export class PeerbitProxyClient implements ProgramClient {
 				},
 				exportByKey: async <
 					T extends
-						| Ed25519PublicKey
-						| X25519PublicKey
-						| Secp256k1PublicKey
-						| PublicSignKey
-						| PublicKeyEncryptionKey,
+					| Ed25519PublicKey
+					| X25519PublicKey
+					| Secp256k1PublicKey
+					| PublicSignKey
+					| PublicKeyEncryptionKey,
 					Q = KeypairFromPublicKey<T>
 				>(
 					publicKey: T
@@ -292,7 +292,7 @@ export class PeerbitProxyClient implements ProgramClient {
 					);
 					return resp.keypair?.key as Q;
 				},
-				import: async (properties: { keypair; id }) => {
+				import: async (properties: { keypair: any; id: any }) => {
 					await this.request<keychain.RESP_ImportKey>(
 						new keychain.REQ_ImportKey(properties.keypair, properties.id)
 					);
