@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 /// [imports]
 import { field, variant, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
@@ -6,15 +8,12 @@ import { v4 as uuid } from "uuid";
 
 import {
 	ByteMatchQuery,
-	DeleteOperation,
 	Documents,
 	MissingField,
-	PutOperation,
 	SearchRequest,
 	Sort
 } from "@peerbit/document";
 /// [imports]
-
 /// [definition]
 const POST_ID_PROPERTY = "id";
 const POST_PARENT_POST_ID = "parentPostid";
@@ -69,7 +68,7 @@ class Reaction {
 }
 
 type ChannelArgs = { role?: RoleOptions };
-@variant("channel")
+@variant("xxxchannel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
@@ -90,9 +89,7 @@ export class Channel extends Program<ChannelArgs> {
 		});
 	}
 
-	/**
-	 * Setup will be called on 'open'
-	 */
+	// Setup will be called on 'open'
 	async open(properties?: ChannelArgs): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
@@ -166,7 +163,7 @@ export class Channel extends Program<ChannelArgs> {
 /// [definition]
 
 /// [insert]
-import { delay, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 
 // Start two clients that ought to talk to each other
 const peer = await Peerbit.create();
@@ -439,4 +436,4 @@ const searchAndSync = await channelFromClient2.posts.index.search(
 /// [disconnecting]
 await peer.stop();
 await peer2.stop();
-/// [disconnecting]
+/// [disconnecting] 

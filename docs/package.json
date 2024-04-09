@@ -1,0 +1,25 @@
+{
+	"name": "docs",
+	"private": true,
+	"version": "0.0.0",
+	"sideEffects": true,
+	"type": "module",
+	"files": [
+		"src",
+		"modules",
+		"examples",
+		"topics",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"scripts": {
+		"clean": "#not used",
+		"build": "#not used",
+		"test": "aegir test -t node"
+	},
+	"license": "MIT",
+	"localMaintainers": [
+		"dao.xyz"
+	]
+}

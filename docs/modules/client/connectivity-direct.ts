@@ -1,5 +1,6 @@
 import { Peerbit } from "peerbit";
 import type { Multiaddr } from "@multiformats/multiaddr";
+import { expect } from 'chai';
 
 const peerA = await Peerbit.create();
 const peerB = await Peerbit.create();

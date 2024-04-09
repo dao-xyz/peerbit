@@ -2,7 +2,7 @@
 /// [definition]
 import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
-import { Observer, Replicator, SharedLog, Role } from "@peerbit/shared-log";
+import { Observer, Replicator, SharedLog, type RoleOptions } from "@peerbit/shared-log";
 import assert from 'node:assert'
 
 // The line below will make sure that every time the database manifest
@@ -11,7 +11,7 @@ import assert from 'node:assert'
 
 // We define an type here that is used as opening argument
 // role defines the responsibilities for replicating the data
-type Args = { role: Role };
+type Args = { role: RoleOptions };
 
 @variant("my-database") // required
 class MyDatabase extends Program<Args> {
@@ -36,14 +36,14 @@ const client = await Peerbit.create();
 Open a program with the intention of replicating data and do services for data related tasks, as search (default behaviour)
 you can also do  
 
-await client.open(new MyDatabase(), { args: { role: new Observer } });
+await client.open(new MyDatabase(), { args: { role: 'observer' } });
 	
 to not participate in replication work
 */
-await client.open(new MyDatabase(), { args: { role: Replicator } });
+await client.open(new MyDatabase(), { args: { role: 'replicator' } });
 
 // Open a program with the intention of not doing any work
-const store = await client.open(new MyDatabase(), { args: { role: Observer } });
+const store = await client.open(new MyDatabase(), { args: { role: 'observer' } });
 /// [role]
 
 /// [append]

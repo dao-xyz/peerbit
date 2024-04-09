@@ -12,11 +12,11 @@
     "ts"
   ],
   "spec": [
-    "**/test/**/*.spec.ts"
+    "**/*.spec.ts"
   ],
   "ignore": [
     "**/node_modules/**",
-    "**/dist/**"
+    "dist/**"
   ],
   "timeout": "20000"
 }

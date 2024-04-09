@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 /// [imports]
 import { variant, field } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";

@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { SharedLog } from "@peerbit/shared-log";
 import { Peerbit } from "peerbit";
-import { waitForResolved } from "../../../packages/utils/time/src/index.js";
+import { waitForResolved } from "@peerbit/time";
 import { X25519Keypair } from "@peerbit/crypto";
 import assert from "node:assert";
 
@@ -68,7 +68,7 @@ await waitForResolved(() => assert.equal(store2.log.log.length, 1));
 const entry = (await store2.log.log.values.toArray())[0];
 
 // use .getPayload() instead of .payload to decrypt the payload
-assert.equal((await entry.getPayload()).getValue(), payload);
+assert.deepEqual((await entry.getPayload()).getValue(), payload);
 
 await client.stop();
 await client2.stop();

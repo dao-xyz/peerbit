@@ -9,6 +9,7 @@
 	"license": "Apache-2.0",
 	"type": "module",
 	"workspaces": [
+		"packages/docs",
 		"packages/transport/blocks",
 		"packages/transport/blocks-interface",
 		"packages/transport/stream",
@@ -51,7 +52,7 @@
 	},
 	"scripts": {
 		"reset": "aegir run clean && aegir clean interop/node_modules packages/**/node_modules node_modules package-lock.json packages/*/package-lock.json interop/*/package-lock.json",
-		"test": "aegir run test:node",
+		"test": "aegir run test",
 		"test:node": "aegir run test:node",
 		"test:chrome": "aegir run test:chrome",
 		"test:chrome-webworker": "aegir run test:chrome-webworker",
@@ -60,6 +61,7 @@
 		"test:electron-main": "aegir run test:electron-main",
 		"test:cli": "aegir run test:cli",
 		"test:interop": "aegir run test:interop",
+		"test:docs": "aegir run test --roots ./docs",
 		"test:part-1": "aegir run test --roots ./packages/clients/** ./packages/log",
 		"test:part-2": "aegir run test --roots ./packages/programs/** ./docs",
 		"test:part-3": "aegir run test --roots  ./packages/utils/** ./packages/transport/**",

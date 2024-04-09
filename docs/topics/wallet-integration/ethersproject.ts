@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import {
-	Identity,
+	type Identity,
 	PreHash,
 	Secp256k1PublicKey,
 	SignatureWithKey
@@ -10,6 +10,7 @@ import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 import { Wallet } from "@ethersproject/wallet";
+import { expect } from "chai";
 
 const wallet = Wallet.createRandom(); // if you would run this in the browser you would fetch the wallet from the window object instead
 

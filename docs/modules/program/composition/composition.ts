@@ -7,6 +7,7 @@ import { type RoleOptions } from "@peerbit/shared-log";
 
 @variant(0) // version 0
 class Post {
+
 	@field({ type: "string" })
 	id: string;
 
@@ -22,8 +23,9 @@ class Post {
 // This class extends Program which allows it to be replicated amongst peers
 type Args = { role: RoleOptions };
 
-@variant("posts")
+@variant("posts-with-documents-store")
 class PostsDB extends Program<Args> {
+
 	@field({ type: Documents })
 	posts: Documents<Post>; // Documents<?> provide document store functionality around your Posts
 
@@ -41,17 +43,18 @@ class PostsDB extends Program<Args> {
 		});
 	}
 }
-/// [data]
 
-@variant("channel")
+/// [data]
+@variant("channel-with-nested-postdb")
 class Channel extends Program<Args> {
+
 	// Name of channel
 	@field({ type: "string" })
 	name: string;
 
 	// Posts within channel
 	@field({ type: PostsDB })
-	db: PostsDB; // Documents<?> provide document store functionality around your Posts
+	db: PostsDB;
 
 	constructor(name: string) {
 		super();
@@ -117,6 +120,8 @@ const forum2 = await client2.open<Forum>(forum.address, {
 await forum2.channels.log.waitForReplicator(client.identity.publicKey);
 
 // find channels from the forum from client2 perspective
+import { expect } from 'chai';
+
 const channels = await forum2.channels.index.search(new SearchRequest());
 expect(channels).to.have.length(1);
 expect(channels[0].name).equal("general");

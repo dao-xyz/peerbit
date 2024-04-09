@@ -1288,10 +1288,10 @@
   dependencies:
     "@jridgewell/trace-mapping" "0.3.9"
 
-"@dao-xyz/borsh@^5.2.1":
-  version "5.2.1"
-  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.2.1.tgz#365fd5e7decc8bfb87bb1f9d41e26366a0e7d2ca"
-  integrity sha512-jfhp91rePGmB5KFdLHEr6+Lw6KY4/6asVYXM0LhcCaF22/fHBGovW2PDw0LWI2z5JGee+Jn1kMDKkS9I2Ytniw==
+"@dao-xyz/borsh@^5.2.2":
+  version "5.2.2"
+  resolved "https://registry.yarnpkg.com/@dao-xyz/borsh/-/borsh-5.2.2.tgz#be1da57980532927537a4fc94d3f3b9f72058ad8"
+  integrity sha512-ODHzDe2ZnDTsydH2GM9jKmk0gdqahZaWevmZYoplGEeDBn1Gx7TzwcY63yb0Q3uv1Ut/Uh7wTRrP/fM3b+ThPQ==
   dependencies:
     "@protobufjs/float" "^1.0.2"
     "@protobufjs/utf8" "^1.1.0"
@@ -2799,10 +2799,10 @@
   resolved "https://registry.yarnpkg.com/@octokit/openapi-types/-/openapi-types-20.0.0.tgz#9ec2daa0090eeb865ee147636e0c00f73790c6e5"
   integrity sha512-EtqRBEjp1dL/15V7WiX5LJMIxxkdiGJnabzYx5Apx4FkQIFgAfKumXeYAqqJCj1s+BMX4cPFIFC4OLCR6stlnA==
 
-"@octokit/openapi-types@^21.0.0":
-  version "21.2.0"
-  resolved "https://registry.yarnpkg.com/@octokit/openapi-types/-/openapi-types-21.2.0.tgz#d699a060dd6814fae4e5b601a5d530b6edd94136"
-  integrity sha512-xx+Xd6I7rYvul/hgUDqv6TeGX0IOGnhSg9IOeYgd/uI7IAqUy6DE2B6Ipv2M4mWoxaMcWjIzgTIcv8pMO3F3vw==
+"@octokit/openapi-types@^22.0.0":
+  version "22.0.0"
+  resolved "https://registry.yarnpkg.com/@octokit/openapi-types/-/openapi-types-22.0.0.tgz#5f9bdad4be329c61f2d0f99f06c0bc8364649add"
+  integrity sha512-kWzSxSIBjCtwrT8/O/A/nrSjmHvR5I9GGTHPyBU19VuEae+QZfaPnnfLwXgV56n51xHN3U2dYy8zh/kO9/39ig==
 
 "@octokit/plugin-paginate-rest@^11.0.0":
   version "11.0.0"
@@ -2896,11 +2896,11 @@
     "@octokit/openapi-types" "^20.0.0"
 
 "@octokit/types@^13.0.0", "@octokit/types@^13.1.0":
-  version "13.1.0"
-  resolved "https://registry.yarnpkg.com/@octokit/types/-/types-13.1.0.tgz#d99ec2996eb617a484120d706b5ce96905cb1fb0"
-  integrity sha512-nBwAFOYqVUUJ2AZFK4ZzESQptaAVqdTDKk8gE0Xr0o99WuPDSrhUC38x0F40xD9OUxXhOOuZKWNNVVLPSHQDvQ==
+  version "13.2.0"
+  resolved "https://registry.yarnpkg.com/@octokit/types/-/types-13.2.0.tgz#e0620e0d84b1a0f505147b2b0462db4719d6a3f2"
+  integrity sha512-K4rpfbIQLe4UimS/PWZAcImhZUC80lhe2f1NpAaaTulPJXv54QIAFFCQEEbdQdqTV/745QDmdvp8NI49LaI00A==
   dependencies:
-    "@octokit/openapi-types" "^21.0.0"
+    "@octokit/openapi-types" "^22.0.0"
 
 "@phenomnomnominal/tsquery@^5.0.0":
   version "5.0.1"
@@ -3980,9 +3980,9 @@
   integrity sha512-nG96G3Wp6acyAgJqGasjODb+acrI7KltPiRxzHPXnP3NgI28bpQDRv53olbqGXbfcgF5aiiHmO3xpwEpS5Ld9g==
 
 "@types/node@*", "@types/node@^20.2.5", "@types/node@^20.4.2":
-  version "20.12.5"
-  resolved "https://registry.yarnpkg.com/@types/node/-/node-20.12.5.tgz#74c4f31ab17955d0b5808cdc8fd2839526ad00b3"
-  integrity sha512-BD+BjQ9LS/D8ST9p5uqBxghlN+S42iuNxjsUGjeZobe/ciXzk2qb1B6IXc6AnRLS+yFJRpN2IPEHMzwspfDJNw==
+  version "20.12.6"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-20.12.6.tgz#72d068870518d7da1d97b49db401e2d6a1805294"
+  integrity sha512-3KurE8taB8GCvZBPngVbp0lk5CKi8M9f9k1rsADh0Evdz5SzJ+Q+Hx9uHoFGsLnLnd1xmkDQr2hVhlA0Mn0lKQ==
   dependencies:
     undici-types "~5.26.4"
 
@@ -4021,9 +4021,9 @@
     "@types/react" "*"
 
 "@types/react@*", "@types/react@^18.2.12":
-  version "18.2.74"
-  resolved "https://registry.yarnpkg.com/@types/react/-/react-18.2.74.tgz#2d52eb80e4e7c4ea8812c89181d6d590b53f958c"
-  integrity sha512-9AEqNZZyBx8OdZpxzQlaFEVCSFUM2YXJH46yPOiOpm078k6ZLOCcuAzGum/zK8YBwY+dbahVNbHrbgrAwIRlqw==
+  version "18.2.75"
+  resolved "https://registry.yarnpkg.com/@types/react/-/react-18.2.75.tgz#45d18f384939306d35312def1bf532eb38a68562"
+  integrity sha512-+DNnF7yc5y0bHkBTiLKqXFe+L4B3nvOphiMY3tuA5X10esmjqk7smyBZzbGTy2vsiy/Bnzj8yFIBL8xhRacoOg==
   dependencies:
     "@types/prop-types" "*"
     csstype "^3.0.2"
@@ -4821,9 +4821,9 @@ available-typed-arrays@^1.0.7:
     possible-typed-array-names "^1.0.0"
 
 aws-sdk@^2.1259.0:
-  version "2.1594.0"
-  resolved "https://registry.yarnpkg.com/aws-sdk/-/aws-sdk-2.1594.0.tgz#9da5347b5f164f8197af1287a70c3cec35375042"
-  integrity sha512-ZvJ63Vm/ZuygGuO19n1PjPkyo4OcKQzgK62kAhsp4SUBDMYuemOXHpIH+ORFOjO8Js7exoqHtNS4p9fHt6cW2Q==
+  version "2.1595.0"
+  resolved "https://registry.yarnpkg.com/aws-sdk/-/aws-sdk-2.1595.0.tgz#a0babe4531e98eb15e987ccf5198884265353c00"
+  integrity sha512-ee0FaplSMz9Y6XJnnyDCHv6SLziJ2YCI4SsO0VRFUKK4Jtk/KErp20CJI/4ZsS+oz7k2/vQ3JqGQXCz95nU8Ww==
   dependencies:
     buffer "4.9.2"
     events "1.1.1"
@@ -5396,10 +5396,10 @@ ci-info@^4.0.0:
   resolved "https://registry.yarnpkg.com/ci-info/-/ci-info-4.0.0.tgz#65466f8b280fc019b9f50a5388115d17a63a44f2"
   integrity sha512-TdHqgGf9odd8SXNuxtUBVx8Nv+qZOejE6qyqiy5NtbYYQOeFa6zmHkxlPzmaLxWWHsU6nJmB7AETdVPi+2NBUg==
 
-cidr-regex@4.0.3:
-  version "4.0.3"
-  resolved "https://registry.yarnpkg.com/cidr-regex/-/cidr-regex-4.0.3.tgz#07b52c9762d1ff546a50740e92fc2b5b13a6d871"
-  integrity sha512-HOwDIy/rhKeMf6uOzxtv7FAbrz8zPjmVKfSpM+U7/bNBXC5rtOyr758jxcptiSx6ZZn5LOhPJT5WWxPAGDV8dw==
+cidr-regex@^4.0.4:
+  version "4.0.5"
+  resolved "https://registry.yarnpkg.com/cidr-regex/-/cidr-regex-4.0.5.tgz#c90181992feb60ce28b8cc7590970ab94ab1060a"
+  integrity sha512-gljhROSwEnEvC+2lKqfkv1dU2v46h8Cwob19LlfGeGRMDLuwFD5+3D6+/vaa9/QrVLDASiSQ2OYQwzzjQ5I57A==
   dependencies:
     ip-regex "^5.0.0"
 
@@ -6223,9 +6223,9 @@ electron-mocha-main@^11.0.3:
     yargs "^16.2.0"
 
 electron-to-chromium@^1.4.668:
-  version "1.4.729"
-  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.4.729.tgz#8477d21e2a50993781950885b2731d92ad532c00"
-  integrity sha512-bx7+5Saea/qu14kmPTDHQxkp2UnziG3iajUQu3BxFvCOnpAJdDbMV4rSl+EqFDkkpNNVUFlR1kDfpL59xfy1HA==
+  version "1.4.730"
+  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.4.730.tgz#5e382c83085b50b9c63cb08692e8fcd875c1b9eb"
+  integrity sha512-oJRPo82XEqtQAobHpJIR3zW5YO3sSRRkPz2an4yxi1UvqhsGm54vR/wzTFV74a3soDOJ8CKW7ajOOX5ESzddwg==
 
 electron-window@^0.8.0:
   version "0.8.1"
@@ -8030,11 +8030,11 @@ is-ci@^2.0.0:
     ci-info "^2.0.0"
 
 is-cidr@^5.0.3:
-  version "5.0.3"
-  resolved "https://registry.yarnpkg.com/is-cidr/-/is-cidr-5.0.3.tgz#fcf817c0146dd4a318f27938af89e98a9b21bdd5"
-  integrity sha512-lKkM0tmz07dAxNsr8Ii9MGreExa9ZR34N9j8mTG5op824kcwBqinZPowNjcVWWc7j+jR8XAMMItOmBkniN0jOA==
+  version "5.0.5"
+  resolved "https://registry.yarnpkg.com/is-cidr/-/is-cidr-5.0.5.tgz#6898e3e84a320cecaa505654b33463399baf9e8e"
+  integrity sha512-zDlCvz2v8dBpumuGD4/fc7wzFKY6UYOvFW29JWSstdJoByGN3TKwS0tFA9VWc7DM01VOVOn/DaR84D8Mihp9Rg==
   dependencies:
-    cidr-regex "4.0.3"
+    cidr-regex "^4.0.4"
 
 is-core-module@^2.12.0, is-core-module@^2.13.0, is-core-module@^2.13.1, is-core-module@^2.5.0, is-core-module@^2.8.1:
   version "2.13.1"
@@ -11593,9 +11593,9 @@ react-native-test-runner@^5.0.0:
     yn "^4.0.0"
 
 react-native-webrtc@^118.0.3:
-  version "118.0.4"
-  resolved "https://registry.yarnpkg.com/react-native-webrtc/-/react-native-webrtc-118.0.4.tgz#7ea504ece4ebbee631a4d54b097ee6cf399f5513"
-  integrity sha512-q3L7TXjFRp6kwiuHvp3Y78CRE9sYWdtq9btiYf+iA19u4IhDpUWzj6eWo6xIwvvvWOzp4jo0o3fNY8up1qUNfw==
+  version "118.0.5"
+  resolved "https://registry.yarnpkg.com/react-native-webrtc/-/react-native-webrtc-118.0.5.tgz#4aea10c0033970d8697c9bcc3e31280870ad172a"
+  integrity sha512-R665M4V8pJhpOvFT0iD0T70TNxX1Q92ikt7h8uTLaNDt08OymlnJ+5S95XS2qIDRUjN1aMjjnzS+HlmZ4C1AQg==
   dependencies:
     base64-js "1.5.1"
     debug "4.3.4"
@@ -12986,9 +12986,13 @@ totalist@^3.0.0:
   integrity sha512-sf4i37nQ2LBx4m3wB74y+ubopq6W/dIzXg0FDGjsYnZHVa1Da8FH853wlL2gtUhg+xJXjfk3kUZS3BRoQeoQBQ==
 
 traverse@~0.6.6:
-  version "0.6.8"
-  resolved "https://registry.yarnpkg.com/traverse/-/traverse-0.6.8.tgz#5e5e0c41878b57e4b73ad2f3d1e36a715ea4ab15"
-  integrity sha512-aXJDbk6SnumuaZSANd21XAo15ucCDE38H4fkqiGsc3MhCK+wOlZvLP9cB/TvpHT0mOyWgC4Z8EwRlzqYSUzdsA==
+  version "0.6.9"
+  resolved "https://registry.yarnpkg.com/traverse/-/traverse-0.6.9.tgz#76cfdbacf06382d460b76f8b735a44a6209d8b81"
+  integrity sha512-7bBrcF+/LQzSgFmT0X5YclVqQxtv7TDJ1f8Wj7ibBu/U6BMLeOpUxuZjV7rMc44UtKxlnMFigdhFAIszSX1DMg==
+  dependencies:
+    gopd "^1.0.1"
+    typedarray.prototype.slice "^1.0.3"
+    which-typed-array "^1.1.15"
 
 treeverse@^3.0.0:
   version "3.0.0"
@@ -13214,6 +13218,18 @@ typedarray-to-buffer@^3.1.5:
   integrity sha512-zdu8XMNEDepKKR+XYOXAVPtWui0ly0NtohUscw+UmaHiAWT8hrV1rr//H6V+0DvJ3OQ19S979M0laLfX8rm82Q==
   dependencies:
     is-typedarray "^1.0.0"
+
+typedarray.prototype.slice@^1.0.3:
+  version "1.0.3"
+  resolved "https://registry.yarnpkg.com/typedarray.prototype.slice/-/typedarray.prototype.slice-1.0.3.tgz#bce2f685d3279f543239e4d595e0d021731d2d1a"
+  integrity sha512-8WbVAQAUlENo1q3c3zZYuy5k9VzBQvp8AX9WOtbvyWlLM1v5JaSRmjubLjzHF4JFtptjH/5c/i95yaElvcjC0A==
+  dependencies:
+    call-bind "^1.0.7"
+    define-properties "^1.2.1"
+    es-abstract "^1.23.0"
+    es-errors "^1.3.0"
+    typed-array-buffer "^1.0.2"
+    typed-array-byte-offset "^1.0.2"
 
 typedoc-plugin-mdn-links@^3.0.3:
   version "3.1.19"
