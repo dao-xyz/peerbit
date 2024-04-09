@@ -7,6 +7,7 @@
 		"url": "https://github.com/dao-xyz/peerbit"
 	},
 	"license": "Apache-2.0",
+	"type": "module",
 	"workspaces": [
 		"packages/docs",
 		"packages/transport/blocks",
