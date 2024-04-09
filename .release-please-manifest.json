@@ -25,5 +25,6 @@
     "packages/clients/peerbit": "4.0.7",
     "packages/clients/peerbit-proxy/window": "3.0.33",
     "packages/utils/any-store": "2.0.2",
-    "packages/utils/keychain": "1.0.17"
+    "packages/utils/keychain": "1.0.17",
+    ".": "1.0.0"
 }
