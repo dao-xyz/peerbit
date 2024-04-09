@@ -30,10 +30,11 @@ jobs:
       - name: Install deps
         run: |
           yarn && npx playwright install-deps
-
+      - name: Build
+        run: |
+          yarn build
       - name: Lint
         run: yarn lint
-
       - name: Tests
         run: ${{matrix.test_cmd}}
 
@@ -59,9 +60,10 @@ jobs:
       - name: Install deps
         run: |
           yarn && npx playwright install-deps
-
+      - name: Build
+        run: |
+          yarn build
       - name: Lint
         run: yarn lint
-
       - name: Tests
         run: ${{matrix.test_cmd}}
