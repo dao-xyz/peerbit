@@ -50,7 +50,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
         run: npm run --if-present release:rc
-      - name: Publish to NPM
+      - name: Publish RC to NPM
         if: ${{ steps.release.outputs.releases_created != 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
