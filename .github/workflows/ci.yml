@@ -9,10 +9,11 @@ on:
   pull_request:
     types: ['opened', 'reopened', 'synchronize']
 jobs:
-  name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
+  
   runs-on: ${{ matrix.os }}
   test_push:
     if: github.event_name == 'push'
+    name: Test (Node v${{ matrix.node-version }}, OS ${{ matrix.os }})
     strategy:
        matrix:
         os: [ ubuntu-22.04 ]
