@@ -23,8 +23,8 @@ jobs:
           command: manifest
           token: ${{secrets.GITHUB_TOKEN}}
           default-branch: master
-          monorepo-tags: true
-          release-type: node
+          manifest-file: .release-please-manifest.json
+          config-file: .release-please.json
 
     # The logic below handles the npm publication:
       - name: Checkout Repository
