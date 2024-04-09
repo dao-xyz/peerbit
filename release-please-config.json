@@ -1,10 +1,35 @@
 {
 	"bootstrap-sha": "148d23a1bc0e9fad48ea6589cd861d47bfd2b75c",
 	"last-release-sha": "c3343e8e19a44343036ed20ed6f15bd13beddf6f",
-	"bump-minor-pre-major": true,
-	"bump-patch-for-minor-pre-major": true,
 	"plugins": [
 		"node-workspace"
+	],
+	"changelog-sections": [
+		{
+			"type": "feat",
+			"section": "Features",
+			"hidden": false
+		},
+		{
+			"type": "fix",
+			"section": "Bug Fixes",
+			"hidden": false
+		},
+		{
+			"type": "docs",
+			"section": "Documentation",
+			"hidden": false
+		},
+		{
+			"type": "deps",
+			"section": "Dependencies",
+			"hidden": false
+		},
+		{
+			"type": "refactor",
+			"section": "Refactors",
+			"hidden": false
+		}
 	],
 	"packages": {
 		"packages/transport/blocks": {},
