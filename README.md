@@ -75,7 +75,7 @@ IMPORTANT: Peerbit uses yarn.
 1. Check yarn version: `yarn -v` should print something
 2. Install: `yarn`
 3. Build: `yarn build`
-4. Run tests: `yarn test`
+4. Run tests: `yarn test` in root in a specifc subpackage
 
 You might possibly need to CMD + Shift + P and then enter to restart the typescript server after the build step.
 
@@ -85,8 +85,8 @@ To create a new package, follow the following steps:
 2. Update the package.json `name`, `description`, `version` fields
 3. Possibly add other depencencies to the package.json `dependencies` field (like `@peerbit/crypto`)
 4. Delete contents in CHANGELOG.md
-5. Update the root package.json `workspaces.packages` field
-6. Update root lerna.json `workspaces.packages` field
+5. Update the root package.json `workspaces` field
+6. Update root lerna.json `workspaces` field
 7. run yarn once in root
 
 We recommend running tests with the VS Code integration though: https://github.com/CoderLine/mocha-vscode
