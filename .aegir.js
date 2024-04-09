@@ -8,6 +8,7 @@ export default {
     // global options
     debug: false,
     test: {
+        concurrency: 2,
         files: [],
         before: () => {
             return { env: { TS_NODE_PROJECT: path.join(root, 'tsconfig.test.json') } }

@@ -11,6 +11,7 @@
   "extension": [
     "ts"
   ],
+  "parallel": true,
   "spec": [
     "**/test/**/*.spec.ts"
   ],
