@@ -1,6 +1,6 @@
-import { Blocks } from "@peerbit/blocks-interface";
+import { type Blocks } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
-import { Address } from "./address.js";
+import type { Address } from "./address.js";
 import { logger as loggerFn } from "@peerbit/logger";
 
 export const logger = loggerFn({ module: "program-handler" });

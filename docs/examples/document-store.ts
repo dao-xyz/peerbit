@@ -16,87 +16,94 @@ import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
-/// [imports]
+import assert from 'node:assert'
+try {
 
-/// [client]
-const peer = await Peerbit.create();
-/// [client]
+	/// [imports]
 
-/// [data]
-// This class will store post messages
-@variant(0) // version 0
-class Post {
-	@field({ type: "string" })
-	id: string;
+	/// [client]
+	const peer = await Peerbit.create();
+	/// [client]
 
-	@field({ type: "string" })
-	message: string;
+	/// [data]
+	// This class will store post messages
+	@variant(0) // version 0
+	class Post {
+		@field({ type: "string" })
+		id: string;
 
-	constructor(message: string) {
-		this.id = uuid();
-		this.message = message;
+		@field({ type: "string" })
+		message: string;
+
+		constructor(message: string) {
+			this.id = uuid();
+			this.message = message;
+		}
 	}
+
+	// This class extends Program which allows it to be replicated amongst peers
+	@variant("posts")
+	class PostsDB extends Program {
+		@field({ type: Documents })
+		posts: Documents<Post>; // Documents<?> provide document store functionality around your Posts
+
+		constructor() {
+			super();
+			this.posts = new Documents();
+		}
+
+		/**
+		 * Implement open to control what things are to be done on 'open'
+		 */
+		async open(): Promise<void> {
+			// We need to setup the store in the setup hook
+			// we can also modify properties of our store here, for example set access control
+			await this.posts.open({
+				type: Post
+				// You can add more properties here, like
+				/* canPerform: (entry) => true */
+			});
+		}
+	}
+	/// [data]
+
+	/// [insert]
+	const store = await peer.open(new PostsDB());
+	await store.posts.put(new Post("hello world"));
+	/// [insert]
+
+	/// [another-client]
+	// search for documents from another peer
+	const peer2 = await Peerbit.create();
+
+	// Connect to the first peer
+	await peer2.dial(peer.getMultiaddrs());
+
+	const store2 = await peer2.open<PostsDB>(store.address!);
+
+	// Wait for peer1 to be reachable for query
+	await store.posts.log.waitForReplicator(peer2.identity.publicKey);
+
+	const responses: Post[] = await store2.posts.index.search(
+		new SearchRequest({
+			query: [] // query all
+		}),
+		{
+			local: true,
+			remote: true
+		}
+	);
+
+	assert.equal(responses.length, 1);
+	assert.deepEqual(responses.map((x) => x.message), ["hello world"]);
+	/// [another-client]
+
+	/// [disconnecting]
+	await peer.stop();
+	await peer2.stop();
+	/// [disconnecting]
+
+} catch (error) {
+	console.error("WTF", error)
+	throw error;
 }
-
-// This class extends Program which allows it to be replicated amongst peers
-@variant("posts")
-class PostsDB extends Program {
-	@field({ type: Documents })
-	posts: Documents<Post>; // Documents<?> provide document store functionality around your Posts
-
-	constructor() {
-		super();
-		this.posts = new Documents();
-	}
-
-	/**
-	 * Implement open to control what things are to be done on 'open'
-	 */
-	async open(): Promise<void> {
-		// We need to setup the store in the setup hook
-		// we can also modify properties of our store here, for example set access control
-		await this.posts.open({
-			type: Post,
-			index: { key: "id" }
-			// You can add more properties here, like
-			/* canPerform: (entry) => true */
-		});
-	}
-}
-/// [data]
-
-/// [insert]
-const store = await peer.open(new PostsDB());
-await store.posts.put(new Post("hello world"));
-/// [insert]
-
-/// [another-client]
-// search for documents from another peer
-const peer2 = await Peerbit.create();
-
-// Connect to the first peer
-await peer2.dial(peer.getMultiaddrs());
-
-const store2 = await peer2.open<PostsDB>(store.address!);
-
-// Wait for peer1 to be reachable for query
-await store.posts.log.waitForReplicator(peer2.identity.publicKey);
-
-const responses: Post[] = await store2.posts.index.search(
-	new SearchRequest({
-		query: [] // query all
-	}),
-	{
-		local: true,
-		remote: true
-	}
-);
-
-expect(responses).toHaveLength(1);
-expect(responses.map((x) => x.message)).toEqual(["hello world"]);
-/// [another-client]
-
-/// [disconnecting]
-await peer.stop();
-await peer2.stop();
-/// [disconnecting]

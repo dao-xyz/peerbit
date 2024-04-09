@@ -1,8 +1,12 @@
 {
-	"extends": "../../../tsconfig.json",
-	"include": ["src"],
+	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
-		"noEmit": false,
-		"outDir": "lib/esm"
-	}
+		"experimentalDecorators": true,
+		"emitDecoratorMetadata": true,
+		"outDir": "dist",
+	},
+	"include": [
+		"src",
+		"test"
+	]
 }

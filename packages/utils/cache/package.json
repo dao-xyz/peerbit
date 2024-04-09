@@ -3,21 +3,49 @@
 	"version": "2.0.6",
 	"description": "Simple cache",
 	"type": "module",
-	"publishConfig": {
-		"access": "public"
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
 	},
 	"files": [
-		"lib",
 		"src",
-		"!src/**/__tests__",
-		"!lib/**/__tests__",
-		"LICENSE"
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
 	],
-	"module": "lib/esm/index.js",
-	"types": "lib/esm/index.d.ts",
 	"exports": {
-		"import": "./lib/esm/index.js",
-		"require": "./lib/cjs/index.js"
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "ipfs",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"repository": {
 		"type": "git",
@@ -26,16 +54,14 @@
 	"homepage": "https://github.com/dao-xyz/peerbit",
 	"bugs": "https://github.com/dao-xyz/peerbit/issues",
 	"scripts": {
-		"clean": "shx rm -rf lib/*",
-		"build": "yarn clean && tsc -p tsconfig.json",
-		"test": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.ts --runInBand --forceExit",
-		"test:unit": "node ../../../node_modules/.bin/jest test  -c  ../../../jest.config.unit.ts --runInBand --forceExit",
-		"test:integration": "node ../node_modules/.bin/jest test -c  ../../../jest.config.integration.ts --runInBand --forceExit"
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": "aegir test"
 	},
 	"license": "MIT",
 	"devDependencies": {
 		"@peerbit/time": "2.0.6",
-		"@types/yallist": "^4.0.1"
+		"@types/yallist": "^4.0.4"
 	},
 	"dependencies": {
 		"yallist": "^4.0.0"

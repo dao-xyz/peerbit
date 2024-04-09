@@ -1,9 +1,9 @@
 import { Entry } from "./entry.js";
-import { AnyStore } from "@peerbit/any-store";
+import { type AnyStore } from "@peerbit/any-store";
 import { HeadsCache } from "./heads-cache.js";
-import { Blocks } from "@peerbit/blocks-interface";
-import { Keychain } from "@peerbit/keychain";
-import { Encoding } from "./encoding.js";
+import { type Blocks } from "@peerbit/blocks-interface";
+import { type Keychain } from "@peerbit/keychain";
+import { type Encoding } from "./encoding.js";
 import { Values } from "./values.js";
 import { logger } from "./logger.js";
 import { EntryIndex } from "./entry-index.js";
@@ -25,7 +25,7 @@ export class HeadsIndex<T> {
 	private _index: Set<string> = new Set();
 	private _gids: Map<string, Map<string, Entry<T>>>; // gid -> hash -> entry
 	private _headsCache: HeadsCache<T> | undefined;
-	private _config: Log<T>;
+	private _config!: Log<T>;
 	private _onGidRemoved?: (gid: string[]) => Promise<void> | void;
 	constructor(id: Uint8Array) {
 		this._gids = new Map();

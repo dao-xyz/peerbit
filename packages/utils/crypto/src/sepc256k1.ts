@@ -1,18 +1,18 @@
-import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
 
 import { Wallet } from "@ethersproject/wallet";
 import { arrayify } from "@ethersproject/bytes";
 import { joinSignature } from "@ethersproject/bytes";
-import { SignatureLike, splitSignature } from "@ethersproject/bytes";
+import { type SignatureLike, splitSignature } from "@ethersproject/bytes";
 import _ec from "elliptic";
 import EC = _ec.ec;
 let _curve: EC;
 
-import { equals } from "@peerbit/uint8arrays";
+import { equals } from "uint8arrays";
 import { toHexString } from "./utils.js";
-import { PeerId } from "@libp2p/interface";
-import { Identity } from "./signer.js";
+import { type PeerId } from "@libp2p/interface";
+import { type Identity } from "./signer.js";
 import { coerce } from "./bytes.js";
 import { generateKeyPair, supportedKeys } from "@libp2p/crypto/keys";
 import utf8 from "@protobufjs/utf8";

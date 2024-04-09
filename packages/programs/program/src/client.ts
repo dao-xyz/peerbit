@@ -1,12 +1,12 @@
 import type { PeerId as Libp2pPeerId } from "@libp2p/interface";
-import { Blocks } from "@peerbit/blocks-interface";
-import { PubSub } from "@peerbit/pubsub-interface";
-import { Ed25519PublicKey, Identity } from "@peerbit/crypto";
-import { Keychain } from "@peerbit/keychain";
-import type { AnyStore } from "@peerbit/any-store";
-import { Multiaddr } from "@multiformats/multiaddr";
-import { Address } from "./address.js";
-import { CanOpen, ExtractArgs, Manageable, OpenOptions } from "./handler.js";
+import { type Blocks } from "@peerbit/blocks-interface";
+import { type PubSub } from "@peerbit/pubsub-interface";
+import { Ed25519PublicKey, type Identity } from "@peerbit/crypto";
+import { type Keychain } from "@peerbit/keychain";
+import type { AnyStore } from "@peerbit/any-store-interface";
+import type { Multiaddr } from "@multiformats/multiaddr";
+import type { Address } from "./address.js";
+import type { CanOpen, ExtractArgs, Manageable, OpenOptions } from "./handler.js";
 
 export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	peerId: Libp2pPeerId;

@@ -3,13 +3,13 @@ import { PubSubData } from "./messages.js";
 import {
 	Message,
 	DataMessage,
-	WaitForPeer,
-	PeerEvents,
+	type WaitForPeer,
+	type PeerEvents,
 	DeliveryMode,
-	PriorityOptions,
-	IdentificationOptions
+	type PriorityOptions,
+	type IdentificationOptions
 } from "@peerbit/stream-interface";
-import { EventHandler } from "@libp2p/interface";
+import { type EventHandler } from "@libp2p/interface";
 import { field, vec } from "@dao-xyz/borsh";
 
 export class SubscriptionEvent {
@@ -116,13 +116,13 @@ export interface IEventEmitter<EventMap extends Record<string, any>> {
 type MaybePromise<T> = Promise<T> | T;
 export type PublishOptions = (
 	| {
-			topics?: string[];
-			mode?: DeliveryMode | undefined;
-	  }
+		topics?: string[];
+		mode?: DeliveryMode | undefined;
+	}
 	| {
-			topics: string[];
-			mode?: DeliveryMode | undefined;
-	  }
+		topics: string[];
+		mode?: DeliveryMode | undefined;
+	}
 ) & { client?: string } & PriorityOptions &
 	IdentificationOptions;
 

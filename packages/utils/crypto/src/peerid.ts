@@ -1,4 +1,4 @@
-import { PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 import { Ed25519Keypair, Ed25519PublicKey } from "./ed25519.js";
 import { Secp256k1Keypair, Secp256k1PublicKey } from "./sepc256k1.js";
 

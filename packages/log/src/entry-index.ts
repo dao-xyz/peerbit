@@ -1,8 +1,8 @@
 import { Cache } from "@peerbit/cache";
-import { Entry, ShallowEntry } from "./entry.js";
+import { Entry, type ShallowEntry } from "./entry.js";
 import { deserialize } from "@dao-xyz/borsh";
 import { logger } from "./logger.js";
-import { Blocks } from "@peerbit/blocks-interface";
+import { type Blocks } from "@peerbit/blocks-interface";
 
 export class EntryIndex<T> {
 	_cache: Cache<Entry<T> | null>;

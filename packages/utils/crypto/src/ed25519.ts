@@ -1,7 +1,7 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
-import { equals } from "@peerbit/uint8arrays";
-import { Identity, Signer, SignWithKey } from "./signer.js";
+import { equals } from "uint8arrays";
+import { type Identity, type SignWithKey } from "./signer.js";
 import { SignatureWithKey } from "./signature.js";
 import { toHexString } from "./utils.js";
 import { peerIdFromKeys } from "@libp2p/peer-id";

@@ -1,0 +1,137 @@
+import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
+import { Entry } from "../src/entry.js";
+import { EntryIndex } from "../src/entry-index.js";
+import { LastWriteWins } from "../src/log-sorting.js";
+import { Values } from "../src/values.js";
+import { Cache } from "@peerbit/cache";
+import { signKey } from "./fixtures/privateKey.js";
+import { expect } from "chai";
+
+describe("values", () => {
+	let e1: Entry<Uint8Array>, e2: Entry<Uint8Array>, e3: Entry<Uint8Array>;
+	let store: BlockStore;
+	let entryIndex: EntryIndex<Uint8Array>;
+	beforeEach(async () => {
+		const identity = signKey;
+		store = new AnyBlockStore();
+		await store.start();
+		e1 = await Entry.create({
+			store,
+			identity,
+			meta: {
+				gidSeed: Buffer.from("a"),
+				next: []
+			},
+			data: new Uint8Array([0])
+		});
+
+		e2 = await Entry.create({
+			store,
+			identity,
+			meta: {
+				gidSeed: Buffer.from("a"),
+				next: [e1]
+			},
+			data: new Uint8Array([1])
+		});
+
+		e3 = await Entry.create({
+			store,
+			identity,
+			meta: {
+				gidSeed: Buffer.from("a"),
+				next: [e2]
+			},
+			data: new Uint8Array([2])
+		});
+		entryIndex = new EntryIndex({
+			store,
+			init: (e) => { },
+			cache: new Cache({ max: 1000 })
+		});
+		await entryIndex.set(e1);
+		await entryIndex.set(e2);
+		await entryIndex.set(e3);
+	});
+	afterEach(async () => {
+		await store.stop();
+	});
+	it("put last", async () => {
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
+		await values.put(e1);
+		await values.put(e2);
+		await values.put(e3);
+		expect(values.head!.value).equal(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).to.deep.equal([
+			e1.hash,
+			e2.hash,
+			e3.hash
+		]);
+	});
+
+	it("put middle", async () => {
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
+		await values.put(e1);
+		await values.put(e3);
+		await values.put(e2);
+		expect(values.head!.value).equal(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).to.deep.equal([
+			e1.hash,
+			e2.hash,
+			e3.hash
+		]);
+	});
+
+	it("put first", async () => {
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
+		await values.put(e2);
+		await values.put(e3);
+		await values.put(e1);
+		expect(values.head!.value).equal(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).to.deep.equal([
+			e1.hash,
+			e2.hash,
+			e3.hash
+		]);
+	});
+
+	it("put concurrently", async () => {
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
+		let promises: Promise<any>[] = [];
+		for (let i = 0; i < 100; i++) {
+			const fn = async () => values.put(e1);
+			promises.push(fn());
+		}
+
+		await Promise.all(promises);
+		expect(values.head!.value).equal(e1.hash);
+		expect((await values.toArray()).length).equal(1);
+	});
+	it("delete", async () => {
+		const values = new Values<Uint8Array>(entryIndex, LastWriteWins, []);
+		await values.put(e1);
+		await values.put(e2);
+		await values.put(e3);
+		expect(values.head!.value).equal(e3.hash);
+		expect((await values.toArray()).map((x) => x.hash)).to.deep.equal([
+			e1.hash,
+			e2.hash,
+			e3.hash
+		]);
+		await values.delete(e2);
+		expect((await values.toArray()).map((x) => x.hash)).to.deep.equal([
+			e1.hash,
+			e3.hash
+		]);
+		expect(values.head!.value).equal(e3.hash);
+		expect(values.tail!.value).equal(e1.hash);
+		await values.delete(e1);
+		expect((await values.toArray()).map((x) => x.hash)).to.deep.equal([e3.hash]);
+		expect(values.head!.value).equal(e3.hash);
+		expect(values.tail!.value).equal(e3.hash);
+		await values.delete(e3);
+		expect(await values.toArray()).to.be.empty;
+		expect(values.head).to.be.null;
+		expect(values.tail).to.be.null;
+	});
+});

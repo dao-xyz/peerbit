@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 /// [imports]
 import { field, variant, option } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
@@ -6,15 +8,12 @@ import { v4 as uuid } from "uuid";
 
 import {
 	ByteMatchQuery,
-	DeleteOperation,
 	Documents,
 	MissingField,
-	PutOperation,
 	SearchRequest,
 	Sort
 } from "@peerbit/document";
 /// [imports]
-
 /// [definition]
 const POST_ID_PROPERTY = "id";
 const POST_PARENT_POST_ID = "parentPostid";
@@ -69,7 +68,7 @@ class Reaction {
 }
 
 type ChannelArgs = { role?: RoleOptions };
-@variant("channel")
+@variant("xxxchannel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
@@ -90,27 +89,25 @@ export class Channel extends Program<ChannelArgs> {
 		});
 	}
 
-	/**
-	 * Setup will be called on 'open'
-	 */
+	// Setup will be called on 'open'
 	async open(properties?: ChannelArgs): Promise<void> {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
 			role: properties?.role,
-			canPerform: async (operation, { entry }) => {
+			canPerform: async (properties) => {
 				// Determine whether an operation, based on an entry should be allowed
 
 				// You can use the entry to get properties of the operation
 				// like signers
 
-				const signers = await entry.getPublicKeys();
+				const signers = await properties.entry.getPublicKeys();
 
-				if (operation instanceof PutOperation) {
+				if (properties.type === "put") {
 					// do some behaviour
 					return true;
-				} else if (operation instanceof DeleteOperation) {
+				} else if (properties.type === "delete") {
 					// do some other behaviour
 					return true;
 				}
@@ -119,7 +116,7 @@ export class Channel extends Program<ChannelArgs> {
 
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
-				key: POST_ID_PROPERTY,
+				idProperty: POST_ID_PROPERTY,
 
 				// You can tailor what fields should be indexed,
 				// everything else will be stored on disc (if you use disc storage with the client)
@@ -157,11 +154,8 @@ export class Channel extends Program<ChannelArgs> {
 		});
 
 		await this.reactions.open({
-			type: Reaction,
-			index: {
-				// Primary key is default 'id', but we can assign it manually here
-				key: REACTION_ID_PROPERTY
-			}
+			type: Reaction
+
 			// we don't provide an index here, which means we will index all fields of Reaction
 		});
 	}
@@ -208,8 +202,10 @@ await channelFromClient2.posts.put(message3, {
 });
 
 // Since the first node is a replicator, it will eventually get all messages
-await waitForResolved(() =>
-	expect(channelFromClient1.posts.index.size).toEqual(3)
+import { expect } from "chai";
+
+await waitForResolved(async () =>
+	expect(await channelFromClient1.posts.index.getSize()).equal(3)
 );
 
 // And to do some reactions
@@ -228,16 +224,16 @@ await channelFromClient1.reactions.put(
 /// [delete]
 const anotherPost = new Post("I will delete this in a moment");
 await channelFromClient2.posts.put(anotherPost);
-await waitForResolved(() =>
-	expect(channelFromClient1.posts.index.size).toEqual(4)
+await waitForResolved(async () =>
+	expect(await channelFromClient1.posts.index.getSize()).equal(4)
 );
 
 // Delete with no arg (will permantly delete)
 await channelFromClient2.posts.del(anotherPost.id);
 
 // The delete will eventually propagate to the first client (the replicator)
-await waitForResolved(() =>
-	expect(channelFromClient1.posts.index.size).toEqual(3)
+await waitForResolved(async () =>
+	expect(await channelFromClient1.posts.index.getSize()).equal(3)
 );
 
 /// [delete]
@@ -251,8 +247,8 @@ const posts: Post[] = await channelFromClient2.posts.index.search(
 		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	})
 );
-expect(posts).toHaveLength(3);
-expect(posts.map((x) => x.message)).toEqual([
+expect(posts).to.have.length(3);
+expect(posts.map((x) => x.message)).to.deep.equal([
 	"hello world",
 	"The Shoebill is terrifying",
 	"No, it just a big duck"
@@ -271,8 +267,8 @@ const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 		local: true
 	}
 );
-expect(postsLocally).toHaveLength(1);
-expect(postsLocally.map((x) => x.message)).toEqual(["No, it just a big duck"]);
+expect(postsLocally).to.have.length(1);
+expect(postsLocally.map((x) => x.message)).to.deep.equal(["No, it just a big duck"]);
 /// [search-locally]
 
 /// [search-from-one]
@@ -287,8 +283,8 @@ const postsFromClient1: Post[] = await channelFromClient2.posts.index.search(
 		]
 	})
 );
-expect(postsFromClient1).toHaveLength(2);
-expect(postsFromClient1.map((x) => x.message)).toEqual([
+expect(postsFromClient1).to.have.length(2);
+expect(postsFromClient1.map((x) => x.message)).to.deep.equal([
 	"hello world",
 	"The Shoebill is terrifying"
 ]);
@@ -305,8 +301,8 @@ const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
 	})
 );
 
-expect(reactions).toHaveLength(1);
-expect(reactions[0][REACTION_TYPE_PROPERTY]).toEqual(ReactionType.HAHA);
+expect(reactions).to.have.length(1);
+expect(reactions[0][REACTION_TYPE_PROPERTY]).equal(ReactionType.HAHA);
 /// [reactions-one]
 
 /// [query-detailed]
@@ -321,7 +317,7 @@ import {
 	And
 } from "@peerbit/document";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { RoleOptions } from "@peerbit/shared-log";
+import { type RoleOptions } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [
@@ -417,8 +413,8 @@ const iterator = channelFromClient2.posts.index.iterate(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) })
 );
 const postsFromIterator = await iterator.next(2); // fetch (at most) 2 posts
-expect(postsFromIterator).toHaveLength(2);
-expect(iterator.done()).toBeFalse(); // There should be 3 posts in total and we only fetched 2
+expect(postsFromIterator).to.have.length(2);
+expect(iterator.done()).to.be.false; // There should be 3 posts in total and we only fetched 2
 
 // You can close the iterator once you are done
 // This will notify peers that you are doing iterating
@@ -440,4 +436,4 @@ const searchAndSync = await channelFromClient2.posts.index.search(
 /// [disconnecting]
 await peer.stop();
 await peer2.stop();
-/// [disconnecting]
+/// [disconnecting] 

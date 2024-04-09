@@ -2,7 +2,7 @@ import type { PeerId } from "@libp2p/interface";
 import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	DataEvent,
-	PubSubEvents,
+	type PubSubEvents,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 	type PublishOptions,
@@ -19,7 +19,7 @@ import {
 import { CustomEvent } from "@libp2p/interface";
 
 @variant(6)
-export abstract class PubSubMessage extends Message {}
+export abstract class PubSubMessage extends Message { }
 
 @variant(0)
 export class REQ_GetSubscribers extends PubSubMessage {
@@ -55,7 +55,7 @@ export class REQ_RequestSubscribers extends PubSubMessage {
 }
 
 @variant(3)
-export class RESP_RequestSubscribers extends PubSubMessage {}
+export class RESP_RequestSubscribers extends PubSubMessage { }
 
 @variant(4)
 export class REQ_Publish extends PubSubMessage {
@@ -82,12 +82,8 @@ export class REQ_Publish extends PubSubMessage {
 
 @variant(5)
 export class RESP_Publish extends PubSubMessage {
-	@field({ type: Uint8Array })
-	messageId: Uint8Array;
-
 	constructor(messageId: Uint8Array) {
-		super();
-		this.messageId = messageId;
+		super(messageId);
 	}
 }
 
@@ -103,7 +99,7 @@ export class REQ_Subscribe extends PubSubMessage {
 }
 
 @variant(7)
-export class RESP_Subscribe extends PubSubMessage {}
+export class RESP_Subscribe extends PubSubMessage { }
 
 @variant(8)
 export class REQ_Unsubscribe extends PubSubMessage {
@@ -148,7 +144,7 @@ export class REQ_PubsubWaitFor extends PubSubMessage {
 }
 
 @variant(11)
-export class RESP_PubsubWaitFor extends PubSubMessage {}
+export class RESP_PubsubWaitFor extends PubSubMessage { }
 
 @variant(12)
 export class REQ_AddEventListener extends PubSubMessage {
@@ -166,7 +162,7 @@ export class REQ_AddEventListener extends PubSubMessage {
 }
 
 @variant(13)
-export class RESP_AddEventListener extends PubSubMessage {}
+export class RESP_AddEventListener extends PubSubMessage { }
 
 @variant(14)
 export class REQ_RemoveEventListener extends PubSubMessage {
@@ -180,7 +176,7 @@ export class REQ_RemoveEventListener extends PubSubMessage {
 }
 
 @variant(15)
-export class RESP_RemoveEventListener extends PubSubMessage {}
+export class RESP_RemoveEventListener extends PubSubMessage { }
 
 @variant(16)
 export class RESP_EmitEvent extends PubSubMessage {

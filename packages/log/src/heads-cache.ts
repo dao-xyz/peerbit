@@ -1,14 +1,14 @@
 import PQueue from "p-queue";
 import { v4 as uuid } from "uuid";
-import { Entry } from "./entry";
-import { AnyStore } from "@peerbit/any-store";
+import { Entry } from "./entry.js";
+import { type AnyStore } from "@peerbit/any-store";
 import { variant, option, field, vec } from "@dao-xyz/borsh";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import { logger as loggerFn } from "@peerbit/logger";
 
 import path from "path-browserify";
 export const logger = loggerFn({ module: "heads-cache" });
-export class CachedValue {}
+export class CachedValue { }
 /* export type AppendOptions<T> = {
 	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
 	nexts?: Entry<T>[];
@@ -32,10 +32,8 @@ export class UnsfinishedReplication {
 	@field({ type: vec("string") })
 	hashes: string[];
 
-	constructor(opts?: { hashes: string[] }) {
-		if (opts) {
-			this.hashes = opts.hashes;
-		}
+	constructor(opts: { hashes: string[] }) {
+		this.hashes = opts.hashes;
 	}
 }
 
@@ -90,9 +88,9 @@ interface HeadsIndex {
 }
 export class HeadsCache<T> /* implements Initiable<T>  */ {
 	// An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
-	headsPath: string;
-	removedHeadsPath: string;
-	initialized: boolean;
+	headsPath!: string;
+	removedHeadsPath!: string;
+	initialized: boolean = false;
 
 	private _headsPathCounter = 0;
 
@@ -106,7 +104,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 	private _cacheWriteQueue?: PQueue<any, any>;
 
 	private _loaded = false;
-	private _index: HeadsIndex;
+	private _index!: HeadsIndex;
 
 	constructor(index: HeadsIndex) {
 		this._index = index;

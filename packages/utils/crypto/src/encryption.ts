@@ -1,7 +1,7 @@
 export * from "./errors.js";
 
 import {
-	AbstractType,
+	type AbstractType,
 	deserialize,
 	field,
 	serialize,
@@ -9,13 +9,23 @@ import {
 	vec,
 	fixedArray
 } from "@dao-xyz/borsh";
-import { equals } from "@peerbit/uint8arrays";
 import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
 import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
 import { Ed25519PublicKey } from "./ed25519.js";
 import { randomBytes } from "./random.js";
 import { sha256 } from "./hash.js";
+
+import { equals as uequals } from "uint8arrays";
+export const equals = (array1?: Uint8Array, array2?: Uint8Array) => {
+	if (!!array1 != !!array2) return false;
+	if (!array1 || !array2) {
+		return false;
+	}
+	return uequals(array1, array2);
+};
+
+
 export type MaybePromise<T> = Promise<T> | T;
 
 export type PublicKeyEncryptionParameters = {
@@ -65,8 +75,8 @@ function isAsymmetricEncryptionKeys(
 
 type EnvelopeFromParameter<Parameters extends KeyExchangeOptions> =
 	Parameters extends PublicKeyEncryptionParameters
-		? PublicKeyEnvelope
-		: HashedKeyEnvelope;
+	? PublicKeyEnvelope
+	: HashedKeyEnvelope;
 
 type EncryptProvide<Parameters extends KeyExchangeOptions> = (
 	bytes: Uint8Array,
@@ -80,8 +90,8 @@ interface KeyProvider {
 export const createLocalEncryptProvider = <
 	K extends PublicKeyEncryptionKeys | SymmetricKeys,
 	Parameters extends KeyExchangeOptions = K extends PublicKeyEncryptionKeys
-		? PublicKeyEncryptionParameters
-		: SymmetricKeyEncryptionParameters
+	? PublicKeyEncryptionParameters
+	: SymmetricKeyEncryptionParameters
 >(
 	keys: K
 ) => {

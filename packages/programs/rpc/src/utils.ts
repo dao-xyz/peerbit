@@ -1,15 +1,15 @@
 import {
 	DeliveryMode,
-	PriorityOptions,
+	type PriorityOptions,
 	SilentDelivery
 } from "@peerbit/stream-interface";
-import { RPC } from "./controller";
-import {
+import { RPC } from "./controller.js";
+import type {
 	EncryptionOptions,
 	RPCRequestResponseOptions,
 	RPCResponse
-} from "./io";
-import { Constructor } from "@dao-xyz/borsh";
+} from "./io.js";
+import { type Constructor } from "@dao-xyz/borsh";
 export class MissingResponsesError extends Error {
 	constructor(message: string) {
 		super(message);

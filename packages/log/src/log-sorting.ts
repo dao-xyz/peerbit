@@ -1,6 +1,6 @@
-import { Entry, ShallowEntry } from "./entry.js";
+import { type ShallowEntry } from "./entry.js";
 import { LamportClock as Clock } from "./clock.js";
-import { compare } from "@peerbit/uint8arrays";
+import { compare } from "uint8arrays";
 
 const First = (a: any, b: any) => a;
 

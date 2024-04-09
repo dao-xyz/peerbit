@@ -1,4 +1,4 @@
-import { Blocks } from "@peerbit/blocks-interface";
+import { type Blocks } from "@peerbit/blocks-interface";
 import {
 	cidifyString,
 	codecCodes,
@@ -8,9 +8,10 @@ import {
 } from "./block.js";
 import { decode, type Block } from "multiformats/block";
 import { waitFor } from "@peerbit/time";
-import { PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 import { PublicSignKey } from "@peerbit/crypto";
-import { AnyStore, createStore } from "@peerbit/any-store";
+import { createStore } from "@peerbit/any-store";
+import { type AnyStore } from "@peerbit/any-store-interface";
 
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
@@ -36,7 +37,7 @@ export class AnyBlockStore implements Blocks {
 			if (!bytes) {
 				return undefined;
 			}
-			const codec = codecCodes[cidObject.code];
+			const codec = (codecCodes as any)[cidObject.code];
 			const block = await decode({
 				bytes,
 				codec,

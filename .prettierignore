@@ -1,9 +1,0 @@
-# Ignore artifacts
-**/lib
-coverage
-**/.git
-**/.svn
-**/.hg
-**/node_modules
-**/dist
-.release-please-manifest.json

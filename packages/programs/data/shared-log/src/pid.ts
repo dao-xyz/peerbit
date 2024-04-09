@@ -50,7 +50,7 @@ export class PIDReplicationController {
 			errorMemory =
 				currentFactor > 0 && memoryUsage > 0
 					? Math.max(Math.min(1, this.maxMemoryLimit / estimatedTotalSize), 0) -
-						currentFactor
+					currentFactor
 					: 0;
 		}
 

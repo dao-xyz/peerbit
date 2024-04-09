@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import {
-	Identity,
+	type Identity,
 	PreHash,
 	Secp256k1PublicKey,
 	SignatureWithKey
@@ -10,6 +10,7 @@ import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 import { Wallet } from "@ethersproject/wallet";
+import { expect } from "chai";
 
 const wallet = Wallet.createRandom(); // if you would run this in the browser you would fetch the wallet from the window object instead
 
@@ -63,9 +64,9 @@ class PostStore extends Program {
 	async open(args?: any): Promise<void> {
 		await this.posts.open({
 			type: Post,
-			canPerform: (operation, context) => {
+			canPerform: (properties) => {
 				// This canPerfom will only return true if the post was signed by the wallet
-				const publicKeys = context.entry.publicKeys;
+				const publicKeys = properties.entry.publicKeys;
 				if (publicKeys.find((publicKey) => publicKey.equals(walletPublicKey))) {
 					return true;
 				}
@@ -83,5 +84,5 @@ await db.posts.put(new Post("Hello world!"), {
 	signers: [walletIdentity.sign.bind(walletIdentity)]
 });
 
-expect(db.posts.index.size).toEqual(1); // Post was appproved
+expect(await db.posts.index.getSize()).equal(1); // Post was appproved
 await peer.stop();

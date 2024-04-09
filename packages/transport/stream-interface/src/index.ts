@@ -1,6 +1,6 @@
-import { PublicSignKey } from "@peerbit/crypto";
+import type { PublicSignKey } from "@peerbit/crypto";
 import type { PeerId } from "@libp2p/interface";
-import { DataMessage, Message } from "./messages.js";
+import type { DataMessage, Message } from "./messages.js";
 
 export interface PeerEvents {
 	"peer:session": CustomEvent<PublicSignKey>;
@@ -31,7 +31,4 @@ export class NotStartedError extends Error {
 }
 
 export class DeliveryError extends Error {
-	constructor(message?: string) {
-		super(message);
-	}
 }

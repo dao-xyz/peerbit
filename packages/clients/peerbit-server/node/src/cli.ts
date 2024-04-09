@@ -19,14 +19,14 @@ import {
 } from "./config.js";
 import chalk from "chalk";
 import { createClient, waitForDomain } from "./client.js";
-import { InstallDependency, StartProgram } from "./types.js";
+import type { InstallDependency, StartProgram } from "./types.js";
 import { exit } from "process";
 import yargs from "yargs";
 import readline from "readline";
 import fs from "fs";
 import path from "path";
 import { toBase64 } from "@peerbit/crypto";
-import { DEFAULT_REMOTE_GROUP, RemoteObject, Remotes } from "./remotes.js";
+import { DEFAULT_REMOTE_GROUP, type RemoteObject, Remotes } from "./remotes.js";
 import { peerIdFromString } from "@libp2p/peer-id";
 import { LOCAL_API_PORT } from "./routes.js";
 import { type PeerId } from "@libp2p/interface";
@@ -299,9 +299,9 @@ export const cli = async (args?: string[]) => {
 								region: args.region,
 								credentials: args.accessKeyId
 									? {
-											accessKeyId: args.accessKeyId,
-											secretAccessKey: args.secretAccessKey
-										}
+										accessKeyId: args.accessKeyId,
+										secretAccessKey: args.secretAccessKey
+									}
 									: undefined
 							});
 							await startCertbot(
@@ -385,12 +385,12 @@ export const cli = async (args?: string[]) => {
 							handler: async (args) => {
 								const accessGrant: PeerId[] =
 									args.access?.length > 0
-										? args.access.map((x) => peerIdFromString(x))
+										? args.access.map((x: any) => peerIdFromString(x))
 										: [
-												await (
-													await getKeypair(args.directory)
-												).publicKey.toPeerId()
-											];
+											await (
+												await getKeypair(args.directory)
+											).publicKey.toPeerId()
+										];
 								const nodes = await launchNodes({
 									email: "marcus@dao.xyz",
 									count: args.count,
@@ -401,8 +401,7 @@ export const cli = async (args?: string[]) => {
 								});
 
 								console.log(
-									`Waiting for ${args.count} ${
-										args.count > 1 ? "nodes" : "node"
+									`Waiting for ${args.count} ${args.count > 1 ? "nodes" : "node"
 									} to spawn. This might take a few minutes. You can watch the progress in your AWS console.`
 								);
 								const twirlTimer = (function () {
@@ -432,8 +431,7 @@ export const cli = async (args?: string[]) => {
 									} catch (error: any) {
 										process.stdout.write("\r");
 										console.error(
-											`Error waiting for domain for ip: ${
-												node.publicIp
+											`Error waiting for domain for ip: ${node.publicIp
 											} to be available: ${error?.toString()}`
 										);
 									}
@@ -690,7 +688,7 @@ export const cli = async (args?: string[]) => {
 
 						const selectedRemotes: RemoteObject[] = [];
 						if (names.length > 0) {
-							for (const [ix, name] of names.entries()) {
+							for (const [_ix, name] of names.entries()) {
 								if (name === "localhost") {
 									selectedRemotes.push({
 										address: "http://localhost:" + LOCAL_API_PORT,
@@ -740,8 +738,8 @@ export const cli = async (args?: string[]) => {
 											" ",
 											remote.name.length
 										) +
-											": " +
-											string
+										": " +
+										string
 									);
 
 								apis.push({
@@ -944,8 +942,7 @@ export const cli = async (args?: string[]) => {
 														} catch (error: any) {
 															api.log(
 																chalk.red(
-																	`Failed to drop ${
-																		args.address
+																	`Failed to drop ${args.address
 																	}: ${error.toString()}`
 																)
 															);

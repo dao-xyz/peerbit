@@ -37,26 +37,6 @@ export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
 	return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
 };
 
-let concatBytes: (arr: Uint8Array[], totalLength: number) => Uint8Array;
-if ((globalThis as any).Buffer) {
-	concatBytes = (globalThis as any).Buffer.concat;
-} else {
-	concatBytes = (arrays, length) => {
-		if (length == null) {
-			let length = 0;
-			for (const element of arrays) {
-				length += element.length;
-			}
-		}
-		const output = new Uint8Array(length);
-		let offset = 0;
-		for (const arr of arrays) {
-			output.set(arr, offset);
-			offset += arr.length;
-		}
-		return output;
-	};
-}
 
 const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
 	const toHashes: string[] = [];
@@ -90,7 +70,7 @@ export const deliveryModeHasReceiver = (
 	return false;
 };
 
-export abstract class DeliveryMode {}
+export abstract class DeliveryMode { }
 
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
@@ -205,7 +185,7 @@ export class Signatures {
 	}
 }
 
-abstract class PeerInfo {}
+abstract class PeerInfo { }
 
 @variant(0)
 export class MultiAddrinfo extends PeerInfo {
@@ -395,8 +375,8 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 		return this._verified != null
 			? this._verified
 			: (this._verified =
-					(await this.header.verify()) &&
-					(await verifyMultiSig(this, expectSignatures)));
+				(await this.header.verify()) &&
+				(await verifyMultiSig(this, expectSignatures)));
 	}
 }
 
@@ -406,10 +386,10 @@ const DATA_VARIANT = 0;
 @variant(DATA_VARIANT)
 export class DataMessage<
 	T extends SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere =
-		| SilentDelivery
-		| SeekDelivery
-		| AcknowledgeDelivery
-		| AnyWhere
+	| SilentDelivery
+	| SeekDelivery
+	| AcknowledgeDelivery
+	| AnyWhere
 > extends Message<T> {
 	@field({ type: MessageHeader })
 	private _header: MessageHeader<T>;

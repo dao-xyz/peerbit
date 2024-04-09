@@ -1,5 +1,5 @@
 import { Entry } from "./entry.js";
-import { Blocks } from "@peerbit/blocks-interface";
+import { type Blocks } from "@peerbit/blocks-interface";
 import {
 	BinaryReader,
 	BinaryWriter,
@@ -11,7 +11,7 @@ import {
 	vec
 } from "@dao-xyz/borsh";
 import { waitFor } from "@peerbit/time";
-import { AnyStore } from "@peerbit/any-store";
+import { type AnyStore } from "@peerbit/any-store";
 import { logger } from "./logger.js";
 
 @variant(0)
@@ -28,18 +28,16 @@ export class Snapshot {
 	@field({ type: vec(Entry) })
 	values: Entry<any>[];
 
-	constructor(props?: {
+	constructor(props: {
 		id: Uint8Array;
 		heads: string[];
 		size: bigint;
 		values: Entry<any>[];
 	}) {
-		if (props) {
-			this.heads = props.heads;
-			this.id = props.id;
-			this.size = props.size;
-			this.values = props.values;
-		}
+		this.heads = props.heads;
+		this.id = props.id;
+		this.size = props.size;
+		this.values = props.values;
 	}
 }
 

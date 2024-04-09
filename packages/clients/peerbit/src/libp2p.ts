@@ -1,12 +1,12 @@
-import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
+import { createLibp2p, type Libp2p, type Libp2pOptions, type ServiceFactoryMap } from "libp2p";
 import { DirectSub } from "@peerbit/pubsub";
 import { DirectBlock } from "@peerbit/blocks";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { transports, relay, listen } from "./transports.js";
 import { identify } from "@libp2p/identify";
-import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
+import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { DefaultKeychain, Keychain } from "@peerbit/keychain";
+import { DefaultKeychain, type Keychain } from "@peerbit/keychain";
 
 export type Libp2pExtendServices = {
 	pubsub: DirectSub;
@@ -34,7 +34,7 @@ export const createLibp2pExtended = (
 		}
 	}
 ): Promise<Libp2pExtended> => {
-	const relayIdentify = {
+	const relayIdentify: any = {
 		relay: relay(),
 		identify: identify()
 	};

@@ -1,10 +1,10 @@
 /// [imports]
-import { field, variant, option } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
-import { Documents, RoleOptions } from "@peerbit/document";
+import { Documents, type RoleOptions } from "@peerbit/document";
 import { sha256Sync } from "@peerbit/crypto";
 
 @variant(0) // version 0

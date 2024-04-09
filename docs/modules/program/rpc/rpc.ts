@@ -1,10 +1,11 @@
+// @ts-nocheck
+
 /// [imports]
-import { variant, field, serialize } from "@dao-xyz/borsh";
+import { variant, field } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { RPC } from "@peerbit/rpc";
 import { Peerbit } from "peerbit";
-import { equals } from "uint8arrays";
 /// [imports]
 
 /// [definition-messages]
@@ -24,13 +25,13 @@ class World {
 /// [definition-messages]
 
 /// [definition-roles]
-class Role {}
+class Role { }
 
 @variant("responder")
-class Responder extends Role {}
+class Responder extends Role { }
 
 @variant("requester")
-class Requester extends Role {}
+class Requester extends Role { }
 /// [definition-roles]
 
 /// [definition-program]
@@ -54,8 +55,8 @@ class RPCTest extends Program<Args> {
 			responseHandler:
 				args?.role instanceof Responder
 					? (hello, from) => {
-							return new World();
-						}
+						return new World();
+					}
 					: undefined // only create a response handler if we are to respond to requests
 		});
 	}
@@ -91,10 +92,11 @@ const responses = await rpcRequester.rpc.request(new Hello(), { amount: 1 });
 
 // Now you can also explicitly send to the ones who has subscribers with the role "Responder"
 // const responses = await rpcRequester.rpc.request(new Hello(), { to: await rpcRequester.getAllResponders() })
+import { expect } from "chai";
 
-expect(responses).toHaveLength(1);
+expect(responses).to.have.length(1);
 for (const response of responses) {
-	expect(response.response).toBeInstanceOf(World);
+	expect(response.response).to.be.instanceOf(World);
 }
 /// [request]
 

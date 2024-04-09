@@ -10,17 +10,17 @@ import {
 	PublicKeyEncryptionKey,
 	PublicSignKey
 } from "@peerbit/crypto";
-import { AbstractType } from "@dao-xyz/borsh";
+import { type AbstractType } from "@dao-xyz/borsh";
 
 export type KeypairFromPublicKey<T> = T extends X25519PublicKey
 	? X25519Keypair
 	: T extends Ed25519PublicKey
-		? Ed25519Keypair
-		: T extends Secp256k1PublicKey
-			? Secp256k1Keypair
-			: T extends PublicSignKey | PublicKeyEncryptionKey
-				? Keypair
-				: never;
+	? Ed25519Keypair
+	: T extends Secp256k1PublicKey
+	? Secp256k1Keypair
+	: T extends PublicSignKey | PublicKeyEncryptionKey
+	? Keypair
+	: never;
 
 export type KeypairParameters = {
 	keypair: Ed25519Keypair | X25519Keypair | Secp256k1Keypair | Keypair;
@@ -36,11 +36,11 @@ export interface Keychain {
 	// This is only really relevant for asymmetric keys? -> No changes
 	exportByKey<
 		T extends
-			| Ed25519PublicKey
-			| X25519PublicKey
-			| Secp256k1PublicKey
-			| PublicSignKey
-			| PublicKeyEncryptionKey,
+		| Ed25519PublicKey
+		| X25519PublicKey
+		| Secp256k1PublicKey
+		| PublicSignKey
+		| PublicKeyEncryptionKey,
 		Q = KeypairFromPublicKey<T>
 	>(
 		publicKey: T

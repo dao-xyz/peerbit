@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Message } from "./message.js";
-import { api } from "@peerbit/any-store";
+import * as api from "@peerbit/any-store-interface/messages";
 export { api };
 @variant(10)
 export class StorageMessage<T extends api.MemoryRequest> extends Message {

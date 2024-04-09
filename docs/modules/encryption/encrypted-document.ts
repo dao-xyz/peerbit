@@ -2,9 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
 import {
-	DeleteOperation,
 	Documents,
-	PutOperation,
 	SearchRequest
 } from "@peerbit/document";
 import { delay } from "@peerbit/time";
@@ -55,7 +53,6 @@ class PostsDB extends Program {
 				min: 2
 			},
 			index: {
-				key: "id",
 				canRead: (post, publicKey) => {
 					// can publicKey read this particular post?
 					return true;
@@ -66,16 +63,7 @@ class PostsDB extends Program {
 				}
 			},
 			canReplicate: (publicKey) =>
-				!!ALL_MEMBERS.find((x) => x.equals(publicKey)),
-
-			canPerform: async (operation, _context) => {
-				if (operation instanceof PutOperation) {
-					return true;
-				} else if (operation instanceof DeleteOperation) {
-					return false;
-				}
-				return true;
-			}
+				!!ALL_MEMBERS.find((x) => x.equals(publicKey))
 		});
 	}
 }
@@ -121,17 +109,20 @@ const nonMemberStore = await nonMember.open<PostsDB>(memberStore1.address);
 // And there could be a replication progress underway (https://github.com/dao-xyz/peerbit/issues/151)
 // If you open the store with an observer role, then you will not need this delay
 await delay(3000);
-expect(await memberStore1.posts.index.search(new SearchRequest())).toHaveLength(
+
+import { expect } from "chai";
+
+expect(await memberStore1.posts.index.search(new SearchRequest())).to.have.length(
 	1
 );
 
-expect(await memberStore2.posts.index.search(new SearchRequest())).toHaveLength(
+expect(await memberStore2.posts.index.search(new SearchRequest())).to.have.length(
 	1
 );
 
 expect(
 	await nonMemberStore.posts.index.search(new SearchRequest())
-).toHaveLength(0);
+).to.be.empty;
 
 await groupMember1.stop();
 await groupMember2.stop();

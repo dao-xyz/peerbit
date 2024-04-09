@@ -26,7 +26,6 @@ Peerbit started as a fork of [OrbitDb](https://github.com/orbitdb/orbitdb) in or
 - All modules have been rewritten in TypeScript. There are many benefits of this, one is that we can omit a large amount of type checking code.
 - Monorepo. OrbitDB is scattered around many repositories which slows down development speed. Peerbit has collected all modules in one repo with [lerna](https://github.com/lerna/lerna).
 - **ESM-only** because we need to be compatible with the latest versions if `js-ipfs` and `libp2p`
-- Tests are now written in `jest` rather than `mocha`
 - Type safety. Messages are encoded with [Borsh](https://github.com/near/borsh) serialization format. This format allows one to have a strict type checks during serialization/deserialization and enables message polymorphism which JSON does not (in a easy way) support and provides a much more compact data representation.
 - Performance critical modules are written with the mindset that they might be ported to Rust/WASM at some point.
 - In OrbitDB it was assumed that a store always has an access controller, here, we don't make that assumption. In fact every "program" that is allowed to update a state needs to define checks ```canAppend```, ```canRead``` or delegate these checks to some "access controller", there are a few predefined ACLs [here](../packages/programs/acl). This way, you have more freedom when creating "programs" as you can pick, choose and combine programs to build the functionality you want to achieve. 

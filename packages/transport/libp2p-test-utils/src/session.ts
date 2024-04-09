@@ -1,9 +1,9 @@
-import { createLibp2p, Libp2p, Libp2pOptions, ServiceFactoryMap } from "libp2p";
+import { createLibp2p, type Libp2p, type Libp2pOptions } from "libp2p";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { setMaxListeners } from "events";
 import { relay, transports } from "./transports.js";
 import { identify } from "@libp2p/identify";
-import { CircuitRelayService } from "@libp2p/circuit-relay-v2";
+import { type CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import { yamux } from "@chainsafe/libp2p-yamux";
 
@@ -85,7 +85,7 @@ export class TestSession<T> {
 		for (let i = 0; i < n; i++) {
 			const result = async () => {
 				const definedOptions: Libp2pOptions<T> | undefined =
-					options?.[i] || options;
+					(options as any)?.[i] || options;
 				const node = await createLibp2p<T>({
 					addresses: {
 						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"]
@@ -97,9 +97,9 @@ export class TestSession<T> {
 					datastore: definedOptions?.datastore,
 					transports:
 						definedOptions?.transports ??
-						transports(definedOptions?.["browser"]),
+						transports((definedOptions as any)?.["browser"]),
 					services: {
-						relay: definedOptions?.["browser"] ? undefined : relay(),
+						relay: (definedOptions as any)?.["browser"] ? undefined : relay(),
 						identify: identify(),
 						...definedOptions?.services
 					} as any,

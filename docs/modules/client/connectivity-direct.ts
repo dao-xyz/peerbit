@@ -1,5 +1,6 @@
 import { Peerbit } from "peerbit";
 import type { Multiaddr } from "@multiformats/multiaddr";
+import { expect } from 'chai';
 
 const peerA = await Peerbit.create();
 const peerB = await Peerbit.create();
@@ -22,7 +23,7 @@ await peerA.dial(multaddrs);
 // Connected!
 
 // We can dial an address directly from a string. This one below is malformed and will fail
-await expect(peerA.dial("/ip4/123.4.5...")).rejects.toThrowError(
+await expect(peerA.dial("/ip4/123.4.5...")).rejectedWith(
 	"invalid ip address"
 );
 

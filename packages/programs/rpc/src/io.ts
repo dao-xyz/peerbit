@@ -5,7 +5,7 @@ import {
 	X25519Keypair
 } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
-import { PriorityOptions, WithMode } from "@peerbit/stream-interface";
+import type { PriorityOptions, WithMode } from "@peerbit/stream-interface";
 
 export const logger = loggerFn({ module: "rpc" });
 export type RPCRequestResponseOptions<R> = {

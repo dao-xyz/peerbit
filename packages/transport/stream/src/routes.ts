@@ -247,7 +247,7 @@ export class Routes {
 	}
 
 	hasTarget(target: string) {
-		for (const [k, v] of this.routes) {
+		for (const [_k, v] of this.routes) {
 			if (v.has(target)) {
 				return true;
 			}
@@ -338,8 +338,8 @@ export class Routes {
 
 	countAll() {
 		let size = 0;
-		for (const [from, map] of this.routes) {
-			for (const [k, v] of map) {
+		for (const [_from, map] of this.routes) {
+			for (const [_k, v] of map) {
 				size += v.list.length;
 			}
 		}

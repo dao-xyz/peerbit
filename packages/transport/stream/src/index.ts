@@ -3,7 +3,7 @@ import { pipe } from "it-pipe";
 import Queue from "p-queue";
 import type { PeerId } from "@libp2p/interface";
 import type { Connection } from "@libp2p/interface";
-import { PushableLanes, pushableLanes } from "./pushable-lanes.js";
+import { type PushableLanes, pushableLanes } from "./pushable-lanes.js";
 import type { Stream } from "@libp2p/interface";
 import { Uint8ArrayList } from "uint8arraylist";
 import { abortableSource } from "abortable-iterator";
@@ -12,7 +12,7 @@ import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
 import type { IncomingStreamData, Registrar } from "@libp2p/interface-internal";
 import type { AddressManager } from "@libp2p/interface-internal";
 import type { ConnectionManager } from "@libp2p/interface-internal";
-import { PeerStore } from "@libp2p/interface";
+import { type PeerStore } from "@libp2p/interface";
 import pDefer from "p-defer";
 
 import { AbortError, delay, TimeoutError, waitFor } from "@peerbit/time";
@@ -27,7 +27,7 @@ import {
 } from "@peerbit/crypto";
 
 import { multiaddr } from "@multiformats/multiaddr";
-import { Components } from "libp2p/components";
+import type { Components } from "libp2p/components";
 import type { TypedEventTarget } from "@libp2p/interface";
 
 import { logger } from "./logger.js";
@@ -40,27 +40,27 @@ import {
 	Message as Message,
 	DataMessage,
 	getMsgId,
-	WaitForPeer,
+	type WaitForPeer,
 	ACK,
 	SeekDelivery,
 	AcknowledgeDelivery,
 	SilentDelivery,
 	MessageHeader,
 	Goodbye,
-	StreamEvents,
+	type StreamEvents,
 	TracedDelivery,
 	AnyWhere,
 	NotStartedError,
 	deliveryModeHasReceiver,
 	DeliveryError,
-	WithTo,
-	WithMode,
-	PriorityOptions
+	type WithTo,
+	type WithMode,
+	type PriorityOptions
 } from "@peerbit/stream-interface";
 
 import { MultiAddrinfo } from "@peerbit/stream-interface";
 import { BandwidthTracker } from "./stats.js";
-import { IdentificationOptions } from "@peerbit/stream-interface";
+import { type IdentificationOptions } from "@peerbit/stream-interface";
 export { BandwidthTracker }; // might be useful for others
 
 const logError = (e?: { message: string }) => {
@@ -180,8 +180,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	write(data: Uint8Array | Uint8ArrayList, priority: number) {
 		if (data.length > MAX_DATA_LENGTH_OUT) {
 			throw new Error(
-				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
-					MAX_DATA_LENGTH_OUT * 1e-6
+				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${MAX_DATA_LENGTH_OUT * 1e-6
 				} mb`
 			);
 		}
@@ -378,17 +377,16 @@ export interface DirectStreamComponents extends Components {
 
 export type ConnectionManagerArguments =
 	| (Partial<Pick<ConnectionManagerOptions, "minConnections">> &
-			Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
-				pruner?: Partial<PrunerOptions> | false;
-			} & { dialer?: Partial<DialerOptions> | false })
+		Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
+			pruner?: Partial<PrunerOptions> | false;
+		} & { dialer?: Partial<DialerOptions> | false })
 	| false;
 
 export abstract class DirectStream<
-		Events extends { [s: string]: any } = StreamEvents
-	>
+	Events extends { [s: string]: any } = StreamEvents
+>
 	extends TypedEventEmitter<Events>
-	implements WaitForPeer
-{
+	implements WaitForPeer {
 	public peerId: PeerId;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
@@ -494,34 +492,34 @@ export abstract class DirectStream<
 				...connectionManager,
 				dialer:
 					connectionManager?.dialer !== false &&
-					connectionManager?.dialer !== null
+						connectionManager?.dialer !== null
 						? { retryDelay: 60 * 1000, ...connectionManager?.dialer }
 						: undefined,
 				pruner:
 					connectionManager?.pruner !== false &&
-					connectionManager?.pruner !== null
+						connectionManager?.pruner !== null
 						? {
-								connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
-								interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
-								maxBuffer: MAX_QUEUED_BYTES,
-								...connectionManager?.pruner
-							}
+							connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
+							interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
+							maxBuffer: MAX_QUEUED_BYTES,
+							...connectionManager?.pruner
+						}
 						: undefined
 			};
 		}
 
 		this.recentDials = this.connectionManagerOptions.dialer
 			? new Cache({
-					ttl: this.connectionManagerOptions.dialer.retryDelay,
-					max: 1e3
-				})
+				ttl: this.connectionManagerOptions.dialer.retryDelay,
+				max: 1e3
+			})
 			: undefined;
 
 		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
 			? new Cache({
-					max: 1e6,
-					ttl: this.connectionManagerOptions.pruner.connectionTimeout
-				})
+				max: 1e6,
+				ttl: this.connectionManagerOptions.pruner.connectionTimeout
+			})
 			: undefined;
 	}
 
@@ -640,7 +638,7 @@ export abstract class DirectStream<
 			await peerStreams.close();
 		}
 
-		for (const [k, v] of this.healthChecks) {
+		for (const [_k, v] of this.healthChecks) {
 			clearTimeout(v);
 		}
 		this.healthChecks.clear();
@@ -652,7 +650,7 @@ export abstract class DirectStream<
 		this.routes.clear();
 		this.peerKeyHashToPublicKey.clear();
 
-		for (const [k, v] of this._ackCallbacks) {
+		for (const [_k, v] of this._ackCallbacks) {
 			v.clear();
 		}
 
@@ -1009,9 +1007,9 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			logger.warn(
 				"Failed processing messages to id: " +
-					peerStreams.peerId.toString() +
-					". " +
-					err?.message
+				peerStreams.peerId.toString() +
+				". " +
+				err?.message
 			);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
@@ -1230,14 +1228,14 @@ export abstract class DirectStream<
 						// include our origin if message is SeekDelivery and we have not recently pruned a connection to this peer
 						origin:
 							message.header.mode instanceof SeekDelivery &&
-							!message.header.signatures!.publicKeys.find((x) =>
-								this.prunedConnectionsCache?.has(x.hashcode())
-							)
+								!message.header.signatures!.publicKeys.find((x) =>
+									this.prunedConnectionsCache?.has(x.hashcode())
+								)
 								? new MultiAddrinfo(
-										this.components.addressManager
-											.getAddresses()
-											.map((x) => x.toString())
-									)
+									this.components.addressManager
+										.getAddresses()
+										.map((x) => x.toString())
+								)
 								: undefined
 					})
 				}).sign(this.sign),
@@ -1412,9 +1410,9 @@ export abstract class DirectStream<
 		).mode
 			? (options as WithMode).mode!
 			: new SilentDelivery({
-					to: (options as WithTo).to!,
-					redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
-				});
+				to: (options as WithTo).to!,
+				redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
+			});
 
 		if (
 			mode instanceof AcknowledgeDelivery ||
@@ -1436,7 +1434,7 @@ export abstract class DirectStream<
 				if (
 					!neighbourRoutes ||
 					now - neighbourRoutes.session >
-						neighbourRoutes.list.length * this.routeSeekInterval ||
+					neighbourRoutes.list.length * this.routeSeekInterval ||
 					!this.routes.isUpToDate(hash, neighbourRoutes)
 				) {
 					mode = new SeekDelivery({
@@ -1586,7 +1584,7 @@ export abstract class DirectStream<
 
 		const onUnreachable =
 			!relayed &&
-			((ev) => {
+			((ev: any) => {
 				const deletedReceiver = messageToSet.delete(ev.detail.hashcode());
 				if (deletedReceiver) {
 					// Only reject if we are the sender
@@ -1632,11 +1630,9 @@ export abstract class DirectStream<
 					new DeliveryError(
 						`Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
 							...messageToSet
-						]} delivery acknowledges from all nodes (${
-							fastestNodesReached.size
-						}/${messageToSet.size}). Mode: ${
-							message.header.mode.constructor.name
-						}. Redundancy: ${message.header.mode["redundancy"]}`
+						]} delivery acknowledges from all nodes (${fastestNodesReached.size
+						}/${messageToSet.size}). Mode: ${message.header.mode.constructor.name
+						}. Redundancy: ${(message.header.mode as any)["redundancy"]}`
 					)
 				);
 			} else {
@@ -1870,9 +1866,9 @@ export abstract class DirectStream<
 			} catch (error: any) {
 				logger.info(
 					"Failed to connect directly to: " +
-						JSON.stringify(addresses.map((x) => x.toString())) +
-						". " +
-						error?.message
+					JSON.stringify(addresses.map((x) => x.toString())) +
+					". " +
+					error?.message
 				);
 			}
 		}
@@ -1906,11 +1902,11 @@ export abstract class DirectStream<
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-					hash +
-					" does not exist. Connection exist: " +
-					this.peers.has(hash) +
-					". Route exist: " +
-					this.routes.isReachable(this.publicKeyHash, hash, 0)
+				hash +
+				" does not exist. Connection exist: " +
+				this.peers.has(hash) +
+				". Route exist: " +
+				this.routes.isReachable(this.publicKeyHash, hash, 0)
 			);
 		}
 		if (options?.neighbour) {
@@ -1924,11 +1920,11 @@ export abstract class DirectStream<
 			} catch (error) {
 				throw new Error(
 					"Stream to " +
-						stream.publicKey.hashcode() +
-						" not ready. Readable: " +
-						stream.isReadable +
-						". Writable " +
-						stream.isWritable
+					stream.publicKey.hashcode() +
+					" not ready. Readable: " +
+					stream.isReadable +
+					". Writable " +
+					stream.isWritable
 				);
 			}
 		}

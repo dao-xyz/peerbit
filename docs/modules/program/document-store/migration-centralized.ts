@@ -1,9 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { Documents, PutOperation, SearchRequest } from "@peerbit/document";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 
-abstract class AbstractPost {}
+abstract class AbstractPost { }
 
 @variant(0)
 class PostV0 extends AbstractPost {
@@ -54,9 +54,9 @@ class PostStore extends Program {
 	async open(args?: any): Promise<void> {
 		await this.posts.open({
 			type: AbstractPost, // Use base class here
-			canPerform: (operation, context) => {
+			canPerform: (props) => {
 				// Signed by the CENTRAL_AUTHORITY, just trust it?
-				if (context.entry.publicKeys.find((x) => x.equals(CENTRAL_AUTHORITY))) {
+				if (props.entry.publicKeys.find((x) => x.equals(CENTRAL_AUTHORITY))) {
 					return true;
 				}
 

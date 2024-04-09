@@ -1,7 +1,7 @@
-import { BinaryWriter, field, serialize, serializer } from "@dao-xyz/borsh";
+import { field, serialize } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "./hash.js";
-import { PeerId } from "@libp2p/interface";
-import { compare } from "@peerbit/uint8arrays";
+import { type PeerId } from "@libp2p/interface";
+import { compare } from "uint8arrays";
 import { toHexString } from "./utils.js";
 
 interface Key {
@@ -27,7 +27,7 @@ export abstract class Keypair {
 }
 
 // ---- SIGNATURE KEYS -----
-export interface PublicSignKey extends Key {}
+export interface PublicSignKey extends Key { }
 export abstract class PublicSignKey implements Key {
 	private _bytes: Uint8Array;
 	get bytes(): Uint8Array {
@@ -43,7 +43,7 @@ export abstract class PublicSignKey implements Key {
 	}
 }
 
-export interface PrivateSignKey extends Key {}
+export interface PrivateSignKey extends Key { }
 export abstract class PrivateSignKey implements Key {
 	get bytes(): Uint8Array {
 		return serialize(this);
@@ -55,7 +55,7 @@ export abstract class PrivateSignKey implements Key {
 }
 
 // ---- PUBLIC KEY ENCRYPTION -----
-export interface PublicKeyEncryptionKey extends Key {}
+export interface PublicKeyEncryptionKey extends Key { }
 export abstract class PublicKeyEncryptionKey implements Key {
 	get bytes(): Uint8Array {
 		return serialize(this);
@@ -65,7 +65,7 @@ export abstract class PublicKeyEncryptionKey implements Key {
 		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 }
-export interface PrivateEncryptionKey extends Key {}
+export interface PrivateEncryptionKey extends Key { }
 export abstract class PrivateEncryptionKey implements Key {
 	get bytes(): Uint8Array {
 		return serialize(this);
@@ -77,7 +77,7 @@ export abstract class PrivateEncryptionKey implements Key {
 }
 
 // ---- OTHER KEYS ----
-export interface PlainKey extends Key {}
+export interface PlainKey extends Key { }
 export abstract class PlainKey implements Key {
 	get bytes(): Uint8Array {
 		return serialize(this);

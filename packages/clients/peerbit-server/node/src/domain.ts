@@ -2,7 +2,7 @@ import { waitFor } from "@peerbit/time";
 
 const isNode = typeof window === "undefined";
 
-const validateEmail = (email) => {
+const validateEmail = (email: any) => {
 	return String(email)
 		.toLowerCase()
 		.match(
@@ -55,7 +55,6 @@ const createConfig = async (
 	file = file.replaceAll("%DOMAIN%", domain);
 
 	const fs = await import("fs");
-	const path = await import("path");
 
 	fs.mkdir(outputPath, { recursive: true }, (err) => {
 		if (err) throw err;

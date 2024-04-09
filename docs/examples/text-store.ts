@@ -5,9 +5,10 @@ import {
 	Range,
 	DString,
 	StringOperation,
-	TransactionContext
+	type TransactionContext
 } from "@peerbit/string";
 import { field, variant } from "@dao-xyz/borsh";
+import assert from "node:assert";
 
 @variant("collaborative_text") // You have to give the program a unique name
 class CollaborativeText extends Program {
@@ -50,6 +51,6 @@ console.log(document.address!.toString()); /// this address can be opened by ano
 await document.string.add("hello", new Range({ offset: 0n, length: 5n }));
 await document.string.add("world", new Range({ offset: 6n, length: 5n }));
 
-expect(await document.string.getValue()).toEqual("hello world");
+assert.equal(await document.string.getValue(), "hello world");
 
 await peer.stop();

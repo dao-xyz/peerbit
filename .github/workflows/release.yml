@@ -12,8 +12,12 @@ name: Run Release Please
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: write
     steps:
-      - uses: google-github-actions/release-please-action@v3
+      - uses: google-github-actions/release-please-action@v4
         id: release
         with:
           command: manifest
@@ -25,12 +29,12 @@ jobs:
     # The logic below handles the npm publication:
       - name: Checkout Repository
         if: ${{ steps.release.outputs.releases_created }}
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Setup Node
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         if: ${{ steps.release.outputs.releases_created }}
         with:
-          node-version: 18
+          node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
       - name: Build Packages
         if: ${{ steps.release.outputs.releases_created }}
@@ -42,7 +46,12 @@ jobs:
     # need to publish all unpublished versions to NPM here
     # See: https://github.com/lerna/lerna/tree/main/commands/publish#bump-from-package
       - name: Publish to NPM
-        if: ${{ steps.release.outputs.releases_created }}
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-        run: yarn lerna publish from-package --no-push --no-private --yes
+        run: npm run --if-present release:rc
+      - name: Publish RC to NPM
+        if: ${{ steps.release.outputs.releases_created != 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+        run: npm run --if-present release:rc

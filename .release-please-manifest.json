@@ -22,7 +22,6 @@
     "packages/clients/test-utils": "2.0.33",
     "packages/utils/time": "2.0.6",
     "packages/programs/acl/trusted-network": "3.0.40",
-    "packages/utils/uint8arrays": "3.0.1",
     "packages/clients/peerbit": "4.0.7",
     "packages/clients/peerbit-proxy/window": "3.0.33",
     "packages/utils/any-store": "2.0.2",

@@ -1,4 +1,4 @@
-import { WaitForPeer } from "@peerbit/stream-interface";
+import { type WaitForPeer } from "@peerbit/stream-interface";
 
 export type GetOptions = {
 	timeout?: number;

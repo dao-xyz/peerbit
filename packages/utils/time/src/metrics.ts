@@ -1,4 +1,4 @@
-import hrtime from "./hrtime.js";
+import {hrtime} from "./hrtime.js";
 
 export class MovingAverageTracker {
 	private lastTS: bigint;

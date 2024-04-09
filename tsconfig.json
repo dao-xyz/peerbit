@@ -1,34 +1,10 @@
 {
-	"include": ["docs/**/*", "packages/*/src", "packages/*/*/src"],
-	"exclude": [
-		"node_modules",
-		"packages/*/node_modules",
-		"packages/*/*/node_modules"
-	],
-	"compilerOptions": {
-		"target": "es2022",
-		"module": "ES2022",
-		"lib": ["ES2022", "DOM", "WebWorker"],
-		"moduleResolution": "node",
-		"strict": true,
-		"strictPropertyInitialization": false,
-		"noUnusedLocals": false,
-		"strictFunctionTypes": true,
-		"esModuleInterop": true,
-		"noEmit": true,
-		"noEmitOnError": false,
-		"noImplicitAny": false,
-		"declaration": true,
-		"sourceMap": true,
-		"stripInternal": true,
-		"jsx": "react",
-		"allowSyntheticDefaultImports": true,
-		"resolveJsonModule": true,
-		"isolatedModules": true,
-		"emitDecoratorMetadata": true,
-		"experimentalDecorators": true,
-		"typeRoots": ["node_modules/@types"],
-		"skipLibCheck": true
-	},
-	"files": ["global.d.ts"]
+    "extends": "aegir/src/config/tsconfig.aegir.json",
+    "compilerOptions": {
+        "checkJs": false,
+        "strictPropertyInitialization": false,
+        "experimentalDecorators": true,
+        "emitDecoratorMetadata": true,
+        "outDir": "dist"
+    }
 }

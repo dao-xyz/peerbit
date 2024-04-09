@@ -11,9 +11,9 @@ import {
 	PublicSignKey,
 	toBase64
 } from "@peerbit/crypto";
-import { KeyParameters, Keychain, KeypairParameters } from "./interface.js";
-import { AnyStore } from "@peerbit/any-store";
-import { serialize, deserialize, Constructor } from "@dao-xyz/borsh";
+import { type KeyParameters, type Keychain, type KeypairParameters } from "./interface.js";
+import { type AnyStore } from "@peerbit/any-store";
+import { serialize, deserialize, type Constructor } from "@dao-xyz/borsh";
 import { createStore } from "@peerbit/any-store";
 
 export type { Keychain };
@@ -21,17 +21,17 @@ export type { Keychain };
 export type KeypairFromPublicKey<T> = T extends X25519PublicKey
 	? X25519Keypair
 	: T extends Ed25519PublicKey
-		? Ed25519Keypair
-		: T extends Secp256k1PublicKey
-			? Secp256k1Keypair
-			: T extends PublicSignKey | PublicKeyEncryptionKey
-				? Keypair
-				: never;
+	? Ed25519Keypair
+	: T extends Secp256k1PublicKey
+	? Secp256k1Keypair
+	: T extends PublicSignKey | PublicKeyEncryptionKey
+	? Keypair
+	: never;
 
 export class DefaultKeychain implements Keychain {
 	constructor(
 		readonly properties: { store: AnyStore } = { store: createStore() }
-	) {}
+	) { }
 	async import(
 		parameters: (KeypairParameters | KeyParameters) & { id?: Uint8Array }
 	): Promise<void> {
@@ -61,11 +61,11 @@ export class DefaultKeychain implements Keychain {
 	}
 	async exportByKey<
 		T extends
-			| X25519PublicKey
-			| Ed25519PublicKey
-			| Secp256k1PublicKey
-			| PublicSignKey
-			| PublicKeyEncryptionKey,
+		| X25519PublicKey
+		| Ed25519PublicKey
+		| Secp256k1PublicKey
+		| PublicSignKey
+		| PublicKeyEncryptionKey,
 		Q = KeypairFromPublicKey<T>
 	>(publicKey: T): Promise<Q | undefined> {
 		const key = await this.properties.store.get(toBase64(serialize(publicKey)));

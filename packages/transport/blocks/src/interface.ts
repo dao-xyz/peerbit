@@ -1,5 +1,5 @@
-import { MaybePromise } from "@peerbit/any-store";
-import { Blocks as IBlockStore } from "@peerbit/blocks-interface";
+import type { MaybePromise } from "@peerbit/any-store-interface";
+import type { Blocks as IBlockStore } from "@peerbit/blocks-interface";
 
 export type StoreStatus = MaybePromise<
 	"open" | "opening" | "closed" | "closing"

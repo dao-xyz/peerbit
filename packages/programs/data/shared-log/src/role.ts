@@ -8,7 +8,7 @@ export const overlaps = (x1: number, x2: number, y1: number, y2: number) => {
 };
 
 export abstract class Role {
-	abstract equals(other: Role);
+	abstract equals(other: Role): boolean;
 }
 
 export const NO_TYPE_VARIANT = new Uint8Array([0]);

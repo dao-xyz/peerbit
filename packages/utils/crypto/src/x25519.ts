@@ -1,6 +1,6 @@
 export * from "./errors.js";
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { compare } from "@peerbit/uint8arrays";
+import { compare } from "uint8arrays";
 import sodium from "libsodium-wrappers";
 import {
 	Keypair,
@@ -9,11 +9,10 @@ import {
 } from "./key.js";
 import {
 	Ed25519Keypair,
-	Ed25519PublicKey,
-	Ed25519PrivateKey
+	Ed25519PublicKey
 } from "./ed25519.js";
 import { toHexString } from "./utils.js";
-import { PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 @variant(0)
 export class X25519PublicKey extends PublicKeyEncryptionKey {
 	@field({ type: fixedArray("u8", 32) })

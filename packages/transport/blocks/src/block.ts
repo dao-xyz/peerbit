@@ -47,7 +47,7 @@ export const checkDecodeBlock = async (
 ): Promise<Block<any, any, any, any>> => {
 	const cidObject =
 		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
-	const codec = options.codec || codecCodes[cidObject.code];
+	const codec = options.codec || (codecCodes as any)[cidObject.code];
 	const block = await decode({
 		bytes: bytes,
 		codec,
@@ -103,7 +103,7 @@ export const createBlock = async (
 		links?: string[];
 	}
 ): Promise<Block<any, any, any, any>> => {
-	const codec = codecMap[format];
+	const codec = (codecMap as any)[format];
 	value = prepareBlockWrite(value, codec, options?.links);
 	const block = await encode({
 		value,

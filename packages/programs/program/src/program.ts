@@ -1,25 +1,25 @@
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { Constructor, getSchema, variant } from "@dao-xyz/borsh";
+import { type Constructor, getSchema, variant } from "@dao-xyz/borsh";
 import { getValuesWithType } from "./utils.js";
 import { serialize, deserialize } from "@dao-xyz/borsh";
 import {
-	TypedEventTarget,
+	type TypedEventTarget,
 	CustomEvent,
 	TypedEventEmitter
 } from "@libp2p/interface";
-import { Client } from "./client.js";
-import { Blocks } from "@peerbit/blocks-interface";
-import { PeerId as Libp2pPeerId } from "@libp2p/interface";
+import { type Client } from "./client.js";
+import { type Blocks } from "@peerbit/blocks-interface";
+import { type PeerId as Libp2pPeerId } from "@libp2p/interface";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent
 } from "@peerbit/pubsub-interface";
-import { Address } from "./address.js";
+import { type Address } from "./address.js";
 import {
-	EventOptions,
+	type EventOptions,
 	Handler,
-	Manageable,
-	ProgramInitializationOptions,
+	type Manageable,
+	type ProgramInitializationOptions,
 	addParent
 } from "./handler.js";
 
@@ -58,7 +58,7 @@ export interface LifeCycleEvents {
 	close: CustomEvent<Program>;
 }
 
-export interface ProgramEvents extends NetworkEvents, LifeCycleEvents {}
+export interface ProgramEvents extends NetworkEvents, LifeCycleEvents { }
 
 const getAllParentAddresses = (p: Program): string[] => {
 	return getAllParent(p, [])
@@ -123,7 +123,7 @@ export abstract class Program<
 	}
 
 	get events(): TypedEventTarget<Events> {
-		return this._events || (this._events = new TypedEventEmitter());
+		return this._events || (this._events = new TypedEventEmitter<Events>());
 	}
 
 	get closed(): boolean {
@@ -182,14 +182,14 @@ export abstract class Program<
 		await this.node.services.pubsub.addEventListener(
 			"subscribe",
 			this._subscriptionEventListener ||
-				(this._subscriptionEventListener = (s) =>
-					!this.closed && this._emitJoinNetworkEvents(s.detail))
+			(this._subscriptionEventListener = (s) =>
+				!this.closed && this._emitJoinNetworkEvents(s.detail))
 		);
 		await this.node.services.pubsub.addEventListener(
 			"unsubscribe",
 			this._unsubscriptionEventListener ||
-				(this._unsubscriptionEventListener = (s) =>
-					!this.closed && this._emitLeaveNetworkEvents(s.detail))
+			(this._unsubscriptionEventListener = (s) =>
+				!this.closed && this._emitLeaveNetworkEvents(s.detail))
 		);
 
 		await this._eventOptions?.onBeforeOpen?.(this);
@@ -513,7 +513,7 @@ export abstract class Program<
 		if (!p) {
 			throw new Error("Failed to load program");
 		}
-		await node.open<T>(p, options as any); // TODO fix types
+		await node.open<any>(p, options as any); // TODO fix types
 		return p as T;
 	}
 }
@@ -521,7 +521,7 @@ export abstract class Program<
 export const getProgramFromVariants = <
 	T extends Program
 >(): Constructor<T>[] => {
-	const deps = Program.prototype[1000]; /// TODO improve BORSH lib to provide all necessary utility methods
+	const deps = (Program.prototype as any)[1000]; /// TODO improve BORSH lib to provide all necessary utility methods
 	return (deps || []) as Constructor<T>[];
 };
 

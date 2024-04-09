@@ -1,8 +1,8 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents, PutOperation, SearchRequest } from "@peerbit/document";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 
-abstract class AbstractPost {}
+abstract class AbstractPost { }
 
 @variant(0)
 class PostV0 extends AbstractPost {
@@ -51,12 +51,12 @@ class PostStore extends Program {
 	async open(args?: any): Promise<void> {
 		await this.posts.open({
 			type: AbstractPost, // Use base class here
-			canPerform: (operation, context) => {
-				if (operation instanceof PutOperation) {
-					if (operation.value instanceof PostV0) {
+			canPerform: (properties) => {
+				if (properties.type === "put") {
+					if (properties.value instanceof PostV0) {
 						// Validate something with the 'old' post type
 						return true;
-					} else if (operation.value instanceof PostV1) {
+					} else if (properties.value instanceof PostV1) {
 						// Validate something with the 'new' post type
 						return true;
 					} else {

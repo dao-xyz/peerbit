@@ -1,5 +1,5 @@
-import { BlockStore } from "./interface.js";
-import { Blocks as IBlocks } from "@peerbit/blocks-interface";
+import type { BlockStore } from "./interface.js";
+import type { Blocks as IBlocks } from "@peerbit/blocks-interface";
 import {
 	stringifyCid,
 	cidifyString,
@@ -11,13 +11,13 @@ import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
 import { PublicSignKey } from "@peerbit/crypto";
 import { AnyBlockStore } from "./any-blockstore.js";
-import { GetOptions } from "@peerbit/blocks-interface";
+import type { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
 import { AbortError } from "@peerbit/time";
 import type { PeerId } from "@libp2p/interface";
 import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
 
-export class BlockMessage {}
+export class BlockMessage { }
 
 @variant(0)
 export class BlockRequest extends BlockMessage {
@@ -173,7 +173,7 @@ export class RemoteBlocks implements IBlocks {
 		cidObject: CID,
 		options: { timeout?: number; hasher?: any; from?: string[] } = {}
 	): Promise<Uint8Array | undefined> {
-		const codec = codecCodes[cidObject.code];
+		const codec = (codecCodes as any)[cidObject.code];
 		let promise = this._readFromPeersPromises.get(cidString);
 		if (!promise) {
 			promise = new Promise<Block<any, any, any, 1> | undefined>(
