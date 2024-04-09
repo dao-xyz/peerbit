@@ -4,6 +4,7 @@ on:
         - master
       paths:
           - packages/**
+          - .release-please.json  
 permissions:
   contents: write
   pull-requests: write
