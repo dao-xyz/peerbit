@@ -62,7 +62,7 @@
 		"./dist/src/transports.js": "./dist/src/transports.browser.js"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.1",
+		"@dao-xyz/borsh": "^5.2.2",
 		"@peerbit/any-store": "^2.0.2",
 		"@peerbit/crypto": "2.2.0",
 		"@peerbit/logger": "1.0.2",
