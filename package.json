@@ -7,7 +7,6 @@
 		"url": "https://github.com/dao-xyz/peerbit"
 	},
 	"license": "Apache-2.0",
-	"type": "module",
 	"workspaces": [
 		"packages/docs",
 		"packages/transport/blocks",
@@ -46,9 +45,6 @@
 	],
 	"engines": {
 		"node": ">=18"
-	},
-	"publishConfig": {
-		"access": "public"
 	},
 	"scripts": {
 		"reset": "aegir run clean && aegir clean interop/node_modules packages/**/node_modules node_modules package-lock.json packages/*/package-lock.json interop/*/package-lock.json",
