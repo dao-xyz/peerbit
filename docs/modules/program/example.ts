@@ -2,7 +2,7 @@
 /// [definition]
 import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
-import { Observer, Replicator, SharedLog, type RoleOptions } from "@peerbit/shared-log";
+import { SharedLog, type RoleOptions } from "@peerbit/shared-log";
 import assert from 'node:assert'
 
 // The line below will make sure that every time the database manifest
