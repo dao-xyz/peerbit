@@ -1,3 +1,3 @@
-it("document-store-y", async () => {
+it("document-store", async () => {
 	await import("./document-store.js");
 });
