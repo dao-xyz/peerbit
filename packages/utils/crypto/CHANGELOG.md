@@ -61,6 +61,20 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.2.1](https://github.com/dao-xyz/peerbit/compare/crypto-v2.2.0...crypto-v2.2.1) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from ^2.0.6 to ^2.1.0
+
 ## [2.2.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.1.7...crypto-v2.2.0) (2024-02-26)
 
 

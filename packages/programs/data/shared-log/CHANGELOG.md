@@ -389,6 +389,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [8.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.7...shared-log-v8.0.8) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Refactors
+
+* onChange and canAppend refactor ([04e5e4c](https://github.com/dao-xyz/peerbit/commit/04e5e4c789f22043fc0dc5e11862952989e00726))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.7 to 4.0.8
+    * @peerbit/log bumped from 3.0.34 to 4.0.0
+    * @peerbit/rpc bumped from 4.0.7 to 4.0.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [8.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.6...shared-log-v8.0.7) (2024-02-26)
 
 

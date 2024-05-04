@@ -33,6 +33,17 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
 
+## [2.0.3](https://github.com/dao-xyz/peerbit/compare/any-store-v2.0.2...any-store-v2.0.3) (2024-05-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.2.0 to ^2.2.1
+    * @peerbit/any-store-opfs bumped from ^2.0.2 to ^2.0.3
+    * @peerbit/any-store-interface bumped from ^2.0.2 to ^1.0.0
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-v2.0.0...any-store-v2.0.1) (2024-02-02)
 
 

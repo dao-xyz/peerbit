@@ -43,6 +43,27 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.5...stream-v4.0.6) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Documentation
+
+* add protocol info ([218a5bb](https://github.com/dao-xyz/peerbit/commit/218a5bb2ba2c6c254343a8299ef0528393872fef))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.6 to 2.1.0
+    * @peerbit/crypto bumped from 2.2.0 to 2.2.1
+    * @peerbit/stream-interface bumped from ^5.0.2 to ^5.0.3
+
 ## [4.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.4...stream-v4.0.5) (2024-02-26)
 
 

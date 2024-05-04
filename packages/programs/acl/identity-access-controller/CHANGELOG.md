@@ -630,6 +630,38 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v3.0.40...identity-access-controller-v4.0.0) (2024-05-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* search index abstraction
+
+### Features
+
+* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
+
+
+### Bug Fixes
+
+* types ([1d07383](https://github.com/dao-xyz/peerbit/commit/1d07383aa58272aa9c77eedc4b15466de5ad5046))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Refactors
+
+* index-engine abstraction ([f96f37d](https://github.com/dao-xyz/peerbit/commit/f96f37dc61c75d8cbf5512a41352468a10f8dcf2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 6.0.7 to 7.0.0
+    * @peerbit/trusted-network bumped from 3.0.40 to 4.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [3.0.27](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v3.0.26...identity-access-controller-v3.0.27) (2024-01-26)
 
 

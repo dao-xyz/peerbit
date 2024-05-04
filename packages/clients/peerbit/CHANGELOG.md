@@ -313,6 +313,24 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.7...peerbit-v4.0.8) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.0.2 to ^2.0.3
+    * @peerbit/crypto bumped from 2.2.0 to 2.2.1
+    * @peerbit/program bumped from 4.0.7 to 4.0.8
+    * @peerbit/pubsub bumped from ^3.0.5 to ^3.0.6
+    * @peerbit/blocks bumped from ^2.0.32 to ^2.0.33
+
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.5...peerbit-v4.0.6) (2024-02-10)
 
 

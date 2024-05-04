@@ -566,6 +566,32 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.40...trusted-network-v4.0.0) (2024-05-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* search index abstraction
+
+### Features
+
+* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.2.0 to 2.2.1
+    * @peerbit/document bumped from 6.0.7 to 7.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [3.0.27](https://github.com/dao-xyz/peerbit/compare/trusted-network-v3.0.26...trusted-network-v3.0.27) (2024-01-26)
 
 

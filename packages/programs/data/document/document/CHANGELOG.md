@@ -456,6 +456,35 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.0](https://github.com/dao-xyz/peerbit/compare/document-v6.0.7...document-v7.0.0) (2024-05-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* search index abstraction
+
+### Features
+
+* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.7 to 4.0.8
+    * @peerbit/rpc bumped from 4.0.7 to 4.0.8
+    * @peerbit/shared-log bumped from 8.0.7 to 8.0.8
+    * @peerbit/document-interface bumped from ^6.0.7 to ^1.0.0
+    * @peerbit/document-index-simple bumped from ^0.0.1 to ^1.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.33 to 2.0.34
+
 ## [6.0.6](https://github.com/dao-xyz/peerbit/compare/document-v6.0.5...document-v6.0.6) (2024-02-10)
 
 
