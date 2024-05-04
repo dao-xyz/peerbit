@@ -1,3 +1,3 @@
-# Direct block
+# Direct block interface
 
-Block swap/share protocol built on top of [Direct Stream](./../direct-stream/README.md)
+Message types for the Block swap/share protocol
