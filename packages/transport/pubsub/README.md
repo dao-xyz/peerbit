@@ -11,17 +11,13 @@ Features
 	
 	method based on aggregated subscriber info, not only from immediate peers.
 
-- Subscriptions with associated metadata. E.g. you can subscribe to topics and provide data that explains the purpose for peers
-	```typescript 
-	.subscribe(topic, new UInt8Array([1,2,3]))
-	```
 
-	```typescript
-	.getSubscribersWithData(topic, data)
-	``` 
-
-- Efficient content routing through path-finding algorithms
+- Efficient content routing through an approximate path finding algorithm
 	```typescript
 	.publish(data, { topics: ["a","b"]})
 	```
 	will try to find the subscribers of "a" and "b" and send messages with the shortest path in the network.
+
+- Packet prioritization. Data packages can be sent with different priority. That allows some traffic to pass through the traffic faster than other. This is useful in case of congestion
+- Mode'd delivery. Packages can be sent with different delivery mode 'Acknowledge' (wait for acknowledgement from all known subscribers), 'Seek' (find new subscribers for a topic), 'Silent' (just deliver).
+- Redundancy in data delivery. Data packages can be sent with different redundancy. This means that you can choose to send some packages only in one path (the fastest) or send a package in the 'N' fastest paths (this gives you a redundancy degree of 'N'). This feature is useful when you want to adapt delivery for unstable networks or when you want to make sure that some messages are delivered with high probability (without waiting for Acknowledgemts and retry)
