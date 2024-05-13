@@ -66,6 +66,20 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.0.3](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.2...stream-interface-v5.0.3) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.2.0 to 2.2.1
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.0...stream-interface-v5.0.1) (2024-02-02)
 
 

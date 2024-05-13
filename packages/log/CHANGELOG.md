@@ -368,6 +368,33 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/log-v3.0.34...log-v4.0.0) (2024-05-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* search index abstraction
+
+### Features
+
+* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.6 to 2.1.0
+    * @peerbit/blocks-interface bumped from ^1.2.19 to ^1.2.20
+    * @peerbit/crypto bumped from 2.2.0 to 2.2.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.33 to 2.0.34
+
 ## [3.0.33](https://github.com/dao-xyz/peerbit/compare/log-v3.0.32...log-v3.0.33) (2024-02-10)
 
 

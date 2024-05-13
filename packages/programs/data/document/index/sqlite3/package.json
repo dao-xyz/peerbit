@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-index-sqlite3",
-	"version": "0.0.1",
+	"version": "1.0.0",
 	"description": "SQLite index for document store",
 	"type": "module",
 	"sideEffects": false,
@@ -63,11 +63,11 @@
 	"license": "MIT",
 	"dependencies": {
 		"better-sqlite3": "^9.4.5",
-		"@peerbit/document-interface": "^6.0.7",
+		"@peerbit/document-interface": "^1.0.0",
 		"@sqlite.org/sqlite-wasm": "^3.45.2-build1"
 	},
 	"devDependencies": {
 		"@types/better-sqlite3": "^7.6.9",
-		"@peerbit/document-tests": "^0.0.1"
+		"@peerbit/document-tests": "^1.0.0"
 	}
 }

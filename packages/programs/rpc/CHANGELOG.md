@@ -417,6 +417,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/rpc-v4.0.7...rpc-v4.0.8) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.2.0 to 2.2.1
+    * @peerbit/program bumped from 4.0.7 to 4.0.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/rpc-v4.0.1...rpc-v4.0.2) (2024-02-02)
 
 

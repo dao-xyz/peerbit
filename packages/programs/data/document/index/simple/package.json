@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-index-simple",
-	"version": "0.0.1",
+	"version": "1.0.0",
 	"description": "Simple in memory index for document store",
 	"sideEffects": false,
 	"type": "module",
@@ -57,9 +57,9 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/document-interface": "^6.0.7"
+		"@peerbit/document-interface": "^1.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/document-tests": "^0.0.1"
+		"@peerbit/document-tests": "^1.0.0"
 	}
 }

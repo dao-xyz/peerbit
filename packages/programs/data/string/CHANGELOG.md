@@ -632,6 +632,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.27](https://github.com/dao-xyz/peerbit/compare/string-v4.1.26...string-v4.1.27) (2024-05-04)
+
+
+### Bug Fixes
+
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Refactors
+
+* type constructors ([d392dd7](https://github.com/dao-xyz/peerbit/commit/d392dd79813dfdc19912072ce5954163bbf579f3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.7 to 4.0.8
+    * @peerbit/shared-log bumped from ^8.0.7 to ^8.0.8
+    * @peerbit/rpc bumped from 4.0.7 to 4.0.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [4.1.3](https://github.com/dao-xyz/peerbit/compare/string-v4.1.2...string-v4.1.3) (2024-01-17)
 
 
