@@ -48,11 +48,14 @@ describe("trim", function () {
 
 	it("respect canTrim for length type", async () => {
 		let canTrimInvocations = 0;
-		const e1: any = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // set nexts [] so all get unique gids
+		// @ts-ignore
+		const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // set nexts [] so all get unique gids
 		// @ts-ignore
 		const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // set nexts [] so all get unique gids
 		// @ts-ignore
 		const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // set nexts [] so all get unique gids
+
+		console.log(e1.entry.hash, e2.entry.hash, e3.entry.hash)
 		await log.trim({
 			type: "length",
 			from: 2,
@@ -126,12 +129,15 @@ describe("trim", function () {
 			/**
 			 * In this test we test, that even if the commits are concurrent the output is determenistic if we are trimming
 			 */
+
+			// TODO is this test really neccessary
 			let canTrimInvocations = 0;
 			const log = new Log<string>();
 			await log.open(
 				store,
 				signKey,
 				{
+					encoding: JSON_ENCODING,
 					trim: {
 						type: "length",
 						from: 1,
@@ -143,13 +149,15 @@ describe("trim", function () {
 							}
 						}
 					},
-					encoding: JSON_ENCODING
+
 				} // when length > 3 cut back to 1
+
 			);
 			let size = 3;
 			let promises: Promise<any>[] = [];
 			for (let i = 0; i < size; i++) {
-				promises.push(log.append("hello" + i));
+				promises.push(log.append(String(i)));
+
 			}
 			await Promise.all(promises);
 			expect(canTrimInvocations).lessThan(size); // even though concurrently trimming is sync
@@ -292,7 +300,7 @@ describe("trim", function () {
 			});
 
 			expect(canTrimInvocations).equal(2); // checks e1 then e2 (e2 we can delete)
-			await log.delete(e3.entry); // e3 is also cached as the next node to trim
+			await log.delete(e3.entry.hash); // e3 is also cached as the next node to trim
 			await log.trim({
 				type: "length",
 				from: 1,
@@ -375,7 +383,7 @@ describe("trim", function () {
 			trimmableGids.add(e1.entry.gid);
 
 			const cacheId = () => "id";
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash
 			]);
 			await log.trim({
@@ -389,12 +397,12 @@ describe("trim", function () {
 			});
 
 			expect(canTrimInvocations).to.deep.equal([e1.entry.gid]); // checks e1
-			expect((await log.values.toArray()).map((x) => x.hash)).to.be.empty;
+			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
 
 			canTrimInvocations = [];
 			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			trimmableGids.add(e2.entry.gid);
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e2.entry.hash
 			]);
 			await log.trim({
@@ -407,11 +415,11 @@ describe("trim", function () {
 				}
 			});
 			expect(canTrimInvocations).to.deep.equal([e2.entry.gid]); // e1 checked again (?), e2 checked and trimmed
-			expect((await log.values.toArray()).map((x) => x.hash)).to.be.empty;
+			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
 
 			canTrimInvocations = [];
 			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e3.entry.hash
 			]);
 			trimmableGids.add(e3.entry.gid);
@@ -425,7 +433,7 @@ describe("trim", function () {
 				}
 			});
 			expect(canTrimInvocations).to.deep.equal([e3.entry.gid]);
-			expect((await log.values.toArray()).map((x) => x.hash)).to.be.empty;
+			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
 		});
 
 		it("can trim later new entries are added", async () => {
@@ -462,14 +470,14 @@ describe("trim", function () {
 				}
 			});
 			expect(canTrimInvocations).to.deep.equal([e1.entry.gid, e2.entry.gid]); // e1 checked again (?), e2 checked and trimmed
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash
 			]);
 
 			canTrimInvocations = [];
 			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
 				e3.entry.hash
@@ -485,14 +493,14 @@ describe("trim", function () {
 				}
 			});
 			expect(canTrimInvocations).to.deep.equal([e2.entry.gid, e3.entry.gid]);
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash
 			]);
 
 			canTrimInvocations = [];
 			const e4 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
 				e4.entry.hash
@@ -508,7 +516,7 @@ describe("trim", function () {
 				}
 			});
 			expect(canTrimInvocations).to.deep.equal([e2.entry.gid, e4.entry.gid]);
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash
 			]);
@@ -618,7 +626,7 @@ describe("trim", function () {
 				}
 			});
 			await log.join([e2.entry]);
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
 				e3.entry.hash
@@ -632,7 +640,7 @@ describe("trim", function () {
 					cacheId: () => "b"
 				}
 			});
-			expect((await log.values.toArray()).map((x) => x.hash)).to.deep.equal([
+			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e2.entry.hash,
 				e3.entry.hash
 			]);

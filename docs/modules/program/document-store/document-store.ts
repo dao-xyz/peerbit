@@ -9,7 +9,7 @@ import { v4 as uuid } from "uuid";
 import {
 	ByteMatchQuery,
 	Documents,
-	MissingField,
+	IsNull,
 	SearchRequest,
 	Sort
 } from "@peerbit/document";
@@ -243,7 +243,7 @@ await waitForResolved(async () =>
 // then you can do the following
 const posts: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
-		query: [new MissingField({ key: POST_PARENT_POST_ID })],
+		query: [new IsNull({ key: POST_PARENT_POST_ID })],
 		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	})
 );
@@ -259,7 +259,7 @@ expect(posts.map((x) => x.message)).to.deep.equal([
 /// [search-locally]
 const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
-		query: [new MissingField({ key: POST_PARENT_POST_ID })],
+		query: [new IsNull({ key: POST_PARENT_POST_ID })],
 		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	}),
 	{
@@ -375,7 +375,7 @@ new SearchRequest({
 		new BoolQuery({ key: "boolProperty", value: true }),
 
 		// Missing values
-		new MissingField({ key: "someProperty" }),
+		new IsNull({ key: "someProperty" }),
 
 		// Nested propety
 		// Find values for nested fields, e.g. { a: { b: { c: "hello "}}}

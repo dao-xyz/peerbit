@@ -7,6 +7,7 @@ import type { AnyStore } from "@peerbit/any-store-interface";
 import type { Multiaddr } from "@multiformats/multiaddr";
 import type { Address } from "./address.js";
 import type { CanOpen, ExtractArgs, Manageable, OpenOptions } from "./handler.js";
+import type { Indices } from "@peerbit/indexer-interface";
 
 export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	peerId: Libp2pPeerId;
@@ -19,6 +20,7 @@ export interface Client<T extends Manageable<ExtractArgs<T>>> {
 		keychain: Keychain;
 	};
 	storage: AnyStore;
+	indexer: Indices;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	open<S extends T & CanOpen<ExtractArgs<S>>>(

@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { Ed25519Keypair } from "../src/ed25519.js";
 import { PreHash } from "../src/prehash.js";
 import { SignatureWithKey, verify } from "../src/signature.js";
-//node --loader ts-node/esm ./src/__benchmark__/index.ts
+//node --loader ts-node/esm ./benchmark/index.ts
 
 const keypair = await Ed25519Keypair.create();
 const signatures: [Uint8Array, SignatureWithKey][] = [];

@@ -19,7 +19,7 @@ const checkReplicas = async (
 	await waitForResolved(async () => {
 		const map = new Map<string, number>();
 		for (const db of dbs) {
-			for (const value of await db.log.log.values.toArray()) {
+			for (const value of await db.log.log.toArray()) {
 				expect(await db.log.log.blocks.has(value.hash)).to.be.true;
 				map.set(value.hash, (map.get(value.hash) || 0) + 1);
 			}
@@ -42,7 +42,7 @@ const checkBounded = async (
 	for (const [_i, db] of dbs.entries()) {
 		await waitForResolved(
 			() =>
-				expect(db.log.log.values.length).greaterThanOrEqual(
+				expect(db.log.log.length).greaterThanOrEqual(
 					entryCount * lower
 				),
 			{
@@ -52,9 +52,9 @@ const checkBounded = async (
 	}
 
 	const checkConverged = async (db: EventStore<any>) => {
-		const a = db.log.log.values.length;
+		const a = db.log.log.length;
 		await delay(100); // arb delay
-		return a === db.log.log.values.length;
+		return a === db.log.log.length;
 	};
 
 	for (const [_i, db] of dbs.entries()) {
@@ -66,18 +66,18 @@ const checkBounded = async (
 
 	for (const [_i, db] of dbs.entries()) {
 		await waitForResolved(() =>
-			expect(db.log.log.values.length).greaterThanOrEqual(
+			expect(db.log.log.length).greaterThanOrEqual(
 				entryCount * lower
 			)
 		);
 		await waitForResolved(() =>
-			expect(db.log.log.values.length).lessThanOrEqual(entryCount * higher)
+			expect(db.log.log.length).lessThanOrEqual(entryCount * higher)
 		);
 	}
 
 	await checkReplicas(
 		dbs,
-		maxReplicas(dbs[0].log, [...(await dbs[0].log.log.values.toArray())]),
+		maxReplicas(dbs[0].log, [...(await dbs[0].log.log.toArray())]),
 		entryCount
 	);
 };
@@ -335,8 +335,8 @@ describe(`sharding`, () => {
 				})
 			);
 		}
-		await waitFor(() => db1.log.log.values.length === entryCount);
-		await waitFor(() => db2.log.log.values.length === entryCount);
+		await waitFor(() => db1.log.log.length === entryCount);
+		await waitFor(() => db2.log.log.length === entryCount);
 
 		db3 = await EventStore.open<EventStore<string>>(
 			db1.address!,

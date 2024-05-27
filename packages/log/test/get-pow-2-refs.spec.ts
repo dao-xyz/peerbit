@@ -26,7 +26,7 @@ describe("get-pow-2-refs", function () {
 			}
 		});
 		it("get refs one", async () => {
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			expect(heads).to.have.length(1);
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 1
@@ -38,7 +38,7 @@ describe("get-pow-2-refs", function () {
 		});
 
 		it("get refs 4", async () => {
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 4
 			});
@@ -55,7 +55,7 @@ describe("get-pow-2-refs", function () {
 		});
 
 		it("get refs 8", async () => {
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 8
 			});
@@ -72,7 +72,7 @@ describe("get-pow-2-refs", function () {
 		});
 
 		it("get refs with memory limit", async () => {
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			expect(heads).to.have.length(1);
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: Number.MAX_SAFE_INTEGER,
@@ -103,7 +103,7 @@ describe("get-pow-2-refs", function () {
 		});
 
 		it("no refs if no nexts", async () => {
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: 8
 			});

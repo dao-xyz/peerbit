@@ -18,19 +18,21 @@ import {
 	type SharedLogOptions,
 	type SharedAppendOptions
 } from "@peerbit/shared-log";
-import * as types from "@peerbit/document-interface";
+import * as indexerTypes from "@peerbit/indexer-interface";
+import * as documentsTypes from "@peerbit/document-interface";
 
 export type { RoleOptions }; // For convenience (so that consumers does not have to do the import above from shared-log packages)
 
 import {
-	type IndexableFields,
+	type Transformer,
 	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
 	DocumentIndex,
 	Operation,
 	PutOperation,
 	type CanSearch,
-	type CanRead
+	type CanRead,
+	type IDocumentWithContext
 } from "./search.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 
@@ -69,16 +71,17 @@ export type CanPerform<T> = (
 	properties: CanPerformOperations<T>
 ) => MaybePromise<boolean>;
 
-export type SetupOptions<T> = {
+export type SetupOptions<T, I = T> = {
 	type: AbstractType<T>;
 	canOpen?: (program: T) => MaybePromise<boolean>;
 	canPerform?: CanPerform<T>;
-	id?: (obj: any) => types.IdPrimitive;
+	id?: (obj: any) => indexerTypes.IdPrimitive;
 	index?: {
 		idProperty?: string | string[];
 		canSearch?: CanSearch;
 		canRead?: CanRead<T>;
-		fields?: IndexableFields<T>;
+		type?: new (arg: T) => I;
+		transformer?: Transformer<T, I>;
 	};
 	log?: {
 		trim?: TrimOptions;
@@ -86,8 +89,8 @@ export type SetupOptions<T> = {
 } & SharedLogOptions<Operation>;
 
 @variant("documents")
-export class Documents<T> extends Program<
-	SetupOptions<T>,
+export class Documents<T, I = T> extends Program<
+	SetupOptions<T, I>,
 	DocumentEvents<T> & ProgramEvents
 > {
 	@field({ type: SharedLog })
@@ -97,20 +100,20 @@ export class Documents<T> extends Program<
 	immutable: boolean; // "Can I overwrite a document?"
 
 	@field({ type: DocumentIndex })
-	private _index: DocumentIndex<T>;
+	private _index: DocumentIndex<T, I>;
 
 	private _clazz: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
 	private _manuallySynced: Set<string>;
-	private idResolver: (any: any) => types.IdPrimitive;
+	private idResolver: (any: any) => indexerTypes.IdPrimitive;
 
 	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
 
 	constructor(properties?: {
 		id?: Uint8Array;
 		immutable?: boolean;
-		index?: DocumentIndex<T>;
+		index?: DocumentIndex<T, I>;
 	}) {
 		super();
 
@@ -119,11 +122,11 @@ export class Documents<T> extends Program<
 		this._index = properties?.index || new DocumentIndex();
 	}
 
-	get index(): DocumentIndex<T> {
+	get index(): DocumentIndex<T, I> {
 		return this._index;
 	}
 
-	async open(options: SetupOptions<T>) {
+	async open(options: SetupOptions<T, I>) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
 
@@ -143,28 +146,20 @@ export class Documents<T> extends Program<
 			options.id ||
 			(typeof idProperty === "string"
 				? (obj: any) => obj[idProperty as string]
-				: (obj: any) => types.extractFieldValue(obj, idProperty as string[]));
+				: (obj: any) => indexerTypes.extractFieldValue(obj, idProperty as string[]));
 
 		this.idResolver = idResolver;
 
-		let transform: IndexableFields<T>;
-		if (options.index?.fields) {
-			if (typeof options.index.fields === "function") {
-				transform = options.index.fields;
-			} else {
-				transform = options.index.fields;
-			}
-		} else {
-			transform = (obj) => obj as Record<string, any>; // TODO check types
-		}
+
 		await this._index.open({
-			type: this._clazz,
 			log: this.log,
 			canRead: options?.index?.canRead,
 			canSearch: options.index?.canSearch,
-			fields: transform,
+			documentType: this._clazz,
+			indexedType: options.index?.type,
+			transformer: options.index?.transformer,
 			indexBy: idProperty,
-			sync: async (result: types.Results<T>) => {
+			sync: async (result: documentsTypes.Results<T>) => {
 				// here we arrive for all the results we want to persist.
 				// we we need to do here is
 				// 1. add the entry to a list of entries that we should persist through prunes
@@ -315,10 +310,10 @@ export class Documents<T> extends Program<
 					this.index.valueEncoding.decoder(putOperation.data);
 				const keyValue = this.idResolver(value);
 
-				const key = types.toId(keyValue);
+				const key = indexerTypes.toId(keyValue);
 
-				const existingDocument = await this.index.engine.get(key);
-				if (existingDocument && existingDocument.context.head !== entry.hash) {
+				const existingDocument = await this.index.get(key);
+				if (existingDocument && existingDocument.value.context.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
 						//Key already exist and this instance Documents can note overrite/edit'
@@ -328,7 +323,7 @@ export class Documents<T> extends Program<
 					if (entry.next.length !== 1) {
 						return false;
 					}
-					let doc = await this.log.log.get(existingDocument.context.head);
+					let doc = await this.log.log.get(existingDocument.value.context.head);
 					if (!doc) {
 						logger.error("Failed to find Document from head");
 						return false;
@@ -344,12 +339,12 @@ export class Documents<T> extends Program<
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = await this._index.engine.get(operation.key);
+				const existingDocument = await this.index.get(operation.key);
 				if (!existingDocument) {
 					// already deleted
 					return operation; // assume ok
 				}
-				let doc = await this.log.log.get(existingDocument.context.head);
+				let doc = await this.log.log.get(existingDocument.value.context.head);
 				if (!doc) {
 					logger.error("Failed to find Document from head");
 					return false;
@@ -382,7 +377,7 @@ export class Documents<T> extends Program<
 		const keyValue = this.idResolver(doc);
 
 		// type check the key
-		types.checkId(keyValue);
+		indexerTypes.checkId(keyValue);
 
 		const ser = serialize(doc);
 		if (ser.length > MAX_BATCH_SIZE) {
@@ -423,8 +418,8 @@ export class Documents<T> extends Program<
 		return appended;
 	}
 
-	async del(id: types.Ideable, options?: SharedAppendOptions<Operation>) {
-		const key = types.toId(id);
+	async del(id: indexerTypes.Ideable, options?: SharedAppendOptions<Operation>) {
+		const key = indexerTypes.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {
 				local: true,
@@ -459,10 +454,12 @@ export class Documents<T> extends Program<
 			change?.added.length === 1 ? !!change.added[0] : false;
 
 		const removed = [...(change.removed || [])];
+
 		const removedSet = new Map<string, Entry<Operation>>();
 		for (const r of removed) {
 			removedSet.set(r.hash, r);
 		}
+
 		const sortedEntries = [...change.added, ...(removed || [])]
 			.sort(this.log.log.sortFn)
 			.reverse(); // sort so we get newest to oldest
@@ -493,7 +490,7 @@ export class Documents<T> extends Program<
 					// get index key from value
 					const keyObject = this.idResolver(value);
 
-					const key = types.toId(keyObject);
+					const key = indexerTypes.toId(keyObject);
 
 					// document is already updated with more recent entry
 					if (modified.has(key.primitive)) {
@@ -529,7 +526,7 @@ export class Documents<T> extends Program<
 
 					if (payload instanceof PutOperation) {
 						value = this.index.valueEncoding.decoder(payload.data);
-						key = types.toIdeable(this.idResolver(value));
+						key = indexerTypes.toId(this.idResolver(value)).primitive;
 						// document is already updated with more recent entry
 						if (modified.has(key)) {
 							continue;

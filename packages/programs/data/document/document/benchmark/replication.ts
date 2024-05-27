@@ -9,7 +9,7 @@ import { DirectSub } from "@peerbit/pubsub";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { delay } from "@peerbit/time";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
+// Run with "node --loader ts-node/esm ./benchmark/replication.ts"
 // put x 862 ops/sec ±4.75% (75 runs sampled)
 
 @variant("document")

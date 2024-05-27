@@ -87,6 +87,7 @@ interface HeadsIndex {
 	has(cid: string): boolean;
 }
 export class HeadsCache<T> /* implements Initiable<T>  */ {
+
 	// An access controller that is note part of the store manifest, usefull for circular store -> access controller -> store structures
 	headsPath!: string;
 	removedHeadsPath!: string;

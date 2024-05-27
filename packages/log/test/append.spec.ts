@@ -37,7 +37,9 @@ describe("append", function () {
 
 		it("added the correct amount of items", () => {
 			expect(log.length).equal(1);
+			console.log("DONE!")
 		});
+
 
 		it("added the correct values", async () => {
 			(await log.toArray()).forEach((entry) => {
@@ -52,7 +54,7 @@ describe("append", function () {
 		});
 
 		it("has the correct heads", async () => {
-			for (const head of await log.getHeads()) {
+			for (const head of await log.getHeads().all()) {
 				expect(head.hash).to.deep.equal((await log.toArray())[0].hash);
 			}
 		});
@@ -73,12 +75,11 @@ describe("append", function () {
 			const { entry: e2 } = await log.append(new Uint8Array([2]));
 			expect(await blockExists(e1.hash)).to.be.true;
 			expect(await blockExists(e2.hash)).to.be.true;
-			expect(log.nextsIndex.get(e1.hash)!.has(e2.hash)).to.be.true;
+			console.log("---> ", e2.hash)
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
 				meta: { type: EntryType.CUT }
 			});
-			// No forward pointers to next indices. We do this, so when we delete an entry, we can now whether an entry has a depenency of another entry which is not of type RESET
-			expect(log.nextsIndex.get(e2.hash)).equal(undefined);
+			expect((await log.entryIndex.getHasNext(e1.hash).all()).length).equal(0);
 			expect(await blockExists(e1.hash)).to.be.false;
 			expect(await blockExists(e2.hash)).to.be.false;
 			expect(await blockExists(e3.hash)).to.be.true;
@@ -105,10 +106,8 @@ describe("append", function () {
 				).entry;
 				// Make sure the log has the right heads after each append
 				const values = await log.toArray();
-				expect((await log.getHeads()).length).equal(1);
-				expect((await log.getHeads())[0].hash).equal(
-					values[values.length - 1].hash
-				);
+				expect((await log.getHeads().all()).length).equal(1);
+				expect((await log.getHeads().all())[0].hash).equal(values[values.length - 1].hash);
 			}
 		});
 

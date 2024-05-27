@@ -7,7 +7,7 @@ import crypto from "crypto";
 import { Program } from "@peerbit/program";
 import { SharedLog, type Args } from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/index.ts"
 // put x 5,843 ops/sec ±4.50% (367 runs sampled)
 
 @variant("document")

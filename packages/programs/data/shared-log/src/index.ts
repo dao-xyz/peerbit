@@ -7,6 +7,7 @@ import {
 	Log,
 	type LogEvents,
 	type LogProperties,
+	ShallowEntry,
 } from "@peerbit/log";
 import { Program, type ProgramEvents } from "@peerbit/program";
 import { BinaryWriter, BorshError, field, variant } from "@dao-xyz/borsh";
@@ -67,14 +68,14 @@ export { Observer, Replicator, Role };
 
 export const logger = loggerFn({ module: "shared-log" });
 
-const groupByGid = async <T extends Entry<any> | EntryWithRefs<any>>(
+const groupByGid = async <T extends ShallowEntry | Entry<any> | EntryWithRefs<any>>(
 	entries: T[]
 ): Promise<Map<string, T[]>> => {
 	const groupByGid: Map<string, T[]> = new Map();
 	for (const head of entries) {
 		const gid = await (head instanceof Entry
 			? head.getGid()
-			: head.entry.getGid());
+			: head instanceof ShallowEntry ? head.meta.gid : head.entry.getGid());
 		let value = groupByGid.get(gid);
 		if (!value) {
 			value = [];
@@ -132,7 +133,7 @@ export type SharedLogOptions<T> = {
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
-	sync?: (entry: Entry<T>) => boolean;
+	sync?: (entry: Entry<T> | ShallowEntry) => boolean;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
 	distributionDebounceTime?: number;
@@ -208,7 +209,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private openTime!: number;
 	private oldestOpenTime!: number;
 
-	private sync?: (entry: Entry<T>) => boolean;
+	private sync?: (entry: Entry<T> | ShallowEntry) => boolean;
 
 	// A fn that we can call many times that recalculates the participation role
 	private rebalanceParticipationDebounced:
@@ -394,7 +395,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		options?: SharedAppendOptions<T> | undefined
 	): Promise<{
 		entry: Entry<T>;
-		removed: Entry<T>[];
+		removed: ShallowEntry[];
 	}> {
 		const appendOptions: AppendOptions<T> = { ...options };
 		const minReplicasData = encodeReplicas(
@@ -537,8 +538,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 		this._sortedPeersCache = yallist.create();
 		this._gidPeersHistory = new Map();
 
-		const cache = await storage.sublevel("cache");
-
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
 			...this._logProperties,
@@ -555,7 +554,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			trim: this._logProperties?.trim && {
 				...this._logProperties?.trim
 			},
-			cache: cache
+			indexer: await this.node.indexer.scope("log")
 		});
 
 		// Open for communcation
@@ -586,7 +585,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			this.distribute();
 		}, 7.5 * 1000);
 
-		const requestSync = () => {
+		const requestSync = async () => {
 			/**
 			 * This method fetches entries that we potentially want.
 			 * In a case in which we become replicator of a segment,
@@ -597,7 +596,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const requestHashes: string[] = [];
 			const from: Set<string> = new Set();
 			for (const [key, value] of this.syncInFlightQueue) {
-				if (!this.log.has(key)) {
+				if (!await this.log.has(key)) {
 					// TODO test that this if statement actually does anymeaningfull
 					if (value.length > 0) {
 						requestHashes.push(key);
@@ -653,7 +652,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 	async getMemoryUsage() {
 		return (
-			((await this.log.memory?.size()) || 0) + (await this.log.blocks.size())
+			((await this.log.entryIndex?.getMemoryUsage()) || 0) + (await this.log.blocks.size())
 		);
 	}
 
@@ -783,7 +782,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
 					for (const head of heads) {
-						if (!this.log.has(head.entry.hash)) {
+						if (!await this.log.has(head.entry.hash)) {
 							head.entry.init({
 								// we need to init because we perhaps need to decrypt gid
 								keychain: this.log.keychain,
@@ -806,10 +805,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 					for (const [gid, entries] of groupedByGid) {
 						const fn = async () => {
-							const headsWithGid = this.log.headsIndex.gids.get(gid);
+							const headsWithGid = await this.log.entryIndex.getHeads(gid).all();
 
 							const maxReplicasFromHead =
-								headsWithGid && headsWithGid.size > 0
+								headsWithGid && headsWithGid.length > 0
 									? maxReplicas(this, [...headsWithGid.values()])
 									: this.replicas.min.getValue(this);
 
@@ -850,8 +849,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 									toMerge.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {
-										const map = this.log.headsIndex.gids.get(ref);
-										if (map && map.size > 0) {
+										const map = await this.log.entryIndex.getHeads(ref).all();
+										if (map && map.length > 0) {
 											toMerge.push(entry.entry);
 											(toDelete || (toDelete = [])).push(entry.entry);
 											continue outer;
@@ -895,10 +894,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 					if (maybeDelete) {
 						for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-							const headsWithGid = this.log.headsIndex.gids.get(
+							const headsWithGid = await this.log.entryIndex.getHeads(
 								entries[0].entry.meta.gid
-							);
-							if (headsWithGid && headsWithGid.size > 0) {
+							).all();
+							if (headsWithGid && headsWithGid.length > 0) {
 								const minReplicas = maxReplicas(this, headsWithGid.values());
 
 								const isLeader = await this.isLeader(
@@ -921,16 +920,16 @@ export class SharedLog<T = Uint8Array> extends Program<
 				const hasAndIsLeader: string[] = [];
 
 				for (const hash of msg.hashes) {
-					const indexedEntry = this.log.entryIndex.getShallow(hash);
+					const indexedEntry = await this.log.entryIndex.getShallow(hash);
 					if (
 						indexedEntry &&
 						(await this.isLeader(
-							indexedEntry.meta.gid,
-							decodeReplicas(indexedEntry).getValue(this)
+							indexedEntry.value.meta.gid,
+							decodeReplicas(indexedEntry.value).getValue(this)
 						))
 					) {
 						this._gidPeersHistory
-							.get(indexedEntry.meta.gid)
+							.get(indexedEntry.value.meta.gid)
 							?.delete(context.from.hashcode());
 						hasAndIsLeader.push(hash);
 					} else {
@@ -997,7 +996,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							);
 						}
 						inverted.add(hash);
-					} else if (!this.log.has(hash)) {
+					} else if (!await this.log.has(hash)) {
 						this.syncInFlightQueue.set(hash, []);
 						requestHashes.push(hash); // request immediately (first time we have seen this hash)
 					}
@@ -1505,7 +1504,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	prune(
-		entries: Entry<any>[],
+		entries: (Entry<any> | ShallowEntry)[],
 		options?: { timeout?: number; unchecked?: boolean }
 	): Promise<any>[] {
 		if (options?.unchecked) {
@@ -1526,7 +1525,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		// - Peers join and leave, which means we might not be a replicator anymore
 
 		const promises: Promise<any>[] = [];
-		const filteredEntries: Entry<any>[] = [];
+		const filteredEntries: (Entry<any> | ShallowEntry)[] = [];
 		for (const entry of entries) {
 			const pendingPrev = this._pendingDeletes.get(entry.hash);
 			if (pendingPrev) {
@@ -1576,7 +1575,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 						: minReplicasValue;
 
 					const leaders = await this.findLeaders(
-						entry.gid,
+						entry.meta.gid,
 						minMinReplicasValue
 					);
 
@@ -1670,10 +1669,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		const changed = false;
 		await this.log.trim();
-		const heads = await this.log.getHeads();
+		const heads = await this.log.getHeads().all();
+
 		const groupedByGid = await groupByGid(heads);
-		const uncheckedDeliver: Map<string, Entry<any>[]> = new Map();
-		const allEntriesToDelete: Entry<any>[] = [];
+		const uncheckedDeliver: Map<string, (Entry<any> | ShallowEntry)[]> = new Map();
+		const allEntriesToDelete: (Entry<any> | ShallowEntry)[] = [];
 
 		for (const [gid, entries] of groupedByGid) {
 			if (this.closed) {
@@ -1695,6 +1695,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			);
 			const currentPeersSet = new Set(currentPeers);
 			this._gidPeersHistory.set(gid, currentPeersSet);
+
 
 			for (const currentPeer of currentPeers) {
 				if (currentPeer == this.node.identity.publicKey.hashcode()) {
@@ -1720,7 +1721,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					// if we are replicator, we will always persist entries that we need to so filtering on createdLocally will not make a difference
 					let entriesToDelete =
 						this._role instanceof Observer
-							? entries.filter((e) => !e.createdLocally)
+							? [] // TODO (expected behaviour?) /* entries.filter((e) => !e.createdLocally) */
 							: entries;
 
 					if (this.sync) {
@@ -1738,6 +1739,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				}
 			}
 		}
+
 
 		for (const [target, entries] of uncheckedDeliver) {
 			this.rpc.send(
@@ -1768,6 +1770,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				map.set(hash, { timestamp: now });
 			}
 		}
+
 
 		await this.rpc.send(
 			new ResponseMaybeSync({

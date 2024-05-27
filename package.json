@@ -14,8 +14,8 @@
 		"packages/transport/blocks-interface",
 		"packages/transport/stream",
 		"packages/transport/stream-interface",
-		"packages/transport/stream/test/browser",
-		"packages/transport/stream/test/browser/browser-node",
+		"packages/transport/stream/e2e/browser",
+		"packages/transport/stream/e2e/browser/browser-node",
 		"packages/transport/pubsub",
 		"packages/transport/pubsub-interface",
 		"packages/transport/libp2p-test-utils",
@@ -35,14 +35,14 @@
 		"packages/programs/clock-service",
 		"packages/programs/transport",
 		"packages/programs/data/document/*",
-		"packages/programs/data/document/index/*",
 		"packages/programs/data/*",
 		"packages/utils/crypto",
 		"packages/utils/any-store/*",
 		"packages/utils/time",
 		"packages/utils/cache",
 		"packages/utils/logger",
-		"packages/utils/keychain"
+		"packages/utils/keychain",
+		"packages/utils/indexer/*"
 	],
 	"engines": {
 		"node": ">=18"
@@ -83,7 +83,7 @@
 		"@types/mocha": "^10.0.6",
 		"@types/node": "^20.2.5",
 		"@types/wicg-file-system-access": "^2023.10.4",
-		"aegir": "github:marcus-pousette/aegir#workspace-config",
+		"aegir": "github:marcus-pousette/aegir#multiple-assets",
 		"benchmark": "^2.1.4",
 		"chai-as-promised": "^7.1.1",
 		"dotenv": "^16.0.3",

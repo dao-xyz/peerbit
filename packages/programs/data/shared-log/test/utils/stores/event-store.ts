@@ -1,4 +1,4 @@
-import type { CanAppend, Encoding, TrimOptions } from "@peerbit/log";
+import type { CanAppend, Encoding, ShallowEntry, TrimOptions } from "@peerbit/log";
 import { Entry } from "@peerbit/log";
 import type { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
 import { variant, field } from "@dao-xyz/borsh";
@@ -26,7 +26,7 @@ export class EventIndex<T> {
 	}
 
 	async get(): Promise<any> {
-		return this._log ? this._log.log.values.toArray() : [];
+		return this._log ? this._log.log.toArray() : [];
 	}
 }
 
@@ -38,7 +38,7 @@ export type Args<T> = {
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
-	sync?: (entry: Entry<Operation<T>>) => boolean;
+	sync?: (entry: Entry<Operation<T>> | ShallowEntry) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 };

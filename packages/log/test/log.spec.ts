@@ -23,13 +23,11 @@ describe("properties", function () {
 			const log = new Log();
 			await log.open(store, signKey, undefined);
 			assert.notStrictEqual(log.entryIndex, null);
-			assert.notStrictEqual(log.headsIndex, null);
 			assert.notStrictEqual(log.id, null);
 			assert.notStrictEqual(log.id, null);
 			assert.notStrictEqual(log.toArray(), null);
-			assert.notStrictEqual(await log.getHeads(), null);
 			assert.deepStrictEqual(await log.toArray(), []);
-			assert.deepStrictEqual(await log.getHeads(), []);
+			assert.deepStrictEqual(await log.getHeads().all(), []);
 			assert.deepStrictEqual(await log.getTailHashes(), []);
 		});
 
@@ -231,7 +229,7 @@ describe("properties", function () {
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			await log.reset([two, three, one]);
-			expect((await log.getHeads()).map((x) => x.hash)).to.have.members([
+			expect((await log.getHeads().all()).map((x) => x.hash)).to.have.members([
 				one.hash,
 				two.hash,
 				three.hash

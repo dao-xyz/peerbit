@@ -58,12 +58,12 @@ describe(`network`, () => {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.log.log.values.length === 2);
+		await waitFor(() => db1.log.log.length === 2);
 		expect(
-			(await db1.log.log.values.toArray()).map(
+			(await db1.log.log.toArray()).map(
 				(x) => x.payload.getValue().value
 			)
 		).to.have.members(["hello", "world"]);
-		await waitForResolved(() => expect(db2.log.log.values.length).equal(2));
+		await waitForResolved(() => expect(db2.log.log.length).equal(2));
 	});
 });

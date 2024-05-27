@@ -10,7 +10,7 @@ import { tcp } from "@libp2p/tcp";
 import crypto from "crypto";
 import { SeekDelivery } from "@peerbit/stream-interface";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
+// Run with "node --loader ts-node/esm ./benchmark/transfer.ts"
 
 // size: 100byte x 1,727 ops/sec ±2.61% (83 runs sampled)
 // size: 1kb x 1,727 ops/sec ±2.61% (83 runs sampled)

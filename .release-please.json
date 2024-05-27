@@ -50,13 +50,10 @@
 		"packages/programs/acl/trusted-network": {},
 		"packages/programs/program": {},
 		"packages/programs/clock-service": {},
-		"packages/programs/data/document/document": {},
-		"packages/programs/data/document/index/simple": {},
-		"packages/programs/data/document/index/sqlite3": {},
-		"packages/programs/data/document/index/tests": {},
-		"packages/programs/data/document/interface": {},
+		"packages/programs/data/document/indexer": {},
 		"packages/programs/data/string": {},
 		"packages/programs/data/shared-log": {},
+		"packages/programs/data/document/document/interface": {},
 		"packages/utils/crypto": {},
 		"packages/utils/any-store/any-store": {},
 		"packages/utils/any-store/interface": {},
@@ -64,6 +61,10 @@
 		"packages/utils/cache": {},
 		"packages/utils/time": {},
 		"packages/utils/logger": {},
-		"packages/utils/keychain": {}
+		"packages/utils/keychain": {},
+		"packages/utils/indexer/simple": {},
+		"packages/utils/indexer/sqlite3": {},
+		"packages/utils/indexer/tests": {},
+		"packages/utils/indexer/interface": {}
 	}
 }

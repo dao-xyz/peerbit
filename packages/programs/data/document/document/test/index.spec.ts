@@ -26,7 +26,7 @@ import {
 	AbstractSearchRequest,
 	Results,
 	CloseIteratorRequest
-} from "@peerbit/document-interface";
+} from "@peerbit/indexer-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { Entry, Log } from "@peerbit/log";
 import { AccessError, PublicSignKey, randomBytes } from "@peerbit/crypto";
@@ -198,7 +198,7 @@ describe("index", () => {
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(await store.docs.index.getSize()).equal(0);
 				expect(
-					(await store.docs.log.log.values.toArray()).map((x) => x.hash)
+					(await store.docs.log.log.toArray()).map((x) => x.hash)
 				).to.deep.equal([deleteOperation.hash]); // the delete operation
 			});
 
@@ -928,7 +928,7 @@ describe("index", () => {
 				// put doc again and make sure it still exist in index with trim to 1 option
 				await store.docs.put(doc);
 				expect(await store.docs.index.getSize()).equal(1);
-				expect(store.docs.log.log.values.length).equal(1);
+				expect(store.docs.log.log.length).equal(1);
 				expect(changes.length).equal(2);
 				expect(changes[1].added).to.have.length(1);
 				expect(changes[1].added[0].id).equal(doc.id);
@@ -962,7 +962,7 @@ describe("index", () => {
 				}
 
 				expect(await store.docs.index.getSize()).equal(10);
-				expect(store.docs.log.log.values.length).equal(10);
+				expect(store.docs.log.log.length).equal(10);
 				expect(store.docs.log.log.headsIndex.index.size).equal(10);
 			});
 
@@ -2144,7 +2144,7 @@ describe("index", () => {
 					canSearch: () => true,
 					log: stores[0].docs.log,
 					sync: () => undefined as any,
-					type: Document
+					documentType: Document
 				});
 
 				await put(0, 0);
@@ -2553,7 +2553,7 @@ describe("index", () => {
 			await stores[1].store.docs.put(subProgram);
 			expect(subProgram.closed).to.be.true; // Because observer? Not open by default?
 			await stores[0].store.docs.log.log.join(
-				[...(await stores[1].store.docs.log.log.values.toArray()).values()].map(
+				[...(await stores[1].store.docs.log.log.toArray()).values()].map(
 					(x) => deserialize(serialize(x), Entry)
 				)
 			);

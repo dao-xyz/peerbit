@@ -147,7 +147,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			}),
 			{
 				...options,
-				meta: { ...options?.meta, next: await this._log.log.getHeads() }
+				meta: { ...options?.meta, next: await this._log.log.getHeads().all() } // TODO: optimize
 			}
 		);
 	}

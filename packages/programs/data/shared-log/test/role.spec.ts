@@ -91,13 +91,13 @@ describe(`role`, () => {
 		await db1.add("hello");
 		await db2.add("world");
 
-		await waitFor(() => db1.log.log.values.length === 2); // db2 can write ...
+		await waitFor(() => db1.log.log.length === 2); // db2 can write ...
 		expect(
-			(await db1.log.log.values.toArray()).map(
+			(await db1.log.log.toArray()).map(
 				(x) => x.payload.getValue().value
 			)
 		).to.have.members(["hello", "world"]);
-		expect(db2.log.log.values.length).equal(1); // ... but will not receive entries
+		expect(db2.log.log.length).equal(1); // ... but will not receive entries
 	});
 
 	describe("observer", () => {
@@ -135,13 +135,13 @@ describe(`role`, () => {
 			await db1.add("hello");
 			await db2.add("world");
 
-			await waitFor(() => db1.log.log.values.length === 2); // db2 can write ...
+			await waitFor(() => db1.log.log.length === 2); // db2 can write ...
 			expect(
-				(await db1.log.log.values.toArray()).map(
+				(await db1.log.log.toArray()).map(
 					(x) => x.payload.getValue().value
 				)
 			).to.have.members(["hello", "world"]);
-			expect(db2.log.log.values.length).equal(1); // ... but will not receive entries
+			expect(db2.log.log.length).equal(1); // ... but will not receive entries
 		});
 	});
 
@@ -344,9 +344,9 @@ describe("segment", () => {
 	// Now the db2 will request sync clocks even though it does not replicate any content
 	await db2.add("world");
 
-	await waitFor(() => db1.store.oplog.values.length === 2);
+	await waitFor(() => db1.store.oplog.length === 2);
 	expect(
-		db1.store.oplog.values.toArray().map((x) => x.payload.getValue().value)
+		db1.store.oplog.toArray().map((x) => x.payload.getValue().value)
 	).to.have.members(["hello", "world"]);
-	expect(db2.store.oplog.values.length).equal(1);
+	expect(db2.store.oplog.length).equal(1);
 }); */

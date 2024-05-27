@@ -44,7 +44,7 @@ export class StringIndex extends Program {
 	}
 
 	async updateIndex(_change: Change<StringOperation>) {
-		this._string = await applyOperations("", await this._log.values.toArray()); // TODO improve performance
+		this._string = await applyOperations("", await this._log.toArray()); // TODO improve performance
 	}
 }
 

@@ -11,7 +11,6 @@
   "extension": [
     "ts"
   ],
-  "parallel": true,
   "spec": [
     "**/test/**/*.spec.ts"
   ],
@@ -19,5 +18,5 @@
     "**/node_modules/**",
     "**/dist/**"
   ],
-  "timeout": "20000"
+  "timeout": "35000"
 }

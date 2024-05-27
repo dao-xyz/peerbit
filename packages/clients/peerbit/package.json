@@ -62,13 +62,15 @@
 		"./dist/src/transports.js": "./dist/src/transports.browser.js"
 	},
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.2",
+		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/any-store": "^2.0.2",
 		"@peerbit/crypto": "2.2.0",
 		"@peerbit/logger": "1.0.2",
 		"@peerbit/program": "4.0.7",
 		"@peerbit/pubsub": "^3.0.5",
 		"@peerbit/blocks": "^2.0.32",
+		"@peerbit/indexer-simple": "^0.0.1",
+		"@peerbit/indexer-sqlite3": "^0.0.1",
 		"datastore-level": "^10.1.5",
 		"@dao-xyz/libp2p-noise": "^14.1.2",
 		"@chainsafe/libp2p-yamux": "^6.0.2",
