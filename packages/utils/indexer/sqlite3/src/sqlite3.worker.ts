@@ -39,6 +39,10 @@ class SqliteWorkerHandler {
                 await db.close();
                 this.databases.delete(message.databaseId);
             }
+            else if (message.type === 'open') {
+
+                await db.open();
+            }
             else if (message.type === 'run') {
                 return db.run(message.sql, message.values.map(messages.resolveValue));
             }

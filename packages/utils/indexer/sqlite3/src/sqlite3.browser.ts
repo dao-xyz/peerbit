@@ -67,6 +67,10 @@ class ProxyDatabase implements IDatabase {
         return statement
     }
 
+    async open() {
+        return this.send({ type: 'open', id: uuid(), databaseId: this.databaseId });
+    }
+
     async close() {
         return this.send({ type: 'close', id: uuid(), databaseId: this.databaseId });
     }
@@ -128,6 +132,7 @@ const init = async (): Promise<DatabaseCreator> => {
         const db = new ProxyDatabase(send);
         await isReady.promise;
         await db.init(directory);
+        await db.open();
         return db;
     }
     return initialized = { create, close: () => { initialized = undefined, worker.terminate() } }

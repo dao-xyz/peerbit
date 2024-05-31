@@ -1,6 +1,6 @@
 import { default as sqlite3InitModule, type SAHPoolUtil, type OpfsSAHPoolDatabase } from "@sqlite.org/sqlite-wasm";
 import { type Database as SQLDatabase, type PreparedStatement as SQLStatement } from "@sqlite.org/sqlite-wasm";
-import { type Database as IDatabase, type Statement as IStatement, type StatementGetResult } from "./types.js";
+import { type Statement as IStatement, type StatementGetResult } from "./types.js";
 import type { BindableValue } from "./schema.js";
 import { BinaryWriter, BinaryReader } from '@dao-xyz/borsh';
 import { fromBase64URL, toBase64URL } from "@peerbit/crypto";
@@ -79,11 +79,11 @@ class Statement implements IStatement {
 
 }
 
-export class Database implements IDatabase {
+/* export class Database implements IDatabase {
 
     statements: Map<string, Statement> = new Map();
-    constructor(private readonly db: SQLDatabase, private readonly _close?: () => Promise<any> | any) {
-    }
+    private db: SQLDatabase
+    constructor(private readonly _close?: () => Promise<any> | any) { }
 
     async exec(sql: string) {
         return this.db.exec(sql);
@@ -111,7 +111,7 @@ export class Database implements IDatabase {
     }
 }
 
-
+ */
 const log = (...args: any) => console.log(...args);
 const error = (...args: any) => console.error(...args);
 
@@ -137,37 +137,62 @@ let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | undefined = undefin
 
 const create = async (directory?: string) => {
 
+    let statements: Map<string, Statement> = new Map();
+
     sqlite3 = sqlite3 || await sqlite3InitModule({ print: log, printErr: error });
-    let sqliteDb: OpfsSAHPoolDatabase | SQLDatabase;
-    let close: (() => Promise<any> | any) | undefined = undefined
-    if (directory) {
+    let sqliteDb: OpfsSAHPoolDatabase | SQLDatabase | undefined = undefined;
+    let close: (() => Promise<any> | any) | undefined = async () => {
+        await Promise.all([...statements.values()].map(x => x.finalize?.()))
+        await sqliteDb?.close();
+    }
+    let open = async () => {
+        if (directory) {
 
-        // directory has to be absolute path. Remove leading dot if any
-        // TODO show warning if directory is not absolute?
-        directory = directory.replace(/^\./, "");
+            // directory has to be absolute path. Remove leading dot if any
+            // TODO show warning if directory is not absolute?
+            directory = directory.replace(/^\./, "");
 
-        let dbFileName = `${directory}/db.sqlite`;
+            let dbFileName = `${directory}/db.sqlite`;
 
-        poolUtil = poolUtil || await sqlite3.installOpfsSAHPoolVfs({
-            directory: "peerbit/sqlite" // encodeName("peerbit") 
-        });
+            poolUtil = poolUtil || await sqlite3.installOpfsSAHPoolVfs({
+                directory: "peerbit/sqlite" // encodeName("peerbit") 
+            });
 
-        await poolUtil.reserveMinimumCapacity(100);
-        sqliteDb = new poolUtil.OpfsSAHPoolDb(dbFileName);
-        close = async () => {
-            // TODO fix when https://github.com/sqlite/sqlite-wasm/issues/70 is fixed
-            // await poolUtil.unlink(dbFileName)
+            await poolUtil.reserveMinimumCapacity(100);
+            sqliteDb = new poolUtil.OpfsSAHPoolDb(dbFileName);
+
         }
+        else {
+            sqliteDb = new sqlite3.oo1.DB(':memory:')
+        }
+
+        sqliteDb.exec('PRAGMA journal_mode = WAL');
+        sqliteDb.exec('PRAGMA foreign_keys = on');
     }
-    else {
-        sqliteDb = new sqlite3.oo1.DB(':memory:')
+
+
+    return {
+        close,
+        exec: (sql: string) => {
+            return sqliteDb.exec(sql);
+        },
+        open,
+        prepare: (sql: string) => {
+            const statement = sqliteDb.prepare(sql);
+            const wrappedStatement = new Statement(statement);
+            statements.set(sql, wrappedStatement)
+            return wrappedStatement
+        },
+        get(sql: string) {
+            return sqliteDb.exec({ sql, rowMode: 'array' });
+        },
+
+        run(sql: string, bind: any[]) {
+            return sqliteDb.exec(sql, { bind, rowMode: 'array' });
+        },
+        statements
+
     }
-
-    sqliteDb.exec('PRAGMA journal_mode = WAL');
-    sqliteDb.exec('PRAGMA foreign_keys = on');
-
-
-    return new Database(sqliteDb, close)
 }
 
 export { create };

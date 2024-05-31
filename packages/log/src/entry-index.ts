@@ -16,7 +16,7 @@ export type ResultsIterator<T> = {
 
 const ENTRY_CACHE_MAX_SIZE = 1000; // TODO as param for log
 
-type ResolveOptions = { replicate?: boolean; timeout?: number; ignoreMissing?: boolean }
+type ResolveOptions = { replicate?: boolean; signal?: AbortSignal, timeout?: number; ignoreMissing?: boolean }
 export type MaybeResolveOptions = boolean | ResolveOptions;
 export type ReturnTypeFromResolveOptions<R extends MaybeResolveOptions, T> = R extends false | undefined ? ShallowEntry : Entry<T>;
 
@@ -319,7 +319,7 @@ export class EntryIndex<T> {
 
 	private async resolveFromStore(
 		k: string,
-		options?: { replicate?: boolean; timeout?: number }
+		options?: { signal?: AbortSignal, replicate?: boolean; timeout?: number }
 	): Promise<Entry<T> | null> {
 		const value = await this.properties.store.get(k, options);
 		if (value) {

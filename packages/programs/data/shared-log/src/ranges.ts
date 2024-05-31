@@ -1,7 +1,8 @@
 import yallist from "yallist";
 import { type ReplicatorRect } from "./replication.js";
-import { Replicator } from "./role.js";
+import { ReplicationSegment, Replicator } from "./role.js";
 import { PublicSignKey } from "@peerbit/crypto";
+import { Compare, IntegerCompare, SearchRequest, StringMatch, type Index } from "@peerbit/indexer-interface";
 
 export const containsPoint = (
 	rect: { offset: number; factor: number },
@@ -31,7 +32,7 @@ export const containsPoint = (
 const collectNodesAroundPoint = (
 	time: number,
 	roleAge: number,
-	peers: yallist<ReplicatorRect>,
+	peers: Index<ReplicatorRect>,
 	currentNode: yallist.Node<ReplicatorRect> | null,
 	collector: (rect: ReplicatorRect, matured: boolean) => void,
 	point: number,
@@ -39,7 +40,7 @@ const collectNodesAroundPoint = (
 ) => {
 	/* 	let uniqueMatured = 0;
 	 */ const maybeIncrementMatured = (rect: ReplicatorRect) => {
-		const isMature = isMatured(rect.role, time, roleAge);
+		const isMature = isMatured(rect.segment, time, roleAge);
 		collector(rect, isMature);
 	};
 
@@ -88,22 +89,29 @@ const collectNodesAroundPoint = (
 	}
 };
 
-export const isMatured = (role: Replicator, now: number, minAge: number) => {
-	return now - Number(role.timestamp) >= minAge;
+export const isMatured = (segment: ReplicationSegment, now: number, minAge: number) => {
+	return now - Number(segment.timestamp) >= minAge;
 };
 
-export const getSamples = (
+export const getSamples = async (
 	cursor: number,
-	peers: yallist<ReplicatorRect>,
+	peers: Index<ReplicatorRect>,
 	amount: number,
 	roleAge: number
 ) => {
 	const leaders: Set<string> = new Set();
 	const width = 1;
-	if (!peers || peers?.length === 0) {
+	if (!peers) {
 		return [];
 	}
-	amount = Math.min(amount, peers.length);
+
+	const size = await peers.getSize()
+
+	amount = Math.min(amount, size);
+
+	if (amount === 0) {
+		return []
+	}
 
 	const t = +new Date();
 
@@ -123,9 +131,9 @@ export const getSamples = (
 			currentNode,
 			(rect, m) => {
 				if (m) {
-					maturedLeaders.add(rect.publicKey.hashcode());
+					maturedLeaders.add(rect.hash);
 				}
-				leaders.add(rect.publicKey.hashcode());
+				leaders.add(rect.hash);
 			},
 			point,
 			(postProcess) => {
@@ -142,25 +150,27 @@ export const getSamples = (
 	return [...leaders];
 };
 
-export const getCover = (
+/* export const getCover = (
 	coveringWidth: number,
-	peers: yallist<ReplicatorRect>,
+	peers: Index<ReplicatorRect>,
 	roleAge: number,
 	startNodeIdentity?: PublicSignKey
 ): string[] => {
 	return [...getCoverSet(coveringWidth, peers, roleAge, startNodeIdentity)];
-};
-export const getCoverSet = (
+}; */
+
+export const getCoverSet = async (
 	coveringWidth: number,
-	peers: yallist<ReplicatorRect>,
+	peers: Index<ReplicatorRect>,
 	roleAge: number,
 	startNodeIdentity?: PublicSignKey
-): Set<string> => {
+): Promise<Set<string>> => {
 	// find a good starting point
-	let walker = peers.head;
+	let startNode: ReplicatorRect | undefined = undefined;
 	if (startNodeIdentity) {
 		// start at our node (local first)
-		while (walker) {
+		let result = await peers.query(new SearchRequest({ query: [new StringMatch({ key: 'hash', value: startNodeIdentity.hashcode() })], fetch: 1 }), startNodeIdentity)
+		/* while (walker) {
 			if (walker.value.publicKey.equals(startNodeIdentity)) {
 				break;
 			}
@@ -168,18 +178,23 @@ export const getCoverSet = (
 		}
 		if (!walker) {
 			walker = peers.head;
-		}
-	} else {
-		const seed = Math.round(peers.length * Math.random()); // start at a random point
-		for (let i = 0; i < seed - 1; i++) {
+		} */
+		startNode = result.results[0]?.value
+	}
+
+	if (!startNode) {
+		const seed = Math.round((await peers.getSize()) * Math.random()); // start at a random point
+		/* for (let i = 0; i < seed - 1; i++) {
 			if (walker?.next == null) {
 				break;
 			}
 			walker = walker.next;
-		}
+		} */
+		let result = await peers.query(new SearchRequest({ query: [new StringMatch({ key: 'hash', value: startNodeIdentity.hashcode() })], fetch: 1 }), startNodeIdentity)
+		startNode = result.results[0]?.value
 	}
 
-	const startNode = walker;
+	/* const startNode = walker; */
 	if (!startNode) {
 		return new Set();
 	}
@@ -190,11 +205,11 @@ export const getCoverSet = (
 	const t = +new Date();
 
 	let wrappedOnce = false;
-	const startPoint = startNode.value.role.offset;
+	const startPoint = startNode.segment.offset;
 
 	const getNextPoint = (): [number, number, number, boolean] => {
 		let nextPoint =
-			currentNode.value.role.offset + currentNode.value.role.factor;
+			currentNode.segment.offset + currentNode.segment.factor;
 
 		if (nextPoint > 1 || nextPoint < startPoint) {
 			wrappedOnce = true;
@@ -204,21 +219,21 @@ export const getCoverSet = (
 		let distanceStart: number;
 
 		if (wrappedOnce) {
-			distanceStart = (1 - startPoint + currentNode.value.role.offset) % 1;
+			distanceStart = (1 - startPoint + currentNode.segment.offset) % 1;
 		} else {
-			distanceStart = (currentNode.value.role.offset - startPoint) % 1;
+			distanceStart = (currentNode.segment.offset - startPoint) % 1;
 		}
 
-		const distanceEnd = distanceStart + currentNode.value.role.factor;
+		const distanceEnd = distanceStart + currentNode.segment.factor;
 
 		return [nextPoint, distanceStart, distanceEnd, wrappedOnce];
 	};
 
-	const getNextMatured = (from: yallist.Node<ReplicatorRect>) => {
-		let next = (from.next || peers.head)!;
+	const getNextMatured = async (from: ReplicatorRect) => {
+		let next = (await peers.query(new SearchRequest({ query: [new IntegerCompare({ key: ['segment', 'offset'], compare: Compare.Greater, value: from.segment.offset })], fetch: 1 })))?.results[0]?.value  // (from.next || peers.head)!;
 		while (
-			!next.value.publicKey.equals(from.value.publicKey) &&
-			!next.value.publicKey.equals(startNode.value.publicKey)
+			!next.value.publicKey.equals(from.value.hash) &&
+			!next.value.publicKey.equals(startNode.hash)
 		) {
 			if (isMatured(next.value.role, t, roleAge)) {
 				return next;
@@ -236,12 +251,12 @@ export const getCoverSet = (
 
 	let isPastThePoint = false;
 	outer: while (currentNode) {
-		if (set.has(currentNode.value.publicKey.hashcode())) break;
+		if (set.has(currentNode.hash)) break;
 
 		const [nextPoint, distanceStart, distanceEnd, wrapped] = getNextPoint();
 
 		if (distanceStart <= coveringWidth) {
-			set.add(currentNode.value.publicKey.hashcode());
+			set.add(currentNode.hash);
 		}
 
 		if (distanceEnd >= coveringWidth) {
@@ -275,7 +290,7 @@ export const getCoverSet = (
 
 			if (overlapsRange) {
 				// Find out if there is a better choice ahead of us
-				const nextNext = getNextMatured(next);
+				const nextNext = await getNextMatured(next);
 				if (
 					nextNext &&
 					!nextNext.value.publicKey.equals(currentNode.value.publicKey) &&
@@ -299,8 +314,8 @@ export const getCoverSet = (
 	// collect 1 point around the boundary of the start and one at the end,
 	// preferrd matured and that we already have it
 	for (const point of [
-		startNode.value.role.offset,
-		(startNode.value.role.offset + coveringWidth) % 1
+		startNode.segment.offset,
+		(startNode.segment.offset + coveringWidth) % 1
 	]) {
 		let done = false;
 		const unmatured: string[] = [];
@@ -308,7 +323,7 @@ export const getCoverSet = (
 			t,
 			roleAge,
 			peers,
-			isMatured(startNode.value.role, t, roleAge) ? startNode : peers.head, // start at startNode is matured, else start at head (we only seek to find one matured node at the point)
+			isMatured(startNode.segment.role, t, roleAge) ? startNode : peers.head, // start at startNode is matured, else start at head (we only seek to find one matured node at the point)
 			(rect, matured) => {
 				if (matured) {
 					if (set.has(rect.publicKey.hashcode())) {

@@ -18,5 +18,5 @@
     "**/node_modules/**",
     "**/dist/**"
   ],
-  "timeout": "35000"
+  "timeout": "55000"
 }

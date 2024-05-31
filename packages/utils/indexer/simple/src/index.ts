@@ -96,12 +96,13 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	stop(): void | Promise<void> {
-		// nothing to do
+		this._resultsCollectQueue.clear()
 	}
 
 	drop() {
 
 		this._index.clear()
+		this._resultsCollectQueue.clear()
 		/* for (const subindex of this.subIndices) {
 			subindex[1].clear()
 		} */
@@ -434,7 +435,7 @@ export class HashmapIndices implements types.Indices {
 
 		const existingIndex = this.indices.find(i => i.schema === properties.schema)
 		if (existingIndex) {
-			return existingIndex.index
+			return existingIndex.index as HashmapIndex<T, NestedType>
 		}
 		const index = new HashmapIndex<T, NestedType>();
 		this.indices.push({ schema: properties.schema, index })

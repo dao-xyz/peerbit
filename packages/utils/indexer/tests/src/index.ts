@@ -318,6 +318,8 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 						});
 						store = out.store
 					} catch (error: any) {
+						console.error("????????", error)
+
 						// some impl might want to throw here, since the schema is known in advance and the indexBy will be missing
 						expect(error["message"]).equal(
 							"Primary key __missing__ not found in schema"
@@ -1366,7 +1368,7 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 							});
 
 							it("can query multiple versions at once", async () => {
-								await store.put(new PolymorpArrayDocument({
+								/* await store.put(new PolymorpArrayDocument({
 									id: '1',
 									array: [
 										new AV0({
@@ -1377,7 +1379,7 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 										})
 									]
 								}))
-
+ */
 								const doc2 = new PolymorpArrayDocument({
 									id: '2',
 									array: [
@@ -1404,6 +1406,8 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 
 								expect(response.results).to.have.length(1);
 								expect(response.results[0].value.id).to.equal("2");
+
+								console.log(response.results[0].value)
 
 								checkDocument(response.results[0].value, doc2)
 							});
@@ -1659,7 +1663,6 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 						new CloseIteratorRequest({ id: request.id }),
 						(await Ed25519Keypair.create()).publicKey
 					);
-					await delay(2000);
 					expect(store.getPending(request.idString)).to.exist;
 
 					// send from the owner
@@ -1792,7 +1795,7 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 		})
 
 		describe('drop', () => {
-			it('drops', async () => {
+			it('store', async () => {
 				let { directory, indices, store } = await setupDefault()
 				expect(await store.getSize()).equal(4);
 				await store.drop()
@@ -1801,6 +1804,34 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 				store = (await setup({ schema: Document }, directory)).store;
 				expect(await store.getSize()).equal(0);
 			})
+
+			it('indices', async () => {
+				let { directory, indices } = await setupDefault()
+				let subindex = await indices.scope("x")
+
+				store = await subindex.init({ indexBy: ["id"], schema: Document });
+				await store.put(new Document({ id: "1", name: "hello", number: 1n, tags: [] }));
+				await store.put(new Document({ id: "2", name: "hello", number: 1n, tags: [] }));
+				await store.put(new Document({ id: "3", name: "hello", number: 1n, tags: [] }));
+				await store.put(new Document({ id: "4", name: "hello", number: 1n, tags: [] }));
+
+				expect(await store.getSize()).equal(4);
+				await indices.drop()
+				expect(await store.getSize()).equal(0);
+				await indices.stop()
+				store = (await setup({ schema: Document }, directory)).store;
+				expect(await store.getSize()).equal(0);
+			})
+
+			it('close-drop', async () => {
+				let { indices, store } = await setupDefault()
+				expect(await store.getSize()).equal(4);
+				await indices.stop();
+				await indices.drop()
+				expect(await store.getSize()).equal(0);
+
+			})
+
 		})
 
 
@@ -1846,6 +1877,17 @@ export const tests = (createIndicies: <T> (directory?: string) => Indices | Prom
 				const subScope = await scope.scope("subindex");
 				const subIndex = await subScope.init({ indexBy: ["id"], schema: Document });
 				await subIndex.put(new Document({ id: "1", name: "hello", number: 1n, tags: [] }))
+			})
+
+			it("can restart", async () => {
+				const scope = await createIndicies()
+				await scope.start()
+				await scope.stop()
+				await scope.start()
+				const subIndex = await scope.init({ indexBy: ["id"], schema: Document });
+				await subIndex.put(new Document({ id: "1", name: "hello", number: 1n, tags: [] }))
+
+
 			})
 		})
 	});

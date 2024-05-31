@@ -3,7 +3,8 @@ import {
 	randomBytes,
 	sha256Base64Sync,
 	type Identity,
-	X25519Keypair
+	X25519Keypair,
+	toBase64
 } from "@peerbit/crypto";
 import { type AnyStore } from "@peerbit/any-store";
 
@@ -37,7 +38,8 @@ import { cidifyString } from "@peerbit/blocks";
 import { type Keychain } from "@peerbit/keychain";
 import { type Indices } from "@peerbit/indexer-interface";
 import { HashmapIndices } from "@peerbit/indexer-simple";
-
+/* import { toBase64 } from '@peerbit/crypto'
+ */
 const { LastWriteWins } = Sorting;
 
 export type LogEvents<T, R = undefined> = {
@@ -92,6 +94,7 @@ type OnChange<T> = (
 
 @variant(0)
 export class Log<T> {
+
 	@field({ type: fixedArray("u8", 32) })
 	private _id: Uint8Array;
 
@@ -115,6 +118,7 @@ export class Log<T> {
 	private _canAppend?: CanAppend<T>;
 	private _onChange?: OnChange<T>;
 	private _closed = true;
+	private _closeController!: AbortController;
 	private _loadedOnce = false
 	private _indexer!: Indices;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
@@ -136,6 +140,8 @@ export class Log<T> {
 		if (this.closed === false) {
 			throw new Error("Already open");
 		}
+
+		this._closeController = new AbortController();
 
 		const { encoding, trim, keychain, indexer, onGidRemoved, sortFn } = options;
 
@@ -164,11 +170,12 @@ export class Log<T> {
 			throw new Error("Id not set");
 		}
 
+		let logIndexer = await this._indexer.scope(toBase64(this.id))
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
 			onGidRemoved,
-			index: await (await this._indexer.scope("heads")).init({ schema: ShallowEntry }),
+			index: await (await logIndexer.scope("heads")).init({ schema: ShallowEntry }),
 			publicKey: this._identity.publicKey,
 			sort: this._sortFn
 		});
@@ -201,6 +208,8 @@ export class Log<T> {
 
 		this._onChange = options?.onChange;
 		this._closed = false;
+		this._closeController = new AbortController()
+
 	}
 
 	private _idString: string | undefined;
@@ -1222,6 +1231,7 @@ export class Log<T> {
 	async close() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
+		this._closeController.abort();
 		await this._indexer?.stop?.();
 		this._indexer = undefined as any;
 		this._loadedOnce = false;
@@ -1230,7 +1240,7 @@ export class Log<T> {
 	async drop() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-
+		this._closeController.abort();
 		await this.entryIndex?.clear();
 		await this._indexer?.drop();
 		await this._indexer?.stop?.();
@@ -1292,37 +1302,24 @@ export class Log<T> {
 		this._loadedOnce = true;
 
 		const providedCustomHeads = Array.isArray(opts["heads"]);
-		const heads = providedCustomHeads
-			? (opts["heads"] as Array<Entry<T>>)
-			: await this._entryIndex.getHeads(undefined, { ignoreMissing: opts.ignoreMissing, timeout: opts.timeout }).all()/* {
-				replicate: true, // TODO this.replication.replicate(x) => true/false
-				timeout: opts.fetchEntryTimeout,
-				reload: opts.reload,
-				ignoreMissing: opts.ignoreMissing,
-				cache: { update: true, reset: true }
-			} */;
 
-		if (heads) {
-			// Load the log
-			if (providedCustomHeads) {
-				await this.reset(heads as any as Entry<any>[]);
-			} else {
-				/*
-				TODO feat amount load
-				const amount = (opts as { amount?: number }).amount;
-				if (amount != null && amount >= 0 && amount < heads.length) {
-					throw new Error(
-						"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
-						amount +
-						" entries"
-					);
-				} */
+		try {
+			const heads = providedCustomHeads
+				? (opts["heads"] as Array<Entry<T>>)
+				: await this._entryIndex.getHeads(undefined, { signal: this._closeController.signal, ignoreMissing: opts.ignoreMissing, timeout: opts.timeout }).all()
 
-				await this.join(heads instanceof Entry ? [heads] : heads, {
-					/* length: amount, */
-					timeout: opts?.fetchEntryTimeout
-				});
+			if (heads) {
+				// Load the log
+				if (providedCustomHeads) {
+					await this.reset(heads as any as Entry<any>[]);
+				} else {
+					await this.join(heads instanceof Entry ? [heads] : heads, {
+						timeout: opts?.fetchEntryTimeout
+					});
+				}
 			}
+		} catch (error) {
+			throw error;
 		}
 	}
 

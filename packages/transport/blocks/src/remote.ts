@@ -171,7 +171,7 @@ export class RemoteBlocks implements IBlocks {
 	private async _readFromPeers(
 		cidString: string,
 		cidObject: CID,
-		options: { timeout?: number; hasher?: any; from?: string[] } = {}
+		options: { signal?: AbortSignal, timeout?: number; hasher?: any; from?: string[] } = {}
 	): Promise<Uint8Array | undefined> {
 		const codec = (codecCodes as any)[cidObject.code];
 		let promise = this._readFromPeersPromises.get(cidString);
@@ -191,9 +191,11 @@ export class RemoteBlocks implements IBlocks {
 							"abort",
 							abortHandler
 						);
+						options?.signal?.removeEventListener("abort", abortHandler)
 						reject(new AbortError());
 					};
 					this.closeController.signal.addEventListener("abort", abortHandler);
+					options?.signal?.addEventListener("abort", abortHandler)
 
 					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
 						const value = await checkDecodeBlock(cidObject, bytes, {

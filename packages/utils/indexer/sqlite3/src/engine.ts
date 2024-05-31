@@ -14,7 +14,7 @@ import {
 	convertToSQLType,
 	convertSearchRequestToQuery,
 	getSQLTable,
-	resolveFieldValues,
+	insert,
 	resolveTable,
 	/* getTableName, */
 	convertSumRequestToQuery,
@@ -143,8 +143,8 @@ export class SQLLiteIndex<T extends Record<string, any>> implements Index<T, any
 			this.properties.db.exec(sql);
 
 			// put and return the id
-			let sqlPut = `insert or replace into ${table.name}  (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`
-			let sqlReplace = `insert into ${table.name} (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`
+			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`
+			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`
 
 			this.putStatement.set(table.name, await this.properties.db.prepare(sqlPut));
 			this.replaceStatement.set(table.name, await this.properties.db.prepare(sqlReplace));
@@ -253,27 +253,36 @@ export class SQLLiteIndex<T extends Record<string, any>> implements Index<T, any
 	}
 
 	async put(value: T, _id: undefined): Promise<void> {
-		const valuesToPut = resolveFieldValues(
+		await insert(
+			async (values, table) => {
+				const preId = values[table.primaryIndex]
+
+				if (table.name === "__122__array__av0") {
+					console.log("PUT", values, table.name)
+				}
+
+				if (table.name === "__122__array__av1") {
+					console.log("PUT", values, table.name)
+				}
+
+
+				if (preId != null) {
+					const statement = this.replaceStatement.get(table.name)!
+					await statement.run(values.map(x => typeof x === 'boolean' ? (x ? 1 : 0) : x));
+					await statement.reset?.()
+					return preId
+				}
+				else {
+					const statement = this.putStatement.get(table.name)!
+					const out = await statement.get(values.map(x => typeof x === 'boolean' ? (x ? 1 : 0) : x));
+					await statement.reset?.()
+					return out[table.primary]
+				}
+			},
 			value,
 			this.tables,
 			resolveTable([this.scopeString], this.tables, this.properties.schema!)
 		);
-
-		for (const { table, values } of valuesToPut) {
-			const idIsKnown = values[table.primaryIndex] != null
-
-			if (idIsKnown) {
-				const statement = this.replaceStatement.get(table.name)!
-				await statement.run(values.map(x => typeof x === 'boolean' ? (x ? 1 : 0) : x));
-				await statement.reset?.()
-			}
-			else {
-				const statement = this.replaceStatement.get(table.name)!
-				const out = await statement.get(values.map(x => typeof x === 'boolean' ? (x ? 1 : 0) : x));
-				await statement.reset?.()
-				console.log(out)
-			}
-		}
 	}
 
 	async del(id: types.IdKey): Promise<void> {
@@ -487,6 +496,10 @@ export class SQLiteIndices implements types.Indices {
 	async start(): Promise<void> {
 
 		this.closed = false;
+
+		await this.properties.db.open(); // TODO only open if parent is not defined ? or this method will not be the opposite of close
+
+
 		for (const scope of this.scopes.values()) {
 			await scope.start()
 		}
@@ -494,6 +507,8 @@ export class SQLiteIndices implements types.Indices {
 		for (const index of this.indices) {
 			await index.index.start()
 		}
+
+
 	}
 
 	async stop(): Promise<void> {

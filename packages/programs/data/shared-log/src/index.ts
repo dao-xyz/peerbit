@@ -37,7 +37,7 @@ import {
 	AbsoluteReplicas,
 	ReplicationError,
 	type ReplicationLimits,
-	type ReplicatorRect,
+	ReplicatorRect,
 	RequestRoleMessage,
 	ResponseRoleMessage,
 	decodeReplicas,
@@ -48,7 +48,6 @@ import {
 import pDefer, { type DeferredPromise } from "p-defer";
 import { Cache } from "@peerbit/cache";
 import { CustomEvent } from "@libp2p/interface";
-import yallist from "yallist";
 import {
 	AcknowledgeDelivery,
 	DeliveryMode,
@@ -63,8 +62,10 @@ export * from "./replication.js";
 import PQueue from "p-queue";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import { getCoverSet, getSamples, isMatured } from "./ranges.js";
+import { SearchRequest, StringMatch, type Index } from "@peerbit/indexer-interface";
 export { type CPUUsage, CPUUsageIntervalLag };
 export { Observer, Replicator, Role };
+import { HashmapIndices } from '@peerbit/indexer-simple'
 
 export const logger = loggerFn({ module: "shared-log" });
 
@@ -171,7 +172,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	// options
 	private _role!: Observer | Replicator;
 	private _roleConfig!: AdaptiveReplicatorOptions | Observer | Replicator;
-	private _sortedPeersCache!: yallist<ReplicatorRect> | undefined;
+	private _sortedPeersCache!: Index<ReplicatorRect> | undefined;
 	private _totalParticipation!: number;
 	private _gidPeersHistory!: Map<string, Set<string>>;
 
@@ -535,9 +536,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		this._onSubscriptionFn = this._onSubscription.bind(this);
 		this._totalParticipation = 0;
-		this._sortedPeersCache = yallist.create();
+		const out = await new HashmapIndices().init({ schema: ReplicatorRect })
+		this._sortedPeersCache = out;
 		this._gidPeersHistory = new Map();
 
+		const indexer = await this.node.indexer.scope("log")
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
 			...this._logProperties,
@@ -554,7 +557,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			trim: this._logProperties?.trim && {
 				...this._logProperties?.trim
 			},
-			indexer: await this.node.indexer.scope("log")
+			indexer
 		});
 
 		// Open for communcation
@@ -652,7 +655,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 	async getMemoryUsage() {
 		return (
-			((await this.log.entryIndex?.getMemoryUsage()) || 0) + (await this.log.blocks.size())
+			(await this.log.blocks.size())
+			/* ((await this.log.entryIndex?.getMemoryUsage()) || 0) */ // + (await this.log.blocks.size())
 		);
 	}
 
@@ -1098,16 +1102,17 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 	}
 
-	getReplicatorsSorted(): yallist<ReplicatorRect> | undefined {
+	getReplicatorsSorted(): Index<ReplicatorRect> | undefined {
 		return this._sortedPeersCache;
 	}
 
 	async waitForReplicator(...keys: PublicSignKey[]) {
-		const check = () => {
+		const check = async () => {
 			for (const k of keys) {
-				const rect = this.getReplicatorsSorted()
-					?.toArray()
-					?.find((x) => x.publicKey.equals(k));
+				const rects = await this.getReplicatorsSorted()
+					?.query(new SearchRequest({ query: [new StringMatch({ key: 'hash', value: k.hashcode() })] }), this.node.identity.publicKey)
+				const rect = await rects.results[0]?.value
+
 				if (
 					!rect ||
 					!isMatured(rect.role, +new Date(), this.getDefaultMinRoleAge())
@@ -1214,9 +1219,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
-	getDefaultMinRoleAge(): number {
+	async getDefaultMinRoleAge(): Promise<number> {
 		const now = +new Date();
-		const replLength = this.getReplicatorsSorted()!.length;
+		const replLength = await this.getReplicatorsSorted().getSize();
 		const diffToOldest =
 			replLength > 1 ? now - this.oldestOpenTime - 1 : Number.MAX_SAFE_INTEGER;
 		return Math.min(
@@ -1721,7 +1726,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					// if we are replicator, we will always persist entries that we need to so filtering on createdLocally will not make a difference
 					let entriesToDelete =
 						this._role instanceof Observer
-							? [] // TODO (expected behaviour?) /* entries.filter((e) => !e.createdLocally) */
+							? entries // TODO (expected behaviour?) /* entries.filter((e) => !e.createdLocally) */
 							: entries;
 
 					if (this.sync) {

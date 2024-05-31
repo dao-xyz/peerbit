@@ -32,6 +32,7 @@ export class Observer extends Role {
 export const REPLICATOR_TYPE_VARIANT = new Uint8Array([2]);
 
 export class ReplicationSegment {
+
 	@field({ type: "u64" })
 	timestamp: bigint;
 

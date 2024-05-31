@@ -4,18 +4,22 @@ import {
 	serialize,
 	field,
 	option,
-	BinaryReader
+	BinaryReader,
+	vec
 } from "@dao-xyz/borsh";
 import { TransportMessage } from "./message.js";
-import { Observer, Replicator, Role } from "./role.js";
-import { PublicSignKey } from "@peerbit/crypto";
+import { Observer, ReplicationSegment, Replicator, Role } from "./role.js";
 import yallist from "yallist";
 
 export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
 
-export type ReplicatorRect = {
-	publicKey: PublicSignKey;
-	role: Replicator;
+export class ReplicatorRect {
+
+	@field({ type: 'string' })
+	hash: string;
+
+	@field({ type: ReplicationSegment })
+	segment: ReplicationSegment;
 };
 
 interface SharedLog {

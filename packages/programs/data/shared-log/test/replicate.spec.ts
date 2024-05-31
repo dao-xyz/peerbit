@@ -81,9 +81,11 @@ describe(`exchange`, function () {
 	});
 
 	afterEach(async () => {
-		if (db1) await db1.drop();
+		try {
+			await Promise.allSettled([db1.drop(), db2.drop()]);
+		} catch (error) {
 
-		if (db2) await db2.drop();
+		}
 
 		await session.stop();
 	});

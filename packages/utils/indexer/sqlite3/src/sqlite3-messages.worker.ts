@@ -17,6 +17,11 @@ interface Close extends Message {
     type: 'close'
 }
 
+interface Open extends Message {
+    type: 'open'
+}
+
+
 interface Prepare extends Message {
     type: 'prepare'
     sql: string
@@ -98,7 +103,7 @@ interface Response {
 
 
 
-export type DatabaseMessages = CreateDatabase | Exec | Prepare | Close | Run
+export type DatabaseMessages = CreateDatabase | Exec | Prepare | Close | Open | Run
 export type StatementMessages = Bind | Step | Get | Reset | All | Finalize | RunStatement
 export type ResponseMessages = ErrorResponse | Response
 

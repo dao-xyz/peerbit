@@ -377,11 +377,11 @@ const isNestedType = (type: FieldType): type is AbstractType<any> => {
 	const unwrapped = unwrapNestedType(type);
 	return typeof unwrapped === "function" && unwrapped !== Uint8Array;
 }
-const unwrapNestedType = (type: FieldType): Constructor<any> => {
+const unwrapNestedType = (type: FieldType): FieldType => {
 	if (type instanceof WrappedType) {
-		return type.elementType as Constructor<any>;
+		return type.elementType;
 	}
-	return type as Constructor<any>;
+	return type
 
 
 }
@@ -398,7 +398,7 @@ const getTableFromField = (parentTable: Table, tables: Map<string, Table>, field
 		clazzNames.push(WRAPPED_SIMPLE_VALUE_VARIANT)
 	}
 	else {
-		const testCtors = [unwrapNestedType(field.type), ...(getDependencies(unwrapNestedType(field.type), 0) || []) as Constructor<any>[]]
+		const testCtors: any[] = [unwrapNestedType(field.type), ...(getDependencies(unwrapNestedType(field.type) as any, 0) || []) as Constructor<any>[]]
 		for (const ctor of testCtors) {
 			if (!ctor) {
 				continue;
@@ -462,38 +462,38 @@ const getTableFromValue = (parentTable: Table, tables: Map<string, Table>, field
 }
 
 
-export const resolveFieldValues = (
+export const insert = async (
+	insertFn: (values: any[], table: Table) => Promise<any>,
 	obj: Record<string, any>,
 	tables: Map<string, Table>,
 	table: Table,
 	parentId: any = undefined,
 	index?: number,
-): { table: Table; values: (any | ((parentId: any) => any))[] }[] => {
+) => {
 	const fields = getSchema(table.ctor).fields;
-	const result: { table: Table; values: any[] } = { table, values: [] };
-	const ret: { table: Table; values: any[] }[] = [];
+	const bindableValues: any[] = [];
 
 
-	const handleElement = (item: any, field: Field, index?: number) => {
+	const handleElement = async (item: any, field: Field, parentId: any, index?: number) => {
 		const subTable = getTableFromValue(table, tables, field, item);
 
-		const itemResolved = resolveFieldValues(
+		await insert(
+			insertFn,
 			(typeof item === "function" && item instanceof Uint8Array === false) ? item : new subTable.ctor(item),
 			tables,
 			subTable,
-			parentId ?? obj[table.primary], /* parentId ?? obj[table.primary] */
+			parentId, /* parentId ?? obj[table.primary] */
 			index
 		);
 
-		ret.push(...itemResolved);
 	}
 
-	const handleNested = (field: Field, optional = false) => {
+	const handleNested = async (field: Field, optional: boolean, parentId: any) => {
 		if (Array.isArray(obj[field.key])) {
 			const arr = obj[field.key];
 			for (let i = 0; i < arr.length; i++) {
 				const item = arr[i];
-				handleElement(item, field, i);
+				await handleElement(item, field, parentId, i);
 			}
 		} else {
 
@@ -515,44 +515,70 @@ export const resolveFieldValues = (
 				}
 				return;
 			}
-			handleElement(value, field);
+			await handleElement(value, field, parentId);
 
 		}
 	};
-	for (const field of fields) {
-		if (typeof field.type === "string" || field.type == Uint8Array) {
-			result.values.push(convertToSQLType(obj[field.key], field.type));
-		} else if (field.type instanceof OptionKind) {
-			if (typeof field.type.elementType === "string" || field.type.elementType == Uint8Array) {
-				result.values.push(
-					convertToSQLType(obj[field.key], field.type.elementType)
-				);
-			}
-			else if (field.type.elementType instanceof VecKind) {
-				handleNested(field, true);
-			} else {
-				handleNested(field, true)
-			}
-		} else if (field.type instanceof VecKind) {
-			handleNested(field);
-		} else {
-			handleNested(field);
+
+	let nestedFields: Field[] = [];
+	if (parentId != null) {
+		bindableValues.push(undefined);
+		bindableValues.push(parentId);
+		if (index != null) {
+			bindableValues.push(index);
 		}
+
 	}
 
+	for (const field of fields) {
+		const unwrappedType = unwrapNestedType(field.type);
+		if (field.type instanceof VecKind === false && (typeof unwrappedType === "string" || unwrappedType == Uint8Array)) {
+			if (Array.isArray(obj[field.key])) {
+				console.log("??")
+			}
+			bindableValues.push(convertToSQLType(obj[field.key], unwrappedType));
+		}
+		else {
+			nestedFields.push(field);
+		}
+		/* 
+				if (typeof field.type === "string" || field.type == Uint8Array) {
+					bindableValues.push(convertToSQLType(obj[field.key], field.type));
+				} else if (field.type instanceof OptionKind) {
+					if (typeof field.type.elementType === "string" || field.type.elementType == Uint8Array) {
+						bindableValues.push(
+							convertToSQLType(obj[field.key], field.type.elementType)
+						);
+					}
+					else if (field.type.elementType instanceof VecKind) {
+						handleNested(field, true);
+					} else {
+						handleNested(field, true)
+					}
+				} else if (field.type instanceof VecKind) {
+					handleNested(field);
+				} else {
+					handleNested(field);
+				} */
+	}
 
-
-	if (parentId != null) {
+	/* if (parentId != null) {
 
 		if (index != null) {
-			result.values.unshift(index);
+			bindableValues.unshift(index);
 		}
 
-		result.values.unshift(parentId);
-		result.values.unshift(undefined);
+		bindableValues.unshift(parentId);
+		bindableValues.unshift(undefined);
 	}
+ */
+	const thisId = await insertFn(bindableValues, table);
 
-	return [result, ...ret];
+	for (const nested of nestedFields) {
+		const isOptional = nested.type instanceof OptionKind;
+		await handleNested(nested, isOptional, thisId)
+	}
+	/* return [result, ...ret]; */
 };
 
 export const getTablePrefixedField = (table: Table, key: string, skipPrefix: boolean = false) => `${skipPrefix ? '' : table.name + "#"}${key}`
@@ -618,8 +644,6 @@ export const resolveInstanceFromValue = async <T>(
 
 						resolvedArr[element[ARRAY_INDEX_COLUMN]] = (subtable.isSimpleValue ? resolved.value : resolved);
 					}
-
-
 				}
 			}
 

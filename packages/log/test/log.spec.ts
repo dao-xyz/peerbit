@@ -6,6 +6,7 @@ import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
 import { expect } from "chai";
+import { HashmapIndices } from "@peerbit/indexer-simple";
 
 describe("properties", function () {
 	let store: BlockStore;
@@ -307,4 +308,37 @@ describe("properties", function () {
 			);
 		});
 	});
+
+	describe("size", () => {
+		it("returns the sum of payloads", async () => {
+			const log = new Log<Uint8Array>();
+			await log.open(store, signKey);
+			await log.append(new Uint8Array([1]));
+			await log.append(new Uint8Array([2, 3]));
+			await log.append(new Uint8Array([3, 4, 5]));
+			const arr = (await log.toArray())
+			const size = arr.reduce((acc, entry) => acc + entry.payloadByteLength, 0);
+			expect(log.length).equal(3);
+			expect(await log.entryIndex.getMemoryUsage()).equal(size);
+		});
+	});
+
+	describe("indexer", () => {
+		it('unique', async () => {
+			let indices = new HashmapIndices()
+
+			const log1 = new Log();
+			await log1.open(store, signKey, { indexer: indices });
+
+
+			const log2 = new Log();
+			await log2.open(store, signKey, { indexer: indices });
+			await log1.append(new Uint8Array([0]))
+
+			expect(await log1.toArray()).to.have.length(1)
+			expect(await log2.toArray()).to.have.length(0)
+		})
+	})
+
+
 });

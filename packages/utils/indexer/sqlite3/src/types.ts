@@ -8,6 +8,8 @@ export type Database = {
     exec: (sql: string) => Promise<any> | any
     prepare: (sql: string, err?: (err: any) => any) => Promise<Statement> | Statement,
     close: (err?: (err: any) => any) => Promise<any> | any
+    open(): Promise<any> | any
+
 }
 
 export type StatementGetResult = { [key: string]: SQLLiteValue }
@@ -15,7 +17,7 @@ export type StatementGetResult = { [key: string]: SQLLiteValue }
 export type Statement = {
 
     bind: (values: BindableValue[], err?: (err: any) => any) => Promise<Statement> | Statement
-    finalize: (err?: (err: any) => any) => Promise<void> | void
+    finalize?: (err?: (err: any) => any) => Promise<void> | void
     get: (values?: BindableValue[], err?: (err: any, row: any) => any) => Promise<StatementGetResult> | StatementGetResult
     run: (values: BindableValue[], err?: (err: any) => any) => Promise<void> | void
     reset?: (err?: (err: any) => any) => Promise<Statement> | Statement,

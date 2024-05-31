@@ -5,7 +5,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { AbsoluteReplicas, maxReplicas } from "../src/replication.js";
 import { Replicator } from "../src/role.js";
-import { Ed25519Keypair, randomBytes, toBase64 } from "@peerbit/crypto";
+import { Ed25519Keypair, randomBytes, /* randomBytes, */ toBase64 } from "@peerbit/crypto";
 import { deserialize } from "@dao-xyz/borsh";
 import { waitForConverged } from "./utils.js";
 import { expect } from "chai";
@@ -31,7 +31,6 @@ const checkReplicas = async (
 		expect(map.size).equal(entryCount);
 	});
 };
-
 
 const checkBounded = async (
 	entryCount: number,
@@ -151,7 +150,11 @@ describe(`sharding`, () => {
 	});
 
 	afterEach(async () => {
-		await Promise.all([db1?.drop(), db2?.drop(), db3?.drop(), db4?.drop()]);
+		try {
+			await Promise.allSettled([db1?.drop(), db2?.drop(), db3?.drop(), db4?.drop()]);
+		} catch (error) {
+
+		}
 		db1 = undefined as any;
 		db2 = undefined as any;
 		db3 = undefined as any;
@@ -421,6 +424,7 @@ describe(`sharding`, () => {
 		// Specifically is .pendingDeletes is used to resuse safelyDelete requests,
 		// which would make this test break since reopen, would/should invalidate pending deletes
 		// TODO make this more well defined
+
 		await delay(100);
 
 		await session.peers[2].open(db3);
@@ -807,29 +811,33 @@ describe(`sharding`, () => {
 						await db2.add(data, { meta: { next: [] } });
 					}
 
-					await waitForResolved(
-						async () => {
-							expect((db1.log.role as Replicator).factor).to.be.within(
-								0.43,
-								0.57
-							);
-							expect((db2.log.role as Replicator).factor).to.be.within(
-								0.43,
-								0.57
-							);
-						},
-						{ timeout: 20 * 1000 }
-					);
+					try {
+						await waitForResolved(
+							async () => {
+								expect((db1.log.role as Replicator).factor).to.be.within(
+									0.43,
+									0.57
+								);
+								expect((db2.log.role as Replicator).factor).to.be.within(
+									0.43,
+									0.57
+								);
+							},
+							{ timeout: 20 * 1000 }
+						);
 
-					// allow 10% error
-					await waitForResolved(async () => {
-						expect(await db1.log.getMemoryUsage()).lessThan(
-							memoryLimit * 1.1
-						);
-						expect(await db2.log.getMemoryUsage()).lessThan(
-							memoryLimit * 1.1
-						);
-					});
+						// allow 10% error
+						await waitForResolved(async () => {
+							expect(await db1.log.getMemoryUsage()).lessThan(
+								memoryLimit * 1.1
+							);
+							expect(await db2.log.getMemoryUsage()).lessThan(
+								memoryLimit * 1.1
+							);
+						});
+					} catch (error) {
+						throw error;
+					}
 				});
 
 				it("overflow limited", async () => {
@@ -1055,16 +1063,29 @@ describe(`sharding`, () => {
 						await db2.add(data, { meta: { next: [] } });
 					}
 					await delay(db1.log.timeUntilRoleMaturity);
+					try {
 
-					await waitForResolved(async () =>
-						expect(await db1.log.getMemoryUsage()).lessThan(10 * 1e3)
-					); // 10% error at most
+						await waitForResolved(async () =>
+							expect(await db1.log.getMemoryUsage()).lessThan(10 * 1e3)
+						); // 10% error at most
 
-					await waitForResolved(async () =>
-						expect(
-							Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
-						).lessThan((memoryLimit / 100) * 10)
-					); // 10% error at most
+						await waitForResolved(async () =>
+							expect(
+								Math.abs(memoryLimit - (await db2.log.getMemoryUsage()))
+							).lessThan((memoryLimit / 100) * 10)
+						); // 10% error at most
+					} catch (error) {
+						const db1Memory = await db1.log.getMemoryUsage();
+						const db2Memory = await db2.log.getMemoryUsage();
+						const db1Factor = (db1.log.role as Replicator).factor;
+						const db2Factor = (db2.log.role as Replicator).factor;
+						console.log("db1 factor", db1Factor);
+						console.log("db2 factor", db2Factor);
+						console.log("db1 memory", db1Memory);
+						console.log("db2 memory", db2Memory);
+						const [_a, _b] = [db1, db2].map(x => (x.log as any)["_pendingDeletes"].size)
+						throw error;
+					}
 				});
 
 				it("even if unlimited", async () => {
