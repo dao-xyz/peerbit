@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { sha256, sha256Base64 } from "../src/hash.js";
 import { deserialize, field, serialize } from "@dao-xyz/borsh";
 
-//node --loader ts-node/esm ./src/__benchmark__/hash.ts
+//node --loader ts-node/esm ./benchmark/hash.ts
 
 /**
  * Benchmark for hashing + serializing

@@ -3,7 +3,7 @@ import { Ed25519Keypair, Ed25519PublicKey } from "../src/ed25519.js";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { peerIdFromBytes, peerIdFromKeys } from "@libp2p/peer-id";
-//node --loader ts-node/esm ./src/__benchmark__/peer-ids.ts
+//node --loader ts-node/esm ./benchmark/peer-ids.ts
 
 const keypair = await Ed25519Keypair.create();
 const peerId = await createEd25519PeerId();
