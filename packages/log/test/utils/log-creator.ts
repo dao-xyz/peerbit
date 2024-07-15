@@ -60,8 +60,9 @@ export class LogCreator {
 				}
 			});
 			await log4.join(logA);
+			const toArray = (await log4.toArray())
 			expect(
-				(await log4.toArray()).map((h) => h.payload.getValue())
+				toArray.map((h) => h.payload.getValue())
 			).to.deep.equal(expectedData);
 			return log4;
 		};

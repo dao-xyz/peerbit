@@ -1,4 +1,4 @@
-import type { CanAppend, Encoding, TrimOptions } from "@peerbit/log";
+import type { CanAppend, Change, Encoding, ShallowEntry, TrimOptions } from "@peerbit/log";
 import { Entry } from "@peerbit/log";
 import type { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
 import { variant, field } from "@dao-xyz/borsh";
@@ -7,8 +7,8 @@ import { PublicSignKey, randomBytes } from "@peerbit/crypto";
 import {
 	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
-	type RoleOptions,
-	SharedLog
+	SharedLog,
+	type ReplicationOptions
 } from "../../../src/index.js";
 import { JSON_ENCODING } from "./encoding.js";
 
@@ -26,19 +26,20 @@ export class EventIndex<T> {
 	}
 
 	async get(): Promise<any> {
-		return this._log ? this._log.log.values.toArray() : [];
+		return this._log ? this._log.log.toArray() : [];
 	}
 }
 
 export type Args<T> = {
-	role?: RoleOptions;
+	onChange?: (change: Change<Operation<T>>) => void,
+	replicate?: ReplicationOptions;
 	trim?: TrimOptions;
 	replicas?: ReplicationLimitsOptions;
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
-	sync?: (entry: Entry<Operation<T>>) => boolean;
+	sync?: (entry: Entry<Operation<T>> | ShallowEntry) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 };
@@ -66,7 +67,7 @@ export class EventStore<T> extends Program<Args<T>> {
 	async open(properties?: Args<T>) {
 		this._index = new EventIndex(this.log);
 		await this.log.open({
-			onChange: () => undefined,
+			onChange: properties?.onChange,
 			canAppend: (entry) => {
 				const a = this._canAppend ? this._canAppend(entry) : true;
 				if (!a) {
@@ -75,7 +76,7 @@ export class EventStore<T> extends Program<Args<T>> {
 				return properties?.canAppend ? properties.canAppend(entry) : true;
 			},
 			canReplicate: properties?.canReplicate,
-			role: properties?.role,
+			replicate: properties?.replicate,
 			trim: properties?.trim,
 			replicas: properties?.replicas,
 			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,

@@ -91,7 +91,7 @@ describe("signature", function () {
 
   expect(err).equal(undefined)
   expect(log1._id).equal('A')
-  expect(log1.values.length).equal(1)
+  expect(log1.length).equal(1)
   expect(log1.values[0].payload.getValue()).equal('one')
 })
 */

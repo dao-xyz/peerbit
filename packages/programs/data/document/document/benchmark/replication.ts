@@ -9,7 +9,7 @@ import { DirectSub } from "@peerbit/pubsub";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { delay } from "@peerbit/time";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
+// Run with "node --loader ts-node/esm ./benchmark/replication.ts"
 // put x 862 ops/sec ±4.75% (75 runs sampled)
 
 @variant("document")
@@ -53,7 +53,7 @@ const peers = await Promise.all(
 			transports: [tcp()],
 			streamMuxers: [yamux()],
 			services: {
-				pubsub: (sub) =>
+				pubsub: (sub: any) =>
 					new DirectSub(sub, {
 						canRelayMessage: true
 						/* connectionManager: true */
@@ -65,7 +65,7 @@ const peers = await Promise.all(
 			transports: [tcp()],
 			streamMuxers: [yamux()],
 			services: {
-				pubsub: (sub) =>
+				pubsub: (sub: any) =>
 					new DirectSub(sub, {
 						canRelayMessage: true
 						/* connectionManager: true */
@@ -76,7 +76,7 @@ const peers = await Promise.all(
 			transports: [tcp()],
 			streamMuxers: [yamux()],
 			services: {
-				pubsub: (sub) =>
+				pubsub: (sub: any) =>
 					new DirectSub(sub, {
 						canRelayMessage: true
 						/* connectionManager: true */
@@ -101,8 +101,7 @@ for (const [i, client] of peers.entries()) {
 	if (address) {
 		store = await client.open<TestStore>(address, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}
@@ -110,8 +109,7 @@ for (const [i, client] of peers.entries()) {
 	} else {
 		store = await client.open(new TestStore(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}

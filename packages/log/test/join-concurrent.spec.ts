@@ -86,8 +86,8 @@ describe("concurrency", function () {
 			expect(log1.length).equal(41);
 			expect(log2.length).equal(41);
 			assert.deepStrictEqual(
-				log1.values.toArray().map((e) => e.payload.getValue()),
-				log2.values.toArray().map((e) => e.payload.getValue())
+				log1.toArray().map((e) => e.payload.getValue()),
+				log2.toArray().map((e) => e.payload.getValue())
 			);
 		}); */
 

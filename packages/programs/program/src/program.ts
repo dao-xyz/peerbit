@@ -96,8 +96,7 @@ type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 export abstract class Program<
 	Args = any,
 	Events extends ProgramEvents = ProgramEvents
-> implements Manageable<Args>
-{
+> implements Manageable<Args> {
 	private _node: ProgramClient;
 	private _allPrograms: Program[] | undefined;
 
@@ -288,6 +287,9 @@ export abstract class Program<
 
 	private async end(type: "drop" | "close", from?: Program): Promise<boolean> {
 		if (this.closed) {
+			if (type === "drop") {
+				throw new Error("Program is closed, cannot drop");
+			}
 			return true;
 		}
 
@@ -372,6 +374,7 @@ export abstract class Program<
 				this.node.services.pubsub.waitFor(x, { signal: options?.signal })
 			)
 		);
+
 
 		// wait for subscribing to topics
 		return new Promise<void>((resolve, reject) => {

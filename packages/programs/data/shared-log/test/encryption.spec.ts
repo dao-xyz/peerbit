@@ -71,7 +71,7 @@ describe("encryption", () => {
 			// A peer that can open
 			const store2 = await client2.open<SimpleStore>(store.address!);
 			await waitForResolved(() => expect(store2.log.log.length).equal(1));
-			const entry = (await store2.log.log.values.toArray())[0];
+			const entry = (await store2.log.log.toArray())[0];
 
 			// use .getPayload() instead of .payload to decrypt the payload
 			expect((await entry.getPayload()).getValue()).to.deep.equal(
@@ -111,10 +111,10 @@ describe("encryption", () => {
 				}
 			});
 
-			expect(store.log.log.values.length).equal(1);
+			expect(store.log.log.length).equal(1);
 			await store.close();
 			store = await client.open(store.clone());
-			expect(store.log.log.values.length).equal(1);
+			expect(store.log.log.length).equal(1);
 			await store.close();
 		});
 
@@ -134,10 +134,10 @@ describe("encryption", () => {
 				}
 			});
 
-			expect(store.log.log.values.length).equal(1);
+			expect(store.log.log.length).equal(1);
 			await store.close();
 			store = await client2.open(store.clone());
-			expect(store.log.log.values.length).equal(0);
+			expect(store.log.log.length).equal(0);
 			await store.close();
 		});
 	});

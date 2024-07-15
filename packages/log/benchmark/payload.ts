@@ -8,7 +8,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { BORSH_ENCODING } from "../src/encoding.js";
 import { Entry } from "../src/entry.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/payload.ts"
 
 @variant("document")
 class Document {

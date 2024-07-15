@@ -14,6 +14,7 @@ const logger = loggerFn({ module: "exchange-heads" });
  */
 @variant(0)
 export class EntryWithRefs<T> {
+
 	@field({ type: Entry })
 	entry: Entry<T>;
 
@@ -154,23 +155,23 @@ export const allEntriesWithUniqueGids = async (
 	}
 
 	// TODO optimize this
-	const map: Map<string, ShallowEntry> = new Map();
-	let curr: ShallowEntry[] = [entry];
+	const map: Map<string, ShallowEntry | Entry<any>> = new Map();
+	let curr: (Entry<any> | ShallowEntry)[] = [entry];
 	while (curr.length > 0) {
-		const nexts: ShallowEntry[] = [];
+		const nexts: (Entry<any> | ShallowEntry)[] = [];
 		for (const element of curr) {
 			if (!map.has(element.meta.gid)) {
 				map.set(element.meta.gid, element);
 				if (element.meta.type === EntryType.APPEND) {
 					for (const next of element.meta.next) {
-						const indexedEntry = log.entryIndex.getShallow(next);
+						const indexedEntry = await log.entryIndex.getShallow(next);
 						if (!indexedEntry) {
 							logger.error(
 								"Failed to find indexed entry for hash when fetching references: " +
 								next
 							);
 						} else {
-							nexts.push(indexedEntry);
+							nexts.push(indexedEntry.value);
 						}
 					}
 				}

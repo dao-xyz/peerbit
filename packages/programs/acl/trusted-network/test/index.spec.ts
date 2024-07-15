@@ -6,7 +6,8 @@ import {
 	getPathGenerator,
 	getToByFrom,
 	TrustedNetwork,
-	IdentityGraph
+	IdentityGraph,
+	FromTo
 } from "../src/index.js";
 import { delay, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, type Identity } from "@peerbit/crypto";
@@ -14,9 +15,9 @@ import { Secp256k1PublicKey } from "@peerbit/crypto";
 import { Wallet } from "@ethersproject/wallet";
 import { serialize, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
-import { Documents, SearchRequest } from "@peerbit/document";
-import { Replicator } from "@peerbit/shared-log";
+import { Documents } from "@peerbit/document";
 import { expect } from "chai";
+import { SearchRequest } from "@peerbit/indexer-interface";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
@@ -30,7 +31,7 @@ const createIdentity = async () => {
 class AnyCanAppendIdentityGraph extends IdentityGraph {
 	constructor(props?: {
 		id?: Uint8Array;
-		relationGraph?: Documents<IdentityRelation>;
+		relationGraph?: Documents<IdentityRelation, FromTo>;
 	}) {
 		super(props);
 	}
@@ -163,7 +164,7 @@ describe("index", () => {
 			const observer = await AnyCanAppendIdentityGraph.open(
 				replicator.address,
 				session.peers[1],
-				{ args: { role: { type: "observer" } } }
+				{ args: { replicate: false } }
 			);
 			await observer.relationGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey
@@ -203,8 +204,8 @@ describe("index", () => {
 				rootTrust: session.peers[0].peerId
 			});
 			await session.peers[0].open(l0a);
-			expect(l0a.trustGraph.log.role).to.be.instanceOf(Replicator);
-			expect((l0a.trustGraph.log.role as Replicator).factor).equal(1);
+			expect(await l0a.trustGraph.log.isReplicating()).to.be.true;
+			expect(((await l0a.trustGraph.log.getMyReplicationSegments()).reduce((a, b) => a + b.widthNormalized, 0))).to.equal(1);
 		});
 
 		it("trusted by chain", async () => {
@@ -225,7 +226,7 @@ describe("index", () => {
 				session.peers[2],
 				{
 					args: {
-						role: "observer"
+						replicate: false
 					}
 				}
 			);
@@ -241,7 +242,7 @@ describe("index", () => {
 			await l0a.add(session.peers[1].peerId);
 
 			await l0b.trustGraph.log.log.join(
-				await l0a.trustGraph.log.log.getHeads()
+				await l0a.trustGraph.log.log.getHeads().all()
 			);
 
 			await waitForResolved(async () =>
@@ -251,7 +252,7 @@ describe("index", () => {
 			await l0b.add(session.peers[2].peerId); // Will only work if peer2 is trusted
 
 			await l0a.trustGraph.log.log.join(
-				await l0b.trustGraph.log.log.getHeads()
+				await l0b.trustGraph.log.log.getHeads().all()
 			);
 
 			await waitForResolved(async () =>

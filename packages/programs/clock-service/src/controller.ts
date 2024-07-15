@@ -5,7 +5,7 @@ import { SignatureWithKey } from "@peerbit/crypto";
 import { Entry, HLC } from "@peerbit/log";
 import { TrustedNetwork } from "@peerbit/trusted-network";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Replicator, type RoleOptions } from "@peerbit/shared-log";
+import { type ReplicationOptions } from "@peerbit/shared-log";
 import { serialize } from "@dao-xyz/borsh";
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n: number | bigint) => (n < 0n ? -n : n);
@@ -38,7 +38,7 @@ export class SignError extends Result {
 	}
 }
 
-type Args = { role?: RoleOptions; maxTimeError?: number };
+type Args = { replicate?: ReplicationOptions; maxTimeError?: number };
 
 @variant("clock_service")
 export class ClockService extends Program<Args> {
@@ -64,14 +64,23 @@ export class ClockService extends Program<Args> {
 	 * @param maxError, in ms, defaults to 10 seconds
 	 */
 	async open(properties?: Args) {
+		if (properties?.replicate === true) {
+			properties.replicate = {
+				factor: 1
+			}
+		}
+		if (properties?.replicate && (properties.replicate as any)?.["factor"] !== 1) {
+			throw new Error("ClockService can only be used with a factor of 1");
+		}
+
 		this.maxError = BigInt((properties?.maxTimeError || 10e3) * 1e6);
-		await this._trustedNetwork.open({ role: properties?.role });
+		await this._trustedNetwork.open({ replicate: properties?.replicate });
 		await this._remoteSigner.open({
 			topic: this._trustedNetwork.trustGraph.log.log.idString + "/clock", // TODO do better
 			queryType: Uint8Array,
 			responseType: Result,
 			responseHandler:
-				!properties?.role || properties?.role instanceof Replicator
+				!properties?.replicate /* ||  properties?.replicate instanceof Replicator */ // ?? this feels wrong since the replication duties are dynamic
 					? async (arr, context) => {
 						const entry = deserialize(arr, Entry);
 						if (entry.hash) {

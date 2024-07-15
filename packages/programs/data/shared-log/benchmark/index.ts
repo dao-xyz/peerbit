@@ -7,7 +7,7 @@ import crypto from "crypto";
 import { Program } from "@peerbit/program";
 import { SharedLog, type Args } from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/index.ts"
 // put x 5,843 ops/sec ±4.50% (367 runs sampled)
 
 @variant("document")
@@ -67,8 +67,7 @@ const store = new TestStore({
 const client: ProgramClient = session.peers[0];
 await client.open<TestStore>(store, {
 	args: {
-		role: {
-			type: "replicator",
+		replicate: {
 			factor: 1
 		},
 		trim: { type: "length" as const, to: 100 },

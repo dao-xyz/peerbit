@@ -4,7 +4,9 @@
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
 		"strictNullChecks": false,
-		"outDir": "dist"
+		"outDir": "dist",
+		"skipLibCheck": true,
+		"checkJs": false
 	},
 	"include": [
 		"src",

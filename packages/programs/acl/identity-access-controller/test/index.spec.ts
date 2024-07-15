@@ -4,13 +4,12 @@ import { Access, AccessType } from "../src/access.js";
 import { AnyAccessCondition, PublicKeyAccessCondition } from "../src/condition.js";
 import { waitFor, waitForResolved } from "@peerbit/time";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
-import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
+import { Documents } from "@peerbit/document";
+import { SearchRequest, StringMatch } from "@peerbit/indexer-interface"
 import { Program } from "@peerbit/program";
 import { IdentityAccessController } from "../src/acl-db.js";
 import { type PeerId } from "@libp2p/interface";
-import { type RoleOptions } from "@peerbit/shared-log";
-import { Role } from "@peerbit/shared-log";
-import { Replicator } from "@peerbit/shared-log";
+import { SharedLog, type ReplicationOptions } from "@peerbit/shared-log";
 import { expect } from 'chai'
 
 @variant("document")
@@ -26,7 +25,7 @@ class Document {
 }
 
 @variant("test_store")
-class TestStore extends Program<{ role: RoleOptions }> {
+class TestStore extends Program<{ replicate: ReplicationOptions }> {
 	@field({ type: Documents })
 	store: Documents<Document>;
 
@@ -41,7 +40,7 @@ class TestStore extends Program<{ role: RoleOptions }> {
 		});
 	}
 
-	async open(properties?: { role: RoleOptions }) {
+	async open(properties?: { replicate: ReplicationOptions }) {
 		await this.accessController.open();
 		await this.store.open({
 			type: Document,
@@ -49,7 +48,7 @@ class TestStore extends Program<{ role: RoleOptions }> {
 			index: {
 				canRead: this.accessController.canRead.bind(this.accessController)
 			},
-			role: properties?.role
+			replicate: properties?.replicate
 		});
 	}
 }
@@ -81,13 +80,14 @@ describe("index", () => {
 	it("replicates by default", async () => {
 		const s = new TestStore({ publicKey: session.peers[0].peerId });
 		const l0a = await session.peers[0].open(s);
-		const checkRole = (role: Role) => {
-			expect(role).to.be.instanceOf(Replicator);
-			expect((role as Replicator).factor).equal(1);
+		const checkRole = async (log: SharedLog<any>) => {
+			expect(await log.isReplicating()).to.be.true
+			expect(((await log.getMyReplicationSegments()).reduce((a, b) => a + b.widthNormalized, 0))).to.equal(1);
+
 		};
-		checkRole(l0a.accessController.access.log.role);
-		checkRole(l0a.accessController.identityGraphController.relationGraph.role);
-		checkRole(l0a.accessController.trustedNetwork.trustGraph.role);
+		await checkRole(l0a.accessController.access.log);
+		await checkRole(l0a.accessController.identityGraphController.relationGraph.log);
+		await checkRole(l0a.accessController.trustedNetwork.trustGraph.log);
 	});
 
 	it("can write from trust web", async () => {
@@ -113,7 +113,7 @@ describe("index", () => {
 		await l0a.accessController.trustedNetwork.add(session.peers[1].peerId);
 
 		await l0b.accessController.trustedNetwork.trustGraph.log.log.join(
-			await l0a.accessController.trustedNetwork.trustGraph.log.log.getHeads()
+			await l0a.accessController.trustedNetwork.trustGraph.log.log.getHeads().all()
 		);
 
 		await waitFor(
@@ -125,8 +125,8 @@ describe("index", () => {
 			})
 		); // Now trusted
 
-		await l0a.store.log.log.join(await l0b.store.log.log.getHeads());
-		await l0b.store.log.log.join(await l0a.store.log.log.getHeads());
+		await l0a.store.log.log.join(await l0b.store.log.log.getHeads().all());
+		await l0b.store.log.log.join(await l0a.store.log.log.getHeads().all());
 
 		await waitForResolved(async () =>
 			expect(await l0a.store.index.getSize()).equal(2)
@@ -152,7 +152,7 @@ describe("index", () => {
 
 			const l0b = await TestStore.open(l0a.address!, session.peers[1]);
 
-			await l0b.store.log.log.join(await l0a.store.log.log.getHeads());
+			await l0b.store.log.log.join(await l0a.store.log.log.getHeads().all());
 
 			await waitForResolved(async () =>
 				expect(await l0b.store.index.getSize()).equal(1)
@@ -176,7 +176,7 @@ describe("index", () => {
 			);
 
 			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads()
+				await l0a.accessController.access.log.log.getHeads().all()
 			);
 			await waitForResolved(async () =>
 				expect(await l0b.store.index.getSize()).equal(1)
@@ -223,10 +223,10 @@ describe("index", () => {
 			);
 
 			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads()
+				await l0a.accessController.access.log.log.getHeads().all()
 			);
 			await l0c.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads()
+				await l0a.accessController.access.log.log.getHeads().all()
 			);
 
 			await expect(
@@ -245,7 +245,7 @@ describe("index", () => {
 				session.peers[2].peerId
 			);
 			await l0c.accessController.identityGraphController.relationGraph.log.log.join(
-				await l0b.accessController.identityGraphController.relationGraph.log.log.getHeads()
+				await l0b.accessController.identityGraphController.relationGraph.log.log.getHeads().all()
 			);
 
 			await waitForResolved(async () =>
@@ -291,7 +291,7 @@ describe("index", () => {
 			expect(access.id).to.exist;
 			await l0a.accessController.access.put(access);
 			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads()
+				await l0a.accessController.access.log.log.getHeads().all()
 			);
 
 			await waitForResolved(async () =>
@@ -317,7 +317,7 @@ describe("index", () => {
 				})
 			);
 			const l0b = await TestStore.open(l0a.address!, session.peers[1], {
-				args: { role: "observer" }
+				args: { replicate: false }
 			});
 
 			await l0b.store.log.waitForReplicator(
@@ -350,7 +350,7 @@ describe("index", () => {
 				}).initialize()
 			);
 			await l0b.accessController.access.log.log.join(
-				await l0a.accessController.access.log.log.getHeads()
+				await l0a.accessController.access.log.log.getHeads().all()
 			);
 			await waitForResolved(async () =>
 				expect(await l0b.accessController.access.index.getSize()).equal(1)
@@ -389,7 +389,7 @@ describe("index", () => {
 
 		const l0b = await TestStore.open(l0a.address!, session.peers[1], {
 			args: {
-				role: "observer"
+				replicate: false
 			}
 		});
 

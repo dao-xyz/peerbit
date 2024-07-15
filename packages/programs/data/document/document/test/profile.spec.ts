@@ -5,8 +5,8 @@ import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
 import { waitForResolved } from "@peerbit/time";
 import { TestSession } from "@peerbit/test-utils";
-import type { RoleOptions } from "@peerbit/shared-log";
 import { expect } from 'chai'
+import type { ReplicationOptions } from "@peerbit/shared-log";
 /**
  * A test meant for profiling purposes
  */
@@ -41,8 +41,8 @@ class TestStore extends Program {
 		this.docs = new Documents();
 	}
 
-	async open(properties?: { role: RoleOptions }): Promise<void> {
-		await this.docs.open({ type: Document, role: properties?.role });
+	async open(properties?: { replicate?: ReplicationOptions; }): Promise<void> {
+		await this.docs.open({ type: Document, replicate: properties?.replicate });
 	}
 }
 const RANDOM_BYTES = randomBytes(14 * 1000);
@@ -64,16 +64,14 @@ describe("profile", () => {
 			const store: TestStore = await (stores.length === 0
 				? client.open(new TestStore(), {
 					args: {
-						role: {
-							type: "replicator",
+						replicate: {
 							factor: 1
 						}
 					}
 				})
 				: TestStore.open(stores[0].address, client, {
 					args: {
-						role: {
-							type: "replicator",
+						replicate: {
 							factor: 1
 						}
 					}

@@ -70,12 +70,12 @@ describe("entry", function () {
 					clock
 				}
 			});
-			expect(entry.hash).to.equal("zb2rhkp7iF9qm87YVdLERWfiChsfs8FhnTEqUB426kQtq3zro");
+			expect(entry.hash).to.equal("zb2rhZwBBmAvUNPkSjsKLSf1F41aSM4QP2XLQortvngCfhttg");
 			expect(entry.gid).equal(sha256Base64Sync(Buffer.from("a")));
 			expect(entry.meta.clock.equals(clock)).to.be.true;
 			expect(entry.payload.getValue()).to.deep.equal(new Uint8Array([1]));
 			expect(entry.next.length).equal(0);
-			expect(entry.size).equal(215);
+			expect(entry.size).equal(212);
 		});
 
 		it("creates a entry with payload", async () => {
@@ -95,7 +95,7 @@ describe("entry", function () {
 				data: payload,
 				encoding: JSON_ENCODING
 			});
-			expect(entry.hash).to.equal("zb2rhcD9YFepJetzdndygKFLjMorAQEEVremfwzxr2S8jkpwy");
+			expect(entry.hash).to.equal("zb2rhkJGPvFC4NKfVACnJLgMN2wPPV8q2MFEaT4Buc89Sy9p8");
 			expect(entry.payload.getValue()).to.deep.equal(payload);
 			expect(entry.gid).equal(sha256Base64Sync(Buffer.from("a")));
 			expect(entry.meta.clock.equals(clock)).to.be.true;
@@ -168,7 +168,7 @@ describe("entry", function () {
 			});
 			expect(entry2.payload.getValue()).to.deep.equal(payload2);
 			expect(entry2.next.length).equal(1);
-			expect(entry2.hash).to.equal("zb2rhi1Jy97WwuumkKVYWb8ZdpjLiZVzHxCivcYZcs5Qn2N4T");
+			expect(entry2.hash).to.equal("zb2rhhiDKq4NrW7LHgHuV5cRiP4J1ysJmboYSp9jjdd7MzLmu");
 		});
 
 		it("`next` parameter can be an array of strings", async () => {
@@ -446,7 +446,7 @@ describe("entry", function () {
 	});
 
 	describe("toMultihash", () => {
-		it("returns an ipfs multihash", async () => {
+		it("returns an multihash", async () => {
 			const entry = await Entry.create({
 				store,
 				identity: signKey,
@@ -464,7 +464,7 @@ describe("entry", function () {
 			entry.hash = undefined as any;
 			const multihash = await Entry.toMultihash(store, entry);
 			expect(multihash).equal(hash);
-			expect(multihash).to.equal("zb2rhkp7iF9qm87YVdLERWfiChsfs8FhnTEqUB426kQtq3zro");
+			expect(multihash).to.equal("zb2rhZwBBmAvUNPkSjsKLSf1F41aSM4QP2XLQortvngCfhttg");
 		});
 
 		/*  TODO what is the point of this test?
@@ -519,7 +519,7 @@ describe("entry", function () {
 			expect(final.payload.getValue()).to.deep.equal(payload2);
 			expect(final.next.length).equal(1);
 			expect(final.next[0]).equal(entry1.hash);
-			expect(final.hash).to.equal("zb2rhcw32voNHstGRjjRE4X6Rb2oKS4tGtqzogERKvDKQf9iw");
+			expect(final.hash).to.equal("zb2rhXNBbQprcTNTWmJCMW3ifnBjmtZ1DTS4LXHNP2VXKa18X");
 		});
 	});
 

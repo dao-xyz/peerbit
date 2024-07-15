@@ -23,7 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
-import { field, variant } from "@dao-xyz/borsh";
+import { field/* , variant */ } from "@dao-xyz/borsh";
 import { compare, equals } from "uint8arrays";
 import { hrtime } from "@peerbit/time";
 
@@ -56,7 +56,7 @@ function bigIntCoerce(input: any, fallback: any) {
 	return fallback;
 }
 
-@variant(0)
+/* @variant(0) */
 export class Timestamp {
 	@field({ type: "u64" })
 	wallTime: bigint;
@@ -209,7 +209,7 @@ export class ForwardJumpError extends Error {
 	}
 }
 
-@variant(0)
+/* @variant(0) */
 export class LamportClock {
 	@field({ type: Uint8Array })
 	id: Uint8Array;

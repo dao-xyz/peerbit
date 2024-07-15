@@ -1,6 +1,5 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import {
-	SearchRequest,
 	Documents,
 	Operation,
 	type CanRead,
@@ -15,12 +14,14 @@ import {
 	hasPath,
 	getFromByTo,
 	getToByFrom,
-	getRelation
+	getRelation,
+	FromTo
 } from "./identity-graph.js";
 import { Program } from "@peerbit/program";
 import { sha256Base64Sync } from "@peerbit/crypto";
 import { type PeerId } from "@libp2p/interface";
-import { Replicator, type RoleOptions } from "@peerbit/shared-log";
+import { type ReplicationOptions } from "@peerbit/shared-log";
+import { SearchRequest } from '@peerbit/indexer-interface'
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey
@@ -65,17 +66,19 @@ const canPerformByRelation = async (
 
 type IdentityGraphArgs = {
 	canRead?: CanRead<IdentityRelation>;
-	role?: RoleOptions;
+	replicate?: ReplicationOptions;
 };
+
+
 
 @variant("relations")
 export class IdentityGraph extends Program<IdentityGraphArgs> {
 	@field({ type: Documents })
-	relationGraph: Documents<IdentityRelation>;
+	relationGraph: Documents<IdentityRelation, FromTo>;
 
 	constructor(props?: {
 		id?: Uint8Array;
-		relationGraph?: Documents<IdentityRelation>;
+		relationGraph?: Documents<IdentityRelation, FromTo>;
 	}) {
 		super();
 		if (props) {
@@ -91,18 +94,15 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 	}
 
 	async open(options?: IdentityGraphArgs) {
+
+
 		await this.relationGraph.open({
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
-			role: options?.role,
+			replicate: options?.replicate,
 			index: {
 				canRead: options?.canRead,
-				fields: (obj, _entry) => {
-					return {
-						from: obj.from.hashcode(),
-						to: obj.to.hashcode()
-					};
-				}
+				type: FromTo
 			}
 		});
 	}
@@ -126,7 +126,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
  * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
  */
 
-type TrustedNetworkArgs = { role?: RoleOptions };
+type TrustedNetworkArgs = { replicate?: ReplicationOptions };
 
 @variant("trusted_network")
 export class TrustedNetwork extends Program<TrustedNetworkArgs> {
@@ -134,7 +134,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	rootTrust: PublicSignKey;
 
 	@field({ type: Documents })
-	trustGraph: Documents<IdentityRelation>;
+	trustGraph: Documents<IdentityRelation, FromTo>;
 
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
@@ -146,18 +146,12 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		await this.trustGraph.open({
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
-			role: options?.role || {
-				type: "replicator",
+			replicate: options?.replicate || {
 				factor: 1
 			},
 			index: {
 				canRead: this.canRead.bind(this),
-				fields: (obj, _entry) => {
-					return {
-						from: obj.from.hashcode(),
-						to: obj.to.hashcode()
-					};
-				}
+				type: FromTo
 			}
 		}); // self referencing access controller
 	}
@@ -229,7 +223,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		if (this.trustGraph.log.role instanceof Replicator) {
+		if (await this.trustGraph.log.isReplicating()) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			this.trustGraph.index.search(new SearchRequest({ query: [] }), {

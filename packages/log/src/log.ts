@@ -5,10 +5,9 @@ import {
 	type Identity,
 	X25519Keypair
 } from "@peerbit/crypto";
-import { Cache } from "@peerbit/cache";
 import { type AnyStore } from "@peerbit/any-store";
 
-import { EntryIndex } from "./entry-index.js";
+import { EntryIndex, type MaybeResolveOptions, type ResultsIterator, type ReturnTypeFromResolveOptions } from "./entry-index.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import { findUniques } from "./find-uniques.js";
@@ -17,7 +16,9 @@ import {
 	Entry,
 	Payload,
 	type CanAppend,
-	EntryType
+	EntryType,
+	ShallowEntry,
+	type ShallowOrFullEntry
 } from "./entry.js";
 import {
 	HLC,
@@ -28,39 +29,38 @@ import {
 
 import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
 import { type Encoding, NO_ENCODING } from "./encoding.js";
-import { type CacheUpdateOptions, HeadsIndex } from "./heads.js";
-import { type EntryNode, Values } from "./values.js";
 import { Trim, type TrimOptions } from "./trim.js";
-import { logger } from "./logger.js";
 import { type Change } from "./change.js";
 import { type EntryWithRefs } from "./entry-with-refs.js";
 import { type Blocks } from "@peerbit/blocks-interface";
 import { cidifyString } from "@peerbit/blocks";
 import { type Keychain } from "@peerbit/keychain";
+import { type Indices } from "@peerbit/indexer-interface";
+import { create } from "@peerbit/indexer-sqlite3";
 
-const { LastWriteWins, NoZeroes } = Sorting;
+const { LastWriteWins } = Sorting;
 
-export type LogEvents<T, R = undefined> = {
-	onChange?: (change: Change<T>, reference?: R) => void;
+export type LogEvents<T> = {
+	onChange?: (change: Change<T>/* , reference?: R */) => void;
 	onGidRemoved?: (gids: string[]) => Promise<void> | void;
 };
 
 export type MemoryProperties = {
-	cache?: AnyStore;
+	storage?: AnyStore;
+	indexer?: Indices,
 };
 
 export type LogProperties<T> = {
 	keychain?: Keychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
-	sortFn?: Sorting.ISortFunction;
+	sortFn?: Sorting.SortFn
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
 };
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
 
-const ENTRY_CACHE_MAX = 1000; // TODO as param
 
 export type AppendOptions<T> = {
 	meta?: {
@@ -68,7 +68,7 @@ export type AppendOptions<T> = {
 		gidSeed?: Uint8Array;
 		data?: Uint8Array;
 		timestamp?: Timestamp;
-		next?: Entry<any>[];
+		next?: Entry<any>[] | ShallowEntry[];
 	};
 
 	identity?: Identity;
@@ -90,12 +90,29 @@ type OnChange<T> = (
 	reference?: undefined
 ) => void | Promise<void>;
 
+
+export type JoinableEntry = {
+	meta: {
+		clock: {
+			timestamp: Timestamp
+		},
+		next: string[]
+		gid: string,
+		type: EntryType
+	},
+	hash: string
+}
+
+export const ENTRY_JOIN_SHAPE = { hash: true, meta: { type: true, next: true, gid: true, clock: true } } as const
+
+
 @variant(0)
 export class Log<T> {
+
 	@field({ type: fixedArray("u8", 32) })
 	private _id: Uint8Array;
 
-	private _sortFn!: Sorting.ISortFunction;
+	/* private _sortFn!: Sorting.ISortFunction; */
 	private _storage!: Blocks;
 	private _hlc!: HLC;
 
@@ -104,21 +121,22 @@ export class Log<T> {
 
 	// Keeping track of entries
 	private _entryIndex!: EntryIndex<T>;
-	private _headsIndex!: HeadsIndex<T>;
-	private _values!: Values<T>;
-
+	/* 	private _headsIndex!: HeadsIndex<T>;
+		private _values!: Values<T>;
+	 */
 	// Index of all next pointers in this log
-	private _nextsIndex!: Map<string, Set<string>>;
+	/* private _nextsIndex!: Map<string, Set<string>>; */
 	private _keychain?: Keychain;
 	private _encoding!: Encoding<T>;
 	private _trim!: Trim<T>;
-	private _entryCache!: Cache<Entry<T>>;
-
 	private _canAppend?: CanAppend<T>;
 	private _onChange?: OnChange<T>;
 	private _closed = true;
-	private _memory?: AnyStore;
+	private _closeController!: AbortController;
+	private _loadedOnce = false
+	private _indexer!: Indices;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
+	private _sortFn!: Sorting.SortFn;
 
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
@@ -137,20 +155,16 @@ export class Log<T> {
 			throw new Error("Already open");
 		}
 
-		const { encoding, trim, keychain, cache, onGidRemoved } = options;
-		let { sortFn } = options;
+		this._closeController = new AbortController();
 
-		if (sortFn == null) {
-			sortFn = LastWriteWins;
-		}
-		sortFn = sortFn as Sorting.ISortFunction;
+		const { encoding, trim, keychain, indexer, onGidRemoved, sortFn } = options;
 
-		this._sortFn = NoZeroes(sortFn);
+		// TODO do correctly with tie breaks
+		this._sortFn = sortFn || LastWriteWins;
+
 		this._storage = store;
-		this._memory = cache;
-		if (this._memory && (await this._memory.status()) !== "open") {
-			await this._memory.open();
-		}
+		this._indexer = indexer || await create();
+		await this._indexer.start?.()
 
 		this._encoding = encoding || NO_ENCODING;
 		this._joining = new Map();
@@ -164,48 +178,34 @@ export class Log<T> {
 		// Clock
 		this._hlc = new HLC();
 
-		this._nextsIndex = new Map();
+
 		const id = this.id;
 		if (!id) {
 			throw new Error("Id not set");
 		}
-		this._headsIndex = new HeadsIndex(id);
-		await this._headsIndex.init(this, { onGidRemoved });
-		this._entryCache = new Cache({ max: ENTRY_CACHE_MAX });
+
 		this._entryIndex = new EntryIndex({
 			store: this._storage,
 			init: (e) => e.init(this),
-			cache: this._entryCache
+			onGidRemoved,
+			index: await (await this._indexer.scope("heads")).init({ schema: ShallowEntry }),
+			publicKey: this._identity.publicKey,
+			sort: this._sortFn
 		});
-		this._values = new Values(this._entryIndex, this._sortFn);
+		await this._entryIndex.init()
+		/* 	this._values = new Values(this._entryIndex, this._sortFn); */
+
 		this._trim = new Trim(
 			{
-				headsIndex: this._headsIndex,
-				deleteNode: async (node: EntryNode) => {
-					// TODO check if we have before delete?
-					const entry = await this.get(node.value);
-					//f (!!entry)
-					const a = this.values.length;
-					if (entry) {
-						this.values.deleteNode(node);
-						await Promise.all([
-							this.headsIndex.del(this.entryIndex.getShallow(node.value)!),
-							this.entryIndex.delete(node.value)
-						]);
-						this.nextsIndex.delete(node.value);
-						await this.blocks.rm(node.value);
-					}
-					const b = this.values.length;
-					if (a === b) {
-						/* throw new Error(
-							"Unexpected miss match between log size and entry index size: " +
-							this.values.length +
-							this.entryIndex._index.size
-						); */
-					}
-					return entry;
+				index: this._entryIndex,
+				deleteNode: async (node: ShallowEntry) => {
+					await this.get(node.hash);
+					await this._entryIndex.delete(node.hash);
+					await this._storage.rm(node.hash)
+					return node;
 				},
-				values: () => this.values
+				sortFn: this._sortFn,
+				getLength: () => this.length
 			},
 			trim
 		);
@@ -221,6 +221,8 @@ export class Log<T> {
 
 		this._onChange = options?.onChange;
 		this._closed = false;
+		this._closeController = new AbortController()
+
 	}
 
 	private _idString: string | undefined;
@@ -235,6 +237,8 @@ export class Log<T> {
 	public static createIdString(id: Uint8Array) {
 		return sha256Base64Sync(id);
 	}
+
+
 
 	get id() {
 		return this._id;
@@ -251,15 +255,13 @@ export class Log<T> {
 	 * Returns the length of the log.
 	 */
 	get length() {
-		return this.values.length;
+		if (this._closed) {
+			throw new Error("Closed")
+		}
+		return this._entryIndex.length
 	}
 
-	get values(): Values<T> {
-		if (this.closed) {
-			throw new Error("Closed");
-		}
-		return this._values;
-	}
+
 	get canAppend() {
 		return this._canAppend;
 	}
@@ -271,41 +273,24 @@ export class Log<T> {
 	 */
 
 	has(cid: string) {
-		return this._entryIndex._index.has(cid);
+		return this._entryIndex.has(cid);
 	}
 	/**
 	 * Get all entries sorted. Don't use this method anywhere where performance matters
 	 */
-	toArray(): Promise<Entry<T>[]> {
+	async toArray(): Promise<Entry<T>[]> {
 		// we call init, because the values might be unitialized
-		return this._values.toArray().then((arr) => arr.map((x) => x.init(this)));
+		return this.entryIndex.query([], this.sortFn.sort, true).all()
 	}
 
 	/**
 	 * Returns the head index
 	 */
-	get headsIndex(): HeadsIndex<T> {
-		return this._headsIndex;
-	}
 
-	get memory(): AnyStore | undefined {
-		return this._memory;
-	}
 
-	async getHeads(): Promise<Entry<T>[]> {
-		const heads: Promise<Entry<T> | undefined>[] = new Array(
-			this.headsIndex.index.size
-		);
-		let i = 0;
-		for (const hash of this.headsIndex.index) {
-			heads[i++] = this._entryIndex.get(hash).then((x) => x?.init(this));
-		}
-		const resolved = await Promise.all(heads);
-		const defined = resolved.filter((x): x is Entry<T> => !!x);
-		if (defined.length !== resolved.length) {
-			logger.error("Failed to resolve all heads");
-		}
-		return defined;
+
+	getHeads<R extends MaybeResolveOptions = false>(resolve: R = false as R): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
+		return this.entryIndex.getHeads(undefined, resolve)
 	}
 
 	/**
@@ -341,9 +326,6 @@ export class Log<T> {
 		return this._storage;
 	}
 
-	get nextsIndex(): Map<string, Set<string>> {
-		return this._nextsIndex;
-	}
 
 	get entryIndex(): EntryIndex<T> {
 		return this._entryIndex;
@@ -374,80 +356,93 @@ export class Log<T> {
 	}
 
 	/**
-	 * Find an entry.
+	 * Get an entry.
 	 * @param {string} [hash] The hashes of the entry
 	 */
 	get(
 		hash: string,
 		options?: { timeout?: number }
 	): Promise<Entry<T> | undefined> {
-		return this._entryIndex.get(hash, options);
+		return this._entryIndex.get(hash, options ? { type: 'full', timeout: options.timeout } : undefined);
 	}
 
-	async traverse(
-		rootEntries: Entry<T>[],
-		amount = -1,
-		endHash?: string
-	): Promise<{ [key: string]: Entry<T> }> {
-		// Sort the given given root entries and use as the starting stack
-		let stack: Entry<T>[] = rootEntries.sort(this._sortFn).reverse();
 
-		// Cache for checking if we've processed an entry already
-		let traversed: { [key: string]: boolean } = {};
-		// End result
-		const result: { [key: string]: Entry<T> } = {};
-		let count = 0;
-		// Named function for getting an entry from the log
-		const getEntry = (e: string) => this.get(e);
+	/**
+	 * Get a entry with shallow representation
+	 * @param {string} [hash] The hashes of the entry
+	 */
+	async getShallow(
+		hash: string,
+		options?: { timeout?: number }
+	): Promise<ShallowEntry | undefined> {
+		return (await this._entryIndex.getShallow(hash))?.value;
+	}
 
-		// Add an entry to the stack and traversed nodes index
-		const addToStack = (entry: Entry<T>) => {
-			// If we've already processed the Entry<T>, don't add it to the stack
-			if (!entry || traversed[entry.hash]) {
-				return;
+	/* 
+		async traverse(
+			rootEntries: Entry<T>[],
+			amount = -1,
+			endHash?: string
+		): Promise<{ [key: string]: Entry<T> }> {
+			// Sort the given given root entries and use as the starting stack
+			let stack: Entry<T>[] = rootEntries.sort(this._sortFn).reverse();
+	
+			// Cache for checking if we've processed an entry already
+			let traversed: { [key: string]: boolean } = {};
+			// End result
+			const result: { [key: string]: Entry<T> } = {};
+			let count = 0;
+			// Named function for getting an entry from the log
+			const getEntry = (e: string) => this.get(e);
+	
+			// Add an entry to the stack and traversed nodes index
+			const addToStack = (entry: Entry<T>) => {
+				// If we've already processed the Entry<T>, don't add it to the stack
+				if (!entry || traversed[entry.hash]) {
+					return;
+				}
+	
+				// Add the entry in front of the stack and sort
+				stack = [entry, ...stack].sort(this._sortFn).reverse();
+				// Add to the cache of processed entries
+				traversed[entry.hash] = true;
+			};
+	
+			const addEntry = (rootEntry: Entry<T>) => {
+				result[rootEntry.hash] = rootEntry;
+				traversed[rootEntry.hash] = true;
+				count++;
+			};
+	
+			// Start traversal
+			// Process stack until it's empty (traversed the full log)
+			// or when we have the requested amount of entries
+			// If requested entry amount is -1, traverse all
+			while (stack.length > 0 && (count < amount || amount < 0)) {
+				// eslint-disable-line no-unmodified-loop-condition
+				// Get the next element from the stack
+				const entry = stack.shift();
+				if (!entry) {
+					throw new Error("Unexpected");
+				}
+				// Add to the result
+				addEntry(entry);
+				// If it is the specified end hash, break out of the while loop
+				if (endHash && endHash === entry.hash) break;
+	
+				// Add entry's next references to the stack
+				const entries = (await Promise.all(entry.next.map(getEntry))).filter(
+					(x) => !!x
+				) as Entry<any>[];
+				entries.forEach(addToStack);
 			}
-
-			// Add the entry in front of the stack and sort
-			stack = [entry, ...stack].sort(this._sortFn).reverse();
-			// Add to the cache of processed entries
-			traversed[entry.hash] = true;
-		};
-
-		const addEntry = (rootEntry: Entry<T>) => {
-			result[rootEntry.hash] = rootEntry;
-			traversed[rootEntry.hash] = true;
-			count++;
-		};
-
-		// Start traversal
-		// Process stack until it's empty (traversed the full log)
-		// or when we have the requested amount of entries
-		// If requested entry amount is -1, traverse all
-		while (stack.length > 0 && (count < amount || amount < 0)) {
-			// eslint-disable-line no-unmodified-loop-condition
-			// Get the next element from the stack
-			const entry = stack.shift();
-			if (!entry) {
-				throw new Error("Unexpected");
-			}
-			// Add to the result
-			addEntry(entry);
-			// If it is the specified end hash, break out of the while loop
-			if (endHash && endHash === entry.hash) break;
-
-			// Add entry's next references to the stack
-			const entries = (await Promise.all(entry.next.map(getEntry))).filter(
-				(x) => !!x
-			) as Entry<any>[];
-			entries.forEach(addToStack);
+	
+			stack = [];
+			traversed = {};
+			// End result
+			return result;
 		}
-
-		stack = [];
-		traversed = {};
-		// End result
-		return result;
-	}
-
+	 */
 	async getReferenceSamples(
 		from: Entry<T>,
 		options?: { pointerCount?: number; memoryLimit?: number }
@@ -455,7 +450,7 @@ export class Log<T> {
 		const hashes = new Set<string>();
 		const pointerCount = options?.pointerCount || 0;
 		const memoryLimit = options?.memoryLimit;
-		const maxDistance = Math.min(pointerCount, this._values.length);
+		const maxDistance = Math.min(pointerCount, this.entryIndex.length);
 		if (maxDistance === 0) {
 			return [];
 		}
@@ -521,7 +516,9 @@ export class Log<T> {
 	async append(
 		data: T,
 		options: AppendOptions<T> = {}
-	): Promise<{ entry: Entry<T>; removed: Entry<T>[] }> {
+	): Promise<{ entry: Entry<T>; removed: ShallowEntry[] }> {
+
+
 		// Update the clock (find the latest clock)
 		if (options.meta?.next) {
 			for (const n of options.meta.next) {
@@ -534,7 +531,7 @@ export class Log<T> {
 
 		await this.load({ reload: false });
 
-		const nexts: Entry<any>[] = options.meta?.next || (await this.getHeads());
+		const nexts: Sorting.SortableEntry[] = options.meta?.next || await this.entryIndex.getHeads(undefined, { type: 'shape', shape: Sorting.ENTRY_SORT_SHAPE }).all();
 
 		// Calculate max time for log/graph
 		const clock = new Clock({
@@ -567,28 +564,35 @@ export class Log<T> {
 			canAppend: options.canAppend || this._canAppend
 		});
 
+
 		if (!entry.hash) {
 			throw new Error("Unexpected");
 		}
 
-		for (const e of nexts) {
-			if (!this.has(e.hash)) {
-				await this.join([e]);
-			}
-
-			let nextIndexSet = this._nextsIndex.get(e.hash);
-			if (!nextIndexSet) {
-				nextIndexSet = new Set();
-				nextIndexSet.add(entry.hash);
-				this._nextsIndex.set(e.hash, nextIndexSet);
-			} else {
-				nextIndexSet.add(entry.hash);
+		if (entry.meta.type !== EntryType.CUT) {
+			for (const e of nexts) {
+				if (!await this.has(e.hash)) {
+					let entry: Entry<any>;
+					if (e instanceof Entry) {
+						entry = e;
+					}
+					else {
+						let resolved = await this.entryIndex.get(e.hash);
+						if (!resolved) {
+							console.warn("Unexpected missing entry when joining", e.hash)
+							continue;
+						}
+						entry = resolved;
+					}
+					await this.join([entry]);
+				}
 			}
 		}
 
-		await this._entryIndex.set(entry, false); // save === false, because its already saved when Entry.create
-		await this._headsIndex.put(entry, { cache: { update: false } }); // we will update the cache a few lines later *
-		await this._values.put(entry);
+
+
+
+		await this.entryIndex.put(entry, { unique: true, isHead: true, toMultiHash: false });
 
 		const removed = await this.processEntry(entry);
 
@@ -607,25 +611,19 @@ export class Log<T> {
 			removed: removed
 		};
 
-		await this._headsIndex.updateHeadsCache(changes); // * here
 		await (options?.onChange || this._onChange)?.(changes);
 		return { entry, removed };
 	}
 
-	async reset(entries: Entry<T>[]) {
-		this._nextsIndex = new Map();
-		this._entryIndex = new EntryIndex({
-			store: this._storage,
-			init: (e) => e.init(this),
-			cache: this._entryCache
-		});
-		await this.headsIndex.reset([]);
-		this._values = new Values(this._entryIndex, this._sortFn, []);
-		await this.join(entries);
+	async reset(entries?: Entry<T>[]) {
+		const heads = await this.getHeads(true).all();
+		await this._entryIndex.clear();
+		await this._onChange?.({ added: [], removed: heads });
+		await this.join(entries || heads);
 	}
 
 	async remove(
-		entry: Entry<T> | Entry<T>[],
+		entry: ShallowOrFullEntry<T> | ShallowOrFullEntry<T>[],
 		options?: { recursively?: boolean }
 	): Promise<Change<T>> {
 		await this.load({ reload: false });
@@ -638,28 +636,26 @@ export class Log<T> {
 			};
 		}
 
-		if (options?.recursively) {
-			await this.deleteRecursively(entry);
-		} else {
-			for (const entry of entries) {
-				await this.delete(entry);
-			}
-		}
 
 		const change: Change<T> = {
 			added: [],
 			removed: Array.isArray(entry) ? entry : [entry]
 		};
 
-		/* 	await Promise.all([
-				this._logCache?.queue(change),
-				this._onUpdate(change),
-			]); */
 		await this._onChange?.(change);
+
+		if (options?.recursively) {
+			await this.deleteRecursively(entry);
+		} else {
+			for (const entry of entries) {
+				await this.delete(entry.hash);
+			}
+		}
+
 		return change;
 	}
 
-	iterator(options?: {
+	/* iterator(options?: {
 		from?: "tail" | "head";
 		amount?: number;
 	}): IterableIterator<string> {
@@ -680,277 +676,208 @@ export class Log<T> {
 				next = nextFn(next);
 			}
 		})();
-	}
+	} */
 
 	async trim(option: TrimOptions | undefined = this._trim.options) {
 		return this._trim.trim(option);
 	}
 
-	/**
-	 *
-	 * @param entries
-	 * @returns change
-	 */
-	/* async sync(
-		entries: (EntryWithRefs<T> | Entry<T> | string)[],
-		options: {
-			canAppend?: CanAppend<T>;
-			onChange?: (change: Change<T>) => void | Promise<void>;
-			timeout?: number;
-		} = {}
-	): Promise<void> {
-
-
-		logger.debug(`Sync request #${entries.length}`);
-		const entriesToJoin: (Entry<T> | string)[] = [];
-		for (const e of entries) {
-			if (e instanceof Entry || typeof e === "string") {
-				entriesToJoin.push(e);
-			} else {
-				for (const ref of e.references) {
-					entriesToJoin.push(ref);
-				}
-				entriesToJoin.push(e.entry);
-			}
-		}
-
-		await this.join(entriesToJoin, {
-			canAppend: (entry) => {
-				const canAppend = options?.canAppend || this.canAppend;
-				return !canAppend || canAppend(entry);
-			},
-			onChange: (change) => {
-				options?.onChange?.(change);
-				return this._onChange?.({
-					added: change.added,
-					removed: change.removed,
-				});
-			},
-			timeout: options.timeout,
-		});
-	} */
-
 	async join(
-		entriesOrLog: (string | Entry<T> | EntryWithRefs<T>)[] | Log<T>,
+		entriesOrLog: (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[] | Log<T> | ResultsIterator<Entry<any>>,
 		options?: {
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
 			timeout?: number;
-		} & CacheUpdateOptions
+		}
 	): Promise<void> {
-		const definedOptions = {
-			...options,
-			cache: options?.cache ?? {
-				update: true
-			}
-		};
 
-		await this.load({ reload: false });
-		if (entriesOrLog.length === 0) {
-			return;
-		}
-		/* const joinLength = options?.length ?? Number.MAX_SAFE_INTEGER;  TODO */
-		const visited = new Set<string>();
-		const nextRefs: Map<string, Entry<T>[]> = new Map();
-		const entriesBottomUp: Entry<T>[] = [];
-		const stack: string[] = [];
-		const resolvedEntries: Map<string, Entry<T>> = new Map();
-		const entries = Array.isArray(entriesOrLog)
-			? entriesOrLog
-			: await entriesOrLog.values.toArray();
 
-		// Build a list of already resolved entries, and filter out already joined entries
-		for (const e of entries) {
-			// TODO, do this less ugly
-			let hash: string;
-			if (e instanceof Entry) {
-				hash = e.hash;
-				resolvedEntries.set(e.hash, e);
-				if (this.has(hash)) {
-					continue;
-				}
-				stack.push(hash);
-			} else if (typeof e === "string") {
-				hash = e;
+		let entries: Entry<T>[]
+		let references: Map<string, Entry<T>> = new Map();
 
-				if (this.has(hash)) {
-					continue;
-				}
-				stack.push(hash);
-			} else {
-				hash = e.entry.hash;
-				resolvedEntries.set(e.entry.hash, e.entry);
-				if (this.has(hash)) {
-					continue;
-				}
-				stack.push(hash);
-
-				for (const e2 of e.references) {
-					resolvedEntries.set(e2.hash, e2);
-					if (this.has(e2.hash)) {
-						continue;
-					}
-					stack.push(e2.hash);
-				}
+		if (entriesOrLog instanceof Log) {
+			if (entriesOrLog.entryIndex.length === 0)
+				return;
+			entries = await entriesOrLog.toArray();
+			for (const element of entries) {
+				references.set(element.hash, element)
 			}
 		}
-
-		const removedHeads: Entry<T>[] = [];
-		for (const hash of stack) {
-			if (visited.has(hash) || this.has(hash)) {
-				continue;
-			}
-			visited.add(hash);
-
-			const entry =
-				resolvedEntries.get(hash) ||
-				(await Entry.fromMultihash<T>(this._storage, hash, {
-					timeout: options?.timeout
-				}));
-
-			entry.init(this);
-			resolvedEntries.set(entry.hash, entry);
-
-			let nexts: string[];
-			if (
-				entry.meta.type !== EntryType.CUT &&
-				(nexts = await entry.getNext())
-			) {
-				let isRoot = true;
-				for (const next of nexts) {
-					if (!this.has(next)) {
-						isRoot = false;
-					} else {
-						if (this._headsIndex.has(next)) {
-							const toRemove = (await this.get(next, options))!;
-							await this._headsIndex.del(toRemove);
-							removedHeads.push(toRemove);
-						}
-					}
-					let nextIndexSet = nextRefs.get(next);
-					if (!nextIndexSet) {
-						nextIndexSet = [];
-						nextIndexSet.push(entry);
-						nextRefs.set(next, nextIndexSet);
-					} else {
-						nextIndexSet.push(entry);
-					}
-					if (!visited.has(next)) {
-						stack.push(next);
-					}
-				}
-				if (isRoot) {
-					entriesBottomUp.push(entry);
-				}
-			} else {
-				entriesBottomUp.push(entry);
-			}
-		}
-
-		while (entriesBottomUp.length > 0) {
-			const e = entriesBottomUp.shift()!;
-			await this._joining.get(e.hash);
-			const p = this.joinEntry(
-				e,
-				nextRefs,
-				entriesBottomUp,
-				definedOptions
-			).then(
-				() => this._joining.delete(e.hash) // TODO, if head we run into problems with concurrency here!, we add heads at line 929 but resolve here
-			);
-			this._joining.set(e.hash, p);
-			await p;
-		}
-	}
-
-	private async joinEntry(
-		e: Entry<T>,
-		nextRefs: Map<string, Entry<T>[]>,
-		stack: Entry<T>[],
-		options?: {
-			verifySignatures?: boolean;
-			trim?: TrimOptions;
-			length?: number;
-		} & CacheUpdateOptions
-	): Promise<void> {
-		if (this.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
-			return;
-		}
-
-		if (!e.hash) {
-			throw new Error("Unexpected");
-		}
-
-		const headsWithGid = this.headsIndex.gids.get(e.gid);
-		if (headsWithGid) {
-			for (const [_k, v] of headsWithGid) {
-				if (v.meta.type === EntryType.CUT && v.next.includes(e.hash)) {
-					return; // already deleted
-				}
-			}
-		}
-
-		if (!this.has(e.hash)) {
-			if (options?.verifySignatures) {
-				if (!(await e.verifySignatures())) {
-					throw new Error('Invalid signature entry with hash "' + e.hash + '"');
-				}
-			}
-
-			if (this?._canAppend && !(await this?._canAppend(e))) {
+		else if (Array.isArray(entriesOrLog)) {
+			if (entriesOrLog.length === 0) {
 				return;
 			}
 
-			// Update the internal entry index
-			await this._entryIndex.set(e);
-			await this._values.put(e);
-
-			if (e.meta.type !== EntryType.CUT) {
-				for (const a of e.next) {
-					if (!this.has(a)) {
-						await this.join([a]);
+			entries = []
+			for (const element of entriesOrLog) {
+				if (element instanceof Entry) {
+					entries.push(element)
+					references.set(element.hash, element)
+				}
+				else if (typeof element === "string") {
+					let entry = (await Entry.fromMultihash<T>(this._storage, element, {
+						timeout: options?.timeout
+					}))
+					if (!entry) {
+						throw new Error("Missing entry in join by hash: " + element)
 					}
+					entries.push(entry)
+				}
+				else if (element instanceof ShallowEntry) {
+					element
+					let entry = (await Entry.fromMultihash<T>(this._storage, element.hash, {
+						timeout: options?.timeout
+					}))
+					if (!entry) {
+						throw new Error("Missing entry in join by hash: " + element)
+					}
+					entries.push(entry)
+				}
+				else {
+					entries.push(element.entry)
+					references.set(element.entry.hash, element.entry)
 
-					let nextIndexSet = this._nextsIndex.get(a);
-					if (!nextIndexSet) {
-						nextIndexSet = new Set();
-						nextIndexSet.add(e.hash);
-						this._nextsIndex.set(a, nextIndexSet);
-					} else {
-						nextIndexSet.add(a);
+					for (const ref of element.references) {
+						references.set(ref.hash, ref)
 					}
 				}
 			}
 
-			const clock = await e.getClock();
-			this._hlc.update(clock.timestamp);
-
-			const removed = await this.processEntry(e);
-			const trimmed = await this.trim(options?.trim);
-
-			if (trimmed) {
-				for (const entry of trimmed) {
-					removed.push(entry);
-				}
+		}
+		else {
+			let all = (await entriesOrLog.all()) // TODO dont load all at once
+			if (all.length === 0) {
+				return;
 			}
 
-			await this?._onChange?.({ added: [e], removed: removed });
+			entries = all
 		}
 
-		const forward = nextRefs.get(e.hash);
-		if (forward) {
-			if (this._headsIndex.has(e.hash)) {
-				await this._headsIndex.del(e, options);
+		let heads: Map<string, boolean> = new Map()
+		for (const entry of entries) {
+			if (heads.has(entry.hash)) {
+				continue;
 			}
-			for (const en of forward) {
-				stack.push(en);
+			heads.set(entry.hash, true);
+			for (const next of await entry.getNext()) {
+				heads.set(next, false)
 			}
-		} else {
-			await this.headsIndex.put(e, options);
+
 		}
+
+		for (const entry of entries) {
+			const p = this.joinRecursively(entry, { references, isHead: heads.get(entry.hash)!, ...options })
+			this._joining.set(entry.hash, p);
+			p.finally(() => {
+				this._joining.delete(entry.hash);
+			})
+			await p;
+		}
+
+
+
 	}
 
-	private async processEntry(entry: Entry<T>) {
+
+	/**
+	 * Bottom up join of entries into the log
+	 * @param entry 
+	 * @param options 
+	 * @returns 
+	 */
+
+	private async joinRecursively(entry: Entry<T>, options: {
+		verifySignatures?: boolean;
+		trim?: TrimOptions;
+		length?: number;
+		references?: Map<string, Entry<T>>;
+		isHead: boolean;
+		timeout?: number
+	}) {
+		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
+			return;
+		}
+
+		if (!entry.hash) {
+			throw new Error("Unexpected");
+		}
+
+		if (await this.has(entry.hash)) {
+			return;
+		}
+
+		entry.init(this)
+
+		if (options?.verifySignatures) {
+			if (!(await entry.verifySignatures())) {
+				throw new Error('Invalid signature entry with hash "' + entry.hash + '"');
+			}
+		}
+
+		if (this?._canAppend && !(await this?._canAppend(entry))) {
+			return;
+		}
+
+
+
+		const headsWithGid: JoinableEntry[] = await this.entryIndex.getHeads(entry.gid, { type: 'shape', shape: ENTRY_JOIN_SHAPE }).all();
+		if (headsWithGid) {
+			for (const v of headsWithGid) {
+
+				// TODO second argument should be a time compare instead? what about next nexts?
+				// and check the cut entry is newer than the current 'entry' 
+				if (v.meta.type === EntryType.CUT && v.meta.next.includes(entry.hash) && Sorting.compare(entry, v, this._sortFn) < 0) {
+					return; // already deleted 
+				}
+			}
+		}
+
+
+
+		if (entry.meta.type !== EntryType.CUT) {
+			for (const a of entry.next) {
+				if (!await this.has(a)) {
+					const nested = options.references?.get(a) || (await Entry.fromMultihash<T>(this._storage, a, {
+						timeout: options?.timeout
+					}));
+
+					if (!nested) {
+						throw new Error("Missing entry in joinRecursively: " + a)
+					}
+
+					const p = this.joinRecursively(nested, options.isHead ? { ...options, isHead: false } : options);
+					this._joining.set(nested.hash, p);
+					p.finally(() => {
+						this._joining.delete(nested.hash);
+					})
+					await p;
+				}
+			}
+		}
+
+
+
+		const clock = await entry.getClock();
+		this._hlc.update(clock.timestamp);
+
+
+		await this._entryIndex.put(entry, { unique: false, isHead: options.isHead, toMultiHash: true });
+
+
+		const removed = await this.processEntry(entry);
+		const trimmed = await this.trim(options?.trim);
+
+		if (trimmed) {
+			for (const entry of trimmed) {
+				removed.push(entry);
+			}
+		}
+
+		await this?._onChange?.({ added: [entry], removed: removed });
+
+	}
+
+	private async processEntry(entry: Entry<T>): Promise<ShallowEntry[]> {
 		if (entry.meta.type === EntryType.CUT) {
 			return this.deleteRecursively(entry, true);
 		}
@@ -958,37 +885,44 @@ export class Log<T> {
 	}
 
 	/// TODO simplify methods below
-	async deleteRecursively(from: Entry<any> | Entry<any>[], skipFirst = false) {
+	async deleteRecursively(from: ShallowOrFullEntry<T> | ShallowOrFullEntry<T>[], skipFirst = false) {
 		const stack = Array.isArray(from) ? [...from] : [from];
-		const promises: Promise<void>[] = [];
+		const promises: (Promise<void> | void)[] = [];
 		let counter = 0;
-		const deleted: Entry<T>[] = [];
+		const deleted: ShallowEntry[] = [];
 
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
-			if ((counter > 0 || !skipFirst) && this.has(entry.hash)) {
-				// TODO test last argument: It is for when multiple heads point to the same entry, hence we might visit it multiple times? or a concurrent delete process is doing it before us.
-				this._trim.deleteFromCache(entry);
-				await this._headsIndex.del(entry);
-				await this._values.delete(entry);
-				await this._entryIndex.delete(entry.hash);
-
-				this._nextsIndex.delete(entry.hash);
-				deleted.push(entry);
-				promises.push(entry.delete(this._storage));
-			}
-
-			for (const next of entry.next) {
-				const nextFromNext = this._nextsIndex.get(next);
-				if (nextFromNext) {
-					nextFromNext.delete(entry.hash);
+			const skip = (counter === 0 && skipFirst)
+			if (!skip) {
+				const has = await this.has(entry.hash)
+				if (has) {
+					// TODO test last argument: It is for when multiple heads point to the same entry, hence we might visit it multiple times? or a concurrent delete process is doing it before us.
+					const deletedEntry = await this.delete(entry.hash);
+					if (deletedEntry) {
+						/* 	this._nextsIndex.delete(entry.hash); */
+						deleted.push(deletedEntry);
+					}
 				}
 
-				if (!nextFromNext || nextFromNext.size === 0) {
-					const ne = await this.get(next);
-					if (ne) {
-						stack.push(ne);
+			}
+
+			for (const next of entry.meta.next) {
+				try {
+					const nextFromNext = this.entryIndex.getHasNext(next);
+					const entriesThatHasNext = await nextFromNext.all()
+
+					// if there are no entries which is not of "CUT" type, we can safely delete the next entry
+					// figureately speaking, these means where are cutting all branches to a stem, so we can delete the stem as well
+					let hasAlternativeNext = !!entriesThatHasNext.find(x => x.meta.type !== EntryType.CUT)
+					if (!hasAlternativeNext) {
+						const ne = await this.get(next);
+						if (ne) {
+							stack.push(ne);
+						}
 					}
+				} catch (error) {
+					throw error;
 				}
 			}
 			counter++;
@@ -997,34 +931,10 @@ export class Log<T> {
 		return deleted;
 	}
 
-	async delete(entry: Entry<any>) {
-		this._trim.deleteFromCache(entry);
-		await this._headsIndex.del(entry, {
-			cache: {
-				update: false
-			}
-		}); // cache is not updated here, but at *
-		await this._values.delete(entry);
-		await this._entryIndex.delete(entry.hash);
-		this._nextsIndex.delete(entry.hash);
-		const newHeads: string[] = [];
-		for (const next of entry.next) {
-			const ne = await this.get(next);
-			if (ne) {
-				const nexts = this._nextsIndex.get(next)!;
-				nexts.delete(entry.hash);
-				if (nexts.size === 0) {
-					await this._headsIndex.put(ne);
-					newHeads.push(ne.hash);
-				}
-			}
-		}
-		await this._headsIndex.updateHeadsCache({
-			added: newHeads,
-			removed: [entry.hash]
-		}); // * here
-
-		return entry.delete(this._storage);
+	async delete(hash: string): Promise<ShallowEntry | undefined> {
+		await this._trim.deleteFromCache(hash);
+		const removedEntry = await this._entryIndex.delete(hash);
+		return removedEntry
 	}
 
 	/**
@@ -1053,7 +963,6 @@ export class Log<T> {
 						let padding = new Array(Math.max(len - 1, 0));
 						padding = len > 1 ? padding.fill("  ") : padding;
 						padding = len > 0 ? padding.concat(["└─"]) : padding;
-						/* istanbul ignore next */
 						return (
 							padding.join("") +
 							(payloadMapper ? payloadMapper(e.payload) : e.payload)
@@ -1062,38 +971,30 @@ export class Log<T> {
 			)
 		).join("\n");
 	}
-	async idle() {
-		await this._headsIndex.headsCache?.idle();
-	}
+
 
 	async close() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-		await this._entryCache?.clear();
-		await this._headsIndex?.close();
-		await this._memory?.close();
-		this._entryCache = undefined as any;
-		this._headsIndex = undefined as any;
-		this._memory = undefined as any;
-		this._values = undefined as any;
+		this._closeController.abort();
+		await this._indexer?.stop?.();
+		this._indexer = undefined as any;
+		this._loadedOnce = false;
 	}
 
 	async drop() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
+		this._closeController.abort();
+		await this.entryIndex?.clear();
+		await this._indexer?.drop();
+		await this._indexer?.stop?.();
 
-		await Promise.all(
-			[...this.entryIndex._index.values()].map((x) => this.blocks.rm(x.hash))
-		);
-		await this._headsIndex?.drop();
-		await this._entryCache?.clear();
-		await this._memory?.clear();
-		await this._memory?.close();
 	}
 
 	async recover() {
 		// merge existing
-		const existing = await this.getHeads();
+		const existing = await this.getHeads(true).all();
 
 		const allHeads: Map<string, Entry<any>> = new Map();
 		for (const head of existing) {
@@ -1129,47 +1030,35 @@ export class Log<T> {
 		opts: {
 			heads?: Entry<T>[];
 			fetchEntryTimeout?: number;
-			reload: boolean;
+			reset?: boolean;
 			ignoreMissing?: boolean;
-		} = { reload: true }
+			timeout?: number,
+			reload?: boolean
+		} = {}
 	) {
 		if (this.closed) {
 			throw new Error("Closed");
 		}
 
+		if (this._loadedOnce && !opts.reload && !opts.reset) {
+			return;
+		}
+
+		this._loadedOnce = true;
+
 		const providedCustomHeads = Array.isArray(opts["heads"]);
+
 		const heads = providedCustomHeads
 			? (opts["heads"] as Array<Entry<T>>)
-			: await this.headsIndex.load({
-				replicate: true, // TODO this.replication.replicate(x) => true/false
-				timeout: opts.fetchEntryTimeout,
-				reload: opts.reload,
-				ignoreMissing: opts.ignoreMissing,
-				cache: { update: true, reset: true }
-			});
+			: await this._entryIndex.getHeads(undefined, { type: 'full', signal: this._closeController.signal, ignoreMissing: opts.ignoreMissing, timeout: opts.timeout }).all()
 
 		if (heads) {
 			// Load the log
-			if (providedCustomHeads) {
-				await this.reset(heads);
+			if (providedCustomHeads || opts.reset) {
+				await this.reset(heads as any as Entry<any>[]);
 			} else {
-				/*
-				TODO feat amount load
-				const amount = (opts as { amount?: number }).amount;
-				if (amount != null && amount >= 0 && amount < heads.length) {
-					throw new Error(
-						"You are not loading all heads, this will lead to unexpected behaviours on write. Please load at least load: " +
-						amount +
-						" entries"
-					);
-				} */
-
 				await this.join(heads instanceof Entry ? [heads] : heads, {
-					/* length: amount, */
-					timeout: opts?.fetchEntryTimeout,
-					cache: {
-						update: false
-					}
+					timeout: opts?.fetchEntryTimeout
 				});
 			}
 		}

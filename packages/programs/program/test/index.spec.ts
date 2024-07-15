@@ -100,6 +100,16 @@ describe("program", () => {
 				await peer.open(p);
 				expect(p.closed).to.be.false;
 			});
+
+			it("reject when dropping after close", async () => {
+				const p = new P3();
+				await peer.open(p);
+				expect(p.closed).to.be.false;
+				await p.close();
+				expect(p.closed).to.be.true;
+				await expect(p.drop()).rejectedWith("Program is closed, cannot drop");
+			})
+
 			it("can re-open from closed", async () => {
 				const p = new P4();
 

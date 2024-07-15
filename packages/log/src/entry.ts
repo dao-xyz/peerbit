@@ -29,6 +29,8 @@ import { logger } from "./logger.js";
 import { type Blocks } from "@peerbit/blocks-interface";
 import { type Keychain } from "@peerbit/keychain";
 import { equals } from "./utils.js";
+import { id } from "@peerbit/indexer-interface";
+import type { SortableEntry } from "./log-sorting.js";
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -137,8 +139,9 @@ export enum EntryType {
 	CUT = 1 // Delete or Create tombstone ... delete all nexts, i
 }
 
-@variant(0)
+/* @variant(0) */
 export class Meta {
+
 	@field({ type: Clock })
 	clock: Clock;
 
@@ -218,22 +221,39 @@ const maybeEncrypt = <Q>(
 	});
 };
 
-export interface ShallowEntry {
+
+export class ShallowEntry {
+
+	@id({ type: "string" })
 	hash: string;
-	meta: {
-		clock: Clock;
-		data?: Uint8Array;
-		gid: string;
-		next: string[];
-		type: EntryType;
-	};
-	payloadByteLength: number;
+
+	@field({ type: Meta })
+	meta: Meta;
+
+	@field({ type: 'u32' })
+	payloadSize: number;
+
+	@field({ type: 'bool' })
+	head: boolean;
+
+	constructor(properties: {
+		hash: string;
+		meta: Meta;
+		payloadSize: number;
+		head: boolean;
+	}) {
+		this.hash = properties.hash;
+		this.meta = properties.meta;
+		this.payloadSize = properties.payloadSize;
+		this.head = properties.head;
+	}
 }
+export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
 
 @variant(0)
 export class Entry<T>
-	implements EntryEncryptionTemplate<Meta, Payload<T>, SignatureWithKey[]>
-{
+	implements EntryEncryptionTemplate<Meta, Payload<T>, SignatureWithKey[]> {
+
 	@field({ type: MaybeEncrypted })
 	_meta: MaybeEncrypted<Meta>;
 
@@ -477,7 +497,7 @@ export class Entry<T>
 			type?: EntryType;
 			gidSeed?: Uint8Array;
 			data?: Uint8Array;
-			next?: Entry<T>[];
+			next?: SortableEntry[];
 		};
 		encoding?: Encoding<T>;
 		canAppend?: CanAppend<T>;
@@ -654,18 +674,19 @@ export class Entry<T>
 		return this._payload.byteLength;
 	}
 
-	toShallow(): ShallowEntry {
-		return {
+	toShallow(isHead: boolean): ShallowEntry {
+		return new ShallowEntry({
 			hash: this.hash,
-			payloadByteLength: this._payload.byteLength,
-			meta: {
+			payloadSize: this._payload.byteLength,
+			head: isHead,
+			meta: new Meta({
 				gid: this.meta.gid,
 				data: this.meta.data,
 				clock: this.meta.clock,
 				next: this.meta.next,
 				type: this.meta.type
-			}
-		};
+			})
+		});
 	}
 
 	/**
@@ -682,8 +703,7 @@ export class Entry<T>
 
 		const bytes = serialize(entry);
 		entry.size = bytes.length;
-		const result = store.put(bytes);
-		return result;
+		return store.put(bytes);
 	}
 
 	/**

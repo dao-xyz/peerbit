@@ -3,12 +3,24 @@ import { randomBytes } from "@peerbit/crypto";
 import { Log } from "../src/log.js";
 import { Entry } from "../src/entry.js";
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { StringArray } from "../src/types.js";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { PubSubData } from "@peerbit/pubsub-interface";
 import { JSON_ENCODING } from "./utils/encoding.js";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from 'chai';
+
+import { field, vec } from "@dao-xyz/borsh";
+
+export class StringArray {
+
+	@field({ type: vec("string") })
+	arr: string[];
+
+	constructor(properties: { arr: string[] }) {
+		this.arr = properties.arr;
+	}
+}
+
 
 describe("replication", function () {
 	let session: TestSession;
@@ -120,8 +132,8 @@ describe("replication", function () {
 						}
 					})
 				).entry;
-				const hashes1 = await input1.getHeads();
-				const hashes2 = await input2.getHeads();
+				const hashes1 = await input1.getHeads().all();
+				const hashes2 = await input2.getHeads().all();
 				await session.peers[0].services.pubsub.publish(
 					Buffer.from(
 						serialize(new StringArray({ arr: hashes1.map((x) => x.hash) }))

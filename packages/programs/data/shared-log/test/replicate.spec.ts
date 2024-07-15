@@ -10,12 +10,12 @@ import {
 	randomBytes,
 	toBase64
 } from "@peerbit/crypto";
-import { AbsoluteReplicas, decodeReplicas, maxReplicas } from "../src/replication.js";
-import { Observer } from "../src/role.js";
+import { AbsoluteReplicas, ReplicationRangeIndexable, decodeReplicas, maxReplicas } from "../src/replication.js";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { collectMessages, getReceivedHeads } from "./utils.js";
 import { expect } from "chai";
+import { SearchRequest } from "@peerbit/indexer-interface";
 
 describe(`exchange`, function () {
 	let session: TestSession;
@@ -72,8 +72,7 @@ describe(`exchange`, function () {
 
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}
@@ -81,9 +80,12 @@ describe(`exchange`, function () {
 	});
 
 	afterEach(async () => {
-		if (db1) await db1.drop();
-
-		if (db2) await db2.drop();
+		if (db1 && db1.closed === false) {
+			await db1.drop();
+		}
+		if (db2 && db2.closed === false) {
+			await db2.drop();
+		}
 
 		await session.stop();
 	});
@@ -181,25 +183,31 @@ describe(`exchange`, function () {
 					}
 				}
 			))!;
-			db1.log.updateRole({ type: "replicator", factor: 0.5 });
-			db2.log.updateRole({ type: "replicator", factor: 0.5 });
+			await db1.log.replicate({ factor: 0.5 });
+			await db2.log.replicate({ factor: 0.5 });
 
-			await waitForResolved(() =>
+			const getParticipationPerPer = (ranges: ReplicationRangeIndexable[]) => {
+				let map = new Map<string, number>()
+				for (const range of ranges) {
+					map.set(range.hash, (map.get(range.hash) || 0) + range.widthNormalized)
+				}
+				return map
+			}
+
+			await waitForResolved(async () =>
 				expect(
-					db1.log
-						.getReplicatorsSorted()
-						?.toArray()
-						.map((x) => Math.round(x.role.factor * 2))
-				).to.deep.equal([1, 1])
+					[...getParticipationPerPer((await db1.log
+						.replicationIndex.query(new SearchRequest({ fetch: 0xffffffff }))).results.map(x => x.value)).values()].map(x => Math.round(x * 200))
+				).to.deep.equal([100, 100])
 			);
-			await waitForResolved(() =>
+
+			await waitForResolved(async () =>
 				expect(
-					db2.log
-						.getReplicatorsSorted()
-						?.toArray()
-						.map((x) => Math.round(x.role.factor * 2))
-				).to.deep.equal([1, 1])
+					[...getParticipationPerPer((await db2.log
+						.replicationIndex.query(new SearchRequest({ fetch: 0xffffffff }))).results.map(x => x.value)).values()].map(x => Math.round(x * 200))
+				).to.deep.equal([100, 100])
 			);
+
 
 			const { entry: entryA } = await db1.add("a", {
 				meta: { next: [], gidSeed: new Uint8Array([1]) }
@@ -261,8 +269,7 @@ describe(`exchange`, function () {
 				session.peers[1],
 				{
 					args: {
-						role: {
-							type: "replicator",
+						replicate: {
 							factor: 1
 						}
 					}
@@ -293,7 +300,6 @@ describe(`exchange`, function () {
 		const value = "hello";
 
 		await db1.add(value);
-
 		await waitForResolved(() => expect(db2.log.log.length).equal(1));
 
 		expect((await db2.iterator({ limit: -1 })).collect().length).equal(1);
@@ -303,19 +309,23 @@ describe(`exchange`, function () {
 		).collect();
 		expect(db1Entries.length).equal(1);
 
-		await waitForResolved(async () =>
-			expect(
-				await db1.log.findLeaders(
-					db1Entries[0].gid,
-					maxReplicas(db1.log, db1Entries)
-					// 0
+		try {
+			await waitForResolved(async () =>
+				expect(
+					await db1.log.findLeaders(
+						db1Entries[0].gid,
+						maxReplicas(db1.log, db1Entries)
+						// 0
+					)
+				).to.have.members(
+					[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
+						getPublicKeyFromPeerId(p).hashcode()
+					)
 				)
-			).to.have.members(
-				[session.peers[0].peerId, session.peers[1].peerId].map((p) =>
-					getPublicKeyFromPeerId(p).hashcode()
-				)
-			)
-		);
+			);
+		} catch (error) {
+			throw error;
+		}
 
 		expect(db1Entries[0].payload.getValue().value).equal(value);
 		const db2Entries: Entry<Operation<string>>[] = (
@@ -379,8 +389,8 @@ describe(`exchange`, function () {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -389,6 +399,39 @@ describe(`exchange`, function () {
 
 		await waitForResolved(() => expect(db2.log.log.length).equal(count));
 	});
+
+	it("can unreplicate", async () => {
+		await db1.close();
+		db1 = await session.peers[0].open<EventStore<string>>(new EventStore(), {
+			args: {
+				replicas: {
+					min: 1
+				},
+				replicate: {
+					factor: 1
+				}
+			}
+		})!;
+
+		db2 = (await EventStore.open<EventStore<string>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicas: {
+						min: 1
+					},
+					replicate: {
+						factor: 1
+					}
+				}
+			}
+		))!;
+		await db1.add("data");
+		await waitForResolved(() => expect(db2.log.log.length).equal(1));
+		await db2.log.replicate(false);
+		await waitForResolved(() => expect(db2.log.log.length).equal(0));
+	})
 });
 
 describe("redundancy", () => {
@@ -418,14 +461,14 @@ describe("redundancy", () => {
 		fetchHashes = new Set();
 	});
 	afterEach(async () => {
-		if (db1) await db1.drop();
-		if (db2) await db2.drop();
-		if (db3) await db3.drop();
+		if (db1 && db1.closed === false) await db1.drop();
+		if (db2 && db2.closed === false) await db2.drop();
+		if (db3 && db3.closed === false) await db3.drop();
 	});
 
 	it("only sends entries once, 2 peers dynamic", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
-		db1.log.updateRole({ type: "replicator" });
+		await db1.log.replicate();
 		let count = 1000;
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello " + i, { meta: { next: [] } });
@@ -440,9 +483,7 @@ describe("redundancy", () => {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator"
-					}
+					replicate: true
 				}
 			}
 		))!;
@@ -460,7 +501,7 @@ describe("redundancy", () => {
 
 	it("only sends entries once, 2 peers fixed", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
-		db1.log.updateRole({ type: "replicator", factor: 1 });
+		db1.log.replicate({ factor: 1 });
 		let count = 1000;
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello " + i, { meta: { next: [] } });
@@ -475,8 +516,8 @@ describe("redundancy", () => {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -497,7 +538,7 @@ describe("redundancy", () => {
 	it("only sends entries once, 2 peers fixed, write after open", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: { type: "replicator", factor: 1 }
+				replicate: { factor: 1 }
 			}
 		});
 		let count = 1;
@@ -508,8 +549,8 @@ describe("redundancy", () => {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -518,11 +559,12 @@ describe("redundancy", () => {
 
 		const message2 = collectMessages(db2.log);
 
-		await waitForResolved(() =>
-			expect(db1.log.getReplicatorsSorted()?.length).equal(2)
+		await waitForResolved(async () =>
+			expect((await db1.log.getReplicators())?.size).equal(2)
 		);
-		await waitForResolved(() =>
-			expect(db2.log.getReplicatorsSorted()?.length).equal(2)
+
+		await waitForResolved(async () =>
+			expect((await db2.log.getReplicators())?.size).equal(2)
 		);
 
 		await db1.add("hello", { meta: { next: [] } });
@@ -537,11 +579,10 @@ describe("redundancy", () => {
 		expect(dataMessages1).to.be.empty; // no data is sent back
 	});
 
-	it("only sends entries once,3 peers", async () => {
+	it("only sends entries once, 3 peers", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}
@@ -553,8 +594,7 @@ describe("redundancy", () => {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
 						factor: 1
 					}
 				}
@@ -562,7 +602,7 @@ describe("redundancy", () => {
 		);
 		const message2 = collectMessages(db2.log);
 
-		let count = 1000;
+		let count = 1;
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello " + i, { meta: { next: [] } });
 		}
@@ -573,14 +613,14 @@ describe("redundancy", () => {
 			session.peers[2],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
 						factor: 1
 					}
 				}
 			}
 		);
 		const message3 = collectMessages(db3.log);
+
 		await waitForResolved(() => expect(db3.log.log.length).equal(count));
 
 		const heads = getReceivedHeads(message3);
@@ -600,8 +640,7 @@ describe("redundancy", () => {
 	it("only sends entries once,3 peers", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}
@@ -613,8 +652,7 @@ describe("redundancy", () => {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
 						factor: 1
 					}
 				}
@@ -633,8 +671,8 @@ describe("redundancy", () => {
 			session.peers[2],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -738,13 +776,13 @@ describe(`start/stop`, function () {
 		await session.stop();
 	});
 
-	it("starts replicating the database when peers connect in write mode", async () => {
+	it("replicate on connect", async () => {
 		const entryCount = 1000;
 		const entryArr: number[] = [];
 		const db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -763,8 +801,8 @@ describe(`start/stop`, function () {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -772,7 +810,7 @@ describe(`start/stop`, function () {
 		))!;
 
 		await waitForResolved(async () =>
-			expect((await db2.iterator({ limit: -1 })).collect().length).equal(
+			expect(db2.log.log.length).equal(
 				entryCount
 			)
 		);
@@ -787,8 +825,8 @@ describe(`start/stop`, function () {
 	it("can restart replicate", async () => {
 		const db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -801,8 +839,8 @@ describe(`start/stop`, function () {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -818,8 +856,8 @@ describe(`start/stop`, function () {
 			session.peers[1],
 			{
 				args: {
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -844,8 +882,8 @@ describe("canReplicate", () => {
 					min,
 					max
 				},
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				},
 				canReplicate
@@ -860,8 +898,8 @@ describe("canReplicate", () => {
 						min,
 						max
 					},
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					},
 					canReplicate
@@ -878,8 +916,8 @@ describe("canReplicate", () => {
 						min,
 						max
 					},
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					},
 					canReplicate
@@ -919,30 +957,33 @@ describe("canReplicate", () => {
 
 		await Promise.all(
 			[db1, db2, db3].map((log) =>
-				waitForResolved(() =>
+				waitForResolved(async () =>
 					expect(
-						log.log
-							.getReplicatorsSorted()!
-							.toArray()
-							.map((x) => x.publicKey.hashcode())
+						[...await log.log
+							.getReplicators()]
 					).to.have.members(expectedReplicators)
 				)
 			)
 		);
-		const union1 = db1.log.getReplicatorUnion(0);
+		const unionFromPeer0 = await db1.log.getReplicatorUnion(0);
+		let selfIndex = unionFromPeer0.findIndex(x => x === db1.node.identity.publicKey.hashcode())
+
+		// should always include self in the cover set, also include one of the remotes since their replication factor is 1
 		expect([
 			db2.node.identity.publicKey.hashcode(),
 			db3.node.identity.publicKey.hashcode()
-		]).include(union1[0]); // only 1 needs to be present, since both 2 and 3 are replicating with factor 1
-		expect(union1).to.have.length(1);
+		]).include(unionFromPeer0[selfIndex === 0 ? 1 : 0]);
+		expect(unionFromPeer0).to.have.length(2);
 
+
+		// the other ones should only have to cover themselves
 		await Promise.all(
 			[db2, db3].map((log) =>
 				waitForResolved(
-					() =>
-						expect(log.log.getReplicatorUnion(0)).to.have.members([
+					async () =>
+						expect(await log.log.getReplicatorUnion(0)).to.have.members([
 							log.node.identity.publicKey.hashcode()
-						]) // I only need to query muself to access all data
+						])
 				)
 			)
 		);
@@ -969,7 +1010,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: "observer"
+				replicate: false
 			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
@@ -980,8 +1021,12 @@ describe("replication degree", () => {
 					replicas: {
 						min,
 						max
+					},
+					replicate: {
+						factor: 0.5,
+						offset: 0
 					}
-				}
+				},
 			}
 		))!;
 
@@ -993,6 +1038,10 @@ describe("replication degree", () => {
 					replicas: {
 						min,
 						max
+					},
+					replicate: {
+						factor: 0.5,
+						offset: 0.5
 					}
 				}
 			}
@@ -1055,53 +1104,30 @@ describe("replication degree", () => {
 	});
 
 	afterEach(async () => {
-		if (db1) await db1.drop();
+		if (db1 && db1.closed === false) await db1.drop();
 
-		if (db2) await db2.drop();
+		if (db2 && db1.closed === false) await db2.drop();
 
-		if (db3) await db3.drop();
+		if (db3 && db1.closed === false) await db3.drop();
 
 		await session.stop();
 	});
 
-	it("can override min on program level", async () => {
-		let minReplicas = 1;
-		let maxReplicas = 1;
 
-		await init(minReplicas, maxReplicas);
-
-		const entryCount = 100;
-		for (let i = 0; i < entryCount; i++) {
-			await db1.add("hello", {
-				replicas: new AbsoluteReplicas(100), // will be overriden by 'maxReplicas' above
-				meta: { next: [] }
-			});
-		}
-
-		await waitForResolved(() => {
-			expect(db1.log.log.length).equal(entryCount);
-			let total = db2.log.log.length + db3.log.log.length;
-			expect(total).greaterThanOrEqual(entryCount);
-			expect(total).lessThan(entryCount * 2);
-			expect(db2.log.log.length).greaterThan(entryCount * 0.2);
-			expect(db3.log.log.length).greaterThan(entryCount * 0.2);
-		});
-	});
 
 	it("will prune once reaching max replicas", async () => {
 		await session.stop();
 		session = await TestSession.disconnected(3);
 
-		let minReplicas = 1;
-		let maxReplicas = 1;
+		let minReplicas = 2;
+		let maxReplicas = 2;
 
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
 				replicas: {
 					min: minReplicas,
 					max: maxReplicas
-				},
-				role: "observer"
+				}
 			}
 		});
 		db2 = (await session.peers[1].open(db1.clone(), {
@@ -1136,7 +1162,9 @@ describe("replication degree", () => {
 		await db2.close();
 
 		session.peers[2].dial(session.peers[0].getMultiaddrs());
+
 		await waitForResolved(() => expect(db3.log.log.length).equal(entryCount));
+
 
 		// reopen db2 again and make sure either db3 or db2 drops the entry (not both need to replicate)
 		await delay(2000);
@@ -1150,12 +1178,7 @@ describe("replication degree", () => {
 		});
 
 		await waitForResolved(() => {
-			expect(db1.log.log.length).equal(entryCount);
-			let total = db2.log.log.length + db3.log.log.length;
-			expect(total).greaterThanOrEqual(entryCount);
-			expect(total).lessThan(entryCount * 2);
-			expect(db2.log.log.length).greaterThan(entryCount * 0.2);
-			expect(db3.log.log.length).greaterThan(entryCount * 0.2);
+			expect(db1.log.log.length).to.be.lessThan(entryCount);
 		});
 	});
 
@@ -1211,14 +1234,15 @@ describe("replication degree", () => {
 			});
 		}
 
+
 		await waitForResolved(() => {
-			expect(db1.log.log.length).equal(entryCount);
+			expect(db1.log.log.length).equal(0);
 			let total = db2.log.log.length + db3.log.log.length;
 			expect(total).greaterThanOrEqual(entryCount);
 			expect(total).lessThan(entryCount * 2);
 			expect(db2.log.log.length).greaterThan(entryCount * 0.2);
 			expect(db3.log.log.length).greaterThan(entryCount * 0.2);
-		});
+		}, { timeout: 20 * 1000 });
 	});
 
 	it("observer will not delete unless replicated", async () => {
@@ -1227,7 +1251,7 @@ describe("replication degree", () => {
 				replicas: {
 					min: 10
 				},
-				role: "observer"
+				replicate: false
 			}
 		});
 		db2 = (await EventStore.open<EventStore<string>>(
@@ -1238,8 +1262,7 @@ describe("replication degree", () => {
 					replicas: {
 						min: 10
 					},
-					role: {
-						type: "replicator",
+					replicate: {
 						factor: 1
 					}
 				}
@@ -1250,7 +1273,6 @@ describe("replication degree", () => {
 
 		await waitForResolved(() => expect(db1.log.log.length).equal(1));
 		await waitForResolved(() => expect(db2.log.log.length).equal(1));
-
 		await expect(
 			Promise.all(db1.log.prune([e1.entry], { timeout: 3000 }))
 		).rejectedWith("Timeout for checked pruning");
@@ -1263,8 +1285,7 @@ describe("replication degree", () => {
 				replicas: {
 					min: 10
 				},
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}
@@ -1277,8 +1298,8 @@ describe("replication degree", () => {
 					replicas: {
 						min: 10
 					},
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					}
 				}
@@ -1307,7 +1328,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: "observer"
+				replicate: false
 			}
 		});
 
@@ -1319,8 +1340,7 @@ describe("replication degree", () => {
 					replicas: {
 						min,
 						max
-					},
-					role: "observer"
+					}
 				}
 			}
 		))!;
@@ -1338,8 +1358,7 @@ describe("replication degree", () => {
 
 		await waitForResolved(() => expect(db1.log.log.length).equal(1));
 		expect(db2ReorgCounter).equal(0);
-		await db2.log.updateRole({
-			type: "replicator",
+		await db2.log.replicate({
 			factor: 1
 		});
 		expect(db2ReorgCounter).equal(1);
@@ -1357,7 +1376,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: "observer"
+				replicate: false
 			}
 		});
 
@@ -1367,14 +1386,15 @@ describe("replication degree", () => {
 		await delay(2000);
 		// expect(db2ReorgCounter).equal(1); TODO limit distributions and test this
 
-		await db2.log.updateRole("observer");
+		await db2.log.replicate(false);
+
 		// 	expect(db2ReorgCounter).equal(2); TODO limit distributions and test this
-		expect(db2.log.role instanceof Observer).to.be.true;
+		expect(await db2.log.isReplicating()).to.be.false;
 
 		// peer 1 replicator (will get entry)
 		// peer 2 observer (will safely delete the entry)
-		await db1.log.updateRole({
-			type: "replicator",
+		await db1.log.replicate({
+
 			factor: 1
 		});
 
@@ -1382,7 +1402,28 @@ describe("replication degree", () => {
 		await waitForResolved(() => expect(db2.log.log.length).equal(0));
 		// expect(db2ReorgCounter).equal(3); TODO
 	});
+	it("can override min on program level", async () => {
+		let minReplicas = 1;
+		let maxReplicas = 1;
 
+		await init(minReplicas, maxReplicas);
+
+		const entryCount = 100;
+		for (let i = 0; i < entryCount; i++) {
+			await db1.add("hello", {
+				replicas: new AbsoluteReplicas(100), // will be overriden by 'maxReplicas' above
+				meta: { next: [] }
+			});
+		}
+		await waitForResolved(() => {
+			expect(db1.log.log.length).equal(0); // because db1 is not replicating at all, but just pruning once it knows entries are replicated elsewhere
+			let total = db2.log.log.length + db3.log.log.length;
+			expect(total).greaterThanOrEqual(entryCount);
+			expect(total).lessThan(entryCount * 2);
+			expect(db2.log.log.length).greaterThan(entryCount * 0.2);
+			expect(db3.log.log.length).greaterThan(entryCount * 0.2);
+		}, { timeout: 3e4 });
+	});
 	it("time out when pending IHave are never resolved", async () => {
 		let min = 1;
 		let max = 1;
@@ -1396,7 +1437,7 @@ describe("replication degree", () => {
 					min,
 					max
 				},
-				role: "observer"
+				replicate: false
 			}
 		});
 
@@ -1410,8 +1451,8 @@ describe("replication degree", () => {
 						min,
 						max
 					},
-					role: {
-						type: "replicator",
+					replicate: {
+
 						factor: 1
 					},
 					respondToIHaveTimeout
@@ -1448,8 +1489,8 @@ describe("replication degree", () => {
 	it("does not get blocked by slow sends", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1457,15 +1498,15 @@ describe("replication degree", () => {
 
 		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
 		});
 
-		await waitForResolved(() =>
-			expect(db1.log.getReplicatorsSorted()?.length).equal(2)
+		await waitForResolved(async () =>
+			expect((await db1.log.getReplicators()).size).equal(2)
 		);
 
 		let db1Delay = 0;
@@ -1495,8 +1536,8 @@ describe("replication degree", () => {
 		let t0 = +new Date();
 		db3 = await session.peers[2].open<EventStore<any>>(db1.address, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1512,8 +1553,8 @@ describe("replication degree", () => {
 	it("restarting node will receive entries", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1521,8 +1562,8 @@ describe("replication degree", () => {
 
 		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1534,8 +1575,8 @@ describe("replication degree", () => {
 		await session.peers[1].start();
 		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1546,8 +1587,8 @@ describe("replication degree", () => {
 	it("can handle many large messages", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1560,8 +1601,8 @@ describe("replication degree", () => {
 		}
 		db2 = await session.peers[1].open<EventStore<any>>(db1.address, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
+
 					factor: 1
 				}
 			}
@@ -1597,7 +1638,7 @@ describe("sync", () => {
 	let db1: EventStore<string>, db2: EventStore<string>;
 
 	before(async () => {
-		session = await TestSession.connected(3);
+		session = await TestSession.connected(2);
 	});
 	after(async () => {
 		await session.stop();
@@ -1611,12 +1652,11 @@ describe("sync", () => {
 	it("manually synced entries will not get pruned", async () => {
 		db1 = await session.peers[0].open<EventStore<string>>(new EventStore(), {
 			args: {
-				sync: () => true,
+				/* sync: () => true, */
 				replicas: {
 					min: 1
 				},
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				}
 			}
@@ -1627,12 +1667,11 @@ describe("sync", () => {
 			session.peers[1],
 			{
 				args: {
-					sync: () => true,
+					/* 	sync: () => true, */
 					replicas: {
 						min: 1
 					},
-					role: {
-						type: "replicator",
+					replicate: {
 						factor: 1
 					}
 				}
@@ -1640,8 +1679,8 @@ describe("sync", () => {
 		))!;
 		await db1.add("data");
 		await waitForResolved(() => expect(db2.log.log.length).equal(1));
-		await db2.log.updateRole("observer");
+		await db2.log.replicate(false)
 		await delay(3000);
-		expect(db2.log.log.length).equal(1);
+		await waitForResolved(() => expect(db2.log.log.length).equal(0));
 	});
 });

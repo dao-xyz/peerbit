@@ -1,12 +1,14 @@
 import { field, variant } from "@dao-xyz/borsh";
 import {
 	Documents,
+	type CanPerformOperations
+} from "@peerbit/document";
+import {
 	SearchRequest,
 	IntegerCompare,
 	Compare,
 	Or,
-	type CanPerformOperations
-} from "@peerbit/document";
+} from "@peerbit/indexer-interface";
 import {
 	getPathGenerator,
 	TrustedNetwork,
@@ -19,7 +21,7 @@ import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { type PeerId } from "@libp2p/interface";
 import { concat } from "uint8arrays";
-import { type RoleOptions } from "@peerbit/shared-log";
+import { type ReplicationOptions } from "@peerbit/shared-log";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -199,13 +201,13 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async open(properties?: { role?: RoleOptions }) {
+	async open(properties?: { replicate?: ReplicationOptions }) {
 		await this.identityGraphController.open({
-			role: properties?.role || { type: "replicator", factor: 1 },
+			replicate: properties?.replicate || { factor: 1 },
 			canRead: this.canRead.bind(this)
 		});
 		await this.access.open({
-			role: properties?.role || { type: "replicator", factor: 1 },
+			replicate: properties?.replicate || { factor: 1 },
 			type: Access,
 			canPerform: this.canPerform.bind(this),
 			index: {

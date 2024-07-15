@@ -17,11 +17,11 @@ describe("load", function () {
 	afterEach(async () => {
 		await session.stop();
 
-		if (db1) {
+		if (db1 && db1.closed === false) {
 			await db1.drop();
 		}
 
-		if (db2) {
+		if (db2 && db2.closed === false) {
 			await db2.drop();
 		}
 	});
@@ -60,7 +60,7 @@ describe("load", function () {
 
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
-				role: { type: "replicator", factor: 0.5 },
+				replicate: { factor: 0.5 },
 				replicas: {
 					min: 1
 				}
@@ -76,7 +76,7 @@ describe("load", function () {
 			session.peers[1],
 			{
 				args: {
-					role: { type: "replicator", factor: 0.5 },
+					replicate: { factor: 0.5 },
 					replicas: {
 						min: 1
 					}
@@ -95,7 +95,7 @@ describe("load", function () {
 			session.peers[0],
 			{
 				args: {
-					role: { type: "replicator", factor: 0.5 },
+					replicate: { factor: 0.5 },
 					replicas: {
 						min: 1
 					}
@@ -106,4 +106,45 @@ describe("load", function () {
 		expect(lengthBeforeClose).equal(lengthAfterClose);
 		expect(lengthAfterClose).greaterThan(0);
 	});
+
+	it("reload emit change events for loaded entries", async () => {
+		session = await TestSession.connected(1, [
+			{ directory: "./tmp/shared-log/load-events/" + uuid() }
+		]);
+
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: {
+				replicate: { factor: 1 },
+				replicas: {
+					min: 1
+				}
+			}
+		});
+		await db1.add("hello", { meta: { next: [] } });
+
+		await db1.close();
+
+		let added = 0;
+		let removed = 0;
+
+		db1 = await session.peers[0].open(db1.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				replicas: {
+					min: 1
+				},
+				onChange: (change) => {
+					added += change.added.length
+					removed += change.removed.length
+				}
+			}
+		});
+
+		expect(db1.log.log.length).to.equal(1)
+		await db1.log.reload()
+		await waitForResolved(() => {
+			expect(removed).equal(1) // because of the reset
+			expect(added).equal(1)
+		})
+	})
 });

@@ -14,6 +14,7 @@ import { type ProgramClient } from "@peerbit/program";
 import { type Change } from "@peerbit/log";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from 'chai'
+import { v4 as uuid } from 'uuid'
 
 describe("query", () => {
 	let session: TestSession,
@@ -41,7 +42,7 @@ describe("query", () => {
 		await observer.open(observerStore, {
 			args: {
 				log: {
-					role: "observer"
+					replicate: false
 				}
 			}
 		});
@@ -257,7 +258,7 @@ describe("events", () => {
 		await peer1.open(store2, {
 			args: {
 				log: {
-					role: "observer"
+					replicate: false
 				}
 			}
 		});
@@ -326,7 +327,7 @@ describe("load", () => {
 	beforeEach(async () => {
 		// we reinit sesion for every test since DString does always have same address
 		// and that might lead to sideeffects running all tests in one go
-		session = await TestSession.connected(1);
+		session = await TestSession.connected(1, { directory: "./tmp/string/" + uuid() });
 
 		// Create store
 		store = new DString({});
@@ -341,6 +342,7 @@ describe("load", () => {
 	it("loads on open", async () => {
 		let data = "hello";
 		await store.add(data, new Range({ offset: 0, length: data.length }));
+		expect(await store.getValue()).equal(data);
 		await store.close();
 		expect(store._index.string).equal("");
 		expect(store._index._log).equal(undefined);

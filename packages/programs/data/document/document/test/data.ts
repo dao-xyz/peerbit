@@ -14,8 +14,8 @@ export class Document {
     @field({ type: option("u64") })
     number?: bigint;
 
-    @field({ type: option(vec("string")) })
-    tags?: string[];
+    @field({ type: vec("string") })
+    tags: string[];
 
     @field({ type: option("bool") })
     bool?: boolean;
@@ -27,7 +27,7 @@ export class Document {
         this.id = opts.id;
         this.name = opts.name;
         this.number = opts.number;
-        this.tags = opts.tags;
+        this.tags = opts.tags || [];
         this.bool = opts.bool;
         this.data = opts.data;
     }

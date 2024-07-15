@@ -117,6 +117,8 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			queryType: SearchRequest,
 			responseType: StringResult
 		});
+
+		await this._log.reload() // TODO make it so that it does not reload the whole log (i.e. persist the generated string in some way)
 	}
 
 	private async _canPerform(
@@ -127,7 +129,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			return true;
 		} else {
 			for (const next of context.entry.next) {
-				if (this._log.log.has(next)) {
+				if (await this._log.log.has(next)) {
 					return true;
 				}
 			}
@@ -147,7 +149,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			}),
 			{
 				...options,
-				meta: { ...options?.meta, next: await this._log.log.getHeads() }
+				meta: { ...options?.meta, next: await this._log.log.getHeads().all() } // TODO: optimize
 			}
 		);
 	}

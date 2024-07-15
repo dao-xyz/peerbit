@@ -60,17 +60,18 @@
 		"crdt"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.2",
+		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/cache": "2.0.6",
 		"@peerbit/blocks-interface": "^1.2.19",
 		"@peerbit/crypto": "2.2.0",
 		"@peerbit/logger": "1.0.2",
 		"@peerbit/time": "2.0.6",
-		"libp2p": "^1.2.3",
+		"libp2p": "^1.8.1",
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
-		"yallist": "^4.0.0",
-		"uuid": "^9.0.0"
+		"uuid": "^9.0.0",
+		"@peerbit/indexer-interface": "^0.0.1",
+		"@peerbit/indexer-simple": "^0.0.1"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "2.0.33",

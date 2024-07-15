@@ -1,7 +1,6 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
 import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
 import { Program } from "@peerbit/program";
-import * as types from "@peerbit/document-interface";
 import {
 	RPC,
 	type RPCResponse,
@@ -10,14 +9,19 @@ import {
 	type RPCRequestAllOptions
 } from "@peerbit/rpc";
 import { logger as loggerFn } from "@peerbit/logger";
-import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
+import { PublicSignKey, sha256Base64Sync, type MaybePromise } from "@peerbit/crypto";
 import { SharedLog } from "@peerbit/shared-log";
 import { concat, fromString } from "uint8arrays";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import { Cache } from "@peerbit/cache";
-import { HashmapIndexEngine } from "@peerbit/document-index-simple";
-import { MAX_BATCH_SIZE } from "./constants.js";
+import {
+	HashmapIndex
+} from "@peerbit/indexer-simple";
+import * as types from "@peerbit/document-interface";
+import * as indexerTypes from "@peerbit/indexer-interface";
+import { copySerialization } from "./borsh.js";
+
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -44,12 +48,9 @@ export class PutOperation extends Operation /* <T> */ {
 
 	/* _value?: T; */
 
-	constructor(props?: { data: Uint8Array /* value?: T */ }) {
+	constructor(props: { data: Uint8Array /* value?: T */ }) {
 		super();
-		if (props) {
-			this.data = props.data;
-			/* this._value = props.value; */
-		}
+		this.data = props.data;
 	}
 }
 
@@ -72,10 +73,10 @@ export class PutAllOperation<T> extends Operation<T> {
  */
 @variant(2)
 export class DeleteOperation extends Operation {
-	@field({ type: types.IdKey })
-	key: types.IdKey;
+	@field({ type: indexerTypes.IdKey })
+	key: indexerTypes.IdKey;
 
-	constructor(props: { key: types.IdKey }) {
+	constructor(props: { key: indexerTypes.IdKey }) {
 		super();
 		this.key = props.key;
 	}
@@ -91,12 +92,13 @@ export type QueryOptions<R> = {
 	local?: boolean;
 };
 export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
-export type IndexableFields<T> = (
+
+type Transformer<T, I> = (
 	obj: T,
 	context: types.Context
-) => Record<string, any> | Promise<Record<string, any>>;
+) => MaybePromise<I>
 
-export type ResultsIterator<T> = {
+type ResultsIterator<T> = {
 	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
@@ -142,14 +144,15 @@ const dedup = <T>(
 	allResult: T[],
 	dedupBy: (obj: any) => string | Uint8Array | number | bigint
 ) => {
-	const unique: Set<types.IdPrimitive> = new Set();
+	const unique: Set<indexerTypes.IdPrimitive> = new Set();
 	const dedup: T[] = [];
 	for (const result of allResult) {
-		const key = types.toIdeable(dedupBy(result));
-		if (unique.has(key)) {
+		const key = indexerTypes.toId(dedupBy(result));
+		const primitive = key.primitive;
+		if (unique.has(primitive)) {
 			continue;
 		}
-		unique.add(key);
+		unique.add(primitive);
 		dedup.push(result);
 	}
 	return dedup;
@@ -163,7 +166,7 @@ if (!(await this.canRead(message.sender))) {
 } */
 
 export type CanSearch = (
-	request: types.SearchRequest | types.CollectNextRequest,
+	request: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
 	from: PublicSignKey
 ) => Promise<boolean> | boolean;
 
@@ -172,35 +175,55 @@ export type CanRead<T> = (
 	from: PublicSignKey
 ) => Promise<boolean> | boolean;
 
-export type OpenOptions<T> = {
-	type: AbstractType<T>;
+export type IDocumentWithContext<I> = {
+	__context: types.Context;
+} & I
+
+export type OpenOptions<T, I> = {
+	documentType: AbstractType<T>;
+	indexedType?: new (arg: T, context: types.Context) => I;
 	dbType: AbstractType<types.IDocumentStore<T>>;
 	log: SharedLog<Operation>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
-	engine?: types.IndexEngine;
 	sync: (result: types.Results<T>) => Promise<void>;
 	indexBy?: string | string[];
-	fields: IndexableFields<T>;
 };
 
+
+type IndexableClass<I> = new (value: I, context: types.Context) => IDocumentWithContext<I> /* IDocumentWithContext<T>; */
+
 @variant("documents_index")
-export class DocumentIndex<T> extends Program<OpenOptions<T>> {
+export class DocumentIndex<T, I extends Record<string, any>> extends Program<OpenOptions<T, I>> {
+
 	@field({ type: RPC })
-	_query: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+	_query: RPC<indexerTypes.AbstractSearchRequest, types.AbstractSearchResult<T>>;
 
-	engine: types.IndexEngine;
 
-	type: AbstractType<T>;
+	// Original document representation
+	documentType: AbstractType<T>;
+
+	// indexed document, either a constructor is provided
+	indexedType?: new (arg: T, context: types.Context) => I;
+
+	// or a transformer is provided. The transformer will otherwise be generated 
+	transformer: Transformer<T, I>;
+
+
+	// The indexed document wrapped in a context
+	wrappedIndexedType: IndexableClass<I>;
+
+	// The database type, for recursive indexing
 	dbType: AbstractType<types.IDocumentStore<T>>;
+	indexedTypeIsDocumentType: boolean;
 
 	// Index key
-	private indexBy: string | string[];
-	private indexByArr: string[];
+	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
+	private index: indexerTypes.Index<IDocumentWithContext<I>>
 
 	// Transformation, indexer
-	fields: IndexableFields<T>;
+	/* fields: IndexableFields<T, I>; */
 
 	private _valueEncoding: Encoding<T>;
 
@@ -212,7 +235,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private _resolverCache: Cache<T>;
 	private _isProgramValues: boolean;
 	constructor(properties?: {
-		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+		query?: RPC<indexerTypes.AbstractSearchRequest, types.AbstractSearchResult<T>>;
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
@@ -222,44 +245,79 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return this._valueEncoding;
 	}
 
-	async open(properties: OpenOptions<T>) {
+	async open(properties: OpenOptions<T, I>) {
 		this._log = properties.log;
-		this.type = properties.type;
+
+		/* class DocumentWithContext implements IDocumentWithContext<I | T> {
+
+			@field({ type: properties.indexedType || properties.documentType })
+			[INDEXED_VALUE_PROPERTY]: I;
+
+			@field({ type: types.Context })
+			context: types.Context;
+
+			constructor(value: I, context: types.Context) {
+				this.value = value;
+				this.context = context;
+			}
+		}
+			*/
+
+		this.documentType = properties.documentType;
+		this.indexedType = properties.indexedType;
+		this.indexedTypeIsDocumentType = properties.indexedType === properties.documentType;
+
+		class IndexedClassWithContex {
+
+			@field({ type: types.Context })
+			__context: types.Context;
+
+			constructor(value: I, context: types.Context) {
+				Object.assign(this, value);
+				this.__context = context;
+			}
+		}
+
+		// copy all prototype values from indexedType to IndexedClassWithContex
+		copySerialization((properties.indexedType || properties.documentType)!, IndexedClassWithContex);
+
+		this.wrappedIndexedType = IndexedClassWithContex as new (value: I, context: types.Context) => IDocumentWithContext<I>
+
 		// if this.type is a class that extends Program we want to do special functionality
-		this._isProgramValues = this.type instanceof Program;
+		this._isProgramValues = this.documentType instanceof Program;
 		this.dbType = properties.dbType;
 		this._sync = properties.sync;
-		this.fields = properties.fields;
-		this.indexBy = properties.indexBy || DEFAULT_INDEX_BY;
-		this.indexByArr = Array.isArray(this.indexBy)
-			? this.indexBy
-			: [this.indexBy];
-		this.indexByResolver =
-			typeof this.indexBy === "string"
-				? (obj) => obj[this.indexBy as string]
-				: (obj: any) => types.extractFieldValue(obj, this.indexBy as string[]);
+		this.indexedType = properties.indexedType;
 
-		this._valueEncoding = BORSH_ENCODING(this.type);
+		this.transformer = (properties.indexedType ? ((obj, context) => new properties.indexedType!(obj, context)) : (obj) => obj as any as I); // TODO types
+
+		const maybeArr = properties.indexBy || DEFAULT_INDEX_BY
+		this.indexBy = Array.isArray(maybeArr) ? maybeArr : [maybeArr];
+		this.indexByResolver = (obj: any) => indexerTypes.extractFieldValue(obj, this.indexBy);
+
+		this._valueEncoding = BORSH_ENCODING(this.documentType);
 
 		if (this._isProgramValues) {
 			this._resolverProgramCache = new Map();
 		}
 		this._resolverCache = new Cache({ max: 1000 }); // TODO choose limit better (adaptive)
 
-		this.engine = properties.engine || new HashmapIndexEngine();
+		this.index = await (await this.node.indexer.scope(
+			sha256Base64Sync(
+				concat([this._log.log.id, fromString("/document-index")])
+			))).init({
+				indexBy: this.indexBy,
+				schema: this.wrappedIndexedType,
+				nested: {
+					match: (obj: any): obj is types.IDocumentStore<any> =>
+						obj instanceof this.dbType,
+					query: async (obj: types.IDocumentStore<any>, query) =>
+						obj.index.search(query)
+				},
+				/* maxBatchSize: MAX_BATCH_SIZE */
+			}) || new HashmapIndex<IDocumentWithContext<I>>();
 
-		await this.engine.init({
-			indexBy: this.indexBy,
-			nested: {
-				match: (obj: any): obj is types.IDocumentStore<any> =>
-					obj instanceof this.dbType,
-				query: async (obj: types.IDocumentStore<any>, query) =>
-					obj.index.search(query)
-			},
-			maxBatchSize: MAX_BATCH_SIZE
-		});
 
-		await this.engine.start?.();
 		await this._query.open({
 			topic: sha256Base64Sync(
 				concat([this._log.log.id, fromString("/document")])
@@ -272,24 +330,24 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 				if (
 					properties.canSearch &&
-					(query instanceof types.SearchRequest ||
-						query instanceof types.CollectNextRequest) &&
+					(query instanceof indexerTypes.SearchRequest ||
+						query instanceof indexerTypes.CollectNextRequest) &&
 					!(await properties.canSearch(
-						query as types.SearchRequest | types.CollectNextRequest,
+						query as indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
 						ctx.from
 					))
 				) {
 					return new types.NoAccess();
 				}
 
-				if (query instanceof types.CloseIteratorRequest) {
+				if (query instanceof indexerTypes.CloseIteratorRequest) {
 					this.processCloseIteratorRequest(query, ctx.from);
 				} else {
 					const results = await this.processQuery(
 						query as
-						| types.SearchRequest
-						| types.SearchRequest
-						| types.CollectNextRequest,
+						| indexerTypes.SearchRequest
+						| indexerTypes.SearchRequest
+						| indexerTypes.CollectNextRequest,
 						ctx.from,
 						{
 							canRead: properties.canRead
@@ -304,39 +362,41 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 				}
 			},
 			responseType: types.AbstractSearchResult,
-			queryType: types.AbstractSearchRequest
+			queryType: indexerTypes.AbstractSearchRequest
 		});
 	}
 
 	async close(from?: Program): Promise<boolean> {
 		const closed = await super.close(from);
 		if (closed) {
-			await this.engine.stop?.();
+			await this.index.stop?.();
 		}
 		return closed;
 	}
 
 	async drop(from?: Program): Promise<boolean> {
-		const closed = await super.drop(from);
-		if (closed) {
-			await this.engine.stop?.();
+		const dropped = await super.drop(from);
+		if (dropped) {
+			await this.index.drop?.();
+			await this.index.stop?.();
+
 		}
-		return closed;
+		return dropped;
 	}
 
 	public async get(
-		key: types.Ideable | types.IdKey,
+		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: QueryOptions<T>
 	): Promise<T | undefined> {
 		return (
 			await this.getDetailed(
-				key instanceof types.IdKey ? key : types.toId(key),
+				key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key),
 				options
 			)
 		)?.[0]?.results[0]?.value;
 	}
 
-	public async put(value: T, entry: Entry<Operation>, id: types.IdKey) {
+	public async put(value: T, entry: Entry<Operation>, id: indexerTypes.IdKey) {
 		const idString = id.primitive;
 		if (this._isProgramValues) {
 			this._resolverProgramCache!.set(idString, value);
@@ -344,77 +404,70 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			this._resolverCache.add(idString, value);
 		}
 
+		const existing = (await this.index.get(id))
 		const context = new types.Context({
 			created:
-				(await this.engine.get(id))?.context.created ||
+				existing?.value.__context.created ||
 				entry.meta.clock.timestamp.wallTime,
 			modified: entry.meta.clock.timestamp.wallTime,
 			head: entry.hash,
 			gid: entry.gid
 		});
 
-		const valueToIndex = await this.fields(value, context);
-		this.engine.put({
-			id,
-			indexed: valueToIndex,
-			context,
-			size: entry.payload.data.byteLength
-			/* reference:
-				valueToIndex === value || value instanceof Program
-					? { value }
-					: undefined */
-		});
+		const valueToIndex = this.indexedType ? new this.indexedType(value, context) : value;
+		const wrappedValueToIndex = new this.wrappedIndexedType(valueToIndex as I, context)
+		await this.index.put(wrappedValueToIndex)
+
 	}
 
-	public del(key: types.IdPrimitive) {
-		const keyObject = types.toId(key);
+	public del(key: indexerTypes.IdPrimitive) {
 		if (this._isProgramValues) {
 			this._resolverProgramCache!.delete(key);
 		} else {
 			this._resolverCache.del(key);
 		}
-		return this.engine.del(keyObject);
+		return this.index.del(new indexerTypes.DeleteRequest({ query: [indexerTypes.getMatcher(this.indexBy, key)] }));
 	}
 
 	public async getDetailed(
-		key: types.IdKey | types.IdPrimitive,
+		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
 		options?: QueryOptions<T>
 	): Promise<types.Results<T>[] | undefined> {
 		let results: types.Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
-				new types.SearchRequest({
+				new indexerTypes.SearchRequest({
 					query: [
-						new types.ByteMatchQuery({ key: this.indexByArr, value: key })
+						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key })
 					]
 				}),
 				options
 			);
 		} else {
-			const indexableKey = types.toIdeable(key);
+			const indexableKey = indexerTypes.toIdeable(key);
 
 			if (
 				typeof indexableKey === "number" ||
 				typeof indexableKey === "bigint"
 			) {
 				results = await this.queryDetailed(
-					new types.SearchRequest({
+					new indexerTypes.SearchRequest({
 						query: [
-							new types.IntegerCompare({
-								key: this.indexByArr,
-								compare: types.Compare.Equal,
+							new indexerTypes.IntegerCompare({
+								key: this.indexBy,
+								compare: indexerTypes.Compare.Equal,
 								value: indexableKey
 							})
 						]
 					}),
 					options
 				);
-			} else {
+			} else if (typeof indexableKey === "string") {
 				results = await this.queryDetailed(
-					new types.SearchRequest({
+					new indexerTypes.SearchRequest({
 						query: [
-							new types.StringMatch({
-								key: this.indexByArr,
+							new indexerTypes.StringMatch({
+								key: this.indexBy,
 								value: indexableKey
 							})
 						]
@@ -422,17 +475,31 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					options
 				);
 			}
+			else if (indexableKey instanceof Uint8Array) {
+				results = await this.queryDetailed(
+					new indexerTypes.SearchRequest({
+						query: [
+							new indexerTypes.ByteMatchQuery({
+								key: this.indexBy,
+								value: indexableKey
+							})
+						]
+					}),
+					options
+				);
+			}
+
 		}
 
 		return results;
 	}
 
 	getSize(): Promise<number> | number {
-		return this.engine.getSize();
+		return this.index.getSize();
 	}
 
 	private async resolveDocument(
-		value: types.IndexedResult
+		value: indexerTypes.IndexedResult<IDocumentWithContext<I>>
 	): Promise<{ value: T } | undefined> {
 		const cached =
 			this._resolverCache.get(value.id.primitive) ||
@@ -441,10 +508,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			return { value: cached };
 		}
 
-		if (value.indexed instanceof this.type) {
-			return { value: value.indexed as T };
+		if (this.indexedTypeIsDocumentType) {
+			return { value: value.value.value as any as T }; // TODO types
 		}
-		const head = await await this._log.log.get(value.context.head);
+
+		const head = await this._log.log.get(value.value.__context.head);
 		if (!head) {
 			return undefined; // we could end up here if we recently pruned the document and other peers never persisted the entry
 			// TODO update changes in index before removing entries from log entry storage
@@ -464,7 +532,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	async processQuery(
-		query: types.SearchRequest | types.CollectNextRequest,
+		query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
 		from: PublicSignKey,
 		options?: {
 			canRead?: CanRead<T>;
@@ -472,11 +540,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	): Promise<types.Results<T>> {
 		// We do special case for querying the id as we can do it faster than iterating
 
-		let indexedResult: types.IndexedResults | undefined = undefined;
-		if (query instanceof types.SearchRequest) {
-			indexedResult = await this.engine.query(query, from);
-		} else if (query instanceof types.CollectNextRequest) {
-			indexedResult = await this.engine.next(query, from);
+		let indexedResult: indexerTypes.IndexedResults<IDocumentWithContext<I>> | undefined = undefined;
+		if (query instanceof indexerTypes.SearchRequest) {
+			indexedResult = await this.index.query(query);
+		} else if (query instanceof indexerTypes.CollectNextRequest) {
+			indexedResult = await this.index.next(query);
 		} else {
 			throw new Error("Unsupported");
 		}
@@ -491,10 +559,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			}
 			filteredResults.push(
 				new types.ResultWithSource({
-					context: result.context,
+					context: result.value.__context,
 					value: value.value,
 					source: serialize(value.value),
-					indexed: result.indexed
+					indexed: result.value
 				})
 			);
 		}
@@ -506,10 +574,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	async processCloseIteratorRequest(
-		query: types.CloseIteratorRequest,
+		query: indexerTypes.CloseIteratorRequest,
 		publicKey: PublicSignKey
 	): Promise<void> {
-		return this.engine.close(query, publicKey);
+		return this.index.close(query);
 	}
 
 	/**
@@ -519,7 +587,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	 * @returns
 	 */
 	public async queryDetailed(
-		queryRequest: types.SearchRequest,
+		queryRequest: indexerTypes.SearchRequest,
 		options?: QueryDetailedOptions<T>
 	): Promise<types.Results<T>[]> {
 		const local = typeof options?.local == "boolean" ? options?.local : true;
@@ -574,7 +642,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					) => {
 						for (const r of await introduceEntries(
 							results,
-							this.type,
+							this.documentType,
 							this._sync,
 							options
 						)) {
@@ -582,7 +650,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						}
 					};
 					try {
-						if (queryRequest instanceof types.CloseIteratorRequest) {
+						if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
 							// don't wait for responses
 							await this._query.request(queryRequest, { mode: remote!.mode });
 						} else {
@@ -639,7 +707,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	 * @returns
 	 */
 	public async search(
-		queryRequest: types.SearchRequest,
+		queryRequest: indexerTypes.SearchRequest,
 		options?: SearchOptions<T>
 	): Promise<T[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
@@ -675,7 +743,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	 * @returns
 	 */
 	public iterate(
-		queryRequest: types.SearchRequest,
+		queryRequest: indexerTypes.SearchRequest,
 		options?: QueryOptions<T>
 	): ResultsIterator<T> {
 		let fetchPromise: Promise<any> | undefined = undefined;
@@ -728,9 +796,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						const buffer: BufferedResult<T>[] = [];
 
 						for (const result of results.results) {
-							const indexKey = types.toIdeable(
+							const indexKey = indexerTypes.toId(
 								this.indexByResolver(result.value)
-							);
+							).primitive;
 							if (visited.has(indexKey)) {
 								continue;
 							}
@@ -741,7 +809,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								from: from,
 								indexed:
 									result.indexed ||
-									(await this.fields(result.value, result.context))
+									(await this.transformer(result.value, result.context))
 							});
 						}
 
@@ -787,7 +855,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 					// TODO buffer more than deleted?
 					// TODO batch to multiple 'to's
-					const collectRequest = new types.CollectNextRequest({
+					const collectRequest = new indexerTypes.CollectNextRequest({
 						id: queryRequest.id,
 						amount: n - buffer.buffer.length
 					});
@@ -812,13 +880,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 										for (const result of results.results) {
 											if (
 												visited.has(
-													types.toIdeable(this.indexByResolver(result.value))
+													indexerTypes.toId(this.indexByResolver(result.value)).primitive
 												)
 											) {
 												continue;
 											}
 											visited.add(
-												types.toIdeable(this.indexByResolver(result.value))
+												indexerTypes.toId(this.indexByResolver(result.value)).primitive
 											);
 											peerBuffer.buffer.push({
 												value: result.value,
@@ -826,7 +894,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 												from: this.node.identity.publicKey,
 												indexed:
 													result.indexed ||
-													(await this.fields(result.value, result.context))
+													(await this.transformer(result.value, result.context))
 											});
 										}
 									}
@@ -849,7 +917,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 })
 								})
 								.then((response) =>
-									introduceEntries(response, this.type, this._sync, options)
+									introduceEntries(response, this.documentType, this._sync, options)
 										.then((responses) => {
 											responses.map((response) => {
 												resultsLeft += Number(response.response.kept);
@@ -871,23 +939,23 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 													for (const result of response.response.results) {
 														if (
 															visited.has(
-																types.toIdeable(
+																indexerTypes.toId(
 																	this.indexByResolver(result.value)
-																)
+																).primitive
 															)
 														) {
 															continue;
 														}
 														visited.add(
-															types.toIdeable(
+															indexerTypes.toId(
 																this.indexByResolver(result.value)
-															)
+															).primitive
 														);
 														peerBuffer.buffer.push({
 															value: result.value,
 															context: result.context,
 															from: response.from!,
-															indexed: this.fields(result.value, result.context)
+															indexed: this.transformer(result.value, result.context)
 														});
 													}
 												}
@@ -927,10 +995,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			const fetchedAll = await fetchAtLeast(n);
 
 			// get n next top entries, shift and pull more results
-			const results = await types.resolvedSort(
-				peerBuffers(),
+			const peerBuffersArr = peerBuffers()
+			const results = peerBuffersArr.sort((a, b) => indexerTypes.extractSortCompare(
+				a.indexed, b.indexed,
 				queryRequest.sort
-			);
+			));
 
 			const pendingMoreResults = n < results.length;
 
@@ -958,7 +1027,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		const close = async () => {
 			controller.abort(new AbortError("Iterator closed"));
 
-			const closeRequest = new types.CloseIteratorRequest({
+			const closeRequest = new indexerTypes.CloseIteratorRequest({
 				id: queryRequest.id
 			});
 			const promises: Promise<any>[] = [];

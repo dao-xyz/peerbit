@@ -32,22 +32,18 @@ describe("replicators", () => {
 		await delay(1000);
 
 		const db2 = await session.peers[1].open(store.clone());
-		await waitForResolved(() =>
+		await waitForResolved(async () =>
 			expect(
-				db1.log
-					.getReplicatorsSorted()
-					?.toArray()
-					.map((x) => x.publicKey.hashcode())
+				[...await db1.log
+					.getReplicators()]
 			).to.have.members(
 				session.peers.map((x) => x.identity.publicKey.hashcode())
 			)
 		);
-		await waitForResolved(() =>
+		await waitForResolved(async () =>
 			expect(
-				db2.log
-					.getReplicatorsSorted()
-					?.toArray()
-					.map((x) => x.publicKey.hashcode())
+				[...await db2.log
+					.getReplicators()]
 			).to.have.members(
 				session.peers.map((x) => x.identity.publicKey.hashcode())
 			)
@@ -61,8 +57,7 @@ describe("replicators", () => {
 
 		const db1 = await session.peers[0].open(store.clone(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				},
 				replicas: {
@@ -72,8 +67,7 @@ describe("replicators", () => {
 		});
 		const db2 = await session.peers[1].open(store.clone(), {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				},
 				replicas: {
@@ -92,8 +86,7 @@ describe("replicators", () => {
 
 		const db3 = await session.peers[2].open(store, {
 			args: {
-				role: {
-					type: "replicator",
+				replicate: {
 					factor: 1
 				},
 				replicas: {
@@ -102,12 +95,9 @@ describe("replicators", () => {
 			}
 		});
 
-		await waitForResolved(() => {
-			expect(db3.log.getReplicatorsSorted()?.length).equal(3);
-		});
-
-		await waitForResolved(() => {
-			expect(db3.log.getReplicatorsSorted()?.length).equal(3);
+		await waitForResolved(async () => {
+			expect((await db3.log
+				.getReplicators()).size).equal(3);
 		});
 
 		await waitForResolved(() =>

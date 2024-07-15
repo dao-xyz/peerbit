@@ -26,7 +26,7 @@ export const slowDownSend = (
 	// TODO types
 	const sendFn = log.rpc.send.bind(log.rpc);
 	log.rpc.send = async (msg, options) => {
-		if (msg.constructor === type && abortSignal && abortSignal.aborted == false) {
+		if (msg.constructor?.name === type?.name && abortSignal && abortSignal.aborted == false) {
 			try {
 				await delay(tms, { signal: abortSignal });
 			} catch (error) {

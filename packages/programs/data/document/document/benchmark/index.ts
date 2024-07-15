@@ -6,7 +6,7 @@ import { type ProgramClient, Program } from "@peerbit/program";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/index.ts"
 // put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))
 
 @variant("document")
@@ -59,8 +59,7 @@ const store = new TestStore({
 const client: ProgramClient = session.peers[0];
 await client.open(store, {
 	args: {
-		role: {
-			type: "replicator",
+		replicate: {
 			factor: 1
 		},
 		log: {

@@ -1,13 +1,14 @@
 {
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
-		"strict": false,
-		"checkJs": false,
-		"noUnusedLocals": false,
+		/* "strict": false,
+		
+		"noUnusedLocals": false, */
 		// allow top level await 
+		"strictPropertyInitialization": false,
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
-		"strictNullChecks": false,
+		/* 	"strictNullChecks": false, */
 		"outDir": "dist"
 	},
 	"include": [

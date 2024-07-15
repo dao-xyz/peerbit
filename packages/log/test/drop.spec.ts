@@ -1,7 +1,6 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Log } from "../src/log.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { createStore } from "@peerbit/any-store";
 import { expect } from "chai";
 
 describe("drop", () => {
@@ -11,9 +10,7 @@ describe("drop", () => {
 		log = new Log();
 		store = new AnyBlockStore();
 		await store.start();
-		const cache = createStore();
-		await cache.open();
-		await log.open(store, await Ed25519Keypair.create(), { cache });
+		await log.open(store, await Ed25519Keypair.create());
 	});
 
 	afterEach(async () => {

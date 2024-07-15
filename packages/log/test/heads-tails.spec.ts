@@ -3,7 +3,6 @@ import { Log } from "../src/log.js";
 import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey3, signKey4 } from "./fixtures/privateKey.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { createStore } from "@peerbit/any-store";
 import { expect } from "chai";
 
 const last = (arr: any[]) => {
@@ -11,7 +10,6 @@ const last = (arr: any[]) => {
 };
 
 interface Events {
-	cacheUpdates: number;
 	gidsRemoved: string[][];
 }
 const createEvents = async (
@@ -20,26 +18,16 @@ const createEvents = async (
 	signKey: Ed25519Keypair
 ) => {
 	let events: Events = {
-		cacheUpdates: 0,
 		gidsRemoved: []
 	};
-	const cache = createStore();
 	await log.open(store, signKey, {
-		cache,
 		onGidRemoved: (gids) => {
 			events.gidsRemoved.push(gids);
 		}
 	});
-	const queueFn = log.headsIndex.headsCache!.queue.bind(
-		log.headsIndex.headsCache
-	);
-	log.headsIndex.headsCache!.queue = (change) => {
-		events.cacheUpdates += 1;
-		return queueFn(change);
-	};
+
 	const logClose = log.close.bind(log);
 	log.close = async () => {
-		await cache.close();
 		return logClose();
 	};
 	return { log, events };
@@ -87,43 +75,42 @@ describe("head-tails", function () {
 	describe("heads", () => {
 		it("finds one head after one entry", async () => {
 			await log1.append(new Uint8Array([0, 0]));
-			expect((await log1.getHeads()).length).equal(1);
+			expect((await log1.getHeads().all()).length).equal(1);
 		});
 
 		it("finds one head after two entries", async () => {
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
-			expect((await log1.getHeads()).length).equal(1);
+			expect((await log1.getHeads().all()).length).equal(1);
 		});
 
 		it("log contains the head entry", async () => {
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
 			assert.deepStrictEqual(
-				(await log1.get((await log1.getHeads())[0].hash))?.hash,
-				(await log1.getHeads())[0].hash
+				(await log1.get((await log1.getHeads().all())[0].hash))?.hash,
+				(await log1.getHeads().all())[0].hash
 			);
 		});
 
 		it("finds head after a join and append", async () => {
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
+
 			await log2.append(new Uint8Array([1, 0]));
 
 			await log2.join(log1);
 
-			expect(log2Events.cacheUpdates).equal(2); // initial load + join
 			await log2.append(new Uint8Array([1, 1]));
 
 			expect(log1Events.gidsRemoved).to.be.empty;
 			expect(log2Events.gidsRemoved).to.have.length(1); // because log2 had 2 different gis before last append
 
-			expect(log2Events.cacheUpdates).equal(3);
 			const expectedHead = last(await log2.toArray());
 
-			expect((await log2.getHeads()).length).equal(1);
+			expect((await log2.getHeads().all()).length).equal(1);
 			assert.deepStrictEqual(
-				(await log2.getHeads())[0].hash,
+				(await log2.getHeads().all())[0].hash,
 				expectedHead.hash
 			);
 		});
@@ -139,7 +126,7 @@ describe("head-tails", function () {
 
 			await log1.join(log2);
 
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			expect(heads.length).equal(2);
 			expect(heads.map((x) => x.hash)).to.have.members([
 				expectedHead1.hash,
@@ -165,10 +152,10 @@ describe("head-tails", function () {
 
 			await log1.join(log2);
 
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			expect(heads.length).equal(2);
-			expect(heads[0].hash).equal(expectedHead1.hash);
-			expect(heads[1].hash).equal(expectedHead2.hash);
+			expect(heads[0].hash).equal(expectedHead2.hash);
+			expect(heads[1].hash).equal(expectedHead1.hash);
 		});
 
 		it("finds two heads after three joins", async () => {
@@ -187,7 +174,7 @@ describe("head-tails", function () {
 			const expectedHead2 = last(await log2.toArray());
 			await log1.join(log2);
 
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			expect(heads.length).equal(2);
 			expect(heads.map((x) => x.hash)).to.have.members([
 				expectedHead1.hash,
@@ -212,7 +199,7 @@ describe("head-tails", function () {
 			await log1.join(log2);
 			await log1.join(log3);
 
-			const heads = await log1.getHeads();
+			const heads = await log1.getHeads(true).all();
 			expect(heads.length).equal(3);
 			expect(heads.map((x) => x.hash)).to.have.members([
 				expectedHead1.hash,
@@ -242,7 +229,6 @@ describe("head-tails", function () {
 				const { entry: ab1 } = await log1.append(new Uint8Array([0]), {
 					meta: { next: [a1, b1] }
 				});
-				expect(log1Events.cacheUpdates).equal(3);
 				expect(log1Events.gidsRemoved).to.have.length(1);
 				expect(log1Events.gidsRemoved[0]).to.have.length(1);
 				expect(log1Events.gidsRemoved[0][0]).equal(
@@ -384,4 +370,44 @@ describe("head-tails", function () {
 			);
 		}); */
 	});
+
+
+	describe("order", () => {
+
+		it('can get oldest', async () => {
+			await log1.append(new Uint8Array([0, 0]));
+			await log1.append(new Uint8Array([0, 1]));
+			await log1.append(new Uint8Array([0, 2]));
+			expect((await log1.entryIndex.getOldest())!.hash).equal((await log1.toArray())[0].hash);
+		})
+
+		it('can get newest', async () => {
+			await log1.append(new Uint8Array([0, 0]));
+			await log1.append(new Uint8Array([0, 1]));
+			await log1.append(new Uint8Array([0, 2]));
+			expect((await log1.entryIndex.getNewest())!.hash).equal((await log1.toArray())[2].hash);
+		})
+
+		it("can get before", async () => {
+
+			await log1.append(new Uint8Array([0, 0]));
+			await log1.append(new Uint8Array([0, 1]));
+			await log1.append(new Uint8Array([0, 2]));
+
+			const entry = await log1.append(new Uint8Array([0, 3]));
+			const before = await log1.entryIndex.getBefore(entry.entry);
+			expect(before!.hash).equal((await log1.toArray())[2].hash);
+
+		})
+
+		it("can get after", async () => {
+
+			await log1.append(new Uint8Array([0, 0]));
+			await log1.append(new Uint8Array([0, 1]));
+			const entry = await log1.append(new Uint8Array([0, 2]));
+			await log1.append(new Uint8Array([0, 3]));
+			const after = await log1.entryIndex.getAfter(entry.entry);
+			expect(after!.hash).equal((await log1.toArray())[3].hash);
+		})
+	})
 });

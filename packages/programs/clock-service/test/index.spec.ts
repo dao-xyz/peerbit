@@ -41,7 +41,7 @@ describe("clock", () => {
 		responder.clock.maxError = BigInt(maxTimeError * 1e6);
 
 		reader = deserialize(serialize(responder), P);
-		await session.peers[1].open(reader, { args: { role: "observer" } });
+		await session.peers[1].open(reader, { args: { replicate: false } });
 		await reader.waitFor(session.peers[0].peerId);
 	});
 	afterEach(async () => {
