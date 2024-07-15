@@ -14,8 +14,8 @@
 		"packages/transport/blocks-interface",
 		"packages/transport/stream",
 		"packages/transport/stream-interface",
-		"packages/transport/stream/test/browser",
-		"packages/transport/stream/test/browser/browser-node",
+		"packages/transport/stream/e2e/browser",
+		"packages/transport/stream/e2e/browser/browser-node",
 		"packages/transport/pubsub",
 		"packages/transport/pubsub-interface",
 		"packages/transport/libp2p-test-utils",
@@ -35,14 +35,14 @@
 		"packages/programs/clock-service",
 		"packages/programs/transport",
 		"packages/programs/data/document/*",
-		"packages/programs/data/document/index/*",
 		"packages/programs/data/*",
 		"packages/utils/crypto",
 		"packages/utils/any-store/*",
 		"packages/utils/time",
 		"packages/utils/cache",
 		"packages/utils/logger",
-		"packages/utils/keychain"
+		"packages/utils/keychain",
+		"packages/utils/indexer/*"
 	],
 	"engines": {
 		"node": ">=18"
@@ -75,15 +75,16 @@
 		"deploy": "yarn deploy:docs && yarn deploy:example",
 		"deploy:docs": "yarn docs && gh-pages --dist docs --dotfiles",
 		"fmt": "prettier --write '{*,**/*}.{js,ts,jsx,tsx,json,vue}'",
-		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json"
+		"postinstall": "patch-package && mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json"
 	},
 	"devDependencies": {
-		"@playwright/test": "^1.42.1",
+		"patch-package": "^8.0.0",
+		"@playwright/test": "^1.45.1",
 		"@types/benchmark": "^2.1.5",
 		"@types/mocha": "^10.0.6",
 		"@types/node": "^20.2.5",
+		"aegir": "github:marcus-pousette/aegir#multiple-assets",
 		"@types/wicg-file-system-access": "^2023.10.4",
-		"aegir": "github:marcus-pousette/aegir#workspace-config",
 		"benchmark": "^2.1.4",
 		"chai-as-promised": "^7.1.1",
 		"dotenv": "^16.0.3",
