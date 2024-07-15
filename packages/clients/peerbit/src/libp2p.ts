@@ -18,33 +18,40 @@ export type Libp2pExtended = Libp2p<
 >;
 
 export type Libp2pCreateOptions = Libp2pOptions<
-	Libp2pExtendServices & { relay: CircuitRelayService; identify: any }
+	Partial<Libp2pExtendServices & { relay: CircuitRelayService; identify: any }>
 >;
+
+export type PartialLibp2pCreateOptions = Libp2pOptions<
+	Partial<Libp2pExtendServices & { relay: CircuitRelayService; identify: any }>
+>;
+
 
 export type Libp2pCreateOptionsWithServices = Libp2pCreateOptions & {
 	services: ServiceFactoryMap<Libp2pExtendServices>;
 };
 
 export const createLibp2pExtended = (
-	opts: Libp2pCreateOptions = {
+	opts: PartialLibp2pCreateOptions = {
 		services: {
-			blocks: (c) => new DirectBlock(c),
-			pubsub: (c) => new DirectSub(c),
-			keychain: (c) => new DefaultKeychain()
+			blocks: (c: any) => new DirectBlock(c),
+			pubsub: (c: any) => new DirectSub(c),
+			keychain: (c: any) => new DefaultKeychain()
 		}
 	}
 ): Promise<Libp2pExtended> => {
-	const relayIdentify: any = {
-		relay: relay(),
-		identify: identify()
-	};
 
-	// https://github.com/libp2p/js-libp2p/issues/1757
-	Object.keys(relayIdentify).forEach((key) => {
-		if (relayIdentify[key] === undefined) {
-			delete relayIdentify[key];
+	let extraServices: any = {}
+
+	if (!opts.services?.["relay"]) {
+		const relayComponent = relay()
+		if (relayComponent) { // will be null in browser
+			extraServices["relay"] = relayComponent
 		}
-	});
+	}
+	if (!opts.services?.["identify"]) {
+		extraServices["identify"] = identify()
+	}
+
 
 	return createLibp2p({
 		...opts,
@@ -60,7 +67,6 @@ export const createLibp2pExtended = (
 		connectionEncryption: opts.connectionEncryption || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],
 		services: {
-			...relayIdentify,
 			pubsub:
 				opts.services?.pubsub ||
 				((c) =>
@@ -71,7 +77,8 @@ export const createLibp2pExtended = (
 					})),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
 			keychain: opts.services?.keychain || ((c) => new DefaultKeychain()),
-			...opts.services
+			...opts.services,
+			...extraServices
 		}
 	});
 };

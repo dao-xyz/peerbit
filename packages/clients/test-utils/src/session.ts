@@ -60,9 +60,9 @@ export class TestSession {
 				services: {
 					blocks: (c) => new DirectBlock(c),
 					pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
-					keychain: (c) => new DefaultKeychain(),
+					keychain: () => new DefaultKeychain(),
 					...o?.libp2p?.services
-				},
+				},  /// TODO types
 				streamMuxers: [yamux()]
 			};
 		};

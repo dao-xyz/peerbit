@@ -16,7 +16,8 @@ import "@libp2p/peer-id";
 import {
 	createLibp2pExtended,
 	type Libp2pExtended,
-	type Libp2pCreateOptions as ClientCreateOptions
+	type Libp2pCreateOptions as ClientCreateOptions,
+	type PartialLibp2pCreateOptions
 } from "./libp2p.js";
 import { DirectBlock } from "@peerbit/blocks";
 import { LevelDatastore } from "datastore-level";
@@ -26,6 +27,9 @@ import { resolveBootstrapAddresses } from "./bootstrap.js";
 import { type AnyStore, createStore } from "@peerbit/any-store";
 import { DefaultKeychain } from "@peerbit/keychain";
 import { type ExtractArgs } from "@peerbit/program";
+import type { Indices } from "@peerbit/indexer-interface";
+import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3"
+import { create as createSQLiteIndexerH } from "@peerbit/indexer-simple"
 
 export const logger = loggerFn({ module: "client" });
 
@@ -35,9 +39,10 @@ export type OptionalCreateOptions = {
 export type CreateOptions = {
 	directory?: string;
 	storage: AnyStore;
+	indexer: Indices;
 	identity: Ed25519Keypair;
 } & OptionalCreateOptions;
-type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
+type Libp2pOptions = { libp2p?: Libp2pExtended | PartialLibp2pCreateOptions };
 type SimpleLibp2pOptions = { relay?: boolean };
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
@@ -68,6 +73,7 @@ export class Peerbit implements ProgramClient {
 	directory?: string;
 
 	private _storage: AnyStore;
+	private _indexer: Indices
 	private _libp2pExternal?: boolean = false;
 
 	// Libp2p peerid in Identity form
@@ -94,6 +100,7 @@ export class Peerbit implements ProgramClient {
 		this.directory = options.directory;
 		this._storage = options.storage;
 		this._libp2pExternal = options.libp2pExternal;
+		this._indexer = options.indexer;
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
@@ -106,9 +113,9 @@ export class Peerbit implements ProgramClient {
 		const directory = options.directory;
 		const hasDir = directory != null;
 
-		const storage = await createCache(
-			directory != null ? path.join(directory, "/cache") : undefined
-		);
+		const storage = await createCache(directory != null ? path.join(directory, "/cache") : undefined);
+
+		const indexer = directory != null ? await createSQLiteIndexer(path.join(directory, "/index")) : await createSQLiteIndexerH()
 
 		const blocksDirectory = hasDir
 			? path.join(directory, "/blocks").toString()
@@ -144,15 +151,15 @@ export class Peerbit implements ProgramClient {
 				...extendedOptions,
 				peerId,
 				services: {
-					keychain: (c) => keychain,
-					blocks: (c) =>
+					keychain: (c: any) => keychain,
+					blocks: (c: any) =>
 						new DirectBlock(c, {
 							canRelayMessage: asRelay,
 							directory: blocksDirectory
 						}),
-					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
+					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
 					...extendedOptions?.services
-				},
+				} as any, // TODO types are funky
 				datastore
 			});
 		}
@@ -196,7 +203,8 @@ export class Peerbit implements ProgramClient {
 			directory,
 			storage: storage,
 			libp2pExternal,
-			identity
+			identity,
+			indexer
 		});
 		return peer;
 	}
@@ -312,5 +320,9 @@ export class Peerbit implements ProgramClient {
 
 	get storage() {
 		return this._storage;
+	}
+
+	get indexer() {
+		return this._indexer;
 	}
 }
