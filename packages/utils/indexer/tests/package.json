@@ -1,0 +1,67 @@
+{
+	"name": "@peerbit/indexer-tests",
+	"version": "0.0.1",
+	"description": "Tests document store index engines",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/e2e",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"browser": {
+		"./dist/src/benchmarks.js": "./dist/src/benchmarks.browser.js"
+	},
+	"eslintConfig": {
+		"extends": "ipfs",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "aegir clean",
+		"build": "aegir build --no-bundle",
+		"test": ""
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"@peerbit/indexer-interface": "^0.0.1",
+		"@types/uuid": "^9.0.8",
+		"benchmark": "^2.1.4"
+	}
+}

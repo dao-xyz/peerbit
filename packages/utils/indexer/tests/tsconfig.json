@@ -1,0 +1,17 @@
+{
+	"extends": "aegir/src/config/tsconfig.aegir.json",
+	"compilerOptions": {
+		"checkJs": false,
+		"strict": false,
+		"allowUnusedLabels": true,
+		"noUnusedLocals": false,
+		"experimentalDecorators": true,
+		"emitDecoratorMetadata": true,
+		"strictNullChecks": false,
+		"outDir": "dist"
+	},
+	"include": [
+		"src",
+		"test"
+	]
+}
