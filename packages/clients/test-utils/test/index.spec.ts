@@ -40,4 +40,10 @@ describe("session", () => {
 		});
 		await waitFor(() => !!result);
 	});
+
+	it("indexer", async () => {
+		expect(session.peers[0].indexer).to.exist
+		expect(session.peers[0].indexer != session.peers[1].indexer).to.be.true
+
+	})
 });
