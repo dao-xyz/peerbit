@@ -53,6 +53,7 @@
 	"dependencies": {
 		"@peerbit/program": "^4.0.7",
 		"@peerbit/any-store-interface": "^2.0.2",
+		"@peerbit/indexer-simple": "^0.0.1",
 		"uuid": "^9.0.0"
 	},
 	"devDependencies": {

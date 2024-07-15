@@ -1,5 +1,5 @@
 import { createClient } from "@peerbit/proxy-window";
-import { SharedLog, Args } from "@peerbit/shared-log";
+import { SharedLog } from "@peerbit/shared-log";
 import { useEffect, useReducer, useRef } from "react";
 import { Change } from "@peerbit/log";
 import { randomBytes } from "@peerbit/crypto";

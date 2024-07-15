@@ -17,12 +17,14 @@ import * as connection from "./connection.js";
 import { CustomEvent } from "@libp2p/interface";
 import { serialize, deserialize, type AbstractType } from "@dao-xyz/borsh";
 import { type Keychain } from "@peerbit/keychain";
+import type { Indices } from "@peerbit/indexer-interface";
 
 const levelKey = (level: string[]) => JSON.stringify(level);
 const CUSTOM_EVENT_ORIGIN_PROPERTY = "__origin";
 const CUSTOM_EVENT_ORIGIN_PROXY = "proxy";
 
 export class PeerbitProxyHost implements ProgramClient {
+
 	private _levels: Map<string, AnyStore>;
 	private _eventListenerSubscribeCounter: Map<
 		string,
@@ -84,6 +86,11 @@ export class PeerbitProxyHost implements ProgramClient {
 	get storage(): AnyStore {
 		return this.hostClient.storage;
 	}
+
+	get indexer(): Indices {
+		return this.hostClient.indexer;
+	}
+
 
 	start(): Promise<void> {
 		return this.hostClient.start();

@@ -39,6 +39,8 @@ import { TypedEventEmitter } from "@libp2p/interface";
 import { serialize, deserialize, type AbstractType } from "@dao-xyz/borsh";
 import type { Keychain, KeypairFromPublicKey } from "@peerbit/keychain";
 import { type ExtractArgs } from "@peerbit/program";
+import type { Indices } from "@peerbit/indexer-interface";
+import { HashmapIndices } from "@peerbit/indexer-simple";
 
 const messageIdString = (messageId: Uint8Array) => sha256Base64(messageId);
 const levelKey = (level: string[]) => JSON.stringify(level);
@@ -121,6 +123,7 @@ export class PeerbitProxyClient implements ProgramClient {
 	private _multiaddr: Multiaddr[];
 	private _services: { pubsub: PubSub; blocks: Blocks; keychain: Keychain };
 	private _storage: AnyStore;
+	private _indexer: Indices;
 	private _handler: ProgramHandler;
 
 	constructor(readonly messages: connection.Node) {
@@ -366,6 +369,9 @@ export class PeerbitProxyClient implements ProgramClient {
 			};
 		};
 		this._storage = createStorage();
+
+
+		this._indexer = new HashmapIndices() // TODO use host indexer
 	}
 
 	async connect() {
@@ -404,6 +410,10 @@ export class PeerbitProxyClient implements ProgramClient {
 
 	get storage(): AnyStore {
 		return this._storage;
+	}
+
+	get indexer(): Indices {
+		return this._indexer;
 	}
 
 	async start(): Promise<void> {
