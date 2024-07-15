@@ -10,7 +10,6 @@ export default {
         watch: false,
         files: [],
         timeout: 60000,
-        '--': 'hello',
 
         grep: '',
         bail: false,
