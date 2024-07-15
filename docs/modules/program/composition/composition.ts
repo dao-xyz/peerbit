@@ -1,9 +1,10 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "peerbit";
-import { Documents, SearchRequest } from "@peerbit/document";
+import { Documents } from "@peerbit/document";
 import { v4 as uuid } from "uuid";
-import { type RoleOptions } from "@peerbit/shared-log";
+import { type ReplicationOptions } from "@peerbit/shared-log";
+import { SearchRequest } from "@peerbit/indexer-interface"
 
 @variant(0) // version 0
 class Post {
@@ -21,7 +22,7 @@ class Post {
 }
 
 // This class extends Program which allows it to be replicated amongst peers
-type Args = { role: RoleOptions };
+type Args = { replicate: ReplicationOptions };
 
 @variant("posts-with-documents-store")
 class PostsDB extends Program<Args> {
@@ -39,7 +40,7 @@ class PostsDB extends Program<Args> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			role: args?.role /* canPerform: (entry) => true */
+			replicate: args?.replicate /* canPerform: (entry) => true */
 		});
 	}
 }
@@ -95,7 +96,7 @@ class Forum extends Program<Args> {
 			index: {
 				idProperty: NAME_PROPERTY
 			},
-			role: args?.role
+			replicate: args?.replicate
 		});
 	}
 }
@@ -113,7 +114,7 @@ await client2.dial(client.getMultiaddrs());
 
 // open the forum as a observer, i.e. not replication duties
 const forum2 = await client2.open<Forum>(forum.address, {
-	args: { role: "observer" }
+	args: { replicate: false }
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
@@ -126,10 +127,10 @@ const channels = await forum2.channels.index.search(new SearchRequest());
 expect(channels).to.have.length(1);
 expect(channels[0].name).equal("general");
 
-// open this channel (if we would open the forum with role: 'replicator', this would already be done)
+// open this channel (if we would open the forum with replicate: false, this would already be done)
 expect(channels[0].closed).to.be.true;
 const channel2 = await client2.open<Channel>(channels[0], {
-	args: { role: "observer" }
+	args: { replicate: false }
 });
 
 // Wait for client 1 to be available (only needed for testing locally)

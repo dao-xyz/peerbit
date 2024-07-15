@@ -9,7 +9,7 @@ import { v4 as uuid } from "uuid";
 import {
 	ByteMatchQuery,
 	Documents,
-	MissingField,
+	IsNull,
 	SearchRequest,
 	Sort
 } from "@peerbit/document";
@@ -95,7 +95,7 @@ export class Channel extends Program<ChannelArgs> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			role: properties?.role,
+			replicate: properties?.replicate,
 			canPerform: async (properties) => {
 				// Determine whether an operation, based on an entry should be allowed
 
@@ -177,7 +177,7 @@ const channelFromClient2 = await peer2.open<Channel>(
 	channelFromClient1.address!,
 	{
 		// Observer will not store anything unless explicitly doing so
-		args: { role: "observer" } // or 'replicator' (default))
+		args: { replicate: false } // or 'replicator' (default))
 	}
 );
 
@@ -243,7 +243,7 @@ await waitForResolved(async () =>
 // then you can do the following
 const posts: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
-		query: [new MissingField({ key: POST_PARENT_POST_ID })],
+		query: [new IsNull({ key: POST_PARENT_POST_ID })],
 		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	})
 );
@@ -259,7 +259,7 @@ expect(posts.map((x) => x.message)).to.deep.equal([
 /// [search-locally]
 const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
-		query: [new MissingField({ key: POST_PARENT_POST_ID })],
+		query: [new IsNull({ key: POST_PARENT_POST_ID })],
 		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
 	}),
 	{
@@ -375,7 +375,7 @@ new SearchRequest({
 		new BoolQuery({ key: "boolProperty", value: true }),
 
 		// Missing values
-		new MissingField({ key: "someProperty" }),
+		new IsNull({ key: "someProperty" }),
 
 		// Nested propety
 		// Find values for nested fields, e.g. { a: { b: { c: "hello "}}}

@@ -65,7 +65,7 @@ await store.log.append(payload, {
 // A peer that can open
 const store2 = await client2.open<SimpleStore>(store.address!);
 await waitForResolved(() => assert.equal(store2.log.log.length, 1));
-const entry = (await store2.log.log.values.toArray())[0];
+const entry = (await store2.log.log.toArray())[0];
 
 // use .getPayload() instead of .payload to decrypt the payload
 assert.deepEqual((await entry.getPayload()).getValue(), payload);

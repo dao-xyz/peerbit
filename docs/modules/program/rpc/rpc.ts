@@ -6,6 +6,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { RPC } from "@peerbit/rpc";
 import { Peerbit } from "peerbit";
+import { type ReplicationOptions } from "@peerbit/shared-log";
 /// [imports]
 
 /// [definition-messages]
@@ -35,7 +36,7 @@ class Requester extends Role { }
 /// [definition-roles]
 
 /// [definition-program]
-type Args = { role: Role };
+type Args = { replicate: ReplicationOptions };
 
 @variant("rpc-test")
 class RPCTest extends Program<Args> {
