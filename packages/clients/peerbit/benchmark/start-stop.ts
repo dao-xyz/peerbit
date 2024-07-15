@@ -1,6 +1,6 @@
 import B from "benchmark";
 import { Peerbit } from "../src/peer.js";
-// Run with "node --loader ts-node/esm ./src/__benchmark__/start-stop.ts"
+// Run with "node --loader ts-node/esm ./benchmark/start-stop.ts"
 
 // start and stop x 91.15 ops/sec ±0.95% (87 runs sampled)
 const suite = new B.Suite();
