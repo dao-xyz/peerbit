@@ -10,7 +10,7 @@ import { tcp } from "@libp2p/tcp";
 import crypto from "crypto";
 import { SeekDelivery } from "@peerbit/stream-interface";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
+// Run with "node --loader ts-node/esm ./benchmark/transfer.ts"
 
 // size: 100byte x 1,727 ops/sec ±2.61% (83 runs sampled)
 // size: 1kb x 1,727 ops/sec ±2.61% (83 runs sampled)
@@ -26,7 +26,7 @@ class TestStreamImpl extends DirectStream {
 }
 const session = await TestSession.disconnected(4, {
 	transports: [tcp()],
-	services: { directstream: (c) => new TestStreamImpl(c) }
+	services: { directstream: (c: any) => new TestStreamImpl(c) }
 });
 
 /* 
@@ -50,8 +50,7 @@ await session.connect([
 	[session.peers[2], session.peers[3]]
 ]);
 
-const stream = (i: number): TestStreamImpl =>
-	session.peers[i].services.directstream;
+const stream = (i: number): TestStreamImpl => session.peers[i].services.directstream;
 
 await waitForPeers(stream(0), stream(1));
 await waitForPeers(stream(1), stream(2));

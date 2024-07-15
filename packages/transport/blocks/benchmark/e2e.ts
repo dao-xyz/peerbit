@@ -6,7 +6,7 @@ import crypto from "crypto";
 import { DirectBlock, stringifyCid } from "../src/index.js";
 import { tcp } from "@libp2p/tcp";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/e2e.ts"
+// Run with "node --loader ts-node/esm ./benchmark/e2e.ts"
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)
 // size: 1000kb x 40.51 ops/sec ±4.09% (62 runs sampled)
 

@@ -9,6 +9,7 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 
 type DefaultServices = { relay: CircuitRelayService; identify: any };
 type Libp2pWithServices<T> = Libp2p<T & DefaultServices>;
+
 export class TestSession<T> {
 	peers: Libp2pWithServices<T & DefaultServices>[];
 
@@ -70,7 +71,7 @@ export class TestSession<T> {
 		options?: Libp2pOptions<T> | Libp2pOptions<T>[]
 	) {
 		const libs = (await TestSession.disconnected<T>(n, options)).peers;
-		return new TestSession(libs).connect();
+		return new TestSession<T>(libs).connect();
 	}
 
 	static async disconnected<T extends Record<string, unknown>>(
@@ -113,7 +114,7 @@ export class TestSession<T> {
 		}
 
 		const libs = (await Promise.all(promises)) as Libp2p<T & DefaultServices>[];
-		return new TestSession(libs);
+		return new TestSession<T>(libs);
 	}
 
 	stop(): Promise<any> {

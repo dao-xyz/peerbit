@@ -355,6 +355,14 @@ type ConnectionManagerOptions = {
 	pruner?: PrunerOptions;
 };
 
+export type ConnectionManagerArguments =
+	| (Partial<Pick<ConnectionManagerOptions, "minConnections">> &
+		Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
+			pruner?: Partial<PrunerOptions> | false;
+		} & { dialer?: Partial<DialerOptions> | false })
+	| false;
+
+
 export type DirectStreamOptions = {
 	canRelayMessage?: boolean;
 	messageProcessingConcurrency?: number;
@@ -375,12 +383,6 @@ export interface DirectStreamComponents extends Components {
 	events: TypedEventTarget<Libp2pEvents>;
 }
 
-export type ConnectionManagerArguments =
-	| (Partial<Pick<ConnectionManagerOptions, "minConnections">> &
-		Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
-			pruner?: Partial<PrunerOptions> | false;
-		} & { dialer?: Partial<DialerOptions> | false })
-	| false;
 
 export abstract class DirectStream<
 	Events extends { [s: string]: any } = StreamEvents
@@ -701,6 +703,7 @@ export abstract class DirectStream<
 	 * Registrar notifies an established connection with protocol
 	 */
 	public async onPeerConnected(peerId: PeerId, connection: Connection) {
+
 		if (
 			!this.isStarted() ||
 			connection.transient ||
@@ -734,6 +737,7 @@ export abstract class DirectStream<
 			let stream: Stream = undefined as any; // TODO types
 			let tries = 0;
 			let peer: PeerStreams = undefined as any;
+
 			while (tries <= 3) {
 				tries++;
 				if (!this.started) {
@@ -751,6 +755,7 @@ export abstract class DirectStream<
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
 						await delay(100);
+						console.error(error)
 						continue; // Retry
 					}
 
@@ -1926,6 +1931,8 @@ export abstract class DirectStream<
 					". Writable " +
 					stream.isWritable
 				);
+			} finally {
+				console.log("DONE!")
 			}
 		}
 	}

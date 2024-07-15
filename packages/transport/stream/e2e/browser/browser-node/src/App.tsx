@@ -4,7 +4,7 @@ import { circuitRelayTransport } from "@libp2p/circuit-relay-v2";
 import { webRTC } from "@libp2p/webrtc";
 import { all } from "@libp2p/websockets/filters";
 import { webSockets } from "@libp2p/websockets";
-import type { Multiaddr } from "@multiformats/multiaddr";
+import { multiaddr } from '@multiformats/multiaddr';
 import { ready } from "@peerbit/crypto";
 import { noise } from "@dao-xyz/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";

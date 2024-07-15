@@ -1,6 +1,7 @@
 import { type WaitForPeer } from "@peerbit/stream-interface";
 
 export type GetOptions = {
+	signal?: AbortSignal;
 	timeout?: number;
 	replicate?: boolean;
 	from?: string[];

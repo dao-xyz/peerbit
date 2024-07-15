@@ -11,7 +11,7 @@ import {
 } from "../src/block.js";
 import { equals } from "uint8arrays";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/multiformats.ts"
+// Run with "node --loader ts-node/esm ./benchmark/multiformats.ts"
 // size: 1kb x 785 ops/sec ±2.66% (86 runs sampled)
 // size: 1000kb x 38.14 ops/sec ±1.43% (40 runs sampled)
 

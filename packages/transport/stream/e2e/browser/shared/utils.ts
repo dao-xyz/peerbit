@@ -1,7 +1,7 @@
 import {
-	ConnectionManagerArguments,
+	type ConnectionManagerArguments,
 	DirectStream,
-	DirectStreamComponents
+	type DirectStreamComponents
 } from "@peerbit/stream";
 
 export class TestDirectStream extends DirectStream {

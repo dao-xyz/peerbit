@@ -6,14 +6,14 @@ import { waitForPeers } from "@peerbit/stream";
 import { tcp } from "@libp2p/tcp";
 import { DataEvent } from "@peerbit/pubsub-interface";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/index.ts"
 // size: 1kb x 1,722 ops/sec ±1.89% (82 runs sampled)
 // size: 1000kb x 107 ops/sec ±2.02% (85 runs sampled)
 
 const session = await TestSession.disconnected(4, {
 	transports: [tcp()],
 	services: {
-		pubsub: (c) =>
+		pubsub: (c: any) =>
 			new DirectSub(c, {
 				canRelayMessage: true,
 				connectionManager: false
