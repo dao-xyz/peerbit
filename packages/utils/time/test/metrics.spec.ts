@@ -1,6 +1,6 @@
+import { expect } from "chai";
 import { waitForResolved } from "../src/index.js";
 import { MovingAverageTracker } from "../src/metrics.js";
-import { expect } from "chai";
 
 describe("metrics", () => {
 	it("moving averiage", async () => {
