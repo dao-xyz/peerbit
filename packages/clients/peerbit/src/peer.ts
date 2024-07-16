@@ -29,7 +29,6 @@ import { DefaultKeychain } from "@peerbit/keychain";
 import { type ExtractArgs } from "@peerbit/program";
 import type { Indices } from "@peerbit/indexer-interface";
 import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3"
-import { create as createSQLiteIndexerH } from "@peerbit/indexer-simple"
 
 export const logger = loggerFn({ module: "client" });
 
@@ -115,7 +114,7 @@ export class Peerbit implements ProgramClient {
 
 		const storage = await createCache(directory != null ? path.join(directory, "/cache") : undefined);
 
-		const indexer = directory != null ? await createSQLiteIndexer(path.join(directory, "/index")) : await createSQLiteIndexerH()
+		const indexer = directory != null ? await createSQLiteIndexer(path.join(directory, "/index")) : await createSQLiteIndexer()
 
 		const blocksDirectory = hasDir
 			? path.join(directory, "/blocks").toString()
