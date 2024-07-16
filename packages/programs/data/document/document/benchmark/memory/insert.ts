@@ -78,11 +78,7 @@ try {
                 args: {
                     replicate: {
                         factor: 1
-                    },
-                    log: {
-                        trim: { type: "length" as const, to: 100 }
                     }
-
                 }
             });
         }
@@ -98,7 +94,6 @@ try {
             }
         }
         else if (message.type === 'done') {
-            console.log("DONE!")
             process.exit(0)
         }
 

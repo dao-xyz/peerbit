@@ -85,8 +85,8 @@ const send = (message: Message) => {
 
 
 // send the insert message
-let inserts = 10;
-let insertBatchSize = 1000;
+let inserts = 150;
+let insertBatchSize = 10;
 let memoryUsages: number[] = []
 console.log("Inserting batches of", insertBatchSize, "documents", inserts, "times");
 for (let i = 0; i < inserts; i++) {
@@ -95,7 +95,7 @@ for (let i = 0; i < inserts; i++) {
     // log a progress bar that is updating without printing newline
     process.stdout.write(`\r${i}/${inserts}`)
 
-    send({ type: 'insert', docs: insertBatchSize, size: 1024 })
+    send({ type: 'insert', docs: insertBatchSize, size: 1e6 })
 
 
 

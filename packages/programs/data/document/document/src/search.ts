@@ -300,7 +300,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		if (this._isProgramValues) {
 			this._resolverProgramCache = new Map();
 		}
-		this._resolverCache = new Cache({ max: 1000 }); // TODO choose limit better (adaptive)
+		this._resolverCache = new Cache({ max: 10 }); // TODO choose limit better (adaptive)
 
 		this.index = await (await this.node.indexer.scope(
 			sha256Base64Sync(
