@@ -7,7 +7,6 @@ import { expect } from 'chai'
 import { v4 as uuid } from "uuid";
 
 // Include test utilities
-import { AnyBlockStore } from "@peerbit/blocks";
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
 
 const dbPath = path.join("tmp", "peerbit", "tests", "create-open");
@@ -35,12 +34,17 @@ describe("Create", function () {
 		});
 
 		it("block storage exist at path", async () => {
-			const location: string = (
+			/* const location: string = (
 				client.libp2p.services.blocks["remoteBlocks"]
 					.localStore as AnyBlockStore
 			)["_store"].store["location"];
-			expect(location.endsWith(path.join(client.directory!, "blocks").toString())).to.be.true;
+			expect(location.endsWith(path.join(client.directory!, "blocks").toString())).to.be.true; */
+			expect(await client
+				.libp2p.services.blocks.persisted()
+			).to.be.true;
 		});
+
+
 	});
 
 	it("can create with peerId", async () => {

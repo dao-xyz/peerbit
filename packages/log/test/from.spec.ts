@@ -66,6 +66,9 @@ class SlowBlockStore implements Blocks {
 	async size() {
 		return this._store.size();
 	}
+	persisted(): boolean | Promise<boolean> {
+		return this._store.persisted();
+	}
 }
 
 describe("from", function () {

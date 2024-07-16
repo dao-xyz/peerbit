@@ -70,7 +70,8 @@ export const createPeer = async (
 				iterator: () => {
 					return undefined as any; // TODO
 				},
-				size: () => Promise.resolve(0)
+				size: () => Promise.resolve(0),
+				persisted: () => Promise.resolve(false)
 			},
 			pubsub: {
 				subscribe: async (topic: any) => {
@@ -162,7 +163,7 @@ export const createPeer = async (
 				p,
 				o
 			);
-		}
+		},
 	};
 	state.peers.set(peer.identity.publicKey.hashcode(), peer);
 	return peer;
