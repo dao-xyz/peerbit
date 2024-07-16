@@ -5,7 +5,7 @@ import { PublicSignKey } from "@peerbit/crypto";
 import { Message } from "./message.js";
 
 @variant(7)
-export abstract class BlocksMessage extends Message {}
+export abstract class BlocksMessage extends Message { }
 
 @variant(0)
 export class REQ_PutBlock extends BlocksMessage {
@@ -94,7 +94,7 @@ export class REQ_RmBlock extends BlocksMessage {
 	}
 }
 @variant(7)
-export class RESP_RmBlock extends BlocksMessage {}
+export class RESP_RmBlock extends BlocksMessage { }
 
 @variant(8)
 export class REQ_Iterator extends BlocksMessage {
@@ -135,10 +135,10 @@ export class REQ_BlockWaitFor extends BlocksMessage {
 }
 
 @variant(11)
-export class RESP_BlockWaitFor extends BlocksMessage {}
+export class RESP_BlockWaitFor extends BlocksMessage { }
 
 @variant(12)
-export class REQ_BlockSize extends BlocksMessage {}
+export class REQ_BlockSize extends BlocksMessage { }
 
 @variant(13)
 export class RESP_BlockSize extends BlocksMessage {
@@ -154,3 +154,23 @@ export class RESP_BlockSize extends BlocksMessage {
 		return Number(this._size);
 	}
 }
+
+@variant(14)
+export class REQ_Persisted extends BlocksMessage { }
+
+@variant(15)
+export class RESP_Persisted extends BlocksMessage {
+
+	@field({ type: "bool" })
+	private _persisted: boolean;
+
+	constructor(properties: { persisted: boolean }) {
+		super();
+		this._persisted = properties.persisted
+	}
+	get persisted(): boolean {
+		return this._persisted;
+	}
+}
+
+

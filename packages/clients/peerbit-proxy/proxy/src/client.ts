@@ -265,7 +265,14 @@ export class PeerbitProxyClient implements ProgramClient {
 							new blocks.REQ_BlockSize()
 						)
 					).size;
-				}
+				},
+				persisted: async () => {
+					return (
+						await this.request<blocks.RESP_Persisted>(
+							new blocks.REQ_Persisted()
+						)
+					).persisted;
+				},
 			},
 			keychain: {
 				exportById: async <
@@ -365,7 +372,14 @@ export class PeerbitProxyClient implements ProgramClient {
 							new memory.StorageMessage(new memory.api.REQ_Size({ level }))
 						)
 					).message.size;
-				}
+				},
+				persisted: async () => {
+					return (
+						await this.request<memory.StorageMessage<memory.api.RESP_Persisted>>(
+							new memory.StorageMessage(new memory.api.REQ_Persisted({ level }))
+						)
+					).message.persisted;
+				},
 			};
 		};
 		this._storage = createStorage();

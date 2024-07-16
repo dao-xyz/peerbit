@@ -272,4 +272,8 @@ export class RemoteBlocks implements IBlocks {
 			return "closed";
 		}
 	}
+
+	persisted(): boolean | Promise<boolean> {
+		return this.localStore?.persisted() || false;
+	}
 }

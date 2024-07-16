@@ -19,4 +19,5 @@ export interface Blocks extends WaitForPeer {
 	rm(cid: string): MaybePromise<void>;
 	iterator(): AsyncGenerator<[string, Uint8Array], void, void>;
 	size(): MaybePromise<number>;
+	persisted(): MaybePromise<boolean>;
 }

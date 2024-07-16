@@ -97,4 +97,8 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	get status() {
 		return this.remoteBlocks?.status || this.started;
 	}
+
+	persisted(): boolean | Promise<boolean> {
+		return this.remoteBlocks.persisted();
+	}
 }

@@ -70,6 +70,10 @@ describe(`index`, function () {
 			});
  */
 
+			it('persisted', () => {
+				expect(store.persisted()).equal(type === "disc" ? true : false);
+			})
+
 			it("get", async () => {
 				const result = await store.get(data.key);
 				expect(result).to.deep.equal(new Uint8Array([123]));

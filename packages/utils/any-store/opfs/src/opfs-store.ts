@@ -117,7 +117,8 @@ export class OPFSStore implements AnyStore {
 						new memory.REQ_Size({ level })
 					);
 					return size.size;
-				}
+				},
+				persisted: directory != null ? () => true : () => false
 			};
 		};
 	}
@@ -195,5 +196,9 @@ export class OPFSStore implements AnyStore {
 			const bytes = serialize(request);
 			this.worker.postMessage(bytes, [bytes.buffer]);
 		});
+	}
+
+	persisted() {
+		return this.root.persisted();
 	}
 }

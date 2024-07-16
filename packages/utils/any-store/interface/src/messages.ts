@@ -199,6 +199,25 @@ export class RESP_Size extends MemoryMessage {
 }
 
 @variant(24)
+export class REQ_Persisted extends MemoryMessage { }
+
+@variant(25)
+export class RESP_Persisted extends MemoryMessage {
+
+	@field({ type: "bool" })
+	private _persisted: boolean;
+
+	constructor(properties: { level: string[]; persisted: boolean }) {
+		super(properties);
+		this._persisted = properties.persisted
+	}
+	get persisted(): boolean {
+		return this._persisted;
+	}
+}
+
+
+@variant(26)
 export class RESP_Error extends MemoryMessage {
 	@field({ type: "string" })
 	error: string;

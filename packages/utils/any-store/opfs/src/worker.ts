@@ -202,7 +202,8 @@ export class OPFSStoreWorker {
 					isOpen = false;
 					this._memoryIterator.clear();
 				},
-				open
+				open,
+				persisted: () => true
 			};
 		};
 
@@ -238,7 +239,6 @@ export class OPFSStoreWorker {
 							postMessageFn
 						);
 					} else if (message instanceof memory.REQ_Close) {
-						console.log("CLOSE > ", message.level)
 						await m.close();
 						await this.respond(
 							message,

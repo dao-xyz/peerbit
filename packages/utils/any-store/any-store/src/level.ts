@@ -118,4 +118,8 @@ export class LevelStore implements AnyStore {
 	async sublevel(name: string) {
 		return new LevelStore(this.store.sublevel(name, { valueEncoding: "view" }));
 	}
+
+	persisted() {
+		return this.store instanceof ClassicLevel ? true : false
+	}
 }

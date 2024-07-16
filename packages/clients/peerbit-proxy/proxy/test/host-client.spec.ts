@@ -182,6 +182,12 @@ describe("index", () => {
 			await client1.storage.clear();
 			expect(await sublevel.get(key)).equal(undefined);
 		});
+
+		it("persisted", async () => {
+			expect(await client1.storage.persisted()).equal(false);
+
+			// TODO try case where it is persisted
+		});
 	});
 
 	describe("keychain", () => {
@@ -279,6 +285,13 @@ describe("index", () => {
 			const size2 = await client1.services.blocks.size();
 			expect(size2).greaterThan(0);
 		});
+
+		it("persisted", async () => {
+			expect(await client1.services.blocks.persisted()).equal(false);
+
+			// TODO try case where it is persisted
+		});
+
 	});
 
 	describe("pubsub", () => {

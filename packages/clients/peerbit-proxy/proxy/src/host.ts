@@ -306,6 +306,18 @@ export class PeerbitProxyHost implements ProgramClient {
 						from
 					);
 				}
+				else if (request instanceof memory.api.REQ_Persisted) {
+					await this.respond(
+						message,
+						new memory.StorageMessage(
+							new memory.api.RESP_Persisted({
+								persisted: await m.persisted(),
+								level: request.level
+							})
+						),
+						from
+					);
+				}
 			} else if (message instanceof blocks.REQ_BlockWaitFor) {
 				await this.services.blocks.waitFor(message.publicKey);
 				await this.respond(message, new blocks.RESP_BlockWaitFor(), from);
@@ -343,7 +355,10 @@ export class PeerbitProxyHost implements ProgramClient {
 			} else if (message instanceof blocks.REQ_RmBlock) {
 				await this.services.blocks.rm(message.cid);
 				await this.respond(message, new blocks.RESP_RmBlock(), from);
-			} else if (message instanceof pubsub.REQ_AddEventListener) {
+			} else if (message instanceof blocks.REQ_Persisted) {
+				await this.respond(message, new blocks.RESP_Persisted({ persisted: await this.services.blocks.persisted() }), from);
+			}
+			else if (message instanceof pubsub.REQ_AddEventListener) {
 				let map = this._eventListenerSubscribeCounter.get(from.id);
 				if (!map) {
 					map = new Map();
