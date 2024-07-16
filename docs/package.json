@@ -16,7 +16,8 @@
 	"scripts": {
 		"clean": "#not used",
 		"build": "#not used",
-		"test": "aegir test -t node"
+		"test": "aegir test -t node",
+		"lint": "aegir lint"
 	},
 	"license": "MIT",
 	"localMaintainers": [

@@ -38,7 +38,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -61,7 +61,8 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build",
-		"test": ""
+		"test": "",
+		"lint": "aegir lint"
 	},
 	"license": "MIT",
 	"dependencies": {

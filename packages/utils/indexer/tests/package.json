@@ -38,7 +38,7 @@
 		"./dist/src/benchmarks.js": "./dist/src/benchmarks.browser.js"
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -55,7 +55,8 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": ""
+		"test": "",
+		"lint": "aegir lint"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",

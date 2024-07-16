@@ -34,7 +34,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -69,7 +69,8 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test -t node"
+		"test": "aegir test -t node",
+		"lint": "aegir lint"
 	},
 	"devDependencies": {
 		"@peerbit/time": "2.0.6"

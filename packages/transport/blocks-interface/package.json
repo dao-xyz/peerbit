@@ -35,7 +35,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -52,7 +52,8 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": ""
+		"test": "",
+		"lint": "aegir lint"
 	},
 	"engines": {
 		"node": ">=16.15.1"

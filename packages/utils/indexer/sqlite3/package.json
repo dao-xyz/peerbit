@@ -42,7 +42,7 @@
 		"./dist/src/sqlite3.js": "./dist/src/sqlite3.browser.js"
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -63,7 +63,8 @@
 		"build": "aegir build && npm run build-worker && npm run copy-sqlite-wasm",
 		"test": "aegir test",
 		"test:browser": "aegir clean && aegir test -t browser",
-		"test:node": "aegir clean && aegir test -t node"
+		"test:node": "aegir clean && aegir test -t node",
+		"lint": "aegir lint"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",

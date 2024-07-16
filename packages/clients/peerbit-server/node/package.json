@@ -50,7 +50,8 @@
 		"build-lib": "tsc -p tsconfig.json",
 		"build-ui": "cd ../frontend && yarn build && cd ../node",
 		"postbuild": "cp src/nginx-template.conf lib/esm/ && cp -r ../frontend/dist lib/ui",
-		"test": "aegir test"
+		"test": "aegir test",
+		"lint": "aegir lint"
 	},
 	"devDependencies": {
 		"@peerbit/test-lib": "^0.0.1",

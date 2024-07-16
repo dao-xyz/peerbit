@@ -18,7 +18,8 @@
 		]
 	},
 	"scripts": {
-		"test": "playwright test"
+		"test": "playwright test",
+		"lint": "aegir lint"
 	},
 	"dependencies": {
 		"@peerbit/stream": "*"
