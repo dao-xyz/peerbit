@@ -684,7 +684,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			options?.timeUntilRoleMaturity ?? WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
 			options?.waitForReplicatorTimeout || WAIT_FOR_REPLICATOR_TIMEOUT;
-		this._gidParentCache = new Cache({ max: 1000 });
+		this._gidParentCache = new Cache({ max: 100 }); // TODO choose a good number
 		this._closeController = new AbortController();
 		this._isTrustedReplicator = options?.canReplicate;
 		this.sync = options?.sync;
