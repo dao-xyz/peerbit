@@ -35,7 +35,7 @@ export const createLibp2pExtended = (
 		services: {
 			blocks: (c: any) => new DirectBlock(c),
 			pubsub: (c: any) => new DirectSub(c),
-			keychain: (c: any) => new DefaultKeychain()
+			keychain: () => new DefaultKeychain()
 		}
 	}
 ): Promise<Libp2pExtended> => {
