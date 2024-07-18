@@ -29,7 +29,7 @@ function copyToPublicPlugin(
 	return {
 		name: "copy-to-public",
 		buildStart() {
-			if (options && options.assets) {
+			if (options?.assets) {
 				options.assets.forEach(({ src, dest }) => {
 					const sourcePath = path.resolve(src);
 					const destinationPath = path.resolve(process.cwd(), "public", dest);
@@ -89,6 +89,10 @@ export default (
 };
 
 function copyAssets(srcPath: string, destPath: string) {
+	if (!fs.existsSync(srcPath)) {
+		throw new Error(`File ${srcPath} does not exist`);
+	}
+
 	if (fs.statSync(srcPath).isDirectory()) {
 		// Ensure the directory exists in the public folder
 		fs.mkdirSync(destPath, { recursive: true });
@@ -97,9 +101,15 @@ function copyAssets(srcPath: string, destPath: string) {
 		fs.readdirSync(srcPath).forEach((file) => {
 			const srcFilePath = path.join(srcPath, file);
 			const destFilePath = path.join(destPath, file);
+			// eslint-disable-next-line no-console
+			console.log(`Copying ${srcFilePath} to ${destFilePath}`);
+
 			copyAssets(srcFilePath, destFilePath); // Recursion for directories
 		});
 	} else {
+		// eslint-disable-next-line no-console
+		console.log(`Copying ${srcPath} to ${destPath}`);
+
 		// Ensure the destination directory exists
 		fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
