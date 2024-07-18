@@ -41,15 +41,50 @@ function copyToPublicPlugin(
 	};
 }
 
+const findLibraryInNodeModules = (library: string) => {
+	// scan upwards until we find the node_modules folder
+	let currentDir = process.cwd();
+	let nodeModulesDir = path.join(currentDir, "node_modules");
+
+	while (!fs.existsSync(path.join(nodeModulesDir, library))) {
+		currentDir = path.resolve(currentDir, "..");
+		nodeModulesDir = path.join(currentDir, "node_modules");
+
+		// we have found a .git folder, so we are at the root
+		// then stop
+		if (fs.existsSync(path.join(currentDir, ".git"))) {
+			break;
+		}
+	}
+	const libraryPath = path.join(nodeModulesDir, library);
+	if (!fs.existsSync(libraryPath)) {
+		throw new Error(`Library ${library} not found in node_modules`);
+	}
+
+	return libraryPath;
+};
+
+let pathsToCopy = [
+	"@peerbit/any-store-opfs/dist/peerbit",
+	"@peerbit/indexer-sqlite3/dist/peerbit",
+];
 export default (
 	options: {
 		packages?: string[];
 		assets?: { src: string; dest: string }[];
 	} = {},
 ): PluginOption[] => {
+	let defaultAssets = pathsToCopy.map((path) => {
+		return {
+			src: findLibraryInNodeModules(path),
+			dest: "peerbit/",
+		};
+	});
 	return [
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
-		copyToPublicPlugin({ assets: options.assets }),
+		copyToPublicPlugin({
+			assets: [...defaultAssets, ...(options.assets || [])],
+		}),
 	];
 };
 
