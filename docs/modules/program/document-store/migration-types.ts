@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Documents } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 
-abstract class AbstractPost { }
+abstract class AbstractPost {}
 
 @variant(0) // Adding this will prepend the byte 0 to posts of this type (important (!))
 class PostV0 extends AbstractPost {
@@ -55,7 +55,7 @@ class PostStore extends Program {
 					}
 				}
 				return false;
-			}
+			},
 		});
 	}
 }

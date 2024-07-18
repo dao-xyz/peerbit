@@ -1,29 +1,29 @@
+import { serialize, variant } from "@dao-xyz/borsh";
+import { Wallet } from "@ethersproject/wallet";
+import { AccessError, Ed25519Keypair, type Identity } from "@peerbit/crypto";
+import { Secp256k1PublicKey } from "@peerbit/crypto";
+import { Documents } from "@peerbit/document";
+import { SearchRequest } from "@peerbit/indexer-interface";
+import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
+import { delay, waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
 import {
+	FromTo,
+	IdentityGraph,
 	IdentityRelation,
+	TrustedNetwork,
 	createIdentityGraphStore,
 	getFromByTo,
 	getPathGenerator,
 	getToByFrom,
-	TrustedNetwork,
-	IdentityGraph,
-	FromTo
 } from "../src/index.js";
-import { delay, waitForResolved } from "@peerbit/time";
-import { AccessError, Ed25519Keypair, type Identity } from "@peerbit/crypto";
-import { Secp256k1PublicKey } from "@peerbit/crypto";
-import { Wallet } from "@ethersproject/wallet";
-import { serialize, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { Documents } from "@peerbit/document";
-import { expect } from "chai";
-import { SearchRequest } from "@peerbit/indexer-interface";
 
 const createIdentity = async () => {
 	const ed = await Ed25519Keypair.create();
 	return {
 		publicKey: ed.publicKey,
-		sign: (data: any) => ed.sign(data)
+		sign: (data: any) => ed.sign(data),
 	};
 };
 
@@ -67,17 +67,17 @@ describe("index", () => {
 			const c = (await Ed25519Keypair.create()).publicKey;
 
 			const store = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore()
+				relationGraph: createIdentityGraphStore(),
 			});
 			await session.peers[0].open(store);
 
 			const ab = new IdentityRelation({
 				to: b,
-				from: a
+				from: a,
 			});
 			const bc = new IdentityRelation({
 				to: c,
-				from: b
+				from: b,
 			});
 			await store.relationGraph.put(ab);
 			await store.relationGraph.put(bc);
@@ -104,7 +104,7 @@ describe("index", () => {
 			for await (const relation of getPathGenerator(
 				c,
 				store.relationGraph,
-				getFromByTo
+				getFromByTo,
 			)) {
 				relationsFromGeneratorFromByTo.push(relation);
 			}
@@ -116,7 +116,7 @@ describe("index", () => {
 			for await (const relation of getPathGenerator(
 				a,
 				store.relationGraph,
-				getToByFrom
+				getToByFrom,
 			)) {
 				relationsFromGeneratorToByFrom.push(relation);
 			}
@@ -130,13 +130,13 @@ describe("index", () => {
 			const b = await Secp256k1PublicKey.recover(await Wallet.createRandom());
 
 			const store = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore()
+				relationGraph: createIdentityGraphStore(),
 			});
 			await session.peers[0].open(store);
 
 			const ab = new IdentityRelation({
 				to: b,
-				from: a
+				from: a,
 			});
 
 			await store.relationGraph.put(ab);
@@ -152,22 +152,22 @@ describe("index", () => {
 
 		it("can get path as observer", async () => {
 			const replicator = new AnyCanAppendIdentityGraph({
-				relationGraph: createIdentityGraphStore()
+				relationGraph: createIdentityGraphStore(),
 			});
 			await session.peers[0].open(replicator);
 			const ab = new IdentityRelation({
 				to: (await Ed25519Keypair.create()).publicKey,
-				from: (await Ed25519Keypair.create()).publicKey
+				from: (await Ed25519Keypair.create()).publicKey,
 			});
 			await replicator.relationGraph.put(ab);
 
 			const observer = await AnyCanAppendIdentityGraph.open(
 				replicator.address,
 				session.peers[1],
-				{ args: { replicate: false } }
+				{ args: { replicate: false } },
 			);
 			await observer.relationGraph.log.waitForReplicator(
-				session.peers[0].identity.publicKey
+				session.peers[0].identity.publicKey,
 			);
 
 			let pathFrom = await getFromByTo.resolve(ab.to, observer.relationGraph);
@@ -183,9 +183,9 @@ describe("index", () => {
 		before(async () => {
 			session = await TestSession.connected(4);
 		});
-		beforeEach(async () => { });
+		beforeEach(async () => {});
 
-		afterEach(async () => { });
+		afterEach(async () => {});
 
 		after(async () => {
 			await session.stop();
@@ -201,23 +201,28 @@ describe("index", () => {
 
 		it("replicates by default", async () => {
 			const l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId
+				rootTrust: session.peers[0].peerId,
 			});
 			await session.peers[0].open(l0a);
 			expect(await l0a.trustGraph.log.isReplicating()).to.be.true;
-			expect(((await l0a.trustGraph.log.getMyReplicationSegments()).reduce((a, b) => a + b.widthNormalized, 0))).to.equal(1);
+			expect(
+				(await l0a.trustGraph.log.getMyReplicationSegments()).reduce(
+					(a, b) => a + b.widthNormalized,
+					0,
+				),
+			).to.equal(1);
 		});
 
 		it("trusted by chain", async () => {
 			const l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId
+				rootTrust: session.peers[0].peerId,
 			});
 			await session.peers[0].open(l0a);
 
 			await session.peers[1].services.blocks.waitFor(session.peers[0].peerId);
 			let l0b: TrustedNetwork = await TrustedNetwork.open(
 				l0a.address!,
-				session.peers[1]
+				session.peers[1],
 			);
 
 			await session.peers[2].services.blocks.waitFor(session.peers[0].peerId);
@@ -226,46 +231,43 @@ describe("index", () => {
 				session.peers[2],
 				{
 					args: {
-						replicate: false
-					}
-				}
+						replicate: false,
+					},
+				},
 			);
 
 			await session.peers[3].services.blocks.waitFor(session.peers[0].peerId);
-			await TrustedNetwork.open(
-				l0a.address!,
-				session.peers[3]
-			);
+			await TrustedNetwork.open(l0a.address!, session.peers[3]);
 
 			await l0c.waitFor([session.peers[0].peerId, session.peers[1].peerId]);
 
 			await l0a.add(session.peers[1].peerId);
 
 			await l0b.trustGraph.log.log.join(
-				await l0a.trustGraph.log.log.getHeads().all()
+				await l0a.trustGraph.log.log.getHeads().all(),
 			);
 
 			await waitForResolved(async () =>
-				expect(await l0b.trustGraph.index.getSize()).equal(1)
+				expect(await l0b.trustGraph.index.getSize()).equal(1),
 			);
 
 			await l0b.add(session.peers[2].peerId); // Will only work if peer2 is trusted
 
 			await l0a.trustGraph.log.log.join(
-				await l0b.trustGraph.log.log.getHeads().all()
+				await l0b.trustGraph.log.log.getHeads().all(),
 			);
 
 			await waitForResolved(async () =>
-				expect(await l0b.trustGraph.index.getSize()).equal(2)
+				expect(await l0b.trustGraph.index.getSize()).equal(2),
 			);
 			await waitForResolved(async () =>
-				expect(await l0a.trustGraph.index.getSize()).equal(2)
+				expect(await l0a.trustGraph.index.getSize()).equal(2),
 			);
 
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey,
 				session.peers[1].identity.publicKey,
-				session.peers[3].identity.publicKey
+				session.peers[3].identity.publicKey,
 			);
 
 			await delay(1000); // TODO fix test flakeness
@@ -273,8 +275,8 @@ describe("index", () => {
 			// Try query with trusted
 			let responses: IdentityRelation[] = await l0c.trustGraph.index.search(
 				new SearchRequest({
-					query: []
-				})
+					query: [],
+				}),
 			);
 
 			expect(responses).to.have.length(2);
@@ -310,22 +312,22 @@ describe("index", () => {
 
 		it("has relation", async () => {
 			const l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId
+				rootTrust: session.peers[0].peerId,
 			});
 			await session.peers[0].open(l0a);
 
 			await l0a.add(session.peers[1].peerId);
 			expect(
-				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId)
+				await l0a.hasRelation(session.peers[0].peerId, session.peers[1].peerId),
 			).to.be.false;
 			expect(
-				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId)
+				await l0a.hasRelation(session.peers[1].peerId, session.peers[0].peerId),
 			).to.be.true;
 		});
 
 		it("can not append with wrong truster", async () => {
 			let l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId
+				rootTrust: session.peers[0].peerId,
 			});
 			await session.peers[0].open(l0a);
 
@@ -333,27 +335,27 @@ describe("index", () => {
 				l0a.trustGraph.put(
 					new IdentityRelation({
 						to: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
-						from: await Secp256k1PublicKey.recover(await Wallet.createRandom())
-					})
-				)
+						from: await Secp256k1PublicKey.recover(await Wallet.createRandom()),
+					}),
+				),
 			).eventually.rejectedWith(AccessError);
 		});
 
 		it("untrusteed by chain", async () => {
 			let l0a = new TrustedNetwork({
-				rootTrust: session.peers[0].peerId
+				rootTrust: session.peers[0].peerId,
 			});
 
 			await session.peers[0].open(l0a);
 
 			let l0b: TrustedNetwork = await TrustedNetwork.open(
 				l0a.address!,
-				session.peers[1]
+				session.peers[1],
 			);
 
 			// Can not append peer3Key since its not trusted by the root
 			await expect(l0b.add(session.peers[2].peerId)).eventually.rejectedWith(
-				AccessError
+				AccessError,
 			);
 		});
 	});

@@ -1,6 +1,6 @@
+import { expect } from "chai";
 import { equals } from "uint8arrays";
 import { AnyBlockStore } from "../src/any-blockstore.js";
-import { expect } from 'chai'
 
 describe(`level`, function () {
 	let store: AnyBlockStore;

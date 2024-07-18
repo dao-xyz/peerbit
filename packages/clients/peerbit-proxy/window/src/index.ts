@@ -2,19 +2,19 @@ import { type ProgramClient } from "@peerbit/program";
 import {
 	PeerbitProxyClient,
 	PeerbitProxyHost,
-	connection
+	connection,
 } from "@peerbit/proxy";
 
 type WindowFunctions = {
 	addEventListener: <K extends keyof WindowEventMap>(
 		type: K,
 		listener: (this: Window, ev: WindowEventMap[K]) => any,
-		options?: boolean | AddEventListenerOptions
+		options?: boolean | AddEventListenerOptions,
 	) => void;
 	postMessage: (
 		message: any,
 		targetOrigin: string,
-		transfer?: Transferable[]
+		transfer?: Transferable[],
 	) => void;
 	top: WindowFunctions | null;
 };
@@ -23,7 +23,7 @@ export class PostMessageNode extends connection.MessageNode {
 	static messagePrefixKey = "peerbit-proxy-";
 	constructor(
 		readonly targetOrigin = "*",
-		readonly windowHandle: WindowFunctions = globalThis
+		readonly windowHandle: WindowFunctions = globalThis,
 	) {
 		super({
 			addEventListener: (k, fn) => {
@@ -34,22 +34,22 @@ export class PostMessageNode extends connection.MessageNode {
 							ev.data.message,
 							ev.source
 								? {
-									id: (
-										ev.data.message as
-										| connection.Hello
-										| connection.DataMessage
-									).from,
-									publishMessage: (msg) =>
-										ev.source?.postMessage(
-											{
-												type: PostMessageNode.messagePrefixKey + msg.type,
-												message: msg
-											},
-											{ targetOrigin: "*" }
-										),
-									parent: ev.source === window.top
-								}
-								: undefined
+										id: (
+											ev.data.message as
+												| connection.Hello
+												| connection.DataMessage
+										).from,
+										publishMessage: (msg) =>
+											ev.source?.postMessage(
+												{
+													type: PostMessageNode.messagePrefixKey + msg.type,
+													message: msg,
+												},
+												{ targetOrigin: "*" },
+											),
+										parent: ev.source === window.top,
+									}
+								: undefined,
 						);
 					}
 				});
@@ -59,12 +59,12 @@ export class PostMessageNode extends connection.MessageNode {
 				(windowHandle.top || windowHandle).postMessage(
 					{
 						type: messageKey,
-						message: msg
+						message: msg,
 					},
 					this.targetOrigin,
-					msg.type === "data" ? [msg.data] : undefined
+					msg.type === "data" ? [msg.data] : undefined,
 				); // TODO transferable
-			}
+			},
 		});
 	}
 }

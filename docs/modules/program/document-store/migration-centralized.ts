@@ -3,7 +3,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 
-abstract class AbstractPost { }
+abstract class AbstractPost {}
 
 @variant(0)
 class PostV0 extends AbstractPost {
@@ -63,14 +63,14 @@ class PostStore extends Program {
 				// Do some other kind of validation work for data not signed by central authority
 				// TODO
 				return true;
-			}
+			},
 		});
 
 		// Migration loop only running by the central authority
 		if (CENTRAL_AUTHORITY.equals(this.node.identity.publicKey)) {
 			const allLocalPosts = await this.posts.index.search(new SearchRequest(), {
 				local: true,
-				remote: false
+				remote: false,
 			});
 			for (const post of allLocalPosts) {
 				if (post instanceof PostV0) {
@@ -79,8 +79,8 @@ class PostStore extends Program {
 						new PostV1({
 							id: post.id,
 							message: post.message,
-							title: "Migrated post"
-						})
+							title: "Migrated post",
+						}),
 					);
 				}
 			}

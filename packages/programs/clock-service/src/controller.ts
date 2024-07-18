@@ -1,16 +1,16 @@
-import { field, deserialize, variant, option } from "@dao-xyz/borsh";
-import { RPC, type RPCResponse } from "@peerbit/rpc";
-import { Program } from "@peerbit/program";
+import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { SignatureWithKey } from "@peerbit/crypto";
 import { Entry, HLC } from "@peerbit/log";
-import { TrustedNetwork } from "@peerbit/trusted-network";
 import { logger as loggerFn } from "@peerbit/logger";
+import { Program } from "@peerbit/program";
+import { RPC, type RPCResponse } from "@peerbit/rpc";
 import { type ReplicationOptions } from "@peerbit/shared-log";
-import { serialize } from "@dao-xyz/borsh";
+import { TrustedNetwork } from "@peerbit/trusted-network";
+
 const logger = loggerFn({ module: "clock-signer" });
 const abs = (n: number | bigint) => (n < 0n ? -n : n);
 
-export abstract class Result { }
+export abstract class Result {}
 
 @variant(0)
 export class Ok extends Result {
@@ -61,15 +61,18 @@ export class ClockService extends Program<Args> {
 	}
 
 	/**
-	 * @param maxError, in ms, defaults to 10 seconds
+	 * @param properties in ms, defaults to 10 seconds
 	 */
 	async open(properties?: Args) {
 		if (properties?.replicate === true) {
 			properties.replicate = {
-				factor: 1
-			}
+				factor: 1,
+			};
 		}
-		if (properties?.replicate && (properties.replicate as any)?.["factor"] !== 1) {
+		if (
+			properties?.replicate &&
+			(properties.replicate as any)?.["factor"] !== 1
+		) {
 			throw new Error("ClockService can only be used with a factor of 1");
 		}
 
@@ -82,29 +85,29 @@ export class ClockService extends Program<Args> {
 			responseHandler:
 				!properties?.replicate /* ||  properties?.replicate instanceof Replicator */ // ?? this feels wrong since the replication duties are dynamic
 					? async (arr, context) => {
-						const entry = deserialize(arr, Entry);
-						if (entry.hash) {
-							logger.warn("Recieved entry with hash, unexpected");
-						}
+							const entry = deserialize(arr, Entry);
+							if (entry.hash) {
+								logger.warn("Recieved entry with hash, unexpected");
+							}
 
-						entry._signatures = undefined; // because we dont want to sign signatures
+							entry._signatures = undefined; // because we dont want to sign signatures
 
-						const now = this._hlc.now().wallTime;
-						const cmp = (await entry.getClock()).timestamp.wallTime;
-						if (abs(now - cmp) > this.maxError) {
-							logger.info("Recieved an entry with an invalid timestamp");
-							return new SignError({
-								message: "Recieved an entry with an invalid timestamp"
+							const now = this._hlc.now().wallTime;
+							const cmp = (await entry.getClock()).timestamp.wallTime;
+							if (abs(now - cmp) > this.maxError) {
+								logger.info("Recieved an entry with an invalid timestamp");
+								return new SignError({
+									message: "Recieved an entry with an invalid timestamp",
+								});
+							}
+							const signature = await this.node.identity.sign(
+								serialize(entry.toSignable()),
+							);
+							return new Ok({
+								signature,
 							});
 						}
-						const signature = await this.node.identity.sign(
-							serialize(entry.toSignable())
-						);
-						return new Ok({
-							signature
-						});
-					}
-					: undefined
+					: undefined,
 		});
 	}
 

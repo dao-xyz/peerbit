@@ -1,9 +1,9 @@
+import { expect, use } from "chai";
+import chaiAsPromised from "chai-as-promised";
 import { type ProgramClient } from "../src/index.js";
 import { TestProgram } from "./samples.js";
 import { createPeer } from "./utils.js";
-import { expect } from "chai";
-import { use } from "chai";
-import chaiAsPromised from 'chai-as-promised';
+
 use(chaiAsPromised);
 
 describe(`shared`, () => {
@@ -27,21 +27,21 @@ describe(`shared`, () => {
 		let t0 = +new Date();
 		const nonExisting = client.open(
 			"zb2rhXREnAbm5Twtm2ahJM7QKT6FoQGNksWv5jp7o5W6BQ7ax",
-			{ timeout }
+			{ timeout },
 		);
 		expect(await client.open(new TestProgram())).to.exist;
 		let t1 = +new Date();
 
 		expect(t1 - t0).lessThan(timeout); // Because db1 will be opened concurrently
 		await expect(nonExisting).rejectedWith(
-			"Failed to resolve program with address: zb2rhXREnAbm5Twtm2ahJM7QKT6FoQGNksWv5jp7o5W6BQ7ax"
+			"Failed to resolve program with address: zb2rhXREnAbm5Twtm2ahJM7QKT6FoQGNksWv5jp7o5W6BQ7ax",
 		);
 	});
 
 	it("open same store twice by address will throw error", async () => {
 		const db1 = await client.open(new TestProgram());
 		await expect(client.open(db1.address)).rejectedWith(
-			`Program at ${db1.address} is already open`
+			`Program at ${db1.address} is already open`,
 		);
 	});
 
@@ -54,7 +54,7 @@ describe(`shared`, () => {
 		await db1Promise;
 		//await db2Promise;
 		await expect(db2Promise).rejectedWith(
-			`Program at ${p1.address} is already open`
+			`Program at ${p1.address} is already open`,
 		);
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
@@ -71,7 +71,7 @@ describe(`shared`, () => {
 
 		//await db2Promise;
 		await expect(db2Promise).rejectedWith(
-			`Program at ${p1.address} is already open`
+			`Program at ${p1.address} is already open`,
 		);
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
@@ -110,7 +110,7 @@ describe(`shared`, () => {
 
 		await db1Promise;
 		const db2Open = await db2Promise;
-		expect(db2Open == p1).to.be.true;
+		expect(db2Open === p1).to.be.true;
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
 	});
@@ -121,14 +121,16 @@ describe(`shared`, () => {
 		const db1Promise = client.open(p1);
 		await db1Promise;
 		const db2Open = await client.open(p2, { existing: "reuse" });
-		expect(db2Open == p1).to.be.true;
+		expect(db2Open === p1).to.be.true;
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
 	});
 
 	it("rejects", async () => {
 		const someParent = new TestProgram();
-		await expect(client.open(someParent, { parent: someParent })).rejectedWith("Parent program can not be equal to the program");
+		await expect(client.open(someParent, { parent: someParent })).rejectedWith(
+			"Parent program can not be equal to the program",
+		);
 	});
 
 	it("opens when existing is not in items", async () => {

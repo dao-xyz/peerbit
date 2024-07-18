@@ -1,8 +1,8 @@
-import B from "benchmark";
-import { Log } from "../src/log.js";
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { create } from "@peerbit/indexer-sqlite3";
+import B from "benchmark";
+import { Log } from "../src/log.js";
 
 // Run with "node --loader ts-node/esm ./benchmark/append.ts"
 
@@ -17,7 +17,6 @@ const reset = async () => {
 };
 await reset();
 
-
 const suite = new B.Suite({ delay: 100 });
 suite
 	.add("chain", {
@@ -25,14 +24,14 @@ suite
 			await log.append(new Uint8Array([1, 2, 3]));
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("no-next", {
 		fn: async (deferred: any) => {
 			await log.append(new Uint8Array([1, 2, 3]), { meta: { next: [] } });
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.on("cycle", async (event: any) => {
 		console.log(String(event.target));

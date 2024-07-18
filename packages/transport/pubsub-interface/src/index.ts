@@ -1,16 +1,16 @@
-import { PublicSignKey } from "@peerbit/crypto";
-import { PubSubData } from "./messages.js";
-import {
-	Message,
-	DataMessage,
-	type WaitForPeer,
-	type PeerEvents,
-	DeliveryMode,
-	type PriorityOptions,
-	type IdentificationOptions
-} from "@peerbit/stream-interface";
-import { type EventHandler } from "@libp2p/interface";
 import { field, vec } from "@dao-xyz/borsh";
+import { type EventHandler } from "@libp2p/interface";
+import { PublicSignKey } from "@peerbit/crypto";
+import {
+	DataMessage,
+	DeliveryMode,
+	type IdentificationOptions,
+	Message,
+	type PeerEvents,
+	type PriorityOptions,
+	type WaitForPeer,
+} from "@peerbit/stream-interface";
+import { PubSubData } from "./messages.js";
 
 export class SubscriptionEvent {
 	@field({ type: PublicSignKey })
@@ -103,12 +103,12 @@ export interface IEventEmitter<EventMap extends Record<string, any>> {
 	addEventListener<K extends keyof EventMap>(
 		type: K,
 		listener: EventHandler<EventMap[K]> | null,
-		options?: boolean | AddEventListenerOptions
+		options?: boolean | AddEventListenerOptions,
 	): MaybePromise<void>;
 	removeEventListener<K extends keyof EventMap>(
 		type: K,
 		listener?: EventHandler<EventMap[K]> | null,
-		options?: boolean | EventListenerOptions
+		options?: boolean | EventListenerOptions,
 	): MaybePromise<void>;
 	dispatchEvent(event: Event): MaybePromise<boolean>;
 }
@@ -116,13 +116,13 @@ export interface IEventEmitter<EventMap extends Record<string, any>> {
 type MaybePromise<T> = Promise<T> | T;
 export type PublishOptions = (
 	| {
-		topics?: string[];
-		mode?: DeliveryMode | undefined;
-	}
+			topics?: string[];
+			mode?: DeliveryMode | undefined;
+	  }
 	| {
-		topics: string[];
-		mode?: DeliveryMode | undefined;
-	}
+			topics: string[];
+			mode?: DeliveryMode | undefined;
+	  }
 ) & { client?: string } & PriorityOptions &
 	IdentificationOptions;
 
@@ -138,7 +138,7 @@ export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
 		options?: {
 			force?: boolean;
 			data?: Uint8Array;
-		}
+		},
 	): MaybePromise<boolean>;
 
 	publish(data: Uint8Array, options?: PublishOptions): MaybePromise<Uint8Array>;

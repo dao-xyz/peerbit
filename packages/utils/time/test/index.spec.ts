@@ -1,6 +1,7 @@
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 import { AbortError, delay, waitFor } from "../src/index.js";
+
 use(chaiAsPromised);
 
 describe("delay", () => {

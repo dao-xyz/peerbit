@@ -1,20 +1,20 @@
+import { yamux } from "@chainsafe/libp2p-yamux";
+import { DirectBlock } from "@peerbit/blocks";
+import { DefaultKeychain } from "@peerbit/keychain";
 import { TestSession as SSession } from "@peerbit/libp2p-test-utils";
+import { type ProgramClient } from "@peerbit/program";
+import { DirectSub } from "@peerbit/pubsub";
 import {
-	DirectStream,
-	waitForPeers as waitForPeersStreams
+	type DirectStream,
+	waitForPeers as waitForPeersStreams,
 } from "@peerbit/stream";
+import { type Libp2pOptions } from "libp2p";
 import {
 	type Libp2pCreateOptions,
+	type Libp2pCreateOptionsWithServices,
 	type Libp2pExtendServices,
-	type Libp2pCreateOptionsWithServices
 } from "peerbit";
-import { DirectBlock } from "@peerbit/blocks";
-import { DirectSub } from "@peerbit/pubsub";
 import { Peerbit } from "peerbit";
-import { type ProgramClient } from "@peerbit/program";
-import { DefaultKeychain } from "@peerbit/keychain";
-import { type Libp2pOptions } from "libp2p";
-import { yamux } from "@chainsafe/libp2p-yamux";
 
 export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
@@ -45,14 +45,16 @@ export class TestSession {
 		await session.connect();
 		// TODO types
 		await waitForPeersStreams(
-			...session.peers.map((x) => x.services.blocks as any as DirectStream<any>)
+			...session.peers.map(
+				(x) => x.services.blocks as any as DirectStream<any>,
+			),
 		);
 		return session;
 	}
 
 	static async disconnected(
 		n: number,
-		options?: CreateOptions | CreateOptions[]
+		options?: CreateOptions | CreateOptions[],
 	) {
 		const m = (o?: CreateOptions): Libp2pCreateOptionsWithServices => {
 			return {
@@ -61,16 +63,16 @@ export class TestSession {
 					blocks: (c) => new DirectBlock(c),
 					pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
 					keychain: () => new DefaultKeychain(),
-					...o?.libp2p?.services
-				},  /// TODO types
-				streamMuxers: [yamux()]
+					...o?.libp2p?.services,
+				}, /// TODO types
+				streamMuxers: [yamux()],
 			};
 		};
 		let optionsWithServices:
 			| Libp2pCreateOptionsWithServices
 			| Libp2pCreateOptionsWithServices[] = Array.isArray(options)
-				? options.map(m)
-				: m(options);
+			? options.map(m)
+			: m(options);
 		const session = await SSession.disconnected(n, optionsWithServices);
 		return new TestSession(
 			session,
@@ -78,9 +80,9 @@ export class TestSession {
 				session.peers.map((x, ix) =>
 					Array.isArray(options)
 						? Peerbit.create({ libp2p: x, directory: options[ix]?.directory })
-						: Peerbit.create({ libp2p: x, directory: options?.directory })
-				)
-			)) as Peerbit[]
+						: Peerbit.create({ libp2p: x, directory: options?.directory }),
+				),
+			)) as Peerbit[],
 		);
 	}
 }

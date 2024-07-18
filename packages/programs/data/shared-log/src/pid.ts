@@ -16,7 +16,7 @@ export class PIDReplicationController {
 			kp?: number;
 			ki?: number;
 			kd?: number;
-		} = {}
+		} = {},
 	) {
 		const { storage: memory, cpu, kp = 0.7, ki = 0.025, kd = 0.05 } = options;
 		this.kp = kp;
@@ -42,8 +42,8 @@ export class PIDReplicationController {
 		this.prevTotalFactor = totalFactor;
 		this.prevMemoryUsage = memoryUsage;
 
-		const estimatedTotalSize = currentFactor > 0 ? memoryUsage / currentFactor : 0;
-
+		const estimatedTotalSize =
+			currentFactor > 0 ? memoryUsage / currentFactor : 0;
 
 		let errorMemory = 0;
 
@@ -51,7 +51,7 @@ export class PIDReplicationController {
 			errorMemory =
 				currentFactor > 0 && memoryUsage > 0
 					? Math.max(Math.min(1, this.maxMemoryLimit / estimatedTotalSize), 0) -
-					currentFactor
+						currentFactor
 					: 0;
 		}
 
@@ -151,7 +151,6 @@ export class PIDReplicationController {
 			memoryUsage,
 			estimatedTotalSize
 		}); */
-
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

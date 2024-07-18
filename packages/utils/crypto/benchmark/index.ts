@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { Ed25519Keypair } from "../src/ed25519.js";
 import { PreHash } from "../src/prehash.js";
 import { SignatureWithKey, verify } from "../src/signature.js";
+
 //node --loader ts-node/esm ./benchmark/index.ts
 
 const keypair = await Ed25519Keypair.create();
@@ -27,7 +28,7 @@ suite
 			await keypair.sign(data, PreHash.NONE);
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("hash+sign", {
 		fn: async (deferred: any) => {
@@ -35,7 +36,7 @@ suite
 			await keypair.sign(data, PreHash.SHA_256);
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("verify", {
 		fn: async (deferred: any) => {
@@ -46,7 +47,7 @@ suite
 			}
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("hash+verify", {
 		fn: async (deferred: any) => {
@@ -57,7 +58,7 @@ suite
 			}
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.on("error", (error: any) => {
 		throw error;

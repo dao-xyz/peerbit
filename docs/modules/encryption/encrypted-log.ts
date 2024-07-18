@@ -1,10 +1,10 @@
 import { field, variant } from "@dao-xyz/borsh";
+import { X25519Keypair } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { SharedLog } from "@peerbit/shared-log";
-import { Peerbit } from "peerbit";
 import { waitForResolved } from "@peerbit/time";
-import { X25519Keypair } from "@peerbit/crypto";
 import assert from "node:assert";
+import { Peerbit } from "peerbit";
 
 // This class extends Program which allows it to be replicated amongst peers
 @variant("simple_store")
@@ -43,7 +43,7 @@ await store.log.append(payload, {
 			meta: [
 				client.identity.publicKey,
 				client2.identity.publicKey,
-				client3.identity.publicKey
+				client3.identity.publicKey,
 			],
 
 			// Who can read the message?
@@ -54,12 +54,12 @@ await store.log.append(payload, {
 			signatures: [
 				client.identity.publicKey,
 				client2.identity.publicKey,
-				client3.identity.publicKey
-			]
+				client3.identity.publicKey,
+			],
 
 			// Omitting any of the fields below will make it unencrypted
-		}
-	}
+		},
+	},
 });
 
 // A peer that can open

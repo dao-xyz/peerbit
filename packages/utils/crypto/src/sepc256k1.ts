@@ -1,24 +1,26 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
-
+import {
+	type SignatureLike,
+	arrayify,
+	joinSignature,
+	splitSignature,
+} from "@ethersproject/bytes";
 import { Wallet } from "@ethersproject/wallet";
-import { arrayify } from "@ethersproject/bytes";
-import { joinSignature } from "@ethersproject/bytes";
-import { type SignatureLike, splitSignature } from "@ethersproject/bytes";
+import { generateKeyPair, supportedKeys } from "@libp2p/crypto/keys";
+import { type PeerId } from "@libp2p/interface";
+import { peerIdFromKeys } from "@libp2p/peer-id";
+import utf8 from "@protobufjs/utf8";
 import _ec from "elliptic";
+import { equals } from "uint8arrays";
+import { coerce } from "./bytes.js";
+import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
+import { PreHash, prehashFn } from "./prehash.js";
+import { SignatureWithKey } from "./signature.js";
+import { type Identity } from "./signer.js";
+import { toHexString } from "./utils.js";
+
 import EC = _ec.ec;
 let _curve: EC;
-
-import { equals } from "uint8arrays";
-import { toHexString } from "./utils.js";
-import { type PeerId } from "@libp2p/interface";
-import { type Identity } from "./signer.js";
-import { coerce } from "./bytes.js";
-import { generateKeyPair, supportedKeys } from "@libp2p/crypto/keys";
-import utf8 from "@protobufjs/utf8";
-import { SignatureWithKey } from "./signature.js";
-import { PreHash, prehashFn } from "./prehash.js";
-import { peerIdFromKeys } from "@libp2p/peer-id";
 
 @variant(1)
 export class Secp256k1PublicKey extends PublicSignKey {
@@ -43,7 +45,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		// So we can recover the public key
 		const publicKey = recoverPublicKeyFromSignature(
 			await prehashFn(toSign, PreHash.ETH_KECCAK_256),
-			signature
+			signature,
 		);
 
 		return new Secp256k1PublicKey({ publicKey });
@@ -62,7 +64,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 
 	toPeerId(): Promise<PeerId> {
 		return peerIdFromKeys(
-			new supportedKeys["secp256k1"].Secp256k1PublicKey(this.publicKey).bytes
+			new supportedKeys["secp256k1"].Secp256k1PublicKey(this.publicKey).bytes,
 		);
 	}
 
@@ -72,7 +74,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		}
 		if (id.type === "secp256k1") {
 			return new Secp256k1PublicKey({
-				publicKey: id.publicKey.slice(4) // computeAddress(!.slice(4)),
+				publicKey: id.publicKey.slice(4), // computeAddress(!.slice(4)),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -110,7 +112,7 @@ export class Secp256k1PrivateKey extends PrivateSignKey {
 		}
 		if (id.type === "secp256k1") {
 			return new Secp256k1PrivateKey({
-				privateKey: coerce(id.privateKey!.slice(4))
+				privateKey: coerce(id.privateKey.slice(4)),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -125,7 +127,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	@field({ type: Secp256k1PrivateKey })
 	privateKey: Secp256k1PrivateKey;
 
-	_wallet: Wallet;
+	_wallet!: Wallet;
 	constructor(properties: {
 		publicKey: Secp256k1PublicKey;
 		privateKey: Secp256k1PrivateKey;
@@ -139,11 +141,11 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		const generated = await generateKeyPair("secp256k1");
 		const kp = new Secp256k1Keypair({
 			publicKey: new Secp256k1PublicKey({
-				publicKey: generated.public.marshal()
+				publicKey: generated.public.marshal(),
 			}),
 			privateKey: new Secp256k1PrivateKey({
-				privateKey: generated.marshal()
-			})
+				privateKey: generated.marshal(),
+			}),
 		});
 
 		return kp;
@@ -151,14 +153,14 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 
 	async sign(
 		data: Uint8Array,
-		prehash: PreHash = PreHash.ETH_KECCAK_256
+		prehash: PreHash = PreHash.ETH_KECCAK_256,
 	): Promise<SignatureWithKey> {
 		const maybeHashed = await prehashFn(data, prehash);
 
 		const signature = joinSignature(
 			(this._wallet || (this._wallet = new Wallet(this.privateKey.privateKey)))
 				._signingKey()
-				.signDigest(maybeHashed)
+				.signDigest(maybeHashed),
 		);
 		const signatureBytes = new Uint8Array(utf8.length(signature)); // TODO utilize Buffer allocUnsafe
 		utf8.write(signature, signatureBytes, 0);
@@ -166,7 +168,7 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		return new SignatureWithKey({
 			prehash,
 			publicKey: this.publicKey,
-			signature: signatureBytes
+			signature: signatureBytes,
 		});
 	}
 
@@ -183,19 +185,19 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	static fromPeerId(peerId: PeerId) {
 		return new Secp256k1Keypair({
 			privateKey: Secp256k1PrivateKey.from(peerId),
-			publicKey: Secp256k1PublicKey.fromPeerId(peerId)
+			publicKey: Secp256k1PublicKey.fromPeerId(peerId),
 		});
 	}
 
 	toPeerId(): Promise<PeerId> {
 		return peerIdFromKeys(
 			new supportedKeys["secp256k1"].Secp256k1PublicKey(
-				this.publicKey.publicKey
+				this.publicKey.publicKey,
 			).bytes,
 			new supportedKeys["secp256k1"].Secp256k1PrivateKey(
 				this.privateKey.privateKey,
-				this.publicKey.publicKey
-			).bytes
+				this.publicKey.publicKey,
+			).bytes,
 		);
 	}
 }
@@ -211,28 +213,28 @@ function getCurve() {
 
 export const recoverPublicKeyFromSignature = (
 	digest: Uint8Array,
-	signature: SignatureLike
+	signature: SignatureLike,
 ): Uint8Array => {
 	const sig = splitSignature(signature);
 	const rs = { r: arrayify(sig.r), s: arrayify(sig.s) };
 	return new Uint8Array(
 		getCurve()
 			.recoverPubKey(arrayify(digest), rs, sig.recoveryParam)
-			.encodeCompressed()
+			.encodeCompressed(),
 	);
 };
 
 export const verifySignatureSecp256k1 = async (
 	signature: SignatureWithKey,
-	data: Uint8Array
+	data: Uint8Array,
 ): Promise<boolean> => {
 	const hashedData = await prehashFn(data, signature.prehash);
 	const signerKey = recoverPublicKeyFromSignature(
 		arrayify(hashedData),
-		decoder.decode(signature.signature)
+		decoder.decode(signature.signature),
 	);
 	return equals(
 		signerKey,
-		(signature.publicKey as Secp256k1PublicKey).publicKey
+		(signature.publicKey as Secp256k1PublicKey).publicKey,
 	);
 };

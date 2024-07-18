@@ -1,4 +1,4 @@
-import { AbstractLevel } from "abstract-level";
+import type { AbstractLevel } from "abstract-level";
 
 export class Session {
 	programs: KV;
@@ -8,19 +8,19 @@ export class Session {
 			string | Buffer | Uint8Array,
 			string,
 			Uint8Array
-		>
+		>,
 	) {
 		this.imports = new KV(
 			this.level.sublevel<string, Uint8Array>("imports", {
 				keyEncoding: "utf8",
-				valueEncoding: "view"
-			})
+				valueEncoding: "view",
+			}),
 		);
 		this.programs = new KV(
 			this.level.sublevel<string, Uint8Array>("programs", {
 				keyEncoding: "utf8",
-				valueEncoding: "view"
-			})
+				valueEncoding: "view",
+			}),
 		);
 	}
 
@@ -36,7 +36,7 @@ export class KV {
 			string | Buffer | Uint8Array,
 			string,
 			Uint8Array
-		>
+		>,
 	) {}
 
 	add(key: string, arg: Uint8Array) {

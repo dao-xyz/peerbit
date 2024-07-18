@@ -1,8 +1,8 @@
-import { Log } from "../src/log.js";
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
-import { EntryType } from "../src/entry.js";
 import { expect } from "chai";
+import { EntryType } from "../src/entry.js";
+import { Log } from "../src/log.js";
 
 describe("append", function () {
 	let store: BlockStore;
@@ -39,7 +39,6 @@ describe("append", function () {
 			expect(log.length).equal(1);
 		});
 
-
 		it("added the correct values", async () => {
 			(await log.toArray()).forEach((entry) => {
 				expect(entry.payload.getValue()).to.deep.equal(new Uint8Array([1]));
@@ -75,7 +74,7 @@ describe("append", function () {
 			expect(await blockExists(e1.hash)).to.be.true;
 			expect(await blockExists(e2.hash)).to.be.true;
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
-				meta: { type: EntryType.CUT }
+				meta: { type: EntryType.CUT },
 			});
 			expect((await log.entryIndex.getHasNext(e1.hash).all()).length).equal(0);
 			expect(await blockExists(e1.hash)).to.be.false;
@@ -98,14 +97,14 @@ describe("append", function () {
 				prev = (
 					await log.append(new TextEncoder().encode("hello" + i), {
 						meta: {
-							next: prev ? [prev] : undefined
-						}
+							next: prev ? [prev] : undefined,
+						},
 					})
 				).entry;
 
 				// Make sure the log has the right heads after each append
 				const values = await log.toArray();
-				const heads = (await log.getHeads().all())
+				const heads = await log.getHeads().all();
 				expect(heads.length).equal(1);
 				expect(heads[0].hash).equal(values[values.length - 1].hash);
 			}
@@ -118,7 +117,7 @@ describe("append", function () {
 		it("added the correct values", async () => {
 			(await log.toArray()).forEach((entry, index) => {
 				expect(entry.payload.getValue()).to.deep.equal(
-					new TextEncoder().encode("hello" + index)
+					new TextEncoder().encode("hello" + index),
 				);
 			});
 		});
@@ -128,8 +127,8 @@ describe("append", function () {
 				if (index > 0) {
 					expect(
 						entry.meta.clock.timestamp.compare(
-							(await log.toArray())[index - 1].meta.clock.timestamp
-						)
+							(await log.toArray())[index - 1].meta.clock.timestamp,
+						),
 					).greaterThan(0);
 				}
 				expect(entry.meta.clock.id).to.deep.equal(signKey.publicKey.bytes);

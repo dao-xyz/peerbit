@@ -1,2 +1,2 @@
-export { tests } from './tests.js'
-export { benchmarks } from './benchmarks.js'
+export { tests } from "./tests.js";
+export { benchmarks } from "./benchmarks.js";

@@ -1,10 +1,10 @@
-import { CID } from "multiformats";
-import * as raw from "multiformats/codecs/raw";
 import * as dagCbor from "@ipld/dag-cbor";
-import { sha256 } from "multiformats/hashes/sha2";
+import { CID } from "multiformats";
 import { base58btc } from "multiformats/bases/base58";
-import { type Block, encode, decode } from "multiformats/block";
+import { type Block, decode, encode } from "multiformats/block";
+import * as raw from "multiformats/codecs/raw";
 import type { MultihashHasher } from "multiformats/hashes/interface";
+import { sha256 } from "multiformats/hashes/sha2";
 
 const unsupportedCodecError = () => new Error("unsupported codec");
 
@@ -14,11 +14,11 @@ export const defaultHasher = sha256;
 
 export const codecCodes = {
 	[dagCbor.code]: dagCbor,
-	[raw.code]: raw
+	[raw.code]: raw,
 };
 export const codecMap = {
-	raw: raw,
-	"dag-cbor": dagCbor
+	raw,
+	"dag-cbor": dagCbor,
 };
 
 export const cidifyString = (str: string): CID => {
@@ -43,15 +43,15 @@ export const stringifyCid = (cid: any): string => {
 export const checkDecodeBlock = async (
 	expectedCID: CID | string,
 	bytes: Uint8Array,
-	options: { hasher?: any; codec?: any }
+	options: { hasher?: any; codec?: any },
 ): Promise<Block<any, any, any, any>> => {
 	const cidObject =
 		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
 	const codec = options.codec || (codecCodes as any)[cidObject.code];
 	const block = await decode({
-		bytes: bytes,
+		bytes,
 		codec,
-		hasher: options?.hasher || defaultHasher
+		hasher: options?.hasher || defaultHasher,
 	});
 	if (!block.cid.equals(cidObject)) {
 		throw new Error("CID does not match");
@@ -60,7 +60,7 @@ export const checkDecodeBlock = async (
 };
 export const getBlockValue = async <T>(
 	block: Block<T, any, any, any>,
-	links?: string[]
+	links?: string[],
 ): Promise<T> => {
 	if (block.cid.code === dagCbor.code) {
 		const value = block.value as any;
@@ -101,14 +101,14 @@ export const createBlock = async (
 	options?: {
 		hasher?: MultihashHasher<number>;
 		links?: string[];
-	}
+	},
 ): Promise<Block<any, any, any, any>> => {
 	const codec = (codecMap as any)[format];
 	value = prepareBlockWrite(value, codec, options?.links);
 	const block = await encode({
 		value,
 		codec,
-		hasher: options?.hasher || defaultHasher
+		hasher: options?.hasher || defaultHasher,
 	});
 	return block as Block<any, any, any, any>;
 };

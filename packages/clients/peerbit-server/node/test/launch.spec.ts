@@ -1,7 +1,5 @@
-
-
 describe("spawn", () => {
-	it("no-test", () => { });
+	it("no-test", () => {});
 	/* it("launch and stop", async () => {
 		const results = await launchNodes({
 			email: "marcus@dao.xyz",

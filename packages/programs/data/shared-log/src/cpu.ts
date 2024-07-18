@@ -20,8 +20,8 @@ export class CPUUsageIntervalLag implements CPUUsage {
 			windowSize: number;
 			intervalTime: number;
 			upperBoundLag: number;
-		} = { windowSize: 50, intervalTime: 100, upperBoundLag: 1000 }
-	) { }
+		} = { windowSize: 50, intervalTime: 100, upperBoundLag: 1000 },
+	) {}
 	private mean() {
 		return this.sum / this.dt.length;
 	}
@@ -30,14 +30,14 @@ export class CPUUsageIntervalLag implements CPUUsage {
 		return (
 			Math.min(
 				Math.max(this.mean() - this.properties.intervalTime, 0),
-				this.properties.upperBoundLag
+				this.properties.upperBoundLag,
 			) / this.properties.upperBoundLag
 		); // 1 if lagging more than MAX_INTERVAL seconds
 	}
 
 	start() {
 		this.dt = new Array<number>(this.properties.windowSize).fill(
-			this.properties.intervalTime
+			this.properties.intervalTime,
 		);
 		this.sum = this.properties.windowSize * this.properties.intervalTime;
 

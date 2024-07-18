@@ -2,54 +2,52 @@ import { deserialize, field, serialize } from "@dao-xyz/borsh";
 import { expect } from "chai";
 import { copySerialization } from "../src/borsh";
 
-
 describe("borsh", () => {
+	it("can append fields to an already defined class", () => {
+		class IndexedClass {
+			@field({ type: "string" })
+			id: string;
 
-    it("can append fields to an already defined class", () => {
+			@field({ type: "string" })
+			name: string;
 
-        class IndexedClass {
+			constructor(value: IndexedClass) {
+				Object.assign(this, value);
+			}
+		}
 
-            @field({ type: 'string' })
-            id: string
+		class Context {
+			@field({ type: "string" })
+			context: string;
 
-            @field({ type: 'string' })
-            name: string
+			constructor(value: Context) {
+				Object.assign(this, value);
+			}
+		}
+		class IndexedClassWithContext<I> {
+			@field({ type: Context })
+			__context: Context;
 
-            constructor(value: IndexedClass) {
-                Object.assign(this, value);
-            }
-        }
+			constructor(value: I, context: Context) {
+				Object.assign(this, value);
+				this.__context = context;
+			}
+		}
 
-        class Context {
-            @field({ type: 'string' })
-            context: string
+		copySerialization(IndexedClass, IndexedClassWithContext);
+		copySerialization(IndexedClass, IndexedClassWithContext); // invoke multiple times to assert that it is idempotent
+		copySerialization(IndexedClass, IndexedClassWithContext); // invoke multiple times to assert that it is idempotent
 
-            constructor(value: Context) {
-                Object.assign(this, value);
-            }
-        }
-        class IndexedClassWithContext<I> {
-
-            @field({ type: Context })
-            __context: Context;
-
-            constructor(value: I, context: Context) {
-                Object.assign(this, value);
-                this.__context = context;
-            }
-        }
-
-
-        copySerialization(IndexedClass, IndexedClassWithContext,);
-        copySerialization(IndexedClass, IndexedClassWithContext); // invoke multiple times to assert that it is idempotent
-        copySerialization(IndexedClass, IndexedClassWithContext); // invoke multiple times to assert that it is idempotent
-
-        const obj = new IndexedClassWithContext({ id: '1', name: '2' }, { context: '3' });
-        const indexedClass = new IndexedClassWithContext(obj, new Context({ context: '3' }));
-        const ser = serialize(indexedClass)
-        const der = deserialize(ser, IndexedClassWithContext);
-        expect(der).to.deep.equal(indexedClass);
-    })
-
-
-})
+		const obj = new IndexedClassWithContext(
+			{ id: "1", name: "2" },
+			{ context: "3" },
+		);
+		const indexedClass = new IndexedClassWithContext(
+			obj,
+			new Context({ context: "3" }),
+		);
+		const ser = serialize(indexedClass);
+		const der = deserialize(ser, IndexedClassWithContext);
+		expect(der).to.deep.equal(indexedClass);
+	});
+});

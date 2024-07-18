@@ -1,25 +1,22 @@
-import type { PeerId } from "@libp2p/interface";
-import { getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { deserialize, field, option, variant, vec } from "@dao-xyz/borsh";
+import { CustomEvent, type PeerId } from "@libp2p/interface";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	DataEvent,
 	type PubSubEvents,
+	PublishEvent,
+	type PublishOptions,
 	SubscriptionEvent,
 	UnsubcriptionEvent,
-	type PublishOptions,
-	PublishEvent
 } from "@peerbit/pubsub-interface";
-import { field, variant, vec, option, deserialize } from "@dao-xyz/borsh";
-import { PublicSignKey } from "@peerbit/crypto";
-import { Message } from "./message.js";
 import {
 	DeliveryMode,
-	Message as StreamMessage
+	Message as StreamMessage,
 } from "@peerbit/stream-interface";
-
-import { CustomEvent } from "@libp2p/interface";
+import { Message } from "./message.js";
 
 @variant(6)
-export abstract class PubSubMessage extends Message { }
+export abstract class PubSubMessage extends Message {}
 
 @variant(0)
 export class REQ_GetSubscribers extends PubSubMessage {
@@ -55,7 +52,7 @@ export class REQ_RequestSubscribers extends PubSubMessage {
 }
 
 @variant(3)
-export class RESP_RequestSubscribers extends PubSubMessage { }
+export class RESP_RequestSubscribers extends PubSubMessage {}
 
 @variant(4)
 export class REQ_Publish extends PubSubMessage {
@@ -99,7 +96,7 @@ export class REQ_Subscribe extends PubSubMessage {
 }
 
 @variant(7)
-export class RESP_Subscribe extends PubSubMessage { }
+export class RESP_Subscribe extends PubSubMessage {}
 
 @variant(8)
 export class REQ_Unsubscribe extends PubSubMessage {
@@ -144,7 +141,7 @@ export class REQ_PubsubWaitFor extends PubSubMessage {
 }
 
 @variant(11)
-export class RESP_PubsubWaitFor extends PubSubMessage { }
+export class RESP_PubsubWaitFor extends PubSubMessage {}
 
 @variant(12)
 export class REQ_AddEventListener extends PubSubMessage {
@@ -162,7 +159,7 @@ export class REQ_AddEventListener extends PubSubMessage {
 }
 
 @variant(13)
-export class RESP_AddEventListener extends PubSubMessage { }
+export class RESP_AddEventListener extends PubSubMessage {}
 
 @variant(14)
 export class REQ_RemoveEventListener extends PubSubMessage {
@@ -176,7 +173,7 @@ export class REQ_RemoveEventListener extends PubSubMessage {
 }
 
 @variant(15)
-export class RESP_RemoveEventListener extends PubSubMessage { }
+export class RESP_RemoveEventListener extends PubSubMessage {}
 
 @variant(16)
 export class RESP_EmitEvent extends PubSubMessage {
@@ -220,39 +217,39 @@ export class RESP_DispatchEvent extends PubSubMessage {
 
 export const createCustomEventFromType = (
 	type: keyof PubSubEvents,
-	data: Uint8Array
+	data: Uint8Array,
 ) => {
 	if (type === "data") {
 		return new CustomEvent<DataEvent>("data", {
-			detail: deserialize(data, DataEvent)
+			detail: deserialize(data, DataEvent),
 		});
 	} else if (type === "publish") {
 		return new CustomEvent<DataEvent>("publish", {
-			detail: deserialize(data, PublishEvent)
+			detail: deserialize(data, PublishEvent),
 		});
 	} else if (type === "message") {
 		return new CustomEvent<StreamMessage>("message", {
-			detail: deserialize(data, StreamMessage)
+			detail: deserialize(data, StreamMessage),
 		});
 	} else if (type === "peer:session") {
 		return new CustomEvent<PublicSignKey>("peer:session", {
-			detail: deserialize(data, PublicSignKey)
+			detail: deserialize(data, PublicSignKey),
 		});
 	} else if (type === "peer:reachable") {
 		return new CustomEvent<PublicSignKey>("peer:reachable", {
-			detail: deserialize(data, PublicSignKey)
+			detail: deserialize(data, PublicSignKey),
 		});
 	} else if (type === "peer:unreachable") {
 		return new CustomEvent<PublicSignKey>("peer:unreachable", {
-			detail: deserialize(data, PublicSignKey)
+			detail: deserialize(data, PublicSignKey),
 		});
 	} else if (type === "subscribe") {
 		return new CustomEvent<SubscriptionEvent>("subscribe", {
-			detail: deserialize(data, SubscriptionEvent)
+			detail: deserialize(data, SubscriptionEvent),
 		});
 	} else if (type === "unsubscribe") {
 		return new CustomEvent<UnsubcriptionEvent>("subscribe", {
-			detail: deserialize(data, UnsubcriptionEvent)
+			detail: deserialize(data, UnsubcriptionEvent),
 		});
 	} else throw new Error("Unsupported event type: " + String(type));
 };

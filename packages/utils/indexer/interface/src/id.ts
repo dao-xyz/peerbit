@@ -3,10 +3,10 @@ import { toBase64 } from "@peerbit/crypto";
 import {
 	decodeUint8Array,
 	encodeUint8Array,
-	encodingLength
+	encodingLength,
 } from "uint8-varint";
 
-export abstract class PrimitiveValue { }
+export abstract class PrimitiveValue {}
 
 @variant(0)
 export class StringValue extends PrimitiveValue {
@@ -25,7 +25,7 @@ export abstract class NumberValue extends PrimitiveValue {
 }
 
 @variant(0)
-export abstract class IntegerValue extends NumberValue { }
+export abstract class IntegerValue extends NumberValue {}
 
 @variant(0)
 export class UnsignedIntegerValue extends IntegerValue {
@@ -34,11 +34,7 @@ export class UnsignedIntegerValue extends IntegerValue {
 
 	constructor(number: number) {
 		super();
-		if (
-			Number.isInteger(number) === false ||
-			number > 4294967295 ||
-			number < 0
-		) {
+		if (!Number.isInteger(number) || number > 4294967295 || number < 0) {
 			throw new Error("Number is not u32");
 		}
 		this.number = number;
@@ -115,7 +111,7 @@ const varint53 = {
 		writer["_writes"] = writer["_writes"].next = () =>
 			encodeUint8Array(value, writer["_buf"], offset);
 		writer.totalSize += encodingLength(value);
-	}
+	},
 };
 
 @variant(2)
@@ -149,7 +145,7 @@ export const toId = (obj: Ideable): IdKey => {
 			return new IntegerKey(Number(obj));
 		}
 		throw new Error(
-			"BigInt is not less than 2^53. Max value is 9007199254740991"
+			"BigInt is not less than 2^53. Max value is 9007199254740991",
 		);
 	}
 	if (obj instanceof Uint8Array) {
@@ -157,12 +153,14 @@ export const toId = (obj: Ideable): IdKey => {
 	}
 	throw new Error(
 		"Unexpected index key: " +
-		typeof obj +
-		", expected: string, number, bigint or Uint8Array"
+			typeof obj +
+			", expected: string, number, bigint or Uint8Array",
 	);
 };
 
-export const toIdeable = (key: IdKey | Ideable): string | number | bigint | Uint8Array => {
+export const toIdeable = (
+	key: IdKey | Ideable,
+): string | number | bigint | Uint8Array => {
 	if (key instanceof IdKey) {
 		return key.primitive;
 	}
@@ -180,7 +178,7 @@ export const toIdeable = (key: IdKey | Ideable): string | number | bigint | Uint
 	}
 
 	if (key instanceof Uint8Array) {
-		return key;/*  toBase64(key); */
+		return key; /*  toBase64(key); */
 	}
 
 	throw new Error("Unexpected index key: " + typeof key);
@@ -189,13 +187,13 @@ export const toIdeable = (key: IdKey | Ideable): string | number | bigint | Uint
 export const checkId = (obj: Ideable) => {
 	if (obj == null) {
 		throw new Error(
-			`The provided key value is null or undefined, expecting string, number, bigint, or Uint8array`
+			`The provided key value is null or undefined, expecting string, number, bigint, or Uint8array`,
 		);
 	}
 	const type = typeof obj;
 
 	if (type === "number") {
-		if (Number.isInteger(obj) === false) {
+		if (!Number.isInteger(obj)) {
 			throw new Error(`The provided key number value is not an integer`);
 		}
 	}
@@ -205,7 +203,6 @@ export const checkId = (obj: Ideable) => {
 	}
 
 	throw new Error(
-		`Key is not ${[...idKeyTypes]}, provided key value type: ${typeof obj}`
+		`Key is not ${[...idKeyTypes]}, provided key value type: ${typeof obj}`,
 	);
 };
-

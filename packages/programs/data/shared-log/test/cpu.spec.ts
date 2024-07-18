@@ -1,6 +1,6 @@
-import { CPUUsageIntervalLag } from "../src/cpu.js";
 import { expect } from "chai";
-import sinon from 'sinon';
+import sinon from "sinon";
+import { CPUUsageIntervalLag } from "../src/cpu.js";
 
 describe("CPUUsageIntervalLag", () => {
 	let clock: ReturnType<typeof sinon.useFakeTimers>;
@@ -9,7 +9,7 @@ describe("CPUUsageIntervalLag", () => {
 	});
 	afterEach(() => {
 		clock.restore();
-	})
+	});
 
 	it("appends dt", () => {
 		let windowSize = 10;
@@ -17,7 +17,7 @@ describe("CPUUsageIntervalLag", () => {
 		const cpuUsage = new CPUUsageIntervalLag({
 			windowSize: windowSize,
 			intervalTime: interval,
-			upperBoundLag: 1000
+			upperBoundLag: 1000,
 		});
 
 		cpuUsage.start();

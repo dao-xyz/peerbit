@@ -1,9 +1,7 @@
 {
 	"bootstrap-sha": "148d23a1bc0e9fad48ea6589cd861d47bfd2b75c",
 	"last-release-sha": "c3343e8e19a44343036ed20ed6f15bd13beddf6f",
-	"plugins": [
-		"node-workspace"
-	],
+	"plugins": ["node-workspace"],
 	"changelog-sections": [
 		{
 			"type": "feat",
@@ -45,6 +43,7 @@
 		"packages/clients/peerbit-proxy/proxy": {},
 		"packages/clients/peerbit-server/node": {},
 		"packages/clients/test-utils": {},
+		"packages/clients/vite": {},
 		"packages/programs/rpc": {},
 		"packages/programs/acl/identity-access-controller": {},
 		"packages/programs/acl/trusted-network": {},

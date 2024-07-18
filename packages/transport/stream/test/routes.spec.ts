@@ -1,5 +1,5 @@
-import { Routes } from "../src/routes.js";
 import { expect } from "chai";
+import { Routes } from "../src/routes.js";
 
 const me = "me";
 const a = "a";

@@ -1,10 +1,10 @@
-import { Log } from "../src/log.js";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
+import { waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
 import { Entry, EntryType } from "../src/entry.js";
+import { Log } from "../src/log.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
-import { expect } from "chai";
-import { waitForResolved } from "@peerbit/time";
 
 describe("delete", function () {
 	let store: BlockStore;
@@ -54,13 +54,13 @@ describe("delete", function () {
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2 } = await log.append("hello2a");
 			const { entry: e2b } = await log.append("hello2b", {
-				meta: { next: [e2] }
+				meta: { next: [e2] },
 			});
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
 				meta: {
 					next: [e2],
-					type: EntryType.CUT
-				}
+					type: EntryType.CUT,
+				},
 			});
 			expect(await log.toArray()).to.have.length(4); // will still have lengrt 4 because e2 references 2eb which is not a CUT
 			await log.deleteRecursively(e2b);
@@ -82,10 +82,10 @@ describe("delete", function () {
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e1 } = await log.append(new Uint8Array([1]));
 			const { entry: e2a } = await log.append("hello2a", {
-				meta: { next: [e1] }
+				meta: { next: [e1] },
 			});
 			const { entry: e2b } = await log.append("hello2b", {
-				meta: { next: [e1] }
+				meta: { next: [e1] },
 			});
 
 			await log.deleteRecursively(e2a);
@@ -100,59 +100,59 @@ describe("delete", function () {
 			expect((await log.toArray()).length).equal(0);
 			expect(await log.getHeads().all()).to.be.empty;
 		});
-
 	});
 
-	describe('remove', () => {
-
+	describe("remove", () => {
 		it("can resolve the full entry from deleted", async () => {
 			const log = new Log();
 			let deleted: number = 0;
 
 			await log.open(store, signKey, {
-				encoding: JSON_ENCODING, onChange: async (change) => {
+				encoding: JSON_ENCODING,
+				onChange: async (change) => {
 					if (change.removed.length > 0) {
 						// try to resolve the full entry
-						await Promise.all(change.removed.map(async (e) => {
-							const entry = await log.get(e.hash);
-							expect(entry).to.exist;
-							expect(entry!.hash).to.equal(e.hash);
-							expect(entry).to.be.instanceOf(Entry)
-						}))
+						await Promise.all(
+							change.removed.map(async (e) => {
+								const entry = await log.get(e.hash);
+								expect(entry).to.exist;
+								expect(entry!.hash).to.equal(e.hash);
+								expect(entry).to.be.instanceOf(Entry);
+							}),
+						);
 
 						deleted += change.removed.length;
 					}
-				}
+				},
 			});
 			const { entry: _e1 } = await log.append(new Uint8Array([2]));
 			const { entry: e2 } = await log.append(new Uint8Array([3]));
 
-			await log.remove(e2)
+			await log.remove(e2);
 
 			await waitForResolved(() => expect(deleted).to.equal(1));
-
-		})
-	})
+		});
+	});
 
 	describe("delete", () => {
-
 		it("updates for new heads", async () => {
 			const log = new Log();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
 			const { entry: e1 } = await log.append(new Uint8Array([2]));
 			const { entry: e2 } = await log.append(new Uint8Array([3]));
-			const { entry: e2b } = await log.append(new Uint8Array([3]), { meta: { next: [e1] } });
+			const { entry: e2b } = await log.append(new Uint8Array([3]), {
+				meta: { next: [e1] },
+			});
 
 			// log have 2 heads e2 and e2b, delete e2 and e2b should be the only head
 
-			expect((await log.getHeads().all()).map(x => x.hash)).to.deep.equal([e2.hash, e2b.hash]);
-			await log.delete(e2.hash)
-			const newHeads = await log.getHeads().all()
-			expect((newHeads).map(x => x.hash)).to.deep.equal([e2b.hash]);
-
-		})
-
-
-
-	})
+			expect((await log.getHeads().all()).map((x) => x.hash)).to.deep.equal([
+				e2.hash,
+				e2b.hash,
+			]);
+			await log.delete(e2.hash);
+			const newHeads = await log.getHeads().all();
+			expect(newHeads.map((x) => x.hash)).to.deep.equal([e2b.hash]);
+		});
+	});
 });

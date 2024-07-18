@@ -1,5 +1,5 @@
 import sodium from "libsodium-wrappers";
-import { base58btc } from 'multiformats/bases/base58'
+import { base58btc } from "multiformats/bases/base58";
 
 export const fromHexString = (hexString: string) => sodium.from_hex(hexString);
 
@@ -20,5 +20,5 @@ export const fromBase64URL = (base64: string) => {
 };
 
 export const toBase58 = (arr: Uint8Array) => {
-	return base58btc.baseEncode(arr)
-}
+	return base58btc.baseEncode(arr);
+};

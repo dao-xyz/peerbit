@@ -3,31 +3,36 @@ import {
 	BorshError,
 	field,
 	serialize,
-	variant
+	variant,
 } from "@dao-xyz/borsh";
-import { type Change, Entry, EntryType, type ShallowOrFullEntry, type TrimOptions } from "@peerbit/log";
-import { Program, type ProgramEvents } from "@peerbit/program";
-import { AccessError, DecryptedThing } from "@peerbit/crypto";
-import { logger as loggerFn } from "@peerbit/logger";
 import { CustomEvent } from "@libp2p/interface";
+import { AccessError, DecryptedThing } from "@peerbit/crypto";
+import * as documentsTypes from "@peerbit/document-interface";
+import * as indexerTypes from "@peerbit/indexer-interface";
 import {
+	type Change,
+	Entry,
+	EntryType,
+	type ShallowOrFullEntry,
+	type TrimOptions,
+} from "@peerbit/log";
+import { logger as loggerFn } from "@peerbit/logger";
+import { Program, type ProgramEvents } from "@peerbit/program";
+import {
+	type SharedAppendOptions,
 	SharedLog,
 	type SharedLogOptions,
-	type SharedAppendOptions
 } from "@peerbit/shared-log";
-import * as indexerTypes from "@peerbit/indexer-interface";
-import * as documentsTypes from "@peerbit/document-interface";
-
+import { MAX_BATCH_SIZE } from "./constants.js";
 import {
 	BORSH_ENCODING_OPERATION,
+	type CanRead,
+	type CanSearch,
 	DeleteOperation,
 	DocumentIndex,
 	Operation,
 	PutOperation,
-	type CanSearch,
-	type CanRead
 } from "./search.js";
-import { MAX_BATCH_SIZE } from "./constants.js";
 
 const logger = loggerFn({ module: "document" });
 
@@ -61,7 +66,7 @@ type CanPerformDelete<T> = {
 
 export type CanPerformOperations<T> = CanPerformPut<T> | CanPerformDelete<T>;
 export type CanPerform<T> = (
-	properties: CanPerformOperations<T>
+	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
 
 export type SetupOptions<T, I = T> = {
@@ -81,10 +86,10 @@ export type SetupOptions<T, I = T> = {
 } & SharedLogOptions<Operation>;
 
 @variant("documents")
-export class Documents<T, I extends Record<string, any> = T extends Record<string, any> ? T : any> extends Program<
-	SetupOptions<T, I>,
-	DocumentEvents<T> & ProgramEvents
-> {
+export class Documents<
+	T,
+	I extends Record<string, any> = T extends Record<string, any> ? T : any,
+> extends Program<SetupOptions<T, I>, DocumentEvents<T> & ProgramEvents> {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation>;
 
@@ -126,7 +131,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this.canOpen) {
 				throw new Error(
-					"Document store needs to be opened with canOpen option when the document type is a Program"
+					"Document store needs to be opened with canOpen option when the document type is a Program",
 				);
 			}
 		}
@@ -138,10 +143,10 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 			options.id ||
 			(typeof idProperty === "string"
 				? (obj: any) => obj[idProperty as string]
-				: (obj: any) => indexerTypes.extractFieldValue(obj, idProperty as string[]));
+				: (obj: any) =>
+						indexerTypes.extractFieldValue(obj, idProperty as string[]));
 
 		this.idResolver = idResolver;
-
 
 		await this._index.open({
 			log: this.log,
@@ -161,7 +166,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 				}
 				return this.log.log.join(heads);
 			},
-			dbType: this.constructor
+			dbType: this.constructor,
 		});
 
 		await this.log.open({
@@ -176,7 +181,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 				// here we arrive when ever a insertion/pruning behaviour processes an entry
 				// returning true means that it should persist
 				return this._manuallySynced.has(entry.gid);
-			}
+			},
 		});
 	}
 
@@ -187,13 +192,13 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 	private async _resolveEntry(history: Entry<Operation> | string) {
 		return typeof history === "string"
 			? (await this.log.log.get(history)) ||
-			(await Entry.fromMultihash<Operation>(this.log.log.blocks, history))
+					(await Entry.fromMultihash<Operation>(this.log.log.blocks, history))
 			: history;
 	}
 
 	async canAppend(
 		entry: Entry<Operation>,
-		reference?: { document: T; operation: PutOperation }
+		reference?: { document: T; operation: PutOperation },
 	): Promise<boolean> {
 		const l0 = await this._canAppend(entry as Entry<Operation>, reference);
 		if (!l0) {
@@ -223,16 +228,16 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 					!(await this._optionCanPerform(
 						operation instanceof PutOperation
 							? {
-								type: "put",
-								value: document!,
-								operation,
-								entry: entry as any as Entry<PutOperation>
-							}
+									type: "put",
+									value: document!,
+									operation,
+									entry: entry as any as Entry<PutOperation>,
+								}
 							: {
-								type: "delete",
-								operation,
-								entry: entry as any as Entry<DeleteOperation>
-							}
+									type: "delete",
+									operation,
+									entry: entry as any as Entry<DeleteOperation>,
+								},
 					))
 				) {
 					return false;
@@ -251,12 +256,12 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 
 	async _canAppend(
 		entry: Entry<Operation>,
-		reference?: { document: T; operation: PutOperation }
+		reference?: { document: T; operation: PutOperation },
 	): Promise<PutOperation | DeleteOperation | false> {
 		const resolve = async (history: Entry<Operation> | string) => {
 			return typeof history === "string"
 				? this.log.log.get(history) ||
-				(await Entry.fromMultihash(this.log.log.blocks, history))
+						(await Entry.fromMultihash(this.log.log.blocks, history))
 				: history;
 		};
 		const pointsToHistory = async (history: Entry<Operation> | string) => {
@@ -280,7 +285,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 		try {
 			entry.init({
 				encoding: this.log.log.encoding,
-				keychain: this.node.services.keychain
+				keychain: this.node.services.keychain,
 			});
 			const operation =
 				reference?.operation || entry._payload instanceof DecryptedThing
@@ -296,7 +301,8 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 
 				const key = indexerTypes.toId(keyValue);
 
-				const existingDocument = (await this.index.getDetailed(key))?.[0]?.results[0];
+				const existingDocument = (await this.index.getDetailed(key))?.[0]
+					?.results[0];
 				if (existingDocument && existingDocument.context.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
@@ -323,7 +329,9 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 				if (entry.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = (await this.index.getDetailed(operation.key))?.[0].results[0];
+				const existingDocument = (
+					await this.index.getDetailed(operation.key)
+				)?.[0].results[0];
 				if (!existingDocument) {
 					// already deleted
 					return operation; // assume ok
@@ -356,7 +364,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 
 	public async put(
 		doc: T,
-		options?: SharedAppendOptions<Operation> & { unique?: boolean }
+		options?: SharedAppendOptions<Operation> & { unique?: boolean },
 	) {
 		const keyValue = this.idResolver(doc);
 
@@ -366,22 +374,23 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 		const ser = serialize(doc);
 		if (ser.length > MAX_BATCH_SIZE) {
 			throw new Error(
-				`Document is too large (${ser.length * 1e-6
-				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`
+				`Document is too large (${
+					ser.length * 1e-6
+				}) mb). Needs to be less than ${MAX_BATCH_SIZE * 1e-6} mb`,
 			);
 		}
 
 		const existingDocument = options?.unique
 			? undefined
 			: (
-				await this._index.getDetailed(keyValue, {
-					local: true,
-					remote: { sync: true } // only query remote if we know they exist
-				})
-			)?.[0]?.results[0];
+					await this._index.getDetailed(keyValue, {
+						local: true,
+						remote: { sync: true }, // only query remote if we know they exist
+					})
+				)?.[0]?.results[0];
 
 		const operation = new PutOperation({
-			data: ser
+			data: ser,
 		});
 		const appended = await this.log.append(operation, {
 			...options,
@@ -389,25 +398,28 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 				next: existingDocument
 					? [await this._resolveEntry(existingDocument.context.head)]
 					: [],
-				...options?.meta
+				...options?.meta,
 			},
 			canAppend: (entry) => {
 				return this.canAppend(entry, { document: doc, operation });
 			},
 			onChange: (change) => {
 				return this.handleChanges(change, { document: doc, operation });
-			}
+			},
 		});
 
 		return appended;
 	}
 
-	async del(id: indexerTypes.Ideable, options?: SharedAppendOptions<Operation>) {
+	async del(
+		id: indexerTypes.Ideable,
+		options?: SharedAppendOptions<Operation>,
+	) {
 		const key = indexerTypes.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {
 				local: true,
-				remote: { sync: true }
+				remote: { sync: true },
 			})
 		)?.[0]?.results[0];
 
@@ -417,32 +429,38 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 
 		return this.log.append(
 			new DeleteOperation({
-				key
+				key,
 			}),
 			{
 				...options,
 				meta: {
 					next: [await this._resolveEntry(existing.context.head)],
 					type: EntryType.CUT,
-					...options?.meta
-				}
-			} //
+					...options?.meta,
+				},
+			}, //
 		);
 	}
 
 	async handleChanges(
 		change: Change<Operation>,
-		reference?: { document: T; operation: PutOperation }
+		reference?: { document: T; operation: PutOperation },
 	): Promise<void> {
 		const isAppendOperation =
 			change?.added.length === 1 ? !!change.added[0] : false;
-
 
 		const removedSet = new Map<string, ShallowOrFullEntry<Operation>>();
 		for (const r of change.removed) {
 			removedSet.set(r.hash, r);
 		}
-		const sortedEntries = [...((await Promise.all(change.removed.map(x => x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash)))) || []), ...change.added] // TODO assert sorting
+		const sortedEntries = [
+			...((await Promise.all(
+				change.removed.map((x) =>
+					x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash),
+				),
+			)) || []),
+			...change.added,
+		]; // TODO assert sorting
 		/* 
 				const sortedEntries = [...change.added, ...(removed || [])]
 					.sort(this.log.log.sortFn)
@@ -453,7 +471,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 
 		let documentsChanged: DocumentsChange<T> = {
 			added: [],
-			removed: []
+			removed: [],
 		};
 
 		let modified: Set<string | number | bigint> = new Set();
@@ -461,7 +479,6 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 			if (!item) continue;
 
 			try {
-
 				const payload =
 					item._payload instanceof DecryptedThing
 						? item.payload.getValue(item.encoding)
@@ -493,7 +510,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 						) {
 							value = (await this.node.open(value, {
 								parent: this as Program<any, any>,
-								existing: "reuse"
+								existing: "reuse",
 							})) as any as T; // TODO types
 						}
 					}
@@ -525,7 +542,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 						}
 						const document = await this._index.get(key, {
 							local: true,
-							remote: false
+							remote: false,
 						});
 						if (!document) {
 							continue;
@@ -558,7 +575,7 @@ export class Documents<T, I extends Record<string, any> = T extends Record<strin
 		}
 
 		this.events.dispatchEvent(
-			new CustomEvent("change", { detail: documentsChanged })
+			new CustomEvent("change", { detail: documentsChanged }),
 		);
 	}
 }

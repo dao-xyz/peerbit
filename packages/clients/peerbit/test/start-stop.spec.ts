@@ -1,8 +1,8 @@
-import { Program } from "@peerbit/program";
-import { Peerbit } from "../src/peer.js";
-import { createEd25519PeerId } from "@libp2p/peer-id-factory";
 import { variant } from "@dao-xyz/borsh";
-import { expect } from 'chai';
+import { createEd25519PeerId } from "@libp2p/peer-id-factory";
+import { Program } from "@peerbit/program";
+import { expect } from "chai";
+import { Peerbit } from "../src/peer.js";
 
 @variant("test-start-stop")
 class TestP extends Program {
@@ -19,7 +19,7 @@ describe("start-stop", () => {
 	it("can create with peerId", async () => {
 		const peerId = await createEd25519PeerId();
 		client = await Peerbit.create({
-			libp2p: { peerId }
+			libp2p: { peerId },
 		});
 		expect(client.peerId.equals(peerId)).to.be.true;
 		const addressA = (await client.open(new TestP())).address;

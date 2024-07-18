@@ -1,9 +1,9 @@
+import { expect } from "chai";
 import all from "it-all";
 import { pipe } from "it-pipe";
 import pDefer from "p-defer";
 import { Uint8ArrayList } from "uint8arraylist";
 import { pushableLanes } from "../src/pushable-lanes.js";
-import { expect } from "chai";
 
 describe("it-pushable", () => {
 	it("should push input slowly", async () => {
@@ -42,7 +42,7 @@ describe("it-pushable", () => {
 		source.end(new Error("boom"));
 
 		await expect(
-			pipe(source, async (source) => all(source))
+			pipe(source, async (source) => all(source)),
 		).to.be.rejected.and.eventually.have.property("message", "boom");
 	});
 
@@ -61,7 +61,7 @@ describe("it-pushable", () => {
 		setTimeout(() => source.end(), input.length * 10);
 
 		await expect(
-			pipe(source, async (source) => all(source))
+			pipe(source, async (source) => all(source)),
 		).to.be.rejected.and.eventually.have.property("message", "boom");
 	});
 
@@ -91,7 +91,7 @@ describe("it-pushable", () => {
 		const source = pushableLanes({
 			onEnd: () => {
 				done();
-			}
+			},
 		});
 		const input = [1, 2, 3].map((x) => new Uint8Array(x));
 		for (let i = 0; i < input.length; i++) {
@@ -106,7 +106,7 @@ describe("it-pushable", () => {
 		const source = pushableLanes({
 			onEnd: () => {
 				ended.resolve();
-			}
+			},
 		});
 		source.push(new Uint8Array(1));
 		source.push(new Uint8Array(2));
@@ -121,7 +121,7 @@ describe("it-pushable", () => {
 		const source = pushableLanes({
 			onEnd: () => {
 				done();
-			}
+			},
 		});
 		const input = [1, 2, 3].map((x) => new Uint8Array(x));
 		for (let i = 0; i < input.length; i++) {
@@ -135,7 +135,7 @@ describe("it-pushable", () => {
 		const source = pushableLanes({
 			onEnd: () => {
 				done();
-			}
+			},
 		});
 		source.end();
 	});
@@ -145,10 +145,10 @@ describe("it-pushable", () => {
 			onEnd: (err) => {
 				expect(err).to.have.property("message", "boom");
 				done();
-			}
+			},
 		});
 		setTimeout(() => source.end(new Error("boom")), 10);
-		void pipe(source, async (source) => all(source)).catch(() => { });
+		void pipe(source, async (source) => all(source)).catch(() => {});
 	});
 
 	it("should call onEnd on return before end", (done) => {
@@ -160,7 +160,7 @@ describe("it-pushable", () => {
 			onEnd: () => {
 				expect(output).to.deep.equal(input.slice(0, max));
 				done();
-			}
+			},
 		});
 
 		input.forEach((v, i) => setTimeout(() => source.push(v), i * 10));
@@ -185,7 +185,7 @@ describe("it-pushable", () => {
 			onEnd: () => {
 				expect(output).to.deep.equal(input.slice(0, max));
 				done();
-			}
+			},
 		});
 
 		let index = 0;
@@ -222,7 +222,7 @@ describe("it-pushable", () => {
 				setTimeout(() => {
 					done();
 				}, 50);
-			}
+			},
 		});
 
 		input.forEach((v, i) => setTimeout(() => source.push(v), i * 10));
@@ -244,7 +244,7 @@ describe("it-pushable", () => {
 				expect(err).to.have.property("message", "boom");
 				expect(output).to.deep.equal(input.slice(0, max));
 				done();
-			}
+			},
 		});
 
 		input.forEach((v, i) => setTimeout(() => source.push(v), i * 10));
@@ -373,7 +373,10 @@ describe("it-pushable", () => {
 
 		controller.abort();
 
-		await expect(p).to.be.rejected.eventually.have.property("code", "ABORT_ERR");
+		await expect(p).to.be.rejected.eventually.have.property(
+			"code",
+			"ABORT_ERR",
+		);
 	});
 
 	describe("lanes", () => {
@@ -390,7 +393,7 @@ describe("it-pushable", () => {
 				new Uint8Array([1]),
 				new Uint8Array([2]),
 				new Uint8Array([3]),
-				new Uint8Array([4])
+				new Uint8Array([4]),
 			]);
 			expect(source.readableLength).equal(0);
 		});

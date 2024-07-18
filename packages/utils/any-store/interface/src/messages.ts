@@ -1,4 +1,4 @@
-import { field, variant, vec, option } from "@dao-xyz/borsh";
+import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { v4 as uuid } from "uuid";
 
 export const levelKey = (level: string[]) => JSON.stringify(level);
@@ -25,7 +25,7 @@ export abstract class MemoryMessage extends MemoryRequest {
 }
 
 @variant(0)
-export class REQ_Status extends MemoryMessage { }
+export class REQ_Status extends MemoryMessage {}
 
 @variant(1)
 export class RESP_Status extends MemoryMessage {
@@ -42,16 +42,16 @@ export class RESP_Status extends MemoryMessage {
 }
 
 @variant(2)
-export class REQ_Open extends MemoryMessage { }
+export class REQ_Open extends MemoryMessage {}
 
 @variant(3)
-export class RESP_Open extends MemoryMessage { }
+export class RESP_Open extends MemoryMessage {}
 
 @variant(4)
-export class REQ_Close extends MemoryMessage { }
+export class REQ_Close extends MemoryMessage {}
 
 @variant(5)
-export class RESP_Close extends MemoryMessage { }
+export class RESP_Close extends MemoryMessage {}
 
 @variant(6)
 export class REQ_Get extends MemoryMessage {
@@ -91,7 +91,7 @@ export class REQ_Put extends MemoryMessage {
 }
 
 @variant(9)
-export class RESP_Put extends MemoryMessage { }
+export class RESP_Put extends MemoryMessage {}
 
 @variant(10)
 export class REQ_Del extends MemoryMessage {
@@ -105,7 +105,7 @@ export class REQ_Del extends MemoryMessage {
 }
 
 @variant(11)
-export class RESP_Del extends MemoryMessage { }
+export class RESP_Del extends MemoryMessage {}
 
 @variant(12)
 export class REQ_Iterator_Next extends MemoryMessage {
@@ -153,7 +153,7 @@ export class REQ_Iterator_Stop extends MemoryMessage {
 }
 
 @variant(15)
-export class RESP_Iterator_Stop extends MemoryMessage { }
+export class RESP_Iterator_Stop extends MemoryMessage {}
 
 @variant(16)
 export class REQ_Sublevel extends MemoryMessage {
@@ -167,22 +167,22 @@ export class REQ_Sublevel extends MemoryMessage {
 }
 
 @variant(17)
-export class RESP_Sublevel extends MemoryMessage { }
+export class RESP_Sublevel extends MemoryMessage {}
 
 @variant(18)
-export class REQ_Clear extends MemoryMessage { }
+export class REQ_Clear extends MemoryMessage {}
 
 @variant(19)
-export class RESP_Clear extends MemoryMessage { }
+export class RESP_Clear extends MemoryMessage {}
 
 @variant(20)
-export class REQ_Idle extends MemoryMessage { }
+export class REQ_Idle extends MemoryMessage {}
 
 @variant(21)
-export class RESP_Idle extends MemoryMessage { }
+export class RESP_Idle extends MemoryMessage {}
 
 @variant(22)
-export class REQ_Size extends MemoryMessage { }
+export class REQ_Size extends MemoryMessage {}
 
 @variant(23)
 export class RESP_Size extends MemoryMessage {
@@ -199,23 +199,21 @@ export class RESP_Size extends MemoryMessage {
 }
 
 @variant(24)
-export class REQ_Persisted extends MemoryMessage { }
+export class REQ_Persisted extends MemoryMessage {}
 
 @variant(25)
 export class RESP_Persisted extends MemoryMessage {
-
 	@field({ type: "bool" })
 	private _persisted: boolean;
 
 	constructor(properties: { level: string[]; persisted: boolean }) {
 		super(properties);
-		this._persisted = properties.persisted
+		this._persisted = properties.persisted;
 	}
 	get persisted(): boolean {
 		return this._persisted;
 	}
 }
-
 
 @variant(26)
 export class RESP_Error extends MemoryMessage {

@@ -1,18 +1,15 @@
-import { TestSession } from "@peerbit/test-utils";
+import { deserialize, field, serialize, vec } from "@dao-xyz/borsh";
 import { randomBytes } from "@peerbit/crypto";
-import { Log } from "../src/log.js";
-import { Entry } from "../src/entry.js";
-import { deserialize, serialize } from "@dao-xyz/borsh";
-import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { PubSubData } from "@peerbit/pubsub-interface";
-import { JSON_ENCODING } from "./utils/encoding.js";
+import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
-import { expect } from 'chai';
-
-import { field, vec } from "@dao-xyz/borsh";
+import { expect } from "chai";
+import { Entry } from "../src/entry.js";
+import { Log } from "../src/log.js";
+import { signKey, signKey2 } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 export class StringArray {
-
 	@field({ type: vec("string") })
 	arr: string[];
 
@@ -20,7 +17,6 @@ export class StringArray {
 		this.arr = properties.arr;
 	}
 }
-
 
 describe("replication", function () {
 	let session: TestSession;
@@ -72,16 +68,16 @@ describe("replication", function () {
 				{ encoding: JSON_ENCODING };
 			log2 = new Log({ id: logId });
 			await log2.open(session.peers[1].services.blocks, signKey2, {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 
 			input1 = new Log({ id: logId });
 			await input1.open(session.peers[0].services.blocks, signKey, {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			input2 = new Log({ id: logId });
 			await input2.open(session.peers[1].services.blocks, signKey2, {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			await session.peers[0].services.pubsub.subscribe(channel);
 			await session.peers[1].services.pubsub.subscribe(channel);
@@ -89,14 +85,14 @@ describe("replication", function () {
 			await waitForResolved(async () =>
 				expect(
 					(await session.peers[1].services.pubsub.getSubscribers(channel))
-						?.length
-				).equal(2)
+						?.length,
+				).equal(2),
 			);
 			await waitForResolved(async () =>
 				expect(
 					(await session.peers[1].services.pubsub.getSubscribers(channel))
-						?.length
-				).equal(2)
+						?.length,
+				).equal(2),
 			);
 
 			await session.peers[0].services.pubsub.addEventListener("data", (evt) => {
@@ -121,34 +117,34 @@ describe("replication", function () {
 				prev1 = (
 					await input1.append("A" + i, {
 						meta: {
-							next: prev1 ? [prev1] : undefined
-						}
+							next: prev1 ? [prev1] : undefined,
+						},
 					})
 				).entry;
 				prev2 = (
 					await input2.append("B" + i, {
 						meta: {
-							next: prev2 ? [prev2] : undefined
-						}
+							next: prev2 ? [prev2] : undefined,
+						},
 					})
 				).entry;
 				const hashes1 = await input1.getHeads().all();
 				const hashes2 = await input2.getHeads().all();
 				await session.peers[0].services.pubsub.publish(
 					Buffer.from(
-						serialize(new StringArray({ arr: hashes1.map((x) => x.hash) }))
+						serialize(new StringArray({ arr: hashes1.map((x) => x.hash) })),
 					),
 					{
-						topics: [channel]
-					}
+						topics: [channel],
+					},
 				);
 				await session.peers[1].services.pubsub.publish(
 					Buffer.from(
-						serialize(new StringArray({ arr: hashes2.map((x) => x.hash) }))
+						serialize(new StringArray({ arr: hashes2.map((x) => x.hash) })),
 					),
 					{
-						topics: [channel]
-					}
+						topics: [channel],
+					},
 				);
 			}
 
@@ -174,7 +170,7 @@ describe("replication", function () {
 
 			const result = new Log<string>({ id: logId });
 			await result.open(session.peers[0].services.blocks, signKey, {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 
 			await result.join(log1);
@@ -188,9 +184,9 @@ describe("replication", function () {
 			expect(
 				await Promise.all(
 					[0, 1, 2, 3, 9, 10].map(async (i) =>
-						(await result.toArray())[i].payload.getValue()
-					)
-				)
+						(await result.toArray())[i].payload.getValue(),
+					),
+				),
 			).to.deep.equal(["A1", "B1", "A2", "B2", "B5", "A6"]);
 		});
 	});

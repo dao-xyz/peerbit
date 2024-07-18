@@ -1,7 +1,7 @@
 import { type Blocks } from "@peerbit/blocks-interface";
+import { logger as loggerFn } from "@peerbit/logger";
 import PQueue from "p-queue";
 import type { Address } from "./address.js";
-import { logger as loggerFn } from "@peerbit/logger";
 
 export const logger = loggerFn({ module: "program-handler" });
 
@@ -30,7 +30,7 @@ export interface Saveable {
 		options?: {
 			format?: string;
 			timeout?: number;
-		}
+		},
 	): Promise<Address>;
 
 	delete(): Promise<void>;
@@ -76,10 +76,10 @@ export class Handler<T extends Manageable<any>> {
 			load: (
 				address: Address,
 				blocks: Blocks,
-				options?: { timeout?: number }
+				options?: { timeout?: number },
 			) => Promise<T | undefined>;
 			shouldMonitor: (thing: any) => boolean;
-		}
+		},
 	) {
 		this._openQueue = new Map();
 		this.items = new Map();
@@ -90,13 +90,13 @@ export class Handler<T extends Manageable<any>> {
 			[...this._openQueue.values()].map((x) => {
 				x.clear();
 				return x.onIdle();
-			})
+			}),
 		);
 		this._openQueue.clear();
 
 		// Close all open databases
 		await Promise.all(
-			[...this.items.values()].map((program) => program.close())
+			[...this.items.values()].map((program) => program.close()),
 		);
 
 		// Remove all databases from the state
@@ -112,7 +112,7 @@ export class Handler<T extends Manageable<any>> {
 	private async checkProcessExisting<S extends T>(
 		address: Address,
 		toOpen: Manageable<any>,
-		mergeSrategy: ProgramMergeStrategy = "reject"
+		mergeSrategy: ProgramMergeStrategy = "reject",
 	): Promise<S | undefined> {
 		const prev = this.items.get(address);
 		if (mergeSrategy === "reject") {
@@ -130,7 +130,7 @@ export class Handler<T extends Manageable<any>> {
 
 	async open<S extends T>(
 		storeOrAddress: S | Address | string,
-		options: OpenOptions<S> = {}
+		options: OpenOptions<S> = {},
 	): Promise<S> {
 		const fn = async (): Promise<S> => {
 			// TODO add locks for store lifecycle, e.g. what happens if we try to open and close a store at the same time?
@@ -141,7 +141,7 @@ export class Handler<T extends Manageable<any>> {
 						const existing = await this.checkProcessExisting(
 							storeOrAddress.toString(),
 							program,
-							options?.existing
+							options?.existing,
 						);
 						if (existing) {
 							return existing as S;
@@ -150,28 +150,28 @@ export class Handler<T extends Manageable<any>> {
 						program = (await this.properties.load(
 							storeOrAddress,
 							this.properties.client.services.blocks,
-							options
+							options,
 						)) as S; // TODO fix typings
 
 						if (!this.properties.shouldMonitor(program)) {
 							if (!program) {
 								throw new Error(
-									"Failed to resolve program with address: " + storeOrAddress
+									"Failed to resolve program with address: " + storeOrAddress,
 								);
 							}
 							throw new Error(
-								`Failed to open program because program is of type ${program?.constructor.name} `
+								`Failed to open program because program is of type ${program?.constructor.name} `,
 							);
 						}
 					}
 				} catch (error) {
 					logger.error(
-						"Failed to load store with address: " + storeOrAddress.toString()
+						"Failed to load store with address: " + storeOrAddress.toString(),
 					);
 					throw error;
 				}
 			} else {
-				if (options.parent == program) {
+				if (options.parent === program) {
 					throw new Error("Parent program can not be equal to the program");
 				}
 
@@ -185,7 +185,7 @@ export class Handler<T extends Manageable<any>> {
 						const existing = await this.checkProcessExisting(
 							program.address,
 							program,
-							options?.existing
+							options?.existing,
 						);
 
 						if (existing) {
@@ -205,13 +205,13 @@ export class Handler<T extends Manageable<any>> {
 
 			// TODO prevent resave if already saved
 			const address = await program.save(
-				this.properties.client.services.blocks
+				this.properties.client.services.blocks,
 			);
 
 			const existing = await this.checkProcessExisting(
 				address,
 				program,
-				options?.existing
+				options?.existing,
 			);
 			if (existing) {
 				return existing as S;
@@ -233,7 +233,7 @@ export class Handler<T extends Manageable<any>> {
 						return this._onProgamClose(p);
 					}
 				},
-				...options
+				...options,
 				// If the program opens more programs
 				// reset: options.reset,
 			});
@@ -254,7 +254,7 @@ export class Handler<T extends Manageable<any>> {
 		} else {
 			if (storeOrAddress.closed) {
 				address = await storeOrAddress.save(
-					this.properties.client.services.blocks
+					this.properties.client.services.blocks,
 				);
 			} else {
 				address = storeOrAddress.address;

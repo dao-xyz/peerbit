@@ -1,11 +1,9 @@
-import { ReplicationRangeIndexable } from "../src/replication.js";
-import { Ed25519Keypair, Ed25519PublicKey } from "@peerbit/crypto";
-import { getCoverSet, getDistance, getSamples } from "../src/ranges.js";
-import { expect } from "chai";
+import { Ed25519Keypair, type Ed25519PublicKey } from "@peerbit/crypto";
 import type { Index } from "@peerbit/indexer-interface";
 import { create as createIndices } from "@peerbit/indexer-sqlite3";
-
-
+import { expect } from "chai";
+import { getCoverSet, getDistance, getSamples } from "../src/ranges.js";
+import { ReplicationRangeIndexable } from "../src/replication.js";
 
 // prettier-ignore
 describe("ranges", () => {

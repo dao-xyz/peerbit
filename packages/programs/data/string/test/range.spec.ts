@@ -1,6 +1,6 @@
+import { expect } from "chai";
 import { Range } from "../src/range.js";
-import { StringOperation, applyOperations } from "../src/string-index.js";
-import { expect } from 'chai';
+import { type StringOperation, applyOperations } from "../src/string-index.js";
 
 describe("operations", () => {
 	it("add", async () => {
@@ -8,41 +8,39 @@ describe("operations", () => {
 			{
 				index: new Range({
 					offset: 0,
-					length: "hello".length
+					length: "hello".length,
 				}),
-				value: "hello"
+				value: "hello",
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: " ".length
+					length: " ".length,
 				}),
-				value: " "
+				value: " ",
 			},
 			{
 				index: new Range({
 					offset: "hello ".length,
-					length: "world".length
+					length: "world".length,
 				}),
-				value: "world"
-			}
+				value: "world",
+			},
 		];
 
 		let string = await applyOperations(
 			"",
 			operations.map((v, ix) => {
-				{
-					return {
-						hash: ix.toString(),
-						payload: {
-							getValue: () => v
-						},
-						getPayload: async () => {
-							return { getValue: () => v };
-						}
-					} as any;
-				}
-			})
+				return {
+					hash: ix.toString(),
+					payload: {
+						getValue: () => v,
+					},
+					getPayload: async () => {
+						return { getValue: () => v };
+					},
+				} as any;
+			}),
 		);
 		expect(string).equal("hello world");
 	});
@@ -52,48 +50,46 @@ describe("operations", () => {
 			{
 				index: new Range({
 					offset: 0,
-					length: "hello".length
+					length: "hello".length,
 				}),
-				value: "hello"
+				value: "hello",
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: "w".length
+					length: "w".length,
 				}),
-				value: "w"
+				value: "w",
 			},
 			{
 				index: new Range({
 					offset: "hello ".length,
-					length: "world".length
+					length: "world".length,
 				}),
-				value: "world"
+				value: "world",
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: " ".length
+					length: " ".length,
 				}),
-				value: " "
-			}
+				value: " ",
+			},
 		];
 
 		let string = await applyOperations(
 			"",
 			operations.map((v, ix) => {
-				{
-					return {
-						hash: ix.toString(),
-						payload: {
-							getValue: () => v
-						},
-						getPayload: async () => {
-							return { getValue: () => v };
-						}
-					} as any;
-				}
-			})
+				return {
+					hash: ix.toString(),
+					payload: {
+						getValue: () => v,
+					},
+					getPayload: async () => {
+						return { getValue: () => v };
+					},
+				} as any;
+			}),
 		);
 		expect(string).equal("hello world");
 	});
@@ -103,33 +99,31 @@ describe("operations", () => {
 			{
 				index: new Range({
 					offset: 0,
-					length: 0
+					length: 0,
 				}),
-				value: "hello world"
+				value: "hello world",
 			},
 			{
 				index: new Range({
 					offset: "hello".length,
-					length: "hello world".length
-				})
-			}
+					length: "hello world".length,
+				}),
+			},
 		];
 
 		let string = await applyOperations(
 			"",
 			operations.map((v, ix) => {
-				{
-					return {
-						hash: ix.toString(),
-						payload: {
-							getValue: () => v
-						},
-						getPayload: async () => {
-							return { getValue: () => v };
-						}
-					} as any;
-				}
-			})
+				return {
+					hash: ix.toString(),
+					payload: {
+						getValue: () => v,
+					},
+					getPayload: async () => {
+						return { getValue: () => v };
+					},
+				} as any;
+			}),
 		);
 		expect(string).equal("hello");
 	});

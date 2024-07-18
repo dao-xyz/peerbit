@@ -1,7 +1,7 @@
-import { type ProgramClient } from "@peerbit/program";
-import { Peerbit } from "../src/peer.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { expect } from 'chai'
+import { type ProgramClient } from "@peerbit/program";
+import { expect } from "chai";
+import { Peerbit } from "../src/peer.js";
 
 describe(`identity`, function () {
 	describe("restore", () => {
@@ -19,7 +19,7 @@ describe(`identity`, function () {
 			const kp = await Ed25519Keypair.create();
 			await client.services.keychain?.import({
 				keypair: kp,
-				id: new Uint8Array([1, 2, 3])
+				id: new Uint8Array([1, 2, 3]),
 			});
 
 			// stop
@@ -31,7 +31,7 @@ describe(`identity`, function () {
 			expect(client.peerId.equals(id1)).to.be.true;
 
 			const exportedKeypair = await client.services.keychain?.exportByKey(
-				kp.publicKey
+				kp.publicKey,
 			);
 			expect(exportedKeypair!.equals(kp)).to.be.true;
 		});
@@ -43,7 +43,7 @@ describe(`identity`, function () {
 			const kp = await Ed25519Keypair.create();
 			await client.services.keychain?.import({
 				keypair: kp,
-				id: new Uint8Array([1, 2, 3])
+				id: new Uint8Array([1, 2, 3]),
 			});
 
 			// stop
@@ -52,9 +52,9 @@ describe(`identity`, function () {
 			// reopen, expect a clean slate
 			client = await Peerbit.create({});
 			expect(client.peerId.equals(id1)).to.be.false;
-			expect(
-				await client.services.keychain?.exportByKey(kp.publicKey)
-			).equal(undefined);
+			expect(await client.services.keychain?.exportByKey(kp.publicKey)).equal(
+				undefined,
+			);
 		});
 	});
 });

@@ -1,10 +1,10 @@
-import { Log } from "../src/log.js";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { waitFor } from "@peerbit/time";
+import { expect } from "chai";
+import { type ShallowEntry } from "../src/entry.js";
+import { Log } from "../src/log.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
-import { type ShallowEntry } from "../src/entry.js";
-import { expect } from "chai";
 
 describe("trim", function () {
 	let store: BlockStore;
@@ -31,8 +31,8 @@ describe("trim", function () {
 				type: "length",
 				from: 1,
 				to: 1,
-				filter: { canTrim: () => true }
-			}
+				filter: { canTrim: () => true },
+			},
 		});
 		await log.append(new Uint8Array([1]));
 		await log.trim();
@@ -42,7 +42,7 @@ describe("trim", function () {
 		await log.trim();
 		expect(log.length).equal(1);
 		expect((await log.toArray())[0].payload.getValue()).to.deep.equal(
-			new Uint8Array([3])
+			new Uint8Array([3]),
 		);
 	});
 
@@ -63,15 +63,15 @@ describe("trim", function () {
 				canTrim: (entry) => {
 					canTrimInvocations += 1;
 					return Promise.resolve(entry.meta.gid !== e1.entry.gid);
-				}
-			}
+				},
+			},
 		});
 		expect(log.length).equal(2);
 		expect((await log.toArray())[0].payload.getValue()).to.deep.equal(
-			new Uint8Array([1])
+			new Uint8Array([1]),
 		);
 		expect((await log.toArray())[1].payload.getValue()).to.deep.equal(
-			new Uint8Array([3])
+			new Uint8Array([3]),
 		);
 		expect(canTrimInvocations).equal(2);
 	});
@@ -92,8 +92,8 @@ describe("trim", function () {
 				canTrim: (gid) => {
 					canTrimInvocations += 1;
 					return Promise.resolve(false);
-				}
-			}
+				},
+			},
 		});
 		expect(log.length).equal(3);
 		expect(canTrimInvocations).equal(1);
@@ -104,7 +104,7 @@ describe("trim", function () {
 		await log.open(
 			store,
 			signKey,
-			{ trim: { type: "length", from: 3, to: 1 } } // when length > 3 cut back to 1
+			{ trim: { type: "length", from: 3, to: 1 } }, // when length > 3 cut back to 1
 		);
 		const { entry: a1 } = await log.append(new Uint8Array([1]));
 		const { entry: a2 } = await log.append(new Uint8Array([2]));
@@ -119,7 +119,7 @@ describe("trim", function () {
 		expect(await log.blocks.get(a2.hash)).equal(undefined);
 		expect(await log.blocks.get(a3.hash)).to.exist;
 		expect((await log.toArray())[0].payload.getValue()).to.deep.equal(
-			new Uint8Array([3])
+			new Uint8Array([3]),
 		);
 	});
 
@@ -145,12 +145,10 @@ describe("trim", function () {
 							canTrim: () => {
 								canTrimInvocations += 1;
 								return true;
-							}
-						}
+							},
+						},
 					},
-
-				} // when length > 3 cut back to 1
-
+				}, // when length > 3 cut back to 1
 			);
 			let size = 3;
 			let promises: Promise<any>[] = [];
@@ -170,33 +168,41 @@ describe("trim", function () {
 			signKey,
 			{
 				trim: { type: "bytelength", to: 15, filter: { canTrim: () => true } },
-				encoding: JSON_ENCODING
-			} // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
+				encoding: JSON_ENCODING,
+			}, // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 
-		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]), { meta: { next: [] } });
+		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
 		expect(r1).to.be.empty;
 		expect(await log.blocks.get(a1.hash)).to.exist;
-		expect((await log.toArray()).map((x) => x.payload.getValue())).to.deep.equal([
-			new Uint8Array([1])
-		]);
-		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]), { meta: { next: [] } });
+		expect(
+			(await log.toArray()).map((x) => x.payload.getValue()),
+		).to.deep.equal([new Uint8Array([1])]);
+		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]), {
+			meta: { next: [] },
+		});
 		expect(r2.map((x) => x.hash)).to.have.members([a1.hash]);
 		expect(await log.blocks.get(a2.hash)).to.exist;
-		expect((await log.toArray()).map((x) => x.payload.getValue())).to.deep.equal([
-			new Uint8Array([2])
-		]);
-		const { entry: a3, removed: r3 } = await log.append(new Uint8Array([3]), { meta: { next: [] } });
+		expect(
+			(await log.toArray()).map((x) => x.payload.getValue()),
+		).to.deep.equal([new Uint8Array([2])]);
+		const { entry: a3, removed: r3 } = await log.append(new Uint8Array([3]), {
+			meta: { next: [] },
+		});
 		expect(r3.map((x) => x.hash)).to.have.members([a2.hash]);
 		expect(await log.blocks.get(a3.hash)).to.exist;
-		expect((await log.toArray()).map((x) => x.payload.getValue())).to.deep.equal([
-			new Uint8Array([3])
-		]);
-		const { entry: a4, removed: r4 } = await log.append(new Uint8Array([4]), { meta: { next: [] } });
+		expect(
+			(await log.toArray()).map((x) => x.payload.getValue()),
+		).to.deep.equal([new Uint8Array([3])]);
+		const { entry: a4, removed: r4 } = await log.append(new Uint8Array([4]), {
+			meta: { next: [] },
+		});
 		expect(r4.map((x) => x.hash)).to.have.members([a3.hash]);
-		expect((await log.toArray()).map((x) => x.payload.getValue())).to.deep.equal([
-			new Uint8Array([4])
-		]);
+		expect(
+			(await log.toArray()).map((x) => x.payload.getValue()),
+		).to.deep.equal([new Uint8Array([4])]);
 		expect(await log.blocks.get(a1.hash)).equal(undefined);
 		expect(await log.blocks.get(a2.hash)).equal(undefined);
 		expect(await log.blocks.get(a3.hash)).equal(undefined);
@@ -210,17 +216,17 @@ describe("trim", function () {
 			store,
 			signKey,
 			{
-				trim: { type: "time", maxAge }
-			} // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
+				trim: { type: "time", maxAge },
+			}, // bytelength is 15 so for every new helloX we hav eto delete the previous helloY
 		);
 
 		let t0 = +new Date();
 		const { entry: a1, removed: r1 } = await log.append(new Uint8Array([1]));
 		expect(r1).to.be.empty;
 		expect(await log.blocks.get(a1.hash)).to.exist;
-		expect((await log.toArray()).map((x) => x.payload.getValue())).to.deep.equal([
-			new Uint8Array([1])
-		]);
+		expect(
+			(await log.toArray()).map((x) => x.payload.getValue()),
+		).to.deep.equal([new Uint8Array([1])]);
 		const { entry: a2, removed: r2 } = await log.append(new Uint8Array([2]));
 		expect(r2.map((x) => x.hash)).to.have.members([]);
 
@@ -249,8 +255,8 @@ describe("trim", function () {
 				to: 2,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(log.length).equal(2);
 			expect(canTrimInvocations).equal(2); // checks e1 then e2 (e2 we can delete)
@@ -261,8 +267,8 @@ describe("trim", function () {
 				to: 1,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(log.length).equal(1);
@@ -291,8 +297,8 @@ describe("trim", function () {
 				to: 3,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(canTrimInvocations).equal(2); // checks e1 then e2 (e2 we can delete)
@@ -304,8 +310,8 @@ describe("trim", function () {
 				to: 1,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(log.length).equal(1);
@@ -331,14 +337,14 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(canTrimInvocations).to.deep.equal([
 				e1.entry.gid,
 				e2.entry.gid,
-				e3.entry.gid
+				e3.entry.gid,
 			]); // checks e1, e2, e3
 			canTrimInvocations = [];
 			await log.trim({
@@ -347,8 +353,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(canTrimInvocations).to.be.empty; // no more checks since nothing has changed
@@ -361,8 +367,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(canTrimInvocations).to.deep.equal([e3.entry.gid, e4.entry.gid]); // starts at e1 then e2, but ignored because of cache
 		});
@@ -382,7 +388,7 @@ describe("trim", function () {
 
 			const cacheId = () => "id";
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
-				e1.entry.hash
+				e1.entry.hash,
 			]);
 			await log.trim({
 				type: "length",
@@ -390,8 +396,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(canTrimInvocations).to.deep.equal([e1.entry.gid]); // checks e1
@@ -401,7 +407,7 @@ describe("trim", function () {
 			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			trimmableGids.add(e2.entry.gid);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
-				e2.entry.hash
+				e2.entry.hash,
 			]);
 			await log.trim({
 				type: "length",
@@ -409,8 +415,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(canTrimInvocations).to.deep.equal([e2.entry.gid]); // e1 checked again (?), e2 checked and trimmed
 			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
@@ -418,7 +424,7 @@ describe("trim", function () {
 			canTrimInvocations = [];
 			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
-				e3.entry.hash
+				e3.entry.hash,
 			]);
 			trimmableGids.add(e3.entry.gid);
 			await log.trim({
@@ -427,8 +433,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(canTrimInvocations).to.deep.equal([e3.entry.gid]);
 			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
@@ -450,8 +456,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 
 			expect(canTrimInvocations).to.deep.equal([e1.entry.gid]); // checks e1
@@ -464,13 +470,13 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(canTrimInvocations).to.deep.equal([e1.entry.gid, e2.entry.gid]); // e1 checked again (?), e2 checked and trimmed
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
-				e2.entry.hash
+				e2.entry.hash,
 			]);
 
 			canTrimInvocations = [];
@@ -478,7 +484,7 @@ describe("trim", function () {
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
-				e3.entry.hash
+				e3.entry.hash,
 			]);
 			trimmableGids.add(e3.entry.gid);
 			await log.trim({
@@ -487,13 +493,13 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(canTrimInvocations).to.deep.equal([e2.entry.gid, e3.entry.gid]);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
-				e2.entry.hash
+				e2.entry.hash,
 			]);
 
 			canTrimInvocations = [];
@@ -501,7 +507,7 @@ describe("trim", function () {
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
-				e4.entry.hash
+				e4.entry.hash,
 			]);
 			trimmableGids.add(e4.entry.gid);
 			await log.trim({
@@ -510,13 +516,13 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId
-				}
+					cacheId,
+				},
 			});
 			expect(canTrimInvocations).to.deep.equal([e2.entry.gid, e4.entry.gid]);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
-				e2.entry.hash
+				e2.entry.hash,
 			]);
 		});
 
@@ -536,8 +542,8 @@ describe("trim", function () {
 					canTrim: (gid) => {
 						canTrimInvocations += 1;
 						return Promise.resolve(false); // can not trim
-					}
-				}
+					},
+				},
 			});
 			expect(canTrimInvocations).equal(3); // checks e1 then e2 (e2 we can delete)
 			await log.trim({
@@ -548,8 +554,8 @@ describe("trim", function () {
 					canTrim: (gid) => {
 						canTrimInvocations += 1;
 						return Promise.resolve(false); // can not trim
-					}
-				}
+					},
+				},
 			});
 
 			expect(canTrimInvocations).equal(6);
@@ -574,8 +580,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId: () => "a"
-				}
+					cacheId: () => "a",
+				},
 			});
 
 			trimGid = e1.entry.gid;
@@ -588,8 +594,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId: () => "a"
-				}
+					cacheId: () => "a",
+				},
 			});
 
 			expect(canTrimInvocations).equal(3);
@@ -600,8 +606,8 @@ describe("trim", function () {
 				to: 0,
 				filter: {
 					canTrim,
-					cacheId: () => "b"
-				}
+					cacheId: () => "b",
+				},
 			});
 			expect(log.length).equal(2);
 			expect(canTrimInvocations).equal(6); // cache resets, so will go through all entries
@@ -620,14 +626,14 @@ describe("trim", function () {
 				to: 2,
 				filter: {
 					canTrim,
-					cacheId: () => "b"
-				}
+					cacheId: () => "b",
+				},
 			});
 			await log.join([e2.entry]);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
-				e3.entry.hash
+				e3.entry.hash,
 			]);
 			await log.trim({
 				type: "length",
@@ -635,12 +641,12 @@ describe("trim", function () {
 				to: 2,
 				filter: {
 					canTrim,
-					cacheId: () => "b"
-				}
+					cacheId: () => "b",
+				},
 			});
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e2.entry.hash,
-				e3.entry.hash
+				e3.entry.hash,
 			]);
 		});
 	});

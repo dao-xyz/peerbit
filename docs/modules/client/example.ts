@@ -6,7 +6,7 @@ const clientInMemory = await Peerbit.create();
 
 // Store content on disc when possible
 const clientWithStorage = await Peerbit.create({
-	directory: "/path/somewhere"
+	directory: "/path/somewhere",
 });
 /// [memory]
 

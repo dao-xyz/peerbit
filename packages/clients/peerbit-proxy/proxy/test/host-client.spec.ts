@@ -1,22 +1,21 @@
-import { PeerbitProxyHost } from "../src/host.js";
-import { TestSession } from "@peerbit/test-utils";
-import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
-import { delay, waitForResolved } from "@peerbit/time";
-import { GetSubscribers } from "@peerbit/pubsub-interface";
 import { deserialize } from "@dao-xyz/borsh";
 import { TypedEventEmitter } from "@libp2p/interface";
-
+import { Ed25519Keypair, X25519Keypair } from "@peerbit/crypto";
+import { GetSubscribers } from "@peerbit/pubsub-interface";
 import { DataMessage } from "@peerbit/stream-interface";
+import { TestSession } from "@peerbit/test-utils";
+import { delay, waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
 import { PeerbitProxyClient } from "../src/client.js";
+import { PeerbitProxyHost } from "../src/host.js";
 import { EventEmitterNode } from "./utils.js";
-import { expect } from 'chai'
 
 describe("index", () => {
 	let session: TestSession;
 	let hostWithClients: [
 		PeerbitProxyHost,
 		PeerbitProxyClient,
-		PeerbitProxyClient
+		PeerbitProxyClient,
 	][];
 	let client1: PeerbitProxyClient;
 	let client1b: PeerbitProxyClient;
@@ -33,16 +32,16 @@ describe("index", () => {
 		for (let i = 0; i < 2; i++) {
 			const host = new PeerbitProxyHost(
 				session.peers[i],
-				new EventEmitterNode(events).start()
+				new EventEmitterNode(events).start(),
 			);
 			await host.init();
 			const client1 = new PeerbitProxyClient(
-				new EventEmitterNode(events).start()
+				new EventEmitterNode(events).start(),
 			);
 			client1.messages.connect({ to: { id: host.messages.id, parent: true } });
 			await client1.connect();
 			const client2 = new PeerbitProxyClient(
-				new EventEmitterNode(events).start()
+				new EventEmitterNode(events).start(),
 			);
 			client2.messages.connect({ to: { id: host.messages.id, parent: true } });
 			await client2.connect();
@@ -56,8 +55,8 @@ describe("index", () => {
 		client2b = hostWithClients[1][2];
 		host2 = hostWithClients[1][0];
 
-		expect(host1).to.exist
-		expect(host2).to.exist
+		expect(host1).to.exist;
+		expect(host2).to.exist;
 	});
 
 	afterEach(async () => {
@@ -70,7 +69,7 @@ describe("index", () => {
 
 	it("getMultiaddrs", async () => {
 		expect(client1.getMultiaddrs().map((x) => x.toString())).to.deep.equal(
-			host1.getMultiaddrs().map((x) => x.toString())
+			host1.getMultiaddrs().map((x) => x.toString()),
 		);
 	});
 
@@ -78,7 +77,7 @@ describe("index", () => {
 		await client1.dial(session.peers[1].getMultiaddrs());
 		expect(session.peers[1]);
 		expect(client1.getMultiaddrs().map((x) => x.toString())).to.deep.equal(
-			host1.getMultiaddrs().map((x) => x.toString())
+			host1.getMultiaddrs().map((x) => x.toString()),
 		);
 	});
 
@@ -99,15 +98,23 @@ describe("index", () => {
 			expect(await client1.storage.get(key)).equal(undefined);
 			expect(await host1.storage.get(key)).equal(undefined);
 			await client1.storage.put(key, data);
-			expect(new Uint8Array((await client1.storage.get(key))!)).to.deep.equal(data);
-			expect(new Uint8Array((await host1.storage.get(key))!)).to.deep.equal(data);
+			expect(new Uint8Array((await client1.storage.get(key))!)).to.deep.equal(
+				data,
+			);
+			expect(new Uint8Array((await host1.storage.get(key))!)).to.deep.equal(
+				data,
+			);
 		});
 
 		it("del", async () => {
 			await client1.storage.put(key, data);
 
-			expect(new Uint8Array((await client1.storage.get(key))!)).to.deep.equal(data);
-			expect(new Uint8Array((await host1.storage.get(key))!)).to.deep.equal(data);
+			expect(new Uint8Array((await client1.storage.get(key))!)).to.deep.equal(
+				data,
+			);
+			expect(new Uint8Array((await host1.storage.get(key))!)).to.deep.equal(
+				data,
+			);
 
 			await client1.storage.del(key);
 
@@ -119,7 +126,7 @@ describe("index", () => {
 			const datas = [data, new Uint8Array([1])];
 			await client1.storage.put(key, data);
 			await Promise.all(
-				keys.map((key, ix) => client1.storage.put(key, datas[ix]))
+				keys.map((key, ix) => client1.storage.put(key, datas[ix])),
 			);
 
 			let c = 0;
@@ -138,9 +145,10 @@ describe("index", () => {
 			const datas = [data, new Uint8Array([1])];
 			await client1.storage.put(key, data);
 			await Promise.all(
-				keys.map((key, ix) => client1.storage.put(key, datas[ix]))
+				keys.map((key, ix) => client1.storage.put(key, datas[ix])),
 			);
 
+			// eslint-disable-next-line no-unreachable-loop
 			for await (const _iter of client1.storage.iterator()) {
 				break;
 			}
@@ -175,7 +183,7 @@ describe("index", () => {
 		it("sublevel", async () => {
 			const sublevel = await client1.storage.sublevel("sublevel");
 			await waitForResolved(async () =>
-				expect(await sublevel.status()).equal("open")
+				expect(await sublevel.status()).equal("open"),
 			);
 			await sublevel.put(key, data);
 			expect(new Uint8Array((await sublevel.get(key))!)).to.deep.equal(data);
@@ -198,22 +206,22 @@ describe("index", () => {
 			expect(
 				(
 					await client1.services.keychain.exportById(id, Ed25519Keypair)
-				)?.equals(keypair)
-			).to.be.true
+				)?.equals(keypair),
+			).to.be.true;
 			expect(
 				(await host1.services.keychain.exportById(id, Ed25519Keypair))?.equals(
-					keypair
-				)
-			).to.be.true
+					keypair,
+				),
+			).to.be.true;
 			expect(
 				(
 					await client1.services.keychain.exportByKey(keypair.publicKey)
-				)?.equals(keypair)
+				)?.equals(keypair),
 			).to.be.true;
 			expect(
 				(await host1.services.keychain.exportByKey(keypair.publicKey))?.equals(
-					keypair
-				)
+					keypair,
+				),
 			).to.be.true;
 		});
 
@@ -225,13 +233,13 @@ describe("index", () => {
 			expect(
 				(
 					await client1.services.keychain.exportByKey(xkeypair.publicKey)
-				)?.equals(xkeypair)
+				)?.equals(xkeypair),
 			).to.be.true;
 
 			expect(
 				(await host1.services.keychain.exportByKey(xkeypair.publicKey))?.equals(
-					xkeypair
-				)
+					xkeypair,
+				),
 			).to.be.true;
 		});
 	});
@@ -241,9 +249,9 @@ describe("index", () => {
 
 		it("put/rm", async () => {
 			const cid = await client1.services.blocks.put(data);
-			expect(new Uint8Array((await client1.services.blocks.get(cid))!)).to.deep.equal(
-				data
-			);
+			expect(
+				new Uint8Array((await client1.services.blocks.get(cid))!),
+			).to.deep.equal(data);
 			expect(await host1.services.blocks.get(cid)).to.deep.equal(data);
 
 			expect(await client1.services.blocks.has(cid)).equal(true);
@@ -253,10 +261,10 @@ describe("index", () => {
 
 			let t0 = +new Date();
 			expect(await client1.services.blocks.get(cid, { timeout: 1000 })).equal(
-				undefined
+				undefined,
 			);
 			expect(await host1.services.blocks.get(cid, { timeout: 1000 })).equal(
-				undefined
+				undefined,
 			);
 			expect(+new Date() - t0).lessThan(3000);
 
@@ -266,9 +274,9 @@ describe("index", () => {
 
 		it("waitFor", async () => {
 			const waitForFn = host1.services.blocks.waitFor.bind(
-				host1.services.blocks
+				host1.services.blocks,
 			);
-			let invoked = false
+			let invoked = false;
 			host1.services.blocks.waitFor = (p) => {
 				invoked = true;
 				return waitForFn(p);
@@ -291,7 +299,6 @@ describe("index", () => {
 
 			// TODO try case where it is persisted
 		});
-
 	});
 
 	describe("pubsub", () => {
@@ -329,8 +336,8 @@ describe("index", () => {
 				await client1.services.pubsub.requestSubscribers("topic");
 				await waitForResolved(async () =>
 					expect(
-						(await client1.services.pubsub.getSubscribers("topic"))!.length
-					).equal(1)
+						(await client1.services.pubsub.getSubscribers("topic"))!.length,
+					).equal(1),
 				);
 				await client1.services.pubsub.publish(data, { topics: ["topic"] });
 				await waitForResolved(() => expect(msg2).to.be.true);
@@ -392,10 +399,10 @@ describe("index", () => {
 
 				await host1.services.pubsub.subscribe("topic");
 				await host1.services.pubsub.publish(new Uint8Array([123]), {
-					topics: ["topic"]
+					topics: ["topic"],
 				});
 
-				expect(data).to.exist
+				expect(data).to.exist;
 			});
 		});
 
@@ -403,12 +410,13 @@ describe("index", () => {
 			await client1.services.pubsub.waitFor(client2.peerId);
 			await client2.services.pubsub.subscribe("topic");
 			await client1.services.pubsub.requestSubscribers("topic");
-			await waitForResolved(async () =>
-				expect(
-					(await client1.services.pubsub.getSubscribers("topic"))?.find((x) =>
-						x.equals(client2.identity.publicKey)
-					)
-				).to.exist
+			await waitForResolved(
+				async () =>
+					expect(
+						(await client1.services.pubsub.getSubscribers("topic"))?.find((x) =>
+							x.equals(client2.identity.publicKey),
+						),
+					).to.exist,
 			);
 		});
 
@@ -417,13 +425,13 @@ describe("index", () => {
 			await client2.services.pubsub.addEventListener("message", (message) => {
 				if (message.detail instanceof DataMessage && message.detail.data) {
 					receivedMessages.push(
-						deserialize(message.detail.data, GetSubscribers)
+						deserialize(message.detail.data, GetSubscribers),
 					);
 				}
 			});
 			await client1.services.pubsub.requestSubscribers(
 				"topic",
-				client2.identity.publicKey
+				client2.identity.publicKey,
 			);
 
 			await waitForResolved(() => expect(receivedMessages).to.have.length(1));

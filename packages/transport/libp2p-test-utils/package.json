@@ -61,9 +61,9 @@
 		"@dao-xyz/libp2p-noise": "^14.1.2",
 		"@libp2p/tcp": "^9.1.1",
 		"@libp2p/webrtc": "^4.1.1",
-		"@libp2p/websockets": "^8.1.1",
-		"@libp2p/identify": "^2.1.1",
-		"@libp2p/circuit-relay-v2": "^1.1.1",
+		"@libp2p/websockets": "^8.1.2",
+		"@libp2p/identify": "^2.1.2",
+		"@libp2p/circuit-relay-v2": "^1.1.2",
 		"libp2p": "^1.8.1"
 	},
 	"scripts": {

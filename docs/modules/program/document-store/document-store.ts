@@ -1,20 +1,38 @@
 // @ts-nocheck
-
 /// [imports]
-import { field, variant, option } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { Peerbit } from "peerbit";
-import { v4 as uuid } from "uuid";
-
+import { field, option, variant } from "@dao-xyz/borsh";
+import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import {
 	ByteMatchQuery,
 	Documents,
 	IsNull,
 	SearchRequest,
-	Sort
+	Sort,
 } from "@peerbit/document";
-/// [imports]
+/// [reactions-one]
+/// [query-detailed]
+import {
+	And,
+	BoolQuery,
+	Compare,
+	IntegerCompare,
+	Or,
+	SortDirection,
+	StringMatch,
+	StringMatchMethod,
+} from "@peerbit/document";
+import { Program } from "@peerbit/program";
+import { type RoleOptions } from "@peerbit/shared-log";
 /// [definition]
+/// [insert]
+import { waitForResolved } from "@peerbit/time";
+// Since the first node is a replicator, it will eventually get all messages
+import { expect } from "chai";
+import { Peerbit } from "peerbit";
+import { v4 as uuid } from "uuid";
+
+/// [imports]
+
 const POST_ID_PROPERTY = "id";
 const POST_PARENT_POST_ID = "parentPostid";
 const POST_FROM_PROPERTY = "from";
@@ -42,7 +60,7 @@ enum ReactionType {
 	THUMBS_UP = 0,
 	THUMBS_DOWN = 1,
 	HAHA = 2,
-	HEART = 3
+	HEART = 3,
 }
 
 const REACTION_ID_PROPERTY = "id";
@@ -81,11 +99,11 @@ export class Channel extends Program<ChannelArgs> {
 	constructor() {
 		super();
 		this.posts = new Documents({
-			id: sha256Sync(new TextEncoder().encode("posts"))
+			id: sha256Sync(new TextEncoder().encode("posts")),
 		});
 
 		this.reactions = new Documents({
-			id: sha256Sync(new TextEncoder().encode("reactions"))
+			id: sha256Sync(new TextEncoder().encode("reactions")),
 		});
 	}
 
@@ -127,7 +145,7 @@ export class Channel extends Program<ChannelArgs> {
 						[POST_MESSAGE_PROPERTY]: post.message,
 						[POST_FROM_PROPERTY]: (await this.posts.log.log.get(context.head))
 							?.signatures[0].publicKey.bytes,
-						[POST_TIMESTAMP_PROPERTY]: context.modified
+						[POST_TIMESTAMP_PROPERTY]: context.modified,
 					};
 				},
 
@@ -139,31 +157,28 @@ export class Channel extends Program<ChannelArgs> {
 				canSearch: (query, publicKey) => {
 					// determine whether publicKey can perform query
 					return true;
-				}
+				},
 			},
 
 			replicas: {
 				// How many times should posts at least be replicated
 				min: 2,
 				// How many times at most can a post be replicated?
-				max: undefined
+				max: undefined,
 			},
 			canReplicate: (publicKey: PublicSignKey) => {
 				return true; // Create logic who we trust to be a replicator (and indexer)
-			}
+			},
 		});
 
 		await this.reactions.open({
-			type: Reaction
+			type: Reaction,
 
 			// we don't provide an index here, which means we will index all fields of Reaction
 		});
 	}
 }
 /// [definition]
-
-/// [insert]
-import { waitForResolved } from "@peerbit/time";
 
 // Start two clients that ought to talk to each other
 const peer = await Peerbit.create();
@@ -177,8 +192,8 @@ const channelFromClient2 = await peer2.open<Channel>(
 	channelFromClient1.address!,
 	{
 		// Observer will not store anything unless explicitly doing so
-		args: { replicate: false } // or 'replicator' (default))
-	}
+		args: { replicate: false }, // or 'replicator' (default))
+	},
 );
 
 // Wait for peer1 to be reachable for query
@@ -193,31 +208,28 @@ await channelFromClient1.posts.put(message1);
 // passing { unique: true } will disable the validation check for duplicates, this is useful
 // if you know the id is unique in advance (for performance reasons)
 await channelFromClient1.posts.put(new Post("The Shoebill is terrifying"), {
-	unique: true
+	unique: true,
 });
 
 const message3 = new Post("No, it just a big duck");
 await channelFromClient2.posts.put(message3, {
-	replicas: 10 // this is an very important message, so lets notify peers we want a high replication degree on it
+	replicas: 10, // this is an very important message, so lets notify peers we want a high replication degree on it
 });
 
-// Since the first node is a replicator, it will eventually get all messages
-import { expect } from "chai";
-
 await waitForResolved(async () =>
-	expect(await channelFromClient1.posts.index.getSize()).equal(3)
+	expect(await channelFromClient1.posts.index.getSize()).equal(3),
 );
 
 // And to do some reactions
 
 // Client 2 reacts to the first post
 await channelFromClient2.reactions.put(
-	new Reaction(message1.id, ReactionType.HEART)
+	new Reaction(message1.id, ReactionType.HEART),
 );
 
 // Client 1 reacts to the last post
 await channelFromClient1.reactions.put(
-	new Reaction(message3.id, ReactionType.HAHA)
+	new Reaction(message3.id, ReactionType.HAHA),
 );
 /// [insert]
 
@@ -225,7 +237,7 @@ await channelFromClient1.reactions.put(
 const anotherPost = new Post("I will delete this in a moment");
 await channelFromClient2.posts.put(anotherPost);
 await waitForResolved(async () =>
-	expect(await channelFromClient1.posts.index.getSize()).equal(4)
+	expect(await channelFromClient1.posts.index.getSize()).equal(4),
 );
 
 // Delete with no arg (will permantly delete)
@@ -233,7 +245,7 @@ await channelFromClient2.posts.del(anotherPost.id);
 
 // The delete will eventually propagate to the first client (the replicator)
 await waitForResolved(async () =>
-	expect(await channelFromClient1.posts.index.getSize()).equal(3)
+	expect(await channelFromClient1.posts.index.getSize()).equal(3),
 );
 
 /// [delete]
@@ -244,14 +256,14 @@ await waitForResolved(async () =>
 const posts: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
 		query: [new IsNull({ key: POST_PARENT_POST_ID })],
-		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
-	})
+		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }),
+	}),
 );
 expect(posts).to.have.length(3);
 expect(posts.map((x) => x.message)).to.deep.equal([
 	"hello world",
 	"The Shoebill is terrifying",
-	"No, it just a big duck"
+	"No, it just a big duck",
 ]);
 
 /// [search-all]
@@ -260,15 +272,17 @@ expect(posts.map((x) => x.message)).to.deep.equal([
 const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
 		query: [new IsNull({ key: POST_PARENT_POST_ID })],
-		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY })
+		sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }),
 	}),
 	{
 		remote: false,
-		local: true
-	}
+		local: true,
+	},
 );
 expect(postsLocally).to.have.length(1);
-expect(postsLocally.map((x) => x.message)).to.deep.equal(["No, it just a big duck"]);
+expect(postsLocally.map((x) => x.message)).to.deep.equal([
+	"No, it just a big duck",
+]);
 /// [search-locally]
 
 /// [search-from-one]
@@ -278,46 +292,31 @@ const postsFromClient1: Post[] = await channelFromClient2.posts.index.search(
 		query: [
 			new ByteMatchQuery({
 				key: POST_FROM_PROPERTY,
-				value: peer.identity.publicKey.bytes
-			})
-		]
-	})
+				value: peer.identity.publicKey.bytes,
+			}),
+		],
+	}),
 );
 expect(postsFromClient1).to.have.length(2);
 expect(postsFromClient1.map((x) => x.message)).to.deep.equal([
 	"hello world",
-	"The Shoebill is terrifying"
+	"The Shoebill is terrifying",
 ]);
 
 /// [search-from-one]
 
-/// [reactions-one]
 // Get reactions for a particular post
 const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
 	new SearchRequest({
 		query: [
-			new StringMatch({ key: [REACTION_POST_ID_PROPERTY], value: posts[2].id })
-		]
-	})
+			new StringMatch({ key: [REACTION_POST_ID_PROPERTY], value: posts[2].id }),
+		],
+	}),
 );
 
 expect(reactions).to.have.length(1);
 expect(reactions[0][REACTION_TYPE_PROPERTY]).equal(ReactionType.HAHA);
 /// [reactions-one]
-
-/// [query-detailed]
-import {
-	StringMatch,
-	IntegerCompare,
-	BoolQuery,
-	StringMatchMethod,
-	Compare,
-	SortDirection,
-	Or,
-	And
-} from "@peerbit/document";
-import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { type RoleOptions } from "@peerbit/shared-log";
 
 new SearchRequest({
 	query: [
@@ -326,49 +325,49 @@ new SearchRequest({
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			method: StringMatchMethod.contains
+			method: StringMatchMethod.contains,
 		}), // string matches somewhere
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			method: StringMatchMethod.exact
+			method: StringMatchMethod.exact,
 		}), // default
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			method: StringMatchMethod.prefix
+			method: StringMatchMethod.prefix,
 		}), // prefix match
 		new StringMatch({
 			key: "stringProperty",
 			value: "hello",
-			caseInsensitive: true
+			caseInsensitive: true,
 		}),
 
 		// Integers
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.Equal
+			compare: Compare.Equal,
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.Greater
+			compare: Compare.Greater,
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.GreaterOrEqual
+			compare: Compare.GreaterOrEqual,
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.Less
+			compare: Compare.Less,
 		}),
 		new IntegerCompare({
 			key: "integerProperty",
 			value: 123,
-			compare: Compare.LessOrEqual
+			compare: Compare.LessOrEqual,
 		}),
 
 		// Boolean
@@ -389,11 +388,11 @@ new SearchRequest({
 				new IntegerCompare({
 					key: "integerProperty",
 					value: 123,
-					compare: Compare.Less
-				})
-			])
-		])
-	]
+					compare: Compare.Less,
+				}),
+			]),
+		]),
+	],
 });
 /// [query-detailed]
 
@@ -402,15 +401,15 @@ new SearchRequest({
 	query: [],
 	sort: [
 		new Sort({ key: "someProperty" }), // ascending sort direction (default)
-		new Sort({ key: "anotherProperty", direction: SortDirection.DESC })
-	]
+		new Sort({ key: "anotherProperty", direction: SortDirection.DESC }),
+	],
 });
 
 /// [sort-detailed]
 
 /// [iterator-detailed]
 const iterator = channelFromClient2.posts.index.iterate(
-	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) })
+	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
 );
 const postsFromIterator = await iterator.next(2); // fetch (at most) 2 posts
 expect(postsFromIterator).to.have.length(2);
@@ -424,16 +423,16 @@ await iterator.close();
 /// [sync]
 const iterateAndSync = await channelFromClient2.posts.index.iterate(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
-	{ local: true, remote: { sync: true } }
+	{ local: true, remote: { sync: true } },
 );
 
 const searchAndSync = await channelFromClient2.posts.index.search(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
-	{ local: true, remote: { sync: true } }
+	{ local: true, remote: { sync: true } },
 );
 /// [sync]
 
 /// [disconnecting]
 await peer.stop();
 await peer2.stop();
-/// [disconnecting] 
+/// [disconnecting]

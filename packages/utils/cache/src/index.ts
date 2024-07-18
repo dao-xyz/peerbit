@@ -1,7 +1,11 @@
 // Fifo
 import yallist from "yallist";
 
-export type CacheData<T> = { value?: T | null; time: number; size: number };
+export interface CacheData<T> {
+	value?: T | null;
+	time: number;
+	size: number;
+}
 type Key = string | bigint | number;
 export class Cache<T = undefined> {
 	private _map: Map<Key, CacheData<T>>;
@@ -20,6 +24,7 @@ export class Cache<T = undefined> {
 		this.ttl = options.ttl;
 		this.clear();
 	}
+
 	has(key: Key) {
 		this.trim();
 		if (this.deleted.has(key)) {
@@ -43,10 +48,12 @@ export class Cache<T = undefined> {
 	trim(time = +new Date()) {
 		for (;;) {
 			const headKey = this.list.head;
-			if (headKey?.value !== undefined) {
-				const cacheValue = this._map.get(headKey.value)!;
-				const outOfDate =
-					this.ttl !== undefined && cacheValue.time < time - this.ttl;
+			if (headKey?.value != null) {
+				const cacheValue = this._map.get(headKey.value);
+				if (!cacheValue) {
+					throw new Error("Cache value not found");
+				}
+				const outOfDate = this.ttl != null && cacheValue.time < time - this.ttl;
 				if (outOfDate || this.currentSize > this.max) {
 					this.list.shift();
 					this._map.delete(headKey.value);
@@ -64,7 +71,7 @@ export class Cache<T = undefined> {
 	}
 
 	del(key: Key) {
-		const cacheValue = this._map.get(key)!;
+		const cacheValue = this._map.get(key);
 		if (cacheValue && !this.deleted.has(key)) {
 			this.deleted.add(key);
 			this.currentSize -= cacheValue.size;
@@ -83,6 +90,7 @@ export class Cache<T = undefined> {
 		this._map.set(key, { time, value: value ?? null, size });
 		this.trim(time);
 	}
+
 	clear() {
 		this.list = yallist.create();
 		this._map = new Map();

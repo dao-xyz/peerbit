@@ -50,7 +50,7 @@ export class StringIndex extends Program {
 
 export const applyOperations = async (
 	string: string,
-	operations: Entry<StringOperation>[]
+	operations: Entry<StringOperation>[],
 ): Promise<string> => {
 	await Promise.all(operations.map((operation) => operation.getPayload()));
 
@@ -66,11 +66,11 @@ export const applyOperations = async (
 };
 export const applyOperation = (
 	s: string,
-	operation: StringOperation
+	operation: StringOperation,
 ): string => {
 	// TODO check bounds number
 	const to = Number(operation.index.offset) + Number(operation.index.length);
-	if (operation.value != undefined) {
+	if (operation.value !== undefined) {
 		s = s.padEnd(to);
 		s =
 			s.slice(0, Number(operation.index.offset)) +

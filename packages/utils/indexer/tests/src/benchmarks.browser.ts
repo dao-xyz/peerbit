@@ -1,1 +1,3 @@
-export const benchmarks = () => { /* TODO */ }
+export const benchmarks = () => {
+	/* TODO */
+};

@@ -1,13 +1,10 @@
-import path from "path";
-import { Peerbit } from "../src/peer.js";
-import fs from "fs";
-import { expect } from 'chai'
-
-// @ts-ignore
-import { v4 as uuid } from "uuid";
-
 // Include test utilities
 import { createEd25519PeerId } from "@libp2p/peer-id-factory";
+import { expect } from "chai";
+import fs from "fs";
+import path from "path";
+import { v4 as uuid } from "uuid";
+import { Peerbit } from "../src/peer.js";
 
 const dbPath = path.join("tmp", "peerbit", "tests", "create-open");
 
@@ -18,7 +15,7 @@ describe("Create", function () {
 		before(async () => {
 			clientDirectory = dbPath + uuid();
 			client = (await Peerbit.create({
-				directory: clientDirectory
+				directory: clientDirectory,
 			})) as Peerbit;
 		});
 		after(async () => {
@@ -39,18 +36,14 @@ describe("Create", function () {
 					.localStore as AnyBlockStore
 			)["_store"].store["location"];
 			expect(location.endsWith(path.join(client.directory!, "blocks").toString())).to.be.true; */
-			expect(await client
-				.libp2p.services.blocks.persisted()
-			).to.be.true;
+			expect(await client.libp2p.services.blocks.persisted()).to.be.true;
 		});
-
-
 	});
 
 	it("can create with peerId", async () => {
 		const peerId = await createEd25519PeerId();
 		const client = await Peerbit.create({
-			libp2p: { peerId }
+			libp2p: { peerId },
 		});
 		expect(client.peerId.equals(peerId)).to.be.true;
 		await client.stop();

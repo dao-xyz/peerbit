@@ -9,14 +9,14 @@
  * website to be able to render parts of the code.
  * If you are to copy code from this example, you can safely remove these
  */
-
 /// [imports]
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { Peerbit } from "peerbit";
 import { Documents, SearchRequest } from "@peerbit/document";
+import { Program } from "@peerbit/program";
+import assert from "node:assert";
+import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
-import assert from 'node:assert'
+
 /// [imports]
 
 /// [client]
@@ -57,7 +57,7 @@ class PostsDB extends Program {
 		// We need to setup the store in the setup hook
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
-			type: Post
+			type: Post,
 			// You can add more properties here, like
 			/* canPerform: (entry) => true */
 		});
@@ -84,16 +84,19 @@ await store.posts.log.waitForReplicator(peer2.identity.publicKey);
 
 const responses: Post[] = await store2.posts.index.search(
 	new SearchRequest({
-		query: [] // query all
+		query: [], // query all
 	}),
 	{
 		local: true,
-		remote: true
-	}
+		remote: true,
+	},
 );
 
 assert.equal(responses.length, 1);
-assert.deepEqual(responses.map((x) => x.message), ["hello world"]);
+assert.deepEqual(
+	responses.map((x) => x.message),
+	["hello world"],
+);
 /// [another-client]
 
 /// [disconnecting]

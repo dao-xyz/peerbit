@@ -1,12 +1,12 @@
-import B from "benchmark";
 import { field, option, serialize, variant } from "@dao-xyz/borsh";
-import { v4 as uuid } from "uuid";
-import crypto from "crypto";
-import { Log } from "../src/log.js";
 import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import B from "benchmark";
+import crypto from "crypto";
+import { v4 as uuid } from "uuid";
 import { BORSH_ENCODING } from "../src/encoding.js";
 import { Entry } from "../src/entry.js";
+import { Log } from "../src/log.js";
 
 // Run with "node --loader ts-node/esm ./benchmark/payload.ts"
 
@@ -58,13 +58,13 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1e3)
+				bytes: crypto.randomBytes(1e3),
 			});
 			await log.append(doc);
 
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("1e4", {
 		fn: async (deferred: any) => {
@@ -72,13 +72,13 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1e4)
+				bytes: crypto.randomBytes(1e4),
 			});
 			await log.append(doc);
 
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("1e5", {
 		fn: async (deferred: any) => {
@@ -86,7 +86,7 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1e5)
+				bytes: crypto.randomBytes(1e5),
 			});
 			const entry = await log.append(doc);
 			serialize(new NestedEntry(entry.entry));
@@ -102,7 +102,7 @@ suite
 
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("1e6", {
 		fn: async (deferred: any) => {
@@ -110,13 +110,13 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1e5)
+				bytes: crypto.randomBytes(1e5),
 			});
 			await log.append(doc);
 
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.on("cycle", async (event: any) => {
 		console.log(String(event.target));

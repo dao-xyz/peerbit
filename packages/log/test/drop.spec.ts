@@ -1,7 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
-import { Log } from "../src/log.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
+import { Log } from "../src/log.js";
 
 describe("drop", () => {
 	let log: Log<Uint8Array>;

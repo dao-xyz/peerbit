@@ -1,6 +1,7 @@
-import { LevelStore } from "./level.js";
 import { Level } from "level";
+import { LevelStore } from "./level.js";
 import { MemoryStore } from "./memory.js";
+
 /* import os from 'os'
 import { check } from 'diskusage' */
 

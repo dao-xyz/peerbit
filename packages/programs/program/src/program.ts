@@ -1,31 +1,31 @@
-import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { type Constructor, getSchema, variant } from "@dao-xyz/borsh";
-import { getValuesWithType } from "./utils.js";
-import { serialize, deserialize } from "@dao-xyz/borsh";
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import {
-	type TypedEventTarget,
 	CustomEvent,
-	TypedEventEmitter
+	type PeerId as Libp2pPeerId,
+	TypedEventEmitter,
+	type TypedEventTarget,
 } from "@libp2p/interface";
-import { type Client } from "./client.js";
 import { type Blocks } from "@peerbit/blocks-interface";
-import { type PeerId as Libp2pPeerId } from "@libp2p/interface";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	SubscriptionEvent,
-	UnsubcriptionEvent
+	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
 import { type Address } from "./address.js";
+import { type Client } from "./client.js";
 import {
 	type EventOptions,
 	Handler,
 	type Manageable,
 	type ProgramInitializationOptions,
-	addParent
+	addParent,
 } from "./handler.js";
+import { getValuesWithType } from "./utils.js";
 
 const intersection = (
 	a: Map<string, PublicSignKey> | undefined,
-	b: Map<string, PublicSignKey> | PublicSignKey[]
+	b: Map<string, PublicSignKey> | PublicSignKey[],
 ) => {
 	const newSet = new Map<string, PublicSignKey>();
 
@@ -58,7 +58,7 @@ export interface LifeCycleEvents {
 	close: CustomEvent<Program>;
 }
 
-export interface ProgramEvents extends NetworkEvents, LifeCycleEvents { }
+export interface ProgramEvents extends NetworkEvents, LifeCycleEvents {}
 
 const getAllParentAddresses = (p: Program): string[] => {
 	return getAllParent(p, [])
@@ -84,7 +84,7 @@ class ProgramHandler extends Handler<Program> {
 		super({
 			client: properties.client,
 			shouldMonitor: (p) => p instanceof Program,
-			load: Program.load
+			load: Program.load,
 		});
 	}
 }
@@ -95,8 +95,9 @@ type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 @variant(0)
 export abstract class Program<
 	Args = any,
-	Events extends ProgramEvents = ProgramEvents
-> implements Manageable<Args> {
+	Events extends ProgramEvents = ProgramEvents,
+> implements Manageable<Args>
+{
 	private _node: ProgramClient;
 	private _allPrograms: Program[] | undefined;
 
@@ -111,7 +112,7 @@ export abstract class Program<
 	get address(): Address {
 		if (!this._address) {
 			throw new Error(
-				"Address does not exist, please open or save this program once to obtain it"
+				"Address does not exist, please open or save this program once to obtain it",
 			);
 		}
 		return this._address;
@@ -147,20 +148,20 @@ export abstract class Program<
 
 	async beforeOpen(
 		node: ProgramClient,
-		options?: ProgramInitializationOptions<Args, this>
+		options?: ProgramInitializationOptions<Args, this>,
 	) {
 		// check that a  discriminator exist
 		const schema = getSchema(this.constructor);
 		if (!schema || typeof schema.variant !== "string") {
 			throw new Error(
-				`Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass ${this.constructor.name} { ...`
+				`Expecting class to be decorated with a string variant. Example:\n'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass ${this.constructor.name} { ...`,
 			);
 		}
 
 		await this.save(node.services.blocks);
 		if (getAllParentAddresses(this as Program).includes(this.address)) {
 			throw new Error(
-				"Subprogram has same address as some parent program. This is not currently supported"
+				"Subprogram has same address as some parent program. This is not currently supported",
 			);
 		}
 
@@ -181,14 +182,14 @@ export abstract class Program<
 		await this.node.services.pubsub.addEventListener(
 			"subscribe",
 			this._subscriptionEventListener ||
-			(this._subscriptionEventListener = (s) =>
-				!this.closed && this._emitJoinNetworkEvents(s.detail))
+				(this._subscriptionEventListener = (s) =>
+					!this.closed && this._emitJoinNetworkEvents(s.detail)),
 		);
 		await this.node.services.pubsub.addEventListener(
 			"unsubscribe",
 			this._unsubscriptionEventListener ||
-			(this._unsubscriptionEventListener = (s) =>
-				!this.closed && this._emitLeaveNetworkEvents(s.detail))
+				(this._unsubscriptionEventListener = (s) =>
+					!this.closed && this._emitLeaveNetworkEvents(s.detail)),
 		);
 
 		await this._eventOptions?.onBeforeOpen?.(this);
@@ -220,7 +221,7 @@ export abstract class Program<
 		for (const topic of allTopics) {
 			if (
 				!(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
-					s.from.equals(x)
+					s.from.equals(x),
 				)
 			) {
 				return;
@@ -239,7 +240,7 @@ export abstract class Program<
 		for (const topic of allTopics) {
 			if (
 				(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
-					s.from.equals(x)
+					s.from.equals(x),
 				)
 			) {
 				return;
@@ -249,10 +250,10 @@ export abstract class Program<
 	}
 
 	private _subscriptionEventListener: (
-		e: CustomEvent<SubscriptionEvent>
+		e: CustomEvent<SubscriptionEvent>,
 	) => void;
 	private _unsubscriptionEventListener: (
-		e: CustomEvent<UnsubcriptionEvent>
+		e: CustomEvent<UnsubcriptionEvent>,
 	) => void;
 
 	private async processEnd(type: "drop" | "close") {
@@ -296,7 +297,7 @@ export abstract class Program<
 		let parentIdx = -1;
 		let close = true;
 		if (this.parents) {
-			parentIdx = this.parents.findIndex((x) => x == from);
+			parentIdx = this.parents.findIndex((x) => x === from);
 			if (parentIdx !== -1) {
 				if (this.parents.length === 1) {
 					close = true;
@@ -313,11 +314,11 @@ export abstract class Program<
 		if (end) {
 			this.node?.services.pubsub.removeEventListener(
 				"subscribe",
-				this._subscriptionEventListener
+				this._subscriptionEventListener,
 			);
 			this.node?.services.pubsub.removeEventListener(
 				"unsubscribe",
-				this._unsubscriptionEventListener
+				this._unsubscriptionEventListener,
 			);
 
 			this._eventOptions = undefined;
@@ -357,24 +358,23 @@ export abstract class Program<
 	 */
 	async waitFor(
 		other: PublicSignKey | Libp2pPeerId | (PublicSignKey | Libp2pPeerId)[],
-		options?: { signal?: AbortSignal; timeout?: number }
+		options?: { signal?: AbortSignal; timeout?: number },
 	): Promise<void> {
 		const ids = Array.isArray(other) ? other : [other];
 		const expectedHashes = new Set(
 			ids.map((x) =>
 				x instanceof PublicSignKey
 					? x.hashcode()
-					: getPublicKeyFromPeerId(x).hashcode()
-			)
+					: getPublicKeyFromPeerId(x).hashcode(),
+			),
 		);
 
 		// make sure nodes are reachable
 		await Promise.all(
 			ids.map((x) =>
-				this.node.services.pubsub.waitFor(x, { signal: options?.signal })
-			)
+				this.node.services.pubsub.waitFor(x, { signal: options?.signal }),
+			),
 		);
-
 
 		// wait for subscribing to topics
 		return new Promise<void>((resolve, reject) => {
@@ -384,7 +384,7 @@ export abstract class Program<
 					options?.signal?.removeEventListener("abort", abortListener);
 					reject(new Error("Timeout"));
 				},
-				options?.timeout || 10 * 1000
+				options?.timeout || 10 * 1000,
 			);
 
 			const abortListener = (e: Event) => {
@@ -475,7 +475,7 @@ export abstract class Program<
 
 		if (existingAddress && existingAddress !== this.address) {
 			throw new Error(
-				"Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized"
+				"Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized",
 			);
 		}
 
@@ -494,7 +494,7 @@ export abstract class Program<
 		store: Blocks,
 		options?: {
 			timeout?: number;
-		}
+		},
 	): Promise<P | undefined> {
 		const bytes = await store.get(address, options);
 		if (!bytes) {
@@ -509,7 +509,7 @@ export abstract class Program<
 		this: Constructor<T>,
 		address: string,
 		node: ProgramClient,
-		options?: ProgramInitializationOptions<ExtractArgs<T>, T>
+		options?: ProgramInitializationOptions<ExtractArgs<T>, T>,
 	): Promise<T> {
 		const p = await Program.load<T>(address, node.services.blocks);
 
@@ -522,16 +522,16 @@ export abstract class Program<
 }
 
 export const getProgramFromVariants = <
-	T extends Program
+	T extends Program,
 >(): Constructor<T>[] => {
 	const deps = (Program.prototype as any)[1000]; /// TODO improve BORSH lib to provide all necessary utility methods
 	return (deps || []) as Constructor<T>[];
 };
 
 export const getProgramFromVariant = <T extends Program>(
-	variant: string
+	variant: string,
 ): Constructor<T> | undefined => {
 	return getProgramFromVariants().filter(
-		(x) => getSchema(x).variant === variant
+		(x) => getSchema(x).variant === variant,
 	)[0] as Constructor<T>;
 };

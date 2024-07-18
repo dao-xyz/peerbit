@@ -1,15 +1,18 @@
-import { createStore as createStoreFn } from "../src/store.js";
-import path from "path";
-import { v4 as uuid } from "uuid";
-import { type AnyStore } from "@peerbit/any-store-interface"
-import { fileURLToPath } from "url";
-import { dirname } from "path";
+import { type AnyStore } from "@peerbit/any-store-interface";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { waitForResolved } from '@peerbit/time'
+import path, { dirname } from "path";
+import { fileURLToPath } from "url";
+import { v4 as uuid } from "uuid";
+import { createStore as createStoreFn } from "../src/store.js";
 
-const __dirname = typeof window === undefined ? dirname(fileURLToPath(import.meta.url)) : "/tmp";
+// eslint-disable-next-line @typescript-eslint/naming-convention
+const __dirname =
+	typeof window === undefined
+		? dirname(fileURLToPath(import.meta.url))
+		: "/tmp";
 
-(globalThis as any)["__playwright_test__"] = typeof window === undefined
+(globalThis as any)["__playwright_test__"] = typeof window === undefined;
 
 describe(`index`, function () {
 	const testType = ["disc", "memory"];
@@ -18,12 +21,9 @@ describe(`index`, function () {
 			return createStoreFn(
 				type === "disc"
 					? path.join(__dirname, "tmp", "anystore", "index", uuid())
-					: undefined
+					: undefined,
 			);
 		};
-
-
-
 
 		describe(type, () => {
 			const data = { key: "some-value", value: new Uint8Array([123]) };
@@ -37,13 +37,11 @@ describe(`index`, function () {
 
 				await store.close(); // force writes/size updates to take place (only needed for classic level). TODO make the code work without this
 				await store.open();
-
 			});
 
 			afterEach(async () => {
 				await store.close();
 			});
-
 
 			/* it(`set, get, delete, size`, async () => {
 
@@ -70,9 +68,9 @@ describe(`index`, function () {
 			});
  */
 
-			it('persisted', () => {
-				expect(store.persisted()).equal(type === "disc" ? true : false);
-			})
+			it("persisted", () => {
+				expect(store.persisted()).equal(type === "disc");
+			});
 
 			it("get", async () => {
 				const result = await store.get(data.key);
@@ -85,14 +83,12 @@ describe(`index`, function () {
 			});
 
 			it("size", async () => {
-				const result = await store.size()
+				const result = await store.size();
 
 				expect(result).to.be.greaterThanOrEqual(1); // classic level might calculate with true stored size
 			});
 
 			it("del", async () => {
-
-
 				expect(await store.size()).greaterThanOrEqual(1);
 				await store.del(data.key);
 				const result = await store.get(data.key);
@@ -116,7 +112,6 @@ describe(`index`, function () {
 			}); */
 
 			it("del missing", async () => {
-
 				expect(await store.size()).greaterThanOrEqual(1);
 
 				await store.del("_missing_");
@@ -124,14 +119,14 @@ describe(`index`, function () {
 			});
 
 			it("replace-delete", async () => {
-				await store.put(data.key, new Uint8Array([2, 3]))
+				await store.put(data.key, new Uint8Array([2, 3]));
 
 				await store.close(); // force writes/size updates to take place (only needed for classic level). TODO make the code work without this
 				await store.open();
 
 				const s0 = await store.size();
 				expect(s0).greaterThanOrEqual(2);
-				await store.del(data.key)
+				await store.del(data.key);
 				const result = await store.get(data.key);
 				expect(result).equal(undefined);
 				expect(await store.size()).to.be.lessThan(s0);
@@ -140,30 +135,30 @@ describe(`index`, function () {
 			it("clear", async () => {
 				let result = await store.get(data.key);
 				expect(result).to.exist;
-				await store.clear()
+				await store.clear();
 				result = await store.get(data.key);
 				expect(result).equal(undefined);
-				expect(await store.size()).equal(0);;
+				expect(await store.size()).equal(0);
 			});
 
 			it("status", async () => {
 				let status = await store.status();
 				expect(status).equal("open");
 
-				await store.close()
+				await store.close();
 
 				status = await store.status();
 				expect(status).equal("closed");
 
-				await store.open()
+				await store.open();
 
 				status = await store.status();
 				expect(status).equal("open");
 			});
 
 			it("iterate", async () => {
-				await store.put("y", new Uint8Array([124]))
-				await store.put("z", new Uint8Array([125]))
+				await store.put("y", new Uint8Array([124]));
+				await store.put("z", new Uint8Array([125]));
 
 				let result: string[] = [];
 				for await (const [k, _v] of store.iterator()) {
@@ -199,23 +194,24 @@ describe(`index`, function () {
 				await last;
 				const result = await store.get(data.key);
 				expect(result).equal(undefined);
-				expect(await store.size()).equal(0);;
+				expect(await store.size()).equal(0);
 			});
 
-
 			it("special characters", async () => {
-				await store.put("* _ /", new Uint8Array([123]))
-				const result = await store.get("* _ /")
+				await store.put("* _ /", new Uint8Array([123]));
+				const result = await store.get("* _ /");
 				expect(result).to.deep.equal(new Uint8Array([123]));
 			});
 
-
 			describe("sublevel", () => {
-
 				it("create from sublevel", async () => {
-					await waitForResolved(async () => expect(await store.status()).equal("open"));
+					await waitForResolved(async () =>
+						expect(await store.status()).equal("open"),
+					);
 					const sublevel = await store.sublevel("sublevel");
-					await waitForResolved(async () => expect(await sublevel.status()).equal("open"));
+					await waitForResolved(async () =>
+						expect(await sublevel.status()).equal("open"),
+					);
 					await sublevel.close();
 					expect(await sublevel.status()).equal("closed");
 					expect(await store.status()).equal("open");
@@ -226,13 +222,13 @@ describe(`index`, function () {
 					const sublevel = await store.sublevel("sublevel");
 					await sublevel.put("a", new Uint8Array([2]));
 					expect(new Uint8Array((await store.get("a"))!)).to.deep.equal(
-						new Uint8Array([1])
+						new Uint8Array([1]),
 					);
 					expect(new Uint8Array((await sublevel.get("a"))!)).to.deep.equal(
-						new Uint8Array([2])
+						new Uint8Array([2]),
 					);
 					expect(new Uint8Array((await store.get("a"))!)).to.deep.equal(
-						new Uint8Array([1])
+						new Uint8Array([1]),
 					);
 					await store.clear();
 					expect(await sublevel.get("a")).to.be.undefined;
@@ -243,4 +239,3 @@ describe(`index`, function () {
 });
 
 // 		"test": "aegir clean && aegir build --no-bundle && playwright-test  'dist/test/index.spec.js' --runner mocha --assets ../../../../node_modules/@peerbit/any-store-opfs/dist --timeout 60000",
-

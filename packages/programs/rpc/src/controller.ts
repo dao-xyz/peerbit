@@ -3,39 +3,39 @@ import {
 	BorshError,
 	deserialize,
 	serialize,
-	variant
+	variant,
 } from "@dao-xyz/borsh";
 import {
+	AccessError,
 	DecryptedThing,
 	MaybeEncrypted,
 	PublicSignKey,
-	toBase64,
-	AccessError,
-	X25519PublicKey,
 	X25519Keypair,
-	randomBytes
+	X25519PublicKey,
+	randomBytes,
+	toBase64,
 } from "@peerbit/crypto";
-import { RequestV0, ResponseV0, RPCMessage } from "./encoding.js";
-import {
-	logger,
-	type RPCResponse,
-	type EncryptionOptions,
-	type RPCRequestOptions
-} from "./io.js";
+import { Program } from "@peerbit/program";
 import {
 	DataEvent,
-	type PublishOptions as PubSubPublishOptions
+	type PublishOptions as PubSubPublishOptions,
 } from "@peerbit/pubsub-interface";
-import { Program } from "@peerbit/program";
 import {
 	DataMessage,
 	type PriorityOptions,
 	SilentDelivery,
 	type WithMode,
-	deliveryModeHasReceiver
+	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
-import pDefer, { type DeferredPromise } from "p-defer";
 import { AbortError, TimeoutError } from "@peerbit/time";
+import pDefer, { type DeferredPromise } from "p-defer";
+import { RPCMessage, RequestV0, ResponseV0 } from "./encoding.js";
+import {
+	type EncryptionOptions,
+	type RPCRequestOptions,
+	type RPCResponse,
+	logger,
+} from "./io.js";
 
 export type RPCSetupOptions<Q, R> = {
 	topic: string;
@@ -49,11 +49,11 @@ export type RequestContext = {
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
-	context: RequestContext
+	context: RequestContext,
 ) => Promise<R | undefined> | R | undefined;
 
 const createValueResolver = <T>(
-	type: AbstractType<T> | Uint8Array
+	type: AbstractType<T> | Uint8Array,
 ): ((decryptedThings: DecryptedThing<T>) => T) => {
 	if ((type as any) === Uint8Array) {
 		return (decrypted) => decrypted._data as T;
@@ -98,7 +98,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 			await this.node.services.pubsub.unsubscribe(this.topic);
 			await this.node.services.pubsub.removeEventListener(
 				"data",
-				this._onMessageBinded
+				this._onMessageBinded,
 			);
 			this._subscribed = false;
 		}
@@ -150,14 +150,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					if (this._responseHandler) {
 						const maybeEncrypted = rpcMessage.request;
 						const decrypted = await maybeEncrypted.decrypt(
-							this.node.services.keychain
+							this.node.services.keychain,
 						);
 						const response = await this._responseHandler(
 							this._getRequestValueFn(decrypted),
 							{
 								from: message.header.signatures!.publicKeys[0],
-								timestamp: message.header.timestamp
-							}
+								timestamp: message.header.timestamp,
+							},
 						);
 						if (response && rpcMessage.respondTo) {
 							// send query and wait for replies in a generator like behaviour
@@ -169,22 +169,22 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 							// send with { to: [RECIEVER] } param
 
 							const decryptedMessage = new DecryptedThing<Uint8Array>({
-								data: serializedResponse
+								data: serializedResponse,
 							});
 							let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> =
 								decryptedMessage;
 
 							maybeEncryptedMessage = await decryptedMessage.encrypt(
 								this._keypair,
-								[rpcMessage.respondTo]
+								[rpcMessage.respondTo],
 							);
 
 							await this.node.services.pubsub.publish(
 								serialize(
 									new ResponseV0({
 										response: maybeEncryptedMessage,
-										requestId: message.id
-									})
+										requestId: message.id,
+									}),
 								),
 								{
 									topics: [this.topic],
@@ -193,9 +193,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 									/// TODO make redundancy parameter configurable?
 									mode: new SilentDelivery({
 										to: [message.header.signatures!.publicKeys[0]],
-										redundancy: 1
-									})
-								}
+										redundancy: 1,
+									}),
+								},
 							);
 						}
 					}
@@ -205,7 +205,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					// TODO evaluate when and how handler can be missing
 					handler?.({
 						message,
-						response: rpcMessage
+						response: rpcMessage,
 					});
 				}
 			} catch (error: any) {
@@ -221,7 +221,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 				logger.error(
 					"Error handling query: " +
-					(error?.message ? error?.message?.toString() : error)
+						(error?.message ? error?.message?.toString() : error),
 				);
 			}
 		}
@@ -230,14 +230,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	private async seal(
 		request: Q,
 		respondTo?: X25519PublicKey,
-		options?: EncryptionOptions
+		options?: EncryptionOptions,
 	) {
 		const requestData = this._requestTypeIsUint8Array
 			? (request as Uint8Array)
 			: serialize(request);
 
 		const decryptedMessage = new DecryptedThing<Uint8Array>({
-			data: requestData
+			data: requestData,
 		});
 
 		let maybeEncryptedMessage: MaybeEncrypted<Uint8Array> = decryptedMessage;
@@ -248,13 +248,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		) {
 			maybeEncryptedMessage = await decryptedMessage.encrypt(
 				options.encryption.key,
-				options.encryption.responders
+				options.encryption.responders,
 			);
 		}
 
 		const requestMessage = new RequestV0({
 			request: maybeEncryptedMessage,
-			respondTo
+			respondTo,
 		});
 
 		return requestMessage;
@@ -262,13 +262,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 
 	private getPublishOptions(
 		id?: Uint8Array,
-		options?: EncryptionOptions & WithMode & PriorityOptions
+		options?: EncryptionOptions & WithMode & PriorityOptions,
 	): PubSubPublishOptions {
 		return {
 			id,
 			priority: options?.priority,
 			mode: options?.mode,
-			topics: [this.topic]
+			topics: [this.topic],
 		};
 	}
 
@@ -279,11 +279,11 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	 */
 	public async send(
 		message: Q,
-		options?: EncryptionOptions & WithMode & PriorityOptions
+		options?: EncryptionOptions & WithMode & PriorityOptions,
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
-			this.getPublishOptions(undefined, options)
+			this.getPublishOptions(undefined, options),
 		);
 	}
 
@@ -293,7 +293,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 		allResults: RPCResponse<R>[],
 		responders: Set<string>,
 		expectedResponders?: Set<string>,
-		options?: RPCRequestOptions<R>
+		options?: RPCRequestOptions<R>,
 	) {
 		return async (properties: {
 			response: ResponseV0;
@@ -330,7 +330,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 						promise.resolve();
 					}
 				}
-			} catch (error) {
+			} catch (error: any) {
 				if (error instanceof AccessError) {
 					return; // Ignore things we can not open
 				}
@@ -340,7 +340,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 					return; // Name space conflict most likely
 				}
 
-				console.error("failed ot deserialize query response", error);
+				logger.error("failed ot deserialize query response: " + error?.message);
 				promise.reject(error);
 			}
 		};
@@ -354,7 +354,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 	 */
 	public async request(
 		request: Q,
-		options?: RPCRequestOptions<R>
+		options?: RPCRequestOptions<R>,
 	): Promise<RPCResponse<R>[]> {
 		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
 		// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
@@ -374,11 +374,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 			() => {
 				deferredPromise.resolve();
 			},
-			options?.timeout || 10 * 1000
+			options?.timeout || 10 * 1000,
 		);
 
 		const abortListener = (err: Event) => {
-			deferredPromise.reject((err.target as any)?.["reason"] || new AbortError());
+			deferredPromise.reject(
+				(err.target as any)?.["reason"] || new AbortError(),
+			);
 		};
 		options?.signal?.addEventListener("abort", abortListener);
 
@@ -409,14 +411,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				allResults,
 				responders,
 				expectedResponders,
-				options
-			)
+				options,
+			),
 		);
 
 		try {
 			await this.node.services.pubsub.publish(
 				requestBytes,
-				this.getPublishOptions(messageId, options)
+				this.getPublishOptions(messageId, options),
 			);
 			await deferredPromise.promise;
 		} catch (error: any) {

@@ -1,14 +1,15 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { Peerbit } from "peerbit";
 import { Documents } from "@peerbit/document";
-import { v4 as uuid } from "uuid";
+import { SearchRequest } from "@peerbit/indexer-interface";
+import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";
-import { SearchRequest } from "@peerbit/indexer-interface"
+// find channels from the forum from client2 perspective
+import { expect } from "chai";
+import { Peerbit } from "peerbit";
+import { v4 as uuid } from "uuid";
 
 @variant(0) // version 0
 class Post {
-
 	@field({ type: "string" })
 	id: string;
 
@@ -26,7 +27,6 @@ type Args = { replicate: ReplicationOptions };
 
 @variant("posts-with-documents-store")
 class PostsDB extends Program<Args> {
-
 	@field({ type: Documents })
 	posts: Documents<Post>; // Documents<?> provide document store functionality around your Posts
 
@@ -40,7 +40,7 @@ class PostsDB extends Program<Args> {
 		// we can also modify properties of our store here, for example set access control
 		await this.posts.open({
 			type: Post,
-			replicate: args?.replicate /* canPerform: (entry) => true */
+			replicate: args?.replicate /* canPerform: (entry) => true */,
 		});
 	}
 }
@@ -48,7 +48,6 @@ class PostsDB extends Program<Args> {
 /// [data]
 @variant("channel-with-nested-postdb")
 class Channel extends Program<Args> {
-
 	// Name of channel
 	@field({ type: "string" })
 	name: string;
@@ -94,9 +93,9 @@ class Forum extends Program<Args> {
 			canPerform: (entry) => true, // who can create a channel?
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
 			index: {
-				idProperty: NAME_PROPERTY
+				idProperty: NAME_PROPERTY,
 			},
-			replicate: args?.replicate
+			replicate: args?.replicate,
 		});
 	}
 }
@@ -114,14 +113,11 @@ await client2.dial(client.getMultiaddrs());
 
 // open the forum as a observer, i.e. not replication duties
 const forum2 = await client2.open<Forum>(forum.address, {
-	args: { replicate: false }
+	args: { replicate: false },
 });
 
 // Wait for client 1 to be available (only needed for testing locally)
 await forum2.channels.log.waitForReplicator(client.identity.publicKey);
-
-// find channels from the forum from client2 perspective
-import { expect } from 'chai';
 
 const channels = await forum2.channels.index.search(new SearchRequest());
 expect(channels).to.have.length(1);
@@ -130,7 +126,7 @@ expect(channels[0].name).equal("general");
 // open this channel (if we would open the forum with replicate: false, this would already be done)
 expect(channels[0].closed).to.be.true;
 const channel2 = await client2.open<Channel>(channels[0], {
-	args: { replicate: false }
+	args: { replicate: false },
 });
 
 // Wait for client 1 to be available (only needed for testing locally)

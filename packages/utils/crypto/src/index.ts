@@ -1,3 +1,5 @@
+import libsodium from "libsodium-wrappers";
+
 export * from "./key.js";
 export * from "./ed25519.js";
 export * from "./signature.js";
@@ -10,6 +12,6 @@ export * from "./hash.js";
 export * from "./random.js";
 export * from "./prehash.js";
 export * from "./signer.js";
-import libsodium from "libsodium-wrappers";
+
 const ready = libsodium.ready;
 export { ready };

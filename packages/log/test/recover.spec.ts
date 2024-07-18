@@ -1,7 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
-import { Log } from "../src/log.js";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
+import { Log } from "../src/log.js";
 
 describe("recover", () => {
 	let log: Log<Uint8Array>;
@@ -22,7 +22,10 @@ describe("recover", () => {
 		await log.append(new Uint8Array([2]));
 		await log.append(new Uint8Array([3]), { meta: { next: [] } });
 
-		await (log.blocks as any)["_store"].store.set("not a cid", new Uint8Array([4]));
+		await (log.blocks as any)["_store"].store.set(
+			"not a cid",
+			new Uint8Array([4]),
+		);
 		expect(log.length).equal(3);
 		expect(await log.getHeads().all()).to.have.length(2);
 
@@ -43,7 +46,10 @@ describe("recover", () => {
 		await log.append(new Uint8Array([2]));
 		await log.append(new Uint8Array([3]), { meta: { next: [] } });
 
-		await (log.blocks as any)["_store"].store.set("not a cid", new Uint8Array([4]));
+		await (log.blocks as any)["_store"].store.set(
+			"not a cid",
+			new Uint8Array([4]),
+		);
 		expect(log.length).equal(3);
 		expect(await log.getHeads().all()).to.have.length(2);
 

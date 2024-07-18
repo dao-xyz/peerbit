@@ -1,36 +1,35 @@
-import { HLC, LamportClock as Clock, Timestamp } from "./clock.js";
 import {
-	variant,
-	field,
-	serialize,
 	deserialize,
-	option,
-	vec,
+	field,
 	fixedArray,
+	option,
+	serialize,
+	variant,
+	vec,
 } from "@dao-xyz/borsh";
-
+import { type Blocks } from "@peerbit/blocks-interface";
 import {
+	AccessError,
 	DecryptedThing,
+	Ed25519PublicKey,
+	type Identity,
 	MaybeEncrypted,
 	PublicSignKey,
-	X25519PublicKey,
 	SignatureWithKey,
-	AccessError,
-	Ed25519PublicKey,
-	sha256Base64,
+	X25519Keypair,
+	X25519PublicKey,
 	randomBytes,
-	type Identity,
-	X25519Keypair
+	sha256Base64,
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
-import { compare } from "uint8arrays";
-import { type Encoding, NO_ENCODING } from "./encoding.js";
-import { logger } from "./logger.js";
-import { type Blocks } from "@peerbit/blocks-interface";
-import { type Keychain } from "@peerbit/keychain";
-import { equals } from "./utils.js";
 import { id } from "@peerbit/indexer-interface";
+import { type Keychain } from "@peerbit/keychain";
+import { compare } from "uint8arrays";
+import { LamportClock as Clock, HLC, Timestamp } from "./clock.js";
+import { type Encoding, NO_ENCODING } from "./encoding.js";
 import type { SortableEntry } from "./log-sorting.js";
+import { logger } from "./logger.js";
+import { equals } from "./utils.js";
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -121,7 +120,7 @@ export class Payload<T> {
 		return this._value;
 	}
 	getValue(encoding: Encoding<T> = this.encoding || NO_ENCODING): T {
-		if (this._value != undefined) {
+		if (this._value !== undefined) {
 			return this._value;
 		}
 		return encoding.decoder(this.data);
@@ -136,12 +135,11 @@ export interface EntryEncryptionTemplate<A, B, C> {
 
 export enum EntryType {
 	APPEND = 0, // Add more data
-	CUT = 1 // Delete or Create tombstone ... delete all nexts, i
+	CUT = 1, // Delete or Create tombstone ... delete all nexts, i
 }
 
 /* @variant(0) */
 export class Meta {
-
 	@field({ type: Clock })
 	clock: Clock;
 
@@ -199,7 +197,7 @@ export class Signatures {
 const maybeEncrypt = <Q>(
 	thing: Q,
 	keypair?: X25519Keypair,
-	receiver?: MaybeEncryptionPublicKey
+	receiver?: MaybeEncryptionPublicKey,
 ): Promise<MaybeEncrypted<Q>> | MaybeEncrypted<Q> => {
 	const receivers = receiver
 		? Array.isArray(receiver)
@@ -212,28 +210,26 @@ const maybeEncrypt = <Q>(
 		}
 		return new DecryptedThing<Q>({
 			data: serialize(thing),
-			value: thing
+			value: thing,
 		}).encrypt(keypair, receivers);
 	}
 	return new DecryptedThing<Q>({
 		data: serialize(thing),
-		value: thing
+		value: thing,
 	});
 };
 
-
 export class ShallowEntry {
-
 	@id({ type: "string" })
 	hash: string;
 
 	@field({ type: Meta })
 	meta: Meta;
 
-	@field({ type: 'u32' })
+	@field({ type: "u32" })
 	payloadSize: number;
 
-	@field({ type: 'bool' })
+	@field({ type: "bool" })
 	head: boolean;
 
 	constructor(properties: {
@@ -252,8 +248,8 @@ export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
 
 @variant(0)
 export class Entry<T>
-	implements EntryEncryptionTemplate<Meta, Payload<T>, SignatureWithKey[]> {
-
+	implements EntryEncryptionTemplate<Meta, Payload<T>, SignatureWithKey[]>
+{
 	@field({ type: MaybeEncrypted })
 	_meta: MaybeEncrypted<Meta>;
 
@@ -292,11 +288,11 @@ export class Entry<T>
 	init(
 		props:
 			| {
-				keychain?: Keychain;
-				encoding: Encoding<T>;
-			}
-			| Entry<T>
-	): Entry<T> {
+					keychain?: Keychain;
+					encoding: Encoding<T>;
+			  }
+			| Entry<T>,
+	): this {
 		if (props instanceof Entry) {
 			this._keychain = props._keychain;
 			this._encoding = props._encoding;
@@ -381,7 +377,7 @@ export class Entry<T>
 	get size(): number {
 		if (this._size == null) {
 			throw new Error(
-				"Size not set. Size is set when entry is, created, loaded or joined"
+				"Size not set. Size is set when entry is, created, loaded or joined",
 			);
 		}
 		return this._size;
@@ -393,6 +389,7 @@ export class Entry<T>
 	get signatures(): SignatureWithKey[] {
 		const signatures = this._signatures!.signatures.filter((x) => {
 			try {
+				// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 				x.decrypted;
 				return true;
 			} catch (error) {
@@ -411,7 +408,7 @@ export class Entry<T>
 	 */
 	async getSignatures(): Promise<SignatureWithKey[]> {
 		const results = await Promise.allSettled(
-			this._signatures!.signatures.map((x) => x.decrypt(this._keychain))
+			this._signatures!.signatures.map((x) => x.decrypt(this._keychain)),
 		);
 
 		if (logger.level === "debug" || logger.level === "trace") {
@@ -452,7 +449,7 @@ export class Entry<T>
 			payload: entry._payload,
 			reserved: entry._reserved,
 			signatures: undefined,
-			hash: undefined
+			hash: undefined,
 		});
 		return trimmed;
 	}
@@ -504,7 +501,7 @@ export class Entry<T>
 		encryption?: EntryEncryption;
 		identity: Identity;
 		signers?: ((
-			data: Uint8Array
+			data: Uint8Array,
 		) => Promise<SignatureWithKey> | SignatureWithKey)[];
 	}): Promise<Entry<T>> {
 		if (!properties.encoding || !properties?.meta?.next) {
@@ -512,9 +509,9 @@ export class Entry<T>
 				...properties,
 				meta: {
 					...properties?.meta,
-					next: properties.meta?.next ? properties.meta?.next : []
+					next: properties.meta?.next ? properties.meta?.next : [],
 				},
-				encoding: properties.encoding ? properties.encoding : NO_ENCODING
+				encoding: properties.encoding ? properties.encoding : NO_ENCODING,
 			};
 		}
 
@@ -532,7 +529,7 @@ export class Entry<T>
 		const payloadToSave = new Payload<T>({
 			data: properties.encoding.encoder(properties.data),
 			value: properties.data,
-			encoding: properties.encoding
+			encoding: properties.encoding,
 		});
 
 		let clock: Clock | undefined = properties.meta?.clock;
@@ -547,12 +544,12 @@ export class Entry<T>
 				properties.encryption?.receiver.meta
 			) {
 				throw new Error(
-					"Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the receiver (encryption target) for the clock"
+					"Signature is to be encrypted yet the clock is not, which contains the publicKey as id. Either provide a custom Clock value that is not sensitive or set the receiver (encryption target) for the clock",
 				);
 			}
 			clock = new Clock({
 				id: properties.identity.publicKey.bytes,
-				timestamp: hlc.now()
+				timestamp: hlc.now(),
 			});
 		} else {
 			const cv = clock;
@@ -561,9 +558,9 @@ export class Entry<T>
 				if (Timestamp.compare(n.meta.clock.timestamp, cv.timestamp) >= 0) {
 					throw new Error(
 						"Expecting next(s) to happen before entry, got: " +
-						n.meta.clock.timestamp +
-						" > " +
-						cv.timestamp
+							n.meta.clock.timestamp +
+							" > " +
+							cv.timestamp,
 					);
 				}
 			}
@@ -576,7 +573,7 @@ export class Entry<T>
 			// take min gid as our gid
 			if (properties.meta?.gid) {
 				throw new Error(
-					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided"
+					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided",
 				);
 			}
 			for (const n of nexts) {
@@ -605,16 +602,16 @@ export class Entry<T>
 				gid: gid!,
 				type: properties.meta?.type ?? EntryType.APPEND,
 				data: properties.meta?.data,
-				next: nextHashes
+				next: nextHashes,
 			}),
 			properties.encryption?.keypair,
-			properties.encryption?.receiver.meta
+			properties.encryption?.receiver.meta,
 		);
 
 		const payload = await maybeEncrypt(
 			payloadToSave,
 			properties.encryption?.keypair,
-			properties.encryption?.receiver.payload
+			properties.encryption?.receiver.payload,
 		);
 
 		// Sign id, encrypted payload, clock, nexts, refs
@@ -622,40 +619,40 @@ export class Entry<T>
 			meta: metadataEncrypted,
 			payload,
 			signatures: undefined,
-			createdLocally: true
+			createdLocally: true,
 		});
 
 		const signers = properties.signers || [
-			properties.identity.sign.bind(properties.identity)
+			properties.identity.sign.bind(properties.identity),
 		];
 		const signable = entry.toSignable();
 		const signableBytes = serialize(signable);
 		let signatures = await Promise.all(
-			signers.map((signer) => signer(signableBytes))
+			signers.map((signer) => signer(signableBytes)),
 		);
 		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
 
 		const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
 		const encryptAllSignaturesWithSameKey = isMaybeEryptionPublicKey(
-			properties.encryption?.receiver?.signatures
+			properties.encryption?.receiver?.signatures,
 		);
 
 		for (const signature of signatures) {
 			const encryptionRecievers = encryptAllSignaturesWithSameKey
 				? properties.encryption?.receiver?.signatures
-				: (properties.encryption?.receiver?.signatures as any)?.[ // TODO types
-				signature.publicKey.hashcode()
-				];
+				: (properties.encryption?.receiver?.signatures as any)?.[
+						signature.publicKey.hashcode()
+					]; // TODO types
 			const signatureEncrypted = await maybeEncrypt(
 				signature,
 				properties.encryption?.keypair,
-				encryptionRecievers
+				encryptionRecievers,
 			);
 			encryptedSignatures.push(signatureEncrypted);
 		}
 
 		entry._signatures = new Signatures({
-			signatures: encryptedSignatures
+			signatures: encryptedSignatures,
 		});
 
 		if (properties.canAppend && !(await properties.canAppend(entry))) {
@@ -684,8 +681,8 @@ export class Entry<T>
 				data: this.meta.data,
 				clock: this.meta.clock,
 				next: this.meta.next,
-				type: this.meta.type
-			})
+				type: this.meta.type,
+			}),
 		});
 	}
 
@@ -716,7 +713,7 @@ export class Entry<T>
 	static async fromMultihash<T>(
 		store: Blocks,
 		hash: string,
-		options?: { timeout?: number; replicate?: boolean }
+		options?: { timeout?: number; replicate?: boolean },
 	) {
 		if (!hash) throw new Error(`Invalid hash: ${hash}`);
 		const bytes = await store.get(hash, options);
@@ -760,7 +757,7 @@ export class Entry<T>
 	 * @returns {boolean}
 	 */
 	static isDirectParent<T>(entry1: Entry<T>, entry2: Entry<T>) {
-		return entry2.next.indexOf(entry1.hash as any) > -1; // TODO fix types
+		return entry2.next.includes(entry1.hash as any); // TODO fix types
 	}
 
 	/**
@@ -772,7 +769,7 @@ export class Entry<T>
 	 */
 	static findDirectChildren<T>(
 		entry: Entry<T>,
-		values: Entry<T>[]
+		values: Entry<T>[],
 	): Entry<T>[] {
 		let stack: Entry<T>[] = [];
 		let parent = values.find((e) => Entry.isDirectParent(entry, e));

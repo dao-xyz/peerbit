@@ -1,5 +1,4 @@
-import { variant, field, fixedArray } from "@dao-xyz/borsh";
-
+import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import { randomBytes } from "@peerbit/crypto";
 
 @variant(0)

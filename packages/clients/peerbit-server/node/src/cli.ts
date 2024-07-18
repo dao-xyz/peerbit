@@ -1,36 +1,39 @@
-import {
-	createTestDomain,
-	getDomainFromConfig,
-	loadConfig,
-	startCertbot
-} from "./domain.js";
-import { startServerWithNode } from "./server.js";
+/* eslint-disable no-console */
+
+/* eslint-disable @typescript-eslint/naming-convention */
+import type { PeerId } from "@libp2p/interface";
+import { peerIdFromString } from "@libp2p/peer-id";
+import { toBase64 } from "@peerbit/crypto";
+import chalk from "chalk";
+import fs from "fs";
+import path from "path";
+import { exit } from "process";
+import readline from "readline";
+import Table from "tty-table";
+import type yargs from "yargs";
 import {
 	AWS_LINUX_ARM_AMIs,
 	createRecord,
 	launchNodes,
-	terminateNode
+	terminateNode,
 } from "./aws.js";
+import { createClient, waitForDomain } from "./client.js";
 import {
 	getHomeConfigDir,
 	getKeypair,
 	getPackageName,
-	getRemotesPath
+	getRemotesPath,
 } from "./config.js";
-import chalk from "chalk";
-import { createClient, waitForDomain } from "./client.js";
-import type { InstallDependency, StartProgram } from "./types.js";
-import { exit } from "process";
-import yargs from "yargs";
-import readline from "readline";
-import fs from "fs";
-import path from "path";
-import { toBase64 } from "@peerbit/crypto";
+import {
+	createTestDomain,
+	getDomainFromConfig,
+	loadConfig,
+	startCertbot,
+} from "./domain.js";
 import { DEFAULT_REMOTE_GROUP, type RemoteObject, Remotes } from "./remotes.js";
-import { peerIdFromString } from "@libp2p/peer-id";
 import { LOCAL_API_PORT } from "./routes.js";
-import { type PeerId } from "@libp2p/interface";
-import Table from "tty-table";
+import { startServerWithNode } from "./server.js";
+import type { InstallDependency, StartProgram } from "./types.js";
 
 const colors = [
 	"#00FF00",
@@ -95,13 +98,13 @@ const colors = [
 	"#A5FFD2",
 	"#FFB167",
 	"#009BFF",
-	"#E85EBE"
+	"#E85EBE",
 ];
 const padString = function (
 	string: string,
 	padding: number,
 	padChar = " ",
-	stringLength = string.valueOf().length
+	stringLength = string.valueOf().length,
 ) {
 	const val = string.valueOf();
 	if (Math.abs(padding) <= stringLength) {
@@ -135,12 +138,12 @@ export const cli = async (args?: string[]) => {
 						defaultDescription: "~.peerbit",
 						type: "string",
 						alias: "d",
-						default: getHomeConfigDir()
+						default: getHomeConfigDir(),
 					})
 					.option("bootstrap", {
 						describe: "Whether to connect to bootstap nodes on startup",
 						type: "boolean",
-						default: false
+						default: false,
 					})
 					.option("grant-access", {
 						describe: "Grant access to public keys on start",
@@ -148,26 +151,26 @@ export const cli = async (args?: string[]) => {
 							"The publickey of this device located in 'directory'",
 						type: "string",
 						array: true,
-						alias: "ga"
+						alias: "ga",
 					})
 					.option("reset", {
 						describe:
 							"If true, then programs opened during last session will not be opened",
 						type: "boolean",
 						default: false,
-						alias: "r"
+						alias: "r",
 					})
 					.option("port-api", {
 						describe:
 							"Set API server port. Only modify this when testing locally, since NGINX config depends on the default value",
 						type: "number",
-						default: undefined
+						default: undefined,
 					})
 					.option("port-node", {
 						describe:
 							"Set Libp2p listen port. Only modify this when testing locally, since NGINX config depends on the default value",
 						type: "number",
-						default: undefined
+						default: undefined,
 					});
 				return yargs;
 			},
@@ -175,14 +178,14 @@ export const cli = async (args?: string[]) => {
 				await startServerWithNode({
 					directory: args.directory,
 					domain: await loadConfig().then((config) =>
-						config ? getDomainFromConfig(config) : undefined
+						config ? getDomainFromConfig(config) : undefined,
 					),
 					ports: { api: args["port-api"], node: args["port-node"] },
 					bootstrap: args.bootstrap,
 					newSession: args.reset,
-					grantAccess: args["grant-access"]
+					grantAccess: args["grant-access"],
 				});
-			}
+			},
 		})
 		.command({
 			command: "id",
@@ -193,14 +196,14 @@ export const cli = async (args?: string[]) => {
 					defaultDescription: "~.peerbit",
 					type: "string",
 					alias: "d",
-					default: getHomeConfigDir()
+					default: getHomeConfigDir(),
 				});
 				return yargs;
 			},
 			handler: async (args) => {
 				const kp = await getKeypair(args.directory);
 				console.log((await kp.toPeerId()).toString());
-			}
+			},
 		})
 		.command(
 			"domain",
@@ -215,25 +218,25 @@ export const cli = async (args?: string[]) => {
 							email: {
 								describe: "Email for Lets encrypt autorenewal messages",
 								type: "string",
-								demandOption: true
+								demandOption: true,
 							},
 							outdir: {
 								describe: "Output path for Nginx config",
 								type: "string",
-								alias: "o"
+								alias: "o",
 							},
 							wait: {
 								alias: "w",
 								describe: "Wait for setup to succeed (or fail)",
 								type: "boolean",
-								default: false
-							}
+								default: false,
+							},
 						},
 						handler: async (args) => {
 							const domain = await createTestDomain();
 							await startCertbot(domain, args.email, args.outdir, args.wait);
 							exit();
-						}
+						},
 					})
 					.command({
 						command: "aws",
@@ -244,45 +247,45 @@ export const cli = async (args?: string[]) => {
 								describe: "domain, e.g. abc.example.com, example.com",
 								alias: "d",
 								type: "string",
-								demandOption: true
+								demandOption: true,
 							},
 							hostedZoneId: {
 								describe: 'The id of the hosted zone "HostedZoneId"',
 								alias: "hz",
 								type: "string",
-								require: true
+								require: true,
 							},
 							accessKeyId: {
 								describe: "Access key id of the AWS user",
 								alias: "ak",
-								type: "string"
+								type: "string",
 							},
 							region: {
 								describe: "AWS region",
 								alias: "r",
-								type: "string"
+								type: "string",
 							},
 							secretAccessKey: {
 								describe: "Secret key id of the AWS user",
 								alias: "sk",
-								type: "string"
+								type: "string",
 							},
 							email: {
 								describe: "Email for Lets encrypt auto-renewal messages",
 								type: "string",
-								demandOption: true
+								demandOption: true,
 							},
 							outdir: {
 								describe: "Output path for Nginx config",
 								type: "string",
-								alias: "o"
+								alias: "o",
 							},
 							wait: {
 								alias: "w",
 								describe: "Wait for setup to succeed (or fail)",
 								type: "boolean",
-								default: false
-							}
+								default: false,
+							},
 						},
 						handler: async (args) => {
 							if (
@@ -290,7 +293,7 @@ export const cli = async (args?: string[]) => {
 								!!args.region !== !!args.secretAccessKey
 							) {
 								throw new Error(
-									"Expecting either all 'accessKeyId', 'region' and 'secretAccessKey' to be provided or none"
+									"Expecting either all 'accessKeyId', 'region' and 'secretAccessKey' to be provided or none",
 								);
 							}
 							await createRecord({
@@ -299,23 +302,23 @@ export const cli = async (args?: string[]) => {
 								region: args.region,
 								credentials: args.accessKeyId
 									? {
-										accessKeyId: args.accessKeyId,
-										secretAccessKey: args.secretAccessKey
-									}
-									: undefined
+											accessKeyId: args.accessKeyId,
+											secretAccessKey: args.secretAccessKey,
+										}
+									: undefined,
 							});
 							await startCertbot(
 								args.domain,
 								args.email,
 								args.outdir,
-								args.wait
+								args.wait,
 							);
 							exit();
-						}
+						},
 					})
 					.strict()
 					.demandCommand();
-			}
+			},
 		)
 		.command("remote", "Handle remote nodes", (innerYargs) => {
 			innerYargs
@@ -330,19 +333,19 @@ export const cli = async (args?: string[]) => {
 									defaultDescription: "One node",
 									type: "number",
 									alias: "c",
-									default: 1
+									default: 1,
 								});
 								awsArgs.option("region", {
 									describe: "Region",
 									type: "string",
 									defaultDescription: "Region defined in ~.aws/config",
-									choices: Object.keys(AWS_LINUX_ARM_AMIs)
+									choices: Object.keys(AWS_LINUX_ARM_AMIs),
 								});
 								awsArgs.option("group", {
 									describe: "Remote group to launch nodes in",
 									type: "string",
 									alias: "g",
-									default: DEFAULT_REMOTE_GROUP
+									default: DEFAULT_REMOTE_GROUP,
 								});
 								awsArgs.option("size", {
 									describe: "Instance size",
@@ -354,16 +357,16 @@ export const cli = async (args?: string[]) => {
 										"medium",
 										"large",
 										"xlarge",
-										"2xlarge"
+										"2xlarge",
 									],
-									default: "micro"
+									default: "micro",
 								});
 
 								awsArgs.option("name", {
 									describe: "Name prefix for spawned nodes",
 									type: "string",
 									alias: "n",
-									default: "peerbit-node"
+									default: "peerbit-node",
 								});
 								awsArgs.option("grant-access", {
 									describe: "Grant access to public keys on start",
@@ -371,14 +374,14 @@ export const cli = async (args?: string[]) => {
 										"The publickey of this device located in 'directory'",
 									type: "string",
 									array: true,
-									alias: "ga"
+									alias: "ga",
 								});
 								awsArgs.option("directory", {
 									describe: "Peerbit directory",
 									defaultDescription: "~.peerbit",
 									type: "string",
 									alias: "d",
-									default: getHomeConfigDir()
+									default: getHomeConfigDir(),
 								});
 								return awsArgs;
 							},
@@ -387,29 +390,30 @@ export const cli = async (args?: string[]) => {
 									args.access?.length > 0
 										? args.access.map((x: any) => peerIdFromString(x))
 										: [
-											await (
-												await getKeypair(args.directory)
-											).publicKey.toPeerId()
-										];
+												await (
+													await getKeypair(args.directory)
+												).publicKey.toPeerId(),
+											];
 								const nodes = await launchNodes({
 									email: "marcus@dao.xyz",
 									count: args.count,
 									namePrefix: args.name,
 									region: args.region,
 									grantAccess: accessGrant,
-									size: args.size
+									size: args.size,
 								});
 
 								console.log(
-									`Waiting for ${args.count} ${args.count > 1 ? "nodes" : "node"
-									} to spawn. This might take a few minutes. You can watch the progress in your AWS console.`
+									`Waiting for ${args.count} ${
+										args.count > 1 ? "nodes" : "node"
+									} to spawn. This might take a few minutes. You can watch the progress in your AWS console.`,
 								);
 								const twirlTimer = (function () {
 									const P = ["\\", "|", "/", "-"];
 									let x = 0;
 									return setInterval(function () {
 										process.stdout.write(
-											"\r" + "Loading: " + chalk.hex(colors[x])(P[x++])
+											"\r" + "Loading: " + chalk.hex(colors[x])(P[x++]),
 										);
 										x &= 3;
 									}, 250);
@@ -425,14 +429,15 @@ export const cli = async (args?: string[]) => {
 											origin: {
 												type: "aws",
 												instanceId: node.instanceId,
-												region: node.region
-											}
+												region: node.region,
+											},
 										});
 									} catch (error: any) {
 										process.stdout.write("\r");
 										console.error(
-											`Error waiting for domain for ip: ${node.publicIp
-											} to be available: ${error?.toString()}`
+											`Error waiting for domain for ip: ${
+												node.publicIp
+											} to be available: ${error?.toString()}`,
 										);
 									}
 								}
@@ -442,7 +447,7 @@ export const cli = async (args?: string[]) => {
 								for (const node of nodes) {
 									console.log(chalk.green(node.name));
 								}
-							}
+							},
 						})
 						.strict()
 						.demandCommand();
@@ -454,21 +459,21 @@ export const cli = async (args?: string[]) => {
 						killArgs.option("all", {
 							describe: "Kill all nodes",
 							type: "boolean",
-							default: false
+							default: false,
 						});
 						killArgs.positional("name", {
 							type: "string",
 							describe: "Remote name",
 							default: "localhost",
 							demandOption: false,
-							array: true
+							array: true,
 						});
 						killArgs.option("directory", {
 							describe: "Peerbit directory",
 							defaultDescription: "~.peerbit",
 							type: "string",
 							alias: "d",
-							default: getHomeConfigDir()
+							default: getHomeConfigDir(),
 						});
 						return killArgs;
 					},
@@ -480,12 +485,12 @@ export const cli = async (args?: string[]) => {
 								if (remote.origin?.type === "aws") {
 									await terminateNode({
 										instanceId: remote.origin.instanceId,
-										region: remote.origin.region
+										region: remote.origin.region,
 									});
 								}
 							}
 						}
-					}
+					},
 				})
 				.command({
 					command: "list",
@@ -497,7 +502,7 @@ export const cli = async (args?: string[]) => {
 							defaultDescription: "~.peerbit",
 							type: "string",
 							alias: "d",
-							default: getHomeConfigDir()
+							default: getHomeConfigDir(),
 						});
 
 						return yargs;
@@ -509,11 +514,11 @@ export const cli = async (args?: string[]) => {
 						const all = allRemotes;
 						const apis = await Promise.all(
 							all.map(async (remote) =>
-								createClient(await getKeypair(args.directory), remote)
-							)
+								createClient(await getKeypair(args.directory), remote),
+							),
 						);
 						const resolvedOrRejected = await Promise.allSettled(
-							apis.map((x) => x.peer.id.get())
+							apis.map((x) => x.peer.id.get()),
 						);
 
 						if (all.length > 0) {
@@ -528,7 +533,7 @@ export const cli = async (args?: string[]) => {
 									resolvedOrRejected[ix].status === "fulfilled"
 										? chalk.green("Y")
 										: chalk.red("N"),
-									remote.address
+									remote.address,
 								];
 								rows.push(row);
 							}
@@ -536,13 +541,13 @@ export const cli = async (args?: string[]) => {
 								["Name", "Group", "Origin", "Online", "Address"].map((x) => {
 									return { value: x, align: "left" };
 								}),
-								rows
+								rows,
 							);
 							console.log(table.render());
 						} else {
 							console.log("No remotes found!");
 						}
-					}
+					},
 				})
 				.command({
 					command: "add <name> <address>",
@@ -552,25 +557,25 @@ export const cli = async (args?: string[]) => {
 							.positional("name", {
 								type: "string",
 								describe: "Remote address",
-								demandOption: true
+								demandOption: true,
 							})
 							.positional("address", {
 								type: "string",
 								describe: "Remote name",
-								demandOption: true
+								demandOption: true,
 							})
 							.option("group", {
 								describe: "Group name",
 								type: "string",
 								alias: "g",
-								default: DEFAULT_REMOTE_GROUP
+								default: DEFAULT_REMOTE_GROUP,
 							})
 							.option("directory", {
 								describe: "Peerbit directory",
 								defaultDescription: "~.peerbit",
 								type: "string",
 								alias: "d",
-								default: getHomeConfigDir()
+								default: getHomeConfigDir(),
 							});
 
 						return yargs;
@@ -580,7 +585,7 @@ export const cli = async (args?: string[]) => {
 							throw new Error("Remote can not be named 'localhost'");
 						}
 						const api = await createClient(await getKeypair(args.directory), {
-							address: args.address
+							address: args.address,
 						});
 						try {
 							await api.program.list();
@@ -594,9 +599,9 @@ export const cli = async (args?: string[]) => {
 						remotes.add({
 							name: args.name,
 							address: args.address,
-							group: args.group
+							group: args.group,
 						});
-					}
+					},
 				})
 				.command({
 					command: "remove <name>",
@@ -607,14 +612,14 @@ export const cli = async (args?: string[]) => {
 							.positional("name", {
 								type: "string",
 								describe: "Remote address",
-								demandOption: true
+								demandOption: true,
 							})
 							.option("directory", {
 								describe: "Peerbit directory",
 								defaultDescription: "~.peerbit",
 								type: "string",
 								alias: "d",
-								default: getHomeConfigDir()
+								default: getHomeConfigDir(),
 							});
 
 						return yargs;
@@ -623,15 +628,15 @@ export const cli = async (args?: string[]) => {
 						const remotes = new Remotes(getRemotesPath(args.directory));
 						if (remotes.remove(args.name)) {
 							console.log(
-								chalk.green("Removed remote with name: " + args.name)
+								chalk.green("Removed remote with name: " + args.name),
 							);
 							remotes.save();
 						} else {
 							console.log(
-								chalk.red("Did not find any remote with name: " + args.name)
+								chalk.red("Did not find any remote with name: " + args.name),
 							);
 						}
-					}
+					},
 				})
 				.command({
 					command: "connect [name...]",
@@ -643,26 +648,26 @@ export const cli = async (args?: string[]) => {
 								describe: "Remote name",
 								default: "localhost",
 								demandOption: false,
-								array: true
+								array: true,
 							})
 							.option("all", {
 								type: "boolean",
 								describe: "Connect to all nodes",
-								default: false
+								default: false,
 							})
 							.option("group", {
 								type: "string",
 								describe: "Remote group name",
 								alias: "g",
 								default: [],
-								array: true
+								array: true,
 							})
 							.option("directory", {
 								describe: "Peerbit directory",
 								defaultDescription: "~.peerbit",
 								type: "string",
 								alias: "d",
-								default: getHomeConfigDir()
+								default: getHomeConfigDir(),
 							});
 						return yargs;
 					},
@@ -693,7 +698,7 @@ export const cli = async (args?: string[]) => {
 									selectedRemotes.push({
 										address: "http://localhost:" + LOCAL_API_PORT,
 										name: "localhost",
-										group: DEFAULT_REMOTE_GROUP
+										group: DEFAULT_REMOTE_GROUP,
 									});
 								} else {
 									const remote = remotes.getByName(name);
@@ -722,7 +727,7 @@ export const cli = async (args?: string[]) => {
 
 						if (selectedRemotes.length === 0) {
 							console.log(
-								chalk.red("No remotes matched your connection condition")
+								chalk.red("No remotes matched your connection condition"),
 							);
 						} else {
 							console.log(`Connected to (${selectedRemotes.length}):`);
@@ -736,16 +741,16 @@ export const cli = async (args?: string[]) => {
 											chalkBg(remote.name),
 											maxNameLength,
 											" ",
-											remote.name.length
+											remote.name.length,
 										) +
-										": " +
-										string
+											": " +
+											string,
 									);
 
 								apis.push({
 									log: logFn,
 									name: remote.name,
-									api: await createClient(keypair, remote)
+									api: await createClient(keypair, remote),
 								});
 							}
 
@@ -755,7 +760,7 @@ export const cli = async (args?: string[]) => {
 									await api.api.program.list();
 								} catch (error) {
 									throw new Error(
-										`Failed to connect to '${api.name}': ${error?.toString()}`
+										`Failed to connect to '${api.name}': ${error?.toString()}`,
 									);
 								}
 							}
@@ -764,7 +769,7 @@ export const cli = async (args?: string[]) => {
 								input: process.stdin,
 								output: process.stdout,
 								terminal: true,
-								historySize: 100
+								historySize: 100,
 							});
 
 							console.log("Write 'help' to show commands.\n");
@@ -781,7 +786,7 @@ export const cli = async (args?: string[]) => {
 													for (const api of apis) {
 														api.log((await api.api.peer.id.get()).toString());
 													}
-												}
+												},
 											})
 											.command({
 												command: "address",
@@ -789,10 +794,10 @@ export const cli = async (args?: string[]) => {
 												handler: async (args) => {
 													for (const api of apis) {
 														(await api.api.peer.addresses.get()).forEach((x) =>
-															api.log(x.toString())
+															api.log(x.toString()),
 														);
 													}
-												}
+												},
 											})
 											.strict()
 											.demandCommand();
@@ -810,18 +815,18 @@ export const cli = async (args?: string[]) => {
 														yargs.positional("peer-id", {
 															describe: "Peer id",
 															type: "string",
-															demandOption: true
+															demandOption: true,
 														});
 														return yargs;
 													},
 													handler: async (args) => {
 														const peerId: PeerId = peerIdFromString(
-															args["peer-id"]
+															args["peer-id"],
 														);
 														for (const api of apis) {
 															await api.api.access.allow(peerId);
 														}
-													}
+													},
 												})
 												.command({
 													command: "deny <peer-id>",
@@ -829,7 +834,7 @@ export const cli = async (args?: string[]) => {
 													builder: (yargs: yargs.Argv) => {
 														yargs.positional("peer-id", {
 															describe: "Peer id",
-															demandOption: true
+															demandOption: true,
 														});
 														return yargs;
 													},
@@ -838,11 +843,11 @@ export const cli = async (args?: string[]) => {
 														for (const api of apis) {
 															await api.api.access.deny(peerId);
 														}
-													}
+													},
 												})
 												.strict()
 												.demandCommand();
-										}
+										},
 									)
 									.command("network", "Manage network", (yargs) => {
 										yargs
@@ -853,7 +858,7 @@ export const cli = async (args?: string[]) => {
 													for (const api of apis) {
 														await api.api.network.bootstrap();
 													}
-												}
+												},
 											})
 											.strict()
 											.demandCommand();
@@ -873,7 +878,7 @@ export const cli = async (args?: string[]) => {
 															type: "boolean",
 															describe: "Replicate data on this topic",
 															aliases: "r",
-															default: false
+															default: false,
 														});
 														return yargs;
 													},
@@ -889,12 +894,12 @@ export const cli = async (args?: string[]) => {
 												console.log("Not subscribed to any topics");
 											} */
 														console.error("Not implemented");
-													}
+													},
 												})
 												.strict()
 												.demandCommand();
 											return yargs;
-										}
+										},
 									)
 									.command("program", "Manage programs", (yargs) => {
 										yargs
@@ -905,7 +910,7 @@ export const cli = async (args?: string[]) => {
 													yargs.positional("address", {
 														type: "string",
 														describe: "Program address",
-														demandOption: true
+														demandOption: true,
 													});
 													return yargs;
 												},
@@ -913,7 +918,7 @@ export const cli = async (args?: string[]) => {
 												handler: async (args) => {
 													for (const api of apis) {
 														const program = await api.api.program.has(
-															args.address
+															args.address,
 														);
 														if (!program) {
 															api.log(chalk.red("Closed"));
@@ -921,7 +926,7 @@ export const cli = async (args?: string[]) => {
 															api.log(chalk.green("Open"));
 														}
 													}
-												}
+												},
 											})
 											.command({
 												command: "drop <address>",
@@ -930,7 +935,7 @@ export const cli = async (args?: string[]) => {
 													yargs.positional("address", {
 														type: "string",
 														describe: "Program address",
-														demandOption: true
+														demandOption: true,
 													});
 													return yargs;
 												},
@@ -942,13 +947,14 @@ export const cli = async (args?: string[]) => {
 														} catch (error: any) {
 															api.log(
 																chalk.red(
-																	`Failed to drop ${args.address
-																	}: ${error.toString()}`
-																)
+																	`Failed to drop ${
+																		args.address
+																	}: ${error.toString()}`,
+																),
 															);
 														}
 													}
-												}
+												},
 											})
 											.command({
 												command: "close <address>",
@@ -957,7 +963,7 @@ export const cli = async (args?: string[]) => {
 													yargs.positional("address", {
 														type: "string",
 														describe: "Program address",
-														demandOption: true
+														demandOption: true,
 													});
 													return yargs;
 												},
@@ -966,7 +972,7 @@ export const cli = async (args?: string[]) => {
 													for (const api of apis) {
 														await api.api.program.close(args.address);
 													}
-												}
+												},
 											})
 											.command({
 												command: "list",
@@ -980,7 +986,7 @@ export const cli = async (args?: string[]) => {
 															api.log(chalk.green(p));
 														});
 													}
-												}
+												},
 											})
 											.command({
 												command: "variants",
@@ -994,7 +1000,7 @@ export const cli = async (args?: string[]) => {
 															api.log(chalk.green(p));
 														});
 													}
-												}
+												},
 											})
 											.command({
 												command: "open [program]",
@@ -1003,34 +1009,34 @@ export const cli = async (args?: string[]) => {
 													yargs.positional("program", {
 														type: "string",
 														describe: "Identifier",
-														demandOption: true
+														demandOption: true,
 													});
 													yargs.option("base64", {
 														type: "string",
 														describe: "Base64 encoded serialized",
-														aliases: "b"
+														aliases: "b",
 													});
 													yargs.option("variant", {
 														type: "string",
 														describe: "Variant name",
-														aliases: "v"
+														aliases: "v",
 													});
 													return yargs;
 												},
 												handler: async (args) => {
 													if (!args.base64 && !args.variant) {
 														throw new Error(
-															"Either base64 or variant argument needs to be provided"
+															"Either base64 or variant argument needs to be provided",
 														);
 													}
 													let startArg: StartProgram;
 													if (args.base64) {
 														startArg = {
-															base64: args.base64
+															base64: args.base64,
 														};
 													} else {
 														startArg = {
-															variant: args.variant
+															variant: args.variant,
 														};
 													}
 													for (const api of apis) {
@@ -1039,7 +1045,7 @@ export const cli = async (args?: string[]) => {
 														api.log("Started program with address: ");
 														api.log(chalk.green(address.toString()));
 													}
-												}
+												},
 											})
 											.strict()
 											.demandCommand();
@@ -1053,7 +1059,7 @@ export const cli = async (args?: string[]) => {
 												type: "string",
 												describe:
 													"Installed dependency will be loaded with js import(...)",
-												demandOption: true
+												demandOption: true,
 											});
 
 											return yargs;
@@ -1073,7 +1079,7 @@ export const cli = async (args?: string[]) => {
 												installCommand = {
 													type: "tgz",
 													name: await getPackageName(packageName),
-													base64
+													base64,
 												};
 											} else {
 												installCommand = { type: "npm", name: packageName };
@@ -1083,13 +1089,13 @@ export const cli = async (args?: string[]) => {
 												const newPrograms =
 													await api.api.dependency.install(installCommand);
 												api.log(
-													`New variants available (${newPrograms.length}):`
+													`New variants available (${newPrograms.length}):`,
 												);
 												newPrograms.forEach((p) => {
 													api.log(chalk.green(p));
 												});
 											}
-										}
+										},
 									})
 									.command({
 										command: "restart",
@@ -1098,7 +1104,7 @@ export const cli = async (args?: string[]) => {
 											for (const api of apis) {
 												await api.api.restart();
 											}
-										}
+										},
 									})
 									.command({
 										command: "stop",
@@ -1107,7 +1113,7 @@ export const cli = async (args?: string[]) => {
 											for (const api of apis) {
 												await api.api.stop();
 											}
-										}
+										},
 									})
 									.help()
 									.strict()
@@ -1126,7 +1132,7 @@ export const cli = async (args?: string[]) => {
 								rl.prompt(true);
 							});
 						}
-					}
+					},
 				})
 				.help()
 				.strict()

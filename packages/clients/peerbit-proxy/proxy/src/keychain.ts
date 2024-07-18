@@ -1,17 +1,17 @@
+import { type AbstractType, field, option, variant } from "@dao-xyz/borsh";
 import {
+	ByteKey,
 	Ed25519Keypair,
 	Keypair,
-	X25519Keypair,
-	ByteKey,
-	PublicSignKey,
 	PublicKeyEncryptionKey,
-	Secp256k1Keypair
+	PublicSignKey,
+	Secp256k1Keypair,
+	X25519Keypair,
 } from "@peerbit/crypto";
-import { field, variant, option, type AbstractType } from "@dao-xyz/borsh";
 import { Message } from "./message.js";
 
 @variant(8)
-export abstract class KeyChainMessage extends Message { }
+export abstract class KeyChainMessage extends Message {}
 
 @variant(0)
 export class REQ_ImportKey extends KeyChainMessage {
@@ -29,16 +29,13 @@ export class REQ_ImportKey extends KeyChainMessage {
 }
 
 @variant(1)
-export class RESP_ImportKey extends KeyChainMessage { }
+export class RESP_ImportKey extends KeyChainMessage {}
 
 interface PublicKeyWrapped {
 	key: PublicKeyEncryptionKey | PublicSignKey;
 }
 
-abstract class PublicKeyWrapped implements PublicKeyWrapped {
-}
-
-
+abstract class PublicKeyWrapped implements PublicKeyWrapped {}
 
 @variant(0)
 class PublicSignKeyWrapped extends PublicKeyWrapped {
@@ -62,9 +59,11 @@ class EncryptionKeyWrapped extends PublicKeyWrapped {
 	}
 }
 
-interface KeyOrKeypair { key: Keypair | ByteKey; }
+interface KeyOrKeypair {
+	key: Keypair | ByteKey;
+}
 
-abstract class KeyOrKeypair implements KeyOrKeypair { }
+abstract class KeyOrKeypair implements KeyOrKeypair {}
 
 @variant(0)
 class KeypairWrapped extends KeyOrKeypair {
@@ -119,7 +118,7 @@ type KeyStringType = "ed25519" | "x25519" | "secp256k1" | "bytekey";
 const getKeyStringType = (
 	type: AbstractType<
 		Ed25519Keypair | Secp256k1Keypair | X25519Keypair | ByteKey
-	>
+	>,
 ): KeyStringType => {
 	if (type === Ed25519Keypair) {
 		return "ed25519";
@@ -158,7 +157,7 @@ export class REQ_ExportKeypairById extends KeyChainMessage {
 		keyId: Uint8Array,
 		type: AbstractType<
 			Ed25519Keypair | Secp256k1Keypair | X25519Keypair | ByteKey
-		>
+		>,
 	) {
 		super();
 		this.keyId = keyId;

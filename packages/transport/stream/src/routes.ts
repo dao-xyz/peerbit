@@ -28,7 +28,7 @@ export class Routes {
 
 	constructor(
 		readonly me: string,
-		options?: { routeMaxRetentionPeriod?: number; signal?: AbortSignal }
+		options?: { routeMaxRetentionPeriod?: number; signal?: AbortSignal },
 	) {
 		this.routeMaxRetentionPeriod =
 			options?.routeMaxRetentionPeriod ?? 10 * 1000;
@@ -72,7 +72,7 @@ export class Routes {
 		target: string,
 		distance: number,
 		session: number,
-		remoteSession: number
+		remoteSession: number,
 	): "new" | "updated" | "restart" {
 		let fromMap = this.routes.get(from);
 		if (!fromMap) {
@@ -230,6 +230,8 @@ export class Routes {
 			return false;
 		}
 		if (
+			// TODO why do we need this check?
+			// eslint-disable-next-line eqeqeq
 			routeInfo.remoteSession == undefined ||
 			remoteInfo.session === undefined
 		) {
@@ -350,7 +352,7 @@ export class Routes {
 	getFanout(
 		from: string,
 		tos: string[],
-		redundancy: number
+		redundancy: number,
 	): Map<string, Map<string, { to: string; timestamp: number }>> | undefined {
 		if (tos.length === 0) {
 			return undefined;
@@ -402,7 +404,7 @@ export class Routes {
 						) {
 							foundClosest = true;
 
-							if (distance == -1) {
+							if (distance === -1) {
 								// remove 1 from the expected redunancy since we got a route with negative 1 distance
 								// if we do not do this, we would get 2 routes if redundancy = 1, {-1, 0}, while it should just be
 								// {-1} in this case

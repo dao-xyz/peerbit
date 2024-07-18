@@ -1,20 +1,20 @@
+import { type Change } from "@peerbit/log";
+import { type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
-import { DString } from "../src/string-store.js";
+import { waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import { v4 as uuid } from "uuid";
 import {
-	SearchRequest,
-	StringResult,
-	StringMatch,
-	RangeMetadatas,
+	type AbstractSearchResult,
 	RangeMetadata,
-	StringOperation,
-	AbstractSearchResult
+	RangeMetadatas,
+	SearchRequest,
+	StringMatch,
+	type StringOperation,
+	StringResult,
 } from "../src/index.js";
 import { Range } from "../src/range.js";
-import { type ProgramClient } from "@peerbit/program";
-import { type Change } from "@peerbit/log";
-import { waitForResolved } from "@peerbit/time";
-import { expect } from 'chai'
-import { v4 as uuid } from 'uuid'
+import { DString } from "../src/string-store.js";
 
 describe("query", () => {
 	let session: TestSession,
@@ -36,15 +36,15 @@ describe("query", () => {
 
 		observerStore = (await DString.load(
 			writeStore.address!,
-			writer.services.blocks
+			writer.services.blocks,
 		)) as DString;
 
 		await observer.open(observerStore, {
 			args: {
 				log: {
-					replicate: false
-				}
-			}
+					replicate: false,
+				},
+			},
 		});
 
 		await observerStore.waitFor(writer.identity.publicKey);
@@ -64,22 +64,22 @@ describe("query", () => {
 	it("match all", async () => {
 		await writeStore.add(
 			"hello",
-			new Range({ offset: 0n, length: "hello".length })
+			new Range({ offset: 0n, length: "hello".length }),
 		);
 		await writeStore.add(
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length
-			})
+				length: "world".length,
+			}),
 		);
 		let responses: AbstractSearchResult[] = (
 			await observerStore.query.request(
 				new SearchRequest({
-					query: []
+					query: [],
 				}),
 
-				{ amount: 1 }
+				{ amount: 1 },
 			)
 		).map((x) => x.response);
 
@@ -89,25 +89,24 @@ describe("query", () => {
 		expect(responses[0]).to.deep.equal(
 			new StringResult({
 				string: "hello world",
-				metadatas: undefined //  because we are matching without any specific query
-			})
+				metadatas: undefined, //  because we are matching without any specific query
+			}),
 		);
 
 		// rewrite this in chai
-
 	});
 
 	it("match part", async () => {
 		await writeStore.add(
 			"hello",
-			new Range({ offset: 0n, length: "hello".length })
+			new Range({ offset: 0n, length: "hello".length }),
 		);
 		await writeStore.add(
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length
-			})
+				length: "world".length,
+			}),
 		);
 
 		let response: AbstractSearchResult[] = (
@@ -116,15 +115,15 @@ describe("query", () => {
 					query: [
 						new StringMatch({
 							exactMatch: true,
-							value: "o w"
+							value: "o w",
 						}),
 						new StringMatch({
 							exactMatch: true,
-							value: "orld"
-						})
-					]
+							value: "orld",
+						}),
+					],
 				}),
-				{ amount: 1 }
+				{ amount: 1 },
 			)
 		).map((x) => x.response);
 		expect(response[0]).to.exist;
@@ -135,29 +134,29 @@ describe("query", () => {
 					metadatas: [
 						new RangeMetadata({
 							length: BigInt("o w".length),
-							offset: BigInt("hell".length)
+							offset: BigInt("hell".length),
 						}),
 						new RangeMetadata({
 							length: BigInt("orld".length),
-							offset: BigInt("hello w".length)
-						})
-					]
-				})
-			})
+							offset: BigInt("hello w".length),
+						}),
+					],
+				}),
+			}),
 		);
 	});
 
 	it("toString remote", async () => {
 		await writeStore.add(
 			"hello",
-			new Range({ offset: 0n, length: "hello".length })
+			new Range({ offset: 0n, length: "hello".length }),
 		);
 		await writeStore.add(
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length
-			})
+				length: "world".length,
+			}),
 		);
 
 		let callbackValues: string[] = [];
@@ -166,8 +165,8 @@ describe("query", () => {
 				callback: (s) => {
 					callbackValues.push(s);
 				},
-				queryOptions: { amount: 1 }
-			}
+				queryOptions: { amount: 1 },
+			},
 		});
 		expect(string).equal("hello world");
 		expect(callbackValues).to.deep.equal(["hello world"]);
@@ -197,12 +196,12 @@ describe("concurrency", () => {
 
 		store2 = (await DString.load(
 			store1.address!,
-			peer2.services.blocks
+			peer2.services.blocks,
 		)) as DString;
 
 		store3 = (await DString.load(
 			store1.address!,
-			peer3.services.blocks
+			peer3.services.blocks,
 		)) as DString;
 
 		await peer2.open(store2);
@@ -221,13 +220,13 @@ describe("concurrency", () => {
 		await store3.add("3", new Range({ offset: 2n, length: 1 }));
 
 		await waitForResolved(async () =>
-			expect(await store1.getValue()).equal("123")
+			expect(await store1.getValue()).equal("123"),
 		);
 		await waitForResolved(async () =>
-			expect(await store2.getValue()).equal("123")
+			expect(await store2.getValue()).equal("123"),
 		);
 		await waitForResolved(async () =>
-			expect(await store3.getValue()).equal("123")
+			expect(await store3.getValue()).equal("123"),
 		);
 	});
 });
@@ -252,15 +251,15 @@ describe("events", () => {
 
 		store2 = (await DString.load(
 			store1.address!,
-			peer2.services.blocks
+			peer2.services.blocks,
 		)) as DString;
 
 		await peer1.open(store2, {
 			args: {
 				log: {
-					replicate: false
-				}
-			}
+					replicate: false,
+				},
+			},
 		});
 	});
 
@@ -282,40 +281,32 @@ describe("events", () => {
 
 		await store1.add(
 			"hello",
-			new Range({ offset: 0n, length: "hello".length })
+			new Range({ offset: 0n, length: "hello".length }),
 		);
 
 		await waitForResolved(() => expect(events1).to.have.length(1));
 		expect(events1[0].added).to.have.length(1);
-		expect((await events1[0].added[0].getPayloadValue()).value).equal(
-			"hello"
-		);
+		expect((await events1[0].added[0].getPayloadValue()).value).equal("hello");
 
 		await waitForResolved(() => expect(events2).to.have.length(1));
 		expect(events2[0].added).to.have.length(1);
-		expect((await events2[0].added[0].getPayloadValue()).value).equal(
-			"hello"
-		);
+		expect((await events2[0].added[0].getPayloadValue()).value).equal("hello");
 
 		await store2.add(
 			"world",
 			new Range({
 				offset: BigInt("hello ".length),
-				length: "world".length
-			})
+				length: "world".length,
+			}),
 		);
 
 		await waitForResolved(() => expect(events1).to.have.length(2));
 		expect(events1[1].added).to.have.length(1);
-		expect((await events1[1].added[0].getPayloadValue()).value).equal(
-			"world"
-		);
+		expect((await events1[1].added[0].getPayloadValue()).value).equal("world");
 
 		await waitForResolved(() => expect(events2).to.have.length(2));
 		expect(events2[1].added).to.have.length(1);
-		expect((await events2[1].added[0].getPayloadValue()).value).equal(
-			"world"
-		);
+		expect((await events2[1].added[0].getPayloadValue()).value).equal("world");
 		expect(await store1.getValue()).equal("hello world");
 		expect(await store2.getValue()).equal("hello world");
 	});
@@ -327,7 +318,9 @@ describe("load", () => {
 	beforeEach(async () => {
 		// we reinit sesion for every test since DString does always have same address
 		// and that might lead to sideeffects running all tests in one go
-		session = await TestSession.connected(1, { directory: "./tmp/string/" + uuid() });
+		session = await TestSession.connected(1, {
+			directory: "./tmp/string/" + uuid(),
+		});
 
 		// Create store
 		store = new DString({});

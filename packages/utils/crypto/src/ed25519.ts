@@ -1,17 +1,16 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { PrivateSignKey, PublicSignKey, Keypair } from "./key.js";
-import { equals } from "uint8arrays";
-import { type Identity, type SignWithKey } from "./signer.js";
-import { SignatureWithKey } from "./signature.js";
-import { toHexString } from "./utils.js";
-import { peerIdFromKeys } from "@libp2p/peer-id";
 import { supportedKeys } from "@libp2p/crypto/keys";
-import { coerce } from "./bytes.js";
-import sodium from "libsodium-wrappers";
 import type { Ed25519PeerId, PeerId } from "@libp2p/interface";
+import { peerIdFromKeys } from "@libp2p/peer-id";
+import sodium from "libsodium-wrappers";
+import { concat, equals } from "uint8arrays";
+import { coerce } from "./bytes.js";
 import { sign } from "./ed25519-sign.js";
+import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
 import { PreHash } from "./prehash.js";
-import { concat } from "uint8arrays";
+import { SignatureWithKey } from "./signature.js";
+import { type Identity, type SignWithKey } from "./signer.js";
+import { toHexString } from "./utils.js";
 
 @variant(0)
 export class Ed25519PublicKey extends PublicSignKey {
@@ -32,13 +31,14 @@ export class Ed25519PublicKey extends PublicSignKey {
 		}
 		return false;
 	}
+
 	toString(): string {
 		return "ed25119p/" + toHexString(this.publicKey);
 	}
 
 	toPeerId(): Promise<PeerId> {
 		return peerIdFromKeys(
-			new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey).bytes
+			new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey).bytes,
 		);
 	}
 
@@ -60,7 +60,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 		}
 		if (id.type === "Ed25519") {
 			return new Ed25519PublicKey({
-				publicKey: coerce(id.publicKey!.slice(4))
+				publicKey: coerce(id.publicKey.slice(4)),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -101,7 +101,7 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 		}
 		if (id.type === "Ed25519") {
 			return new Ed25519PrivateKey({
-				privateKey: coerce(id.privateKey!.slice(4, 36))
+				privateKey: coerce(id.privateKey.slice(4, 36)),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -130,11 +130,11 @@ export class Ed25519Keypair extends Keypair implements Identity {
 		const generated = sodium.crypto_sign_keypair();
 		const kp = new Ed25519Keypair({
 			publicKey: new Ed25519PublicKey({
-				publicKey: generated.publicKey
+				publicKey: generated.publicKey,
 			}),
 			privateKey: new Ed25519PrivateKey({
-				privateKey: generated.privateKey.slice(0, 32) // Only the private key part (?)
-			})
+				privateKey: generated.privateKey.slice(0, 32), // Only the private key part (?)
+			}),
 		});
 
 		return kp;
@@ -142,7 +142,7 @@ export class Ed25519Keypair extends Keypair implements Identity {
 
 	sign(
 		data: Uint8Array,
-		prehash: PreHash = PreHash.NONE
+		prehash: PreHash = PreHash.NONE,
 	): Promise<SignatureWithKey> {
 		return sign(data, this, prehash);
 	}
@@ -166,17 +166,17 @@ export class Ed25519Keypair extends Keypair implements Identity {
 	static fromPeerId(peerId: PeerId | Ed25519PeerId) {
 		return new Ed25519Keypair({
 			privateKey: Ed25519PrivateKey.fromPeerID(peerId),
-			publicKey: Ed25519PublicKey.fromPeerId(peerId)
+			publicKey: Ed25519PublicKey.fromPeerId(peerId),
 		});
 	}
 
-	_privateKeyPublicKey: Uint8Array; // length 64
+	_privateKeyPublicKey!: Uint8Array; // length 64
 	get privateKeyPublicKey(): Uint8Array {
 		return (
 			this._privateKeyPublicKey ||
 			(this._privateKeyPublicKey = concat([
 				this.privateKey.privateKey,
-				this.publicKey.publicKey
+				this.publicKey.publicKey,
 			]))
 		);
 	}
@@ -187,8 +187,8 @@ export class Ed25519Keypair extends Keypair implements Identity {
 				.bytes,
 			new supportedKeys["ed25519"].Ed25519PrivateKey(
 				this.privateKeyPublicKey,
-				this.publicKey.publicKey
-			).bytes
+				this.publicKey.publicKey,
+			).bytes,
 		);
 	}
 }

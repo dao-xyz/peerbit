@@ -1,21 +1,26 @@
+import type { AbstractType } from "@dao-xyz/borsh";
+import { type IdKey } from "./id.js";
 import {
 	CloseIteratorRequest,
 	CollectNextRequest,
-	CountRequest,
-	DeleteRequest,
-	SearchRequest,
-	SumRequest
+	type CountRequest,
+	type DeleteRequest,
+	type SearchRequest,
+	type SumRequest,
 } from "./query.js";
-import { IdKey } from "./id.js";
-import type { AbstractType } from "@dao-xyz/borsh";
+
 type MaybePromise<T = void> = Promise<T> | T;
 
-export interface IndexedResult<T extends Record<string, any> = Record<string, any>> {
+export interface IndexedResult<
+	T extends Record<string, any> = Record<string, any>,
+> {
 	id: IdKey;
 	value: T;
 }
 
-export interface IndexedResults<T extends Record<string, any> = Record<string, any>> {
+export interface IndexedResults<
+	T extends Record<string, any> = Record<string, any>,
+> {
 	results: IndexedResult<T>[];
 	kept: number;
 }
@@ -30,12 +35,14 @@ export type NestedProperties<T> = {
 	query: (nested: T, query: SearchRequest) => Promise<Record<string, any>[]>;
 };
 
-
-export type IteratorBatchProperties = { maxSize: number, sizeProperty: string[] }
+export type IteratorBatchProperties = {
+	maxSize: number;
+	sizeProperty: string[];
+};
 export type IndexEngineInitProperties<T, N> = {
 	indexBy?: string[];
 	nested?: NestedProperties<N>;
-	schema: AbstractType<T>
+	schema: AbstractType<T>;
 	/* iterator: { batch: IteratorBatchProperties }; */
 };
 
@@ -44,17 +51,28 @@ export type QueryOptions = { resolve: ResolveOptions };
 export type ReturnTypeFromQueryOptions<T, O> = O extends { resolve: 'full' } ? T : Partial<T>;
  */
 
-export type Shape = { [key: string]: true | Shape }
+export type Shape = { [key: string]: true | Shape };
 export interface Index<T extends Record<string, any>, NestedType = any> {
-	init(properties: IndexEngineInitProperties<T, NestedType>): MaybePromise<Index<T, NestedType>>
+	init(
+		properties: IndexEngineInitProperties<T, NestedType>,
+	): MaybePromise<Index<T, NestedType>>;
 	drop(): MaybePromise<void>;
-	get(id: IdKey, options?: { shape: Shape }): MaybePromise<IndexedResult<T> | undefined>;
+	get(
+		id: IdKey,
+		options?: { shape: Shape },
+	): MaybePromise<IndexedResult<T> | undefined>;
 	put(value: T, id?: IdKey): MaybePromise<void>;
 	del(query: DeleteRequest): MaybePromise<IdKey[]>;
 	sum(query: SumRequest): MaybePromise<bigint | number>;
 	count(query: CountRequest): MaybePromise<number>;
-	query(query: SearchRequest, options?: { shape?: Shape, reference?: boolean }): MaybePromise<IndexedResults<T>>;
-	next(query: CollectNextRequest, options?: { shape?: Shape }): MaybePromise<IndexedResults<T>>;
+	query(
+		query: SearchRequest,
+		options?: { shape?: Shape; reference?: boolean },
+	): MaybePromise<IndexedResults<T>>;
+	next(
+		query: CollectNextRequest,
+		options?: { shape?: Shape },
+	): MaybePromise<IndexedResults<T>>;
 	close(query: CloseIteratorRequest): MaybePromise<void>;
 
 	/*
@@ -71,7 +89,6 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 
 export type IndexIterator<T> = ReturnType<typeof iterate<T>>;
 export const iterate = <T>(index: Index<T, any>, query: SearchRequest) => {
-
 	let isDone = false;
 	let fetchedOnce = false;
 	const next = async (count: number, options?: { shape?: Shape }) => {
@@ -83,18 +100,16 @@ export const iterate = <T>(index: Index<T, any>, query: SearchRequest) => {
 		} else {
 			res = await index.next(
 				new CollectNextRequest({ id: query.id, amount: count }),
-				options
+				options,
 			);
 		}
 		isDone = res.kept === 0;
 		return res;
-	}
+	};
 	const done = () => isDone;
 	const close = () => {
-		return index.close(
-			new CloseIteratorRequest({ id: query.id })
-		);
-	}
+		return index.close(new CloseIteratorRequest({ id: query.id }));
+	};
 	return {
 		next,
 		done,
@@ -106,28 +121,25 @@ export const iterate = <T>(index: Index<T, any>, query: SearchRequest) => {
 					results.push(element);
 				}
 			}
-			await close()
-			return results
-		}
+			await close();
+			return results;
+		},
 	};
-}
+};
 
-
-export type ResultsIterator<T> = ReturnType<typeof iterate<T>>
+export type ResultsIterator<T> = ReturnType<typeof iterate<T>>;
 
 export const iteratorInSeries = <T>(...iterators: IndexIterator<T>[]) => {
 	let i = 0;
 	const done = () => i >= iterators.length;
 	let current = iterators[i];
 	const next = async (count: number) => {
-
 		let acc: IndexedResults<T> = {
 			kept: 0,
-			results: []
-		}
+			results: [],
+		};
 
-		while (current.done() === false && i < iterators.length) {
-
+		while (!current.done() && i < iterators.length) {
 			const next = await current.next(count);
 			acc.kept += next.kept;
 			acc.results.push(...next.results);
@@ -146,7 +158,7 @@ export const iteratorInSeries = <T>(...iterators: IndexIterator<T>[]) => {
 		}
 
 		return acc;
-	}
+	};
 	return {
 		next,
 		done,
@@ -163,18 +175,19 @@ export const iteratorInSeries = <T>(...iterators: IndexIterator<T>[]) => {
 				}
 			}
 			return results;
-		}
+		},
 	};
-}
+};
 
 export interface Indices {
-	init<T extends Record<string, any>, NestedType>(properties: IndexEngineInitProperties<T, NestedType>): MaybePromise<Index<T, NestedType>>
+	init<T extends Record<string, any>, NestedType>(
+		properties: IndexEngineInitProperties<T, NestedType>,
+	): MaybePromise<Index<T, NestedType>>;
 	scope(name: string): MaybePromise<Indices>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 	drop(): MaybePromise<void>;
 }
-
 
 /* export interface IndexEngine<T extends Record<string, any> = Record<string, any>, NestedType = any> {
 init(properties: IndexEngineInitProperties<NestedType>): MaybePromise<void>

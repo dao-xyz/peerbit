@@ -1,6 +1,6 @@
 import { delay } from "@peerbit/time";
-import { Cache } from "../src/index.js";
 import { expect } from "chai";
+import { Cache } from "../src/index.js";
 
 describe("cache", () => {
 	it("ttl", async () => {

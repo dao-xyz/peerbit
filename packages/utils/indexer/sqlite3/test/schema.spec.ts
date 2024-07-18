@@ -1,9 +1,8 @@
-import { fromRowToObj, getTableName } from "../src/schema.js";
 import { expect } from "chai";
-import { DocumentNoVariant, DocumentWithVariant } from './fixtures.js'
+import { fromRowToObj, getTableName } from "../src/schema.js";
+import { DocumentNoVariant, DocumentWithVariant } from "./fixtures.js";
 
 describe("schema", () => {
-
 	it("fromRowToObj", () => {
 		const obj = { id: 1 };
 		const parsed = fromRowToObj(obj, DocumentNoVariant);
@@ -11,15 +10,15 @@ describe("schema", () => {
 		expect(parsed.id).to.equal(1);
 	});
 
-	describe('table', () => {
+	describe("table", () => {
 		it("uses class for table name when no variant", () => {
 			const table = getTableName(["scope"], DocumentNoVariant);
-			expect(table).to.equal("scope__class_DocumentNoVariant")
-		})
+			expect(table).to.equal("scope__class_DocumentNoVariant");
+		});
 
 		it("uses variant for table name", () => {
 			const table = getTableName(["scope"], DocumentWithVariant);
-			expect(table).to.equal("scope__v_0")
-		})
-	})
+			expect(table).to.equal("scope__v_0");
+		});
+	});
 });

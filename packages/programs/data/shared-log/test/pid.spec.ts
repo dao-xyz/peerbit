@@ -1,5 +1,5 @@
-import { PIDReplicationController } from "../src/pid.js";
 import { expect } from "chai";
+import { PIDReplicationController } from "../src/pid.js";
 
 describe("PIDReplicationController", () => {
 	describe("cpu", () => {
@@ -12,8 +12,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					peerCount: 2,
 					totalFactor: 1,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).equal(0);
 			cpuUsage = 0;
 			expect(
@@ -22,8 +22,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					peerCount: 2,
 					totalFactor: 1,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).to.be.within(0.4, 0.6); // no change
 		});
 
@@ -36,8 +36,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					peerCount: 1,
 					totalFactor: 1,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).equal(1);
 			expect(
 				controller.step({
@@ -45,8 +45,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					peerCount: 1,
 					totalFactor: 1,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).equal(1);
 			expect(
 				controller.step({
@@ -54,8 +54,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					peerCount: 1,
 					totalFactor: 1,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).equal(1);
 		});
 
@@ -69,7 +69,7 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					peerCount: 1,
 					totalFactor: 2,
-					cpuUsage
+					cpuUsage,
 				});
 			}
 			expect(f).equal(0);
@@ -85,7 +85,7 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					totalFactor: 0.666,
 					peerCount: 2,
-					cpuUsage
+					cpuUsage,
 				});
 			}
 			expect(f).equal(0);
@@ -93,7 +93,7 @@ describe("PIDReplicationController", () => {
 
 		it("respects cpu limit", () => {
 			const controller = new PIDReplicationController("", {
-				cpu: { max: 0.5 }
+				cpu: { max: 0.5 },
 			});
 			let cpuUsage = 0.4; // < 0.5
 			expect(
@@ -102,8 +102,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					totalFactor: 1,
 					peerCount: 2,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).equal(1);
 			cpuUsage = 0.6;
 			expect(
@@ -112,8 +112,8 @@ describe("PIDReplicationController", () => {
 					memoryUsage: 0,
 					totalFactor: 1,
 					peerCount: 2,
-					cpuUsage
-				})
+					cpuUsage,
+				}),
 			).lessThan(1);
 		});
 	});

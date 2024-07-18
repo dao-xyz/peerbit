@@ -6,9 +6,5 @@
 		"strictNullChecks": false,
 		"outDir": "dist"
 	},
-	"include": [
-		"src",
-		"test",
-		"test"
-	]
+	"include": ["src", "test"]
 }

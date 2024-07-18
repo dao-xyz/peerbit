@@ -1,0 +1,38 @@
+diff --git a/node_modules/libp2p/dist/src/components.js b/node_modules/libp2p/dist/src/components.js
+index 86963c0..1f5f8d1 100644
+--- a/node_modules/libp2p/dist/src/components.js
++++ b/node_modules/libp2p/dist/src/components.js
+@@ -17,11 +17,30 @@ class DefaultComponents {
+         return this._started;
+     }
+     async _invokeStartableMethod(methodName) {
+-        await Promise.all(Object.values(this.components)
++        const timeout = new Promise((resolve, reject) => {
++            setTimeout(() => {
++                reject('timeout')
++            }, 10000);
++        });
++        const connectionManager = this.components["connectionManager"]
++        if (isStartable(connectionManager)) {
++            await connectionManager[methodName]?.();
++        }
++        let promise = Promise.all(Object.values(this.components)
+             .filter(obj => isStartable(obj))
+             .map(async (startable) => {
+-            await startable[methodName]?.();
+-        }));
++                await startable[methodName]?.();
++            }));
++        const race = Promise.race([promise, timeout]);
++        try {
++            await race;
++        }
++        catch (e) {
++            throw e;
++        }
++        finally {
++            clearTimeout(timeout);
++        }
+     }
+     async beforeStart() {
+         await this._invokeStartableMethod('beforeStart');

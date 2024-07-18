@@ -1,9 +1,11 @@
 /// [program]
 /// [definition]
-import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
-import { SharedLog, type ReplicationOptions } from "@peerbit/shared-log";
-import assert from 'node:assert'
+import { Program } from "@peerbit/program";
+import { type ReplicationOptions, SharedLog } from "@peerbit/shared-log";
+import assert from "node:assert";
+/// [definition]
+import { Peerbit } from "peerbit";
 
 // The line below will make sure that every time the database manifest
 // gets serialized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
@@ -26,9 +28,6 @@ class MyDatabase extends Program<Args> {
 	}
 }
 
-/// [definition]
-import { Peerbit } from "peerbit";
-
 const client = await Peerbit.create();
 
 /// [role]
@@ -43,12 +42,14 @@ to not participate in replication work
 await client.open(new MyDatabase(), { args: { replicate: true } });
 
 // Open a program with the intention of not doing any work
-const store = await client.open(new MyDatabase(), { args: { replicate: false } });
+const store = await client.open(new MyDatabase(), {
+	args: { replicate: false },
+});
 /// [role]
 
 /// [append]
 const { entry } = await store.log.append(new Uint8Array([1, 2, 3]));
-assert.equal(entry.getPayloadValue(), (new Uint8Array([1, 2, 3])));
+assert.equal(entry.getPayloadValue(), new Uint8Array([1, 2, 3]));
 /// [append]
 
 await client.stop();

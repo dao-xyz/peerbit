@@ -1,9 +1,9 @@
-import { Program } from "@peerbit/program";
-import { variant, field } from "@dao-xyz/borsh";
-import { Documents } from "@peerbit/document";
+import { field, variant } from "@dao-xyz/borsh";
 import { PublicSignKey } from "@peerbit/crypto";
-import { Peerbit } from "peerbit";
+import { Documents } from "@peerbit/document";
+import { Program } from "@peerbit/program";
 import { decodeReplicas } from "@peerbit/shared-log";
+import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
 class Text {
@@ -35,7 +35,7 @@ export class TextDocuments extends Program<Args> {
 			type: Text,
 			replicas: {
 				min: args?.replicas?.min ?? 2,
-				max: args?.replicas?.max
+				max: args?.replicas?.max,
 			},
 			canReplicate: (publicKey: PublicSignKey) => {
 				return true; // Assume anyone can be a replicator
@@ -48,7 +48,7 @@ export class TextDocuments extends Program<Args> {
 					return false;
 				}
 				return true;
-			}
+			},
 		});
 	}
 }
@@ -60,9 +60,9 @@ const db = await peer.open(new TextDocuments(), {
 		// Assume the default replication degree should at least be 1 (if omitted 2 will be used)
 		replicas: {
 			min: 1,
-			max: undefined // If provided you can set an upper bound
-		}
-	}
+			max: undefined, // If provided you can set an upper bound
+		},
+	},
 });
 
 // will replicate at least the amount of time provided in the open arguments

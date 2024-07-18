@@ -1,4 +1,4 @@
-import { variant, field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { Peerbit } from "../src/peer.js";
 
@@ -7,7 +7,7 @@ class SubProgram extends Program {
 	constructor() {
 		super();
 	}
-	async open() { }
+	async open() {}
 }
 
 @variant("parent")

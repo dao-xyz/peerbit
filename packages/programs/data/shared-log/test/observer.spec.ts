@@ -1,13 +1,13 @@
-import { TestSession } from "@peerbit/test-utils";
-import { EventStore } from "./utils/stores/index.js";
-import { waitForResolved } from "@peerbit/time";
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import { TestSession } from "@peerbit/test-utils";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { EventStore } from "./utils/stores/index.js";
 
 describe("observer", () => {
 	let session: TestSession;
 
-	before(async () => { });
+	before(async () => {});
 
 	afterEach(async () => {
 		await session.stop();
@@ -17,7 +17,7 @@ describe("observer", () => {
 		session = await TestSession.disconnected(3);
 		session.connect([
 			[session.peers[0], session.peers[1]],
-			[session.peers[1], session.peers[2]]
+			[session.peers[1], session.peers[2]],
 		]);
 
 		let stores: EventStore<string>[] = [];
@@ -28,11 +28,8 @@ describe("observer", () => {
 		for (const [i, peer] of session.peers.entries()) {
 			const store = await peer.open(createStore(), {
 				args: {
-					replicate:
-						i <= replicatorEndIndex
-							? { factor: 1 }
-							: false
-				}
+					replicate: i <= replicatorEndIndex ? { factor: 1 } : false,
+				},
 			});
 			stores.push(store);
 		}
@@ -58,8 +55,9 @@ describe("observer", () => {
 		for (let i = 0; i < hashes.length; i++) {
 			for (let j = 1; j < stores.length; j++) {
 				if (await stores[j].log.isReplicating()) {
-					await waitForResolved(async () =>
-						expect(await stores[j].log.log.has(hashes[j])).to.be.true
+					await waitForResolved(
+						async () =>
+							expect(await stores[j].log.log.has(hashes[j])).to.be.true,
 					);
 				} else {
 					expect(await stores[j].log.log.has(hashes[j])).to.be.false;
@@ -78,22 +76,22 @@ describe("observer", () => {
 		const replicator = await session.peers[0].open(createStore(), {
 			args: {
 				replicate: {
-					factor: 1
-				}
-			}
+					factor: 1,
+				},
+			},
 		});
 
 		const observer = await session.peers[1].open(createStore(), {
 			args: {
 				replicate: false,
-				sync: () => true
-			}
+				sync: () => true,
+			},
 		});
 		await waitForResolved(async () =>
-			expect(await replicator.log.replicationIndex?.getSize()).equal(1)
+			expect(await replicator.log.replicationIndex?.getSize()).equal(1),
 		);
 		await waitForResolved(async () =>
-			expect(await observer.log.replicationIndex?.getSize()).equal(1)
+			expect(await observer.log.replicationIndex?.getSize()).equal(1),
 		);
 
 		await replicator.add("a", { target: "all" });
@@ -107,21 +105,21 @@ describe("observer", () => {
 		session = await TestSession.disconnected(3);
 		await session.connect([
 			[session.peers[0], session.peers[1]],
-			[session.peers[1], session.peers[2]]
+			[session.peers[1], session.peers[2]],
 		]);
 
 		const s = new EventStore<string>();
 		const createStore = () => deserialize(serialize(s), EventStore);
 		const replicator = await session.peers[0].open(createStore(), {
 			args: {
-				replicate: { factor: 1 }
-			}
+				replicate: { factor: 1 },
+			},
 		});
 
 		const observer = await session.peers[2].open(createStore(), {
 			args: {
-				replicate: false
-			}
+				replicate: false,
+			},
 		});
 
 		await observer.log.waitForReplicator(replicator.node.identity.publicKey);

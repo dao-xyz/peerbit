@@ -1,32 +1,29 @@
-import http from "http";
-import {
-	fromBase64,
-	getPublicKeyFromPeerId
-} from "@peerbit/crypto";
-import { deserialize } from "@dao-xyz/borsh";
+/* eslint-disable no-console */
+import { deserialize, getSchema } from "@dao-xyz/borsh";
+import { peerIdFromString } from "@libp2p/peer-id";
+import { fromBase64, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	Program,
 	type ProgramClient,
 	getProgramFromVariant,
-	getProgramFromVariants
+	getProgramFromVariants,
 } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
-import { v4 as uuid } from "uuid";
-import {
-	getNodePath,
-	getKeypair,
-	getTrustPath
-} from "./config.js";
+import { execSync, spawn } from "child_process";
 import { setMaxListeners } from "events";
-import { create } from "./peerbit.js";
+import fs from "fs";
+import http from "http";
+import { Level } from "level";
+import { MemoryLevel } from "memory-level";
+import { base58btc } from "multiformats/bases/base58";
+import path, { dirname } from "path";
 import { Peerbit } from "peerbit";
-import { getSchema } from "@dao-xyz/borsh";
-import type {
-	InstallDependency,
-	StartByBase64,
-	StartByVariant,
-	StartProgram
-} from "./types.js";
+import { exit } from "process";
+import tmp from "tmp";
+import { fileURLToPath } from "url";
+import { v4 as uuid } from "uuid";
+import { getKeypair, getNodePath, getTrustPath } from "./config.js";
+import { create } from "./peerbit.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
@@ -35,26 +32,22 @@ import {
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
+	PROGRAM_VARIANTS_PATH,
 	RESTART_PATH,
-	TRUST_PATH,
 	STOP_PATH,
-	PROGRAM_VARIANTS_PATH
+	TRUST_PATH,
 } from "./routes.js";
 import { Session } from "./session.js";
-import fs from "fs";
-import { exit } from "process";
-import { spawn, execSync } from "child_process";
-import tmp from "tmp";
-import path from "path";
-import { base58btc } from "multiformats/bases/base58";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { Level } from "level";
-import { MemoryLevel } from "memory-level";
-import { Trust } from "./trust.js";
 import { getBody, verifyRequest } from "./signed-request.js";
-import { peerIdFromString } from "@libp2p/peer-id";
+import { Trust } from "./trust.js";
+import type {
+	InstallDependency,
+	StartByBase64,
+	StartByVariant,
+	StartProgram,
+} from "./types.js";
 
+// eslint-disable-next-line @typescript-eslint/naming-convention
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const stopAndWait = (server: http.Server) => {
@@ -93,7 +86,7 @@ export const startServerWithNode = async (properties: {
 		directory: getNodePath(properties.directory),
 		domain: properties.domain,
 		listenPort: properties.ports?.node,
-		peerId: await keypair.toPeerId()
+		peerId: await keypair.toPeerId(),
 	});
 
 	if (properties.bootstrap) {
@@ -107,10 +100,10 @@ export const startServerWithNode = async (properties: {
 	const session = new Session(
 		sessionDirectory
 			? new Level<string, Uint8Array>(sessionDirectory, {
-				valueEncoding: "view",
-				keyEncoding: "utf-8"
-			})
-			: new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" })
+					valueEncoding: "view",
+					keyEncoding: "utf-8",
+				})
+			: new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" }),
 	);
 	if (!properties.newSession) {
 		for (const [string] of await session.imports.all()) {
@@ -132,7 +125,7 @@ export const startServerWithNode = async (properties: {
 	const server = await startApiServer(peer, {
 		port: properties.ports?.api,
 		trust,
-		session
+		session,
 	});
 	const printNodeInfo = async () => {
 		console.log("Starting node with address(es): ");
@@ -147,7 +140,7 @@ export const startServerWithNode = async (properties: {
 	await printNodeInfo();
 	const shutDownHook = async (
 		controller: { stop: () => any },
-		server: http.Server
+		server: http.Server,
 	) => {
 		["SIGTERM", "SIGINT", "SIGUSR1", "SIGUSR2"].forEach((code) => {
 			process.on(code, async () => {
@@ -207,7 +200,7 @@ function findPeerbitProgramFolder(inputDirectory: string): string | null {
 			nodeModulesPath,
 			"@peerbit",
 			"program",
-			"package.json"
+			"package.json",
 		);
 
 		if (fs.existsSync(packageJsonPath)) {
@@ -231,7 +224,7 @@ export const startApiServer = async (
 		trust: Trust;
 		session?: Session;
 		port?: number;
-	}
+	},
 ): Promise<http.Server> => {
 	const port = properties?.port ?? LOCAL_API_PORT;
 
@@ -244,14 +237,14 @@ export const startApiServer = async (
 			process.argv.shift()!,
 			[
 				...process.execArgv,
-				...process.argv.filter((x) => x !== "--reset" && x !== "-r")
+				...process.argv.filter((x) => x !== "--reset" && x !== "-r"),
 			],
 			{
 				cwd: process.cwd(),
 				detached: true,
 				stdio: "inherit",
-				gid: process.getgid!()
-			}
+				gid: process.getgid!(),
+			},
 		);
 		process.exit(0);
 	};
@@ -265,7 +258,7 @@ export const startApiServer = async (
 			req.headers,
 			req.method!,
 			req.url!,
-			body
+			body,
 		);
 		if (result.equals(client.identity.publicKey)) {
 			return body;
@@ -295,7 +288,7 @@ export const startApiServer = async (
 					try {
 						body =
 							req.url.startsWith(PEER_ID_PATH) ||
-								req.url.startsWith(ADDRESS_PATH)
+							req.url.startsWith(ADDRESS_PATH)
 								? await getBody(req)
 								: await getVerifiedBody(req);
 					} catch (error: any) {
@@ -313,7 +306,8 @@ export const startApiServer = async (
 						switch (req.method) {
 							case "GET":
 								try {
-									const ref: any = (client as Peerbit).handler?.items?.keys() || [];
+									const ref: any =
+										(client as Peerbit).handler?.items?.keys() || [];
 									const keys = JSON.stringify([...ref]);
 									res.setHeader("Content-Type", "application/json");
 									res.writeHead(200);
@@ -341,8 +335,8 @@ export const startApiServer = async (
 									res.writeHead(200);
 									res.end(
 										JSON.stringify(
-											getProgramFromVariants().map((x) => getSchema(x).variant)
-										)
+											getProgramFromVariants().map((x) => getSchema(x).variant),
+										),
 									);
 								} catch (error: any) {
 									res.writeHead(404);
@@ -364,7 +358,7 @@ export const startApiServer = async (
 							case "HEAD":
 								try {
 									const program = (client as Peerbit).handler?.items.get(
-										getPathValue(req, 1)
+										getPathValue(req, 1),
 									);
 									if (program) {
 										res.writeHead(200);
@@ -385,7 +379,7 @@ export const startApiServer = async (
 									const queryData = url.searchParams.get("delete");
 
 									const program = (client as Peerbit).handler?.items.get(
-										getPathValue(req, 1)
+										getPathValue(req, 1),
 									);
 									if (program) {
 										let closed = false;
@@ -396,7 +390,7 @@ export const startApiServer = async (
 										}
 										if (closed) {
 											await properties?.session?.programs.remove(
-												program.address
+												program.address,
 											);
 										}
 
@@ -418,13 +412,13 @@ export const startApiServer = async (
 									let program: Program;
 									if ((startArguments as StartByVariant).variant) {
 										const P = getProgramFromVariant(
-											(startArguments as StartByVariant).variant
+											(startArguments as StartByVariant).variant,
 										);
 										if (!P) {
 											res.writeHead(400);
 											res.end(
 												"Missing program with variant: " +
-												(startArguments as StartByVariant).variant
+													(startArguments as StartByVariant).variant,
 											);
 											return;
 										}
@@ -432,7 +426,7 @@ export const startApiServer = async (
 									} else {
 										program = deserialize(
 											fromBase64((startArguments as StartByBase64).base64),
-											Program
+											Program,
 										);
 									}
 									client
@@ -441,7 +435,7 @@ export const startApiServer = async (
 											// TODO what if this is a reopen?
 											await properties?.session?.programs.add(
 												program.address,
-												new Uint8Array()
+												new Uint8Array(),
 											);
 											res.writeHead(200);
 											res.end(program.address.toString());
@@ -476,7 +470,7 @@ export const startApiServer = async (
 										name:
 											base58btc.encode(Buffer.from(installName)) +
 											uuid() +
-											".tgz"
+											".tgz",
 									});
 									fs.writeFileSync(tempFile.fd, binary);
 									clear = () => tempFile.removeCallback();
@@ -508,15 +502,15 @@ export const startApiServer = async (
 
 										console.log("Installing package: " + installName);
 										execSync(
-											`${permission} npm install ${installName} --prefix ${installDir} --no-save --no-package-lock`
+											`${permission} npm install ${installName} --prefix ${installDir} --no-save --no-package-lock`,
 										); // TODO omit=dev ? but this makes breaks the tests after running once?
 									} catch (error: any) {
 										res.writeHead(400);
 										res.end(
 											"Failed to install library: " +
-											packageName +
-											". " +
-											error.toString()
+												packageName +
+												". " +
+												error.toString(),
 										);
 										clear?.();
 										return;
@@ -524,7 +518,7 @@ export const startApiServer = async (
 
 									try {
 										const programsPre = new Set(
-											getProgramFromVariants().map((x) => getSchema(x).variant)
+											getProgramFromVariants().map((x) => getSchema(x).variant),
 										);
 
 										await import(
@@ -532,10 +526,10 @@ export const startApiServer = async (
 										);
 										await properties?.session?.imports.add(
 											packageName,
-											new Uint8Array()
+											new Uint8Array(),
 										);
 										const programsPost = getProgramFromVariants()?.map((x) =>
-											getSchema(x)
+											getSchema(x),
 										);
 										const newPrograms: { variant: string }[] = [];
 										for (const p of programsPost) {
@@ -660,9 +654,7 @@ export const startApiServer = async (
 	server.on("error", (e) => {
 		console.error("Server error: " + e?.message);
 		import("fs").then((fs) => {
-			fs.writeFile("error.log", JSON.stringify(e.message), function () {
-				/* void */ 0;
-			});
+			fs.writeFile("error.log", JSON.stringify(e.message), function () {});
 		});
 	});
 	await waitFor(() => server.listening);

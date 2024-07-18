@@ -1,9 +1,13 @@
 // TODO make bundle by removing unecessary dependencies
-import { deserialize, serialize } from "@dao-xyz/borsh";
-import { type AnyStore } from "@peerbit/any-store-interface"
+import {
+	BinaryReader,
+	BinaryWriter,
+	deserialize,
+	serialize,
+} from "@dao-xyz/borsh";
+import { type AnyStore } from "@peerbit/any-store-interface";
 import * as memory from "@peerbit/any-store-interface/messages";
-import { fromBase64URL, toBase64URL, ready } from "@peerbit/crypto";
-import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
+import { fromBase64URL, ready, toBase64URL } from "@peerbit/crypto";
 import { waitForResolved } from "@peerbit/time";
 
 const directory = location.hash.split("#")?.[1];
@@ -22,14 +26,14 @@ const decodeName = (name: string): string => {
 };
 
 const waitForSyncAcccess = async (
-	fileHandle: FileSystemFileHandle
+	fileHandle: FileSystemFileHandle,
 ): Promise<FileSystemSyncAccessHandle> => {
 	try {
 		const handle = await fileHandle.createSyncAccessHandle();
 		return handle;
 	} catch (error) {
 		const handle = await waitForResolved(() =>
-			fileHandle.createSyncAccessHandle()
+			fileHandle.createSyncAccessHandle(),
 		);
 		if (!handle) {
 			throw error;
@@ -64,7 +68,7 @@ export class OPFSStoreWorker {
 
 		const createMemory = (
 			root?: FileSystemDirectoryHandle,
-			levels: string[] = []
+			levels: string[] = [],
 		): AnyStore => {
 			let isOpen = false;
 
@@ -98,11 +102,11 @@ export class OPFSStoreWorker {
 					m = await navigator.storage.getDirectory();
 					if (directory) {
 						m = await m.getDirectoryHandle(encodeName(directory), {
-							create: true
+							create: true,
 						});
 					}
 					await calculateSize();
-				};
+				}
 				isOpen = true;
 			};
 			return {
@@ -155,7 +159,7 @@ export class OPFSStoreWorker {
 					const encodedKey = encodeName(key);
 
 					const fileHandle = await m.getFileHandle(encodedKey, {
-						create: true
+						create: true,
 					});
 					const writeFileHandle = await createWriteHandle(fileHandle);
 					writeFileHandle.write(value);
@@ -178,7 +182,7 @@ export class OPFSStoreWorker {
 				sublevel: async (name) => {
 					const encodedName = encodeName(name);
 					const fileHandle = await m.getDirectoryHandle(encodedName, {
-						create: true
+						create: true,
 					});
 					const sublevel = [...levels, name];
 					const subMemory = createMemory(fileHandle, sublevel);
@@ -189,10 +193,10 @@ export class OPFSStoreWorker {
 
 				async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
 					for await (const v of m.values()) {
-						if (v.kind == "file") {
+						if (v.kind === "file") {
 							yield [
 								decodeName(v.name),
-								new Uint8Array(await (await v.getFile()).arrayBuffer())
+								new Uint8Array(await (await v.getFile()).arrayBuffer()),
 							];
 						}
 					}
@@ -203,7 +207,7 @@ export class OPFSStoreWorker {
 					this._memoryIterator.clear();
 				},
 				open,
-				persisted: () => true
+				persisted: () => true,
 			};
 		};
 
@@ -214,13 +218,13 @@ export class OPFSStoreWorker {
 			try {
 				if (message instanceof memory.MemoryMessage) {
 					if (message instanceof memory.REQ_Open) {
-						if (await this._rootStore.status() === "closed") {
+						if ((await this._rootStore.status()) === "closed") {
 							await this._rootStore.open();
 						}
 						await this.respond(
 							message,
 							new memory.RESP_Open({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 						return;
 					}
@@ -236,21 +240,21 @@ export class OPFSStoreWorker {
 						await this.respond(
 							message,
 							new memory.RESP_Clear({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Close) {
 						await m.close();
 						await this.respond(
 							message,
 							new memory.RESP_Close({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Del) {
 						await m.del(message.key);
 						await this.respond(
 							message,
 							new memory.RESP_Del({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Iterator_Next) {
 						let iterator = this._memoryIterator.get(message.id);
@@ -263,10 +267,12 @@ export class OPFSStoreWorker {
 							message,
 							new memory.RESP_Iterator_Next({
 								keys: next.done ? [] : [(next.value as any)[0]],
-								values: next.done ? [] : [new Uint8Array((next.value as any)[1])],
-								level: message.level
+								values: next.done
+									? []
+									: [new Uint8Array((next.value as any)[1])],
+								level: message.level,
 							}),
-							postMessageFn
+							postMessageFn,
 						);
 						if (next.done) {
 							this._memoryIterator.delete(message.id);
@@ -276,7 +282,7 @@ export class OPFSStoreWorker {
 						await this.respond(
 							message,
 							new memory.RESP_Iterator_Stop({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Get) {
 						const value = await m.get(message.key);
@@ -284,34 +290,34 @@ export class OPFSStoreWorker {
 							message,
 							new memory.RESP_Get({
 								bytes: value ? new Uint8Array(value) : undefined,
-								level: message.level
+								level: message.level,
 							}),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Put) {
 						await m.put(message.key, message.bytes);
 						await this.respond(
 							message,
 							new memory.RESP_Put({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Size) {
 						await this.respond(
 							message,
 							new memory.RESP_Size({
 								size: await m.size(),
-								level: message.level
+								level: message.level,
 							}),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Status) {
 						await this.respond(
 							message,
 							new memory.RESP_Status({
 								status: await m.status(),
-								level: message.level
+								level: message.level,
 							}),
-							postMessageFn
+							postMessageFn,
 						);
 					} else if (message instanceof memory.REQ_Sublevel) {
 						await m.sublevel(message.name);
@@ -319,7 +325,7 @@ export class OPFSStoreWorker {
 						await this.respond(
 							message,
 							new memory.RESP_Sublevel({ level: message.level }),
-							postMessageFn
+							postMessageFn,
 						);
 					}
 				}
@@ -328,9 +334,9 @@ export class OPFSStoreWorker {
 					message,
 					new memory.RESP_Error({
 						error: (error as any)?.["message"] || error?.constructor.name,
-						level: (message as any)["level"] || []
+						level: (message as any)["level"] || [],
 					}),
-					postMessageFn
+					postMessageFn,
 				);
 			}
 		});
@@ -339,7 +345,7 @@ export class OPFSStoreWorker {
 	async respond(
 		request: memory.MemoryRequest,
 		response: memory.MemoryRequest,
-		postMessageFn = postMessage
+		postMessageFn = postMessage,
 	) {
 		response.messageId = request.messageId;
 		const bytes = serialize(response);

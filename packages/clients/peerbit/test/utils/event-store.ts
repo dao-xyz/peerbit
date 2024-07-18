@@ -1,6 +1,6 @@
-import { variant, field } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
+import { field, variant } from "@dao-xyz/borsh";
 import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
+import { Program } from "@peerbit/program";
 
 // TODO: generalize the Iterator functions and spin to its own module
 export interface Operation<T> {
@@ -27,7 +27,7 @@ export class EventStore extends Program {
 	}
 
 	add(data: Uint8Array, args: any) {
-		this.log.push({ hash: sha256Base64Sync(data), data: data });
+		this.log.push({ hash: sha256Base64Sync(data), data });
 	}
 
 	async get(hash: string) {

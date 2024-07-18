@@ -1,12 +1,11 @@
 /// [imports]
 import { field, variant } from "@dao-xyz/borsh";
+import { sha256Sync } from "@peerbit/crypto";
+import { Documents } from "@peerbit/document";
 import { Program } from "@peerbit/program";
+import { type ReplicationOptions } from "@peerbit/shared-log";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
-
-import { Documents } from "@peerbit/document";
-import { sha256Sync } from "@peerbit/crypto";
-import { type ReplicationOptions } from "@peerbit/shared-log";
 
 @variant(0) // version 0
 export class Post {
@@ -33,14 +32,14 @@ export class Channel extends Program<ChannelArgs> {
 	constructor() {
 		super();
 		this.posts = new Documents({
-			id: sha256Sync(new TextEncoder().encode("posts"))
+			id: sha256Sync(new TextEncoder().encode("posts")),
 		});
 	}
 
 	async open(properties?: ChannelArgs): Promise<void> {
 		await this.posts.open({
 			type: Post,
-			replicate: properties?.replicate
+			replicate: properties?.replicate,
 		});
 	}
 }
@@ -54,15 +53,15 @@ const peer = await Peerbit.create();
 // we can pass a role when opening
 const channel = await peer.open(new Channel(), {
 	args: {
-		replicate: true // by default
-	}
+		replicate: true, // by default
+	},
 });
 
 // If we choose a replication factor of 1,
 // then all entries will be synced to our database
 // this can be useful for real-time applications, like games
 await channel.posts.log.replicate({
-	factor: 1
+	factor: 1,
 });
 
 // We can choose to limit our role depending on how much storage
@@ -70,10 +69,10 @@ await channel.posts.log.replicate({
 await channel.posts.log.replicate({
 	limits: {
 		cpu: {
-			max: 0.5 // try to stay below 50% utilization
+			max: 0.5, // try to stay below 50% utilization
 		},
-		storage: 1e8 // only use 100mb at most
-	}
+		storage: 1e8, // only use 100mb at most
+	},
 });
 
 // Or we can become observers and just be able to perform searches

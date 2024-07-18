@@ -1,6 +1,6 @@
-import { TestSession } from "../src/session.js";
 import { waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { TestSession } from "../src/session.js";
 
 describe("session", () => {
 	let session: TestSession;
@@ -27,23 +27,22 @@ describe("session", () => {
 		});
 		await waitForResolved(async () =>
 			expect(
-				(await session.peers[0].services.pubsub.getSubscribers("x"))?.length
-			).equal(3)
+				(await session.peers[0].services.pubsub.getSubscribers("x"))?.length,
+			).equal(3),
 		);
 		await waitForResolved(async () =>
 			expect(
-				(await session.peers[1].services.pubsub.getSubscribers("x"))?.length
-			).equal(3)
+				(await session.peers[1].services.pubsub.getSubscribers("x"))?.length,
+			).equal(3),
 		);
 		session.peers[0].services.pubsub.publish(new Uint8Array([1, 2, 3]), {
-			topics: ["x"]
+			topics: ["x"],
 		});
 		await waitFor(() => !!result);
 	});
 
 	it("indexer", async () => {
-		expect(session.peers[0].indexer).to.exist
-		expect(session.peers[0].indexer != session.peers[1].indexer).to.be.true
-
-	})
+		expect(session.peers[0].indexer).to.exist;
+		expect(session.peers[0].indexer !== session.peers[1].indexer).to.be.true;
+	});
 });

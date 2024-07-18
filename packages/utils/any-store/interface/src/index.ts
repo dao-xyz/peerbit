@@ -19,4 +19,3 @@ export interface AnyStore {
 	size(): MaybePromise<number>;
 	persisted(): MaybePromise<boolean>;
 }
-

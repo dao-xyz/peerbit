@@ -13,7 +13,7 @@ describe("metrics", () => {
 				expect(ma.value).lessThan(1100);
 				clearInterval(interval);
 				done = true;
-			} catch (error) { }
+			} catch (error) {}
 		}, 100);
 
 		await waitForResolved(() => expect(done).to.be.true);

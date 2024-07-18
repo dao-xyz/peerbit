@@ -1,9 +1,8 @@
-import { waitFor, waitForResolved } from "@peerbit/time";
-import { EventStore } from "./utils/stores/event-store.js";
-import { expect } from "chai";
-
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
+import { waitFor, waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import { EventStore } from "./utils/stores/event-store.js";
 
 /**
  * Tests that are relavent for browser environments
@@ -13,9 +12,9 @@ describe(`network`, () => {
 	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 
-	after(async () => { });
+	after(async () => {});
 
-	beforeEach(async () => { });
+	beforeEach(async () => {});
 
 	afterEach(async () => {
 		if (db1) await db1.drop();
@@ -36,9 +35,9 @@ describe(`network`, () => {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: {
 				replicate: {
-					factor: 1
-				}
-			}
+					factor: 1,
+				},
+			},
 		});
 
 		db2 = await await EventStore.open<EventStore<string>>(
@@ -47,10 +46,10 @@ describe(`network`, () => {
 			{
 				args: {
 					replicate: {
-						factor: 1
-					}
-				}
-			}
+						factor: 1,
+					},
+				},
+			},
 		);
 
 		await db1.add("hello");
@@ -58,9 +57,7 @@ describe(`network`, () => {
 
 		await waitFor(() => db1.log.log.length === 2);
 		expect(
-			(await db1.log.log.toArray()).map(
-				(x) => x.payload.getValue().value
-			)
+			(await db1.log.log.toArray()).map((x) => x.payload.getValue().value),
 		).to.have.members(["hello", "world"]);
 		await waitForResolved(() => expect(db2.log.log.length).equal(2));
 	});

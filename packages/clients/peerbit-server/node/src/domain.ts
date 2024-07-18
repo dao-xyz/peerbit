@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { waitFor } from "@peerbit/time";
 
 const isNode = typeof window === "undefined";
@@ -6,18 +7,18 @@ const validateEmail = (email: any) => {
 	return String(email)
 		.toLowerCase()
 		.match(
-			/^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+			/^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/,
 		);
 };
 
 const getConfigFileTemplate = async (): Promise<string> => {
 	const url = await import("url");
-	const __filename = url.fileURLToPath(import.meta.url);
+	const filename = url.fileURLToPath(import.meta.url);
 	const fs = await import("fs");
 	const path = await import("path");
 	const file = fs.readFileSync(
-		path.join(__filename, "../nginx-template.conf"),
-		"utf-8"
+		path.join(filename, "../nginx-template.conf"),
+		"utf-8",
 	);
 	return file;
 };
@@ -45,7 +46,7 @@ const getNginxConfigPath = async (folder: string) => {
 
 const createConfig = async (
 	outputPath: string,
-	domain: string
+	domain: string,
 ): Promise<{ domain: string }> => {
 	if (!isNode) {
 		throw new Error("Config can only be created with node");
@@ -85,15 +86,15 @@ export const getDomainFromConfig = async (config: string) => {
 const getUIPath = async (): Promise<string> => {
 	const url = await import("url");
 	const path = await import("path");
-	const __filename = url.fileURLToPath(import.meta.url);
-	const p1 = path.join(__filename, "../../", "ui");
+	const filename = url.fileURLToPath(import.meta.url);
+	const p1 = path.join(filename, "../../", "ui");
 
 	const fs = await import("fs");
 
 	if (fs.existsSync(p1) && fs.lstatSync(p1).isDirectory()) {
 		return p1; // build
 	} else {
-		const p2 = path.join(__filename, "../../", "lib/ui");
+		const p2 = path.join(filename, "../../", "lib/ui");
 		if (fs.existsSync(p2) && fs.lstatSync(p2).isDirectory()) {
 			return p2;
 		}
@@ -110,7 +111,7 @@ export const getMyIp = async (): Promise<string> => {
 					reject("DNS lookup failed");
 				}
 				resolve(stdout.trimEnd());
-			}
+			},
 		);
 	});
 	return ipv4;
@@ -122,24 +123,17 @@ export const createTestDomain = async () => {
 		await axios.post(
 			"https://bfbbnhwpfj2ptcmurz6lit4xlu0vjajw.lambda-url.us-east-1.on.aws",
 			await getMyIp(),
-			{ headers: { "Content-Type": "application/json" } }
+			{ headers: { "Content-Type": "application/json" } },
 		)
 	).data.domain;
 	return domain;
 };
 
-/**
- *
- * @param email
- * @param nginxConfigPath
- * @param dockerProcessName
- * @returns domain
- */
 export const startCertbot = async (
 	domain: string,
 	email: string,
 	waitForUp = false,
-	dockerProcessName = "nginx-certbot"
+	dockerProcessName = "nginx-certbot",
 ): Promise<void> => {
 	if (!validateEmail(email)) {
 		throw new Error("Email for SSL renenewal is invalid");
@@ -168,7 +162,7 @@ export const startCertbot = async (
 	// try two times with some delay, because sometimes the docker daemon is not available immidatel
 	await startContainer(
 		certbotDockerCommand,
-		"Failed to start certbot container"
+		"Failed to start certbot container",
 	);
 
 	console.log("Certbot started succesfully!");
@@ -187,12 +181,12 @@ export const startCertbot = async (
 					return false;
 				}
 			},
-			{ timeout: 5 * 60 * 10000, delayInterval: 5000 }
+			{ timeout: 5 * 60 * 10000, delayInterval: 5000 },
 		);
 		console.log("Domain is ready");
 	} else {
 		console.log(
-			"The domain is not available immediately as it takes some time to request SSL certificate."
+			"The domain is not available immediately as it takes some time to request SSL certificate.",
 		);
 	}
 };

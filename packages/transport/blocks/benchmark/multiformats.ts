@@ -1,15 +1,15 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import B from "benchmark";
 import crypto from "crypto";
-import { sha256 } from "multiformats/hashes/sha2";
 import { encode } from "multiformats/block";
+import { sha256 } from "multiformats/hashes/sha2";
+import { equals } from "uint8arrays";
 import {
 	checkDecodeBlock,
 	cidifyString,
 	codecMap,
-	stringifyCid
+	stringifyCid,
 } from "../src/block.js";
-import { equals } from "uint8arrays";
 
 // Run with "node --loader ts-node/esm ./benchmark/multiformats.ts"
 // size: 1kb x 785 ops/sec ±2.66% (86 runs sampled)
@@ -75,20 +75,20 @@ for (const size of sizes) {
 				const cid = await encode({
 					value: rng,
 					codec,
-					hasher: sha256
+					hasher: sha256,
 				});
 				const cidString = stringifyCid(cid.cid);
 				const cidObject = cidifyString(cidString);
 				const checked = await checkDecodeBlock(cidObject, rng, {
 					hasher: sha256,
-					codec
+					codec,
 				});
 				if (!checked) {
 					throw new Error("Not verified");
 				}
 				deferred.resolve();
 			}
-		}
+		},
 	});
 
 	suite.add("dummy, size: " + size / 1e3 + "kb", {
@@ -105,7 +105,7 @@ for (const size of sizes) {
 				}
 				deferred.resolve();
 			}
-		}
+		},
 	});
 
 	suite.add("sha256 digest hex, size: " + size / 1e3 + "kb", {
@@ -123,7 +123,7 @@ for (const size of sizes) {
 				}
 				deferred.resolve();
 			}
-		}
+		},
 	});
 }
 suite

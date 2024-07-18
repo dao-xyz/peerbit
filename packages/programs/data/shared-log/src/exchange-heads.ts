@@ -1,9 +1,9 @@
-import { variant, field, vec, fixedArray } from "@dao-xyz/borsh";
+import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
+import { Cache } from "@peerbit/cache";
 import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { TransportMessage } from "./message.js";
-import { Cache } from "@peerbit/cache";
 
 const logger = loggerFn({ module: "exchange-heads" });
 
@@ -14,7 +14,6 @@ const logger = loggerFn({ module: "exchange-heads" });
  */
 @variant(0)
 export class EntryWithRefs<T> {
-
 	@field({ type: Entry })
 	entry: Entry<T>;
 
@@ -92,7 +91,7 @@ const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be fas
 export const createExchangeHeadsMessages = async (
 	log: Log<any>,
 	heads: Entry<any>[],
-	gidParentCache: Cache<Entry<any>[]>
+	gidParentCache: Cache<Entry<any>[]>,
 ): Promise<ExchangeHeadsMessage<any>[]> => {
 	const messages: ExchangeHeadsMessage<any>[] = [];
 	let size = 0;
@@ -118,8 +117,8 @@ export const createExchangeHeadsMessages = async (
 		current.push(
 			new EntryWithRefs({
 				entry: fromHead,
-				gidRefrences: refs.map((x) => x.meta.gid)
-			})
+				gidRefrences: refs.map((x) => x.meta.gid),
+			}),
 		);
 
 		size += fromHead.size;
@@ -127,8 +126,8 @@ export const createExchangeHeadsMessages = async (
 			size = 0;
 			messages.push(
 				new ExchangeHeadsMessage({
-					heads: current
-				})
+					heads: current,
+				}),
 			);
 			current = [];
 			continue;
@@ -137,8 +136,8 @@ export const createExchangeHeadsMessages = async (
 	if (current.length > 0) {
 		messages.push(
 			new ExchangeHeadsMessage({
-				heads: current
-			})
+				heads: current,
+			}),
 		);
 	}
 	return messages;
@@ -147,7 +146,7 @@ export const createExchangeHeadsMessages = async (
 export const allEntriesWithUniqueGids = async (
 	log: Log<any>,
 	entry: Entry<any>,
-	gidParentCache: Cache<Entry<any>[]>
+	gidParentCache: Cache<Entry<any>[]>,
 ): Promise<Entry<any>[]> => {
 	const cachedValue = gidParentCache.get(entry.hash);
 	if (cachedValue != null) {
@@ -168,7 +167,7 @@ export const allEntriesWithUniqueGids = async (
 						if (!indexedEntry) {
 							logger.error(
 								"Failed to find indexed entry for hash when fetching references: " +
-								next
+									next,
 							);
 						} else {
 							nexts.push(indexedEntry.value);
@@ -181,8 +180,8 @@ export const allEntriesWithUniqueGids = async (
 	}
 	const value = [
 		...(await Promise.all(
-			[...map.values()].map((x) => log.entryIndex.get(x.hash))
-		))
+			[...map.values()].map((x) => log.entryIndex.get(x.hash)),
+		)),
 	].filter((x) => !!x) as Entry<any>[];
 	gidParentCache.add(entry.hash, value);
 	return value;

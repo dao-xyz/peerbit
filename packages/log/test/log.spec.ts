@@ -1,12 +1,12 @@
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
+import { HashmapIndices } from "@peerbit/indexer-simple";
 import assert from "assert";
-import { Entry } from "../src/entry.js";
+import { expect } from "chai";
 import { LamportClock as Clock, Timestamp } from "../src/clock.js";
+import { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
-import { expect } from "chai";
-import { HashmapIndices } from "@peerbit/indexer-simple";
 
 describe("properties", function () {
 	let store: BlockStore;
@@ -66,9 +66,9 @@ describe("properties", function () {
 		});
 
 		it("returns a nicely formatted string", async () => {
-			expect(await log.toString((p) => Buffer.from(p.data).toString())).to.deep.equal(
-				expectedData
-			);
+			expect(
+				await log.toString((p) => Buffer.from(p.data).toString()),
+			).to.deep.equal(expectedData);
 		});
 	});
 
@@ -81,19 +81,21 @@ describe("properties", function () {
 			await log.append("one", {
 				meta: {
 					gidSeed: Buffer.from("a"),
-					timestamp: new Timestamp({ wallTime: 0n, logical: 0 })
-				}
+					timestamp: new Timestamp({ wallTime: 0n, logical: 0 }),
+				},
 			});
 		});
 
 		it("returns an Entry", async () => {
 			const entry = await log.get((await log.toArray())[0].hash)!;
-			expect(entry?.hash).to.equal("zb2rhc5B7Urj1WsHyjBTConmq6aTDivRTgg5TkVHYFHesyKw4");
+			expect(entry?.hash).to.equal(
+				"zb2rhc5B7Urj1WsHyjBTConmq6aTDivRTgg5TkVHYFHesyKw4",
+			);
 		});
 
 		it("returns undefined when Entry is not in the log", async () => {
 			const entry = await log.get(
-				"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"
+				"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
 			);
 			assert.deepStrictEqual(entry, undefined);
 		});
@@ -110,19 +112,19 @@ describe("properties", function () {
 
 		it("changes identity", async () => {
 			expect((await log.toArray())[0].meta.clock.id).to.deep.equal(
-				signKey.publicKey.bytes
+				signKey.publicKey.bytes,
 			);
 			log.setIdentity(signKey2);
 			await log.append("two", { meta: { gidSeed: Buffer.from("a") } });
 			assert.deepStrictEqual(
 				(await log.toArray())[1].meta.clock.id,
-				signKey2.publicKey.bytes
+				signKey2.publicKey.bytes,
 			);
 			log.setIdentity(signKey3);
 			await log.append("three", { meta: { gidSeed: Buffer.from("a") } });
 			assert.deepStrictEqual(
 				(await log.toArray())[2].meta.clock.id,
-				signKey3.publicKey.bytes
+				signKey3.publicKey.bytes,
 			);
 		});
 	});
@@ -146,7 +148,7 @@ describe("properties", function () {
 
 		it("returns false if it doesn't have the Entry", async () => {
 			expect(
-				await log.has("zb2rhbnwihVVVVEVVPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J")
+				await log.has("zb2rhbnwihVVVVEVVPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J"),
 			).equal(false);
 		});
 	});
@@ -159,10 +161,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
-					next: []
+					next: [],
 				},
 				data: "entryA",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const two = await Entry.create({
 				store,
@@ -170,10 +172,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
-					next: []
+					next: [],
 				},
 				data: "entryB",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const three = await Entry.create({
 				store,
@@ -181,10 +183,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
-					next: []
+					next: [],
 				},
 				data: "entryC",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -202,30 +204,30 @@ describe("properties", function () {
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: []
+					next: [],
 				},
 				data: "entryA",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const two = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: []
+					next: [],
 				},
 				data: "entryB",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const three = await Entry.create({
 				store,
 				identity: signKey,
 				meta: {
 					gidSeed: Buffer.from("a"),
-					next: []
+					next: [],
 				},
 				data: "entryC",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -233,7 +235,7 @@ describe("properties", function () {
 			expect((await log.getHeads().all()).map((x) => x.hash)).to.have.members([
 				one.hash,
 				two.hash,
-				three.hash
+				three.hash,
 			]);
 		});
 
@@ -244,10 +246,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([0]), timestamp: 0 }),
-					next: []
+					next: [],
 				},
 				data: "entryA",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const two = await Entry.create({
 				store,
@@ -255,10 +257,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([1]), timestamp: 0 }),
-					next: []
+					next: [],
 				},
 				data: "entryB",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const three = await Entry.create({
 				store,
@@ -266,10 +268,10 @@ describe("properties", function () {
 				meta: {
 					gidSeed: Buffer.from("a"),
 					clock: new Clock({ id: new Uint8Array([2]), timestamp: 0 }),
-					next: []
+					next: [],
 				},
 				data: "entryC",
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const log = new Log<string>();
 			await log.open(store, signKey, { encoding: JSON_ENCODING });
@@ -298,13 +300,13 @@ describe("properties", function () {
 			expect((await log.toArray()) instanceof Array).equal(true);
 			expect(log.length).equal(3);
 			expect((await log.toArray())[0].payload.getValue()).to.deep.equal(
-				new Uint8Array([1])
+				new Uint8Array([1]),
 			);
 			expect((await log.toArray())[1].payload.getValue()).to.deep.equal(
-				new Uint8Array([2])
+				new Uint8Array([2]),
 			);
 			expect((await log.toArray())[2].payload.getValue()).to.deep.equal(
-				new Uint8Array([3])
+				new Uint8Array([3]),
 			);
 		});
 	});
@@ -316,7 +318,7 @@ describe("properties", function () {
 			await log.append(new Uint8Array([1]));
 			await log.append(new Uint8Array([2, 3]));
 			await log.append(new Uint8Array([3, 4, 5]));
-			const arr = (await log.toArray())
+			const arr = await log.toArray();
 			const size = arr.reduce((acc, entry) => acc + entry.payloadByteLength, 0);
 			expect(log.length).equal(3);
 			expect(BigInt(await log.entryIndex.getMemoryUsage())).equal(BigInt(size));
@@ -324,25 +326,21 @@ describe("properties", function () {
 	});
 
 	describe("indexer", () => {
-		it('unique', async () => {
-
+		it("unique", async () => {
 			// TODO what is the purpose of this test?
 			// if indices.scope is called we assert that scope needs to be created outside the open
 
-			let indices = new HashmapIndices()
+			let indices = new HashmapIndices();
 
 			const log1 = new Log();
 			await log1.open(store, signKey, { indexer: await indices.scope("x") });
 
-
 			const log2 = new Log();
 			await log2.open(store, signKey, { indexer: await indices.scope("y") });
-			await log1.append(new Uint8Array([0]))
+			await log1.append(new Uint8Array([0]));
 
-			expect(await log1.toArray()).to.have.length(1)
-			expect(await log2.toArray()).to.have.length(0)
-		})
-	})
-
-
+			expect(await log1.toArray()).to.have.length(1);
+			expect(await log2.toArray()).to.have.length(0);
+		});
+	});
 });

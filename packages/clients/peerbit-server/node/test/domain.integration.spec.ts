@@ -1,13 +1,13 @@
-import { TestSession } from "@peerbit/test-utils";
 import { type ProgramClient } from "@peerbit/program";
-import http from "http";
-import { startApiServer } from "../src/server.js";
+import { TestSession } from "@peerbit/test-utils";
+import { expect } from "chai";
 import dotenv from "dotenv";
-import { getDomainFromConfig } from "../src/domain.js";
+import type http from "http";
 import path from "path";
 import { getTrustPath } from "../src/config.js";
+import { getDomainFromConfig } from "../src/domain.js";
+import { startApiServer } from "../src/server.js";
 import { Trust } from "../src/trust.js";
-import { expect } from "chai";
 
 dotenv.config();
 
@@ -33,12 +33,12 @@ describe("ssl", () => {
 	before(async () => {
 		const directory = "./tmp/peerbit/" + +new Date();
 		session = await TestSession.connected(1, {
-			directory: path.join(directory, "node")
+			directory: path.join(directory, "node"),
 		});
 		peer = session.peers[0];
 		server = await startApiServer(peer, {
 			trust: new Trust(getTrustPath(directory)),
-			port: 12345
+			port: 12345,
 		});
 	});
 
@@ -48,7 +48,7 @@ describe("ssl", () => {
 		await server.close();
 	});
 
-	it("_", () => { });
+	it("_", () => {});
 	/* These test are flaky, or have side effects, and should not be running in ci yet
 	it("certbot", async () => {
 		const { exec } = await import("child_process");

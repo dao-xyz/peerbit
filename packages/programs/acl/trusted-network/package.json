@@ -2,7 +2,6 @@
 	"name": "@peerbit/trusted-network",
 	"version": "3.0.40",
 	"description": "Access controller that operates on a DB",
-	"type": "module",
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

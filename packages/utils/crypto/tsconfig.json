@@ -1,15 +1,10 @@
 {
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
-		// allow top level await 
+		// allow top level await
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
-		"strictNullChecks": false,
 		"outDir": "dist"
 	},
-	"include": [
-		"src",
-		"test",
-		"benchmark"
-	]
+	"include": ["src", "test", "benchmark"]
 }

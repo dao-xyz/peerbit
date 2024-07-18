@@ -1,37 +1,37 @@
-import type { InstallDependency, StartProgram } from "./types.js";
+import { type PeerId } from "@libp2p/interface";
+import { multiaddr } from "@multiformats/multiaddr";
+import {
+	Ed25519Keypair,
+	type Ed25519PublicKey,
+	type Identity,
+	PublicSignKey,
+	getPublicKeyFromPeerId,
+} from "@peerbit/crypto";
+import type { Address } from "@peerbit/program";
+import { waitForResolved } from "@peerbit/time";
+import type { RemoteOrigin } from "./remotes.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
-	STOP_PATH,
 	INSTALL_PATH,
 	LOCAL_API_PORT,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
-	RESTART_PATH,
-	TRUST_PATH,
+	PROGRAM_VARIANTS_PATH,
 	REMOTE_API_PORT,
-	PROGRAM_VARIANTS_PATH
+	RESTART_PATH,
+	STOP_PATH,
+	TRUST_PATH,
 } from "./routes.js";
-import { multiaddr } from "@multiformats/multiaddr";
 import { signRequest } from "./signed-request.js";
-import {
-	Ed25519Keypair,
-	Ed25519PublicKey,
-	type Identity,
-	PublicSignKey,
-	getPublicKeyFromPeerId
-} from "@peerbit/crypto";
-import { type PeerId } from "@libp2p/interface";
-import { waitForResolved } from "@peerbit/time";
-import type { RemoteOrigin } from "./remotes.js";
-import type { Address } from "@peerbit/program";
+import type { InstallDependency, StartProgram } from "./types.js";
 
 export const createClient = async (
 	keypair: Identity<Ed25519PublicKey>,
 	remote: { address: string; origin?: RemoteOrigin } = {
-		address: "http://localhost:" + LOCAL_API_PORT
-	}
+		address: "http://localhost:" + LOCAL_API_PORT,
+	},
 ) => {
 	// Add missing protocol
 	let endpoint = remote.address;
@@ -62,13 +62,13 @@ export const createClient = async (
 			config.method!,
 			url.pathname + url.search,
 			config.data,
-			keypair
+			keypair,
 		);
 		return config;
 	});
 
 	const validateStatus = (status: number) => {
-		return (status >= 200 && status < 300) || status == 404;
+		return (status >= 200 && status < 300) || status === 404;
 	};
 
 	const throwIfNot200 = (resp: { status: number; data: any }) => {
@@ -82,43 +82,43 @@ export const createClient = async (
 		throwIfNot200(
 			await axiosInstance.get(endpoint + PEER_ID_PATH, {
 				validateStatus,
-				timeout: 5000
-			})
+				timeout: 5000,
+			}),
 		).data;
 
 	return {
 		peer: {
 			id: {
-				get: getId
+				get: getId,
 			},
 			addresses: {
 				get: async () => {
 					return (
 						throwIfNot200(
 							await axiosInstance.get(endpoint + ADDRESS_PATH, {
-								validateStatus
-							})
+								validateStatus,
+							}),
 						).data as string[]
 					).map((x) => multiaddr(x));
-				}
-			}
+				},
+			},
 		},
 
 		access: {
 			allow: async (key: PublicSignKey | PeerId | string) => {
 				const result = await axiosInstance.put(
 					endpoint +
-					TRUST_PATH +
-					"/" +
-					encodeURIComponent(
-						typeof key === "string"
-							? key
-							: key instanceof PublicSignKey
-								? key.hashcode()
-								: getPublicKeyFromPeerId(key).hashcode()
-					),
+						TRUST_PATH +
+						"/" +
+						encodeURIComponent(
+							typeof key === "string"
+								? key
+								: key instanceof PublicSignKey
+									? key.hashcode()
+									: getPublicKeyFromPeerId(key).hashcode(),
+						),
 					undefined,
-					{ validateStatus }
+					{ validateStatus },
 				);
 				if (result.status !== 200 && result.status !== 404) {
 					throw new Error(result.data);
@@ -128,29 +128,29 @@ export const createClient = async (
 			deny: async (key: PublicSignKey | PeerId) => {
 				const result = await axiosInstance.delete(
 					endpoint +
-					TRUST_PATH +
-					"/" +
-					encodeURIComponent(
-						key instanceof PublicSignKey
-							? key.hashcode()
-							: getPublicKeyFromPeerId(key).hashcode()
-					),
-					{ validateStatus }
+						TRUST_PATH +
+						"/" +
+						encodeURIComponent(
+							key instanceof PublicSignKey
+								? key.hashcode()
+								: getPublicKeyFromPeerId(key).hashcode(),
+						),
+					{ validateStatus },
 				);
 				if (result.status !== 200 && result.status !== 404) {
 					throw new Error(result.data);
 				}
 				return result.status === 200 ? true : false;
-			}
+			},
 		},
 		program: {
 			has: async (address: Address | string): Promise<boolean> => {
 				const result = await axiosInstance.head(
 					endpoint +
-					PROGRAM_PATH +
-					"/" +
-					encodeURIComponent(address.toString()),
-					{ validateStatus }
+						PROGRAM_PATH +
+						"/" +
+						encodeURIComponent(address.toString()),
+					{ validateStatus },
 				);
 				if (result.status !== 200 && result.status !== 404) {
 					throw new Error(result.data);
@@ -164,9 +164,9 @@ export const createClient = async (
 						endpoint + PROGRAM_PATH,
 						JSON.stringify(program),
 						{
-							validateStatus
-						}
-					)
+							validateStatus,
+						},
+					),
 				);
 				return resp.data as string;
 			},
@@ -175,13 +175,13 @@ export const createClient = async (
 				throwIfNot200(
 					await axiosInstance.delete(
 						endpoint +
-						PROGRAM_PATH +
-						"/" +
-						encodeURIComponent(address.toString()),
+							PROGRAM_PATH +
+							"/" +
+							encodeURIComponent(address.toString()),
 						{
-							validateStatus
-						}
-					)
+							validateStatus,
+						},
+					),
 				);
 			},
 
@@ -189,33 +189,33 @@ export const createClient = async (
 				throwIfNot200(
 					await axiosInstance.delete(
 						endpoint +
-						PROGRAM_PATH +
-						"/" +
-						encodeURIComponent(address.toString()) +
-						"?delete=true",
+							PROGRAM_PATH +
+							"/" +
+							encodeURIComponent(address.toString()) +
+							"?delete=true",
 						{
-							validateStatus
-						}
-					)
+							validateStatus,
+						},
+					),
 				);
 			},
 
 			list: async (): Promise<string[]> => {
 				const resp = throwIfNot200(
 					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
-						validateStatus
-					})
+						validateStatus,
+					}),
 				);
 				return resp.data as string[];
 			},
 			variants: async (): Promise<string[]> => {
 				const resp = throwIfNot200(
 					await axiosInstance.get(endpoint + PROGRAM_VARIANTS_PATH, {
-						validateStatus
-					})
+						validateStatus,
+					}),
 				);
 				return resp.data as string[];
-			}
+			},
 		},
 		dependency: {
 			install: async (instruction: InstallDependency): Promise<string[]> => {
@@ -223,39 +223,39 @@ export const createClient = async (
 					endpoint + INSTALL_PATH,
 					JSON.stringify(instruction),
 					{
-						validateStatus
-					}
+						validateStatus,
+					},
 				);
 				if (resp.status !== 200) {
 					throw new Error(
-						typeof resp.data === "string" ? resp.data : resp.data.toString()
+						typeof resp.data === "string" ? resp.data : resp.data.toString(),
 					);
 				}
 				return resp.data;
-			}
+			},
 		},
 		network: {
 			bootstrap: async (): Promise<void> => {
 				throwIfNot200(
 					await axiosInstance.post(endpoint + BOOTSTRAP_PATH, undefined, {
-						validateStatus
-					})
+						validateStatus,
+					}),
 				);
-			}
+			},
 		},
 
 		restart: async (): Promise<void> => {
 			throwIfNot200(
 				await axiosInstance.post(endpoint + RESTART_PATH, undefined, {
-					validateStatus
-				})
+					validateStatus,
+				}),
 			);
 		},
 		stop: async (): Promise<void> => {
 			throwIfNot200(
 				await axiosInstance.post(endpoint + STOP_PATH, undefined, {
-					validateStatus
-				})
+					validateStatus,
+				}),
 			);
 		},
 		terminate: async () => {
@@ -263,19 +263,19 @@ export const createClient = async (
 			if (remote.origin?.type === "aws") {
 				await terminateNode({
 					instanceId: remote.origin.instanceId,
-					region: remote.origin.region
+					region: remote.origin.region,
 				});
 			}
-		}
+		},
 	};
 };
 
 export const waitForDomain = async (
 	ip: string,
-	timeout: number = 5 * 60 * 1000
+	timeout: number = 5 * 60 * 1000,
 ): Promise<string> => {
 	const c = await createClient(await Ed25519Keypair.create(), {
-		address: "http://" + ip + ":" + LOCAL_API_PORT
+		address: "http://" + ip + ":" + LOCAL_API_PORT,
 	});
 	const result = await waitForResolved(
 		async () => {
@@ -288,8 +288,8 @@ export const waitForDomain = async (
 		},
 		{
 			delayInterval: 5000,
-			timeout
-		}
+			timeout,
+		},
 	);
 	if (!result) {
 		throw new Error("Failed to resolve domain");

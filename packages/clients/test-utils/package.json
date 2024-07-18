@@ -2,7 +2,6 @@
 	"name": "@peerbit/test-utils",
 	"version": "2.0.33",
 	"description": "Test utils for Peerbit",
-	"type": "module",
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

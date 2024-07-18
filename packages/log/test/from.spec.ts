@@ -1,18 +1,20 @@
-import assert from "assert";
-
-import { FirstWriteWins } from "../src/log-sorting.js";
-import { Entry } from "../src/entry.js";
-import { Log } from "../src/log.js";
-import { LogCreator } from "./utils/log-creator.js";
-import { compare } from "uint8arrays";
-import { delay } from "@peerbit/time";
-import { expect } from "chai";
-
-import { Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
-import { type BlockStore, AnyBlockStore, type StoreStatus } from "@peerbit/blocks";
-import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
 import { type PeerId } from "@libp2p/interface";
+import {
+	AnyBlockStore,
+	type BlockStore,
+	type StoreStatus,
+} from "@peerbit/blocks";
+import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
+import { Ed25519Keypair, type PublicSignKey } from "@peerbit/crypto";
+import { delay } from "@peerbit/time";
+import assert from "assert";
+import { expect } from "chai";
+import { compare } from "uint8arrays";
+import { Entry } from "../src/entry.js";
+import { FirstWriteWins } from "../src/log-sorting.js";
+import { Log } from "../src/log.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
+import { LogCreator } from "./utils/log-creator.js";
 
 const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
@@ -26,7 +28,7 @@ class SlowBlockStore implements Blocks {
 	}
 	async get<T>(
 		cid: string,
-		options?: GetOptions | undefined
+		options?: GetOptions | undefined,
 	): Promise<Uint8Array | undefined> {
 		await delay(this.lag);
 		return this._store.get(cid, options);
@@ -88,7 +90,7 @@ describe("from", function () {
 		"entryB2",
 		"entryA2",
 		"entryB1",
-		"entryA1"
+		"entryA1",
 	];
 
 	let store: BlockStore;
@@ -102,7 +104,7 @@ describe("from", function () {
 			await Ed25519Keypair.create(),
 			await Ed25519Keypair.create(),
 			await Ed25519Keypair.create(),
-			await Ed25519Keypair.create()
+			await Ed25519Keypair.create(),
 		];
 		signKeys.sort((a, b) => {
 			return compare(a.publicKey.publicKey, b.publicKey.publicKey);
@@ -124,22 +126,22 @@ describe("from", function () {
 		it("creates a log from an entry hash", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const data = fixture.log;
 			const heads = await fixture.log.getHeads(true).all();
 
 			const log1 = await Log.fromEntry(store, signKey, heads[0], {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const log2 = await Log.fromEntry(store, signKey, heads[1], {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 
 			await log1.join(log2);
-			expect((await log1.getHeads().all()).map((x) => x.meta.gid)).to.have.members(
-				(await data.getHeads().all()).map((x) => x.meta.gid)
-			);
+			expect(
+				(await log1.getHeads().all()).map((x) => x.meta.gid),
+			).to.have.members((await data.getHeads().all()).map((x) => x.meta.gid));
 			expect(log1.length).equal(16);
 			const arr = (await log1.toArray()).map((e) => e.payload.getValue());
 			assert.deepStrictEqual(arr, fixture.expectedData);
@@ -148,16 +150,16 @@ describe("from", function () {
 		it("creates a log from an entry hash with custom tiebreaker", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const heads = await fixture.log.getHeads(true).all();
 			const log1 = await Log.fromEntry(store, signKey, heads[0], {
 				sortFn: FirstWriteWins,
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			const log2 = await Log.fromEntry(store, signKey, heads[1], {
 				sortFn: FirstWriteWins,
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 
 			await log1.join(log2);
@@ -165,7 +167,7 @@ describe("from", function () {
 			expect(log1.length).equal(16);
 			assert.deepStrictEqual(
 				(await log1.toArray()).map((e) => e.payload.getValue()),
-				firstWriteExpectedData
+				firstWriteExpectedData,
 			);
 		});
 
@@ -177,7 +179,7 @@ describe("from", function () {
 					new SlowBlockStore(store),
 					signKey,
 					"zdpuAwNuRc2Kc1aNDdcdSWuxfNpHRJQw8L8APBNHCEFXbogus",
-					{ timeout, encoding: JSON_ENCODING }
+					{ timeout, encoding: JSON_ENCODING },
 				);
 				throw new Error("Expected to fail");
 			} catch (error) {
@@ -207,7 +209,7 @@ describe("from", function () {
 		it("creates a log from an entry", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const data = fixture.log;
 
@@ -216,23 +218,23 @@ describe("from", function () {
 				signKey,
 				await data.getHeads(true).all(),
 				{
-					encoding: JSON_ENCODING
-				}
+					encoding: JSON_ENCODING,
+				},
 			);
 			expect((await log.getHeads().all())[0].meta.gid).equal(
-				(await data.getHeads().all())[0].meta.gid
+				(await data.getHeads().all())[0].meta.gid,
 			);
 			expect(log.length).equal(16);
 			assert.deepStrictEqual(
 				(await log.toArray()).map((e) => e.payload.getValue()),
-				fixture.expectedData
+				fixture.expectedData,
 			);
 		});
 
 		it("creates a log from an entry with custom tiebreaker", async () => {
 			const fixture = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const data = fixture.log;
 
@@ -240,12 +242,12 @@ describe("from", function () {
 				store,
 				signKey,
 				await data.getHeads(true).all(),
-				{ sortFn: FirstWriteWins, encoding: JSON_ENCODING }
+				{ sortFn: FirstWriteWins, encoding: JSON_ENCODING },
 			);
 			expect(log.length).equal(16);
 			assert.deepStrictEqual(
 				(await log.toArray()).map((e) => e.payload.getValue()),
-				firstWriteExpectedData
+				firstWriteExpectedData,
 			);
 		});
 
@@ -373,24 +375,24 @@ describe("from", function () {
 					identity: log1.identity,
 					meta: {
 						gidSeed: Buffer.from("X"),
-						next: prev1 ? [prev1] : undefined
+						next: prev1 ? [prev1] : undefined,
 					},
-					data: new Uint8Array([0, i])
+					data: new Uint8Array([0, i]),
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
 					meta: { gidSeed: Buffer.from("X"), next: prev2 ? [prev2, n1] : [n1] },
-					data: new Uint8Array([1, i])
+					data: new Uint8Array([1, i]),
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
 					meta: {
 						gidSeed: Buffer.from("X"),
-						next: prev3 ? [prev3, n1, n2] : [n1, n2]
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
 					},
-					data: new Uint8Array([2, i])
+					data: new Uint8Array([2, i]),
 				});
 				items1.push(n1);
 				items2.push(n2);
@@ -401,12 +403,12 @@ describe("from", function () {
 			expect(a.length).equal(amount);
 
 			const b = await Log.fromEntry<Uint8Array>(store, signKey2, [
-				last(items2)
+				last(items2),
 			]);
 			expect(b.length).equal(amount * 2);
 
 			const c = await Log.fromEntry<Uint8Array>(store, signKey3, [
-				last(items3)
+				last(items3),
 			]);
 			expect(c.length).equal(amount * 3);
 		});
@@ -425,24 +427,24 @@ describe("from", function () {
 					identity: log1.identity,
 					meta: {
 						gidSeed: Buffer.from("X"),
-						next: prev1 ? [prev1] : undefined
+						next: prev1 ? [prev1] : undefined,
 					},
-					data: new Uint8Array([0, i])
+					data: new Uint8Array([0, i]),
 				});
 				const n2 = await Entry.create({
 					store,
 					identity: log2.identity,
 					meta: { gidSeed: Buffer.from("X"), next: prev2 ? [prev2, n1] : [n1] },
-					data: new Uint8Array([1, i])
+					data: new Uint8Array([1, i]),
 				});
 				const n3 = await Entry.create({
 					store,
 					identity: log3.identity,
 					meta: {
 						gidSeed: Buffer.from("X"),
-						next: prev3 ? [prev3, n1, n2] : [n1, n2]
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
 					},
-					data: new Uint8Array([2, i])
+					data: new Uint8Array([2, i]),
 				});
 				items1.push(n1);
 				items2.push(n2);
@@ -480,10 +482,10 @@ describe("from", function () {
 							items1.length > 0
 								? items1[items1.length - 1].meta.clock.advance()
 								: undefined,
-						next: prev1 ? [prev1] : undefined
+						next: prev1 ? [prev1] : undefined,
 					},
 					data: "entryA" + i,
-					encoding: JSON_ENCODING
+					encoding: JSON_ENCODING,
 				});
 				const n2 = await Entry.create({
 					store,
@@ -494,10 +496,10 @@ describe("from", function () {
 							items2.length > 0
 								? items2[items2.length - 1].meta.clock.advance()
 								: undefined,
-						next: prev2 ? [prev2, n1] : [n1]
+						next: prev2 ? [prev2, n1] : [n1],
 					},
 					data: "entryB" + i,
-					encoding: JSON_ENCODING
+					encoding: JSON_ENCODING,
 				});
 				const n3 = await Entry.create({
 					store,
@@ -508,10 +510,10 @@ describe("from", function () {
 							items3.length > 0
 								? items3[items3.length - 1].meta.clock.advance()
 								: undefined,
-						next: prev3 ? [prev3, n1, n2] : [n1, n2]
+						next: prev3 ? [prev3, n1, n2] : [n1, n2],
 					},
 					data: "entryC" + i,
-					encoding: JSON_ENCODING
+					encoding: JSON_ENCODING,
 				});
 				/*        log1.mergeClock(log2.clock)
 			 log1.mergeClock(log3.clock)
@@ -547,19 +549,19 @@ describe("from", function () {
 				"entryA9",
 				"entryB9",
 				"entryA10",
-				"entryB10"
+				"entryB10",
 			];
 
 			const b = await Log.fromEntry<string>(store, signKey2, last(items2), {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			expect(b.length).equal(amount * 2);
 			expect(
-				(await b.toArray()).map((e) => e.payload.getValue())
+				(await b.toArray()).map((e) => e.payload.getValue()),
 			).to.have.members(itemsInB);
 
 			const c = await Log.fromEntry<string>(store, signKey4, last(items3), {
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			await c.append("EOF");
 			expect(c.length).equal(amount * 3 + 1);
@@ -595,11 +597,11 @@ describe("from", function () {
 				"entryA10",
 				"entryB10",
 				"entryC10",
-				"EOF"
+				"EOF",
 			];
 
 			expect(
-				(await c.toArray()).map((e) => e.payload.getValue())
+				(await c.toArray()).map((e) => e.payload.getValue()),
 			).to.have.members(tmp);
 
 			// make sure logX comes after A, B and C
@@ -613,8 +615,8 @@ describe("from", function () {
 				signKey3,
 				last(await logX.toArray()),
 				{
-					encoding: JSON_ENCODING
-				}
+					encoding: JSON_ENCODING,
+				},
 			);
 
 			await c.join(d);
@@ -622,18 +624,12 @@ describe("from", function () {
 
 			await c.append("DONE");
 			await d.append("DONE");
-			await Log.fromEntry<string>(
-				store,
-				signKey3,
-				last(await c.toArray()),
-				{ encoding: JSON_ENCODING }
-			);
-			await Log.fromEntry<string>(
-				store,
-				signKey3,
-				last(await d.toArray()),
-				{ encoding: JSON_ENCODING }
-			);
+			await Log.fromEntry<string>(store, signKey3, last(await c.toArray()), {
+				encoding: JSON_ENCODING,
+			});
+			await Log.fromEntry<string>(store, signKey3, last(await d.toArray()), {
+				encoding: JSON_ENCODING,
+			});
 
 			/*  expect(f.toString()).equal(bigLogString) // Ignore these for know since we have removed the clock manipulation in the loop
 	 expect(g.toString()).equal(bigLogString) */
@@ -678,12 +674,12 @@ describe("from", function () {
 				"entryA12",
 				"entryA13",
 				"entryA14",
-				"entryA15"
+				"entryA15",
 			];
 
-			expect((await log1.toArray()).map((e) => e.payload.getValue())).to.deep.equal(
-				expectedData
-			);
+			expect(
+				(await log1.toArray()).map((e) => e.payload.getValue()),
+			).to.deep.equal(expectedData);
 		});
 
 		it("retrieves randomly joined log deterministically", async () => {
@@ -719,18 +715,18 @@ describe("from", function () {
 				"entryA8",
 				"entryA9",
 				"entryA10",
-				"entryC0"
+				"entryC0",
 			];
 
 			expect(
-				(await log4.toArray()).map((e) => e.payload.getValue())
+				(await log4.toArray()).map((e) => e.payload.getValue()),
 			).to.deep.equal(expectedData);
 		});
 
 		it("sorts", async () => {
 			const testLog = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const log = testLog.log;
 			const expectedData = testLog.expectedData;
@@ -750,7 +746,7 @@ describe("from", function () {
 				"entryA7",
 				"entryA8",
 				"entryA9",
-				"entryA10"
+				"entryA10",
 			];
 
 			const expectedData3 = [
@@ -768,7 +764,7 @@ describe("from", function () {
 				"entryC0",
 				"entryA7",
 				"entryA8",
-				"entryA9"
+				"entryA9",
 			];
 
 			const expectedData4 = [
@@ -786,13 +782,13 @@ describe("from", function () {
 				"entryA7",
 				"entryA8",
 				"entryA9",
-				"entryA10"
+				"entryA10",
 			];
 
 			const fetchOrder = (await log.toArray()).slice().sort(Entry.compare);
 			assert.deepStrictEqual(
 				fetchOrder.map((e) => e.payload.getValue()),
-				expectedData
+				expectedData,
 			);
 
 			const reverseOrder = (await log.toArray())
@@ -819,7 +815,7 @@ describe("from", function () {
 				.sort(Entry.compare);
 			assert.deepStrictEqual(
 				partialLog.map((e) => e.payload.getValue()),
-				expectedData2
+				expectedData2,
 			);
 
 			const partialLog2 = (await log.toArray())
@@ -827,7 +823,7 @@ describe("from", function () {
 				.sort(Entry.compare);
 			assert.deepStrictEqual(
 				partialLog2.map((e) => e.payload.getValue()),
-				expectedData3
+				expectedData3,
 			);
 
 			const partialLog3 = (await log.toArray())
@@ -835,14 +831,14 @@ describe("from", function () {
 				.sort(Entry.compare);
 			assert.deepStrictEqual(
 				partialLog3.map((e) => e.payload.getValue()),
-				expectedData4
+				expectedData4,
 			);
 		});
 
 		it("sorts deterministically from random order", async () => {
 			const testLog = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const log = testLog.log;
 			const expectedData = testLog.expectedData;
@@ -850,7 +846,7 @@ describe("from", function () {
 			const fetchOrder = (await log.toArray()).slice().sort(Entry.compare);
 			assert.deepStrictEqual(
 				fetchOrder.map((e) => e.payload.getValue()),
-				expectedData
+				expectedData,
 			);
 
 			let sorted;
@@ -861,7 +857,7 @@ describe("from", function () {
 				sorted = randomOrder.sort(Entry.compare);
 				assert.deepStrictEqual(
 					sorted.map((e) => e.payload.getValue()),
-					expectedData
+					expectedData,
 				);
 			}
 		});
@@ -869,31 +865,31 @@ describe("from", function () {
 		it("sorts entries correctly", async () => {
 			const testLog = await LogCreator.createLogWithTwoHundredEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 			const log = testLog.log;
 			const expectedData = testLog.expectedData;
 			assert.deepStrictEqual(
 				(await log.toArray()).map((e) => e.payload.getValue()),
-				expectedData
+				expectedData,
 			);
 		});
 
 		it("sorts entries according to custom tiebreaker function", async () => {
 			const testLog = await LogCreator.createLogWithSixteenEntries(
 				store,
-				signKeys
+				signKeys,
 			);
 
 			const firstWriteWinsLog = new Log<string>();
 			await firstWriteWinsLog.open(store, signKeys[0], {
 				sortFn: FirstWriteWins,
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			await firstWriteWinsLog.join(testLog.log);
 			assert.deepStrictEqual(
 				(await firstWriteWinsLog.toArray()).map((e) => e.payload.getValue()),
-				firstWriteExpectedData
+				firstWriteExpectedData,
 			);
 		});
 
@@ -1149,9 +1145,9 @@ describe("from", function () {
 								items1.length > 0
 									? items1[items1.length - 1].meta.clock.advance()
 									: undefined,
-							next: prev1 ? [prev1] : undefined
+							next: prev1 ? [prev1] : undefined,
 						},
-						data: new Uint8Array([0, i])
+						data: new Uint8Array([0, i]),
 					});
 					const n2 = await Entry.create({
 						store,
@@ -1162,9 +1158,9 @@ describe("from", function () {
 								items2.length > 0
 									? items2[items2.length - 1].meta.clock.advance()
 									: undefined,
-							next: prev2 ? [prev2, n1] : [n1]
+							next: prev2 ? [prev2, n1] : [n1],
 						},
-						data: new Uint8Array([1, i])
+						data: new Uint8Array([1, i]),
 					});
 					const n3 = await Entry.create({
 						store,
@@ -1175,9 +1171,9 @@ describe("from", function () {
 								items3.length > 0
 									? items3[items3.length - 1].meta.clock.advance()
 									: undefined,
-							next: prev3 ? [prev3, n1, n2] : [n1, n2]
+							next: prev3 ? [prev3, n1, n2] : [n1, n2],
 						},
-						data: new Uint8Array([2, i])
+						data: new Uint8Array([2, i]),
 					});
 					items1.push(n1);
 					items2.push(n2);

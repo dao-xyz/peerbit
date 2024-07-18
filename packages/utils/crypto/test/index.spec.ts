@@ -1,40 +1,40 @@
-import {
-	Ed25519Keypair,
-	X25519Keypair,
-	verifySignatureSecp256k1,
-	Secp256k1PublicKey,
-	Secp256k1Keypair,
-	verify,
-	Ed25519PublicKey,
-	SignatureWithKey,
-	Ed25519PrivateKey
-} from "../src/index.js";
-import sodium from "libsodium-wrappers";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Wallet } from "@ethersproject/wallet";
-import { createSecp256k1PeerId } from "@libp2p/peer-id-factory";
 import { supportedKeys } from "@libp2p/crypto/keys";
+import { createSecp256k1PeerId } from "@libp2p/peer-id-factory";
+import { expect } from "chai";
+import sodium from "libsodium-wrappers";
 import {
+	sign as signEd25519Browser,
+	verifySignatureEd25519 as verifySignatureEd25519Browser,
+} from "../src/ed25519-sign.browser.js";
+import {
+	sign as signEd25519,
 	verifySignatureEd25519,
-	sign as signEd25519
 } from "../src/ed25519-sign.js";
 import {
-	verifySignatureEd25519 as verifySignatureEd25519Browser,
-	sign as signEd25519Browser
-} from "../src/ed25519-sign.browser.js";
+	Ed25519Keypair,
+	Ed25519PrivateKey,
+	Ed25519PublicKey,
+	Secp256k1Keypair,
+	Secp256k1PublicKey,
+	SignatureWithKey,
+	X25519Keypair,
+	verify,
+	verifySignatureSecp256k1,
+} from "../src/index.js";
 import { PreHash } from "../src/prehash.js";
-import { expect } from "chai";
 
 describe("Ed25519", () => {
 	it("ser/der", async () => {
 		const keypair = await Ed25519Keypair.create();
 		const derser = deserialize(serialize(keypair), Ed25519Keypair);
 		expect(new Uint8Array(derser.publicKey.publicKey)).to.deep.equal(
-			keypair.publicKey.publicKey
+			keypair.publicKey.publicKey,
 		);
 	});
 
-	it("PeerId", async () => { });
+	it("PeerId", async () => {});
 
 	describe("PeerId", () => {
 		it("keypair", async () => {
@@ -43,9 +43,8 @@ describe("Ed25519", () => {
 			const privateKeyFromPeerId = Ed25519PrivateKey.fromPeerID(peerId);
 			const keyPairFromPeerId = Ed25519Keypair.fromPeerId(peerId);
 			expect(keyPairFromPeerId.equals(kp)).to.be.true;
-			expect(
-				privateKeyFromPeerId.equals(keyPairFromPeerId.privateKey)
-			).to.be.true;
+			expect(privateKeyFromPeerId.equals(keyPairFromPeerId.privateKey)).to.be
+				.true;
 		});
 
 		it("publickey", async () => {
@@ -65,9 +64,9 @@ describe("Ed25519", () => {
 				new SignatureWithKey({
 					prehash: PreHash.NONE,
 					publicKey: new Ed25519PublicKey({ publicKey: keypair.publicKey }),
-					signature: signature
+					signature,
 				}),
-				data
+				data,
 			);
 			expect(isVerified).to.be.true;
 		});
@@ -92,7 +91,7 @@ describe("Ed25519", () => {
 
 			const isNotVerified = await verifySignatureEd25519(
 				signature,
-				data.reverse()
+				data.reverse(),
 			);
 			expect(isNotVerified).to.be.false;
 		});
@@ -108,7 +107,7 @@ describe("Ed25519", () => {
 
 			const isNotVerified = await verifySignatureEd25519Browser(
 				signature,
-				data.reverse()
+				data.reverse(),
 			);
 			expect(isNotVerified).to.be.false;
 		});
@@ -119,14 +118,14 @@ describe("Ed25519", () => {
 			const signature = await signEd25519Browser(
 				data,
 				keypair,
-				PreHash.SHA_256
+				PreHash.SHA_256,
 			);
 			const isVerified = await verifySignatureEd25519Browser(signature, data);
 			expect(isVerified).to.be.true;
 
 			const isNotVerified = await verifySignatureEd25519Browser(
 				signature,
-				data.reverse()
+				data.reverse(),
 			);
 			expect(isNotVerified).to.be.false;
 		});
@@ -139,7 +138,7 @@ describe("Ed25519", () => {
 		it("sign", async () => {
 			const keypair = await Ed25519Keypair.create();
 			const data = new Uint8Array([1, 2, 3]);
-			let signatures: SignatureWithKey[] = [];
+			const signatures: SignatureWithKey[] = [];
 			for (const signFn of signFns) {
 				const signature = await signFn(data, keypair, PreHash.NONE);
 				for (const verifyFn of verifyFns) {
@@ -150,8 +149,8 @@ describe("Ed25519", () => {
 				if (signatures.length > 1) {
 					expect(
 						signatures[signatures.length - 2].equals(
-							signatures[signatures.length - 1]
-						)
+							signatures[signatures.length - 1],
+						),
 					).to.be.true;
 				}
 			}
@@ -172,8 +171,8 @@ describe("Ed25519", () => {
 				if (signatures.length > 1) {
 					expect(
 						signatures[signatures.length - 2].equals(
-							signatures[signatures.length - 1]
-						)
+							signatures[signatures.length - 1],
+						),
 					).to.be.true;
 				}
 			}
@@ -186,7 +185,7 @@ describe("X25519", () => {
 		const keypair = await X25519Keypair.create();
 		const derser = deserialize(serialize(keypair), X25519Keypair);
 		expect(new Uint8Array(derser.publicKey.publicKey)).to.deep.equal(
-			keypair.publicKey.publicKey
+			keypair.publicKey.publicKey,
 		);
 	});
 });
@@ -204,7 +203,7 @@ describe("Sepck2561k1", () => {
 		const signatureWithKey = new SignatureWithKey({
 			prehash: PreHash.ETH_KECCAK_256,
 			publicKey: pk,
-			signature: signatureBytes
+			signature: signatureBytes,
 		});
 
 		const isVerified = await verifySignatureSecp256k1(signatureWithKey, data);
@@ -212,7 +211,7 @@ describe("Sepck2561k1", () => {
 
 		const isNotVerified = await verifySignatureSecp256k1(
 			signatureWithKey,
-			new Uint8Array(data).reverse()
+			new Uint8Array(data).reverse(),
 		);
 		expect(isNotVerified).to.be.false;
 	});
@@ -220,7 +219,7 @@ describe("Sepck2561k1", () => {
 		const peerId = await createSecp256k1PeerId();
 		const keypair = Secp256k1Keypair.fromPeerId(peerId);
 		const privateKey = new supportedKeys["secp256k1"].Secp256k1PrivateKey(
-			peerId.privateKey!.slice(4)
+			peerId.privateKey!.slice(4),
 		);
 		const publicKeyComputed = privateKey.public;
 		expect(publicKeyComputed.bytes).to.deep.equal(peerId.publicKey);
@@ -243,7 +242,7 @@ describe("Sepck2561k1", () => {
 		});
 	});
 	it("ser/der", async () => {
-		const wallet = await Wallet.createRandom();
+		const wallet = Wallet.createRandom();
 		const pk = await Secp256k1PublicKey.recover(wallet);
 		const derser = deserialize(serialize(pk), Secp256k1PublicKey);
 		expect(derser.equals(pk)).to.be.true;

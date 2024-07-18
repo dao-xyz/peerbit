@@ -1,5 +1,5 @@
-import { AbstractLevel } from "abstract-level";
 import { type AnyStore } from "@peerbit/any-store-interface";
+import { type AbstractLevel } from "abstract-level";
 import { ClassicLevel } from "classic-level";
 
 const isNotFoundError = (err: any) =>
@@ -7,7 +7,7 @@ const isNotFoundError = (err: any) =>
 	err.toString().indexOf("NotFound") === -1;
 
 export class LevelStore implements AnyStore {
-	constructor(readonly store: AbstractLevel<any, any, any>) { }
+	constructor(readonly store: AbstractLevel<any, any, any>) {}
 
 	status() {
 		return this.store.status;
@@ -25,8 +25,9 @@ export class LevelStore implements AnyStore {
 	}
 
 	async open() {
-		if (!this.store)
+		if (!this.store) {
 			return Promise.reject(new Error("No cache store found to open"));
+		}
 		if (this.status() !== "open") {
 			await this.store.open();
 			return Promise.resolve();
@@ -52,7 +53,7 @@ export class LevelStore implements AnyStore {
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
 		const iterator = this.store.iterator<any, Uint8Array>({
-			valueEncoding: "view"
+			valueEncoding: "view",
 		});
 		for await (const [key, value] of iterator) {
 			yield [key, value];
@@ -64,7 +65,10 @@ export class LevelStore implements AnyStore {
 	}
 
 	async put(key: string, value: Uint8Array) {
-		return this.store.put(key, value, { valueEncoding: "view", sync: true } as any); // sync option to make sure read after write behaves correctly
+		return this.store.put(key, value, {
+			valueEncoding: "view",
+			sync: true,
+		} as any); // sync option to make sure read after write behaves correctly
 	}
 
 	// Remove a value and key from the cache
@@ -90,21 +94,21 @@ export class LevelStore implements AnyStore {
 		let size = 0;
 		if (this.store instanceof ClassicLevel) {
 			const e = this.store.keys({
-				limit: 1,
-				fillCache: !1
-			}),
+					limit: 1,
+					fillCache: !1,
+				}),
 				a = await e.next();
 			await e.close();
 			const t = this.store.keys({
-				limit: 1,
-				reverse: !0,
-				fillCache: !1
-			}),
+					limit: 1,
+					reverse: !0,
+					fillCache: !1,
+				}),
 				s = await t.next();
 			return (
 				await t.close(),
 				this.store.approximateSize(a, s + "\uffff", {
-					keyEncoding: "utf8"
+					keyEncoding: "utf8",
 				})
 			);
 		} else {
@@ -120,6 +124,6 @@ export class LevelStore implements AnyStore {
 	}
 
 	persisted() {
-		return this.store instanceof ClassicLevel ? true : false
+		return this.store instanceof ClassicLevel;
 	}
 }

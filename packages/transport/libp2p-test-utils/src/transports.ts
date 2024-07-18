@@ -1,25 +1,23 @@
 import {
+	circuitRelayServer,
 	circuitRelayTransport,
-	circuitRelayServer
 } from "@libp2p/circuit-relay-v2";
+import type { Transport } from "@libp2p/interface";
+
 import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
-import { tcp } from "@libp2p/tcp";
 import type { Components } from "libp2p/components";
-import type { Transport } from "@libp2p/interface";
 
-export const transports = (
-	browser: boolean
-): Array<(components: Components) => Transport> =>
-	browser
-		? [
-			circuitRelayTransport({
-				discoverRelays: 1
-			}),
-			webRTC({}),
-			webSockets({ filter: filters.all })
-		]
-		: ([tcp()] as any);
+export const transports = (): Array<(components: Components) => Transport> => [
+	circuitRelayTransport({
+		discoverRelays: 1,
+		reservationCompletionTimeout: 5000
+	}),
+	webRTC({}),
+	webSockets({ filter: filters.all }),
+];
 
-export const relay = () => circuitRelayServer({});
+// applyDefaultLimit: false because of https://github.com/libp2p/js-libp2p/issues/2622
+export const relay = () =>
+	circuitRelayServer({ reservations: { applyDefaultLimit: false } });

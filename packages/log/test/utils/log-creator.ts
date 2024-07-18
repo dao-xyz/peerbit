@@ -1,13 +1,14 @@
-import { Ed25519Keypair, randomBytes } from "@peerbit/crypto";
 import { type Blocks } from "@peerbit/blocks-interface";
-import { Log } from "../../src/log.js";
-import { Timestamp } from "../../src/clock.js";
-import { JSON_ENCODING } from "./encoding.js";
+import { type Ed25519Keypair, randomBytes } from "@peerbit/crypto";
 import { expect } from "chai";
+import { Timestamp } from "../../src/clock.js";
+import { Log } from "../../src/log.js";
+import { JSON_ENCODING } from "./encoding.js";
+
 export class LogCreator {
 	static async createLogWithSixteenEntries(
 		store: Blocks,
-		signKeys: Ed25519Keypair[]
+		signKeys: Ed25519Keypair[],
 	) {
 		const expectedData = [
 			"entryA1",
@@ -25,7 +26,7 @@ export class LogCreator {
 			"entryA7",
 			"entryA8",
 			"entryA9",
-			"entryA10"
+			"entryA10",
 		];
 
 		const create = async (): Promise<Log<string>> => {
@@ -55,15 +56,15 @@ export class LogCreator {
 				meta: {
 					timestamp: new Timestamp({
 						wallTime: (await logA.toArray())[5].meta.clock.timestamp.wallTime,
-						logical: (await logA.toArray())[5].meta.clock.timestamp.logical + 1
-					})
-				}
+						logical: (await logA.toArray())[5].meta.clock.timestamp.logical + 1,
+					}),
+				},
 			});
 			await log4.join(logA);
-			const toArray = (await log4.toArray())
-			expect(
-				toArray.map((h) => h.payload.getValue())
-			).to.deep.equal(expectedData);
+			const toArray = await log4.toArray();
+			expect(toArray.map((h) => h.payload.getValue())).to.deep.equal(
+				expectedData,
+			);
 			return log4;
 		};
 
@@ -72,7 +73,7 @@ export class LogCreator {
 
 	static async createLogWithTwoHundredEntries(
 		store: Blocks,
-		signKeys: Ed25519Keypair[]
+		signKeys: Ed25519Keypair[],
 	) {
 		const amount = 100;
 

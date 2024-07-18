@@ -1,6 +1,6 @@
-export class TimeoutError extends Error { }
+export class TimeoutError extends Error {}
 
-export class AbortError extends Error { }
+export class AbortError extends Error {}
 export const delay = async (ms: number, options?: { signal?: AbortSignal }) => {
 	return new Promise<void>((resolve, reject) => {
 		function handleAbort() {
@@ -25,10 +25,10 @@ const createTimeoutError = (options: { timeoutMessage?: string }) =>
 export const waitFor = async <T>(
 	fn: () => T | Promise<T>,
 	options: {
-		timeout?: number
-		signal?: AbortSignal
-		delayInterval?: number
-		timeoutMessage?: string
+		timeout?: number;
+		signal?: AbortSignal;
+		delayInterval?: number;
+		timeoutMessage?: string;
 	} = { timeout: 10 * 1000, delayInterval: 100 },
 ): Promise<T | undefined> => {
 	const delayInterval = options.delayInterval || 100;
@@ -59,10 +59,10 @@ export const waitFor = async <T>(
 export const waitForResolved = async <T>(
 	fn: () => T | Promise<T>,
 	options: {
-		timeout?: number
-		signal?: AbortSignal
-		delayInterval?: number
-		timeoutMessage?: string
+		timeout?: number;
+		signal?: AbortSignal;
+		delayInterval?: number;
+		timeoutMessage?: string;
 	} = { timeout: 10 * 1000, delayInterval: 50 },
 ): Promise<T> => {
 	const delayInterval = options.delayInterval || 50;

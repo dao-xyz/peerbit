@@ -8,9 +8,5 @@
 		"skipLibCheck": true,
 		"checkJs": false
 	},
-	"include": [
-		"src",
-		"test",
-		"benchmark"
-	]
+	"include": ["src", "test", "benchmark"]
 }

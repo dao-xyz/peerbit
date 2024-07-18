@@ -1,66 +1,67 @@
-import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
-import { pipe } from "it-pipe";
-import Queue from "p-queue";
-import type { PeerId } from "@libp2p/interface";
-import type { Connection } from "@libp2p/interface";
-import { type PushableLanes, pushableLanes } from "./pushable-lanes.js";
-import type { Stream } from "@libp2p/interface";
-import { Uint8ArrayList } from "uint8arraylist";
-import { abortableSource } from "abortable-iterator";
-import * as lp from "it-length-prefixed";
-import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
-import type { IncomingStreamData, Registrar } from "@libp2p/interface-internal";
-import type { AddressManager } from "@libp2p/interface-internal";
-import type { ConnectionManager } from "@libp2p/interface-internal";
-import { type PeerStore } from "@libp2p/interface";
-import pDefer from "p-defer";
-
-import { AbortError, delay, TimeoutError, waitFor } from "@peerbit/time";
-
+import { CustomEvent, TypedEventEmitter } from "@libp2p/interface";
+import type {
+	Connection,
+	Libp2pEvents,
+	PeerId,
+	PeerStore,
+	Stream,
+	TypedEventTarget,
+} from "@libp2p/interface";
+import type {
+	AddressManager,
+	ConnectionManager,
+	IncomingStreamData,
+	Registrar,
+} from "@libp2p/interface-internal";
+import { multiaddr } from "@multiformats/multiaddr";
+import { Cache } from "@peerbit/cache";
 import {
+	PublicSignKey,
+	type SignatureWithKey,
 	getKeypairFromPeerId,
 	getPublicKeyFromPeerId,
-	PublicSignKey,
+	ready,
 	sha256Base64,
-	SignatureWithKey,
-	toBase64
+	toBase64,
 } from "@peerbit/crypto";
-
-import { multiaddr } from "@multiformats/multiaddr";
-import type { Components } from "libp2p/components";
-import type { TypedEventTarget } from "@libp2p/interface";
-
-import { logger } from "./logger.js";
-export { logger };
-import { Cache } from "@peerbit/cache";
-
-import type { Libp2pEvents } from "@libp2p/interface";
-import { ready } from "@peerbit/crypto";
 import {
-	Message as Message,
-	DataMessage,
-	getMsgId,
-	type WaitForPeer,
 	ACK,
-	SeekDelivery,
 	AcknowledgeDelivery,
-	SilentDelivery,
-	MessageHeader,
+	AnyWhere,
+	DataMessage,
+	DeliveryError,
 	Goodbye,
+	type IdentificationOptions,
+	Message,
+	MessageHeader,
+	MultiAddrinfo,
+	NotStartedError,
+	type PriorityOptions,
+	SeekDelivery,
+	SilentDelivery,
 	type StreamEvents,
 	TracedDelivery,
-	AnyWhere,
-	NotStartedError,
-	deliveryModeHasReceiver,
-	DeliveryError,
-	type WithTo,
+	type WaitForPeer,
 	type WithMode,
-	type PriorityOptions
+	type WithTo,
+	deliveryModeHasReceiver,
+	getMsgId,
 } from "@peerbit/stream-interface";
-
-import { MultiAddrinfo } from "@peerbit/stream-interface";
+import { AbortError, TimeoutError, delay, waitFor } from "@peerbit/time";
+import { abortableSource } from "abortable-iterator";
+import * as lp from "it-length-prefixed";
+import { pipe } from "it-pipe";
+import type { Components } from "libp2p/components";
+import pDefer from "p-defer";
+import Queue from "p-queue";
+import { Uint8ArrayList } from "uint8arraylist";
+import { logger } from "./logger.js";
+import { type PushableLanes, pushableLanes } from "./pushable-lanes.js";
+import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
 import { BandwidthTracker } from "./stats.js";
-import { type IdentificationOptions } from "@peerbit/stream-interface";
+
+export { logger };
+
 export { BandwidthTracker }; // might be useful for others
 
 const logError = (e?: { message: string }) => {
@@ -180,8 +181,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	write(data: Uint8Array | Uint8ArrayList, priority: number) {
 		if (data.length > MAX_DATA_LENGTH_OUT) {
 			throw new Error(
-				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${MAX_DATA_LENGTH_OUT * 1e-6
-				} mb`
+				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
+					MAX_DATA_LENGTH_OUT * 1e-6
+				} mb`,
 			);
 		}
 		if (this.outboundStream == null) {
@@ -194,44 +196,46 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			data instanceof Uint8Array ? data : data.subarray(),
 			this.outboundStream.getReadableLength(0) === 0
 				? 0
-				: getLaneFromPriority(priority) // TODO use more lanes
+				: getLaneFromPriority(priority), // TODO use more lanes
 		);
 	}
 
 	async waitForWrite(bytes: Uint8Array | Uint8ArrayList, priority: number = 0) {
 		if (this.closed) {
-			logger.error("Failed to send to stream: " + this.peerId + ". Closed");
+			logger.error(
+				"Failed to send to stream: " + this.peerId.toString() + ". Closed",
+			);
 			return;
 		}
 
 		if (!this.isWritable) {
 			// Catch the event where the outbound stream is attach, but also abort if we shut down
-			const outboundPromise = new Promise<void>((rs, rj) => {
-				const resolve = () => {
+			const outboundPromise = new Promise<void>((resolve, reject) => {
+				const resolveClear = () => {
 					this.removeEventListener("stream:outbound", listener);
 					clearTimeout(timer);
-					rs();
+					resolve();
 				};
-				const reject = (err: Error) => {
+				const rejectClear = (err: Error) => {
 					this.removeEventListener("stream:outbound", listener);
 					clearTimeout(timer);
-					rj(err);
+					reject(err);
 				};
 				const timer = setTimeout(() => {
-					reject(new Error("Timed out"));
+					rejectClear(new Error("Timed out"));
 				}, 3 * 1000); // TODO if this timeout > 10s we run into issues in the tests when running in CI
 				const abortHandler = () => {
 					this.removeEventListener("close", abortHandler);
-					reject(new AbortError("Closed"));
+					rejectClear(new AbortError("Closed"));
 				};
 				this.addEventListener("close", abortHandler);
 
 				const listener = () => {
-					resolve();
+					resolveClear();
 				};
 				this.addEventListener("stream:outbound", listener);
 				if (this.isWritable) {
-					resolve();
+					resolveClear();
 				}
 			});
 
@@ -264,15 +268,15 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.rawInboundStream = stream;
 		this.inboundStream = abortableSource(
 			pipe(this.rawInboundStream, (source) =>
-				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN })
+				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
 			),
 			this.inboundAbortController.signal,
 			{
 				returnOnAbort: true,
 				onReturnError: (err) => {
 					logger.error("Inbound stream error", err?.message);
-				}
-			}
+				},
+			},
 		);
 
 		this.dispatchEvent(new CustomEvent("stream:inbound"));
@@ -288,7 +292,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		const _prevStream = this.outboundStream;
 		if (_prevStream) {
 			logger.info(
-				`Stream already exist. This can be due to that you are opening two or more connections to ${this.peerId.toString()}. A stream will only be created for the first succesfully created connection`
+				`Stream already exist. This can be due to that you are opening two or more connections to ${this.peerId.toString()}. A stream will only be created for the first succesfully created connection`,
 			);
 			return;
 		}
@@ -298,7 +302,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		pipe(
 			this.outboundStream,
 			(source) => lp.encode(source),
-			this.rawOutboundStream
+			this.rawOutboundStream,
 		).catch(logError);
 
 		// Emit if the connection is new
@@ -357,11 +361,10 @@ type ConnectionManagerOptions = {
 
 export type ConnectionManagerArguments =
 	| (Partial<Pick<ConnectionManagerOptions, "minConnections">> &
-		Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
-			pruner?: Partial<PrunerOptions> | false;
-		} & { dialer?: Partial<DialerOptions> | false })
+			Partial<Pick<ConnectionManagerOptions, "maxConnections">> & {
+				pruner?: Partial<PrunerOptions> | false;
+			} & { dialer?: Partial<DialerOptions> | false })
 	| false;
-
 
 export type DirectStreamOptions = {
 	canRelayMessage?: boolean;
@@ -383,12 +386,12 @@ export interface DirectStreamComponents extends Components {
 	events: TypedEventTarget<Libp2pEvents>;
 }
 
-
 export abstract class DirectStream<
-	Events extends { [s: string]: any } = StreamEvents
->
+		Events extends { [s: string]: any } = StreamEvents,
+	>
 	extends TypedEventEmitter<Events>
-	implements WaitForPeer {
+	implements WaitForPeer
+{
 	public peerId: PeerId;
 	public publicKey: PublicSignKey;
 	public publicKeyHash: string;
@@ -434,7 +437,7 @@ export abstract class DirectStream<
 			callback: (
 				ack: ACK,
 				messageThrough: PeerStreams,
-				messageFrom?: PeerStreams
+				messageFrom?: PeerStreams,
 			) => void;
 			clear: () => void;
 		}
@@ -443,7 +446,7 @@ export abstract class DirectStream<
 	constructor(
 		readonly components: DirectStreamComponents,
 		multicodecs: string[],
-		options?: DirectStreamOptions
+		options?: DirectStreamOptions,
 	) {
 		super();
 		const {
@@ -454,7 +457,7 @@ export abstract class DirectStream<
 			connectionManager,
 			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR,
 			seekTimeout = SEEK_DELIVERY_TIMEOUT,
-			routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD
+			routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD,
 		} = options || {};
 
 		const signKey = getKeypairFromPeerId(components.peerId);
@@ -485,7 +488,7 @@ export abstract class DirectStream<
 				maxConnections: Number.MAX_SAFE_INTEGER,
 				minConnections: 0,
 				dialer: undefined,
-				pruner: undefined
+				pruner: undefined,
 			};
 		} else {
 			this.connectionManagerOptions = {
@@ -494,34 +497,34 @@ export abstract class DirectStream<
 				...connectionManager,
 				dialer:
 					connectionManager?.dialer !== false &&
-						connectionManager?.dialer !== null
+					connectionManager?.dialer !== null
 						? { retryDelay: 60 * 1000, ...connectionManager?.dialer }
 						: undefined,
 				pruner:
 					connectionManager?.pruner !== false &&
-						connectionManager?.pruner !== null
+					connectionManager?.pruner !== null
 						? {
-							connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
-							interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
-							maxBuffer: MAX_QUEUED_BYTES,
-							...connectionManager?.pruner
-						}
-						: undefined
+								connectionTimeout: DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT,
+								interval: DEFAULT_PRUNE_CONNECTIONS_INTERVAL,
+								maxBuffer: MAX_QUEUED_BYTES,
+								...connectionManager?.pruner,
+							}
+						: undefined,
 			};
 		}
 
 		this.recentDials = this.connectionManagerOptions.dialer
 			? new Cache({
-				ttl: this.connectionManagerOptions.dialer.retryDelay,
-				max: 1e3
-			})
+					ttl: this.connectionManagerOptions.dialer.retryDelay,
+					max: 1e3,
+				})
 			: undefined;
 
 		this.prunedConnectionsCache = this.connectionManagerOptions.pruner
 			? new Cache({
-				max: 1e6,
-				ttl: this.connectionManagerOptions.pruner.connectionTimeout
-			})
+					max: 1e6,
+					ttl: this.connectionManagerOptions.pruner.connectionTimeout,
+				})
 			: undefined;
 	}
 
@@ -537,7 +540,7 @@ export abstract class DirectStream<
 
 		this.routes = new Routes(this.publicKeyHash, {
 			routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
-			signal: this.closeController.signal
+			signal: this.closeController.signal,
 		});
 
 		this.started = true;
@@ -551,9 +554,9 @@ export abstract class DirectStream<
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
 					maxOutboundStreams: this.maxOutboundStreams,
-					runOnTransientConnection: false
-				})
-			)
+					runOnTransientConnection: false,
+				}),
+			),
 		);
 
 		// register protocol with topology
@@ -563,9 +566,9 @@ export abstract class DirectStream<
 				this.components.registrar.register(multicodec, {
 					onConnect: this.onPeerConnected.bind(this),
 					onDisconnect: this.onPeerDisconnected.bind(this),
-					notifyOnTransient: false
-				})
-			)
+					notifyOnTransient: false,
+				}),
+			),
 		);
 
 		// All existing connections are like new ones for us. To deduplication on remotes so we only resuse one connection for this protocol (we could be connected with many connections)
@@ -620,13 +623,13 @@ export abstract class DirectStream<
 		clearTimeout(this.pruneConnectionsTimeout);
 
 		await Promise.all(
-			this.multicodecs.map((x) => this.components.registrar.unhandle(x))
+			this.multicodecs.map((x) => this.components.registrar.unhandle(x)),
 		);
 
 		// unregister protocol and handlers
 		if (this._registrarTopologyIds != null) {
 			this._registrarTopologyIds?.map((id) =>
-				this.components.registrar.unregister(id)
+				this.components.registrar.unregister(id),
 			);
 		}
 
@@ -693,7 +696,7 @@ export abstract class DirectStream<
 			peerId,
 			publicKey,
 			stream.protocol,
-			connection.id
+			connection.id,
 		);
 		const inboundStream = peer.attachInboundStream(stream);
 		this.processMessages(peer.publicKey, inboundStream, peer).catch(logError);
@@ -703,7 +706,6 @@ export abstract class DirectStream<
 	 * Registrar notifies an established connection with protocol
 	 */
 	public async onPeerConnected(peerId: PeerId, connection: Connection) {
-
 		if (
 			!this.isStarted() ||
 			connection.transient ||
@@ -755,7 +757,6 @@ export abstract class DirectStream<
 				} catch (error: any) {
 					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
 						await delay(100);
-						console.error(error)
 						continue; // Retry
 					}
 
@@ -781,7 +782,7 @@ export abstract class DirectStream<
 				peerKey,
 				-1,
 				+new Date(),
-				-1
+				-1,
 			);
 		} catch (err: any) {
 			logger.error(err);
@@ -806,7 +807,7 @@ export abstract class DirectStream<
 				.getConnectionsMap()
 				.get(peerId)
 				?.find(
-					(x) => x.id === conn.id
+					(x) => x.id === conn.id,
 				) /* TODO this should work but does not? peer?.connId !== conn.id */
 		) {
 			return;
@@ -833,9 +834,9 @@ export abstract class DirectStream<
 						leaving: [peerKeyHash],
 						header: new MessageHeader({
 							session: this.session,
-							mode: new SilentDelivery({ to: dependent, redundancy: 2 })
-						})
-					}).sign(this.sign)
+							mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
+						}),
+					}).sign(this.sign),
 				);
 			}
 
@@ -863,7 +864,7 @@ export abstract class DirectStream<
 		target: PublicSignKey,
 		distance: number,
 		session: number,
-		remoteSession: number
+		remoteSession: number,
 	) {
 		const targetHash = typeof target === "string" ? target : target.hashcode();
 
@@ -873,7 +874,7 @@ export abstract class DirectStream<
 			targetHash,
 			distance,
 			session,
-			remoteSession
+			remoteSession,
 		);
 
 		// second condition is that we don't want to emit 'reachable' events for routes where we act only as a relay
@@ -886,29 +887,21 @@ export abstract class DirectStream<
 		}
 	}
 
-	/**
-	 * invoked when a new peer becomes reachable
-	 * @param publicKeyHash
-	 */
 	public onPeerReachable(publicKey: PublicSignKey) {
 		// override this fn
 		this.dispatchEvent(
-			new CustomEvent("peer:reachable", { detail: publicKey })
+			new CustomEvent("peer:reachable", { detail: publicKey }),
 		);
 	}
 
-	/**
-	 * invoked when a new peer becomes unreachable
-	 * @param publicKeyHash
-	 */
 	public onPeerUnreachable(hash: string) {
 		// override this fn
 
 		this.dispatchEvent(
 			// TODO types
 			new CustomEvent("peer:unreachable", {
-				detail: this.peerKeyHashToPublicKey.get(hash)!
-			})
+				detail: this.peerKeyHashToPublicKey.get(hash)!,
+			}),
 		);
 	}
 
@@ -925,8 +918,8 @@ export abstract class DirectStream<
 		this.dispatchEvent(
 			// TODO types
 			new CustomEvent("peer:session", {
-				detail: key
-			})
+				detail: key,
+			}),
 		);
 	}
 
@@ -937,7 +930,7 @@ export abstract class DirectStream<
 		peerId: PeerId,
 		publicKey: PublicSignKey,
 		protocol: string,
-		connId: string
+		connId: string,
 	): PeerStreams {
 		const publicKeyHash = publicKey.hashcode();
 
@@ -959,14 +952,14 @@ export abstract class DirectStream<
 			peerId,
 			publicKey,
 			protocol,
-			connId
+			connId,
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
 		this.updateSession(publicKey, -1);
 
 		peerStreams.addEventListener("close", () => this._removePeer(publicKey), {
-			once: true
+			once: true,
 		});
 
 		return peerStreams;
@@ -1001,7 +994,7 @@ export abstract class DirectStream<
 	async processMessages(
 		peerId: PublicSignKey,
 		stream: AsyncIterable<Uint8ArrayList>,
-		peerStreams: PeerStreams
+		peerStreams: PeerStreams,
 	) {
 		try {
 			await pipe(stream, async (source) => {
@@ -1012,9 +1005,9 @@ export abstract class DirectStream<
 		} catch (err: any) {
 			logger.warn(
 				"Failed processing messages to id: " +
-				peerStreams.peerId.toString() +
-				". " +
-				err?.message
+					peerStreams.peerId.toString() +
+					". " +
+					err?.message,
 			);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
@@ -1026,7 +1019,7 @@ export abstract class DirectStream<
 	async processRpc(
 		from: PublicSignKey,
 		peerStreams: PeerStreams,
-		message: Uint8ArrayList
+		message: Uint8ArrayList,
 	): Promise<boolean> {
 		// logger.debug("rpc from " + from + ", " + this.peerIdStr);
 
@@ -1048,7 +1041,7 @@ export abstract class DirectStream<
 
 	private async modifySeenCache(
 		message: Uint8Array,
-		getIdFn: (bytes: Uint8Array) => Promise<string> = getMsgId
+		getIdFn: (bytes: Uint8Array) => Promise<string> = getMsgId,
 	) {
 		const msgId = await getIdFn(message);
 		const seen = this.seenCache.get(msgId);
@@ -1062,7 +1055,7 @@ export abstract class DirectStream<
 	async processMessage(
 		from: PublicSignKey,
 		peerStream: PeerStreams,
-		msg: Uint8ArrayList
+		msg: Uint8ArrayList,
 	) {
 		if (!this.started) {
 			return;
@@ -1072,8 +1065,8 @@ export abstract class DirectStream<
 		const message: Message | undefined = Message.from(msg);
 		this.dispatchEvent(
 			new CustomEvent("message", {
-				detail: message
-			})
+				detail: message,
+			}),
 		);
 
 		if (message instanceof DataMessage) {
@@ -1092,7 +1085,7 @@ export abstract class DirectStream<
 
 	public shouldIgnore(message: DataMessage, seenBefore: number) {
 		const fromMe = message.header.signatures?.publicKeys.find((x) =>
-			x.equals(this.publicKey)
+			x.equals(this.publicKey),
 		);
 
 		if (fromMe) {
@@ -1115,7 +1108,7 @@ export abstract class DirectStream<
 		from: PublicSignKey,
 		peerStream: PeerStreams,
 		message: DataMessage,
-		seenBefore: number
+		seenBefore: number,
 	) {
 		if (this.shouldIgnore(message, seenBefore)) {
 			return false;
@@ -1145,8 +1138,8 @@ export abstract class DirectStream<
 			if (seenBefore === 0 && message.data) {
 				this.dispatchEvent(
 					new CustomEvent("data", {
-						detail: message
-					})
+						detail: message,
+					}),
 				);
 			}
 		}
@@ -1173,8 +1166,8 @@ export abstract class DirectStream<
 					const to = [...this.peers.values()].filter(
 						(x) =>
 							!message.header.signatures?.publicKeys.find((y) =>
-								y.equals(x.publicKey)
-							) && x != peerStream
+								y.equals(x.publicKey),
+							) && x !== peerStream,
 					);
 					if (to.length > 0) {
 						this.relayMessage(from, message, to);
@@ -1204,7 +1197,7 @@ export abstract class DirectStream<
 	async maybeAcknowledgeMessage(
 		peerStream: PeerStreams,
 		message: DataMessage | Goodbye,
-		seenBefore: number
+		seenBefore: number,
 	) {
 		if (
 			(message.header.mode instanceof SeekDelivery ||
@@ -1218,7 +1211,7 @@ export abstract class DirectStream<
 				return;
 			}
 			const signers = message.header.signatures!.publicKeys.map((x) =>
-				x.hashcode()
+				x.hashcode(),
 			);
 			await this.publishMessage(
 				this.publicKey,
@@ -1233,18 +1226,18 @@ export abstract class DirectStream<
 						// include our origin if message is SeekDelivery and we have not recently pruned a connection to this peer
 						origin:
 							message.header.mode instanceof SeekDelivery &&
-								!message.header.signatures!.publicKeys.find((x) =>
-									this.prunedConnectionsCache?.has(x.hashcode())
-								)
+							!message.header.signatures!.publicKeys.find((x) =>
+								this.prunedConnectionsCache?.has(x.hashcode()),
+							)
 								? new MultiAddrinfo(
-									this.components.addressManager
-										.getAddresses()
-										.map((x) => x.toString())
-								)
-								: undefined
-					})
+										this.components.addressManager
+											.getAddresses()
+											.map((x) => x.toString()),
+									)
+								: undefined,
+					}),
 				}).sign(this.sign),
-				[peerStream]
+				[peerStream],
 			);
 		}
 	}
@@ -1253,12 +1246,12 @@ export abstract class DirectStream<
 		from: PublicSignKey,
 		peerStream: PeerStreams,
 		messageBytes: Uint8ArrayList | Uint8Array,
-		message: DataMessage
+		message: DataMessage,
 	) {
 		const seenBefore = await this.modifySeenCache(
 			messageBytes instanceof Uint8ArrayList
 				? messageBytes.subarray()
-				: messageBytes
+				: messageBytes,
 		);
 
 		return this.onDataMessage(from, peerStream, message, seenBefore);
@@ -1268,18 +1261,18 @@ export abstract class DirectStream<
 		publicKey: PublicSignKey,
 		peerStream: PeerStreams,
 		messageBytes: Uint8ArrayList | Uint8Array,
-		message: ACK
+		message: ACK,
 	) {
 		const seenBefore = await this.modifySeenCache(
 			messageBytes instanceof Uint8Array
 				? messageBytes
 				: messageBytes.subarray(),
-			(bytes) => sha256Base64(bytes)
+			(bytes) => sha256Base64(bytes),
 		);
 
 		if (seenBefore > 0) {
 			logger.debug(
-				"Received message already seen of type: " + message.constructor.name
+				"Received message already seen of type: " + message.constructor.name,
 			);
 			return false;
 		}
@@ -1291,7 +1284,7 @@ export abstract class DirectStream<
 
 		const messageIdString = toBase64(message.messageIdToAcknowledge);
 		const myIndex = message.header.mode.trace.findIndex(
-			(x) => x === this.publicKeyHash
+			(x) => x === this.publicKeyHash,
 		);
 		const next = message.header.mode.trace[myIndex - 1];
 		const nextStream = next ? this.peers.get(next) : undefined;
@@ -1314,7 +1307,7 @@ export abstract class DirectStream<
 			if (message.header.origin && this.connectionManagerOptions.dialer) {
 				this.maybeConnectDirectly(
 					message.header.signatures!.publicKeys[0].hashcode(),
-					message.header.origin
+					message.header.origin,
 				);
 			}
 		}
@@ -1324,17 +1317,17 @@ export abstract class DirectStream<
 		publicKey: PublicSignKey,
 		peerStream: PeerStreams,
 		messageBytes: Uint8ArrayList | Uint8Array,
-		message: Goodbye
+		message: Goodbye,
 	) {
 		const seenBefore = await this.modifySeenCache(
 			messageBytes instanceof Uint8Array
 				? messageBytes
-				: messageBytes.subarray()
+				: messageBytes.subarray(),
 		);
 
 		if (seenBefore > 0) {
 			logger.debug(
-				"Received message already seen of type: " + message.constructor.name
+				"Received message already seen of type: " + message.constructor.name,
 			);
 			return;
 		}
@@ -1347,7 +1340,7 @@ export abstract class DirectStream<
 		await this.maybeAcknowledgeMessage(peerStream, message, seenBefore);
 
 		const filteredLeaving = message.leaving.filter((x) =>
-			this.routes.hasTarget(x)
+			this.routes.hasTarget(x),
 		);
 
 		// Forward to all dependent
@@ -1383,8 +1376,8 @@ export abstract class DirectStream<
 			return this.publish(undefined, {
 				mode: new SeekDelivery({
 					to: remotes,
-					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
-				})
+					redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY,
+				}),
 			})
 				.then(() => true)
 				.catch((e) => {
@@ -1406,7 +1399,7 @@ export abstract class DirectStream<
 
 	async createMessage(
 		data: Uint8Array | Uint8ArrayList | undefined,
-		options: (WithTo | WithMode) & PriorityOptions & IdentificationOptions
+		options: (WithTo | WithMode) & PriorityOptions & IdentificationOptions,
 	) {
 		// dispatch the event if we are interested
 
@@ -1415,9 +1408,9 @@ export abstract class DirectStream<
 		).mode
 			? (options as WithMode).mode!
 			: new SilentDelivery({
-				to: (options as WithTo).to!,
-				redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY
-			});
+					to: (options as WithTo).to!,
+					redundancy: DEFAULT_SILENT_MESSAGE_REDUDANCY,
+				});
 
 		if (
 			mode instanceof AcknowledgeDelivery ||
@@ -1439,12 +1432,12 @@ export abstract class DirectStream<
 				if (
 					!neighbourRoutes ||
 					now - neighbourRoutes.session >
-					neighbourRoutes.list.length * this.routeSeekInterval ||
+						neighbourRoutes.list.length * this.routeSeekInterval ||
 					!this.routes.isUpToDate(hash, neighbourRoutes)
 				) {
 					mode = new SeekDelivery({
 						to: mode.to,
-						redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY
+						redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY,
 					});
 					break;
 				}
@@ -1457,8 +1450,8 @@ export abstract class DirectStream<
 				id: options.id,
 				mode,
 				session: this.session,
-				priority: options.priority
-			})
+				priority: options.priority,
+			}),
 		});
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
@@ -1471,8 +1464,8 @@ export abstract class DirectStream<
 	async publish(
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: (WithMode | WithTo) & PriorityOptions = {
-			mode: new SeekDelivery({ redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY })
-		}
+			mode: new SeekDelivery({ redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY }),
+		},
 	): Promise<Uint8Array> {
 		if (!this.started) {
 			throw new NotStartedError();
@@ -1480,7 +1473,7 @@ export abstract class DirectStream<
 
 		if ((options as WithMode).mode && (options as WithTo).to) {
 			throw new Error(
-				"Expecting either 'to' or 'mode' to be provided not both"
+				"Expecting either 'to' or 'mode' to be provided not both",
 			);
 		}
 
@@ -1492,7 +1485,7 @@ export abstract class DirectStream<
 	public async relayMessage(
 		from: PublicSignKey,
 		message: Message,
-		to?: PeerStreams[] | Map<string, PeerStreams>
+		to?: PeerStreams[] | Map<string, PeerStreams>,
 	) {
 		if (this.canRelayMessage) {
 			if (message instanceof DataMessage) {
@@ -1505,7 +1498,7 @@ export abstract class DirectStream<
 			}
 			if (deliveryModeHasReceiver(message.header.mode)) {
 				message.header.mode.to = message.header.mode.to.filter(
-					(x) => x !== this.publicKeyHash
+					(x) => x !== this.publicKeyHash,
 				);
 				if (message.header.mode.to.length === 0) {
 					return; // non to send to
@@ -1527,7 +1520,7 @@ export abstract class DirectStream<
 	private async createDeliveryPromise(
 		from: PublicSignKey,
 		message: DataMessage | Goodbye,
-		relayed?: boolean
+		relayed?: boolean,
 	): Promise<{ promise: Promise<void> }> {
 		if (message.header.mode instanceof AnyWhere) {
 			return { promise: Promise.resolve() };
@@ -1553,7 +1546,7 @@ export abstract class DirectStream<
 						to,
 						setTimeout(() => {
 							this.removePeerFromRoutes(to);
-						}, this.seekTimeout)
+						}, this.seekTimeout),
 					);
 				}
 			}
@@ -1564,9 +1557,9 @@ export abstract class DirectStream<
 			return {
 				promise: Promise.reject(
 					new DeliveryError(
-						"Cannnot deliver message to peers because there are no peers to deliver to"
-					)
-				)
+						"Cannnot deliver message to peers because there are no peers to deliver to",
+					),
+				),
 			};
 		}
 
@@ -1596,8 +1589,8 @@ export abstract class DirectStream<
 					clear();
 					deliveryDeferredPromise.reject(
 						new DeliveryError(
-							`At least one recipent became unreachable while delivering messsage of type ${message.constructor.name}} to ${ev.detail.hashcode()}`
-						)
+							`At least one recipent became unreachable while delivering messsage of type ${message.constructor.name}} to ${ev.detail.hashcode()}`,
+						),
 					);
 				}
 			});
@@ -1634,11 +1627,13 @@ export abstract class DirectStream<
 				deliveryDeferredPromise.reject(
 					new DeliveryError(
 						`Failed to get message ${idString} ${filterMessageForSeenCounter} ${[
-							...messageToSet
-						]} delivery acknowledges from all nodes (${fastestNodesReached.size
-						}/${messageToSet.size}). Mode: ${message.header.mode.constructor.name
-						}. Redundancy: ${(message.header.mode as any)["redundancy"]}`
-					)
+							...messageToSet,
+						]} delivery acknowledges from all nodes (${
+							fastestNodesReached.size
+						}/${messageToSet.size}). Mode: ${
+							message.header.mode.constructor.name
+						}. Redundancy: ${(message.header.mode as any)["redundancy"]}`,
+					),
 				);
 			} else {
 				deliveryDeferredPromise.resolve();
@@ -1682,7 +1677,7 @@ export abstract class DirectStream<
 						messageTarget,
 						seenCounter,
 						session,
-						Number(ack.header.session)
+						Number(ack.header.session),
 					); // we assume the seenCounter = distance. The more the message has been seen by the target the longer the path is to the target
 				}
 
@@ -1711,7 +1706,7 @@ export abstract class DirectStream<
 			clear: () => {
 				clear();
 				deliveryDeferredPromise.resolve();
-			}
+			},
 		});
 		return deliveryDeferredPromise;
 	}
@@ -1720,7 +1715,7 @@ export abstract class DirectStream<
 		from: PublicSignKey,
 		message: Message,
 		to?: PeerStreams[] | Map<string, PeerStreams>,
-		relayed?: boolean
+		relayed?: boolean,
 	): Promise<void> {
 		if (this.stopping || !this.started) {
 			throw new NotStartedError();
@@ -1784,7 +1779,7 @@ export abstract class DirectStream<
 				const fanout = this.routes.getFanout(
 					from.hashcode(),
 					message.header.mode.to,
-					message.header.mode.redundancy
+					message.header.mode.redundancy,
 				);
 
 				if (fanout) {
@@ -1794,7 +1789,7 @@ export abstract class DirectStream<
 							const stream = this.peers.get(neighbour);
 							stream &&
 								promises.push(
-									stream.waitForWrite(bytes, message.header.priority)
+									stream.waitForWrite(bytes, message.header.priority),
 								);
 						}
 						await Promise.all(promises);
@@ -1833,7 +1828,7 @@ export abstract class DirectStream<
 			// Dont send message back to any of the signers (they have already seen the message)
 			if (
 				message.header.signatures?.publicKeys.find((x) =>
-					x.equals(id.publicKey)
+					x.equals(id.publicKey),
 				)
 			) {
 				continue;
@@ -1867,13 +1862,15 @@ export abstract class DirectStream<
 			.map((x) => multiaddr(x));
 		if (addresses.length > 0) {
 			try {
-				await this.components.connectionManager.openConnection(addresses);
+				await this.components.connectionManager.openConnection([
+					addresses[addresses.length - 1],
+				]);
 			} catch (error: any) {
 				logger.info(
 					"Failed to connect directly to: " +
-					JSON.stringify(addresses.map((x) => x.toString())) +
-					". " +
-					error?.message
+						JSON.stringify(addresses.map((x) => x.toString())) +
+						". " +
+						error?.message,
 				);
 			}
 		}
@@ -1881,7 +1878,7 @@ export abstract class DirectStream<
 
 	async waitFor(
 		peer: PeerId | PublicSignKey,
-		options?: { timeout?: number; signal?: AbortSignal; neighbour?: boolean }
+		options?: { timeout?: number; signal?: AbortSignal; neighbour?: boolean },
 	) {
 		const hash = (
 			peer instanceof PublicSignKey ? peer : getPublicKeyFromPeerId(peer)
@@ -1901,17 +1898,17 @@ export abstract class DirectStream<
 				},
 				{
 					signal: options?.signal,
-					timeout: options?.timeout ?? 10 * 1000
-				}
+					timeout: options?.timeout ?? 10 * 1000,
+				},
 			);
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
-				hash +
-				" does not exist. Connection exist: " +
-				this.peers.has(hash) +
-				". Route exist: " +
-				this.routes.isReachable(this.publicKeyHash, hash, 0)
+					hash +
+					" does not exist. Connection exist: " +
+					this.peers.has(hash) +
+					". Route exist: " +
+					this.routes.isReachable(this.publicKeyHash, hash, 0),
 			);
 		}
 		if (options?.neighbour) {
@@ -1920,19 +1917,17 @@ export abstract class DirectStream<
 				// Dontwait for readlable https://github.com/libp2p/js-libp2p/issues/2321
 				await waitFor(() => /* stream.isReadable && */ stream.isWritable, {
 					signal: options?.signal,
-					timeout: options?.timeout ?? 10 * 1000
+					timeout: options?.timeout ?? 10 * 1000,
 				});
 			} catch (error) {
 				throw new Error(
 					"Stream to " +
-					stream.publicKey.hashcode() +
-					" not ready. Readable: " +
-					stream.isReadable +
-					". Writable " +
-					stream.isWritable
+						stream.publicKey.hashcode() +
+						" not ready. Readable: " +
+						stream.isReadable +
+						". Writable " +
+						stream.isWritable,
 				);
-			} finally {
-				console.log("DONE!")
 			}
 		}
 	}

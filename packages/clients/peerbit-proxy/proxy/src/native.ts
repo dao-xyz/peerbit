@@ -1,4 +1,4 @@
-import { variant, field } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { Message } from "./message.js";
 
 @variant(0)

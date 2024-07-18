@@ -4,31 +4,31 @@ import {
 	fixedArray,
 	serialize,
 	variant,
-	vec
+	vec,
 } from "@dao-xyz/borsh";
-
 import { randomBytes, sha256Base64Sync, toBase64 } from "@peerbit/crypto";
+import { v4 as uuid } from "uuid";
 import {
 	BigUnsignedIntegerValue,
 	IntegerValue,
-	UnsignedIntegerValue
+	UnsignedIntegerValue,
 } from "./id.js";
-import { v4 as uuid } from "uuid";
 
 export enum Compare {
 	Equal = 0,
 	Greater = 1,
 	GreaterOrEqual = 2,
 	Less = 3,
-	LessOrEqual = 4
+	LessOrEqual = 4,
 }
 export const compare = (
 	test: bigint | number,
 	compare: Compare,
-	value: bigint | number
+	value: bigint | number,
 ) => {
 	switch (compare) {
 		case Compare.Equal:
+			// eslint-disable-next-line eqeqeq
 			return test == value; // == because with want bigint == number at some cases
 		case Compare.Greater:
 			return test > value;
@@ -39,6 +39,7 @@ export const compare = (
 		case Compare.LessOrEqual:
 			return test <= value;
 		default:
+			// eslint-disable-next-line no-console
 			console.warn("Unexpected compare");
 			return false;
 	}
@@ -54,7 +55,7 @@ export abstract class Query {
 
 export enum SortDirection {
 	ASC = 0,
-	DESC = 1
+	DESC = 1,
 }
 
 @variant(0)
@@ -67,28 +68,26 @@ export class Sort {
 
 	constructor(properties: {
 		key: string[] | string;
-		direction?: SortDirection | 'asc' | 'desc';
+		direction?: SortDirection | "asc" | "desc";
 	}) {
 		this.key = Array.isArray(properties.key)
 			? properties.key
 			: [properties.key];
 		if (properties.direction) {
-			if (properties.direction === 'asc') {
+			if (properties.direction === "asc") {
 				this.direction = SortDirection.ASC;
-			} else if (properties.direction === 'desc') {
+			} else if (properties.direction === "desc") {
 				this.direction = SortDirection.DESC;
-			}
-			else {
+			} else {
 				this.direction = properties.direction;
 			}
-		}
-		else {
+		} else {
 			this.direction = SortDirection.ASC;
 		}
 	}
 }
 
-export abstract class AbstractSearchRequest { }
+export abstract class AbstractSearchRequest {}
 
 /**
  * Search with query and collect with sort conditionss
@@ -99,7 +98,6 @@ const toArray = <T>(arr: T | T[] | undefined) =>
 
 @variant(0)
 export class SearchRequest extends AbstractSearchRequest {
-
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array; // Session id
 
@@ -112,11 +110,20 @@ export class SearchRequest extends AbstractSearchRequest {
 	@field({ type: "u32" })
 	fetch: number;
 
-
-	constructor(props?: { query?: Query[] | Query | Record<string, string | number | bigint | Uint8Array | boolean | null | undefined>; sort?: Sort[] | Sort, fetch?: number }) {
+	constructor(props?: {
+		query?:
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
+		sort?: Sort[] | Sort;
+		fetch?: number;
+	}) {
 		super();
 		this.id = randomBytes(32);
-		this.query = props?.query ? toQuery(props.query) : []
+		this.query = props?.query ? toQuery(props.query) : [];
 		this.sort = toArray(props?.sort);
 		this.fetch = props?.fetch ?? 1;
 	}
@@ -167,7 +174,7 @@ export class CloseIteratorRequest extends AbstractSearchRequest {
 }
 
 @variant(1)
-export abstract class LogicalQuery extends Query { }
+export abstract class LogicalQuery extends Query {}
 
 @variant(0)
 export class And extends LogicalQuery {
@@ -179,7 +186,7 @@ export class And extends LogicalQuery {
 		this.and = and;
 
 		if (this.and.length === 0) {
-			throw new Error("And query must have at least one query")
+			throw new Error("And query must have at least one query");
 		}
 	}
 }
@@ -194,14 +201,13 @@ export class Or extends LogicalQuery {
 		this.or = or;
 
 		if (this.or.length === 0) {
-			throw new Error("Or query must have at least one query")
+			throw new Error("Or query must have at least one query");
 		}
 	}
 }
 
 @variant(2)
 export class Not extends LogicalQuery {
-
 	@field({ type: Query })
 	not: Query;
 
@@ -212,7 +218,7 @@ export class Not extends LogicalQuery {
 }
 
 @variant(2)
-export abstract class StateQuery extends Query { }
+export abstract class StateQuery extends Query {}
 
 @variant(1)
 export class StateFieldQuery extends StateQuery {
@@ -231,8 +237,8 @@ export class ByteMatchQuery extends StateFieldQuery {
 	value: Uint8Array;
 
 	@field({ type: "u8" })
-	// @ts-ignore: unused
-	private _reserved: number; // Replcate MemoryCompare query with this?
+	// @ts-expect-error: unused
+	private _reserved: number; // Replicate MemoryCompare query with this?
 
 	constructor(props: { key: string[] | string; value: Uint8Array }) {
 		super(props);
@@ -252,12 +258,11 @@ export class ByteMatchQuery extends StateFieldQuery {
 export enum StringMatchMethod {
 	"exact" = 0,
 	"prefix" = 1,
-	"contains" = 2
+	"contains" = 2,
 }
 
 @variant(2)
 export class StringMatch extends StateFieldQuery {
-
 	@field({ type: "string" })
 	value: string;
 
@@ -304,38 +309,28 @@ export class IntegerCompare extends StateFieldQuery {
 			}
 		}
 
-		if (typeof props.compare === 'string') {
-			if (props.compare === 'eq') {
+		if (typeof props.compare === "string") {
+			if (props.compare === "eq") {
 				this.compare = Compare.Equal;
-			}
-			else if (props.compare === 'gt') {
+			} else if (props.compare === "gt") {
 				this.compare = Compare.Greater;
-			}
-			else if (props.compare === 'gte') {
+			} else if (props.compare === "gte") {
 				this.compare = Compare.GreaterOrEqual;
-			}
-			else if (props.compare === 'lt') {
+			} else if (props.compare === "lt") {
 				this.compare = Compare.Less;
-			}
-			else if (props.compare === 'lte') {
+			} else if (props.compare === "lte") {
 				this.compare = Compare.LessOrEqual;
-			}
-			else {
+			} else {
 				throw new Error("Invalid compare string");
 			}
-		}
-		else {
+		} else {
 			this.compare = props.compare;
 		}
 	}
 }
 
 @variant(4)
-export class IsNull extends StateFieldQuery {
-	constructor(props: { key: string[] | string }) {
-		super(props);
-	}
-}
+export class IsNull extends StateFieldQuery {}
 
 @variant(5)
 export class BoolQuery extends StateFieldQuery {
@@ -350,24 +345,32 @@ export class BoolQuery extends StateFieldQuery {
 
 @variant(2)
 export class Nested extends Query {
+	@field({ type: "string" })
+	id: string;
 
-	@field({ type: 'string' })
-	id: string
-
-	@field({ type: 'string' })
+	@field({ type: "string" })
 	path: string;
 
 	@field({ type: vec(Query) })
 	query: Query[];
 
-	constructor(props: { id?: string, path: string, query: Query[] | Query | Record<string, string | number | bigint | Uint8Array | boolean | null | undefined> }) {
+	constructor(props: {
+		id?: string;
+		path: string;
+		query:
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
+	}) {
 		super();
 		this.path = props.path;
-		this.id = props.id ?? uuid()
+		this.id = props.id ?? uuid();
 		this.query = toQuery(props.query);
 	}
 }
-
 
 // TODO MemoryCompareQuery can be replaces with ByteMatchQuery? Or Nesteed Queries + ByteMatchQuery?
 /* @variant(0)
@@ -399,12 +402,10 @@ export class MemoryCompareQuery extends Query {
 	}
 } */
 
-
-export abstract class AbstractAggregationRequest { }
+export abstract class AbstractAggregationRequest {}
 
 @variant(0)
 export class SumRequest extends AbstractAggregationRequest {
-
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array;
 
@@ -414,7 +415,16 @@ export class SumRequest extends AbstractAggregationRequest {
 	@field({ type: vec("string") })
 	key: string[];
 
-	constructor(props: { query?: Query[] | Query | Record<string, string | number | bigint | Uint8Array | boolean | null | undefined>; key: string[] | string }) {
+	constructor(props: {
+		query?:
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
+		key: string[] | string;
+	}) {
 		super();
 		this.id = randomBytes(32);
 		this.query = props.query ? toQuery(props.query) : [];
@@ -422,9 +432,7 @@ export class SumRequest extends AbstractAggregationRequest {
 	}
 }
 
-
-
-export abstract class AbstractCountRequest { }
+export abstract class AbstractCountRequest {}
 
 @variant(0)
 export class CountRequest extends AbstractCountRequest {
@@ -434,76 +442,108 @@ export class CountRequest extends AbstractCountRequest {
 	@field({ type: vec(Query) })
 	query: Query[];
 
-	constructor(props: { query: Query[] | Query | Record<string, string | number | bigint | Uint8Array | boolean | null | undefined> } = { query: [] }) {
+	constructor(
+		props: {
+			query:
+				| Query[]
+				| Query
+				| Record<
+						string,
+						string | number | bigint | Uint8Array | boolean | null | undefined
+				  >;
+		} = { query: [] },
+	) {
 		super();
 		this.id = randomBytes(32);
 		this.query = toQuery(props.query);
 	}
 }
 
-
-export abstract class AbstractDeleteRequest { }
+export abstract class AbstractDeleteRequest {}
 
 @variant(0)
 export class DeleteRequest extends AbstractDeleteRequest {
-
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array; // Session id
 
 	@field({ type: vec(Query) })
 	query: Query[];
 
-	constructor(props: { query: Query[] | Query | Record<string, string | number | bigint | Uint8Array | boolean | null | undefined> }) {
+	constructor(props: {
+		query:
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
+	}) {
 		super();
 		this.id = randomBytes(32);
 		this.query = toQuery(props.query);
 	}
 }
 
-const toQuery = (query: Query[] | Query | Record<string, string | number | bigint | Uint8Array | boolean | null | undefined>) => {
-
+const toQuery = (
+	query:
+		| Query[]
+		| Query
+		| Record<
+				string,
+				string | number | bigint | Uint8Array | boolean | null | undefined
+		  >,
+) => {
 	if (Array.isArray(query)) {
 		return query;
 	}
 	if (query instanceof Query) {
-		return [query]
+		return [query];
 	}
 
-	return convertQueryRecordToObject(query)
-}
-const convertQueryRecordToObject = (obj: Record<string, string | number | bigint | Uint8Array | boolean | null | undefined | Record<string, any>>, queries: Query[] = [], path?: string[],) => {
-
+	return convertQueryRecordToObject(query);
+};
+const convertQueryRecordToObject = (
+	obj: Record<
+		string,
+		| string
+		| number
+		| bigint
+		| Uint8Array
+		| boolean
+		| null
+		| undefined
+		| Record<string, any>
+	>,
+	queries: Query[] = [],
+	path?: string[],
+) => {
 	for (const [k, v] of Object.entries(obj)) {
-		let mergedKey = path ? [...path, k] : [k]
-		if (typeof v === 'object' && v instanceof Uint8Array === false) {
-			convertQueryRecordToObject(v!, queries, mergedKey)
-		}
-		else {
-			const matcher = getMatcher(mergedKey, v)
-			queries.push(matcher)
+		let mergedKey = path ? [...path, k] : [k];
+		if (typeof v === "object" && v instanceof Uint8Array === false) {
+			convertQueryRecordToObject(v!, queries, mergedKey);
+		} else {
+			const matcher = getMatcher(mergedKey, v);
+			queries.push(matcher);
 		}
 	}
 	return queries;
-}
+};
 
-export const getMatcher = (key: string[], value: string | number | bigint | Uint8Array | boolean | null | undefined) => {
-
-	if (typeof value === 'string') {
-		return new StringMatch({ key, value })
-	}
-	else if (typeof value === 'bigint' || typeof value === 'number') {
-		return new IntegerCompare({ key, value, compare: Compare.Equal })
-	}
-	else if (typeof value === 'boolean') {
-		return new BoolQuery({ key, value })
-	}
-	else if (value == null) {
-		return new IsNull({ key })
-	}
-	else if (value instanceof Uint8Array) {
-		return new ByteMatchQuery({ key, value })
+export const getMatcher = (
+	key: string[],
+	value: string | number | bigint | Uint8Array | boolean | null | undefined,
+) => {
+	if (typeof value === "string") {
+		return new StringMatch({ key, value });
+	} else if (typeof value === "bigint" || typeof value === "number") {
+		return new IntegerCompare({ key, value, compare: Compare.Equal });
+	} else if (typeof value === "boolean") {
+		return new BoolQuery({ key, value });
+	} else if (value == null) {
+		return new IsNull({ key });
+	} else if (value instanceof Uint8Array) {
+		return new ByteMatchQuery({ key, value });
 	}
 
-	throw new Error("Invalid query value")
-
-}
+	throw new Error("Invalid query value");
+};

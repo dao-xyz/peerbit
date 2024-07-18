@@ -1,11 +1,12 @@
-import { EventStore } from "./utils/stores/event-store.js";
+import { deserialize } from "@dao-xyz/borsh";
+import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
-import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { deserialize } from "@dao-xyz/borsh";
-import { slowDownSend } from "./utils.js";
+import { expect } from "chai";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
-import { expect } from 'chai';
+import { slowDownSend } from "./utils.js";
+import { EventStore } from "./utils/stores/event-store.js";
+
 /* import { CountRequest } from "@peerbit/indexer-interface"; */
 
 /**
@@ -20,9 +21,9 @@ describe(`leaders`, function () {
 			timeUntilRoleMaturity: 0,
 			replicas: {
 				min: 1,
-				max: 10000
-			}
-		}
+				max: 10000,
+			},
+		},
 	};
 	before(async () => {
 		session = await TestSession.connected(3, [
@@ -34,11 +35,11 @@ describe(`leaders`, function () {
 							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
 							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
 							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
-							62, 133, 97, 57, 150, 187, 247, 215
+							62, 133, 97, 57, 150, 187, 247, 215,
 						]),
-						Ed25519Keypair
-					).toPeerId()
-				}
+						Ed25519Keypair,
+					).toPeerId(),
+				},
 			},
 			{
 				libp2p: {
@@ -48,11 +49,11 @@ describe(`leaders`, function () {
 							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
 							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
 							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
-							112, 65, 202, 154, 27, 63, 15
+							112, 65, 202, 154, 27, 63, 15,
 						]),
-						Ed25519Keypair
-					).toPeerId()
-				}
+						Ed25519Keypair,
+					).toPeerId(),
+				},
 			},
 			{
 				libp2p: {
@@ -62,12 +63,12 @@ describe(`leaders`, function () {
 							12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231,
 							155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84,
 							137, 152, 227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187,
-							239, 56, 174, 184, 34, 141, 45, 242
+							239, 56, 174, 184, 34, 141, 45, 242,
 						]),
-						Ed25519Keypair
-					).toPeerId()
-				}
-			}
+						Ed25519Keypair,
+					).toPeerId(),
+				},
+			},
 		]);
 	});
 
@@ -75,7 +76,7 @@ describe(`leaders`, function () {
 		await session.stop();
 	});
 
-	beforeEach(async () => { });
+	beforeEach(async () => {});
 
 	afterEach(async () => {
 		if (db1 && db1.closed === false) await db1.drop();
@@ -88,7 +89,7 @@ describe(`leaders`, function () {
 		// perhaps do an event based get peers using the pubsub peers api
 
 		db1 = await session.peers[0].open(new EventStore<string>(), {
-			args: { ...options.args, replicate: { offset: 0, factor: 0.5 } }
+			args: { ...options.args, replicate: { offset: 0, factor: 0.5 } },
 		});
 		const isLeaderAOneLeader = await db1.log.isLeader(123, 1);
 		expect(isLeaderAOneLeader);
@@ -96,20 +97,19 @@ describe(`leaders`, function () {
 		expect(isLeaderATwoLeader);
 
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
-			args: { ...options.args, replicate: { offset: 0.5, factor: 0.5 } }
+			args: { ...options.args, replicate: { offset: 0.5, factor: 0.5 } },
 		})) as EventStore<string>;
 
 		await waitForResolved(async () =>
-			expect((await db1.log.getReplicators()).size).to.equal(2)
+			expect((await db1.log.getReplicators()).size).to.equal(2),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db2.log.getReplicators()).size).to.equal(2)
+			expect((await db2.log.getReplicators()).size).to.equal(2),
 		);
 
 		// leader rotation is kind of random, so we do a sequence of tests
 		for (let i = 0; i < 3; i++) {
-
 			let slot = (0.1 + i) % 1;
 
 			// One leader
@@ -117,17 +117,16 @@ describe(`leaders`, function () {
 			const isLeaderBOneLeader = await db2.log.isLeader(slot, 1);
 			expect([isLeaderAOneLeader, isLeaderBOneLeader]).to.have.members([
 				false,
-				true
+				true,
 			]);
 
 			// Two leaders
 			const isLeaderATwoLeaders = await db1.log.isLeader(slot, 2);
 			const isLeaderBTwoLeaders = await db2.log.isLeader(slot, 2);
 
-
 			expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).to.have.members([
 				true,
-				true
+				true,
 			]);
 		}
 	});
@@ -138,12 +137,12 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { ...options.args }
+			args: { ...options.args },
 		});
 		db2 = (await EventStore.open(
 			db1.address!,
 			session.peers[1],
-			options
+			options,
 		)) as EventStore<string>;
 
 		await delay(5000); // some delay so that if peers are to replicate, they would have had time to notify each other
@@ -165,23 +164,23 @@ describe(`leaders`, function () {
 
 		const store = await new EventStore<string>();
 		db1 = await session.peers[0].open(store, {
-			args: { ...options.args, replicate: false }
+			args: { ...options.args, replicate: false },
 		});
 
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
-			args: { ...options.args, replicate: { factor: 0.5 } }
+			args: { ...options.args, replicate: { factor: 0.5 } },
 		})) as EventStore<string>;
 
 		db3 = (await EventStore.open(db1.address!, session.peers[2], {
-			args: { ...options.args, replicate: { factor: 0.5 } }
+			args: { ...options.args, replicate: { factor: 0.5 } },
 		})) as EventStore<string>;
 
 		await waitForResolved(async () =>
-			expect((await db2.log.getReplicators()).size).to.equal(2)
+			expect((await db2.log.getReplicators()).size).to.equal(2),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db3.log.getReplicators()).size).to.equal(2)
+			expect((await db3.log.getReplicators()).size).to.equal(2),
 		);
 
 		// One leader
@@ -198,7 +197,6 @@ describe(`leaders`, function () {
 	});
 
 	it("select leaders for three peers", async () => {
-
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
@@ -206,38 +204,36 @@ describe(`leaders`, function () {
 			args: {
 				replicate: {
 					offset: 0,
-					factor: 0.3333
-				}
-			}
+					factor: 0.3333,
+				},
+			},
 		});
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
 			args: {
 				replicate: {
 					offset: 0.333,
-					factor: 0.3333
-				}
-			}
+					factor: 0.3333,
+				},
+			},
 		})) as EventStore<string>;
 		db3 = (await EventStore.open(db1.address!, session.peers[2], {
 			args: {
 				replicate: {
 					offset: 0.666,
-					factor: 0.3333
-				}
-			}
+					factor: 0.3333,
+				},
+			},
 		})) as EventStore<string>;
 
-
-
 		await waitForResolved(async () =>
-			expect((await db1.log.getReplicators()).size).to.equal(3)
+			expect((await db1.log.getReplicators()).size).to.equal(3),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db2.log.getReplicators()).size).to.equal(3)
+			expect((await db2.log.getReplicators()).size).to.equal(3),
 		);
 		await waitForResolved(async () =>
-			expect((await db3.log.getReplicators()).size).to.equal(3)
+			expect((await db3.log.getReplicators()).size).to.equal(3),
 		);
 
 		let resolved = 0;
@@ -245,53 +241,53 @@ describe(`leaders`, function () {
 			try {
 				const slot = Math.random();
 				const isLeaderAOneLeader = await db1.log.isLeader(slot, 1, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				const isLeaderBOneLeader = await db2.log.isLeader(slot, 1, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				const isLeaderCOneLeader = await db3.log.isLeader(slot, 1, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				expect([
 					isLeaderAOneLeader,
 					isLeaderBOneLeader,
-					isLeaderCOneLeader
+					isLeaderCOneLeader,
 				]).include.members([false, false, true]);
 
 				// Two leaders
 				const isLeaderATwoLeaders = await db1.log.isLeader(slot, 2, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				const isLeaderBTwoLeaders = await db2.log.isLeader(slot, 2, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				const isLeaderCTwoLeaders = await db3.log.isLeader(slot, 2, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				expect([
 					isLeaderATwoLeaders,
 					isLeaderBTwoLeaders,
-					isLeaderCTwoLeaders
+					isLeaderCTwoLeaders,
 				]).include.members([false, true, true]);
 
 				// Three leders
 				const isLeaderAThreeLeaders = await db1.log.isLeader(slot, 3, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				const isLeaderBThreeLeaders = await db2.log.isLeader(slot, 3, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				const isLeaderCThreeLeaders = await db3.log.isLeader(slot, 3, {
-					roleAge: 0
+					roleAge: 0,
 				});
 				expect([
 					isLeaderAThreeLeaders,
 					isLeaderBThreeLeaders,
-					isLeaderCThreeLeaders
+					isLeaderCThreeLeaders,
 				]).include.members([true, true, true]);
 				resolved += 1;
-			} catch (error) { }
+			} catch (error) {}
 		}
 		// since the distribution only in best scenarios distributes perfectly
 		// we might have duplication, i.e. more than expected amount of leaders for a particular
@@ -304,42 +300,41 @@ describe(`leaders`, function () {
 		db2 = (await EventStore.open(
 			db1.address!,
 			session.peers[1],
-			options
+			options,
 		)) as EventStore<string>;
 		db3 = (await EventStore.open(
 			db1.address!,
 			session.peers[2],
-			options
+			options,
 		)) as EventStore<string>;
 
 		await waitForResolved(async () =>
 			expect(Math.abs((await db1.log.getTotalParticipation()) - 0.33)).lessThan(
-				0.02
-			)
+				0.02,
+			),
 		);
 		await waitForResolved(async () =>
 			expect(Math.abs((await db2.log.getTotalParticipation()) - 0.33)).lessThan(
-				0.02
-			)
+				0.02,
+			),
 		);
 		await waitForResolved(async () =>
 			expect(Math.abs((await db3.log.getTotalParticipation()) - 0.33)).lessThan(
-				0.02
-			)
+				0.02,
+			),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db1.log.getReplicators()).size).to.equal(3)
+			expect((await db1.log.getReplicators()).size).to.equal(3),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db2.log.getReplicators()).size).to.equal(3)
+			expect((await db2.log.getReplicators()).size).to.equal(3),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db3.log.getReplicators()).size).to.equal(3)
+			expect((await db3.log.getReplicators()).size).to.equal(3),
 		);
-
 
 		let a = 0,
 			b = 0,
@@ -368,13 +363,13 @@ describe(`leaders`, function () {
 			db1 = await session.peers[0].open(store, {
 				args: {
 					replicate: {
-						factor: 0.5001 // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+						factor: 0.5001, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
 					},
 					replicas: {
-						min: 2
+						min: 2,
 					},
-					timeUntilRoleMaturity: 10 * 1000
-				}
+					timeUntilRoleMaturity: 10 * 1000,
+				},
 			});
 
 			db2 = await EventStore.open<EventStore<string>>(
@@ -383,21 +378,19 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicate: {
-
-							factor: 0.5001 // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+							factor: 0.5001, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
 						},
 						replicas: {
-							min: 2
+							min: 2,
 						},
-						timeUntilRoleMaturity: 10 * 1000
-					}
-				}
+						timeUntilRoleMaturity: 10 * 1000,
+					},
+				},
 			);
 
 			await waitForResolved(async () => {
 				expect((await db1.log.getReplicators()).size).equal(2);
 			});
-
 
 			await waitForResolved(async () => {
 				expect((await db2.log.getReplicators()).size).equal(2);
@@ -406,29 +399,27 @@ describe(`leaders`, function () {
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
 			expect(await db1.log.getReplicatorUnion(0)).to.deep.equal([
-				session.peers[0].identity.publicKey.hashcode()
+				session.peers[0].identity.publicKey.hashcode(),
 			]);
 
 			expect(await db2.log.getReplicatorUnion(0)).to.deep.equal([
-				session.peers[1].identity.publicKey.hashcode()
+				session.peers[1].identity.publicKey.hashcode(),
 			]);
-
 		});
 
 		it("will consider in flight", async () => {
-
 			const store = new EventStore<string>();
 
 			db1 = await session.peers[0].open(store.clone(), {
 				args: {
 					replicate: {
-						factor: 0.5001 // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+						factor: 0.5001, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
 					},
 					replicas: {
-						min: 2
+						min: 2,
 					},
-					timeUntilRoleMaturity: 1e4
-				}
+					timeUntilRoleMaturity: 1e4,
+				},
 			});
 
 			const abortController = new AbortController();
@@ -438,14 +429,13 @@ describe(`leaders`, function () {
 			db2 = await session.peers[1].open(store.clone(), {
 				args: {
 					replicate: {
-
-						factor: 0.5001 // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+						factor: 0.5001, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
 					},
 					replicas: {
-						min: 2
+						min: 2,
 					},
-					timeUntilRoleMaturity: 1e4
-				}
+					timeUntilRoleMaturity: 1e4,
+				},
 			});
 
 			await waitForResolved(async () => {
@@ -456,29 +446,30 @@ describe(`leaders`, function () {
 				expect((await db2.log.getReplicators()).size).equal(2);
 			});
 
-			await waitForResolved(() =>
-				expect(
-					db2.log["syncInFlight"].has(db1.node.identity.publicKey.hashcode())
-				).to.be.true
+			await waitForResolved(
+				() =>
+					expect(
+						db2.log["syncInFlight"].has(db1.node.identity.publicKey.hashcode()),
+					).to.be.true,
 			);
 
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
 			expect(await db2.log.getReplicatorUnion(0)).to.have.members([
 				session.peers[0].identity.publicKey.hashcode(),
-				session.peers[1].identity.publicKey.hashcode()
+				session.peers[1].identity.publicKey.hashcode(),
 			]);
 
 			abortController.abort("Start sending now");
 			await waitForResolved(() => {
 				expect(
-					db2.log["syncInFlight"].has(db1.node.identity.publicKey.hashcode())
-				).to.be.false
-			})
+					db2.log["syncInFlight"].has(db1.node.identity.publicKey.hashcode()),
+				).to.be.false;
+			});
 
 			// no more inflight
 			expect(await db2.log.getReplicatorUnion(0)).to.deep.equal([
-				session.peers[1].identity.publicKey.hashcode()
+				session.peers[1].identity.publicKey.hashcode(),
 			]);
 		});
 
@@ -488,13 +479,13 @@ describe(`leaders`, function () {
 			db1 = await session.peers[0].open(store, {
 				args: {
 					replicas: {
-						min: 1
+						min: 1,
 					},
 					replicate: {
 						offset: 0,
-						factor: 0.34
-					}
-				}
+						factor: 0.34,
+					},
+				},
 			});
 			db2 = await EventStore.open<EventStore<string>>(
 				db1.address!,
@@ -502,14 +493,14 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicas: {
-							min: 1
+							min: 1,
 						},
 						replicate: {
 							offset: 0.333,
-							factor: 0.34
-						}
-					}
-				}
+							factor: 0.34,
+						},
+					},
+				},
 			);
 
 			db3 = await EventStore.open<EventStore<string>>(
@@ -518,28 +509,27 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicas: {
-							min: 1
+							min: 1,
 						},
 						replicate: {
 							offset: 0.666,
-							factor: 0.34
-						}
-					}
-				}
+							factor: 0.34,
+						},
+					},
+				},
 			);
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(3)
+				expect((await db1.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(3)
+				expect((await db2.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db3.log.getReplicators()).size).to.equal(3)
+				expect((await db3.log.getReplicators()).size).to.equal(3),
 			);
-
 
 			for (let i = 1; i <= 3; i++) {
 				db1.log.replicas.min = { getValue: () => i };
@@ -557,13 +547,12 @@ describe(`leaders`, function () {
 			db1 = await session.peers[0].open(store, {
 				args: {
 					replicas: {
-						min: 1
+						min: 1,
 					},
 					replicate: {
-
-						factor: 0.34
-					}
-				}
+						factor: 0.34,
+					},
+				},
 			});
 
 			db2 = await EventStore.open<EventStore<string>>(
@@ -572,14 +561,13 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicas: {
-							min: 1
+							min: 1,
 						},
 						replicate: {
-
-							factor: 0.34
-						}
-					}
-				}
+							factor: 0.34,
+						},
+					},
+				},
 			);
 
 			db3 = await EventStore.open<EventStore<string>>(
@@ -588,35 +576,32 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicas: {
-							min: 1
+							min: 1,
 						},
 						replicate: {
-
-							factor: 0.34
-						}
-					}
-				}
+							factor: 0.34,
+						},
+					},
+				},
 			);
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(3)
+				expect((await db1.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(3)
+				expect((await db2.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db3.log.getReplicators()).size).to.equal(3)
+				expect((await db3.log.getReplicators()).size).to.equal(3),
 			);
 
 			for (let i = 3; i <= 3; i++) {
 				db3.log.replicas.min = { getValue: () => i };
 
 				// Should always include all nodes since no is mature
-				expect(
-					await db3.log.getReplicatorUnion(0xffffffff)
-				).to.have.length(1);
+				expect(await db3.log.getReplicatorUnion(0xffffffff)).to.have.length(1);
 			}
 		});
 
@@ -627,13 +612,13 @@ describe(`leaders`, function () {
 			db1 = await session.peers[0].open(store, {
 				args: {
 					replicas: {
-						min: 1
+						min: 1,
 					},
 					replicate: {
 						offset: 0,
-						factor: 0.34
-					}
-				}
+						factor: 0.34,
+					},
+				},
 			});
 
 			await delay(MATURE_TIME);
@@ -644,14 +629,14 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicas: {
-							min: 1
+							min: 1,
 						},
 						replicate: {
 							offset: 0.334,
-							factor: 0.34
-						}
-					}
-				}
+							factor: 0.34,
+						},
+					},
+				},
 			);
 
 			db3 = await EventStore.open<EventStore<string>>(
@@ -660,26 +645,26 @@ describe(`leaders`, function () {
 				{
 					args: {
 						replicas: {
-							min: 1
+							min: 1,
 						},
 						replicate: {
 							offset: 0.666,
-							factor: 0.34
-						}
-					}
-				}
+							factor: 0.34,
+						},
+					},
+				},
 			);
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(3)
+				expect((await db1.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(3)
+				expect((await db2.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db3.log.getReplicators()).size).to.equal(3)
+				expect((await db3.log.getReplicators()).size).to.equal(3),
 			);
 
 			// TODO not sure if db2 results should be included here
@@ -688,11 +673,11 @@ describe(`leaders`, function () {
 
 			for (let i = 1; i < 3; i++) {
 				db3.log.replicas.min = { getValue: () => i };
-				let list = await db3.log.getReplicatorUnion(MATURE_TIME)
+				let list = await db3.log.getReplicatorUnion(MATURE_TIME);
 				expect(list).to.have.length(2); // TODO unmature nodes should not be queried
 				expect(list).to.have.members([
 					session.peers[0].identity.publicKey.hashcode(),
-					session.peers[2].identity.publicKey.hashcode()
+					session.peers[2].identity.publicKey.hashcode(),
 				]);
 			}
 
@@ -702,7 +687,9 @@ describe(`leaders`, function () {
 				db3.log.replicas.min = { getValue: () => i };
 
 				// all is matured now
-				expect(await db3.log.getReplicatorUnion(MATURE_TIME)).to.have.length(3 - i + 1); // since I am replicating with factor 1 and is mature
+				expect(await db3.log.getReplicatorUnion(MATURE_TIME)).to.have.length(
+					3 - i + 1,
+				); // since I am replicating with factor 1 and is mature
 			}
 		});
 	});
@@ -713,10 +700,9 @@ describe(`leaders`, function () {
 				args: {
 					replicate: {
 						offset: 0,
-						factor: 0.05
-
-					} // cover 5%
-				}
+						factor: 0.05,
+					}, // cover 5%
+				},
 			});
 
 			db2 = await EventStore.open<EventStore<string>>(
@@ -726,18 +712,18 @@ describe(`leaders`, function () {
 					args: {
 						replicate: {
 							offset: 0.5,
-							factor: 0.48
-						} // cover 48%  appx 10 times more)
-					}
-				}
+							factor: 0.48,
+						}, // cover 48%  appx 10 times more)
+					},
+				},
 			);
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(2)
+				expect((await db1.log.getReplicators()).size).to.equal(2),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(2)
+				expect((await db2.log.getReplicators()).size).to.equal(2),
 			);
 
 			let a = 0,
@@ -747,7 +733,7 @@ describe(`leaders`, function () {
 			// expect db1 and db2 segments to not overlap for this test asserts to work out well
 			for (const segmentsA of await db1.log.getMyReplicationSegments()) {
 				for (const segmentsB of await db2.log.getMyReplicationSegments()) {
-					expect(segmentsA.overlaps(segmentsB)).to.be.false
+					expect(segmentsA.overlaps(segmentsB)).to.be.false;
 				}
 			}
 
@@ -781,45 +767,42 @@ describe(`leaders`, function () {
 				replicate: {
 					...options.args,
 
-					factor: 0.3333
-				}
-			}
+					factor: 0.3333,
+				},
+			},
 		});
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
 			args: {
 				...options.args,
 				replicate: {
-
-					factor: 0.3333
-				}
-			}
+					factor: 0.3333,
+				},
+			},
 		})) as EventStore<string>;
 		db3 = (await EventStore.open(db1.address!, session.peers[2], {
 			args: {
 				...options.args,
 				replicate: {
-
-					factor: 0.3333
-				}
-			}
+					factor: 0.3333,
+				},
+			},
 		})) as EventStore<string>;
 
 		await waitForResolved(async () =>
-			expect((await db1.log.getReplicators()).size).to.equal(3)
+			expect((await db1.log.getReplicators()).size).to.equal(3),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db2.log.getReplicators()).size).to.equal(3)
+			expect((await db2.log.getReplicators()).size).to.equal(3),
 		);
 
 		await waitForResolved(async () =>
-			expect((await db3.log.getReplicators()).size).to.equal(3)
+			expect((await db3.log.getReplicators()).size).to.equal(3),
 		);
-
 
 		for (let i = 0; i < 100; i++) {
 			const leaders: Set<string | undefined> = new Set(
-				await db1.log.findLeaders(String(i), 3, { roleAge: 0 })
+				await db1.log.findLeaders(String(i), 3, { roleAge: 0 }),
 			);
 			expect(leaders.has(undefined)).to.be.false;
 			expect(leaders.size).equal(3);
@@ -827,58 +810,50 @@ describe(`leaders`, function () {
 	});
 
 	describe("get replicators sorted", () => {
-
 		it("can handle peers leaving and joining", async () => {
 			db1 = await session.peers[0].open(new EventStore<string>(), options);
 			db2 = (await EventStore.open(
 				db1.address!,
 				session.peers[1],
-				options
+				options,
 			)) as EventStore<string>;
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(2)
+				expect((await db1.log.getReplicators()).size).to.equal(2),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(2)
+				expect((await db2.log.getReplicators()).size).to.equal(2),
 			);
 
 			db3 = (await EventStore.open(
 				db1.address!,
 				session.peers[2],
-				options
+				options,
 			)) as EventStore<string>;
 
-
 			await waitForResolved(async () =>
-				expect((await db3.log.getReplicators()).size).to.equal(3)
+				expect((await db3.log.getReplicators()).size).to.equal(3),
 			);
 
 			await db2.close();
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(2)
+				expect((await db1.log.getReplicators()).size).to.equal(2),
 			);
 
 			await waitForResolved(async () =>
-				expect(
-					[...await db1.log
-						.getReplicators()]
-				).to.have.members([
+				expect([...(await db1.log.getReplicators())]).to.have.members([
 					getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
-					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
-				])
+					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+				]),
 			);
 
 			await waitForResolved(async () =>
-				expect(
-					[...await db3.log
-						.getReplicators()]
-				).to.have.members([
+				expect([...(await db3.log.getReplicators())]).to.have.members([
 					getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
-					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
-				])
+					getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
+				]),
 			);
 
 			expect(db2.log["_replicationRangeIndex"]).equal(undefined);
@@ -886,44 +861,35 @@ describe(`leaders`, function () {
 			db2 = (await EventStore.open(
 				db1.address!,
 				session.peers[1],
-				options
+				options,
 			)) as EventStore<string>;
 
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(3)
+				expect((await db1.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(3)
+				expect((await db2.log.getReplicators()).size).to.equal(3),
 			);
 
 			await waitForResolved(async () =>
-				expect((await db3.log.getReplicators()).size).to.equal(3)
+				expect((await db3.log.getReplicators()).size).to.equal(3),
 			);
 
-			expect(
-				[...await db1.log
-					.getReplicators()]
-			).to.have.members([
+			expect([...(await db1.log.getReplicators())]).to.have.members([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
+				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 			]);
-			expect(
-				[...await db2.log
-					.getReplicators()]
-			).to.have.members([
+			expect([...(await db2.log.getReplicators())]).to.have.members([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
+				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 			]);
-			expect(
-				[...await db3.log
-					.getReplicators()]
-			).to.have.members([
+			expect([...(await db3.log.getReplicators())]).to.have.members([
 				getPublicKeyFromPeerId(session.peers[0].peerId).hashcode(),
 				getPublicKeyFromPeerId(session.peers[1].peerId).hashcode(),
-				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode()
+				getPublicKeyFromPeerId(session.peers[2].peerId).hashcode(),
 			]);
 		});
 	});

@@ -1,13 +1,13 @@
 import {
 	type AbstractType,
 	type Constructor,
-	getSchemasBottomUp
+	getSchemasBottomUp,
 } from "@dao-xyz/borsh";
 
 export const getValuesWithType = <T>(
 	from: any,
 	type: Constructor<T> | AbstractType<T>,
-	stopAtType?: Constructor<any> | AbstractType<any>
+	stopAtType?: Constructor<any> | AbstractType<any>,
 ): T[] => {
 	const schemas = getSchemasBottomUp(from.constructor);
 	const values: T[] = [];

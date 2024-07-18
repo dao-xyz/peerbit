@@ -1,27 +1,28 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
-import { Program } from "@peerbit/program";
-import {
-	RPC,
-	type RPCResponse,
-	queryAll,
-	MissingResponsesError,
-	type RPCRequestAllOptions
-} from "@peerbit/rpc";
-import { logger as loggerFn } from "@peerbit/logger";
-import { PublicSignKey, sha256Base64Sync, type MaybePromise } from "@peerbit/crypto";
-import { SharedLog } from "@peerbit/shared-log";
-import { concat, fromString } from "uint8arrays";
-import { SilentDelivery } from "@peerbit/stream-interface";
-import { AbortError } from "@peerbit/time";
 import { Cache } from "@peerbit/cache";
 import {
-	HashmapIndex
-} from "@peerbit/indexer-simple";
+	type MaybePromise,
+	PublicSignKey,
+	sha256Base64Sync,
+} from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
 import * as indexerTypes from "@peerbit/indexer-interface";
+import { HashmapIndex } from "@peerbit/indexer-simple";
+import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
+import { logger as loggerFn } from "@peerbit/logger";
+import { Program } from "@peerbit/program";
+import {
+	MissingResponsesError,
+	RPC,
+	type RPCRequestAllOptions,
+	type RPCResponse,
+	queryAll,
+} from "@peerbit/rpc";
+import { SharedLog } from "@peerbit/shared-log";
+import { SilentDelivery } from "@peerbit/stream-interface";
+import { AbortError } from "@peerbit/time";
+import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
-
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -33,7 +34,7 @@ type BufferedResult<T> = {
 };
 
 @variant(0)
-export class Operation /* <T> */ { }
+export class Operation /* <T> */ {}
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
@@ -93,10 +94,7 @@ export type QueryOptions<R> = {
 };
 export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
 
-type Transformer<T, I> = (
-	obj: T,
-	context: types.Context
-) => MaybePromise<I>
+type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
 
 type ResultsIterator<T> = {
 	close: () => Promise<void>;
@@ -107,7 +105,7 @@ type ResultsIterator<T> = {
 type QueryDetailedOptions<T> = QueryOptions<T> & {
 	onResponse?: (
 		response: types.AbstractSearchResult<T>,
-		from: PublicSignKey
+		from: PublicSignKey,
 	) => void | Promise<void>;
 };
 
@@ -115,7 +113,7 @@ const introduceEntries = async <T>(
 	responses: RPCResponse<types.AbstractSearchResult<T>>[],
 	type: AbstractType<T>,
 	sync: (result: types.Results<T>) => Promise<void>,
-	options?: QueryDetailedOptions<T>
+	options?: QueryDetailedOptions<T>,
 ): Promise<RPCResponse<types.Results<T>>[]> => {
 	const results: RPCResponse<types.Results<T>>[] = [];
 	for (const response of responses) {
@@ -142,7 +140,7 @@ const introduceEntries = async <T>(
 
 const dedup = <T>(
 	allResult: T[],
-	dedupBy: (obj: any) => string | Uint8Array | number | bigint
+	dedupBy: (obj: any) => string | Uint8Array | number | bigint,
 ) => {
 	const unique: Set<indexerTypes.IdPrimitive> = new Set();
 	const dedup: T[] = [];
@@ -167,17 +165,17 @@ if (!(await this.canRead(message.sender))) {
 
 export type CanSearch = (
 	request: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
-	from: PublicSignKey
+	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
 export type CanRead<T> = (
 	result: T,
-	from: PublicSignKey
+	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
 export type IDocumentWithContext<I> = {
 	__context: types.Context;
-} & I
+} & I;
 
 export type OpenOptions<T, I> = {
 	documentType: AbstractType<T>;
@@ -190,15 +188,20 @@ export type OpenOptions<T, I> = {
 	indexBy?: string | string[];
 };
 
-
-type IndexableClass<I> = new (value: I, context: types.Context) => IDocumentWithContext<I> /* IDocumentWithContext<T>; */
+type IndexableClass<I> = new (
+	value: I,
+	context: types.Context,
+) => IDocumentWithContext<I>; /* IDocumentWithContext<T>; */
 
 @variant("documents_index")
-export class DocumentIndex<T, I extends Record<string, any>> extends Program<OpenOptions<T, I>> {
-
+export class DocumentIndex<T, I extends Record<string, any>> extends Program<
+	OpenOptions<T, I>
+> {
 	@field({ type: RPC })
-	_query: RPC<indexerTypes.AbstractSearchRequest, types.AbstractSearchResult<T>>;
-
+	_query: RPC<
+		indexerTypes.AbstractSearchRequest,
+		types.AbstractSearchResult<T>
+	>;
 
 	// Original document representation
 	documentType: AbstractType<T>;
@@ -206,9 +209,8 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	// indexed document, either a constructor is provided
 	indexedType?: new (arg: T, context: types.Context) => I;
 
-	// or a transformer is provided. The transformer will otherwise be generated 
+	// or a transformer is provided. The transformer will otherwise be generated
 	transformer: Transformer<T, I>;
-
 
 	// The indexed document wrapped in a context
 	wrappedIndexedType: IndexableClass<I>;
@@ -220,7 +222,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	// Index key
 	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
-	private index: indexerTypes.Index<IDocumentWithContext<I>>
+	private index: indexerTypes.Index<IDocumentWithContext<I>>;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
@@ -235,7 +237,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	private _resolverCache: Cache<T>;
 	private _isProgramValues: boolean;
 	constructor(properties?: {
-		query?: RPC<indexerTypes.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+		query?: RPC<
+			indexerTypes.AbstractSearchRequest,
+			types.AbstractSearchResult<T>
+		>;
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
@@ -265,10 +270,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 
 		this.documentType = properties.documentType;
 		this.indexedType = properties.indexedType;
-		this.indexedTypeIsDocumentType = properties.indexedType === properties.documentType;
+		this.indexedTypeIsDocumentType =
+			properties.indexedType === properties.documentType;
 
 		class IndexedClassWithContex {
-
 			@field({ type: types.Context })
 			__context: types.Context;
 
@@ -279,9 +284,15 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		}
 
 		// copy all prototype values from indexedType to IndexedClassWithContex
-		copySerialization((properties.indexedType || properties.documentType)!, IndexedClassWithContex);
+		copySerialization(
+			(properties.indexedType || properties.documentType)!,
+			IndexedClassWithContex,
+		);
 
-		this.wrappedIndexedType = IndexedClassWithContex as new (value: I, context: types.Context) => IDocumentWithContext<I>
+		this.wrappedIndexedType = IndexedClassWithContex as new (
+			value: I,
+			context: types.Context,
+		) => IDocumentWithContext<I>;
 
 		// if this.type is a class that extends Program we want to do special functionality
 		this._isProgramValues = this.documentType instanceof Program;
@@ -289,11 +300,14 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		this._sync = properties.sync;
 		this.indexedType = properties.indexedType;
 
-		this.transformer = (properties.indexedType ? ((obj, context) => new properties.indexedType!(obj, context)) : (obj) => obj as any as I); // TODO types
+		this.transformer = properties.indexedType
+			? (obj, context) => new properties.indexedType!(obj, context)
+			: (obj) => obj as any as I; // TODO types
 
-		const maybeArr = properties.indexBy || DEFAULT_INDEX_BY
+		const maybeArr = properties.indexBy || DEFAULT_INDEX_BY;
 		this.indexBy = Array.isArray(maybeArr) ? maybeArr : [maybeArr];
-		this.indexByResolver = (obj: any) => indexerTypes.extractFieldValue(obj, this.indexBy);
+		this.indexByResolver = (obj: any) =>
+			indexerTypes.extractFieldValue(obj, this.indexBy);
 
 		this._valueEncoding = BORSH_ENCODING(this.documentType);
 
@@ -302,25 +316,28 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		}
 		this._resolverCache = new Cache({ max: 10 }); // TODO choose limit better (adaptive)
 
-		this.index = await (await this.node.indexer.scope(
-			sha256Base64Sync(
-				concat([this._log.log.id, fromString("/document-index")])
-			))).init({
+		this.index =
+			(await (
+				await this.node.indexer.scope(
+					sha256Base64Sync(
+						concat([this._log.log.id, fromString("/document-index")]),
+					),
+				)
+			).init({
 				indexBy: this.indexBy,
 				schema: this.wrappedIndexedType,
 				nested: {
 					match: (obj: any): obj is types.IDocumentStore<any> =>
 						obj instanceof this.dbType,
 					query: async (obj: types.IDocumentStore<any>, query) =>
-						obj.index.search(query)
+						obj.index.search(query),
 				},
 				/* maxBatchSize: MAX_BATCH_SIZE */
-			}) || new HashmapIndex<IDocumentWithContext<I>>();
-
+			})) || new HashmapIndex<IDocumentWithContext<I>>();
 
 		await this._query.open({
 			topic: sha256Base64Sync(
-				concat([this._log.log.id, fromString("/document")])
+				concat([this._log.log.id, fromString("/document")]),
 			),
 			responseHandler: async (query, ctx) => {
 				if (!ctx.from) {
@@ -333,8 +350,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 					(query instanceof indexerTypes.SearchRequest ||
 						query instanceof indexerTypes.CollectNextRequest) &&
 					!(await properties.canSearch(
-						query as indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
-						ctx.from
+						query as
+							| indexerTypes.SearchRequest
+							| indexerTypes.CollectNextRequest,
+						ctx.from,
 					))
 				) {
 					return new types.NoAccess();
@@ -345,24 +364,24 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 				} else {
 					const results = await this.processQuery(
 						query as
-						| indexerTypes.SearchRequest
-						| indexerTypes.SearchRequest
-						| indexerTypes.CollectNextRequest,
+							| indexerTypes.SearchRequest
+							| indexerTypes.SearchRequest
+							| indexerTypes.CollectNextRequest,
 						ctx.from,
 						{
-							canRead: properties.canRead
-						}
+							canRead: properties.canRead,
+						},
 					);
 
 					return new types.Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
 						results: results.results,
-						kept: results.kept
+						kept: results.kept,
 					});
 				}
 			},
 			responseType: types.AbstractSearchResult,
-			queryType: indexerTypes.AbstractSearchRequest
+			queryType: indexerTypes.AbstractSearchRequest,
 		});
 	}
 
@@ -379,19 +398,18 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		if (dropped) {
 			await this.index.drop?.();
 			await this.index.stop?.();
-
 		}
 		return dropped;
 	}
 
 	public async get(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
-		options?: QueryOptions<T>
+		options?: QueryOptions<T>,
 	): Promise<T | undefined> {
 		return (
 			await this.getDetailed(
 				key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key),
-				options
+				options,
 			)
 		)?.[0]?.results[0]?.value;
 	}
@@ -404,20 +422,24 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 			this._resolverCache.add(idString, value);
 		}
 
-		const existing = (await this.index.get(id))
+		const existing = await this.index.get(id);
 		const context = new types.Context({
 			created:
 				existing?.value.__context.created ||
 				entry.meta.clock.timestamp.wallTime,
 			modified: entry.meta.clock.timestamp.wallTime,
 			head: entry.hash,
-			gid: entry.gid
+			gid: entry.gid,
 		});
 
-		const valueToIndex = this.indexedType ? new this.indexedType(value, context) : value;
-		const wrappedValueToIndex = new this.wrappedIndexedType(valueToIndex as I, context)
-		await this.index.put(wrappedValueToIndex)
-
+		const valueToIndex = this.indexedType
+			? new this.indexedType(value, context)
+			: value;
+		const wrappedValueToIndex = new this.wrappedIndexedType(
+			valueToIndex as I,
+			context,
+		);
+		await this.index.put(wrappedValueToIndex);
 	}
 
 	public del(key: indexerTypes.IdPrimitive) {
@@ -426,22 +448,26 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		} else {
 			this._resolverCache.del(key);
 		}
-		return this.index.del(new indexerTypes.DeleteRequest({ query: [indexerTypes.getMatcher(this.indexBy, key)] }));
+		return this.index.del(
+			new indexerTypes.DeleteRequest({
+				query: [indexerTypes.getMatcher(this.indexBy, key)],
+			}),
+		);
 	}
 
 	public async getDetailed(
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
-		options?: QueryOptions<T>
+		options?: QueryOptions<T>,
 	): Promise<types.Results<T>[] | undefined> {
 		let results: types.Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
 				new indexerTypes.SearchRequest({
 					query: [
-						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key })
-					]
+						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
+					],
 				}),
-				options
+				options,
 			);
 		} else {
 			const indexableKey = indexerTypes.toIdeable(key);
@@ -456,11 +482,11 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 							new indexerTypes.IntegerCompare({
 								key: this.indexBy,
 								compare: indexerTypes.Compare.Equal,
-								value: indexableKey
-							})
-						]
+								value: indexableKey,
+							}),
+						],
 					}),
-					options
+					options,
 				);
 			} else if (typeof indexableKey === "string") {
 				results = await this.queryDetailed(
@@ -468,27 +494,25 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 						query: [
 							new indexerTypes.StringMatch({
 								key: this.indexBy,
-								value: indexableKey
-							})
-						]
+								value: indexableKey,
+							}),
+						],
 					}),
-					options
+					options,
 				);
-			}
-			else if (indexableKey instanceof Uint8Array) {
+			} else if (indexableKey instanceof Uint8Array) {
 				results = await this.queryDetailed(
 					new indexerTypes.SearchRequest({
 						query: [
 							new indexerTypes.ByteMatchQuery({
 								key: this.indexBy,
-								value: indexableKey
-							})
-						]
+								value: indexableKey,
+							}),
+						],
 					}),
-					options
+					options,
 				);
 			}
-
 		}
 
 		return results;
@@ -499,7 +523,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	}
 
 	private async resolveDocument(
-		value: indexerTypes.IndexedResult<IDocumentWithContext<I>>
+		value: indexerTypes.IndexedResult<IDocumentWithContext<I>>,
 	): Promise<{ value: T } | undefined> {
 		const cached =
 			this._resolverCache.get(value.id.primitive) ||
@@ -520,14 +544,14 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		const payloadValue = await head.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
 			return {
-				value: this.valueEncoding.decoder(payloadValue.data)
+				value: this.valueEncoding.decoder(payloadValue.data),
 				/* size: payloadValue.data.byteLength */
 			};
 		}
 
 		throw new Error(
 			"Unexpected value type when getting document: " +
-			payloadValue?.constructor?.name || typeof payloadValue
+				payloadValue?.constructor?.name || typeof payloadValue,
 		);
 	}
 
@@ -536,11 +560,13 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		from: PublicSignKey,
 		options?: {
 			canRead?: CanRead<T>;
-		}
+		},
 	): Promise<types.Results<T>> {
 		// We do special case for querying the id as we can do it faster than iterating
 
-		let indexedResult: indexerTypes.IndexedResults<IDocumentWithContext<I>> | undefined = undefined;
+		let indexedResult:
+			| indexerTypes.IndexedResults<IDocumentWithContext<I>>
+			| undefined = undefined;
 		if (query instanceof indexerTypes.SearchRequest) {
 			indexedResult = await this.index.query(query);
 		} else if (query instanceof indexerTypes.CollectNextRequest) {
@@ -562,20 +588,20 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 					context: result.value.__context,
 					value: value.value,
 					source: serialize(value.value),
-					indexed: result.value
-				})
+					indexed: result.value,
+				}),
 			);
 		}
 		const results: types.Results<T> = new types.Results({
 			results: filteredResults,
-			kept: BigInt(indexedResult.kept)
+			kept: BigInt(indexedResult.kept),
 		});
 		return results;
 	}
 
 	async processCloseIteratorRequest(
 		query: indexerTypes.CloseIteratorRequest,
-		publicKey: PublicSignKey
+		publicKey: PublicSignKey,
 	): Promise<void> {
 		return this.index.close(query);
 	}
@@ -588,9 +614,9 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	 */
 	public async queryDetailed(
 		queryRequest: indexerTypes.SearchRequest,
-		options?: QueryDetailedOptions<T>
+		options?: QueryDetailedOptions<T>,
 	): Promise<types.Results<T>[]> {
-		const local = typeof options?.local == "boolean" ? options?.local : true;
+		const local = typeof options?.local === "boolean" ? options?.local : true;
 		let remote: RemoteQueryOptions<types.AbstractSearchResult<T>> | undefined =
 			undefined;
 		if (typeof options?.remote === "boolean") {
@@ -612,7 +638,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		const promises: Promise<types.Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
-				"Expecting either 'options.remote' or 'options.local' to be true"
+				"Expecting either 'options.remote' or 'options.local' to be true",
 			);
 		}
 		const allResults: types.Results<T>[] = [];
@@ -620,7 +646,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		if (local) {
 			const results = await this.processQuery(
 				queryRequest,
-				this.node.identity.publicKey
+				this.node.identity.publicKey,
 			);
 			if (results.results.length > 0) {
 				options?.onResponse &&
@@ -631,20 +657,20 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 
 		if (remote) {
 			const replicatorGroups = await this._log.getReplicatorUnion(
-				remote.minAge
+				remote.minAge,
 			);
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
 				const fn = async () => {
 					const rs: types.Results<T>[] = [];
 					const responseHandler = async (
-						results: RPCResponse<types.AbstractSearchResult<T>>[]
+						results: RPCResponse<types.AbstractSearchResult<T>>[],
 					) => {
 						for (const r of await introduceEntries(
 							results,
 							this.documentType,
 							this._sync,
-							options
+							options,
 						)) {
 							rs.push(r.response);
 						}
@@ -659,7 +685,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 								groupHashes,
 								queryRequest,
 								responseHandler,
-								remote
+								remote,
 							);
 						}
 					} catch (error) {
@@ -708,7 +734,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	 */
 	public async search(
 		queryRequest: indexerTypes.SearchRequest,
-		options?: SearchOptions<T>
+		options?: SearchOptions<T>,
 	): Promise<T[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
 		queryRequest.fetch = options?.size ?? 0xffffffff;
@@ -724,7 +750,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		) {
 			// We might need to pull .next multiple time due to data message size limitations
 			for (const result of await iterator.next(
-				queryRequest.fetch - allResults.length
+				queryRequest.fetch - allResults.length,
 			)) {
 				allResults.push(result);
 			}
@@ -744,7 +770,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 	 */
 	public iterate(
 		queryRequest: indexerTypes.SearchRequest,
-		options?: QueryOptions<T>
+		options?: QueryOptions<T>,
 	): ResultsIterator<T> {
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<
@@ -797,7 +823,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 
 						for (const result of results.results) {
 							const indexKey = indexerTypes.toId(
-								this.indexByResolver(result.value)
+								this.indexByResolver(result.value),
 							).primitive;
 							if (visited.has(indexKey)) {
 								continue;
@@ -809,20 +835,20 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 								from: from,
 								indexed:
 									result.indexed ||
-									(await this.transformer(result.value, result.context))
+									(await this.transformer(result.value, result.context)),
 							});
 						}
 
 						peerBufferMap.set(from.hashcode(), {
 							buffer,
-							kept: Number(response.kept)
+							kept: Number(response.kept),
 						});
 					} else {
 						throw new Error(
-							"Unsupported result type: " + response?.constructor?.name
+							"Unsupported result type: " + response?.constructor?.name,
 						);
 					}
-				}
+				},
 			});
 
 			return done;
@@ -857,7 +883,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 					// TODO batch to multiple 'to's
 					const collectRequest = new indexerTypes.CollectNextRequest({
 						id: queryRequest.id,
-						amount: n - buffer.buffer.length
+						amount: n - buffer.buffer.length,
 					});
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
@@ -880,13 +906,15 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 										for (const result of results.results) {
 											if (
 												visited.has(
-													indexerTypes.toId(this.indexByResolver(result.value)).primitive
+													indexerTypes.toId(this.indexByResolver(result.value))
+														.primitive,
 												)
 											) {
 												continue;
 											}
 											visited.add(
-												indexerTypes.toId(this.indexByResolver(result.value)).primitive
+												indexerTypes.toId(this.indexByResolver(result.value))
+													.primitive,
 											);
 											peerBuffer.buffer.push({
 												value: result.value,
@@ -894,17 +922,20 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 												from: this.node.identity.publicKey,
 												indexed:
 													result.indexed ||
-													(await this.transformer(result.value, result.context))
+													(await this.transformer(
+														result.value,
+														result.context,
+													)),
 											});
 										}
 									}
 								})
 								.catch((e) => {
 									logger.error(
-										"Failed to collect sorted results from self. " + e?.message
+										"Failed to collect sorted results from self. " + e?.message,
 									);
 									peerBufferMap.delete(peer);
-								})
+								}),
 						);
 					} else {
 						// Fetch remotely
@@ -914,10 +945,15 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 									...options,
 									signal: controller.signal,
 									priority: 1,
-									mode: new SilentDelivery({ to: [peer], redundancy: 1 })
+									mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 								})
 								.then((response) =>
-									introduceEntries(response, this.documentType, this._sync, options)
+									introduceEntries(
+										response,
+										this.documentType,
+										this._sync,
+										options,
+									)
 										.then((responses) => {
 											responses.map((response) => {
 												resultsLeft += Number(response.response.kept);
@@ -940,22 +976,25 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 														if (
 															visited.has(
 																indexerTypes.toId(
-																	this.indexByResolver(result.value)
-																).primitive
+																	this.indexByResolver(result.value),
+																).primitive,
 															)
 														) {
 															continue;
 														}
 														visited.add(
 															indexerTypes.toId(
-																this.indexByResolver(result.value)
-															).primitive
+																this.indexByResolver(result.value),
+															).primitive,
 														);
 														peerBuffer.buffer.push({
 															value: result.value,
 															context: result.context,
 															from: response.from!,
-															indexed: this.transformer(result.value, result.context)
+															indexed: this.transformer(
+																result.value,
+																result.context,
+															),
 														});
 													}
 												}
@@ -964,13 +1003,13 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 										.catch((e) => {
 											logger.error(
 												"Failed to collect sorted results from: " +
-												peer +
-												". " +
-												e?.message
+													peer +
+													". " +
+													e?.message,
 											);
 											peerBufferMap.delete(peer);
-										})
-								)
+										}),
+								),
 						);
 					}
 				} else {
@@ -995,11 +1034,14 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 			const fetchedAll = await fetchAtLeast(n);
 
 			// get n next top entries, shift and pull more results
-			const peerBuffersArr = peerBuffers()
-			const results = peerBuffersArr.sort((a, b) => indexerTypes.extractSortCompare(
-				a.indexed, b.indexed,
-				queryRequest.sort
-			));
+			const peerBuffersArr = peerBuffers();
+			const results = peerBuffersArr.sort((a, b) =>
+				indexerTypes.extractSortCompare(
+					a.indexed,
+					b.indexed,
+					queryRequest.sort,
+				),
+			);
 
 			const pendingMoreResults = n < results.length;
 
@@ -1011,7 +1053,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 					logger.error("Unexpected empty result buffer");
 					continue;
 				}
-				const idx = arr.buffer.findIndex((x) => x.value == result.value);
+				const idx = arr.buffer.findIndex((x) => x.value === result.value);
 				if (idx >= 0) {
 					arr.buffer.splice(idx, 1);
 				}
@@ -1020,7 +1062,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 			done = fetchedAll && !pendingMoreResults;
 			return dedup(
 				batch.map((x) => x.value),
-				this.indexByResolver
+				this.indexByResolver,
 			);
 		};
 
@@ -1028,7 +1070,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 			controller.abort(new AbortError("Iterator closed"));
 
 			const closeRequest = new indexerTypes.CloseIteratorRequest({
-				id: queryRequest.id
+				id: queryRequest.id,
 			});
 			const promises: Promise<any>[] = [];
 			for (const [peer, buffer] of peerBufferMap) {
@@ -1041,16 +1083,16 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 					promises.push(
 						this.processCloseIteratorRequest(
 							closeRequest,
-							this.node.identity.publicKey
-						)
+							this.node.identity.publicKey,
+						),
 					);
 				} else {
 					// Close remote
 					promises.push(
 						this._query.send(closeRequest, {
 							...options,
-							mode: new SilentDelivery({ to: [peer], redundancy: 1 })
-						})
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+						}),
 					);
 				}
 			}
@@ -1060,7 +1102,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<Ope
 		return {
 			close,
 			next,
-			done: () => done
+			done: () => done,
 		};
 	}
 }

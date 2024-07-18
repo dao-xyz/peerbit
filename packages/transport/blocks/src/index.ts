@@ -2,7 +2,7 @@ export {
 	cidifyString,
 	stringifyCid,
 	createBlock,
-	getBlockValue
+	getBlockValue,
 } from "./block.js";
 export { DirectBlock } from "./libp2p.js";
 export * from "./interface.js";

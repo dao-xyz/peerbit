@@ -1,9 +1,9 @@
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
+import type { Ed25519Keypair } from "@peerbit/crypto";
 import assert from "assert";
-import { Log } from "../src/log.js";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
-import { signKey, signKey3, signKey4 } from "./fixtures/privateKey.js";
-import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
+import { Log } from "../src/log.js";
+import { signKey, signKey3, signKey4 } from "./fixtures/privateKey.js";
 
 const last = (arr: any[]) => {
 	return arr[arr.length - 1];
@@ -15,15 +15,15 @@ interface Events {
 const createEvents = async (
 	log: Log<any>,
 	store: BlockStore,
-	signKey: Ed25519Keypair
+	signKey: Ed25519Keypair,
 ) => {
 	let events: Events = {
-		gidsRemoved: []
+		gidsRemoved: [],
 	};
 	await log.open(store, signKey, {
 		onGidRemoved: (gids) => {
 			events.gidsRemoved.push(gids);
-		}
+		},
 	});
 
 	const logClose = log.close.bind(log);
@@ -89,7 +89,7 @@ describe("head-tails", function () {
 			await log1.append(new Uint8Array([0, 1]));
 			assert.deepStrictEqual(
 				(await log1.get((await log1.getHeads().all())[0].hash))?.hash,
-				(await log1.getHeads().all())[0].hash
+				(await log1.getHeads().all())[0].hash,
 			);
 		});
 
@@ -111,7 +111,7 @@ describe("head-tails", function () {
 			expect((await log2.getHeads().all()).length).equal(1);
 			assert.deepStrictEqual(
 				(await log2.getHeads().all())[0].hash,
-				expectedHead.hash
+				expectedHead.hash,
 			);
 		});
 
@@ -130,7 +130,7 @@ describe("head-tails", function () {
 			expect(heads.length).equal(2);
 			expect(heads.map((x) => x.hash)).to.have.members([
 				expectedHead1.hash,
-				expectedHead2.hash
+				expectedHead2.hash,
 			]);
 		});
 
@@ -178,7 +178,7 @@ describe("head-tails", function () {
 			expect(heads.length).equal(2);
 			expect(heads.map((x) => x.hash)).to.have.members([
 				expectedHead1.hash,
-				expectedHead2.hash
+				expectedHead2.hash,
 			]);
 		});
 
@@ -204,7 +204,7 @@ describe("head-tails", function () {
 			expect(heads.map((x) => x.hash)).to.have.members([
 				expectedHead1.hash,
 				expectedHead2.hash,
-				expectedHead3.hash
+				expectedHead3.hash,
 			]);
 		});
 
@@ -221,18 +221,18 @@ describe("head-tails", function () {
 				*/
 
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]), {
-					meta: { next: [] }
+					meta: { next: [] },
 				});
 				const { entry: b1 } = await log1.append(new Uint8Array([1, 0]), {
-					meta: { next: [] }
+					meta: { next: [] },
 				});
 				const { entry: ab1 } = await log1.append(new Uint8Array([0]), {
-					meta: { next: [a1, b1] }
+					meta: { next: [a1, b1] },
 				});
 				expect(log1Events.gidsRemoved).to.have.length(1);
 				expect(log1Events.gidsRemoved[0]).to.have.length(1);
 				expect(log1Events.gidsRemoved[0][0]).equal(
-					ab1.gid === a1.gid ? b1.gid : a1.gid
+					ab1.gid === a1.gid ? b1.gid : a1.gid,
 				); // if ab1 has gid a then b will be shadowed
 			});
 
@@ -251,24 +251,24 @@ describe("head-tails", function () {
 				*/
 
 				const { entry: a0 } = await log1.append(new Uint8Array([0, 0]), {
-					meta: { next: [], gidSeed: Buffer.from("b") }
+					meta: { next: [], gidSeed: Buffer.from("b") },
 				});
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]), {
-					meta: { next: [a0] }
+					meta: { next: [a0] },
 				});
 				const { entry: b1 } = await log1.append(new Uint8Array([1, 0]), {
-					meta: { next: [], gidSeed: Buffer.from("a") }
+					meta: { next: [], gidSeed: Buffer.from("a") },
 				});
 
 				// b2
-				// @ts-ignore
+				// @ts-ignore unused
 				const b2 = await log1.append(new Uint8Array([1, 1]), {
-					meta: { next: [b1] }
+					meta: { next: [b1] },
 				});
 
 				// a2
 				const a2 = await log1.append(new Uint8Array([0, 2]), {
-					meta: { next: [a1, b1] }
+					meta: { next: [a1, b1] },
 				});
 
 				// this test only makes sense to do, we try to make b1 gid "removable", i.e. by using a1 gid instead for a2
@@ -301,12 +301,12 @@ describe("head-tails", function () {
 			await log1.close();
 			log1 = new Log();
 			await log1.open(store, signKey, {
-				trim: { type: "length", to: 2 }
+				trim: { type: "length", to: 2 },
 			});
 			await log2.close();
 			log2 = new Log();
 			await log2.open(store, signKey, {
-				trim: { type: "length", to: 2 }
+				trim: { type: "length", to: 2 },
 			});
 			const { entry: a1 } = await log1.append(new Uint8Array([0, 0]));
 			const { entry: b1 } = await log2.append(new Uint8Array([1, 0]));
@@ -317,7 +317,7 @@ describe("head-tails", function () {
 			// the joined log will only contain the last two entries a2, b2
 			expect((await log1.toArray()).map((x) => x.hash)).to.have.members([
 				a2.hash,
-				b2.hash
+				b2.hash,
 			]);
 			expect(await log1.getTailHashes()).to.have.members([a1.hash, b1.hash]);
 		});
@@ -371,25 +371,26 @@ describe("head-tails", function () {
 		}); */
 	});
 
-
 	describe("order", () => {
-
-		it('can get oldest', async () => {
+		it("can get oldest", async () => {
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
 			await log1.append(new Uint8Array([0, 2]));
-			expect((await log1.entryIndex.getOldest())!.hash).equal((await log1.toArray())[0].hash);
-		})
+			expect((await log1.entryIndex.getOldest())!.hash).equal(
+				(await log1.toArray())[0].hash,
+			);
+		});
 
-		it('can get newest', async () => {
+		it("can get newest", async () => {
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
 			await log1.append(new Uint8Array([0, 2]));
-			expect((await log1.entryIndex.getNewest())!.hash).equal((await log1.toArray())[2].hash);
-		})
+			expect((await log1.entryIndex.getNewest())!.hash).equal(
+				(await log1.toArray())[2].hash,
+			);
+		});
 
 		it("can get before", async () => {
-
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
 			await log1.append(new Uint8Array([0, 2]));
@@ -397,17 +398,15 @@ describe("head-tails", function () {
 			const entry = await log1.append(new Uint8Array([0, 3]));
 			const before = await log1.entryIndex.getBefore(entry.entry);
 			expect(before!.hash).equal((await log1.toArray())[2].hash);
-
-		})
+		});
 
 		it("can get after", async () => {
-
 			await log1.append(new Uint8Array([0, 0]));
 			await log1.append(new Uint8Array([0, 1]));
 			const entry = await log1.append(new Uint8Array([0, 2]));
 			await log1.append(new Uint8Array([0, 3]));
 			const after = await log1.entryIndex.getAfter(entry.entry);
 			expect(after!.hash).equal((await log1.toArray())[3].hash);
-		})
-	})
+		});
+	});
 });

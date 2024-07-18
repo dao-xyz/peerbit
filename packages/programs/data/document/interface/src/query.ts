@@ -3,14 +3,12 @@ import {
 	deserialize,
 	field,
 	variant,
-	vec
+	vec,
 } from "@dao-xyz/borsh";
-
-
 
 /// ----- RESULTS -----
 
-export abstract class Result { }
+export abstract class Result {}
 
 @variant(0)
 export class Context {
@@ -80,7 +78,8 @@ export class ResultWithSource<T> extends Result {
 	indexed?: Record<string, any>;
 }
 
-export abstract class AbstractSearchResult<T> { }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export abstract class AbstractSearchResult<T> {}
 
 @variant(0)
 export class Results<T> extends AbstractSearchResult<T> {
@@ -98,7 +97,7 @@ export class Results<T> extends AbstractSearchResult<T> {
 }
 
 @variant(1)
-export class NoAccess extends AbstractSearchResult<any> { }
+export class NoAccess extends AbstractSearchResult<any> {}
 
 /* @variant(5)
 export class LogQuery extends Query { } */

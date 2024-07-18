@@ -1,66 +1,68 @@
+import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
+import { type AnyStore } from "@peerbit/any-store";
+import { cidifyString } from "@peerbit/blocks";
+import { type Blocks } from "@peerbit/blocks-interface";
 import {
+	type Identity,
 	SignatureWithKey,
+	X25519Keypair,
 	randomBytes,
 	sha256Base64Sync,
-	type Identity,
-	X25519Keypair
 } from "@peerbit/crypto";
-import { type AnyStore } from "@peerbit/any-store";
-
-import { EntryIndex, type MaybeResolveOptions, type ResultsIterator, type ReturnTypeFromResolveOptions } from "./entry-index.js";
-import * as LogError from "./log-errors.js";
-import * as Sorting from "./log-sorting.js";
-import { findUniques } from "./find-uniques.js";
-import {
-	type EncryptionTemplateMaybeEncrypted,
-	Entry,
-	Payload,
-	type CanAppend,
-	EntryType,
-	ShallowEntry,
-	type ShallowOrFullEntry
-} from "./entry.js";
-import {
-	HLC,
-	LamportClock as Clock,
-	LamportClock,
-	Timestamp
-} from "./clock.js";
-
-import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
-import { type Encoding, NO_ENCODING } from "./encoding.js";
-import { Trim, type TrimOptions } from "./trim.js";
-import { type Change } from "./change.js";
-import { type EntryWithRefs } from "./entry-with-refs.js";
-import { type Blocks } from "@peerbit/blocks-interface";
-import { cidifyString } from "@peerbit/blocks";
-import { type Keychain } from "@peerbit/keychain";
 import { type Indices } from "@peerbit/indexer-interface";
 import { create } from "@peerbit/indexer-sqlite3";
+import { type Keychain } from "@peerbit/keychain";
+import { type Change } from "./change.js";
+import {
+	LamportClock as Clock,
+	HLC,
+	LamportClock,
+	Timestamp,
+} from "./clock.js";
+import { type Encoding, NO_ENCODING } from "./encoding.js";
+import {
+	EntryIndex,
+	type MaybeResolveOptions,
+	type ResultsIterator,
+	type ReturnTypeFromResolveOptions,
+} from "./entry-index.js";
+import { type EntryWithRefs } from "./entry-with-refs.js";
+import {
+	type CanAppend,
+	type EncryptionTemplateMaybeEncrypted,
+	Entry,
+	EntryType,
+	Payload,
+	ShallowEntry,
+	type ShallowOrFullEntry,
+} from "./entry.js";
+import { findUniques } from "./find-uniques.js";
+import * as LogError from "./log-errors.js";
+import * as Sorting from "./log-sorting.js";
+import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
 
 export type LogEvents<T> = {
-	onChange?: (change: Change<T>/* , reference?: R */) => void;
+	onChange?: (change: Change<T> /* , reference?: R */) => void;
 	onGidRemoved?: (gids: string[]) => Promise<void> | void;
 };
 
 export type MemoryProperties = {
 	storage?: AnyStore;
-	indexer?: Indices,
+	indexer?: Indices;
 };
 
 export type LogProperties<T> = {
 	keychain?: Keychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
-	sortFn?: Sorting.SortFn
+	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
 };
 
 export type LogOptions<T> = LogProperties<T> & LogEvents<T> & MemoryProperties;
-
 
 export type AppendOptions<T> = {
 	meta?: {
@@ -73,7 +75,7 @@ export type AppendOptions<T> = {
 
 	identity?: Identity;
 	signers?: ((
-		data: Uint8Array
+		data: Uint8Array,
 	) => Promise<SignatureWithKey> | SignatureWithKey)[];
 
 	trim?: TrimOptions;
@@ -87,28 +89,28 @@ export type AppendOptions<T> = {
 
 type OnChange<T> = (
 	change: Change<T>,
-	reference?: undefined
+	reference?: undefined,
 ) => void | Promise<void>;
-
 
 export type JoinableEntry = {
 	meta: {
 		clock: {
-			timestamp: Timestamp
-		},
-		next: string[]
-		gid: string,
-		type: EntryType
-	},
-	hash: string
-}
+			timestamp: Timestamp;
+		};
+		next: string[];
+		gid: string;
+		type: EntryType;
+	};
+	hash: string;
+};
 
-export const ENTRY_JOIN_SHAPE = { hash: true, meta: { type: true, next: true, gid: true, clock: true } } as const
-
+export const ENTRY_JOIN_SHAPE = {
+	hash: true,
+	meta: { type: true, next: true, gid: true, clock: true },
+} as const;
 
 @variant(0)
 export class Log<T> {
-
 	@field({ type: fixedArray("u8", 32) })
 	private _id: Uint8Array;
 
@@ -133,7 +135,7 @@ export class Log<T> {
 	private _onChange?: OnChange<T>;
 	private _closed = true;
 	private _closeController!: AbortController;
-	private _loadedOnce = false
+	private _loadedOnce = false;
 	private _indexer!: Indices;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 	private _sortFn!: Sorting.SortFn;
@@ -163,8 +165,8 @@ export class Log<T> {
 		this._sortFn = sortFn || LastWriteWins;
 
 		this._storage = store;
-		this._indexer = indexer || await create();
-		await this._indexer.start?.()
+		this._indexer = indexer || (await create());
+		await this._indexer.start?.();
 
 		this._encoding = encoding || NO_ENCODING;
 		this._joining = new Map();
@@ -178,7 +180,6 @@ export class Log<T> {
 		// Clock
 		this._hlc = new HLC();
 
-
 		const id = this.id;
 		if (!id) {
 			throw new Error("Id not set");
@@ -188,11 +189,13 @@ export class Log<T> {
 			store: this._storage,
 			init: (e) => e.init(this),
 			onGidRemoved,
-			index: await (await this._indexer.scope("heads")).init({ schema: ShallowEntry }),
+			index: await (
+				await this._indexer.scope("heads")
+			).init({ schema: ShallowEntry }),
 			publicKey: this._identity.publicKey,
-			sort: this._sortFn
+			sort: this._sortFn,
 		});
-		await this._entryIndex.init()
+		await this._entryIndex.init();
 		/* 	this._values = new Values(this._entryIndex, this._sortFn); */
 
 		this._trim = new Trim(
@@ -201,13 +204,13 @@ export class Log<T> {
 				deleteNode: async (node: ShallowEntry) => {
 					await this.get(node.hash);
 					await this._entryIndex.delete(node.hash);
-					await this._storage.rm(node.hash)
+					await this._storage.rm(node.hash);
 					return node;
 				},
 				sortFn: this._sortFn,
-				getLength: () => this.length
+				getLength: () => this.length,
 			},
-			trim
+			trim,
 		);
 
 		this._canAppend = async (entry) => {
@@ -221,8 +224,7 @@ export class Log<T> {
 
 		this._onChange = options?.onChange;
 		this._closed = false;
-		this._closeController = new AbortController()
-
+		this._closeController = new AbortController();
 	}
 
 	private _idString: string | undefined;
@@ -237,8 +239,6 @@ export class Log<T> {
 	public static createIdString(id: Uint8Array) {
 		return sha256Base64Sync(id);
 	}
-
-
 
 	get id() {
 		return this._id;
@@ -256,11 +256,10 @@ export class Log<T> {
 	 */
 	get length() {
 		if (this._closed) {
-			throw new Error("Closed")
+			throw new Error("Closed");
 		}
-		return this._entryIndex.length
+		return this._entryIndex.length;
 	}
-
 
 	get canAppend() {
 		return this._canAppend;
@@ -280,17 +279,17 @@ export class Log<T> {
 	 */
 	async toArray(): Promise<Entry<T>[]> {
 		// we call init, because the values might be unitialized
-		return this.entryIndex.query([], this.sortFn.sort, true).all()
+		return this.entryIndex.query([], this.sortFn.sort, true).all();
 	}
 
 	/**
 	 * Returns the head index
 	 */
 
-
-
-	getHeads<R extends MaybeResolveOptions = false>(resolve: R = false as R): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
-		return this.entryIndex.getHeads(undefined, resolve)
+	getHeads<R extends MaybeResolveOptions = false>(
+		resolve: R = false as R,
+	): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
+		return this.entryIndex.getHeads(undefined, resolve);
 	}
 
 	/**
@@ -326,7 +325,6 @@ export class Log<T> {
 		return this._storage;
 	}
 
-
 	get entryIndex(): EntryIndex<T> {
 		return this._entryIndex;
 	}
@@ -361,11 +359,13 @@ export class Log<T> {
 	 */
 	get(
 		hash: string,
-		options?: { timeout?: number }
+		options?: { timeout?: number },
 	): Promise<Entry<T> | undefined> {
-		return this._entryIndex.get(hash, options ? { type: 'full', timeout: options.timeout } : undefined);
+		return this._entryIndex.get(
+			hash,
+			options ? { type: "full", timeout: options.timeout } : undefined,
+		);
 	}
-
 
 	/**
 	 * Get a entry with shallow representation
@@ -373,7 +373,7 @@ export class Log<T> {
 	 */
 	async getShallow(
 		hash: string,
-		options?: { timeout?: number }
+		options?: { timeout?: number },
 	): Promise<ShallowEntry | undefined> {
 		return (await this._entryIndex.getShallow(hash))?.value;
 	}
@@ -445,7 +445,7 @@ export class Log<T> {
 	 */
 	async getReferenceSamples(
 		from: Entry<T>,
-		options?: { pointerCount?: number; memoryLimit?: number }
+		options?: { pointerCount?: number; memoryLimit?: number },
 	): Promise<Entry<T>[]> {
 		const hashes = new Set<string>();
 		const pointerCount = options?.pointerCount || 0;
@@ -510,33 +510,36 @@ export class Log<T> {
 
 	/**
 	 * Append an entry to the log.
-	 * @param {Entry} entry Entry to add
-	 * @return {Log} New Log containing the appended value
+	 * @param {T} data The data to be appended
+	 * @param {AppendOptions} [options] The options for the append
+	 * @returns {{ entry: Entry<T>; removed: ShallowEntry[] }} The appended entry and an array of removed entries
 	 */
 	async append(
 		data: T,
-		options: AppendOptions<T> = {}
+		options: AppendOptions<T> = {},
 	): Promise<{ entry: Entry<T>; removed: ShallowEntry[] }> {
-
-
 		// Update the clock (find the latest clock)
 		if (options.meta?.next) {
 			for (const n of options.meta.next) {
 				if (!n.hash)
 					throw new Error(
-						"Expecting nexts to already be saved. missing hash for one or more entries"
+						"Expecting nexts to already be saved. missing hash for one or more entries",
 					);
 			}
 		}
 
 		await this.load({ reload: false });
 
-		const nexts: Sorting.SortableEntry[] = options.meta?.next || await this.entryIndex.getHeads(undefined, { type: 'shape', shape: Sorting.ENTRY_SORT_SHAPE }).all();
+		const nexts: Sorting.SortableEntry[] =
+			options.meta?.next ||
+			(await this.entryIndex
+				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
+				.all());
 
 		// Calculate max time for log/graph
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
-			timestamp: options?.meta?.timestamp || this._hlc.now()
+			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
 		const entry = await Entry.create<T>({
@@ -549,21 +552,20 @@ export class Log<T> {
 				type: options.meta?.type,
 				gidSeed: options.meta?.gidSeed,
 				data: options.meta?.data,
-				next: nexts
+				next: nexts,
 			},
 
 			encoding: this._encoding,
 			encryption: options.encryption
 				? {
-					keypair: options.encryption.keypair,
-					receiver: {
-						...options.encryption.receiver
+						keypair: options.encryption.keypair,
+						receiver: {
+							...options.encryption.receiver,
+						},
 					}
-				}
 				: undefined,
-			canAppend: options.canAppend || this._canAppend
+			canAppend: options.canAppend || this._canAppend,
 		});
-
 
 		if (!entry.hash) {
 			throw new Error("Unexpected");
@@ -571,15 +573,15 @@ export class Log<T> {
 
 		if (entry.meta.type !== EntryType.CUT) {
 			for (const e of nexts) {
-				if (!await this.has(e.hash)) {
+				if (!(await this.has(e.hash))) {
 					let entry: Entry<any>;
 					if (e instanceof Entry) {
 						entry = e;
-					}
-					else {
+					} else {
 						let resolved = await this.entryIndex.get(e.hash);
 						if (!resolved) {
-							console.warn("Unexpected missing entry when joining", e.hash)
+							// eslint-disable-next-line no-console
+							console.warn("Unexpected missing entry when joining", e.hash);
 							continue;
 						}
 						entry = resolved;
@@ -589,10 +591,11 @@ export class Log<T> {
 			}
 		}
 
-
-
-
-		await this.entryIndex.put(entry, { unique: true, isHead: true, toMultiHash: false });
+		await this.entryIndex.put(entry, {
+			unique: true,
+			isHead: true,
+			toMultiHash: false,
+		});
 
 		const removed = await this.processEntry(entry);
 
@@ -608,7 +611,7 @@ export class Log<T> {
 
 		const changes: Change<T> = {
 			added: [entry],
-			removed: removed
+			removed,
 		};
 
 		await (options?.onChange || this._onChange)?.(changes);
@@ -624,7 +627,7 @@ export class Log<T> {
 
 	async remove(
 		entry: ShallowOrFullEntry<T> | ShallowOrFullEntry<T>[],
-		options?: { recursively?: boolean }
+		options?: { recursively?: boolean },
 	): Promise<Change<T>> {
 		await this.load({ reload: false });
 		const entries = Array.isArray(entry) ? entry : [entry];
@@ -632,14 +635,13 @@ export class Log<T> {
 		if (entries.length === 0) {
 			return {
 				added: [],
-				removed: []
+				removed: [],
 			};
 		}
 
-
 		const change: Change<T> = {
 			added: [],
-			removed: Array.isArray(entry) ? entry : [entry]
+			removed: Array.isArray(entry) ? entry : [entry],
 		};
 
 		await this._onChange?.(change);
@@ -683,117 +685,116 @@ export class Log<T> {
 	}
 
 	async join(
-		entriesOrLog: (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[] | Log<T> | ResultsIterator<Entry<any>>,
+		entriesOrLog:
+			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
+			| Log<T>
+			| ResultsIterator<Entry<any>>,
 		options?: {
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
 			timeout?: number;
-		}
+		},
 	): Promise<void> {
-
-
-		let entries: Entry<T>[]
+		let entries: Entry<T>[];
 		let references: Map<string, Entry<T>> = new Map();
 
 		if (entriesOrLog instanceof Log) {
-			if (entriesOrLog.entryIndex.length === 0)
-				return;
+			if (entriesOrLog.entryIndex.length === 0) return;
 			entries = await entriesOrLog.toArray();
 			for (const element of entries) {
-				references.set(element.hash, element)
+				references.set(element.hash, element);
 			}
-		}
-		else if (Array.isArray(entriesOrLog)) {
+		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) {
 				return;
 			}
 
-			entries = []
+			entries = [];
 			for (const element of entriesOrLog) {
 				if (element instanceof Entry) {
-					entries.push(element)
-					references.set(element.hash, element)
-				}
-				else if (typeof element === "string") {
-					let entry = (await Entry.fromMultihash<T>(this._storage, element, {
-						timeout: options?.timeout
-					}))
+					entries.push(element);
+					references.set(element.hash, element);
+				} else if (typeof element === "string") {
+					let entry = await Entry.fromMultihash<T>(this._storage, element, {
+						timeout: options?.timeout,
+					});
 					if (!entry) {
-						throw new Error("Missing entry in join by hash: " + element)
+						throw new Error("Missing entry in join by hash: " + element);
 					}
-					entries.push(entry)
-				}
-				else if (element instanceof ShallowEntry) {
-					element
-					let entry = (await Entry.fromMultihash<T>(this._storage, element.hash, {
-						timeout: options?.timeout
-					}))
+					entries.push(entry);
+				} else if (element instanceof ShallowEntry) {
+					let entry = await Entry.fromMultihash<T>(
+						this._storage,
+						element.hash,
+						{
+							timeout: options?.timeout,
+						},
+					);
 					if (!entry) {
-						throw new Error("Missing entry in join by hash: " + element)
+						throw new Error("Missing entry in join by hash: " + element.hash);
 					}
-					entries.push(entry)
-				}
-				else {
-					entries.push(element.entry)
-					references.set(element.entry.hash, element.entry)
+					entries.push(entry);
+				} else {
+					entries.push(element.entry);
+					references.set(element.entry.hash, element.entry);
 
 					for (const ref of element.references) {
-						references.set(ref.hash, ref)
+						references.set(ref.hash, ref);
 					}
 				}
 			}
-
-		}
-		else {
-			let all = (await entriesOrLog.all()) // TODO dont load all at once
+		} else {
+			let all = await entriesOrLog.all(); // TODO dont load all at once
 			if (all.length === 0) {
 				return;
 			}
 
-			entries = all
+			entries = all;
 		}
 
-		let heads: Map<string, boolean> = new Map()
+		let heads: Map<string, boolean> = new Map();
 		for (const entry of entries) {
 			if (heads.has(entry.hash)) {
 				continue;
 			}
 			heads.set(entry.hash, true);
 			for (const next of await entry.getNext()) {
-				heads.set(next, false)
+				heads.set(next, false);
 			}
-
 		}
 
 		for (const entry of entries) {
-			const p = this.joinRecursively(entry, { references, isHead: heads.get(entry.hash)!, ...options })
+			const p = this.joinRecursively(entry, {
+				references,
+				isHead: heads.get(entry.hash)!,
+				...options,
+			});
 			this._joining.set(entry.hash, p);
 			p.finally(() => {
 				this._joining.delete(entry.hash);
-			})
+			});
 			await p;
 		}
-
-
-
 	}
-
 
 	/**
 	 * Bottom up join of entries into the log
-	 * @param entry 
-	 * @param options 
-	 * @returns 
+	 * @param entry
+	 * @param options
+	 * @returns
 	 */
 
-	private async joinRecursively(entry: Entry<T>, options: {
-		verifySignatures?: boolean;
-		trim?: TrimOptions;
-		length?: number;
-		references?: Map<string, Entry<T>>;
-		isHead: boolean;
-		timeout?: number
-	}) {
+	private async joinRecursively(
+		entry: Entry<T>,
+		options: {
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+			length?: number;
+			references?: Map<string, Entry<T>>;
+			isHead: boolean;
+			timeout?: number;
+		},
+	) {
 		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
 			return;
 		}
@@ -806,11 +807,13 @@ export class Log<T> {
 			return;
 		}
 
-		entry.init(this)
+		entry.init(this);
 
 		if (options?.verifySignatures) {
 			if (!(await entry.verifySignatures())) {
-				throw new Error('Invalid signature entry with hash "' + entry.hash + '"');
+				throw new Error(
+					'Invalid signature entry with hash "' + entry.hash + '"',
+				);
 			}
 		}
 
@@ -818,51 +821,57 @@ export class Log<T> {
 			return;
 		}
 
-
-
-		const headsWithGid: JoinableEntry[] = await this.entryIndex.getHeads(entry.gid, { type: 'shape', shape: ENTRY_JOIN_SHAPE }).all();
+		const headsWithGid: JoinableEntry[] = await this.entryIndex
+			.getHeads(entry.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
+			.all();
 		if (headsWithGid) {
 			for (const v of headsWithGid) {
-
 				// TODO second argument should be a time compare instead? what about next nexts?
-				// and check the cut entry is newer than the current 'entry' 
-				if (v.meta.type === EntryType.CUT && v.meta.next.includes(entry.hash) && Sorting.compare(entry, v, this._sortFn) < 0) {
-					return; // already deleted 
+				// and check the cut entry is newer than the current 'entry'
+				if (
+					v.meta.type === EntryType.CUT &&
+					v.meta.next.includes(entry.hash) &&
+					Sorting.compare(entry, v, this._sortFn) < 0
+				) {
+					return; // already deleted
 				}
 			}
 		}
 
-
-
 		if (entry.meta.type !== EntryType.CUT) {
 			for (const a of entry.next) {
-				if (!await this.has(a)) {
-					const nested = options.references?.get(a) || (await Entry.fromMultihash<T>(this._storage, a, {
-						timeout: options?.timeout
-					}));
+				if (!(await this.has(a))) {
+					const nested =
+						options.references?.get(a) ||
+						(await Entry.fromMultihash<T>(this._storage, a, {
+							timeout: options?.timeout,
+						}));
 
 					if (!nested) {
-						throw new Error("Missing entry in joinRecursively: " + a)
+						throw new Error("Missing entry in joinRecursively: " + a);
 					}
 
-					const p = this.joinRecursively(nested, options.isHead ? { ...options, isHead: false } : options);
+					const p = this.joinRecursively(
+						nested,
+						options.isHead ? { ...options, isHead: false } : options,
+					);
 					this._joining.set(nested.hash, p);
 					p.finally(() => {
 						this._joining.delete(nested.hash);
-					})
+					});
 					await p;
 				}
 			}
 		}
 
-
-
 		const clock = await entry.getClock();
 		this._hlc.update(clock.timestamp);
 
-
-		await this._entryIndex.put(entry, { unique: false, isHead: options.isHead, toMultiHash: true });
-
+		await this._entryIndex.put(entry, {
+			unique: false,
+			isHead: options.isHead,
+			toMultiHash: true,
+		});
 
 		const removed = await this.processEntry(entry);
 		const trimmed = await this.trim(options?.trim);
@@ -874,7 +883,6 @@ export class Log<T> {
 		}
 
 		await this?._onChange?.({ added: [entry], removed: removed });
-
 	}
 
 	private async processEntry(entry: Entry<T>): Promise<ShallowEntry[]> {
@@ -885,7 +893,10 @@ export class Log<T> {
 	}
 
 	/// TODO simplify methods below
-	async deleteRecursively(from: ShallowOrFullEntry<T> | ShallowOrFullEntry<T>[], skipFirst = false) {
+	async deleteRecursively(
+		from: ShallowOrFullEntry<T> | ShallowOrFullEntry<T>[],
+		skipFirst = false,
+	) {
 		const stack = Array.isArray(from) ? [...from] : [from];
 		const promises: (Promise<void> | void)[] = [];
 		let counter = 0;
@@ -893,9 +904,9 @@ export class Log<T> {
 
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
-			const skip = (counter === 0 && skipFirst)
+			const skip = counter === 0 && skipFirst;
 			if (!skip) {
-				const has = await this.has(entry.hash)
+				const has = await this.has(entry.hash);
 				if (has) {
 					// TODO test last argument: It is for when multiple heads point to the same entry, hence we might visit it multiple times? or a concurrent delete process is doing it before us.
 					const deletedEntry = await this.delete(entry.hash);
@@ -904,25 +915,22 @@ export class Log<T> {
 						deleted.push(deletedEntry);
 					}
 				}
-
 			}
 
 			for (const next of entry.meta.next) {
-				try {
-					const nextFromNext = this.entryIndex.getHasNext(next);
-					const entriesThatHasNext = await nextFromNext.all()
+				const nextFromNext = this.entryIndex.getHasNext(next);
+				const entriesThatHasNext = await nextFromNext.all();
 
-					// if there are no entries which is not of "CUT" type, we can safely delete the next entry
-					// figureately speaking, these means where are cutting all branches to a stem, so we can delete the stem as well
-					let hasAlternativeNext = !!entriesThatHasNext.find(x => x.meta.type !== EntryType.CUT)
-					if (!hasAlternativeNext) {
-						const ne = await this.get(next);
-						if (ne) {
-							stack.push(ne);
-						}
+				// if there are no entries which is not of "CUT" type, we can safely delete the next entry
+				// figureately speaking, these means where are cutting all branches to a stem, so we can delete the stem as well
+				let hasAlternativeNext = !!entriesThatHasNext.find(
+					(x) => x.meta.type !== EntryType.CUT,
+				);
+				if (!hasAlternativeNext) {
+					const ne = await this.get(next);
+					if (ne) {
+						stack.push(ne);
 					}
-				} catch (error) {
-					throw error;
 				}
 			}
 			counter++;
@@ -934,7 +942,7 @@ export class Log<T> {
 	async delete(hash: string): Promise<ShallowEntry | undefined> {
 		await this._trim.deleteFromCache(hash);
 		const removedEntry = await this._entryIndex.delete(hash);
-		return removedEntry
+		return removedEntry;
 	}
 
 	/**
@@ -947,7 +955,7 @@ export class Log<T> {
 	 */
 	async toString(
 		payloadMapper: (payload: Payload<T>) => string = (payload) =>
-			(payload.getValue(this.encoding) as any).toString()
+			(payload.getValue(this.encoding) as any).toString(),
 	): Promise<string> {
 		return (
 			await Promise.all(
@@ -957,7 +965,7 @@ export class Log<T> {
 					.map(async (e, idx) => {
 						const parents: Entry<any>[] = Entry.findDirectChildren(
 							e,
-							await this.toArray()
+							await this.toArray(),
 						);
 						const len = parents.length;
 						let padding = new Array(Math.max(len - 1, 0));
@@ -965,13 +973,12 @@ export class Log<T> {
 						padding = len > 0 ? padding.concat(["└─"]) : padding;
 						return (
 							padding.join("") +
-							(payloadMapper ? payloadMapper(e.payload) : e.payload)
+							(payloadMapper?.(e.payload) || (e.payload as any as string))
 						);
-					})
+					}),
 			)
 		).join("\n");
 	}
-
 
 	async close() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
@@ -989,7 +996,6 @@ export class Log<T> {
 		await this.entryIndex?.clear();
 		await this._indexer?.drop();
 		await this._indexer?.stop?.();
-
 	}
 
 	async recover() {
@@ -1032,9 +1038,9 @@ export class Log<T> {
 			fetchEntryTimeout?: number;
 			reset?: boolean;
 			ignoreMissing?: boolean;
-			timeout?: number,
-			reload?: boolean
-		} = {}
+			timeout?: number;
+			reload?: boolean;
+		} = {},
 	) {
 		if (this.closed) {
 			throw new Error("Closed");
@@ -1050,7 +1056,14 @@ export class Log<T> {
 
 		const heads = providedCustomHeads
 			? (opts["heads"] as Array<Entry<T>>)
-			: await this._entryIndex.getHeads(undefined, { type: 'full', signal: this._closeController.signal, ignoreMissing: opts.ignoreMissing, timeout: opts.timeout }).all()
+			: await this._entryIndex
+					.getHeads(undefined, {
+						type: "full",
+						signal: this._closeController.signal,
+						ignoreMissing: opts.ignoreMissing,
+						timeout: opts.timeout,
+					})
+					.all();
 
 		if (heads) {
 			// Load the log
@@ -1058,7 +1071,7 @@ export class Log<T> {
 				await this.reset(heads as any as Entry<any>[]);
 			} else {
 				await this.join(heads instanceof Entry ? [heads] : heads, {
-					timeout: opts?.fetchEntryTimeout
+					timeout: opts?.fetchEntryTimeout,
 				});
 			}
 		}
@@ -1072,14 +1085,14 @@ export class Log<T> {
 			id?: Uint8Array;
 			/* length?: number; TODO */
 			timeout?: number;
-		} & LogOptions<T> = { id: randomBytes(32) }
+		} & LogOptions<T> = { id: randomBytes(32) },
 	): Promise<Log<T>> {
 		const log = new Log<T>(options.id && { id: options.id });
 		await log.open(store, identity, options);
 		await log.join(!Array.isArray(entryOrHash) ? [entryOrHash] : entryOrHash, {
 			timeout: options.timeout,
 			trim: options.trim,
-			verifySignatures: true
+			verifySignatures: true,
 		});
 		return log;
 	}
@@ -1090,13 +1103,13 @@ export class Log<T> {
 	 * Finds entries that are the heads of this collection,
 	 * ie. entries that are not referenced by other entries.
 	 *
-	 * @param {Array<Entry<T>>} entries Entries to search heads from
+	 * @param {Array<Entry<T>>} entries - Entries to search heads from
 	 * @returns {Array<Entry<T>>}
 	 */
 	static findHeads<T>(entries: Entry<T>[]) {
 		const indexReducer = (
 			res: { [key: string]: string },
-			entry: Entry<any>
+			entry: Entry<any>,
 		) => {
 			const addToResult = (e: string) => (res[e] = entry.hash);
 			entry.next.forEach(addToResult);
@@ -1145,7 +1158,7 @@ export class Log<T> {
 			res: Entry<T>[],
 			entries: Entry<T>[],
 			_idx: any,
-			_arr: any
+			_arr: any,
 		) => res.concat(findUniques(entries, "hash"));
 		const exists = (e: string) => hashes[e] === undefined;
 		const findFromReverseIndex = (e: string) => reverseIndex[e];
@@ -1169,7 +1182,7 @@ export class Log<T> {
 			res: string[],
 			entry: Entry<any>,
 			idx: number,
-			arr: Entry<any>[]
+			arr: Entry<any>[],
 		) => {
 			const addToResult = (e: string) => {
 				/* istanbul ignore else */

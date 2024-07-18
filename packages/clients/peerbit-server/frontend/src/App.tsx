@@ -1,16 +1,17 @@
-import { createClient, getPort } from "@peerbit/server";
-import { useEffect, useState } from "react";
 import { Box, Grid, Paper, Typography } from "@mui/material";
 import {
+	CssBaseline,
+	ThemeProvider,
 	createTheme,
 	responsiveFontSizes,
-	ThemeProvider,
-	CssBaseline
 } from "@mui/material";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import { createClient, getPort } from "@peerbit/server";
+import { useEffect, useState } from "react";
+
 let theme = createTheme({
 	palette: {
-		mode: "dark"
+		mode: "dark",
 	},
 	typography: {
 		fontFamily: [
@@ -23,9 +24,9 @@ let theme = createTheme({
 			"sans-serif",
 			'"Apple Color Emoji"',
 			'"Segoe UI Emoji"',
-			'"Segoe UI Symbol"'
-		].join(",")
-	}
+			'"Segoe UI Symbol"',
+		].join(","),
+	},
 });
 theme = responsiveFontSizes(theme);
 
@@ -46,7 +47,7 @@ export const App = () => {
 					"//" +
 					window.location.hostname +
 					":" +
-					getPort(window.location.protocol)
+					getPort(window.location.protocol),
 			}).then((c) => {
 				setClient(c);
 				c.peer.id
@@ -68,14 +69,14 @@ export const App = () => {
 							(x) =>
 								x.protoNames().includes("tcp") &&
 								!x.protoNames().includes("ws") &&
-								!x.protoNames().includes("wss")
+								!x.protoNames().includes("wss"),
 						);
 						if (tcpAddress) {
 							setTCPAddress(tcpAddress.toString());
 						}
 						const wsAddress = addresses.find(
 							(x) =>
-								x.protoNames().includes("ws") || x.protoNames().includes("wss")
+								x.protoNames().includes("ws") || x.protoNames().includes("wss"),
 						);
 						if (wsAddress) {
 							setWebsocketAddress(wsAddress.toString());
@@ -83,7 +84,7 @@ export const App = () => {
 						let others = addresses.filter(
 							(x) =>
 								(!tcpAddress || !x.equals(tcpAddress)) &&
-								(!wsAddress || !x.equals(wsAddress))
+								(!wsAddress || !x.equals(wsAddress)),
 						);
 						setOtherAddresses(others.map((x) => x.toString()));
 					})

@@ -1,11 +1,11 @@
-import { delay } from "@peerbit/time";
-import { TestSession } from "@peerbit/test-utils";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { Entry } from "@peerbit/log";
 import { Program } from "@peerbit/program";
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { ClockService } from "../src/controller.js";
+import { TestSession } from "@peerbit/test-utils";
+import { delay } from "@peerbit/time";
 import { TrustedNetwork } from "@peerbit/trusted-network";
-import { expect } from 'chai'
+import { expect } from "chai";
+import { ClockService } from "../src/controller.js";
 
 const maxTimeError = 3000;
 @variant("clock-test")
@@ -32,9 +32,9 @@ describe("clock", () => {
 		responder = new P({
 			clock: new ClockService({
 				trustedNetwork: new TrustedNetwork({
-					rootTrust: session.peers[0].peerId
-				})
-			})
+					rootTrust: session.peers[0].peerId,
+				}),
+			}),
 		});
 
 		await session.peers[0].open(responder);
@@ -57,16 +57,16 @@ describe("clock", () => {
 			store: session.peers[1].services.blocks,
 			signers: [
 				reader.node.identity.sign.bind(reader.node.identity),
-				reader.clock.sign.bind(reader.clock)
-			]
+				reader.clock.sign.bind(reader.clock),
+			],
 		});
 		expect(
-			await Promise.all(entry.signatures.map((x) => x.publicKey.hashcode()))
+			await Promise.all(entry.signatures.map((x) => x.publicKey.hashcode())),
 		).to.have.members(
 			await Promise.all([
 				reader.node.identity.publicKey.hashcode(),
-				responder.node.identity.publicKey.hashcode()
-			])
+				responder.node.identity.publicKey.hashcode(),
+			]),
 		);
 		expect(await reader.clock.verify(entry)).to.be.true;
 	});
@@ -82,9 +82,9 @@ describe("clock", () => {
 					async (data: Uint8Array) => {
 						await delay(maxTimeError + 1000);
 						return reader.clock.sign(data);
-					}
-				]
-			})
+					},
+				],
+			}),
 		).rejectedWith("Recieved an entry with an invalid timestamp");
 	});
 });

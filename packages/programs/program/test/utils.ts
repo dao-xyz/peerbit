@@ -1,15 +1,15 @@
+import { CustomEvent } from "@libp2p/interface";
 import {
 	Ed25519Keypair,
-	PublicSignKey,
+	type PublicSignKey,
 	randomBytes,
-	sha256Base64Sync
+	sha256Base64Sync,
 } from "@peerbit/crypto";
-import { type ProgramClient, ProgramHandler } from "../src/program";
 import {
 	SubscriptionEvent,
-	UnsubcriptionEvent
+	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
-import { CustomEvent } from "@libp2p/interface";
+import { type ProgramClient, ProgramHandler } from "../src/program";
 
 export const createPeer = async (
 	state: {
@@ -26,10 +26,10 @@ export const createPeer = async (
 		pubsubEventHandlers: Map<string, { fn: any; publicKey: PublicSignKey }[]>;
 		peers: Map<string, ProgramClient>;
 	} = {
-			pubsubEventHandlers: new Map(),
-			subsribers: new Map(),
-			peers: new Map()
-		}
+		pubsubEventHandlers: new Map(),
+		subsribers: new Map(),
+		peers: new Map(),
+	},
 ): Promise<ProgramClient> => {
 	const keypair = await Ed25519Keypair.create();
 
@@ -71,7 +71,7 @@ export const createPeer = async (
 					return undefined as any; // TODO
 				},
 				size: () => Promise.resolve(0),
-				persisted: () => Promise.resolve(false)
+				persisted: () => Promise.resolve(false),
 			},
 			pubsub: {
 				subscribe: async (topic: any) => {
@@ -82,17 +82,17 @@ export const createPeer = async (
 					}
 					map.set(keypair.publicKey.hashcode(), {
 						publicKey: keypair.publicKey,
-						timestamp: BigInt(+new Date())
+						timestamp: BigInt(+new Date()),
 					});
 					dispatchEvent(
 						new CustomEvent<SubscriptionEvent>("subscribe", {
-							detail: new SubscriptionEvent(keypair.publicKey, [topic])
-						})
+							detail: new SubscriptionEvent(keypair.publicKey, [topic]),
+						}),
 					);
 				},
 				getSubscribers: (topic: any) => {
 					return [...(state.subsribers.get(topic)?.values() || [])].map(
-						(x) => x.publicKey
+						(x) => x.publicKey,
 					);
 				},
 
@@ -105,8 +105,8 @@ export const createPeer = async (
 					if (ret) {
 						dispatchEvent(
 							new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
-								detail: new UnsubcriptionEvent(keypair.publicKey, [topic])
-							})
+								detail: new UnsubcriptionEvent(keypair.publicKey, [topic]),
+							}),
 						);
 					}
 					return ret;
@@ -122,7 +122,7 @@ export const createPeer = async (
 
 				removeEventListener: (type: any, e: any) => {
 					const fns = state.pubsubEventHandlers.get(type);
-					const idx = fns?.findIndex((x) => x.fn == e);
+					const idx = fns?.findIndex((x) => x.fn === e);
 					if (idx == null || idx < 0) {
 						return; // already removed
 					}
@@ -139,18 +139,18 @@ export const createPeer = async (
 										// TODO undefined checks
 										detail: new SubscriptionEvent(
 											state.peers.get(hash)!.identity.publicKey!,
-											[topic]
-										)
+											[topic],
+										),
 									}),
-									true
+									true,
 								);
 							}
 						}
 					}
 				},
-				waitFor: () => Promise.resolve()
+				waitFor: () => Promise.resolve(),
 			},
-			keychain: undefined as any // TODO
+			keychain: undefined as any, // TODO
 		},
 		storage: undefined as any, // TODO
 		indexer: undefined as any, // TODO
@@ -161,7 +161,7 @@ export const createPeer = async (
 		open: async (p, o) => {
 			return (handler || (handler = new ProgramHandler({ client: peer }))).open(
 				p,
-				o
+				o,
 			);
 		},
 	};

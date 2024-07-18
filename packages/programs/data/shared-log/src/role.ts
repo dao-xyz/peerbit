@@ -65,7 +65,6 @@ export const SEGMENT_COORDINATE_SCALE = 4294967295;
 }
  */
 
-
 /* abstract class Capacity { }
 
 @variant(2)

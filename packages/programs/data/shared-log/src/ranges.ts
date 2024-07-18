@@ -1,7 +1,27 @@
-import { /* getSegmentsFromOffsetAndRange, */ type ReplicationRangeIndexable } from "./replication.js";
+import { type PublicSignKey, equals } from "@peerbit/crypto";
+import {
+	And,
+	Compare,
+	type Index,
+	type IndexIterator,
+	type IndexedResult,
+	type IndexedResults,
+	IntegerCompare,
+	Or,
+	type Query,
+	SearchRequest,
+	Sort,
+	SortDirection,
+	StringMatch,
+	iterate,
+	iteratorInSeries,
+} from "@peerbit/indexer-interface";
+import {
+	/* getSegmentsFromOffsetAndRange, */
+	type ReplicationRangeIndexable,
+} from "./replication.js";
 import { SEGMENT_COORDINATE_SCALE } from "./role.js";
-import { PublicSignKey, equals } from "@peerbit/crypto";
-import { And, Compare, IntegerCompare, Or, Query, SearchRequest, Sort, SortDirection, StringMatch, iterate, iteratorInSeries, type Index, type IndexIterator, type IndexedResult, type IndexedResults } from "@peerbit/indexer-interface";
+
 /* 
 export const containsPoint = (
 	rect: { offset: number; length: number },
@@ -86,92 +106,157 @@ export const containsPoint = (
 	return results.results.map(x => x.value)
 } */
 
-const containingPoint = (rects: Index<ReplicationRangeIndexable>,
+const containingPoint = (
+	rects: Index<ReplicationRangeIndexable>,
 	point: number,
 	roleAgeLimit: number,
 	matured: boolean,
 	now: number,
 	options?: {
-		sort?: Sort[],
-		scaled?: boolean
-	}
+		sort?: Sort[];
+		scaled?: boolean;
+	},
 ): IndexIterator<ReplicationRangeIndexable> => {
 	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
 	// so we need to query for all ranges that contain the point
-	let pointScaled = Math.round(point * (options?.scaled ? 1 : SEGMENT_COORDINATE_SCALE));
+	let pointScaled = Math.round(
+		point * (options?.scaled ? 1 : SEGMENT_COORDINATE_SCALE),
+	);
 	let queries = [
 		new Or([
 			new And([
-				new IntegerCompare({ key: 'start1', compare: Compare.LessOrEqual, value: pointScaled }),
-				new IntegerCompare({ key: 'end1', compare: Compare.Greater, value: pointScaled }),
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: pointScaled,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.Greater,
+					value: pointScaled,
+				}),
 			]),
 			new And([
-				new IntegerCompare({ key: 'start2', compare: Compare.LessOrEqual, value: pointScaled }),
-				new IntegerCompare({ key: 'end2', compare: Compare.Greater, value: pointScaled }),
-			])
+				new IntegerCompare({
+					key: "start2",
+					compare: Compare.LessOrEqual,
+					value: pointScaled,
+				}),
+				new IntegerCompare({
+					key: "end2",
+					compare: Compare.Greater,
+					value: pointScaled,
+				}),
+			]),
 		]),
-		new IntegerCompare({ key: 'timestamp', compare: matured ? Compare.LessOrEqual : Compare.Greater, value: BigInt(now - roleAgeLimit) })
-	]
-	return iterate(rects, new SearchRequest({
-		query: queries,
-		sort: options?.sort,
-		fetch: 0xffffffff
-	}))
+		new IntegerCompare({
+			key: "timestamp",
+			compare: matured ? Compare.LessOrEqual : Compare.Greater,
+			value: BigInt(now - roleAgeLimit),
+		}),
+	];
+	return iterate(
+		rects,
+		new SearchRequest({
+			query: queries,
+			sort: options?.sort,
+			fetch: 0xffffffff,
+		}),
+	);
 	/* const results = await rects.query(new SearchRequest({
 		query: queries,
 		sort: options?.sort,
 		fetch: 0xffffffff
 	}))
 	return results.results.map(x => x.value) */
-}
-
-
+};
 
 const getClosest = (
-	direction: 'above' | 'below',
+	direction: "above" | "below",
 	rects: Index<ReplicationRangeIndexable>,
 	point: number,
 	roleAgeLimit: number,
 	matured: boolean,
 	now: number,
-	scaled: boolean = false
+	scaled: boolean = false,
 ): IndexIterator<ReplicationRangeIndexable> => {
-	const scaledPoint = Math.round(point * (scaled ? 1 : SEGMENT_COORDINATE_SCALE))
+	const scaledPoint = Math.round(
+		point * (scaled ? 1 : SEGMENT_COORDINATE_SCALE),
+	);
 	const createQueries = (p: number, equality: boolean) => {
 		let queries: Query[];
-		if (direction === 'below') {
+		if (direction === "below") {
 			queries = [
-
-				new IntegerCompare({ key: 'end2', compare: equality ? Compare.LessOrEqual : Compare.Less, value: p }),
-				new IntegerCompare({ key: 'timestamp', compare: matured ? Compare.LessOrEqual : Compare.GreaterOrEqual, value: BigInt(now - roleAgeLimit) })
-			]
-		}
-		else {
+				new IntegerCompare({
+					key: "end2",
+					compare: equality ? Compare.LessOrEqual : Compare.Less,
+					value: p,
+				}),
+				new IntegerCompare({
+					key: "timestamp",
+					compare: matured ? Compare.LessOrEqual : Compare.GreaterOrEqual,
+					value: BigInt(now - roleAgeLimit),
+				}),
+			];
+		} else {
 			queries = [
-				new IntegerCompare({ key: 'start1', compare: equality ? Compare.GreaterOrEqual : Compare.Greater, value: p }),
-				new IntegerCompare({ key: 'timestamp', compare: matured ? Compare.LessOrEqual : Compare.GreaterOrEqual, value: BigInt(now - roleAgeLimit) })
-			]
-
+				new IntegerCompare({
+					key: "start1",
+					compare: equality ? Compare.GreaterOrEqual : Compare.Greater,
+					value: p,
+				}),
+				new IntegerCompare({
+					key: "timestamp",
+					compare: matured ? Compare.LessOrEqual : Compare.GreaterOrEqual,
+					value: BigInt(now - roleAgeLimit),
+				}),
+			];
 		}
-		queries.push(new IntegerCompare({ key: 'width', compare: Compare.Greater, value: 0 }))
+		queries.push(
+			new IntegerCompare({ key: "width", compare: Compare.Greater, value: 0 }),
+		);
 		return queries;
-	}
+	};
 
-	const iterator = iterate(rects, new SearchRequest({
-		query: createQueries(scaledPoint, false),
-		sort: direction === 'below' ? new Sort({ key: ['end2'], direction: 'desc' }) : new Sort({ key: ['start1'], direction: 'asc' })
-	}))
-	const iteratorWrapped = iterate(rects, new SearchRequest({
-		query: createQueries(direction === 'below' ? SEGMENT_COORDINATE_SCALE : 0, true),
-		sort: direction === 'below' ? new Sort({ key: ['end2'], direction: 'desc' }) : new Sort({ key: ['start1'], direction: 'asc' })
-	}))
+	const iterator = iterate(
+		rects,
+		new SearchRequest({
+			query: createQueries(scaledPoint, false),
+			sort:
+				direction === "below"
+					? new Sort({ key: ["end2"], direction: "desc" })
+					: new Sort({ key: ["start1"], direction: "asc" }),
+		}),
+	);
+	const iteratorWrapped = iterate(
+		rects,
+		new SearchRequest({
+			query: createQueries(
+				direction === "below" ? SEGMENT_COORDINATE_SCALE : 0,
+				true,
+			),
+			sort:
+				direction === "below"
+					? new Sort({ key: ["end2"], direction: "desc" })
+					: new Sort({ key: ["start1"], direction: "asc" }),
+		}),
+	);
 
-	return joinIterator([iterator, iteratorWrapped], scaledPoint, true, direction)
+	return joinIterator(
+		[iterator, iteratorWrapped],
+		scaledPoint,
+		true,
+		direction,
+	);
+};
 
-}
-
-export const getDistance = (from: number, to: number, direction: 'above' | 'below' | 'closest', end = SEGMENT_COORDINATE_SCALE) => {
-	// if direction is 'above' only measure distance from 'from to 'to' from above. 
+export const getDistance = (
+	from: number,
+	to: number,
+	direction: "above" | "below" | "closest",
+	end = SEGMENT_COORDINATE_SCALE,
+) => {
+	// if direction is 'above' only measure distance from 'from to 'to' from above.
 	// i.e if from < to, then from needs to wrap around 0 to 1 and then to to
 	// if direction is 'below' and from > to, then from needs to wrap around 1 to 0 and then to to
 	// if direction is 'closest' then the shortest distance is the distance
@@ -179,74 +264,85 @@ export const getDistance = (from: number, to: number, direction: 'above' | 'belo
 	// also from is 0.1 and to is 0.9, then distance should be 0.2 not 0.8
 	// same as for if from is 0.9 and to is 0.1, then distance should be 0.2 not 0.8
 
-
-	if (direction === 'closest') {
-
+	if (direction === "closest") {
 		if (from === to) {
 			return 0;
 		}
 
-		return Math.min(Math.abs(from - to), Math.abs(end - Math.abs(from - to)))
+		return Math.min(Math.abs(from - to), Math.abs(end - Math.abs(from - to)));
 	}
 
-	if (direction === 'above') {
+	if (direction === "above") {
 		if (from <= to) {
-			return Math.abs(end - to) + from
+			return Math.abs(end - to) + from;
 		}
 		return from - to;
 	}
 
-	if (direction === 'below') {
+	if (direction === "below") {
 		if (from >= to) {
-			return Math.abs(end - from) + to
+			return Math.abs(end - from) + to;
 		}
 		return to - from;
 	}
 
-	throw new Error("Invalid direction")
+	throw new Error("Invalid direction");
+};
 
-}
-
-const joinIterator = (iterators: IndexIterator<ReplicationRangeIndexable>[], point: number, scaled: boolean, direction: 'above' | 'below' | 'closest') => {
-
-	const scaledPoint = Math.round(point * (scaled ? 1 : SEGMENT_COORDINATE_SCALE))
-	let queues: { kept: number, elements: { result: IndexedResult<ReplicationRangeIndexable>, dist: number }[] }[] = []
+const joinIterator = (
+	iterators: IndexIterator<ReplicationRangeIndexable>[],
+	point: number,
+	scaled: boolean,
+	direction: "above" | "below" | "closest",
+) => {
+	const scaledPoint = Math.round(
+		point * (scaled ? 1 : SEGMENT_COORDINATE_SCALE),
+	);
+	let queues: {
+		kept: number;
+		elements: {
+			result: IndexedResult<ReplicationRangeIndexable>;
+			dist: number;
+		}[];
+	}[] = [];
 
 	return {
-		next: async (count: number): Promise<IndexedResults<ReplicationRangeIndexable>> => {
+		next: async (
+			count: number,
+		): Promise<IndexedResults<ReplicationRangeIndexable>> => {
 			let results: IndexedResults<ReplicationRangeIndexable> = {
 				kept: 0, // TODO
-				results: []
+				results: [],
 			};
 			for (let i = 0; i < iterators.length; i++) {
-				let queue = queues[i]
+				let queue = queues[i];
 				if (!queue) {
-					queue = { elements: [], kept: 0 }
+					queue = { elements: [], kept: 0 };
 					queues[i] = queue;
 				}
-				let iterator = iterators[i]
+				let iterator = iterators[i];
 				if (queue.elements.length < count && iterator.done() === false) {
-					let res = await iterator.next(count)
+					let res = await iterator.next(count);
 					queue.kept = res.kept;
 
 					for (const el of res.results) {
 						const closest = el.value;
 
 						let dist: number;
-						if (direction === 'closest') {
-							dist = Math.min(getDistance(closest.start1, scaledPoint, direction), getDistance(closest.end2, scaledPoint, direction));
-						}
-						else if (direction === 'above') {
-							dist = getDistance(closest.start1, scaledPoint, direction)
-						}
-						else if (direction === 'below') {
-							dist = getDistance(closest.end2, scaledPoint, direction)
-						}
-						else {
-							throw new Error("Invalid direction")
+						if (direction === "closest") {
+							dist = Math.min(
+								getDistance(closest.start1, scaledPoint, direction),
+								getDistance(closest.end2, scaledPoint, direction),
+							);
+						} else if (direction === "above") {
+							dist = getDistance(closest.start1, scaledPoint, direction);
+						} else if (direction === "below") {
+							dist = getDistance(closest.end2, scaledPoint, direction);
+						} else {
+							throw new Error("Invalid direction");
 						}
 
-						queue.elements.push({ result: el, dist })
+						queue.elements.push({ result: el, dist });
 					}
 				}
 			}
@@ -257,12 +353,12 @@ const joinIterator = (iterators: IndexIterator<ReplicationRangeIndexable>[], poi
 				let closestQueue = -1;
 				let closestDist = Number.MAX_SAFE_INTEGER;
 				for (let j = 0; j < queues.length; j++) {
-					let queue = queues[j]
+					let queue = queues[j];
 					if (queue && queue.elements.length > 0) {
-						let closest = queue.elements[0]
+						let closest = queue.elements[0];
 						if (closest.dist < closestDist) {
-							closestDist = closest.dist
-							closestQueue = j
+							closestDist = closest.dist;
+							closestQueue = j;
 						}
 					}
 				}
@@ -271,43 +367,69 @@ const joinIterator = (iterators: IndexIterator<ReplicationRangeIndexable>[], poi
 					break;
 				}
 
-				let closest = queues[closestQueue]?.elements.shift()
+				let closest = queues[closestQueue]?.elements.shift();
 				if (closest) {
-					results.results.push(closest.result)
+					results.results.push(closest.result);
 				}
 			}
 
 			for (let i = 0; i < queues.length; i++) {
-				results.kept += queues[i].elements.length + queues[i].kept
+				results.kept += queues[i].elements.length + queues[i].kept;
 			}
 
-			return results
+			return results;
 		},
-		done: () => iterators.every(x => x.done()),
+		done: () => iterators.every((x) => x.done()),
 		close: async () => {
 			for (const iterator of iterators) {
-				await iterator.close()
+				await iterator.close();
 			}
 		},
 		all: async () => {
-			let results: IndexedResult<ReplicationRangeIndexable>[] = []
+			let results: IndexedResult<ReplicationRangeIndexable>[] = [];
 			for (const iterator of iterators) {
-				let res = await iterator.all()
-				results.push(...res)
+				let res = await iterator.all();
+				results.push(...res);
 			}
-			return results
-		}
-	}
-}
+			return results;
+		},
+	};
+};
 
-const getClosestAround = (peers: Index<ReplicationRangeIndexable>, point: number, roleAge: number, now: number, scaled: boolean) => {
+const getClosestAround = (
+	peers: Index<ReplicationRangeIndexable>,
+	point: number,
+	roleAge: number,
+	now: number,
+	scaled: boolean,
+) => {
+	const closestBelow = getClosest(
+		"below",
+		peers,
+		point,
+		roleAge,
+		true,
+		now,
+		scaled,
+	);
+	const closestAbove = getClosest(
+		"above",
+		peers,
+		point,
+		roleAge,
+		true,
+		now,
+		scaled,
+	);
+	const containing = containingPoint(peers, point, roleAge, true, now, {
+		scaled: scaled,
+	});
 
-	const closestBelow = getClosest('below', peers, point, roleAge, true, now, scaled)
-	const closestAbove = getClosest('above', peers, point, roleAge, true, now, scaled)
-	const containing = containingPoint(peers, point, roleAge, true, now, { scaled: scaled })
-
-	return iteratorInSeries(containing, joinIterator([closestBelow, closestAbove], point, scaled, 'closest'))
-}
+	return iteratorInSeries(
+		containing,
+		joinIterator([closestBelow, closestAbove], point, scaled, "closest"),
+	);
+};
 
 const collectNodesAroundPoint = async (
 	roleAge: number,
@@ -315,26 +437,33 @@ const collectNodesAroundPoint = async (
 	collector: (rect: ReplicationRangeIndexable, matured: boolean) => void,
 	point: number,
 	now: number,
-	done: () => boolean = () => true
+	done: () => boolean = () => true,
 ) => {
-	const containing = containingPoint(peers, point, 0, true, now, { scaled: false })
+	const containing = containingPoint(peers, point, 0, true, now, {
+		scaled: false,
+	});
 
-	const allContaining = await containing.next(0xffffffff)
+	const allContaining = await containing.next(0xffffffff);
 	for (const rect of allContaining.results) {
-		collector(rect.value, isMatured(rect.value, now, roleAge))
+		collector(rect.value, isMatured(rect.value, now, roleAge));
 	}
 
 	if (done()) {
 		return;
 	}
 
-	const closestBelow = getClosest('below', peers, point, 0, true, now, false)
-	const closestAbove = getClosest('above', peers, point, 0, true, now, false)
-	const aroundIterator = joinIterator([closestBelow, closestAbove], point, false, 'closest')
+	const closestBelow = getClosest("below", peers, point, 0, true, now, false);
+	const closestAbove = getClosest("above", peers, point, 0, true, now, false);
+	const aroundIterator = joinIterator(
+		[closestBelow, closestAbove],
+		point,
+		false,
+		"closest",
+	);
 	while (aroundIterator.done() === false && done() === false) {
-		const res = await aroundIterator.next(1)
+		const res = await aroundIterator.next(1);
 		for (const rect of res.results) {
-			collector(rect.value, isMatured(rect.value, now, roleAge))
+			collector(rect.value, isMatured(rect.value, now, roleAge));
 			if (done()) {
 				return;
 			}
@@ -342,7 +471,11 @@ const collectNodesAroundPoint = async (
 	}
 };
 
-export const isMatured = (segment: { timestamp: bigint }, now: number, minAge: number) => {
+export const isMatured = (
+	segment: { timestamp: bigint },
+	now: number,
+	minAge: number,
+) => {
 	return now - Number(segment.timestamp) >= minAge;
 };
 
@@ -350,7 +483,7 @@ export const getSamples = async (
 	cursor: number,
 	peers: Index<ReplicationRangeIndexable>,
 	amount: number,
-	roleAge: number
+	roleAge: number,
 ) => {
 	const leaders: Set<string> = new Set();
 	const width = 1;
@@ -358,16 +491,15 @@ export const getSamples = async (
 		return [];
 	}
 
-	const size = await peers.getSize()
+	const size = await peers.getSize();
 
 	amount = Math.min(amount, size);
 
 	if (amount === 0) {
-		return []
+		return [];
 	}
 
 	const now = +new Date();
-
 
 	const maturedLeaders = new Set();
 	for (let i = 0; i < amount; i++) {
@@ -391,56 +523,64 @@ export const getSamples = async (
 				if (maturedLeaders.size > i) {
 					return true;
 				}
-				return false
-			}
+				return false;
+			},
 		);
 	}
 
 	return [...leaders];
 };
 
-
 const fetchOne = async (iterator: IndexIterator<ReplicationRangeIndexable>) => {
-	const value = await iterator.next(1)
-	await iterator.close()
+	const value = await iterator.next(1);
+	await iterator.close();
 	return value.results[0]?.value;
-}
+};
 
 export const getCoverSet = async (
 	coveringWidth: number,
 	peers: Index<ReplicationRangeIndexable>,
 	roleAge: number,
-	startNodeIdentity?: PublicSignKey
+	startNodeIdentity?: PublicSignKey,
 ): Promise<Set<string>> => {
-	let now = +new Date;
+	let now = +new Date();
 
 	// find a good starting point
 	let startNode: ReplicationRangeIndexable | undefined = undefined;
 	if (startNodeIdentity) {
 		// start at our node (local first)
-		let result = await peers.query(new SearchRequest({ query: [new StringMatch({ key: 'hash', value: startNodeIdentity.hashcode() })], fetch: 1 }))
-		startNode = result.results[0]?.value
+		let result = await peers.query(
+			new SearchRequest({
+				query: [
+					new StringMatch({ key: "hash", value: startNodeIdentity.hashcode() }),
+				],
+				fetch: 1,
+			}),
+		);
+		startNode = result.results[0]?.value;
 
 		if (startNode) {
 			if (!isMatured(startNode, now, roleAge)) {
-				const matured = (await fetchOne(getClosestAround(peers, startNode.start1, roleAge, now, true)))
+				const matured = await fetchOne(
+					getClosestAround(peers, startNode.start1, roleAge, now, true),
+				);
 				if (matured) {
 					startNode = matured;
 				}
 			}
 		}
-
 	}
 	let startLocation: number;
 
 	if (!startNode) {
-		startLocation = Math.random() * SEGMENT_COORDINATE_SCALE
-		startNode = (await fetchOne(getClosestAround(peers, startLocation, roleAge, now, true)));
-	}
-
-	else {
+		startLocation = Math.random() * SEGMENT_COORDINATE_SCALE;
+		startNode = await fetchOne(
+			getClosestAround(peers, startLocation, roleAge, now, true),
+		);
+	} else {
 		// TODO choose start location as the point with the longest range?
-		startLocation = startNode/* .segments[0]? */.start1 ?? Math.random() * SEGMENT_COORDINATE_SCALE
+		startLocation =
+			startNode.start1 ?? Math.random() * SEGMENT_COORDINATE_SCALE;
 	}
 
 	/* const startNode = walker; */
@@ -448,65 +588,83 @@ export const getCoverSet = async (
 		return new Set();
 	}
 
-	let results: ReplicationRangeIndexable[] = []
+	let results: ReplicationRangeIndexable[] = [];
 
 	let widthToCoverScaled = coveringWidth * SEGMENT_COORDINATE_SCALE;
-	const endLocation = (startLocation + widthToCoverScaled) % SEGMENT_COORDINATE_SCALE
+	const endLocation =
+		(startLocation + widthToCoverScaled) % SEGMENT_COORDINATE_SCALE;
 	const endIsWrapped = endLocation <= startLocation;
 
-	const endRect = await fetchOne(getClosestAround(peers, endLocation, roleAge, now, true)) || await fetchOne(getClosestAround(peers, endLocation, 0, now, true)); // (await getClosest('above', peers, nextLocation, roleAge, true, 1, true))[0]
+	const endRect =
+		(await fetchOne(
+			getClosestAround(peers, endLocation, roleAge, now, true),
+		)) || (await fetchOne(getClosestAround(peers, endLocation, 0, now, true))); // (await getClosest('above', peers, nextLocation, roleAge, true, 1, true))[0]
 
 	if (!endRect) {
-		return new Set()
+		return new Set();
 	}
 
-
-	let current = /* (await getClosestAround(peers, startLocation, roleAge, 1, true))[0] */startNode || await fetchOne(getClosestAround(peers, startLocation, 0, now, true))//(await getClosest('above', peers, startLocation, roleAge, true, 1, true))[0]
+	let current =
+		/* (await getClosestAround(peers, startLocation, roleAge, 1, true))[0] */ startNode ||
+		(await fetchOne(getClosestAround(peers, startLocation, 0, now, true))); //(await getClosest('above', peers, startLocation, roleAge, true, 1, true))[0]
 	let coveredLength = current.width;
 	let nextLocation = current.end2;
 
-
 	// push edges
-	results.push(endRect)
+	results.push(endRect);
 	results.push(current);
 	/* const endIsSameAsStart = equals(endRect.id, current.id); */
 
-
-	const resolveNextContaining = async (nextLocation: number, roleAge: number) => {
-		let next = await fetchOne(containingPoint(peers, nextLocation, roleAge, true, now, { scaled: true, sort: [new Sort({ key: "end2", direction: SortDirection.DESC })] }));// get entersecting sort by largest end2 
-		return next
-	}
+	const resolveNextContaining = async (
+		nextLocation: number,
+		roleAge: number,
+	) => {
+		let next = await fetchOne(
+			containingPoint(peers, nextLocation, roleAge, true, now, {
+				scaled: true,
+				sort: [new Sort({ key: "end2", direction: SortDirection.DESC })],
+			}),
+		); // get entersecting sort by largest end2
+		return next;
+	};
 
 	const resolveNextAbove = async (nextLocation: number, roleAge: number) => {
 		// if not get closest from above
-		let next = await fetchOne(getClosest('above', peers, nextLocation, roleAge, true, now, true))
-		return next
-	}
+		let next = await fetchOne(
+			getClosest("above", peers, nextLocation, roleAge, true, now, true),
+		);
+		return next;
+	};
 
-	const resolveNext = async (nextLocation: number, roleAge: number): Promise<[ReplicationRangeIndexable, boolean]> => {
-		const containing = await resolveNextContaining(nextLocation, roleAge)
+	const resolveNext = async (
+		nextLocation: number,
+		roleAge: number,
+	): Promise<[ReplicationRangeIndexable, boolean]> => {
+		const containing = await resolveNextContaining(nextLocation, roleAge);
 		if (containing) {
-			return [containing, true]
+			return [containing, true];
 		}
-		return [await resolveNextAbove(nextLocation, roleAge), false]
-	}
+		return [await resolveNextAbove(nextLocation, roleAge), false];
+	};
 
 	// fill the middle
-	let wrappedOnce = current.end2 < current.end1
+	let wrappedOnce = current.end2 < current.end1;
 
 	let maturedCoveredLength = coveredLength;
 	/* 	let lastMatured = isMatured(startNode, now, roleAge) ? startNode : undefined;
 	 */
 
-	while (maturedCoveredLength < widthToCoverScaled && coveredLength <= SEGMENT_COORDINATE_SCALE) {
-
-		let nextCandidate = await resolveNext(nextLocation, roleAge)
+	while (
+		maturedCoveredLength < widthToCoverScaled &&
+		coveredLength <= SEGMENT_COORDINATE_SCALE
+	) {
+		let nextCandidate = await resolveNext(nextLocation, roleAge);
 		/* let fromAbove = false; */
 		let matured = true;
 
 		if (!nextCandidate[0]) {
-			matured = false
-			nextCandidate = await resolveNext(nextLocation, 0)
+			matured = false;
+			nextCandidate = await resolveNext(nextLocation, 0);
 			/* fromAbove = true; */
 		}
 
@@ -521,15 +679,19 @@ export const getCoverSet = async (
 		if (current.end2 < nextLocation) {
 			wrappedOnce = true;
 			coveredLength += SEGMENT_COORDINATE_SCALE - nextLocation;
-			coveredLength += current.end2
-		}
-		else {
+			coveredLength += current.end2;
+		} else {
 			coveredLength += current.end1 - nextLocation;
 		}
 
-
-		let isLast = (distanceBefore < widthToCoverScaled && coveredLength >= widthToCoverScaled)
-		if (isLast && (!nextCandidate[1] /* || Math.min(current.start1, current.start2) > Math.min(endRect.start1, endRect.start2) */)/* (Math.min(current.start1, current.start2) > endLocation) */ || equals(endRect.id, current.id)) {
+		let isLast =
+			distanceBefore < widthToCoverScaled &&
+			coveredLength >= widthToCoverScaled;
+		if (
+			(isLast &&
+				!nextCandidate[1]) /* || Math.min(current.start1, current.start2) > Math.min(endRect.start1, endRect.start2) */ /* (Math.min(current.start1, current.start2) > endLocation) */ ||
+			equals(endRect.id, current.id)
+		) {
 			/* if ((isLast && ((endIsWrapped && wrappedOnce) || (!endIsWrapped))) && (current.start1 > endLocation || equals(current.id, endRect.id))) { */
 			// this is the end!
 			/* if (lastMatured && lastMatured.distanceTo(endLocation) < current.distanceTo(endLocation)) {
@@ -538,19 +700,16 @@ export const getCoverSet = async (
 			break;
 		}
 
-
 		/* if (fromAbove && next && next.start1 > endRect.start1 && (endIsWrapped === false || wrappedOnce)) {
 			break;
 		} */
 
 		// this is a skip condition to not include too many rects
 
-
 		if (matured) {
 			maturedCoveredLength = coveredLength;
 			/* lastMatured = current; */
 		}
-
 
 		results.push(current);
 		/* 
@@ -560,13 +719,16 @@ export const getCoverSet = async (
 				}
 		
 		 */
-		nextLocation = endIsWrapped ? wrappedOnce ? Math.min(current.end2, endLocation) : current.end2 : Math.min(current.end2, endLocation);
+		nextLocation = endIsWrapped
+			? wrappedOnce
+				? Math.min(current.end2, endLocation)
+				: current.end2
+			: Math.min(current.end2, endLocation);
 	}
 
-	const res = new Set(results.map(x => x.hash))
-	startNodeIdentity && res.add(startNodeIdentity.hashcode())
+	const res = new Set(results.map((x) => x.hash));
+	startNodeIdentity && res.add(startNodeIdentity.hashcode());
 	return res;
-
 
 	//
 	/* const set: Set<string> = new Set();
