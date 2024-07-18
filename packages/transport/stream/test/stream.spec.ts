@@ -244,7 +244,7 @@ describe("streams", function () {
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			before(async () => { });
+			before(async () => {});
 
 			beforeEach(async () => {
 				// 0 and 2 not connected
@@ -308,7 +308,7 @@ describe("streams", function () {
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			before(async () => { });
+			before(async () => {});
 
 			beforeEach(async () => {
 				// 0 and 2 not connected
@@ -563,7 +563,7 @@ describe("streams", function () {
 				) => {
 					delay(3000, { signal: streams[0].stream.closeController.signal })
 						.then(() => write02(data, priority))
-						.catch(() => { });
+						.catch(() => {});
 				};
 
 				// Reseek again and check that path 0 -> 1 -> 2 -> 3 is "fastest"
@@ -696,7 +696,7 @@ describe("streams", function () {
 		describe("seek", () => {
 			let session: TestSessionStream;
 
-			before(async () => { });
+			before(async () => {});
 
 			afterEach(async () => {
 				await session.stop();
@@ -724,7 +724,7 @@ describe("streams", function () {
 			let session: TestSessionStream;
 			let streams: ReturnType<typeof createMetrics>[];
 
-			before(async () => { });
+			before(async () => {});
 
 			beforeEach(async () => {
 				session = await connected(3, {
@@ -931,7 +931,7 @@ describe("streams", function () {
 					let session: TestSessionStream;
 					let streams: ReturnType<typeof createMetrics>[];
 
-					before(async () => { });
+					before(async () => {});
 
 					beforeEach(async () => {
 						session = await disconnected(3);
@@ -950,7 +950,6 @@ describe("streams", function () {
 								2,
 							),
 						);
-
 
 						await session.peers[0].services.directstream.publish(
 							new Uint8Array([0]),
@@ -1005,7 +1004,7 @@ describe("streams", function () {
 					let session: TestSessionStream;
 					let streams: ReturnType<typeof createMetrics>[];
 
-					before(async () => { });
+					before(async () => {});
 
 					beforeEach(async () => {
 						session = await connected(4);
@@ -1064,7 +1063,7 @@ describe("streams", function () {
 					let streams: ReturnType<typeof createMetrics>[];
 					const data = new Uint8Array([1, 2, 3]);
 
-					before(async () => { });
+					before(async () => {});
 
 					beforeEach(async () => {
 						session = await connected(3, {
@@ -1192,7 +1191,7 @@ describe("streams", function () {
 					let streams: ReturnType<typeof createMetrics>[];
 					const data = new Uint8Array([1, 2, 3]);
 
-					before(async () => { });
+					before(async () => {});
 
 					beforeEach(async () => {
 						session = await disconnected(5, {
@@ -1398,7 +1397,7 @@ describe("streams", function () {
 			describe("invalidation", () => {
 				let session: TestSessionStream;
 
-				before(async () => { });
+				before(async () => {});
 
 				afterEach(async () => {
 					await session.stop();
@@ -1421,7 +1420,7 @@ describe("streams", function () {
 
 					// make it so that one node is responsive
 					session.peers[1].services.directstream.publishMessage =
-						(() => { }) as any;
+						(() => {}) as any;
 
 					// now route should persist even if peer can't reach
 					await expect(
@@ -1846,7 +1845,7 @@ describe("streams", function () {
 		let streams: ReturnType<typeof createMetrics>[];
 		let timer: ReturnType<typeof setTimeout>;
 
-		before(async () => { });
+		before(async () => {});
 
 		beforeEach(async () => {
 			session = await connected(3, {
@@ -1904,7 +1903,7 @@ describe("streams", function () {
 	describe("limits", () => {
 		let session: TestSessionStream;
 
-		before(async () => { });
+		before(async () => {});
 
 		beforeEach(async () => {
 			session = await connected(2);
@@ -2624,7 +2623,7 @@ describe("join/leave", () => {
 
 	describe("invalidation", () => {
 		let extraSession: TestSessionStream;
-		beforeEach(async () => { });
+		beforeEach(async () => {});
 		afterEach(async () => {
 			await session?.stop();
 			await extraSession?.stop();
@@ -2695,13 +2694,13 @@ describe("join/leave", () => {
 					{
 						mode: seekDelivery[i]
 							? new SeekDelivery({
-								redundancy: 1,
-								to: [slow.publicKey, fast.publicKey],
-							})
+									redundancy: 1,
+									to: [slow.publicKey, fast.publicKey],
+								})
 							: new SilentDelivery({
-								redundancy: 1,
-								to: [slow.publicKey, fast.publicKey],
-							}), // undefined ?
+									redundancy: 1,
+									to: [slow.publicKey, fast.publicKey],
+								}), // undefined ?
 					},
 				);
 

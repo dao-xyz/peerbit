@@ -6,10 +6,7 @@ import type { Multiaddr } from "@multiformats/multiaddr";
 import { waitFor } from "@peerbit/time";
 import { setMaxListeners } from "events";
 import { type Libp2p, type Libp2pOptions, createLibp2p } from "libp2p";
-import {
-	relay,
-	transports,
-} from "./transports.js";
+import { relay, transports } from "./transports.js";
 
 type DefaultServices = { relay: CircuitRelayService; identify: any };
 type Libp2pWithServices<T> = Libp2p<T & DefaultServices>;

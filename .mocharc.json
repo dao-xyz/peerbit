@@ -1,23 +1,13 @@
 {
-	"require": [
-		"ts-node/register",
-		"chai-extend/chai-global.js"
-	],
+	"require": ["ts-node/register", "chai-extend/chai-global.js"],
 	"node-option": [
 		"experimental-specifier-resolution=node",
 		"loader=ts-node/esm",
 		"no-warnings"
 	],
-	"extension": [
-		"ts"
-	],
+	"extension": ["ts"],
 	"parallel": false,
-	"spec": [
-		"**/test/**/*.spec.ts"
-	],
-	"ignore": [
-		"**/node_modules/**",
-		"**/dist/**"
-	],
+	"spec": ["**/test/**/*.spec.ts"],
+	"ignore": ["**/node_modules/**", "**/dist/**"],
 	"timeout": "40000"
 }
