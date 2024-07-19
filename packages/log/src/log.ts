@@ -1,7 +1,6 @@
 import { deserialize, field, fixedArray, variant } from "@dao-xyz/borsh";
 import { type AnyStore } from "@peerbit/any-store";
-import { cidifyString } from "@peerbit/blocks";
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type Blocks, cidifyString } from "@peerbit/blocks-interface";
 import {
 	type Identity,
 	SignatureWithKey,
