@@ -125,7 +125,7 @@ export class SearchRequest extends AbstractSearchRequest {
 		this.id = randomBytes(32);
 		this.query = props?.query ? toQuery(props.query) : [];
 		this.sort = toArray(props?.sort);
-		this.fetch = props?.fetch ?? 1;
+		this.fetch = props?.fetch ?? 10; // default fetch 10 documents
 	}
 
 	private _idString: string;
