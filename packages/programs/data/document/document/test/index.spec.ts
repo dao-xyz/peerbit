@@ -626,9 +626,9 @@ describe("index", () => {
 					canSearch: (
 						| undefined
 						| ((
-								query: AbstractSearchRequest,
-								publicKey: PublicSignKey,
-						  ) => Promise<boolean>)
+							query: AbstractSearchRequest,
+							publicKey: PublicSignKey,
+						) => Promise<boolean>)
 					)[] = [];
 				before(async () => {
 					session = await TestSession.connected(peersCount);
@@ -645,12 +645,12 @@ describe("index", () => {
 						const store =
 							i > 0
 								? (await TestStore.load<TestStore>(
-										stores[0].address!,
-										session.peers[i].services.blocks,
-									))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 								: new TestStore({
-										docs: new Documents<Document>(),
-									});
+									docs: new Documents<Document>(),
+								});
 						await session.peers[i].open(store, {
 							args: {
 								replicate: i === 0 ? { factor: 1 } : false,
@@ -658,16 +658,16 @@ describe("index", () => {
 									canRead:
 										i === 0
 											? (obj: any, key: any) => {
-													return canRead[i] ? canRead[i]!(obj, key) : true;
-												}
+												return canRead[i] ? canRead[i]!(obj, key) : true;
+											}
 											: undefined,
 									canSearch:
 										i === 0
 											? (query: any, key: any) => {
-													return canSearch[i]
-														? canSearch[i]!(query, key)
-														: true;
-												}
+												return canSearch[i]
+													? canSearch[i]!(query, key)
+													: true;
+											}
 											: undefined,
 								},
 							},
@@ -812,7 +812,7 @@ describe("index", () => {
 							}),
 							{ remote: { amount: 1, sync: true } },
 						);
-						await waitFor(() => syncEvents == 2);
+						await waitFor(() => syncEvents === 2);
 						expect(canPerformEvents).equal(6); // no new checks, since all docs already added
 					});
 					it("will persist synced entries through prunes", async () => {
@@ -1210,7 +1210,7 @@ describe("index", () => {
 			});
 
 			describe("concurrency", () => {
-				before(() => {});
+				before(() => { });
 
 				let abortController: AbortController,
 					interval: ReturnType<typeof setInterval>;
@@ -1455,12 +1455,12 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks,
-								))!
+								stores[0].address!,
+								session.peers[i].services.blocks,
+							))!
 							: new TestStore({
-									docs: new Documents<Document>(),
-								});
+								docs: new Documents<Document>(),
+							});
 					store.docs.log.append = async (a: any, b: any) => {
 						// Omit synchronization so results are always the same (HACKY)
 						b = {
@@ -1685,7 +1685,7 @@ describe("index", () => {
 					@field({ type: "u64" })
 					[KEY]: bigint;
 
-					constructor(properties: { id: string; [KEY]: bigint }) {
+					constructor(properties: { id: string;[KEY]: bigint }) {
 						this.id = properties.id;
 						this[KEY] = properties[KEY];
 					}
@@ -2033,12 +2033,12 @@ describe("index", () => {
 				const store =
 					i > 0
 						? (await TestStoreSubPrograms.load<TestStoreSubPrograms>(
-								stores[0].store.address!,
-								session.peers[i].services.blocks,
-							))!
+							stores[0].store.address!,
+							session.peers[i].services.blocks,
+						))!
 						: new TestStoreSubPrograms({
-								docs: new Documents<SubProgram>(),
-							});
+							docs: new Documents<SubProgram>(),
+						});
 
 				await session.peers[i].open(store, {
 					args: {
@@ -2216,12 +2216,12 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks,
-								))!
+								stores[0].address!,
+								session.peers[i].services.blocks,
+							))!
 							: new TestStore({
-									docs: new Documents<Document>(),
-								});
+								docs: new Documents<Document>(),
+							});
 					await session.peers[i].open(store);
 					stores.push(store);
 				}
