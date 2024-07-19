@@ -232,6 +232,27 @@ describe(`role`, () => {
 			expect(t1 - t0).greaterThan(await db2.log.getDefaultMinRoleAge());
 		});
 		describe("getDefaultMinRoleAge", () => {
+			it("if not replicating, min role age is 0", async () => {
+				const store = new EventStore<string>();
+
+				await session.peers[0].open(store.clone(), {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
+				const db2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+				await waitForResolved(async () =>
+					expect((await db2.log.getReplicators()).size).to.equal(1),
+				);
+				expect(await db2.log.getDefaultMinRoleAge()).equal(0);
+			});
+
 			it("oldest is always mature", async () => {
 				const store = new EventStore<string>();
 

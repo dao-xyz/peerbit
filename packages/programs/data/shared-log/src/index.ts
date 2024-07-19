@@ -1586,6 +1586,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	async getDefaultMinRoleAge(): Promise<number> {
+		if ((await this.isReplicating()) === false) {
+			return 0;
+		}
+
 		const now = +new Date();
 		const replLength = await this.replicationIndex.getSize();
 		const diffToOldest =
@@ -1627,10 +1631,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 
 		// Total replication "width"
-		const width = 1; //this.getParticipationSum(roleAge);
+		const width = 1;
 
 		// How much width you need to "query" to
-
 		const peers = this.replicationIndex; // TODO types
 		const minReplicas = Math.min(
 			await peers.getSize(),
