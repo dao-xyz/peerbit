@@ -12,5 +12,5 @@
 		"noUnusedLocals": false,
 		"outDir": "dist"
 	},
-	"include": ["examples", "modules", "topics", "examples"]
+	"include": ["modules", "topics", "examples"]
 }
