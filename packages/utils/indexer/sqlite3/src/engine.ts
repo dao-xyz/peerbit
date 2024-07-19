@@ -186,19 +186,8 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")}) strict`;
 			const sqlCreateIndex = `create index if not exists ${table.name}_index on ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")})`;
 
-			try {
-				this.properties.db.exec(sqlCreateTable);
-			} catch (error) {
-				console.error("Error creating table with sql: ", sqlCreateTable);
-				throw error;
-			}
-
-			try {
-				this.properties.db.exec(sqlCreateIndex);
-			} catch (error) {
-				console.error("Error creating index with sql: ", sqlCreateIndex);
-				throw error;
-			}
+			this.properties.db.exec(sqlCreateTable);
+			this.properties.db.exec(sqlCreateIndex);
 
 			// put and return the id
 			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
