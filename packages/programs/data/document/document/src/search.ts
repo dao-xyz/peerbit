@@ -92,7 +92,7 @@ export type QueryOptions<R> = {
 	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult<R>>;
 	local?: boolean;
 };
-export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
+export type SearchOptions<R> = QueryOptions<R>;
 
 type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
 
@@ -225,6 +225,9 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	// Original document representation
 	documentType: AbstractType<T>;
 
+	// The indexed representation
+	indexedType: AbstractType<T>;
+
 	// transform options
 	transformer: Transformer<T, I>;
 
@@ -269,21 +272,6 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	async open(properties: OpenOptions<T, I>) {
 		this._log = properties.log;
 
-		/* class DocumentWithContext implements IDocumentWithContext<I | T> {
-
-			@field({ type: properties.indexedType || properties.documentType })
-			[INDEXED_VALUE_PROPERTY]: I;
-
-			@field({ type: types.Context })
-			context: types.Context;
-
-			constructor(value: I, context: types.Context) {
-				this.value = value;
-				this.context = context;
-			}
-		}
-			*/
-
 		this.documentType = properties.documentType;
 		this.indexedTypeIsDocumentType =
 			!properties.transform?.type ||
@@ -315,9 +303,8 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		this.dbType = properties.dbType;
 		this._sync = properties.sync;
 
-		/* 	this.transform
-				? isTransformerWithFunction(this.transform) ? await this.transform.transform(value, context) : new this.indexedType(value, context) */
 		const transformOptions = properties.transform;
+		this.indexedType = this.wrappedIndexedType;
 		this.transformer = transformOptions
 			? isTransformerWithFunction(transformOptions)
 				? (obj, context) => transformOptions.transform(obj, context)
@@ -553,7 +540,13 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		}
 
 		if (this.indexedTypeIsDocumentType) {
-			return { value: value.value.value as any as T }; // TODO types
+			// cast value to T, i.e. convert the class but keep all properties except the __context
+			const obj = Object.assign(
+				Object.create(this.documentType.prototype),
+				value.value,
+			);
+			delete obj.__context;
+			return { value: obj as T };
 		}
 
 		const head = await this._log.log.get(value.value.__context.head);
@@ -679,6 +672,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			const replicatorGroups = await this._log.getReplicatorUnion(
 				remote.minAge,
 			);
+
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
 				const fn = async () => {
@@ -757,7 +751,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		options?: SearchOptions<T>,
 	): Promise<T[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-		queryRequest.fetch = options?.size ?? 0xffffffff;
+		queryRequest.fetch = queryRequest.fetch ?? 0xffffffff;
 
 		// So that the iterator is pre-fetching the right amount of entries
 		const iterator = this.iterate(queryRequest, options);

@@ -560,7 +560,6 @@ export class Documents<
 
 					// update index
 					await this._index.del(key);
-
 					modified.add(key);
 				} else {
 					// Unknown operation
