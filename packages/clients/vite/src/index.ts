@@ -101,15 +101,10 @@ function copyAssets(srcPath: string, destPath: string) {
 		fs.readdirSync(srcPath).forEach((file) => {
 			const srcFilePath = path.join(srcPath, file);
 			const destFilePath = path.join(destPath, file);
-			// eslint-disable-next-line no-console
-			console.log(`Copying ${srcFilePath} to ${destFilePath}`);
 
 			copyAssets(srcFilePath, destFilePath); // Recursion for directories
 		});
 	} else {
-		// eslint-disable-next-line no-console
-		console.log(`Copying ${srcPath} to ${destPath}`);
-
 		// Ensure the destination directory exists
 		fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
