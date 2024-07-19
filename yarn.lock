@@ -6450,7 +6450,7 @@ eslint-config-love@^47.0.0:
 
 "eslint-config-peerbit@https://github.com/dao-xyz/eslint-config-peerbit":
   version "7.0.2"
-  resolved "https://github.com/dao-xyz/eslint-config-peerbit#1ed67f16a3d52f53421302f8acb119b43fb16d44"
+  resolved "https://github.com/dao-xyz/eslint-config-peerbit#b339542b8b2ed4ea7b3fee87bb53e3d2bd22565e"
   dependencies:
     "@typescript-eslint/eslint-plugin" "^7.5.0"
     "@typescript-eslint/parser" "^7.5.0"
