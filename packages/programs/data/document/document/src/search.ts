@@ -177,15 +177,34 @@ export type IDocumentWithContext<I> = {
 	__context: types.Context;
 } & I;
 
+export type TransformerAsConstructor<T, I> = {
+	type?: new (arg: T, context: types.Context) => I;
+};
+
+export type TransformerAsFunction<T, I> = {
+	type: AbstractType<I>;
+	transform: (arg: T, context: types.Context) => I | Promise<I>;
+};
+export type TransformOptions<T, I> =
+	| TransformerAsConstructor<T, I>
+	| TransformerAsFunction<T, I>;
+
+const isTransformerWithFunction = <T, I>(
+	options: TransformOptions<T, I>,
+): options is TransformerAsFunction<T, I> => {
+	return (options as TransformerAsFunction<T, I>).transform != null;
+};
+
 export type OpenOptions<T, I> = {
 	documentType: AbstractType<T>;
-	indexedType?: new (arg: T, context: types.Context) => I;
+
 	dbType: AbstractType<types.IDocumentStore<T>>;
 	log: SharedLog<Operation>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
 	sync: (result: types.Results<T>) => Promise<void>;
 	indexBy?: string | string[];
+	transform?: TransformOptions<T, I>;
 };
 
 type IndexableClass<I> = new (
@@ -206,10 +225,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	// Original document representation
 	documentType: AbstractType<T>;
 
-	// indexed document, either a constructor is provided
-	indexedType?: new (arg: T, context: types.Context) => I;
-
-	// or a transformer is provided. The transformer will otherwise be generated
+	// transform options
 	transformer: Transformer<T, I>;
 
 	// The indexed document wrapped in a context
@@ -269,9 +285,9 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			*/
 
 		this.documentType = properties.documentType;
-		this.indexedType = properties.indexedType;
 		this.indexedTypeIsDocumentType =
-			properties.indexedType === properties.documentType;
+			!properties.transform?.type ||
+			properties.transform?.type === properties.documentType;
 
 		class IndexedClassWithContex {
 			@field({ type: types.Context })
@@ -285,7 +301,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 
 		// copy all prototype values from indexedType to IndexedClassWithContex
 		copySerialization(
-			(properties.indexedType || properties.documentType)!,
+			(properties.transform?.type || properties.documentType)!,
 			IndexedClassWithContex,
 		);
 
@@ -298,10 +314,16 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		this._isProgramValues = this.documentType instanceof Program;
 		this.dbType = properties.dbType;
 		this._sync = properties.sync;
-		this.indexedType = properties.indexedType;
 
-		this.transformer = properties.indexedType
-			? (obj, context) => new properties.indexedType!(obj, context)
+		/* 	this.transform
+				? isTransformerWithFunction(this.transform) ? await this.transform.transform(value, context) : new this.indexedType(value, context) */
+		const transformOptions = properties.transform;
+		this.transformer = transformOptions
+			? isTransformerWithFunction(transformOptions)
+				? (obj, context) => transformOptions.transform(obj, context)
+				: transformOptions.type
+					? (obj, context) => new transformOptions.type!(obj, context)
+					: (obj) => obj as any as I
 			: (obj) => obj as any as I; // TODO types
 
 		const maybeArr = properties.indexBy || DEFAULT_INDEX_BY;
@@ -432,9 +454,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			gid: entry.gid,
 		});
 
-		const valueToIndex = this.indexedType
-			? new this.indexedType(value, context)
-			: value;
+		const valueToIndex = await this.transformer(value, context);
 		const wrappedValueToIndex = new this.wrappedIndexedType(
 			valueToIndex as I,
 			context,

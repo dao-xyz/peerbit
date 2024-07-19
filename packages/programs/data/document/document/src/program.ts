@@ -32,6 +32,7 @@ import {
 	DocumentIndex,
 	Operation,
 	PutOperation,
+	type TransformOptions,
 } from "./search.js";
 
 const logger = loggerFn({ module: "document" });
@@ -78,8 +79,7 @@ export type SetupOptions<T, I = T> = {
 		canSearch?: CanSearch;
 		canRead?: CanRead<T>;
 		idProperty?: string | string[];
-		type?: new (arg: T, context: documentsTypes.Context) => I;
-	};
+	} & TransformOptions<T, I>;
 	log?: {
 		trim?: TrimOptions;
 	};
@@ -153,7 +153,7 @@ export class Documents<
 			canRead: options?.index?.canRead,
 			canSearch: options.index?.canSearch,
 			documentType: this._clazz,
-			indexedType: options.index?.type,
+			transform: options.index,
 			indexBy: idProperty,
 			sync: async (result: documentsTypes.Results<T>) => {
 				// here we arrive for all the results we want to persist.
