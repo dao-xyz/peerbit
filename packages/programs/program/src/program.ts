@@ -58,7 +58,7 @@ export interface LifeCycleEvents {
 	close: CustomEvent<Program>;
 }
 
-export interface ProgramEvents extends NetworkEvents, LifeCycleEvents {}
+export interface ProgramEvents extends NetworkEvents, LifeCycleEvents { }
 
 const getAllParentAddresses = (p: Program): string[] => {
 	return getAllParent(p, [])
@@ -96,8 +96,7 @@ type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 export abstract class Program<
 	Args = any,
 	Events extends ProgramEvents = ProgramEvents,
-> implements Manageable<Args>
-{
+> implements Manageable<Args> {
 	private _node: ProgramClient;
 	private _allPrograms: Program[] | undefined;
 
@@ -118,12 +117,13 @@ export abstract class Program<
 		return this._address;
 	}
 
+	set address(address: Address) {
+		this._address = address;
+	}
+
 	async calculateAddress(): Promise<Address> {
 		this._address = await calculateRawCid(serialize(this));
 		return this._address;
-	}
-	set address(address: Address) {
-		this._address = address;
 	}
 
 	get events(): TypedEventTarget<Events> {
@@ -186,14 +186,14 @@ export abstract class Program<
 		await this.node.services.pubsub.addEventListener(
 			"subscribe",
 			this._subscriptionEventListener ||
-				(this._subscriptionEventListener = (s) =>
-					!this.closed && this._emitJoinNetworkEvents(s.detail)),
+			(this._subscriptionEventListener = (s) =>
+				!this.closed && this._emitJoinNetworkEvents(s.detail)),
 		);
 		await this.node.services.pubsub.addEventListener(
 			"unsubscribe",
 			this._unsubscriptionEventListener ||
-				(this._unsubscriptionEventListener = (s) =>
-					!this.closed && this._emitLeaveNetworkEvents(s.detail)),
+			(this._unsubscriptionEventListener = (s) =>
+				!this.closed && this._emitLeaveNetworkEvents(s.detail)),
 		);
 
 		await this._eventOptions?.onBeforeOpen?.(this);
