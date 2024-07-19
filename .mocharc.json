@@ -7,7 +7,7 @@
 	],
 	"extension": ["ts"],
 	"parallel": false,
-	"spec": ["**/test/**/*.spec.ts"],
+	"spec": ["**/*.spec.ts"],
 	"ignore": ["**/node_modules/**", "**/dist/**"],
 	"timeout": "40000"
 }
