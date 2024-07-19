@@ -1,6 +1,5 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Documents } from "@peerbit/document";
-import type { Context } from "@peerbit/document-interface";
 import { SearchRequest } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";

@@ -2,30 +2,28 @@
 /// [imports]
 import { field, option, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import {
-	ByteMatchQuery,
-	Documents,
-	IsNull,
-	SearchRequest,
-	Sort,
-} from "@peerbit/document";
+import { Documents } from "@peerbit/document";
 /// [reactions-one]
 /// [query-detailed]
 import {
 	And,
 	BoolQuery,
+	ByteMatchQuery,
 	Compare,
 	IntegerCompare,
+	IsNull,
 	Or,
+	SearchRequest,
+	Sort,
 	SortDirection,
 	StringMatch,
 	StringMatchMethod,
-} from "@peerbit/document";
+} from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
-import { type RoleOptions } from "@peerbit/shared-log";
+import { type ReplicationOptions, type RoleOptions } from "@peerbit/shared-log";
 /// [definition]
 /// [insert]
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 // Since the first node is a replicator, it will eventually get all messages
 import { expect } from "chai";
 import { Peerbit } from "peerbit";
@@ -85,13 +83,43 @@ class Reaction {
 	}
 }
 
-type ChannelArgs = { role?: RoleOptions };
-@variant("xxxchannel")
+type ChannelArgs = { replicate?: ReplicationOptions };
+
+// This class will out us to index posts in another format
+// this is useful when the original format is not suitable for indexing
+// or the indexed format should contain additional information like
+// signer, timestamp etc.
+class IndexedPost {
+	@field({ type: "string" })
+	[POST_ID_PROPERTY]: string;
+
+	@field({ type: option("string") })
+	[POST_PARENT_POST_ID]?: string;
+
+	@field({ type: "string" })
+	[POST_MESSAGE_PROPERTY]: string;
+
+	@field({ type: Uint8Array })
+	[POST_FROM_PROPERTY]: Uint8Array;
+
+	@field({ type: "u64" })
+	[POST_TIMESTAMP_PROPERTY]: bigint;
+
+	constructor(post: Post, from: Uint8Array, timestamp: bigint) {
+		this[POST_ID_PROPERTY] = post.id;
+		this[POST_PARENT_POST_ID] = post.parentPostid;
+		this[POST_MESSAGE_PROPERTY] = post.message;
+		this[POST_FROM_PROPERTY] = from;
+		this[POST_TIMESTAMP_PROPERTY] = timestamp;
+	}
+}
+
+@variant("channel")
 export class Channel extends Program<ChannelArgs> {
 	// Documents<?> provide document store functionality around posts
 
 	@field({ type: Documents })
-	posts: Documents<Post>;
+	posts: Documents<Post, IndexedPost>;
 
 	@field({ type: Documents })
 	reactions: Documents<Reaction>;
@@ -136,17 +164,18 @@ export class Channel extends Program<ChannelArgs> {
 				// Primary key is default 'id', but we can assign it manually here
 				idProperty: POST_ID_PROPERTY,
 
-				// You can tailor what fields should be indexed,
-				// everything else will be stored on disc (if you use disc storage with the client)
-				fields: async (post, context) => {
-					return {
-						[POST_ID_PROPERTY]: post.message,
-						[POST_PARENT_POST_ID]: post.parentPostid,
-						[POST_MESSAGE_PROPERTY]: post.message,
-						[POST_FROM_PROPERTY]: (await this.posts.log.log.get(context.head))
-							?.signatures[0].publicKey.bytes,
-						[POST_TIMESTAMP_PROPERTY]: context.modified,
-					};
+				// The type of the index
+				type: IndexedPost,
+
+				// Implement the transformer to do async stuff
+				transform: async (post, context) => {
+					return new IndexedPost(
+						post,
+						(
+							await this.posts.log.log.get(context.head)
+						)?.signatures[0].publicKey.bytes,
+						context.modified,
+					);
 				},
 
 				canRead: (post, publicKey) => {
@@ -187,12 +216,14 @@ const peer2 = await Peerbit.create();
 // Connect to the first peer
 await peer2.dial(peer.getMultiaddrs());
 
-const channelFromClient1 = await peer.open(new Channel());
+const channelFromClient1 = await peer.open<Channel>(new Channel(), {
+	args: { replicate: { factor: 1 } },
+});
 const channelFromClient2 = await peer2.open<Channel>(
 	channelFromClient1.address!,
 	{
-		// Observer will not store anything unless explicitly doing so
-		args: { replicate: false }, // or 'replicator' (default))
+		// Non-replicator will not store anything unless explicitly doing so
+		args: { replicate: false },
 	},
 );
 
