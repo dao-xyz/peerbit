@@ -393,7 +393,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					Math.random(),
 				length: (this._replicationSettings as FixedReplicationOptions).factor,
 				publicKeyHash: this.node.identity.publicKey.hashcode(),
-				replicationIntent: ReplicationIntent.Automatic, // automatic means that this range might be reused later for dynamic replication behaviour
+				replicationIntent: ReplicationIntent.Explicit, // automatic means that this range might be reused later for dynamic replication behaviour
 				timestamp: BigInt(+new Date()),
 				id: sha256Sync(this.node.identity.publicKey.bytes),
 			});
@@ -544,7 +544,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this._isTrustedReplicator &&
 				!(await this._isTrustedReplicator(from))
 			) {
-				return false;
+				if (this.node.identity.publicKey.equals(from)) {
+					if (range.replicationIntent === ReplicationIntent.Automatic) {
+						return false; // we dont want to replicate automatic ranges if not allowed by others
+					}
+				} else {
+					return false;
+				}
 			}
 
 			range.id = new Uint8Array(range.id);
@@ -608,6 +614,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 			range,
 			this.node.identity.publicKey,
 		);
+		if (!added) {
+			logger.warn("Not allowed to replicate by canReplicate");
+		}
 
 		added &&
 			(await this.rpc.send(
@@ -2083,6 +2092,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const usedMemory = await this.getMemoryUsage();
 			let dynamicRange = await this.getDynamicRange();
 
+			if (!dynamicRange) {
+				return; // not allowed to replicate
+			}
+
 			const peersSize = (await peers.getSize()) || 1;
 			const newFactor = this.replicationController.step({
 				memoryUsage: usedMemory,
@@ -2161,7 +2174,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this.node.identity.publicKey,
 			);
 			if (!added) {
-				throw new Error("Can not replicate, not allowed by canReplicate");
+				logger.warn("Not allowed to replicate by canReplicate");
+				return;
 			}
 		}
 		return range;

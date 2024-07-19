@@ -13,6 +13,7 @@ import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import mapSeries from "p-each-series";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
+import type { ReplicationOptions } from "../src/index.js";
 import {
 	AbsoluteReplicas,
 	type ReplicationRangeIndexable,
@@ -881,6 +882,7 @@ describe("canReplicate", () => {
 
 	const init = async (
 		canReplicate: (publicKey: PublicSignKey) => Promise<boolean> | boolean,
+		replicate: ReplicationOptions = { factor: 1 },
 	) => {
 		let min = 100;
 		let max = undefined;
@@ -890,9 +892,7 @@ describe("canReplicate", () => {
 					min,
 					max,
 				},
-				replicate: {
-					factor: 1,
-				},
+				replicate,
 				canReplicate,
 			},
 		});
@@ -905,9 +905,7 @@ describe("canReplicate", () => {
 						min,
 						max,
 					},
-					replicate: {
-						factor: 1,
-					},
+					replicate,
 					canReplicate,
 				},
 			},
@@ -922,9 +920,7 @@ describe("canReplicate", () => {
 						min,
 						max,
 					},
-					replicate: {
-						factor: 1,
-					},
+					replicate,
 					canReplicate,
 				},
 			},
@@ -1000,6 +996,21 @@ describe("canReplicate", () => {
 		});
 		await delay(1000); // Add some delay so that all replication events most likely have occured
 		expect(db1.log.log.length).equal(0); // because not trusted for replication job
+	});
+
+	it("replicate even if not allowed if factor is 1 ", async () => {
+		await init(() => false, { factor: 1 });
+
+		const mySegments = await db1.log.getMyReplicationSegments();
+		expect(mySegments).to.have.length(1);
+		expect(mySegments[0].widthNormalized).to.equal(1);
+	});
+
+	it("does not replicate if not allowed and dynamic ", async () => {
+		await init(() => false, true);
+
+		const mySegments = await db1.log.getMyReplicationSegments();
+		expect(mySegments).to.have.length(0);
 	});
 });
 
