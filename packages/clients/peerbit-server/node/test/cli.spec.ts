@@ -17,8 +17,7 @@ const runCommandProcess = (args: any): ProcessWithOut => {
 	const cmd = `node --experimental-vm-modules ${path.join(
 		__dirname,
 		"../",
-		"lib",
-		"esm",
+		"dist",
 		"bin.js",
 	)} ${args}`;
 	const p = exec(

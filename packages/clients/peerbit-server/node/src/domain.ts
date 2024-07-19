@@ -94,7 +94,7 @@ const getUIPath = async (): Promise<string> => {
 	if (fs.existsSync(p1) && fs.lstatSync(p1).isDirectory()) {
 		return p1; // build
 	} else {
-		const p2 = path.join(filename, "../../", "lib/ui");
+		const p2 = path.join(filename, "../../", "dist/ui");
 		if (fs.existsSync(p2) && fs.lstatSync(p2).isDirectory()) {
 			return p2;
 		}
