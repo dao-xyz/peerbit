@@ -6,7 +6,7 @@ import {
 	TypedEventEmitter,
 	type TypedEventTarget,
 } from "@libp2p/interface";
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type Blocks, calculateRawCid } from "@peerbit/blocks-interface";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	SubscriptionEvent,
@@ -118,6 +118,10 @@ export abstract class Program<
 		return this._address;
 	}
 
+	async calculateAddress(): Promise<Address> {
+		this._address = await calculateRawCid(serialize(this));
+		return this._address;
+	}
 	set address(address: Address) {
 		this._address = address;
 	}
@@ -466,9 +470,7 @@ export abstract class Program<
 
 	async save(store: Blocks = this.node.services.blocks): Promise<Address> {
 		const existingAddress = this._address;
-		const hash = await store.put(serialize(this));
-
-		this._address = hash;
+		this._address = await store.put(serialize(this));
 		if (!this.address) {
 			throw new Error("Unexpected");
 		}
