@@ -1,5 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Documents } from "@peerbit/document";
+import type { Context } from "@peerbit/document-interface";
 import { SearchRequest } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";
@@ -68,6 +69,19 @@ class Channel extends Program<Args> {
 	}
 }
 
+class IndexableChannel {
+	@field({ type: "string" })
+	name: string;
+
+	@field({ type: "string" })
+	db: string;
+
+	constructor(name: string, address: string) {
+		this.name = name;
+		this.db = address;
+	}
+}
+
 const NAME_PROPERTY = "name";
 
 @variant("forum")
@@ -78,7 +92,7 @@ class Forum extends Program<Args> {
 
 	// Posts within channel
 	@field({ type: Documents })
-	channels: Documents<Channel>;
+	channels: Documents<Channel, IndexableChannel>;
 
 	constructor(name: string) {
 		super();
@@ -94,6 +108,9 @@ class Forum extends Program<Args> {
 			canOpen: (channel: Channel) => true, // if someone append a Channel, should I, as a Replicator, start/open it?
 			index: {
 				idProperty: NAME_PROPERTY,
+				type: IndexableChannel,
+				transform: async (channel, _context) =>
+					new IndexableChannel(channel.name, await channel.calculateAddress()),
 			},
 			replicate: args?.replicate,
 		});

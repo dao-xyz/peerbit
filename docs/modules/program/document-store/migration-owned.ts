@@ -1,5 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents, SearchRequest } from "@peerbit/document";
+import { Documents } from "@peerbit/document";
+import { SearchRequest } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
 
 abstract class AbstractPost {}
