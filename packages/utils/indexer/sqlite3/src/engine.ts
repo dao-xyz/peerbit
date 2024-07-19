@@ -19,6 +19,7 @@ import {
 	convertSearchRequestToQuery,
 	/* getTableName, */
 	convertSumRequestToQuery,
+	escapeColumnName,
 	getInlineTableFieldName,
 	getSQLTable,
 	getTablePrefixedField,
@@ -183,16 +184,27 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			}
 
 			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")}) strict`;
-			const sqlCreateIndex = `create index if not exists ${table.name}_index on ${table.name} (${table.fields.map((field) => field.name).join(", ")})`;
+			const sqlCreateIndex = `create index if not exists ${table.name}_index on ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")})`;
 
-			this.properties.db.exec(sqlCreateTable);
-			this.properties.db.exec(sqlCreateIndex);
+			try {
+				this.properties.db.exec(sqlCreateTable);
+			} catch (error) {
+				console.error("Error creating table with sql: ", sqlCreateTable);
+				throw error;
+			}
+
+			try {
+				this.properties.db.exec(sqlCreateIndex);
+			} catch (error) {
+				console.error("Error creating index with sql: ", sqlCreateIndex);
+				throw error;
+			}
 
 			// put and return the id
-			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
+			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
 
 			// insert or replace with id already defined
-			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => field.name).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
+			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
 
 			this.putStatement.set(
 				table.name,
@@ -306,7 +318,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		return undefined;
 	}
 
-	async put(value: T, _id: undefined): Promise<void> {
+	async put(value: T, _id?: any): Promise<void> {
 		const classOfValue = value.constructor as Constructor<T>;
 		return insert(
 			async (values, table) => {

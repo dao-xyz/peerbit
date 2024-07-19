@@ -69,6 +69,7 @@ export const convertToSQLType = (
 };
 
 const nullAsUndefined = (value: any) => (value === null ? undefined : value);
+export const escapeColumnName = (name: string) => `"${name}"`;
 
 export const convertFromSQLType = (
 	value: boolean | bigint | string | number | Uint8Array,
@@ -420,7 +421,7 @@ export const getSQLFields = (
 		sqlFields.push({
 			name: keyString,
 			key,
-			definition: `'${keyString}' ${fieldType} ${isPrimary ? "PRIMARY KEY" : ""}`,
+			definition: `${escapeColumnName(keyString)} ${fieldType} ${isPrimary ? "PRIMARY KEY" : ""}`,
 			type: fieldType,
 			isPrimary,
 			from: field,
@@ -505,7 +506,7 @@ export const getSQLFields = (
 			sqlFields.push({
 				name: keyString,
 				key,
-				definition: `'${keyString}' INTEGER`,
+				definition: `${escapeColumnName(keyString)} INTEGER`,
 				type: "bool",
 				isPrimary: false,
 				from: undefined,
@@ -858,7 +859,7 @@ export const selectAllFields = (
 					!tableAndShape.shape ||
 					matchFieldInShape(tableAndShape.shape, [], field)
 				) {
-					const value = `${tableAndShape.table.name}.${field.name} as '${getTablePrefixedField(tableAndShape.table, field.name)}'`;
+					const value = `${tableAndShape.table.name}.${escapeColumnName(field.name)} as '${getTablePrefixedField(tableAndShape.table, field.name)}'`;
 					fieldResolvers.push(value);
 				}
 			}
@@ -1418,7 +1419,12 @@ const resolveTableToQuery = (
 		for (const currentTable of currentTables.map((x) => x.table)) {
 			const schema = getSchema(currentTable.ctor);
 			const field = schema.fields.find((x) => x.key === key)!;
-
+			if (!field && currentTable.children.length > 0) {
+				// second arg is needed because of polymorphic fields we might end up here intentially to check what tables to query
+				throw new Error(
+					`Property with key "${key}" is not found in the schema ${JSON.stringify(schema.fields.map((x) => x.key))}`,
+				);
+			}
 			for (const child of currentTable.children) {
 				const tableNameAs = createTableReferenceName(
 					child,
@@ -1489,62 +1495,6 @@ const resolveTableToQuery = (
 	return { queryKey, foreignTables };
 };
 
-/* 
-const resolveTableToQuery = (table: Table, tables: Map<string, Table>, join: Map<string, JoinTable>,
-	path: string[], alias?: string) => {
-	let foreignTables: JoinTable[] = [{ table, as: alias || table.name }];
-	let queryKey = FOREIGN_VALUE_PROPERTY;
-
-	outer:
-	for (const [i, key] of path.entries()) {
-		const currentTables = foreignTables.map(x => x.table);
-		for (const currentTable of currentTables) {
-
-			// TODO line below will not work if a object contains a subobject which is a inline table, that itself references a table to jon
-			// this is not supported, but should be fixed
-			const sqlField = currentTable.fields.find(x => x.key === key)
-			if (sqlField && i === path.length - 1) {
-				queryKey = sqlField.name;
-				break outer;
-			}
-
-			const schema = getSchema(currentTable.ctor);
-			const field = schema.fields.find((x) => x.key === key)!;
-			const resolvedTables = getTableFromField(currentTable, tables, field)
-			foreignTables = []
-
-			if (!alias && (field.type instanceof VecKind || (field.type instanceof OptionKind && field.type.elementType instanceof VecKind))) {
-				let aliasSuffix = "_" + String(join.size);
-				alias = aliasSuffix
-			}
-			for (const foreignTable of resolvedTables) {
-				const tableNameAs = alias ? (alias + "_" + foreignTable.name) : foreignTable.name
-				let tableWithAlias = { table: foreignTable, as: tableNameAs }
-
-				// inline tables does not need to be joined
-				if (!foreignTable.inline) { join.set(tableNameAs, tableWithAlias) }
-
-				foreignTables.push(tableWithAlias)
-			}
-		}
-
-		if (i === path.length - 2) {
-			const foreignTablesWithField = foreignTables.filter(t => t.table.fields.find((x) =>
-				x.key === path[i + 1])
-			)
-			if (foreignTablesWithField.length > 0) {
-				queryKey = foreignTablesWithField[0].table.fields.find((x) =>
-					x.key === path[i + 1])!.name
-				// path[i + 1]; 
-				foreignTables = foreignTablesWithField;
-				break;
-			}
-		}
-	}
-
-	return { queryKey, foreignTables };
-} */
-
 const convertStateFieldQuery = (
 	query: types.StateFieldQuery,
 	tables: Map<string, Table>,
@@ -1591,7 +1541,8 @@ const convertStateFieldQuery = (
 		return { where: whereBuilder.join(" OR ") };
 	}
 
-	const keyWithTable = (tableAlias || table.name) + "." + inlinedName;
+	const keyWithTable =
+		(tableAlias || table.name) + "." + escapeColumnName(inlinedName);
 	let where: string;
 	if (query instanceof types.StringMatch) {
 		let statement = "";
