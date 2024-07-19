@@ -21,3 +21,15 @@ export interface Blocks extends WaitForPeer {
 	size(): MaybePromise<number>;
 	persisted(): MaybePromise<boolean>;
 }
+
+export {
+	cidifyString,
+	stringifyCid,
+	createBlock,
+	getBlockValue,
+	calculateRawCid,
+	checkDecodeBlock,
+	codecCodes,
+	defaultHasher,
+	codecMap,
+} from "./block.js";

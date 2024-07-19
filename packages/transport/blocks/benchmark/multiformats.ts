@@ -1,15 +1,15 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import B from "benchmark";
-import crypto from "crypto";
-import { encode } from "multiformats/block";
-import { sha256 } from "multiformats/hashes/sha2";
-import { equals } from "uint8arrays";
 import {
 	checkDecodeBlock,
 	cidifyString,
 	codecMap,
 	stringifyCid,
-} from "../src/block.js";
+} from "@peerbit/blocks-interface";
+import B from "benchmark";
+import crypto from "crypto";
+import { encode } from "multiformats/block";
+import { sha256 } from "multiformats/hashes/sha2";
+import { equals } from "uint8arrays";
 
 // Run with "node --loader ts-node/esm ./benchmark/multiformats.ts"
 // size: 1kb x 785 ops/sec ±2.66% (86 runs sampled)

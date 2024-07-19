@@ -1,10 +1,11 @@
 import { tcp } from "@libp2p/tcp";
+import { stringifyCid } from "@peerbit/blocks-interface";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForPeers } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
 import B from "benchmark";
 import crypto from "crypto";
-import { DirectBlock, stringifyCid } from "../src/index.js";
+import { DirectBlock } from "../src/index.js";
 
 // Run with "node --loader ts-node/esm ./benchmark/e2e.ts"
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)

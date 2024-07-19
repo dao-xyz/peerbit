@@ -112,3 +112,8 @@ export const createBlock = async (
 	});
 	return block as Block<any, any, any, any>;
 };
+
+export const calculateRawCid = async (bytes: Uint8Array) => {
+	const block = await createBlock(bytes, "raw");
+	return stringifyCid(block.cid);
+};

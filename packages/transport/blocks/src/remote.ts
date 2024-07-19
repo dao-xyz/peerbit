@@ -1,7 +1,14 @@
 import { field, variant } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
 import { CustomEvent, TypedEventEmitter } from "@libp2p/interface";
-import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
+import {
+	type GetOptions,
+	type Blocks as IBlocks,
+	checkDecodeBlock,
+	cidifyString,
+	codecCodes,
+	stringifyCid,
+} from "@peerbit/blocks-interface";
 import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import { AbortError } from "@peerbit/time";
@@ -9,12 +16,6 @@ import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
 import PQueue from "p-queue";
 import { AnyBlockStore } from "./any-blockstore.js";
-import {
-	checkDecodeBlock,
-	cidifyString,
-	codecCodes,
-	stringifyCid,
-} from "./block.js";
 import type { BlockStore } from "./interface.js";
 
 export const logger = loggerFn({ module: "blocks-remote" });

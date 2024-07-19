@@ -1,17 +1,17 @@
 import { type PeerId } from "@libp2p/interface";
 import { createStore } from "@peerbit/any-store";
 import { type AnyStore } from "@peerbit/any-store-interface";
-import { type Blocks } from "@peerbit/blocks-interface";
-import { type PublicSignKey } from "@peerbit/crypto";
-import { waitFor } from "@peerbit/time";
-import { type Block, decode } from "multiformats/block";
 import {
+	type Blocks,
 	cidifyString,
 	codecCodes,
 	createBlock,
 	defaultHasher,
 	stringifyCid,
-} from "./block.js";
+} from "@peerbit/blocks-interface";
+import { type PublicSignKey } from "@peerbit/crypto";
+import { waitFor } from "@peerbit/time";
+import { type Block, decode } from "multiformats/block";
 
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
