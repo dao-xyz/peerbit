@@ -161,23 +161,10 @@ export const toId = (obj: Ideable): IdKey => {
 export const toIdeable = (
 	key: IdKey | Ideable,
 ): string | number | bigint | Uint8Array => {
-	if (typeof key === "string") {
-		return key;
+	if (key instanceof IdKey) {
+		return key.key;
 	}
-
-	if (typeof key === "number") {
-		return key;
-	}
-
-	if (typeof key === "bigint") {
-		return key;
-	}
-
-	if (key instanceof Uint8Array) {
-		return key; /*  toBase64(key); */
-	}
-
-	throw new Error("Unexpected index key: " + typeof key);
+	return key;
 };
 
 export const checkId = (obj: Ideable) => {
