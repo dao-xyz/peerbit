@@ -43,6 +43,33 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.5...stream-v4.0.6) (2024-07-20)
+
+
+### Bug Fixes
+
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
+
+
+### Documentation
+
+* add protocol info ([218a5bb](https://github.com/dao-xyz/peerbit/commit/218a5bb2ba2c6c254343a8299ef0528393872fef))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.6 to 2.1.0
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+    * @peerbit/stream-interface bumped from ^5.0.2 to ^5.0.3
+    * @peerbit/logger bumped from ^1.0.2 to ^1.0.3
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
+
 ## [4.0.5](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.4...stream-v4.0.5) (2024-02-26)
 
 

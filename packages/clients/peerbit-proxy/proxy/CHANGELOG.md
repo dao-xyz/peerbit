@@ -308,6 +308,31 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.1.0](https://github.com/dao-xyz/peerbit/compare/proxy-v3.0.7...proxy-v3.1.0) (2024-07-20)
+
+
+### Features
+
+* add api for determining if persistant ([bc9e218](https://github.com/dao-xyz/peerbit/commit/bc9e218651a086ded8e7eaebaf15f3ce0db176d0))
+
+
+### Bug Fixes
+
+* add indexer minimal support ([e371489](https://github.com/dao-xyz/peerbit/commit/e3714895d8b47cee8d7cb1c7f2739191ac3673ec))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^4.0.7 to ^5.0.0
+    * @peerbit/any-store-interface bumped from ^2.0.2 to ^1.0.0
+    * @peerbit/indexer-simple bumped from ^0.0.1 to ^1.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.33 to 2.0.34
+
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/proxy-v3.0.1...proxy-v3.0.2) (2024-02-02)
 
 

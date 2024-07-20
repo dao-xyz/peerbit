@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/libp2p-test-utils",
-	"version": "2.1.3",
+	"version": "2.1.4",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -73,7 +73,7 @@
 		"lint": "aegir lint"
 	},
 	"devDependencies": {
-		"@peerbit/time": "2.0.6"
+		"@peerbit/time": "2.0.7"
 	},
 	"localMaintainers": [
 		"dao.xyz"

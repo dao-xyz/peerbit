@@ -66,6 +66,23 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.0.3](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.2...stream-interface-v5.0.3) (2024-07-20)
+
+
+### Bug Fixes
+
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.0...stream-interface-v5.0.1) (2024-02-02)
 
 

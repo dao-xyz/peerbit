@@ -188,6 +188,26 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.5...pubsub-v3.0.6) (2024-07-20)
+
+
+### Bug Fixes
+
+* flaky test ([d8775d3](https://github.com/dao-xyz/peerbit/commit/d8775d3303947910e8b11f2d298bfaf852a07615))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.0.5 to 4.0.6
+    * @peerbit/logger bumped from 1.0.2 to 1.0.3
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
+
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.4...pubsub-v3.0.5) (2024-02-26)
 
 

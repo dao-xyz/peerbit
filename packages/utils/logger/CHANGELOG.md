@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.2...logger-v1.0.3) (2024-07-20)
+
+
+### Bug Fixes
+
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.1...logger-v1.0.2) (2023-12-31)
 
 

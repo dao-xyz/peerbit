@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store-opfs",
-	"version": "2.0.2",
+	"version": "1.0.0",
 	"description": "OPFS worker",
 	"sideEffects": true,
 	"type": "module",
@@ -66,10 +66,10 @@
 	},
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/crypto": "^2.2.0",
-		"@peerbit/logger": "1.0.2",
-		"@peerbit/time": "2.0.6",
-		"@peerbit/any-store-interface": "^2.0.2",
+		"@peerbit/crypto": "^2.3.0",
+		"@peerbit/logger": "1.0.3",
+		"@peerbit/time": "2.0.7",
+		"@peerbit/any-store-interface": "^1.0.0",
 		"uuid": "^9.0.0"
 	},
 	"devDependencies": {

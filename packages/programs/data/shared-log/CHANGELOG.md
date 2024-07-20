@@ -389,6 +389,41 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.7...shared-log-v9.0.0) (2024-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* support for indexer
+
+### Bug Fixes
+
+* correctly handle canReplicate false when opening dbs ([4b88aa6](https://github.com/dao-xyz/peerbit/commit/4b88aa64b3d88567e529d9c122c3bf05d746b986))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* getDefaultMinRoleAge() evaluates to 0 if not replicating ([dd99cb1](https://github.com/dao-xyz/peerbit/commit/dd99cb1675b727c4ddd6418c0dfe81626b44ab7f))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update cache parameters ([8c52a86](https://github.com/dao-xyz/peerbit/commit/8c52a86a8285ed2939530e78e78647fd7a4484d3))
+
+
+### Refactors
+
+* onChange and canAppend refactor ([04e5e4c](https://github.com/dao-xyz/peerbit/commit/04e5e4c789f22043fc0dc5e11862952989e00726))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.2 to 1.0.3
+    * @peerbit/program bumped from 4.0.7 to 5.0.0
+    * @peerbit/log bumped from 3.0.34 to 4.0.0
+    * @peerbit/rpc bumped from 4.0.7 to 5.0.0
+    * @peerbit/time bumped from 2.0.6 to 2.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [8.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.6...shared-log-v8.0.7) (2024-02-26)
 
 

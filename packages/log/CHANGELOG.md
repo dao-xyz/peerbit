@@ -368,6 +368,45 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/log-v3.0.34...log-v4.0.0) (2024-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* support for indexer
+* search index abstraction
+
+### Features
+
+* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
+
+
+### Bug Fixes
+
+* add bench ([cf4dedf](https://github.com/dao-xyz/peerbit/commit/cf4dedff069518fb58e63e3ca894059d7a3766e5))
+* add persistant api ([396c4ab](https://github.com/dao-xyz/peerbit/commit/396c4abc7839cdc2762c25cf2b190fc963331b0e))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* resolve entry on trim ([49376e0](https://github.com/dao-xyz/peerbit/commit/49376e0ba94e5d3c13a3e69792b49043a33752aa))
+* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update cache parameters ([8c52a86](https://github.com/dao-xyz/peerbit/commit/8c52a86a8285ed2939530e78e78647fd7a4484d3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from 2.0.6 to 2.1.0
+    * @peerbit/blocks-interface bumped from ^1.2.19 to ^1.3.0
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+    * @peerbit/logger bumped from 1.0.2 to 1.0.3
+    * @peerbit/time bumped from 2.0.6 to 2.0.7
+    * @peerbit/indexer-interface bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/indexer-simple bumped from ^0.0.1 to ^1.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.33 to 2.0.34
+
 ## [3.0.33](https://github.com/dao-xyz/peerbit/compare/log-v3.0.32...log-v3.0.33) (2024-02-10)
 
 

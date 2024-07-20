@@ -279,6 +279,34 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.32...blocks-v2.1.0) (2024-07-20)
+
+
+### Features
+
+* add api for determining if persistant ([bc9e218](https://github.com/dao-xyz/peerbit/commit/bc9e218651a086ded8e7eaebaf15f3ce0db176d0))
+
+
+### Bug Fixes
+
+* extract some utility methods to the interface package ([e9cf681](https://github.com/dao-xyz/peerbit/commit/e9cf68180491b09eb490ec95ccc63b0f66b37a96))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.0.2 to ^2.1.0
+    * @peerbit/stream bumped from 4.0.5 to 4.0.6
+    * @peerbit/blocks-interface bumped from 1.2.19 to 1.3.0
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
+
 ## [2.0.31](https://github.com/dao-xyz/peerbit/compare/blocks-v2.0.30...blocks-v2.0.31) (2024-02-10)
 
 

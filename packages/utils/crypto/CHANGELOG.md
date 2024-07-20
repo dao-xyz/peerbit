@@ -61,6 +61,29 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.2.0...crypto-v2.3.0) (2024-07-20)
+
+
+### Features
+
+* add toBase58 ([7b942e1](https://github.com/dao-xyz/peerbit/commit/7b942e1729985c727540b5a619ae103cf8ad5839))
+
+
+### Bug Fixes
+
+* bench ([58d3a1b](https://github.com/dao-xyz/peerbit/commit/58d3a1b98c065bada35cb30d615e5ed258350d5f))
+* bump dep ([0d6d842](https://github.com/dao-xyz/peerbit/commit/0d6d842615a790468882293b5d7809878aee04a9))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped from ^2.0.6 to ^2.1.0
+
 ## [2.2.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.1.7...crypto-v2.2.0) (2024-02-26)
 
 
