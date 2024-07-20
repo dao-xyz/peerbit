@@ -23,7 +23,7 @@
 	"packages/utils/time": "2.0.7",
 	"packages/programs/acl/trusted-network": "4.0.0",
 	"packages/clients/peerbit": "4.0.8",
-	"packages/clients/peerbit-proxy/window": "3.0.34",
+	"packages/clients/peerbit-proxy/window": "3.0.35",
 	"packages/utils/any-store/any-store": "2.1.0",
 	"packages/utils/keychain": "1.0.18",
 	"packages/utils/any-store/interface": "1.0.0",
