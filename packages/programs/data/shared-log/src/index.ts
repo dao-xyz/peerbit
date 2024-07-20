@@ -31,6 +31,7 @@ import {
 	type LogEvents,
 	type LogProperties,
 	ShallowEntry,
+	type ShallowOrFullEntry,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { Program, type ProgramEvents } from "@peerbit/program";
@@ -659,7 +660,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		options?: SharedAppendOptions<T> | undefined,
 	): Promise<{
 		entry: Entry<T>;
-		removed: ShallowEntry[];
+		removed: ShallowOrFullEntry<T>[];
 	}> {
 		const appendOptions: AppendOptions<T> = { ...options };
 		const minReplicasData = encodeReplicas(
