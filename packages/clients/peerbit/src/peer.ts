@@ -48,6 +48,7 @@ type Libp2pOptions = { libp2p?: Libp2pExtended | PartialLibp2pCreateOptions };
 type SimpleLibp2pOptions = { relay?: boolean };
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
+	indexer?: (directory?: string) => Promise<Indices> | Indices;
 } & OptionalCreateOptions;
 
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
@@ -120,10 +121,11 @@ export class Peerbit implements ProgramClient {
 			directory != null ? path.join(directory, "/cache") : undefined,
 		);
 
+		const indexerFn = options.indexer || createSQLiteIndexer;
 		const indexer =
 			directory != null
-				? await createSQLiteIndexer(path.join(directory, "/index"))
-				: await createSQLiteIndexer();
+				? await indexerFn(path.join(directory, "/index"))
+				: await indexerFn();
 
 		const blocksDirectory = hasDir
 			? path.join(directory, "/blocks").toString()
