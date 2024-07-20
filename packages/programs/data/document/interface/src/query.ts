@@ -24,16 +24,21 @@ export class Context {
 	@field({ type: "string" })
 	gid: string;
 
+	@field({ type: "u32" })
+	size: number; // bytes
+
 	constructor(properties: {
 		created: bigint;
 		modified: bigint;
 		head: string;
 		gid: string;
+		size: number;
 	}) {
 		this.created = properties.created;
 		this.modified = properties.modified;
 		this.head = properties.head;
 		this.gid = properties.gid;
+		this.size = properties.size;
 	}
 }
 
@@ -75,6 +80,7 @@ export class ResultWithSource<T> extends Result {
 		return this._value;
 	}
 
+	// we never send this over the wire since we can always reconstruct it from value
 	indexed?: Record<string, any>;
 }
 
