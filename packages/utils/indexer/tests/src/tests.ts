@@ -1,6 +1,7 @@
 import {
 	deserialize,
 	field,
+	fixedArray,
 	option,
 	serialize,
 	variant,
@@ -16,7 +17,6 @@ import {
 	DeleteRequest,
 	type Index,
 	type IndexEngineInitProperties,
-	type IndexedResults,
 	type Indices,
 	IntegerCompare,
 	IsNull,
@@ -76,6 +76,9 @@ class Document extends Base {
 	@field({ type: option(Uint8Array) })
 	data?: Uint8Array;
 
+	@field({ type: option(fixedArray("u8", 32)) })
+	fixedData?: Uint8Array;
+
 	@field({ type: option(NestedValue) })
 	nested?: NestedValue;
 
@@ -93,6 +96,7 @@ class Document extends Base {
 		this.tags = opts.tags || [];
 		this.bool = opts.bool;
 		this.data = opts.data;
+		this.fixedData = opts.fixedData;
 		this.nested = opts.nested;
 		this.nestedVec = opts.nestedVec || [];
 	}
@@ -138,6 +142,7 @@ export const tests = (
 				number: 1n,
 				bool: true,
 				data: new Uint8Array([1]),
+				fixedData: new Uint8Array(32).fill(1),
 				tags: [],
 			});
 
@@ -153,6 +158,7 @@ export const tests = (
 				name: "Hello World",
 				number: 2n,
 				data: new Uint8Array([2]),
+				fixedData: new Uint8Array(32).fill(2),
 				tags: ["Hello", "World"],
 			});
 
@@ -161,6 +167,7 @@ export const tests = (
 				name: "foo",
 				number: 3n,
 				data: new Uint8Array([3]),
+				fixedData: new Uint8Array(32).fill(3),
 				tags: ["Hello"],
 			});
 
@@ -405,6 +412,30 @@ export const tests = (
 
 					const id = new Uint8Array([1, 2, 3]);
 					const doc = new DocumentUint8arrayId({
+						id,
+						value: "Hello world",
+					});
+					await testIndex(store, doc);
+				});
+
+				class DocumentFixedUint8arrayId {
+					@field({ type: fixedArray("u8", 32) })
+					id: Uint8Array;
+
+					@field({ type: "string" })
+					value: string;
+
+					constructor(properties: { id: Uint8Array; value: string }) {
+						this.id = properties.id;
+						this.value = properties.value;
+					}
+				}
+
+				it("index as fixed Uint8array", async () => {
+					const { store } = await setup({ schema: DocumentFixedUint8arrayId });
+
+					const id = new Uint8Array(32).fill(1);
+					const doc = new DocumentFixedUint8arrayId({
 						id,
 						value: "Hello world",
 					});
@@ -685,81 +716,163 @@ export const tests = (
 				});
 
 				describe("uint8arrays", () => {
-					describe("bytematch", () => {
-						it("matches", async () => {
-							await setupDefault();
+					describe("dynamic", () => {
+						describe("bytematch", () => {
+							it("matches", async () => {
+								await setupDefault();
 
-							const responses = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new ByteMatchQuery({
-											key: "data",
-											value: new Uint8Array([1]),
-										}),
-									],
-								}),
-							);
-							expect(responses.results).to.have.length(1);
-							expect(
-								responses.results.map((x) => x.id.primitive),
-							).to.deep.equal(["1"]);
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new ByteMatchQuery({
+												key: "data",
+												value: new Uint8Array([1]),
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.have.length(1);
+								expect(
+									responses.results.map((x) => x.id.primitive),
+								).to.deep.equal(["1"]);
+							});
+							it("un-matches", async () => {
+								await setupDefault();
+
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new ByteMatchQuery({
+												key: "data",
+												value: new Uint8Array([199]),
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.be.empty;
+							});
 						});
-						it("un-matches", async () => {
-							await setupDefault();
+						describe("integer", () => {
+							it("exists", async () => {
+								await setupDefault();
 
-							const responses = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new ByteMatchQuery({
-											key: "data",
-											value: new Uint8Array([199]),
-										}),
-									],
-								}),
-							);
-							expect(responses.results).to.be.empty;
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new IntegerCompare({
+												key: "data",
+												compare: Compare.Equal,
+												value: 1,
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.have.length(1);
+								expect(
+									responses.results.map((x) => x.id.primitive),
+								).to.deep.equal(["1"]);
+							});
+
+							it("does not exist", async () => {
+								await setupDefault();
+
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new IntegerCompare({
+												key: "data",
+												compare: Compare.Equal,
+												value: 199,
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.be.empty;
+							});
 						});
 					});
-					describe("integer", () => {
-						it("exists", async () => {
-							await setupDefault();
 
-							const responses = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new IntegerCompare({
-											key: "data",
-											compare: Compare.Equal,
-											value: 1,
-										}),
-									],
-								}),
-							);
-							expect(responses.results).to.have.length(1);
-							expect(
-								responses.results.map((x) => x.id.primitive),
-							).to.deep.equal(["1"]);
+					describe("fixed", () => {
+						describe("bytematch", () => {
+							it("matches", async () => {
+								await setupDefault();
+
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new ByteMatchQuery({
+												key: "fixedData",
+												value: new Uint8Array(32).fill(1),
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.have.length(1);
+								expect(
+									responses.results.map((x) => x.id.primitive),
+								).to.deep.equal(["1"]);
+							});
+							it("un-matches", async () => {
+								await setupDefault();
+
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new ByteMatchQuery({
+												key: "data",
+												value: new Uint8Array(32).fill(99),
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.be.empty;
+							});
 						});
+						describe("integer", () => {
+							it("exists", async () => {
+								await setupDefault();
 
-						it("does not exist", async () => {
-							await setupDefault();
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new IntegerCompare({
+												key: "data",
+												compare: Compare.Equal,
+												value: 1,
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.have.length(1);
+								expect(
+									responses.results.map((x) => x.id.primitive),
+								).to.deep.equal(["1"]);
+							});
 
-							const responses = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new IntegerCompare({
-											key: "data",
-											compare: Compare.Equal,
-											value: 199,
-										}),
-									],
-								}),
-							);
-							expect(responses.results).to.be.empty;
+							it("does not exist", async () => {
+								await setupDefault();
+
+								const responses = await search(
+									store,
+									new SearchRequest({
+										query: [
+											new IntegerCompare({
+												key: "data",
+												compare: Compare.Equal,
+												value: 199,
+											}),
+										],
+									}),
+								);
+								expect(responses.results).to.be.empty;
+							});
 						});
 					});
 				});
