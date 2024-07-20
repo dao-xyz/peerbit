@@ -10,8 +10,8 @@ import {
 	type CanRead,
 	Documents,
 	Operation,
+	SearchRequest,
 } from "@peerbit/document";
-import { SearchRequest } from "@peerbit/indexer-interface";
 import { type AppendOptions } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";

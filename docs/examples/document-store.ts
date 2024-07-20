@@ -11,8 +11,7 @@
  */
 /// [imports]
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents } from "@peerbit/document";
-import { SearchRequest } from "@peerbit/indexer-interface";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import assert from "node:assert";
 import { Peerbit } from "peerbit";
