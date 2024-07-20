@@ -161,10 +161,6 @@ export const toId = (obj: Ideable): IdKey => {
 export const toIdeable = (
 	key: IdKey | Ideable,
 ): string | number | bigint | Uint8Array => {
-	if (key instanceof IdKey) {
-		return key.primitive;
-	}
-
 	if (typeof key === "string") {
 		return key;
 	}
