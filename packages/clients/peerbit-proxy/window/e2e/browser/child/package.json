@@ -19,7 +19,8 @@
 		"@types/react": "^18.2.12",
 		"@types/react-dom": "^18.2.5",
 		"@vitejs/plugin-react": "^4.2.1",
-		"vite": "^5.0.10"
+		"vite": "^5.0.10",
+		"@peerbit/vite": "*"
 	},
 	"browserslist": {
 		"production": [
