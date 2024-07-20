@@ -201,10 +201,10 @@ export class Log<T> {
 			{
 				index: this._entryIndex,
 				deleteNode: async (node: ShallowEntry) => {
-					await this.get(node.hash);
+					const resolved = await this.get(node.hash);
 					await this._entryIndex.delete(node.hash);
 					await this._storage.rm(node.hash);
-					return node;
+					return resolved;
 				},
 				sortFn: this._sortFn,
 				getLength: () => this.length,
@@ -516,7 +516,7 @@ export class Log<T> {
 	async append(
 		data: T,
 		options: AppendOptions<T> = {},
-	): Promise<{ entry: Entry<T>; removed: ShallowEntry[] }> {
+	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
 		// Update the clock (find the latest clock)
 		if (options.meta?.next) {
 			for (const n of options.meta.next) {
@@ -596,7 +596,7 @@ export class Log<T> {
 			toMultiHash: false,
 		});
 
-		const removed = await this.processEntry(entry);
+		const removed: ShallowOrFullEntry<T>[] = await this.processEntry(entry);
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 
@@ -872,7 +872,7 @@ export class Log<T> {
 			toMultiHash: true,
 		});
 
-		const removed = await this.processEntry(entry);
+		const removed: ShallowOrFullEntry<T>[] = await this.processEntry(entry);
 		const trimmed = await this.trim(options?.trim);
 
 		if (trimmed) {

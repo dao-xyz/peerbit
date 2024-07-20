@@ -2,7 +2,7 @@ import { Cache } from "@peerbit/cache";
 import { SumRequest } from "@peerbit/indexer-interface";
 import PQueue from "p-queue";
 import type { EntryIndex } from "./entry-index.js";
-import { type ShallowEntry } from "./entry.js";
+import { Entry, type ShallowEntry } from "./entry.js";
 import type { SortFn } from "./log-sorting.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
@@ -82,7 +82,7 @@ export type TrimOptions = TrimCanAppendOption & TrimCondition;
 interface Log<T> {
 	index: EntryIndex<T>;
 	sortFn: SortFn;
-	deleteNode: (node: ShallowEntry) => Promise<ShallowEntry | undefined>;
+	deleteNode: (node: ShallowEntry) => Promise<Entry<T> | undefined>;
 	getLength(): number;
 }
 export class Trim<T> {
@@ -120,12 +120,12 @@ export class Trim<T> {
 
 	private async trimTask(
 		option: TrimOptions | undefined = this._trim,
-	): Promise<ShallowEntry[]> {
+	): Promise<Entry<T>[]> {
 		if (!option) {
 			return [];
 		}
 		///  TODO Make this method less ugly
-		const deleted: ShallowEntry[] = [];
+		const deleted: Entry<T>[] = [];
 
 		let done: () => Promise<boolean> | boolean;
 		/* 		const valueIterator = this._log.index.query([], this._log.sortFn.sort, false); */
@@ -295,7 +295,7 @@ export class Trim<T> {
 	 */
 	async trim(
 		options: TrimOptions | undefined = this._trim,
-	): Promise<ShallowEntry[] | undefined> {
+	): Promise<Entry<T>[] | undefined> {
 		if (!options) {
 			return;
 		}
