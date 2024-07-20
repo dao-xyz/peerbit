@@ -18,9 +18,9 @@ jobs:
         os: [ ubuntu-22.04 ]
         node-version: [20.x]
         test_cmd: 
-          - yarn test:part-1 -- -t node
-          - yarn test:part-2 -- -t node
-          - yarn test:part-3 -- -t node
+          - yarn test:part-1
+          - yarn test:part-2
+          - yarn test:part-3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
