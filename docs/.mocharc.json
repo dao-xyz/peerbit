@@ -8,5 +8,6 @@
 	"extension": ["ts"],
 	"spec": ["**/*.spec.ts"],
 	"ignore": ["**/node_modules/**", "dist/**"],
-	"timeout": "20000"
+	"timeout": "20000",
+	"exit": true
 }
