@@ -16,6 +16,13 @@ import { Log } from "../src/log.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
 import { LogCreator } from "./utils/log-creator.js";
 
+const assertEntriesEqual = (listA: Entry<any>[], listB: Entry<any>[]) => {
+	expect(listA.length).equal(listB.length);
+	for (let i = 0; i < listA.length; i++) {
+		expect(listA[i].hash).equal(listB[i].hash);
+	}
+};
+
 const last = <T>(arr: T[]): T => {
 	return arr[arr.length - 1];
 };
@@ -795,19 +802,19 @@ describe("from", function () {
 				.slice()
 				.reverse()
 				.sort(Entry.compare);
-			assert.deepStrictEqual(fetchOrder, reverseOrder);
+			assertEntriesEqual(fetchOrder, reverseOrder);
 
 			const hashOrder = (await log.toArray())
 				.slice()
 				.sort((a, b) => a.hash.localeCompare(b.hash))
 				.sort(Entry.compare);
-			assert.deepStrictEqual(fetchOrder, hashOrder);
+			assertEntriesEqual(fetchOrder, hashOrder);
 
 			const randomOrder2 = (await log.toArray())
 				.slice()
 				.sort((a, b) => 0.5 - Math.random())
 				.sort(Entry.compare);
-			assert.deepStrictEqual(fetchOrder, randomOrder2);
+			assertEntriesEqual(fetchOrder, randomOrder2);
 
 			// partial data
 			const partialLog = (await log.toArray())
