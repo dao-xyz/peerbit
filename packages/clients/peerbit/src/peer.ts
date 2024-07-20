@@ -267,6 +267,7 @@ export class Peerbit implements ProgramClient {
 
 	async start() {
 		await this._storage.open();
+		await this.indexer.start();
 
 		if (this.libp2p.status === "stopped" || this.libp2p.status === "stopping") {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
@@ -276,6 +277,7 @@ export class Peerbit implements ProgramClient {
 	async stop() {
 		await this._handler?.stop();
 		await this._storage.close();
+		await this.indexer.stop();
 
 		// Close libp2p (after above)
 		if (!this._libp2pExternal) {
