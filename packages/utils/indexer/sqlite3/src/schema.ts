@@ -3,6 +3,7 @@ import {
 	type Constructor,
 	type Field,
 	type FieldType,
+	FixedArrayKind,
 	OptionKind,
 	VecKind,
 	WrappedType,
@@ -108,7 +109,7 @@ export const toSQLType = (type: FieldType, isOptional = false) => {
 			throw new Error(`Type ${type} is not supported in SQL`);
 		}
 		ret = sqlType;
-	} else if (type === Uint8Array) {
+	} else if (isUint8ArrayType(type)) {
 		ret = "BLOB";
 	} else if (type instanceof OptionKind) {
 		throw new Error("Unexpected option");
@@ -357,7 +358,7 @@ export const getSQLFields = (
 		}
 
 		let isSimpleValue = false;
-		if (typeof elementType === "function" && elementType !== Uint8Array) {
+		if (typeof elementType === "function" && !isUint8ArrayType(elementType)) {
 			chilCtor = elementType as Constructor<any>;
 		} else {
 			@variant(WRAPPED_SIMPLE_VALUE_VARIANT)
@@ -435,6 +436,10 @@ export const getSQLFields = (
 		type: FieldType,
 		isOptional: boolean,
 	) => {
+		if (type instanceof FixedArrayKind && type.elementType === "u8") {
+			type = Uint8Array;
+		}
+
 		if (typeof type === "string" || type === Uint8Array) {
 			handleSimpleField(key, field, type, true);
 		} else if (
@@ -468,9 +473,7 @@ export const getSQLFields = (
 		} else if (typeof type === "function") {
 			handleNestedType(key, type);
 		} else {
-			throw new Error(
-				`Unsupported type in option, ${typeof type}: ${typeof type}`,
-			);
+			throw new Error(`Unsupported type: ${JSON.stringify(type)}}`);
 		}
 	};
 
@@ -648,6 +651,16 @@ const getTableFromValue = (
 	return subTable;
 };
 
+const isUint8ArrayType = (type: FieldType) => {
+	if (type === Uint8Array) {
+		return true;
+	}
+	if (type instanceof FixedArrayKind) {
+		return type.elementType === "u8";
+	}
+	return false;
+};
+
 export const insert = async (
 	insertFn: (values: any[], table: Table) => Promise<any> | any,
 	obj: Record<string, any>,
@@ -737,7 +750,10 @@ export const insert = async (
 	for (const field of fields) {
 		const unwrappedType = unwrapNestedType(field.type);
 		if (field.type instanceof VecKind === false) {
-			if (typeof unwrappedType === "string" || unwrappedType === Uint8Array) {
+			if (
+				typeof unwrappedType === "string" ||
+				isUint8ArrayType(unwrappedType)
+			) {
 				bindableValues.push(convertToSQLType(obj[field.key], unwrappedType));
 			} else if (
 				typeof unwrappedType === "function" &&
@@ -1067,12 +1083,12 @@ export const resolveInstanceFromValue = async <T>(
 					)
 				]
 			: undefined;
-		if (typeof field.type === "string" || field.type === Uint8Array) {
+		if (typeof field.type === "string" || isUint8ArrayType(field.type)) {
 			obj[field.key] = convertFromSQLType(fieldValue, field.type);
 		} else if (field.type instanceof OptionKind) {
 			if (
 				typeof field.type.elementType === "string" ||
-				field.type.elementType === Uint8Array
+				isUint8ArrayType(field.type.elementType)
 			) {
 				obj[field.key] = convertFromSQLType(fieldValue, field.type.elementType);
 			} else if (field.type.elementType instanceof VecKind) {
