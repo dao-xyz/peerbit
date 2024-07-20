@@ -23,6 +23,7 @@ import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
+import { MAX_BATCH_SIZE } from "./constants.js";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -225,9 +226,6 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	// Original document representation
 	documentType: AbstractType<T>;
 
-	// The indexed representation
-	indexedType: AbstractType<T>;
-
 	// transform options
 	transformer: Transformer<T, I>;
 
@@ -241,7 +239,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	// Index key
 	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
-	private index: indexerTypes.Index<IDocumentWithContext<I>>;
+	index: indexerTypes.Index<IDocumentWithContext<I>>;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
@@ -255,6 +253,17 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache: Cache<T>;
 	private _isProgramValues: boolean;
+
+	private _resultQueue: Map<
+		string,
+		{
+			from: PublicSignKey;
+			keptInIndex: number;
+			timeout: ReturnType<typeof setTimeout>;
+			queue: indexerTypes.IndexedResult<IDocumentWithContext<I>>[];
+		}
+	>;
+
 	constructor(properties?: {
 		query?: RPC<
 			indexerTypes.AbstractSearchRequest,
@@ -301,10 +310,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		// if this.type is a class that extends Program we want to do special functionality
 		this._isProgramValues = this.documentType instanceof Program;
 		this.dbType = properties.dbType;
+		this._resultQueue = new Map();
 		this._sync = properties.sync;
 
 		const transformOptions = properties.transform;
-		this.indexedType = this.wrappedIndexedType;
 		this.transformer = transformOptions
 			? isTransformerWithFunction(transformOptions)
 				? (obj, context) => transformOptions.transform(obj, context)
@@ -377,6 +386,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 							| indexerTypes.SearchRequest
 							| indexerTypes.CollectNextRequest,
 						ctx.from,
+						false,
 						{
 							canRead: properties.canRead,
 						},
@@ -392,6 +402,15 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			responseType: types.AbstractSearchResult,
 			queryType: indexerTypes.AbstractSearchRequest,
 		});
+	}
+
+	getPending(cursorId: string): number | undefined {
+		const queue = this._resultQueue.get(cursorId);
+		if (queue) {
+			return queue.queue.length + queue.keptInIndex;
+		}
+
+		return this.index.getPending(cursorId);
 	}
 
 	async close(from?: Program): Promise<boolean> {
@@ -439,6 +458,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			modified: entry.meta.clock.timestamp.wallTime,
 			head: entry.hash,
 			gid: entry.gid,
+			size: entry.payloadByteLength,
 		});
 
 		const valueToIndex = await this.transformer(value, context);
@@ -449,15 +469,15 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		await this.index.put(wrappedValueToIndex);
 	}
 
-	public del(key: indexerTypes.IdPrimitive) {
+	public del(key: indexerTypes.IdKey) {
 		if (this._isProgramValues) {
-			this._resolverProgramCache!.delete(key);
+			this._resolverProgramCache!.delete(key.primitive);
 		} else {
-			this._resolverCache.del(key);
+			this._resolverCache.del(key.primitive);
 		}
 		return this.index.del(
 			new indexerTypes.DeleteRequest({
-				query: [indexerTypes.getMatcher(this.indexBy, key)],
+				query: [indexerTypes.getMatcher(this.indexBy, key.key)],
 			}),
 		);
 	}
@@ -571,11 +591,19 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	async processQuery(
 		query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
 		from: PublicSignKey,
+		isLocal: boolean,
 		options?: {
 			canRead?: CanRead<T>;
 		},
 	): Promise<types.Results<T>> {
 		// We do special case for querying the id as we can do it faster than iterating
+
+		let prevQueued = isLocal
+			? undefined
+			: this._resultQueue.get(query.idString);
+		if (prevQueued && !from.equals(prevQueued.from)) {
+			throw new Error("Different from in queued results");
+		}
 
 		let indexedResult:
 			| indexerTypes.IndexedResults<IDocumentWithContext<I>>
@@ -583,12 +611,46 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		if (query instanceof indexerTypes.SearchRequest) {
 			indexedResult = await this.index.query(query);
 		} else if (query instanceof indexerTypes.CollectNextRequest) {
-			indexedResult = await this.index.next(query);
+			indexedResult =
+				prevQueued?.keptInIndex === 0
+					? { kept: 0, results: [] }
+					: await this.index.next(query);
 		} else {
 			throw new Error("Unsupported");
 		}
 		const filteredResults: types.ResultWithSource<T>[] = [];
-		for (const result of indexedResult.results) {
+		let resultSize = 0;
+
+		let toIterate = prevQueued
+			? [...prevQueued.queue, ...indexedResult.results]
+			: indexedResult.results;
+
+		if (prevQueued) {
+			this._resultQueue.delete(query.idString);
+			prevQueued = undefined;
+		}
+
+		if (!isLocal) {
+			prevQueued = {
+				from,
+				queue: [],
+				timeout: setTimeout(() => {
+					this._resultQueue.delete(query.idString);
+				}, 6e4),
+				keptInIndex: indexedResult.kept,
+			};
+			this._resultQueue.set(query.idString, prevQueued);
+		}
+
+		for (const result of toIterate) {
+			if (!isLocal) {
+				resultSize += result.value.__context.size;
+				if (resultSize > MAX_BATCH_SIZE) {
+					prevQueued!.queue.push(result);
+					continue;
+				}
+			}
+
 			const value = await this.resolveDocument(result);
 			if (
 				!value ||
@@ -607,15 +669,38 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		}
 		const results: types.Results<T> = new types.Results({
 			results: filteredResults,
-			kept: BigInt(indexedResult.kept),
+			kept: BigInt(indexedResult.kept + (prevQueued?.queue.length || 0)),
 		});
+
+		if (!isLocal && results.kept === 0n) {
+			this.clearResultsQueue(query);
+		}
+
 		return results;
 	}
 
+	clearResultsQueue(
+		query:
+			| indexerTypes.SearchRequest
+			| indexerTypes.CollectNextRequest
+			| indexerTypes.CloseIteratorRequest,
+	) {
+		const queue = this._resultQueue.get(query.idString);
+		if (queue) {
+			clearTimeout(queue.timeout);
+			this._resultQueue.delete(query.idString);
+		}
+	}
 	async processCloseIteratorRequest(
 		query: indexerTypes.CloseIteratorRequest,
 		publicKey: PublicSignKey,
 	): Promise<void> {
+		const queueData = this._resultQueue.get(query.idString);
+		if (queueData && !queueData.from.equals(publicKey)) {
+			logger.info("Ignoring close iterator request from different peer");
+			return;
+		}
+		this.clearResultsQueue(query);
 		return this.index.close(query);
 	}
 
@@ -660,6 +745,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			const results = await this.processQuery(
 				queryRequest,
 				this.node.identity.publicKey,
+				true,
 			);
 			if (results.results.length > 0) {
 				options?.onResponse &&
@@ -846,7 +932,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 							buffer.push({
 								value: result.value,
 								context: result.context,
-								from: from,
+								from,
 								indexed:
 									result.indexed ||
 									(await this.transformer(result.value, result.context)),
@@ -864,6 +950,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 					}
 				},
 			});
+
+			if (done) {
+				this.clearResultsQueue(queryRequest);
+			}
 
 			return done;
 		};
@@ -902,7 +992,11 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
 						promises.push(
-							this.processQuery(collectRequest, this.node.identity.publicKey)
+							this.processQuery(
+								collectRequest,
+								this.node.identity.publicKey,
+								true,
+							)
 								.then(async (results) => {
 									resultsLeft += Number(results.kept);
 
@@ -1074,6 +1168,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			}
 
 			done = fetchedAll && !pendingMoreResults;
+
 			return dedup(
 				batch.map((x) => x.value),
 				this.indexByResolver,

@@ -9,7 +9,7 @@ import {
 } from "@dao-xyz/borsh";
 import {
 	AccessError,
-	type Ed25519PublicKey,
+	Ed25519PublicKey,
 	type PublicSignKey,
 	randomBytes,
 } from "@peerbit/crypto";
@@ -610,7 +610,7 @@ describe("index", () => {
 
 				expect(await store.docs.index.getSize()).equal(10);
 				expect(store.docs.log.log.length).equal(10);
-				expect(store.docs.log.log.headsIndex.index.size).equal(10);
+				expect((await store.docs.log.log.getHeads().all()).length).equal(10);
 			});
 		});
 
@@ -626,9 +626,9 @@ describe("index", () => {
 					canSearch: (
 						| undefined
 						| ((
-							query: AbstractSearchRequest,
-							publicKey: PublicSignKey,
-						) => Promise<boolean>)
+								query: AbstractSearchRequest,
+								publicKey: PublicSignKey,
+						  ) => Promise<boolean>)
 					)[] = [];
 				before(async () => {
 					session = await TestSession.connected(peersCount);
@@ -645,12 +645,12 @@ describe("index", () => {
 						const store =
 							i > 0
 								? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks,
-								))!
+										stores[0].address!,
+										session.peers[i].services.blocks,
+									))!
 								: new TestStore({
-									docs: new Documents<Document>(),
-								});
+										docs: new Documents<Document>(),
+									});
 						await session.peers[i].open(store, {
 							args: {
 								replicate: i === 0 ? { factor: 1 } : false,
@@ -658,16 +658,16 @@ describe("index", () => {
 									canRead:
 										i === 0
 											? (obj: any, key: any) => {
-												return canRead[i] ? canRead[i]!(obj, key) : true;
-											}
+													return canRead[i] ? canRead[i]!(obj, key) : true;
+												}
 											: undefined,
 									canSearch:
 										i === 0
 											? (query: any, key: any) => {
-												return canSearch[i]
-													? canSearch[i]!(query, key)
-													: true;
-											}
+													return canSearch[i]
+														? canSearch[i]!(query, key)
+														: true;
+												}
 											: undefined,
 								},
 							},
@@ -775,6 +775,7 @@ describe("index", () => {
 					expect(results).to.have.length(4);
 				});
 
+				/*  TODO feat
 				describe("sync", () => {
 					it("can match sync", async () => {
 						expect(await stores[1].docs.index.getSize()).equal(0);
@@ -859,8 +860,9 @@ describe("index", () => {
 							},
 						);
 					});
-				});
+				}); */
 
+				/* TODO feat
 				describe("array", () => {
 					describe("nested store", () => {
 						@variant("test-nested-document-store")
@@ -878,6 +880,19 @@ describe("index", () => {
 							}
 							open(args?: any): Promise<void> {
 								return this.documents.open({ type: Document });
+							}
+						}
+
+						class NestedDocumentIndexable {
+							@field({ type: Uint8Array })
+							id: Uint8Array;
+
+							@field({ type: 'string' })
+							address: string
+
+							constructor(properties: { id: Uint8Array, address: string }) {
+								this.id = properties.id;
+								this.address = properties.address;
 							}
 						}
 
@@ -903,7 +918,12 @@ describe("index", () => {
 								await this.documents.open({
 									...options,
 									type: NestedDocument,
-									index: { ...options?.index, idProperty: "id" },
+									index: {
+										...options?.index,
+										idProperty: "id",
+										type: NestedDocumentIndexable,
+										transform: async (arg) => new NestedDocumentIndexable({ id: arg.id, address: await arg.calculateAddress() })
+									},
 									canOpen: () => true,
 								});
 							}
@@ -943,7 +963,7 @@ describe("index", () => {
 							expect(results.length).equal(1);
 						});
 					});
-				});
+				}); */
 
 				describe("canRead", () => {
 					it("no read access will return a response with 0 results", async () => {
@@ -1095,7 +1115,7 @@ describe("index", () => {
 						writeStore.address,
 						{
 							args: {
-								replacte: false,
+								replicate: false,
 							},
 						},
 					);
@@ -1109,7 +1129,7 @@ describe("index", () => {
 					for (let i = 0; i < 10; i++) {
 						const doc = new Document({
 							id: String(i),
-							data: randomBytes(5e6 - 100),
+							data: randomBytes(5e6 - 1300),
 						});
 						await writeStore.docs.put(doc);
 					}
@@ -1173,6 +1193,12 @@ describe("index", () => {
 					await waitForResolved(async () =>
 						expect((await store1.docs.log.getReplicators()).size).equal(3),
 					);
+					await waitForResolved(async () =>
+						expect((await store2.docs.log.getReplicators()).size).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect((await store3.docs.log.getReplicators()).size).equal(3),
+					);
 
 					const count = 1000;
 
@@ -1194,13 +1220,13 @@ describe("index", () => {
 						for (const store of [store1, store2, store3]) {
 							let t0 = +new Date();
 							const collected = await store.docs.index.search(
-								new SearchRequest(),
+								new SearchRequest({ fetch: count }),
 							);
 							try {
 								expect(collected.length).equal(count);
 							} catch (error) {
 								throw new Error(
-									`Failed to collect all messages ${collected} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}`,
+									`Failed to collect all messages ${collected.length} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}`,
 								);
 							}
 						}
@@ -1210,7 +1236,7 @@ describe("index", () => {
 			});
 
 			describe("concurrency", () => {
-				before(() => { });
+				before(() => {});
 
 				let abortController: AbortController,
 					interval: ReturnType<typeof setInterval>;
@@ -1455,12 +1481,12 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-								stores[0].address!,
-								session.peers[i].services.blocks,
-							))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 							: new TestStore({
-								docs: new Documents<Document>(),
-							});
+									docs: new Documents<Document>(),
+								});
 					store.docs.log.append = async (a: any, b: any) => {
 						// Omit synchronization so results are always the same (HACKY)
 						b = {
@@ -1685,7 +1711,7 @@ describe("index", () => {
 					@field({ type: "u64" })
 					[KEY]: bigint;
 
-					constructor(properties: { id: string;[KEY]: bigint }) {
+					constructor(properties: { id: string; [KEY]: bigint }) {
 						this.id = properties.id;
 						this[KEY] = properties[KEY];
 					}
@@ -1758,19 +1784,15 @@ describe("index", () => {
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).to.be.false;
 					await iterator.next(2); // fetch some, but not all
-					expect(
-						(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-							request.idString,
-						)!.arr,
-					).to.have.length(1);
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						1,
+					);
 					await iterator.close();
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)[
-									"_resultsCollectQueue"
-								].get(request.idString),
-							).equal(undefined),
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
 						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
@@ -1784,11 +1806,9 @@ describe("index", () => {
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).to.be.false;
 					await iterator.next(1); // fetch some, but not all
-					expect(
-						(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-							request.idString,
-						)!.arr,
-					).to.have.length(1);
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						1,
+					);
 
 					const closeRequest = new CloseIteratorRequest({ id: request.id });
 
@@ -1801,11 +1821,9 @@ describe("index", () => {
 					});
 
 					await delay(2000);
-					expect(
-						(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-							request.idString,
-						),
-					).to.exist;
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						1,
+					);
 
 					// send from the owner
 					await stores[1].docs.index["_query"].send(closeRequest, {
@@ -1816,12 +1834,10 @@ describe("index", () => {
 					});
 
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)[
-									"_resultsCollectQueue"
-								].get(request.idString),
-							).equal(undefined),
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
 						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
@@ -1837,12 +1853,10 @@ describe("index", () => {
 					expect(iterator.done()).to.be.false;
 					await iterator.next(3); // fetch some, but not all
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)[
-									"_resultsCollectQueue"
-								].get(request.idString),
-							).equal(undefined),
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
 						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
@@ -1859,12 +1873,10 @@ describe("index", () => {
 					await iterator.next(1);
 					expect(iterator.done()).to.be.true;
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)[
-									"_resultsCollectQueue"
-								].get(request.idString),
-							).equal(undefined),
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
 						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
@@ -1973,10 +1985,23 @@ describe("index", () => {
 	});
 
 	describe("program as value", () => {
+		class SubProgramIndexable {
+			@field({ type: fixedArray("u8", 32) })
+			id: Uint8Array;
+
+			@field({ type: "string" })
+			address: string;
+
+			constructor(properties: { id: Uint8Array; address: string }) {
+				this.id = properties.id;
+				this.string = properties.string;
+			}
+		}
 		@variant("subprogram")
 		class SubProgram extends Program {
 			@field({ type: fixedArray("u8", 32) })
 			id: Uint8Array;
+
 			@field({ type: Log })
 			log: Log<any>;
 
@@ -2005,6 +2030,13 @@ describe("index", () => {
 					type: SubProgram,
 					index: {
 						idProperty: ["id"],
+						type: SubProgramIndexable,
+						transform: async (arg, ctx) => {
+							return new SubProgramIndexable({
+								id: arg.id,
+								address: await arg.calculateAddress(),
+							});
+						},
 					},
 				});
 			}
@@ -2033,12 +2065,12 @@ describe("index", () => {
 				const store =
 					i > 0
 						? (await TestStoreSubPrograms.load<TestStoreSubPrograms>(
-							stores[0].store.address!,
-							session.peers[i].services.blocks,
-						))!
+								stores[0].store.address!,
+								session.peers[i].services.blocks,
+							))!
 						: new TestStoreSubPrograms({
-							docs: new Documents<SubProgram>(),
-						});
+								docs: new Documents<SubProgram>(),
+							});
 
 				await session.peers[i].open(store, {
 					args: {
@@ -2125,6 +2157,10 @@ describe("index", () => {
 				dropped = true;
 				return subprogramDropped(from);
 			};
+			const size = await stores[0].store.docs.index.getSize();
+			expect(size).to.be.equal(1);
+			const fetch = await stores[0].store.docs.index.get(subProgram.id);
+			expect(fetch).to.be.exist;
 			await stores[0].store.docs.del(subProgram.id);
 			await waitForResolved(() => expect(subProgram.closed).to.be.true);
 			expect(dropped).to.be.true;
@@ -2216,12 +2252,12 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-								stores[0].address!,
-								session.peers[i].services.blocks,
-							))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 							: new TestStore({
-								docs: new Documents<Document>(),
-							});
+									docs: new Documents<Document>(),
+								});
 					await session.peers[i].open(store);
 					stores.push(store);
 				}

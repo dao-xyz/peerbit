@@ -424,7 +424,7 @@ export class Documents<
 		)?.[0]?.results[0];
 
 		if (!existing) {
-			throw new Error(`No entry with key '${key}' in the database`);
+			throw new Error(`No entry with key '${key.primitive}' in the database`);
 		}
 
 		return this.log.append(
@@ -454,12 +454,12 @@ export class Documents<
 			removedSet.set(r.hash, r);
 		}
 		const sortedEntries = [
+			...change.added,
 			...((await Promise.all(
 				change.removed.map((x) =>
 					x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash),
 				),
 			)) || []),
-			...change.added,
 		]; // TODO assert sorting
 		/* 
 				const sortedEntries = [...change.added, ...(removed || [])]
@@ -525,19 +525,19 @@ export class Documents<
 					this._manuallySynced.delete(item.gid);
 
 					let value: T;
-					let key: string | number | bigint;
+					let key: indexerTypes.IdKey;
 
 					if (payload instanceof PutOperation) {
 						value = this.index.valueEncoding.decoder(payload.data);
-						key = indexerTypes.toId(this.idResolver(value)).primitive;
+						key = indexerTypes.toId(this.idResolver(value));
 						// document is already updated with more recent entry
-						if (modified.has(key)) {
+						if (modified.has(key.primitive)) {
 							continue;
 						}
 					} else if (payload instanceof DeleteOperation) {
-						key = payload.key.primitive;
+						key = payload.key;
 						// document is already updated with more recent entry
-						if (modified.has(key)) {
+						if (modified.has(key.primitive)) {
 							continue;
 						}
 						const document = await this._index.get(key, {
@@ -560,7 +560,7 @@ export class Documents<
 
 					// update index
 					await this._index.del(key);
-					modified.add(key);
+					modified.add(key.primitive);
 				} else {
 					// Unknown operation
 					throw new OperationError("Unknown operation");
