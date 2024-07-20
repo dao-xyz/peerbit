@@ -79,7 +79,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			properties.scope.length > 0
 				? "_" + escapePathToSQLName(properties.scope).join("_")
 				: undefined;
-		this.iteratorTimeout = options?.iteratorTimeout || 1e4;
+		this.iteratorTimeout = options?.iteratorTimeout || 60e3;
 	}
 
 	get tables() {
