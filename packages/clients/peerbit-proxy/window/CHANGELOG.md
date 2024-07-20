@@ -374,6 +374,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.0.35](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.34...proxy-window-v3.0.35) (2024-07-20)
+
+
+### Bug Fixes
+
+* use asterisk version for vite dep ([3a75d6e](https://github.com/dao-xyz/peerbit/commit/3a75d6ea5531f3584ba1081152590375b9bd6cb2))
+
 ## [3.0.34](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.33...proxy-window-v3.0.34) (2024-07-20)
 
 
