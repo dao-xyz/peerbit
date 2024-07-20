@@ -1,17 +1,26 @@
 diff --git a/node_modules/libp2p/dist/src/components.js b/node_modules/libp2p/dist/src/components.js
-index 86963c0..1f5f8d1 100644
+index 86963c0..be78d8e 100644
 --- a/node_modules/libp2p/dist/src/components.js
 +++ b/node_modules/libp2p/dist/src/components.js
-@@ -17,11 +17,30 @@ class DefaultComponents {
+@@ -1,6 +1,7 @@
+ import { CodeError, serviceCapabilities, serviceDependencies } from '@libp2p/interface';
+ import { isStartable } from '@libp2p/interface';
+ import { defaultLogger } from '@libp2p/logger';
++import pDefer from 'p-defer';
+ class DefaultComponents {
+     components = {};
+     _started = false;
+@@ -17,11 +18,32 @@ class DefaultComponents {
          return this._started;
      }
      async _invokeStartableMethod(methodName) {
 -        await Promise.all(Object.values(this.components)
-+        const timeout = new Promise((resolve, reject) => {
-+            setTimeout(() => {
-+                reject('timeout')
-+            }, 10000);
-+        });
++
++        let timeoutPromise = pDefer();
++        let timeout = setTimeout(() => {
++            timeoutPromise.reject(new Error(`Timeout waiting for ${methodName} to complete`));
++        }, 10000);
++
 +        const connectionManager = this.components["connectionManager"]
 +        if (isStartable(connectionManager)) {
 +            await connectionManager[methodName]?.();
@@ -23,9 +32,10 @@ index 86963c0..1f5f8d1 100644
 -        }));
 +                await startable[methodName]?.();
 +            }));
-+        const race = Promise.race([promise, timeout]);
++        const race = Promise.race([promise, timeoutPromise.promise]);
 +        try {
 +            await race;
++            timeoutPromise.resolve()
 +        }
 +        catch (e) {
 +            throw e;
