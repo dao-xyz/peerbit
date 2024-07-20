@@ -49,7 +49,7 @@ jobs:
         if: ${{ steps.release.outputs.releases_created == 'true' }}
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-        run: npm run --if-present release:rc
+        run: npm run --if-present release
       - name: Publish RC to NPM
         if: ${{ steps.release.outputs.releases_created != 'true' }}
         env:
