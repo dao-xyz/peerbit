@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.1](https://github.com/dao-xyz/peerbit/compare/document-v7.0.0...document-v7.0.1) (2024-07-20)
+
+
+### Bug Fixes
+
+* re-export indexer interface ([281c123](https://github.com/dao-xyz/peerbit/commit/281c1232afc61e8e5b74bc8b11acd66474cbe0ea))
+
 ## [7.0.0](https://github.com/dao-xyz/peerbit/compare/document-v6.0.7...document-v7.0.0) (2024-07-20)
 
 
