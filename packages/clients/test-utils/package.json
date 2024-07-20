@@ -2,7 +2,6 @@
 	"name": "@peerbit/test-utils",
 	"version": "2.0.33",
 	"description": "Test utils for Peerbit",
-	"type": "module",
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -36,7 +35,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -53,7 +52,8 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test -t node"
+		"test": "aegir test -t node",
+		"lint": "aegir lint"
 	},
 	"repository": {
 		"type": "git",

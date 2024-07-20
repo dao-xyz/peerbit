@@ -1,8 +1,7 @@
 // This more like a playground as of now
 // No real tests yet,
 // But there are ways here to generate base64 string for programs
-
-import { serialize, deserialize } from "@dao-xyz/borsh";
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { DString } from "@peerbit/string";
 import { TestSession } from "@peerbit/test-utils";
@@ -13,7 +12,7 @@ describe("server", () => {
 
 	before(async () => {
 		session = await TestSession.connected(1, {
-			directory: "./tmp/peerbit/" + +new Date()
+			directory: "./tmp/peerbit/" + +new Date(),
 		});
 		peer = session.peers[0];
 	});
@@ -26,7 +25,7 @@ describe("server", () => {
 	it("_", async () => {
 		const program = new PermissionedString({
 			store: new DString({}),
-			trusted: [peer.identity.publicKey]
+			trusted: [peer.identity.publicKey],
 		});
 		const base54 = Buffer.from(serialize(program)).toString("base64");
 		deserialize(Buffer.from(base54, "base64"), Program);

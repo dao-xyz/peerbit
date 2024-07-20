@@ -1,8 +1,8 @@
-import { Node } from "../src/connection.js";
-import { waitForResolved } from "@peerbit/time";
 import { TypedEventEmitter } from "@libp2p/interface";
+import { waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import type { Node } from "../src/connection.js";
 import { EventEmitterNode } from "./utils.js";
-import { expect } from 'chai'
 
 const testNodes = async (a: Node, b: Node, c: Node) => {
 	a.start();
@@ -31,12 +31,12 @@ const testNodes = async (a: Node, b: Node, c: Node) => {
 
 	a.send(new Uint8Array([1, 2, 3]));
 	await waitForResolved(() =>
-		expect(receivedMessage).to.deep.equal(new Uint8Array([1, 2, 3]))
+		expect(receivedMessage).to.deep.equal(new Uint8Array([1, 2, 3])),
 	);
 
 	a.send(new Uint8Array([3, 2, 1]), b.id);
 	await waitForResolved(() =>
-		expect(receivedMessage).to.deep.equal(new Uint8Array([3, 2, 1]))
+		expect(receivedMessage).to.deep.equal(new Uint8Array([3, 2, 1])),
 	);
 
 	expect(receivedMessageC).equal(undefined);

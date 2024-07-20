@@ -1,6 +1,6 @@
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { signRequest, verifyRequest } from "../src/signed-request.js";
 import { expect } from "chai";
+import { signRequest, verifyRequest } from "../src/signed-request.js";
 
 describe("signed-request", () => {
 	let signedRequest: {
@@ -17,14 +17,14 @@ describe("signed-request", () => {
 			data,
 			headers: {},
 			method: "POST",
-			url: "https://example.com/hello"
+			url: "https://example.com/hello",
 		};
 		await signRequest(
 			signedRequest.headers,
 			signedRequest.method,
 			new URL(signedRequest.url).pathname,
 			data,
-			keypair
+			keypair,
 		);
 	});
 
@@ -35,23 +35,23 @@ describe("signed-request", () => {
 					signedRequest.headers,
 					signedRequest.method,
 					new URL(signedRequest.url).pathname,
-					data
+					data,
 				)
-			).equals(keypair.publicKey)
+			).equals(keypair.publicKey),
 		).to.be.true;
 	});
 
 	it("invalid time", async () => {
 		signedRequest.headers["X-Peerbit-Signature-Time"] = String(
-			Number(signedRequest.headers["X-Peerbit-Signature-Time"] as string) + 1
+			Number(signedRequest.headers["X-Peerbit-Signature-Time"] as string) + 1,
 		);
 		await expect(
 			verifyRequest(
 				signedRequest.headers,
 				signedRequest.method,
 				new URL(signedRequest.url).pathname,
-				data
-			)
+				data,
+			),
 		).rejectedWith("Invalid signature");
 	});
 
@@ -61,14 +61,14 @@ describe("signed-request", () => {
 				signedRequest.headers,
 				"?",
 				new URL(signedRequest.url).pathname,
-				data
-			)
+				data,
+			),
 		).rejectedWith("Invalid signature");
 	});
 
 	it("invalid url", async () => {
 		await expect(
-			verifyRequest(signedRequest.headers, signedRequest.method, "?", data)
+			verifyRequest(signedRequest.headers, signedRequest.method, "?", data),
 		).rejectedWith("Invalid signature");
 	});
 
@@ -78,8 +78,8 @@ describe("signed-request", () => {
 				signedRequest.headers,
 				signedRequest.method,
 				new URL(signedRequest.url).pathname,
-				"bye"
-			)
+				"bye",
+			),
 		).rejectedWith("Invalid signature");
 	});
 });

@@ -1,7 +1,7 @@
 {
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
-		// allow top level await 
+		// allow top level await
 		"allowJs": true,
 		"checkJs": false,
 		"strict": false,
@@ -10,12 +10,7 @@
 		"strictNullChecks": false,
 		"allowUnusedLabels": true,
 		"noUnusedLocals": false,
-		"outDir": "dist",
+		"outDir": "dist"
 	},
-	"include": [
-		"examples",
-		"modules",
-		"topics",
-		"examples"
-	]
+	"include": ["modules", "topics", "examples"]
 }

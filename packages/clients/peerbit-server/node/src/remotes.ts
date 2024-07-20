@@ -27,11 +27,11 @@ export class Remotes {
 	constructor(readonly path: string) {
 		if (fs.existsSync(path)) {
 			this.data = JSON.parse(
-				fs.readFileSync(path).toString("utf-8")
+				fs.readFileSync(path).toString("utf-8"),
 			) as RemotesObject;
 		} else {
 			this.data = {
-				remotes: []
+				remotes: [],
 			};
 		}
 	}

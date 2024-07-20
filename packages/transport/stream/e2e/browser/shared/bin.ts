@@ -1,10 +1,10 @@
-import { createLibp2p } from "libp2p";
-import { webSockets } from "@libp2p/websockets";
-import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
-import { noise } from "@dao-xyz/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
+import { noise } from "@dao-xyz/libp2p-noise";
+import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
+import { webSockets } from "@libp2p/websockets";
 import { all } from "@libp2p/websockets/filters";
+import { createLibp2p } from "libp2p";
 import { TestDirectStream } from "./utils.js";
 
 // Run with "node --loader ts-node/esm ./test/browser/shared/bin.ts"
@@ -14,15 +14,18 @@ const relay = await createLibp2p<{
 	stream: TestDirectStream;
 }>({
 	addresses: {
-		listen: ["/ip4/127.0.0.1/tcp/0/ws"]
+		listen: ["/ip4/127.0.0.1/tcp/0/ws"],
 	},
 	services: {
-		relay: circuitRelayServer({ reservations: { maxReservations: 1000 } }),
+		// applyDefaultLimit: false because of https://github.com/libp2p/js-libp2p/issues/2622
+		relay: circuitRelayServer({
+			reservations: { applyDefaultLimit: false, maxReservations: 1000 },
+		}),
 		identify: identify(),
-		stream: (c) => new TestDirectStream(c)
+		stream: (c) => new TestDirectStream(c),
 	},
 	transports: [webSockets({ filter: all })],
 	streamMuxers: [yamux()],
-	connectionEncryption: [noise()]
+	connectionEncryption: [noise()],
 });
 console.log(relay.getMultiaddrs().map((x) => x.toString()));

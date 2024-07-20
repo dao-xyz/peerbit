@@ -1,4 +1,4 @@
-/* 
+/*
 
 MIT License
 
@@ -25,7 +25,6 @@ SOFTWARE.
 
 */
 
-
 const hrtime = (previousTimestamp?: [number, number]): [number, number] => {
 	const baseNow = Math.floor((Date.now() - performance.now()) * 1e-3);
 	const clocktime = performance.now() * 1e-3;
@@ -48,4 +47,4 @@ hrtime.bigint = (time?: [number, number]): bigint => {
 	return BigInt(diff[0] * NS_PER_SEC + diff[1]);
 };
 
-export { hrtime }
+export { hrtime };

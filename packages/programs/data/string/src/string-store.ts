@@ -1,24 +1,23 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { type AppendOptions, type Change, Entry } from "@peerbit/log";
-import { SharedLog, type SharedLogOptions } from "@peerbit/shared-log";
+import { CustomEvent } from "@libp2p/interface";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
-import { Program, type ProgramEvents } from "@peerbit/program";
-import { type RPCRequestOptions, RPC, type RequestContext } from "@peerbit/rpc";
+import { type AppendOptions, type Change, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import { StringOperation, StringIndex, encoding } from "./string-index.js";
+import { Program, type ProgramEvents } from "@peerbit/program";
+import { RPC, type RPCRequestOptions, type RequestContext } from "@peerbit/rpc";
+import { SharedLog, type SharedLogOptions } from "@peerbit/shared-log";
+import { concat, fromString } from "uint8arrays";
 import {
 	AbstractSearchResult,
 	NoAccess,
 	RangeMetadata,
 	RangeMetadatas,
-	StringMatch,
 	SearchRequest,
-	StringResult
+	StringMatch,
+	StringResult,
 } from "./query.js";
-import { CustomEvent } from "@libp2p/interface";
-import { concat, fromString } from "uint8arrays";
-
 import { Range } from "./range.js";
+import { StringIndex, StringOperation, encoding } from "./string-index.js";
 
 const logger = loggerFn({ module: "string" });
 
@@ -45,7 +44,7 @@ export interface StringEvents {
 
 export type CanPerform = (
 	operation: StringOperation,
-	context: TransactionContext
+	context: TransactionContext,
 ) => Promise<boolean> | boolean;
 
 export type Args = {
@@ -86,7 +85,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		await this._log.open({
 			encoding,
 			replicas: {
-				min: 0xffffffff // assume a document can not be sharded?
+				min: 0xffffffff, // assume a document can not be sharded?
 			},
 			canAppend: async (entry) => {
 				const operation = await entry.getPayloadValue();
@@ -102,32 +101,34 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 				await this._index.updateIndex(change);
 				this.events.dispatchEvent(
 					new CustomEvent("change", {
-						detail: change
-					})
+						detail: change,
+					}),
 				);
-			}
+			},
 		});
 
 		await this.query.open({
 			...options,
 			topic: sha256Base64Sync(
-				concat([this._log.log.id, fromString("/dstring")])
+				concat([this._log.log.id, fromString("/dstring")]),
 			),
 			responseHandler: this.queryHandler.bind(this),
 			queryType: SearchRequest,
-			responseType: StringResult
+			responseType: StringResult,
 		});
+
+		await this._log.reload(); // TODO make it so that it does not reload the whole log (i.e. persist the generated string in some way)
 	}
 
 	private async _canPerform(
 		operation: StringOperation,
-		context: TransactionContext
+		context: TransactionContext,
 	): Promise<boolean> {
 		if (this._log.log.length === 0 || context.entry.next.length === 0) {
 			return true;
 		} else {
 			for (const next of context.entry.next) {
-				if (this._log.log.has(next)) {
+				if (await this._log.log.has(next)) {
 					return true;
 				}
 			}
@@ -138,17 +139,17 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	async add(
 		value: string,
 		index: Range,
-		options?: AppendOptions<StringOperation>
+		options?: AppendOptions<StringOperation>,
 	) {
 		return this._log.append(
 			new StringOperation({
 				index,
-				value
+				value,
 			}),
 			{
 				...options,
-				meta: { ...options?.meta, next: await this._log.log.getHeads() }
-			}
+				meta: { ...options?.meta, next: await this._log.log.getHeads().all() }, // TODO: optimize
+			},
 		);
 	}
 
@@ -158,10 +159,10 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 
 	async queryHandler(
 		query: SearchRequest,
-		ctx: RequestContext
+		ctx: RequestContext,
 	): Promise<AbstractSearchResult | undefined> {
 		logger.debug("Recieved query");
-		if (query instanceof SearchRequest == false) {
+		if (query instanceof SearchRequest === false) {
 			logger.debug("Recieved query which is not a StringQueryRequest");
 			return;
 		}
@@ -173,30 +174,30 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 
 		const content = this._index.string;
 		const relaventQueries = stringQuery.query.filter(
-			(x) => x instanceof StringMatch
+			(x) => x instanceof StringMatch,
 		) as StringMatch[];
-		if (relaventQueries.length == 0) {
+		if (relaventQueries.length === 0) {
 			logger.debug("Responding with all");
 			return new StringResult({
-				string: content
+				string: content,
 			});
 		}
 		const ranges = relaventQueries
 			.map((query) => {
 				const occurances = findAllOccurrences(
 					query.preprocess(content),
-					query.preprocess(query.value)
+					query.preprocess(query.value),
 				);
 				return occurances.map((ix) => {
 					return new RangeMetadata({
 						offset: BigInt(ix),
-						length: BigInt(query.value.length)
+						length: BigInt(query.value.length),
 					});
 				});
 			})
 			.flat(1);
 
-		if (ranges.length == 0) {
+		if (ranges.length === 0) {
 			logger.debug("Could not find any matches");
 			return;
 		}
@@ -204,8 +205,8 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		return new StringResult({
 			string: content,
 			metadatas: new RangeMetadatas({
-				metadatas: ranges
-			})
+				metadatas: ranges,
+			}),
 		});
 	}
 
@@ -219,20 +220,19 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			const counter: Map<string, number> = new Map();
 			const responses = await this.query.request(
 				new SearchRequest({
-					query: []
+					query: [],
 				}),
-				options.remote.queryOptions
+				options.remote.queryOptions,
 			);
 			for (const response of responses) {
 				if (response.response instanceof NoAccess) {
 					logger.error("Missing access");
 					continue;
 				} else if (response.response instanceof StringResult) {
-					options?.remote.callback &&
-						options?.remote.callback(response.response.string);
+					options?.remote.callback?.(response.response.string);
 					counter.set(
 						response.response.string,
-						(counter.get(response.response.string) || 0) + 1
+						(counter.get(response.response.string) || 0) + 1,
 					);
 				} else {
 					throw new Error("Unsupported type: " + response?.constructor?.name);

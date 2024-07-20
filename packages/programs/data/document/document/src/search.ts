@@ -1,22 +1,28 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
-import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
-import { Program } from "@peerbit/program";
-import * as types from "@peerbit/document-interface";
+import { Cache } from "@peerbit/cache";
 import {
+	type MaybePromise,
+	PublicSignKey,
+	sha256Base64Sync,
+} from "@peerbit/crypto";
+import * as types from "@peerbit/document-interface";
+import * as indexerTypes from "@peerbit/indexer-interface";
+import { HashmapIndex } from "@peerbit/indexer-simple";
+import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
+import { logger as loggerFn } from "@peerbit/logger";
+import { Program } from "@peerbit/program";
+import {
+	MissingResponsesError,
 	RPC,
+	type RPCRequestAllOptions,
 	type RPCResponse,
 	queryAll,
-	MissingResponsesError,
-	type RPCRequestAllOptions
 } from "@peerbit/rpc";
-import { logger as loggerFn } from "@peerbit/logger";
-import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { SharedLog } from "@peerbit/shared-log";
-import { concat, fromString } from "uint8arrays";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
-import { Cache } from "@peerbit/cache";
-import { HashmapIndexEngine } from "@peerbit/document-index-simple";
+import { concat, fromString } from "uint8arrays";
+import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 
 const logger = loggerFn({ module: "document-index" });
@@ -29,7 +35,7 @@ type BufferedResult<T> = {
 };
 
 @variant(0)
-export class Operation /* <T> */ { }
+export class Operation /* <T> */ {}
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
@@ -44,12 +50,9 @@ export class PutOperation extends Operation /* <T> */ {
 
 	/* _value?: T; */
 
-	constructor(props?: { data: Uint8Array /* value?: T */ }) {
+	constructor(props: { data: Uint8Array /* value?: T */ }) {
 		super();
-		if (props) {
-			this.data = props.data;
-			/* this._value = props.value; */
-		}
+		this.data = props.data;
 	}
 }
 
@@ -72,10 +75,10 @@ export class PutAllOperation<T> extends Operation<T> {
  */
 @variant(2)
 export class DeleteOperation extends Operation {
-	@field({ type: types.IdKey })
-	key: types.IdKey;
+	@field({ type: indexerTypes.IdKey })
+	key: indexerTypes.IdKey;
 
-	constructor(props: { key: types.IdKey }) {
+	constructor(props: { key: indexerTypes.IdKey }) {
 		super();
 		this.key = props.key;
 	}
@@ -90,13 +93,11 @@ export type QueryOptions<R> = {
 	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult<R>>;
 	local?: boolean;
 };
-export type SearchOptions<R> = { size?: number } & QueryOptions<R>;
-export type IndexableFields<T> = (
-	obj: T,
-	context: types.Context
-) => Record<string, any> | Promise<Record<string, any>>;
+export type SearchOptions<R> = QueryOptions<R>;
 
-export type ResultsIterator<T> = {
+type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
+
+type ResultsIterator<T> = {
 	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
@@ -105,7 +106,7 @@ export type ResultsIterator<T> = {
 type QueryDetailedOptions<T> = QueryOptions<T> & {
 	onResponse?: (
 		response: types.AbstractSearchResult<T>,
-		from: PublicSignKey
+		from: PublicSignKey,
 	) => void | Promise<void>;
 };
 
@@ -113,7 +114,7 @@ const introduceEntries = async <T>(
 	responses: RPCResponse<types.AbstractSearchResult<T>>[],
 	type: AbstractType<T>,
 	sync: (result: types.Results<T>) => Promise<void>,
-	options?: QueryDetailedOptions<T>
+	options?: QueryDetailedOptions<T>,
 ): Promise<RPCResponse<types.Results<T>>[]> => {
 	const results: RPCResponse<types.Results<T>>[] = [];
 	for (const response of responses) {
@@ -140,16 +141,17 @@ const introduceEntries = async <T>(
 
 const dedup = <T>(
 	allResult: T[],
-	dedupBy: (obj: any) => string | Uint8Array | number | bigint
+	dedupBy: (obj: any) => string | Uint8Array | number | bigint,
 ) => {
-	const unique: Set<types.IdPrimitive> = new Set();
+	const unique: Set<indexerTypes.IdPrimitive> = new Set();
 	const dedup: T[] = [];
 	for (const result of allResult) {
-		const key = types.toIdeable(dedupBy(result));
-		if (unique.has(key)) {
+		const key = indexerTypes.toId(dedupBy(result));
+		const primitive = key.primitive;
+		if (unique.has(primitive)) {
 			continue;
 		}
-		unique.add(key);
+		unique.add(primitive);
 		dedup.push(result);
 	}
 	return dedup;
@@ -163,44 +165,84 @@ if (!(await this.canRead(message.sender))) {
 } */
 
 export type CanSearch = (
-	request: types.SearchRequest | types.CollectNextRequest,
-	from: PublicSignKey
+	request: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
 export type CanRead<T> = (
 	result: T,
-	from: PublicSignKey
+	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
-export type OpenOptions<T> = {
-	type: AbstractType<T>;
+export type IDocumentWithContext<I> = {
+	__context: types.Context;
+} & I;
+
+export type TransformerAsConstructor<T, I> = {
+	type?: new (arg: T, context: types.Context) => I;
+};
+
+export type TransformerAsFunction<T, I> = {
+	type: AbstractType<I>;
+	transform: (arg: T, context: types.Context) => I | Promise<I>;
+};
+export type TransformOptions<T, I> =
+	| TransformerAsConstructor<T, I>
+	| TransformerAsFunction<T, I>;
+
+const isTransformerWithFunction = <T, I>(
+	options: TransformOptions<T, I>,
+): options is TransformerAsFunction<T, I> => {
+	return (options as TransformerAsFunction<T, I>).transform != null;
+};
+
+export type OpenOptions<T, I> = {
+	documentType: AbstractType<T>;
+
 	dbType: AbstractType<types.IDocumentStore<T>>;
 	log: SharedLog<Operation>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
-	engine?: types.IndexEngine;
 	sync: (result: types.Results<T>) => Promise<void>;
 	indexBy?: string | string[];
-	fields: IndexableFields<T>;
+	transform?: TransformOptions<T, I>;
 };
 
+type IndexableClass<I> = new (
+	value: I,
+	context: types.Context,
+) => IDocumentWithContext<I>; /* IDocumentWithContext<T>; */
+
 @variant("documents_index")
-export class DocumentIndex<T> extends Program<OpenOptions<T>> {
+export class DocumentIndex<T, I extends Record<string, any>> extends Program<
+	OpenOptions<T, I>
+> {
 	@field({ type: RPC })
-	_query: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+	_query: RPC<
+		indexerTypes.AbstractSearchRequest,
+		types.AbstractSearchResult<T>
+	>;
 
-	engine: types.IndexEngine;
+	// Original document representation
+	documentType: AbstractType<T>;
 
-	type: AbstractType<T>;
+	// transform options
+	transformer: Transformer<T, I>;
+
+	// The indexed document wrapped in a context
+	wrappedIndexedType: IndexableClass<I>;
+
+	// The database type, for recursive indexing
 	dbType: AbstractType<types.IDocumentStore<T>>;
+	indexedTypeIsDocumentType: boolean;
 
 	// Index key
-	private indexBy: string | string[];
-	private indexByArr: string[];
+	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
+	index: indexerTypes.Index<IDocumentWithContext<I>>;
 
 	// Transformation, indexer
-	fields: IndexableFields<T>;
+	/* fields: IndexableFields<T, I>; */
 
 	private _valueEncoding: Encoding<T>;
 
@@ -211,8 +253,22 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache: Cache<T>;
 	private _isProgramValues: boolean;
+
+	private _resultQueue: Map<
+		string,
+		{
+			from: PublicSignKey;
+			keptInIndex: number;
+			timeout: ReturnType<typeof setTimeout>;
+			queue: indexerTypes.IndexedResult<IDocumentWithContext<I>>[];
+		}
+	>;
+
 	constructor(properties?: {
-		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+		query?: RPC<
+			indexerTypes.AbstractSearchRequest,
+			types.AbstractSearchResult<T>
+		>;
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
@@ -222,47 +278,84 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return this._valueEncoding;
 	}
 
-	async open(properties: OpenOptions<T>) {
+	async open(properties: OpenOptions<T, I>) {
 		this._log = properties.log;
-		this.type = properties.type;
-		// if this.type is a class that extends Program we want to do special functionality
-		this._isProgramValues = this.type instanceof Program;
-		this.dbType = properties.dbType;
-		this._sync = properties.sync;
-		this.fields = properties.fields;
-		this.indexBy = properties.indexBy || DEFAULT_INDEX_BY;
-		this.indexByArr = Array.isArray(this.indexBy)
-			? this.indexBy
-			: [this.indexBy];
-		this.indexByResolver =
-			typeof this.indexBy === "string"
-				? (obj) => obj[this.indexBy as string]
-				: (obj: any) => types.extractFieldValue(obj, this.indexBy as string[]);
 
-		this._valueEncoding = BORSH_ENCODING(this.type);
+		this.documentType = properties.documentType;
+		this.indexedTypeIsDocumentType =
+			!properties.transform?.type ||
+			properties.transform?.type === properties.documentType;
+
+		class IndexedClassWithContex {
+			@field({ type: types.Context })
+			__context: types.Context;
+
+			constructor(value: I, context: types.Context) {
+				Object.assign(this, value);
+				this.__context = context;
+			}
+		}
+
+		// copy all prototype values from indexedType to IndexedClassWithContex
+		copySerialization(
+			(properties.transform?.type || properties.documentType)!,
+			IndexedClassWithContex,
+		);
+
+		this.wrappedIndexedType = IndexedClassWithContex as new (
+			value: I,
+			context: types.Context,
+		) => IDocumentWithContext<I>;
+
+		// if this.type is a class that extends Program we want to do special functionality
+		this._isProgramValues = this.documentType instanceof Program;
+		this.dbType = properties.dbType;
+		this._resultQueue = new Map();
+		this._sync = properties.sync;
+
+		const transformOptions = properties.transform;
+		this.transformer = transformOptions
+			? isTransformerWithFunction(transformOptions)
+				? (obj, context) => transformOptions.transform(obj, context)
+				: transformOptions.type
+					? (obj, context) => new transformOptions.type!(obj, context)
+					: (obj) => obj as any as I
+			: (obj) => obj as any as I; // TODO types
+
+		const maybeArr = properties.indexBy || DEFAULT_INDEX_BY;
+		this.indexBy = Array.isArray(maybeArr) ? maybeArr : [maybeArr];
+		this.indexByResolver = (obj: any) =>
+			indexerTypes.extractFieldValue(obj, this.indexBy);
+
+		this._valueEncoding = BORSH_ENCODING(this.documentType);
 
 		if (this._isProgramValues) {
 			this._resolverProgramCache = new Map();
 		}
-		this._resolverCache = new Cache({ max: 1000 }); // TODO choose limit better (adaptive)
+		this._resolverCache = new Cache({ max: 10 }); // TODO choose limit better (adaptive)
 
-		this.engine = properties.engine || new HashmapIndexEngine();
+		this.index =
+			(await (
+				await this.node.indexer.scope(
+					sha256Base64Sync(
+						concat([this._log.log.id, fromString("/document-index")]),
+					),
+				)
+			).init({
+				indexBy: this.indexBy,
+				schema: this.wrappedIndexedType,
+				nested: {
+					match: (obj: any): obj is types.IDocumentStore<any> =>
+						obj instanceof this.dbType,
+					query: async (obj: types.IDocumentStore<any>, query) =>
+						obj.index.search(query),
+				},
+				/* maxBatchSize: MAX_BATCH_SIZE */
+			})) || new HashmapIndex<IDocumentWithContext<I>>();
 
-		await this.engine.init({
-			indexBy: this.indexBy,
-			nested: {
-				match: (obj: any): obj is types.IDocumentStore<any> =>
-					obj instanceof this.dbType,
-				query: async (obj: types.IDocumentStore<any>, query) =>
-					obj.index.search(query)
-			},
-			maxBatchSize: MAX_BATCH_SIZE
-		});
-
-		await this.engine.start?.();
 		await this._query.open({
 			topic: sha256Base64Sync(
-				concat([this._log.log.id, fromString("/document")])
+				concat([this._log.log.id, fromString("/document")]),
 			),
 			responseHandler: async (query, ctx) => {
 				if (!ctx.from) {
@@ -272,71 +365,84 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 				if (
 					properties.canSearch &&
-					(query instanceof types.SearchRequest ||
-						query instanceof types.CollectNextRequest) &&
+					(query instanceof indexerTypes.SearchRequest ||
+						query instanceof indexerTypes.CollectNextRequest) &&
 					!(await properties.canSearch(
-						query as types.SearchRequest | types.CollectNextRequest,
-						ctx.from
+						query as
+							| indexerTypes.SearchRequest
+							| indexerTypes.CollectNextRequest,
+						ctx.from,
 					))
 				) {
 					return new types.NoAccess();
 				}
 
-				if (query instanceof types.CloseIteratorRequest) {
+				if (query instanceof indexerTypes.CloseIteratorRequest) {
 					this.processCloseIteratorRequest(query, ctx.from);
 				} else {
 					const results = await this.processQuery(
 						query as
-						| types.SearchRequest
-						| types.SearchRequest
-						| types.CollectNextRequest,
+							| indexerTypes.SearchRequest
+							| indexerTypes.SearchRequest
+							| indexerTypes.CollectNextRequest,
 						ctx.from,
+						false,
 						{
-							canRead: properties.canRead
-						}
+							canRead: properties.canRead,
+						},
 					);
 
 					return new types.Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
 						results: results.results,
-						kept: results.kept
+						kept: results.kept,
 					});
 				}
 			},
 			responseType: types.AbstractSearchResult,
-			queryType: types.AbstractSearchRequest
+			queryType: indexerTypes.AbstractSearchRequest,
 		});
+	}
+
+	getPending(cursorId: string): number | undefined {
+		const queue = this._resultQueue.get(cursorId);
+		if (queue) {
+			return queue.queue.length + queue.keptInIndex;
+		}
+
+		return this.index.getPending(cursorId);
 	}
 
 	async close(from?: Program): Promise<boolean> {
 		const closed = await super.close(from);
 		if (closed) {
-			await this.engine.stop?.();
+			await this.index.stop?.();
 		}
 		return closed;
 	}
 
 	async drop(from?: Program): Promise<boolean> {
-		const closed = await super.drop(from);
-		if (closed) {
-			await this.engine.stop?.();
+		const dropped = await super.drop(from);
+		if (dropped) {
+			await this.index.drop?.();
+			await this.index.stop?.();
 		}
-		return closed;
+		return dropped;
 	}
 
 	public async get(
-		key: types.Ideable | types.IdKey,
-		options?: QueryOptions<T>
+		key: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: QueryOptions<T>,
 	): Promise<T | undefined> {
 		return (
 			await this.getDetailed(
-				key instanceof types.IdKey ? key : types.toId(key),
-				options
+				key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key),
+				options,
 			)
 		)?.[0]?.results[0]?.value;
 	}
 
-	public async put(value: T, entry: Entry<Operation>, id: types.IdKey) {
+	public async put(value: T, entry: Entry<Operation>, id: indexerTypes.IdKey) {
 		const idString = id.primitive;
 		if (this._isProgramValues) {
 			this._resolverProgramCache!.set(idString, value);
@@ -344,82 +450,94 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			this._resolverCache.add(idString, value);
 		}
 
+		const existing = await this.index.get(id);
 		const context = new types.Context({
 			created:
-				(await this.engine.get(id))?.context.created ||
+				existing?.value.__context.created ||
 				entry.meta.clock.timestamp.wallTime,
 			modified: entry.meta.clock.timestamp.wallTime,
 			head: entry.hash,
-			gid: entry.gid
+			gid: entry.gid,
+			size: entry.payloadByteLength,
 		});
 
-		const valueToIndex = await this.fields(value, context);
-		this.engine.put({
-			id,
-			indexed: valueToIndex,
+		const valueToIndex = await this.transformer(value, context);
+		const wrappedValueToIndex = new this.wrappedIndexedType(
+			valueToIndex as I,
 			context,
-			size: entry.payload.data.byteLength
-			/* reference:
-				valueToIndex === value || value instanceof Program
-					? { value }
-					: undefined */
-		});
+		);
+		await this.index.put(wrappedValueToIndex);
 	}
 
-	public del(key: types.IdPrimitive) {
-		const keyObject = types.toId(key);
+	public del(key: indexerTypes.IdKey) {
 		if (this._isProgramValues) {
-			this._resolverProgramCache!.delete(key);
+			this._resolverProgramCache!.delete(key.primitive);
 		} else {
-			this._resolverCache.del(key);
+			this._resolverCache.del(key.primitive);
 		}
-		return this.engine.del(keyObject);
+		return this.index.del(
+			new indexerTypes.DeleteRequest({
+				query: [indexerTypes.getMatcher(this.indexBy, key.key)],
+			}),
+		);
 	}
 
 	public async getDetailed(
-		key: types.IdKey | types.IdPrimitive,
-		options?: QueryOptions<T>
+		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
+		options?: QueryOptions<T>,
 	): Promise<types.Results<T>[] | undefined> {
 		let results: types.Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
-				new types.SearchRequest({
+				new indexerTypes.SearchRequest({
 					query: [
-						new types.ByteMatchQuery({ key: this.indexByArr, value: key })
-					]
+						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
+					],
 				}),
-				options
+				options,
 			);
 		} else {
-			const indexableKey = types.toIdeable(key);
+			const indexableKey = indexerTypes.toIdeable(key);
 
 			if (
 				typeof indexableKey === "number" ||
 				typeof indexableKey === "bigint"
 			) {
 				results = await this.queryDetailed(
-					new types.SearchRequest({
+					new indexerTypes.SearchRequest({
 						query: [
-							new types.IntegerCompare({
-								key: this.indexByArr,
-								compare: types.Compare.Equal,
-								value: indexableKey
-							})
-						]
+							new indexerTypes.IntegerCompare({
+								key: this.indexBy,
+								compare: indexerTypes.Compare.Equal,
+								value: indexableKey,
+							}),
+						],
 					}),
-					options
+					options,
 				);
-			} else {
+			} else if (typeof indexableKey === "string") {
 				results = await this.queryDetailed(
-					new types.SearchRequest({
+					new indexerTypes.SearchRequest({
 						query: [
-							new types.StringMatch({
-								key: this.indexByArr,
-								value: indexableKey
-							})
-						]
+							new indexerTypes.StringMatch({
+								key: this.indexBy,
+								value: indexableKey,
+							}),
+						],
 					}),
-					options
+					options,
+				);
+			} else if (indexableKey instanceof Uint8Array) {
+				results = await this.queryDetailed(
+					new indexerTypes.SearchRequest({
+						query: [
+							new indexerTypes.ByteMatchQuery({
+								key: this.indexBy,
+								value: indexableKey,
+							}),
+						],
+					}),
+					options,
 				);
 			}
 		}
@@ -428,11 +546,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	}
 
 	getSize(): Promise<number> | number {
-		return this.engine.getSize();
+		return this.index.getSize();
 	}
 
 	private async resolveDocument(
-		value: types.IndexedResult
+		value: indexerTypes.IndexedResult<IDocumentWithContext<I>>,
 	): Promise<{ value: T } | undefined> {
 		const cached =
 			this._resolverCache.get(value.id.primitive) ||
@@ -441,10 +559,17 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			return { value: cached };
 		}
 
-		if (value.indexed instanceof this.type) {
-			return { value: value.indexed as T };
+		if (this.indexedTypeIsDocumentType) {
+			// cast value to T, i.e. convert the class but keep all properties except the __context
+			const obj = Object.assign(
+				Object.create(this.documentType.prototype),
+				value.value,
+			);
+			delete obj.__context;
+			return { value: obj as T };
 		}
-		const head = await await this._log.log.get(value.context.head);
+
+		const head = await this._log.log.get(value.value.__context.head);
 		if (!head) {
 			return undefined; // we could end up here if we recently pruned the document and other peers never persisted the entry
 			// TODO update changes in index before removing entries from log entry storage
@@ -452,36 +577,80 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		const payloadValue = await head.getPayloadValue();
 		if (payloadValue instanceof PutOperation) {
 			return {
-				value: this.valueEncoding.decoder(payloadValue.data)
+				value: this.valueEncoding.decoder(payloadValue.data),
 				/* size: payloadValue.data.byteLength */
 			};
 		}
 
 		throw new Error(
 			"Unexpected value type when getting document: " +
-			payloadValue?.constructor?.name || typeof payloadValue
+				payloadValue?.constructor?.name || typeof payloadValue,
 		);
 	}
 
 	async processQuery(
-		query: types.SearchRequest | types.CollectNextRequest,
+		query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
 		from: PublicSignKey,
+		isLocal: boolean,
 		options?: {
 			canRead?: CanRead<T>;
-		}
+		},
 	): Promise<types.Results<T>> {
 		// We do special case for querying the id as we can do it faster than iterating
 
-		let indexedResult: types.IndexedResults | undefined = undefined;
-		if (query instanceof types.SearchRequest) {
-			indexedResult = await this.engine.query(query, from);
-		} else if (query instanceof types.CollectNextRequest) {
-			indexedResult = await this.engine.next(query, from);
+		let prevQueued = isLocal
+			? undefined
+			: this._resultQueue.get(query.idString);
+		if (prevQueued && !from.equals(prevQueued.from)) {
+			throw new Error("Different from in queued results");
+		}
+
+		let indexedResult:
+			| indexerTypes.IndexedResults<IDocumentWithContext<I>>
+			| undefined = undefined;
+		if (query instanceof indexerTypes.SearchRequest) {
+			indexedResult = await this.index.query(query);
+		} else if (query instanceof indexerTypes.CollectNextRequest) {
+			indexedResult =
+				prevQueued?.keptInIndex === 0
+					? { kept: 0, results: [] }
+					: await this.index.next(query);
 		} else {
 			throw new Error("Unsupported");
 		}
 		const filteredResults: types.ResultWithSource<T>[] = [];
-		for (const result of indexedResult.results) {
+		let resultSize = 0;
+
+		let toIterate = prevQueued
+			? [...prevQueued.queue, ...indexedResult.results]
+			: indexedResult.results;
+
+		if (prevQueued) {
+			this._resultQueue.delete(query.idString);
+			prevQueued = undefined;
+		}
+
+		if (!isLocal) {
+			prevQueued = {
+				from,
+				queue: [],
+				timeout: setTimeout(() => {
+					this._resultQueue.delete(query.idString);
+				}, 6e4),
+				keptInIndex: indexedResult.kept,
+			};
+			this._resultQueue.set(query.idString, prevQueued);
+		}
+
+		for (const result of toIterate) {
+			if (!isLocal) {
+				resultSize += result.value.__context.size;
+				if (resultSize > MAX_BATCH_SIZE) {
+					prevQueued!.queue.push(result);
+					continue;
+				}
+			}
+
 			const value = await this.resolveDocument(result);
 			if (
 				!value ||
@@ -491,25 +660,48 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			}
 			filteredResults.push(
 				new types.ResultWithSource({
-					context: result.context,
+					context: result.value.__context,
 					value: value.value,
 					source: serialize(value.value),
-					indexed: result.indexed
-				})
+					indexed: result.value,
+				}),
 			);
 		}
 		const results: types.Results<T> = new types.Results({
 			results: filteredResults,
-			kept: BigInt(indexedResult.kept)
+			kept: BigInt(indexedResult.kept + (prevQueued?.queue.length || 0)),
 		});
+
+		if (!isLocal && results.kept === 0n) {
+			this.clearResultsQueue(query);
+		}
+
 		return results;
 	}
 
+	clearResultsQueue(
+		query:
+			| indexerTypes.SearchRequest
+			| indexerTypes.CollectNextRequest
+			| indexerTypes.CloseIteratorRequest,
+	) {
+		const queue = this._resultQueue.get(query.idString);
+		if (queue) {
+			clearTimeout(queue.timeout);
+			this._resultQueue.delete(query.idString);
+		}
+	}
 	async processCloseIteratorRequest(
-		query: types.CloseIteratorRequest,
-		publicKey: PublicSignKey
+		query: indexerTypes.CloseIteratorRequest,
+		publicKey: PublicSignKey,
 	): Promise<void> {
-		return this.engine.close(query, publicKey);
+		const queueData = this._resultQueue.get(query.idString);
+		if (queueData && !queueData.from.equals(publicKey)) {
+			logger.info("Ignoring close iterator request from different peer");
+			return;
+		}
+		this.clearResultsQueue(query);
+		return this.index.close(query);
 	}
 
 	/**
@@ -519,10 +711,10 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	 * @returns
 	 */
 	public async queryDetailed(
-		queryRequest: types.SearchRequest,
-		options?: QueryDetailedOptions<T>
+		queryRequest: indexerTypes.SearchRequest,
+		options?: QueryDetailedOptions<T>,
 	): Promise<types.Results<T>[]> {
-		const local = typeof options?.local == "boolean" ? options?.local : true;
+		const local = typeof options?.local === "boolean" ? options?.local : true;
 		let remote: RemoteQueryOptions<types.AbstractSearchResult<T>> | undefined =
 			undefined;
 		if (typeof options?.remote === "boolean") {
@@ -544,7 +736,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		const promises: Promise<types.Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
-				"Expecting either 'options.remote' or 'options.local' to be true"
+				"Expecting either 'options.remote' or 'options.local' to be true",
 			);
 		}
 		const allResults: types.Results<T>[] = [];
@@ -552,7 +744,8 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		if (local) {
 			const results = await this.processQuery(
 				queryRequest,
-				this.node.identity.publicKey
+				this.node.identity.publicKey,
+				true,
 			);
 			if (results.results.length > 0) {
 				options?.onResponse &&
@@ -563,26 +756,27 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 		if (remote) {
 			const replicatorGroups = await this._log.getReplicatorUnion(
-				remote.minAge
+				remote.minAge,
 			);
+
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
 				const fn = async () => {
 					const rs: types.Results<T>[] = [];
 					const responseHandler = async (
-						results: RPCResponse<types.AbstractSearchResult<T>>[]
+						results: RPCResponse<types.AbstractSearchResult<T>>[],
 					) => {
 						for (const r of await introduceEntries(
 							results,
-							this.type,
+							this.documentType,
 							this._sync,
-							options
+							options,
 						)) {
 							rs.push(r.response);
 						}
 					};
 					try {
-						if (queryRequest instanceof types.CloseIteratorRequest) {
+						if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
 							// don't wait for responses
 							await this._query.request(queryRequest, { mode: remote!.mode });
 						} else {
@@ -591,7 +785,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 								groupHashes,
 								queryRequest,
 								responseHandler,
-								remote
+								remote,
 							);
 						}
 					} catch (error) {
@@ -639,11 +833,11 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	 * @returns
 	 */
 	public async search(
-		queryRequest: types.SearchRequest,
-		options?: SearchOptions<T>
+		queryRequest: indexerTypes.SearchRequest,
+		options?: SearchOptions<T>,
 	): Promise<T[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-		queryRequest.fetch = options?.size ?? 0xffffffff;
+		queryRequest.fetch = queryRequest.fetch ?? 0xffffffff;
 
 		// So that the iterator is pre-fetching the right amount of entries
 		const iterator = this.iterate(queryRequest, options);
@@ -656,7 +850,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		) {
 			// We might need to pull .next multiple time due to data message size limitations
 			for (const result of await iterator.next(
-				queryRequest.fetch - allResults.length
+				queryRequest.fetch - allResults.length,
 			)) {
 				allResults.push(result);
 			}
@@ -675,8 +869,8 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 	 * @returns
 	 */
 	public iterate(
-		queryRequest: types.SearchRequest,
-		options?: QueryOptions<T>
+		queryRequest: indexerTypes.SearchRequest,
+		options?: QueryOptions<T>,
 	): ResultsIterator<T> {
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<
@@ -728,9 +922,9 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 						const buffer: BufferedResult<T>[] = [];
 
 						for (const result of results.results) {
-							const indexKey = types.toIdeable(
-								this.indexByResolver(result.value)
-							);
+							const indexKey = indexerTypes.toId(
+								this.indexByResolver(result.value),
+							).primitive;
 							if (visited.has(indexKey)) {
 								continue;
 							}
@@ -738,24 +932,28 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 							buffer.push({
 								value: result.value,
 								context: result.context,
-								from: from,
+								from,
 								indexed:
 									result.indexed ||
-									(await this.fields(result.value, result.context))
+									(await this.transformer(result.value, result.context)),
 							});
 						}
 
 						peerBufferMap.set(from.hashcode(), {
 							buffer,
-							kept: Number(response.kept)
+							kept: Number(response.kept),
 						});
 					} else {
 						throw new Error(
-							"Unsupported result type: " + response?.constructor?.name
+							"Unsupported result type: " + response?.constructor?.name,
 						);
 					}
-				}
+				},
 			});
+
+			if (done) {
+				this.clearResultsQueue(queryRequest);
+			}
 
 			return done;
 		};
@@ -787,14 +985,18 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 
 					// TODO buffer more than deleted?
 					// TODO batch to multiple 'to's
-					const collectRequest = new types.CollectNextRequest({
+					const collectRequest = new indexerTypes.CollectNextRequest({
 						id: queryRequest.id,
-						amount: n - buffer.buffer.length
+						amount: n - buffer.buffer.length,
 					});
 					// Fetch locally?
 					if (peer === this.node.identity.publicKey.hashcode()) {
 						promises.push(
-							this.processQuery(collectRequest, this.node.identity.publicKey)
+							this.processQuery(
+								collectRequest,
+								this.node.identity.publicKey,
+								true,
+							)
 								.then(async (results) => {
 									resultsLeft += Number(results.kept);
 
@@ -812,13 +1014,15 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 										for (const result of results.results) {
 											if (
 												visited.has(
-													types.toIdeable(this.indexByResolver(result.value))
+													indexerTypes.toId(this.indexByResolver(result.value))
+														.primitive,
 												)
 											) {
 												continue;
 											}
 											visited.add(
-												types.toIdeable(this.indexByResolver(result.value))
+												indexerTypes.toId(this.indexByResolver(result.value))
+													.primitive,
 											);
 											peerBuffer.buffer.push({
 												value: result.value,
@@ -826,17 +1030,20 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 												from: this.node.identity.publicKey,
 												indexed:
 													result.indexed ||
-													(await this.fields(result.value, result.context))
+													(await this.transformer(
+														result.value,
+														result.context,
+													)),
 											});
 										}
 									}
 								})
 								.catch((e) => {
 									logger.error(
-										"Failed to collect sorted results from self. " + e?.message
+										"Failed to collect sorted results from self. " + e?.message,
 									);
 									peerBufferMap.delete(peer);
-								})
+								}),
 						);
 					} else {
 						// Fetch remotely
@@ -846,10 +1053,15 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 									...options,
 									signal: controller.signal,
 									priority: 1,
-									mode: new SilentDelivery({ to: [peer], redundancy: 1 })
+									mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 								})
 								.then((response) =>
-									introduceEntries(response, this.type, this._sync, options)
+									introduceEntries(
+										response,
+										this.documentType,
+										this._sync,
+										options,
+									)
 										.then((responses) => {
 											responses.map((response) => {
 												resultsLeft += Number(response.response.kept);
@@ -871,23 +1083,26 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 													for (const result of response.response.results) {
 														if (
 															visited.has(
-																types.toIdeable(
-																	this.indexByResolver(result.value)
-																)
+																indexerTypes.toId(
+																	this.indexByResolver(result.value),
+																).primitive,
 															)
 														) {
 															continue;
 														}
 														visited.add(
-															types.toIdeable(
-																this.indexByResolver(result.value)
-															)
+															indexerTypes.toId(
+																this.indexByResolver(result.value),
+															).primitive,
 														);
 														peerBuffer.buffer.push({
 															value: result.value,
 															context: result.context,
 															from: response.from!,
-															indexed: this.fields(result.value, result.context)
+															indexed: this.transformer(
+																result.value,
+																result.context,
+															),
 														});
 													}
 												}
@@ -896,13 +1111,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 										.catch((e) => {
 											logger.error(
 												"Failed to collect sorted results from: " +
-												peer +
-												". " +
-												e?.message
+													peer +
+													". " +
+													e?.message,
 											);
 											peerBufferMap.delete(peer);
-										})
-								)
+										}),
+								),
 						);
 					}
 				} else {
@@ -927,9 +1142,13 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 			const fetchedAll = await fetchAtLeast(n);
 
 			// get n next top entries, shift and pull more results
-			const results = await types.resolvedSort(
-				peerBuffers(),
-				queryRequest.sort
+			const peerBuffersArr = peerBuffers();
+			const results = peerBuffersArr.sort((a, b) =>
+				indexerTypes.extractSortCompare(
+					a.indexed,
+					b.indexed,
+					queryRequest.sort,
+				),
 			);
 
 			const pendingMoreResults = n < results.length;
@@ -942,24 +1161,25 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					logger.error("Unexpected empty result buffer");
 					continue;
 				}
-				const idx = arr.buffer.findIndex((x) => x.value == result.value);
+				const idx = arr.buffer.findIndex((x) => x.value === result.value);
 				if (idx >= 0) {
 					arr.buffer.splice(idx, 1);
 				}
 			}
 
 			done = fetchedAll && !pendingMoreResults;
+
 			return dedup(
 				batch.map((x) => x.value),
-				this.indexByResolver
+				this.indexByResolver,
 			);
 		};
 
 		const close = async () => {
 			controller.abort(new AbortError("Iterator closed"));
 
-			const closeRequest = new types.CloseIteratorRequest({
-				id: queryRequest.id
+			const closeRequest = new indexerTypes.CloseIteratorRequest({
+				id: queryRequest.id,
 			});
 			const promises: Promise<any>[] = [];
 			for (const [peer, buffer] of peerBufferMap) {
@@ -972,16 +1192,16 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 					promises.push(
 						this.processCloseIteratorRequest(
 							closeRequest,
-							this.node.identity.publicKey
-						)
+							this.node.identity.publicKey,
+						),
 					);
 				} else {
 					// Close remote
 					promises.push(
 						this._query.send(closeRequest, {
 							...options,
-							mode: new SilentDelivery({ to: [peer], redundancy: 1 })
-						})
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+						}),
 					);
 				}
 			}
@@ -991,7 +1211,7 @@ export class DocumentIndex<T> extends Program<OpenOptions<T>> {
 		return {
 			close,
 			next,
-			done: () => done
+			done: () => done,
 		};
 	}
 }

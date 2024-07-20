@@ -34,7 +34,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -59,17 +59,18 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/libp2p-noise": "^14.1.2",
-		"@libp2p/tcp": "^9.0.15",
-		"@libp2p/webrtc": "^4.0.13",
-		"@libp2p/websockets": "^8.0.15",
-		"@libp2p/identify": "^1.0.12",
-		"@libp2p/circuit-relay-v2": "^1.0.13",
-		"libp2p": "^1.2.3"
+		"@libp2p/tcp": "^9.1.1",
+		"@libp2p/webrtc": "^4.1.1",
+		"@libp2p/websockets": "^8.1.2",
+		"@libp2p/identify": "^2.1.2",
+		"@libp2p/circuit-relay-v2": "^1.1.2",
+		"libp2p": "^1.8.1"
 	},
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test -t node"
+		"test": "aegir test -t node",
+		"lint": "aegir lint"
 	},
 	"devDependencies": {
 		"@peerbit/time": "2.0.6"

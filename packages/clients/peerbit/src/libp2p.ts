@@ -1,12 +1,17 @@
-import { createLibp2p, type Libp2p, type Libp2pOptions, type ServiceFactoryMap } from "libp2p";
-import { DirectSub } from "@peerbit/pubsub";
-import { DirectBlock } from "@peerbit/blocks";
-import { noise } from "@dao-xyz/libp2p-noise";
-import { transports, relay, listen } from "./transports.js";
-import { identify } from "@libp2p/identify";
-import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { yamux } from "@chainsafe/libp2p-yamux";
+import { noise } from "@dao-xyz/libp2p-noise";
+import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
+import { identify } from "@libp2p/identify";
+import { DirectBlock } from "@peerbit/blocks";
 import { DefaultKeychain, type Keychain } from "@peerbit/keychain";
+import { DirectSub } from "@peerbit/pubsub";
+import {
+	type Libp2p,
+	type Libp2pOptions,
+	type ServiceFactoryMap,
+	createLibp2p,
+} from "libp2p";
+import { listen, relay, transports } from "./transports.js";
 
 export type Libp2pExtendServices = {
 	pubsub: DirectSub;
@@ -18,7 +23,11 @@ export type Libp2pExtended = Libp2p<
 >;
 
 export type Libp2pCreateOptions = Libp2pOptions<
-	Libp2pExtendServices & { relay: CircuitRelayService; identify: any }
+	Partial<Libp2pExtendServices & { relay: CircuitRelayService; identify: any }>
+>;
+
+export type PartialLibp2pCreateOptions = Libp2pOptions<
+	Partial<Libp2pExtendServices & { relay: CircuitRelayService; identify: any }>
 >;
 
 export type Libp2pCreateOptionsWithServices = Libp2pCreateOptions & {
@@ -26,52 +35,53 @@ export type Libp2pCreateOptionsWithServices = Libp2pCreateOptions & {
 };
 
 export const createLibp2pExtended = (
-	opts: Libp2pCreateOptions = {
+	opts: PartialLibp2pCreateOptions = {
 		services: {
-			blocks: (c) => new DirectBlock(c),
-			pubsub: (c) => new DirectSub(c),
-			keychain: (c) => new DefaultKeychain()
+			blocks: (c: any) => new DirectBlock(c),
+			pubsub: (c: any) => new DirectSub(c),
+			keychain: () => new DefaultKeychain(),
+		},
+	},
+): Promise<Libp2pExtended> => {
+	let extraServices: any = {};
+
+	if (!opts.services?.["relay"]) {
+		const relayComponent = relay();
+		if (relayComponent) {
+			// will be null in browser
+			extraServices["relay"] = relayComponent;
 		}
 	}
-): Promise<Libp2pExtended> => {
-	const relayIdentify: any = {
-		relay: relay(),
-		identify: identify()
-	};
-
-	// https://github.com/libp2p/js-libp2p/issues/1757
-	Object.keys(relayIdentify).forEach((key) => {
-		if (relayIdentify[key] === undefined) {
-			delete relayIdentify[key];
-		}
-	});
+	if (!opts.services?.["identify"]) {
+		extraServices["identify"] = identify();
+	}
 
 	return createLibp2p({
 		...opts,
 		connectionManager: {
 			minConnections: 0,
-			...opts.connectionManager
+			...opts.connectionManager,
 		},
 		addresses: {
 			listen: listen(),
-			...opts.addresses
+			...opts.addresses,
 		},
 		transports: opts.transports || transports(),
 		connectionEncryption: opts.connectionEncryption || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],
 		services: {
-			...relayIdentify,
 			pubsub:
 				opts.services?.pubsub ||
 				((c) =>
 					new DirectSub(c, {
-						canRelayMessage: true
+						canRelayMessage: true,
 						// auto dial true
 						// auto prune true
 					})),
 			blocks: opts.services?.blocks || ((c) => new DirectBlock(c)),
 			keychain: opts.services?.keychain || ((c) => new DefaultKeychain()),
-			...opts.services
-		}
+			...opts.services,
+			...extraServices,
+		},
 	});
 };

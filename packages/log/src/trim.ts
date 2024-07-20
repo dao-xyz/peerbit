@@ -1,8 +1,9 @@
 import { Cache } from "@peerbit/cache";
+import { SumRequest } from "@peerbit/indexer-interface";
 import PQueue from "p-queue";
-import { Entry, type ShallowEntry } from "./entry.js";
-import { type EntryNode, Values } from "./values.js";
-import { HeadsIndex } from "./heads.js";
+import type { EntryIndex } from "./entry-index.js";
+import type { Entry, ShallowEntry } from "./entry.js";
+import type { SortFn } from "./log-sorting.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {
 	if (a.type === b.type) {
@@ -79,15 +80,16 @@ export type TrimCanAppendOption = {
 export type TrimOptions = TrimCanAppendOption & TrimCondition;
 
 interface Log<T> {
-	headsIndex: HeadsIndex<T>;
-	values: () => Values<T>;
-	deleteNode: (node: EntryNode) => Promise<Entry<T> | undefined>;
+	index: EntryIndex<T>;
+	sortFn: SortFn;
+	deleteNode: (node: ShallowEntry) => Promise<Entry<T> | undefined>;
+	getLength(): number;
 }
 export class Trim<T> {
 	private _trim?: TrimOptions;
-	private _canTrimCacheLastNode: EntryNode | undefined | null;
-	private _trimLastHead: EntryNode | undefined | null;
-	private _trimLastTail: EntryNode | undefined | null;
+	private _canTrimCacheLastNode: ShallowEntry | undefined | null;
+	private _trimLastHead: ShallowEntry | undefined | null;
+	private _trimLastTail: ShallowEntry | undefined | null;
 	private _trimLastLength = 0;
 
 	private _trimLastOptions?: TrimOptions;
@@ -102,9 +104,13 @@ export class Trim<T> {
 		this._queue = new PQueue({ concurrency: 1 });
 	}
 
-	deleteFromCache(entry: Entry<T>) {
-		if (this._canTrimCacheLastNode?.value === entry.hash) {
-			this._canTrimCacheLastNode = this._canTrimCacheLastNode.prev;
+	async deleteFromCache(hash: string) {
+		if (this._canTrimCacheLastNode?.hash === hash) {
+			// we do 'getAfter' here, because earlier entries might already have been deleted or checked for deletion but not removed due to some filtering logic
+			this._canTrimCacheLastNode = await this._log.index.getAfter(
+				this._canTrimCacheLastNode,
+				false,
+			);
 		}
 	}
 
@@ -113,7 +119,7 @@ export class Trim<T> {
 	}
 
 	private async trimTask(
-		option: TrimOptions | undefined = this._trim
+		option: TrimOptions | undefined = this._trim,
 	): Promise<Entry<T>[]> {
 		if (!option) {
 			return [];
@@ -121,32 +127,40 @@ export class Trim<T> {
 		///  TODO Make this method less ugly
 		const deleted: Entry<T>[] = [];
 
-		let done: () => boolean;
-		const values = this._log.values();
+		let done: () => Promise<boolean> | boolean;
+		/* 		const valueIterator = this._log.index.query([], this._log.sortFn.sort, false); */
 		if (option.type === "length") {
 			const to = option.to;
 			const from = option.from ?? to;
-			if (values.length < from) {
+			if (this._log.getLength() < from) {
 				return [];
 			}
-			done = () => values.length <= to;
-		} else if (option.type == "bytelength") {
-			// prune to max sum payload sizes in bytes
-			const byteLengthFrom = option.from ?? option.to;
+			done = async () => this._log.getLength() <= to;
+		} else if (option.type === "bytelength") {
+			// TODO calculate the sum and cache it and update it only when entries are added or removed
+			const byteLengthFn = async () =>
+				BigInt(
+					await this._log.index.properties.index.sum(
+						new SumRequest({ key: "payloadSize" }),
+					),
+				);
 
-			if (values.byteLength < byteLengthFrom) {
+			// prune to max sum payload sizes in bytes
+			const byteLengthFrom = BigInt(option.from ?? option.to);
+
+			if ((await byteLengthFn()) < byteLengthFrom) {
 				return [];
 			}
-			done = () => values.byteLength <= option.to;
-		} else if (option.type == "time") {
+			done = async () => (await byteLengthFn()) <= option.to;
+		} else if (option.type === "time") {
 			const s0 = BigInt(+new Date() * 1e6);
 			const maxAge = option.maxAge * 1e6;
-			done = () => {
-				if (!values.tail) {
+			done = async () => {
+				if (!(await this._log.index.getOldest())) {
 					return true;
 				}
 
-				const nodeValue = values.entryIndex.getShallow(values.tail.value);
+				const nodeValue = await this._log.index.getOldest();
 
 				if (!nodeValue) {
 					return true;
@@ -158,7 +172,7 @@ export class Trim<T> {
 			return [];
 		}
 
-		const tail = values.tail;
+		const tail = await this._log.index.getOldest(false);
 
 		if (
 			this._trimLastOptions &&
@@ -182,17 +196,21 @@ export class Trim<T> {
 				!trimOptionsEqual(this._trimLastOptions, option);
 
 			changed =
-				this._trimLastHead !== values.head ||
-				this._trimLastTail !== values.tail ||
-				this._trimLastLength !== this._log.headsIndex.size ||
+				this._trimLastHead?.hash !==
+					(await this._log.index.getNewest())?.hash ||
+				this._trimLastTail?.hash !==
+					(await this._log.index.getOldest())?.hash ||
+				this._trimLastLength !== this._log.getLength() ||
 				trimOptionsChanged;
+
 			if (!changed) {
 				return [];
 			}
 		}
 
-		let node: EntryNode | undefined | null = this._canTrimCacheLastNode || tail; // TODO should we do this._canTrimCacheLastNode?.prev instead ?
-		let lastNode: EntryNode | undefined | null = node;
+		let node: ShallowEntry | undefined | null =
+			this._canTrimCacheLastNode || tail; // TODO should we do this._canTrimCacheLastNode?.prev instead ?
+		let lastNode: ShallowEntry | undefined | null = node;
 		let looped = false;
 		const startNode = node;
 		let canTrimByGid: Map<string, boolean> | undefined = undefined;
@@ -200,24 +218,27 @@ export class Trim<T> {
 		// TODO only go through heads?
 		while (
 			node &&
-			!done() &&
-			values.length > 0 &&
+			!(await done()) &&
+			this._log.getLength() > 0 &&
 			node &&
-			(!looped || node !== startNode)
+			(!looped || node.hash !== startNode?.hash)
 		) {
 			let deleteAble: boolean | undefined = true;
 			if (option.filter?.canTrim) {
 				canTrimByGid = canTrimByGid || new Map();
-				const indexedEntry = values.entryIndex.getShallow(node.value)!; // TODO check undefined
-				deleteAble = canTrimByGid.get(indexedEntry.meta.gid);
+				if (!node) {
+					throw new Error("Unexpected missing entry when trimming: " + node);
+				}
+
+				deleteAble = canTrimByGid.get(node.meta.gid);
 				if (deleteAble === undefined) {
-					deleteAble = await option.filter?.canTrim(indexedEntry);
-					canTrimByGid.set(indexedEntry.meta.gid, deleteAble);
+					deleteAble = await option.filter?.canTrim(node);
+					canTrimByGid.set(node.meta.gid, deleteAble);
 				}
 
 				if (!deleteAble && cacheProgress) {
 					// ignore it
-					this._canTrimCacheHashBreakpoint.add(node.value, true);
+					this._canTrimCacheHashBreakpoint.add(node.hash, true);
 				}
 			}
 
@@ -225,10 +246,14 @@ export class Trim<T> {
 			if (deleteAble) {
 				// Do this before deleteNode, else prev/next might be gone
 
-				// @ts-ignore
-				const prev = node.prev;
-				// @ts-ignore
-				const next = node.next;
+				const prev: ShallowEntry | undefined = await this._log.index.getAfter(
+					node,
+					false,
+				);
+				const next: ShallowEntry | undefined = await this._log.index.getBefore(
+					node,
+					false,
+				);
 
 				const entry = await this._log.deleteNode(node);
 				if (entry) {
@@ -241,7 +266,7 @@ export class Trim<T> {
 				lastNode = prev || next;
 			} else {
 				lastNode = node;
-				node = node?.prev;
+				node = await this._log.index.getAfter(node, false);
 			}
 
 			if (!node) {
@@ -256,9 +281,9 @@ export class Trim<T> {
 
 		// remember the node where we started last time from
 		this._canTrimCacheLastNode = node || lastNode;
-		this._trimLastHead = values.head;
-		this._trimLastTail = values.tail;
-		this._trimLastLength = this._log.headsIndex.size;
+		this._trimLastHead = await this._log.index.getNewest();
+		this._trimLastTail = await this._log.index.getOldest();
+		this._trimLastLength = this._log.getLength();
 		this._trimLastOptions = option;
 		this._trimLastSeed = seed;
 
@@ -269,12 +294,12 @@ export class Trim<T> {
 	 * @returns deleted entries
 	 */
 	async trim(
-		option: TrimOptions | undefined = this._trim
+		options: TrimOptions | undefined = this._trim,
 	): Promise<Entry<T>[] | undefined> {
-		if (!option) {
+		if (!options) {
 			return;
 		}
-		const result = await this._queue.add(() => this.trimTask(option));
+		const result = await this._queue.add(() => this.trimTask(options));
 		if (result instanceof Object) {
 			return result;
 		}

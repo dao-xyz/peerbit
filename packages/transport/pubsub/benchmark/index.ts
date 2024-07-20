@@ -1,30 +1,30 @@
-import B from "benchmark";
-import { TestSession } from "@peerbit/libp2p-test-utils";
-import { DirectSub } from "../src/index.js";
-import crypto from "crypto";
-import { waitForPeers } from "@peerbit/stream";
 import { tcp } from "@libp2p/tcp";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import { DataEvent } from "@peerbit/pubsub-interface";
+import { waitForPeers } from "@peerbit/stream";
+import B from "benchmark";
+import crypto from "crypto";
+import { DirectSub } from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/index.ts"
 // size: 1kb x 1,722 ops/sec ±1.89% (82 runs sampled)
 // size: 1000kb x 107 ops/sec ±2.02% (85 runs sampled)
 
 const session = await TestSession.disconnected(4, {
 	transports: [tcp()],
 	services: {
-		pubsub: (c) =>
+		pubsub: (c: any) =>
 			new DirectSub(c, {
 				canRelayMessage: true,
-				connectionManager: false
-			})
-	}
+				connectionManager: false,
+			}),
+	},
 });
 
 await session.connect([
 	[session.peers[0], session.peers[1]],
 	[session.peers[1], session.peers[2]],
-	[session.peers[2], session.peers[3]]
+	[session.peers[2], session.peers[3]],
 ]);
 
 /* 
@@ -47,15 +47,15 @@ const TOPIC = "world";
 session.peers[session.peers.length - 1].services.pubsub.subscribe(TOPIC);
 await waitForPeers(
 	session.peers[0].services.pubsub,
-	session.peers[1].services.pubsub
+	session.peers[1].services.pubsub,
 );
 await waitForPeers(
 	session.peers[1].services.pubsub,
-	session.peers[2].services.pubsub
+	session.peers[2].services.pubsub,
 );
 await waitForPeers(
 	session.peers[2].services.pubsub,
-	session.peers[3].services.pubsub
+	session.peers[3].services.pubsub,
 );
 let suite = new B.Suite();
 let listener: ((msg: any) => any) | undefined = undefined;
@@ -80,7 +80,7 @@ for (const size of sizes) {
 
 			session.peers[session.peers.length - 1].services.pubsub.addEventListener(
 				"data",
-				listener
+				listener,
 			);
 			msgMap.clear();
 		},
@@ -88,7 +88,7 @@ for (const size of sizes) {
 			session.peers[
 				session.peers.length - 1
 			].services.pubsub.removeEventListener("data", listener);
-		}
+		},
 	});
 }
 suite

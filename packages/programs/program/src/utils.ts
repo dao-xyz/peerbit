@@ -1,43 +1,13 @@
 import {
 	type AbstractType,
 	type Constructor,
-	getSchema,
-	StructKind
+	getSchemasBottomUp,
 } from "@dao-xyz/borsh";
-
-const MAX_PROTOTYPE_SEARCH = 500;
-const PROTOTYPE_DESERIALIZATION_HANDLER_OFFSET = 500;
-const PROTOTYPE_DEPENDENCY_HANDLER_OFFSET =
-	PROTOTYPE_DESERIALIZATION_HANDLER_OFFSET + MAX_PROTOTYPE_SEARCH;
-const getDependencies = <T>(
-	ctor: Constructor<T> | AbstractType<T>,
-	offset: number
-): Constructor<T> | AbstractType<T> | undefined =>
-	ctor.prototype[PROTOTYPE_DEPENDENCY_HANDLER_OFFSET + offset];
-
-const getSchemasBottomUp = <T>(
-	ctor: Constructor<T> | AbstractType<T>
-): StructKind[] => {
-	let last: StructKind | undefined = undefined;
-	const ret: StructKind[] = [];
-	for (let i = 0; i < 1000; i++) {
-		const curr = getSchema(ctor, i);
-		if (!curr) {
-			if (last && !getDependencies(ctor, i)?.length) {
-				return ret;
-			}
-		} else {
-			ret.push(curr);
-			last = curr;
-		}
-	}
-	return ret;
-};
 
 export const getValuesWithType = <T>(
 	from: any,
 	type: Constructor<T> | AbstractType<T>,
-	stopAtType?: Constructor<any> | AbstractType<any>
+	stopAtType?: Constructor<any> | AbstractType<any>,
 ): T[] => {
 	const schemas = getSchemasBottomUp(from.constructor);
 	const values: T[] = [];

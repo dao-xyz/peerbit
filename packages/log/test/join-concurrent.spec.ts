@@ -1,11 +1,10 @@
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import assert from "assert";
-import { Log } from "../src/log.js";
+import { expect } from "chai";
 import { SortByEntryHash } from "../src/log-sorting.js";
-
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
+import { Log } from "../src/log.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
-import { expect } from "chai";
 
 describe("concurrency", function () {
 	let store: BlockStore;
@@ -25,12 +24,12 @@ describe("concurrency", function () {
 			log1 = new Log();
 			await log1.open(store, signKey, {
 				sortFn: SortByEntryHash,
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 			log2 = new Log();
 			await log2.open(store, signKey, {
 				sortFn: SortByEntryHash,
-				encoding: JSON_ENCODING
+				encoding: JSON_ENCODING,
 			});
 		});
 
@@ -47,7 +46,7 @@ describe("concurrency", function () {
 			expect(log1.length).equal(20);
 			assert.deepStrictEqual(
 				(await log1.toArray()).map((e) => e.payload.getValue()),
-				(await log2.toArray()).map((e) => e.payload.getValue())
+				(await log2.toArray()).map((e) => e.payload.getValue()),
 			);
 
 			// Joining after concurrently appending same payload joins entry once
@@ -61,9 +60,9 @@ describe("concurrency", function () {
 
 			expect(log1.length).equal(log2.length);
 			expect(log1.length).equal(40);
-			expect((await log1.toArray()).map((e) => e.payload.getValue())).to.deep.equal(
-				(await log2.toArray()).map((e) => e.payload.getValue())
-			);
+			expect(
+				(await log1.toArray()).map((e) => e.payload.getValue()),
+			).to.deep.equal((await log2.toArray()).map((e) => e.payload.getValue()));
 		});
 
 		/*  Below test is not true any more since we are using HLC
@@ -86,8 +85,8 @@ describe("concurrency", function () {
 			expect(log1.length).equal(41);
 			expect(log2.length).equal(41);
 			assert.deepStrictEqual(
-				log1.values.toArray().map((e) => e.payload.getValue()),
-				log2.values.toArray().map((e) => e.payload.getValue())
+				log1.toArray().map((e) => e.payload.getValue()),
+				log2.toArray().map((e) => e.payload.getValue())
 			);
 		}); */
 

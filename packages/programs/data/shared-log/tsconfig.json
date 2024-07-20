@@ -4,11 +4,9 @@
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
 		"strictNullChecks": false,
-		"outDir": "dist"
+		"outDir": "dist",
+		"skipLibCheck": true,
+		"checkJs": false
 	},
-	"include": [
-		"src",
-		"test",
-		"benchmark"
-	]
+	"include": ["src", "test", "benchmark"]
 }

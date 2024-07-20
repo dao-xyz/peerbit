@@ -1,0 +1,80 @@
+{
+	"name": "@peerbit/indexer-sqlite3",
+	"version": "0.0.1",
+	"description": "SQLite index for document store",
+	"type": "module",
+	"sideEffects": false,
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/e2e",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		},
+		"./sqlite.org": {
+			"types": "./dist/peerbit/sqlite.org/sqlite3.d.ts",
+			"import": "./dist/peerbit/sqlite.org/sqlite3.js"
+		}
+	},
+	"browser": {
+		"./dist/src/sqlite3.js": "./dist/src/sqlite3.browser.js"
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"clean": "aegir clean",
+		"copy-sqlite-wasm": "mkdir -p ./dist/peerbit/ && cp -r ../../../../node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/. ./dist/peerbit/",
+		"build-worker": "node ../../../../node_modules/esbuild/bin/esbuild --bundle ./src/sqlite3.worker.ts --format=esm  --outfile=./dist/peerbit/sqlite3.worker.min.js",
+		"build": "aegir build && npm run build-worker && npm run copy-sqlite-wasm",
+		"test": "aegir test",
+		"test:browser": "aegir clean && aegir test -t browser",
+		"test:node": "aegir clean && aegir test -t node",
+		"lint": "aegir lint"
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"dependencies": {
+		"better-sqlite3": "^11.1.2",
+		"@peerbit/indexer-interface": "^0.0.1",
+		"@sqlite.org/sqlite-wasm": "^3.46.0-build2"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.11",
+		"@peerbit/indexer-tests": "^0.0.1"
+	}
+}

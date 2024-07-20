@@ -1,15 +1,15 @@
-import B from "benchmark";
-import { field, option, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { v4 as uuid } from "uuid";
-import { Peerbit, createLibp2pExtended } from "peerbit";
-import { tcp } from "@libp2p/tcp";
-import { Documents, type SetupOptions } from "../src/program.js";
-import { DirectSub } from "@peerbit/pubsub";
 import { yamux } from "@chainsafe/libp2p-yamux";
+import { field, option, variant } from "@dao-xyz/borsh";
+import { tcp } from "@libp2p/tcp";
+import { Program } from "@peerbit/program";
+import { DirectSub } from "@peerbit/pubsub";
 import { delay } from "@peerbit/time";
+import B from "benchmark";
+import { Peerbit, createLibp2pExtended } from "peerbit";
+import { v4 as uuid } from "uuid";
+import { Documents, type SetupOptions } from "../src/program.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/replication.ts"
+// Run with "node --loader ts-node/esm ./benchmark/replication.ts"
 // put x 862 ops/sec ±4.75% (75 runs sampled)
 
 @variant("document")
@@ -53,37 +53,37 @@ const peers = await Promise.all(
 			transports: [tcp()],
 			streamMuxers: [yamux()],
 			services: {
-				pubsub: (sub) =>
+				pubsub: (sub: any) =>
 					new DirectSub(sub, {
-						canRelayMessage: true
+						canRelayMessage: true,
 						/* connectionManager: true */
-					})
-			}
+					}),
+			},
 		}),
 		await createLibp2pExtended({
 			connectionManager: {},
 			transports: [tcp()],
 			streamMuxers: [yamux()],
 			services: {
-				pubsub: (sub) =>
+				pubsub: (sub: any) =>
 					new DirectSub(sub, {
-						canRelayMessage: true
+						canRelayMessage: true,
 						/* connectionManager: true */
-					})
-			}
+					}),
+			},
 		}),
 		await createLibp2pExtended({
 			transports: [tcp()],
 			streamMuxers: [yamux()],
 			services: {
-				pubsub: (sub) =>
+				pubsub: (sub: any) =>
 					new DirectSub(sub, {
-						canRelayMessage: true
+						canRelayMessage: true,
 						/* connectionManager: true */
-					})
-			}
-		})
-	].map((x) => Peerbit.create({ libp2p: x }))
+					}),
+			},
+		}),
+	].map((x) => Peerbit.create({ libp2p: x })),
 );
 
 await peers[0].dial(peers[1].getMultiaddrs());
@@ -101,20 +101,18 @@ for (const [i, client] of peers.entries()) {
 	if (address) {
 		store = await client.open<TestStore>(address, {
 			args: {
-				role: {
-					type: "replicator",
-					factor: 1
-				}
-			}
+				replicate: {
+					factor: 1,
+				},
+			},
 		});
 	} else {
 		store = await client.open(new TestStore(), {
 			args: {
-				role: {
-					type: "replicator",
-					factor: 1
-				}
-			}
+				replicate: {
+					factor: 1,
+				},
+			},
 		});
 		address = store.address;
 	}
@@ -134,7 +132,7 @@ const createDoc = () =>
 	new Document({
 		id: uuid(),
 		name: uuid(),
-		number: 2341n
+		number: 2341n,
 	});
 
 // warmup
@@ -154,7 +152,7 @@ suite
 			readerResolver.set(doc.id, deferred.resolve.bind(deferred));
 			await writeStore.docs.put(doc, { unique: true });
 		},
-		defer: true
+		defer: true,
 	})
 	.on("cycle", (event: any) => {
 		console.log(String(event.target));

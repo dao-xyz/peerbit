@@ -1,9 +1,9 @@
+import { deserialize, field, serialize } from "@dao-xyz/borsh";
 import B from "benchmark";
 import crypto from "crypto";
 import { sha256, sha256Base64 } from "../src/hash.js";
-import { deserialize, field, serialize } from "@dao-xyz/borsh";
 
-//node --loader ts-node/esm ./src/__benchmark__/hash.ts
+//node --loader ts-node/esm ./benchmark/hash.ts
 
 /**
  * Benchmark for hashing + serializing
@@ -43,17 +43,17 @@ suite
 			deserialize(serialize(new MBytes(await sha256(getSample()))), MBytes);
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.add("hash-to-string", {
 		fn: async (deferred: any) => {
 			deserialize(
 				serialize(new MSstring(await sha256Base64(getSample()))),
-				MSstring
+				MSstring,
 			);
 			deferred.resolve();
 		},
-		defer: true
+		defer: true,
 	})
 	.on("error", (error: any) => {
 		throw error;

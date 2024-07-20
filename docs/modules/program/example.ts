@@ -1,9 +1,11 @@
 /// [program]
 /// [definition]
-import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
-import { SharedLog, type RoleOptions } from "@peerbit/shared-log";
-import assert from 'node:assert'
+import { Program } from "@peerbit/program";
+import { type ReplicationOptions, SharedLog } from "@peerbit/shared-log";
+import assert from "node:assert";
+/// [definition]
+import { Peerbit } from "peerbit";
 
 // The line below will make sure that every time the database manifest
 // gets serialized, "my-database" will prefix the serialized bytes (in UTF-8 encoding) so that peers
@@ -11,7 +13,7 @@ import assert from 'node:assert'
 
 // We define an type here that is used as opening argument
 // role defines the responsibilities for replicating the data
-type Args = { role: RoleOptions };
+type Args = { replicate: ReplicationOptions };
 
 @variant("my-database") // required
 class MyDatabase extends Program<Args> {
@@ -22,12 +24,9 @@ class MyDatabase extends Program<Args> {
 	}
 
 	async open(args?: Args): Promise<void> {
-		return this.log.open({ role: args?.role });
+		return this.log.open({ replicate: args?.replicate });
 	}
 }
-
-/// [definition]
-import { Peerbit } from "peerbit";
 
 const client = await Peerbit.create();
 
@@ -36,19 +35,21 @@ const client = await Peerbit.create();
 Open a program with the intention of replicating data and do services for data related tasks, as search (default behaviour)
 you can also do  
 
-await client.open(new MyDatabase(), { args: { role: 'observer' } });
+await client.open(new MyDatabase(), { args: { replicate: false } });
 	
 to not participate in replication work
 */
-await client.open(new MyDatabase(), { args: { role: 'replicator' } });
+await client.open(new MyDatabase(), { args: { replicate: true } });
 
 // Open a program with the intention of not doing any work
-const store = await client.open(new MyDatabase(), { args: { role: 'observer' } });
+const store = await client.open(new MyDatabase(), {
+	args: { replicate: false },
+});
 /// [role]
 
 /// [append]
 const { entry } = await store.log.append(new Uint8Array([1, 2, 3]));
-assert.equal(entry.getPayloadValue(), (new Uint8Array([1, 2, 3])));
+assert.equal(entry.getPayloadValue(), new Uint8Array([1, 2, 3]));
 /// [append]
 
 await client.stop();

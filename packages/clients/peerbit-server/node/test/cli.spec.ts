@@ -1,30 +1,27 @@
 // This more like a playground as of now
 // No tests yet,
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
-import { execSync, exec, ChildProcess } from "child_process";
-
 import { waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import { type ChildProcess, exec, execSync } from "child_process";
 import fs from "fs";
+import path from "path";
 import readline from "readline";
 import { v4 as uuid } from "uuid";
-import { Ed25519Keypair } from "@peerbit/crypto";
-import { Trust } from "../src/trust.js";
 import { getTrustPath } from "../src/config.js";
-import { expect } from "chai";
-import path from 'path';
+import { Trust } from "../src/trust.js";
 import { __dirname, modulesPath } from "./utils.js";
-
 
 const runCommandProcess = (args: any): ProcessWithOut => {
 	const cmd = `node --experimental-vm-modules ${path.join(
 		__dirname,
 		"../",
-		"lib",
-		"esm",
-		"bin.js"
+		"dist",
+		"bin.js",
 	)} ${args}`;
 	const p = exec(
-		cmd /* , { env: { ...process.env, "PEERBIT_MODULES_PATH": modulesPath } } */
+		cmd /* , { env: { ...process.env, "PEERBIT_MODULES_PATH": modulesPath } } */,
 	);
 	return getProcessWithOut(p);
 };
@@ -35,7 +32,7 @@ const runCommand = (args: any): string => {
 		"../",
 		"lib",
 		"esm",
-		"bin.js"
+		"bin.js",
 	)} ${args}`;
 	return execSync(cmd).toString();
 };
@@ -55,7 +52,7 @@ const getProcessWithOut = (p: ChildProcess): ProcessWithOut => {
 	let err: string[] = [];
 	let outSinceWrite: string[] = [];
 	const rl = readline.createInterface({
-		input: p.stdout!
+		input: p.stdout!,
 	});
 
 	p.stderr!.on("data", (d: string) => {
@@ -79,7 +76,7 @@ const getProcessWithOut = (p: ChildProcess): ProcessWithOut => {
 		out,
 		err,
 		write,
-		outSinceWrite
+		outSinceWrite,
 	};
 };
 
@@ -90,9 +87,9 @@ const countPeerIds = (out: string[]): number => {
 const debugProcess = (p: ProcessWithOut) => {
 	console.log(
 		"DEBUG PROCESS:\n" +
-		p.out.join("\n") +
-		"\n--------------\n" +
-		p.err.join("\n")
+			p.out.join("\n") +
+			"\n--------------\n" +
+			p.err.join("\n"),
 	);
 };
 
@@ -104,7 +101,7 @@ describe("cli", () => {
 
 	const start = async (extraArgs: string = "") => {
 		const cmd = runCommandProcess(
-			`start --reset --port-api ${PORT} --port-node 0 --directory ${configDirectory} ${extraArgs}`
+			`start --reset --port-api ${PORT} --port-node 0 --directory ${configDirectory} ${extraArgs}`,
 		);
 		processes.push(cmd);
 		try {
@@ -117,25 +114,25 @@ describe("cli", () => {
 		await waitForResolved(() =>
 			expect(
 				runCommand(
-					`remote connect ${LOCAL_REMOTE_NAME} --directory ${configDirectory}`
-				)
-			)
+					`remote connect ${LOCAL_REMOTE_NAME} --directory ${configDirectory}`,
+				),
+			),
 		);
 		return cmd;
 	};
 
 	const addRemote = (
 		remote: string = LOCAL_REMOTE_NAME,
-		address: string = "http://localhost:" + PORT
+		address: string = "http://localhost:" + PORT,
 	): void => {
 		runCommand(
-			`remote add ${remote} ${address} --directory ${configDirectory}`
+			`remote add ${remote} ${address} --directory ${configDirectory}`,
 		);
 	};
 
 	const connect = (remote: string = LOCAL_REMOTE_NAME): ProcessWithOut => {
 		const p = runCommandProcess(
-			`remote connect ${remote} --directory ${configDirectory}`
+			`remote connect ${remote} --directory ${configDirectory}`,
 		);
 		processes.push(p);
 		return p;
@@ -176,7 +173,7 @@ describe("cli", () => {
 		try {
 			await waitForResolved(
 				() => expect(countPeerIds(t.outSinceWrite)).greaterThan(0),
-				{ delayInterval: 500, timeout: 10 * 1000 }
+				{ delayInterval: 500, timeout: 10 * 1000 },
 			);
 		} catch (error) {
 			debugProcess(t);
@@ -197,12 +194,12 @@ describe("cli", () => {
 			await start(
 				`--grant-access ${(await kp1.toPeerId()).toString()} --grant-access ${(
 					await kp2.toPeerId()
-				).toString()}`
+				).toString()}`,
 			);
 			const trust = new Trust(getTrustPath(configDirectory));
 			expect(trust.trusted).to.have.members([
 				kp1.publicKey.hashcode(),
-				kp2.publicKey.hashcode()
+				kp2.publicKey.hashcode(),
 			]);
 		});
 	});
@@ -222,7 +219,7 @@ describe("cli", () => {
 		it("add valid remote", async () => {
 			await start();
 			runCommand(
-				`remote add xyz123 http://localhost:${PORT}  --directory ${configDirectory}`
+				`remote add xyz123 http://localhost:${PORT}  --directory ${configDirectory}`,
 			);
 			const terminal = await connect("xyz123");
 			await checkPeerId(terminal);
@@ -233,10 +230,10 @@ describe("cli", () => {
 			beforeEach(async () => {
 				await start();
 				runCommand(
-					`remote add a http://localhost:${PORT} --group ${GROUP_A} --directory ${configDirectory}`
+					`remote add a http://localhost:${PORT} --group ${GROUP_A} --directory ${configDirectory}`,
 				);
 				runCommand(
-					`remote add b http://localhost:${PORT} --directory ${configDirectory}`
+					`remote add b http://localhost:${PORT} --directory ${configDirectory}`,
 				);
 			});
 
@@ -245,7 +242,7 @@ describe("cli", () => {
 				terminal.out.splice(0, terminal.out.length);
 				terminal.write("peer id");
 				await waitForResolved(() =>
-					expect(countPeerIds(terminal.out)).equal(2)
+					expect(countPeerIds(terminal.out)).equal(2),
 				);
 			});
 
@@ -254,7 +251,7 @@ describe("cli", () => {
 				terminal.out.splice(0, terminal.out.length);
 				terminal.write("peer id");
 				await waitForResolved(
-					() => expect(countPeerIds(terminal.out)).equal(3) // a, b, LOCAL_REMOTE
+					() => expect(countPeerIds(terminal.out)).equal(3), // a, b, LOCAL_REMOTE
 				);
 			});
 
@@ -263,7 +260,7 @@ describe("cli", () => {
 				terminal.out.splice(0, terminal.out.length);
 				terminal.write("peer id");
 				await waitForResolved(() =>
-					expect(countPeerIds(terminal.out)).equal(1)
+					expect(countPeerIds(terminal.out)).equal(1),
 				);
 			});
 		});
@@ -275,21 +272,21 @@ describe("cli", () => {
 				try {
 					await waitForResolved(() =>
 						expect(processes[0].out[processes[0].out.length - 1]).equal(
-							"Shutting down node (exit)"
-						)
+							"Shutting down node (exit)",
+						),
 					);
 				} catch (error) {
 					console.log(
 						"TERMINAL: Never resolved start:\n" +
-						terminal.out.join("\n") +
-						"\n--------------\n" +
-						terminal.err.join("\n")
+							terminal.out.join("\n") +
+							"\n--------------\n" +
+							terminal.err.join("\n"),
 					);
 					console.log(
 						"SERVER: Never resolved start:\n" +
-						processes[0].out.join("\n") +
-						"\n--------------\n" +
-						processes[0].err.join("\n")
+							processes[0].out.join("\n") +
+							"\n--------------\n" +
+							processes[0].err.join("\n"),
 					);
 
 					throw error;
@@ -306,8 +303,8 @@ describe("cli", () => {
 				terminal.write("restart");
 				await waitForResolved(() =>
 					expect(
-						s.out.filter((x) => x.includes("Starting node with address(es)"))
-					).to.have.length(2)
+						s.out.filter((x) => x.includes("Starting node with address(es)")),
+					).to.have.length(2),
 				);
 				await checkPeerId(terminal);
 			});

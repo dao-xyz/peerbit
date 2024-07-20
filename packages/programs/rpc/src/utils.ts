@@ -1,15 +1,16 @@
+import { type Constructor } from "@dao-xyz/borsh";
 import {
-	DeliveryMode,
+	type DeliveryMode,
 	type PriorityOptions,
-	SilentDelivery
+	SilentDelivery,
 } from "@peerbit/stream-interface";
-import { RPC } from "./controller.js";
+import { type RPC } from "./controller.js";
 import type {
 	EncryptionOptions,
 	RPCRequestResponseOptions,
-	RPCResponse
+	RPCResponse,
 } from "./io.js";
-import { type Constructor } from "@dao-xyz/borsh";
+
 export class MissingResponsesError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -23,11 +24,11 @@ export const queryAll = <Q, R>(
 	groups: string[][],
 	request: Q,
 	responseHandler: (response: RPCResponse<R>[]) => Promise<void> | void,
-	options?: RPCRequestAllOptions<R> | undefined
+	options?: RPCRequestAllOptions<R> | undefined,
 ) => {
 	// In each shard/group only query a subset
 	groups = [...groups].filter(
-		(x) => !x.find((y) => y === rpc.node.identity.publicKey.hashcode())
+		(x) => !x.find((y) => y === rpc.node.identity.publicKey.hashcode()),
 	);
 
 	const sendModeType = options?.mode || SilentDelivery;
@@ -48,7 +49,8 @@ export const queryAll = <Q, R>(
 			if (peersToQuery.length > 0) {
 				const results = await rpc.request(request, {
 					...options,
-					mode: new sendModeType({ to: peersToQuery, redundancy: 1 }) // TODO configuration redundancy?
+					// eslint-disable-next-line new-cap
+					mode: new sendModeType({ to: peersToQuery, redundancy: 1 }), // TODO configuration redundancy?
 				});
 
 				for (const result of results) {
@@ -79,7 +81,7 @@ export const queryAll = <Q, R>(
 		}
 		if (missingReponses) {
 			throw new MissingResponsesError(
-				"Did not receive responses from all shards"
+				"Did not receive responses from all shards",
 			);
 		}
 	};

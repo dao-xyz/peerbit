@@ -1,22 +1,27 @@
-import { type AnyStore } from "@peerbit/any-store-interface";
+import { type AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
+import { CustomEvent } from "@libp2p/interface";
 import { type Multiaddr } from "@multiformats/multiaddr";
+import { type AnyStore } from "@peerbit/any-store-interface";
 import { type Blocks } from "@peerbit/blocks-interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { DataEvent, type PubSub, PublishEvent } from "@peerbit/pubsub-interface";
+import type { Indices } from "@peerbit/indexer-interface";
+import { type Keychain } from "@peerbit/keychain";
 import { type ProgramClient } from "@peerbit/program";
+import {
+	DataEvent,
+	type PubSub,
+	PublishEvent,
+} from "@peerbit/pubsub-interface";
 import * as blocks from "./blocks.js";
+import type * as connection from "./connection.js";
 import * as keychain from "./keychain.js";
 import * as lifecycle from "./lifecycle.js";
-import * as memory from "./storage.js";
-import * as native from "./native.js";
 import { Message } from "./message.js";
+import * as native from "./native.js";
 import * as network from "./network.js";
 import * as pubsub from "./pubsub.js";
-import * as connection from "./connection.js";
-import { CustomEvent } from "@libp2p/interface";
-import { serialize, deserialize, type AbstractType } from "@dao-xyz/borsh";
-import { type Keychain } from "@peerbit/keychain";
+import * as memory from "./storage.js";
 
 const levelKey = (level: string[]) => JSON.stringify(level);
 const CUSTOM_EVENT_ORIGIN_PROPERTY = "__origin";
@@ -37,7 +42,7 @@ export class PeerbitProxyHost implements ProgramClient {
 
 	constructor(
 		readonly hostClient: ProgramClient,
-		readonly messages: connection.Node
+		readonly messages: connection.Node,
 	) {
 		if (hostClient.identity instanceof Ed25519Keypair === false) {
 			throw new Error("Expecting identity to be a Ed25519Keypair keypair");
@@ -47,7 +52,7 @@ export class PeerbitProxyHost implements ProgramClient {
 		this._memoryIterator = new Map();
 
 		const dispatchFunction = this.hostClient.services.pubsub.dispatchEvent.bind(
-			this.hostClient.services.pubsub
+			this.hostClient.services.pubsub,
 		);
 
 		// Override pubsub dispatchEvent so that data that is published from one client
@@ -85,6 +90,10 @@ export class PeerbitProxyHost implements ProgramClient {
 		return this.hostClient.storage;
 	}
 
+	get indexer(): Indices {
+		return this.hostClient.indexer;
+	}
+
 	start(): Promise<void> {
 		return this.hostClient.start();
 	}
@@ -119,20 +128,20 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new network.RESP_Identity(this.identity),
-					from
+					from,
 				);
 			} else if (message instanceof network.REQ_GetMultiaddrs) {
 				const respo = this.getMultiaddrs();
 				await this.respond(
 					message,
 					new network.RESP_GetMultiAddrs(respo),
-					from
+					from,
 				);
 			} else if (message instanceof network.REQ_Dial) {
 				await this.respond(
 					message,
 					new network.RESP_DIAL(await this.dial(message.multiaddr)),
-					from
+					from,
 				);
 			} else if (message instanceof lifecycle.REQ_Start) {
 				await this.start();
@@ -146,28 +155,28 @@ export class PeerbitProxyHost implements ProgramClient {
 					new keychain.RESP_ExportKeypairById(
 						await this.services.keychain?.exportById(
 							message.keyId,
-							message.type as AbstractType<any>
-						)
+							message.type as AbstractType<any>,
+						),
 					),
-					from
+					from,
 				);
 			} else if (message instanceof keychain.REQ_ExportKeypairByKey) {
 				await this.respond(
 					message,
 					new keychain.RESP_ExportKeypairByKey(
-						await this.services.keychain?.exportByKey(message.publicKey.key)
+						await this.services.keychain?.exportByKey(message.publicKey.key),
 					),
-					from
+					from,
 				);
 			} else if (message instanceof keychain.REQ_ImportKey) {
 				await this.services.keychain?.import({
 					keypair: message.keypair,
-					id: message.keyId
+					id: message.keyId,
 				});
 				await this.respond(
 					message,
 					new keychain.RESP_ImportKey(message.messageId),
-					from
+					from,
 				);
 			} else if (message instanceof memory.StorageMessage) {
 				const request = message.message as memory.api.MemoryMessage;
@@ -182,27 +191,27 @@ export class PeerbitProxyHost implements ProgramClient {
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Clear({ level: request.level })
+							new memory.api.RESP_Clear({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Close) {
 					await m.close();
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Close({ level: request.level })
+							new memory.api.RESP_Close({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Del) {
 					await m.del(request.key);
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Del({ level: request.level })
+							new memory.api.RESP_Del({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Iterator_Next) {
 					let iterator = this._memoryIterator.get(request.id);
@@ -217,10 +226,10 @@ export class PeerbitProxyHost implements ProgramClient {
 							new memory.api.RESP_Iterator_Next({
 								keys: next.done ? [] : [next.value[0]],
 								values: next.done ? [] : [next.value[1]],
-								level: request.level
-							})
+								level: request.level,
+							}),
 						),
-						from
+						from,
 					);
 					if (next.done) {
 						this._memoryIterator.delete(request.id);
@@ -230,9 +239,9 @@ export class PeerbitProxyHost implements ProgramClient {
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Iterator_Stop({ level: request.level })
+							new memory.api.RESP_Iterator_Stop({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Get) {
 					await this.respond(
@@ -240,28 +249,28 @@ export class PeerbitProxyHost implements ProgramClient {
 						new memory.StorageMessage(
 							new memory.api.RESP_Get({
 								bytes: await m.get(request.key),
-								level: request.level
-							})
+								level: request.level,
+							}),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Open) {
 					await m.open();
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Open({ level: request.level })
+							new memory.api.RESP_Open({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Put) {
 					await m.put(request.key, request.bytes);
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Put({ level: request.level })
+							new memory.api.RESP_Put({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Status) {
 					await this.respond(
@@ -269,23 +278,23 @@ export class PeerbitProxyHost implements ProgramClient {
 						new memory.StorageMessage(
 							new memory.api.RESP_Status({
 								status: await m.status(),
-								level: request.level
-							})
+								level: request.level,
+							}),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Sublevel) {
 					const sublevel = await m.sublevel(request.name);
 					this._levels.set(
 						levelKey([...request.level, request.name]),
-						sublevel
+						sublevel,
 					);
 					await this.respond(
 						message,
 						new memory.StorageMessage(
-							new memory.api.RESP_Sublevel({ level: request.level })
+							new memory.api.RESP_Sublevel({ level: request.level }),
 						),
-						from
+						from,
 					);
 				} else if (request instanceof memory.api.REQ_Size) {
 					await this.respond(
@@ -293,10 +302,21 @@ export class PeerbitProxyHost implements ProgramClient {
 						new memory.StorageMessage(
 							new memory.api.RESP_Size({
 								size: await m.size(),
-								level: request.level
-							})
+								level: request.level,
+							}),
 						),
-						from
+						from,
+					);
+				} else if (request instanceof memory.api.REQ_Persisted) {
+					await this.respond(
+						message,
+						new memory.StorageMessage(
+							new memory.api.RESP_Persisted({
+								persisted: await m.persisted(),
+								level: request.level,
+							}),
+						),
+						from,
 					);
 				}
 			} else if (message instanceof blocks.REQ_BlockWaitFor) {
@@ -306,7 +326,7 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new blocks.RESP_BlockSize(await this.services.blocks.size()),
-					from
+					from,
 				);
 			} else if (message instanceof blocks.REQ_GetBlock) {
 				await this.respond(
@@ -314,28 +334,36 @@ export class PeerbitProxyHost implements ProgramClient {
 					new blocks.RESP_GetBlock(
 						await this.services.blocks.get(message.cid, {
 							replicate: message.replicate,
-							timeout: message.timeout
-						})
+							timeout: message.timeout,
+						}),
 					),
-					from
+					from,
 				);
 			} else if (message instanceof blocks.REQ_HasBlock) {
 				await this.respond(
 					message,
 					new blocks.RESP_HasBlock(await this.services.blocks.has(message.cid)),
-					from
+					from,
 				);
 			} else if (message instanceof blocks.REQ_PutBlock) {
 				await this.respond(
 					message,
 					new blocks.RESP_PutBlock(
-						await this.services.blocks.put(message.bytes)
+						await this.services.blocks.put(message.bytes),
 					),
-					from
+					from,
 				);
 			} else if (message instanceof blocks.REQ_RmBlock) {
 				await this.services.blocks.rm(message.cid);
 				await this.respond(message, new blocks.RESP_RmBlock(), from);
+			} else if (message instanceof blocks.REQ_Persisted) {
+				await this.respond(
+					message,
+					new blocks.RESP_Persisted({
+						persisted: await this.services.blocks.persisted(),
+					}),
+					from,
+				);
 			} else if (message instanceof pubsub.REQ_AddEventListener) {
 				let map = this._eventListenerSubscribeCounter.get(from.id);
 				if (!map) {
@@ -378,19 +406,19 @@ export class PeerbitProxyHost implements ProgramClient {
 
 						const request = new pubsub.RESP_EmitEvent(
 							message.type,
-							serialize(e.detail)
+							serialize(e.detail),
 						);
 						request.messageId = message.emitMessageId; // Same message id so that receiver can subscribe to all events emitted from this listener
 						await this.messages.send(serialize(request), from.id);
 					};
 					subscription = {
 						counter: 1,
-						fn: cb
+						fn: cb,
 					};
 
 					await this.services.pubsub.addEventListener(
 						message.type,
-						subscription.fn
+						subscription.fn,
 					);
 					map.set(message.type, subscription);
 				} else {
@@ -407,7 +435,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					if (subscription.counter === 0) {
 						this.services.pubsub.removeEventListener(
 							message.type,
-							subscription.fn
+							subscription.fn,
 						);
 					}
 					this._eventListenerSubscribeCounter.delete(message.type);
@@ -418,12 +446,12 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new pubsub.RESP_RemoveEventListener(),
-					from
+					from,
 				);
 			} else if (message instanceof pubsub.REQ_DispatchEvent) {
 				const customEvent: any = pubsub.createCustomEventFromType(
 					message.type,
-					message.data
+					message.data,
 				);
 				customEvent[CUSTOM_EVENT_ORIGIN_PROPERTY] = CUSTOM_EVENT_ORIGIN_PROXY;
 				const dispatched =
@@ -432,15 +460,15 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new pubsub.RESP_DispatchEvent(dispatched),
-					from
+					from,
 				);
 			} else if (message instanceof pubsub.REQ_GetSubscribers) {
 				await this.respond(
 					message,
 					new pubsub.RESP_GetSubscribers(
-						await this.services.pubsub.getSubscribers(message.topic)
+						await this.services.pubsub.getSubscribers(message.topic),
 					),
-					from
+					from,
 				);
 			} else if (message instanceof pubsub.REQ_Publish) {
 				await this.respond(
@@ -449,10 +477,10 @@ export class PeerbitProxyHost implements ProgramClient {
 						await this.services.pubsub.publish(message.data, {
 							mode: message.mode!,
 							topics: message.topics!,
-							client: from.id
-						})
+							client: from.id,
+						}),
 					),
-					from
+					from,
 				); // TODO types));
 			} else if (message instanceof pubsub.REQ_PubsubWaitFor) {
 				await this.services.pubsub.waitFor(message.publicKey);
@@ -479,10 +507,10 @@ export class PeerbitProxyHost implements ProgramClient {
 					new pubsub.RESP_Unsubscribe(
 						await this.services.pubsub.unsubscribe(message.topic, {
 							force: message.force,
-							data: message.data
-						})
+							data: message.data,
+						}),
 					),
-					from
+					from,
 				);
 			} else {
 				throw new Error("Unknown message type: " + message.constructor.name);

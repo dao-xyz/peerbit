@@ -1,5 +1,5 @@
-import { logger } from "../src/index.js";
 import { expect } from "chai";
+import { logger } from "../src/index.js";
 
 describe("logger", () => {
 	let reset: string | undefined;

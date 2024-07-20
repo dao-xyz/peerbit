@@ -1,14 +1,20 @@
-import type { CanAppend, Encoding, TrimOptions } from "@peerbit/log";
-import { Entry } from "@peerbit/log";
-import type { EncryptionTemplateMaybeEncrypted } from "@peerbit/log";
-import { variant, field } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
+import { field, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, randomBytes } from "@peerbit/crypto";
+import type {
+	CanAppend,
+	Change,
+	Encoding,
+	EncryptionTemplateMaybeEncrypted,
+	Entry,
+	ShallowEntry,
+	TrimOptions,
+} from "@peerbit/log";
+import { Program } from "@peerbit/program";
 import {
 	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
-	type RoleOptions,
-	SharedLog
+	type ReplicationOptions,
+	SharedLog,
 } from "../../../src/index.js";
 import { JSON_ENCODING } from "./encoding.js";
 
@@ -26,19 +32,20 @@ export class EventIndex<T> {
 	}
 
 	async get(): Promise<any> {
-		return this._log ? this._log.log.values.toArray() : [];
+		return this._log ? this._log.log.toArray() : [];
 	}
 }
 
 export type Args<T> = {
-	role?: RoleOptions;
+	onChange?: (change: Change<Operation<T>>) => void;
+	replicate?: ReplicationOptions;
 	trim?: TrimOptions;
 	replicas?: ReplicationLimitsOptions;
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
-	sync?: (entry: Entry<Operation<T>>) => boolean;
+	sync?: (entry: Entry<Operation<T>> | ShallowEntry) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 };
@@ -66,7 +73,7 @@ export class EventStore<T> extends Program<Args<T>> {
 	async open(properties?: Args<T>) {
 		this._index = new EventIndex(this.log);
 		await this.log.open({
-			onChange: () => undefined,
+			onChange: properties?.onChange,
 			canAppend: (entry) => {
 				const a = this._canAppend ? this._canAppend(entry) : true;
 				if (!a) {
@@ -75,7 +82,7 @@ export class EventStore<T> extends Program<Args<T>> {
 				return properties?.canAppend ? properties.canAppend(entry) : true;
 			},
 			canReplicate: properties?.canReplicate,
-			role: properties?.role,
+			replicate: properties?.replicate,
 			trim: properties?.trim,
 			replicas: properties?.replicas,
 			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,
@@ -83,7 +90,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 1000,
 			sync: properties?.sync,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
-			distributionDebounceTime: 1 // to make tests fast
+			distributionDebounceTime: 1, // to make tests fast
 		});
 	}
 
@@ -98,14 +105,14 @@ export class EventStore<T> extends Program<Args<T>> {
 			};
 			replicas?: AbsoluteReplicas;
 			target?: "all" | "replicators";
-		}
+		},
 	) {
 		return this.log.append(
 			{
 				op: "ADD",
-				value: data
+				value: data,
 			},
-			options
+			options,
 		);
 	}
 
@@ -123,7 +130,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			next() {
 				let item: { value?: Entry<Operation<T>>; done: boolean } = {
 					value: undefined,
-					done: true
+					done: true,
 				};
 				if (currentIndex < messages.length) {
 					item = { value: messages[currentIndex], done: false };
@@ -131,7 +138,7 @@ export class EventStore<T> extends Program<Args<T>> {
 				}
 				return item;
 			},
-			collect: () => messages
+			collect: () => messages,
 		};
 
 		return iterator;
@@ -155,7 +162,7 @@ export class EventStore<T> extends Program<Args<T>> {
 				events,
 				opts.gt ? opts.gt : opts.gte,
 				amount,
-				!!opts.gte
+				!!opts.gte,
 			);
 		} else {
 			// Lower than and lastN case, search latest first by reversing the sequence
@@ -163,7 +170,7 @@ export class EventStore<T> extends Program<Args<T>> {
 				events.reverse(),
 				opts.lt ? opts.lt : opts.lte,
 				amount,
-				opts.lte || !opts.lt
+				opts.lte || !opts.lt,
 			).reverse();
 		}
 
@@ -178,7 +185,7 @@ export class EventStore<T> extends Program<Args<T>> {
 		ops: Entry<Operation<T>>[],
 		hash: string,
 		amount: number,
-		inclusive: boolean
+		inclusive: boolean,
 	) {
 		// Find the index of the gt/lt hash, or start from the beginning of the array if not found
 		const index = ops.map((e) => e.hash).indexOf(hash);

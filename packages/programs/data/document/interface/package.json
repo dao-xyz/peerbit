@@ -35,7 +35,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -52,12 +52,14 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test"
+		"test": "",
+		"lint": "aegir lint"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.2",
-		"@peerbit/crypto": "^2.2.0"
+		"@dao-xyz/borsh": "^5.2.3",
+		"@peerbit/crypto": "^2.2.0",
+		"@peerbit/indexer-interface": "^0.0.1"
 	}
 }

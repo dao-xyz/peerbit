@@ -1,12 +1,12 @@
-import B from "benchmark";
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents, type SetupOptions } from "../src/program.js";
+import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
-import { type ProgramClient, Program } from "@peerbit/program";
-import { v4 as uuid } from "uuid";
+import B from "benchmark";
 import crypto from "crypto";
+import { v4 as uuid } from "uuid";
+import { Documents, type SetupOptions } from "../src/program.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/index.ts"
+// Run with "node --loader ts-node/esm ./benchmark/index.ts"
 // put x 9,522 ops/sec ±4.61% (76 runs sampled) (prev merge store with log: put x 11,527 ops/sec ±6.09% (75 runs sampled))
 
 @variant("document")
@@ -53,20 +53,19 @@ const peersCount = 1;
 const session = await TestSession.connected(peersCount);
 
 const store = new TestStore({
-	docs: new Documents<Document>()
+	docs: new Documents<Document>(),
 });
 
 const client: ProgramClient = session.peers[0];
 await client.open(store, {
 	args: {
-		role: {
-			type: "replicator",
-			factor: 1
+		replicate: {
+			factor: 1,
 		},
 		log: {
-			trim: { type: "length" as const, to: 100 }
-		}
-	}
+			trim: { type: "length" as const, to: 100 },
+		},
+	},
 });
 
 const resolver: Map<string, () => void> = new Map();
@@ -85,7 +84,7 @@ suite
 				id: uuid(),
 				name: "hello",
 				number: 1n,
-				bytes: crypto.randomBytes(1200)
+				bytes: crypto.randomBytes(1200),
 			});
 			resolver.set(doc.id, () => {
 				deferred.resolve();
@@ -94,7 +93,7 @@ suite
 		},
 
 		minSamples: 300,
-		defer: true
+		defer: true,
 	})
 	.on("cycle", (event: any) => {
 		console.log(String(event.target));

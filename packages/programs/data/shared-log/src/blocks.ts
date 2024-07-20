@@ -2,7 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import {
 	BlockRequest,
 	BlockResponse,
-	BlockMessage as IBlockMessage
+	BlockMessage as IBlockMessage,
 } from "@peerbit/blocks";
 import { TransportMessage } from "./message.js";
 

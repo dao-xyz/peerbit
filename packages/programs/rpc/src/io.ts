@@ -1,8 +1,8 @@
-import {
-	X25519PublicKey,
+import type {
 	Ed25519PublicKey,
 	PublicSignKey,
-	X25519Keypair
+	X25519Keypair,
+	X25519PublicKey,
 } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import type { PriorityOptions, WithMode } from "@peerbit/stream-interface";

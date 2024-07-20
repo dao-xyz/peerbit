@@ -1,5 +1,5 @@
+import { expect } from "chai";
 import { createLibp2pExtended } from "../src/libp2p.js";
-import { expect } from 'chai';
 
 it("starts", async () => {
 	const node = await createLibp2pExtended();

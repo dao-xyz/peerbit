@@ -1,17 +1,17 @@
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type PeerId } from "@libp2p/interface";
+import { createStore } from "@peerbit/any-store";
+import { type AnyStore } from "@peerbit/any-store-interface";
 import {
+	type Blocks,
 	cidifyString,
 	codecCodes,
 	createBlock,
 	defaultHasher,
-	stringifyCid
-} from "./block.js";
-import { decode, type Block } from "multiformats/block";
+	stringifyCid,
+} from "@peerbit/blocks-interface";
+import { type PublicSignKey } from "@peerbit/crypto";
 import { waitFor } from "@peerbit/time";
-import { type PeerId } from "@libp2p/interface";
-import { PublicSignKey } from "@peerbit/crypto";
-import { createStore } from "@peerbit/any-store";
-import { type AnyStore } from "@peerbit/any-store-interface";
+import { type Block, decode } from "multiformats/block";
 
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
@@ -29,7 +29,7 @@ export class AnyBlockStore implements Blocks {
 			links?: string[];
 			timeout?: number;
 			hasher?: any;
-		}
+		},
 	): Promise<Uint8Array | undefined> {
 		const cidObject = cidifyString(cid);
 		try {
@@ -41,7 +41,7 @@ export class AnyBlockStore implements Blocks {
 			const block = await decode({
 				bytes,
 				codec,
-				hasher: options?.hasher || defaultHasher
+				hasher: options?.hasher || defaultHasher,
 			});
 			return (block as Block<Uint8Array, any, any, any>).bytes;
 		} catch (error: any) {
@@ -87,8 +87,8 @@ export class AnyBlockStore implements Blocks {
 				{
 					delayInterval: 100,
 					timeout: 10 * 1000,
-					signal: this._closeController.signal
-				}
+					signal: this._closeController.signal,
+				},
 			);
 			await this._opening;
 		} finally {
@@ -97,7 +97,7 @@ export class AnyBlockStore implements Blocks {
 	}
 
 	async stop(): Promise<void> {
-		this._onClose && this._onClose();
+		this._onClose?.();
 		this._closeController?.abort();
 		return this._store.close();
 	}
@@ -106,10 +106,14 @@ export class AnyBlockStore implements Blocks {
 		return this._store.status();
 	}
 	async waitFor(peer: PeerId | PublicSignKey): Promise<void> {
-		return; // Offline storage // TODO this feels off resolving
+		// Offline storage // TODO this feels off resolving
 	}
 
 	async size() {
 		return this._store.size();
+	}
+
+	persisted(): boolean | Promise<boolean> {
+		return this._store.persisted();
 	}
 }

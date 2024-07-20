@@ -1,15 +1,14 @@
-import {
-	field,
-	variant,
-	deserialize,
-	serialize
-} from "@dao-xyz/borsh";
-import { Program, type ProgramClient, getProgramFromVariant } from "../src/program.js";
-import { getValuesWithType } from "../src/utils.js";
-import { createPeer } from "./utils.js";
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { delay } from "@peerbit/time";
-import { expect } from 'chai'
+import { expect } from "chai";
+import {
+	Program,
+	type ProgramClient,
+	getProgramFromVariant,
+} from "../src/program.js";
+import { getValuesWithType } from "../src/utils.js";
 import { EmbeddedStore, Log, P2, P3, P4 } from "./samples.js";
+import { createPeer } from "./utils.js";
 
 describe("getValuesWithType", () => {
 	it("can stop at type", () => {
@@ -37,10 +36,6 @@ describe("program", () => {
 			it("with args", async () => {
 				@variant("p5")
 				class P5 extends Program<{ number: number }> {
-					constructor() {
-						super();
-					}
-
 					number: number | undefined;
 					async open(args?: { number: number } | undefined): Promise<void> {
 						this.number = args?.number;
@@ -53,13 +48,10 @@ describe("program", () => {
 
 			it("fails to init without schema", async () => {
 				class NoVariant extends Program {
-					constructor() {
-						super();
-					}
-					async open(): Promise<void> { }
+					async open(): Promise<void> {}
 				}
 				await expect(peer.open(new NoVariant())).rejectedWith(
-					'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...'
+					'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...',
 				);
 			});
 
@@ -72,15 +64,17 @@ describe("program", () => {
 						super();
 						this.number = 123;
 					}
-					async open(): Promise<void> { }
+					async open(): Promise<void> {}
 				}
 
 				await expect(peer.open(new NoVariant())).rejectedWith(
-					'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...'
+					'Expecting class to be decorated with a string variant. Example:\n\'import { variant } "@dao-xyz/borsh"\n@variant("example-db")\nclass NoVariant { ...',
 				);
 
 				// Remove NoVariant for globals to prevent sideeffects
-				const idx = (Program.prototype as any)[1000].findIndex((x: any) => x == NoVariant);
+				const idx = (Program.prototype as any)[1000].findIndex(
+					(x: any) => x === NoVariant,
+				);
 				((Program.prototype as any)[1000] as Array<() => void>).splice(idx, 1);
 			});
 
@@ -100,6 +94,16 @@ describe("program", () => {
 				await peer.open(p);
 				expect(p.closed).to.be.false;
 			});
+
+			it("reject when dropping after close", async () => {
+				const p = new P3();
+				await peer.open(p);
+				expect(p.closed).to.be.false;
+				await p.close();
+				expect(p.closed).to.be.true;
+				await expect(p.drop()).rejectedWith("Program is closed, cannot drop");
+			});
+
 			it("can re-open from closed", async () => {
 				const p = new P4();
 
@@ -255,7 +259,7 @@ describe("program", () => {
 				p.events.addEventListener("close", (p) => {
 					closeEvents1.set(
 						p.detail.address,
-						(closeEvents1.get(p.detail.address) || 0) + 1
+						(closeEvents1.get(p.detail.address) || 0) + 1,
 					);
 				});
 
@@ -264,7 +268,7 @@ describe("program", () => {
 				p2.events.addEventListener("close", (p) => {
 					closeEvents2.set(
 						p.detail.address,
-						(closeEvents2.get(p.detail.address) || 0) + 1
+						(closeEvents2.get(p.detail.address) || 0) + 1,
 					);
 				});
 
@@ -279,7 +283,7 @@ describe("program", () => {
 				p3.events.addEventListener("close", (p) => {
 					closeEvents3.set(
 						p.detail.address,
-						(closeEvents3.get(p.detail.address) || 0) + 1
+						(closeEvents3.get(p.detail.address) || 0) + 1,
 					);
 				});
 
@@ -344,12 +348,12 @@ describe("program", () => {
 			const peer = await createPeer({
 				subsribers: subscriptions,
 				pubsubEventHandlers: eventHandlers,
-				peers
+				peers,
 			});
 			const peer2 = await createPeer({
 				subsribers: subscriptions,
 				pubsubEventHandlers: eventHandlers,
-				peers
+				peers,
 			});
 
 			const p = new P3();
@@ -380,7 +384,7 @@ describe("program", () => {
 			await peer2.open(p2);
 
 			expect(joinEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]);
-			expect(joinEvents2).to.be.empty
+			expect(joinEvents2).to.be.empty;
 
 			await peer2.services.pubsub.requestSubscribers(p.getTopics()[0]);
 
@@ -399,12 +403,12 @@ describe("program", () => {
 	describe("getProgram", () => {
 		@variant("test_get_a")
 		class A extends Program {
-			async open(args?: any): Promise<void> { }
+			async open(args?: any): Promise<void> {}
 		}
 
 		@variant("test_get_b")
 		class B extends Program {
-			async open(args?: any): Promise<void> { }
+			async open(args?: any): Promise<void> {}
 		}
 
 		it("can resolve by variant", () => {

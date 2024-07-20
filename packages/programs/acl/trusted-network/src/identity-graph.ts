@@ -1,57 +1,63 @@
 import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
-import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
-import { PublicSignKey } from "@peerbit/crypto";
+import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
+import { Documents } from "@peerbit/document";
+import { SearchRequest, StringMatch } from "@peerbit/indexer-interface";
 import { concat } from "uint8arrays";
-import { sha256Sync } from "@peerbit/crypto";
 
 export type RelationResolver = {
 	resolve: (
 		key: PublicSignKey,
-		db: Documents<IdentityRelation>
+		db: Documents<IdentityRelation, FromTo>,
 	) => Promise<IdentityRelation[]>;
 	next: (relation: IdentityRelation) => PublicSignKey;
 };
 
 export const getFromByTo: RelationResolver = {
-	resolve: async (to: PublicSignKey, db: Documents<IdentityRelation>) => {
+	resolve: async (
+		to: PublicSignKey,
+		db: Documents<IdentityRelation, FromTo>,
+	) => {
 		return Promise.all(
 			await db.index.search(
 				new SearchRequest({
 					query: [
 						new StringMatch({
 							key: "to",
-							value: to.hashcode()
-						})
-					]
-				})
-			)
+							value: to.hashcode(),
+						}),
+					],
+				}),
+			),
 		);
 	},
-	next: (relation) => relation.from
+	next: (relation) => relation.from,
 };
 
 export const getToByFrom: RelationResolver = {
-	resolve: async (from: PublicSignKey, db: Documents<IdentityRelation>) => {
+	resolve: async (
+		from: PublicSignKey,
+		db: Documents<IdentityRelation, FromTo>,
+	) => {
 		return Promise.all(
 			await db.index.search(
 				new SearchRequest({
 					query: [
 						new StringMatch({
 							key: "from",
-							value: from.hashcode()
-						})
-					]
-				})
-			)
+							value: from.hashcode(),
+						}),
+					],
+				}),
+			),
 		);
 	},
-	next: (relation) => relation.to
+	next: (relation) => relation.to,
 };
 
 export async function* getPathGenerator(
 	from: PublicSignKey,
-	db: Documents<IdentityRelation>,
-	resolver: RelationResolver
+	db: Documents<IdentityRelation, FromTo>,
+	resolver: RelationResolver,
 ) {
 	let iter = [from];
 	const visited = new Set();
@@ -85,8 +91,8 @@ export async function* getPathGenerator(
 export const hasPathToTarget = async (
 	start: PublicSignKey,
 	target: (key: PublicSignKey) => boolean,
-	db: Documents<IdentityRelation>,
-	resolver: RelationResolver
+	db: Documents<IdentityRelation, FromTo>,
+	resolver: RelationResolver,
 ): Promise<boolean> => {
 	if (!db) {
 		throw new Error("Not initalized");
@@ -152,8 +158,8 @@ export class IdentityRelation extends AbstractRelation {
 export const hasPath = async (
 	start: PublicSignKey,
 	end: PublicSignKey,
-	db: Documents<IdentityRelation>,
-	resolver: RelationResolver
+	db: Documents<IdentityRelation, FromTo>,
+	resolver: RelationResolver,
 ): Promise<boolean> => {
 	return hasPathToTarget(start, (key) => end.equals(key), db, resolver);
 };
@@ -161,12 +167,29 @@ export const hasPath = async (
 export const getRelation = async (
 	from: PublicSignKey,
 	to: PublicSignKey,
-	db: Documents<IdentityRelation>
+	db: Documents<IdentityRelation, FromTo>,
 ): Promise<IdentityRelation | undefined> => {
 	return db.index.get(new IdentityRelation({ from, to }).id);
 };
 
+export class FromTo {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array;
+
+	@field({ type: "string" })
+	from: string;
+
+	@field({ type: "string" })
+	to: string;
+
+	constructor(props: IdentityRelation, _context?: any) {
+		this.from = props.from.hashcode();
+		this.to = props.to.hashcode();
+		this.id = props.id;
+	}
+}
+
 export const createIdentityGraphStore = (id?: Uint8Array) =>
-	new Documents<IdentityRelation>({
-		id
+	new Documents<IdentityRelation, FromTo>({
+		id,
 	});

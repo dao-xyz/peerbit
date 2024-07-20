@@ -1,12 +1,13 @@
-import B from "benchmark";
+import { tcp } from "@libp2p/tcp";
+import { stringifyCid } from "@peerbit/blocks-interface";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForPeers } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
+import B from "benchmark";
 import crypto from "crypto";
-import { DirectBlock, stringifyCid } from "../src/index.js";
-import { tcp } from "@libp2p/tcp";
+import { DirectBlock } from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/e2e.ts"
+// Run with "node --loader ts-node/esm ./benchmark/e2e.ts"
 // size: 1kb x 827 ops/sec ±2.03% (87 runs sampled)
 // size: 1000kb x 40.51 ops/sec ±4.09% (62 runs sampled)
 
@@ -14,8 +15,8 @@ const session: TestSession<{ blocks: DirectBlock }> =
 	await TestSession.disconnected(4, {
 		transports: [tcp()],
 		services: {
-			blocks: (c) => new DirectBlock(c)
-		}
+			blocks: (c) => new DirectBlock(c),
+		},
 	});
 
 /* 
@@ -37,21 +38,21 @@ const session: TestSession<{ blocks: DirectBlock }> =
 await session.connect([
 	[session.peers[0], session.peers[1]],
 	[session.peers[1], session.peers[2]],
-	[session.peers[2], session.peers[3]]
+	[session.peers[2], session.peers[3]],
 ]);
 
 await session.connect();
 await waitForPeers(
 	session.peers[0].services.blocks,
-	session.peers[1].services.blocks
+	session.peers[1].services.blocks,
 );
 await waitForPeers(
 	session.peers[1].services.blocks,
-	session.peers[2].services.blocks
+	session.peers[2].services.blocks,
 );
 await waitForPeers(
 	session.peers[2].services.blocks,
-	session.peers[3].services.blocks
+	session.peers[3].services.blocks,
 );
 await delay(3000);
 
@@ -76,11 +77,11 @@ for (const size of sizes) {
 				const rng = crypto.randomBytes(size);
 				const cid = await session.peers[0].services.blocks.put(rng);
 				await session.peers[session.peers.length - 1].services.blocks.get(
-					stringifyCid(cid)
+					stringifyCid(cid),
 				);
 				deferred.resolve();
 			}
-		}
+		},
 	});
 }
 suite

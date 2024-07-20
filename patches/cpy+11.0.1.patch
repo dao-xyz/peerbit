@@ -1,0 +1,79 @@
+diff --git a/node_modules/cpy/index.js b/node_modules/cpy/index.js
+index 0c67c66..342a51e 100644
+--- a/node_modules/cpy/index.js
++++ b/node_modules/cpy/index.js
+@@ -3,9 +3,9 @@ import EventEmitter from 'node:events';
+ import path from 'node:path';
+ import os from 'node:os';
+ import pMap from 'p-map';
+-import {copyFile} from 'copy-file';
++import { copyFile } from 'copy-file';
+ import pFilter from 'p-filter';
+-import {isDynamicPattern} from 'globby';
++import { isDynamicPattern } from 'globby';
+ import micromatch from 'micromatch';
+ import CpyError from './cpy-error.js';
+ import GlobPattern from './glob-pattern.js';
+@@ -74,7 +74,7 @@ const expandPatternsWithBraceExpansion = patterns => patterns.flatMap(pattern =>
+ @param {string} props.destination
+ @returns {string}
+ */
+-const preprocessDestinationPath = ({entry, destination, options}) => {
++const preprocessDestinationPath = ({ entry, destination, options }) => {
+ 	if (entry.pattern.hasMagic()) {
+ 		if (options.flat) {
+ 			if (path.isAbsolute(destination)) {
+@@ -136,7 +136,7 @@ const renameFile = (source, rename) => {
+ export default function cpy(
+ 	source,
+ 	destination,
+-	{concurrency = os.availableParallelism(), ...options} = {},
++	{ concurrency = os.availableParallelism?.() || os.cpus().length, ...options } = {},
+ ) {
+ 	const copyStatus = new Map();
+ 
+@@ -170,7 +170,7 @@ export default function cpy(
+ 			throw new CpyError('`source` and `destination` required');
+ 		}
+ 
+-		patterns = patterns.map(pattern => new GlobPattern(pattern, destination, {...options, ignore}));
++		patterns = patterns.map(pattern => new GlobPattern(pattern, destination, { ...options, ignore }));
+ 
+ 		for (const pattern of patterns) {
+ 			/**
+@@ -181,7 +181,7 @@ export default function cpy(
+ 			try {
+ 				matches = pattern.getMatches();
+ 			} catch (error) {
+-				throw new CpyError(`Cannot glob \`${pattern.originalPath}\`: ${error.message}`, {cause: error});
++				throw new CpyError(`Cannot glob \`${pattern.originalPath}\`: ${error.message}`, { cause: error });
+ 			}
+ 
+ 			if (matches.length === 0 && !isDynamicPattern(pattern.originalPath) && !isDynamicPattern(ignore)) {
+@@ -195,7 +195,7 @@ export default function cpy(
+ 		}
+ 
+ 		if (options.filter !== undefined) {
+-			entries = await pFilter(entries, options.filter, {concurrency: 1024});
++			entries = await pFilter(entries, options.filter, { concurrency: 1024 });
+ 		}
+ 
+ 		if (entries.length === 0) {
+@@ -256,14 +256,14 @@ export default function cpy(
+ 				);
+ 
+ 				try {
+-					await copyFile(entry.path, to, {...options, onProgress: fileProgressHandler});
++					await copyFile(entry.path, to, { ...options, onProgress: fileProgressHandler });
+ 				} catch (error) {
+-					throw new CpyError(`Cannot copy from \`${entry.relativePath}\` to \`${to}\`: ${error.message}`, {cause: error});
++					throw new CpyError(`Cannot copy from \`${entry.relativePath}\` to \`${to}\`: ${error.message}`, { cause: error });
+ 				}
+ 
+ 				return to;
+ 			},
+-			{concurrency},
++			{ concurrency },
+ 		);
+ 	})();
+ 

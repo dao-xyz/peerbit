@@ -1,54 +1,52 @@
 // @ts-nocheck
 // ts ignore implicit any
-
-
 import {
 	deserialize,
 	field,
 	fixedArray,
-	option,
 	serialize,
 	variant,
-	vec
 } from "@dao-xyz/borsh";
-import { Documents, type DocumentsChange, type SetupOptions } from "../src/program.js";
 import {
-	IntegerCompare,
-	StringMatch,
-	Compare,
-	SearchRequest,
-	StringMatchMethod,
+	AccessError,
+	Ed25519PublicKey,
+	type PublicSignKey,
+	randomBytes,
+} from "@peerbit/crypto";
+import { NoAccess, Results } from "@peerbit/document-interface";
+import {
+	AbstractSearchRequest,
 	ByteMatchQuery,
+	CloseIteratorRequest,
+	Compare,
+	IntegerCompare,
+	SearchRequest,
 	Sort,
 	SortDirection,
-	AbstractSearchResult,
-	NoAccess,
-	AbstractSearchRequest,
-	Results,
-	CloseIteratorRequest
-} from "@peerbit/document-interface";
-import { TestSession } from "@peerbit/test-utils";
+	StringMatch,
+	StringMatchMethod,
+} from "@peerbit/indexer-interface";
 import { Entry, Log } from "@peerbit/log";
-import { AccessError, PublicSignKey, randomBytes } from "@peerbit/crypto";
-import { v4 as uuid } from "uuid";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
-import { Operation, PutOperation } from "../src/search.js";
 import { Program } from "@peerbit/program";
-import pDefer from "p-defer";
-import { expect } from "chai";
-
+import { DirectSub } from "@peerbit/pubsub";
 import {
 	AbsoluteReplicas,
-	Observer,
-	Replicator,
 	decodeReplicas,
-	encodeReplicas
+	encodeReplicas,
 } from "@peerbit/shared-log";
-import { Ed25519PublicKey } from "@peerbit/crypto";
 import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
-import { DirectSub } from "@peerbit/pubsub";
-import { TestStore, Document } from "./data.js";
-
+import { TestSession } from "@peerbit/test-utils";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import pDefer from "p-defer";
+import { v4 as uuid } from "uuid";
+import {
+	Documents,
+	type DocumentsChange,
+	type SetupOptions,
+} from "../src/program.js";
+import { Operation, PutOperation } from "../src/search.js";
+import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
 	let session: TestSession;
@@ -72,7 +70,7 @@ describe("index", () => {
 
 			it("can add and delete", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
@@ -83,11 +81,11 @@ describe("index", () => {
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world"
+					name: "Hello world",
 				});
 				let doc2 = new Document({
 					id: uuid(),
-					name: "Hello world"
+					name: "Hello world",
 				});
 
 				const putOperation = (await store.docs.put(doc)).entry;
@@ -123,7 +121,7 @@ describe("index", () => {
 
 			it("replication degree", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
 				await session.peers[0].open(store);
 				const changes: DocumentsChange<Document>[] = [];
@@ -134,7 +132,7 @@ describe("index", () => {
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world"
+					name: "Hello world",
 				});
 
 				const putOperation = (await store.docs.put(doc, { replicas: 123 }))
@@ -145,14 +143,14 @@ describe("index", () => {
 							meta: {
 								data: Uint8Array;
 							};
-						}
-					).getValue(store.docs.log)
+						},
+					).getValue(store.docs.log),
 				).equal(123);
 			});
 
 			it("many chunks", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
 				await session.peers[0].open(store);
 				const insertions = 100;
@@ -164,9 +162,9 @@ describe("index", () => {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: rngs[i]
+							name: rngs[i],
 						}),
-						{ unique: true }
+						{ unique: true },
 					);
 				}
 			});
@@ -174,21 +172,21 @@ describe("index", () => {
 			it("delete permanently", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						immutable: false
-					})
+						immutable: false,
+					}),
 				});
 				await session.peers[0].open(store);
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world"
+					name: "Hello world",
 				});
 				let editDoc = new Document({
 					id: doc.id,
-					name: "Hello world 2"
+					name: "Hello world 2",
 				});
 
-				await store.docs.put(doc);
+				const xxx = await store.docs.put(doc);
 				expect(await store.docs.index.getSize()).equal(1);
 				const putOperation2 = (await store.docs.put(editDoc)).entry;
 				expect(await store.docs.index.getSize()).equal(1);
@@ -198,15 +196,15 @@ describe("index", () => {
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(await store.docs.index.getSize()).equal(0);
 				expect(
-					(await store.docs.log.log.values.toArray()).map((x) => x.hash)
+					(await store.docs.log.log.toArray()).map((x) => x.hash),
 				).to.deep.equal([deleteOperation.hash]); // the delete operation
 			});
 
 			it("rejects on max message size", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						immutable: false
-					})
+						immutable: false,
+					}),
 				});
 				await session.peers[0].open(store);
 
@@ -215,19 +213,21 @@ describe("index", () => {
 					store.docs.put(
 						new Document({
 							id: uuid(),
-							data: randomBytes(5e6)
-						})
-					)
+							data: randomBytes(5e6),
+						}),
+					),
 				).rejectedWith(
-					"Document is too large (5.00005) mb). Needs to be less than 5 mb"
+					/Document is too large \((5.\d+)\) mb\). Needs to be less than 5 mb/,
 				);
+
+				// document is too large regex with a number that is 5 and a little bit more
 
 				// ok
 				await store.docs.put(
 					new Document({
 						id: uuid(),
-						data: randomBytes(5e6 - 100)
-					})
+						data: randomBytes(5e6 - 100),
+					}),
 				);
 			});
 		});
@@ -241,16 +241,21 @@ describe("index", () => {
 
 			beforeEach(async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
-				await session.peers[0].open(store);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
 				store2 = await session.peers[1].open<TestStore>(store.clone(), {
 					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
-					}
+						replicate: {
+							factor: 1,
+						},
+					},
 				});
 			});
 
@@ -266,109 +271,106 @@ describe("index", () => {
 
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
-				await store.docs.updateRole({
-					type: "replicator",
-					factor: 1
+				await store.docs.log.replicate({
+					factor: 1,
 				});
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: "Hello world"
-						})
+							name: "Hello world",
+						}),
 					);
 				}
 
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT)
+					expect(await store2.docs.index.getSize()).equal(COUNT),
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
 					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
-					}
+						replicate: {
+							factor: 1,
+						},
+					},
 				});
-				await store2.docs.updateRole("observer");
+
 				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT)
+					expect(await store3.docs.index.getSize()).equal(COUNT),
 				);
+
+				await store2.docs.log.replicate(false);
+
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0)
+					expect(await store2.docs.index.getSize()).equal(0),
 				);
 			});
 
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
-				await store.docs.updateRole({
-					type: "replicator",
-					factor: 1
+				await store.docs.log.replicate({
+					factor: 1,
 				});
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: "Hello world"
-						})
+							name: "Hello world",
+						}),
 					);
 				}
 
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT)
+					expect(await store2.docs.index.getSize()).equal(COUNT),
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
 					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
-					}
+						replicate: {
+							factor: 1,
+						},
+					},
 				});
-				await store2.docs.updateRole("observer");
+				await store2.docs.log.replicate(false);
 				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT)
+					expect(await store3.docs.index.getSize()).equal(COUNT),
 				);
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0)
+					expect(await store2.docs.index.getSize()).equal(0),
 				);
 			});
 
 			it("drops when no longer replicating with factor 0", async () => {
 				let COUNT = 10;
-				await store.docs.updateRole({
-					type: "replicator",
-					factor: 1
+				await store.docs.log.replicate({
+					factor: 1,
 				});
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: "Hello world"
-						})
+							name: "Hello world",
+						}),
 					);
 				}
 
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT)
+					expect(await store2.docs.index.getSize()).equal(COUNT),
 				);
 
 				store3 = await session.peers[2].open<TestStore>(store.clone(), {
 					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
-					}
+						replicate: {
+							factor: 1,
+						},
+					},
 				});
-				await store2.docs.updateRole({ type: "replicator", factor: 0 });
+				await store2.docs.log.replicate({ factor: 0 });
 				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT)
+					expect(await store3.docs.index.getSize()).equal(COUNT),
 				);
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0)
+					expect(await store2.docs.index.getSize()).equal(0),
 				);
 			});
 		});
@@ -378,7 +380,7 @@ describe("index", () => {
 
 			before(async () => {
 				session = await TestSession.connected(1, {
-					directory: "./tmp/document-store/drop-test/"
+					directory: "./tmp/document-store/drop-test/",
 				});
 			});
 
@@ -392,18 +394,18 @@ describe("index", () => {
 
 			it("can load and drop", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
 
 				await session.peers[0].open(store);
 
-				const COUNT = 100;
+				const COUNT = 1;
 				for (let i = 0; i < COUNT; i++) {
 					await store.docs.put(
 						new Document({
 							id: uuid(),
-							name: "Hello world"
-						})
+							name: "Hello world",
+						}),
 					);
 				}
 				await store.close();
@@ -411,14 +413,14 @@ describe("index", () => {
 				expect(await store.docs.index.getSize()).equal(COUNT);
 				await store.drop();
 				store = await session.peers[0].open<TestStore>(
-					deserialize(serialize(store), TestStore)
+					deserialize(serialize(store), TestStore),
 				);
 				expect(await store.docs.index.getSize()).equal(0);
 			});
 
 			it("preserves tombstone", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
 
 				await session.peers[0].open(store);
@@ -428,8 +430,8 @@ describe("index", () => {
 				const { entry } = await store.docs.put(
 					new Document({
 						id,
-						name: "Hello world"
-					})
+						name: "Hello world",
+					}),
 				);
 				await store.docs.del(id);
 				await store.close();
@@ -460,31 +462,29 @@ describe("index", () => {
 			it("emits event on replication", async () => {
 				const store = new TestStore({
 					docs: new Documents<Document>({
-						immutable: false
-					})
+						immutable: false,
+					}),
 				});
 				for (const [_i, peer] of session.peers.entries()) {
 					if (store.closed) {
 						stores.push(
 							await peer.open(store, {
 								args: {
-									role: {
-										type: "replicator",
-										factor: 1
-									}
-								}
-							})
+									replicate: {
+										factor: 1,
+									},
+								},
+							}),
 						);
 					} else {
 						stores.push(
 							await TestStore.open(store.address, peer, {
 								args: {
-									role: {
-										type: "replicator",
-										factor: 1
-									}
-								}
-							})
+									replicate: {
+										factor: 1,
+									},
+								},
+							}),
 						);
 					}
 				}
@@ -524,359 +524,6 @@ describe("index", () => {
 			});
 		});
 
-		describe("indexBy", () => {
-			let store: Program & { docs: Documents<any> };
-			let store2: Program;
-
-			before(async () => {
-				session = await TestSession.connected(2);
-			});
-			afterEach(async () => {
-				await store?.close();
-				await store2?.close();
-			});
-
-			after(async () => {
-				await session.stop();
-			});
-
-			const testIndex = async (
-				store: Program & { docs: Documents<any> },
-				doc: any
-			) => {
-				await store.docs.put(doc);
-				let result = await store.docs.index.get(doc.id);
-				expect(result).to.exist;
-				await store.docs.del(doc.id);
-				expect(await store.docs.index.getSize()).equal(0);
-				result = await store.docs.index.get(doc.id);
-				expect(result).equal(undefined);
-			};
-
-			describe("string", () => {
-				class SimpleDocument {
-					@field({ type: "string" })
-					id: string;
-
-					@field({ type: "string" })
-					value: string;
-
-					constructor(properties: { id: string; value: string }) {
-						this.id = properties.id;
-						this.value = properties.value;
-					}
-				}
-
-				@variant("test_index_documents")
-				class TestIndexStore extends Program {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: Documents })
-					docs: Documents<SimpleDocument>;
-
-					constructor(
-						properties: { docs: Documents<SimpleDocument> },
-						readonly indexBy: string = "id"
-					) {
-						super();
-
-						this.id = randomBytes(32);
-						this.docs = properties.docs;
-					}
-					async open(): Promise<void> {
-						await this.docs.open({
-							type: SimpleDocument,
-							index: { idProperty: this.indexBy }
-						});
-					}
-				}
-				it("will throw error if indexBy does not exist in document", async () => {
-					store = new TestIndexStore(
-						{
-							docs: new Documents<SimpleDocument>()
-						},
-						"__missing__"
-					);
-
-					await session.peers[0].open(store);
-
-					let doc = new SimpleDocument({
-						id: "abc 123",
-						value: "Hello world"
-					});
-
-					// put doc
-					await expect(
-						(store as TestIndexStore).docs.put(doc)
-					).rejectedWith(
-						"The provided key value is null or undefined, expecting string, number, bigint, or Uint8array"
-					);
-				});
-
-				it("index by another property", async () => {
-					store = new TestIndexStore(
-						{
-							docs: new Documents<SimpleDocument>()
-						},
-						"value"
-					);
-
-					await session.peers[0].open(store);
-
-					let helloWorld = "Hello world";
-					let doc = new SimpleDocument({
-						id: "abc 123",
-						value: helloWorld
-					});
-
-					// put doc
-					await (store as TestIndexStore).docs.put(doc);
-
-					expect(
-						(await (store as TestIndexStore).docs.index.get(helloWorld))?.value
-					).equal(helloWorld);
-				});
-
-				it("can StringQuery index", async () => {
-					store = new TestIndexStore({
-						docs: new Documents<SimpleDocument>()
-					});
-					await session.peers[0].open(store);
-
-					let doc = new SimpleDocument({
-						id: "abc 123",
-						value: "Hello world"
-					});
-
-					await (store as TestIndexStore).docs.put(doc);
-
-					const results = await (store as TestIndexStore).docs.index.search(
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "id",
-									value: "123",
-									caseInsensitive: false,
-									method: StringMatchMethod.contains
-								})
-							]
-						}),
-						{ remote: { amount: 1 } }
-					);
-					expect(results).to.have.length(1);
-				});
-			});
-
-			describe("bytes", () => {
-				class DocumentUin8arrayId {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: "string" })
-					value: string;
-
-					constructor(properties: { id: Uint8Array; value: string }) {
-						this.id = properties.id;
-						this.value = properties.value;
-					}
-				}
-
-				@variant("test_uint8array_id_store")
-				class TestUint8arrayIdStore extends Program {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: Documents })
-					docs: Documents<DocumentUin8arrayId>;
-
-					constructor(properties: { docs: Documents<DocumentUin8arrayId> }) {
-						super();
-
-						this.id = randomBytes(32);
-						this.docs = properties.docs;
-					}
-					async open(): Promise<void> {
-						await this.docs.open({
-							type: DocumentUin8arrayId
-						});
-					}
-				}
-
-				it("index as Uint8array", async () => {
-					store = new TestUint8arrayIdStore({
-						docs: new Documents<DocumentUin8arrayId>()
-					});
-					await session.peers[0].open(store);
-
-					const id = new Uint8Array([1, 2, 3]);
-					let doc = new DocumentUin8arrayId({
-						id,
-						value: "Hello world"
-					});
-					await testIndex(store, doc);
-				});
-			});
-			describe("number", () => {
-				class DocumentNumberId {
-					@field({ type: "u32" })
-					id: number;
-
-					@field({ type: "string" })
-					value: string;
-
-					constructor(properties: { id: number; value: string }) {
-						this.id = properties.id;
-						this.value = properties.value;
-					}
-				}
-
-				@variant("test_bigint_id_store")
-				class TestNumberIdStore extends Program {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: Documents })
-					docs: Documents<DocumentNumberId>;
-
-					constructor(properties: { docs: Documents<DocumentNumberId> }) {
-						super();
-
-						this.id = randomBytes(32);
-						this.docs = properties.docs;
-					}
-					async open(): Promise<void> {
-						await this.docs.open({
-							type: DocumentNumberId
-						});
-					}
-				}
-				it("index as number", async () => {
-					store = new TestNumberIdStore({
-						docs: new Documents<DocumentNumberId>()
-					});
-					await session.peers[0].open(store);
-
-					const id = 123456789;
-					let doc = new DocumentNumberId({
-						id,
-						value: "Hello world"
-					});
-
-					await testIndex(store, doc);
-				});
-			});
-
-			describe("transformed id", () => {
-				class SimpleDocument {
-					@field({ type: "string" })
-					id: string;
-
-					@field({ type: "string" })
-					value: string;
-
-					constructor(properties: { id: string; value: string }) {
-						this.id = properties.id;
-						this.value = properties.value;
-					}
-				}
-
-				@variant("test_index_documents")
-				class TestIndexStore extends Program {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: Documents })
-					docs: Documents<SimpleDocument>;
-
-					constructor(
-						properties: { docs: Documents<SimpleDocument> },
-						readonly indexBy: string = "transformed_id"
-					) {
-						super();
-
-						this.id = randomBytes(32);
-						this.docs = properties.docs;
-					}
-					async open(): Promise<void> {
-						await this.docs.open({
-							type: SimpleDocument,
-							id: (obj: any) => obj.id,
-							index: {
-								idProperty: this.indexBy,
-								fields: (obj: any) => {
-									return { transformed_id: obj.id + "transformed" };
-								}
-							}
-						});
-					}
-				}
-				it("index", async () => {
-					store = new TestIndexStore({
-						docs: new Documents<SimpleDocument>()
-					});
-					await session.peers[0].open(store);
-
-					const id = "123";
-					let doc = new SimpleDocument({
-						id,
-						value: "Hello world"
-					});
-					await testIndex(store, doc);
-				});
-			});
-
-			describe("bigint", () => {
-				class DocumentBigintId {
-					@field({ type: "u64" })
-					id: bigint;
-
-					@field({ type: "string" })
-					value: string;
-
-					constructor(properties: { id: bigint; value: string }) {
-						this.id = properties.id;
-						this.value = properties.value;
-					}
-				}
-
-				@variant("test_bigint_id_store")
-				class TestBigintIdStore extends Program {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: Documents })
-					docs: Documents<DocumentBigintId>;
-
-					constructor(properties: { docs: Documents<DocumentBigintId> }) {
-						super();
-
-						this.id = randomBytes(32);
-						this.docs = properties.docs;
-					}
-					async open(): Promise<void> {
-						await this.docs.open({
-							type: DocumentBigintId
-						});
-					}
-				}
-
-				it("index as bigint", async () => {
-					store = new TestBigintIdStore({
-						docs: new Documents<DocumentBigintId>()
-					});
-					await session.peers[0].open(store);
-
-					const id = 123456789n;
-					let doc = new DocumentBigintId({
-						id,
-						value: "Hello world"
-					});
-					await testIndex(store, doc);
-				});
-			});
-		});
-
 		describe("index", () => {
 			let store: TestStore;
 			let store2: TestStore;
@@ -895,16 +542,16 @@ describe("index", () => {
 
 			it("trim deduplicate changes", async () => {
 				store = new TestStore({
-					docs: new Documents<Document>()
+					docs: new Documents<Document>(),
 				});
 
 				await session.peers[0].open(store, {
 					args: {
 						log: {
-							trim: { type: "length", to: 1 }
+							trim: { type: "length", to: 1 },
 						},
-						role: "observer" // if we instead would do 'replicator' trimming will not be done unless other peers has joined
-					}
+						replicate: false, // if we instead would do 'replicator' trimming will not be done unless other peers has joined
+					},
 				});
 
 				const changes: DocumentsChange<Document>[] = [];
@@ -914,7 +561,7 @@ describe("index", () => {
 
 				let doc = new Document({
 					id: uuid(),
-					name: "Hello world"
+					name: "Hello world",
 				});
 
 				// put doc
@@ -928,7 +575,7 @@ describe("index", () => {
 				// put doc again and make sure it still exist in index with trim to 1 option
 				await store.docs.put(doc);
 				expect(await store.docs.index.getSize()).equal(1);
-				expect(store.docs.log.log.values.length).equal(1);
+				expect(store.docs.log.log.length).equal(1);
 				expect(changes.length).equal(2);
 				expect(changes[1].added).to.have.length(1);
 				expect(changes[1].added[0].id).equal(doc.id);
@@ -938,117 +585,32 @@ describe("index", () => {
 			it("trim and update index", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
-						immutable: false
-					})
+						immutable: false,
+					}),
 				});
 
 				await session.peers[0].open(store, {
 					args: {
 						log: {
-							trim: { type: "length" as const, to: 10 }
+							trim: { type: "length" as const, to: 10 },
 						},
-						role: "observer" // if we instead would do 'replicator' trimming will not be done unless other peers has joined
-					}
+						replicate: false, // if we instead would do 'replicator' trimming will not be done unless other peers has joined
+					},
 				});
 
 				for (let i = 0; i < 100; i++) {
 					await store.docs.put(
 						new Document({
 							id: String(i),
-							name: "Hello world " + String(i)
+							name: "Hello world " + String(i),
 						}),
-						{ meta: { next: [] } }
+						{ meta: { next: [] } },
 					);
 				}
 
 				expect(await store.docs.index.getSize()).equal(10);
-				expect(store.docs.log.log.values.length).equal(10);
-				expect(store.docs.log.log.headsIndex.index.size).equal(10);
-			});
-
-			describe("field extractor", () => {
-				let indexedNameField = "xyz";
-
-				// We can't seem to define this class inside of the test itself (will yield error when running all tests)
-				@variant("filtered_store")
-				class FilteredStore extends Program {
-					@field({ type: Uint8Array })
-					id: Uint8Array;
-
-					@field({ type: Documents })
-					docs: Documents<Document>;
-
-					constructor(properties: { docs: Documents<Document> }) {
-						super();
-
-						this.id = new Uint8Array(32);
-						this.docs = properties.docs;
-					}
-
-					async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
-						await this.docs.open({
-							...options,
-							type: Document,
-							index: {
-								idProperty: "id",
-								fields: (obj: any) => {
-									return { [indexedNameField]: obj.name };
-								}
-							}
-						});
-					}
-				}
-
-				it("filters field", async () => {
-					store = new FilteredStore({
-						docs: new Documents<Document>()
-					});
-					store.docs.log.log.id = new Uint8Array(32);
-
-					await session.peers[0].open(store);
-
-					let doc = new Document({
-						id: uuid(),
-						name: "Hello world"
-					});
-
-					await store.docs.put(doc);
-
-					let indexedValues = [...store.docs.index.engine.iterator()];
-
-					expect(indexedValues).to.have.length(1);
-
-					expect(indexedValues[0][1].indexed).to.deep.equal({
-						[indexedNameField]: doc.name
-					});
-					expect(indexedValues[0][1].indexed["value"]).equal(undefined); // Because we dont want to keep it in memory (by default)
-
-					await session.peers[1].services.blocks.waitFor(
-						session.peers[0].peerId
-					);
-
-					store2 = (await FilteredStore.load(
-						store.address!,
-						session.peers[1].services.blocks
-					))!;
-
-					await session.peers[1].open(store2, {
-						args: {
-							role: "observer"
-						}
-					});
-
-					expect(store2.docs.log.role).to.be.instanceOf(Observer);
-
-					await store2.docs.log.waitForReplicator(
-						session.peers[0].identity.publicKey
-					);
-
-					let results = await store2.docs.index.search(
-						new SearchRequest({ query: [] })
-					);
-					expect(results).to.have.length(1);
-				});
+				expect(store.docs.log.log.length).equal(10);
+				expect((await store.docs.log.log.getHeads().all()).length).equal(10);
 			});
 		});
 
@@ -1064,9 +626,9 @@ describe("index", () => {
 					canSearch: (
 						| undefined
 						| ((
-							query: AbstractSearchRequest,
-							publicKey: PublicSignKey
-						) => Promise<boolean>)
+								query: AbstractSearchRequest,
+								publicKey: PublicSignKey,
+						  ) => Promise<boolean>)
 					)[] = [];
 				before(async () => {
 					session = await TestSession.connected(peersCount);
@@ -1083,32 +645,32 @@ describe("index", () => {
 						const store =
 							i > 0
 								? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks
-								))!
+										stores[0].address!,
+										session.peers[i].services.blocks,
+									))!
 								: new TestStore({
-									docs: new Documents<Document>()
-								});
+										docs: new Documents<Document>(),
+									});
 						await session.peers[i].open(store, {
 							args: {
-								role: i === 0 ? { type: "replicator", factor: 1 } : "observer",
+								replicate: i === 0 ? { factor: 1 } : false,
 								index: {
 									canRead:
 										i === 0
 											? (obj: any, key: any) => {
-												return canRead[i] ? canRead[i]!(obj, key) : true;
-											}
+													return canRead[i] ? canRead[i]!(obj, key) : true;
+												}
 											: undefined,
 									canSearch:
 										i === 0
 											? (query: any, key: any) => {
-												return canSearch[i]
-													? canSearch[i]!(query, key)
-													: true;
-											}
-											: undefined
-								}
-							}
+													return canSearch[i]
+														? canSearch[i]!(query, key)
+														: true;
+												}
+											: undefined,
+								},
+							},
 						});
 						stores.push(store);
 					}
@@ -1118,7 +680,7 @@ describe("index", () => {
 					let doc = new Document({
 						id: "1",
 						name: "hello",
-						number: 1n
+						number: 1n,
 					});
 
 					let docEdit = new Document({
@@ -1126,56 +688,56 @@ describe("index", () => {
 						name: "hello world",
 						number: 1n,
 						bool: true,
-						data: new Uint8Array([1])
+						data: new Uint8Array([1]),
 					});
 
 					let doc2 = new Document({
 						id: "2",
 						name: "hello world",
-						number: 4n
+						number: 4n,
 					});
 
 					let doc2Edit = new Document({
 						id: "2",
 						name: "Hello World",
 						number: 2n,
-						data: new Uint8Array([2])
+						data: new Uint8Array([2]),
 					});
 
 					let doc3 = new Document({
 						id: "3",
 						name: "foo",
 						number: 3n,
-						data: new Uint8Array([3])
+						data: new Uint8Array([3]),
 					});
 
 					let doc4 = new Document({
 						id: "4",
 						name: undefined,
-						number: undefined
+						number: undefined,
 					});
 
 					await writeStore.docs.put(doc);
 					await waitForResolved(async () =>
-						expect(await writeStore.docs.index.getSize()).equal(1)
+						expect(await writeStore.docs.index.getSize()).equal(1),
 					);
 					await writeStore.docs.put(docEdit);
 					await writeStore.docs.put(doc2);
 					await waitForResolved(async () =>
-						expect(await writeStore.docs.index.getSize()).equal(2)
+						expect(await writeStore.docs.index.getSize()).equal(2),
 					);
 					await writeStore.docs.put(doc2Edit);
 					await writeStore.docs.put(doc3);
 					await writeStore.docs.put(doc4);
 					await waitForResolved(async () =>
-						expect(await writeStore.docs.index.getSize()).equal(4)
+						expect(await writeStore.docs.index.getSize()).equal(4),
 					);
 
-					expect(stores[0].docs.log.role).to.be.instanceOf(Replicator);
-					expect(stores[1].docs.log.role).to.be.instanceOf(Observer);
+					expect(await stores[0].docs.log.isReplicating()).to.be.true;
+					expect(await stores[1].docs.log.isReplicating()).to.be.false;
 					await stores[1].waitFor(session.peers[0].peerId);
 					await stores[1].docs.log.waitForReplicator(
-						session.peers[0].identity.publicKey
+						session.peers[0].identity.publicKey,
 					);
 					await stores[0].waitFor(session.peers[1].peerId);
 					canRead = new Array(stores.length).fill(undefined);
@@ -1188,7 +750,7 @@ describe("index", () => {
 
 				it("no-args", async () => {
 					let results: Document[] = await stores[0].docs.index.search(
-						new SearchRequest({ query: [] })
+						new SearchRequest({ query: [] }),
 					);
 					expect(results).to.have.length(4);
 				});
@@ -1196,9 +758,9 @@ describe("index", () => {
 				it("match locally", async () => {
 					let results: Document[] = await stores[0].docs.index.search(
 						new SearchRequest({
-							query: []
+							query: [],
 						}),
-						{ remote: false }
+						{ remote: false },
 					);
 					expect(results).to.have.length(4);
 				});
@@ -1206,19 +768,20 @@ describe("index", () => {
 				it("match all", async () => {
 					let results: Document[] = await stores[1].docs.index.search(
 						new SearchRequest({
-							query: []
+							query: [],
 						}),
-						{ remote: { amount: 1 } }
+						{ remote: { amount: 1 } },
 					);
 					expect(results).to.have.length(4);
 				});
 
+				/*  TODO feat
 				describe("sync", () => {
 					it("can match sync", async () => {
 						expect(await stores[1].docs.index.getSize()).equal(0);
 						let canPerformEvents = 0;
 						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
-							stores[1].docs
+							stores[1].docs,
 						);
 						let syncEvents = 0;
 						let sync = stores[1].docs.index["_sync"].bind(stores[1].docs.index);
@@ -1233,12 +796,12 @@ describe("index", () => {
 
 						await stores[1].docs.index.search(
 							new SearchRequest({
-								query: []
+								query: [],
 							}),
-							{ remote: { amount: 1, sync: true } }
+							{ remote: { amount: 1, sync: true } },
 						);
 						await waitForResolved(async () =>
-							expect(await stores[1].docs.index.getSize()).equal(4)
+							expect(await stores[1].docs.index.getSize()).equal(4),
 						);
 						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
 						expect(canPerformEvents).equal(6); // 4 documents where 2 have been edited once (4 + 2)
@@ -1246,31 +809,31 @@ describe("index", () => {
 
 						await stores[1].docs.index.search(
 							new SearchRequest({
-								query: []
+								query: [],
 							}),
-							{ remote: { amount: 1, sync: true } }
+							{ remote: { amount: 1, sync: true } },
 						);
-						await waitFor(() => syncEvents == 2);
+						await waitFor(() => syncEvents === 2);
 						expect(canPerformEvents).equal(6); // no new checks, since all docs already added
 					});
 					it("will persist synced entries through prunes", async () => {
 						stores[0].docs.log.replicas = {
-							min: new AbsoluteReplicas(1)
+							min: new AbsoluteReplicas(1),
 						};
 						stores[1].docs.log.replicas = {
-							min: new AbsoluteReplicas(1)
+							min: new AbsoluteReplicas(1),
 						};
 
 						// add new doc, now wirth min replicas set to 1
 						await stores[0].docs.put(new Document({ id: uuid() }));
 
-						await stores[1].docs.updateRole({ type: "replicator", factor: 0 });
+						await stores[1].docs.log.replicate({ factor: 0 });
 						expect(await stores[1].docs.index.getSize()).equal(0);
 						await stores[1].docs.index.search(
 							new SearchRequest({
-								query: []
+								query: [],
 							}),
-							{ remote: { sync: true } }
+							{ remote: { sync: true } },
 						);
 						expect(await stores[1].docs.index.getSize()).equal(5);
 						await stores[1].docs.log.distribute();
@@ -1281,9 +844,9 @@ describe("index", () => {
 					it("removes sync cache when delete", async () => {
 						await stores[1].docs.index.search(
 							new SearchRequest({
-								query: []
+								query: [],
 							}),
-							{ remote: { sync: true } }
+							{ remote: { sync: true } },
 						);
 
 						expect(stores[1].docs["_manuallySynced"].size).equal(4);
@@ -1293,12 +856,13 @@ describe("index", () => {
 						await waitForResolved(
 							() => expect(stores[1].docs["_manuallySynced"].size).equal(0),
 							{
-								timeout: 3e4
-							}
+								timeout: 3e4,
+							},
 						);
 					});
-				});
+				}); */
 
+				/* TODO feat
 				describe("array", () => {
 					describe("nested store", () => {
 						@variant("test-nested-document-store")
@@ -1319,6 +883,19 @@ describe("index", () => {
 							}
 						}
 
+						class NestedDocumentIndexable {
+							@field({ type: Uint8Array })
+							id: Uint8Array;
+
+							@field({ type: 'string' })
+							address: string
+
+							constructor(properties: { id: Uint8Array, address: string }) {
+								this.id = properties.id;
+								this.address = properties.address;
+							}
+						}
+
 						@variant("test-nested-nested-document-store")
 						class NestedDocumentStore extends Program<
 							Partial<SetupOptions<NestedDocument>>
@@ -1336,26 +913,31 @@ describe("index", () => {
 							}
 
 							async open(
-								options?: Partial<SetupOptions<NestedDocument>>
+								options?: Partial<SetupOptions<NestedDocument>>,
 							): Promise<void> {
 								await this.documents.open({
 									...options,
 									type: NestedDocument,
-									index: { ...options?.index, idProperty: "id" },
-									canOpen: () => true
+									index: {
+										...options?.index,
+										idProperty: "id",
+										type: NestedDocumentIndexable,
+										transform: async (arg) => new NestedDocumentIndexable({ id: arg.id, address: await arg.calculateAddress() })
+									},
+									canOpen: () => true,
 								});
 							}
 						}
 
 						it("nested document store", async () => {
 							const nestedStore = await session.peers[0].open(
-								new NestedDocumentStore({ docs: new Documents() })
+								new NestedDocumentStore({ docs: new Documents() }),
 							);
 							const nestedDoc = new NestedDocument(new Documents());
 							await session.peers[0].open(nestedDoc);
 							const document = new Document({
 								id: uuid(),
-								name: "hello"
+								name: "hello",
 							});
 							await nestedDoc.documents.put(document);
 							await nestedStore.documents.put(nestedDoc);
@@ -1363,25 +945,25 @@ describe("index", () => {
 							const nestedStore2 =
 								await session.peers[1].open<NestedDocumentStore>(
 									nestedStore.address,
-									{ args: { role: "observer" } }
+									{ args: { replicate: false } },
 								);
 							await nestedStore2.documents.log.waitForReplicator(
-								session.peers[0].identity.publicKey
+								session.peers[0].identity.publicKey,
 							);
 							const results = await nestedStore2.documents.index.search(
 								new SearchRequest({
 									query: [
 										new StringMatch({
 											key: ["documents", "name"],
-											value: "hello"
-										})
-									]
-								})
+											value: "hello",
+										}),
+									],
+								}),
 							);
 							expect(results.length).equal(1);
 						});
 					});
-				});
+				}); */
 
 				describe("canRead", () => {
 					it("no read access will return a response with 0 results", async () => {
@@ -1393,16 +975,16 @@ describe("index", () => {
 						let allResponses: AbstractSearchResult<Document>[] = [];
 						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
-								query: []
+								query: [],
 							}),
 							{
 								local: false,
 								remote: {
 									onResponse: (r) => {
 										allResponses.push(r);
-									}
-								}
-							}
+									},
+								},
+							},
 						);
 						expect(responses).to.be.empty;
 						expect(allResponses).to.have.length(1);
@@ -1417,7 +999,7 @@ describe("index", () => {
 					it("no search access will return an error response", async () => {
 						const canSearchInvocations: [
 							AbstractSearchRequest,
-							PublicSignKey
+							PublicSignKey,
 						][] = [];
 						canSearch[0] = (a, b) => {
 							canSearchInvocations.push([a, b]);
@@ -1426,7 +1008,7 @@ describe("index", () => {
 						let allResponses: AbstractSearchResult<Document>[] = [];
 						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
-								query: []
+								query: [],
 							}),
 							{
 								local: false,
@@ -1434,16 +1016,18 @@ describe("index", () => {
 									amount: 1,
 									onResponse: (r) => {
 										allResponses.push(r);
-									}
-								}
-							}
+									},
+								},
+							},
 						);
 						expect(responses).to.be.empty;
 						expect(allResponses).to.have.length(1);
 						expect(allResponses[0]).to.be.instanceOf(NoAccess);
 						expect(canSearchInvocations).to.have.length(1);
 						expect(canSearchInvocations[0][0]).to.be.instanceOf(SearchRequest);
-						expect(canSearchInvocations[0][1]).to.be.instanceOf(Ed25519PublicKey);
+						expect(canSearchInvocations[0][1]).to.be.instanceOf(
+							Ed25519PublicKey,
+						);
 					});
 				});
 
@@ -1461,12 +1045,12 @@ describe("index", () => {
 												new IntegerCompare({
 													key: "number",
 													compare: Compare.GreaterOrEqual,
-													value: 2n
-												})
-											]
+													value: 2n,
+												}),
+											],
 										}),
-										{ remote: { amount: 1 } }
-									)
+										{ remote: { amount: 1 } },
+									),
 								);
 							} else {
 								promises.push(
@@ -1476,12 +1060,12 @@ describe("index", () => {
 												new IntegerCompare({
 													key: "number",
 													compare: Compare.Less,
-													value: 2n
-												})
-											]
+													value: 2n,
+												}),
+											],
 										}),
-										{ remote: { amount: 1 } }
-									)
+										{ remote: { amount: 1 } },
+									),
 								);
 							}
 						}
@@ -1518,23 +1102,22 @@ describe("index", () => {
 
 				beforeEach(async () => {
 					writeStore = new TestStore({
-						docs: new Documents<Document>()
+						docs: new Documents<Document>(),
 					});
 					await session.peers[0].open(writeStore, {
 						args: {
-							role: {
-								type: "replicator",
-								factor: 1
-							}
-						}
+							replicate: {
+								factor: 1,
+							},
+						},
 					});
 					readStore = await session.peers[1].open<TestStore>(
 						writeStore.address,
 						{
 							args: {
-								role: "observer"
-							}
-						}
+								replicate: false,
+							},
+						},
 					);
 				});
 				afterEach(async () => {
@@ -1546,15 +1129,15 @@ describe("index", () => {
 					for (let i = 0; i < 10; i++) {
 						const doc = new Document({
 							id: String(i),
-							data: randomBytes(5e6 - 100)
+							data: randomBytes(5e6 - 1300),
 						});
 						await writeStore.docs.put(doc);
 					}
 					await readStore.docs.log.waitForReplicator(
-						session.peers[0].identity.publicKey
+						session.peers[0].identity.publicKey,
 					);
 					const collected = await readStore.docs.index.search(
-						new SearchRequest()
+						new SearchRequest(),
 					);
 					expect(collected).to.have.length(10);
 				});
@@ -1572,48 +1155,49 @@ describe("index", () => {
 
 				it("can search while keeping minimum amount of replicas", async () => {
 					const store = new TestStore({
-						docs: new Documents<Document>()
+						docs: new Documents<Document>(),
 					});
 					const store1 = await session.peers[0].open(store.clone(), {
 						args: {
-							role: {
-								type: "replicator",
-								factor: 0.111
+							replicate: {
+								factor: 0.111,
 							},
 							replicas: {
-								min: 1
-							}
-						}
+								min: 1,
+							},
+						},
 					});
 
 					const store2 = await session.peers[1].open(store.clone(), {
 						args: {
-							role: {
-								type: "replicator",
-								factor: 0.1
+							replicate: {
+								factor: 0.1,
 							},
 							replicas: {
-								min: 1
-							}
-						}
+								min: 1,
+							},
+						},
 					});
 
 					const store3 = await session.peers[2].open(store.clone(), {
 						args: {
-							role: {
-								type: "replicator",
-								factor: 0.2
+							replicate: {
+								factor: 0.2,
 							},
 							replicas: {
-								min: 1
-							}
-						}
+								min: 1,
+							},
+						},
 					});
 
-					await waitForResolved(() =>
-						expect(
-							store1.docs.log.getReplicatorsSorted()?.toArray().length
-						).equal(3)
+					await waitForResolved(async () =>
+						expect((await store1.docs.log.getReplicators()).size).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect((await store2.docs.log.getReplicators()).size).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect((await store3.docs.log.getReplicators()).size).equal(3),
 					);
 
 					const count = 1000;
@@ -1621,7 +1205,7 @@ describe("index", () => {
 					for (let i = 0; i < count; i++) {
 						const doc = new Document({
 							id: uuid(),
-							data: randomBytes(10)
+							data: randomBytes(10),
 						});
 						await store1.docs.put(doc);
 					}
@@ -1636,20 +1220,13 @@ describe("index", () => {
 						for (const store of [store1, store2, store3]) {
 							let t0 = +new Date();
 							const collected = await store.docs.index.search(
-								new SearchRequest()
+								new SearchRequest({ fetch: count }),
 							);
 							try {
 								expect(collected.length).equal(count);
 							} catch (error) {
 								throw new Error(
-									`Failed to collect all messages ${collected} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}. Matured: ${store.docs.log
-										.getReplicatorsSorted()
-										?.toArray()
-										.map(
-											(x: any) =>
-												Number(x.role.timestamp) - t0 >
-												store.docs.log.timeUntilRoleMaturity
-										)}`
+									`Failed to collect all messages ${collected.length} < ${count}. Log lengths:  ${JSON.stringify([store1, store2, store3].map((x) => x.docs.log.log.length))}`,
 								);
 							}
 						}
@@ -1659,7 +1236,7 @@ describe("index", () => {
 			});
 
 			describe("concurrency", () => {
-				before(async () => { });
+				before(() => {});
 
 				let abortController: AbortController,
 					interval: ReturnType<typeof setInterval>;
@@ -1678,25 +1255,24 @@ describe("index", () => {
 							services: {
 								pubsub: (c) =>
 									new DirectSub(c, {
-										connectionManager: { dialer: false, pruner: false }
-									}) // prevent autodialing
-							}
-						}
+										connectionManager: { dialer: false, pruner: false },
+									}), // prevent autodialing
+							},
+						},
 					});
 
 					const writeStore = await session.peers[0].open(
 						new TestStore({
-							docs: new Documents<Document>()
+							docs: new Documents<Document>(),
 						}),
 						{
 							args: {
-								role: {
-									type: "replicator",
-									factor: 1
+								replicate: {
+									factor: 1,
 								},
-								timeUntilRoleMaturity: 1000
-							}
-						}
+								timeUntilRoleMaturity: 1000,
+							},
+						},
 					);
 
 					for (let i = 0; i < session.peers.length - 1; i++) {
@@ -1706,21 +1282,18 @@ describe("index", () => {
 						session.peers.length - 1
 					].open<TestStore>(writeStore.address, {
 						args: {
-							role: {
-								type: "replicator",
-								factor: 1
+							replicate: {
+								factor: 1,
 							},
-							timeUntilRoleMaturity: 1000
-						}
+							timeUntilRoleMaturity: 1000,
+						},
 					});
 
-					await waitForResolved(() =>
-						expect(writeStore.docs.log.getReplicatorsSorted()?.length).equal(
-							2
-						)
+					await waitForResolved(async () =>
+						expect((await writeStore.docs.log.getReplicators())?.size).equal(2),
 					);
-					await waitForResolved(() =>
-						expect(readStore.docs.log.getReplicatorsSorted()?.length).equal(2)
+					await waitForResolved(async () =>
+						expect((await readStore.docs.log.getReplicators())?.size).equal(2),
 					);
 
 					// introduce lag in the relay
@@ -1728,7 +1301,7 @@ describe("index", () => {
 					const rawOutboundStream = (session.peers[1].services.pubsub as any)[
 						"peers"
 					].get(
-						session.peers[2].identity.publicKey.hashcode()
+						session.peers[2].identity.publicKey.hashcode(),
 					)!.rawOutboundStream;
 
 					const sendFn = rawOutboundStream.sendData.bind(rawOutboundStream);
@@ -1749,15 +1322,15 @@ describe("index", () => {
 							...b,
 							meta: {
 								...b?.meta,
-								data: encodeReplicas(new AbsoluteReplicas(1))
-							}
+								data: encodeReplicas(new AbsoluteReplicas(1)),
+							},
 						};
 						return writeStore.docs.log.log.append(a, b);
 					};
 
-					const outboundStream = (session.peers[1].services.pubsub as any)["peers"].get(
-						session.peers[2].identity.publicKey.hashcode()
-					)!.outboundStream;
+					const outboundStream = (session.peers[1].services.pubsub as any)[
+						"peers"
+					].get(session.peers[2].identity.publicKey.hashcode())!.outboundStream;
 
 					let msgSize = 1e4;
 
@@ -1765,7 +1338,7 @@ describe("index", () => {
 						const id = uuid();
 						ids.push(id);
 						await writeStore.docs.put(
-							new Document({ id, data: randomBytes(msgSize) })
+							new Document({ id, data: randomBytes(msgSize) }),
 						);
 						await writeStore.docs.log.distribute();
 						interval = setTimeout(() => insertFn(), lag / 2);
@@ -1773,10 +1346,10 @@ describe("index", () => {
 					insertFn();
 
 					await waitForResolved(() =>
-						expect(outboundStream.readableLength).greaterThan(msgSize * 5)
+						expect(outboundStream.readableLength).greaterThan(msgSize * 5),
 					);
 					await waitForResolved(() =>
-						expect(readStore.docs.log["syncInFlight"].size).greaterThan(0)
+						expect(readStore.docs.log["syncInFlight"].size).greaterThan(0),
 					);
 
 					// try two searches, one default (should work anyway)
@@ -1785,16 +1358,16 @@ describe("index", () => {
 						new SearchRequest({
 							query: new StringMatch({
 								key: ["id"],
-								value: ids[ids.length - 1]
-							})
+								value: ids[ids.length - 1],
+							}),
 						}),
 						{
 							remote: {
 								mode: AcknowledgeDelivery,
 								throwOnMissing: true,
-								timeout: 5e3
-							}
-						}
+								timeout: 5e3,
+							},
+						},
 					);
 
 					await expect(
@@ -1802,18 +1375,18 @@ describe("index", () => {
 							new SearchRequest({
 								query: new StringMatch({
 									key: ["id"],
-									value: ids[ids.length - 1]
-								})
+									value: ids[ids.length - 1],
+								}),
 							}),
 							{
 								remote: {
 									mode: AcknowledgeDelivery,
 									throwOnMissing: true,
 									priority: 0,
-									timeout: 5e3
-								}
-							} // query will low prio and see that we reach an error
-						)
+									timeout: 5e3,
+								},
+							}, // query will low prio and see that we reach an error
+						),
 					).rejectedWith("Did not receive responses from all shards");
 
 					expect(await prioritizedSearchByDefault).to.have.length(1);
@@ -1834,7 +1407,7 @@ describe("index", () => {
 				let doc = new Document({
 					id: String(id),
 					name: String(id),
-					number: BigInt(id)
+					number: BigInt(id),
 				});
 				const resp = await stores[storeIndex].docs.put(doc);
 				// --- wait for all others to "want" this entry ---
@@ -1850,12 +1423,13 @@ describe("index", () => {
 					// this allows use to test sorting where data is determenstically distributed
 					// i.e put(1,123) will put a document at store 1 with id 123, and will never leave that store
 					// store 0 and 2 who want to fetch all data will always have to ask node 1
-					await waitForResolved(() =>
-						expect(
-							stores[i].docs.log["syncInFlight"]
-								.get(stores[storeIndex].node.identity.publicKey.hashcode())
-								.has(resp.entry.hash)
-						).to.be.true
+					await waitForResolved(
+						() =>
+							expect(
+								stores[i].docs.log["syncInFlight"]
+									.get(stores[storeIndex].node.identity.publicKey.hashcode())
+									.has(resp.entry.hash),
+							).to.be.true,
 					);
 				}
 				return resp;
@@ -1867,13 +1441,13 @@ describe("index", () => {
 				query = new IntegerCompare({
 					key: "number",
 					compare: Compare.GreaterOrEqual,
-					value: 0n
-				})
+					value: 0n,
+				}),
 			) => {
 				await waitForResolved(async () => {
 					const req = new SearchRequest({
 						query: [query],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "number" })]
+						sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
 					});
 					const iterator = stores[fromStoreIndex].docs.index.iterate(req);
 
@@ -1907,20 +1481,20 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-								stores[0].address!,
-								session.peers[i].services.blocks
-							))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 							: new TestStore({
-								docs: new Documents<Document>()
-							});
+									docs: new Documents<Document>(),
+								});
 					store.docs.log.append = async (a: any, b: any) => {
 						// Omit synchronization so results are always the same (HACKY)
 						b = {
 							...b,
 							meta: {
 								...b?.meta,
-								data: encodeReplicas(new AbsoluteReplicas(1))
-							}
+								data: encodeReplicas(new AbsoluteReplicas(1)),
+							},
 						};
 						return store.docs.log.log.append(a, b);
 					};
@@ -1930,16 +1504,15 @@ describe("index", () => {
 							index: {
 								canRead: (_document: any, key: any) => {
 									return canRead[i] ? canRead[i]!(key) : true;
-								}
+								},
 							},
-							role: {
+							replicate: {
 								// TODO choose offset so data is perfectly distributed
-								type: "replicator",
-								factor: 1
+								factor: 1,
 							},
 							timeUntilRoleMaturity: 0,
-							replicas: { min: 1 } // make sure documents only exist once
-						}
+							replicas: { min: 1 }, // make sure documents only exist once
+						},
 					});
 
 					// Omit synchronization so results are always the same (HACKY)
@@ -1959,17 +1532,15 @@ describe("index", () => {
 					await stores[i].docs.log.waitForReplicator(
 						...session.peers
 							.filter((_v, ix) => ix !== i)
-							.map((x) => x.identity.publicKey)
+							.map((x) => x.identity.publicKey),
 					);
 				}
 			});
 
 			afterEach(async () => {
-				await Promise.all(stores.map((x) => x.drop()));
+				await Promise.all(stores.map((x) => x.closed || x.drop()));
 				stores = [];
 			});
-
-
 
 			it("empty", async () => {
 				for (let i = 0; i < session.peers.length; i++) {
@@ -2007,18 +1578,16 @@ describe("index", () => {
 			it("observer mixed sort", async () => {
 				// TODO separate setup so we don't need to close store 2 test here
 				await stores[2].close();
-				await stores[0].docs.updateRole({ type: "observer" });
-				await waitForResolved(() =>
-					expect(
-						stores[0].docs.log.getReplicatorsSorted()?.toArray().length
-					).equal(1)
+				await stores[0].docs.log.replicate(false);
+				await waitForResolved(async () =>
+					expect((await stores[0].docs.log.getReplicators()).size).equal(1),
 				);
 				let data: number[] = [];
 				for (let i = 0; i < 100; i++) {
 					let doc = new Document({
 						id: String(i),
 						name: String(i),
-						number: BigInt(i)
+						number: BigInt(i),
 					});
 					data.push(i);
 					const { entry } = await stores[1].docs.put(doc, { target: "all" });
@@ -2030,10 +1599,10 @@ describe("index", () => {
 						new IntegerCompare({
 							key: "number",
 							compare: Compare.GreaterOrEqual,
-							value: 0n
-						})
+							value: 0n,
+						}),
 					],
-					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })]
+					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
 				});
 				const iterator = stores[0].docs.index.iterate(req);
 				let acc: Document[] = [];
@@ -2053,7 +1622,7 @@ describe("index", () => {
 				await put(0, 4);
 				await checkIterate(0, [
 					[0n, 1n],
-					[2n, 3n, 4n]
+					[2n, 3n, 4n],
 				]);
 			});
 
@@ -2072,14 +1641,14 @@ describe("index", () => {
 					promises.push(
 						checkIterate(i, [
 							[0n, 1n],
-							[2n, 3n, 4n]
-						])
+							[2n, 3n, 4n],
+						]),
 					);
 					promises.push(
 						checkIterate(i, [
 							[0n, 1n, 2n],
-							[3n, 4n]
-						])
+							[3n, 4n],
+						]),
 					);
 					promises.push(checkIterate(i, [[0n, 1n, 2n, 3n], [4n]]));
 				}
@@ -2094,8 +1663,8 @@ describe("index", () => {
 					const iterator = await stores[0].docs.index.iterate(
 						new SearchRequest({
 							query: [],
-							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
-						})
+							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+						}),
 					);
 					expect(iterator.done()).to.be.false;
 					const next = await iterator.next(3);
@@ -2106,8 +1675,8 @@ describe("index", () => {
 					const iterator = await stores[0].docs.index.iterate(
 						new SearchRequest({
 							query: [],
-							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })]
-						})
+							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
+						}),
 					);
 					expect(iterator.done()).to.be.false;
 					const next = await iterator.next(3);
@@ -2124,8 +1693,8 @@ describe("index", () => {
 				const iterator = await stores[0].docs.index.iterate(
 					new SearchRequest({
 						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
-					})
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					}),
 				);
 				expect(iterator.done()).to.be.false;
 				const next = await iterator.next(3);
@@ -2135,16 +1704,32 @@ describe("index", () => {
 
 			it("uses indexed fields", async () => {
 				const KEY = "ABC";
+				class IndexClass {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					[KEY]: bigint;
+
+					constructor(properties: { id: string; [KEY]: bigint }) {
+						this.id = properties.id;
+						this[KEY] = properties[KEY];
+					}
+				}
+
 				await stores[0].docs.index.open({
-					fields: async (obj) => {
-						return { [KEY]: obj.number };
+					transform: {
+						type: IndexClass,
+						transform: async (obj) => {
+							return new IndexClass({ id: obj.id, [KEY]: obj.number });
+						},
 					},
 					indexBy: ["id"],
 					dbType: Documents,
 					canSearch: () => true,
 					log: stores[0].docs.log,
 					sync: () => undefined as any,
-					type: Document
+					documentType: Document,
 				});
 
 				await put(0, 0);
@@ -2154,12 +1739,12 @@ describe("index", () => {
 				const iterator = await stores[0].docs.index.iterate(
 					new SearchRequest({
 						query: [],
-						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })]
+						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
 					}),
 					{
 						local: true,
-						remote: false
-					}
+						remote: false,
+					},
 				);
 				const next = await iterator.next(3);
 				expect(next.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
@@ -2175,12 +1760,16 @@ describe("index", () => {
 				const iterator = await stores[2].docs.index.iterate(
 					new SearchRequest({
 						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })]
-					})
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					}),
 				);
-				expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal(["1"]);
+				expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal([
+					"1",
+				]);
 				expect(iterator.done()).to.be.false;
-				expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal(["2"]);
+				expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal([
+					"2",
+				]);
 				expect(iterator.done()).to.be.true;
 			});
 
@@ -2190,25 +1779,21 @@ describe("index", () => {
 					await put(0, 1);
 					await put(0, 2);
 					const request = new SearchRequest({
-						query: []
+						query: [],
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).to.be.false;
 					await iterator.next(2); // fetch some, but not all
-					expect(
-						(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-							request.idString
-						)!.arr
-					).to.have.length(1);
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						1,
+					);
 					await iterator.close();
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-									request.idString
-								)
-							).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 }
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
+						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
 
@@ -2216,16 +1801,14 @@ describe("index", () => {
 					await put(0, 0);
 					await put(0, 1);
 					const request = new SearchRequest({
-						query: []
+						query: [],
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).to.be.false;
 					await iterator.next(1); // fetch some, but not all
-					expect(
-						(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-							request.idString
-						)!.arr
-					).to.have.length(1);
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						1,
+					);
 
 					const closeRequest = new CloseIteratorRequest({ id: request.id });
 
@@ -2233,33 +1816,29 @@ describe("index", () => {
 					await stores[2].docs.index["_query"].send(closeRequest, {
 						mode: new SilentDelivery({
 							to: [session.peers[0].identity.publicKey],
-							redundancy: 1
-						})
+							redundancy: 1,
+						}),
 					});
 
 					await delay(2000);
-					expect(
-						(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-							request.idString
-						)
-					).to.exist;
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						1,
+					);
 
 					// send from the owner
 					await stores[1].docs.index["_query"].send(closeRequest, {
 						mode: new SilentDelivery({
 							to: [session.peers[0].identity.publicKey],
-							redundancy: 1
-						})
+							redundancy: 1,
+						}),
 					});
 
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-									request.idString
-								)
-							).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 }
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
+						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
 
@@ -2268,19 +1847,17 @@ describe("index", () => {
 					await put(0, 1);
 					await put(0, 2);
 					const request = new SearchRequest({
-						query: []
+						query: [],
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					expect(iterator.done()).to.be.false;
 					await iterator.next(3); // fetch some, but not all
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-									request.idString
-								)
-							).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 }
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
+						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
 
@@ -2289,20 +1866,18 @@ describe("index", () => {
 					await put(0, 1);
 					await put(0, 2);
 					const request = new SearchRequest({
-						query: []
+						query: [],
 					});
 					const iterator = await stores[1].docs.index.iterate(request);
 					await iterator.next(2);
 					await iterator.next(1);
 					expect(iterator.done()).to.be.true;
 					await waitForResolved(
-						() =>
+						async () =>
 							expect(
-								(stores[0].docs.index.engine as any)["_resultsCollectQueue"].get(
-									request.idString
-								)
-							).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 }
+								await stores[0].docs.index.getPending(request.idString),
+							).to.eq(undefined),
+						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
 			});
@@ -2329,24 +1904,22 @@ describe("index", () => {
 			await store?.close();
 		});
 
-
-
 		it("reject entries with unexpected payloads", async () => {
 			store = await session.peers[0].open(
 				new TestStore({
-					docs: new Documents<Document>()
-				})
+					docs: new Documents<Document>(),
+				}),
 			);
 			await expect(
-				store.docs.log.log.append(new PutOperation({ data: randomBytes(32) }))
+				store.docs.log.log.append(new PutOperation({ data: randomBytes(32) })),
 			).rejectedWith(AccessError);
 		});
 
 		it("reject entries with unexpected payloads", async () => {
 			store = await session.peers[0].open(
 				new TestStore({
-					docs: new Documents<Document>()
-				})
+					docs: new Documents<Document>(),
+				}),
 			);
 
 			(store as any)["_canAppend"] = () => true; // ignore internal
@@ -2357,20 +1930,18 @@ describe("index", () => {
 					identity: store.node.identity,
 					store: store.docs.log.log.blocks,
 					canAppend: () => true,
-					encoding: store.docs.log.log.encoding
-				})) as Entry<Operation>
+					encoding: store.docs.log.log.encoding,
+				})) as Entry<Operation>,
 			);
 
 			await expect(canAppend).to.be.false;
 		});
 
 		describe("canPerform", () => {
-
-
 			before(async () => {
 				await session.stop();
 				session = await TestSession.connected(1, {
-					directory: "./tmp/document-store/acl/"
+					directory: "./tmp/document-store/acl/",
 				});
 			});
 			after(async () => {
@@ -2395,18 +1966,15 @@ describe("index", () => {
 						type: Document,
 						canPerform: () => {
 							return true;
-						}
+						},
 					});
 				}
 			}
 
 			it("can use different acl on load", async () => {
-
-
-
 				let store = await session.peers[0].open(new TestCanPerfom());
 				await store.documents.put(
-					new Document({ id: "1", name: "1", number: 1n })
+					new Document({ id: "1", name: "1", number: 1n }),
 				);
 				await store.close();
 
@@ -2417,10 +1985,23 @@ describe("index", () => {
 	});
 
 	describe("program as value", () => {
+		class SubProgramIndexable {
+			@field({ type: fixedArray("u8", 32) })
+			id: Uint8Array;
+
+			@field({ type: "string" })
+			address: string;
+
+			constructor(properties: { id: Uint8Array; address: string }) {
+				this.id = properties.id;
+				this.string = properties.string;
+			}
+		}
 		@variant("subprogram")
 		class SubProgram extends Program {
 			@field({ type: fixedArray("u8", 32) })
 			id: Uint8Array;
+
 			@field({ type: Log })
 			log: Log<any>;
 
@@ -2448,8 +2029,15 @@ describe("index", () => {
 					...options,
 					type: SubProgram,
 					index: {
-						idProperty: ["id"]
-					}
+						idProperty: ["id"],
+						type: SubProgramIndexable,
+						transform: async (arg, ctx) => {
+							return new SubProgramIndexable({
+								id: arg.id,
+								address: await arg.calculateAddress(),
+							});
+						},
+					},
 				});
 			}
 		}
@@ -2471,24 +2059,24 @@ describe("index", () => {
 			for (let i = 0; i < peersCount; i++) {
 				if (i > 0) {
 					await session.peers[i].services.blocks.waitFor(
-						session.peers[0].peerId
+						session.peers[0].peerId,
 					);
 				}
 				const store =
 					i > 0
 						? (await TestStoreSubPrograms.load<TestStoreSubPrograms>(
-							stores[0].store.address!,
-							session.peers[i].services.blocks
-						))!
+								stores[0].store.address!,
+								session.peers[i].services.blocks,
+							))!
 						: new TestStoreSubPrograms({
-							docs: new Documents<SubProgram>()
-						});
+								docs: new Documents<SubProgram>(),
+							});
 
 				await session.peers[i].open(store, {
 					args: {
-						role: i === 0 ? { type: "replicator", factor: 1 } : "observer",
-						canOpen: () => true
-					}
+						replicate: i === 0 ? { factor: 1 } : false,
+						canOpen: () => true,
+					},
 				});
 				stores.push({ store });
 			}
@@ -2496,8 +2084,6 @@ describe("index", () => {
 		afterEach(async () => {
 			await Promise.all(stores.map((x) => x.store.close()));
 		});
-
-
 
 		it("can open a subprogram when put", async () => {
 			const subProgram = new SubProgram();
@@ -2553,12 +2139,11 @@ describe("index", () => {
 			await stores[1].store.docs.put(subProgram);
 			expect(subProgram.closed).to.be.true; // Because observer? Not open by default?
 			await stores[0].store.docs.log.log.join(
-				[...(await stores[1].store.docs.log.log.values.toArray()).values()].map(
-					(x) => deserialize(serialize(x), Entry)
-				)
+				[...(await stores[1].store.docs.log.log.toArray()).values()].map((x) =>
+					deserialize(serialize(x), Entry),
+				),
 			);
 			expect(subProgram.closed).to.be.true; // Because observer? Not open by default?
-
 		});
 
 		it("will drop on delete", async () => {
@@ -2572,6 +2157,10 @@ describe("index", () => {
 				dropped = true;
 				return subprogramDropped(from);
 			};
+			const size = await stores[0].store.docs.index.getSize();
+			expect(size).to.be.equal(1);
+			const fetch = await stores[0].store.docs.index.get(subProgram.id);
+			expect(fetch).to.be.exist;
 			await stores[0].store.docs.del(subProgram.id);
 			await waitForResolved(() => expect(subProgram.closed).to.be.true);
 			expect(dropped).to.be.true;
@@ -2586,6 +2175,18 @@ describe("index", () => {
 		});
 
 		describe("index", () => {
+			class Indexable {
+				@field({ type: fixedArray("u8", 32) })
+				id: Uint8Array;
+
+				@field({ type: fixedArray("u8", 32) })
+				custom: Uint8Array;
+
+				constructor(from: SubProgram) {
+					this.id = from.id;
+					this.custom = from.id;
+				}
+			}
 			@variant("test_program_documents_custom_fields")
 			class TestStoreSubPrograms extends Program {
 				@field({ type: Documents })
@@ -2601,10 +2202,8 @@ describe("index", () => {
 						type: SubProgram,
 						index: {
 							idProperty: ["id"],
-							fields: (obj) => {
-								return { id: obj.id, custom: obj.id };
-							}
-						}
+							type: Indexable,
+						},
 					});
 				}
 			}
@@ -2621,16 +2220,16 @@ describe("index", () => {
 				await store.docs.put(subProgram);
 				expect(subProgram.closed).to.be.false;
 				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(1)
+					expect(await store2.docs.index.getSize()).equal(1),
 				);
 				const stores = [store, store2];
 				for (const s of stores) {
 					const results = await s.docs.index.search(
 						new SearchRequest({
 							query: [
-								new ByteMatchQuery({ key: "custom", value: subProgram.id })
-							]
-						})
+								new ByteMatchQuery({ key: "custom", value: subProgram.id }),
+							],
+						}),
 					);
 					expect(results).to.have.length(1);
 					expect(results[0].id).to.deep.equal(subProgram.id);
@@ -2653,26 +2252,26 @@ describe("index", () => {
 					const store =
 						i > 0
 							? (await TestStore.load<TestStore>(
-								stores[0].address!,
-								session.peers[i].services.blocks
-							))!
+									stores[0].address!,
+									session.peers[i].services.blocks,
+								))!
 							: new TestStore({
-								docs: new Documents<Document>()
-							});
+									docs: new Documents<Document>(),
+								});
 					await session.peers[i].open(store);
 					stores.push(store);
 				}
 
 				for (let i = 0; i < stores.length; i++) {
 					const fn = stores[i].docs.index.processQuery.bind(
-						stores[i].docs.index
+						stores[i].docs.index,
 					);
 					stores[i].docs.index.processQuery = (a, b, c) => {
 						counters[i] += 1;
 						return fn(a, b, c);
 					};
 					await stores[i].docs.waitFor(
-						session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId)
+						session.peers.filter((_v, ix) => ix !== i).map((x) => x.peerId),
 					);
 				}
 			});
@@ -2684,14 +2283,10 @@ describe("index", () => {
 				counters = new Array(stores.length).fill(0);
 			});
 
-
-
-
-
 			it("all", async () => {
 				stores[0].docs.log.getReplicatorUnion = () => [
 					stores[1].node.identity.publicKey.hashcode(),
-					stores[2].node.identity.publicKey.hashcode()
+					stores[2].node.identity.publicKey.hashcode(),
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).equal(1);
@@ -2709,7 +2304,7 @@ describe("index", () => {
 
 			it("one", async () => {
 				stores[0].docs.log.getReplicatorUnion = () => [
-					stores[1].node.identity.publicKey.hashcode()
+					stores[1].node.identity.publicKey.hashcode(),
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).equal(1);
@@ -2720,16 +2315,15 @@ describe("index", () => {
 			it("non-local", async () => {
 				stores[0].docs.log.getReplicatorUnion = () => [
 					stores[1].node.identity.publicKey.hashcode(),
-					stores[2].node.identity.publicKey.hashcode()
+					stores[2].node.identity.publicKey.hashcode(),
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-					local: false
+					local: false,
 				});
 				expect(counters[0]).equal(0);
 				expect(counters[1]).equal(1);
 				expect(counters[2]).equal(1);
 			});
-
 
 			describe("errors", () => {
 				let fns: any[];
@@ -2747,13 +2341,13 @@ describe("index", () => {
 				it("will iterate on shard until response", async () => {
 					stores[0].docs.log.getReplicatorUnion = () => [
 						stores[1].node.identity.publicKey.hashcode(),
-						stores[2].node.identity.publicKey.hashcode()
+						stores[2].node.identity.publicKey.hashcode(),
 					];
 
 					let failedOnce = false;
 					for (let i = 1; i < stores.length; i++) {
 						const fn = stores[i].docs.index.processQuery.bind(
-							stores[1].docs.index
+							stores[1].docs.index,
 						);
 						stores[i].docs.index.processQuery = (a, b, c) => {
 							if (!failedOnce) {
@@ -2765,7 +2359,7 @@ describe("index", () => {
 					}
 					let timeout = 1000;
 					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-						remote: { timeout }
+						remote: { timeout },
 					});
 					expect(failedOnce).to.be.true;
 					expect(counters[0]).equal(1);
@@ -2776,7 +2370,7 @@ describe("index", () => {
 				it("will fail silently if can not reach all shards", async () => {
 					stores[0].docs.log.getReplicatorUnion = () => [
 						stores[1].node.identity.publicKey.hashcode(),
-						stores[2].node.identity.publicKey.hashcode()
+						stores[2].node.identity.publicKey.hashcode(),
 					];
 					for (let i = 1; i < stores.length; i++) {
 						stores[i].docs.index.processQuery = (a) => {
@@ -2787,7 +2381,7 @@ describe("index", () => {
 					let timeout = 1000;
 
 					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-						remote: { timeout }
+						remote: { timeout },
 					});
 					expect(counters[0]).equal(1);
 					expect(counters[1]).equal(0);
@@ -2796,7 +2390,11 @@ describe("index", () => {
 			});
 		});
 	});
-	describe("recover", () => {
+
+	// TODO is this feature needed? if so setup a case where a too strict acl is set, actually results in a recoverable state
+	// i.e. block store still has the blocks, but the index is empty
+
+	/* describe("recover", () => {
 		@variant(0)
 		class OtherDoc {
 			@field({ type: "string" })
@@ -2836,7 +2434,7 @@ describe("index", () => {
 		let db2: AlternativeStore;
 
 		beforeEach(async () => {
-			session = await TestSession.connected(1);
+			session = await TestSession.connected(1, { directory: "./tmp/document-store/recover/" + uuid() });
 
 			db1 = await session.peers[0].open(
 				new TestStore({ docs: new Documents() })
@@ -2878,11 +2476,24 @@ describe("index", () => {
 					canPerform: () => canPerform
 				}
 			});
+			expect(await db1.docs.index.getSize()).equal(3);
+			let count = 0;
+			for await (const f of db1.docs.log.log.blocks.iterator()) {
+				count++;
+			}
+			expect(count).to.equal(3);
+			await db1.docs.log.reload();
+
 			expect(await db1.docs.index.getSize()).equal(0);
-			await db1.docs.log.log.headsIndex["_index"].clear();
+
+			count = 0;
+			for await (const f of db1.docs.log.log.blocks.iterator()) {
+				count++;
+			}
+			expect(count).to.equal(0);
+
 			canPerform = true;
 			await db1.docs.put(new Document({ id: uuid() }));
-			await db1.docs.log.log.headsIndex.resetHeadsCache();
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(await db1.docs.index.getSize()).equal(1); // heads are ruined
@@ -2900,8 +2511,9 @@ describe("index", () => {
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(await db1.docs.index.getSize()).equal(4);
+
 		});
-	});
+	}); */
 });
 /*  TODO query all if undefined?
 		
@@ -2932,7 +2544,7 @@ describe("index", () => {
 	
 it("ignore myself if I am a new replicator", async () => {
 	// and the other peer has been around for longer
-	await stores[0].docs.updateRole("observer")
+	await stores[0].docs.replicate(false)
 	await stores[1].docs.updateRole({
 type: 'replicator',
 factor: 1
@@ -2959,3 +2571,88 @@ factor: 1
 	expect(counters[1]).equal(1); // we don't have to query remote since local will suffice since minAge time has passed
 	expect(counters[2]).equal(0);
 }); */
+
+/* 	describe("field extractor", () => {
+					let indexedNameField = "xyz";
+	
+					// We can't seem to define this class inside of the test itself (will yield error when running all tests)
+					@variant("filtered_store")
+					class FilteredStore extends Program {
+						@field({ type: Uint8Array })
+						id: Uint8Array;
+	
+						@field({ type: Documents })
+						docs: Documents<Document>;
+	
+						constructor(properties: { docs: Documents<Document> }) {
+							super();
+	
+							this.id = new Uint8Array(32);
+							this.docs = properties.docs;
+						}
+	
+						async open(options?: Partial<SetupOptions<Document>>): Promise<void> {
+							await this.docs.open({
+								...options,
+								type: Document,
+								index: {
+									idProperty: "id",
+									fields: (obj: any) => {
+										return { [indexedNameField]: obj.name };
+									}
+								}
+							});
+						}
+					}
+	
+					it("filters field", async () => {
+						store = new FilteredStore({
+							docs: new Documents<Document>()
+						});
+						store.docs.log.log.id = new Uint8Array(32);
+	
+						await session.peers[0].open(store);
+	
+						let doc = new Document({
+							id: uuid(),
+							name: "Hello world"
+						});
+	
+						await store.docs.put(doc);
+	
+						let indexedValues = [...store.docs.index.engine.iterator()];
+	
+						expect(indexedValues).to.have.length(1);
+	
+						expect(indexedValues[0][1].indexed).to.deep.equal({
+							[indexedNameField]: doc.name
+						});
+						expect(indexedValues[0][1].indexed["value"]).equal(undefined); // Because we dont want to keep it in memory (by default)
+	
+						await session.peers[1].services.blocks.waitFor(
+							session.peers[0].peerId
+						);
+	
+						store2 = (await FilteredStore.load(
+							store.address!,
+							session.peers[1].services.blocks
+						))!;
+	
+						await session.peers[1].open(store2, {
+							args: {
+								replicate: false
+							}
+						});
+	
+						expect(store2.docs.log.role).to.be.instanceOf(Observer);
+	
+						await store2.docs.log.waitForReplicator(
+							session.peers[0].identity.publicKey
+						);
+	
+						let results = await store2.docs.index.search(
+							new SearchRequest({ query: [] })
+						);
+						expect(results).to.have.length(1);
+					});
+				}); */

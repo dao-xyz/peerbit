@@ -1,30 +1,29 @@
-export * from "./errors.js";
-
 import {
 	type AbstractType,
 	deserialize,
 	field,
+	fixedArray,
 	serialize,
 	variant,
 	vec,
-	fixedArray
 } from "@dao-xyz/borsh";
-import { AccessError } from "./errors.js";
 import sodium from "libsodium-wrappers";
-import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
-import { Ed25519PublicKey } from "./ed25519.js";
-import { randomBytes } from "./random.js";
-import { sha256 } from "./hash.js";
-
 import { equals as uequals } from "uint8arrays";
+import { Ed25519PublicKey } from "./ed25519.js";
+import { AccessError } from "./errors.js";
+import { sha256 } from "./hash.js";
+import { randomBytes } from "./random.js";
+import { X25519Keypair, X25519PublicKey, X25519SecretKey } from "./x25519.js";
+
+export * from "./errors.js";
+
 export const equals = (array1?: Uint8Array, array2?: Uint8Array) => {
-	if (!!array1 != !!array2) return false;
+	if (!!array1 !== !!array2) return false;
 	if (!array1 || !array2) {
 		return false;
 	}
 	return uequals(array1, array2);
 };
-
 
 export type MaybePromise<T> = Promise<T> | T;
 
@@ -48,7 +47,7 @@ export type KeyExchangeOptions =
 
 type EncryptReturnValue<
 	T,
-	Parameters extends KeyExchangeOptions
+	Parameters extends KeyExchangeOptions,
 > = EncryptedThing<T, EnvelopeFromParameter<Parameters>>;
 
 type CipherWithEnvelope<E = PublicKeyEnvelope | HashedKeyEnvelope> = {
@@ -61,26 +60,26 @@ type SymmetricKeys = Uint8Array;
 type PublicKeyEncryptionKeys = X25519Keypair;
 
 function isAsymmetriEncryptionParameters(
-	parameters: KeyExchangeOptions
+	parameters: KeyExchangeOptions,
 ): parameters is PublicKeyEncryptionParameters {
 	return (
 		(parameters as PublicKeyEncryptionParameters).receiverPublicKeys != null
 	);
 }
 function isAsymmetricEncryptionKeys(
-	parameters: PublicKeyEncryptionKeys | SymmetricKeys
+	parameters: PublicKeyEncryptionKeys | SymmetricKeys,
 ): parameters is PublicKeyEncryptionKeys {
 	return (parameters as PublicKeyEncryptionKeys) instanceof X25519Keypair;
 }
 
 type EnvelopeFromParameter<Parameters extends KeyExchangeOptions> =
 	Parameters extends PublicKeyEncryptionParameters
-	? PublicKeyEnvelope
-	: HashedKeyEnvelope;
+		? PublicKeyEnvelope
+		: HashedKeyEnvelope;
 
 type EncryptProvide<Parameters extends KeyExchangeOptions> = (
 	bytes: Uint8Array,
-	parameters: Parameters
+	parameters: Parameters,
 ) => Promise<CipherWithEnvelope<EnvelopeFromParameter<Parameters>>>;
 
 interface KeyProvider {
@@ -90,14 +89,14 @@ interface KeyProvider {
 export const createLocalEncryptProvider = <
 	K extends PublicKeyEncryptionKeys | SymmetricKeys,
 	Parameters extends KeyExchangeOptions = K extends PublicKeyEncryptionKeys
-	? PublicKeyEncryptionParameters
-	: SymmetricKeyEncryptionParameters
+		? PublicKeyEncryptionParameters
+		: SymmetricKeyEncryptionParameters,
 >(
-	keys: K
+	keys: K,
 ) => {
 	return async (
 		bytes: Uint8Array,
-		parameters: Parameters
+		parameters: Parameters,
 	): Promise<CipherWithEnvelope<EnvelopeFromParameter<Parameters>>> => {
 		const nonce = randomBytes(NONCE_LENGTH); // crypto random is faster than sodim random
 		if (
@@ -113,7 +112,7 @@ export const createLocalEncryptProvider = <
 						return X25519PublicKey.from(key);
 					}
 					return key;
-				})
+				}),
 			);
 
 			const ks = receiverX25519PublicKeys.map((receiverPublicKey) => {
@@ -124,11 +123,11 @@ export const createLocalEncryptProvider = <
 							epheremalKey,
 							kNonce,
 							receiverPublicKey.publicKey,
-							keys.secretKey.secretKey
+							keys.secretKey.secretKey,
 						),
-						nonce: kNonce
+						nonce: kNonce,
 					}),
-					receiverPublicKey
+					receiverPublicKey,
 				});
 			});
 
@@ -137,8 +136,8 @@ export const createLocalEncryptProvider = <
 				nonce,
 				envelope: new PublicKeyEnvelope({
 					senderPublicKey: keys.publicKey,
-					ks
-				}) as EnvelopeFromParameter<Parameters>
+					ks,
+				}) as EnvelopeFromParameter<Parameters>,
 			};
 		} else if (
 			!isAsymmetriEncryptionParameters(parameters) &&
@@ -149,8 +148,8 @@ export const createLocalEncryptProvider = <
 				cipher: new Uint8Array(cipher), // TODO do we need this clone?
 				nonce,
 				envelope: new HashedKeyEnvelope({
-					hash: await sha256(keys)
-				}) as EnvelopeFromParameter<Parameters>
+					hash: await sha256(keys),
+				}) as EnvelopeFromParameter<Parameters>,
 			};
 		}
 
@@ -161,22 +160,22 @@ export const createLocalEncryptProvider = <
 export type DecryptProvider = (
 	encrypted: Uint8Array,
 	nonce: Uint8Array,
-	exchange: Envelope
+	exchange: Envelope,
 ) => Promise<Uint8Array>;
 
 type KeyResolver = <T extends X25519PublicKey | Uint8Array>(
-	key: T
+	key: T,
 ) => Promise<
 	(T extends X25519PublicKey ? X25519Keypair : Uint8Array) | undefined
 >;
 
 export const createDecrypterFromKeyResolver = (
-	keyResolver: KeyResolver
+	keyResolver: KeyResolver,
 ): DecryptProvider => {
 	return async (
 		encrypted: Uint8Array,
 		nonce: Uint8Array,
-		exchange: Envelope
+		exchange: Envelope,
 	): Promise<Uint8Array> => {
 		// We only need to open with one of the keys
 
@@ -189,7 +188,7 @@ export const createDecrypterFromKeyResolver = (
 				if (exported) {
 					key = {
 						index: i,
-						keypair: exported
+						keypair: exported,
 					};
 					break;
 				}
@@ -208,7 +207,7 @@ export const createDecrypterFromKeyResolver = (
 						k._encryptedKey.cipher,
 						k._encryptedKey.nonce,
 						exchange._senderPublicKey.publicKey,
-						secretKey.secretKey
+						secretKey.secretKey,
 					);
 				} catch (error) {
 					throw new AccessError("Failed to decrypt");
@@ -240,15 +239,16 @@ export abstract class MaybeEncrypted<T> {
 	}
 
 	decrypt(
-		keyResolver?: X25519Keypair | KeyProvider
+		keyResolver?: X25519Keypair | KeyProvider,
 	): MaybePromise<DecryptedThing<T>>;
 	decrypt(provider?: DecryptProvider): MaybePromise<DecryptedThing<T>>;
 
 	decrypt(
-		provider?: X25519Keypair | DecryptProvider | KeyProvider
+		provider?: X25519Keypair | DecryptProvider | KeyProvider,
 	): MaybePromise<DecryptedThing<T>> | DecryptedThing<T> {
 		throw new Error("Not implemented");
 	}
+
 	equals(other: MaybeEncrypted<T>): boolean {
 		throw new Error("Not implemented");
 	}
@@ -289,17 +289,17 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 
 	async encrypt<Parameters extends KeyExchangeOptions>(
 		provider: EncryptProvide<Parameters>,
-		parameters: Parameters
+		parameters: Parameters,
 	): Promise<EncryptReturnValue<T, Parameters>>;
 
 	async encrypt(
 		x25519Keypair: X25519Keypair,
-		receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[]
+		receiverPublicKeys: (X25519PublicKey | Ed25519PublicKey)[],
 	): Promise<EncryptReturnValue<T, PublicKeyEncryptionParameters>>;
 
 	async encrypt(
 		keypair: EncryptProvide<any> | X25519Keypair,
-		parameters: KeyExchangeOptions | (X25519PublicKey | Ed25519PublicKey)[]
+		parameters: KeyExchangeOptions | (X25519PublicKey | Ed25519PublicKey)[],
 	): Promise<EncryptReturnValue<T, any>> {
 		let provider: EncryptProvide<any>;
 		let options: KeyExchangeOptions;
@@ -310,7 +310,7 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 					| X25519PublicKey
 					| Ed25519PublicKey
 				)[],
-				type: "publicKey"
+				type: "publicKey",
 			};
 		} else {
 			provider = keypair;
@@ -322,17 +322,17 @@ export class DecryptedThing<T> extends MaybeEncrypted<T> {
 		const enc = new EncryptedThing<T, EnvelopeFromParameter<any>>({
 			encrypted: cipher,
 			envelope,
-			nonce
+			nonce,
 		});
 		enc._decrypted = this;
 		return enc;
 	}
 
-	get decrypted(): DecryptedThing<T> {
+	get decrypted(): this {
 		return this;
 	}
 
-	decrypt(): DecryptedThing<T> {
+	decrypt(): this {
 		return this;
 	}
 
@@ -361,11 +361,9 @@ export class CipherWithNonce {
 	@field({ type: Uint8Array })
 	cipher: Uint8Array;
 
-	constructor(props?: { nonce: Uint8Array; cipher: Uint8Array }) {
-		if (props) {
-			this.nonce = props.nonce;
-			this.cipher = props.cipher;
-		}
+	constructor(props: { nonce: Uint8Array; cipher: Uint8Array }) {
+		this.nonce = props.nonce;
+		this.cipher = props.cipher;
 	}
 
 	equals(other: CipherWithNonce): boolean {
@@ -387,14 +385,12 @@ export class K {
 	@field({ type: X25519PublicKey })
 	_receiverPublicKey: X25519PublicKey;
 
-	constructor(props?: {
+	constructor(props: {
 		encryptedKey: CipherWithNonce;
 		receiverPublicKey: X25519PublicKey;
 	}) {
-		if (props) {
-			this._encryptedKey = props.encryptedKey;
-			this._receiverPublicKey = props.receiverPublicKey;
-		}
+		this._encryptedKey = props.encryptedKey;
+		this._receiverPublicKey = props.receiverPublicKey;
 	}
 
 	equals(other: K): boolean {
@@ -421,12 +417,10 @@ class PublicKeyEnvelope extends Envelope {
 	@field({ type: vec(K) })
 	_ks: K[];
 
-	constructor(props?: { senderPublicKey: X25519PublicKey; ks: K[] }) {
+	constructor(props: { senderPublicKey: X25519PublicKey; ks: K[] }) {
 		super();
-		if (props) {
-			this._senderPublicKey = props.senderPublicKey;
-			this._ks = props.ks;
-		}
+		this._senderPublicKey = props.senderPublicKey;
+		this._ks = props.ks;
 	}
 
 	// TODO: should this be comparable to AbstractEnvelope?
@@ -455,12 +449,11 @@ class PublicKeyEnvelope extends Envelope {
 class HashedKeyEnvelope extends Envelope {
 	@field({ type: fixedArray("u8", 32) })
 	hash: Uint8Array;
+
 	// TODO: Do we need a salt here?
-	constructor(props?: { hash: Uint8Array }) {
+	constructor(props: { hash: Uint8Array }) {
 		super();
-		if (props) {
-			this.hash = props.hash;
-		}
+		this.hash = props.hash;
 	}
 
 	// TODO: should this be comparable to AbstractEnvelope?
@@ -479,7 +472,7 @@ class HashedKeyEnvelope extends Envelope {
 @variant(1)
 export class EncryptedThing<
 	T,
-	E extends Envelope = PublicKeyEnvelope | HashedKeyEnvelope
+	E extends Envelope = PublicKeyEnvelope | HashedKeyEnvelope,
 > extends MaybeEncrypted<T> {
 	@field({ type: Uint8Array })
 	_encrypted: Uint8Array;
@@ -490,36 +483,34 @@ export class EncryptedThing<
 	@field({ type: Envelope })
 	_keyexchange: E;
 
-	constructor(props?: {
+	constructor(props: {
 		encrypted: Uint8Array;
 		nonce: Uint8Array;
 		envelope: E;
 	}) {
 		super();
-		if (props) {
-			this._encrypted = props.encrypted;
-			this._nonce = props.nonce;
-			this._keyexchange = props.envelope;
-		}
+		this._encrypted = props.encrypted;
+		this._nonce = props.nonce;
+		this._keyexchange = props.envelope;
 	}
 
 	_decrypted?: DecryptedThing<T>;
 	get decrypted(): DecryptedThing<T> {
 		if (!this._decrypted) {
 			throw new Error(
-				"Entry has not been decrypted, invoke decrypt method before"
+				"Entry has not been decrypted, invoke decrypt method before",
 			);
 		}
 		return this._decrypted;
 	}
 
 	async decrypt(
-		keyResolver?: X25519Keypair | KeyProvider
+		keyResolver?: X25519Keypair | KeyProvider,
 	): Promise<DecryptedThing<T>>;
 	async decrypt(provider?: DecryptProvider): Promise<DecryptedThing<T>>;
 
 	async decrypt(
-		providerOrResolver?: X25519Keypair | DecryptProvider | KeyProvider
+		providerOrResolver?: X25519Keypair | DecryptProvider | KeyProvider,
 	): Promise<DecryptedThing<T>> {
 		let provider: DecryptProvider | undefined;
 		if (typeof providerOrResolver === "function") {
@@ -554,7 +545,7 @@ export class EncryptedThing<
 		const decrypted = await provider(
 			this._encrypted,
 			this._nonce,
-			this._keyexchange
+			this._keyexchange,
 		);
 		if (decrypted) {
 			const der = deserialize(decrypted, DecryptedThing);

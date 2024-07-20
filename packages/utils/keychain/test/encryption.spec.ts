@@ -1,6 +1,6 @@
-import { X25519Keypair, DecryptedThing } from "@peerbit/crypto";
-import { DefaultKeychain } from "../src/index.js";
+import { DecryptedThing, X25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
+import { DefaultKeychain } from "../src/index.js";
 
 describe("encryption", () => {
 	it("decryptProvider", async () => {
@@ -16,12 +16,12 @@ describe("encryption", () => {
 
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
-			data
+			data,
 		});
 
 		const encrypted = await decrypted.encrypt(senderKey, [
 			receiverKey1.publicKey,
-			receiverKey2.publicKey
+			receiverKey2.publicKey,
 		]);
 
 		encrypted._decrypted = undefined;

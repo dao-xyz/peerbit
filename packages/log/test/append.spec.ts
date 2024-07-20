@@ -1,8 +1,8 @@
-import { Log } from "../src/log.js";
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
-import { EntryType } from "../src/entry.js";
 import { expect } from "chai";
+import { EntryType } from "../src/entry.js";
+import { Log } from "../src/log.js";
 
 describe("append", function () {
 	let store: BlockStore;
@@ -52,7 +52,7 @@ describe("append", function () {
 		});
 
 		it("has the correct heads", async () => {
-			for (const head of await log.getHeads()) {
+			for (const head of await log.getHeads().all()) {
 				expect(head.hash).to.deep.equal((await log.toArray())[0].hash);
 			}
 		});
@@ -73,12 +73,10 @@ describe("append", function () {
 			const { entry: e2 } = await log.append(new Uint8Array([2]));
 			expect(await blockExists(e1.hash)).to.be.true;
 			expect(await blockExists(e2.hash)).to.be.true;
-			expect(log.nextsIndex.get(e1.hash)!.has(e2.hash)).to.be.true;
 			const { entry: e3 } = await log.append(new Uint8Array([3]), {
-				meta: { type: EntryType.CUT }
+				meta: { type: EntryType.CUT },
 			});
-			// No forward pointers to next indices. We do this, so when we delete an entry, we can now whether an entry has a depenency of another entry which is not of type RESET
-			expect(log.nextsIndex.get(e2.hash)).equal(undefined);
+			expect((await log.entryIndex.getHasNext(e1.hash).all()).length).equal(0);
 			expect(await blockExists(e1.hash)).to.be.false;
 			expect(await blockExists(e2.hash)).to.be.false;
 			expect(await blockExists(e3.hash)).to.be.true;
@@ -99,16 +97,16 @@ describe("append", function () {
 				prev = (
 					await log.append(new TextEncoder().encode("hello" + i), {
 						meta: {
-							next: prev ? [prev] : undefined
-						}
+							next: prev ? [prev] : undefined,
+						},
 					})
 				).entry;
+
 				// Make sure the log has the right heads after each append
 				const values = await log.toArray();
-				expect((await log.getHeads()).length).equal(1);
-				expect((await log.getHeads())[0].hash).equal(
-					values[values.length - 1].hash
-				);
+				const heads = await log.getHeads().all();
+				expect(heads.length).equal(1);
+				expect(heads[0].hash).equal(values[values.length - 1].hash);
 			}
 		});
 
@@ -119,7 +117,7 @@ describe("append", function () {
 		it("added the correct values", async () => {
 			(await log.toArray()).forEach((entry, index) => {
 				expect(entry.payload.getValue()).to.deep.equal(
-					new TextEncoder().encode("hello" + index)
+					new TextEncoder().encode("hello" + index),
 				);
 			});
 		});
@@ -129,8 +127,8 @@ describe("append", function () {
 				if (index > 0) {
 					expect(
 						entry.meta.clock.timestamp.compare(
-							(await log.toArray())[index - 1].meta.clock.timestamp
-						)
+							(await log.toArray())[index - 1].meta.clock.timestamp,
+						),
 					).greaterThan(0);
 				}
 				expect(entry.meta.clock.id).to.deep.equal(signKey.publicKey.bytes);

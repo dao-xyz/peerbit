@@ -1,6 +1,6 @@
+import { expect } from "chai";
 import { waitForResolved } from "../src/index.js";
 import { MovingAverageTracker } from "../src/metrics.js";
-import { expect } from "chai";
 
 describe("metrics", () => {
 	it("moving averiage", async () => {
@@ -13,7 +13,7 @@ describe("metrics", () => {
 				expect(ma.value).lessThan(1100);
 				clearInterval(interval);
 				done = true;
-			} catch (error) { }
+			} catch (error) {}
 		}, 100);
 
 		await waitForResolved(() => expect(done).to.be.true);

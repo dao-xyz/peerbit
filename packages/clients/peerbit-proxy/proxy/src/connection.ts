@@ -43,19 +43,19 @@ export abstract class Node {
 
 	abstract publishMessage(
 		message: Hello | DataMessage,
-		to?: string
+		to?: string,
 	): MaybePromise<void>;
 	abstract send(data: Uint8Array, to?: string): MaybePromise<void>;
 	abstract subscribe<K extends keyof EventMessages>(
 		type: K,
-		fn: (message: EventMessages[K], from: From) => void
+		fn: (message: EventMessages[K], from: From) => void,
 	): void;
 	abstract unsubscribe<K extends keyof EventMessages>(
 		type: K,
 		fn: (
 			message: EventMessages[K],
-			from: From /* , from: ChannelFrom */
-		) => void
+			from: From /* , from: ChannelFrom */,
+		) => void,
 	): void;
 
 	get started(): boolean {
@@ -76,7 +76,7 @@ export abstract class Node {
 		this.publishMessage({
 			type: "hello",
 			from: this.id,
-			to: properties?.to?.id
+			to: properties?.to?.id,
 		});
 
 		try {
@@ -85,9 +85,9 @@ export abstract class Node {
 				await waitFor(() => this.out.size > 0);
 			}
 		} catch (error) {
-			if (properties!.to == null)
+			if (properties!.to == null) {
 				throw new Error("Failed to connect to any remote");
-			else {
+			} else {
 				throw new Error("Failed to connect to: " + properties?.to?.id);
 			}
 		}
@@ -117,7 +117,7 @@ export abstract class Node {
 					type: "hello",
 					from: this.id,
 					to: hello.from,
-					resp: true
+					resp: true,
 				});
 			}
 		};
@@ -139,9 +139,9 @@ export class MessageNode extends Node {
 			dispatchEvent: (event: Hello | DataMessage) => void;
 			addEventListener: <K extends keyof EventMessages>(
 				type: K,
-				fn: (message: EventMessages[K], from?: From) => void
+				fn: (message: EventMessages[K], from?: From) => void,
 			) => void;
-		}
+		},
 	) {
 		super();
 	}
@@ -153,7 +153,7 @@ export class MessageNode extends Node {
 				to = this.out.keys().next().value;
 			} else {
 				throw new Error(
-					"'to' is undefined there are more than one peer to send messages to"
+					"'to' is undefined there are more than one peer to send messages to",
 				);
 			}
 		}
@@ -164,7 +164,7 @@ export class MessageNode extends Node {
 			type: "data",
 			data,
 			from: this.id,
-			to: typeof to === "string" ? to : toStrict
+			to: typeof to === "string" ? to : toStrict,
 		};
 
 		const outFn = this.out.get(toStrict);
@@ -181,7 +181,7 @@ export class MessageNode extends Node {
 
 	subscribe<K extends keyof EventMessages>(
 		type: K,
-		fn: (message: EventMessages[K], from: From) => void
+		fn: (message: EventMessages[K], from: From) => void,
 	) {
 		this.events.addEventListener(type, (evt, from) => {
 			if (evt.from === this.id) {
@@ -203,7 +203,7 @@ export class MessageNode extends Node {
 					((message: Hello | DataMessage) => {
 						this.events.dispatchEvent(message);
 					}),
-				parent: from?.parent
+				parent: from?.parent,
 			});
 		});
 	}
@@ -211,8 +211,8 @@ export class MessageNode extends Node {
 		type: K,
 		fn: (
 			message: EventMessages[K],
-			from: From /* , from: ChannelFrom */
-		) => void
+			from: From /* , from: ChannelFrom */,
+		) => void,
 	) {
 		throw new Error("Not implemented");
 	}

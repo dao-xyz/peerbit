@@ -26,3 +26,5 @@ yarn-error.log*
 /test-results/
 /playwright-report/
 /playwright/.cache/
+/child/public/peerbit/
+/parent/public/peerbit/

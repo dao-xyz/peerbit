@@ -1,12 +1,12 @@
-import { delay, waitForResolved, waitFor, AbortError } from "@peerbit/time";
-import { TestSession } from "@peerbit/test-utils";
-import { RPC, type RPCResponse, queryAll } from "../src/index.js";
-import { Program } from "@peerbit/program";
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { Program } from "@peerbit/program";
 import { type PeerId } from "@peerbit/pubsub";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import { expect } from 'chai'
+import { TestSession } from "@peerbit/test-utils";
+import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import { RPC, type RPCResponse, queryAll } from "../src/index.js";
 
 @variant("payload")
 class Body {
@@ -21,7 +21,6 @@ class Body {
 
 @variant("rpc-test")
 class RPCTest extends Program {
-
 	@field({ type: RPC })
 	query!: RPC<Body, Body>;
 
@@ -33,7 +32,7 @@ class RPCTest extends Program {
 	constructor(responders: PeerId[]) {
 		super();
 		this.responders = responders.map((x) =>
-			x instanceof PublicSignKey ? x : getPublicKeyFromPeerId(x)
+			x instanceof PublicSignKey ? x : getPublicKeyFromPeerId(x),
 		);
 	}
 
@@ -43,23 +42,23 @@ class RPCTest extends Program {
 			responseType: Body,
 			queryType: Body,
 			responseHandler: this.responders.find((x) =>
-				this.node.identity.publicKey.equals(x)
+				this.node.identity.publicKey.equals(x),
 			)
 				? async (query, _from) => {
-					if (this.delay) {
-						const controller = new AbortController();
-						this.events.addEventListener("close", () => {
-							controller.abort(new AbortError("Closed"));
-						});
-						this.events.addEventListener("drop", () => {
-							controller.abort(new AbortError("Dropped"));
-						});
-						await delay(this.delay, { signal: controller.signal });
+						if (this.delay) {
+							const controller = new AbortController();
+							this.events.addEventListener("close", () => {
+								controller.abort(new AbortError("Closed"));
+							});
+							this.events.addEventListener("drop", () => {
+								controller.abort(new AbortError("Dropped"));
+							});
+							await delay(this.delay, { signal: controller.signal });
+						}
+						const resp = query;
+						return resp;
 					}
-					const resp = query;
-					return resp;
-				}
-				: undefined
+				: undefined,
 		});
 	}
 }
@@ -91,14 +90,14 @@ describe("rpc", () => {
 		it("any", async () => {
 			let results: RPCResponse<Body>[] = await reader.query.request(
 				new Body({
-					arr: new Uint8Array([0, 1, 2])
+					arr: new Uint8Array([0, 1, 2]),
 				}),
-				{ amount: 1 }
+				{ amount: 1 },
 			);
 
 			await waitForResolved(() => expect(results).to.have.length(1));
 			expect(results[0].from?.hashcode()).equal(
-				responder.node.identity.publicKey.hashcode()
+				responder.node.identity.publicKey.hashcode(),
 			);
 		});
 
@@ -106,15 +105,15 @@ describe("rpc", () => {
 			let results: Body[] = [];
 			await reader.query.request(
 				new Body({
-					arr: new Uint8Array([0, 1, 2])
+					arr: new Uint8Array([0, 1, 2]),
 				}),
 
 				{
 					amount: 1,
 					onResponse: (resp) => {
 						results.push(resp);
-					}
-				}
+					},
+				},
 			);
 
 			await waitFor(() => results.length === 1);
@@ -124,9 +123,9 @@ describe("rpc", () => {
 			let results: Body[] = (
 				await reader.query.request(
 					new Body({
-						arr: new Uint8Array([0, 1, 2])
+						arr: new Uint8Array([0, 1, 2]),
 					}),
-					{ timeout: 3000, amount: 1 }
+					{ timeout: 3000, amount: 1 },
 				)
 			).map((x) => x.response);
 			// TODO should requesting without receivers yield any results?
@@ -137,14 +136,14 @@ describe("rpc", () => {
 			results = (
 				await reader.query.request(
 					new Body({
-						arr: new Uint8Array([0, 1, 2])
+						arr: new Uint8Array([0, 1, 2]),
 					}),
 					{
 						mode: new SilentDelivery({
 							to: [responder.node.identity.publicKey],
-							redundancy: 1
-						})
-					}
+							redundancy: 1,
+						}),
+					},
 				)
 			).map((x) => x.response);
 			await waitFor(() => results.length === 1);
@@ -152,23 +151,25 @@ describe("rpc", () => {
 
 		it("resubscribe", async () => {
 			expect(
-				(responder.node.services.pubsub as any)["subscriptions"].get("topic").counter
+				(responder.node.services.pubsub as any)["subscriptions"].get("topic")
+					.counter,
 			).equal(1);
-			expect((responder.node.services.pubsub as any)["listenerCount"]("data")).equal(
-				1
-			);
+			expect(
+				(responder.node.services.pubsub as any)["listenerCount"]("data"),
+			).equal(1);
 			expect(
 				(reader.node.services.pubsub as any)["topics"]
 					.get("topic")
-					.get(responder.node.identity.publicKey.hashcode()).data
+					.get(responder.node.identity.publicKey.hashcode()).data,
 			).equal(undefined);
 			await responder.query.subscribe();
-			await waitForResolved(() =>
-				expect(
-					(reader.node.services.pubsub as any)["topics"]
-						.get("topic")
-						.get(responder.node.identity.publicKey.hashcode())
-				).to.exist
+			await waitForResolved(
+				() =>
+					expect(
+						(reader.node.services.pubsub as any)["topics"]
+							.get("topic")
+							.get(responder.node.identity.publicKey.hashcode()),
+					).to.exist,
 			);
 			await responder.query.subscribe();
 
@@ -176,34 +177,43 @@ describe("rpc", () => {
 			expect(
 				(reader.node.services.pubsub as any)["topics"]
 					.get("topic")
-					.get(responder.node.identity.publicKey.hashcode())
+					.get(responder.node.identity.publicKey.hashcode()),
 			).to.exist;
 
-			expect((responder.node.services.pubsub as any)["listenerCount"]("data")).equal(
-				1
-			);
 			expect(
-				(responder.node.services.pubsub as any)["subscriptions"].get("topic").counter
+				(responder.node.services.pubsub as any)["listenerCount"]("data"),
+			).equal(1);
+			expect(
+				(responder.node.services.pubsub as any)["subscriptions"].get("topic")
+					.counter,
 			).equal(1);
 		});
 
 		it("close", async () => {
-			let listenerCount = (reader.node.services.pubsub as any)["listenerCount"]("data");
+			let listenerCount = (reader.node.services.pubsub as any)["listenerCount"](
+				"data",
+			);
 			expect(listenerCount).equal(1);
 			expect(reader.closed).to.be.false;
 			await reader.close();
 			expect(reader.closed).to.be.true;
-			listenerCount = (reader.node.services.pubsub as any)["listenerCount"]("data");
+			listenerCount = (reader.node.services.pubsub as any)["listenerCount"](
+				"data",
+			);
 			expect(listenerCount).equal(0);
 		});
 
 		it("drop", async () => {
-			let listenerCount = (reader.node.services.pubsub as any)["listenerCount"]("data");
+			let listenerCount = (reader.node.services.pubsub as any)["listenerCount"](
+				"data",
+			);
 			expect(listenerCount).equal(1);
 			expect(reader.closed).to.be.false;
 			await reader.drop();
 			expect(reader.closed).to.be.true;
-			listenerCount = (reader.node.services.pubsub as any)["listenerCount"]("data");
+			listenerCount = (reader.node.services.pubsub as any)["listenerCount"](
+				"data",
+			);
 			expect(listenerCount).equal(0);
 		});
 
@@ -214,10 +224,10 @@ describe("rpc", () => {
 				promises.push(
 					reader.query.request(
 						new Body({
-							arr: new Uint8Array([i])
+							arr: new Uint8Array([i]),
 						}),
-						{ amount: 1 }
-					)
+						{ amount: 1 },
+					),
 				);
 			}
 			const results = await Promise.all(promises);
@@ -234,11 +244,11 @@ describe("rpc", () => {
 			let results: Body[] = (
 				await reader.query.request(
 					new Body({
-						arr: new Uint8Array([0, 1, 2])
+						arr: new Uint8Array([0, 1, 2]),
 					}),
 					{
-						timeout: waitFor
-					}
+						timeout: waitFor,
+					},
 				)
 			).map((x) => x.response);
 			const t1 = +new Date();
@@ -295,7 +305,7 @@ describe("queryAll", () => {
 		}
 		for (let i = 0; i < session.peers.length; i++) {
 			await clients[i].waitFor(
-				session.peers.filter((p, ix) => ix !== i).map((x) => x.peerId)
+				session.peers.filter((p, ix) => ix !== i).map((x) => x.peerId),
 			);
 		}
 	});
@@ -314,7 +324,7 @@ describe("queryAll", () => {
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {
 				r.push(e);
-			}
+			},
 		);
 		expect(r).to.be.empty; // because I am in the group, and it does not make sense then to query someone else
 	});
@@ -326,12 +336,12 @@ describe("queryAll", () => {
 			[
 				session.peers
 					.filter((x, ix) => ix !== 0)
-					.map((x) => x.identity.publicKey.hashcode())
+					.map((x) => x.identity.publicKey.hashcode()),
 			],
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {
 				r.push(e);
-			}
+			},
 		);
 		expect(r).to.have.length(1);
 		expect(r[0]).to.have.length(1);
@@ -347,7 +357,7 @@ describe("queryAll", () => {
 				new Body({ arr: new Uint8Array([1]) }),
 				(e) => {
 					r.push(e);
-				}
+				},
 			);
 			expect(r).to.have.length(1);
 			expect(r[0]).to.have.length(2);
@@ -370,7 +380,7 @@ describe("queryAll", () => {
 						new Body({ arr: new Uint8Array([1]) }),
 						(e) => {
 							r.push(e);
-						}
+						},
 					);
 
 					expect(r).to.have.length(1);
@@ -394,7 +404,7 @@ describe("queryAll", () => {
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {
 				r.push(e);
-			}
+			},
 		);
 
 		clients[1].delay = 1e4; // make sure client 1 never responds
@@ -417,7 +427,7 @@ describe("queryAll", () => {
 			new Body({ arr: new Uint8Array([1]) }),
 			(e) => {
 				r.push(e);
-			}
+			},
 		);
 
 		await expect(promise).rejectedWith(AbortError);
@@ -436,7 +446,7 @@ describe("queryAll", () => {
 			(e) => {
 				r.push(e);
 			},
-			{ signal: controller.signal }
+			{ signal: controller.signal },
 		);
 
 		clients[1].delay = 1e4; // make sure client 1 never responds

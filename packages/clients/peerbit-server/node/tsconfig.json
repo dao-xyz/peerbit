@@ -3,11 +3,7 @@
 	"compilerOptions": {
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
-		"strictNullChecks": false,
-		"outDir": "lib/esm",
-		"rootDir": "src"
+		"outDir": "dist"
 	},
-	"include": [
-		"src"
-	]
+	"include": ["src", "test"]
 }

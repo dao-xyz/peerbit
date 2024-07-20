@@ -1,16 +1,15 @@
-import { field, option, variant, vec } from "@dao-xyz/borsh";
-import { serialize } from "@dao-xyz/borsh";
-import { AccessCondition } from "./condition.js";
+import { field, option, serialize, variant, vec } from "@dao-xyz/borsh";
 import { toBase64 } from "@peerbit/crypto";
+import { AccessCondition } from "./condition.js";
 
 export enum AccessType {
 	Any = 0,
 	Read = 1,
-	Write = 2
+	Write = 2,
 }
 
 @variant(0)
-export class AccessData { }
+export class AccessData {}
 
 export const ACCESS_TYPE_PROPERTY = "accessTypes";
 @variant(0)
@@ -46,7 +45,7 @@ export class Access extends AccessData {
 		return toBase64(serialize(a));
 	}
 
-	initialize(): Access {
+	initialize(): this {
 		this.id = this.calculateId();
 		return this;
 	}
@@ -55,7 +54,7 @@ export class Access extends AccessData {
 		const calculatedId = this.calculateId();
 		if (this.id !== calculatedId) {
 			throw new Error(
-				`Invalid id, got ${this.id} but expected ${calculatedId}`
+				`Invalid id, got ${this.id} but expected ${calculatedId}`,
 			);
 		}
 	}

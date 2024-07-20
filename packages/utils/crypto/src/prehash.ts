@@ -1,7 +1,7 @@
-import { sha256 } from "./hash.js";
-import sha3 from "js-sha3";
 import { toUtf8Bytes } from "@ethersproject/strings";
+import sha3 from "js-sha3";
 import { concat } from "uint8arrays";
+import { sha256 } from "./hash.js";
 
 const messagePrefix = "\x19Ethereum Signed Message:\n";
 const ethKeccak256Hash = (message: Uint8Array) =>
@@ -11,22 +11,22 @@ const ethKeccak256Hash = (message: Uint8Array) =>
 				concat([
 					toUtf8Bytes(messagePrefix),
 					toUtf8Bytes(String(message.length)),
-					message
-				])
+					message,
+				]),
 			)
-			.arrayBuffer()
+			.arrayBuffer(),
 	);
 
 export enum PreHash {
 	NONE = 0,
 	SHA_256 = 1,
-	//BLAKE3 = 2,
-	ETH_KECCAK_256 = 3
+	// BLAKE3 = 2,
+	ETH_KECCAK_256 = 3,
 }
 
 export const prehashFn = (
 	data: Uint8Array,
-	prehash: PreHash
+	prehash: PreHash,
 ): Promise<Uint8Array> | Uint8Array => {
 	if (prehash === PreHash.NONE) {
 		return data;

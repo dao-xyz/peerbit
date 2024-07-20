@@ -1,14 +1,13 @@
-import { Program } from "@peerbit/program";
 import { field, variant } from "@dao-xyz/borsh";
+import { Program } from "@peerbit/program";
+import { expect } from "chai";
 import { Peerbit } from "../src/peer.js";
-import { expect } from 'chai';
 
 @variant("test-shared_nested")
 class TestNestedProgram extends Program {
 	openInvoked = false;
 	async open(): Promise<void> {
 		this.openInvoked = true;
-		return;
 	}
 }
 
@@ -22,7 +21,7 @@ class TestProgram extends Program {
 
 	constructor(
 		id: number = 0,
-		nested: TestNestedProgram = new TestNestedProgram()
+		nested: TestNestedProgram = new TestNestedProgram(),
 	) {
 		super();
 		this.id = id;
@@ -53,7 +52,7 @@ describe(`shared`, () => {
 	it("open same store twice by address will throw error", async () => {
 		const db1 = await client.open(new TestProgram());
 		await expect(client.open(db1.address)).rejectedWith(
-			`Program at ${db1.address} is already open`
+			`Program at ${db1.address} is already open`,
 		);
 	});
 
@@ -66,7 +65,7 @@ describe(`shared`, () => {
 		await db1Promise;
 		//await db2Promise;
 		await expect(db2Promise).rejectedWith(
-			`Program at ${p1.address} is already open`
+			`Program at ${p1.address} is already open`,
 		);
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
@@ -83,7 +82,7 @@ describe(`shared`, () => {
 
 		//await db2Promise;
 		await expect(db2Promise).rejectedWith(
-			`Program at ${p1.address} is already open`
+			`Program at ${p1.address} is already open`,
 		);
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
@@ -122,7 +121,7 @@ describe(`shared`, () => {
 
 		await db1Promise;
 		const db2Open = await db2Promise;
-		expect(db2Open == p1).to.be.true;
+		expect(db2Open === p1).to.be.true;
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.be.not.be.true;
 	});
@@ -133,7 +132,7 @@ describe(`shared`, () => {
 		const db1Promise = client.open(p1);
 		await db1Promise;
 		const db2Open = await client.open(p2, { existing: "reuse" });
-		expect(db2Open == p1).to.be.true;
+		expect(db2Open === p1).to.be.true;
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.be.not.be.true;
 	});

@@ -1,5 +1,3 @@
-import { Entry } from "./entry.js";
-import { type Blocks } from "@peerbit/blocks-interface";
 import {
 	BinaryReader,
 	BinaryWriter,
@@ -8,10 +6,12 @@ import {
 	fixedArray,
 	serialize,
 	variant,
-	vec
+	vec,
 } from "@dao-xyz/borsh";
-import { waitFor } from "@peerbit/time";
 import { type AnyStore } from "@peerbit/any-store";
+import { type Blocks } from "@peerbit/blocks-interface";
+import { waitFor } from "@peerbit/time";
+import { Entry } from "./entry.js";
 import { logger } from "./logger.js";
 
 @variant(0)
@@ -49,7 +49,7 @@ export const save = async <T>(
 		id: Uint8Array;
 		getHeads: () => Promise<string[]>;
 		getValues: () => Promise<Entry<T>[]> | Entry<T>[];
-	}
+	},
 ): Promise<string> => {
 	const values = await log.getValues();
 	const buf = serialize(
@@ -57,8 +57,8 @@ export const save = async <T>(
 			id: log.id,
 			heads: await log.getHeads(),
 			size: BigInt(values.length),
-			values: values
-		})
+			values,
+		}),
 	);
 
 	const snapshot = await blockstore.put(buf);
@@ -68,7 +68,7 @@ export const save = async <T>(
 
 	await waitFor(async () => (await cache.get(snapshotPath)) != null, {
 		delayInterval: 200,
-		timeout: 10 * 1000
+		timeout: 10 * 1000,
 	});
 
 	logger.debug(`Saved snapshot: ${snapshot}`);
@@ -77,7 +77,7 @@ export const save = async <T>(
 
 export const load = async (
 	hash: string,
-	blockstore: Blocks
+	blockstore: Blocks,
 ): Promise<Snapshot> => {
 	const block = await blockstore.get(hash);
 	if (!block) {
@@ -89,7 +89,7 @@ export const load = async (
 export const loadFromCache = async (
 	path: string,
 	blockstore: Blocks,
-	cache: AnyStore
+	cache: AnyStore,
 ) => {
 	const snapshotOrCID = await cache.get(path);
 	if (!snapshotOrCID) {

@@ -2,6 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { Documents } from "@peerbit/document";
 import { Program } from "@peerbit/program";
+import { expect } from "chai";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
@@ -39,17 +40,17 @@ class PostStore extends Program {
 				const publicKeys = properties.entry.publicKeys; // Public keys of signers
 				if (
 					publicKeys.find((publicKey) =>
-						publicKey.equals(REQUIRED_SIGNER.publicKey)
+						publicKey.equals(REQUIRED_SIGNER.publicKey),
 					) &&
 					publicKeys.find(
-						(publicKey) => !publicKey.equals(REQUIRED_SIGNER.publicKey)
+						(publicKey) => !publicKey.equals(REQUIRED_SIGNER.publicKey),
 					)
 				) {
 					return true;
 				}
 
 				return false;
-			}
+			},
 		});
 	}
 }
@@ -61,11 +62,9 @@ const db = await peer.open(new PostStore());
 await db.posts.put(new Post("Hello world!"), {
 	signers: [
 		peer.identity.sign.bind(peer.identity),
-		REQUIRED_SIGNER.sign.bind(REQUIRED_SIGNER)
-	]
+		REQUIRED_SIGNER.sign.bind(REQUIRED_SIGNER),
+	],
 });
-
-import { expect } from "chai";
 
 expect(await db.posts.index.getSize()).equal(1); // Post was appproved
 

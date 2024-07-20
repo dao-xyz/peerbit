@@ -10,26 +10,26 @@
 	"type": "module",
 	"sideEffects": false,
 	"bin": {
-		"peerbit": "./lib/esm/bin.js"
+		"peerbit": "./dist/src/bin.js"
 	},
-	"module": "lib/esm/index.js",
-	"types": "lib/esm/index.d.ts",
+	"module": "dist/src/index.js",
+	"types": "dist/src/index.d.ts",
 	"exports": {
-		"import": "./lib/esm/index.js"
+		"import": "./dist/src/index.js"
 	},
 	"browser": {
-		"./lib/esm/server.js": "./lib/esm/server.browser.js",
-		"./server.js": "./lib/esm/server.browser.js",
-		"./lib/esm/config.js": "./lib/esm/config.browser.js",
-		"./config.js": "./lib/esm/config.browser.js",
-		"./lib/esm/remotes.js": "./lib/esm/remotes.browser.js",
-		"./remotes.js": "./lib/esm/remotes.browser.js",
-		"./lib/esm/docker.js": "./lib/esm/docker.browser.js",
-		"./docker.js": "./lib/esm/docker.browser.js",
-		"./lib/esm/aws.js": "./lib/esm/aws.browser.js"
+		"./dist/src/server.js": "./dist/src/server.browser.js",
+		"./server.js": "./dist/src/server.browser.js",
+		"./dist/src/config.js": "./dist/src/config.browser.js",
+		"./config.js": "./dist/src/config.browser.js",
+		"./dist/src/remotes.js": "./dist/src/remotes.browser.js",
+		"./remotes.js": "./dist/src/remotes.browser.js",
+		"./dist/src/docker.js": "./dist/src/docker.browser.js",
+		"./docker.js": "./dist/src/docker.browser.js",
+		"./dist/src/aws.js": "./dist/src/aws.browser.js"
 	},
 	"files": [
-		"lib",
+		"dist",
 		"src",
 		"src/nginx-template.conf",
 		"!src/test",
@@ -44,13 +44,26 @@
 	"engines": {
 		"node": ">=18"
 	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
 	"scripts": {
 		"clean": "shx rm -rf lib/*",
 		"build": "yarn clean && yarn build-lib && yarn build-ui",
 		"build-lib": "tsc -p tsconfig.json",
 		"build-ui": "cd ../frontend && yarn build && cd ../node",
-		"postbuild": "cp src/nginx-template.conf lib/esm/ && cp -r ../frontend/dist lib/ui",
-		"test": "aegir test"
+		"postbuild": "cp src/nginx-template.conf dist/ && cp -r ../frontend/dist/. dist/ui",
+		"test": "aegir test",
+		"lint": "aegir lint"
 	},
 	"devDependencies": {
 		"@peerbit/test-lib": "^0.0.1",

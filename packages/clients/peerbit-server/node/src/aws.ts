@@ -1,5 +1,8 @@
-import { delay } from "@peerbit/time";
+/* eslint-disable no-console */
+
+/* eslint-disable @typescript-eslint/naming-convention */
 import { type PeerId } from "@libp2p/interface";
+import { delay } from "@peerbit/time";
 
 export const createRecord = async (options: {
 	domain: string;
@@ -26,9 +29,9 @@ export const createRecord = async (options: {
 		credentials: options.credentials
 			? {
 					accessKeyId: options.credentials.accessKeyId,
-					secretAccessKey: options.credentials.secretAccessKey
+					secretAccessKey: options.credentials.secretAccessKey,
 				}
-			: undefined
+			: undefined,
 	});
 	const cmd = new ChangeResourceRecordSetsCommand({
 		ChangeBatch: {
@@ -39,12 +42,12 @@ export const createRecord = async (options: {
 						Name: options.domain,
 						Type: v4 ? "A" : "AAAA",
 						TTL: 60,
-						ResourceRecords: [{ Value: myIp }]
-					}
-				}
-			]
+						ResourceRecords: [{ Value: myIp }],
+					},
+				},
+			],
 		},
-		HostedZoneId: options.hostedZoneId
+		HostedZoneId: options.hostedZoneId,
 	});
 	await client.send(cmd);
 };
@@ -95,7 +98,7 @@ export const AWS_LINUX_ARM_AMIs: Record<string, string> = {
 	/* 	"us-gov-east-1",
 		"us-gov-west-1", */
 	"us-west-1": "ami-0dca369228f3b2ce7",
-	"us-west-2": "ami-0c79a55dda52434da"
+	"us-west-2": "ami-0c79a55dda52434da",
 };
 export const launchNodes = async (properties: {
 	region?: string;
@@ -111,7 +114,7 @@ export const launchNodes = async (properties: {
 		throw new Error(
 			"Unexpected node launch count: " +
 				properties.count +
-				". To prevent unwanted behaviour you can also launch 10 nodes at once"
+				". To prevent unwanted behaviour you can also launch 10 nodes at once",
 		);
 	}
 	const count = properties.count || 1;
@@ -123,7 +126,7 @@ export const launchNodes = async (properties: {
 		DescribeSecurityGroupsCommand,
 		CreateSecurityGroupCommand,
 		AuthorizeSecurityGroupIngressCommand,
-		DescribeInstancesCommand
+		DescribeInstancesCommand,
 	} = await import("@aws-sdk/client-ec2");
 	const client = new EC2Client({ region: properties.region });
 	const regionString = await client.config.region();
@@ -132,23 +135,23 @@ export const launchNodes = async (properties: {
 		await client.send(
 			new DescribeSecurityGroupsCommand({
 				Filters: [
-					{ Name: "tag:" + PURPOSE_TAG_NAME, Values: [PURPOSE_TAG_VALUE] }
-				]
-			})
+					{ Name: "tag:" + PURPOSE_TAG_NAME, Values: [PURPOSE_TAG_VALUE] },
+				],
+			}),
 		)
 	)?.SecurityGroups?.[0];
 	if (!securityGroupOut) {
 		securityGroupOut = await client.send(
 			new CreateSecurityGroupCommand({
 				GroupName: "peerbit-node",
-				Description: "Security group for running Peerbit nodes"
-			})
+				Description: "Security group for running Peerbit nodes",
+			}),
 		);
 		await client.send(
 			new CreateTagsCommand({
 				Resources: [securityGroupOut.GroupId!],
-				Tags: [{ Key: PURPOSE_TAG_NAME, Value: PURPOSE_TAG_VALUE }]
-			})
+				Tags: [{ Key: PURPOSE_TAG_NAME, Value: PURPOSE_TAG_VALUE }],
+			}),
 		);
 		await client.send(
 			new AuthorizeSecurityGroupIngressCommand({
@@ -158,40 +161,40 @@ export const launchNodes = async (properties: {
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 80,
-						ToPort: 80
+						ToPort: 80,
 					}, // Frontend
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 443,
-						ToPort: 443
+						ToPort: 443,
 					}, // Frontend SSL
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 9002,
-						ToPort: 9002
+						ToPort: 9002,
 					}, // HTTPS api
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 8082,
-						ToPort: 8082
+						ToPort: 8082,
 					}, // HTTP api
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 4002,
-						ToPort: 4005
+						ToPort: 4005,
 					}, // libp2p
 					{
 						IpRanges: [{ CidrIp: "0.0.0.0/0" }],
 						IpProtocol: "tcp",
 						FromPort: 22,
-						ToPort: 22
-					} // SSH
-				]
-			})
+						ToPort: 22,
+					}, // SSH
+				],
+			}),
 		);
 	}
 	const instanceTag =
@@ -200,8 +203,8 @@ export const launchNodes = async (properties: {
 		(
 			await client.send(
 				new DescribeInstancesCommand({
-					Filters: [{ Name: "tag:Purpose", Values: [instanceTag] }]
-				})
+					Filters: [{ Name: "tag:Purpose", Values: [instanceTag] }],
+				}),
 			)
 		).Reservations?.length || 0;
 
@@ -212,12 +215,12 @@ export const launchNodes = async (properties: {
 			SecurityGroupIds: [securityGroupOut.GroupId!],
 			InstanceType: ("t4g." + (properties.size || "micro")) as any, // TODO types
 			UserData: Buffer.from(
-				setupUserData(properties.email, properties.grantAccess)
+				setupUserData(properties.email, properties.grantAccess),
 			).toString("base64"),
 			MinCount: count,
-			MaxCount: count
+			MaxCount: count,
 			// InstanceInitiatedShutdownBehavior: 'terminate' // to enable termination when node shutting itself down
-		})
+		}),
 	);
 
 	if (!instanceOut.Instances || instanceOut.Instances.length === 0) {
@@ -237,37 +240,33 @@ export const launchNodes = async (properties: {
 				Resources: [instance.InstanceId!],
 				Tags: [
 					{ Key: "Name", Value: name },
-					{ Key: "Purpose", Value: instanceTag }
-				]
-			})
+					{ Key: "Purpose", Value: instanceTag },
+				],
+			}),
 		);
 	}
 
 	// wait for instance ips to become available
-	let publicIps: string[] = [];
-	for (let i = 0; i < 10; i++) {
-		const info = await client.send(
-			new DescribeInstancesCommand({
-				InstanceIds: instanceOut.Instances.map((x) => x.InstanceId!)
-			})
+	const info = await client.send(
+		new DescribeInstancesCommand({
+			InstanceIds: instanceOut.Instances.map((x) => x.InstanceId!),
+		}),
+	);
+	const foundInstances = info
+		.Reservations!.map((x) => x.Instances!.map((y) => y))
+		.flat()!;
+	const foundIps: string[] = [];
+	for (const out of instanceOut.Instances) {
+		const foundInstance = foundInstances.find(
+			(x) => x!.InstanceId === out.InstanceId!,
 		);
-		const foundInstances = info
-			.Reservations!.map((x) => x.Instances!.map((y) => y))
-			.flat()!;
-		const foundIps: string[] = [];
-		for (const out of instanceOut.Instances) {
-			const foundInstance = foundInstances.find(
-				(x) => x!.InstanceId === out.InstanceId!
-			);
-			if (!foundInstance!.PublicIpAddress) {
-				await delay(3000);
-				continue;
-			}
-			foundIps.push(foundInstance!.PublicIpAddress!);
+		if (!foundInstance!.PublicIpAddress) {
+			await delay(3000);
+			continue;
 		}
-		publicIps = foundIps;
-		break;
+		foundIps.push(foundInstance!.PublicIpAddress!);
 	}
+	let publicIps: string[] = foundIps;
 
 	if (publicIps.length === 0) {
 		throw new Error("Failed to resolve IPs for created instances");
@@ -278,7 +277,7 @@ export const launchNodes = async (properties: {
 			instanceId: instanceOut.Instances![ix].InstanceId!,
 			publicIp: v,
 			name: names[ix],
-			region: regionString
+			region: regionString,
 		};
 	}); // TODO types
 };
@@ -292,6 +291,6 @@ export const terminateNode = async (properties: {
 	);
 	const client = new EC2Client({ region: properties.region });
 	await client.send(
-		new TerminateInstancesCommand({ InstanceIds: [properties.instanceId] })
+		new TerminateInstancesCommand({ InstanceIds: [properties.instanceId] }),
 	);
 };

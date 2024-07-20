@@ -1,6 +1,6 @@
-import { variant, field } from "@dao-xyz/borsh";
-import { SharedLog } from "@peerbit/shared-log";
+import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
+import { SharedLog } from "@peerbit/shared-log";
 
 @variant("test-log")
 export class TestLog extends Program {

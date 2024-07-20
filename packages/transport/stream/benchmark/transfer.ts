@@ -1,16 +1,16 @@
-import B from "benchmark";
-import { TestSession } from "@peerbit/libp2p-test-utils";
-import {
-	type DirectStreamComponents,
-	DirectStream,
-	waitForPeers
-} from "../src/index.js";
-import { waitForResolved } from "@peerbit/time";
 import { tcp } from "@libp2p/tcp";
-import crypto from "crypto";
+import { TestSession } from "@peerbit/libp2p-test-utils";
 import { SeekDelivery } from "@peerbit/stream-interface";
+import { waitForResolved } from "@peerbit/time";
+import B from "benchmark";
+import crypto from "crypto";
+import {
+	DirectStream,
+	type DirectStreamComponents,
+	waitForPeers,
+} from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./src/__benchmark__/transfer.ts"
+// Run with "node --loader ts-node/esm ./benchmark/transfer.ts"
 
 // size: 100byte x 1,727 ops/sec ±2.61% (83 runs sampled)
 // size: 1kb x 1,727 ops/sec ±2.61% (83 runs sampled)
@@ -20,13 +20,13 @@ class TestStreamImpl extends DirectStream {
 	constructor(c: DirectStreamComponents) {
 		super(c, ["bench/0.0.0"], {
 			canRelayMessage: true,
-			connectionManager: false
+			connectionManager: false,
 		});
 	}
 }
 const session = await TestSession.disconnected(4, {
 	transports: [tcp()],
-	services: { directstream: (c) => new TestStreamImpl(c) }
+	services: { directstream: (c: any) => new TestStreamImpl(c) },
 });
 
 /* 
@@ -47,7 +47,7 @@ const session = await TestSession.disconnected(4, {
 await session.connect([
 	[session.peers[0], session.peers[1]],
 	[session.peers[1], session.peers[2]],
-	[session.peers[2], session.peers[3]]
+	[session.peers[2], session.peers[3]],
 ]);
 
 const stream = (i: number): TestStreamImpl =>
@@ -60,11 +60,14 @@ await waitForPeers(stream(2), stream(3));
 stream(0).publish(new Uint8Array([123]), {
 	mode: new SeekDelivery({
 		redundancy: 1,
-		to: [stream(session.peers.length - 1).publicKey]
-	})
+		to: [stream(session.peers.length - 1).publicKey],
+	}),
 });
 await waitForResolved(() =>
-	stream(0).routes.isReachable(stream(0).publicKeyHash, stream(3).publicKeyHash)
+	stream(0).routes.isReachable(
+		stream(0).publicKeyHash,
+		stream(3).publicKeyHash,
+	),
 );
 
 let suite = new B.Suite();
@@ -82,7 +85,7 @@ for (const size of sizes) {
 			const small = crypto.randomBytes(size); // 1kb
 			msgMap.set(msgIdFn(small), deferred);
 			stream(0).publish(small, {
-				to: [stream(session.peers.length - 1).publicKey]
+				to: [stream(session.peers.length - 1).publicKey],
 			});
 		},
 		setup: () => {
@@ -95,7 +98,7 @@ for (const size of sizes) {
 		},
 		teardown: () => {
 			stream(session.peers.length - 1).removeEventListener("data", listener);
-		}
+		},
 	});
 }
 suite

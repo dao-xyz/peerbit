@@ -1,9 +1,7 @@
 {
 	"bootstrap-sha": "148d23a1bc0e9fad48ea6589cd861d47bfd2b75c",
 	"last-release-sha": "c3343e8e19a44343036ed20ed6f15bd13beddf6f",
-	"plugins": [
-		"node-workspace"
-	],
+	"plugins": ["node-workspace"],
 	"changelog-sections": [
 		{
 			"type": "feat",
@@ -45,18 +43,16 @@
 		"packages/clients/peerbit-proxy/proxy": {},
 		"packages/clients/peerbit-server/node": {},
 		"packages/clients/test-utils": {},
+		"packages/clients/vite": {},
 		"packages/programs/rpc": {},
 		"packages/programs/acl/identity-access-controller": {},
 		"packages/programs/acl/trusted-network": {},
 		"packages/programs/program": {},
 		"packages/programs/clock-service": {},
-		"packages/programs/data/document/document": {},
-		"packages/programs/data/document/index/simple": {},
-		"packages/programs/data/document/index/sqlite3": {},
-		"packages/programs/data/document/index/tests": {},
-		"packages/programs/data/document/interface": {},
+		"packages/programs/data/document/indexer": {},
 		"packages/programs/data/string": {},
 		"packages/programs/data/shared-log": {},
+		"packages/programs/data/document/document/interface": {},
 		"packages/utils/crypto": {},
 		"packages/utils/any-store/any-store": {},
 		"packages/utils/any-store/interface": {},
@@ -64,6 +60,10 @@
 		"packages/utils/cache": {},
 		"packages/utils/time": {},
 		"packages/utils/logger": {},
-		"packages/utils/keychain": {}
+		"packages/utils/keychain": {},
+		"packages/utils/indexer/simple": {},
+		"packages/utils/indexer/sqlite3": {},
+		"packages/utils/indexer/tests": {},
+		"packages/utils/indexer/interface": {}
 	}
 }

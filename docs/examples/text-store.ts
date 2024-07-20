@@ -1,14 +1,14 @@
-import { Peerbit } from "peerbit";
-import { Program } from "@peerbit/program";
-import { PublicSignKey } from "@peerbit/crypto";
-import {
-	Range,
-	DString,
-	StringOperation,
-	type TransactionContext
-} from "@peerbit/string";
 import { field, variant } from "@dao-xyz/borsh";
+import { PublicSignKey } from "@peerbit/crypto";
+import { Program } from "@peerbit/program";
+import {
+	DString,
+	Range,
+	StringOperation,
+	type TransactionContext,
+} from "@peerbit/string";
 import assert from "node:assert";
+import { Peerbit } from "peerbit";
 
 @variant("collaborative_text") // You have to give the program a unique name
 class CollaborativeText extends Program {
@@ -23,13 +23,13 @@ class CollaborativeText extends Program {
 	async open() {
 		await this.string.open({
 			canPerform: this.canPerform,
-			canRead: this.canRead
+			canRead: this.canRead,
 		});
 	}
 
 	async canPerform(
 		operation: StringOperation,
-		context: TransactionContext
+		context: TransactionContext,
 	): Promise<boolean> {
 		// .. acl logic writers
 		return true;

@@ -1,14 +1,14 @@
+import { BinaryWriter, deserialize, serialize } from "@dao-xyz/borsh";
 import {
+	type Ed25519PublicKey,
 	type Identity,
-	PublicSignKey,
+	type PublicSignKey,
 	SignatureWithKey,
 	fromBase64,
 	toBase64,
 	verify,
-	Ed25519PublicKey
 } from "@peerbit/crypto";
-import { deserialize, serialize, BinaryWriter } from "@dao-xyz/borsh";
-import http from "http";
+import type http from "http";
 
 const SIGNATURE_KEY = "X-Peerbit-Signature";
 const SIGNATURE_TIME_KEY = "X-Peerbit-Signature-Time";
@@ -18,7 +18,7 @@ export const signRequest = async (
 	method: string,
 	path: string,
 	data: string | undefined,
-	keypair: Identity<Ed25519PublicKey>
+	keypair: Identity<Ed25519PublicKey>,
 ) => {
 	const sigTimestamp = Math.round(new Date().getTime() / 1000).toString();
 	const write = new BinaryWriter();
@@ -30,7 +30,7 @@ export const signRequest = async (
 	}
 
 	write.string(
-		method.toLowerCase() + path.toLowerCase() + sigTimestamp + (data || "")
+		method.toLowerCase() + path.toLowerCase() + sigTimestamp + (data || ""),
 	);
 	const signature = await keypair.sign(write.finalize());
 	headers[SIGNATURE_TIME_KEY] = sigTimestamp;
@@ -54,7 +54,7 @@ export const verifyRequest = async (
 	headers: Record<string, string | string[] | undefined>,
 	method: string,
 	path: string,
-	body = ""
+	body = "",
 ): Promise<PublicSignKey> => {
 	const timestamp =
 		headers[SIGNATURE_TIME_KEY] || headers[SIGNATURE_TIME_KEY.toLowerCase()];

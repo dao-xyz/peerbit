@@ -2,7 +2,6 @@
 	"name": "@peerbit/trusted-network",
 	"version": "3.0.40",
 	"description": "Access controller that operates on a DB",
-	"type": "module",
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -36,7 +35,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -53,12 +52,13 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test --target node"
+		"test": "aegir test --target node",
+		"lint": "aegir lint"
 	},
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.2",
+		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "2.2.0",
 		"@peerbit/document": "6.0.7"
 	},

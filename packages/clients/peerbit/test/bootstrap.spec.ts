@@ -1,5 +1,5 @@
+import { expect } from "chai";
 import { Peerbit } from "../src/peer.js";
-import { expect } from 'chai'
 
 describe("bootstrap", () => {
 	let peer: Peerbit;

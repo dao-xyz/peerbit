@@ -5,11 +5,8 @@
 		"emitDecoratorMetadata": true,
 		"noUnusedParameters": false,
 		"noUnusedLocals": false,
-		"outDir": "dist"
+		"outDir": "dist",
+		"checkJs": false
 	},
-	"include": [
-		"src",
-		"test",
-		"benchmark"
-	]
+	"include": ["src", "test", "benchmark"]
 }

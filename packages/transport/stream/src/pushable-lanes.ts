@@ -1,5 +1,5 @@
-import defer from "p-defer";
 import GenericFIFO from "fast-fifo";
+import defer from "p-defer";
 
 export class AbortError extends Error {
 	type: string;
@@ -53,6 +53,7 @@ export interface PushableLanes<T, R = void, N = unknown>
 	/**
 	 * Get readable length for specific lane
 	 * @param lane
+	 * @returns readable length for the lane
 	 */
 	getReadableLength(lane?: number): number;
 }
@@ -156,20 +157,20 @@ class Uint8arrayPriorityQueue<T extends { byteLength: number }> {
 }
 
 export function pushableLanes<T extends { byteLength: number } = Uint8Array>(
-	options: Options = {}
+	options: Options = {},
 ): PushableLanes<T> {
 	return _pushable<Uint8Array, T, PushableLanes<T>>(options);
 }
 
 // Modified from https://github.com/alanshaw/it-pushable
 function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
-	options?: Options
+	options?: Options,
 ): ReturnType {
 	options = options ?? {};
 	let onEnd = options.onEnd;
 	let buffer: Uint8arrayPriorityQueue<PushType> | Uint8ArrayFifo<PushType> =
 		new Uint8arrayPriorityQueue<PushType>(
-			options.lanes ? { lanes: options.lanes } : undefined
+			options.lanes ? { lanes: options.lanes } : undefined,
 		);
 	let pushable: any;
 	let onNext: ((next: Next<PushType>, lane: number) => ReturnType) | null;
@@ -190,7 +191,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 		return {
 			done: next.done === true,
 			// @ts-expect-error if done is false, value will be present
-			value: next.value
+			value: next.value,
 		};
 	};
 
@@ -211,7 +212,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 
 					try {
 						resolve(getNext());
-					} catch (err) {
+					} catch (err: any) {
 						reject(err);
 					}
 
@@ -326,7 +327,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 					signal?.removeEventListener("abort", listener);
 				}
 			}
-		}
+		},
 	};
 
 	if (onEnd == null) {
@@ -378,7 +379,7 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 		},
 		onEmpty: (opts?: AbortOptions) => {
 			return _pushable.onEmpty(opts);
-		}
+		},
 	};
 
 	return pushable;

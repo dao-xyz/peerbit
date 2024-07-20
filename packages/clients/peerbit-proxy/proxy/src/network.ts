@@ -1,16 +1,19 @@
+import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
 import { peerIdFromBytes } from "@libp2p/peer-id";
 import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
-import { type Identity, Ed25519PublicKey, Ed25519Keypair } from "@peerbit/crypto";
-import { serialize, deserialize } from "@dao-xyz/borsh";
-import { field, variant, vec } from "@dao-xyz/borsh";
+import {
+	Ed25519Keypair,
+	Ed25519PublicKey,
+	type Identity,
+} from "@peerbit/crypto";
 import { Message } from "./message.js";
 
 @variant(1)
-export abstract class NetworkMessage extends Message { }
+export abstract class NetworkMessage extends Message {}
 
 @variant(0)
-export class REQ_PeerId extends NetworkMessage { }
+export class REQ_PeerId extends NetworkMessage {}
 
 @variant(1)
 export class RESP_PeerId extends NetworkMessage {
@@ -28,7 +31,7 @@ export class RESP_PeerId extends NetworkMessage {
 }
 
 @variant(2)
-export class REQ_Identity extends NetworkMessage { }
+export class REQ_Identity extends NetworkMessage {}
 
 @variant(3)
 export class RESP_Identity extends NetworkMessage {
@@ -50,7 +53,7 @@ export class RESP_Identity extends NetworkMessage {
 }
 
 @variant(4)
-export class REQ_GetMultiaddrs extends NetworkMessage { }
+export class REQ_GetMultiaddrs extends NetworkMessage {}
 
 @variant(5)
 export class RESP_GetMultiAddrs extends NetworkMessage {

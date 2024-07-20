@@ -1,23 +1,26 @@
-import type { BlockStore } from "./interface.js";
-import type { Blocks as IBlocks } from "@peerbit/blocks-interface";
+import { field, variant } from "@dao-xyz/borsh";
+import type { PeerId } from "@libp2p/interface";
+import { CustomEvent, TypedEventEmitter } from "@libp2p/interface";
 import {
-	stringifyCid,
+	type GetOptions,
+	type Blocks as IBlocks,
+	checkDecodeBlock,
 	cidifyString,
 	codecCodes,
-	checkDecodeBlock
-} from "./block.js";
-import { variant, field } from "@dao-xyz/borsh";
+	stringifyCid,
+} from "@peerbit/blocks-interface";
+import { PublicSignKey } from "@peerbit/crypto";
+import { logger as loggerFn } from "@peerbit/logger";
+import { AbortError } from "@peerbit/time";
 import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
-import { PublicSignKey } from "@peerbit/crypto";
-import { AnyBlockStore } from "./any-blockstore.js";
-import type { GetOptions } from "@peerbit/blocks-interface";
 import PQueue from "p-queue";
-import { AbortError } from "@peerbit/time";
-import type { PeerId } from "@libp2p/interface";
-import { TypedEventEmitter, CustomEvent } from "@libp2p/interface";
+import { AnyBlockStore } from "./any-blockstore.js";
+import type { BlockStore } from "./interface.js";
 
-export class BlockMessage { }
+export const logger = loggerFn({ module: "blocks-remote" });
+
+export class BlockMessage {}
 
 @variant(0)
 export class BlockRequest extends BlockMessage {
@@ -68,14 +71,14 @@ export class RemoteBlocks implements IBlocks {
 			messageProcessingConcurrency?: number;
 			publish: (
 				message: BlockRequest | BlockResponse,
-				options?: { to?: string[] }
+				options?: { to?: string[] },
 			) => Promise<Uint8Array | void>;
 			waitFor(peer: PeerId | PublicSignKey): Promise<void>;
-		}
+		},
 	) {
 		const localTimeout = options?.localTimeout || 1000;
 		this._loadFetchQueue = new PQueue({
-			concurrency: options?.messageProcessingConcurrency || 10
+			concurrency: options?.messageProcessingConcurrency || 10,
 		});
 		this.localStore = options?.local;
 		this._resolvers = new Map();
@@ -85,7 +88,7 @@ export class RemoteBlocks implements IBlocks {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
 					this._loadFetchQueue.add(() =>
-						this.handleFetchRequest(message, localTimeout)
+						this.handleFetchRequest(message, localTimeout),
 					);
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
@@ -93,8 +96,8 @@ export class RemoteBlocks implements IBlocks {
 					this._resolvers.get(message.cid)?.(message.bytes);
 				}
 			} catch (error) {
-				console.error("Got error for libp2p block transport: ", error);
-				return; // timeout o r invalid cid
+				logger.error("Got error for libp2p block transport: ", error);
+				// timeout o r invalid cid
 			}
 		};
 	}
@@ -111,7 +114,7 @@ export class RemoteBlocks implements IBlocks {
 	}
 	async get(
 		cid: string,
-		options?: GetOptions | undefined
+		options?: GetOptions | undefined,
 	): Promise<Uint8Array | undefined> {
 		const cidObject = cidifyString(cid);
 		let value = this.localStore
@@ -150,17 +153,17 @@ export class RemoteBlocks implements IBlocks {
 	}
 	onReachable(publicKey: PublicSignKey) {
 		this._events.dispatchEvent(
-			new CustomEvent("peer:reachable", { detail: publicKey })
+			new CustomEvent("peer:reachable", { detail: publicKey }),
 		);
 	}
 
 	private async handleFetchRequest(
 		request: BlockRequest,
-		localTimeout: number
+		localTimeout: number,
 	) {
 		const cid = stringifyCid(request.cid);
 		const bytes = await this.localStore.get(cid, {
-			timeout: localTimeout
+			timeout: localTimeout,
 		});
 		if (!bytes) {
 			return;
@@ -171,7 +174,12 @@ export class RemoteBlocks implements IBlocks {
 	private async _readFromPeers(
 		cidString: string,
 		cidObject: CID,
-		options: { timeout?: number; hasher?: any; from?: string[] } = {}
+		options: {
+			signal?: AbortSignal;
+			timeout?: number;
+			hasher?: any;
+			from?: string[];
+		} = {},
 	): Promise<Uint8Array | undefined> {
 		const codec = (codecCodes as any)[cidObject.code];
 		let promise = this._readFromPeersPromises.get(cidString);
@@ -182,41 +190,46 @@ export class RemoteBlocks implements IBlocks {
 						() => {
 							resolve(undefined);
 						},
-						options.timeout || 30 * 1000
+						options.timeout || 30 * 1000,
 					);
 					const abortHandler = () => {
 						clearTimeout(timeoutCallback);
 						this._resolvers.delete(cidString);
 						this.closeController.signal.removeEventListener(
 							"abort",
-							abortHandler
+							abortHandler,
 						);
+						options?.signal?.removeEventListener("abort", abortHandler);
 						reject(new AbortError());
 					};
 					this.closeController.signal.addEventListener("abort", abortHandler);
+					options?.signal?.addEventListener("abort", abortHandler);
 
 					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
 						const value = await checkDecodeBlock(cidObject, bytes, {
 							codec,
-							hasher: options?.hasher
+							hasher: options?.hasher,
 						});
 
 						clearTimeout(timeoutCallback);
 						this._resolvers.delete(cidString); // TODO concurrency might not work as expected here
 						this.closeController.signal.removeEventListener(
 							"abort",
-							abortHandler
+							abortHandler,
 						);
 						resolve(value);
 					});
-				}
+				},
 			);
 
 			this._readFromPeersPromises.set(cidString, promise);
 
 			const publish = (to: string) => {
-				if (!options?.from || options.from.includes(to))
-					this.options.publish(new BlockRequest(cidString), { to: [to] });
+				if (!options?.from || options.from.includes(to)) {
+					return this.options.publish(new BlockRequest(cidString), {
+						to: [to],
+					});
+				}
 			};
 
 			const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) => {
@@ -224,7 +237,7 @@ export class RemoteBlocks implements IBlocks {
 			};
 			this._events.addEventListener("peer:reachable", publishOnNewPeers);
 			this.options.publish(new BlockRequest(cidString), {
-				to: options.from
+				to: options.from,
 			});
 
 			// we want to make sure that if some new peers join, we also try to ask them
@@ -269,5 +282,9 @@ export class RemoteBlocks implements IBlocks {
 		} else {
 			return "closed";
 		}
+	}
+
+	persisted(): boolean | Promise<boolean> {
+		return this.localStore?.persisted() || false;
 	}
 }

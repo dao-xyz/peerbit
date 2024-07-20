@@ -1,16 +1,16 @@
 import { field, variant } from "@dao-xyz/borsh";
+import { Wallet } from "@ethersproject/wallet";
 import {
 	type Identity,
 	PreHash,
 	Secp256k1PublicKey,
-	SignatureWithKey
+	SignatureWithKey,
 } from "@peerbit/crypto";
 import { Documents } from "@peerbit/document";
 import { Program } from "@peerbit/program";
+import { expect } from "chai";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
-import { Wallet } from "@ethersproject/wallet";
-import { expect } from "chai";
 
 const wallet = Wallet.createRandom(); // if you would run this in the browser you would fetch the wallet from the window object instead
 
@@ -31,10 +31,10 @@ const walletIdentity: Identity<Secp256k1PublicKey> = {
 		const signatureWithKey = new SignatureWithKey({
 			prehash: PreHash.ETH_KECCAK_256,
 			publicKey: walletPublicKey,
-			signature: signatureBytes
+			signature: signatureBytes,
 		});
 		return signatureWithKey;
-	}
+	},
 };
 
 @variant(0)
@@ -72,7 +72,7 @@ class PostStore extends Program {
 				}
 
 				return false;
-			}
+			},
 		});
 	}
 }
@@ -81,7 +81,7 @@ const peer = await Peerbit.create();
 const db = await peer.open(new PostStore());
 
 await db.posts.put(new Post("Hello world!"), {
-	signers: [walletIdentity.sign.bind(walletIdentity)]
+	signers: [walletIdentity.sign.bind(walletIdentity)],
 });
 
 expect(await db.posts.index.getSize()).equal(1); // Post was appproved

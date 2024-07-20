@@ -1,23 +1,22 @@
 import {
+	deserialize,
+	field,
+	fixedArray,
+	option,
+	serialize,
 	variant,
 	vec,
-	field,
-	serialize,
-	deserialize,
-	fixedArray,
-	option
 } from "@dao-xyz/borsh";
-import { Uint8ArrayList } from "uint8arraylist";
+import type { PeerId } from "@libp2p/interface";
 import {
 	PublicSignKey,
 	SignatureWithKey,
-	verify,
+	getPublicKeyFromPeerId,
 	randomBytes,
 	sha256Base64,
-	getPublicKeyFromPeerId
+	verify,
 } from "@peerbit/crypto";
-
-import type { PeerId } from "@libp2p/interface";
+import { Uint8ArrayList } from "uint8arraylist";
 
 export const ID_LENGTH = 32;
 
@@ -32,11 +31,8 @@ const SIGNATURES_SIZE_ENCODING = "u8"; // with 7 steps you know everyone in the 
 export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
 	// first bytes fis discriminator,
 	// next 32 bytes should be an id
-	//return  Buffer.from(msg.slice(0, 33)).toString('base64');
-
 	return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
 };
-
 
 const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
 	const toHashes: string[] = [];
@@ -56,7 +52,7 @@ const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
 };
 
 export const deliveryModeHasReceiver = (
-	mode: DeliveryMode
+	mode: DeliveryMode,
 ): mode is { to: string[] } => {
 	if (mode instanceof SilentDelivery && mode.to.length > 0) {
 		return true;
@@ -70,7 +66,7 @@ export const deliveryModeHasReceiver = (
 	return false;
 };
 
-export abstract class DeliveryMode { }
+export abstract class DeliveryMode {}
 
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
@@ -111,7 +107,7 @@ export class AcknowledgeDelivery extends DeliveryMode {
 		super();
 		if (this.to?.length === 0) {
 			throw new Error(
-				"Invalud value of property 'to', expecting either undefined or an array with more than one element"
+				"Invalud value of property 'to', expecting either undefined or an array with more than one element",
 			);
 		}
 		this.to = coerceTo(properties.to);
@@ -138,7 +134,7 @@ export class SeekDelivery extends DeliveryMode {
 		super();
 		if (this.to?.length === 0) {
 			throw new Error(
-				"Invalud value of property 'to', expecting either undefined or an array with more than one element"
+				"Invalud value of property 'to', expecting either undefined or an array with more than one element",
 			);
 		}
 		this.to = properties.to ? coerceTo(properties.to) : undefined;
@@ -158,11 +154,7 @@ export class TracedDelivery extends DeliveryMode {
 }
 
 @variant(4)
-export class AnyWhere extends DeliveryMode {
-	constructor() {
-		super();
-	}
-}
+export class AnyWhere extends DeliveryMode {}
 
 @variant(0)
 export class Signatures {
@@ -185,7 +177,7 @@ export class Signatures {
 	}
 }
 
-abstract class PeerInfo { }
+abstract class PeerInfo {}
 
 @variant(0)
 export class MultiAddrinfo extends PeerInfo {
@@ -303,7 +295,7 @@ interface WithHeader {
 
 const sign = async <T extends WithHeader>(
 	obj: T,
-	signer: (bytes: Uint8Array) => Promise<SignatureWithKey>
+	signer: (bytes: Uint8Array) => Promise<SignatureWithKey>,
 ): Promise<T> => {
 	const mode = obj.header.mode;
 	obj.header.mode = undefined as any;
@@ -316,7 +308,7 @@ const sign = async <T extends WithHeader>(
 
 	const signature = await signer(bytes);
 	obj.header.signatures = new Signatures(
-		signatures ? [...signatures.signatures, signature] : [signature]
+		signatures ? [...signatures.signatures, signature] : [signature],
 	);
 	obj.header.mode = mode;
 	return obj;
@@ -324,7 +316,7 @@ const sign = async <T extends WithHeader>(
 
 const verifyMultiSig = async (
 	message: WithHeader,
-	expectSignatures: boolean
+	expectSignatures: boolean,
 ) => {
 	const signatures = message.header.signatures;
 	if (!signatures || signatures.signatures.length === 0) {
@@ -363,7 +355,7 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 	abstract get header(): MessageHeader<T>;
 
 	async sign(
-		signer: (bytes: Uint8Array) => Promise<SignatureWithKey>
+		signer: (bytes: Uint8Array) => Promise<SignatureWithKey>,
 	): Promise<this> {
 		return sign(this, signer);
 	}
@@ -375,8 +367,8 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 		return this._verified != null
 			? this._verified
 			: (this._verified =
-				(await this.header.verify()) &&
-				(await verifyMultiSig(this, expectSignatures)));
+					(await this.header.verify()) &&
+					(await verifyMultiSig(this, expectSignatures)));
 	}
 }
 
@@ -386,10 +378,10 @@ const DATA_VARIANT = 0;
 @variant(DATA_VARIANT)
 export class DataMessage<
 	T extends SilentDelivery | SeekDelivery | AcknowledgeDelivery | AnyWhere =
-	| SilentDelivery
-	| SeekDelivery
-	| AcknowledgeDelivery
-	| AnyWhere
+		| SilentDelivery
+		| SeekDelivery
+		| AcknowledgeDelivery
+		| AnyWhere,
 > extends Message<T> {
 	@field({ type: MessageHeader })
 	private _header: MessageHeader<T>;

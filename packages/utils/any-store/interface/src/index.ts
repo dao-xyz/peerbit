@@ -17,5 +17,5 @@ export interface AnyStore {
 	};
 	clear(): MaybePromise<void>;
 	size(): MaybePromise<number>;
+	persisted(): MaybePromise<boolean>;
 }
-

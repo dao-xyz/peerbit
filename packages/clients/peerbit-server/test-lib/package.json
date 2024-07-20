@@ -41,7 +41,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -59,13 +59,13 @@
 		"node": ">=16.15.1"
 	},
 	"scripts": {
-		"clean": "shx rm -rf lib/*",
+		"clean": "shx rm -rf dist/*",
 		"build": "yarn clean && tsc -p tsconfig.json; tsc -p tsconfig.json",
 		"test": "aegir test -t node"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "*",
-		"libp2p": "^1.2.3"
+		"libp2p": "^1.8.1"
 	},
 	"dependencies": {
 		"@peerbit/string": "*",

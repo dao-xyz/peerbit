@@ -1,8 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Documents, SearchRequest } from "@peerbit/document";
+import { Documents } from "@peerbit/document";
+import { SearchRequest } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
 
-abstract class AbstractPost { }
+abstract class AbstractPost {}
 
 @variant(0)
 class PostV0 extends AbstractPost {
@@ -64,14 +65,14 @@ class PostStore extends Program {
 					}
 				}
 				return false;
-			}
+			},
 		});
 
 		// Migration loop. This code will be included in everyone's code bases once the code/project owners want everyone to migrate
 		// Peers can reject not doing migrations by simply not downloading updates
 		for (const results of await this.posts.index.queryDetailed(
 			new SearchRequest(),
-			{ local: true, remote: false }
+			{ local: true, remote: false },
 		)) {
 			for (const result of results.results) {
 				const latestCommit = await this.posts.log.log.get(result.context.head);
@@ -81,7 +82,7 @@ class PostStore extends Program {
 					result.value instanceof PostV0 &&
 					latestCommit &&
 					latestCommit.publicKeys.find((x) =>
-						x.equals(this.node.identity.publicKey)
+						x.equals(this.node.identity.publicKey),
 					)
 				) {
 					// Then migrate
@@ -89,8 +90,8 @@ class PostStore extends Program {
 						new PostV1({
 							id: result.value.id,
 							message: result.value.message,
-							title: "Migrated post"
-						})
+							title: "Migrated post",
+						}),
 					);
 
 					// Since the same id is used, the old document will be replaced with a new document.

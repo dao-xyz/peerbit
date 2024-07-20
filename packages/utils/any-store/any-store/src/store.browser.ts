@@ -1,5 +1,5 @@
-import { MemoryStore } from "./memory.js";
 import { OPFSStore } from "@peerbit/any-store-opfs/opfs-store";
+import { MemoryStore } from "./memory.js";
 
 export const createStore = (directory?: string) => {
 	return directory ? new OPFSStore(directory) : new MemoryStore();

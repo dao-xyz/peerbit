@@ -1,25 +1,24 @@
 import { field, variant } from "@dao-xyz/borsh";
-import {
-	Documents,
-	SearchRequest,
-	IntegerCompare,
-	Compare,
-	Or,
-	type CanPerformOperations
-} from "@peerbit/document";
-import {
-	getPathGenerator,
-	TrustedNetwork,
-	getFromByTo,
-	IdentityGraph,
-	createIdentityGraphStore
-} from "@peerbit/trusted-network";
-import { ACCESS_TYPE_PROPERTY, Access, AccessType } from "./access.js";
-import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { Program } from "@peerbit/program";
 import { type PeerId } from "@libp2p/interface";
+import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
+import { type CanPerformOperations, Documents } from "@peerbit/document";
+import {
+	Compare,
+	IntegerCompare,
+	Or,
+	SearchRequest,
+} from "@peerbit/indexer-interface";
+import { Program } from "@peerbit/program";
+import { type ReplicationOptions } from "@peerbit/shared-log";
+import {
+	IdentityGraph,
+	TrustedNetwork,
+	createIdentityGraphStore,
+	getFromByTo,
+	getPathGenerator,
+} from "@peerbit/trusted-network";
 import { concat } from "uint8arrays";
-import { type RoleOptions } from "@peerbit/shared-log";
+import { ACCESS_TYPE_PROPERTY, Access, AccessType } from "./access.js";
 
 @variant("identity_acl")
 export class IdentityAccessController extends Program {
@@ -42,19 +41,19 @@ export class IdentityAccessController extends Program {
 			throw new Error("Expecting either TrustedNetwork or rootTrust");
 		}
 		this.access = new Documents({
-			id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([0])]))
+			id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([0])])),
 		});
 
 		this.trustedNetwork = opts.trustedNetwork
 			? opts.trustedNetwork
 			: new TrustedNetwork({
-				id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
-				rootTrust: opts.rootTrust
-			});
+					id: opts.id && sha256Sync(concat([opts.id, new Uint8Array([1])])),
+					rootTrust: opts.rootTrust,
+				});
 		this.identityGraphController = new IdentityGraph({
 			relationGraph: createIdentityGraphStore(
-				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])]))
-			)
+				opts.id && sha256Sync(concat([opts.id, new Uint8Array([2])])),
+			),
 		});
 	}
 
@@ -86,22 +85,22 @@ export class IdentityAccessController extends Program {
 							new IntegerCompare({
 								key: ACCESS_TYPE_PROPERTY,
 								compare: Compare.Equal,
-								value: AccessType.Any
+								value: AccessType.Any,
 							}),
 							new IntegerCompare({
 								key: ACCESS_TYPE_PROPERTY,
 								compare: Compare.Equal,
-								value: AccessType.Read
-							})
-						])
-					]
-				})
+								value: AccessType.Read,
+							}),
+						]),
+					],
+				}),
 			);
 			for (const access of accessReadOrAny) {
 				if (access instanceof Access) {
 					if (
 						access.accessTypes.find(
-							(x) => x === AccessType.Any || x === AccessType.Read
+							(x) => x === AccessType.Any || x === AccessType.Read,
 						) !== undefined
 					) {
 						// check condition
@@ -120,7 +119,7 @@ export class IdentityAccessController extends Program {
 		for await (const trustedByKey of getPathGenerator(
 			s,
 			this.identityGraphController.relationGraph,
-			getFromByTo
+			getFromByTo,
 		)) {
 			if (await canReadCheck(trustedByKey.from)) {
 				return true;
@@ -147,23 +146,23 @@ export class IdentityAccessController extends Program {
 								new IntegerCompare({
 									key: ACCESS_TYPE_PROPERTY,
 									compare: Compare.Equal,
-									value: AccessType.Any
+									value: AccessType.Any,
 								}),
 								new IntegerCompare({
 									key: ACCESS_TYPE_PROPERTY,
 									compare: Compare.Equal,
-									value: AccessType.Write
-								})
-							])
-						]
-					})
+									value: AccessType.Write,
+								}),
+							]),
+						],
+					}),
 				);
 
 				for (const access of accessWritedOrAny) {
 					if (access instanceof Access) {
 						if (
 							access.accessTypes.find(
-								(x) => x === AccessType.Any || x === AccessType.Write
+								(x) => x === AccessType.Any || x === AccessType.Write,
 							) !== undefined
 						) {
 							// check condition
@@ -181,7 +180,7 @@ export class IdentityAccessController extends Program {
 			for await (const trustedByKey of getPathGenerator(
 				key,
 				this.identityGraphController.relationGraph,
-				getFromByTo
+				getFromByTo,
 			)) {
 				if (await canPerformCheck(trustedByKey.from)) {
 					return true;
@@ -199,18 +198,18 @@ export class IdentityAccessController extends Program {
 		return false;
 	}
 
-	async open(properties?: { role?: RoleOptions }) {
+	async open(properties?: { replicate?: ReplicationOptions }) {
 		await this.identityGraphController.open({
-			role: properties?.role || { type: "replicator", factor: 1 },
-			canRead: this.canRead.bind(this)
+			replicate: properties?.replicate || { factor: 1 },
+			canRead: this.canRead.bind(this),
 		});
 		await this.access.open({
-			role: properties?.role || { type: "replicator", factor: 1 },
+			replicate: properties?.replicate || { factor: 1 },
 			type: Access,
 			canPerform: this.canPerform.bind(this),
 			index: {
-				canRead: this.canRead.bind(this)
-			}
+				canRead: this.canRead.bind(this),
+			},
 		});
 		await this.trustedNetwork.open(properties);
 	}

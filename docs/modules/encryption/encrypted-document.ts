@@ -1,22 +1,21 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
-import { Peerbit } from "peerbit";
-import {
-	Documents,
-	SearchRequest
-} from "@peerbit/document";
-import { delay } from "@peerbit/time";
 import { X25519Keypair } from "@peerbit/crypto";
+import { Documents } from "@peerbit/document";
+import { SearchRequest } from "@peerbit/indexer-interface";
+import { Program } from "@peerbit/program";
+import { delay } from "@peerbit/time";
+import { expect } from "chai";
+import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
 const groupMember1 = await Peerbit.create({
-	relay: true
+	relay: true,
 });
 const groupMember2 = await Peerbit.create({
-	relay: true
+	relay: true,
 });
 const nonMember = await Peerbit.create({
-	relay: true
+	relay: true,
 });
 
 await groupMember2.dial(groupMember1.getMultiaddrs());
@@ -50,7 +49,7 @@ class PostsDB extends Program {
 		await this.posts.open({
 			type: Post,
 			replicas: {
-				min: 2
+				min: 2,
 			},
 			index: {
 				canRead: (post, publicKey) => {
@@ -60,17 +59,17 @@ class PostsDB extends Program {
 				canSearch: (request, publicKey) => {
 					// can publicKey perform this query request?
 					return !!ALL_MEMBERS.find((x) => x.equals(publicKey));
-				}
+				},
 			},
 			canReplicate: (publicKey) =>
-				!!ALL_MEMBERS.find((x) => x.equals(publicKey))
+				!!ALL_MEMBERS.find((x) => x.equals(publicKey)),
 		});
 	}
 }
 
 const ALL_MEMBERS = [
 	groupMember1.identity.publicKey,
-	groupMember2.identity.publicKey
+	groupMember2.identity.publicKey,
 ];
 
 const memberStore1 = await groupMember1.open(new PostsDB());
@@ -97,9 +96,9 @@ await memberStore1.posts.put(post, {
 				// client1.identity.publicKey,
 				// client2.identity.publicKey,
 				// client3.identity.publicKey
-			]
-		}
-	}
+			],
+		},
+	},
 });
 
 const memberStore2 = await groupMember2.open<PostsDB>(memberStore1.address);
@@ -110,19 +109,16 @@ const nonMemberStore = await nonMember.open<PostsDB>(memberStore1.address);
 // If you open the store with an observer role, then you will not need this delay
 await delay(3000);
 
-import { expect } from "chai";
-
-expect(await memberStore1.posts.index.search(new SearchRequest())).to.have.length(
-	1
-);
-
-expect(await memberStore2.posts.index.search(new SearchRequest())).to.have.length(
-	1
-);
+expect(
+	await memberStore1.posts.index.search(new SearchRequest()),
+).to.have.length(1);
 
 expect(
-	await nonMemberStore.posts.index.search(new SearchRequest())
-).to.be.empty;
+	await memberStore2.posts.index.search(new SearchRequest()),
+).to.have.length(1);
+
+expect(await nonMemberStore.posts.index.search(new SearchRequest())).to.be
+	.empty;
 
 await groupMember1.stop();
 await groupMember2.stop();

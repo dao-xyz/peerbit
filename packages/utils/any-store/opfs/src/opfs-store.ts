@@ -1,15 +1,16 @@
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { type AnyStore, type MaybePromise } from "@peerbit/any-store-interface";
 import * as memory from "@peerbit/any-store-interface/messages";
-import { createWorker } from "./create.js"
 import { v4 as uuid } from "uuid";
-import { serialize, deserialize } from "@dao-xyz/borsh";
+import { createWorker } from "./create.js";
+
 function memoryIterator(
 	client: {
 		request<T extends memory.MemoryRequest>(
-			request: memory.MemoryRequest
+			request: memory.MemoryRequest,
 		): Promise<T>;
 	},
-	level: string[]
+	level: string[],
 ): {
 	[Symbol.asyncIterator]: () => AsyncIterator<[string, Uint8Array], void, void>;
 } {
@@ -19,16 +20,17 @@ function memoryIterator(
 			return {
 				next: async () => {
 					const resp = await client.request<memory.RESP_Iterator_Next>(
-						new memory.REQ_Iterator_Next({ id: iteratorId, level })
+						new memory.REQ_Iterator_Next({ id: iteratorId, level }),
 					);
 					if (resp.keys.length > 1) {
 						throw new Error("Unsupported iteration response");
 					}
 					// Will only have 0 or 1 element for now
+					// eslint-disable-next-line no-unreachable-loop
 					for (let i = 0; i < resp.keys.length; i++) {
 						return {
 							done: false,
-							value: [resp.keys[i], resp.values[i]] as [string, Uint8Array]
+							value: [resp.keys[i], resp.values[i]] as [string, Uint8Array],
 						} as { done: false; value: [string, Uint8Array] };
 					}
 					return { done: true, value: undefined } as {
@@ -38,15 +40,15 @@ function memoryIterator(
 				},
 				async return() {
 					await client.request<memory.RESP_Iterator_Next>(
-						new memory.REQ_Iterator_Stop({ id: iteratorId, level })
+						new memory.REQ_Iterator_Stop({ id: iteratorId, level }),
 					);
 					return { done: true, value: undefined } as {
 						done: true;
 						value: undefined;
 					};
-				}
+				},
 			};
-		}
+		},
 	};
 }
 
@@ -67,30 +69,30 @@ export class OPFSStore implements AnyStore {
 			return {
 				clear: async () => {
 					await this.request<memory.RESP_Clear>(
-						new memory.REQ_Clear({ level })
+						new memory.REQ_Clear({ level }),
 					);
 				},
 				del: async (key) => {
 					await this.request<memory.RESP_Del>(
-						new memory.REQ_Del({ level, key })
+						new memory.REQ_Del({ level, key }),
 					);
 				},
 				get: async (key) => {
 					return (
 						await this.request<memory.RESP_Get>(
-							new memory.REQ_Get({ level, key })
+							new memory.REQ_Get({ level, key }),
 						)
 					).bytes;
 				},
 				put: async (key, value) => {
 					await this.request<memory.RESP_Put>(
-						new memory.REQ_Put({ level, key, bytes: value })
+						new memory.REQ_Put({ level, key, bytes: value }),
 					);
 				},
 				status: async () =>
 					(
 						await this.request<memory.RESP_Status>(
-							new memory.REQ_Status({ level })
+							new memory.REQ_Status({ level }),
 						)
 					).status,
 				sublevel: async (name) => {
@@ -104,7 +106,7 @@ export class OPFSStore implements AnyStore {
 				iterator: () => memoryIterator(this, level),
 				close: async () => {
 					await this.request<memory.RESP_Close>(
-						new memory.REQ_Close({ level })
+						new memory.REQ_Close({ level }),
 					);
 					/*     this.levelMap.delete(memory.levelKey(level)); */
 				},
@@ -114,10 +116,11 @@ export class OPFSStore implements AnyStore {
 
 				size: async () => {
 					const size = await this.request<memory.RESP_Size>(
-						new memory.REQ_Size({ level })
+						new memory.REQ_Size({ level }),
 					);
 					return size.size;
-				}
+				},
+				persisted: directory != null ? () => true : () => false,
 			};
 		};
 	}
@@ -177,7 +180,7 @@ export class OPFSStore implements AnyStore {
 	}
 
 	async request<T extends memory.MemoryRequest>(
-		request: memory.MemoryRequest
+		request: memory.MemoryRequest,
 	): Promise<T> {
 		return new Promise<T>((resolve, reject) => {
 			const onResponse = (message: memory.MemoryRequest) => {
@@ -190,10 +193,14 @@ export class OPFSStore implements AnyStore {
 			};
 			this._responseCallbacks.set(request.messageId, {
 				fn: onResponse,
-				once: true
+				once: true,
 			});
 			const bytes = serialize(request);
 			this.worker.postMessage(bytes, [bytes.buffer]);
 		});
+	}
+
+	persisted() {
+		return this.root.persisted();
 	}
 }

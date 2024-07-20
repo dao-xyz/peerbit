@@ -1,12 +1,13 @@
 import { field, option, variant } from "@dao-xyz/borsh";
-import { Documents } from "../src/index.js";
-import { Program } from "@peerbit/program";
-import { v4 as uuid } from "uuid";
 import { randomBytes } from "@peerbit/crypto";
-import { waitForResolved } from "@peerbit/time";
+import { Program } from "@peerbit/program";
+import type { ReplicationOptions } from "@peerbit/shared-log";
 import { TestSession } from "@peerbit/test-utils";
-import type { RoleOptions } from "@peerbit/shared-log";
-import { expect } from 'chai'
+import { waitForResolved } from "@peerbit/time";
+import { expect } from "chai";
+import { v4 as uuid } from "uuid";
+import { Documents } from "../src/index.js";
+
 /**
  * A test meant for profiling purposes
  */
@@ -41,8 +42,8 @@ class TestStore extends Program {
 		this.docs = new Documents();
 	}
 
-	async open(properties?: { role: RoleOptions }): Promise<void> {
-		await this.docs.open({ type: Document, role: properties?.role });
+	async open(properties?: { replicate?: ReplicationOptions }): Promise<void> {
+		await this.docs.open({ type: Document, replicate: properties?.replicate });
 	}
 }
 const RANDOM_BYTES = randomBytes(14 * 1000);
@@ -63,21 +64,19 @@ describe("profile", () => {
 		for (const [_i, client] of session.peers.entries()) {
 			const store: TestStore = await (stores.length === 0
 				? client.open(new TestStore(), {
-					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
-					}
-				})
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					})
 				: TestStore.open(stores[0].address, client, {
-					args: {
-						role: {
-							type: "replicator",
-							factor: 1
-						}
-					}
-				}));
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					}));
 			stores.push(store);
 		}
 		await stores[0].waitFor(session.peers[1].peerId);
@@ -95,16 +94,14 @@ describe("profile", () => {
 			const doc = new Document({
 				id: uuid(),
 				name: uuid(),
-				bytes: RANDOM_BYTES
+				bytes: RANDOM_BYTES,
 			});
 			await writeStore.docs.put(doc, { unique: true });
 		}
 
 		await Promise.all(promises);
 		await waitForResolved(async () =>
-			expect(await stores[stores.length - 1].docs.index.getSize()).equal(
-				COUNT
-			)
+			expect(await stores[stores.length - 1].docs.index.getSize()).equal(COUNT),
 		);
 	});
 });

@@ -1,8 +1,8 @@
-import { Log } from "../src/log.js";
 import { AnyBlockStore } from "@peerbit/blocks";
+import { expect } from "chai";
+import { Log } from "../src/log.js";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
-import { expect } from "chai";
 
 describe("crdt", function () {
 	let store: AnyBlockStore;
@@ -66,7 +66,7 @@ describe("crdt", function () {
 			expect(res1.length).equal(expectedElementsCount);
 			expect(res2.length).equal(expectedElementsCount);
 			expect(res1.map((x) => x.payload.getValue())).to.deep.equal(
-				res2.map((x) => x.payload.getValue())
+				res2.map((x) => x.payload.getValue()),
 			);
 		});
 
@@ -100,7 +100,7 @@ describe("crdt", function () {
 			expect(res1.length).equal(expectedElementsCount);
 			expect(res2.length).equal(expectedElementsCount);
 			expect(res1.map((x) => x.payload.getValue())).to.deep.equal(
-				res2.map((x) => x.payload.getValue())
+				res2.map((x) => x.payload.getValue()),
 			);
 		});
 

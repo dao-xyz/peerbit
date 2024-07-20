@@ -1,6 +1,7 @@
 import { type WaitForPeer } from "@peerbit/stream-interface";
 
 export type GetOptions = {
+	signal?: AbortSignal;
 	timeout?: number;
 	replicate?: boolean;
 	from?: string[];
@@ -18,4 +19,17 @@ export interface Blocks extends WaitForPeer {
 	rm(cid: string): MaybePromise<void>;
 	iterator(): AsyncGenerator<[string, Uint8Array], void, void>;
 	size(): MaybePromise<number>;
+	persisted(): MaybePromise<boolean>;
 }
+
+export {
+	cidifyString,
+	stringifyCid,
+	createBlock,
+	getBlockValue,
+	calculateRawCid,
+	checkDecodeBlock,
+	codecCodes,
+	defaultHasher,
+	codecMap,
+} from "./block.js";

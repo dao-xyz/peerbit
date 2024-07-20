@@ -16,12 +16,12 @@ export const getLogLevel = () => {
 		return undefined;
 	}
 	const levels = ["fatal", "error", "warn", "info", "debug", "trace"];
-	if (levels.indexOf(level) === -1) {
+	if (!levels.includes(level)) {
 		throw new Error(
 			"Unexpected LOG_LEVEL: " +
-			level +
-			". Expecting one of: " +
-			JSON.stringify(levels)
+				level +
+				". Expecting one of: " +
+				JSON.stringify(levels),
 		);
 	}
 	return level;

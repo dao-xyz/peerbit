@@ -16,5 +16,12 @@
 			"last 1 firefox version",
 			"last 1 safari version"
 		]
+	},
+	"scripts": {
+		"test": "playwright test",
+		"lint": "aegir lint"
+	},
+	"dependencies": {
+		"@peerbit/stream": "*"
 	}
 }

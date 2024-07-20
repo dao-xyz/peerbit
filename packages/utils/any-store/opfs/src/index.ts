@@ -1,1 +1,1 @@
-import './worker.js'
+import "./worker.js";

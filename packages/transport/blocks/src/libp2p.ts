@@ -1,13 +1,12 @@
-import { type Blocks as IBlocks } from "@peerbit/blocks-interface";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { createStore } from "@peerbit/any-store";
+import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
+import { type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
 import { type DirectStreamComponents } from "@peerbit/stream";
+import { AnyWhere, type DataMessage } from "@peerbit/stream-interface";
 import { AnyBlockStore } from "./any-blockstore.js";
-import type { GetOptions } from "@peerbit/blocks-interface";
-import { createStore } from "@peerbit/any-store";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
-import { PublicSignKey } from "@peerbit/crypto";
-import { AnyWhere, DataMessage } from "@peerbit/stream-interface";
-import { deserialize, serialize } from "@dao-xyz/borsh";
 
 export type DirectBlockComponents = DirectStreamComponents;
 
@@ -23,15 +22,15 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
-		}
+		},
 	) {
 		super(components, ["/lazyblock/0.0.0"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			canRelayMessage: options?.canRelayMessage ?? true,
 			connectionManager: {
 				dialer: false,
-				pruner: false
-			}
+				pruner: false,
+			},
 		});
 		this.remoteBlocks = new RemoteBlocks({
 			local: new AnyBlockStore(createStore(options?.directory)),
@@ -39,14 +38,14 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				this.publish(serialize(message), { mode: new AnyWhere() }),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
-			waitFor: this.waitFor.bind(this)
+			waitFor: this.waitFor.bind(this),
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
 			data.detail?.data?.length &&
 				data.detail?.data.length > 0 &&
 				this.remoteBlocks.onMessage(
-					deserialize(data.detail.data!, BlockMessage)
+					deserialize(data.detail.data!, BlockMessage),
 				);
 		};
 		this.onPeerConnectedFn = (evt: CustomEvent<PublicSignKey>) =>
@@ -62,7 +61,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	}
 	async get(
 		cid: string,
-		options?: GetOptions | undefined
+		options?: GetOptions | undefined,
 	): Promise<Uint8Array | undefined> {
 		return this.remoteBlocks.get(cid, options);
 	}
@@ -96,5 +95,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 	}
 	get status() {
 		return this.remoteBlocks?.status || this.started;
+	}
+
+	persisted(): boolean | Promise<boolean> {
+		return this.remoteBlocks.persisted();
 	}
 }

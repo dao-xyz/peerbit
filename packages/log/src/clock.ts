@@ -22,10 +22,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
-
-import { field, variant } from "@dao-xyz/borsh";
-import { compare, equals } from "uint8arrays";
+import {
+	field,
+	/* , variant */
+} from "@dao-xyz/borsh";
 import { hrtime } from "@peerbit/time";
+import { compare, equals } from "uint8arrays";
 
 const hrTimeNow = hrtime.bigint();
 const startTime = BigInt(Date.now()) * BigInt(1e6) - hrTimeNow;
@@ -36,7 +38,7 @@ export function fromBits(low: any, high: any, unsigned: any, target?: any) {
 		return {
 			low: low | 0,
 			high: high | 0,
-			unsigned: !!unsigned
+			unsigned: !!unsigned,
 		};
 	}
 	target.low = low | 0;
@@ -56,7 +58,7 @@ function bigIntCoerce(input: any, fallback: any) {
 	return fallback;
 }
 
-@variant(0)
+/* @variant(0) */
 export class Timestamp {
 	@field({ type: "u64" })
 	wallTime: bigint;
@@ -90,7 +92,7 @@ export class Timestamp {
 	clone(): Timestamp {
 		return new Timestamp({
 			wallTime: this.wallTime,
-			logical: this.logical
+			logical: this.logical,
 		});
 	}
 
@@ -112,14 +114,14 @@ export class HLC {
 			wallTimeUpperBound?: bigint;
 			toleratedForwardClockJump?: bigint;
 			last?: Timestamp;
-		} = {}
+		} = {},
 	) {
 		this.wallTime = properties.wallTime || bigintTime;
 		this.maxOffset = bigIntCoerce(properties.maxOffset, 0n);
 		this.wallTimeUpperBound = bigIntCoerce(properties.wallTimeUpperBound, 0n);
 		this.toleratedForwardClockJump = bigIntCoerce(
 			properties.toleratedForwardClockJump,
-			0n
+			0n,
 		);
 		this.last = new Timestamp({ wallTime: this.wallTime() });
 		if (properties.last) {
@@ -174,9 +176,11 @@ export class ClockOffsetError extends Error {
 	maxOffset: bigint;
 	constructor(offset: bigint, maxOffset: bigint) {
 		super(
-			`The received time is ${offset / n1e6
-			}ms ahead of the wall time, exceeding the 'maxOffset' limit of ${maxOffset / n1e6
-			}ms.`
+			`The received time is ${
+				offset / n1e6
+			}ms ahead of the wall time, exceeding the 'maxOffset' limit of ${
+				maxOffset / n1e6
+			}ms.`,
 		);
 		this.offset = offset;
 		this.maxOffset = maxOffset;
@@ -188,8 +192,9 @@ export class WallTimeOverflowError extends Error {
 	maxTime: bigint;
 	constructor(time: bigint, maxTime: bigint) {
 		super(
-			`The wall time ${time / n1e6}ms exceeds the max time of ${maxTime / n1e6
-			}ms.`
+			`The wall time ${time / n1e6}ms exceeds the max time of ${
+				maxTime / n1e6
+			}ms.`,
 		);
 		this.time = time;
 		this.maxTime = maxTime;
@@ -201,15 +206,16 @@ export class ForwardJumpError extends Error {
 	tolerance: bigint;
 	constructor(timejump: bigint, tolerance: bigint) {
 		super(
-			`Detected a forward time jump of ${timejump / n1e6
-			}ms, which exceed the allowed tolerance of ${tolerance / n1e6}ms.`
+			`Detected a forward time jump of ${
+				timejump / n1e6
+			}ms, which exceed the allowed tolerance of ${tolerance / n1e6}ms.`,
 		);
 		this.timejump = timejump;
 		this.tolerance = tolerance;
 	}
 }
 
-@variant(0)
+/* @variant(0) */
 export class LamportClock {
 	@field({ type: Uint8Array })
 	id: Uint8Array;
@@ -222,13 +228,13 @@ export class LamportClock {
 		if (!properties.timestamp) {
 			this.timestamp = new Timestamp({
 				wallTime: bigintTime(),
-				logical: 0
+				logical: 0,
 			});
 		} else {
 			if (typeof properties.timestamp === "number") {
 				this.timestamp = new Timestamp({
 					wallTime: bigintTime(),
-					logical: properties.timestamp
+					logical: properties.timestamp,
 				});
 			} else {
 				this.timestamp = properties.timestamp;
@@ -239,7 +245,7 @@ export class LamportClock {
 	clone() {
 		return new LamportClock({
 			id: this.id,
-			timestamp: this.timestamp.clone()
+			timestamp: this.timestamp.clone(),
 		});
 	}
 

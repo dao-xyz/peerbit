@@ -34,7 +34,7 @@
 		}
 	},
 	"eslintConfig": {
-		"extends": "ipfs",
+		"extends": "peerbit",
 		"parserOptions": {
 			"project": true,
 			"sourceType": "module"
@@ -51,7 +51,8 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": ""
+		"test": "",
+		"lint": "aegir lint"
 	},
 	"engines": {
 		"node": ">=16.15.1"
@@ -73,7 +74,7 @@
 		"dao.xyz"
 	],
 	"dependencies": {
-		"@dao-xyz/borsh": "^5.2.2",
+		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "2.2.0",
 		"@peerbit/stream-interface": "^5.0.2"
 	}

@@ -1,7 +1,7 @@
 import { SeekDelivery } from "@peerbit/stream-interface";
-import { Peerbit } from "../src/index.js";
 import { waitFor } from "@peerbit/time";
-import { expect } from 'chai'
+import { expect } from "chai";
+import { Peerbit } from "../src/index.js";
 
 describe(`dial`, function () {
 	let clients: [Peerbit, Peerbit];
@@ -18,7 +18,7 @@ describe(`dial`, function () {
 		const cid = await clients[0].services.blocks.put(new Uint8Array([1]));
 		await clients[0].dial(clients[1].getMultiaddrs()[0]);
 		expect(
-			new Uint8Array((await clients[0].services.blocks.get(cid))!)
+			new Uint8Array((await clients[0].services.blocks.get(cid))!),
 		).to.deep.equal(new Uint8Array([1]));
 	});
 
@@ -32,27 +32,23 @@ describe(`dial`, function () {
 		await clients[0].dial(clients[1].getMultiaddrs()[0]);
 		await clients[0].services.pubsub.publish(new Uint8Array([1]), {
 			topics: [topic],
-			mode: new SeekDelivery({ redundancy: 1 })
+			mode: new SeekDelivery({ redundancy: 1 }),
 		});
 		await waitFor(() => !!data);
 		expect(data && new Uint8Array(data)).to.deep.equal(new Uint8Array([1]));
 	});
 
 	it("dialer settings", async () => {
-		expect(
-			clients[0].services.pubsub.connectionManagerOptions.dialer
-		).to.exist;
-		expect(
-			clients[1].services.blocks.connectionManagerOptions.dialer
-		).equal(undefined);
+		expect(clients[0].services.pubsub.connectionManagerOptions.dialer).to.exist;
+		expect(clients[1].services.blocks.connectionManagerOptions.dialer).equal(
+			undefined,
+		);
 	});
 
 	it("prune settings", async () => {
-		expect(
-			clients[0].services.pubsub.connectionManagerOptions.pruner
-		).to.exist;
-		expect(
-			clients[1].services.blocks.connectionManagerOptions.pruner
-		).equal(undefined);
+		expect(clients[0].services.pubsub.connectionManagerOptions.pruner).to.exist;
+		expect(clients[1].services.blocks.connectionManagerOptions.pruner).equal(
+			undefined,
+		);
 	});
 });

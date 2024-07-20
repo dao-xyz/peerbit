@@ -1,9 +1,9 @@
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { DirectBlock } from "../src/libp2p.js";
 import { waitForPeers } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
-import { expect } from 'chai'
-import sinon from 'sinon'
+import { expect } from "chai";
+import sinon from "sinon";
+import { DirectBlock } from "../src/libp2p.js";
 
 const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
@@ -33,7 +33,7 @@ describe("transport", function () {
 
 	it("write then read over relay", async () => {
 		session = await TestSession.disconnected(3, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		await store(session, 0).start();
@@ -42,7 +42,7 @@ describe("transport", function () {
 
 		await session.connect([
 			[session.peers[0], session.peers[1]],
-			[session.peers[1], session.peers[2]]
+			[session.peers[1], session.peers[2]],
 		]);
 
 		await waitForPeers(store(session, 0), store(session, 1));
@@ -58,7 +58,7 @@ describe("transport", function () {
 
 	it("read while join over relay", async () => {
 		session = await TestSession.disconnected(3, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		await store(session, 0).start();
@@ -84,7 +84,7 @@ describe("transport", function () {
 
 	it("read concurrently", async () => {
 		session = await TestSession.connected(2, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		await store(session, 0).start();
@@ -96,7 +96,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
-		const publish = sinon.spy(store(session, 1)["remoteBlocks"].options.publish);
+		const publish = sinon.spy(
+			store(session, 1)["remoteBlocks"].options.publish,
+		);
 		store(session, 1)["remoteBlocks"].options.publish = publish;
 
 		const promises: Promise<any>[] = [];
@@ -104,7 +106,7 @@ describe("transport", function () {
 			promises.push(store(session, 1).get(cid));
 		}
 		const resolved = await Promise.all(promises);
-		expect(publish.calledOnce).to.be.true
+		expect(publish.calledOnce).to.be.true;
 		for (const b of resolved) {
 			expect(new Uint8Array(b!)).to.deep.equal(data);
 		}
@@ -112,7 +114,7 @@ describe("transport", function () {
 
 	it("get from specific peer", async () => {
 		session = await TestSession.disconnected(2, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		const data = new Uint8Array([5, 4, 3]);
@@ -120,7 +122,7 @@ describe("transport", function () {
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 		const readDataPromise = store(session, 1).get(cid, {
-			from: [session.peers[0].services.blocks.publicKey.hashcode()]
+			from: [session.peers[0].services.blocks.publicKey.hashcode()],
 		});
 
 		await session.connect(); // we connect after get request is sent
@@ -131,7 +133,7 @@ describe("transport", function () {
 
 	it("reads from joining peer", async () => {
 		session = await TestSession.disconnected(2, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		const data = new Uint8Array([5, 4, 3]);
@@ -148,14 +150,14 @@ describe("transport", function () {
 
 	it("timeout", async () => {
 		session = await TestSession.connected(2, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 		await waitForPeers(store(session, 0), store(session, 1));
 
 		const t1 = +new Date();
 		const readData = await store(session, 0).get(
 			"zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
-			{ timeout: 3000 }
+			{ timeout: 3000 },
 		);
 		const t2 = +new Date();
 		expect(readData).equal(undefined);
@@ -164,7 +166,7 @@ describe("transport", function () {
 
 	it("iterate", async () => {
 		session = await TestSession.disconnected(1, {
-			services: { blocks: (c) => new DirectBlock(c) }
+			services: { blocks: (c) => new DirectBlock(c) },
 		});
 
 		const data = new Uint8Array([5, 4, 3]);

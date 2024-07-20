@@ -1,8 +1,8 @@
-import { createClient } from "@peerbit/proxy-window";
-import { SharedLog, Args } from "@peerbit/shared-log";
-import { useEffect, useReducer, useRef } from "react";
-import { Change } from "@peerbit/log";
 import { randomBytes } from "@peerbit/crypto";
+import { Change } from "@peerbit/log";
+import { createClient } from "@peerbit/proxy-window";
+import { SharedLog } from "@peerbit/shared-log";
+import { useEffect, useReducer, useRef } from "react";
 
 const client = await createClient("*");
 
@@ -28,8 +28,8 @@ export const App = () => {
 								console.log(client.messages.id, dbRef.current?.log.length);
 							});
 						}, 1000);
-					}
-				}
+					},
+				},
 			})
 			.then((x: any) => {
 				dbRef.current = x;

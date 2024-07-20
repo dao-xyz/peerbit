@@ -1,9 +1,9 @@
+import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
+import { expect } from "chai";
+import type { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
-import { Entry } from "../src/entry.js";
-import { type BlockStore, AnyBlockStore } from "@peerbit/blocks";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
-import { expect } from "chai";
 
 describe("signature", function () {
 	let store: BlockStore;
@@ -45,9 +45,11 @@ describe("signature", function () {
 		const log = new Log();
 		await log.open(store, signKey, { encoding: JSON_ENCODING });
 		await log.append("one");
-		expect((await log.toArray())[0].signatures).to.exist
+		expect((await log.toArray())[0].signatures).to.exist;
 		expect(
-			(await log.toArray())[0].signatures[0].publicKey.equals(signKey.publicKey)
+			(await log.toArray())[0].signatures[0].publicKey.equals(
+				signKey.publicKey,
+			),
 		).to.be.true;
 	});
 
@@ -59,11 +61,11 @@ describe("signature", function () {
 		await log.append("one", { signers });
 		expect(
 			await Promise.all(
-				(await log.toArray())[0].signatures.map((x) => x.publicKey.hashcode())
-			)
+				(await log.toArray())[0].signatures.map((x) => x.publicKey.hashcode()),
+			),
 		).to.have.members([
 			await signKey.publicKey.hashcode(),
-			await signKey2.publicKey.hashcode()
+			await signKey2.publicKey.hashcode(),
 		]);
 	});
 
@@ -91,7 +93,7 @@ describe("signature", function () {
 
   expect(err).equal(undefined)
   expect(log1._id).equal('A')
-  expect(log1.values.length).equal(1)
+  expect(log1.length).equal(1)
   expect(log1.values[0].payload.getValue()).equal('one')
 })
 */
@@ -116,11 +118,11 @@ describe("signature", function () {
 
 		const entry = (await log2.toArray())[0];
 		expect(err).equal(
-			`Error: Invalid signature entry with hash "${entry.hash}"`
+			`Error: Invalid signature entry with hash "${entry.hash}"`,
 		);
 		expect((await log1.toArray()).length).equal(1);
 		expect((await log1.toArray())[0].payload.getValue()).to.deep.equal(
-			new Uint8Array([1])
+			new Uint8Array([1]),
 		);
 	});
 

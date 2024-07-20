@@ -1,10 +1,10 @@
-import path from "path";
-import os from "os";
-import fs from "fs";
+// Native Node Module
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { Duplex } from "stream"; // Native Node Module
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { dirname } from "path";
+import fs from "fs";
+import os from "os";
+import path, { dirname } from "path";
+import { Duplex } from "stream";
 
 const bufferToStream = (myBuffer: any) => {
 	const tmp = new Duplex();
@@ -39,7 +39,7 @@ const getKeysPath = (configDir: string): string => {
 };
 
 export const getKeypair = async (
-	configDir: string
+	configDir: string,
 ): Promise<Ed25519Keypair> => {
 	const keypath = getKeysPath(configDir);
 	if (!fs.existsSync(keypath)) {
@@ -69,7 +69,7 @@ export const checkExistPath = async (path: string) => {
 };
 
 export const getPackageName = async (
-	path: string | Uint8Array
+	path: string | Uint8Array,
 ): Promise<string> => {
 	const tar = await import("tar-stream");
 	const zlib = await import("zlib");
@@ -86,7 +86,7 @@ export const getPackageName = async (
 
 			extract.on("entry", function (header: any, stream: any, cb: any) {
 				stream.on("data", function (chunk: any) {
-					if (header.name == "package/package.json") data += chunk;
+					if (header.name === "package/package.json") data += chunk;
 				});
 
 				stream.on("end", function () {
@@ -120,4 +120,4 @@ export const getPackageName = async (
 	});
 };
 
-export class NotFoundError extends Error { }
+export class NotFoundError extends Error {}

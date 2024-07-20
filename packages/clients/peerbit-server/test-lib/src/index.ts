@@ -1,8 +1,8 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
+import { type PeerId } from "@libp2p/interface";
 import { Ed25519PublicKey, PublicSignKey } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { DString } from "@peerbit/string";
-import { type PeerId } from "@libp2p/interface";
 
 @variant("permissioned_string")
 export class PermissionedString extends Program {
@@ -20,7 +20,7 @@ export class PermissionedString extends Program {
 		this._store = properties?.store || new DString({});
 		this.trusted =
 			properties?.trusted.map((x) =>
-				x instanceof PublicSignKey ? x : Ed25519PublicKey.fromPeerId(x)
+				x instanceof PublicSignKey ? x : Ed25519PublicKey.fromPeerId(x),
 			) || [];
 	}
 

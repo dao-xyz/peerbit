@@ -1,10 +1,11 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Program } from "@peerbit/program";
 import { X25519Keypair, X25519PublicKey } from "@peerbit/crypto";
-import { SharedLog } from "../src/index.js";
+import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { SharedLog } from "../src/index.js";
+
 @variant("encrypt_store")
 class SimpleStore extends Program {
 	@field({ type: SharedLog })
@@ -49,7 +50,7 @@ describe("encryption", () => {
 						meta: [
 							client.identity.publicKey,
 							client2.identity.publicKey,
-							client3.identity.publicKey
+							client3.identity.publicKey,
 						],
 
 						// Who can read the message?
@@ -60,22 +61,22 @@ describe("encryption", () => {
 						signatures: [
 							client.identity.publicKey,
 							client2.identity.publicKey,
-							client3.identity.publicKey
-						]
+							client3.identity.publicKey,
+						],
 
 						// Omitting any of the fields below will make it unencrypted
-					}
-				}
+					},
+				},
 			});
 
 			// A peer that can open
 			const store2 = await client2.open<SimpleStore>(store.address!);
 			await waitForResolved(() => expect(store2.log.log.length).equal(1));
-			const entry = (await store2.log.log.values.toArray())[0];
+			const entry = (await store2.log.log.toArray())[0];
 
 			// use .getPayload() instead of .payload to decrypt the payload
 			expect((await entry.getPayload()).getValue()).to.deep.equal(
-				new Uint8Array([1])
+				new Uint8Array([1]),
 			);
 		});
 	});
@@ -87,7 +88,7 @@ describe("encryption", () => {
 		beforeEach(async () => {
 			session = await TestSession.connected(2, [
 				{ directory: "./tmp/shared-log/access-error/1" + +new Date() },
-				{ directory: "./tmp/shared-log/access-error/2" + +new Date() }
+				{ directory: "./tmp/shared-log/access-error/2" + +new Date() },
 			]);
 		});
 
@@ -106,15 +107,15 @@ describe("encryption", () => {
 					receiver: {
 						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
-						payload: [await X25519PublicKey.create()]
-					}
-				}
+						payload: [await X25519PublicKey.create()],
+					},
+				},
 			});
 
-			expect(store.log.log.values.length).equal(1);
+			expect(store.log.log.length).equal(1);
 			await store.close();
 			store = await client.open(store.clone());
-			expect(store.log.log.values.length).equal(1);
+			expect(store.log.log.length).equal(1);
 			await store.close();
 		});
 
@@ -129,15 +130,15 @@ describe("encryption", () => {
 					receiver: {
 						meta: [client.identity.publicKey],
 						signatures: [client.identity.publicKey],
-						payload: [await X25519PublicKey.create()]
-					}
-				}
+						payload: [await X25519PublicKey.create()],
+					},
+				},
 			});
 
-			expect(store.log.log.values.length).equal(1);
+			expect(store.log.log.length).equal(1);
 			await store.close();
 			store = await client2.open(store.clone());
-			expect(store.log.log.values.length).equal(0);
+			expect(store.log.log.length).equal(0);
 			await store.close();
 		});
 	});

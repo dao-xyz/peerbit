@@ -1,8 +1,6 @@
-import { randomBytes } from "../src/random.js";
-import { randomBytes as randomBytesBrowser } from "../src/random.js";
 /* import { webcrypto } from "crypto"; */
 import { expect } from "chai";
-
+import { randomBytes } from "../src/random.js";
 
 /* globalThis.crypto = webcrypto as any; */
 
@@ -16,14 +14,8 @@ const testRandom = (bytes: Uint8Array) => {
 		throw new Error();
 	}
 };
-it("native", async () => {
+it("randomBytes", async () => {
 	const bytes = randomBytes(32);
-	testRandom(bytes);
-	expect(bytes).to.have.length(32);
-});
-
-it("browser", async () => {
-	const bytes = randomBytesBrowser(32);
 	testRandom(bytes);
 	expect(bytes).to.have.length(32);
 });

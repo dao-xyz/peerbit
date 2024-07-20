@@ -1,27 +1,28 @@
-import { TestSession } from "@peerbit/test-utils";
-import http from "http";
-import { PermissionedString } from "@peerbit/test-lib";
-import { type Address, Program, type ProgramClient } from "@peerbit/program";
 import { getSchema, serialize } from "@dao-xyz/borsh";
-import {
-	Ed25519Keypair,
-	Ed25519PublicKey,
-	type Identity,
-	toBase64
-} from "@peerbit/crypto";
-import { Peerbit } from "peerbit";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
-import { createClient as createClient } from "../src/client.js";
-import { v4 as uuid } from "uuid";
-import path, { dirname } from "path";
-import { Trust } from "../src/trust.js";
-import { getTrustPath } from "../src/config.js";
-import fs from "fs";
-import { fileURLToPath } from "url";
+import {
+	Ed25519Keypair,
+	type Ed25519PublicKey,
+	type Identity,
+	toBase64,
+} from "@peerbit/crypto";
+import type { Address, Program, ProgramClient } from "@peerbit/program";
+import { PermissionedString } from "@peerbit/test-lib";
+import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
+import fs from "fs";
+import type http from "http";
+import path, { dirname } from "path";
+import type { Peerbit } from "peerbit";
+import { fileURLToPath } from "url";
+import { v4 as uuid } from "uuid";
+import { createClient } from "../src/client.js";
+import { getTrustPath } from "../src/config.js";
 import { startApiServer } from "../src/server.js";
+import { Trust } from "../src/trust.js";
 
+// eslint-disable-next-line @typescript-eslint/naming-convention
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const client = (keypair: Identity<Ed25519PublicKey>, address?: string) => {
@@ -45,12 +46,12 @@ describe("libp2p only", () => {
 			"tmp",
 			"api-test",
 			"libp2ponly",
-			uuid()
+			uuid(),
 		);
 		fs.mkdirSync(configDirectory, { recursive: true });
 		server = await startApiServer(session.peers[0], {
 			trust: new Trust(getTrustPath(configDirectory)),
-			port: 7676
+			port: 7676,
 		});
 	});
 	afterEach(() => {
@@ -63,7 +64,7 @@ describe("libp2p only", () => {
 
 	it("use cli as libp2p cli", async () => {
 		const c = await createClient(await Ed25519Keypair.create(), {
-			address: "http://localhost:" + 7676
+			address: "http://localhost:" + 7676,
 		});
 		expect(await c.peer.id.get()).to.exist;
 	});
@@ -90,23 +91,21 @@ describe("server", () => {
 		});
 	});
 	describe("api", () => {
-		let session: TestSession,
-			peer: ProgramClient,
-			server: http.Server;
+		let session: TestSession, peer: ProgramClient, server: http.Server;
 		let db: PermissionedString;
 
-		before(async () => { });
+		before(async () => {});
 
 		beforeEach(async () => {
 			let directory = path.join(__dirname, "tmp", "api-test", "api", uuid());
 			session = await TestSession.connected(1, {
-				libp2p: { transports: [tcp(), webSockets()] }
+				libp2p: { transports: [tcp(), webSockets()] },
 			});
 			peer = session.peers[0];
 			db = await peer.open(new PermissionedString({ trusted: [] }));
 			fs.mkdirSync(directory, { recursive: true });
 			server = await startApiServer(peer, {
-				trust: new Trust(getTrustPath(directory))
+				trust: new Trust(getTrustPath(directory)),
 			});
 		});
 		afterEach(async () => {
@@ -123,9 +122,9 @@ describe("server", () => {
 
 			it("addresses", async () => {
 				const c = await client(session.peers[0].identity);
-				expect((await c.peer.addresses.get()).map((x) => x.toString())).to.deep.equal(
-					(await peer.getMultiaddrs()).map((x) => x.toString())
-				);
+				expect(
+					(await c.peer.addresses.get()).map((x) => x.toString()),
+				).to.deep.equal((await peer.getMultiaddrs()).map((x) => x.toString()));
 			});
 		});
 
@@ -134,7 +133,7 @@ describe("server", () => {
 				it("variant", async () => {
 					const c = await client(session.peers[0].identity);
 					const address = await c.program.open({
-						variant: getSchema(PermissionedString).variant! as string
+						variant: getSchema(PermissionedString).variant! as string,
 					});
 					expect(await c.program.has(address)).to.be.true;
 				});
@@ -142,10 +141,10 @@ describe("server", () => {
 				it("base64", async () => {
 					const c = await client(session.peers[0].identity);
 					const program = new PermissionedString({
-						trusted: []
+						trusted: [],
 					});
 					const address = await c.program.open({
-						base64: toBase64(serialize(program))
+						base64: toBase64(serialize(program)),
 					});
 					expect(await c.program.has(address)).to.be.true;
 				});
@@ -158,9 +157,9 @@ describe("server", () => {
 					const kp3 = await Ed25519Keypair.create();
 
 					const c2 = await client(kp2);
-					await expect(
-						c2.access.allow(kp3.publicKey)
-					).rejectedWith("Request failed with status code 401");
+					await expect(c2.access.allow(kp3.publicKey)).rejectedWith(
+						"Request failed with status code 401",
+					);
 					await c.access.allow(kp2.publicKey);
 					await c2.access.allow(kp3.publicKey); // now c2 can add since it is trusted by c
 				});
@@ -177,7 +176,7 @@ describe("server", () => {
 
 					const c = await client(session.peers[0].identity);
 					address = await c.program.open({
-						variant: getSchema(PermissionedString).variant! as string
+						variant: getSchema(PermissionedString).variant! as string,
 					});
 					program = (session.peers[0] as Peerbit).handler.items.get(address)!;
 
@@ -212,20 +211,18 @@ describe("server", () => {
 			it("list", async () => {
 				const c = await client(session.peers[0].identity);
 				const address = await c.program.open({
-					variant: getSchema(PermissionedString).variant! as string
+					variant: getSchema(PermissionedString).variant! as string,
 				});
 				expect(await c.program.list()).include(address);
 			});
 		});
 
 		it("bootstrap", async () => {
-			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).equal(
-				0
-			);
+			expect((session.peers[0] as Peerbit).services.pubsub.peers.size).equal(0);
 			const c = await client(session.peers[0].identity);
 			await c.network.bootstrap();
 			expect(
-				(session.peers[0] as Peerbit).services.pubsub.peers.size
+				(session.peers[0] as Peerbit).services.pubsub.peers.size,
 			).greaterThan(0);
 		});
 

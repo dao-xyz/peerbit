@@ -1,31 +1,37 @@
-import { multiaddr, type Multiaddr, isMultiaddr } from "@multiformats/multiaddr";
-import type { Libp2p } from "libp2p";
-import { Ed25519Keypair, Ed25519PublicKey } from "@peerbit/crypto";
+import "@libp2p/peer-id";
 import {
-	Program,
+	type Multiaddr,
+	isMultiaddr,
+	multiaddr,
+} from "@multiformats/multiaddr";
+import { type AnyStore, createStore } from "@peerbit/any-store";
+import { DirectBlock } from "@peerbit/blocks";
+import { Ed25519Keypair, Ed25519PublicKey } from "@peerbit/crypto";
+import type { Indices } from "@peerbit/indexer-interface";
+import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3";
+import { DefaultKeychain } from "@peerbit/keychain";
+import { logger as loggerFn } from "@peerbit/logger";
+import {
 	type Address,
+	type ExtractArgs,
+	type OpenOptions,
+	type Program,
 	type ProgramClient,
-	ProgramHandler
+	ProgramHandler,
 } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
+import { waitFor } from "@peerbit/time";
+import { LevelDatastore } from "datastore-level";
+import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
-import { waitFor } from "@peerbit/time";
-import "@libp2p/peer-id";
-
-import {
-	createLibp2pExtended,
-	type Libp2pExtended,
-	type Libp2pCreateOptions as ClientCreateOptions
-} from "./libp2p.js";
-import { DirectBlock } from "@peerbit/blocks";
-import { LevelDatastore } from "datastore-level";
-import { logger as loggerFn } from "@peerbit/logger";
-import { type OpenOptions } from "@peerbit/program";
 import { resolveBootstrapAddresses } from "./bootstrap.js";
-import { type AnyStore, createStore } from "@peerbit/any-store";
-import { DefaultKeychain } from "@peerbit/keychain";
-import { type ExtractArgs } from "@peerbit/program";
+import {
+	type Libp2pCreateOptions as ClientCreateOptions,
+	type Libp2pExtended,
+	type PartialLibp2pCreateOptions,
+	createLibp2pExtended,
+} from "./libp2p.js";
 
 export const logger = loggerFn({ module: "client" });
 
@@ -35,12 +41,14 @@ export type OptionalCreateOptions = {
 export type CreateOptions = {
 	directory?: string;
 	storage: AnyStore;
+	indexer: Indices;
 	identity: Ed25519Keypair;
 } & OptionalCreateOptions;
-type Libp2pOptions = { libp2p?: Libp2pExtended | ClientCreateOptions };
+type Libp2pOptions = { libp2p?: Libp2pExtended | PartialLibp2pCreateOptions };
 type SimpleLibp2pOptions = { relay?: boolean };
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
+	indexer?: (directory?: string) => Promise<Indices> | Indices;
 } & OptionalCreateOptions;
 
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
@@ -48,7 +56,7 @@ const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 
 const createCache = async (
 	directory: string | undefined,
-	options?: { reset?: boolean }
+	options?: { reset?: boolean },
 ) => {
 	const cache = createStore(directory);
 
@@ -68,6 +76,7 @@ export class Peerbit implements ProgramClient {
 	directory?: string;
 
 	private _storage: AnyStore;
+	private _indexer: Indices;
 	private _libp2pExternal?: boolean = false;
 
 	// Libp2p peerid in Identity form
@@ -82,7 +91,7 @@ export class Peerbit implements ProgramClient {
 		if (this.libp2p.peerId.type !== "Ed25519") {
 			throw new Error(
 				"Unsupported id type, expecting Ed25519 but got " +
-				this.libp2p.peerId.type
+					this.libp2p.peerId.type,
 			);
 		}
 
@@ -94,6 +103,7 @@ export class Peerbit implements ProgramClient {
 		this.directory = options.directory;
 		this._storage = options.storage;
 		this._libp2pExternal = options.libp2pExternal;
+		this._indexer = options.indexer;
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
@@ -101,14 +111,21 @@ export class Peerbit implements ProgramClient {
 
 		let libp2pExtended: Libp2pExtended | undefined = (options as Libp2pOptions)
 			.libp2p as Libp2pExtended;
+
 		const asRelay = (options as SimpleLibp2pOptions).relay;
 
 		const directory = options.directory;
 		const hasDir = directory != null;
 
 		const storage = await createCache(
-			directory != null ? path.join(directory, "/cache") : undefined
+			directory != null ? path.join(directory, "/cache") : undefined,
 		);
+
+		const indexerFn = options.indexer || createSQLiteIndexer;
+		const indexer =
+			directory != null
+				? await indexerFn(path.join(directory, "/index"))
+				: await indexerFn();
 
 		const blocksDirectory = hasDir
 			? path.join(directory, "/blocks").toString()
@@ -119,9 +136,7 @@ export class Peerbit implements ProgramClient {
 			: undefined;
 
 		const datastore = hasDir
-			? new LevelDatastore(
-				path.join(directory, "/libp2p").toString()
-			)
+			? new LevelDatastore(path.join(directory, "/libp2p").toString())
 			: undefined;
 
 		if (datastore) {
@@ -132,8 +147,11 @@ export class Peerbit implements ProgramClient {
 		if (!libp2pExternal) {
 			const extendedOptions: ClientCreateOptions | undefined =
 				libp2pExtended as any as ClientCreateOptions;
+			const store = createStore(keychainDirectory);
+			await store.open();
+
 			const keychain = new DefaultKeychain({
-				store: createStore(keychainDirectory)
+				store,
 			});
 			const peerId =
 				extendedOptions?.peerId ||
@@ -144,16 +162,16 @@ export class Peerbit implements ProgramClient {
 				...extendedOptions,
 				peerId,
 				services: {
-					keychain: (c) => keychain,
-					blocks: (c) =>
+					keychain: (c: any) => keychain,
+					blocks: (c: any) =>
 						new DirectBlock(c, {
 							canRelayMessage: asRelay,
-							directory: blocksDirectory
+							directory: blocksDirectory,
 						}),
-					pubsub: (c) => new DirectSub(c, { canRelayMessage: asRelay }),
-					...extendedOptions?.services
-				},
-				datastore
+					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
+					...extendedOptions?.services,
+				} as any, // TODO types are funky
+				datastore,
 			});
 		}
 		if (datastore) {
@@ -174,7 +192,7 @@ export class Peerbit implements ProgramClient {
 		if (libp2pExtended.peerId.type !== "Ed25519") {
 			throw new Error(
 				"Unsupported id type, expecting Ed25519 but got " +
-				libp2pExtended.peerId.type
+					libp2pExtended.peerId.type,
 			);
 		}
 
@@ -182,10 +200,10 @@ export class Peerbit implements ProgramClient {
 		try {
 			await libp2pExtended.services.keychain.import({
 				keypair: identity,
-				id: SELF_IDENTITY_KEY_ID
+				id: SELF_IDENTITY_KEY_ID,
 			});
 		} catch (error: any) {
-			if (error.code == "ERR_KEY_ALREADY_EXISTS") {
+			if (error.code === "ERR_KEY_ALREADY_EXISTS") {
 				// Do nothing
 			} else {
 				throw error;
@@ -194,9 +212,10 @@ export class Peerbit implements ProgramClient {
 
 		const peer = new Peerbit(libp2pExtended, {
 			directory,
-			storage: storage,
+			storage,
 			libp2pExternal,
-			identity
+			identity,
+			indexer,
 		});
 		return peer;
 	}
@@ -227,10 +246,10 @@ export class Peerbit implements ProgramClient {
 	 * Dial a peer with an Ed25519 peerId
 	 */
 	async dial(
-		address: string | Multiaddr | Multiaddr[] | ProgramClient
+		address: string | Multiaddr | Multiaddr[] | ProgramClient,
 	): Promise<boolean> {
 		const maddress =
-			typeof address == "string"
+			typeof address === "string"
 				? multiaddr(address)
 				: isMultiaddr(address) || Array.isArray(address)
 					? address
@@ -243,13 +262,14 @@ export class Peerbit implements ProgramClient {
 			(await waitFor(
 				() =>
 					this.libp2p.services.pubsub.peers.has(publicKey.hashcode()) &&
-					this.libp2p.services.blocks.peers.has(publicKey.hashcode())
+					this.libp2p.services.blocks.peers.has(publicKey.hashcode()),
 			)) || false
 		);
 	}
 
 	async start() {
 		await this._storage.open();
+		await this.indexer.start();
 
 		if (this.libp2p.status === "stopped" || this.libp2p.status === "stopping") {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
@@ -259,6 +279,7 @@ export class Peerbit implements ProgramClient {
 	async stop() {
 		await this._handler?.stop();
 		await this._storage.close();
+		await this.indexer.stop();
 
 		// Close libp2p (after above)
 		if (!this._libp2pExternal) {
@@ -273,7 +294,7 @@ export class Peerbit implements ProgramClient {
 			throw new Error("Failed to find any addresses to dial");
 		}
 		const settled = await Promise.allSettled(
-			addresses.map((x) => this.dial(x))
+			addresses.map((x) => this.dial(x)),
 		);
 		let once = false;
 		for (const [i, result] of settled.entries()) {
@@ -282,9 +303,9 @@ export class Peerbit implements ProgramClient {
 			} else {
 				logger.warn(
 					"Failed to dial bootstrap address(s): " +
-					JSON.stringify(addresses[i]) +
-					". Reason: " +
-					result.reason
+						JSON.stringify(addresses[i]) +
+						". Reason: " +
+						result.reason,
 				);
 			}
 		}
@@ -303,7 +324,7 @@ export class Peerbit implements ProgramClient {
 
 	async open<S extends Program<ExtractArgs<S>>>(
 		storeOrAddress: S | Address | string,
-		options: OpenOptions<S> = {}
+		options: OpenOptions<S> = {},
 	): Promise<S> {
 		return (
 			this._handler || (this._handler = new ProgramHandler({ client: this }))
@@ -312,5 +333,9 @@ export class Peerbit implements ProgramClient {
 
 	get storage() {
 		return this._storage;
+	}
+
+	get indexer() {
+		return this._indexer;
 	}
 }

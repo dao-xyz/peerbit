@@ -1,4 +1,4 @@
-import {hrtime} from "./hrtime.js";
+import { hrtime } from "./hrtime.js";
 
 export class MovingAverageTracker {
 	private lastTS: bigint;
@@ -8,6 +8,7 @@ export class MovingAverageTracker {
 	constructor(readonly tau = 10) {
 		this.lastTS = hrtime.bigint();
 	}
+
 	add(number: number) {
 		const now = hrtime.bigint();
 		let diff = Number(now - this.lastTS);
@@ -16,7 +17,7 @@ export class MovingAverageTracker {
 		}
 		const dt = diff / 1e9;
 		this.lastTS = now;
-		const alpha_t = 1 - Math.exp(-dt / this.tau);
-		this.value = (1 - alpha_t) * this.value + (alpha_t * number) / dt;
+		const alphaT = 1 - Math.exp(-dt / this.tau);
+		this.value = (1 - alphaT) * this.value + (alphaT * number) / dt;
 	}
 }

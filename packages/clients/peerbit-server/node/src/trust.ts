@@ -5,7 +5,7 @@ export class Trust {
 	constructor(readonly path: string) {
 		if (fs.existsSync(path)) {
 			this.trusted = JSON.parse(
-				fs.readFileSync(path).toString("utf-8")
+				fs.readFileSync(path).toString("utf-8"),
 			) as string[];
 		} else {
 			this.trusted = [];

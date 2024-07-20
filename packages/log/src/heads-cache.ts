@@ -1,14 +1,20 @@
+import {
+	deserialize,
+	field,
+	option,
+	serialize,
+	variant,
+	vec,
+} from "@dao-xyz/borsh";
+import { type AnyStore } from "@peerbit/any-store";
+import { logger as loggerFn } from "@peerbit/logger";
 import PQueue from "p-queue";
+import path from "path-browserify";
 import { v4 as uuid } from "uuid";
 import { Entry } from "./entry.js";
-import { type AnyStore } from "@peerbit/any-store";
-import { variant, option, field, vec } from "@dao-xyz/borsh";
-import { serialize, deserialize } from "@dao-xyz/borsh";
-import { logger as loggerFn } from "@peerbit/logger";
 
-import path from "path-browserify";
 export const logger = loggerFn({ module: "heads-cache" });
-export class CachedValue { }
+export class CachedValue {}
 /* export type AppendOptions<T> = {
 	signers?: ((data: Uint8Array) => Promise<SignatureWithKey>)[];
 	nexts?: Entry<T>[];
@@ -60,23 +66,23 @@ const updateHashes = async (
 	headsPath: string,
 	lastCid: string | undefined,
 	lastCounter: bigint,
-	hashes: string[]
+	hashes: string[],
 ): Promise<{ counter: bigint; newPath: string }> => {
 	const newHeadsPath = path.join(
 		headsPath,
 		String(headCache.headsPathCounter),
-		uuid()
+		uuid(),
 	);
 	const counter = lastCounter + BigInt(hashes.length);
 	await Promise.all([
 		headCache.cache?.put(
 			headsPath,
-			serialize(new CachePath(newHeadsPath.toString()))
+			serialize(new CachePath(newHeadsPath.toString())),
 		),
 		headCache.cache?.put(
 			newHeadsPath,
-			serialize(new HeadsCacheToSerialize(hashes, counter, lastCid))
-		)
+			serialize(new HeadsCacheToSerialize(hashes, counter, lastCid)),
+		),
 	]);
 	return { counter, newPath: newHeadsPath };
 };
@@ -153,7 +159,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			added?: (Entry<T> | string)[];
 			removed?: (Entry<T> | string)[];
 		},
-		reset?: boolean
+		reset?: boolean,
 	) {
 		if (typeof reset !== "boolean" && change.added) {
 			// Only reset all heads if loaded once, since we don't want too loose track of unloaded heads
@@ -190,7 +196,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 				this.headsPath,
 				this._lastHeadsPath,
 				this._lastHeadsCount,
-				change.added.map((x) => (typeof x === "string" ? x : x.hash))
+				change.added.map((x) => (typeof x === "string" ? x : x.hash)),
 			);
 			this._lastHeadsPath = update.newPath;
 			this._lastHeadsCount = update.counter;
@@ -204,7 +210,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 					this.removedHeadsPath,
 					this._lastRemovedHeadsPath,
 					this._lastRemovedHeadsCount,
-					change.removed.map((x) => (typeof x === "string" ? x : x.hash))
+					change.removed.map((x) => (typeof x === "string" ? x : x.hash)),
 				);
 				this._lastRemovedHeadsPath = update.newPath;
 				this._lastRemovedHeadsCount = update.counter;
@@ -216,11 +222,11 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 				) {
 					const resetToHeads = await this.getCachedHeads(
 						this._lastHeadsPath,
-						this._lastRemovedHeadsPath
+						this._lastRemovedHeadsPath,
 					);
 					await this._updateCachedHeads(
 						{ added: resetToHeads, removed: [] },
-						true
+						true,
 					);
 				}
 			}
@@ -236,14 +242,14 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 
 	async getCachedHeads(
 		lastHeadsPath: string | undefined = this._lastHeadsPath,
-		lastRemovedHeadsPath: string | undefined = this._lastRemovedHeadsPath
+		lastRemovedHeadsPath: string | undefined = this._lastRemovedHeadsPath,
 	): Promise<string[]> {
 		if (!this._cache) {
 			return [];
 		}
 		const getHashes = async (
 			start: string | undefined,
-			filter?: Set<string>
+			filter?: Set<string>,
 		) => {
 			const result: string[] = [];
 			let next = start;
@@ -253,7 +259,7 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 				const cache = bytes && deserialize(bytes, HeadsCacheToSerialize);
 				next = cache?.last;
 				cache?.heads.forEach((head) => {
-					if (filter && filter.has(head)) {
+					if (filter?.has(head)) {
 						return;
 					}
 
@@ -385,10 +391,10 @@ export class HeadsCache<T> /* implements Initiable<T>  */ {
 			added?: (Entry<T> | string)[];
 			removed?: (Entry<T> | string)[];
 		},
-		reset?: boolean
+		reset?: boolean,
 	) {
 		return this._cacheWriteQueue?.add(() =>
-			this._updateCachedHeads(changes, reset)
+			this._updateCachedHeads(changes, reset),
 		);
 	}
 }

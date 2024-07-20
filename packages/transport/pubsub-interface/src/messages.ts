@@ -1,5 +1,5 @@
+import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import { Uint8ArrayList } from "uint8arraylist";
-import { field, vec, variant, serialize, deserialize } from "@dao-xyz/borsh";
 
 export abstract class PubSubMessage {
 	abstract bytes(): Uint8Array | Uint8ArrayList;
@@ -60,7 +60,7 @@ export class PubSubData extends PubSubMessage {
 	static from(bytes: Uint8Array | Uint8ArrayList): PubSubData {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
-			PubSubData
+			PubSubData,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;
@@ -94,7 +94,7 @@ export class Subscribe extends PubSubMessage {
 	static from(bytes: Uint8Array | Uint8ArrayList): Subscribe {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
-			Subscribe
+			Subscribe,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;
@@ -125,7 +125,7 @@ export class Unsubscribe extends PubSubMessage {
 	static from(bytes: Uint8Array | Uint8ArrayList): Unsubscribe {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
-			Unsubscribe
+			Unsubscribe,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;
@@ -158,7 +158,7 @@ export class GetSubscribers extends PubSubMessage {
 	static from(bytes: Uint8Array | Uint8ArrayList): GetSubscribers {
 		const ret = deserialize(
 			bytes instanceof Uint8Array ? bytes : bytes.subarray(),
-			GetSubscribers
+			GetSubscribers,
 		);
 		if (bytes instanceof Uint8ArrayList) {
 			ret._serialized = bytes;

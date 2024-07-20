@@ -1,5 +1,6 @@
-import { toBase64 } from "./utils.js";
 import { SHA256 } from "@stablelib/sha256";
+import { toBase64 } from "./utils.js";
+
 export const sha256Base64 = async (bytes: Uint8Array): Promise<string> =>
 	toBase64(await sha256(bytes));
 export const sha256Base64Sync = (bytes: Uint8Array): string =>

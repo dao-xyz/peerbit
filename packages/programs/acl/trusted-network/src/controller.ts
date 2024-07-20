@@ -1,26 +1,30 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
+import { type PeerId } from "@libp2p/interface";
 import {
-	SearchRequest,
+	PublicSignKey,
+	getPublicKeyFromPeerId,
+	sha256Base64Sync,
+} from "@peerbit/crypto";
+import {
+	type CanPerformOperations,
+	type CanRead,
 	Documents,
 	Operation,
-	type CanRead,
-	type CanPerformOperations
 } from "@peerbit/document";
+import { SearchRequest } from "@peerbit/indexer-interface";
 import { type AppendOptions } from "@peerbit/log";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { Program } from "@peerbit/program";
+import { type ReplicationOptions } from "@peerbit/shared-log";
 import {
+	FromTo,
 	IdentityRelation,
 	createIdentityGraphStore,
-	getPathGenerator,
-	hasPath,
 	getFromByTo,
+	getPathGenerator,
+	getRelation,
 	getToByFrom,
-	getRelation
+	hasPath,
 } from "./identity-graph.js";
-import { Program } from "@peerbit/program";
-import { sha256Base64Sync } from "@peerbit/crypto";
-import { type PeerId } from "@libp2p/interface";
-import { Replicator, type RoleOptions } from "@peerbit/shared-log";
 
 const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 	return publicKey instanceof PublicSignKey
@@ -29,7 +33,7 @@ const coercePublicKey = (publicKey: PublicSignKey | PeerId) => {
 };
 const canPerformByRelation = async (
 	properties: CanPerformOperations<IdentityRelation>,
-	isTrusted?: (key: PublicSignKey) => Promise<boolean>
+	isTrusted?: (key: PublicSignKey) => Promise<boolean>,
 ): Promise<boolean> => {
 	// verify the payload
 	const keys = await properties.entry.getPublicKeys();
@@ -65,17 +69,17 @@ const canPerformByRelation = async (
 
 type IdentityGraphArgs = {
 	canRead?: CanRead<IdentityRelation>;
-	role?: RoleOptions;
+	replicate?: ReplicationOptions;
 };
 
 @variant("relations")
 export class IdentityGraph extends Program<IdentityGraphArgs> {
 	@field({ type: Documents })
-	relationGraph: Documents<IdentityRelation>;
+	relationGraph: Documents<IdentityRelation, FromTo>;
 
 	constructor(props?: {
 		id?: Uint8Array;
-		relationGraph?: Documents<IdentityRelation>;
+		relationGraph?: Documents<IdentityRelation, FromTo>;
 	}) {
 		super();
 		if (props) {
@@ -85,7 +89,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 	}
 
 	async canPerform(
-		properties: CanPerformOperations<IdentityRelation>
+		properties: CanPerformOperations<IdentityRelation>,
 	): Promise<boolean> {
 		return canPerformByRelation(properties);
 	}
@@ -94,30 +98,25 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
 		await this.relationGraph.open({
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
-			role: options?.role,
+			replicate: options?.replicate,
 			index: {
 				canRead: options?.canRead,
-				fields: (obj, _entry) => {
-					return {
-						from: obj.from.hashcode(),
-						to: obj.to.hashcode()
-					};
-				}
-			}
+				type: FromTo,
+			},
 		});
 	}
 
 	async addRelation(
 		to: PublicSignKey | PeerId,
-		options?: AppendOptions<Operation>
+		options?: AppendOptions<Operation>,
 	) {
 		/*  trustee = PublicKey.from(trustee); */
 		await this.relationGraph.put(
 			new IdentityRelation({
 				to: coercePublicKey(to),
-				from: options?.identity?.publicKey || this.node.identity.publicKey
+				from: options?.identity?.publicKey || this.node.identity.publicKey,
 			}),
-			options
+			options,
 		);
 	}
 }
@@ -126,7 +125,7 @@ export class IdentityGraph extends Program<IdentityGraphArgs> {
  * Not shardeable since we can not query trusted relations, because this would lead to a recursive problem where we then need to determine whether the responder is trusted or not
  */
 
-type TrustedNetworkArgs = { role?: RoleOptions };
+type TrustedNetworkArgs = { replicate?: ReplicationOptions };
 
 @variant("trusted_network")
 export class TrustedNetwork extends Program<TrustedNetworkArgs> {
@@ -134,7 +133,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	rootTrust: PublicSignKey;
 
 	@field({ type: Documents })
-	trustGraph: Documents<IdentityRelation>;
+	trustGraph: Documents<IdentityRelation, FromTo>;
 
 	constructor(props: { id?: Uint8Array; rootTrust: PublicSignKey | PeerId }) {
 		super();
@@ -146,24 +145,18 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		await this.trustGraph.open({
 			type: IdentityRelation,
 			canPerform: this.canPerform.bind(this),
-			role: options?.role || {
-				type: "replicator",
-				factor: 1
+			replicate: options?.replicate || {
+				factor: 1,
 			},
 			index: {
 				canRead: this.canRead.bind(this),
-				fields: (obj, _entry) => {
-					return {
-						from: obj.from.hashcode(),
-						to: obj.to.hashcode()
-					};
-				}
-			}
+				type: FromTo,
+			},
 		}); // self referencing access controller
 	}
 
 	async canPerform(
-		properties: CanPerformOperations<IdentityRelation>
+		properties: CanPerformOperations<IdentityRelation>,
 	): Promise<boolean> {
 		return canPerformByRelation(properties, (key) => this.isTrusted(key));
 	}
@@ -173,7 +166,7 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	}
 
 	async add(
-		trustee: PublicSignKey | PeerId
+		trustee: PublicSignKey | PeerId,
 	): Promise<IdentityRelation | undefined> {
 		const key =
 			trustee instanceof PublicSignKey
@@ -182,12 +175,12 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 
 		const existingRelation = await this.getRelation(
 			key,
-			this.node.identity.publicKey
+			this.node.identity.publicKey,
 		);
 		if (!existingRelation) {
 			const relation = new IdentityRelation({
 				to: key,
-				from: this.node.identity.publicKey
+				from: this.node.identity.publicKey,
 			});
 			await this.trustGraph.put(relation);
 			return relation;
@@ -197,18 +190,18 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 
 	async hasRelation(
 		trustee: PublicSignKey | PeerId,
-		truster: PublicSignKey | PeerId = this.rootTrust
+		truster: PublicSignKey | PeerId = this.rootTrust,
 	) {
 		return !!(await this.getRelation(trustee, truster));
 	}
 	getRelation(
 		trustee: PublicSignKey | PeerId,
-		truster: PublicSignKey | PeerId = this.rootTrust
+		truster: PublicSignKey | PeerId = this.rootTrust,
 	) {
 		return getRelation(
 			coercePublicKey(truster),
 			coercePublicKey(trustee),
-			this.trustGraph
+			this.trustGraph,
 		);
 	}
 
@@ -219,21 +212,21 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 	 * Root trust A trust B trust C
 	 * C is trusted by Root
 	 * @param trustee
-	 * @param truster, the truster "root", if undefined defaults to the root trust
+	 * @param truster the truster "root", if undefined defaults to the root trust
 	 * @returns true, if trusted
 	 */
 	async isTrusted(
 		trustee: PublicSignKey,
-		truster: PublicSignKey = this.rootTrust
+		truster: PublicSignKey = this.rootTrust,
 	): Promise<boolean> {
 		if (trustee.equals(this.rootTrust)) {
 			return true;
 		}
-		if (this.trustGraph.log.role instanceof Replicator) {
+		if (await this.trustGraph.log.isReplicating()) {
 			return this._isTrustedLocal(trustee, truster);
 		} else {
 			this.trustGraph.index.search(new SearchRequest({ query: [] }), {
-				remote: { sync: true }
+				remote: { sync: true },
 			});
 			return this._isTrustedLocal(trustee, truster);
 		}
@@ -241,13 +234,13 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 
 	async _isTrustedLocal(
 		trustee: PublicSignKey,
-		truster: PublicSignKey = this.rootTrust
+		truster: PublicSignKey = this.rootTrust,
 	): Promise<boolean> {
 		const trustPath = await hasPath(
 			trustee,
 			truster,
 			this.trustGraph,
-			getFromByTo
+			getFromByTo,
 		);
 		return !!trustPath;
 	}
@@ -266,3 +259,17 @@ export class TrustedNetwork extends Program<TrustedNetworkArgs> {
 		return sha256Base64Sync(serialize(this));
 	}
 }
+/* TODO do we need these decorator functions? 
+export const getNetwork = (object: any): TrustedNetwork | undefined => {
+	return (
+		object.constructor.prototype._network &&
+		object[object.constructor.prototype._network]
+	);
+};
+
+export function network(options: { property: string }) {
+	return (constructor: any) => {
+		constructor.prototype._network = options.property;
+	};
+}
+*/

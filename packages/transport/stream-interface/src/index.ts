@@ -1,5 +1,5 @@
-import type { PublicSignKey } from "@peerbit/crypto";
 import type { PeerId } from "@libp2p/interface";
+import type { PublicSignKey } from "@peerbit/crypto";
 import type { DataMessage, Message } from "./messages.js";
 
 export interface PeerEvents {
@@ -20,7 +20,7 @@ export * from "./messages.js";
 export interface WaitForPeer {
 	waitFor(
 		peer: PeerId | PublicSignKey,
-		options?: { signal?: AbortSignal }
+		options?: { signal?: AbortSignal },
 	): Promise<void>;
 }
 
@@ -30,5 +30,4 @@ export class NotStartedError extends Error {
 	}
 }
 
-export class DeliveryError extends Error {
-}
+export class DeliveryError extends Error {}

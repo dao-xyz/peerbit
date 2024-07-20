@@ -1,10 +1,10 @@
+import { expect } from "chai";
 import {
 	DecryptedThing,
 	X25519Keypair,
 	createDecrypterFromKeyResolver,
-	createLocalEncryptProvider
+	createLocalEncryptProvider,
 } from "../src/index.js";
-import { expect } from "chai";
 
 describe("encryption", function () {
 	it("encrypt-provider", async () => {
@@ -14,21 +14,21 @@ describe("encryption", function () {
 
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
-			data
+			data,
 		});
 
 		const receiver1Config = createDecrypterFromKeyResolver(
-			() => receiverKey1 as any
+			() => receiverKey1 as any,
 		);
 		const receiver2Config = createDecrypterFromKeyResolver(
-			() => receiverKey2 as any
+			() => receiverKey2 as any,
 		);
 
 		const encrypted = await decrypted.encrypt(
 			createLocalEncryptProvider(senderKey),
 			{
-				receiverPublicKeys: [receiverKey1.publicKey, receiverKey2.publicKey]
-			}
+				receiverPublicKeys: [receiverKey1.publicKey, receiverKey2.publicKey],
+			},
 		);
 
 		encrypted._decrypted = undefined;
@@ -47,12 +47,12 @@ describe("encryption", function () {
 
 		const data = new Uint8Array([1, 2, 3]);
 		const decrypted = new DecryptedThing({
-			data
+			data,
 		});
 
 		const encrypted = await decrypted.encrypt(senderKey, [
 			receiverKey1.publicKey,
-			receiverKey2.publicKey
+			receiverKey2.publicKey,
 		]);
 
 		encrypted._decrypted = undefined;

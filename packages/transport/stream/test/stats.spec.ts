@@ -1,6 +1,6 @@
 import { delay } from "@peerbit/time";
-import { BandwidthTracker } from "../src/stats.js";
 import { expect } from "chai";
+import { BandwidthTracker } from "../src/stats.js";
 
 describe("bandwidth-tracker", () => {
 	let tracker: BandwidthTracker;

@@ -1,7 +1,6 @@
+import { field, option, variant, vec } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
-import { getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { field, variant, option, vec } from "@dao-xyz/borsh";
-import { PublicSignKey } from "@peerbit/crypto";
+import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { Message } from "./message.js";
 
 @variant(7)
@@ -41,7 +40,7 @@ export class REQ_GetBlock extends BlocksMessage {
 
 	constructor(
 		cid: string,
-		options?: { timeout?: number; replicate?: boolean }
+		options?: { timeout?: number; replicate?: boolean },
 	) {
 		super();
 		this.cid = cid;
@@ -152,5 +151,22 @@ export class RESP_BlockSize extends BlocksMessage {
 
 	get size() {
 		return Number(this._size);
+	}
+}
+
+@variant(14)
+export class REQ_Persisted extends BlocksMessage {}
+
+@variant(15)
+export class RESP_Persisted extends BlocksMessage {
+	@field({ type: "bool" })
+	private _persisted: boolean;
+
+	constructor(properties: { persisted: boolean }) {
+		super();
+		this._persisted = properties.persisted;
+	}
+	get persisted(): boolean {
+		return this._persisted;
 	}
 }
