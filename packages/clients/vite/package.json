@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/vite",
-	"version": "0.0.1",
+	"version": "1.0.0",
 	"description": "Plugin for Vite to use Peerbit",
 	"sideEffects": false,
 	"type": "module",

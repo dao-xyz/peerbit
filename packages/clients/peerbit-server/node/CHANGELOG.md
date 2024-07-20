@@ -452,6 +452,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.34](https://github.com/dao-xyz/peerbit/compare/server-v5.0.33...server-v5.0.34) (2024-07-20)
+
+
+### Bug Fixes
+
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update ui copy path ([1a2928c](https://github.com/dao-xyz/peerbit/commit/1a2928c68accb0f969a3d3760bde50a1707de573))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.0.7 to 4.0.8
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.33 to 2.0.34
+
 ## [5.0.33](https://github.com/dao-xyz/peerbit/compare/server-v5.0.32...server-v5.0.33) (2024-02-26)
 
 

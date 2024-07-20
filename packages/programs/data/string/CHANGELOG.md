@@ -632,6 +632,38 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/string-v4.1.26...string-v5.0.0) (2024-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* support for indexer
+
+### Bug Fixes
+
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Refactors
+
+* type constructors ([d392dd7](https://github.com/dao-xyz/peerbit/commit/d392dd79813dfdc19912072ce5954163bbf579f3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.2 to 1.0.3
+    * @peerbit/program bumped from 4.0.7 to 5.0.0
+    * @peerbit/shared-log bumped from ^8.0.7 to ^9.0.0
+    * @peerbit/rpc bumped from 4.0.7 to 5.0.0
+    * @peerbit/time bumped from 2.0.6 to 2.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+
 ## [4.1.3](https://github.com/dao-xyz/peerbit/compare/string-v4.1.2...string-v4.1.3) (2024-01-17)
 
 

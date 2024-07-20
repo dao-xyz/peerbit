@@ -111,6 +111,22 @@
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [1.0.18](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.17...keychain-v1.0.18) (2024-07-20)
+
+
+### Bug Fixes
+
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.2.0 to ^2.3.0
+    * @peerbit/any-store bumped from ^2.0.2 to ^2.1.0
+
 ## 1.0.0 (2023-12-31)
 
 

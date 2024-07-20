@@ -456,6 +456,52 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.0](https://github.com/dao-xyz/peerbit/compare/document-v6.0.7...document-v7.0.0) (2024-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* support for indexer
+* search index abstraction
+
+### Features
+
+* add transformer logic ([10fedd0](https://github.com/dao-xyz/peerbit/commit/10fedd069b71dc0c5055907134c422cfb4d8e9a3))
+* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
+
+
+### Bug Fixes
+
+* checkJs false to be able to run benchmarks ([17b956b](https://github.com/dao-xyz/peerbit/commit/17b956b1c94be8a553ecd5f8746ecec3921c0abd))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* fmt eqeqeq ([c0aec9c](https://github.com/dao-xyz/peerbit/commit/c0aec9cec6075721cab5a0dea5b34ba4d69e53c2))
+* handle max batch size ([1faba43](https://github.com/dao-xyz/peerbit/commit/1faba43e22ffcb886d4485f74d6d437baa859312))
+* make the search results be broadcasted with contexts ([f920d60](https://github.com/dao-xyz/peerbit/commit/f920d60e46bcc3ad2c2c58b890c2f08509003041))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Documentation
+
+* bench settings ([6708d9c](https://github.com/dao-xyz/peerbit/commit/6708d9c3816b165f0f81da197208c1dca50b91cd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 4.0.7 to 5.0.0
+    * @peerbit/rpc bumped from 4.0.7 to 5.0.0
+    * @peerbit/shared-log bumped from 8.0.7 to 9.0.0
+    * @peerbit/indexer-interface bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/indexer-simple bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/indexer-sqlite3 bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/document-interface bumped from ^6.0.7 to ^1.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.33 to 2.0.34
+    * @peerbit/time bumped from 2.0.6 to 2.0.7
+
 ## [6.0.6](https://github.com/dao-xyz/peerbit/compare/document-v6.0.5...document-v6.0.6) (2024-02-10)
 
 

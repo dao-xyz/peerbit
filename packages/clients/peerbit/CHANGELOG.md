@@ -313,6 +313,41 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.7...peerbit-v4.0.8) (2024-07-20)
+
+
+### Bug Fixes
+
+* add persistant api ([396c4ab](https://github.com/dao-xyz/peerbit/commit/396c4abc7839cdc2762c25cf2b190fc963331b0e))
+* allow to provide a custom indexer ([ba924c5](https://github.com/dao-xyz/peerbit/commit/ba924c5317a32c7a85ace963a92ba3c1965d52f9))
+* bump dependencies ([6b22a32](https://github.com/dao-xyz/peerbit/commit/6b22a320da7b43d1b81ba3bd6893806faae920e8))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* handle indexer lifecycle ([5f011c1](https://github.com/dao-xyz/peerbit/commit/5f011c117de502871e25ca8b42c4100a52eb34be))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* types ([da3c98d](https://github.com/dao-xyz/peerbit/commit/da3c98d69f73ed834c8c979cb00a7ec680297be1))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update types for libp2p ([962d267](https://github.com/dao-xyz/peerbit/commit/962d2679f2dff59cee1f5cc97d0a2f7ea0b6014f))
+* use sqlite for transient indexer by default ([1e50e9c](https://github.com/dao-xyz/peerbit/commit/1e50e9cc8565052a2728f2806f1e75a4e482e645))
+
+
+### Documentation
+
+* comment ([59a0ded](https://github.com/dao-xyz/peerbit/commit/59a0ded025bfa01fed94f498835a2c4a363815d0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.0.2 to ^2.1.0
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+    * @peerbit/logger bumped from 1.0.2 to 1.0.3
+    * @peerbit/program bumped from 4.0.7 to 5.0.0
+    * @peerbit/pubsub bumped from ^3.0.5 to ^3.0.6
+    * @peerbit/blocks bumped from ^2.0.32 to ^2.1.0
+    * @peerbit/indexer-simple bumped from ^0.0.1 to ^1.0.0
+    * @peerbit/indexer-sqlite3 bumped from ^0.0.1 to ^1.0.0
+
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.5...peerbit-v4.0.6) (2024-02-10)
 
 

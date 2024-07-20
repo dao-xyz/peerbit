@@ -194,6 +194,32 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [1.3.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.2.19...blocks-interface-v1.3.0) (2024-07-20)
+
+
+### Features
+
+* add api for determining if persistant ([bc9e218](https://github.com/dao-xyz/peerbit/commit/bc9e218651a086ded8e7eaebaf15f3ce0db176d0))
+
+
+### Bug Fixes
+
+* extract some utility methods to the interface package ([e9cf681](https://github.com/dao-xyz/peerbit/commit/e9cf68180491b09eb490ec95ccc63b0f66b37a96))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+    * @peerbit/stream-interface bumped from ^5.0.2 to ^5.0.3
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
+
 ## [1.2.7](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.2.6...blocks-interface-v1.2.7) (2024-01-17)
 
 

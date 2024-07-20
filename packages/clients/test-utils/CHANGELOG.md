@@ -400,6 +400,26 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.0.34](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.0.33...test-utils-v2.0.34) (2024-07-20)
+
+
+### Bug Fixes
+
+* add test to check that indexer exist ([8031edf](https://github.com/dao-xyz/peerbit/commit/8031edf03d9ed8a4e2b9c4f11473520e3e8a2264))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* update types for libp2p ([962d267](https://github.com/dao-xyz/peerbit/commit/962d2679f2dff59cee1f5cc97d0a2f7ea0b6014f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
+    * peerbit bumped from 4.0.7 to 4.0.8
+  * devDependencies
+    * @peerbit/time bumped from 2.0.6 to 2.0.7
+
 ## [2.0.23](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.0.22...test-utils-v2.0.23) (2024-01-27)
 
 

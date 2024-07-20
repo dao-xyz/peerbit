@@ -202,6 +202,38 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/program-v4.0.7...program-v5.0.0) (2024-07-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* support for indexer
+
+### Features
+
+* add calculateAddress method ([882d690](https://github.com/dao-xyz/peerbit/commit/882d6904e9a64c6da02be1d2785bd63b67537e5f))
+
+
+### Bug Fixes
+
+* add persistant api ([396c4ab](https://github.com/dao-xyz/peerbit/commit/396c4abc7839cdc2762c25cf2b190fc963331b0e))
+* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+* import only type ([9813c98](https://github.com/dao-xyz/peerbit/commit/9813c9872029f7937449b687fa3477afd979e001))
+* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
+    * @peerbit/keychain bumped from ^1.0.17 to ^1.0.18
+    * @peerbit/blocks-interface bumped from ^1.2.19 to ^1.3.0
+    * @peerbit/pubsub-interface bumped from ^3.0.3 to ^3.0.4
+    * @peerbit/any-store-interface bumped from ^2.0.2 to ^1.0.0
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/program-v3.0.20...program-v4.0.0) (2024-02-01)
 
 
