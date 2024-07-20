@@ -60,11 +60,11 @@ export class TestSession {
 			return {
 				...o?.libp2p,
 				services: {
-					blocks: (c) => new DirectBlock(c),
-					pubsub: (c) => new DirectSub(c, { canRelayMessage: true }),
+					blocks: (c: any) => new DirectBlock(c),
+					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: true }),
 					keychain: () => new DefaultKeychain(),
 					...o?.libp2p?.services,
-				}, /// TODO types
+				} as any, /// TODO types
 				streamMuxers: [yamux()],
 			};
 		};
