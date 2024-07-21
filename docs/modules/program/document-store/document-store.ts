@@ -148,6 +148,10 @@ export class Channel extends Program<ChannelArgs> {
 
 				if (properties.type === "put") {
 					// do some behaviour
+					const value = properties.value; // Post
+
+					// .. do some validation logic here
+
 					return true;
 				} else if (properties.type === "delete") {
 					// do some other behaviour
