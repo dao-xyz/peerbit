@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.0...vite-v1.0.1) (2024-07-21)
+
+
+### Bug Fixes
+
+* copy sqlite3.wasm to .dep ([ac53fba](https://github.com/dao-xyz/peerbit/commit/ac53fba4d3d49b253ef6a952edbda60025a2921d))
+
 ## 1.0.0 (2024-07-20)
 
 

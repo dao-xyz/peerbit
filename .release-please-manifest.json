@@ -2,10 +2,10 @@
 	"packages/transport/blocks": "2.1.0",
 	"packages/transport/blocks-interface": "1.3.0",
 	"packages/utils/cache": "2.1.0",
-	"packages/programs/clock-service": "3.0.1",
+	"packages/programs/clock-service": "3.0.2",
 	"packages/utils/crypto": "2.3.0",
-	"packages/programs/data/document/document": "7.0.1",
-	"packages/programs/acl/identity-access-controller": "4.0.1",
+	"packages/programs/data/document/document": "7.0.2",
+	"packages/programs/acl/identity-access-controller": "4.0.2",
 	"packages/transport/libp2p-test-utils": "2.1.4",
 	"packages/log": "4.0.0",
 	"packages/utils/logger": "1.0.3",
@@ -21,7 +21,7 @@
 	"packages/programs/data/string": "5.0.0",
 	"packages/clients/test-utils": "2.0.34",
 	"packages/utils/time": "2.0.7",
-	"packages/programs/acl/trusted-network": "4.0.1",
+	"packages/programs/acl/trusted-network": "4.0.2",
 	"packages/clients/peerbit": "4.0.8",
 	"packages/clients/peerbit-proxy/window": "3.0.35",
 	"packages/utils/any-store/any-store": "2.1.0",
@@ -33,5 +33,5 @@
 	"packages/utils/indexer/simple": "1.0.0",
 	"packages/utils/indexer/sqlite3": "1.0.0",
 	"packages/utils/indexer/tests": "1.0.0",
-	"packages/clients/vite": "1.0.0"
+	"packages/clients/vite": "1.0.1"
 }
