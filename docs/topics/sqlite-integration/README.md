@@ -2,9 +2,9 @@
 
 ## Introduction
 
-Indexing and persistance are two important features of Peerbit. Indexing allows you to search for documents in a collection, while persistance allows you to store documents in a collection and retrieve them later. Persistance indexing capabilities allows us to also use less RAM and offload resources to disk which is important for large scale applications.
+Indexing and persistance are two important features of Peerbit. Smart indexing allows you to search for documents in a collection efficiently and persistance allows you to store the data in a way that it can be retrieved later. Generally an highly performant index is not something that is memory efficient, and a memory efficient index is not something that is highly performant.
 
-For both to co-exist we need a efficient indexing backend that allows us to offloading the mem
+For both to co-exist we need a efficient indexing backend and also have the opportunity to switch between different indexing backends depending on the use case.
 
 Consider follow program 
 
@@ -20,7 +20,7 @@ export class Post {
 	message: string;
 
 	@field({ type: option("string") })
-	parentPostid?: string; // if this value exists, then this post is a comment
+	parentPostId?: string; // if this value exists, then this post is a comment
 
 	constructor(message: string) {
 		this.id = uuid();
@@ -64,7 +64,7 @@ Here it is quite obvious that the `@peerbit/document` needs an efficient way of 
 
 This naturally leads to the conclusion that it is not only the searching for documents that needs to be efficient, but also the syncing layer and oplog layer too.
 
-The [@peerbit/indexer-interface](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/interface) together with two implementations [@peerbit/indexer-memory](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/simple) and [@peerbit/indexer-sqlite](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/sqlite3) provides a way to manage the index in a efficient way which is the backbone of the [@peerbit/document](https://github.com/dao-xyz/peerbit/tree/master/packages/programs/data/document/document) package. The benifit of using SQLite is that there are implementations that both can run in the browser (with OPFS) and natively.
+The [@peerbit/indexer-interface](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/interface) together with two implementations [@peerbit/indexer-memory](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/simple) and [@peerbit/indexer-sqlite](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/sqlite3) provides a way to manage the index in a efficient way which is the backbone of the [@peerbit/document](https://github.com/dao-xyz/peerbit/tree/master/packages/programs/data/document/document) package. The benifit of using SQLite is that there are implementations that both can run in the [browser](https://github.com/sqlite/sqlite-wasm) and [natively](https://github.com/WiseLibs/better-sqlite3).
 
 By providing the `type` field in the open arguments to the documents store, we can specify the type of the document that we are storing. This allows the documents store to create a index for the document type. 
 
@@ -111,29 +111,30 @@ class Post {
     message: string;
 
     @field({ type: option("string") })
-    parentPostid?: string; // if this value exists, then this post is a comment
+    parentPostId?: string; // if this value exists, then this post is a comment
 
     @field({ type: vec(Content) })
     content: Content[];
 
-    constructor(message: string,  content: Content,parentPostid?: string) {
+    constructor(message: string,  content: Content, parentPostId?: string) {
         this.id = uuid();
+        this.parentPostId = parentPostId;
         this.message = message;
         this.content = content
     }
 }
 ```
 
-When this Post type is to be indexed in SQLite, the [@peerbit/indexer-sqlite](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/sqlite3) package will generate a table for the Post type, and multiple tables for the Content type each with a foreign key to the Post table. This allows us to search for the Post type based on the content type. Additionaly since a post can have many contents, we also need to keep track of the order of the content and make sure the order is preserved when we reconstruct the object if we match against this post in a search query that would looks something like this 
+When this Post type is to be indexed in SQLite, the [@peerbit/indexer-sqlite](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/sqlite3) package will generate a table for the Post type, and multiple tables for the Content type each with a foreign key to the Post table. This allows us to search for the Post type based on the content type. Additionaly since a post can have many contents (it is an array), we also need to keep track of the order of the content and make sure the order is preserved when we reconstruct the object if we match against the post with a query like this 
 
 ```ts
 await posts.index.search(new SearchRequest({content: { message: 'Hello World!' }}))
 
 ```
 
-Having many tables can be efficient since for every search we potentially need to join multiple tables. To faciliate better performance the [@peerbit/indexer-sqlite](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/sqlite3) will inline the content fields into the Post table if it can be done without loss of information. This is done by [identifying]() whether polymorphism is expected to be used in a context. This quickly becomes complicated because we could have endless nestling of polymorphic types and sometimes inlining and we both need to keep track of this when inserting but also when querying and reconstructing the original object. 
+Having many tables can be inefficient since for every search we potentially need to join multiple tables. To faciliate better performance the [@peerbit/indexer-sqlite](https://github.com/dao-xyz/peerbit/tree/master/packages/utils/indexer/sqlite3) will inline the content fields into the Post table if it can be done without loss of information. This is done by [identifying](https://github.com/dao-xyz/peerbit/blob/1837795844d4fba49602f8ca48ca06cbbc659ae2/packages/utils/indexer/sqlite3/src/schema.ts#L256) whether polymorphism is expected to be used in a context. This quickly becomes complicated because we could have endless nestling of polymorphic types and sometimes inlining and we both need to keep track of this when inserting but also when querying and reconstructing the original object. 
 
-Additionaly retrieving results can be inefficient to since pulling the data from an index and reconstruct the original object might us to do multiple joins. To faciliate all indexers can support ["shaped"](https://github.com/dao-xyz/peerbit/blob/9e66213b07920b39e3cae3eb6c59af52a92c70b7/packages/utils/indexer/interface/src/index-engine.ts#L68) queries. This is comes in very handy if we quickly want to know whether a document exists or not. For example if you got a particular commit in an operation log. 
+Additionaly retrieving results can be inefficient to since pulling the data from an index and reconstruct the original object might us to do multiple joins. To faciliate all indexers can support ["shaped"](https://github.com/dao-xyz/peerbit/blob/9e66213b07920b39e3cae3eb6c59af52a92c70b7/packages/utils/indexer/interface/src/index-engine.ts#L68) queries where the returned value only contain the data we need. This is comes in very handy if we quickly want to know whether a document exists or not. For example if you got a particular commit in an operation log. 
 
 To get a full understanding of what features are supported in both implementations, see the [test suite](https://github.com/dao-xyz/peerbit/blob/master/packages/utils/indexer/tests/src/tests.ts) that the implementations needs to pass.
 
@@ -174,6 +175,6 @@ There are multiple different solutions out there  today that tries to approach t
 
 The difference with is that Peerbit is not trying to be a SQL database and support all features, but rather focuses on a subset of featuers that are needed for a local-first, p2p application, but still keep the door open for large scale applications to become attractive and do them really well. Mainly the focus for Peerbit is to efficiently handle a scenario where we potentially have thousands of clients that replicate shards of a database and we efficiently want to search for documents, like the "top 10" posts in a channel or get a list of all posts that are comments to a particular post quickly. 
 
-If the support for example "join" like behaviours and aggregation where to be added to early many unforseen challanges would be introduced and performance would be hard to maintain since there would be to exist additional control logic to handle data life cycle and indexing in a sharded context.
+If the support for example "join" like behaviours and aggregation and where to be added to early many unforseen challanges would be introduced and performance would be hard to maintain since there would be to exist additional control logic to handle data life cycle and indexing in a sharded context. 
 
-In theory it would be possible to wrap the `@peerbit/document` in a SQL look-alike client and you would be able to support a subset of SQL queries. This is not something that is currently supported, but could be a future feature.
+Further more, in theory it would be possible to wrap the `@peerbit/document` in a SQL look-alike client and you would be able to support a subset of SQL queries. This is not something that is currently supported, but could be a future feature, just as the more complex quering featuers like aggregation, joins and recursive databases.
