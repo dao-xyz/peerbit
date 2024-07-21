@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.0.1...indexer-sqlite3-v1.0.2) (2024-07-21)
+
+
+### Documentation
+
+* add sqlite3 topic ([1e96df1](https://github.com/dao-xyz/peerbit/commit/1e96df1b11a84a0a98050eeabc5b17960caa0286))
+* rm comment ([f29c5ec](https://github.com/dao-xyz/peerbit/commit/f29c5ecef13c8e993f2e487e32af0d4d433c5a2d))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.0.0...indexer-sqlite3-v1.0.1) (2024-07-21)
 
 
