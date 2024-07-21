@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.1...shared-log-v9.0.2) (2024-07-21)
+
+
+### Bug Fixes
+
+* revert to not used cached total participation value ([3f7bbdd](https://github.com/dao-xyz/peerbit/commit/3f7bbddcc005fd26a96b1abc3df5f81be5372199))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.1 to 4.0.2
+    * @peerbit/rpc bumped from 5.0.1 to 5.0.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.35 to ^2.0.36
+
 ## [9.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.0...shared-log-v9.0.1) (2024-07-21)
 
 
