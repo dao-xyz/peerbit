@@ -3382,12 +3382,7 @@ export const tests = (
 				}
 				await Promise.all(promises);
 				expect(results).to.have.length(100);
-				try {
-					expect(results.every((x) => x === 4)).to.be.true;
-				} catch (error) {
-					console.log(results);
-					throw error;
-				}
+				expect(results.every((x) => x === 4)).to.be.true;
 			});
 		});
 		describe("drop", () => {
