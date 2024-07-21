@@ -81,7 +81,7 @@ class Reaction {
 
 type ChannelArgs = { replicate?: ReplicationOptions };
 
-// This class will out us to index posts in another format
+// This class will let us to index posts in another format
 // this is useful when the original format is not suitable for indexing
 // or the indexed format should contain additional information like
 // signer, timestamp etc.
