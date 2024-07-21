@@ -9,7 +9,7 @@ import {
 	type CanPerformOperations,
 	type CanRead,
 	Documents,
-	Operation,
+	type Operation,
 	SearchRequest,
 } from "@peerbit/document";
 import { type AppendOptions } from "@peerbit/log";
