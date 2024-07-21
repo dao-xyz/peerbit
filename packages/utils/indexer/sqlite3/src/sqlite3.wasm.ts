@@ -7,14 +7,13 @@ import {
 	type PreparedStatement as SQLStatement,
 	default as sqlite3InitModule,
 } from "@sqlite.org/sqlite-wasm";
+import { v4 as uuid } from "uuid";
 import type { BindableValue } from "./schema.js";
 import {
 	type Statement as IStatement,
 	type StatementGetResult,
 } from "./types.js";
 
-/* import { v4 as uuid } from 'uuid';
- */
 export const encodeName = (name: string): string => {
 	// since "/" and perhaps other characters might not be allowed we do encode
 	const writer = new BinaryWriter();
@@ -29,7 +28,10 @@ export const decodeName = (name: string): string => {
 };
 
 class Statement implements IStatement {
-	constructor(private statement: SQLStatement) {}
+	constructor(
+		readonly statement: SQLStatement,
+		readonly id: string,
+	) {}
 
 	async bind(values: any[]) {
 		await this.statement.bind(values);
@@ -85,60 +87,10 @@ class Statement implements IStatement {
 	}
 }
 
-/* export class Database implements IDatabase {
-
-	statements: Map<string, Statement> = new Map();
-	private db: SQLDatabase
-	constructor(private readonly _close?: () => Promise<any> | any) { }
-
-	async exec(sql: string) {
-		return this.db.exec(sql);
-	}
-
-	async prepare(sql: string) {
-		const statement = this.db.prepare(sql);
-		const wrappedStatement = new Statement(statement);
-		this.statements.set(sql, wrappedStatement)
-		return wrappedStatement
-	}
-
-	async close() {
-		await Promise.all([...this.statements.values()].map(x => x.finalize?.()))
-		await this.db.close();
-		await this._close?.()
-	}
-
-	async get(sql: string) {
-		return this.db.exec({ sql, rowMode: 'array' });
-	}
-
-	async run(sql: string, bind: any[]) {
-		return this.db.exec(sql, { bind, rowMode: 'array' });
-	}
-}
-
- */
-
 // eslint-disable-next-line no-console
 const log = (...args: any) => console.log(...args);
 // eslint-disable-next-line no-console
 const error = (...args: any) => console.error(...args);
-
-/* let initOpfsResult: Promise<{ sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>>,poolUtil: }> | undefined = undefined;
-const initOpfs = async () => {
-
-	let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> = await sqlite3InitModule({
-		locateFile: (path, prefix) => {
-
-			return path;
-		}, print: log, printErr: error
-	});
-	let poolUtil = await sqlite3.installOpfsSAHPoolVfs({
-		directory: encodeName("helloworld")
-	});
-
-	return initOpfsResult || (initOpfsResult = { sqlite3, poolUtil })
-} */
 
 let poolUtil: SAHPoolUtil = undefined;
 let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | undefined =
@@ -190,10 +142,13 @@ const create = async (directory?: string) => {
 			return sqliteDb.exec(sql);
 		},
 		open,
-		prepare: (sql: string) => {
+		prepare: (sql: string, id?: string) => {
+			if (id == null) {
+				id = uuid();
+			}
 			const statement = sqliteDb.prepare(sql);
-			const wrappedStatement = new Statement(statement);
-			statements.set(sql, wrappedStatement);
+			const wrappedStatement = new Statement(statement, id);
+			statements.set(id, wrappedStatement);
 			return wrappedStatement;
 		},
 		get(sql: string) {

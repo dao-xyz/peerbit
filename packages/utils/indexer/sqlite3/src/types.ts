@@ -6,10 +6,7 @@ export type SQLite = {
 
 export type Database = {
 	exec: (sql: string) => Promise<any> | any;
-	prepare: (
-		sql: string,
-		err?: (err: any) => any,
-	) => Promise<Statement> | Statement;
+	prepare: (sql: string, id?: string) => Promise<Statement> | Statement;
 	close: (err?: (err: any) => any) => Promise<any> | any;
 	open(): Promise<any> | any;
 	status: () => Promise<"open" | "closed"> | "open" | "closed";
@@ -18,6 +15,7 @@ export type Database = {
 export type StatementGetResult = { [key: string]: SQLLiteValue };
 
 export type Statement = {
+	id: string;
 	bind: (
 		values: BindableValue[],
 		err?: (err: any) => any,

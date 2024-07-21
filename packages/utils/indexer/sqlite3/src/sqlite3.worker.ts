@@ -38,8 +38,8 @@ class SqliteWorkerHandler {
 			} else if (message.type === "status") {
 				return db.status();
 			} else if (message.type === "prepare") {
-				const statementId = message.sql;
-				await db.prepare(message.sql);
+				const statementId = message.id;
+				await db.prepare(message.sql, message.id);
 				// db.statements.get(statementId) -> statement, because sqlite3.wasm stores the statement in a map like this
 				return statementId;
 			} else if (message.type === "close") {

@@ -10,6 +10,7 @@ import {
 } from "./types.js";
 
 class ProxyStatement implements IStatement {
+	id: string;
 	resolvers: {
 		[hash in string]: {
 			resolve: (...args: any) => void;
@@ -23,7 +24,9 @@ class ProxyStatement implements IStatement {
 		) => Promise<T>,
 		readonly databaseId: string,
 		readonly statementId: string,
-	) {}
+	) {
+		this.id = statementId;
+	}
 
 	async bind(values: any[]) {
 		await this.send({
