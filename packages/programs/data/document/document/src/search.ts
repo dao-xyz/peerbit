@@ -97,7 +97,7 @@ export type SearchOptions<R> = QueryOptions<R>;
 
 type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
 
-type ResultsIterator<T> = {
+export type ResultsIterator<T> = {
 	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
