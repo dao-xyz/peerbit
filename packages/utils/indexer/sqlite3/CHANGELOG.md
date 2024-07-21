@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.0.0...indexer-sqlite3-v1.0.1) (2024-07-21)
+
+
+### Bug Fixes
+
+* make statement unique in worker ([2480ea7](https://github.com/dao-xyz/peerbit/commit/2480ea7a12061c650a0bf19a4469e1a5528e5e1e))
+
 ## 1.0.0 (2024-07-20)
 
 
