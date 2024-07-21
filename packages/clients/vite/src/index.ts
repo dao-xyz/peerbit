@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { type PluginOption } from "vite";
+import { viteStaticCopy } from "vite-plugin-static-copy";
 
 function dontMinimizeCertainPackagesPlugin(
 	options: { packages?: string[] } = {},
@@ -84,6 +85,14 @@ export default (
 		dontMinimizeCertainPackagesPlugin({ packages: options.packages }),
 		copyToPublicPlugin({
 			assets: [...defaultAssets, ...(options.assets || [])],
+		}),
+		viteStaticCopy({
+			targets: [
+				{
+					src: "public/peerbit/sqlite3.wasm",
+					dest: "node_modules/.vite/deps",
+				},
+			],
 		}),
 	];
 };
