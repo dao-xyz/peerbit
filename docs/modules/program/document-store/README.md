@@ -9,6 +9,7 @@ npm install @peerbit/document
 
 
 ## Imports
+
 [imports](./document-store.ts ':include :fragment=imports')
 
 ## Definition
@@ -73,8 +74,8 @@ You can also delete documents.
 
 [delete](./document-store.ts ':include :fragment=delete')
 
-## Role 
-There are different kinds of roles you can participate with
+## Replication settings 
+You can choose to replicate content or do nothing
 
 [roles](./roles.ts ':include :fragment=set-role')
 
@@ -99,7 +100,7 @@ We can add conditions for our query.
 
 For example, finding all posts created by the given user.
 
-[search-from-one](./document-store.ts ':include :fragment=search-from-one')
+[search-for-one](./document-store.ts ':include :fragment=search-for-one')
 
 And for our reactions, we can find them for a particular post.
 
@@ -162,43 +163,8 @@ Additionally, sometimes we also want to do transformations of the data before ma
 
 With the document store you can override the document transformer to suit your needs, see below
 
+[sync](./document-store.ts ':include :fragment=index')
 
-
-```typescript 
-
-@variant("channel")
-class Channel extends Program {
-... 
-
-	async open(properties?: ChannelArgs): Promise<void> {
-
-		await this.posts.open({
-			type: Post,
-			index: {
-				key: "id",
-				// You can tailor what fields should be indexed,
-				// everything else will be stored on disc (if you use disc storage with the client)
-				fields: async (post, context) => {
-					return {
-						"id": post.id,
-						"parent": post.parentPostid,
-						"message": post.message,
-
-						// Get the author from the signature
-						"from": (await this.posts.log.log.get(context.head))
-							?.signatures[0].publicKey.bytes,
-
-						// The timestamp for the last modification
-						"modified": context.modified, // Nano seconds
-						
-						// The timestamp for when the document was first created
-						"created": context.created, // Nano seconds
-					};
-				},
-			}})
-	}
-}
-```
 
 
 ## Migrations
