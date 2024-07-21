@@ -253,17 +253,8 @@ export const ARRAY_INDEX_COLUMN = "__index";
 export const PARENT_TABLE_ID = "__parent_id";
 const FOREIGN_VALUE_PROPERTY = "value";
 
-/* const clazzHasVariants = (clazz: Constructor<any>) => {
-	const schema = getSchema(clazz);
-	return schema?.variant !== undefined;
-
-}
- */
 const clazzCanBeInlined = (clazz: Constructor<any>) => {
-	return (
-		/* clazzHasVariants(clazz) === false &&  */ (getDependencies(clazz, 0)
-			?.length ?? 0) === 0
-	);
+	return (getDependencies(clazz, 0)?.length ?? 0) === 0;
 };
 
 interface SimpleNested {
