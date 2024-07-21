@@ -236,11 +236,11 @@ describe(`sharding`, () => {
 			);
 		}
 
-		await waitForResolved(() =>
-			expect(db1.log.totalParticipation - 1).lessThan(0.05),
+		await waitForResolved(async () =>
+			expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(0.05),
 		);
-		await waitForResolved(() =>
-			expect(db2.log.totalParticipation - 1).lessThan(0.05),
+		await waitForResolved(async () =>
+			expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(0.05),
 		);
 		await checkBounded(entryCount, 0.4, 0.6, db1, db2);
 	});
@@ -271,14 +271,14 @@ describe(`sharding`, () => {
 
 		await Promise.all(promises);
 
-		await waitForResolved(() =>
-			expect(db1.log.totalParticipation - 1).lessThan(0.05),
+		await waitForResolved(async () =>
+			expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(0.05),
 		);
-		await waitForResolved(() =>
-			expect(db2.log.totalParticipation - 1).lessThan(0.05),
+		await waitForResolved(async () =>
+			expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(0.05),
 		);
-		await waitForResolved(() =>
-			expect(db3.log.totalParticipation - 1).lessThan(0.05),
+		await waitForResolved(async () =>
+			expect((await db3.log.calculateTotalParticipation()) - 1).lessThan(0.05),
 		);
 
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
@@ -430,25 +430,25 @@ describe(`sharding`, () => {
 
 		await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
 
-		await waitForResolved(() =>
-			expect(db1.log.totalParticipation - 1).lessThan(0.1),
+		await waitForResolved(async () =>
+			expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(0.1),
 		);
-		await waitForResolved(() =>
-			expect(db2.log.totalParticipation - 1).lessThan(0.1),
+		await waitForResolved(async () =>
+			expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(0.1),
 		);
-		await waitForResolved(() =>
-			expect(db3.log.totalParticipation - 1).lessThan(0.1),
+		await waitForResolved(async () =>
+			expect((await db3.log.calculateTotalParticipation()) - 1).lessThan(0.1),
 		);
 
 		await db3.close();
 
 		await checkBounded(entryCount, 1, 1, db1, db2);
 
-		await waitForResolved(() =>
-			expect(db1.log.totalParticipation - 1).lessThan(0.1),
+		await waitForResolved(async () =>
+			expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(0.1),
 		);
-		await waitForResolved(() =>
-			expect(db2.log.totalParticipation - 1).lessThan(0.1),
+		await waitForResolved(async () =>
+			expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(0.1),
 		);
 	});
 

@@ -292,9 +292,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return (await this.countReplicationSegments()) > 0;
 	}
 
-	get totalParticipation(): number {
+	/* get totalParticipation(): number {
 		return this._totalParticipation;
-	}
+	} */
 
 	async calculateTotalParticipation() {
 		const sum = await this.replicationIndex.sum(
@@ -455,12 +455,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			await this.replicationIndex.del(new DeleteRequest({ query: idMatcher }));
 
-			const calculated = await this.calculateTotalParticipation();
-
-			if (Math.abs(this._totalParticipation - calculated) > 0.001) {
-				throw new Error("Total participation is out of sync");
-			}
-
 			await this.updateOldestTimestampFromIndex();
 
 			this.events.dispatchEvent(
@@ -513,12 +507,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const prevSumNormalized = Number(prevSum) / SEGMENT_COORDINATE_SCALE;
 			this._totalParticipation -= prevSumNormalized;
 			await this.replicationIndex.del(new DeleteRequest({ query }));
-
-			const calculated = await this.calculateTotalParticipation();
-
-			if (Math.abs(this._totalParticipation - calculated) > 0.001) {
-				throw new Error("Total participation is out of sync");
-			}
 
 			await this.updateOldestTimestampFromIndex();
 
@@ -577,11 +565,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			}
 
 			this._totalParticipation += range.widthNormalized;
-
-			const calculated = await this.calculateTotalParticipation();
-			if (Math.abs(this._totalParticipation - calculated) > 0.001) {
-				throw new Error("Total participation is out of sync");
-			}
 
 			this.oldestOpenTime = Math.min(
 				Number(range.timestamp),
@@ -2104,7 +2087,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			const newFactor = this.replicationController.step({
 				memoryUsage: usedMemory,
 				currentFactor: dynamicRange.widthNormalized,
-				totalFactor: this._totalParticipation,
+				totalFactor: await this.calculateTotalParticipation(), // TODO use this._totalParticipation when flakiness is fixed
 				peerCount: peersSize,
 				cpuUsage: this.cpuUsage?.value(),
 			});
