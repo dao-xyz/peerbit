@@ -3368,6 +3368,28 @@ export const tests = (
 			}
 		});
 
+		describe("concurrency", () => {
+			it("can handle concurrent counts", async () => {
+				let results: number[] = [];
+				let promises: Promise<void>[] = [];
+				await setupDefault();
+				for (let i = 0; i < 100; i++) {
+					promises.push(
+						(async () => {
+							results.push(await store.count(new CountRequest()));
+						})(),
+					);
+				}
+				await Promise.all(promises);
+				expect(results).to.have.length(100);
+				try {
+					expect(results.every((x) => x === 4)).to.be.true;
+				} catch (error) {
+					console.log(results);
+					throw error;
+				}
+			});
+		});
 		describe("drop", () => {
 			it("store", async () => {
 				let { directory, indices, store } = await setupDefault();
