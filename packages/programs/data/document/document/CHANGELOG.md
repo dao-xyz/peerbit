@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.2](https://github.com/dao-xyz/peerbit/compare/document-v7.0.1...document-v7.0.2) (2024-07-21)
+
+
+### Bug Fixes
+
+* export ResultsIterator ([64d9a92](https://github.com/dao-xyz/peerbit/commit/64d9a924c93c2014edfecbaf0079907462b5398a))
+
 ## [7.0.1](https://github.com/dao-xyz/peerbit/compare/document-v7.0.0...document-v7.0.1) (2024-07-20)
 
 
