@@ -3,8 +3,6 @@
 import { field, option, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { Documents } from "@peerbit/document";
-/// [reactions-one]
-/// [query-detailed]
 import {
 	And,
 	BoolQuery,
@@ -21,16 +19,14 @@ import {
 } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions, type RoleOptions } from "@peerbit/shared-log";
-/// [definition]
-/// [insert]
 import { delay, waitForResolved } from "@peerbit/time";
-// Since the first node is a replicator, it will eventually get all messages
 import { expect } from "chai";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 
 /// [imports]
 
+/// [definition]
 const POST_ID_PROPERTY = "id";
 const POST_PARENT_POST_ID = "parentPostid";
 const POST_FROM_PROPERTY = "from";
@@ -160,14 +156,19 @@ export class Channel extends Program<ChannelArgs> {
 				return false;
 			},
 
+			/// [index]
+
 			index: {
 				// Primary key is default 'id', but we can assign it manually here
 				idProperty: POST_ID_PROPERTY,
 
 				// The type of the index
+				// The constructor for this class needs to take the Post as first argument and context as second
+				// or you need to implement the transform function
 				type: IndexedPost,
 
-				// Implement the transformer to do async stuff
+				// transform function is used to construct an instance of the indexable class
+				// from the original class. Here you can do async stuff like fetching additional data
 				transform: async (post, context) => {
 					return new IndexedPost(
 						post,
@@ -189,6 +190,8 @@ export class Channel extends Program<ChannelArgs> {
 				},
 			},
 
+			/// [index]
+
 			replicas: {
 				// How many times should posts at least be replicated
 				min: 2,
@@ -208,6 +211,8 @@ export class Channel extends Program<ChannelArgs> {
 	}
 }
 /// [definition]
+
+/// [insert]
 
 // Start two clients that ought to talk to each other
 const peer = await Peerbit.create();
@@ -316,7 +321,7 @@ expect(postsLocally.map((x) => x.message)).to.deep.equal([
 ]);
 /// [search-locally]
 
-/// [search-from-one]
+/// [search-for-one]
 // Get all posts from client1 by filtering by its publicKey
 const postsFromClient1: Post[] = await channelFromClient2.posts.index.search(
 	new SearchRequest({
@@ -334,7 +339,9 @@ expect(postsFromClient1.map((x) => x.message)).to.deep.equal([
 	"The Shoebill is terrifying",
 ]);
 
-/// [search-from-one]
+/// [search-for-one]
+
+/// [reactions-one]
 
 // Get reactions for a particular post
 const reactions: Reaction[] = await channelFromClient2.reactions.index.search(
@@ -349,6 +356,7 @@ expect(reactions).to.have.length(1);
 expect(reactions[0][REACTION_TYPE_PROPERTY]).equal(ReactionType.HAHA);
 /// [reactions-one]
 
+/// [query-detailed]
 new SearchRequest({
 	query: [
 		// String
