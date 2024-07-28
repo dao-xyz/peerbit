@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.3...shared-log-v9.0.4) (2024-07-28)
+
+
+### Bug Fixes
+
+* disable self-replicating when not allowed ([2b760c3](https://github.com/dao-xyz/peerbit/commit/2b760c3660f9556cee1e5a29ae378c028f64972a))
+
 ## [9.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.2...shared-log-v9.0.3) (2024-07-28)
 
 
