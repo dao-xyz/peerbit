@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.0.1](https://github.com/dao-xyz/peerbit/compare/program-v5.0.0...program-v5.0.1) (2024-07-28)
+
+
+### Bug Fixes
+
+* custom Error for doing operations when closed ([bf3e3ed](https://github.com/dao-xyz/peerbit/commit/bf3e3ed6059ccbbcaf21b818f6dab3571c76e67c))
+
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/program-v4.0.7...program-v5.0.0) (2024-07-20)
 
 

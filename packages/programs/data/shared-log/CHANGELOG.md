@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.2...shared-log-v9.0.3) (2024-07-28)
+
+
+### Bug Fixes
+
+* custom Error for doing operations when closed ([bf3e3ed](https://github.com/dao-xyz/peerbit/commit/bf3e3ed6059ccbbcaf21b818f6dab3571c76e67c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.0 to 5.0.1
+    * @peerbit/log bumped from 4.0.2 to 4.0.3
+    * @peerbit/rpc bumped from 5.0.2 to 5.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.36 to ^2.0.37
+
 ## [9.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.1...shared-log-v9.0.2) (2024-07-21)
 
 
