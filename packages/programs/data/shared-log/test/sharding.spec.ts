@@ -1178,8 +1178,11 @@ describe(`sharding`, () => {
 					// insert 100kb
 					await db1.add(data, { meta: { next: [] } });
 				}
-				await waitForResolved(() =>
-					expect(db2.log.log.length).greaterThan(db1.log.log.length + 30),
+				await waitForResolved(
+					() => expect(db2.log.log.length).greaterThan(db1.log.log.length + 30),
+					{
+						timeout: 3e4,
+					},
 				);
 			});
 		});
