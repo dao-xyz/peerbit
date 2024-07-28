@@ -533,13 +533,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 				this._isTrustedReplicator &&
 				!(await this._isTrustedReplicator(from))
 			) {
-				if (this.node.identity.publicKey.equals(from)) {
-					if (range.replicationIntent === ReplicationIntent.Automatic) {
-						return false; // we dont want to replicate automatic ranges if not allowed by others
-					}
-				} else {
-					return false;
-				}
+				return false;
 			}
 
 			range.id = new Uint8Array(range.id);
@@ -1611,7 +1605,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	async getReplicatorUnion(roleAge?: number) {
 		roleAge = roleAge ?? (await this.getDefaultMinRoleAge());
 		if (this.closed === true) {
-			throw new Error("Closed");
+			throw new ClosedError();
 		}
 
 		// Total replication "width"

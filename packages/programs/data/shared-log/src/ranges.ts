@@ -583,7 +583,6 @@ export const getCoverSet = async (
 			startNode.start1 ?? Math.random() * SEGMENT_COORDINATE_SCALE;
 	}
 
-	/* const startNode = walker; */
 	if (!startNode) {
 		return new Set();
 	}
