@@ -27,7 +27,7 @@ import {
 	StringMatchMethod,
 } from "@peerbit/indexer-interface";
 import { Entry, Log } from "@peerbit/log";
-import { Program } from "@peerbit/program";
+import { ClosedError, Program } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import {
 	AbsoluteReplicas,
@@ -1390,6 +1390,33 @@ describe("index", () => {
 					).rejectedWith("Did not receive responses from all shards");
 
 					expect(await prioritizedSearchByDefault).to.have.length(1);
+				});
+			});
+
+			describe("closed", () => {
+				before(async () => {
+					session = await TestSession.connected(1);
+				});
+
+				after(async () => {
+					await session.stop();
+				});
+
+				it("will throw when trying to search a closed store", async () => {
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					await store.close();
+					await expect(
+						store.docs.index.search(new SearchRequest({ query: [] })),
+					).rejectedWith(ClosedError);
 				});
 			});
 		});

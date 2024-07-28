@@ -2,6 +2,7 @@ import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import {
+	ClosedError,
 	Program,
 	type ProgramClient,
 	getProgramFromVariant,
@@ -101,7 +102,7 @@ describe("program", () => {
 				expect(p.closed).to.be.false;
 				await p.close();
 				expect(p.closed).to.be.true;
-				await expect(p.drop()).rejectedWith("Program is closed, cannot drop");
+				await expect(p.drop()).rejectedWith(ClosedError);
 			});
 
 			it("can re-open from closed", async () => {

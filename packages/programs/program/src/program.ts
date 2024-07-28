@@ -23,6 +23,14 @@ import {
 } from "./handler.js";
 import { getValuesWithType } from "./utils.js";
 
+export class ClosedError extends Error {
+	constructor() {
+		super(
+			"Not open. Please invoke 'client.open(...)' before calling this method",
+		);
+	}
+}
+
 const intersection = (
 	a: Map<string, PublicSignKey> | undefined,
 	b: Map<string, PublicSignKey> | PublicSignKey[],
@@ -294,7 +302,7 @@ export abstract class Program<
 	private async end(type: "drop" | "close", from?: Program): Promise<boolean> {
 		if (this.closed) {
 			if (type === "drop") {
-				throw new Error("Program is closed, cannot drop");
+				throw new ClosedError();
 			}
 			return true;
 		}

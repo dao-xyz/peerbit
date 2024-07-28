@@ -19,3 +19,4 @@ export type {
 	TransformerAsFunction,
 } from "./search.js";
 export { MAX_BATCH_SIZE as MAX_DOCUMENT_SIZE } from "./constants.js";
+export { ClosedError } from "@peerbit/program";

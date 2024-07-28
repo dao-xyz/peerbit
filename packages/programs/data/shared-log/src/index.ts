@@ -34,7 +34,7 @@ import {
 	type ShallowOrFullEntry,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Program, type ProgramEvents } from "@peerbit/program";
+import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
@@ -1434,7 +1434,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	get replicationIndex(): Index<ReplicationRangeIndexable> {
 		if (!this._replicationRangeIndex) {
-			throw new Error("Not open");
+			throw new ClosedError();
 		}
 		return this._replicationRangeIndex;
 	}

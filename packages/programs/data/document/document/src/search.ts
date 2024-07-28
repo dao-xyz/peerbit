@@ -10,7 +10,7 @@ import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
 import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import { Program } from "@peerbit/program";
+import { ClosedError, Program } from "@peerbit/program";
 import {
 	MissingResponsesError,
 	RPC,
@@ -961,6 +961,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		const fetchAtLeast = async (n: number) => {
 			if (done && first) {
 				return;
+			}
+
+			if (this.closed) {
+				throw new ClosedError();
 			}
 
 			await fetchPromise;
