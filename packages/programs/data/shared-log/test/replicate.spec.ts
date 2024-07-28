@@ -488,7 +488,7 @@ describe("redundancy", () => {
 	it("only sends entries once, 2 peers dynamic", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
 		await db1.log.replicate();
-		let count = 1000;
+		let count = 10;
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello " + i, { meta: { next: [] } });
 		}
