@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.1...vite-v1.0.2) (2024-07-28)
+
+
+### Bug Fixes
+
+* add max search depth for node_modules ([a84c2fc](https://github.com/dao-xyz/peerbit/commit/a84c2fcbc5405a3978b930ea50dbfca838162d23))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.0...vite-v1.0.1) (2024-07-21)
 
 
