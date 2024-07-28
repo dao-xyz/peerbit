@@ -17,7 +17,7 @@ export class Access extends AccessData {
 	@field({ type: option("string") })
 	id: string;
 
-	@field({ type: vec("u8") })
+	@field({ type: vec("u16") }) // TODO we can not use u8 because sqlite will index this as a bytearray in that case
 	[ACCESS_TYPE_PROPERTY]: AccessType[];
 
 	@field({ type: AccessCondition })
