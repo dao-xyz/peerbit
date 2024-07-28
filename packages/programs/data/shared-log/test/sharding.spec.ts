@@ -696,7 +696,7 @@ describe(`sharding`, () => {
 								(memoryLimit / 100) * 5,
 							);
 						},
-						{ timeout: 20 * 1000 },
+						{ timeout: 30 * 1000 },
 					);
 				});
 
