@@ -51,6 +51,7 @@ import { AbortError, TimeoutError, delay, waitFor } from "@peerbit/time";
 import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
+import { type Pushable, pushable } from "it-pushable";
 import type { Components } from "libp2p/components";
 import pDefer from "p-defer";
 import Queue from "p-queue";
@@ -425,6 +426,13 @@ export abstract class DirectStream<
 	private pruneConnectionsTimeout: ReturnType<typeof setInterval>;
 	private prunedConnectionsCache?: Cache<string>;
 	private routeMaxRetentionPeriod: number;
+
+	// for sequential creation of outbound streams
+	private outboundInflightQueue: Pushable<{
+		connection: Connection;
+		peerId: PeerId;
+	}>;
+
 	routeSeekInterval: number;
 	seekTimeout: number;
 	closeController: AbortController;
@@ -481,6 +489,7 @@ export abstract class DirectStream<
 		this._onIncomingStream = this._onIncomingStream.bind(this);
 		this.onPeerConnected = this.onPeerConnected.bind(this);
 		this.onPeerDisconnected = this.onPeerDisconnected.bind(this);
+
 		this._ackCallbacks = new Map();
 
 		if (connectionManager === false || connectionManager === null) {
@@ -537,6 +546,15 @@ export abstract class DirectStream<
 		await ready;
 
 		this.closeController = new AbortController();
+
+		this.outboundInflightQueue = pushable({ objectMode: true });
+		pipe(this.outboundInflightQueue, async (source) => {
+			for await (const { peerId, connection } of source) {
+				await this.createOutboundStream(peerId, connection);
+			}
+		}).catch((e) => {
+			logger.error("outbound inflight queue error: " + e?.toString());
+		});
 
 		this.routes = new Routes(this.publicKeyHash, {
 			routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
@@ -635,7 +653,7 @@ export abstract class DirectStream<
 
 		// reset and clear up
 		this.started = false;
-
+		this.outboundInflightQueue.end();
 		this.closeController.abort();
 
 		logger.debug("stopping");
@@ -698,8 +716,74 @@ export abstract class DirectStream<
 			stream.protocol,
 			connection.id,
 		);
+
+		// handle inbound
 		const inboundStream = peer.attachInboundStream(stream);
 		this.processMessages(peer.publicKey, inboundStream, peer).catch(logError);
+
+		// try to create outbound stream
+		await this.outboundInflightQueue.push({ peerId, connection });
+	}
+
+	protected async createOutboundStream(peerId: PeerId, connection: Connection) {
+		for (const existingStreams of connection.streams) {
+			if (
+				existingStreams.protocol &&
+				this.multicodecs.includes(existingStreams.protocol) &&
+				existingStreams.direction === "outbound"
+			) {
+				return;
+			}
+		}
+
+		let stream: Stream = undefined as any; // TODO types
+		let tries = 0;
+		let peer: PeerStreams = undefined as any;
+		const peerKey = getPublicKeyFromPeerId(peerId);
+		while (tries <= 3) {
+			tries++;
+			if (!this.started) {
+				return;
+			}
+
+			try {
+				stream = await connection.newStream(this.multicodecs);
+				if (stream.protocol == null) {
+					stream.abort(new Error("Stream was not multiplexed"));
+					return;
+				}
+				peer = this.addPeer(peerId, peerKey, stream.protocol!, connection.id); // TODO types
+				await peer.attachOutboundStream(stream);
+			} catch (error: any) {
+				if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
+					await delay(100);
+					continue; // Retry
+				}
+
+				if (
+					connection.status !== "open" ||
+					error?.message === "Muxer already closed" ||
+					error.code === "ERR_STREAM_RESET"
+				) {
+					return; // fail silenty
+				}
+
+				throw error;
+			}
+			break;
+		}
+		if (!stream) {
+			return;
+		}
+
+		this.addRouteConnection(
+			this.publicKeyHash,
+			peerKey.hashcode(),
+			peerKey,
+			-1,
+			+new Date(),
+			-1,
+		);
 	}
 
 	/**
@@ -721,72 +805,7 @@ export abstract class DirectStream<
 			return; // we recently pruned this connect, dont allow it to connect for a while
 		}
 
-		try {
-			for (const existingStreams of connection.streams) {
-				if (
-					existingStreams.protocol &&
-					this.multicodecs.includes(existingStreams.protocol) &&
-					existingStreams.direction === "outbound"
-				) {
-					return;
-				}
-			}
-
-			// This condition seem to work better than the one above, for some reason.
-			// The reason we need this at all is because we will connect to existing connection and receive connection that
-			// some times, yields a race connections where connection drop each other by reset
-
-			let stream: Stream = undefined as any; // TODO types
-			let tries = 0;
-			let peer: PeerStreams = undefined as any;
-
-			while (tries <= 3) {
-				tries++;
-				if (!this.started) {
-					return;
-				}
-
-				try {
-					stream = await connection.newStream(this.multicodecs);
-					if (stream.protocol == null) {
-						stream.abort(new Error("Stream was not multiplexed"));
-						return;
-					}
-					peer = this.addPeer(peerId, peerKey, stream.protocol!, connection.id); // TODO types
-					await peer.attachOutboundStream(stream);
-				} catch (error: any) {
-					if (error.code === "ERR_UNSUPPORTED_PROTOCOL") {
-						await delay(100);
-						continue; // Retry
-					}
-
-					if (
-						connection.status !== "open" ||
-						error?.message === "Muxer already closed" ||
-						error.code === "ERR_STREAM_RESET"
-					) {
-						return; // fail silenty
-					}
-
-					throw error;
-				}
-				break;
-			}
-			if (!stream) {
-				return;
-			}
-
-			this.addRouteConnection(
-				this.publicKeyHash,
-				peerKey.hashcode(),
-				peerKey,
-				-1,
-				+new Date(),
-				-1,
-			);
-		} catch (err: any) {
-			logger.error(err);
-		}
+		this.outboundInflightQueue.push({ peerId, connection });
 	}
 
 	/**
@@ -1905,6 +1924,8 @@ export abstract class DirectStream<
 			throw new Error(
 				"Stream to " +
 					hash +
+					" from " +
+					this.publicKeyHash +
 					" does not exist. Connection exist: " +
 					this.peers.has(hash) +
 					". Route exist: " +

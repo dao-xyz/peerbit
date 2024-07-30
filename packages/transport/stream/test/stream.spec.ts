@@ -2878,13 +2878,12 @@ describe("start/stop", () => {
 		await session.stop();
 	});
 
-	/* protocol restarts does not seem to work after libp2p and components update from 1.2.3 to 1.8.1
-	 it("can restart", async () => {
+	it("can restart", async () => {
 		session = await connected(2, {
 			transports: [tcp(), webSockets({ filter: filters.all })],
 			services: {
-				directstream: (c) => new TestDirectStream(c)
-			}
+				directstream: (c) => new TestDirectStream(c),
+			},
 		}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
 		await waitForPeerStreams(stream(session, 0), stream(session, 1));
 
@@ -2893,9 +2892,9 @@ describe("start/stop", () => {
 		await stream(session, 1).stop();
 		expect(stream(session, 0).peers.size).equal(0);
 		await delay(3000);
-		console.log("--------- RESTARTING --------");
+
 		await stream(session, 0).start();
-		await delay(2000)
+		await delay(2000);
 		await stream(session, 1).start();
 
 		await waitFor(() => stream(session, 0).peers.size === 1);
@@ -2905,8 +2904,8 @@ describe("start/stop", () => {
 		session = await disconnected(2, {
 			transports: [tcp(), webSockets({ filter: filters.all })],
 			services: {
-				directstream: (c) => new TestDirectStream(c)
-			}
+				directstream: (c) => new TestDirectStream(c),
+			},
 		});
 
 		await session.connect();
@@ -2917,23 +2916,23 @@ describe("start/stop", () => {
 		session = await connected(2, {
 			transports: [tcp(), webSockets({ filter: filters.all })],
 			services: {
-				directstream: (c) => new TestDirectStream(c)
-			}
+				directstream: (c) => new TestDirectStream(c),
+			},
 		});
 		await waitForPeerStreams(stream(session, 0), stream(session, 1));
 		await session.peers[0].services.directstream.stop();
 		await session.peers[1].services.directstream.stop();
 		await waitFor(
-			() => session.peers[0].services.directstream.peers.size === 0
+			() => session.peers[0].services.directstream.peers.size === 0,
 		);
 		await waitFor(
-			() => session.peers[1].services.directstream.peers.size === 0
+			() => session.peers[1].services.directstream.peers.size === 0,
 		);
 		await session.peers[1].services.directstream.start();
 		await delay(3000);
 		await session.peers[0].services.directstream.start();
 		await waitForPeerStreams(stream(session, 0), stream(session, 1));
-	}); */
+	});
 
 	it("can connect before start", async () => {
 		session = await connected(2, {
