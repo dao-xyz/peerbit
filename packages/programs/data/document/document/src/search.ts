@@ -286,7 +286,8 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			!properties.transform?.type ||
 			properties.transform?.type === properties.documentType;
 
-		class IndexedClassWithContex {
+		@variant(0)
+		class IndexedClassWithContext {
 			@field({ type: types.Context })
 			__context: types.Context;
 
@@ -296,13 +297,13 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			}
 		}
 
-		// copy all prototype values from indexedType to IndexedClassWithContex
+		// copy all prototype values from indexedType to IndexedClassWithContext
 		copySerialization(
 			(properties.transform?.type || properties.documentType)!,
-			IndexedClassWithContex,
+			IndexedClassWithContext,
 		);
 
-		this.wrappedIndexedType = IndexedClassWithContex as new (
+		this.wrappedIndexedType = IndexedClassWithContext as new (
 			value: I,
 			context: types.Context,
 		) => IDocumentWithContext<I>;
