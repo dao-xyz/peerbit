@@ -188,6 +188,20 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.6...pubsub-v3.0.7) (2024-07-31)
+
+
+### Bug Fixes
+
+* add missing dependency ([baf2750](https://github.com/dao-xyz/peerbit/commit/baf275084398b6919627662c454113d69c10b52c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.0.6 to 4.0.7
+
 ## [3.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.5...pubsub-v3.0.6) (2024-07-20)
 
 

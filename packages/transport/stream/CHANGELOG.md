@@ -43,6 +43,15 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.6...stream-v4.0.7) (2024-07-31)
+
+
+### Bug Fixes
+
+* add missing dependency ([baf2750](https://github.com/dao-xyz/peerbit/commit/baf275084398b6919627662c454113d69c10b52c))
+* remove logging messages for closing events ([5a4ff82](https://github.com/dao-xyz/peerbit/commit/5a4ff826eabb63eb7236d7c7940271b131487b33))
+* sequalize outbound stream creation ([375252f](https://github.com/dao-xyz/peerbit/commit/375252fe5387c01f1d93a4849231bac9c5ef7993))
+
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.5...stream-v4.0.6) (2024-07-20)
 
 
