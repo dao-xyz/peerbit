@@ -66,6 +66,9 @@ export { logger };
 export { BandwidthTracker }; // might be useful for others
 
 const logError = (e?: { message: string }) => {
+	if (e?.message === "Cannot push value onto an ended pushable") {
+		return; // ignore since we are trying to push to a closed stream
+	}
 	return logger.error(e?.message);
 };
 
@@ -193,6 +196,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		}
 
 		this.usedBandWidthTracker.add(data.byteLength);
+
 		this.outboundStream.push(
 			data instanceof Uint8Array ? data : data.subarray(),
 			this.outboundStream.getReadableLength(0) === 0
@@ -1022,12 +1026,22 @@ export abstract class DirectStream<
 				}
 			});
 		} catch (err: any) {
-			logger.warn(
-				"Failed processing messages to id: " +
-					peerStreams.peerId.toString() +
-					". " +
-					err?.message,
-			);
+			if (err?.code === "ERR_STREAM_RESET") {
+				// only send stream reset messages to info
+				logger.info(
+					"Failed processing messages to id: " +
+						peerStreams.peerId.toString() +
+						". " +
+						err?.message,
+				);
+			} else {
+				logger.warn(
+					"Failed processing messages to id: " +
+						peerStreams.peerId.toString() +
+						". " +
+						err?.message,
+				);
+			}
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
 	}
