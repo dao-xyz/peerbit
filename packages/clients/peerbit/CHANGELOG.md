@@ -313,6 +313,16 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.0.12](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.11...peerbit-v4.0.12) (2024-07-31)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/pubsub bumped from ^3.0.6 to ^3.0.7
+    * @peerbit/blocks bumped from ^2.1.0 to ^2.1.1
+
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.10...peerbit-v4.0.11) (2024-07-28)
 
 
