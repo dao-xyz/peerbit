@@ -605,33 +605,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 			));
 	}
 
-	/* async updateRole(role: InitialReplicationOptions, onRoleChange = true) {
-		await this.setupReplicationSettings(role)
-		return this._updateRole(, onRoleChange);
-	} */
-
-	/* private async _updateRole(
-		role: Observer | Replicator = this._role,
-		onRoleChange = true
-	) {
-		this._role = role;
-		const { changed } = await this._modifyReplicators(
-			this.role,
-			this.node.identity.publicKey
-		);
-
-		await this.rpc.subscribe();
-		await this.rpc.send(new ResponseReplicationInfoMessage({ segments: await  }), {
-			priority: 1
-		});
-
-		if (onRoleChange && changed !== "none") {
-			await this.onRoleChange(this._role, this.node.identity.publicKey);
-		}
-
-		return changed;
-	} */
-
 	async append(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
