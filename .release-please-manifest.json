@@ -33,5 +33,5 @@
 	"packages/utils/indexer/simple": "1.0.0",
 	"packages/utils/indexer/sqlite3": "1.0.2",
 	"packages/utils/indexer/tests": "1.0.0",
-	"packages/clients/vite": "1.0.2"
+	"packages/clients/vite": "1.0.3"
 }

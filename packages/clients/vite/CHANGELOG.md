@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.2...vite-v1.0.3) (2024-08-02)
+
+
+### Bug Fixes
+
+* svelte support ([a16b978](https://github.com/dao-xyz/peerbit/commit/a16b97866333482c1d35fd475eb213c85b27208a))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.1...vite-v1.0.2) (2024-07-28)
 
 
