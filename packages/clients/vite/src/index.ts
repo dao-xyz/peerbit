@@ -33,8 +33,20 @@ function copyToPublicPlugin(
 			if (options?.assets) {
 				options.assets.forEach(({ src, dest }) => {
 					const sourcePath = path.resolve(src);
-					const destinationPath = path.resolve(process.cwd(), "public", dest);
 
+					// if public folder exist, then put files there (react)
+					// else put in static folder if (svelte)
+					// else throw error
+					let destinationPath: string;
+					const publicPath = path.resolve(process.cwd(), "public");
+					const staticPath = path.resolve(process.cwd(), "static");
+					if (fs.existsSync(publicPath)) {
+						destinationPath = path.resolve(publicPath, dest);
+					} else if (fs.existsSync(staticPath)) {
+						destinationPath = path.resolve(staticPath, dest);
+					} else {
+						throw new Error("Could not find public or static folder");
+					}
 					copyAssets(sourcePath, destinationPath, "/");
 				});
 			}
