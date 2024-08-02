@@ -48,7 +48,6 @@ import {
 	getMsgId,
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay, waitFor } from "@peerbit/time";
-import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
 import { type Pushable, pushable } from "it-pushable";
@@ -138,7 +137,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * An AbortController for controlled shutdown of the  treams
 	 */
-	private readonly inboundAbortController: AbortController;
+	private inboundAbortController: AbortController;
 
 	private closed: boolean;
 
@@ -153,7 +152,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.peerId = init.peerId;
 		this.publicKey = init.publicKey;
 		this.protocol = init.protocol;
-		this.inboundAbortController = new AbortController();
 		this.closed = false;
 		this.connId = init.connId;
 		this.usedBandWidthTracker = new BandwidthTracker(10);
@@ -270,22 +268,17 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		// The inbound stream is:
 		// - abortable, set to only return on abort, rather than throw
 		// - transformed with length-prefix transform
-		this.rawInboundStream = stream;
-		this.inboundStream = abortableSource(
-			pipe(this.rawInboundStream, (source) =>
-				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
-			),
-			this.inboundAbortController.signal,
-			{
-				returnOnAbort: true,
-				onReturnError: (err) => {
-					logger.error("Inbound stream error", err?.message);
-				},
-			},
-		);
 
-		this.dispatchEvent(new CustomEvent("stream:inbound"));
-		return this.inboundStream;
+		this.rawInboundStream = stream;
+		this.inboundAbortController = new AbortController();
+		this.inboundAbortController.signal.addEventListener("abort", () => {
+			this.rawInboundStream.close().catch((err) => {
+				this.rawInboundStream.abort(err);
+			});
+		});
+		return (this.inboundStream = pipe(this.rawInboundStream, (source) =>
+			lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
+		));
 	}
 
 	/**
@@ -294,13 +287,17 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 	async attachOutboundStream(stream: Stream) {
 		// If an outbound stream already exists, gently close it
-		const _prevStream = this.outboundStream;
-		if (_prevStream) {
-			logger.info(
-				`Stream already exist. This can be due to that you are opening two or more connections to ${this.peerId.toString()}. A stream will only be created for the first succesfully created connection`,
-			);
-			return;
+		const prevStream = this.outboundStream;
+		if (prevStream) {
+			if (this.rawOutboundStream.status === "open") {
+				logger.info(
+					`Stream already exist. This can be due to that you are opening two or more connections to ${this.peerId.toString()}. A stream will only be created for the first succesfully created connection`,
+				);
+				return;
+			}
+			await prevStream.return();
 		}
+
 		this.rawOutboundStream = stream;
 		this.outboundStream = pushableLanes({ lanes: 2 });
 
@@ -817,11 +814,13 @@ export abstract class DirectStream<
 	 */
 	protected async onPeerDisconnected(peerId: PeerId, conn?: Connection) {
 		// PeerId could be me, if so, it means that I am disconnecting
+
+		console.log("onPeerDisconnected", peerId.toString());
+
 		const peerKey = getPublicKeyFromPeerId(peerId);
 		const peerKeyHash = peerKey.hashcode();
-		const connections = this.components.connectionManager
-			.getConnectionsMap()
-			.get(peerId);
+		const connections =
+			this.components.connectionManager.getConnections(peerId);
 		if (
 			conn?.id &&
 			connections &&
@@ -835,6 +834,8 @@ export abstract class DirectStream<
 		) {
 			return;
 		}
+
+		console.log("NO EXISTING CONNECTIONS!", connections);
 
 		if (!this.peers.has(peerKeyHash)) {
 			// TODO remove when https://github.com/libp2p/js-libp2p/issues/2369 fixed
@@ -1042,6 +1043,8 @@ export abstract class DirectStream<
 						err?.message,
 				);
 			}
+
+			console.log("DISCONNECTING", peerStreams.peerId.toString(), err?.message);
 			this.onPeerDisconnected(peerStreams.peerId);
 		}
 	}

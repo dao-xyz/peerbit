@@ -12,8 +12,8 @@
 	"dependencies": {
 		"react": "^18.2.0",
 		"react-dom": "^18.2.0",
-		"@peerbit/stream": "*",
-		"libp2p": "^1.8.2"
+		"@peerbit/shared-log": "*",
+		"peerbit": "*"
 	},
 	"devDependencies": {
 		"@types/react": "^18.2.12",

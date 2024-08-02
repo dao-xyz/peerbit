@@ -83,4 +83,65 @@ test.describe("stream", () => {
 		expect(Number(byteCounterA1)).toBeLessThan(Number(byteCounterA2));
 		expect(Number(byteCounterB1)).toBeLessThan(Number(byteCounterB2));
 	});
+
+	test("can transmit with webrtc after restarting", async ({
+		page,
+		browser,
+	}) => {
+		const relayAddres = relay.getMultiaddrs()[0].toString();
+		await page.goto(
+			"http://localhost:5211/?relay=" + encodeURIComponent(relayAddres),
+		);
+
+		const peerIdLocator = await page.getByTestId("peer-id");
+
+		const anotherPage = await browser.newPage();
+		await anotherPage.goto(
+			"http://localhost:5211/?relay=" +
+				encodeURIComponent(
+					relayAddres +
+						"/p2p-circuit/webrtc/p2p/" +
+						(await peerIdLocator.textContent()),
+				),
+		);
+
+		await waitForResolved(async () => {
+			const counter = await page.getByTestId("peer-counter");
+			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
+		});
+
+		await waitForResolved(async () => {
+			const counter = await anotherPage.getByTestId("peer-counter");
+			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
+		});
+
+		// reload one page to simulate a restart
+		await anotherPage.reload();
+
+		await waitForResolved(async () => {
+			const counter = await anotherPage.getByTestId("peer-counter");
+			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
+		});
+
+		await waitForResolved(async () => {
+			const counter = await page.getByTestId("peer-counter");
+			await expect(counter).toHaveText(String(2), { timeout: 15e3 });
+		});
+
+		// Shut down the relay to make sure traffic works over webrtc
+		await relay.stop();
+
+		const byteCounterA = page.getByTestId("received-data");
+		const byteCounterB = page.getByTestId("received-data");
+
+		const byteCounterA1 = await byteCounterA.textContent();
+		const byteCounterB1 = await byteCounterB.textContent();
+		await delay(3000);
+
+		const byteCounterA2 = await byteCounterA.textContent();
+		const byteCounterB2 = await byteCounterB.textContent();
+
+		expect(Number(byteCounterA1)).toBeLessThan(Number(byteCounterA2));
+		expect(Number(byteCounterB1)).toBeLessThan(Number(byteCounterB2));
+	});
 });

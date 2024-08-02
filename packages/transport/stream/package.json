@@ -77,7 +77,6 @@
 	],
 	"devDependencies": {
 		"@peerbit/libp2p-test-utils": "2.1.4",
-		"@types/yallist": "^4.0.4",
 		"@types/fast-fifo": "^1.0.2"
 	},
 	"dependencies": {
@@ -89,8 +88,7 @@
 		"@peerbit/stream-interface": "^5.0.3",
 		"@peerbit/time": "^2.0.7",
 		"@peerbit/logger": "^1.0.3",
-		"libp2p": "^1.8.1",
-		"yallist": "^4.0.0",
+		"libp2p": "^1.8.2",
 		"abortable-iterator": "^5.0.1"
 	}
 }

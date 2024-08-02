@@ -1,5 +1,5 @@
 diff --git a/node_modules/cpy/index.js b/node_modules/cpy/index.js
-index 0c67c66..342a51e 100644
+index bcfc09c..f2eeb0a 100644
 --- a/node_modules/cpy/index.js
 +++ b/node_modules/cpy/index.js
 @@ -3,9 +3,9 @@ import EventEmitter from 'node:events';
@@ -27,8 +27,8 @@ index 0c67c66..342a51e 100644
  export default function cpy(
  	source,
  	destination,
--	{concurrency = os.availableParallelism(), ...options} = {},
-+	{ concurrency = os.availableParallelism?.() || os.cpus().length, ...options } = {},
+-	{concurrency = os.availableParallelism(), ...options} = {}, // eslint-disable-line n/no-unsupported-features/node-builtins
++	{ concurrency = os.availableParallelism?.() || os.cpus().length, ...options } = {}, // eslint-disable-line n/no-unsupported-features/node-builtins
  ) {
  	const copyStatus = new Map();
  

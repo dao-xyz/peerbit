@@ -78,7 +78,7 @@
 		"postinstall": "mkdir -p node_modules/chai-extend && cp chai-global.js node_modules/chai-extend/chai-global.js && echo '{\"type\": \"module\"}' > node_modules/chai-extend/package.json && patch-package"
 	},
 	"devDependencies": {
-		"@playwright/test": "^1.45.2",
+		"@playwright/test": "^1.45.3",
 		"@types/benchmark": "^2.1.5",
 		"@types/mocha": "^10.0.7",
 		"@types/node": "^20.14.11",

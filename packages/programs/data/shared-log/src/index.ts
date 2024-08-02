@@ -1326,8 +1326,6 @@ export class SharedLog<T = Uint8Array> extends Program<
 							}
 						}
 						addedOnce && (await this.distribute());
-
-						/* await this._modifyReplicators(msg.role, context.from!); */
 					})
 					.catch((e) => {
 						if (e instanceof AbortError) {
@@ -1625,7 +1623,18 @@ export class SharedLog<T = Uint8Array> extends Program<
 		);
 	}
 
+	queue: PQueue;
 	async handleSubscriptionChange(
+		publicKey: PublicSignKey,
+		topics: string[],
+		subscribed: boolean,
+	) {
+		return (this.queue || (this.queue = new PQueue({ concurrency: 1 }))).add(
+			() => this._handleSubscriptionChange(publicKey, topics, subscribed),
+		);
+	}
+
+	async _handleSubscriptionChange(
 		publicKey: PublicSignKey,
 		topics: string[],
 		subscribed: boolean,
@@ -1962,7 +1971,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
-		logger.debug(
+		console.log(
 			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
 				evt.detail.unsubscriptions.map((x) => x),
 			)}'`,
@@ -1983,7 +1992,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
-		logger.debug(
+		console.log(
 			`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
 				evt.detail.subscriptions.map((x) => x),
 			)}'`,

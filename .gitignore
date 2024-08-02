@@ -20,3 +20,4 @@ coverage
 /test-results/
 /playwright-report/
 /playwright/.cache/
+**/public/peerbit/**
