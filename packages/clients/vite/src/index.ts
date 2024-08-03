@@ -34,19 +34,7 @@ function copyToPublicPlugin(
 				options.assets.forEach(({ src, dest }) => {
 					const sourcePath = path.resolve(src);
 
-					// if public folder exist, then put files there (react)
-					// else put in static folder if (svelte)
-					// else throw error
-					let destinationPath: string;
-					const publicPath = path.resolve(process.cwd(), "public");
-					const staticPath = path.resolve(process.cwd(), "static");
-					if (fs.existsSync(publicPath)) {
-						destinationPath = path.resolve(publicPath, dest);
-					} else if (fs.existsSync(staticPath)) {
-						destinationPath = path.resolve(staticPath, dest);
-					} else {
-						throw new Error("Could not find public or static folder");
-					}
+					let destinationPath = path.resolve(resolveStaticPath(), dest);
 					copyAssets(sourcePath, destinationPath, "/");
 				});
 			}
@@ -54,6 +42,21 @@ function copyToPublicPlugin(
 	};
 }
 
+const resolveStaticPath = () => {
+	// if public folder exist, then put files there (react)
+	// else put in static folder if (svelte)
+	// else throw error
+
+	const publicPath = path.resolve(process.cwd(), "public");
+	const staticPath = path.resolve(process.cwd(), "static");
+	if (fs.existsSync(publicPath)) {
+		return publicPath;
+	} else if (fs.existsSync(staticPath)) {
+		return staticPath;
+	} else {
+		throw new Error("Could not find public or static folder");
+	}
+}
 const findLibraryInNodeModules = (library: string) => {
 	// scan upwards until we find the node_modules folder
 	let maxSearchDepth = 10;
@@ -107,7 +110,7 @@ export default (
 		viteStaticCopy({
 			targets: [
 				{
-					src: "public/peerbit/sqlite3.wasm",
+					src: `${resolveStaticPath()}/peerbit/sqlite3.wasm`,
 					dest: "node_modules/.vite/deps",
 				},
 			],
