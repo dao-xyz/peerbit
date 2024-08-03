@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.3...vite-v1.0.4) (2024-08-03)
+
+
+### Bug Fixes
+
+* resolve correct public path for static asset copy ([2d408db](https://github.com/dao-xyz/peerbit/commit/2d408db7b1554aab2a148830178748530c6faf4f))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.2...vite-v1.0.3) (2024-08-02)
 
 
