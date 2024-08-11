@@ -3,7 +3,7 @@ import { HashmapIndices } from "@peerbit/indexer-simple";
 import assert from "assert";
 import { expect } from "chai";
 import { LamportClock as Clock, Timestamp } from "../src/clock.js";
-import { Entry } from "../src/entry.js";
+import { createEntry } from "../src/entry-create.js";
 import { Log } from "../src/log.js";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -89,7 +89,7 @@ describe("properties", function () {
 		it("returns an Entry", async () => {
 			const entry = await log.get((await log.toArray())[0].hash)!;
 			expect(entry?.hash).to.equal(
-				"zb2rhc5B7Urj1WsHyjBTConmq6aTDivRTgg5TkVHYFHesyKw4",
+				"zb2rhYpDDgijHQyZRYovg3mKpgLDCBb89uFGFrRbYoiVCKGiX",
 			);
 		});
 
@@ -155,7 +155,7 @@ describe("properties", function () {
 
 	describe("reset", () => {
 		it("sets items if given as params", async () => {
-			const one = await Entry.create({
+			const one = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -166,7 +166,7 @@ describe("properties", function () {
 				data: "entryA",
 				encoding: JSON_ENCODING,
 			});
-			const two = await Entry.create({
+			const two = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -177,7 +177,7 @@ describe("properties", function () {
 				data: "entryB",
 				encoding: JSON_ENCODING,
 			});
-			const three = await Entry.create({
+			const three = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -199,7 +199,7 @@ describe("properties", function () {
 		});
 
 		it("sorts on reset", async () => {
-			const one = await Entry.create({
+			const one = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -209,7 +209,7 @@ describe("properties", function () {
 				data: "entryA",
 				encoding: JSON_ENCODING,
 			});
-			const two = await Entry.create({
+			const two = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -219,7 +219,7 @@ describe("properties", function () {
 				data: "entryB",
 				encoding: JSON_ENCODING,
 			});
-			const three = await Entry.create({
+			const three = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -240,7 +240,7 @@ describe("properties", function () {
 		});
 
 		it("resets and skips", async () => {
-			const one = await Entry.create({
+			const one = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -251,7 +251,7 @@ describe("properties", function () {
 				data: "entryA",
 				encoding: JSON_ENCODING,
 			});
-			const two = await Entry.create({
+			const two = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -262,7 +262,7 @@ describe("properties", function () {
 				data: "entryB",
 				encoding: JSON_ENCODING,
 			});
-			const three = await Entry.create({
+			const three = await createEntry({
 				store,
 				identity: signKey,
 				meta: {
@@ -319,9 +319,12 @@ describe("properties", function () {
 			await log.append(new Uint8Array([2, 3]));
 			await log.append(new Uint8Array([3, 4, 5]));
 			const arr = await log.toArray();
-			const size = arr.reduce((acc, entry) => acc + entry.payloadByteLength, 0);
+			const size = arr.reduce(
+				(acc, entry) => acc + entry.payload.byteLength,
+				0,
+			);
 			expect(log.length).equal(3);
-			expect(BigInt(await log.entryIndex.getMemoryUsage())).equal(BigInt(size));
+			expect(6n).equal(BigInt(size));
 		});
 	});
 

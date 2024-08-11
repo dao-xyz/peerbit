@@ -10,6 +10,7 @@ import { delay } from "@peerbit/time";
 import assert from "assert";
 import { expect } from "chai";
 import { compare } from "uint8arrays";
+import { createEntry } from "../src/entry-create.js";
 import { Entry } from "../src/entry.js";
 import { FirstWriteWins } from "../src/log-sorting.js";
 import { Log } from "../src/log.js";
@@ -323,21 +324,21 @@ describe("from", function () {
 				const prev1 = last(items1);
 				const prev2 = last(items2);
 				const prev3 = last(items3);
-				const n1 = await Entry.create({
+				const n1 = await createEntry({
 					store,
 					identity: log1.identity,
 					gidSeed: Buffer.from("X"),
 					data: "entryA" + i,
 					next: prev1 ? [prev1] : undefined,
 				});
-				const n2 = await Entry.create({
+				const n2 = await createEntry({
 					store,
 					identity: log2.identity,
 					gidSeed: Buffer.from("X"),
 					data: "entryB" + i,
 					next: prev2 ? [prev2, n1] : [n1],
 				});
-				const n3 = await Entry.create({
+				const n3 = await createEntry({
 					store,
 					identity: log3.identity,
 					gidSeed: Buffer.from("X"),
@@ -377,7 +378,7 @@ describe("from", function () {
 				const prev1 = last(items1);
 				const prev2 = last(items2);
 				const prev3 = last(items3);
-				const n1 = await Entry.create({
+				const n1 = await createEntry({
 					store,
 					identity: log1.identity,
 					meta: {
@@ -386,13 +387,13 @@ describe("from", function () {
 					},
 					data: new Uint8Array([0, i]),
 				});
-				const n2 = await Entry.create({
+				const n2 = await createEntry({
 					store,
 					identity: log2.identity,
 					meta: { gidSeed: Buffer.from("X"), next: prev2 ? [prev2, n1] : [n1] },
 					data: new Uint8Array([1, i]),
 				});
-				const n3 = await Entry.create({
+				const n3 = await createEntry({
 					store,
 					identity: log3.identity,
 					meta: {
@@ -429,7 +430,7 @@ describe("from", function () {
 				const prev1 = last(items1);
 				const prev2 = last(items2);
 				const prev3 = last(items3);
-				const n1 = await Entry.create({
+				const n1 = await createEntry({
 					store,
 					identity: log1.identity,
 					meta: {
@@ -438,13 +439,13 @@ describe("from", function () {
 					},
 					data: new Uint8Array([0, i]),
 				});
-				const n2 = await Entry.create({
+				const n2 = await createEntry({
 					store,
 					identity: log2.identity,
 					meta: { gidSeed: Buffer.from("X"), next: prev2 ? [prev2, n1] : [n1] },
 					data: new Uint8Array([1, i]),
 				});
-				const n3 = await Entry.create({
+				const n3 = await createEntry({
 					store,
 					identity: log3.identity,
 					meta: {
@@ -480,7 +481,7 @@ describe("from", function () {
 				/*        log1.tickClock()
 			 log2.tickClock()
 			 log3.tickClock() */
-				const n1 = await Entry.create({
+				const n1 = await createEntry({
 					store,
 					identity: log1.identity,
 					meta: {
@@ -494,7 +495,7 @@ describe("from", function () {
 					data: "entryA" + i,
 					encoding: JSON_ENCODING,
 				});
-				const n2 = await Entry.create({
+				const n2 = await createEntry({
 					store,
 					identity: log2.identity,
 					meta: {
@@ -508,7 +509,7 @@ describe("from", function () {
 					data: "entryB" + i,
 					encoding: JSON_ENCODING,
 				});
-				const n3 = await Entry.create({
+				const n3 = await createEntry({
 					store,
 					identity: log3.identity,
 					meta: {
@@ -1143,7 +1144,7 @@ describe("from", function () {
 					const prev1 = last(items1);
 					const prev2 = last(items2);
 					const prev3 = last(items3);
-					const n1 = await Entry.create({
+					const n1 = await createEntry({
 						store,
 						identity: log1.identity,
 						meta: {
@@ -1156,7 +1157,7 @@ describe("from", function () {
 						},
 						data: new Uint8Array([0, i]),
 					});
-					const n2 = await Entry.create({
+					const n2 = await createEntry({
 						store,
 						identity: log2.identity,
 						meta: {
@@ -1169,7 +1170,7 @@ describe("from", function () {
 						},
 						data: new Uint8Array([1, i]),
 					});
-					const n3 = await Entry.create({
+					const n3 = await createEntry({
 						store,
 						identity: log3.identity,
 						meta: {

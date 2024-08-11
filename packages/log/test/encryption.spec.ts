@@ -6,6 +6,7 @@ import { create } from "@peerbit/indexer-sqlite3";
 import { DefaultKeychain } from "@peerbit/keychain";
 import { expect } from "chai";
 import path from "path";
+import type { EntryV0 } from "../src/entry-v0.js";
 import { Log } from "../src/log.js";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -81,7 +82,7 @@ describe("encryption", function () {
 			});
 
 			// Remove decrypted caches of the log2 values
-			(await log2.toArray()).forEach((value) => {
+			((await log2.toArray()) as EntryV0<any>[]).forEach((value) => {
 				value._meta.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());
@@ -144,7 +145,7 @@ describe("encryption", function () {
 			});
 
 			// Remove decrypted caches of the log2 values
-			(await log2.toArray()).forEach((value) => {
+			((await log2.toArray()) as EntryV0<any>[]).forEach((value) => {
 				value._meta.clear();
 				value._payload.clear();
 				value._signatures!.signatures.forEach((signature) => signature.clear());

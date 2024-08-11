@@ -1,7 +1,7 @@
 import { AnyBlockStore } from "@peerbit/blocks";
 import { expect } from "chai";
-import { Log } from "../src/log.js";
-import { signKey } from "./fixtures/privateKey.js";
+import { Log } from "../src";
+import { signKey } from "./fixtures/privateKey";
 
 describe("get-pow-2-refs", function () {
 	let store: AnyBlockStore;
@@ -13,7 +13,6 @@ describe("get-pow-2-refs", function () {
 	after(async () => {
 		await store.stop();
 	});
-
 	describe("Single log", () => {
 		let log1: Log<Uint8Array>;
 
@@ -76,17 +75,17 @@ describe("get-pow-2-refs", function () {
 			expect(heads).to.have.length(1);
 			const refs = await log1.getReferenceSamples(heads[0], {
 				pointerCount: Number.MAX_SAFE_INTEGER,
-				memoryLimit: 100,
+				memoryLimit: 5,
 			});
 			const sum = refs
-				.map((r) => r._payload.byteLength)
+				.map((r) => r.payload.byteLength)
 				.reduce((sum, current) => {
 					sum = sum || 0;
 					sum += current;
 					return sum;
 				});
-			expect(sum).lessThan(100);
-			expect(sum).greaterThan(40);
+			expect(sum).lessThan(6);
+			expect(sum).greaterThan(4);
 		});
 	});
 

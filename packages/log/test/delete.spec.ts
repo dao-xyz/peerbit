@@ -1,7 +1,8 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { Entry, EntryType } from "../src/entry.js";
+import { EntryType } from "../src/entry-type.js";
+import { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";

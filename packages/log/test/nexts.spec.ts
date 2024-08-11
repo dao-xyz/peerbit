@@ -25,9 +25,9 @@ describe("Log - Nexts", function () {
 			const { entry: e2a } = await log1.append("2a", {
 				meta: { next: await log1.getHeads(true).all() },
 			});
-			expect((await log1.toArray())[0].next?.length).equal(0);
-			expect((await log1.toArray())[1].next).to.deep.equal([e0.hash]);
-			expect((await log1.toArray())[2].next).to.deep.equal([e1.hash]);
+			expect((await log1.toArray())[0].meta.next?.length).equal(0);
+			expect((await log1.toArray())[1].meta.next).to.deep.equal([e0.hash]);
+			expect((await log1.toArray())[2].meta.next).to.deep.equal([e1.hash]);
 			expect((await log1.getHeads().all()).map((h) => h.hash)).to.have.members([
 				e2a.hash,
 			]);
@@ -48,7 +48,7 @@ describe("Log - Nexts", function () {
 			const { entry: e2ForkAt0 } = await log1.append("2c", {
 				meta: { next: [e0] },
 			});
-			expect((await log1.toArray())[4].next).to.deep.equal([e0.hash]);
+			expect((await log1.toArray())[4].meta.next).to.deep.equal([e0.hash]);
 			expect((await log1.getHeads().all()).map((h) => h.hash)).to.have.members([
 				e2a.hash,
 				e2ForkAtRoot.hash,
@@ -59,7 +59,7 @@ describe("Log - Nexts", function () {
 			const { entry: e2ForkAt1 } = await log1.append("2d", {
 				meta: { next: [e1] },
 			});
-			expect((await log1.toArray())[5].next).to.deep.equal([e1.hash]);
+			expect((await log1.toArray())[5].meta.next).to.deep.equal([e1.hash]);
 			expect((await log1.getHeads().all()).map((h) => h.hash)).to.have.members([
 				e2a.hash,
 				e2ForkAtRoot.hash,

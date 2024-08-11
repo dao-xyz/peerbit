@@ -2,7 +2,8 @@ import { Cache } from "@peerbit/cache";
 import { SumRequest } from "@peerbit/indexer-interface";
 import PQueue from "p-queue";
 import type { EntryIndex } from "./entry-index.js";
-import type { Entry, ShallowEntry } from "./entry.js";
+import type { ShallowEntry } from "./entry-shallow.js";
+import type { Entry } from "./entry.js";
 import type { SortFn } from "./log-sorting.js";
 
 const trimOptionsEqual = (a: TrimOptions, b: TrimOptions) => {

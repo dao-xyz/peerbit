@@ -25,19 +25,15 @@ import {
 	type ResultsIterator,
 	type ReturnTypeFromResolveOptions,
 } from "./entry-index.js";
+import { ShallowEntry } from "./entry-shallow.js";
+import { EntryType } from "./entry-type.js";
+import { type EncryptionTemplateMaybeEncrypted, EntryV0 } from "./entry-v0.js";
 import { type EntryWithRefs } from "./entry-with-refs.js";
-import {
-	type CanAppend,
-	type EncryptionTemplateMaybeEncrypted,
-	Entry,
-	EntryType,
-	Payload,
-	ShallowEntry,
-	type ShallowOrFullEntry,
-} from "./entry.js";
+import { type CanAppend, Entry, type ShallowOrFullEntry } from "./entry.js";
 import { findUniques } from "./find-uniques.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
+import type { Payload } from "./payload.js";
 import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
@@ -370,78 +366,10 @@ export class Log<T> {
 	 * Get a entry with shallow representation
 	 * @param {string} [hash] The hashes of the entry
 	 */
-	async getShallow(
-		hash: string,
-		options?: { timeout?: number },
-	): Promise<ShallowEntry | undefined> {
+	async getShallow(hash: string): Promise<ShallowEntry | undefined> {
 		return (await this._entryIndex.getShallow(hash))?.value;
 	}
 
-	/* 
-		async traverse(
-			rootEntries: Entry<T>[],
-			amount = -1,
-			endHash?: string
-		): Promise<{ [key: string]: Entry<T> }> {
-			// Sort the given given root entries and use as the starting stack
-			let stack: Entry<T>[] = rootEntries.sort(this._sortFn).reverse();
-	
-			// Cache for checking if we've processed an entry already
-			let traversed: { [key: string]: boolean } = {};
-			// End result
-			const result: { [key: string]: Entry<T> } = {};
-			let count = 0;
-			// Named function for getting an entry from the log
-			const getEntry = (e: string) => this.get(e);
-	
-			// Add an entry to the stack and traversed nodes index
-			const addToStack = (entry: Entry<T>) => {
-				// If we've already processed the Entry<T>, don't add it to the stack
-				if (!entry || traversed[entry.hash]) {
-					return;
-				}
-	
-				// Add the entry in front of the stack and sort
-				stack = [entry, ...stack].sort(this._sortFn).reverse();
-				// Add to the cache of processed entries
-				traversed[entry.hash] = true;
-			};
-	
-			const addEntry = (rootEntry: Entry<T>) => {
-				result[rootEntry.hash] = rootEntry;
-				traversed[rootEntry.hash] = true;
-				count++;
-			};
-	
-			// Start traversal
-			// Process stack until it's empty (traversed the full log)
-			// or when we have the requested amount of entries
-			// If requested entry amount is -1, traverse all
-			while (stack.length > 0 && (count < amount || amount < 0)) {
-				// eslint-disable-line no-unmodified-loop-condition
-				// Get the next element from the stack
-				const entry = stack.shift();
-				if (!entry) {
-					throw new Error("Unexpected");
-				}
-				// Add to the result
-				addEntry(entry);
-				// If it is the specified end hash, break out of the while loop
-				if (endHash && endHash === entry.hash) break;
-	
-				// Add entry's next references to the stack
-				const entries = (await Promise.all(entry.next.map(getEntry))).filter(
-					(x) => !!x
-				) as Entry<any>[];
-				entries.forEach(addToStack);
-			}
-	
-			stack = [];
-			traversed = {};
-			// End result
-			return result;
-		}
-	 */
 	async getReferenceSamples(
 		from: Entry<T>,
 		options?: { pointerCount?: number; memoryLimit?: number },
@@ -454,9 +382,9 @@ export class Log<T> {
 			return [];
 		}
 		hashes.add(from.hash);
-		let memoryCounter = from._payload.byteLength;
-		if (from.next?.length > 0 && pointerCount >= 2) {
-			let next = new Set(from.next);
+		let memoryCounter = from.payload.byteLength;
+		if (from.meta.next?.length > 0 && pointerCount >= 2) {
+			let next = new Set(from.meta.next);
 			let prev = 2;
 			outer: for (let i = 2; i <= maxDistance - 1; i *= 2) {
 				for (let j = prev; j < i; j++) {
@@ -466,13 +394,14 @@ export class Log<T> {
 					const nextNext = new Set<string>();
 					for (const n of next) {
 						const nentry = await this.get(n);
-						nentry?.next.forEach((n2) => {
-							nextNext.add(n2);
-						});
+						if (nentry) {
+							for (const n2 of nentry.meta.next) {
+								nextNext.add(n2);
+							}
+						}
 					}
 					next = nextNext;
 				}
-
 				prev = i;
 				if (next) {
 					for (const n of next) {
@@ -483,7 +412,7 @@ export class Log<T> {
 							if (!entry) {
 								break outer;
 							}
-							memoryCounter += entry._payload.byteLength;
+							memoryCounter += entry.payload.byteLength;
 							if (memoryCounter > memoryLimit) {
 								break outer;
 							}
@@ -541,7 +470,7 @@ export class Log<T> {
 			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
-		const entry = await Entry.create<T>({
+		const entry = await EntryV0.create<T>({
 			store: this._storage,
 			identity: options.identity || this._identity,
 			signers: options.signers,
@@ -821,7 +750,7 @@ export class Log<T> {
 		}
 
 		const headsWithGid: JoinableEntry[] = await this.entryIndex
-			.getHeads(entry.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
+			.getHeads(entry.meta.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
 			.all();
 		if (headsWithGid) {
 			for (const v of headsWithGid) {
@@ -838,7 +767,7 @@ export class Log<T> {
 		}
 
 		if (entry.meta.type !== EntryType.CUT) {
-			for (const a of entry.next) {
+			for (const a of entry.meta.next) {
 				if (!(await this.has(a))) {
 					const nested =
 						options.references?.get(a) ||
@@ -1111,7 +1040,7 @@ export class Log<T> {
 			entry: Entry<any>,
 		) => {
 			const addToResult = (e: string) => (res[e] = entry.hash);
-			entry.next.forEach(addToResult);
+			entry.meta.next.forEach(addToResult);
 			return res;
 		};
 
@@ -1133,7 +1062,7 @@ export class Log<T> {
 		let nexts: string[] = [];
 
 		const addToIndex = (e: Entry<T>) => {
-			if (e.next.length === 0) {
+			if (e.meta.next.length === 0) {
 				nullIndex.push(e);
 			}
 			const addToReverseIndex = (a: any) => {
@@ -1143,9 +1072,9 @@ export class Log<T> {
 			};
 
 			// Add all entries and their parents to the reverse index
-			e.next.forEach(addToReverseIndex);
+			e.meta.next.forEach(addToReverseIndex);
 			// Get all next references
-			nexts = nexts.concat(e.next);
+			nexts = nexts.concat(e.meta.next);
 			// Get the hashes of input entries
 			hashes[e.hash] = true;
 		};
@@ -1189,7 +1118,7 @@ export class Log<T> {
 					res.splice(0, 0, e);
 				}
 			};
-			entry.next.reverse().forEach(addToResult);
+			entry.meta.next.reverse().forEach(addToResult);
 			return res;
 		};
 

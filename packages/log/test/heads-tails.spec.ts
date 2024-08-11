@@ -232,7 +232,7 @@ describe("head-tails", function () {
 				expect(log1Events.gidsRemoved).to.have.length(1);
 				expect(log1Events.gidsRemoved[0]).to.have.length(1);
 				expect(log1Events.gidsRemoved[0][0]).equal(
-					ab1.gid === a1.gid ? b1.gid : a1.gid,
+					ab1.meta.gid === a1.meta.gid ? b1.meta.gid : a1.meta.gid,
 				); // if ab1 has gid a then b will be shadowed
 			});
 
@@ -272,7 +272,7 @@ describe("head-tails", function () {
 				});
 
 				// this test only makes sense to do, we try to make b1 gid "removable", i.e. by using a1 gid instead for a2
-				expect(a2.entry.gid).equal(a1.gid);
+				expect(a2.entry.meta.gid).equal(a1.meta.gid);
 
 				// but b1 gid is used by b2, so now removals are done
 				expect(log1Events.gidsRemoved).to.be.empty;
