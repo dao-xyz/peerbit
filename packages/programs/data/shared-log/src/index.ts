@@ -96,10 +96,10 @@ const groupByGid = async <
 	const groupByGid: Map<string, T[]> = new Map();
 	for (const head of entries) {
 		const gid = await (head instanceof Entry
-			? head.getGid()
+			? (await head.getMeta()).gid
 			: head instanceof ShallowEntry
 				? head.meta.gid
-				: head.entry.getGid());
+				: (await head.entry.getMeta()).gid);
 		let value = groupByGid.get(gid);
 		if (!value) {
 			value = [];
@@ -1105,7 +1105,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 								logger.debug(
 									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
-										entry.entry.gid
+										entry.entry.meta.gid
 									}. Because not leader`,
 								);
 							}
@@ -1619,7 +1619,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		},
 	) {
 		return this.isLeader(
-			entry.gid,
+			entry.meta.gid,
 			decodeReplicas(entry).getValue(this),
 			options,
 		);

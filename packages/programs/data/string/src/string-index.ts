@@ -52,7 +52,7 @@ export const applyOperations = async (
 	string: string,
 	operations: Entry<StringOperation>[],
 ): Promise<string> => {
-	await Promise.all(operations.map((operation) => operation.getPayload()));
+	await Promise.all(operations.map((operation) => operation.getPayloadValue()));
 
 	operations.reduce((handled: string[], item: Entry<StringOperation>, _) => {
 		if (!handled.includes(item.hash)) {

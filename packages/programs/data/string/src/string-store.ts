@@ -124,10 +124,10 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 		operation: StringOperation,
 		context: TransactionContext,
 	): Promise<boolean> {
-		if (this._log.log.length === 0 || context.entry.next.length === 0) {
+		if (this._log.log.length === 0 || context.entry.meta.next.length === 0) {
 			return true;
 		} else {
-			for (const next of context.entry.next) {
+			for (const next of context.entry.meta.next) {
 				if (await this._log.log.has(next)) {
 					return true;
 				}

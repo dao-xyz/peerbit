@@ -89,9 +89,6 @@ export class ClockService extends Program<Args> {
 							if (entry.hash) {
 								logger.warn("Recieved entry with hash, unexpected");
 							}
-
-							entry._signatures = undefined; // because we dont want to sign signatures
-
 							const now = this._hlc.now().wallTime;
 							const cmp = (await entry.getClock()).timestamp.wallTime;
 							if (abs(now - cmp) > this.maxError) {
