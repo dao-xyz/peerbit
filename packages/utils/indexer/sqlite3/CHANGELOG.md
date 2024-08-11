@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.0.2...indexer-sqlite3-v1.0.3) (2024-08-11)
+
+
+### Bug Fixes
+
+* support polymorphism at root level ([99834e5](https://github.com/dao-xyz/peerbit/commit/99834e501009cb22455bba663f6d42b9a28b018e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.0.0 to ^1.0.1
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.0.1...indexer-sqlite3-v1.0.2) (2024-07-21)
 
 

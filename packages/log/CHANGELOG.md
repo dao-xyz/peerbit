@@ -368,6 +368,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.5](https://github.com/dao-xyz/peerbit/compare/log-v4.0.4...log-v4.0.5) (2024-08-11)
+
+
+### Bug Fixes
+
+* support migration for log entry formats ([330eb55](https://github.com/dao-xyz/peerbit/commit/330eb559b8afd13d3162ede22fc3f1bafe6cc807))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-simple bumped from ^1.0.0 to ^1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.38 to 2.0.39
+
 ## [4.0.4](https://github.com/dao-xyz/peerbit/compare/log-v4.0.3...log-v4.0.4) (2024-07-31)
 
 
