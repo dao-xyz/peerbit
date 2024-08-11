@@ -75,9 +75,7 @@ describe("encryption", () => {
 			const entry = (await store2.log.log.toArray())[0];
 
 			// use .getPayload() instead of .payload to decrypt the payload
-			expect((await entry.getPayload()).getValue()).to.deep.equal(
-				new Uint8Array([1]),
-			);
+			expect(await entry.getPayloadValue()).to.deep.equal(new Uint8Array([1]));
 		});
 	});
 

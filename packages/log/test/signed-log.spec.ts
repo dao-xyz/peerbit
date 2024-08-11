@@ -1,6 +1,5 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { expect } from "chai";
-import type { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
 import { signKey, signKey2 } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -109,8 +108,12 @@ describe("signature", function () {
 		try {
 			await log1.append(new Uint8Array([1]));
 			await log2.append(new Uint8Array([2]));
-			let entry: Entry<Uint8Array> = (await log2.toArray())[0];
-			entry._signatures = (await log1.toArray())[0]._signatures;
+			const log2ToArray = log2.toArray.bind(log2);
+			log2.toArray = async () => {
+				const entries = await log2ToArray();
+				entries[0].signatures[0].signature = new Uint8Array(64);
+				return entries;
+			};
 			await log1.join(log2, { verifySignatures: true });
 		} catch (e: any) {
 			err = e.toString();

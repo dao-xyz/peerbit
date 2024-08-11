@@ -5,7 +5,9 @@ import assert from "assert";
 import { expect } from "chai";
 import { log } from "console";
 import { compare } from "uint8arrays";
-import { Entry, EntryType } from "../src/entry.js";
+import { createEntry } from "../src/entry-create.js";
+import { EntryType } from "../src/entry-type.js";
+import { Entry } from "../src/entry.js";
 import { Log } from "../src/log.js";
 
 const last = (arr: any[]) => {
@@ -83,7 +85,7 @@ describe("join", function () {
 				const prev1 = last(items1);
 				const prev2 = last(items2);
 				const prev3 = last(items3);
-				const n1 = await Entry.create({
+				const n1 = await createEntry({
 					store: session.peers[0].services.blocks,
 					identity: {
 						...signKey,
@@ -95,7 +97,7 @@ describe("join", function () {
 					},
 					data: new Uint8Array([0, i]),
 				});
-				const n2 = await Entry.create({
+				const n2 = await createEntry({
 					store: session.peers[0].services.blocks,
 					identity: {
 						...signKey2,
@@ -106,7 +108,7 @@ describe("join", function () {
 					},
 					data: new Uint8Array([1, i]),
 				});
-				const n3 = await Entry.create({
+				const n3 = await createEntry({
 					store: session.peers[1].services.blocks,
 					identity: {
 						...signKey3,
@@ -267,7 +269,7 @@ describe("join", function () {
 
 			it("concurrent append after cut", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
-				const b1 = await Entry.create({
+				const b1 = await createEntry({
 					data: new Uint8Array([1, 0]),
 					meta: {
 						type: EntryType.CUT,
@@ -277,7 +279,7 @@ describe("join", function () {
 					store: log1.blocks,
 				});
 
-				const b2 = await Entry.create({
+				const b2 = await createEntry({
 					data: new Uint8Array([1, 1]),
 					meta: {
 						type: EntryType.APPEND,
@@ -302,7 +304,7 @@ describe("join", function () {
 			it("concurrent append before cut", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 
-				const b2 = await Entry.create({
+				const b2 = await createEntry({
 					data: new Uint8Array([1, 1]),
 					meta: {
 						type: EntryType.APPEND,
@@ -312,7 +314,7 @@ describe("join", function () {
 					store: log1.blocks,
 				});
 
-				const b1 = await Entry.create({
+				const b1 = await createEntry({
 					data: new Uint8Array([1, 0]),
 					meta: {
 						type: EntryType.CUT,
@@ -336,7 +338,7 @@ describe("join", function () {
 
 			it("will not reset if joining conflicting (reversed)", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
-				const b1 = await Entry.create({
+				const b1 = await createEntry({
 					data: new Uint8Array([1, 0]),
 					meta: {
 						type: EntryType.APPEND,
@@ -345,7 +347,7 @@ describe("join", function () {
 					identity: log1.identity,
 					store: log1.blocks,
 				});
-				const b2 = await Entry.create({
+				const b2 = await createEntry({
 					data: new Uint8Array([1, 1]),
 					meta: {
 						type: EntryType.CUT,
@@ -703,18 +705,42 @@ describe("join", function () {
 			await log4.join(await log1.getHeads(true).all());
 			await log4.join(await log3.getHeads(true).all());
 			const { entry: d3 } = await log4.append(new Uint8Array([3, 2]));
-			expect(d3.gid).equal([a1.gid, a2.gid, b2.gid, c2.gid, d2.gid].sort()[0]);
+			expect(d3.meta.gid).equal(
+				[
+					a1.meta.gid,
+					a2.meta.gid,
+					b2.meta.gid,
+					c2.meta.gid,
+					d2.meta.gid,
+				].sort()[0],
+			);
 			await log4.append(new Uint8Array([3, 3]));
 			await log1.join(await log4.getHeads(true).all());
 			await log4.join(await log1.getHeads(true).all());
 			const { entry: d5 } = await log4.append(new Uint8Array([3, 4]));
-			expect(d5.gid).equal(
-				[a1.gid, a2.gid, b2.gid, c2.gid, d2.gid, d3.gid, d5.gid].sort()[0],
+			expect(d5.meta.gid).equal(
+				[
+					a1.meta.gid,
+					a2.meta.gid,
+					b2.meta.gid,
+					c2.meta.gid,
+					d2.meta.gid,
+					d3.meta.gid,
+					d5.meta.gid,
+				].sort()[0],
 			);
 
 			const { entry: a5 } = await log1.append(new Uint8Array([0, 4]));
-			expect(a5.gid).equal(
-				[a1.gid, a2.gid, b2.gid, c2.gid, d2.gid, d3.gid, d5.gid].sort()[0],
+			expect(a5.meta.gid).equal(
+				[
+					a1.meta.gid,
+					a2.meta.gid,
+					b2.meta.gid,
+					c2.meta.gid,
+					d2.meta.gid,
+					d3.meta.gid,
+					d5.meta.gid,
+				].sort()[0],
 			);
 
 			await log4.join(await log1.getHeads(true).all());
@@ -972,7 +998,7 @@ describe("join", function () {
 		});
 
 		it("sets size on join", async () => {
-			const n1 = await Entry.create({
+			const n1 = await createEntry({
 				store: session.peers[0].services.blocks,
 				identity: {
 					...signKey,
@@ -983,7 +1009,7 @@ describe("join", function () {
 			n1.size = undefined as any;
 			await log1.join([n1]);
 			const [entry] = await log1.toArray();
-			expect(entry.size).equal(242);
+			expect(entry.size).equal(245);
 		});
 	});
 });

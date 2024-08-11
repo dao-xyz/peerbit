@@ -1,7 +1,7 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { waitFor } from "@peerbit/time";
 import { expect } from "chai";
-import { type ShallowEntry } from "../src/entry.js";
+import type { ShallowEntry } from "../src/entry-shallow.js";
 import { Log } from "../src/log.js";
 import { signKey } from "./fixtures/privateKey.js";
 import { JSON_ENCODING } from "./utils/encoding.js";
@@ -62,7 +62,7 @@ describe("trim", function () {
 			filter: {
 				canTrim: (entry) => {
 					canTrimInvocations += 1;
-					return Promise.resolve(entry.meta.gid !== e1.entry.gid);
+					return Promise.resolve(entry.meta.gid !== e1.entry.meta.gid);
 				},
 			},
 		});
@@ -246,7 +246,7 @@ describe("trim", function () {
 			const e3 = await log.append(new Uint8Array([3]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			const canTrim = (entry: ShallowEntry) => {
 				canTrimInvocations += 1;
-				return Promise.resolve(entry.meta.gid !== e1.entry.gid); // can not trim
+				return Promise.resolve(entry.meta.gid !== e1.entry.meta.gid); // can not trim
 			};
 			const cacheId = () => "";
 			await log.trim({
@@ -286,7 +286,7 @@ describe("trim", function () {
 			const e4 = await log.append(new Uint8Array([4]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 			const canTrim = (entry: ShallowEntry) => {
 				canTrimInvocations += 1;
-				return Promise.resolve(entry.meta.gid !== e1.entry.gid); // can not trim
+				return Promise.resolve(entry.meta.gid !== e1.entry.meta.gid); // can not trim
 			};
 
 			const cacheId = () => "";
@@ -342,9 +342,9 @@ describe("trim", function () {
 			});
 
 			expect(canTrimInvocations).to.deep.equal([
-				e1.entry.gid,
-				e2.entry.gid,
-				e3.entry.gid,
+				e1.entry.meta.gid,
+				e2.entry.meta.gid,
+				e3.entry.meta.gid,
 			]); // checks e1, e2, e3
 			canTrimInvocations = [];
 			await log.trim({
@@ -370,7 +370,10 @@ describe("trim", function () {
 					cacheId,
 				},
 			});
-			expect(canTrimInvocations).to.deep.equal([e3.entry.gid, e4.entry.gid]); // starts at e1 then e2, but ignored because of cache
+			expect(canTrimInvocations).to.deep.equal([
+				e3.entry.meta.gid,
+				e4.entry.meta.gid,
+			]); // starts at e1 then e2, but ignored because of cache
 		});
 
 		it("can first when new entries are added", async () => {
@@ -384,7 +387,7 @@ describe("trim", function () {
 
 			const e1 = await log.append(new Uint8Array([1]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
 
-			trimmableGids.add(e1.entry.gid);
+			trimmableGids.add(e1.entry.meta.gid);
 
 			const cacheId = () => "id";
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
@@ -400,12 +403,12 @@ describe("trim", function () {
 				},
 			});
 
-			expect(canTrimInvocations).to.deep.equal([e1.entry.gid]); // checks e1
+			expect(canTrimInvocations).to.deep.equal([e1.entry.meta.gid]); // checks e1
 			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
 
 			canTrimInvocations = [];
 			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
-			trimmableGids.add(e2.entry.gid);
+			trimmableGids.add(e2.entry.meta.gid);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e2.entry.hash,
 			]);
@@ -418,7 +421,7 @@ describe("trim", function () {
 					cacheId,
 				},
 			});
-			expect(canTrimInvocations).to.deep.equal([e2.entry.gid]); // e1 checked again (?), e2 checked and trimmed
+			expect(canTrimInvocations).to.deep.equal([e2.entry.meta.gid]); // e1 checked again (?), e2 checked and trimmed
 			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
 
 			canTrimInvocations = [];
@@ -426,7 +429,7 @@ describe("trim", function () {
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e3.entry.hash,
 			]);
-			trimmableGids.add(e3.entry.gid);
+			trimmableGids.add(e3.entry.meta.gid);
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -436,7 +439,7 @@ describe("trim", function () {
 					cacheId,
 				},
 			});
-			expect(canTrimInvocations).to.deep.equal([e3.entry.gid]);
+			expect(canTrimInvocations).to.deep.equal([e3.entry.meta.gid]);
 			expect((await log.toArray()).map((x) => x.hash)).to.be.empty;
 		});
 
@@ -460,7 +463,7 @@ describe("trim", function () {
 				},
 			});
 
-			expect(canTrimInvocations).to.deep.equal([e1.entry.gid]); // checks e1
+			expect(canTrimInvocations).to.deep.equal([e1.entry.meta.gid]); // checks e1
 
 			canTrimInvocations = [];
 			const e2 = await log.append(new Uint8Array([2]), { meta: { next: [] } }); // meta: { next: [] } means unique gid
@@ -473,7 +476,10 @@ describe("trim", function () {
 					cacheId,
 				},
 			});
-			expect(canTrimInvocations).to.deep.equal([e1.entry.gid, e2.entry.gid]); // e1 checked again (?), e2 checked and trimmed
+			expect(canTrimInvocations).to.deep.equal([
+				e1.entry.meta.gid,
+				e2.entry.meta.gid,
+			]); // e1 checked again (?), e2 checked and trimmed
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -486,7 +492,7 @@ describe("trim", function () {
 				e2.entry.hash,
 				e3.entry.hash,
 			]);
-			trimmableGids.add(e3.entry.gid);
+			trimmableGids.add(e3.entry.meta.gid);
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -496,7 +502,10 @@ describe("trim", function () {
 					cacheId,
 				},
 			});
-			expect(canTrimInvocations).to.deep.equal([e2.entry.gid, e3.entry.gid]);
+			expect(canTrimInvocations).to.deep.equal([
+				e2.entry.meta.gid,
+				e3.entry.meta.gid,
+			]);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -509,7 +518,7 @@ describe("trim", function () {
 				e2.entry.hash,
 				e4.entry.hash,
 			]);
-			trimmableGids.add(e4.entry.gid);
+			trimmableGids.add(e4.entry.meta.gid);
 			await log.trim({
 				type: "length",
 				from: 0,
@@ -519,7 +528,10 @@ describe("trim", function () {
 					cacheId,
 				},
 			});
-			expect(canTrimInvocations).to.deep.equal([e2.entry.gid, e4.entry.gid]);
+			expect(canTrimInvocations).to.deep.equal([
+				e2.entry.meta.gid,
+				e4.entry.meta.gid,
+			]);
 			expect((await log.toArray()).map((x) => x.hash)).to.deep.equal([
 				e1.entry.hash,
 				e2.entry.hash,
@@ -584,7 +596,7 @@ describe("trim", function () {
 				},
 			});
 
-			trimGid = e1.entry.gid;
+			trimGid = e1.entry.meta.gid;
 			expect(canTrimInvocations).equal(3);
 			expect(log.length).equal(3);
 

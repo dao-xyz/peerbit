@@ -1,7 +1,7 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { expect } from "chai";
-import { EntryType } from "../src/entry.js";
+import { EntryType } from "../src/entry-type.js";
 import { Log } from "../src/log.js";
 
 describe("append", function () {
@@ -47,7 +47,7 @@ describe("append", function () {
 
 		it("added the correct amount of next pointers", async () => {
 			(await log.toArray()).forEach((entry) => {
-				expect(entry.next.length).equal(0);
+				expect(entry.meta.next.length).equal(0);
 			});
 		});
 

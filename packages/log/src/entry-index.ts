@@ -20,12 +20,9 @@ import {
 	iterate,
 	toId,
 } from "@peerbit/indexer-interface";
-import {
-	Entry,
-	EntryType,
-	type ShallowEntry,
-	type ShallowOrFullEntry,
-} from "./entry.js";
+import type { ShallowEntry } from "./entry-shallow.js";
+import { EntryType } from "./entry-type.js";
+import { Entry, type ShallowOrFullEntry } from "./entry.js";
 import type { SortFn } from "./log-sorting.js";
 import { logger } from "./logger.js";
 

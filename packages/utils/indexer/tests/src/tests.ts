@@ -102,6 +102,26 @@ class Document extends Base {
 	}
 }
 
+// variant 1 (next version for migration testing)
+@variant(1)
+class DocumentNext extends Base {
+	@field({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	name: string;
+
+	@field({ type: "string" })
+	anotherField: string;
+
+	constructor(opts: Partial<DocumentNext>) {
+		super();
+		this.id = opts.id || uuid();
+		this.name = opts.name || uuid();
+		this.anotherField = opts.anotherField || uuid();
+	}
+}
+
 const bigIntSort = <T extends number | bigint>(a: T, b: T): number =>
 	a > b ? 1 : 0 || -(a < b);
 
@@ -2309,57 +2329,44 @@ export const tests = (
 					});
 				});
 
-				/* TODO! 
-					describe("polymorph-root", () => {
-						@variant(1)
-						class DocumentNext extends Base {
+				describe("polymorph-root", () => {
+					beforeEach(async () => {
+						await setup({ schema: Base });
+					});
 
-							@field({ type: "string" })
-							id: string;
+					it("can query one of the version", async () => {
+						await store.put(new DocumentNext({ anotherField: "hello" }));
 
-							@field({ type: "string" })
-							name: string;
+						const result = await search(
+							store,
+							new SearchRequest({
+								query: new StringMatch({ key: "anotherField", value: "hello" }),
+							}),
+						);
+						expect(result.results).to.have.length(1);
 
-							@field({ type: "string" })
-							anotherField: string
+						const [doc] = result.results;
+						expect(doc.value).to.be.instanceOf(DocumentNext);
+					});
 
-							constructor(opts: Partial<DocumentNext>) {
-								super()
-								this.id = opts.id || uuid();
-								this.name = opts.name || uuid()
-								this.anotherField = opts.anotherField || uuid()
-							}
+					it("can query multiple versions at once", async () => {
+						let name = uuid();
+						await store.put(new DocumentNext({ name }));
+						await store.put(new DocumentNext({ name }));
+
+						const result = await search(
+							store,
+							new SearchRequest({
+								query: new StringMatch({ key: "name", value: name }),
+							}),
+						);
+
+						expect(result.results).to.have.length(2);
+						for (const doc of result.results) {
+							expect(doc.value).to.be.instanceOf(DocumentNext);
 						}
-
-
-						beforeEach(async () => {
-							await setup({ schema: Base });
-						});
-	
-						it("can query one of the version", async () => {
-	
-							await store.put(new DocumentNext({ anotherField: 'hello' }))
-	
-							const result = await search(store, new SearchRequest({ query: new StringMatch({ key: 'anotherField', value: 'hello' }) }))
-							expect(result.results).to.have.length(1);
-	
-							const [doc] = result.results;
-							expect(doc.value).to.be.instanceOf(DocumentNext)
-						})
-	
-						it("can query multiple versions at once", async () => {
-							let name = uuid()
-							await store.put(new DocumentNext({ name }))
-							await store.put(new DocumentNext({ name }))
-	
-							const result = await search(store, new SearchRequest({ query: new StringMatch({ key: 'name', value: name }) }))
-	
-							expect(result.results).to.have.length(2);
-							for (const doc of result.results) {
-								expect(doc.value).to.be.instanceOf(DocumentNext)
-							}
-						})
-					}) */
+					});
+				});
 			});
 			describe("shape", () => {
 				describe("simple", () => {
@@ -3298,6 +3305,38 @@ export const tests = (
 				typeof sum === "bigint"
 					? expect(sum).to.equal(2n)
 					: expect(sum).to.equal(2);
+			});
+
+			it("nested", async () => {
+				await setup({ schema: Document });
+
+				const doc1 = new Document({
+					id: "1",
+					nested: new NestedValue({ number: 1 }),
+				});
+
+				const doc2 = new Document({
+					id: "2",
+					nested: new NestedValue({ number: 2 }),
+				});
+
+				const doc3 = new Document({
+					id: "3",
+				});
+
+				await store.put(doc1);
+				await store.put(doc2);
+				await store.put(doc3);
+
+				const sum = await store.sum(
+					new SumRequest({
+						key: ["nested", "number"],
+					}),
+				);
+
+				typeof sum === "bigint"
+					? expect(sum).to.equal(3n)
+					: expect(sum).to.equal(3);
 			});
 		});
 

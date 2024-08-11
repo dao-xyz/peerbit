@@ -72,6 +72,13 @@ export const convertToSQLType = (
 const nullAsUndefined = (value: any) => (value === null ? undefined : value);
 export const escapeColumnName = (name: string) => `"${name}"`;
 
+export class MissingFieldError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "MissingFieldError";
+	}
+}
+
 export const convertFromSQLType = (
 	value: boolean | bigint | string | number | Uint8Array,
 	type?: FieldType,
@@ -814,10 +821,22 @@ export const getTablePrefixedField = (
 	`${skipPrefix ? "" : table.name + "#"}${getInlineTableFieldName(table.path.slice(1), key)}`;
 export const getTableNameFromPrefixedField = (prefixedField: string) =>
 	prefixedField.split("#")[0];
+
 export const getInlineTableFieldName = (
 	path: string[] | undefined,
-	key: string,
-) => (path && path.length > 0 ? `${path.join("_")}__${key}` : key);
+	key?: string,
+) => {
+	if (key) {
+		return path && path.length > 0 ? `${path.join("_")}__${key}` : key;
+	} else {
+		// last element in the path is the key, the rest is the path
+		// join key with __ , rest with _
+
+		return path!.length > 2
+			? `${path!.slice(0, -1).join("_")}__${path![path!.length - 1]}`
+			: path!.join("__");
+	}
+};
 
 const matchFieldInShape = (
 	shape: types.Shape | undefined,
@@ -851,13 +870,73 @@ const matchFieldInShape = (
 export const selectChildren = (childrenTable: Table) =>
 	"select * from " + childrenTable.name + " where " + PARENT_TABLE_ID + " = ?";
 
-export const selectAllFields = (
+export const generateSelectQuery = (
+	table: Table,
+	selects: { from: string; as: string }[],
+) => {
+	return `SELECT ${selects.map((x) => `${x.from} as ${x.as}`).join(", ")} FROM ${table.name}`;
+};
+
+export const selectAllFieldsFromTables = (
+	tables: Table[],
+	shape: types.Shape | undefined,
+) => {
+	const selectsPerTable: {
+		selects: {
+			from: string;
+			as: string;
+		}[];
+		joins: Map<string, JoinTable>;
+	}[] = [];
+
+	for (const table of tables) {
+		const { selects, join: joinFromSelect } = selectAllFieldsFromTable(
+			table,
+			shape,
+		);
+		selectsPerTable.push({ selects, joins: joinFromSelect });
+	}
+
+	// pad with empty selects to make sure all selects have the same length
+	/* const maxSelects = Math.max(...selectsPerTable.map(x => x.selects.length)); */
+
+	let newSelects: {
+		from: string;
+		as: string;
+	}[][] = [];
+	for (const [i, selects] of selectsPerTable.entries()) {
+		const newSelect = [];
+		for (const [j, selectsOther] of selectsPerTable.entries()) {
+			if (i !== j) {
+				for (const select of selectsOther.selects) {
+					newSelect.push({ from: "NULL", as: select.as });
+				}
+			} else {
+				selects.selects.forEach((select) => newSelect.push(select));
+			}
+		}
+		newSelects.push(newSelect);
+
+		/* let pad = 0;
+		while (select.selects.length < maxSelects) {
+			select.selects.push({ from: "NULL", as: `'pad#${++pad}'` });
+		} */
+	}
+	// also return table name
+	for (const [i, selects] of selectsPerTable.entries()) {
+		selects.selects = newSelects[i];
+	}
+
+	return selectsPerTable;
+};
+
+export const selectAllFieldsFromTable = (
 	table: Table,
 	shape: types.Shape | undefined,
 ) => {
 	let stack: { table: Table; shape?: types.Shape }[] = [{ table, shape }];
 	let join: Map<string, JoinTable> = new Map();
-	const fieldResolvers: string[] = [];
+	const fieldResolvers: { from: string; as: string }[] = [];
 	for (const tableAndShape of stack) {
 		if (!tableAndShape.table.inline) {
 			for (const field of tableAndShape.table.fields) {
@@ -866,8 +945,10 @@ export const selectAllFields = (
 					!tableAndShape.shape ||
 					matchFieldInShape(tableAndShape.shape, [], field)
 				) {
-					const value = `${tableAndShape.table.name}.${escapeColumnName(field.name)} as '${getTablePrefixedField(tableAndShape.table, field.name)}'`;
-					fieldResolvers.push(value);
+					fieldResolvers.push({
+						from: `${tableAndShape.table.name}.${escapeColumnName(field.name)}`,
+						as: `'${getTablePrefixedField(tableAndShape.table, field.name)}'`,
+					});
 				}
 			}
 		}
@@ -903,7 +984,7 @@ export const selectAllFields = (
 	}
 
 	return {
-		query: `SELECT ${fieldResolvers.join(", ")} FROM ${table.name}`,
+		selects: fieldResolvers, //  `SELECT ${fieldResolvers.join(", ")} FROM ${table.name}`,
 		join,
 	};
 };
@@ -1120,7 +1201,7 @@ export const convertSumRequestToQuery = (
 	tables: Map<string, Table>,
 	table: Table,
 ) => {
-	return `SELECT SUM(${table.name}.${request.key.join(".")}) as sum FROM ${table.name} ${convertRequestToQuery(request, tables, table).query}`;
+	return `SELECT SUM(${table.name}.${getInlineTableFieldName(request.key)}) as sum FROM ${table.name} ${convertRequestToQuery(request, tables, table).query}`;
 };
 
 export const convertCountRequestToQuery = (
@@ -1138,23 +1219,45 @@ export const convertSearchRequestToQuery = (
 	shape: types.Shape | undefined,
 ) => {
 	let unionBuilder = "";
-	let orderByClause: string | undefined = undefined;
-	for (const table of rootTables) {
-		const { query: selectQuery, join: joinFromSelect } = selectAllFields(
-			table,
-			shape,
-		);
-		const { orderBy, query } = convertRequestToQuery(
-			request,
-			tables,
-			table,
-			joinFromSelect,
-		);
-		unionBuilder += `${unionBuilder.length > 0 ? " UNION ALL " : ""} ${selectQuery} ${query}`;
-		orderByClause = orderBy?.length > 0 ? orderBy : orderByClause;
+	let orderByClause: string = "";
+
+	let matchedOnce = false;
+	let lastError: Error | undefined = undefined;
+
+	const selectsPerTable = selectAllFieldsFromTables(rootTables, shape);
+
+	for (const [i, table] of rootTables.entries()) {
+		const { selects, joins: joinFromSelect } = selectsPerTable[i];
+		const selectQuery = generateSelectQuery(table, selects);
+		try {
+			const { orderBy, query } = convertRequestToQuery(
+				request,
+				tables,
+				table,
+				joinFromSelect,
+			);
+			unionBuilder += `${unionBuilder.length > 0 ? " UNION ALL " : ""} ${selectQuery} ${query}`;
+			orderByClause =
+				orderBy?.length > 0
+					? orderByClause.length > 0
+						? orderByClause + ", " + orderBy
+						: orderBy
+					: orderByClause;
+			matchedOnce = true;
+		} catch (error) {
+			if (error instanceof MissingFieldError) {
+				lastError = error;
+				continue;
+			}
+			throw error;
+		}
 	}
 
-	return `${unionBuilder} ${orderByClause ? orderByClause : ""} limit ? offset ?`;
+	if (!matchedOnce) {
+		throw lastError;
+	}
+
+	return `${unionBuilder} ${orderByClause ? "ORDER BY " + orderByClause : ""} limit ? offset ?`;
 };
 
 type SearchQueryParts = { query: string; orderBy: string };
@@ -1197,9 +1300,7 @@ const convertRequestToQuery = <
 
 	if (request instanceof types.SearchRequest) {
 		if (request.sort.length > 0) {
-			if (request.sort.length > 0) {
-				orderByBuilder = "ORDER BY ";
-			}
+			orderByBuilder = "";
 			let once = false;
 			for (const sort of request.sort) {
 				const { foreignTables, queryKey } = resolveTableToQuery(
@@ -1403,10 +1504,7 @@ const resolveTableToQuery = (
 	// this means we need to also check if the key is a field in the current table
 
 	if (searchSelf) {
-		const inlineName = getInlineTableFieldName(
-			path.slice(0, -1),
-			path[path.length - 1],
-		);
+		const inlineName = getInlineTableFieldName(path);
 		let field = table.fields.find((x) => x.name === inlineName);
 		if (field) {
 			return {
@@ -1428,7 +1526,7 @@ const resolveTableToQuery = (
 			const field = schema.fields.find((x) => x.key === key)!;
 			if (!field && currentTable.children.length > 0) {
 				// second arg is needed because of polymorphic fields we might end up here intentially to check what tables to query
-				throw new Error(
+				throw new MissingFieldError(
 					`Property with key "${key}" is not found in the schema ${JSON.stringify(schema.fields.map((x) => x.key))}`,
 				);
 			}
@@ -1482,6 +1580,9 @@ const resolveTableToQuery = (
 	let foreignTables: JoinTable[] = currentTables.filter((x) =>
 		x.table.fields.find((x) => x.key === path[path.length - 1]),
 	);
+	if (foreignTables.length === 0) {
+		throw new MissingFieldError("Failed to find field to join");
+	}
 	let tableToQuery: Table | undefined =
 		foreignTables[foreignTables.length - 1].table;
 	let queryKeyPath = [path[path.length - 1]];
@@ -1494,10 +1595,7 @@ const resolveTableToQuery = (
 
 	let queryKey =
 		queryKeyPath.length > 0
-			? getInlineTableFieldName(
-					queryKeyPath.slice(0, -1),
-					queryKeyPath[queryKeyPath.length - 1],
-				)
+			? getInlineTableFieldName(queryKeyPath)
 			: FOREIGN_VALUE_PROPERTY;
 	return { queryKey, foreignTables };
 };
@@ -1511,10 +1609,7 @@ const convertStateFieldQuery = (
 	tableAlias: string | undefined = undefined,
 ): { where: string } => {
 	// if field id represented as foreign table, do join and compare
-	const inlinedName = getInlineTableFieldName(
-		query.key.slice(0, query.key.length - 1),
-		query.key[query.key.length - 1],
-	);
+	const inlinedName = getInlineTableFieldName(query.key);
 	const tableField = table.fields.find(
 		(x) => x.name === inlinedName,
 	); /* stringArraysEquals(query.key, [...table.parentPath, x.name]) )*/

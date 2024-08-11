@@ -1,5 +1,5 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { Entry } from "@peerbit/log";
+import { createEntry } from "@peerbit/log";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { delay } from "@peerbit/time";
@@ -51,7 +51,7 @@ describe("clock", () => {
 	});
 
 	it("signs and verifies", async () => {
-		const entry = await Entry.create({
+		const entry = await createEntry({
 			data: new Uint8Array([1]),
 			identity: reader.node.identity,
 			store: session.peers[1].services.blocks,
@@ -73,7 +73,7 @@ describe("clock", () => {
 
 	it("reject old entry", async () => {
 		await expect(
-			Entry.create({
+			createEntry({
 				data: new Uint8Array([1]),
 				identity: reader.node.identity,
 				store: session.peers[1].services.blocks,

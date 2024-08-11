@@ -167,10 +167,13 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 
 	async sum(query: types.SumRequest): Promise<number | bigint> {
 		let sum: undefined | number | bigint = undefined;
-		for (const doc of await this.queryAll(query)) {
+		outer: for (const doc of await this.queryAll(query)) {
 			let value: any = doc.value;
 			for (const path of query.key) {
 				value = value[path];
+				if (!value) {
+					continue outer;
+				}
 			}
 
 			if (typeof value === "number") {

@@ -60,7 +60,7 @@ export const waitForConverged = async (
 	fn: () => any,
 	options: { timeout: number; tests: number } = {
 		tests: 3,
-		timeout: 20 * 1000,
+		timeout: 30 * 1000,
 	},
 ) => {
 	let lastResult = undefined;

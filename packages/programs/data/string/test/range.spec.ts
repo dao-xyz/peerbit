@@ -36,7 +36,7 @@ describe("operations", () => {
 					payload: {
 						getValue: () => v,
 					},
-					getPayload: async () => {
+					getPayloadValue: async () => {
 						return { getValue: () => v };
 					},
 				} as any;
@@ -85,7 +85,7 @@ describe("operations", () => {
 					payload: {
 						getValue: () => v,
 					},
-					getPayload: async () => {
+					getPayloadValue: async () => {
 						return { getValue: () => v };
 					},
 				} as any;
@@ -119,7 +119,7 @@ describe("operations", () => {
 					payload: {
 						getValue: () => v,
 					},
-					getPayload: async () => {
+					getPayloadValue: async () => {
 						return { getValue: () => v };
 					},
 				} as any;

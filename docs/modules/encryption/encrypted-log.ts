@@ -68,7 +68,7 @@ await waitForResolved(() => assert.equal(store2.log.log.length, 1));
 const entry = (await store2.log.log.toArray())[0];
 
 // use .getPayload() instead of .payload to decrypt the payload
-assert.deepEqual((await entry.getPayload()).getValue(), payload);
+assert.deepEqual(await entry.getPayloadValue(), payload);
 
 await client.stop();
 await client2.stop();

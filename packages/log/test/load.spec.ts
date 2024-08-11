@@ -36,7 +36,7 @@ describe("load", () => {
 		await log.open(store, await Ed25519Keypair.create(), { indexer });
 		await log.load();
 		const [entry] = await log.toArray();
-		expect(entry.size).equal(242);
+		expect(entry.size).equal(245);
 	});
 
 	it("load after delete", async () => {

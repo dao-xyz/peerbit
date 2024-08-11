@@ -253,7 +253,7 @@ describe(`exchange`, function () {
 				meta: { next: [entryA, entryB] },
 			});
 
-			expect(entryA.meta.gid).not.equal(entryB.gid);
+			expect(entryA.meta.gid).not.equal(entryB.meta.gid);
 			expect(
 				entryAB.meta.gid === entryA.meta.gid ||
 					entryAB.meta.gid === entryB.meta.gid,
@@ -304,7 +304,7 @@ describe(`exchange`, function () {
 
 			expect(cacheLookups).to.have.length(1);
 			expect(
-				cacheLookups.map((x) => x.map((y) => y.gid)).flat(),
+				cacheLookups.map((x) => x.map((y) => y.meta.gid)).flat(),
 			).to.have.members([entryWithNotSameGid, entryAB.meta.gid]);
 
 			await db1.close();
@@ -336,7 +336,7 @@ describe(`exchange`, function () {
 		await waitForResolved(async () =>
 			expect(
 				await db1.log.findLeaders(
-					db1Entries[0].gid,
+					db1Entries[0].meta.gid,
 					maxReplicas(db1.log, db1Entries),
 					// 0
 				),
@@ -354,7 +354,7 @@ describe(`exchange`, function () {
 		expect(db2Entries.length).equal(1);
 		expect(
 			await db2.log.findLeaders(
-				db2Entries[0].gid,
+				db2Entries[0].meta.gid,
 				maxReplicas(db2.log, db2Entries),
 				// 0
 			),

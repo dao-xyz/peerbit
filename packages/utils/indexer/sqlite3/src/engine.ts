@@ -12,6 +12,7 @@ import type {
 import * as types from "@peerbit/indexer-interface";
 import { v4 as uuid } from "uuid";
 import {
+	MissingFieldError,
 	type Table,
 	buildJoin,
 	convertCountRequestToQuery,
@@ -20,13 +21,14 @@ import {
 	/* getTableName, */
 	convertSumRequestToQuery,
 	escapeColumnName,
+	generateSelectQuery,
 	getInlineTableFieldName,
 	getSQLTable,
 	getTablePrefixedField,
 	insert,
 	resolveInstanceFromValue,
 	resolveTable,
-	selectAllFields,
+	selectAllFieldsFromTable,
 	selectChildren,
 } from "./schema.js";
 import type { Database, Statement } from "./types.js";
@@ -124,10 +126,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			throw new Error("Missing schema");
 		}
 
-		this.primaryKeyString = getInlineTableFieldName(
-			this.primaryKeyArr.slice(0, this.primaryKeyArr.length - 1),
-			this.primaryKeyArr[this.primaryKeyArr.length - 1],
-		);
+		this.primaryKeyString = getInlineTableFieldName(this.primaryKeyArr);
 
 		return this;
 	}
@@ -152,10 +151,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		const tables = getSQLTable(
 			this.properties.schema!,
 			this.scopeString ? [this.scopeString] : [],
-			getInlineTableFieldName(
-				this.primaryKeyArr.slice(0, -1),
-				this.primaryKeyArr[this.primaryKeyArr.length - 1],
-			), // TODO fix this, should be array
+			getInlineTableFieldName(this.primaryKeyArr), // TODO fix this, should be array
 			false,
 			undefined,
 			false,
@@ -163,10 +159,6 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		);
 
 		this._rootTables = tables.filter((x) => x.parent == null);
-
-		if (this._rootTables.length > 1) {
-			throw new Error("Multiple root tables not supported (yet)");
-		}
 
 		const allTables = tables;
 
@@ -284,8 +276,11 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		options?: { shape: Shape },
 	): Promise<IndexedResult<T> | undefined> {
 		for (const table of this._rootTables) {
-			const { join: joinMap, query } = selectAllFields(table, options?.shape);
-			const sql = `${query} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? `;
+			const { join: joinMap, selects } = selectAllFieldsFromTable(
+				table,
+				options?.shape,
+			);
+			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? `;
 			const stmt = await this.properties.db.prepare(sql);
 			const rows = await stmt.get([id.key]);
 			await stmt.finalize?.();
@@ -390,9 +385,10 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			let results: IndexedResult<T>[] = await Promise.all(
 				allResults.map(async (row: any) => {
 					let selectedTable = this._rootTables.find(
-						(table) =>
+						(table /* row["table_name"] === table.name, */) =>
 							row[getTablePrefixedField(table, this.primaryKeyString)] != null,
 					)!;
+
 					const value = await resolveInstanceFromValue<T>(
 						row,
 						this.tables,
@@ -428,6 +424,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			}
 			return { results, kept: iterator.kept };
 		};
+
 		const iterator = {
 			kept: 0,
 			fetch,
@@ -483,46 +480,104 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 	async del(query: types.DeleteRequest): Promise<types.IdKey[]> {
 		let ret: types.IdKey[] = [];
+		let once = false;
+		let lastError: Error | undefined = undefined;
 		for (const table of this._rootTables) {
-			const stmt = await this.properties.db.prepare(
-				convertDeleteRequestToQuery(query, this.tables, table),
-			);
-			const results: any[] = await stmt.all([]);
-			await stmt.finalize?.();
-			// TODO types
-			for (const result of results) {
-				ret.push(types.toId(result[table.primary as string]));
+			try {
+				const stmt = await this.properties.db.prepare(
+					convertDeleteRequestToQuery(query, this.tables, table),
+				);
+				const results: any[] = await stmt.all([]);
+				await stmt.finalize?.();
+				// TODO types
+				for (const result of results) {
+					ret.push(types.toId(result[table.primary as string]));
+				}
+				once = true;
+			} catch (error) {
+				if (error instanceof MissingFieldError) {
+					lastError = error;
+					continue;
+				}
+
+				throw error;
 			}
 		}
+
+		if (!once) {
+			throw lastError;
+		}
+
 		return ret;
 	}
 
 	async sum(query: types.SumRequest): Promise<number | bigint> {
 		let ret: number | bigint | undefined = undefined;
+		let once = false;
+		let lastError: Error | undefined = undefined;
+
+		let inlinedName = getInlineTableFieldName(query.key);
 		for (const table of this._rootTables) {
-			const stmt = await this.properties.db.prepare(
-				convertSumRequestToQuery(query, this.tables, table),
-			);
-			const result = await stmt.get();
-			await stmt.finalize?.();
-			if (ret == null) {
-				(ret as any) = result.sum as number;
-			} else {
-				(ret as any) += result.sum as number;
+			try {
+				if (table.fields.find((x) => x.name === inlinedName) == null) {
+					lastError = new MissingFieldError(
+						"Missing field: " + query.key.join("."),
+					);
+					continue;
+				}
+
+				const stmt = await this.properties.db.prepare(
+					convertSumRequestToQuery(query, this.tables, table),
+				);
+				const result = await stmt.get();
+				await stmt.finalize?.();
+				if (ret == null) {
+					(ret as any) = result.sum as number;
+				} else {
+					(ret as any) += result.sum as number;
+				}
+				once = true;
+			} catch (error) {
+				if (error instanceof MissingFieldError) {
+					lastError = error;
+					continue;
+				}
+				throw error;
 			}
 		}
+
+		if (!once) {
+			throw lastError;
+		}
+
 		return ret != null ? ret : 0;
 	}
 
 	async count(request: types.CountRequest): Promise<number> {
 		let ret: number = 0;
+		let once = false;
+		let lastError: Error | undefined = undefined;
 		for (const table of this._rootTables) {
-			const stmt = await this.properties.db.prepare(
-				convertCountRequestToQuery(request, this.tables, table),
-			);
-			const result = await stmt.get();
-			await stmt.finalize?.();
-			ret += Number(result.count);
+			try {
+				const stmt = await this.properties.db.prepare(
+					convertCountRequestToQuery(request, this.tables, table),
+				);
+				const result = await stmt.get();
+				await stmt.finalize?.();
+				ret += Number(result.count);
+				once = true;
+			} catch (error) {
+				if (error instanceof MissingFieldError) {
+					lastError = error;
+					continue;
+				}
+
+				throw error;
+			}
+		}
+
+		if (!once) {
+			throw lastError;
 		}
 		return ret;
 	}

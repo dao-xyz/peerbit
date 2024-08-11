@@ -56,7 +56,7 @@ const resolveStaticPath = () => {
 	} else {
 		throw new Error("Could not find public or static folder");
 	}
-}
+};
 const findLibraryInNodeModules = (library: string) => {
 	// scan upwards until we find the node_modules folder
 	let maxSearchDepth = 10;
