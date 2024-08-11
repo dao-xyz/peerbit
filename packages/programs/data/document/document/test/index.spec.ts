@@ -26,7 +26,7 @@ import {
 	StringMatch,
 	StringMatchMethod,
 } from "@peerbit/indexer-interface";
-import { Entry, Log } from "@peerbit/log";
+import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import {
@@ -1952,7 +1952,7 @@ describe("index", () => {
 			(store as any)["_canAppend"] = () => true; // ignore internal
 
 			const canAppend = await store.docs.canAppend(
-				(await Entry.create({
+				(await createEntry({
 					data: new PutOperation({ data: randomBytes(32) }),
 					identity: store.node.identity,
 					store: store.docs.log.log.blocks,

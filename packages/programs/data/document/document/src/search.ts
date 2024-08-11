@@ -39,23 +39,23 @@ export class Operation /* <T> */ {}
 
 export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
 
-/**
- * Put a complete document at a key
- */
-
+// @deprecated
 @variant(0)
-export class PutOperation extends Operation /* <T> */ {
+export class PutWithKeyOperation extends Operation {
+	@field({ type: "string" })
+	key: string;
+
 	@field({ type: Uint8Array })
 	data: Uint8Array;
 
-	/* _value?: T; */
-
-	constructor(props: { data: Uint8Array /* value?: T */ }) {
+	constructor(props: { key: string; data: Uint8Array }) {
 		super();
+		this.key = props.key;
 		this.data = props.data;
 	}
 }
 
+// @deprecated
 /* @variant(1)
 export class PutAllOperation<T> extends Operation<T> {
 	@field({ type: vec(PutOperation) })
@@ -70,10 +70,54 @@ export class PutAllOperation<T> extends Operation<T> {
 }
  */
 
+// @deprecated
+@variant(2)
+export class DeleteByStringKeyOperation extends Operation {
+	@field({ type: "string" })
+	key: string;
+
+	constructor(props: { key: string }) {
+		super();
+		this.key = props.key;
+	}
+
+	toDeleteOperation(): DeleteOperation {
+		return new DeleteOperation({ key: indexerTypes.toId(this.key) });
+	}
+}
+
+export const coerceDeleteOperation = (
+	operation: DeleteOperation | DeleteByStringKeyOperation,
+): DeleteOperation => {
+	return operation instanceof DeleteByStringKeyOperation
+		? operation.toDeleteOperation()
+		: operation;
+};
+
+@variant(3)
+export class PutOperation extends Operation {
+	@field({ type: Uint8Array })
+	data: Uint8Array;
+
+	constructor(props: { data: Uint8Array }) {
+		super();
+		this.data = props.data;
+	}
+}
+
+export const isPutOperation = (
+	operation: Operation,
+): operation is PutOperation | PutWithKeyOperation => {
+	return (
+		operation instanceof PutOperation ||
+		operation instanceof PutWithKeyOperation
+	);
+};
+
 /**
  * Delete a document at a key
  */
-@variant(2)
+@variant(4)
 export class DeleteOperation extends Operation {
 	@field({ type: indexerTypes.IdKey })
 	key: indexerTypes.IdKey;
@@ -83,6 +127,15 @@ export class DeleteOperation extends Operation {
 		this.key = props.key;
 	}
 }
+
+export const isDeleteOperation = (
+	operation: Operation,
+): operation is DeleteOperation | DeleteByStringKeyOperation => {
+	return (
+		operation instanceof DeleteOperation ||
+		operation instanceof DeleteByStringKeyOperation
+	);
+};
 
 export type RemoteQueryOptions<R> = RPCRequestAllOptions<R> & {
 	sync?: boolean;
@@ -458,8 +511,8 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 				entry.meta.clock.timestamp.wallTime,
 			modified: entry.meta.clock.timestamp.wallTime,
 			head: entry.hash,
-			gid: entry.gid,
-			size: entry.payloadByteLength,
+			gid: entry.meta.gid,
+			size: entry.payload.byteLength,
 		});
 
 		const valueToIndex = await this.transformer(value, context);
@@ -576,7 +629,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			// TODO update changes in index before removing entries from log entry storage
 		}
 		const payloadValue = await head.getPayloadValue();
-		if (payloadValue instanceof PutOperation) {
+		if (isPutOperation(payloadValue)) {
 			return {
 				value: this.valueEncoding.decoder(payloadValue.data),
 				/* size: payloadValue.data.byteLength */

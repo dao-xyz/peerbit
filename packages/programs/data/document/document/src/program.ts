@@ -6,7 +6,7 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import { CustomEvent } from "@libp2p/interface";
-import { AccessError, DecryptedThing } from "@peerbit/crypto";
+import { AccessError } from "@peerbit/crypto";
 import * as documentsTypes from "@peerbit/document-interface";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {
@@ -33,6 +33,9 @@ import {
 	Operation,
 	PutOperation,
 	type TransformOptions,
+	coerceDeleteOperation,
+	isDeleteOperation,
+	isPutOperation,
 } from "./search.js";
 
 const logger = loggerFn({ module: "document" });
@@ -209,12 +212,12 @@ export class Documents<
 			let operation: PutOperation | DeleteOperation = l0;
 			let document: T | undefined = reference?.document;
 			if (!document) {
-				if (l0 instanceof PutOperation) {
+				if (isPutOperation(l0)) {
 					document = this._index.valueEncoding.decoder(l0.data);
 					if (!document) {
 						return false;
 					}
-				} else if (l0 instanceof DeleteOperation) {
+				} else if (isDeleteOperation(l0)) {
 					// Nothing to do here by default
 					// checking if the document exists is not necessary
 					// since it might already be deleted
@@ -226,7 +229,7 @@ export class Documents<
 			if (this._optionCanPerform) {
 				if (
 					!(await this._optionCanPerform(
-						operation instanceof PutOperation
+						isPutOperation(operation)
 							? {
 									type: "put",
 									value: document!,
@@ -268,13 +271,13 @@ export class Documents<
 			// make sure nexts only points to this document at some point in history
 			let current = await resolve(history);
 
-			const next = entry.next[0];
+			const next = entry.meta.next[0];
 			while (
 				current?.hash &&
 				next !== current?.hash &&
-				current.next.length > 0
+				current.meta.next.length > 0
 			) {
-				current = await this.log.log.get(current.next[0])!;
+				current = await this.log.log.get(current.meta.next[0])!;
 			}
 			if (current?.hash === next) {
 				return true; // Ok, we are pointing this new edit to some exising point in time of the old document
@@ -288,10 +291,11 @@ export class Documents<
 				keychain: this.node.services.keychain,
 			});
 			const operation =
-				reference?.operation || entry._payload instanceof DecryptedThing
+				reference?.operation ||
+				/* entry._payload instanceof DecryptedThing
 					? entry.payload.getValue(entry.encoding)
-					: await entry.getPayloadValue();
-			if (operation instanceof PutOperation) {
+					:  */ (await entry.getPayloadValue()); // TODO implement sync api for resolving entries that does not deep decryption
+			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
 				let value =
@@ -310,7 +314,7 @@ export class Documents<
 						return false;
 					}
 
-					if (entry.next.length !== 1) {
+					if (entry.meta.next.length !== 1) {
 						return false;
 					}
 					let doc = await this.log.log.get(existingDocument.context.head);
@@ -321,12 +325,12 @@ export class Documents<
 					const referenceHistoryCorrectly = await pointsToHistory(doc);
 					return referenceHistoryCorrectly ? putOperation : false;
 				} else {
-					if (entry.next.length !== 0) {
+					if (entry.meta.next.length !== 0) {
 						return false;
 					}
 				}
-			} else if (operation instanceof DeleteOperation) {
-				if (entry.next.length !== 1) {
+			} else if (isDeleteOperation(operation)) {
+				if (entry.meta.next.length !== 1) {
 					return false;
 				}
 				const existingDocument = (
@@ -334,7 +338,7 @@ export class Documents<
 				)?.[0].results[0];
 				if (!existingDocument) {
 					// already deleted
-					return operation; // assume ok
+					return coerceDeleteOperation(operation); // assume ok
 				}
 				let doc = await this.log.log.get(existingDocument.context.head);
 				if (!doc) {
@@ -343,7 +347,7 @@ export class Documents<
 				}
 				if (await pointsToHistory(doc)) {
 					// references the existing document
-					return operation;
+					return coerceDeleteOperation(operation);
 				}
 				return false;
 			} else {
@@ -480,11 +484,11 @@ export class Documents<
 
 			try {
 				const payload =
-					item._payload instanceof DecryptedThing
+					/* item._payload instanceof DecryptedThing
 						? item.payload.getValue(item.encoding)
-						: await item.getPayloadValue();
+						:  */ await item.getPayloadValue(); // TODO implement sync api for resolving entries that does not deep decryption
 
-				if (payload instanceof PutOperation && !removedSet.has(item.hash)) {
+				if (isPutOperation(payload) && !removedSet.has(item.hash)) {
 					let value =
 						(isAppendOperation &&
 							reference?.operation === payload &&
@@ -518,24 +522,24 @@ export class Documents<
 					await this._index.put(value, item, key);
 					modified.add(key.primitive);
 				} else if (
-					(payload instanceof DeleteOperation && !removedSet.has(item.hash)) ||
-					payload instanceof PutOperation ||
+					(isDeleteOperation(payload) && !removedSet.has(item.hash)) ||
+					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
-					this._manuallySynced.delete(item.gid);
+					this._manuallySynced.delete(item.meta.gid);
 
 					let value: T;
 					let key: indexerTypes.IdKey;
 
-					if (payload instanceof PutOperation) {
+					if (isPutOperation(payload)) {
 						value = this.index.valueEncoding.decoder(payload.data);
 						key = indexerTypes.toId(this.idResolver(value));
 						// document is already updated with more recent entry
 						if (modified.has(key.primitive)) {
 							continue;
 						}
-					} else if (payload instanceof DeleteOperation) {
-						key = payload.key;
+					} else if (isDeleteOperation(payload)) {
+						key = coerceDeleteOperation(payload).key;
 						// document is already updated with more recent entry
 						if (modified.has(key.primitive)) {
 							continue;
