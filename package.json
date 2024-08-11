@@ -59,7 +59,7 @@
 		"test:electron-main": "aegir run test:electron-main",
 		"test:cli": "aegir run test:cli",
 		"test:interop": "aegir run test:interop",
-		"test:docs": "",
+		"test:docs": "aegir run test --roots ./docs -- -t node",
 		"test:part-1": "aegir run test --roots ./packages/utils/**/* ./packages/clients/** ./packages/log  -- -t node",
 		"test:part-2": "aegir run test --roots ./packages/programs/**/* ./docs -- -t node",
 		"test:part-3": "aegir run test --roots ./packages/transport/**/* -- -t node",
