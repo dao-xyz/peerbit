@@ -308,6 +308,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.1.5](https://github.com/dao-xyz/peerbit/compare/proxy-v3.1.4...proxy-v3.1.5) (2024-08-11)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-simple bumped from ^1.0.0 to ^1.0.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.38 to 2.0.39
+
 ## [3.1.4](https://github.com/dao-xyz/peerbit/compare/proxy-v3.1.3...proxy-v3.1.4) (2024-07-31)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.0.0...indexer-tests-v1.0.1) (2024-08-11)
+
+
+### Bug Fixes
+
+* support polymorphism at root level ([99834e5](https://github.com/dao-xyz/peerbit/commit/99834e501009cb22455bba663f6d42b9a28b018e))
+
 ## 1.0.0 (2024-07-20)
 
 

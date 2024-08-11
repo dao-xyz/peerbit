@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-tests",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Tests document store index engines",
 	"sideEffects": false,
 	"type": "module",

@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.8](https://github.com/dao-xyz/peerbit/compare/document-v7.0.7...document-v7.0.8) (2024-08-11)
+
+
+### Bug Fixes
+
+* support for previous document put operation ([c39e47c](https://github.com/dao-xyz/peerbit/commit/c39e47cdb6af31a97eb5cc130f3b8cc71423380b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.0.4 to 5.0.5
+    * @peerbit/shared-log bumped from 9.0.5 to 9.0.6
+    * @peerbit/indexer-simple bumped from ^1.0.0 to ^1.0.1
+    * @peerbit/indexer-sqlite3 bumped from ^1.0.2 to ^1.0.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.38 to 2.0.39
+
 ## [7.0.7](https://github.com/dao-xyz/peerbit/compare/document-v7.0.6...document-v7.0.7) (2024-07-31)
 
 
