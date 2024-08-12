@@ -137,7 +137,7 @@ export class SearchRequest extends AbstractSearchRequest {
 /**
  * Collect documents from peers using 'collect' session ids. This is used for distributed sorting internally
  */
-@variant(1)
+@variant(2)
 export class CollectNextRequest extends AbstractSearchRequest {
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array; // collect with id
@@ -157,7 +157,7 @@ export class CollectNextRequest extends AbstractSearchRequest {
 	}
 }
 
-@variant(2)
+@variant(3)
 export class CloseIteratorRequest extends AbstractSearchRequest {
 	@field({ type: fixedArray("u8", 32) })
 	id: Uint8Array; // collect with id
@@ -343,7 +343,7 @@ export class BoolQuery extends StateFieldQuery {
 	}
 }
 
-@variant(2)
+/* @variant(2)
 export class Nested extends Query {
 	@field({ type: "string" })
 	id: string;
@@ -358,19 +358,19 @@ export class Nested extends Query {
 		id?: string;
 		path: string;
 		query:
-			| Query[]
-			| Query
-			| Record<
-					string,
-					string | number | bigint | Uint8Array | boolean | null | undefined
-			  >;
+		| Query[]
+		| Query
+		| Record<
+			string,
+			string | number | bigint | Uint8Array | boolean | null | undefined
+		>;
 	}) {
 		super();
 		this.path = props.path;
 		this.id = props.id ?? uuid();
 		this.query = toQuery(props.query);
 	}
-}
+} */
 
 // TODO MemoryCompareQuery can be replaces with ByteMatchQuery? Or Nesteed Queries + ByteMatchQuery?
 /* @variant(0)
