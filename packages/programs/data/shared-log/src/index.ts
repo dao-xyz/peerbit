@@ -287,7 +287,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	private get v8Behaviour() {
-		return this.compatibility < 9;
+		return (this.compatibility ?? Number.MAX_VALUE) < 9;
 	}
 
 	// @deprecated
