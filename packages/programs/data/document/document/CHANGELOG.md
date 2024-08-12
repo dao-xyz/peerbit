@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.12](https://github.com/dao-xyz/peerbit/compare/document-v7.0.11...document-v7.0.12) (2024-08-12)
+
+
+### Bug Fixes
+
+* reload after delete handle tombstones correctly ([f8100bf](https://github.com/dao-xyz/peerbit/commit/f8100bfae0d20b595b461295034eca6f1ed3328b))
+
 ## [7.0.11](https://github.com/dao-xyz/peerbit/compare/document-v7.0.10...document-v7.0.11) (2024-08-12)
 
 
