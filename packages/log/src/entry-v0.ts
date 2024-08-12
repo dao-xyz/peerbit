@@ -25,6 +25,7 @@ import { type Keychain } from "@peerbit/keychain";
 import { compare } from "uint8arrays";
 import { LamportClock as Clock, HLC, Timestamp } from "./clock.js";
 import { type Encoding, NO_ENCODING } from "./encoding.js";
+import { Meta } from "./entry-meta.js";
 import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { type CanAppend, Entry } from "./entry.js";
@@ -70,39 +71,7 @@ export interface EntryEncryptionTemplate<A, B, C> {
 }
 
 @variant(0)
-export class Meta {
-	@field({ type: Clock })
-	clock: Clock;
-
-	@field({ type: "string" })
-	gid: string; // graph id
-
-	@field({ type: vec("string") })
-	next: string[];
-
-	@field({ type: "u8" })
-	type: EntryType;
-
-	@field({ type: option(Uint8Array) })
-	data?: Uint8Array; // Optional metadata
-
-	constructor(properties: {
-		gid: string;
-		clock: Clock;
-		type: EntryType;
-		data?: Uint8Array;
-		next: string[];
-	}) {
-		this.gid = properties.gid;
-		this.clock = properties.clock;
-		this.type = properties.type;
-		this.data = properties.data;
-		this.next = properties.next;
-	}
-}
-
-@variant(0)
-export class Signatures {
+export class MaybeEncryptedSignatures {
 	@field({ type: vec(MaybeEncrypted) })
 	signatures!: MaybeEncrypted<SignatureWithKey>[];
 
@@ -112,7 +81,7 @@ export class Signatures {
 		}
 	}
 
-	equals(other: Signatures) {
+	equals(other: MaybeEncryptedSignatures) {
 		if (this.signatures.length !== other.signatures.length) {
 			return false;
 		}
@@ -164,8 +133,8 @@ export class EntryV0<T>
 	@field({ type: fixedArray("u8", 4) })
 	_reserved?: Uint8Array;
 
-	@field({ type: option(Signatures) })
-	_signatures?: Signatures;
+	@field({ type: option(MaybeEncryptedSignatures) })
+	_signatures?: MaybeEncryptedSignatures;
 
 	@field({ type: option("string") }) // we do option because we serialize and store this in a block without the hash, to receive the hash, which we later set
 	hash!: string; // "zd...Foo", we'll set the hash after persisting the entry
@@ -177,7 +146,7 @@ export class EntryV0<T>
 
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
-		signatures?: Signatures;
+		signatures?: MaybeEncryptedSignatures;
 		meta: MaybeEncrypted<Meta>;
 		reserved?: Uint8Array; // intentational type 0  (not used)h
 		hash?: string;
@@ -557,7 +526,7 @@ export class EntryV0<T>
 			encryptedSignatures.push(signatureEncrypted);
 		}
 
-		entry._signatures = new Signatures({
+		entry._signatures = new MaybeEncryptedSignatures({
 			signatures: encryptedSignatures,
 		});
 

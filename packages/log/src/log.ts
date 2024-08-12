@@ -35,6 +35,7 @@ import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import type { Payload } from "./payload.js";
 import { Trim, type TrimOptions } from "./trim.js";
+import { createEntry } from "./entry-create.js";
 
 const { LastWriteWins } = Sorting;
 
@@ -470,7 +471,7 @@ export class Log<T> {
 			timestamp: options?.meta?.timestamp || this._hlc.now(),
 		});
 
-		const entry = await EntryV0.create<T>({
+		const entry = await createEntry<T>({
 			store: this._storage,
 			identity: options.identity || this._identity,
 			signers: options.signers,
@@ -486,11 +487,11 @@ export class Log<T> {
 			encoding: this._encoding,
 			encryption: options.encryption
 				? {
-						keypair: options.encryption.keypair,
-						receiver: {
-							...options.encryption.receiver,
-						},
-					}
+					keypair: options.encryption.keypair,
+					receiver: {
+						...options.encryption.receiver,
+					},
+				}
 				: undefined,
 			canAppend: options.canAppend || this._canAppend,
 		});
@@ -985,13 +986,13 @@ export class Log<T> {
 		const heads = providedCustomHeads
 			? (opts["heads"] as Array<Entry<T>>)
 			: await this._entryIndex
-					.getHeads(undefined, {
-						type: "full",
-						signal: this._closeController.signal,
-						ignoreMissing: opts.ignoreMissing,
-						timeout: opts.timeout,
-					})
-					.all();
+				.getHeads(undefined, {
+					type: "full",
+					signal: this._closeController.signal,
+					ignoreMissing: opts.ignoreMissing,
+					timeout: opts.timeout,
+				})
+				.all();
 
 		if (heads) {
 			// Load the log

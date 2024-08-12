@@ -27,7 +27,6 @@ export interface Entry<T> {
 	size: number;
 	createdLocally?: boolean;
 	publicKeys: PublicSignKey[];
-	toShallow(isHead: boolean): ShallowEntry;
 }
 
 export abstract class Entry<T> {
@@ -48,6 +47,7 @@ export abstract class Entry<T> {
 	abstract equals(other: Entry<T>): boolean;
 	abstract getPayloadValue(): Promise<T> | T;
 	abstract toSignable(): Entry<T>;
+	abstract toShallow(isHead: boolean): ShallowEntry;
 
 	async getPublicKeys(): Promise<PublicSignKey[]> {
 		const signatures = await this.getSignatures();
