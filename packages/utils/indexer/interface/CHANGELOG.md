@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.0.1...indexer-interface-v1.0.2) (2024-08-12)
+
+
+### Bug Fixes
+
+* add documentaion for Nested experimental query ([61d3cec](https://github.com/dao-xyz/peerbit/commit/61d3cec4ed802ac59f3c77482855a6cb9b8360b5))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.0.0...indexer-interface-v1.0.1) (2024-08-12)
 
 
