@@ -389,6 +389,16 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.6...shared-log-v9.0.7) (2024-08-12)
+
+
+### Bug Fixes
+
+* add compatibility get api ([5b477ce](https://github.com/dao-xyz/peerbit/commit/5b477ceff7ab490c95bbf60063748ff2f61ed7bb))
+* add compatibility with v6 ([2360045](https://github.com/dao-xyz/peerbit/commit/23600457e8765f173773dcffff9a8e2ca90b18e1))
+* backward compatibility for replication roles ([5d729be](https://github.com/dao-xyz/peerbit/commit/5d729be81022e0a49699969aabe1287322033d79))
+* rename compatibility property ([06ea243](https://github.com/dao-xyz/peerbit/commit/06ea243f0ca2acd5827b7118590105bee11d28cf))
+
 ## [9.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.5...shared-log-v9.0.6) (2024-08-11)
 
 

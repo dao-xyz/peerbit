@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.9](https://github.com/dao-xyz/peerbit/compare/document-v7.0.8...document-v7.0.9) (2024-08-12)
+
+
+### Bug Fixes
+
+* add compatibility with v6 ([2360045](https://github.com/dao-xyz/peerbit/commit/23600457e8765f173773dcffff9a8e2ca90b18e1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 9.0.6 to 9.0.7
+
 ## [7.0.8](https://github.com/dao-xyz/peerbit/compare/document-v7.0.7...document-v7.0.8) (2024-08-11)
 
 
