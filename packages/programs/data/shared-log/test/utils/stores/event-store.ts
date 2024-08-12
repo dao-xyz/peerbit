@@ -82,7 +82,7 @@ export class EventStore<T> extends Program<Args<T>> {
 		}
 
 		await this.log.open({
-			compatiblity: properties?.compatibility,
+			compatibility: properties?.compatibility,
 			onChange: properties?.onChange,
 			canAppend: (entry) => {
 				const a = this._canAppend ? this._canAppend(entry) : true;
