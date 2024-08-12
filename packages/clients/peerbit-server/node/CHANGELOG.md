@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.40](https://github.com/dao-xyz/peerbit/compare/server-v5.0.39...server-v5.0.40) (2024-08-12)
+
+
+### Bug Fixes
+
+* install make on start ([8c33ab6](https://github.com/dao-xyz/peerbit/commit/8c33ab6e175f336d5cbc2f787b25fce5cc647287))
+
 ## [5.0.39](https://github.com/dao-xyz/peerbit/compare/server-v5.0.38...server-v5.0.39) (2024-08-11)
 
 
