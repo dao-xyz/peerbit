@@ -87,7 +87,7 @@ export class Sort {
 	}
 }
 
-export abstract class AbstractSearchRequest { }
+export abstract class AbstractSearchRequest {}
 
 /**
  * Search with query and collect with sort conditionss
@@ -112,12 +112,12 @@ export class SearchRequest extends AbstractSearchRequest {
 
 	constructor(props?: {
 		query?:
-		| Query[]
-		| Query
-		| Record<
-			string,
-			string | number | bigint | Uint8Array | boolean | null | undefined
-		>;
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
 		sort?: Sort[] | Sort;
 		fetch?: number;
 	}) {
@@ -174,7 +174,7 @@ export class CloseIteratorRequest extends AbstractSearchRequest {
 }
 
 @variant(1)
-export abstract class LogicalQuery extends Query { }
+export abstract class LogicalQuery extends Query {}
 
 @variant(0)
 export class And extends LogicalQuery {
@@ -218,7 +218,7 @@ export class Not extends LogicalQuery {
 }
 
 @variant(2)
-export abstract class StateQuery extends Query { }
+export abstract class StateQuery extends Query {}
 
 @variant(1)
 export class StateFieldQuery extends StateQuery {
@@ -330,7 +330,7 @@ export class IntegerCompare extends StateFieldQuery {
 }
 
 @variant(4)
-export class IsNull extends StateFieldQuery { }
+export class IsNull extends StateFieldQuery {}
 
 @variant(5)
 export class BoolQuery extends StateFieldQuery {
@@ -359,12 +359,12 @@ export class Nested extends Query {
 		id?: string;
 		path: string;
 		query:
-		| Query[]
-		| Query
-		| Record<
-			string,
-			string | number | bigint | Uint8Array | boolean | null | undefined
-		>;
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
 	}) {
 		super();
 		this.path = props.path;
@@ -403,7 +403,7 @@ export class MemoryCompareQuery extends Query {
 	}
 } */
 
-export abstract class AbstractAggregationRequest { }
+export abstract class AbstractAggregationRequest {}
 
 @variant(0)
 export class SumRequest extends AbstractAggregationRequest {
@@ -418,12 +418,12 @@ export class SumRequest extends AbstractAggregationRequest {
 
 	constructor(props: {
 		query?:
-		| Query[]
-		| Query
-		| Record<
-			string,
-			string | number | bigint | Uint8Array | boolean | null | undefined
-		>;
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
 		key: string[] | string;
 	}) {
 		super();
@@ -433,7 +433,7 @@ export class SumRequest extends AbstractAggregationRequest {
 	}
 }
 
-export abstract class AbstractCountRequest { }
+export abstract class AbstractCountRequest {}
 
 @variant(0)
 export class CountRequest extends AbstractCountRequest {
@@ -446,12 +446,12 @@ export class CountRequest extends AbstractCountRequest {
 	constructor(
 		props: {
 			query:
-			| Query[]
-			| Query
-			| Record<
-				string,
-				string | number | bigint | Uint8Array | boolean | null | undefined
-			>;
+				| Query[]
+				| Query
+				| Record<
+						string,
+						string | number | bigint | Uint8Array | boolean | null | undefined
+				  >;
 		} = { query: [] },
 	) {
 		super();
@@ -460,7 +460,7 @@ export class CountRequest extends AbstractCountRequest {
 	}
 }
 
-export abstract class AbstractDeleteRequest { }
+export abstract class AbstractDeleteRequest {}
 
 @variant(0)
 export class DeleteRequest extends AbstractDeleteRequest {
@@ -472,12 +472,12 @@ export class DeleteRequest extends AbstractDeleteRequest {
 
 	constructor(props: {
 		query:
-		| Query[]
-		| Query
-		| Record<
-			string,
-			string | number | bigint | Uint8Array | boolean | null | undefined
-		>;
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
 	}) {
 		super();
 		this.id = randomBytes(32);
@@ -490,9 +490,9 @@ const toQuery = (
 		| Query[]
 		| Query
 		| Record<
-			string,
-			string | number | bigint | Uint8Array | boolean | null | undefined
-		>,
+				string,
+				string | number | bigint | Uint8Array | boolean | null | undefined
+		  >,
 ) => {
 	if (Array.isArray(query)) {
 		return query;
