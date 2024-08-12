@@ -2,6 +2,7 @@ import {
 	BinaryReader,
 	deserialize,
 	field,
+	option,
 	serialize,
 	variant,
 	vec,
@@ -9,28 +10,14 @@ import {
 import { PublicSignKey, equals, randomBytes } from "@peerbit/crypto";
 import { type Index, id } from "@peerbit/indexer-interface";
 import { TransportMessage } from "./message.js";
-import { SEGMENT_COORDINATE_SCALE } from "./role.js";
+import {
+	Observer,
+	Replicator,
+	Role,
+	SEGMENT_COORDINATE_SCALE,
+} from "./role.js";
 
 export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
-/* 
-export class ReplicatorRect {
-
-	@id({ type: Uint8Array })
-	id: Uint8Array;
-
-	@field({ type: 'string' })
-	hash: string;
-
-	@field({ type: vec(ReplicationSegment) })
-	segments: ReplicationSegment[];
-
-	constructor(properties: { hash: string; segments: ReplicationSegment[] }) {
-		this.id = randomBytes(32);
-		this.hash = properties.hash;
-		this.segments = properties.segments;
-	}
-};
- */
 
 export enum ReplicationIntent {
 	Explicit = 0,
@@ -280,7 +267,35 @@ export class RequestReplicationInfoMessage extends TransportMessage {
 	}
 }
 
+// @deprecated remove when possible
 @variant([1, 1])
+export class ResponseRoleMessage extends TransportMessage {
+	@field({ type: option(Role) })
+	role: Observer | Replicator;
+
+	constructor(properties: { role: Observer | Replicator }) {
+		super();
+		this.role = properties.role;
+	}
+
+	toReplicationInfoMessage(): ResponseReplicationInfoMessage {
+		return new ResponseReplicationInfoMessage({
+			segments:
+				this.role instanceof Replicator
+					? this.role.segments.map((x) => {
+							return new ReplicationRange({
+								id: randomBytes(32),
+								offset: x.offset,
+								factor: x.factor,
+								timestamp: x.timestamp,
+							});
+						})
+					: [],
+		});
+	}
+}
+
+@variant([1, 2])
 export class ResponseReplicationInfoMessage extends TransportMessage {
 	@field({ type: vec(ReplicationRange) })
 	segments: ReplicationRange[];
@@ -291,7 +306,7 @@ export class ResponseReplicationInfoMessage extends TransportMessage {
 	}
 }
 
-@variant([1, 2])
+@variant([1, 3])
 export class StartedReplicating extends TransportMessage {
 	@field({ type: vec(ReplicationRange) })
 	segments: ReplicationRange[];
@@ -302,7 +317,7 @@ export class StartedReplicating extends TransportMessage {
 	}
 }
 
-@variant([1, 3])
+@variant([1, 4])
 export class StoppedReplicating extends TransportMessage {
 	@field({ type: vec(Uint8Array) })
 	segmentIds: Uint8Array[];

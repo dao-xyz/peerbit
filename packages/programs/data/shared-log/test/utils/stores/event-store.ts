@@ -10,12 +10,14 @@ import type {
 	TrimOptions,
 } from "@peerbit/log";
 import { Program } from "@peerbit/program";
+import type { RequestContext } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
 	SharedLog,
 } from "../../../src/index.js";
+import type { TransportMessage } from "../../../src/message.js";
 import { JSON_ENCODING } from "./encoding.js";
 
 // TODO: generalize the Iterator functions and spin to its own module
@@ -48,6 +50,8 @@ export type Args<T> = {
 	sync?: (entry: Entry<Operation<T>> | ShallowEntry) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
+	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
+	compatibility?: number;
 };
 @variant("event_store")
 export class EventStore<T> extends Program<Args<T>> {
@@ -72,7 +76,13 @@ export class EventStore<T> extends Program<Args<T>> {
 
 	async open(properties?: Args<T>) {
 		this._index = new EventIndex(this.log);
+
+		if (properties?.onMessage) {
+			this.log._onMessage = properties.onMessage;
+		}
+
 		await this.log.open({
+			compatiblity: properties?.compatibility,
 			onChange: properties?.onChange,
 			canAppend: (entry) => {
 				const a = this._canAppend ? this._canAppend(entry) : true;
