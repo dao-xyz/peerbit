@@ -72,8 +72,8 @@
 		"@dao-xyz/borsh": "^5.2.3",
 		"@stablelib/sha256": "^2.0.0",
 		"@ethersproject/wallet": "^5.7.0",
-		"@libp2p/crypto": "^4.1.5",
-		"@libp2p/peer-id": "^4.2.0",
-		"libsodium-wrappers": "^0.7.13"
+		"@libp2p/crypto": "^4.1.8",
+		"@libp2p/peer-id": "^4.2.3",
+		"libsodium-wrappers": "^0.7.14"
 	}
 }
