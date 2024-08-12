@@ -234,7 +234,7 @@ export const cli = async (args?: string[]) => {
 						},
 						handler: async (args) => {
 							const domain = await createTestDomain();
-							await startCertbot(domain, args.email, args.outdir, args.wait);
+							await startCertbot(domain, args.email, args.wait);
 							exit();
 						},
 					})
