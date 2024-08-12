@@ -54,10 +54,13 @@ export const createRecord = async (options: {
 
 const setupUserData = (email: string, grantAccess: PeerId[] = []) => {
 	const peerIdStrings = grantAccess.map((x) => x.toString());
+
+	// better-sqlite3 force use to install build-essentials for `make` command, TOOD dont bundle better-sqlite3 by default?
 	return `#!/bin/bash
 cd /home/ubuntu
 curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash - &&\
 sudo apt-get install -y nodejs
+sudo apt-get install -y build-essential
 npm install -g @peerbit/server
 sudo peerbit domain test --email ${email}
 peerbit start ${peerIdStrings.map((key) => `--ga ${key}`)} > log.txt 2>&1 &
