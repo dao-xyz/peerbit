@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.41](https://github.com/dao-xyz/peerbit/compare/server-v5.0.40...server-v5.0.41) (2024-08-12)
+
+
+### Bug Fixes
+
+* copy nginx template to src on postbuild ([325235b](https://github.com/dao-xyz/peerbit/commit/325235b506a830f1382c3b497fd6f51da5fc6f2d))
+
 ## [5.0.40](https://github.com/dao-xyz/peerbit/compare/server-v5.0.39...server-v5.0.40) (2024-08-12)
 
 
