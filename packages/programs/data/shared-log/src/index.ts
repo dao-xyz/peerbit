@@ -282,8 +282,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this._replicationSettings;
 	}
 
+	get compatibility(): number | undefined {
+		return this._logProperties?.compatibility;
+	}
+
 	private get v8Behaviour() {
-		return (this._logProperties?.compatibility ?? Number.MAX_SAFE_INTEGER) < 9;
+		return this.compatibility < 9;
 	}
 
 	// @deprecated
