@@ -73,6 +73,7 @@ import {
 	ReplicationRangeIndexable,
 	RequestReplicationInfoMessage,
 	ResponseReplicationInfoMessage,
+	ResponseRoleMessage,
 	StartedReplicating,
 	StoppedReplicating,
 	decodeReplicas,
@@ -80,7 +81,7 @@ import {
 	hashToUniformNumber,
 	maxReplicas,
 } from "./replication.js";
-import { SEGMENT_COORDINATE_SCALE } from "./role.js";
+import { Observer, Replicator, SEGMENT_COORDINATE_SCALE } from "./role.js";
 
 export * from "./replication.js";
 
@@ -156,6 +157,7 @@ export type SharedLogOptions<T> = {
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
 	distributionDebounceTime?: number;
+	compatiblity?: number;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -205,7 +207,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		publicKey: PublicSignKey,
 	) => Promise<boolean> | boolean;
 
-	private _logProperties?: LogProperties<T> & LogEvents<T>;
+	private _logProperties?: LogProperties<T> &
+		LogEvents<T> &
+		SharedLogOptions<T>;
 	private _closeController!: AbortController;
 	private _gidParentCache!: Cache<Entry<any>[]>;
 	private _respondToIHaveTimeout!: any;
@@ -276,6 +280,28 @@ export class SharedLog<T = Uint8Array> extends Program<
 	 */
 	get replicationSettings(): ReplicationOptions | undefined {
 		return this._replicationSettings;
+	}
+
+	private get v8Behaviour() {
+		return (this._logProperties?.compatiblity ?? Number.MAX_SAFE_INTEGER) < 9;
+	}
+
+	// @deprecated
+	private getRole() {
+		let isFixedReplicationSettings =
+			(this._replicationSettings as FixedReplicationOptions).factor !==
+			undefined;
+		if (isFixedReplicationSettings) {
+			const fixedSettings = this
+				._replicationSettings as FixedReplicationOptions;
+			return new Replicator({
+				factor: fixedSettings.factor,
+				offset: fixedSettings.offset ?? 0,
+			});
+		}
+
+		// TODO this is not accurate but might be good enough
+		return new Observer();
 	}
 
 	async isReplicating() {
@@ -596,13 +622,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 			logger.warn("Not allowed to replicate by canReplicate");
 		}
 
-		added &&
-			(await this.rpc.send(
+		if (added) {
+			await this.rpc.send(
 				new StartedReplicating({ segments: [range.toReplicationRange()] }),
 				{
 					priority: 1,
 				},
-			));
+			);
+		}
 	}
 
 	async append(
@@ -992,10 +1019,14 @@ export class SharedLog<T = Uint8Array> extends Program<
 	async _onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
-	): Promise<TransportMessage | undefined> {
+	): Promise<void> {
 		try {
 			if (!context.from) {
 				throw new Error("Missing from in update role message");
+			}
+
+			if (msg instanceof ResponseRoleMessage) {
+				msg = msg.toReplicationInfoMessage(); // migration
 			}
 
 			if (msg instanceof ExchangeHeadsMessage) {
@@ -1273,6 +1304,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 			} else if (msg instanceof BlocksMessage) {
 				await this.remoteBlocks.onMessage(msg.message);
 			} else if (msg instanceof RequestReplicationInfoMessage) {
+				// TODO this message type is never used, should we remove it?
+
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
@@ -1286,6 +1319,28 @@ export class SharedLog<T = Uint8Array> extends Program<
 						mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
 					},
 				);
+
+				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
+				if (this.v8Behaviour) {
+					const role = this.getRole();
+					if (role instanceof Replicator) {
+						const fixedSettings = this
+							._replicationSettings as FixedReplicationOptions;
+						if (fixedSettings.factor === 1) {
+							await this.rpc.send(
+								new ResponseRoleMessage({
+									role,
+								}),
+								{
+									mode: new SilentDelivery({
+										to: [context.from],
+										redundancy: 1,
+									}),
+								},
+							);
+						}
+					}
+				}
 			} else if (
 				msg instanceof ResponseReplicationInfoMessage ||
 				msg instanceof StartedReplicating
@@ -1293,6 +1348,10 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
+
+				let replicationInfoMessage = msg as
+					| ResponseReplicationInfoMessage
+					| StartedReplicating;
 
 				// we have this statement because peers might have changed/announced their role,
 				// but we don't know them as "subscribers" yet. i.e. they are not online
@@ -1316,7 +1375,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							await this.removeReplicator(context.from!);
 						}
 						let addedOnce = false;
-						for (const segment of msg.segments) {
+						for (const segment of replicationInfoMessage.segments) {
 							const added = await this.addReplicationRange(
 								segment.toReplicationRangeIndexable(context.from!),
 								context.from!,
@@ -1671,6 +1730,15 @@ export class SharedLog<T = Uint8Array> extends Program<
 						},
 					)
 					.catch((e) => logger.error(e.toString()));
+
+				if (this.v8Behaviour) {
+					// for backwards compatibility
+					this.rpc
+						.send(new ResponseRoleMessage({ role: this.getRole() }), {
+							mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
+						})
+						.catch((e) => logger.error(e.toString()));
+				}
 			}
 		} else {
 			await this.removeReplicator(publicKey);
