@@ -74,7 +74,6 @@ export class RoleReplicationSegment {
 	get offset(): number {
 		return this.offsetNominator / SEGMENT_COORDINATE_SCALE;
 	}
-
 }
 
 @variant(2)

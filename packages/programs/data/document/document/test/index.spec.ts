@@ -45,7 +45,7 @@ import {
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
-import { Operation, PutOperation } from "../src/search.js";
+import { Operation, PutOperation, PutWithKeyOperation } from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -2414,6 +2414,54 @@ describe("index", () => {
 					expect(counters[1]).equal(0);
 					expect(counters[2]).equal(0);
 				});
+			});
+		});
+	});
+
+	describe("migration", () => {
+		describe("v6-v7", async () => {
+			let store: TestStore;
+
+			before(async () => {
+				session = await TestSession.connected(1);
+			});
+			afterEach(async () => {
+				await store?.close();
+			});
+
+			after(async () => {
+				await session.stop();
+			});
+
+			it("can be compatible with v6", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						compatibility: 6,
+					},
+				});
+				const changes: DocumentsChange<Document>[] = [];
+
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				const putOperation = (await store.docs.put(doc)).entry;
+				expect(await store.docs.index.getSize()).equal(1);
+
+				expect(changes.length).equal(1);
+				expect(changes[0].added).to.have.length(1);
+
+				const payload = await putOperation.getPayloadValue();
+				expect(payload).to.be.instanceOf(PutWithKeyOperation);
+				expect(store.docs.log.compatibility).to.be.equal(8);
 			});
 		});
 	});

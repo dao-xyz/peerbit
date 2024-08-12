@@ -157,7 +157,7 @@ export type SharedLogOptions<T> = {
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
 	distributionDebounceTime?: number;
-	compatiblity?: number;
+	compatibility?: number;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -282,8 +282,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return this._replicationSettings;
 	}
 
+	get compatibility(): number | undefined {
+		return this._logProperties?.compatibility;
+	}
+
 	private get v8Behaviour() {
-		return (this._logProperties?.compatiblity ?? Number.MAX_SAFE_INTEGER) < 9;
+		return (this.compatibility ?? Number.MAX_VALUE) < 9;
 	}
 
 	// @deprecated

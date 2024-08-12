@@ -32,6 +32,7 @@ import {
 	DocumentIndex,
 	Operation,
 	PutOperation,
+	PutWithKeyOperation,
 	type TransformOptions,
 	coerceDeleteOperation,
 	isDeleteOperation,
@@ -86,7 +87,8 @@ export type SetupOptions<T, I = T> = {
 	log?: {
 		trim?: TrimOptions;
 	};
-} & SharedLogOptions<Operation>;
+	compatibility?: 6;
+} & Exclude<SharedLogOptions<Operation>, "compatibility">;
 
 @variant("documents")
 export class Documents<
@@ -109,6 +111,8 @@ export class Documents<
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 
 	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
+
+	compatibility: 6 | undefined;
 
 	constructor(properties?: {
 		id?: Uint8Array;
@@ -150,6 +154,7 @@ export class Documents<
 						indexerTypes.extractFieldValue(obj, idProperty as string[]));
 
 		this.idResolver = idResolver;
+		this.compatibility = options.compatibility;
 
 		await this._index.open({
 			log: this.log,
@@ -185,6 +190,10 @@ export class Documents<
 				// returning true means that it should persist
 				return this._manuallySynced.has(entry.gid);
 			},
+
+			// document v6 and below need log compatibility of v8 or below
+			compatibility:
+				(options?.compatibility ?? Number.MAX_SAFE_INTEGER < 7) ? 8 : undefined,
 		});
 	}
 
@@ -393,9 +402,22 @@ export class Documents<
 					})
 				)?.[0]?.results[0];
 
-		const operation = new PutOperation({
-			data: ser,
-		});
+		let operation: PutOperation | PutWithKeyOperation;
+		if (this.compatibility === 6) {
+			if (typeof keyValue === "string") {
+				operation = new PutWithKeyOperation({
+					key: keyValue,
+					data: ser,
+				});
+			} else {
+				throw new Error("Key must be a string in compatibility mode v6");
+			}
+		} else {
+			operation = new PutOperation({
+				data: ser,
+			});
+		}
+
 		const appended = await this.log.append(operation, {
 			...options,
 			meta: {
