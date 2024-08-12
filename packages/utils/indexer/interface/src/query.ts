@@ -7,7 +7,6 @@ import {
 	vec,
 } from "@dao-xyz/borsh";
 import { randomBytes, sha256Base64Sync, toBase64 } from "@peerbit/crypto";
-import { v4 as uuid } from "uuid";
 import {
 	BigUnsignedIntegerValue,
 	IntegerValue,
