@@ -344,7 +344,8 @@ export class Documents<
 				}
 				const existingDocument = (
 					await this.index.getDetailed(operation.key)
-				)?.[0].results[0];
+				)?.[0]?.results[0];
+
 				if (!existingDocument) {
 					// already deleted
 					return coerceDeleteOperation(operation); // assume ok
@@ -474,11 +475,12 @@ export class Documents<
 	): Promise<void> {
 		const isAppendOperation =
 			change?.added.length === 1 ? !!change.added[0] : false;
-
 		const removedSet = new Map<string, ShallowOrFullEntry<Operation>>();
+
 		for (const r of change.removed) {
 			removedSet.set(r.hash, r);
 		}
+
 		const sortedEntries = [
 			...change.added,
 			...((await Promise.all(
@@ -487,8 +489,7 @@ export class Documents<
 				),
 			)) || []),
 		]; // TODO assert sorting
-		/* 
-				const sortedEntries = [...change.added, ...(removed || [])]
+		/*  const sortedEntries = [...change.added, ...(removed || [])]
 					.sort(this.log.log.sortFn)
 					.reverse(); // sort so we get newest to oldest */
 

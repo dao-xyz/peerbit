@@ -200,6 +200,30 @@ describe("index", () => {
 				).to.deep.equal([deleteOperation.hash]); // the delete operation
 			});
 
+			it("reload after delete", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						immutable: false,
+					}),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
+
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				await store.docs.put(doc);
+				await store.docs.del(doc.id);
+				await store.docs.log.reload();
+			});
+
 			it("rejects on max message size", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
