@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.0.0...indexer-interface-v1.0.1) (2024-08-12)
+
+
+### Bug Fixes
+
+* revert AbstractSearchRequest variants to v6 ([88b54af](https://github.com/dao-xyz/peerbit/commit/88b54af1f946e96d696d76b387d44cb173548e9b))
+* rm unused import ([fe71c8e](https://github.com/dao-xyz/peerbit/commit/fe71c8efbf40edd591c9ddef986561db3b8c1191))
+
 ## 1.0.0 (2024-07-20)
 
 

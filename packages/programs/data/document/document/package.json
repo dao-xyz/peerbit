@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document",
-	"version": "7.0.9",
+	"version": "7.0.10",
 	"description": "Document store implementation",
 	"type": "module",
 	"sideEffects": false,
@@ -60,15 +60,15 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/program": "5.0.1",
-		"@peerbit/rpc": "5.0.5",
-		"@peerbit/shared-log": "9.0.7",
-		"@peerbit/indexer-interface": "^1.0.0",
-		"@peerbit/indexer-simple": "^1.0.1",
-		"@peerbit/indexer-sqlite3": "^1.0.3",
-		"@peerbit/document-interface": "^1.0.0"
+		"@peerbit/rpc": "5.0.6",
+		"@peerbit/shared-log": "9.0.8",
+		"@peerbit/indexer-interface": "^1.0.1",
+		"@peerbit/indexer-simple": "^1.0.2",
+		"@peerbit/indexer-sqlite3": "^1.0.4",
+		"@peerbit/document-interface": "^1.0.1"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.0.39",
+		"@peerbit/test-utils": "2.0.40",
 		"@peerbit/time": "2.0.7",
 		"@types/pidusage": "^2.0.5",
 		"pidusage": "^3.0.2"

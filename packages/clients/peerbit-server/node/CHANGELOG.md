@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.42](https://github.com/dao-xyz/peerbit/compare/server-v5.0.41...server-v5.0.42) (2024-08-12)
+
+
+### Bug Fixes
+
+* name certbot process correctly ([167097c](https://github.com/dao-xyz/peerbit/commit/167097c9c5c144b2c01934e337554c0c873db15c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.0.13 to 4.0.14
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.39 to 2.0.40
+
 ## [5.0.41](https://github.com/dao-xyz/peerbit/compare/server-v5.0.40...server-v5.0.41) (2024-08-12)
 
 
