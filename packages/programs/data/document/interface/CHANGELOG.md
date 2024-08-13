@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.2...document-interface-v1.0.3) (2024-08-13)
+
+
+### Bug Fixes
+
+* make indexed context to have size property but broadcasted type  not ([d66695a](https://github.com/dao-xyz/peerbit/commit/d66695a8f217810692400b90cdca68410c26702b))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.1...document-interface-v1.0.2) (2024-08-12)
 
 

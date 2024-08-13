@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document",
-	"version": "7.0.12",
+	"version": "7.0.13",
 	"description": "Document store implementation",
 	"type": "module",
 	"sideEffects": false,
@@ -65,7 +65,7 @@
 		"@peerbit/indexer-interface": "^1.0.2",
 		"@peerbit/indexer-simple": "^1.0.3",
 		"@peerbit/indexer-sqlite3": "^1.0.5",
-		"@peerbit/document-interface": "^1.0.2"
+		"@peerbit/document-interface": "^1.0.3"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "2.0.41",

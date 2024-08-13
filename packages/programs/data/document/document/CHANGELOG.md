@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.13](https://github.com/dao-xyz/peerbit/compare/document-v7.0.12...document-v7.0.13) (2024-08-13)
+
+
+### Bug Fixes
+
+* make indexed context to have size property but broadcasted type  not ([d66695a](https://github.com/dao-xyz/peerbit/commit/d66695a8f217810692400b90cdca68410c26702b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document-interface bumped from ^1.0.2 to ^1.0.3
+
 ## [7.0.12](https://github.com/dao-xyz/peerbit/compare/document-v7.0.11...document-v7.0.12) (2024-08-12)
 
 
