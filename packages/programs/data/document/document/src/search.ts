@@ -227,8 +227,49 @@ export type CanRead<T> = (
 	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
+@variant(0)
+export class IndexableContext implements types.Context {
+	@field({ type: "u64" })
+	created: bigint;
+
+	@field({ type: "u64" })
+	modified: bigint;
+
+	@field({ type: "string" })
+	head: string;
+
+	@field({ type: "string" })
+	gid: string;
+
+	@field({ type: "u32" })
+	size: number; // bytes, we index this so we can query documents and understand their representation sizes
+
+	constructor(properties: {
+		created: bigint;
+		modified: bigint;
+		head: string;
+		gid: string;
+		size: number;
+	}) {
+		this.created = properties.created;
+		this.modified = properties.modified;
+		this.head = properties.head;
+		this.gid = properties.gid;
+		this.size = properties.size;
+	}
+
+	toContext(): types.Context {
+		return new types.Context({
+			created: this.created,
+			modified: this.modified,
+			head: this.head,
+			gid: this.gid,
+		});
+	}
+}
+
 export type IDocumentWithContext<I> = {
-	__context: types.Context;
+	__context: IndexableContext;
 } & I;
 
 export type TransformerAsConstructor<T, I> = {
@@ -263,8 +304,8 @@ export type OpenOptions<T, I> = {
 
 type IndexableClass<I> = new (
 	value: I,
-	context: types.Context,
-) => IDocumentWithContext<I>; /* IDocumentWithContext<T>; */
+	context: IndexableContext,
+) => IDocumentWithContext<I>;
 
 @variant("documents_index")
 export class DocumentIndex<T, I extends Record<string, any>> extends Program<
@@ -341,10 +382,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 
 		@variant(0)
 		class IndexedClassWithContext {
-			@field({ type: types.Context })
-			__context: types.Context;
+			@field({ type: IndexableContext })
+			__context: IndexableContext;
 
-			constructor(value: I, context: types.Context) {
+			constructor(value: I, context: IndexableContext) {
 				Object.assign(this, value);
 				this.__context = context;
 			}
@@ -505,7 +546,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		}
 
 		const existing = await this.index.get(id);
-		const context = new types.Context({
+		const context = new IndexableContext({
 			created:
 				existing?.value.__context.created ||
 				entry.meta.clock.timestamp.wallTime,
@@ -712,9 +753,10 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			) {
 				continue;
 			}
+
 			filteredResults.push(
 				new types.ResultWithSource({
-					context: result.value.__context,
+					context: result.value.__context.toContext(),
 					value: value.value,
 					source: serialize(value.value),
 					indexed: result.value,
