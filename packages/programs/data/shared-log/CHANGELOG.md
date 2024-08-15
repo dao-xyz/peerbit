@@ -389,6 +389,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.9...shared-log-v9.0.10) (2024-08-15)
+
+
+### Bug Fixes
+
+* correctly override canAppend on append ([31bca3b](https://github.com/dao-xyz/peerbit/commit/31bca3b4be04f10546c75b6a991a8d970411c24f))
+* dont pre-calculate total participation ([42268a2](https://github.com/dao-xyz/peerbit/commit/42268a21271075d9e36397d88cb6858a178bd5e7))
+
 ## [9.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.8...shared-log-v9.0.9) (2024-08-12)
 
 

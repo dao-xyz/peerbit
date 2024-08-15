@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.0.14](https://github.com/dao-xyz/peerbit/compare/document-v7.0.13...document-v7.0.14) (2024-08-15)
+
+
+### Bug Fixes
+
+* don't perform remote queries on canAppend unless immutable ([e1db01f](https://github.com/dao-xyz/peerbit/commit/e1db01f262bc6dc3c388c3e55a4497a5c86dac98))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 9.0.9 to 9.0.10
+
 ## [7.0.13](https://github.com/dao-xyz/peerbit/compare/document-v7.0.12...document-v7.0.13) (2024-08-13)
 
 
