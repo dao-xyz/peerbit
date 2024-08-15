@@ -1944,7 +1944,7 @@ describe("index", () => {
 	describe("acl", () => {
 		let store: TestStore;
 		before(async () => {
-			session = await TestSession.connected(1);
+			session = await TestSession.connected(2);
 		});
 
 		after(async () => {
@@ -1986,6 +1986,181 @@ describe("index", () => {
 			);
 
 			await expect(canAppend).to.be.false;
+		});
+
+		it("does not query remote when canAppend check", async () => {
+			const store = new TestStore({
+				docs: new Documents<Document>(),
+			});
+			const store1 = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+				},
+			});
+
+			const store2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+				},
+			});
+
+			const processQuery1 = store1.docs.index.processQuery.bind(
+				store1.docs.index,
+			);
+			let remoteQueries1 = 0;
+			store1.docs.index.processQuery = async (
+				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				from: PublicSignKey,
+				isLocal: boolean,
+				options?: {
+					canRead?: CanRead<T>;
+				},
+			) => {
+				if (!isLocal) {
+					remoteQueries1++;
+				}
+
+				return processQuery1(query, from, isLocal, options);
+			};
+
+			const processQuery2 = store2.docs.index.processQuery.bind(
+				store2.docs.index,
+			);
+			let remoteQueries2 = 0;
+			store2.docs.index.processQuery = async (
+				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				from: PublicSignKey,
+				isLocal: boolean,
+				options?: {
+					canRead?: CanRead<T>;
+				},
+			) => {
+				if (!isLocal) {
+					remoteQueries2++;
+				}
+
+				return processQuery2(query, from, isLocal, options);
+			};
+
+			for (let i = 0; i < 10; i++) {
+				const doc = new Document({
+					id: uuid(),
+					data: randomBytes(10),
+				});
+				await store1.docs.put(doc);
+			}
+
+			await waitForResolved(async () =>
+				expect(await store1.docs.index.getSize()).equal(10),
+			);
+			await waitForResolved(async () =>
+				expect(await store2.docs.index.getSize()).equal(10),
+			);
+
+			expect(remoteQueries1).equal(0);
+			expect(remoteQueries2).equal(0);
+		});
+
+		it("immutable", async () => {
+			const store = new TestStore({
+				docs: new Documents<Document>({
+					immutable: true,
+				}),
+			});
+
+			const store1 = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+				},
+			});
+
+			const store2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+				},
+			});
+
+			const processQuery1 = store1.docs.index.processQuery.bind(
+				store1.docs.index,
+			);
+			let remoteQueries1 = 0;
+			store1.docs.index.processQuery = async (
+				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				from: PublicSignKey,
+				isLocal: boolean,
+				options?: {
+					canRead?: CanRead<T>;
+				},
+			) => {
+				if (!isLocal) {
+					remoteQueries1++;
+				}
+
+				return processQuery1(query, from, isLocal, options);
+			};
+
+			const processQuery2 = store2.docs.index.processQuery.bind(
+				store2.docs.index,
+			);
+			let remoteQueries2 = 0;
+			store2.docs.index.processQuery = async (
+				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				from: PublicSignKey,
+				isLocal: boolean,
+				options?: {
+					canRead?: CanRead<T>;
+				},
+			) => {
+				if (!isLocal) {
+					remoteQueries2++;
+				}
+
+				return processQuery2(query, from, isLocal, options);
+			};
+
+			const doc1 = new Document({
+				id: uuid(),
+				number: 1n,
+			});
+
+			await store1.docs.put(doc1);
+			await store2.docs.put(new Document({ id: doc1.id, number: 2n }));
+
+			await waitForResolved(async () =>
+				expect(await store1.docs.index.getSize()).equal(1),
+			);
+			await waitForResolved(async () =>
+				expect(await store2.docs.index.getSize()).equal(1),
+			);
+
+			await waitForResolved(() => expect(remoteQueries1).equal(1));
+			await waitForResolved(() => expect(remoteQueries2).equal(1));
+
+			// expect doc1 to be the "truth"
+
+			const resultsFrom1 = await store1.docs.index.search(
+				new SearchRequest({ fetch: 1 }),
+				{ local: true, remote: false },
+			);
+			expect(resultsFrom1).to.have.length(1);
+			expect(resultsFrom1[0].number).to.equal(1n);
+
+			await waitForResolved(async () => {
+				const resultsFrom2 = await store2.docs.index.search(
+					new SearchRequest({ fetch: 1 }),
+					{ local: true, remote: false },
+				);
+				expect(resultsFrom2).to.have.length(1);
+				expect(resultsFrom2[0].number).to.equal(1n);
+			});
 		});
 
 		describe("canPerform", () => {

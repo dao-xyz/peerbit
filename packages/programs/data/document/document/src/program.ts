@@ -314,25 +314,47 @@ export class Documents<
 
 				const key = indexerTypes.toId(keyValue);
 
-				const existingDocument = (await this.index.getDetailed(key))?.[0]
-					?.results[0];
+				const existingDocument = (
+					await this.index.getDetailed(key, {
+						local: true,
+						remote: this.immutable,
+					})
+				)?.[0]?.results[0];
 				if (existingDocument && existingDocument.context.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
 					if (this.immutable) {
-						//Key already exist and this instance Documents can note overrite/edit'
-						return false;
-					}
+						// key already exist but pick the oldest entry
+						// this is because we can not overwrite same id if immutable
+						if (
+							existingDocument.context.created <
+							entry.meta.clock.timestamp.wallTime
+						) {
+							return false;
+						}
 
-					if (entry.meta.next.length !== 1) {
-						return false;
+						if (entry.meta.next.length > 0) {
+							return false; // can not append to immutable document
+						}
+
+						return putOperation;
+					} else {
+						if (entry.meta.next.length !== 1) {
+							return false;
+						}
+
+						const prevEntry = await this.log.log.entryIndex.get(
+							existingDocument.context.head,
+						);
+						if (!prevEntry) {
+							logger.error(
+								"Failed to find previous entry for document edit: " +
+									entry.hash,
+							);
+							return false;
+						}
+						const referenceHistoryCorrectly = await pointsToHistory(prevEntry);
+						return referenceHistoryCorrectly ? putOperation : false;
 					}
-					let doc = await this.log.log.get(existingDocument.context.head);
-					if (!doc) {
-						logger.error("Failed to find Document from head");
-						return false;
-					}
-					const referenceHistoryCorrectly = await pointsToHistory(doc);
-					return referenceHistoryCorrectly ? putOperation : false;
 				} else {
 					if (entry.meta.next.length !== 0) {
 						return false;
@@ -343,7 +365,10 @@ export class Documents<
 					return false;
 				}
 				const existingDocument = (
-					await this.index.getDetailed(operation.key)
+					await this.index.getDetailed(operation.key, {
+						local: true,
+						remote: this.immutable,
+					})
 				)?.[0]?.results[0];
 
 				if (!existingDocument) {
