@@ -4,6 +4,7 @@ import { create as createIndices } from "@peerbit/indexer-sqlite3";
 import { expect } from "chai";
 import { getCoverSet, getDistance, getSamples } from "../src/ranges.js";
 import { ReplicationRangeIndexable } from "../src/replication.js";
+import { SEGMENT_COORDINATE_SCALE } from "../src/role.js";
 
 // prettier-ignore
 describe("ranges", () => {
@@ -44,7 +45,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(1, peers, 1e5, a)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
 
                     })
                 })
@@ -58,7 +59,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(1, peers, 1e5, a)]).to.have.members([a.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode()])
                     })
                 })
 
@@ -73,7 +74,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(1, peers, 1e5, a)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
 
                     })
 
@@ -86,7 +87,7 @@ describe("ranges", () => {
 
 
                         // should not be included. TODO is this always expected behaviour?
-                        expect([...await getCoverSet(1, peers, 1e5, a)]).to.have.members([a.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode()])
 
                     })
                 })
@@ -102,7 +103,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(0.5, peers, 1e5, a)]).to.have.members([a.hashcode(), b.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, SEGMENT_COORDINATE_SCALE / 2, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode(), b.hashcode()])
                     })
                     it('between', async () => {
 
@@ -116,7 +117,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(0.5, peers, 1e5, a)]).to.have.members([a.hashcode(), b.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, SEGMENT_COORDINATE_SCALE / 2, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode(), b.hashcode()])
 
                     })
                 })
@@ -131,7 +132,7 @@ describe("ranges", () => {
                         );
 
                         // because of rounding errors, a cover width of 0.5 might yield unecessary results
-                        expect([...await getCoverSet(0.499, peers, 0, a)]).to.have.members([a.hashcode()])
+                        expect([...await getCoverSet(peers, 0, a, 0.499 * SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode()])
                     })
 
                     it('after', async () => {
@@ -142,7 +143,7 @@ describe("ranges", () => {
                             new ReplicationRangeIndexable({ publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n })
                         );
 
-                        expect([...await getCoverSet(0.6, peers, 0, b)]).to.have.members([b.hashcode()])
+                        expect([...await getCoverSet(peers, 0, b, 0.6 * SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([b.hashcode()])
                     })
 
                     it('skip matured', async () => {
@@ -152,7 +153,7 @@ describe("ranges", () => {
                             new ReplicationRangeIndexable({ publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n })
                         );
                         // starting from b, we need both a and c since b is not mature to cover the width
-                        expect([...await getCoverSet(0.5, peers, 1e5, a)]).to.have.members([a.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, a, 0.5 * SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode(), c.hashcode()])
                     })
 
                     it('include start node identity', async () => {
@@ -162,7 +163,7 @@ describe("ranges", () => {
                             new ReplicationRangeIndexable({ publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n })
                         );
                         // starting from b, we need both a and c since b is not mature to cover the width
-                        expect([...await getCoverSet(0.5, peers, 1e5, b)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet(peers, 1e5, b, 0.5 * SEGMENT_COORDINATE_SCALE, SEGMENT_COORDINATE_SCALE)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
                     })
                 })
             })

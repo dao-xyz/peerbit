@@ -1,5 +1,4 @@
 import {
-	BinaryReader,
 	deserialize,
 	field,
 	option,
@@ -375,11 +374,4 @@ export const maxReplicas = (
 	const higher = log.replicas.max?.getValue(log) ?? Number.MAX_SAFE_INTEGER;
 	const numberOfLeaders = Math.max(Math.min(higher, max), lower);
 	return numberOfLeaders;
-};
-
-export const hashToUniformNumber = (hash: Uint8Array) => {
-	const seedNumber = new BinaryReader(
-		hash.subarray(hash.length - 4, hash.length),
-	).u32();
-	return seedNumber / 0xffffffff; // bounded between 0 and 1
 };

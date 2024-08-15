@@ -799,7 +799,6 @@ describe("index", () => {
 					expect(results).to.have.length(4);
 				});
 
-				/*  TODO feat
 				describe("sync", () => {
 					it("can match sync", async () => {
 						expect(await stores[1].docs.index.getSize()).equal(0);
@@ -884,7 +883,7 @@ describe("index", () => {
 							},
 						);
 					});
-				}); */
+				});
 
 				/* TODO feat
 				describe("array", () => {

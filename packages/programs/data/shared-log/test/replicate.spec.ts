@@ -336,7 +336,7 @@ describe(`exchange`, function () {
 		await waitForResolved(async () =>
 			expect(
 				await db1.log.findLeaders(
-					db1Entries[0].meta.gid,
+					db1Entries[0],
 					maxReplicas(db1.log, db1Entries),
 					// 0
 				),
@@ -354,7 +354,7 @@ describe(`exchange`, function () {
 		expect(db2Entries.length).equal(1);
 		expect(
 			await db2.log.findLeaders(
-				db2Entries[0].meta.gid,
+				db2Entries[0],
 				maxReplicas(db2.log, db2Entries),
 				// 0
 			),
@@ -910,7 +910,11 @@ describe("canReplicate", () => {
 			),
 		);
 
-		const unionFromPeer0 = await db1.log.getReplicatorUnion(0);
+		const unionFromPeer0 = await db1.log.replicationDomain.collect(
+			db1.log,
+			0,
+			undefined,
+		);
 		let selfIndex = unionFromPeer0.findIndex(
 			(x) => x === db1.node.identity.publicKey.hashcode(),
 		);
@@ -926,9 +930,9 @@ describe("canReplicate", () => {
 		await Promise.all(
 			[db2, db3].map((log) =>
 				waitForResolved(async () =>
-					expect(await log.log.getReplicatorUnion(0)).to.have.members([
-						log.node.identity.publicKey.hashcode(),
-					]),
+					expect(
+						await log.log.replicationDomain.collect(log.log, 0, undefined),
+					).to.have.members([log.node.identity.publicKey.hashcode()]),
 				),
 			),
 		);

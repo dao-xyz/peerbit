@@ -1,11 +1,10 @@
-import { BinaryWriter, BorshError, field, variant } from "@dao-xyz/borsh";
+import { BorshError, field, variant } from "@dao-xyz/borsh";
 import { CustomEvent } from "@libp2p/interface";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
 	PublicSignKey,
-	sha256,
 	sha256Base64Sync,
 	sha256Sync,
 } from "@peerbit/crypto";
@@ -63,7 +62,12 @@ import {
 } from "./exchange-heads.js";
 import { TransportMessage } from "./message.js";
 import { PIDReplicationController } from "./pid.js";
-import { getCoverSet, getSamples, isMatured } from "./ranges.js";
+import { isMatured } from "./ranges.js";
+import {
+	ReplicationDomainHash,
+	hashToUniformNumber,
+} from "./replication-domain-hash.js";
+import { type ReplicationDomain } from "./replication-domain.js";
 import {
 	AbsoluteReplicas,
 	ReplicationError,
@@ -78,7 +82,6 @@ import {
 	StoppedReplicating,
 	decodeReplicas,
 	encodeReplicas,
-	hashToUniformNumber,
 	maxReplicas,
 } from "./replication.js";
 import { Observer, Replicator, SEGMENT_COORDINATE_SCALE } from "./role.js";
@@ -88,6 +91,22 @@ export * from "./replication.js";
 export { type CPUUsage, CPUUsageIntervalLag };
 
 export const logger = loggerFn({ module: "shared-log" });
+
+const getLatestEntry = (
+	entries: (ShallowOrFullEntry<any> | EntryWithRefs<any>)[],
+) => {
+	let latest: ShallowOrFullEntry<any> | undefined = undefined;
+	for (const element of entries) {
+		let entry = element instanceof EntryWithRefs ? element.entry : element;
+		if (
+			!latest ||
+			entry.meta.clock.timestamp.compare(latest.meta.clock.timestamp) > 0
+		) {
+			latest = entry;
+		}
+	}
+	return latest;
+};
 
 const groupByGid = async <
 	T extends ShallowEntry | Entry<any> | EntryWithRefs<any>,
@@ -148,7 +167,7 @@ const isAdaptiveReplicatorOption = (
 	return true;
 };
 
-export type SharedLogOptions<T> = {
+export type SharedLogOptions<T, D extends ReplicationDomain<any>> = {
 	replicate?: ReplicationOptions;
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
@@ -158,6 +177,7 @@ export type SharedLogOptions<T> = {
 	waitForReplicatorTimeout?: number;
 	distributionDebounceTime?: number;
 	compatibility?: number;
+	replicationDomain?: D;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -166,7 +186,9 @@ export const WAIT_FOR_ROLE_MATURITY = 5000;
 const REBALANCE_DEBOUNCE_INTERVAL = 100;
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 
-export type Args<T> = LogProperties<T> & LogEvents<T> & SharedLogOptions<T>;
+export type Args<T, D extends ReplicationDomain<any>> = LogProperties<T> &
+	LogEvents<T> &
+	SharedLogOptions<T, D>;
 
 export type SharedAppendOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
@@ -184,10 +206,10 @@ export interface SharedLogEvents extends ProgramEvents {
 }
 
 @variant("shared_log")
-export class SharedLog<T = Uint8Array> extends Program<
-	Args<T>,
-	SharedLogEvents
-> {
+export class SharedLog<
+	T = Uint8Array,
+	D extends ReplicationDomain<any> = typeof ReplicationDomainHash,
+> extends Program<Args<T, D>, SharedLogEvents> {
 	@field({ type: Log })
 	log: Log<T>;
 
@@ -209,7 +231,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	private _logProperties?: LogProperties<T> &
 		LogEvents<T> &
-		SharedLogOptions<T>;
+		SharedLogOptions<T, D>;
 	private _closeController!: AbortController;
 	private _gidParentCache!: Cache<Entry<any>[]>;
 	private _respondToIHaveTimeout!: any;
@@ -254,7 +276,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	private syncInFlightQueueInverted!: Map<string, Set<string>>;
 
 	// map of hash to public keys that we have asked for entries
-	private syncInFlight!: Map<string, Map<string, { timestamp: number }>>;
+	syncInFlight!: Map<string, Map<string, { timestamp: number }>>;
 
 	replicas!: ReplicationLimits;
 
@@ -266,6 +288,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 	replicationController!: PIDReplicationController;
 	history!: { usedMemory: number; factor: number }[];
+	replicationDomain: D;
 
 	private pq: PQueue<any>;
 
@@ -432,7 +455,19 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 	}
 
-	async replicate(range?: ReplicationRange | ReplicationOptions) {
+	async replicate(
+		rangeOrEntry?: ReplicationRange | ReplicationOptions | Entry<T>,
+	) {
+		let range: ReplicationRange | ReplicationOptions | undefined = undefined;
+
+		if (rangeOrEntry instanceof ReplicationRange) {
+			range = rangeOrEntry;
+		} else if (rangeOrEntry instanceof Entry) {
+			range = await this.replicationDomain.mapper(rangeOrEntry);
+		} else {
+			range = rangeOrEntry;
+		}
+
 		if (range === false || range === 0) {
 			this._replicationSettings = undefined;
 			await this.removeReplicator(this.node.identity.publicKey);
@@ -681,22 +716,29 @@ export class SharedLog<T = Uint8Array> extends Program<
 		)) {
 			if (options?.target === "replicators" || !options?.target) {
 				const minReplicas = decodeReplicas(result.entry).getValue(this);
+
 				let leaders: string[] | Set<string> = await this.findLeaders(
-					result.entry.meta.gid,
+					result.entry,
 					minReplicas,
 				);
+
 				const isLeader = leaders.includes(
 					this.node.identity.publicKey.hashcode(),
 				);
+
 				if (message.heads[0].gidRefrences.length > 0) {
 					const newAndOldLeaders = new Set(leaders);
 					for (const ref of message.heads[0].gidRefrences) {
-						for (const hash of await this.findLeaders(ref, minReplicas)) {
-							newAndOldLeaders.add(hash);
+						const entryFromGid = this.log.entryIndex.getHeads(ref, false);
+						for (const entry of await entryFromGid.all()) {
+							for (const hash of await this.findLeaders(entry, minReplicas)) {
+								newAndOldLeaders.add(hash);
+							}
 						}
 					}
 					leaders = newAndOldLeaders;
 				}
+
 				let set = this._gidPeersHistory.get(result.entry.meta.gid);
 				if (!set) {
 					set = new Set(leaders);
@@ -721,7 +763,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		return result;
 	}
 
-	async open(options?: Args<T>): Promise<void> {
+	async open(options?: Args<T, D>): Promise<void> {
 		this.replicas = {
 			min: options?.replicas?.min
 				? typeof options?.replicas?.min === "number"
@@ -734,7 +776,8 @@ export class SharedLog<T = Uint8Array> extends Program<
 					: options.replicas.max
 				: undefined,
 		};
-
+		this.replicationDomain =
+			options?.replicationDomain ?? (ReplicationDomainHash as D);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
@@ -1074,6 +1117,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							const headsWithGid = await this.log.entryIndex
 								.getHeads(gid)
 								.all();
+							const latestEntry = getLatestEntry(entries)!;
 
 							const maxReplicasFromHead =
 								headsWithGid && headsWithGid.length > 0
@@ -1091,12 +1135,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 							if (isReplicating) {
 								isLeader = await this.waitForIsLeader(
-									gid,
+									latestEntry,
 									Math.max(maxReplicasFromHead, maxReplicasFromNewEntries),
 								);
 							} else {
 								isLeader = await this.findLeaders(
-									gid,
+									latestEntry,
 									Math.max(maxReplicasFromHead, maxReplicasFromNewEntries),
 								);
 
@@ -1180,7 +1224,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 								const minReplicas = maxReplicas(this, headsWithGid.values());
 
 								const isLeader = await this.isLeader(
-									entries[0].entry.meta.gid,
+									entries[0].entry,
 									minReplicas,
 								);
 
@@ -1202,7 +1246,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 					if (
 						indexedEntry &&
 						(await this.isLeader(
-							indexedEntry.value.meta.gid,
+							indexedEntry.value,
 							decodeReplicas(indexedEntry.value).getValue(this),
 						))
 					) {
@@ -1220,7 +1264,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 							callback: async (entry: any) => {
 								if (
 									await this.isLeader(
-										entry.meta.gid,
+										entry,
 										decodeReplicas(entry).getValue(this),
 									)
 								) {
@@ -1514,8 +1558,24 @@ export class SharedLog<T = Uint8Array> extends Program<
 		});
 	}
 
+	/* async join(
+		entries: Entry<T>[],
+		options?: {
+			verifySignatures?: boolean;
+			timeout?: number;
+			replicate: boolean;
+		},
+	): Promise<void> {
+		await this.log.join(entries, options);
+		if (options?.replicate) {
+			for (const entry of entries) {
+				this.replicate(entry);
+			}
+		}
+	} */
+
 	async isLeader(
-		slot: { toString(): string },
+		entry: ShallowOrFullEntry<any>,
 		numberOfLeaders: number,
 		options?: {
 			candidates?: string[];
@@ -1523,13 +1583,13 @@ export class SharedLog<T = Uint8Array> extends Program<
 		},
 	): Promise<boolean> {
 		const isLeader = (
-			await this.findLeaders(slot, numberOfLeaders, options)
+			await this.findLeaders(entry, numberOfLeaders, options)
 		).find((l) => l === this.node.identity.publicKey.hashcode());
 		return !!isLeader;
 	}
 
 	private async waitForIsLeader(
-		slot: { toString(): string },
+		entry: ShallowOrFullEntry<T>,
 		numberOfLeaders: number,
 		timeout = this.waitForReplicatorTimeout,
 	): Promise<string[] | false> {
@@ -1550,7 +1610,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			}, timeout);
 
 			const check = () =>
-				this.findLeaders(slot, numberOfLeaders).then((leaders) => {
+				this.findLeaders(entry, numberOfLeaders).then((leaders) => {
 					const isLeader = leaders.find(
 						(l) => l === this.node.identity.publicKey.hashcode(),
 					);
@@ -1573,7 +1633,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	}
 
 	async findLeaders(
-		subject: { toString(): string },
+		entry: ShallowOrFullEntry<any>,
 		numberOfLeaders: number,
 		options?: {
 			roleAge?: number;
@@ -1583,17 +1643,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			return [this.node.identity.publicKey.hashcode()]; // Assumption: if the store is closed, always assume we have responsibility over the data
 		}
 
-		// For a fixed set or members, the choosen leaders will always be the same (address invariant)
-		// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
-
-		// Convert this thing we wan't to distribute to 8 bytes so we get can convert it into a u64
-		// modulus into an index
-		const utf8writer = new BinaryWriter();
-		utf8writer.string(subject.toString());
-		const seed = await sha256(utf8writer.finalize());
-
-		// convert hash of slot to a number
-		const cursor = hashToUniformNumber(seed); // bounded between 0 and 1
+		const cursor = await this.replicationDomain.mapper(entry);
 		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
 	}
 
@@ -1621,55 +1671,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 		},
 	) {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
-
-		const samples = await getSamples(
+		return this.replicationDomain.distribute(
 			cursor,
 			this.replicationIndex,
 			numberOfLeaders,
 			roleAge,
 		);
-
-		return samples;
-	}
-
-	/**
-	 *
-	 * @returns groups where at least one in any group will have the entry you are looking for
-	 */
-	async getReplicatorUnion(roleAge?: number) {
-		roleAge = roleAge ?? (await this.getDefaultMinRoleAge());
-		if (this.closed === true) {
-			throw new ClosedError();
-		}
-
-		// Total replication "width"
-		const width = 1;
-
-		// How much width you need to "query" to
-		const peers = this.replicationIndex; // TODO types
-		const minReplicas = Math.min(
-			await peers.getSize(),
-			this.replicas.min.getValue(this),
-		);
-
-		// If min replicas = 2
-		// then we need to make sure we cover 0.5 of the total 'width' of the replication space
-		// to make sure we reach sufficient amount of nodes such that at least one one has
-		// the entry we are looking for
-		const coveringWidth = width / minReplicas;
-
-		const set = await getCoverSet(
-			coveringWidth,
-			peers,
-			roleAge,
-			this.node.identity.publicKey,
-		);
-
-		// add all in flight
-		for (const [key, _] of this.syncInFlight) {
-			set.add(key);
-		}
-		return [...set];
 	}
 
 	async isReplicator(
@@ -1679,11 +1686,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 			roleAge?: number;
 		},
 	) {
-		return this.isLeader(
-			entry.meta.gid,
-			decodeReplicas(entry).getValue(this),
-			options,
-		);
+		return this.isLeader(entry, decodeReplicas(entry).getValue(this), options);
 	}
 
 	async handleSubscriptionChange(
@@ -1821,10 +1824,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 						? Math.min(minReplicasValue, this.replicas.max.getValue(this))
 						: minReplicasValue;
 
-					const leaders = await this.findLeaders(
-						entry.meta.gid,
-						minMinReplicasValue,
-					);
+					const leaders = await this.findLeaders(entry, minMinReplicasValue);
 
 					if (
 						leaders.find((x) => x === this.node.identity.publicKey.hashcode())
@@ -1937,7 +1937,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			const oldPeersSet = this._gidPeersHistory.get(gid);
 			const currentPeers = await this.findLeaders(
-				gid,
+				getLatestEntry(entries)!,
 				maxReplicas(this, entries), // pick max replication policy of all entries, so all information is treated equally important as the most important
 			);
 

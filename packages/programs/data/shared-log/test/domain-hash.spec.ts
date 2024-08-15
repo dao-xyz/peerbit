@@ -1,5 +1,6 @@
 import { deserialize } from "@dao-xyz/borsh";
 import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -12,6 +13,11 @@ import { EventStore } from "./utils/stores/event-store.js";
 /**
  * TOOD make these test part of ranges.test.ts
  */
+
+const toEntry = (gid: string | number) => {
+	return { meta: { gid: String(gid) } } as Entry<any>;
+};
+
 describe(`leaders`, function () {
 	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
@@ -91,9 +97,9 @@ describe(`leaders`, function () {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: { ...options.args, replicate: { offset: 0, factor: 0.5 } },
 		});
-		const isLeaderAOneLeader = await db1.log.isLeader(123, 1);
+		const isLeaderAOneLeader = await db1.log.isLeader(toEntry(123), 1);
 		expect(isLeaderAOneLeader);
-		const isLeaderATwoLeader = await db1.log.isLeader(123, 2);
+		const isLeaderATwoLeader = await db1.log.isLeader(toEntry(123), 2);
 		expect(isLeaderATwoLeader);
 
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
@@ -113,16 +119,16 @@ describe(`leaders`, function () {
 			let slot = (0.1 + i) % 1;
 
 			// One leader
-			const isLeaderAOneLeader = await db1.log.isLeader(slot, 1);
-			const isLeaderBOneLeader = await db2.log.isLeader(slot, 1);
+			const isLeaderAOneLeader = await db1.log.isLeader(toEntry(slot), 1);
+			const isLeaderBOneLeader = await db2.log.isLeader(toEntry(slot), 1);
 			expect([isLeaderAOneLeader, isLeaderBOneLeader]).to.have.members([
 				false,
 				true,
 			]);
 
 			// Two leaders
-			const isLeaderATwoLeaders = await db1.log.isLeader(slot, 2);
-			const isLeaderBTwoLeaders = await db2.log.isLeader(slot, 2);
+			const isLeaderATwoLeaders = await db1.log.isLeader(toEntry(slot), 2);
+			const isLeaderBTwoLeaders = await db2.log.isLeader(toEntry(slot), 2);
 
 			expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).to.have.members([
 				true,
@@ -151,8 +157,8 @@ describe(`leaders`, function () {
 		const slot = 0;
 
 		// Two leaders, but only one will be leader since only one is replicating
-		const isLeaderA = await db1.log.isLeader(slot, 2);
-		const isLeaderB = await db2.log.isLeader(slot, 2);
+		const isLeaderA = await db1.log.isLeader(toEntry(slot), 2);
+		const isLeaderB = await db2.log.isLeader(toEntry(slot), 2);
 
 		expect(!isLeaderA); // because replicate is false
 		expect(isLeaderB);
@@ -187,9 +193,9 @@ describe(`leaders`, function () {
 		const slot = 0;
 
 		// Two leaders, but only one will be leader since only one is replicating
-		const isLeaderA = await db1.log.isLeader(slot, 3);
-		const isLeaderB = await db2.log.isLeader(slot, 3);
-		const isLeaderC = await db3.log.isLeader(slot, 3);
+		const isLeaderA = await db1.log.isLeader(toEntry(slot), 3);
+		const isLeaderB = await db2.log.isLeader(toEntry(slot), 3);
+		const isLeaderC = await db3.log.isLeader(toEntry(slot), 3);
 
 		expect(!isLeaderA); // because replicate is false
 		expect(isLeaderB);
@@ -240,13 +246,13 @@ describe(`leaders`, function () {
 		for (let i = 0; i < 100; i++) {
 			try {
 				const slot = Math.random();
-				const isLeaderAOneLeader = await db1.log.isLeader(slot, 1, {
+				const isLeaderAOneLeader = await db1.log.isLeader(toEntry(slot), 1, {
 					roleAge: 0,
 				});
-				const isLeaderBOneLeader = await db2.log.isLeader(slot, 1, {
+				const isLeaderBOneLeader = await db2.log.isLeader(toEntry(slot), 1, {
 					roleAge: 0,
 				});
-				const isLeaderCOneLeader = await db3.log.isLeader(slot, 1, {
+				const isLeaderCOneLeader = await db3.log.isLeader(toEntry(slot), 1, {
 					roleAge: 0,
 				});
 				expect([
@@ -256,13 +262,13 @@ describe(`leaders`, function () {
 				]).include.members([false, false, true]);
 
 				// Two leaders
-				const isLeaderATwoLeaders = await db1.log.isLeader(slot, 2, {
+				const isLeaderATwoLeaders = await db1.log.isLeader(toEntry(slot), 2, {
 					roleAge: 0,
 				});
-				const isLeaderBTwoLeaders = await db2.log.isLeader(slot, 2, {
+				const isLeaderBTwoLeaders = await db2.log.isLeader(toEntry(slot), 2, {
 					roleAge: 0,
 				});
-				const isLeaderCTwoLeaders = await db3.log.isLeader(slot, 2, {
+				const isLeaderCTwoLeaders = await db3.log.isLeader(toEntry(slot), 2, {
 					roleAge: 0,
 				});
 				expect([
@@ -272,13 +278,13 @@ describe(`leaders`, function () {
 				]).include.members([false, true, true]);
 
 				// Three leders
-				const isLeaderAThreeLeaders = await db1.log.isLeader(slot, 3, {
+				const isLeaderAThreeLeaders = await db1.log.isLeader(toEntry(slot), 3, {
 					roleAge: 0,
 				});
-				const isLeaderBThreeLeaders = await db2.log.isLeader(slot, 3, {
+				const isLeaderBThreeLeaders = await db2.log.isLeader(toEntry(slot), 3, {
 					roleAge: 0,
 				});
-				const isLeaderCThreeLeaders = await db3.log.isLeader(slot, 3, {
+				const isLeaderCThreeLeaders = await db3.log.isLeader(toEntry(slot), 3, {
 					roleAge: 0,
 				});
 				expect([
@@ -342,9 +348,15 @@ describe(`leaders`, function () {
 		const count = 10000;
 
 		for (let i = 0; i < count; i++) {
-			a += (await db1.log.isLeader(String(i), 2, { roleAge: 0 })) ? 1 : 0;
-			b += (await db2.log.isLeader(String(i), 2, { roleAge: 0 })) ? 1 : 0;
-			c += (await db3.log.isLeader(String(i), 2, { roleAge: 0 })) ? 1 : 0;
+			a += (await db1.log.isLeader(toEntry(String(i)), 2, { roleAge: 0 }))
+				? 1
+				: 0;
+			b += (await db2.log.isLeader(toEntry(String(i)), 2, { roleAge: 0 }))
+				? 1
+				: 0;
+			c += (await db3.log.isLeader(toEntry(String(i)), 2, { roleAge: 0 }))
+				? 1
+				: 0;
 		}
 
 		const from = count * 0.5;
@@ -398,13 +410,13 @@ describe(`leaders`, function () {
 
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
-			expect(await db1.log.getReplicatorUnion(0)).to.deep.equal([
-				session.peers[0].identity.publicKey.hashcode(),
-			]);
+			expect(
+				await db1.log.replicationDomain.collect(db1.log, 0, undefined),
+			).to.deep.equal([session.peers[0].identity.publicKey.hashcode()]);
 
-			expect(await db2.log.getReplicatorUnion(0)).to.deep.equal([
-				session.peers[1].identity.publicKey.hashcode(),
-			]);
+			expect(
+				await db2.log.replicationDomain.collect(db2.log, 0, undefined),
+			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
 		});
 
 		it("will consider in flight", async () => {
@@ -455,7 +467,9 @@ describe(`leaders`, function () {
 
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
-			expect(await db2.log.getReplicatorUnion(0)).to.have.members([
+			expect(
+				await db2.log.replicationDomain.collect(db2.log, 0, undefined),
+			).to.have.members([
 				session.peers[0].identity.publicKey.hashcode(),
 				session.peers[1].identity.publicKey.hashcode(),
 			]);
@@ -468,9 +482,9 @@ describe(`leaders`, function () {
 			});
 
 			// no more inflight
-			expect(await db2.log.getReplicatorUnion(0)).to.deep.equal([
-				session.peers[1].identity.publicKey.hashcode(),
-			]);
+			expect(
+				await db2.log.replicationDomain.collect(db2.log, 0, undefined),
+			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
 		});
 
 		it("sets replicators groups correctly", async () => {
@@ -537,7 +551,9 @@ describe(`leaders`, function () {
 				// min replicas 3 only need to query 1 (every one have all the data)
 				// min replicas 2 only need to query 2
 				// min replicas 1 only need to query 3 (data could end up at any of the 3 nodes)
-				expect(await db1.log.getReplicatorUnion(0)).to.have.length(3 - i + 1);
+				expect(
+					await db1.log.replicationDomain.collect(db1.log, 0, undefined),
+				).to.have.length(3 - i + 1);
 			}
 		});
 
@@ -601,7 +617,13 @@ describe(`leaders`, function () {
 				db3.log.replicas.min = { getValue: () => i };
 
 				// Should always include all nodes since no is mature
-				expect(await db3.log.getReplicatorUnion(0xffffffff)).to.have.length(1);
+				expect(
+					await db3.log.replicationDomain.collect(
+						db3.log,
+						0xffffffff,
+						undefined,
+					),
+				).to.have.length(1);
 			}
 		});
 
@@ -673,7 +695,11 @@ describe(`leaders`, function () {
 
 			for (let i = 1; i < 3; i++) {
 				db3.log.replicas.min = { getValue: () => i };
-				let list = await db3.log.getReplicatorUnion(MATURE_TIME);
+				let list = await db3.log.replicationDomain.collect(
+					db3.log,
+					MATURE_TIME,
+					undefined,
+				);
 				expect(list).to.have.length(2); // TODO unmature nodes should not be queried
 				expect(list).to.have.members([
 					session.peers[0].identity.publicKey.hashcode(),
@@ -687,9 +713,13 @@ describe(`leaders`, function () {
 				db3.log.replicas.min = { getValue: () => i };
 
 				// all is matured now
-				expect(await db3.log.getReplicatorUnion(MATURE_TIME)).to.have.length(
-					3 - i + 1,
-				); // since I am replicating with factor 1 and is mature
+				expect(
+					await db3.log.replicationDomain.collect(
+						db3.log,
+						MATURE_TIME,
+						undefined,
+					),
+				).to.have.length(3 - i + 1); // since I am replicating with factor 1 and is mature
 			}
 		});
 	});
@@ -738,8 +768,12 @@ describe(`leaders`, function () {
 			}
 
 			for (let i = 0; i < count; i++) {
-				a += (await db1.log.isLeader(String(i), 1, { roleAge: 0 })) ? 1 : 0;
-				b += (await db2.log.isLeader(String(i), 1, { roleAge: 0 })) ? 1 : 0;
+				a += (await db1.log.isLeader(toEntry(String(i)), 1, { roleAge: 0 }))
+					? 1
+					: 0;
+				b += (await db2.log.isLeader(toEntry(String(i)), 1, { roleAge: 0 }))
+					? 1
+					: 0;
 			}
 
 			expect(a + b).equal(count);
@@ -802,7 +836,7 @@ describe(`leaders`, function () {
 
 		for (let i = 0; i < 100; i++) {
 			const leaders: Set<string | undefined> = new Set(
-				await db1.log.findLeaders(String(i), 3, { roleAge: 0 }),
+				await db1.log.findLeaders(toEntry(String(i)), 3, { roleAge: 0 }),
 			);
 			expect(leaders.has(undefined)).to.be.false;
 			expect(leaders.size).equal(3);

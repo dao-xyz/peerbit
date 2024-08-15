@@ -1,4 +1,4 @@
-import { type PublicSignKey, equals } from "@peerbit/crypto";
+import { PublicSignKey, equals } from "@peerbit/crypto";
 import {
 	And,
 	Compare,
@@ -16,95 +16,8 @@ import {
 	iterate,
 	iteratorInSeries,
 } from "@peerbit/indexer-interface";
-import {
-	/* getSegmentsFromOffsetAndRange, */
-	type ReplicationRangeIndexable,
-} from "./replication.js";
+import { type ReplicationRangeIndexable } from "./replication.js";
 import { SEGMENT_COORDINATE_SCALE } from "./role.js";
-
-/* 
-export const containsPoint = (
-	rect: { offset: number; length: number },
-	point: number,
-	eps = 0.00001 // we do this to handle numerical errors
-) => {
-	if (rect.factor === 0) {
-		return false;
-	}
-	const start = rect.offset;
-	const width = rect.factor + eps; // we do this to handle numerical errors. It is better to be more inclusive
-	const endUnwrapped = rect.offset + width;
-	let end = endUnwrapped;
-	let wrapped = false;
-	if (endUnwrapped > 1) {
-		end = endUnwrapped % 1;
-		wrapped = true;
-	}
-
-	const inFirstInterval = point >= start && point < Math.min(endUnwrapped, 1);
-	const inSecondInterval =
-		!inFirstInterval && wrapped && point >= 0 && point < end;
-
-	return inFirstInterval || inSecondInterval;
-}; */
-
-/* const resolveRectsThatContainPoint = async (
-	rects: Index<ReplicationRangeIndexable>,
-	point: number,
-	roleAgeLimit: number,
-	matured: boolean
-): Promise<ReplicationRangeIndexable[]> => {
-	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
-	// so we need to query for all ranges that contain the point
-	const scaledPoint = Math.round(point * SEGMENT_COORDINATE_SCALE)
-	let queries = [
-		new IntegerCompare({ key: 'start', compare: Compare.LessOrEqual, value: scaledPoint }),
-		new IntegerCompare({ key: 'end', compare: Compare.Greater, value: scaledPoint }),
-		new IntegerCompare({ key: 'timestamp', compare: matured ? Compare.LessOrEqual : Compare.Greater, value: Date.now() - roleAgeLimit })
-	]
-
-	const results = await rects.query(new SearchRequest({
-		query: [
-			new Nested({
-				path: 'segments',
-				query: queries
-			})
-		]
-	}))
-	return results.results.map(x => x.value)
-} */
-
-/* const resolveRectsInRange = async (rects: Index<ReplicationRangeIndexable>,
-	start: number,
-	end: number,
-	roleAgeLimit: number,
-	matured: boolean
-): Promise<ReplicationRangeIndexable[]> => {
-	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
-	// so we need to query for all ranges that contain the point
-	let endScaled = Math.round(end * SEGMENT_COORDINATE_SCALE);
-	let startScaled = Math.round(start * SEGMENT_COORDINATE_SCALE);
-	let queries = [
-		new Or([
-			new And([
-				new IntegerCompare({ key: 'start1', compare: Compare.Less, value: endScaled }),
-				new IntegerCompare({ key: 'end1', compare: Compare.GreaterOrEqual, value: startScaled }),
-			]),
-			new And([
-				new IntegerCompare({ key: 'start2', compare: Compare.Less, value: endScaled }),
-				new IntegerCompare({ key: 'end2', compare: Compare.GreaterOrEqual, value: startScaled }),
-			])
-		]),
-		new IntegerCompare({ key: 'timestamp', compare: matured ? Compare.LessOrEqual : Compare.Greater, value: BigInt(+new Date - roleAgeLimit) })
-	]
-
-	const results = await rects.query(new SearchRequest({
-		query: queries,
-		sort: [new Sort({ key: "start1" }), new Sort({ key: "start2" })],
-		fetch: 0xffffffff
-	}))
-	return results.results.map(x => x.value)
-} */
 
 const containingPoint = (
 	rects: Index<ReplicationRangeIndexable>,
@@ -511,7 +424,6 @@ export const getSamples = async (
 			roleAge,
 			peers,
 			(rect, m) => {
-				// console.log(m, rect.start1 / SEGMENT_COORDINATE_SCALE, rect.width / SEGMENT_COORDINATE_SCALE)
 				if (m) {
 					maturedLeaders.add(rect.hash);
 				}
@@ -538,60 +450,25 @@ const fetchOne = async (iterator: IndexIterator<ReplicationRangeIndexable>) => {
 };
 
 export const getCoverSet = async (
-	coveringWidth: number,
 	peers: Index<ReplicationRangeIndexable>,
 	roleAge: number,
-	startNodeIdentity?: PublicSignKey,
+	start: number | PublicSignKey | undefined,
+	widthToCoverScaled: number,
+	intervalWidth: number | undefined,
 ): Promise<Set<string>> => {
-	let now = +new Date();
-
-	// find a good starting point
-	let startNode: ReplicationRangeIndexable | undefined = undefined;
-	if (startNodeIdentity) {
-		// start at our node (local first)
-		let result = await peers.query(
-			new SearchRequest({
-				query: [
-					new StringMatch({ key: "hash", value: startNodeIdentity.hashcode() }),
-				],
-				fetch: 1,
-			}),
-		);
-		startNode = result.results[0]?.value;
-
-		if (startNode) {
-			if (!isMatured(startNode, now, roleAge)) {
-				const matured = await fetchOne(
-					getClosestAround(peers, startNode.start1, roleAge, now, true),
-				);
-				if (matured) {
-					startNode = matured;
-				}
-			}
-		}
-	}
-	let startLocation: number;
-
-	if (!startNode) {
-		startLocation = Math.random() * SEGMENT_COORDINATE_SCALE;
-		startNode = await fetchOne(
-			getClosestAround(peers, startLocation, roleAge, now, true),
-		);
-	} else {
-		// TODO choose start location as the point with the longest range?
-		startLocation =
-			startNode.start1 ?? Math.random() * SEGMENT_COORDINATE_SCALE;
-	}
-
-	if (!startNode) {
-		return new Set();
-	}
+	const { startNode, startLocation, endLocation } = await getStartAndEndNode(
+		peers,
+		start,
+		widthToCoverScaled,
+		roleAge,
+		Date.now(),
+		intervalWidth,
+	);
 
 	let results: ReplicationRangeIndexable[] = [];
 
-	let widthToCoverScaled = coveringWidth * SEGMENT_COORDINATE_SCALE;
-	const endLocation =
-		(startLocation + widthToCoverScaled) % SEGMENT_COORDINATE_SCALE;
+	let now = +new Date();
+
 	const endIsWrapped = endLocation <= startLocation;
 
 	const endRect =
@@ -686,38 +563,16 @@ export const getCoverSet = async (
 		let isLast =
 			distanceBefore < widthToCoverScaled &&
 			coveredLength >= widthToCoverScaled;
-		if (
-			(isLast &&
-				!nextCandidate[1]) /* || Math.min(current.start1, current.start2) > Math.min(endRect.start1, endRect.start2) */ /* (Math.min(current.start1, current.start2) > endLocation) */ ||
-			equals(endRect.id, current.id)
-		) {
-			/* if ((isLast && ((endIsWrapped && wrappedOnce) || (!endIsWrapped))) && (current.start1 > endLocation || equals(current.id, endRect.id))) { */
-			// this is the end!
-			/* if (lastMatured && lastMatured.distanceTo(endLocation) < current.distanceTo(endLocation)) {
-				breaks;
-			} */
+		if ((isLast && !nextCandidate[1]) || equals(endRect.id, current.id)) {
 			break;
 		}
-
-		/* if (fromAbove && next && next.start1 > endRect.start1 && (endIsWrapped === false || wrappedOnce)) {
-			break;
-		} */
-
-		// this is a skip condition to not include too many rects
 
 		if (matured) {
 			maturedCoveredLength = coveredLength;
-			/* lastMatured = current; */
 		}
 
 		results.push(current);
-		/* 
-		
-				if (current.start1 > endLocation && (wrappedOnce || !endIsWrapped)) {
-					break;
-				}
-		
-		 */
+
 		nextLocation = endIsWrapped
 			? wrappedOnce
 				? Math.min(current.end2, endLocation)
@@ -726,153 +581,83 @@ export const getCoverSet = async (
 	}
 
 	const res = new Set(results.map((x) => x.hash));
-	startNodeIdentity && res.add(startNodeIdentity.hashcode());
+
+	start instanceof PublicSignKey && res.add(start.hashcode());
 	return res;
+};
 
-	//
-	/* const set: Set<string> = new Set();
-	let currentNode = startNode;
-	const t = +new Date();
-	
-	let wrappedOnce = false;
-	const startPoint = startNode.segment.offset;
-	
-	const getNextPoint = (): [number, number, number, boolean] => {
-		let nextPoint =
-			currentNode.segment.offset + currentNode.segment.factor;
-	
-		if (nextPoint > 1 || nextPoint < startPoint) {
-			wrappedOnce = true;
-		}
-	
-		nextPoint = nextPoint % 1;
-		let distanceStart: number;
-	
-		if (wrappedOnce) {
-			distanceStart = (1 - startPoint + currentNode.segment.offset) % 1;
-		} else {
-			distanceStart = (currentNode.segment.offset - startPoint) % 1;
-		}
-	
-		const distanceEnd = distanceStart + currentNode.segment.factor;
-	
-		return [nextPoint, distanceStart, distanceEnd, wrappedOnce];
-	};
-	
-	const getNextMatured = async (from: ReplicatorRect) => {
-		let next = (await peers.query(new SearchRequest({ query: [new IntegerCompare({ key: ['segment', 'offset'], compare: Compare.Greater, value: from.segment.offset })], fetch: 1 })))?.results[0]?.value  // (from.next || peers.head)!;
-		while (
-			next.hash !== from.hash &&
-			next.hash !== startNode.hash
-		) {
-			if (isMatured(next.segment, t, roleAge)) {
-				return next;
+export const fetchOneFromPublicKey = async (
+	publicKey: PublicSignKey,
+	index: Index<ReplicationRangeIndexable>,
+	roleAge: number,
+	now: number,
+) => {
+	let result = await index.query(
+		new SearchRequest({
+			query: [new StringMatch({ key: "hash", value: publicKey.hashcode() })],
+			fetch: 1,
+		}),
+	);
+	let node = result.results[0]?.value;
+	if (node) {
+		if (!isMatured(node, now, roleAge)) {
+			const matured = await fetchOne(
+				getClosestAround(index, node.start1, roleAge, now, true),
+			);
+			if (matured) {
+				node = matured;
 			}
-			next = (next.next || peers.head)!;
-		}
-		return undefined;
-	}; */
-
-	/**
-	 * The purpose of this loop is to cover at least coveringWidth
-	 * so that if we query all nodes in this range, we know we will
-	 * "query" all data in that range
-	 */
-
-	/* let isPastThePoint = false;
-	outer: while (currentNode) {
-		if (set.has(currentNode.hash)) break;
-	
-		const [nextPoint, distanceStart, distanceEnd, wrapped] = getNextPoint();
-	
-		if (distanceStart <= coveringWidth) {
-			set.add(currentNode.hash);
-		}
-	
-		if (distanceEnd >= coveringWidth) {
-			break;
-		}
-	
-		let next = currentNode.next || peers.head;
-		while (next) {
-			if (next.value.publicKey.equals(startNode.value.publicKey)) {
-				break outer;
-			}
-	
-			const prevOffset = (next.prev || peers.tail)!.value.role.offset;
-			const nextOffset = next.value.role.offset;
-			const nextHasWrapped = nextOffset < prevOffset;
-	
-			if (
-				(!wrapped && nextOffset > nextPoint) ||
-				(nextHasWrapped &&
-					(wrapped ? nextOffset > nextPoint : prevOffset < nextPoint)) ||
-				(!nextHasWrapped && prevOffset < nextPoint && nextPoint <= nextOffset)
-			) {
-				isPastThePoint = true;
-			}
-	
-			if (isPastThePoint) {
-				break; // include this next in the set;
-			}
-	
-			const overlapsRange = containsPoint(next.value.role, nextPoint);
-	
-			if (overlapsRange) {
-				// Find out if there is a better choice ahead of us
-				const nextNext = await getNextMatured(next);
-				if (
-					nextNext &&
-					nextNext.hash === currentNode.hash &&
-					nextNext.segment.offset < nextPoint &&
-					nextNext.segment.offset + nextNext.segment.factor > nextPoint
-				) {
-					// nextNext is better (continue to iterate)
-				} else {
-					// done
-					break;
-				}
-			} else {
-				// (continue to iterate)
-			}
-	
-			next = next.next || peers.head;
-		}
-		currentNode = next!;
-	} */
-
-	// collect 1 point around the boundary of the start and one at the end,
-	// preferrd matured and that we already have it
-	/* for (const point of [
-		startNode.segment.offset,
-		(startNode.segment.offset + coveringWidth) % 1
-	]) {
-		let done = false;
-		const unmatured: string[] = [];
-		collectNodesAroundPoint(
-			t,
-			roleAge,
-			peers,
-			isMatured(startNode.segment, t, roleAge) ? startNode : peers.head, // start at startNode is matured, else start at head (we only seek to find one matured node at the point)
-			(rect, matured) => {
-				if (matured) {
-					if (set.has(rect.hash)) {
-						// great!
-					} else {
-						set.add(rect.hash);
-					}
-					done = true;
-				} else {
-					unmatured.push(rect.hash);
-				}
-			},
-			point,
-			() => done
-		);
-		if (!done && unmatured.length > 0) {
-			set.add(unmatured[0]);
-			// TODO add more elements?
 		}
 	}
-	return set; */
+	return node;
+};
+
+export const getStartAndEndNode = async (
+	peers: Index<ReplicationRangeIndexable>,
+	start: number | PublicSignKey | undefined | undefined,
+	widthToCoverScaled: number,
+	roleAge: number,
+	now: number,
+	intervalWidth: number | undefined,
+) => {
+	// find a good starting point
+	let startNode: ReplicationRangeIndexable | undefined = undefined;
+	let startLocation: number;
+
+	if (start instanceof PublicSignKey) {
+		// start at our node (local first)
+		startNode = await fetchOneFromPublicKey(start, peers, roleAge, now);
+	} else if (typeof start === "number") {
+		startLocation = start;
+		startNode = await fetchOneClosest(peers, startLocation, roleAge, now);
+	}
+
+	if (!startNode) {
+		startLocation = Math.random() * SEGMENT_COORDINATE_SCALE;
+		startNode = await fetchOneClosest(peers, startLocation, roleAge, now);
+	} else {
+		// TODO choose start location as the point with the longest range?
+		startLocation =
+			startNode.start1 ?? Math.random() * SEGMENT_COORDINATE_SCALE;
+	}
+
+	if (!startNode) {
+		return { startNode: undefined, startLocation: 0, endLocation: 0 };
+	}
+
+	let endLocation = startLocation + widthToCoverScaled;
+	if (intervalWidth != null) {
+		endLocation = endLocation % intervalWidth;
+	}
+
+	return { startNode, startLocation, endLocation };
+};
+
+export const fetchOneClosest = async (
+	peers: Index<ReplicationRangeIndexable>,
+	point: number,
+	roleAge: number,
+	now: number,
+) => {
+	return await fetchOne(getClosestAround(peers, point, roleAge, now, true));
 };

@@ -107,7 +107,6 @@ export class Documents<
 	private _clazz!: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
-	private _manuallySynced!: Set<string>;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 
 	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
@@ -144,7 +143,6 @@ export class Documents<
 		}
 
 		this._optionCanPerform = options.canPerform;
-		this._manuallySynced = new Set();
 		const idProperty = options.index?.idProperty || "id";
 		const idResolver =
 			options.id ||
@@ -169,7 +167,7 @@ export class Documents<
 				// 1. add the entry to a list of entries that we should persist through prunes
 				let heads: string[] = [];
 				for (const entry of result.results) {
-					this._manuallySynced.add(entry.context.gid);
+					this.log.replicate({ hash: entry.context.gid });
 					heads.push(entry.context.head);
 				}
 				return this.log.log.join(heads);
@@ -185,11 +183,11 @@ export class Documents<
 			trim: options?.log?.trim,
 			replicate: options?.replicate,
 			replicas: options?.replicas,
-			sync: (entry: any) => {
+			/* sync: (entry) => {
 				// here we arrive when ever a insertion/pruning behaviour processes an entry
 				// returning true means that it should persist
-				return this._manuallySynced.has(entry.gid);
-			},
+				return this._manuallySynced.has(entry.meta.gid);
+			}, */
 
 			// document v6 and below need log compatibility of v8 or below
 			compatibility:
@@ -403,7 +401,10 @@ export class Documents<
 
 	public async put(
 		doc: T,
-		options?: SharedAppendOptions<Operation> & { unique?: boolean },
+		options?: SharedAppendOptions<Operation> & {
+			unique?: boolean;
+			replicate?: boolean;
+		},
 	) {
 		const keyValue = this.idResolver(doc);
 
@@ -458,6 +459,7 @@ export class Documents<
 			onChange: (change) => {
 				return this.handleChanges(change, { document: doc, operation });
 			},
+			replicate: options?.replicate,
 		});
 
 		return appended;
