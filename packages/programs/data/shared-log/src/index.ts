@@ -197,7 +197,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 	// options
 	private _replicationSettings?: ReplicationOptions;
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable>;
-	private _totalParticipation!: number;
+	/* private _totalParticipation!: number; */
 	private _gidPeersHistory!: Map<string, Set<string>>;
 
 	private _onSubscriptionFn!: (arg: any) => any;
@@ -471,12 +471,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 				return;
 			}
 
-			let sumWidth = prev.results.reduce(
+			/* let sumWidth = prev.results.reduce(
 				(acc, x) => acc + x.value.widthNormalized,
 				0,
 			);
 			this._totalParticipation -= sumWidth;
-
+ */
 			let idMatcher = new Or(
 				prev.results.map(
 					(x) => new ByteMatchQuery({ key: "id", value: x.value.id }),
@@ -531,11 +531,11 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 			let query = new And([idMatcher, identityMatcher]);
 
-			const prevSum = await this.replicationIndex.sum(
+			/* const prevSum = await this.replicationIndex.sum(
 				new SumRequest({ query, key: "width" }),
 			);
 			const prevSumNormalized = Number(prevSum) / SEGMENT_COORDINATE_SCALE;
-			this._totalParticipation -= prevSumNormalized;
+			this._totalParticipation -= prevSumNormalized; */
 			await this.replicationIndex.del(new DeleteRequest({ query }));
 
 			await this.updateOldestTimestampFromIndex();
@@ -579,16 +579,12 @@ export class SharedLog<T = Uint8Array> extends Program<
 				if (prev.value.equals(range)) {
 					return false;
 				}
-				this._totalParticipation -= prev.value.widthNormalized;
+				/* this._totalParticipation -= prev.value.widthNormalized; */
 			}
 
 			await this.replicationIndex.put(range);
-			let inserted = await this.replicationIndex.get(toId(range.id));
-			if (!inserted?.value.equals(range)) {
-				throw new Error("Failed to insert range");
-			}
 
-			this._totalParticipation += range.widthNormalized;
+			/* 	this._totalParticipation += range.widthNormalized; */
 
 			this.oldestOpenTime = Math.min(
 				Number(range.timestamp),
@@ -780,7 +776,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		await this.remoteBlocks.start();
 
-		this._totalParticipation = 0;
+		/* this._totalParticipation = 0; */
 		const logScope = await this.node.indexer.scope(id);
 		const replicationIndex = await logScope.scope("replication");
 		this._replicationRangeIndex = await replicationIndex.init({
@@ -789,7 +785,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 		const logIndex = await logScope.scope("log");
 		await this.node.indexer.start(); // TODO why do we need to start the indexer here?
 
-		this._totalParticipation = await this.calculateTotalParticipation();
+		/* this._totalParticipation = await this.calculateTotalParticipation(); */
 
 		this._gidPeersHistory = new Map();
 
@@ -994,7 +990,7 @@ export class SharedLog<T = Uint8Array> extends Program<
 
 		this._replicationRangeIndex = undefined as any;
 		this.cpuUsage?.stop?.();
-		this._totalParticipation = 0;
+		/* this._totalParticipation = 0; */
 		this.pq.clear();
 	}
 	async close(from?: Program): Promise<boolean> {
