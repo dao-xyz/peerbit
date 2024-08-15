@@ -115,6 +115,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			};
 			replicas?: AbsoluteReplicas;
 			target?: "all" | "replicators";
+			canAppend?: CanAppend<Operation<T>>;
 		},
 	) {
 		return this.log.append(

@@ -661,7 +661,9 @@ export class SharedLog<T = Uint8Array> extends Program<
 		}
 		if (options?.canAppend) {
 			appendOptions.canAppend = async (entry) => {
-				await this.canAppend(entry);
+				if (!(await this.canAppend(entry))) {
+					return false;
+				}
 				return options.canAppend!(entry);
 			};
 		}
