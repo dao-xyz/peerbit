@@ -256,7 +256,7 @@ describe(`exchange`, function () {
 			expect(entryA.meta.gid).not.equal(entryB.meta.gid);
 			expect(
 				entryAB.meta.gid === entryA.meta.gid ||
-					entryAB.meta.gid === entryB.meta.gid,
+				entryAB.meta.gid === entryB.meta.gid,
 			).to.be.true;
 
 			let entryWithNotSameGid =
@@ -391,7 +391,7 @@ describe(`exchange`, function () {
 			} catch (error) {
 				console.error(
 					"Entries out of order: " +
-						entries.map((x) => x.payload.getValue().value).join(", "),
+					entries.map((x) => x.payload.getValue().value).join(", "),
 				);
 				throw error;
 			}
@@ -910,7 +910,7 @@ describe("canReplicate", () => {
 			),
 		);
 
-		const unionFromPeer0 = await db1.log.replicationDomain.collect(
+		const unionFromPeer0 = await db1.log.domain.collect(
 			db1.log,
 			0,
 			undefined,
@@ -931,7 +931,7 @@ describe("canReplicate", () => {
 			[db2, db3].map((log) =>
 				waitForResolved(async () =>
 					expect(
-						await log.log.replicationDomain.collect(log.log, 0, undefined),
+						await log.log.domain.collect(log.log, 0, undefined),
 					).to.have.members([log.node.identity.publicKey.hashcode()]),
 				),
 			),

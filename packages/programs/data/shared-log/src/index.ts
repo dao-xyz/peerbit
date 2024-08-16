@@ -64,10 +64,10 @@ import { TransportMessage } from "./message.js";
 import { PIDReplicationController } from "./pid.js";
 import { isMatured } from "./ranges.js";
 import {
-	ReplicationDomainHash,
-	hashToUniformNumber,
+	hashToU32,
+	ReplicationDomainHash
 } from "./replication-domain-hash.js";
-import { type ReplicationDomain } from "./replication-domain.js";
+import { type ReplicationDomain, type u32 } from "./replication-domain.js";
 import {
 	AbsoluteReplicas,
 	ReplicationError,
@@ -84,7 +84,7 @@ import {
 	encodeReplicas,
 	maxReplicas,
 } from "./replication.js";
-import { Observer, Replicator, SEGMENT_COORDINATE_SCALE } from "./role.js";
+import { MAX_U32, Observer, Replicator } from "./role.js";
 
 export * from "./replication.js";
 
@@ -142,7 +142,7 @@ export type DynamicReplicationOptions = {
 };
 
 export type FixedReplicationOptions = {
-	factor: number;
+	factor: number | 'all' | 'right'
 	offset?: number;
 };
 
@@ -177,7 +177,7 @@ export type SharedLogOptions<T, D extends ReplicationDomain<any>> = {
 	waitForReplicatorTimeout?: number;
 	distributionDebounceTime?: number;
 	compatibility?: number;
-	replicationDomain?: D;
+	domain?: D;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -186,7 +186,7 @@ export const WAIT_FOR_ROLE_MATURITY = 5000;
 const REBALANCE_DEBOUNCE_INTERVAL = 100;
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 
-export type Args<T, D extends ReplicationDomain<any>> = LogProperties<T> &
+export type Args<T, D extends ReplicationDomain<any> = typeof ReplicationDomainHash> = LogProperties<T> &
 	LogEvents<T> &
 	SharedLogOptions<T, D>;
 
@@ -288,7 +288,7 @@ export class SharedLog<
 
 	replicationController!: PIDReplicationController;
 	history!: { usedMemory: number; factor: number }[];
-	replicationDomain: D;
+	domain: D;
 
 	private pq: PQueue<any>;
 
@@ -321,9 +321,11 @@ export class SharedLog<
 		if (isFixedReplicationSettings) {
 			const fixedSettings = this
 				._replicationSettings as FixedReplicationOptions;
+
+			const offset = fixedSettings.offset ?? 0
 			return new Replicator({
-				factor: fixedSettings.factor,
-				offset: fixedSettings.offset ?? 0,
+				factor: typeof fixedSettings.factor === 'number' ? fixedSettings.factor : (fixedSettings.factor === 'all' ? 1 : (1 - offset)),
+				offset,
 			});
 		}
 
@@ -338,7 +340,8 @@ export class SharedLog<
 		if (isAdaptiveReplicatorOption(this._replicationSettings)) {
 			return true;
 		}
-		if ((this.replicationSettings as FixedReplicationOptions).factor > 0) {
+
+		if ((this.replicationSettings as FixedReplicationOptions).factor !== 0) {
 			return true;
 		}
 
@@ -353,7 +356,7 @@ export class SharedLog<
 		const sum = await this.replicationIndex.sum(
 			new SumRequest({ key: "width" }),
 		);
-		return Number(sum) / SEGMENT_COORDINATE_SCALE;
+		return Number(sum) / MAX_U32;
 	}
 
 	async countReplicationSegments() {
@@ -395,11 +398,11 @@ export class SharedLog<
 					cpu:
 						options?.limits?.cpu != null
 							? {
-									max:
-										typeof options?.limits?.cpu === "object"
-											? options.limits.cpu.max
-											: options?.limits?.cpu,
-								}
+								max:
+									typeof options?.limits?.cpu === "object"
+										? options.limits.cpu.max
+										: options?.limits?.cpu,
+							}
 							: undefined,
 				},
 			);
@@ -441,11 +444,11 @@ export class SharedLog<
 			await this.getDynamicRange();
 		} else {
 			// fixed
+			const offset = (this._replicationSettings as FixedReplicationOptions).offset ?? Math.random()
+			const factor = (this._replicationSettings as FixedReplicationOptions).factor
 			const range = new ReplicationRangeIndexable({
-				offset:
-					(this._replicationSettings as FixedReplicationOptions).offset ??
-					Math.random(),
-				length: (this._replicationSettings as FixedReplicationOptions).factor,
+				offset,
+				length: typeof factor === 'number' ? factor : (factor === 'all' ? 1 : (1 - offset)),
 				publicKeyHash: this.node.identity.publicKey.hashcode(),
 				replicationIntent: ReplicationIntent.Explicit, // automatic means that this range might be reused later for dynamic replication behaviour
 				timestamp: BigInt(+new Date()),
@@ -463,7 +466,7 @@ export class SharedLog<
 		if (rangeOrEntry instanceof ReplicationRange) {
 			range = rangeOrEntry;
 		} else if (rangeOrEntry instanceof Entry) {
-			range = await this.replicationDomain.mapper(rangeOrEntry);
+			range = await this.domain.fromEntry(rangeOrEntry);
 		} else {
 			range = rangeOrEntry;
 		}
@@ -776,8 +779,8 @@ export class SharedLog<
 					: options.replicas.max
 				: undefined,
 		};
-		this.replicationDomain =
-			options?.replicationDomain ?? (ReplicationDomainHash as D);
+		this.domain =
+			options?.domain ?? (ReplicationDomainHash as D);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
@@ -1083,8 +1086,7 @@ export class SharedLog<
 				const { heads } = msg;
 
 				logger.debug(
-					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
-						heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
+					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
 					}, logId: ${this.log.idString}`,
 				);
 
@@ -1181,8 +1183,7 @@ export class SharedLog<
 								}
 
 								logger.debug(
-									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
-										entry.entry.meta.gid
+									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${entry.entry.meta.gid
 									}. Because not leader`,
 								);
 							}
@@ -1443,7 +1444,7 @@ export class SharedLog<
 						}
 						logger.error(
 							"Failed to find peer who updated replication settings: " +
-								e?.message,
+							e?.message,
 						);
 					});
 			} else if (msg instanceof StoppedReplicating) {
@@ -1643,8 +1644,8 @@ export class SharedLog<
 			return [this.node.identity.publicKey.hashcode()]; // Assumption: if the store is closed, always assume we have responsibility over the data
 		}
 
-		const cursor = await this.replicationDomain.mapper(entry);
-		return this.findLeadersFromUniformNumber(cursor, numberOfLeaders, options);
+		const cursor = await this.domain.fromEntry(entry);
+		return this.findLeadersFromU32(cursor, numberOfLeaders, options);
 	}
 
 	async getDefaultMinRoleAge(): Promise<number> {
@@ -1663,15 +1664,15 @@ export class SharedLog<
 		); // / 3 so that if 2 replicators and timeUntilRoleMaturity = 1e4 the result will be 1
 	}
 
-	private async findLeadersFromUniformNumber(
-		cursor: number,
+	private async findLeadersFromU32(
+		cursor: u32,
 		numberOfLeaders: number,
 		options?: {
 			roleAge?: number;
 		},
 	) {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
-		return this.replicationDomain.distribute(
+		return this.domain.distribute(
 			cursor,
 			this.replicationIndex,
 			numberOfLeaders,
@@ -1904,7 +1905,7 @@ export class SharedLog<
 					signal: this._closeController.signal,
 				}).then(() => this._distribute()),
 			)
-			.catch(() => {}); // catch ignore delay abort errror
+			.catch(() => { }); // catch ignore delay abort errror
 	}
 
 	async _distribute() {
@@ -2121,10 +2122,11 @@ export class SharedLog<
 			}
 
 			const peersSize = (await peers.getSize()) || 1;
+			const totalParticipation = await this.calculateTotalParticipation()
 			const newFactor = this.replicationController.step({
 				memoryUsage: usedMemory,
 				currentFactor: dynamicRange.widthNormalized,
-				totalFactor: await this.calculateTotalParticipation(), // TODO use this._totalParticipation when flakiness is fixed
+				totalFactor: totalParticipation, // TODO use this._totalParticipation when flakiness is fixed
 				peerCount: peersSize,
 				cpuUsage: this.cpuUsage?.value(),
 			});
@@ -2136,8 +2138,8 @@ export class SharedLog<
 			if (relativeDifference > 0.0001) {
 				// TODO can not reuse old range, since it will (potentially) affect the index because of sideeffects
 				dynamicRange = new ReplicationRangeIndexable({
-					offset: hashToUniformNumber(this.node.identity.publicKey.bytes),
-					length: newFactor,
+					offset: hashToU32(this.node.identity.publicKey.bytes),
+					length: newFactor * MAX_U32,
 					publicKeyHash: dynamicRange.hash,
 					id: dynamicRange.id,
 					replicationIntent: dynamicRange.replicationIntent,

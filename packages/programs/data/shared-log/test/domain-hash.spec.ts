@@ -18,7 +18,7 @@ const toEntry = (gid: string | number) => {
 	return { meta: { gid: String(gid) } } as Entry<any>;
 };
 
-describe(`leaders`, function () {
+describe(`domain-hash`, function () {
 	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
 
@@ -82,7 +82,7 @@ describe(`leaders`, function () {
 		await session.stop();
 	});
 
-	beforeEach(async () => {});
+	beforeEach(async () => { });
 
 	afterEach(async () => {
 		if (db1 && db1.closed === false) await db1.drop();
@@ -293,7 +293,7 @@ describe(`leaders`, function () {
 					isLeaderCThreeLeaders,
 				]).include.members([true, true, true]);
 				resolved += 1;
-			} catch (error) {}
+			} catch (error) { }
 		}
 		// since the distribution only in best scenarios distributes perfectly
 		// we might have duplication, i.e. more than expected amount of leaders for a particular
@@ -411,11 +411,11 @@ describe(`leaders`, function () {
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
 			expect(
-				await db1.log.replicationDomain.collect(db1.log, 0, undefined),
+				await db1.log.domain.collect(db1.log, 0, undefined),
 			).to.deep.equal([session.peers[0].identity.publicKey.hashcode()]);
 
 			expect(
-				await db2.log.replicationDomain.collect(db2.log, 0, undefined),
+				await db2.log.domain.collect(db2.log, 0, undefined),
 			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
 		});
 
@@ -468,7 +468,7 @@ describe(`leaders`, function () {
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
 			expect(
-				await db2.log.replicationDomain.collect(db2.log, 0, undefined),
+				await db2.log.domain.collect(db2.log, 0, undefined),
 			).to.have.members([
 				session.peers[0].identity.publicKey.hashcode(),
 				session.peers[1].identity.publicKey.hashcode(),
@@ -483,7 +483,7 @@ describe(`leaders`, function () {
 
 			// no more inflight
 			expect(
-				await db2.log.replicationDomain.collect(db2.log, 0, undefined),
+				await db2.log.domain.collect(db2.log, 0, undefined),
 			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
 		});
 
@@ -552,7 +552,7 @@ describe(`leaders`, function () {
 				// min replicas 2 only need to query 2
 				// min replicas 1 only need to query 3 (data could end up at any of the 3 nodes)
 				expect(
-					await db1.log.replicationDomain.collect(db1.log, 0, undefined),
+					await db1.log.domain.collect(db1.log, 0, undefined),
 				).to.have.length(3 - i + 1);
 			}
 		});
@@ -618,7 +618,7 @@ describe(`leaders`, function () {
 
 				// Should always include all nodes since no is mature
 				expect(
-					await db3.log.replicationDomain.collect(
+					await db3.log.domain.collect(
 						db3.log,
 						0xffffffff,
 						undefined,
@@ -695,7 +695,7 @@ describe(`leaders`, function () {
 
 			for (let i = 1; i < 3; i++) {
 				db3.log.replicas.min = { getValue: () => i };
-				let list = await db3.log.replicationDomain.collect(
+				let list = await db3.log.domain.collect(
 					db3.log,
 					MATURE_TIME,
 					undefined,
@@ -714,7 +714,7 @@ describe(`leaders`, function () {
 
 				// all is matured now
 				expect(
-					await db3.log.replicationDomain.collect(
+					await db3.log.domain.collect(
 						db3.log,
 						MATURE_TIME,
 						undefined,

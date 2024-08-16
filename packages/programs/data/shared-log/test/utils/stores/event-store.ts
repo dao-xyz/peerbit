@@ -54,7 +54,7 @@ export type Args<T, D extends ReplicationDomain<any>> = {
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
 	compatibility?: number;
-	replicationDomain?: D;
+	domain?: D;
 };
 @variant("event_store")
 export class EventStore<
@@ -107,7 +107,7 @@ export class EventStore<
 			sync: properties?.sync,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 1, // to make tests fast
-			replicationDomain: properties?.replicationDomain,
+			domain: properties?.domain,
 		});
 	}
 

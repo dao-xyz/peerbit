@@ -17,7 +17,8 @@ import {
 	iteratorInSeries,
 } from "@peerbit/indexer-interface";
 import { type ReplicationRangeIndexable } from "./replication.js";
-import { SEGMENT_COORDINATE_SCALE } from "./role.js";
+import { MAX_U32 } from "./role.js";
+import type { u32 } from "./replication-domain.js";
 
 const containingPoint = (
 	rects: Index<ReplicationRangeIndexable>,
@@ -27,38 +28,34 @@ const containingPoint = (
 	now: number,
 	options?: {
 		sort?: Sort[];
-		scaled?: boolean;
 	},
 ): IndexIterator<ReplicationRangeIndexable> => {
 	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
-	// so we need to query for all ranges that contain the point
-	let pointScaled = Math.round(
-		point * (options?.scaled ? 1 : SEGMENT_COORDINATE_SCALE),
-	);
+
 	let queries = [
 		new Or([
 			new And([
 				new IntegerCompare({
 					key: "start1",
 					compare: Compare.LessOrEqual,
-					value: pointScaled,
+					value: point,
 				}),
 				new IntegerCompare({
 					key: "end1",
 					compare: Compare.Greater,
-					value: pointScaled,
+					value: point,
 				}),
 			]),
 			new And([
 				new IntegerCompare({
 					key: "start2",
 					compare: Compare.LessOrEqual,
-					value: pointScaled,
+					value: point,
 				}),
 				new IntegerCompare({
 					key: "end2",
 					compare: Compare.Greater,
-					value: pointScaled,
+					value: point,
 				}),
 			]),
 		]),
@@ -90,12 +87,9 @@ const getClosest = (
 	point: number,
 	roleAgeLimit: number,
 	matured: boolean,
-	now: number,
-	scaled: boolean = false,
+	now: number
 ): IndexIterator<ReplicationRangeIndexable> => {
-	const scaledPoint = Math.round(
-		point * (scaled ? 1 : SEGMENT_COORDINATE_SCALE),
-	);
+
 	const createQueries = (p: number, equality: boolean) => {
 		let queries: Query[];
 		if (direction === "below") {
@@ -134,7 +128,7 @@ const getClosest = (
 	const iterator = iterate(
 		rects,
 		new SearchRequest({
-			query: createQueries(scaledPoint, false),
+			query: createQueries(point, false),
 			sort:
 				direction === "below"
 					? new Sort({ key: ["end2"], direction: "desc" })
@@ -145,7 +139,7 @@ const getClosest = (
 		rects,
 		new SearchRequest({
 			query: createQueries(
-				direction === "below" ? SEGMENT_COORDINATE_SCALE : 0,
+				direction === "below" ? MAX_U32 : 0,
 				true,
 			),
 			sort:
@@ -157,8 +151,7 @@ const getClosest = (
 
 	return joinIterator(
 		[iterator, iteratorWrapped],
-		scaledPoint,
-		true,
+		point,
 		direction,
 	);
 };
@@ -167,7 +160,7 @@ export const getDistance = (
 	from: number,
 	to: number,
 	direction: "above" | "below" | "closest",
-	end = SEGMENT_COORDINATE_SCALE,
+	end = MAX_U32,
 ) => {
 	// if direction is 'above' only measure distance from 'from to 'to' from above.
 	// i.e if from < to, then from needs to wrap around 0 to 1 and then to to
@@ -205,12 +198,8 @@ export const getDistance = (
 const joinIterator = (
 	iterators: IndexIterator<ReplicationRangeIndexable>[],
 	point: number,
-	scaled: boolean,
 	direction: "above" | "below" | "closest",
 ) => {
-	const scaledPoint = Math.round(
-		point * (scaled ? 1 : SEGMENT_COORDINATE_SCALE),
-	);
 	let queues: {
 		kept: number;
 		elements: {
@@ -244,13 +233,13 @@ const joinIterator = (
 						let dist: number;
 						if (direction === "closest") {
 							dist = Math.min(
-								getDistance(closest.start1, scaledPoint, direction),
-								getDistance(closest.end2, scaledPoint, direction),
+								getDistance(closest.start1, point, direction),
+								getDistance(closest.end2, point, direction),
 							);
 						} else if (direction === "above") {
-							dist = getDistance(closest.start1, scaledPoint, direction);
+							dist = getDistance(closest.start1, point, direction);
 						} else if (direction === "below") {
-							dist = getDistance(closest.end2, scaledPoint, direction);
+							dist = getDistance(closest.end2, point, direction);
 						} else {
 							throw new Error("Invalid direction");
 						}
@@ -313,8 +302,7 @@ const getClosestAround = (
 	peers: Index<ReplicationRangeIndexable>,
 	point: number,
 	roleAge: number,
-	now: number,
-	scaled: boolean,
+	now: number
 ) => {
 	const closestBelow = getClosest(
 		"below",
@@ -322,8 +310,7 @@ const getClosestAround = (
 		point,
 		roleAge,
 		true,
-		now,
-		scaled,
+		now
 	);
 	const closestAbove = getClosest(
 		"above",
@@ -331,16 +318,13 @@ const getClosestAround = (
 		point,
 		roleAge,
 		true,
-		now,
-		scaled,
+		now
 	);
-	const containing = containingPoint(peers, point, roleAge, true, now, {
-		scaled: scaled,
-	});
+	const containing = containingPoint(peers, point, roleAge, true, now);
 
 	return iteratorInSeries(
 		containing,
-		joinIterator([closestBelow, closestAbove], point, scaled, "closest"),
+		joinIterator([closestBelow, closestAbove], point, "closest"),
 	);
 };
 
@@ -348,13 +332,11 @@ const collectNodesAroundPoint = async (
 	roleAge: number,
 	peers: Index<ReplicationRangeIndexable>,
 	collector: (rect: ReplicationRangeIndexable, matured: boolean) => void,
-	point: number,
+	point: u32,
 	now: number,
 	done: () => boolean = () => true,
 ) => {
-	const containing = containingPoint(peers, point, 0, true, now, {
-		scaled: false,
-	});
+	const containing = containingPoint(peers, point, 0, true, now);
 
 	const allContaining = await containing.next(0xffffffff);
 	for (const rect of allContaining.results) {
@@ -365,12 +347,11 @@ const collectNodesAroundPoint = async (
 		return;
 	}
 
-	const closestBelow = getClosest("below", peers, point, 0, true, now, false);
-	const closestAbove = getClosest("above", peers, point, 0, true, now, false);
+	const closestBelow = getClosest("below", peers, point, 0, true, now);
+	const closestAbove = getClosest("above", peers, point, 0, true, now);
 	const aroundIterator = joinIterator(
 		[closestBelow, closestAbove],
 		point,
-		false,
 		"closest",
 	);
 	while (aroundIterator.done() === false && done() === false) {
@@ -393,13 +374,12 @@ export const isMatured = (
 };
 
 export const getSamples = async (
-	cursor: number,
+	cursor: u32,
 	peers: Index<ReplicationRangeIndexable>,
 	amount: number,
 	roleAge: number,
 ) => {
 	const leaders: Set<string> = new Set();
-	const width = 1;
 	if (!peers) {
 		return [];
 	}
@@ -417,7 +397,7 @@ export const getSamples = async (
 	const maturedLeaders = new Set();
 	for (let i = 0; i < amount; i++) {
 		// evenly distributed
-		const point = ((cursor + i / amount) % 1) * width;
+		const point = (Math.round(cursor + i * MAX_U32 / amount) % MAX_U32);
 
 		// aquire at least one unique node for each point
 		await collectNodesAroundPoint(
@@ -473,8 +453,8 @@ export const getCoverSet = async (
 
 	const endRect =
 		(await fetchOne(
-			getClosestAround(peers, endLocation, roleAge, now, true),
-		)) || (await fetchOne(getClosestAround(peers, endLocation, 0, now, true))); // (await getClosest('above', peers, nextLocation, roleAge, true, 1, true))[0]
+			getClosestAround(peers, endLocation, roleAge, now),
+		)) || (await fetchOne(getClosestAround(peers, endLocation, 0, now))); // (await getClosest('above', peers, nextLocation, roleAge, true, 1, true))[0]
 
 	if (!endRect) {
 		return new Set();
@@ -482,7 +462,7 @@ export const getCoverSet = async (
 
 	let current =
 		/* (await getClosestAround(peers, startLocation, roleAge, 1, true))[0] */ startNode ||
-		(await fetchOne(getClosestAround(peers, startLocation, 0, now, true))); //(await getClosest('above', peers, startLocation, roleAge, true, 1, true))[0]
+		(await fetchOne(getClosestAround(peers, startLocation, 0, now))); //(await getClosest('above', peers, startLocation, roleAge, true, 1, true))[0]
 	let coveredLength = current.width;
 	let nextLocation = current.end2;
 
@@ -497,7 +477,6 @@ export const getCoverSet = async (
 	) => {
 		let next = await fetchOne(
 			containingPoint(peers, nextLocation, roleAge, true, now, {
-				scaled: true,
 				sort: [new Sort({ key: "end2", direction: SortDirection.DESC })],
 			}),
 		); // get entersecting sort by largest end2
@@ -507,7 +486,7 @@ export const getCoverSet = async (
 	const resolveNextAbove = async (nextLocation: number, roleAge: number) => {
 		// if not get closest from above
 		let next = await fetchOne(
-			getClosest("above", peers, nextLocation, roleAge, true, now, true),
+			getClosest("above", peers, nextLocation, roleAge, true, now),
 		);
 		return next;
 	};
@@ -532,7 +511,7 @@ export const getCoverSet = async (
 
 	while (
 		maturedCoveredLength < widthToCoverScaled &&
-		coveredLength <= SEGMENT_COORDINATE_SCALE
+		coveredLength <= MAX_U32
 	) {
 		let nextCandidate = await resolveNext(nextLocation, roleAge);
 		/* let fromAbove = false; */
@@ -554,7 +533,7 @@ export const getCoverSet = async (
 
 		if (current.end2 < nextLocation) {
 			wrappedOnce = true;
-			coveredLength += SEGMENT_COORDINATE_SCALE - nextLocation;
+			coveredLength += MAX_U32 - nextLocation;
 			coveredLength += current.end2;
 		} else {
 			coveredLength += current.end1 - nextLocation;
@@ -602,7 +581,7 @@ export const fetchOneFromPublicKey = async (
 	if (node) {
 		if (!isMatured(node, now, roleAge)) {
 			const matured = await fetchOne(
-				getClosestAround(index, node.start1, roleAge, now, true),
+				getClosestAround(index, node.start1, roleAge, now),
 			);
 			if (matured) {
 				node = matured;
@@ -633,12 +612,12 @@ export const getStartAndEndNode = async (
 	}
 
 	if (!startNode) {
-		startLocation = Math.random() * SEGMENT_COORDINATE_SCALE;
+		startLocation = Math.random() * MAX_U32;
 		startNode = await fetchOneClosest(peers, startLocation, roleAge, now);
 	} else {
 		// TODO choose start location as the point with the longest range?
 		startLocation =
-			startNode.start1 ?? Math.random() * SEGMENT_COORDINATE_SCALE;
+			startNode.start1 ?? Math.random() * MAX_U32;
 	}
 
 	if (!startNode) {
@@ -659,5 +638,5 @@ export const fetchOneClosest = async (
 	roleAge: number,
 	now: number,
 ) => {
-	return await fetchOne(getClosestAround(peers, point, roleAge, now, true));
+	return await fetchOne(getClosestAround(peers, point, roleAge, now));
 };

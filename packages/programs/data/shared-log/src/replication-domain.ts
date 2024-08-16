@@ -5,10 +5,12 @@ import type {
 	ReplicationLimits,
 	ReplicationRangeIndexable,
 } from "./replication";
+import { MAX_U32 } from "./role";
 
+export type u32 = number
 export type ReplicationDomainMapper = (
 	entry: Entry<any> | ShallowEntry,
-) => Promise<number> | number;
+) => Promise<u32> | u32;
 
 export type Log = {
 	replicas: ReplicationLimits;
@@ -27,14 +29,19 @@ export type ReplicationDomainCoverSet<Args> = (
 	args: Args,
 ) => Promise<string[]> | string[]; // minimum set of peers that covers all the data
 export type ReplicationDistribution = (
-	cursor: number,
+	cursor: u32,
 	peers: Index<ReplicationRangeIndexable>,
 	amount: number,
 	roleAge: number,
 ) => Promise<string[]> | string[]; // distribute data to the peers
 
 export type ReplicationDomain<Args> = {
-	mapper: ReplicationDomainMapper;
+	fromEntry: ReplicationDomainMapper;
 	collect: ReplicationDomainCoverSet<Args>;
 	distribute: ReplicationDistribution;
 };
+
+
+export const uniformToU32 = (cursor: number) => {
+	return cursor * MAX_U32
+}

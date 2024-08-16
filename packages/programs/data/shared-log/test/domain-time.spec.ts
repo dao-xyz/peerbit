@@ -2,26 +2,56 @@ import { deserialize } from "@dao-xyz/borsh";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
-import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { ReplicationDomainTime } from "../src/replication-domain-time.js";
+import { createReplicationDomainTime, type ReplicationDomainTime } from "../src/replication-domain-time.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
-/* import { CountRequest } from "@peerbit/indexer-interface"; */
-
 /**
- * TOOD make these test part of ranges.test.ts
+ * 
+ * @param time nanoseconds
+ * @returns 
  */
-
-const toEntry = (gid: string | number) => {
-	return { meta: { gid: String(gid) } } as Entry<any>;
+const toEntry = (time: bigint | number) => {
+	return { meta: { clock: { timestamp: { wallTime: BigInt(time) } } } } as Entry<any>;
 };
 
-describe(`leaders`, function () {
+describe('ReplicationDomainTime', function () {
+
+	describe('fromTime', () => {
+		it('milliseconds', () => {
+			const origin = new Date()
+			const domain = createReplicationDomainTime(origin);
+			const step = 1000;
+			const someTimeInTheFuture = origin.getTime() + step
+			expect(domain.fromTime(someTimeInTheFuture)).to.be.equal(step);
+		})
+
+	})
+
+	describe('fromEntry', () => {
+		it('milliseconds', () => {
+			const origin = new Date()
+			const domain = createReplicationDomainTime(origin, 'milliseconds');
+			const step = 1000;
+			const someTimeInTheFuture = origin.getTime() + step
+			expect(domain.fromEntry(toEntry(someTimeInTheFuture * 1e6))).to.be.closeTo(step, 1);
+		})
+
+		it('seconds', () => {
+			const origin = new Date()
+			const domain = createReplicationDomainTime(origin, 'seconds');
+			const step = 5;
+			const someTimeInTheFuture = origin.getTime() + step * 1000
+			expect(domain.fromEntry(toEntry(someTimeInTheFuture * 1e6))).to.be.closeTo(step, 0);
+		})
+	})
+})
+
+describe(`e2e`, function () {
 	let session: TestSession;
-	let db1: EventStore<string, typeof ReplicationDomainTime>,
-		db2: EventStore<string, typeof ReplicationDomainTime>,
-		db3: EventStore<string, typeof ReplicationDomainTime>;
+	let db1: EventStore<string, ReplicationDomainTime>,
+		db2: EventStore<string, ReplicationDomainTime>,
+		db3: EventStore<string, ReplicationDomainTime>;
 
 	const options = {
 		args: {
@@ -83,7 +113,7 @@ describe(`leaders`, function () {
 		await session.stop();
 	});
 
-	beforeEach(async () => {});
+	beforeEach(async () => { });
 
 	afterEach(async () => {
 		if (db1 && db1.closed === false) await db1.drop();
@@ -91,23 +121,34 @@ describe(`leaders`, function () {
 		if (db3 && db3.closed === false) await db3.drop();
 	});
 
+
 	it("select leaders for one or two peers", async () => {
 		// TODO fix test timeout, isLeader is too slow as we need to wait for peers
 		// perhaps do an event based get peers using the pubsub peers api
 
+		const originTime = new Date()
+		const domain = createReplicationDomainTime(originTime,)
+
+		const someTimeInTheFuture = originTime.getTime() + 1000
+
 		db1 = await session.peers[0].open(
-			new EventStore<string, typeof ReplicationDomainTime>(),
+			new EventStore<string, ReplicationDomainTime>(),
 			{
-				args: { ...options.args, replicate: { offset: 0, factor: 0.5 } },
+				args: { ...options.args, replicate: { offset: domain.fromTime(someTimeInTheFuture), factor: 'right' }, domain },
 			},
 		);
-		const isLeaderAOneLeader = await db1.log.isLeader(toEntry(123), 1);
-		expect(isLeaderAOneLeader);
-		const isLeaderATwoLeader = await db1.log.isLeader(toEntry(123), 2);
-		expect(isLeaderATwoLeader);
 
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
-			args: { ...options.args, replicate: { offset: 0.5, factor: 0.5 } },
-		})) as EventStore<string, typeof ReplicationDomainTime>;
+			args: { ...options.args, replicate: { offset: domain.fromTime(someTimeInTheFuture - 1000), factor: 999 }, domain },
+		})) as EventStore<string, ReplicationDomainTime>;
+
+
+		const isLeaderAOneLeader = await db1.log.isLeader(toEntry(someTimeInTheFuture), 1);
+		expect(isLeaderAOneLeader).to.be.true;
+		const isLeaderATwoLeader = await db1.log.isLeader(toEntry(someTimeInTheFuture), 2);
+		expect(isLeaderATwoLeader).to.be.false;
+
+
+
 	});
 });
