@@ -5,10 +5,10 @@ import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
+	AddedReplicationSegmentMessage,
+	AllReplicatingSegmentsMessage,
 	RequestReplicationInfoMessage,
-	ResponseReplicationInfoMessage,
 	ResponseRoleMessage,
-	StartedReplicating,
 } from "../src/replication.js";
 import { Replicator } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -61,10 +61,10 @@ describe(`migration-8-9`, function () {
 					},
 					compatibility,
 					onMessage: async (msg, context) => {
-						if (msg instanceof StartedReplicating) {
+						if (msg instanceof AddedReplicationSegmentMessage) {
 							return; // this message type did not exist before
 						}
-						if (msg instanceof ResponseReplicationInfoMessage) {
+						if (msg instanceof AllReplicatingSegmentsMessage) {
 							return; // this message type did not exist before
 						}
 						if (msg instanceof RequestReplicationInfoMessage) {

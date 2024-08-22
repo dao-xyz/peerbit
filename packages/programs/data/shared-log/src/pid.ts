@@ -132,25 +132,26 @@ export class PIDReplicationController {
 			this.integral = 0;
 		}
 
-		/* console.log({
-			id: this.id,
-			currentFactor,
-			newFactor,
-			factorDiff: newFactor - currentFactor,
-			pTerm,
-			dTerm,
-			iTerm,
-			totalError,
-			errorTarget: errorBalance,
-			errorCoverage,
-			errorMemory,
-			errorCPU,
-			peerCount,
-			totalFactor,
-			targetScaler: balanceErrorScaler,
-			memoryUsage,
-			estimatedTotalSize
-		}); */
+		/* 	
+		console.log({
+				id: this.id,
+				currentFactor,
+				newFactor,
+				factorDiff: newFactor - currentFactor,
+				pTerm,
+				dTerm,
+				iTerm,
+				totalError,
+				errorTarget: errorBalance,
+				errorCoverage,
+				errorMemory,
+				errorCPU,
+				peerCount,
+				totalFactor,
+				targetScaler: balanceErrorScaler,
+				memoryUsage,
+				estimatedTotalSize
+			}); */
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

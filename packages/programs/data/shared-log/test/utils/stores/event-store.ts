@@ -18,6 +18,8 @@ import {
 	SharedLog,
 } from "../../../src/index.js";
 import type { TransportMessage } from "../../../src/message.js";
+import type { ReplicationDomainHash } from "../../../src/replication-domain-hash.js";
+import type { ReplicationDomain } from "../../../src/replication-domain.js";
 import { JSON_ENCODING } from "./encoding.js";
 
 // TODO: generalize the Iterator functions and spin to its own module
@@ -38,7 +40,7 @@ export class EventIndex<T> {
 	}
 }
 
-export type Args<T> = {
+export type Args<T, D extends ReplicationDomain<any, Operation<T>>> = {
 	onChange?: (change: Change<Operation<T>>) => void;
 	replicate?: ReplicationOptions;
 	trim?: TrimOptions;
@@ -52,11 +54,15 @@ export type Args<T> = {
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
 	compatibility?: number;
+	domain?: D;
 };
 @variant("event_store")
-export class EventStore<T> extends Program<Args<T>> {
+export class EventStore<
+	T,
+	D extends ReplicationDomain<any, Operation<T>> = ReplicationDomainHash,
+> extends Program<Args<T, D>> {
 	@field({ type: SharedLog })
-	log: SharedLog<Operation<T>>;
+	log: SharedLog<Operation<T>, D>;
 
 	@field({ type: Uint8Array })
 	id: Uint8Array;
@@ -74,7 +80,7 @@ export class EventStore<T> extends Program<Args<T>> {
 		this._canAppend = canAppend;
 	}
 
-	async open(properties?: Args<T>) {
+	async open(properties?: Args<T, D>) {
 		this._index = new EventIndex(this.log);
 
 		if (properties?.onMessage) {
@@ -101,6 +107,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			sync: properties?.sync,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 1, // to make tests fast
+			domain: properties?.domain,
 		});
 	}
 
@@ -116,6 +123,7 @@ export class EventStore<T> extends Program<Args<T>> {
 			replicas?: AbsoluteReplicas;
 			target?: "all" | "replicators";
 			canAppend?: CanAppend<Operation<T>>;
+			replicate?: boolean;
 		},
 	) {
 		return this.log.append(

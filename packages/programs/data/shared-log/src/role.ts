@@ -5,7 +5,8 @@
  */
 import { field, variant, vec } from "@dao-xyz/borsh";
 
-export const SEGMENT_COORDINATE_SCALE = 4294967295;
+export const MAX_U32 = 4294967295;
+export const scaleToU32 = (value: number) => Math.round(MAX_U32 * value);
 
 export const overlaps = (x1: number, x2: number, y1: number, y2: number) => {
 	if (x1 <= y2 && y1 <= x2) {
@@ -59,20 +60,20 @@ export class RoleReplicationSegment {
 		}
 
 		this.timestamp = timestamp ?? BigInt(+new Date());
-		this.factorNominator = Math.round(SEGMENT_COORDINATE_SCALE * factor);
+		this.factorNominator = Math.round(MAX_U32 * factor);
 
 		if (offset > 1 || offset < 0) {
 			throw new Error("Expecting offset to be between 0 and 1, got: " + offset);
 		}
-		this.offsetNominator = Math.round(SEGMENT_COORDINATE_SCALE * offset);
+		this.offsetNominator = Math.round(MAX_U32 * offset);
 	}
 
 	get factor(): number {
-		return this.factorNominator / SEGMENT_COORDINATE_SCALE;
+		return this.factorNominator / MAX_U32;
 	}
 
 	get offset(): number {
-		return this.offsetNominator / SEGMENT_COORDINATE_SCALE;
+		return this.offsetNominator / MAX_U32;
 	}
 }
 

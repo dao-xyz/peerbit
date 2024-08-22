@@ -581,11 +581,11 @@ describe(`sharding`, () => {
 					);
 
 					await waitForConverged(async () => {
-						const diff = await db2.log.getTotalParticipation();
+						const diff = await db2.log.getMyTotalParticipation();
 						return Math.round(diff * 100);
 					});
 
-					expect(await db2.log.getTotalParticipation()).equal(0); // because the CPU error from fixed usage (0.5) is always greater than max (0)
+					expect(await db2.log.getMyTotalParticipation()).equal(0); // because the CPU error from fixed usage (0.5) is always greater than max (0)
 				});
 
 				it("below limit", async () => {
@@ -623,19 +623,19 @@ describe(`sharding`, () => {
 					);
 
 					await waitForConverged(async () => {
-						const diff = await db1.log.getTotalParticipation();
+						const diff = await db1.log.getMyTotalParticipation();
 						return Math.round(diff * 100);
 					});
 					await waitForConverged(async () => {
-						const diff = await db2.log.getTotalParticipation();
+						const diff = await db2.log.getMyTotalParticipation();
 						return Math.round(diff * 100);
 					});
 
-					expect(await db1.log.getTotalParticipation()).to.be.within(
+					expect(await db1.log.getMyTotalParticipation()).to.be.within(
 						0.45,
 						0.55,
 					); // because the CPU error from fixed usage (0.5) is always greater than max (0)
-					expect(await db2.log.getTotalParticipation()).to.be.within(
+					expect(await db2.log.getMyTotalParticipation()).to.be.within(
 						0.45,
 						0.55,
 					); // because the CPU error from fixed usage (0.5) is always greater than max (0)
@@ -683,8 +683,8 @@ describe(`sharding`, () => {
 
 					await waitForConverged(async () => {
 						const diff = Math.abs(
-							(await db2.log.getTotalParticipation()) -
-								(await db1.log.getTotalParticipation()),
+							(await db2.log.getMyTotalParticipation()) -
+								(await db1.log.getMyTotalParticipation()),
 						);
 						return Math.round(diff * 50);
 					});
@@ -738,8 +738,8 @@ describe(`sharding`, () => {
 
 					await waitForConverged(async () => {
 						const diff = Math.abs(
-							(await db2.log.getTotalParticipation()) -
-								(await db1.log.getTotalParticipation()),
+							(await db2.log.getMyTotalParticipation()) -
+								(await db1.log.getMyTotalParticipation()),
 						);
 
 						return Math.round(diff * 100);
@@ -797,11 +797,11 @@ describe(`sharding`, () => {
 
 					await waitForResolved(
 						async () => {
-							expect(await db1.log.getTotalParticipation()).to.be.within(
+							expect(await db1.log.getMyTotalParticipation()).to.be.within(
 								0.43,
 								0.57,
 							);
-							expect(await db2.log.getTotalParticipation()).to.be.within(
+							expect(await db2.log.getMyTotalParticipation()).to.be.within(
 								0.43,
 								0.57,
 							);
@@ -859,13 +859,19 @@ describe(`sharding`, () => {
 					}
 
 					await waitForConverged(async () =>
-						Math.round((await db1.log.getTotalParticipation()) * 500),
+						Math.round((await db1.log.getMyTotalParticipation()) * 500),
 					);
 					await waitForConverged(async () =>
-						Math.round((await db2.log.getTotalParticipation()) * 500),
+						Math.round((await db2.log.getMyTotalParticipation()) * 500),
 					);
-					expect(await db1.log.getTotalParticipation()).to.be.within(0.03, 0.1);
-					expect(await db1.log.getTotalParticipation()).to.be.within(0.03, 0.1);
+					expect(await db1.log.getMyTotalParticipation()).to.be.within(
+						0.03,
+						0.1,
+					);
+					expect(await db1.log.getMyTotalParticipation()).to.be.within(
+						0.03,
+						0.1,
+					);
 				});
 
 				it("evenly if limited when not constrained", async () => {
@@ -911,11 +917,11 @@ describe(`sharding`, () => {
 					}
 
 					await waitForResolved(async () => {
-						expect(await db1.log.getTotalParticipation()).to.be.within(
+						expect(await db1.log.getMyTotalParticipation()).to.be.within(
 							0.45,
 							0.55,
 						);
-						expect(await db2.log.getTotalParticipation()).to.be.within(
+						expect(await db2.log.getMyTotalParticipation()).to.be.within(
 							0.45,
 							0.55,
 						);
@@ -1050,8 +1056,8 @@ describe(`sharding`, () => {
 					} catch (error) {
 						const db1Memory = await db1.log.getMemoryUsage();
 						const db2Memory = await db2.log.getMemoryUsage();
-						const db1Factor = await db1.log.getTotalParticipation();
-						const db2Factor = await db2.log.getTotalParticipation();
+						const db1Factor = await db1.log.getMyTotalParticipation();
+						const db2Factor = await db2.log.getMyTotalParticipation();
 						console.log("db1 factor", db1Factor);
 						console.log("db2 factor", db2Factor);
 						console.log("db1 memory", db1Memory);
@@ -1096,11 +1102,11 @@ describe(`sharding`, () => {
 					}
 
 					await waitForResolved(async () => {
-						expect(await db1.log.getTotalParticipation()).to.be.within(
+						expect(await db1.log.getMyTotalParticipation()).to.be.within(
 							0.45,
 							0.55,
 						);
-						expect(await db2.log.getTotalParticipation()).to.be.within(
+						expect(await db2.log.getMyTotalParticipation()).to.be.within(
 							0.45,
 							0.55,
 						);
@@ -1142,7 +1148,7 @@ describe(`sharding`, () => {
 				);
 
 				await waitForResolved(async () =>
-					expect(await db1.log.getTotalParticipation()).equal(0),
+					expect(await db1.log.getMyTotalParticipation()).equal(0),
 				);
 			});
 		});
