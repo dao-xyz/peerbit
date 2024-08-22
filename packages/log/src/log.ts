@@ -622,19 +622,19 @@ export class Log<T> {
 			trim?: TrimOptions;
 			timeout?: number;
 		},
-	): Promise<void> {
+	): Promise<Entry<T>[]> {
 		let entries: Entry<T>[];
 		let references: Map<string, Entry<T>> = new Map();
 
 		if (entriesOrLog instanceof Log) {
-			if (entriesOrLog.entryIndex.length === 0) return;
+			if (entriesOrLog.entryIndex.length === 0) return [];
 			entries = await entriesOrLog.toArray();
 			for (const element of entries) {
 				references.set(element.hash, element);
 			}
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) {
-				return;
+				return entriesOrLog as [];
 			}
 
 			entries = [];
@@ -674,7 +674,7 @@ export class Log<T> {
 		} else {
 			let all = await entriesOrLog.all(); // TODO dont load all at once
 			if (all.length === 0) {
-				return;
+				return all as [];
 			}
 
 			entries = all;
@@ -690,19 +690,29 @@ export class Log<T> {
 				heads.set(next, false);
 			}
 		}
-
+		let joinedHeads: Entry<T>[] | undefined = undefined;
 		for (const entry of entries) {
+			let isHead = heads.get(entry.hash)!;
 			const p = this.joinRecursively(entry, {
 				references,
-				isHead: heads.get(entry.hash)!,
+				isHead,
 				...options,
 			});
 			this._joining.set(entry.hash, p);
-			p.finally(() => {
+			p.then((joined) => {
+				if (joined && isHead) {
+					// reuse entries array if only one element to prevent unnecessary allocations
+					entries.length > 1
+						? (joinedHeads || (joinedHeads = [])).push(entry)
+						: (joinedHeads = entries);
+				}
+			}).finally(() => {
 				this._joining.delete(entry.hash);
 			});
 			await p;
 		}
+
+		return joinedHeads || [];
 	}
 
 	/**
@@ -722,9 +732,9 @@ export class Log<T> {
 			isHead: boolean;
 			timeout?: number;
 		},
-	) {
+	): Promise<boolean> {
 		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
-			return;
+			return false;
 		}
 
 		if (!entry.hash) {
@@ -732,7 +742,7 @@ export class Log<T> {
 		}
 
 		if (await this.has(entry.hash)) {
-			return;
+			return false;
 		}
 
 		entry.init(this);
@@ -743,10 +753,6 @@ export class Log<T> {
 					'Invalid signature entry with hash "' + entry.hash + '"',
 				);
 			}
-		}
-
-		if (this?._canAppend && !(await this?._canAppend(entry))) {
-			return;
 		}
 
 		const headsWithGid: JoinableEntry[] = await this.entryIndex
@@ -761,7 +767,7 @@ export class Log<T> {
 					v.meta.next.includes(entry.hash) &&
 					Sorting.compare(entry, v, this._sortFn) < 0
 				) {
-					return; // already deleted
+					return false; // already deleted
 				}
 			}
 		}
@@ -792,6 +798,10 @@ export class Log<T> {
 			}
 		}
 
+		if (this?._canAppend && !(await this?._canAppend(entry))) {
+			return false;
+		}
+
 		const clock = await entry.getClock();
 		this._hlc.update(clock.timestamp);
 
@@ -811,6 +821,8 @@ export class Log<T> {
 		}
 
 		await this?._onChange?.({ added: [entry], removed: removed });
+
+		return true;
 	}
 
 	private async processEntry(entry: Entry<T>): Promise<ShallowEntry[]> {

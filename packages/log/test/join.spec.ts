@@ -178,8 +178,10 @@ describe("join", function () {
 			await log2.append(new Uint8Array([1, 0]));
 			await log1.append(new Uint8Array([0, 2]));
 			await log2.append(new Uint8Array([1, 1]));
-			await log1.join(await log2.getHeads(true).all());
-			await log1.join(await log2.getHeads(true).all());
+			const joinedFirst = await log1.join(await log2.getHeads(true).all());
+			expect(joinedFirst).to.have.length(1);
+			const joinedSecond = await log1.join(await log2.getHeads(true).all());
+			expect(joinedSecond).to.have.length(0);
 
 			const expectedData = [
 				new Uint8Array([0, 1]),
@@ -198,6 +200,27 @@ describe("join", function () {
 			const item = last(await log1.toArray());
 			expect(item.next.length).equal(1);
 			expect((await log1.getHeads().all()).length).equal(2);
+		});
+
+		it("canAppend bottom first", async () => {
+			await log1.append(new Uint8Array([1]));
+			await log1.append(new Uint8Array([2]));
+
+			let canAppendCheckedData: Uint8Array[] = [];
+
+			const canAppend2 = log2._canAppend.bind(log2);
+			log2._canAppend = async (entry) => {
+				const result = await canAppend2(entry);
+				canAppendCheckedData.push(entry.payload.getValue());
+				return result;
+			};
+
+			expect(await log1.getHeads().all()).to.have.length(1);
+			await log2.join(await log1.getHeads(true).all());
+			expect(canAppendCheckedData).to.deep.equal([
+				new Uint8Array([1]),
+				new Uint8Array([2]),
+			]);
 		});
 
 		describe("cut", () => {
