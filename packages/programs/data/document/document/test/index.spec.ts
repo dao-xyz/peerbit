@@ -31,6 +31,7 @@ import { ClosedError, Program } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import {
 	AbsoluteReplicas,
+	type ReplicationDomain,
 	decodeReplicas,
 	encodeReplicas,
 } from "@peerbit/shared-log";
@@ -41,12 +42,16 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import { v4 as uuid } from "uuid";
 import {
+	Operation,
+	PutOperation,
+	PutWithKeyOperation,
+} from "../src/operation.js";
+import {
 	Documents,
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
-import { Operation, PutOperation, PutWithKeyOperation } from "../src/search.js";
-import { Document, TestStore } from "./data.js";
+import { Document, StoreWithCustomDomain, TestStore } from "./data.js";
 
 describe("index", () => {
 	let session: TestSession;
@@ -799,20 +804,19 @@ describe("index", () => {
 					expect(results).to.have.length(4);
 				});
 
-				/*  TODO feat
-				describe("sync", () => {
-					it("can match sync", async () => {
+				describe("replicate", () => {
+					it("can match replicate", async () => {
 						expect(await stores[1].docs.index.getSize()).equal(0);
+						await stores[1].docs.log.unreplicate();
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).have.length(0);
+
 						let canPerformEvents = 0;
 						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
 							stores[1].docs,
 						);
-						let syncEvents = 0;
-						let sync = stores[1].docs.index["_sync"].bind(stores[1].docs.index);
-						stores[1].docs.index["_sync"] = async (r) => {
-							syncEvents += 1;
-							return sync(r);
-						};
+
 						stores[1].docs["_optionCanPerform"] = async (props) => {
 							canPerformEvents += 1;
 							return !canPerform || canPerform(props);
@@ -822,23 +826,29 @@ describe("index", () => {
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { amount: 1, sync: true } },
+							{ remote: { replicate: true } },
 						);
+
 						await waitForResolved(async () =>
 							expect(await stores[1].docs.index.getSize()).equal(4),
 						);
+
 						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
 						expect(canPerformEvents).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						expect(syncEvents).equal(1);
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(4);
 
 						await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { amount: 1, sync: true } },
+							{ remote: { replicate: true } },
 						);
-						await waitFor(() => syncEvents === 2);
 						expect(canPerformEvents).equal(6); // no new checks, since all docs already added
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(4); // no new segments
 					});
 					it("will persist synced entries through prunes", async () => {
 						stores[0].docs.log.replicas = {
@@ -857,7 +867,7 @@ describe("index", () => {
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { sync: true } },
+							{ remote: { replicate: true } },
 						);
 						expect(await stores[1].docs.index.getSize()).equal(5);
 						await stores[1].docs.log.distribute();
@@ -870,7 +880,7 @@ describe("index", () => {
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { sync: true } },
+							{ remote: { replicate: true } },
 						);
 
 						expect(stores[1].docs["_manuallySynced"].size).equal(4);
@@ -884,7 +894,7 @@ describe("index", () => {
 							},
 						);
 					});
-				}); */
+				});
 
 				/* TODO feat
 				describe("array", () => {
@@ -1939,6 +1949,76 @@ describe("index", () => {
 
 			// TODO session timeouts?
 		});
+
+		describe("domain", () => {
+			before(async () => {
+				session = await TestSession.connected(2);
+			});
+
+			after(async () => {
+				await session.stop();
+			});
+
+			it("custom domain", async () => {
+				const store = await session.peers[0].open(new StoreWithCustomDomain(), {
+					args: {
+						replicate: {
+							normalized: false,
+							factor: 1,
+							offset: 1,
+							strict: true,
+						},
+					},
+				});
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: {
+							normalized: false,
+							offset: 2,
+							factor: 2,
+							strict: true,
+						},
+					},
+				});
+
+				await store.docs.put(new Document({ id: "1", number: 1n }));
+				await store2.docs.put(new Document({ id: "2", number: 2n }));
+				await store2.docs.put(new Document({ id: "3", number: 3n }));
+
+				await delay(3000); // wait for sometime so that potential replication could have happened
+
+				expect(await store.docs.index.getSize()).to.equal(1);
+				expect(await store2.docs.index.getSize()).to.equal(2);
+
+				// test querying with the same domain but different peers and assert results are correct
+				const resultsWithRemoteRightDomain = await store.docs.index.search(
+					new SearchRequest(),
+					{
+						remote: {
+							domain: {
+								from: 2,
+								to: 3,
+							},
+						},
+					},
+				);
+
+				expect(resultsWithRemoteRightDomain).to.have.length(3);
+
+				const resultsWhenRemoteDoesNotHaveRightDomain =
+					await store.docs.index.search(new SearchRequest(), {
+						remote: {
+							domain: {
+								from: 4,
+								to: 5,
+							},
+						},
+					});
+
+				expect(resultsWhenRemoteDoesNotHaveRightDomain).to.have.length(1); // only the loal result
+				expect(resultsWhenRemoteDoesNotHaveRightDomain[0].id).to.equal("1");
+			});
+		});
 	});
 
 	describe("acl", () => {
@@ -2510,7 +2590,7 @@ describe("index", () => {
 			});
 
 			it("all", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = () => [
 					stores[1].node.identity.publicKey.hashcode(),
 					stores[2].node.identity.publicKey.hashcode(),
 				];
@@ -2521,7 +2601,7 @@ describe("index", () => {
 			});
 
 			it("will always query locally", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [] as any;
+				stores[0].docs.log.getCover = () => [] as any;
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).equal(1);
 				expect(counters[1]).equal(0);
@@ -2529,7 +2609,7 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = () => [
 					stores[1].node.identity.publicKey.hashcode(),
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
@@ -2539,7 +2619,7 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = () => [
 					stores[1].node.identity.publicKey.hashcode(),
 					stores[2].node.identity.publicKey.hashcode(),
 				];
@@ -2565,7 +2645,7 @@ describe("index", () => {
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs.log.getReplicatorUnion = () => [
+					stores[0].docs.log.getCover = () => [
 						stores[1].node.identity.publicKey.hashcode(),
 						stores[2].node.identity.publicKey.hashcode(),
 					];
@@ -2594,7 +2674,7 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs.log.getReplicatorUnion = () => [
+					stores[0].docs.log.getCover = () => [
 						stores[1].node.identity.publicKey.hashcode(),
 						stores[2].node.identity.publicKey.hashcode(),
 					];
@@ -2801,10 +2881,10 @@ describe("index", () => {
 			expect(counters[2]).equal(1);
 		}); */
 
-/*  TODO getReplicatorUnion to provide query alternatives
+/*  TODO getCover to provide query alternatives
 		
 			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = () => [
 					stores[0].node.identity.publicKey.hashcode(),
 					stores[1].node.identity.publicKey.hashcode()
 				];
@@ -2814,7 +2894,7 @@ describe("index", () => {
 				expect(counters[2]).equal(0);
 			}); */
 
-/* TODO getReplicatorUnion to provide query alternatives
+/* TODO getCover to provide query alternatives
 	
 it("ignore myself if I am a new replicator", async () => {
 	// and the other peer has been around for longer
