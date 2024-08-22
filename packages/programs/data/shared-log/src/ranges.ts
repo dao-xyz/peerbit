@@ -667,7 +667,7 @@ export const getStartAndEnd = async (
 		await nodeFromPoint();
 	}
 
-	if (!startNode) {
+	if (!startNode || startLocation == null) {
 		return { startNode: undefined, startLocation: 0, endLocation: 0 };
 	}
 
