@@ -65,14 +65,14 @@ db2 = (await EventStore.open<EventStore<string>>(
 				factor: 1,
 			},
 			onChange: async (change) => {
-				for (const entry of change.added) {
+				for (const added of change.added) {
 					try {
 						resolvers
 							.get(
-								entry.hash,
+								added.entry.hash,
 							)! /* || await waitFor(() => resolvers.get(entry.hash), { signal: abortController.signal }))? */
 							.resolve();
-						resolvers.delete(entry.hash);
+						resolvers.delete(added.entry.hash);
 					} catch (error) {
 						if (error instanceof AbortError) {
 							return;

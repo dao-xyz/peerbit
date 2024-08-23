@@ -1098,7 +1098,7 @@ export class SharedLog<
 
 	async onChange(change: Change<T>) {
 		for (const added of change.added) {
-			this.onEntryAdded(added);
+			this.onEntryAdded(added.entry);
 		}
 		for (const removed of change.removed) {
 			this.onEntryRemoved(removed.hash);
@@ -1720,13 +1720,18 @@ export class SharedLog<
 			replicate: boolean;
 		},
 	): Promise<void> {
-		const joined = await this.log.join(entries, options);
-		if (options?.replicate) {
-			let p: Promise<void>[] = [];
-			for (const entry of joined) {
-				p.push(this.replicate(entry));
-			}
-		}
+		await this.log.join(entries, {
+			...options,
+			onChange: async (change) => {
+				if (change.added) {
+					for (const entry of change.added) {
+						if (entry.head) {
+							await this.replicate(entry.entry, { checkDuplicates: true });
+						}
+					}
+				}
+			},
+		});
 	}
 
 	async isLeader(

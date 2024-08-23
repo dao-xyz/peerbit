@@ -72,8 +72,8 @@ await client.open<TestStore>(store, {
 		},
 		trim: { type: "length" as const, to: 100 },
 		onChange: (change) => {
-			change.added.forEach(async (entry) => {
-				const doc = await entry.getPayloadValue();
+			change.added.forEach(async (added) => {
+				const doc = await added.entry.getPayloadValue();
 				resolver.get(doc.id)!();
 				resolver.delete(doc.id);
 			});
