@@ -731,7 +731,6 @@ export class DocumentIndex<
 			remote.priority = 1;
 		}
 
-		const promises: Promise<types.Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
 				"Expecting either 'options.remote' or 'options.local' to be true",
@@ -752,6 +751,7 @@ export class DocumentIndex<
 			}
 		}
 
+		let resolved: types.Results<T>[] = [];
 		if (remote) {
 			const replicatorGroups = await this._log.getCover(
 				remote.domain ?? (undefined as any),
@@ -760,46 +760,41 @@ export class DocumentIndex<
 
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
-				const fn = async () => {
-					const rs: types.Results<T>[] = [];
-					const responseHandler = async (
-						results: RPCResponse<types.AbstractSearchResult<T>>[],
-					) => {
-						for (const r of await introduceEntries(
-							results,
-							this.documentType,
-							this._sync,
-							options,
-						)) {
-							rs.push(r.response);
-						}
-					};
-					try {
-						if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
-							// don't wait for responses
-							await this._query.request(queryRequest, { mode: remote!.mode });
-						} else {
-							await queryAll(
-								this._query,
-								groupHashes,
-								queryRequest,
-								responseHandler,
-								remote,
-							);
-						}
-					} catch (error) {
-						if (error instanceof MissingResponsesError) {
-							logger.warn("Did not reciveve responses from all shard");
-							if (remote?.throwOnMissing) {
-								throw error;
-							}
-						} else {
+				const responseHandler = async (
+					results: RPCResponse<types.AbstractSearchResult<T>>[],
+				) => {
+					for (const r of await introduceEntries(
+						results,
+						this.documentType,
+						this._sync,
+						options,
+					)) {
+						resolved.push(r.response);
+					}
+				};
+				try {
+					if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
+						// don't wait for responses
+						await this._query.request(queryRequest, { mode: remote!.mode });
+					} else {
+						await queryAll(
+							this._query,
+							groupHashes,
+							queryRequest,
+							responseHandler,
+							remote,
+						);
+					}
+				} catch (error) {
+					if (error instanceof MissingResponsesError) {
+						logger.warn("Did not reciveve responses from all shard");
+						if (remote?.throwOnMissing) {
 							throw error;
 						}
+					} else {
+						throw error;
 					}
-					return rs;
-				};
-				promises.push(fn());
+				}
 			} else {
 				// TODO send without direction out to the world? or just assume we can insert?
 				/* 	promises.push(
@@ -812,7 +807,6 @@ export class DocumentIndex<
 				); */
 			}
 		}
-		const resolved = await Promise.all(promises);
 		for (const r of resolved) {
 			if (r) {
 				if (r instanceof Array) {

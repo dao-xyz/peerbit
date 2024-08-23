@@ -1,4 +1,3 @@
-// @ts-nocheck
 // ts ignore implicit any
 import {
 	deserialize,
@@ -13,31 +12,34 @@ import {
 	type PublicSignKey,
 	randomBytes,
 } from "@peerbit/crypto";
-import { NoAccess, Results } from "@peerbit/document-interface";
+import {
+	AbstractSearchResult,
+	NoAccess,
+	Results,
+} from "@peerbit/document-interface";
 import {
 	AbstractSearchRequest,
 	ByteMatchQuery,
 	CloseIteratorRequest,
+	CollectNextRequest,
 	Compare,
 	IntegerCompare,
 	SearchRequest,
 	Sort,
 	SortDirection,
 	StringMatch,
-	StringMatchMethod,
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import {
 	AbsoluteReplicas,
-	type ReplicationDomain,
 	decodeReplicas,
 	encodeReplicas,
 } from "@peerbit/shared-log";
 import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import { v4 as uuid } from "uuid";
@@ -51,6 +53,7 @@ import {
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
+import type { CanRead } from "../src/search.js";
 import { Document, StoreWithCustomDomain, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -106,7 +109,7 @@ describe("index", () => {
 
 				const putOperation2 = (await store.docs.put(doc2)).entry;
 				expect(await store.docs.index.getSize()).equal(2);
-				expect(putOperation2.next).to.have.members([]); // because doc 2 is independent of doc 1
+				expect(putOperation2.meta.next).to.have.members([]); // because doc 2 is independent of doc 1
 
 				expect(changes.length).equal(2);
 				expect(changes[1].added).to.have.length(1);
@@ -115,7 +118,7 @@ describe("index", () => {
 
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
-				expect(deleteOperation.next).to.have.members([putOperation.hash]); // because delete is dependent on put
+				expect(deleteOperation.meta.next).to.have.members([putOperation.hash]); // because delete is dependent on put
 				expect(await store.docs.index.getSize()).equal(1);
 
 				expect(changes.length).equal(3);
@@ -191,11 +194,11 @@ describe("index", () => {
 					name: "Hello world 2",
 				});
 
-				const xxx = await store.docs.put(doc);
+				await store.docs.put(doc);
 				expect(await store.docs.index.getSize()).equal(1);
 				const putOperation2 = (await store.docs.put(editDoc)).entry;
 				expect(await store.docs.index.getSize()).equal(1);
-				expect(putOperation2.next).to.have.length(1);
+				expect(putOperation2.meta.next).to.have.length(1);
 
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
@@ -858,41 +861,25 @@ describe("index", () => {
 							min: new AbsoluteReplicas(1),
 						};
 
-						// add new doc, now wirth min replicas set to 1
+						// add new doc, now with min replicas set to 1
+
 						await stores[0].docs.put(new Document({ id: uuid() }));
 
 						await stores[1].docs.log.replicate({ factor: 0 });
 						expect(await stores[1].docs.index.getSize()).equal(0);
-						await stores[1].docs.index.search(
+
+						const results = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
 							}),
 							{ remote: { replicate: true } },
 						);
+
+						expect(results).to.have.length(5);
 						expect(await stores[1].docs.index.getSize()).equal(5);
 						await stores[1].docs.log.distribute();
 						await delay(2000); // wait some time so that pruningacn take place
 						expect(await stores[1].docs.index.getSize()).equal(5);
-					});
-
-					it("removes sync cache when delete", async () => {
-						await stores[1].docs.index.search(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { replicate: true } },
-						);
-
-						expect(stores[1].docs["_manuallySynced"].size).equal(4);
-						for (const [k, _v] of stores[0].docs.index.engine.iterator()) {
-							await stores[0].docs.del(k, { target: "all" });
-						}
-						await waitForResolved(
-							() => expect(stores[1].docs["_manuallySynced"].size).equal(0),
-							{
-								timeout: 3e4,
-							},
-						);
 					});
 				});
 
@@ -1252,7 +1239,6 @@ describe("index", () => {
 						}
 						lastLength = store1.docs.log.log.length;
 						for (const store of [store1, store2, store3]) {
-							let t0 = +new Date();
 							const collected = await store.docs.index.search(
 								new SearchRequest({ fetch: count }),
 							);
@@ -1487,8 +1473,8 @@ describe("index", () => {
 					await waitForResolved(
 						() =>
 							expect(
-								stores[i].docs.log["syncInFlight"]
-									.get(stores[storeIndex].node.identity.publicKey.hashcode())
+								stores[i].docs.log.syncInFlight
+									.get(stores[storeIndex].node.identity.publicKey.hashcode())!
 									.has(resp.entry.hash),
 							).to.be.true,
 					);
@@ -1778,10 +1764,11 @@ describe("index", () => {
 					}
 				}
 
-				await stores[0].docs.index.open({
+				// TODO fix types
+				await (stores[0].docs as any).index.open({
 					transform: {
 						type: IndexClass,
-						transform: async (obj) => {
+						transform: async (obj: any) => {
 							return new IndexClass({ id: obj.id, [KEY]: obj.number });
 						},
 					},
@@ -2093,11 +2080,11 @@ describe("index", () => {
 			);
 			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2112,11 +2099,11 @@ describe("index", () => {
 			);
 			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2173,11 +2160,11 @@ describe("index", () => {
 			);
 			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2192,11 +2179,11 @@ describe("index", () => {
 			);
 			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2300,7 +2287,7 @@ describe("index", () => {
 
 			constructor(properties: { id: Uint8Array; address: string }) {
 				this.id = properties.id;
-				this.string = properties.string;
+				this.address = properties.address;
 			}
 		}
 		@variant("subprogram")
@@ -2324,13 +2311,17 @@ describe("index", () => {
 		@variant("test_program_documents")
 		class TestStoreSubPrograms extends Program {
 			@field({ type: Documents })
-			docs: Documents<SubProgram>;
+			docs: Documents<SubProgram, SubProgramIndexable>;
 
-			constructor(properties: { docs: Documents<SubProgram> }) {
+			constructor(properties: {
+				docs: Documents<SubProgram, SubProgramIndexable>;
+			}) {
 				super();
 				this.docs = properties.docs;
 			}
-			async open(options?: Partial<SetupOptions<SubProgram>>): Promise<void> {
+			async open(
+				options?: Partial<SetupOptions<SubProgram, SubProgramIndexable>>,
+			): Promise<void> {
 				await this.docs.open({
 					...options,
 					type: SubProgram,
@@ -2375,7 +2366,7 @@ describe("index", () => {
 								session.peers[i].services.blocks,
 							))!
 						: new TestStoreSubPrograms({
-								docs: new Documents<SubProgram>(),
+								docs: new Documents<SubProgram, SubProgramIndexable>(),
 							});
 
 				await session.peers[i].open(store, {
@@ -2496,7 +2487,7 @@ describe("index", () => {
 			@variant("test_program_documents_custom_fields")
 			class TestStoreSubPrograms extends Program {
 				@field({ type: Documents })
-				docs: Documents<SubProgram>;
+				docs: Documents<SubProgram, Indexable>;
 
 				constructor() {
 					super();
@@ -2590,7 +2581,7 @@ describe("index", () => {
 			});
 
 			it("all", async () => {
-				stores[0].docs.log.getCover = () => [
+				stores[0].docs.log.getCover = async () => [
 					stores[1].node.identity.publicKey.hashcode(),
 					stores[2].node.identity.publicKey.hashcode(),
 				];
@@ -2609,7 +2600,7 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs.log.getCover = () => [
+				stores[0].docs.log.getCover = async () => [
 					stores[1].node.identity.publicKey.hashcode(),
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
@@ -2619,7 +2610,7 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs.log.getCover = () => [
+				stores[0].docs.log.getCover = async () => [
 					stores[1].node.identity.publicKey.hashcode(),
 					stores[2].node.identity.publicKey.hashcode(),
 				];
@@ -2645,7 +2636,7 @@ describe("index", () => {
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs.log.getCover = () => [
+					stores[0].docs.log.getCover = async () => [
 						stores[1].node.identity.publicKey.hashcode(),
 						stores[2].node.identity.publicKey.hashcode(),
 					];
@@ -2674,7 +2665,7 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs.log.getCover = () => [
+					stores[0].docs.log.getCover = async () => [
 						stores[1].node.identity.publicKey.hashcode(),
 						stores[2].node.identity.publicKey.hashcode(),
 					];

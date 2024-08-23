@@ -6,6 +6,7 @@ import {
 	type ReplicationDomain,
 	type ReplicationDomainHash,
 } from "@peerbit/shared-log";
+import { v4 as uuid } from "uuid";
 import {
 	Documents,
 	type Operation,
@@ -33,8 +34,8 @@ export class Document {
 	@field({ type: option(Uint8Array) })
 	data?: Uint8Array;
 
-	constructor(opts: Document) {
-		this.id = opts.id;
+	constructor(opts: Partial<Document>) {
+		this.id = opts.id || uuid();
 		this.name = opts.name;
 		this.number = opts.number;
 		this.tags = opts.tags || [];
@@ -123,7 +124,7 @@ export class StoreWithCustomDomain extends Program {
 	}
 
 	async open(
-		args?: SetupOptions<Document, Document, CustomDomain>,
+		args?: Partial<SetupOptions<Document, Document, CustomDomain>>,
 	): Promise<void> {
 		return this.docs.open({
 			...(args || {}),

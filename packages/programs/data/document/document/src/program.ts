@@ -176,14 +176,10 @@ export class Documents<
 				// here we arrive for all the results we want to persist.
 				// we we need to do here is
 				// 1. add the entry to a list of entries that we should persist through prunes
-				let heads: string[] = [];
-				for (const entry of result.results) {
-					heads.push(entry.context.head);
-				}
-				const joinedEntries = await this.log.log.join(heads);
-				for (const entry of joinedEntries) {
-					await this.log.replicate(entry, { checkDuplicates: true });
-				}
+				await this.log.join(
+					result.results.map((x) => x.context.head),
+					{ replicate: true },
+				);
 			},
 			dbType: this.constructor,
 		});
@@ -490,6 +486,7 @@ export class Documents<
 			throw new Error(`No entry with key '${key.primitive}' in the database`);
 		}
 
+		const entry = await this._resolveEntry(existing.context.head);
 		return this.log.append(
 			new DeleteOperation({
 				key,
@@ -497,7 +494,7 @@ export class Documents<
 			{
 				...options,
 				meta: {
-					next: [await this._resolveEntry(existing.context.head)],
+					next: [entry],
 					type: EntryType.CUT,
 					...options?.meta,
 				},
@@ -518,7 +515,7 @@ export class Documents<
 		}
 
 		const sortedEntries = [
-			...change.added,
+			...change.added.map((x) => x.entry),
 			...((await Promise.all(
 				change.removed.map((x) =>
 					x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash),
