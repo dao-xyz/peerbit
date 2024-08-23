@@ -538,7 +538,7 @@ export class Log<T> {
 		}
 
 		const changes: Change<T> = {
-			added: [entry],
+			added: [{ head: true, entry }],
 			removed,
 		};
 
@@ -621,20 +621,21 @@ export class Log<T> {
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
 			timeout?: number;
+			onChange?: OnChange<T>;
 		},
-	): Promise<Entry<T>[]> {
+	): Promise<void> {
 		let entries: Entry<T>[];
 		let references: Map<string, Entry<T>> = new Map();
 
 		if (entriesOrLog instanceof Log) {
-			if (entriesOrLog.entryIndex.length === 0) return [];
+			if (entriesOrLog.entryIndex.length === 0) return;
 			entries = await entriesOrLog.toArray();
 			for (const element of entries) {
 				references.set(element.hash, element);
 			}
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) {
-				return entriesOrLog as [];
+				return;
 			}
 
 			entries = [];
@@ -643,6 +644,10 @@ export class Log<T> {
 					entries.push(element);
 					references.set(element.hash, element);
 				} else if (typeof element === "string") {
+					if (await this.has(element)) {
+						continue; // already in log
+					}
+
 					let entry = await Entry.fromMultihash<T>(this._storage, element, {
 						timeout: options?.timeout,
 					});
@@ -651,6 +656,10 @@ export class Log<T> {
 					}
 					entries.push(entry);
 				} else if (element instanceof ShallowEntry) {
+					if (await this.has(element.hash)) {
+						continue; // already in log
+					}
+
 					let entry = await Entry.fromMultihash<T>(
 						this._storage,
 						element.hash,
@@ -674,7 +683,7 @@ export class Log<T> {
 		} else {
 			let all = await entriesOrLog.all(); // TODO dont load all at once
 			if (all.length === 0) {
-				return all as [];
+				return;
 			}
 
 			entries = all;
@@ -690,7 +699,6 @@ export class Log<T> {
 				heads.set(next, false);
 			}
 		}
-		let joinedHeads: Entry<T>[] | undefined = undefined;
 		for (const entry of entries) {
 			let isHead = heads.get(entry.hash)!;
 			const p = this.joinRecursively(entry, {
@@ -699,20 +707,11 @@ export class Log<T> {
 				...options,
 			});
 			this._joining.set(entry.hash, p);
-			p.then((joined) => {
-				if (joined && isHead) {
-					// reuse entries array if only one element to prevent unnecessary allocations
-					entries.length > 1
-						? (joinedHeads || (joinedHeads = [])).push(entry)
-						: (joinedHeads = entries);
-				}
-			}).finally(() => {
+			p.finally(() => {
 				this._joining.delete(entry.hash);
 			});
 			await p;
 		}
-
-		return joinedHeads || [];
 	}
 
 	/**
@@ -731,6 +730,7 @@ export class Log<T> {
 			references?: Map<string, Entry<T>>;
 			isHead: boolean;
 			timeout?: number;
+			onChange?: OnChange<T>;
 		},
 	): Promise<boolean> {
 		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
@@ -820,7 +820,14 @@ export class Log<T> {
 			}
 		}
 
-		await this?._onChange?.({ added: [entry], removed: removed });
+		await options?.onChange?.({
+			added: [{ head: options.isHead, entry }],
+			removed: removed,
+		});
+		await this._onChange?.({
+			added: [{ head: options.isHead, entry }],
+			removed: removed,
+		});
 
 		return true;
 	}
