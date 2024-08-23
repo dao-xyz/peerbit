@@ -208,7 +208,7 @@ export class IdentityAccessController extends Program {
 			type: Access,
 			canPerform: this.canPerform.bind(this),
 			index: {
-				canRead: this.canRead.bind(this),
+				canRead: () => true, // TODO set this correctly
 			},
 		});
 		await this.trustedNetwork.open(properties);
