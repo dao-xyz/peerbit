@@ -809,11 +809,11 @@ describe("index", () => {
 
 				describe("replicate", () => {
 					it("can match replicate", async () => {
-						expect(await stores[1].docs.index.getSize()).equal(0);
 						await stores[1].docs.log.unreplicate();
 						expect(
 							await stores[1].docs.log.getMyReplicationSegments(),
 						).have.length(0);
+						expect(await stores[1].docs.index.getSize()).equal(0);
 
 						let canPerformEvents = 0;
 						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
@@ -825,12 +825,13 @@ describe("index", () => {
 							return !canPerform || canPerform(props);
 						};
 
-						await stores[1].docs.index.search(
+						const results = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
 							}),
 							{ remote: { replicate: true } },
 						);
+						expect(results).to.have.length(4);
 
 						await waitForResolved(async () =>
 							expect(await stores[1].docs.index.getSize()).equal(4),
@@ -838,9 +839,10 @@ describe("index", () => {
 
 						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
 						expect(canPerformEvents).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						expect(
-							await stores[1].docs.log.getMyReplicationSegments(),
-						).to.have.length(4);
+						const segments =
+							await stores[1].docs.log.getMyReplicationSegments();
+
+						expect(segments).to.have.length(4);
 
 						await stores[1].docs.index.search(
 							new SearchRequest({
