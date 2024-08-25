@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document",
-	"version": "7.0.14",
+	"version": "7.1.0",
 	"description": "Document store implementation",
 	"type": "module",
 	"sideEffects": false,
@@ -61,7 +61,7 @@
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/program": "5.0.1",
 		"@peerbit/rpc": "5.0.7",
-		"@peerbit/shared-log": "9.0.10",
+		"@peerbit/shared-log": "9.1.0",
 		"@peerbit/indexer-interface": "^1.0.2",
 		"@peerbit/indexer-simple": "^1.0.3",
 		"@peerbit/indexer-sqlite3": "^1.0.5",

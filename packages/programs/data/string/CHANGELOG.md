@@ -632,6 +632,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.11](https://github.com/dao-xyz/peerbit/compare/string-v5.0.10...string-v5.0.11) (2024-08-25)
+
+
+### Bug Fixes
+
+* add hash replication domain ([7d710b5](https://github.com/dao-xyz/peerbit/commit/7d710b5b4c91d8d17c4cfa1a5afaafdf232ee0e1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from ^9.0.10 to ^9.1.0
+
 ## [5.0.10](https://github.com/dao-xyz/peerbit/compare/string-v5.0.9...string-v5.0.10) (2024-08-15)
 
 
