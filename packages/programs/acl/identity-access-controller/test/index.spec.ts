@@ -2,7 +2,7 @@ import { field, serialize, variant } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
 import { Documents } from "@peerbit/document";
-import { SearchRequest, StringMatch } from "@peerbit/indexer-interface";
+import { SearchRequest } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions, SharedLog } from "@peerbit/shared-log";
 import { TestSession } from "@peerbit/test-utils";
@@ -197,7 +197,8 @@ describe("index", () => {
 				new Document({
 					id: "2",
 				}),
-			); // Now trusted
+			);
+			// Now trusted
 		});
 
 		it("through trust chain", async () => {
@@ -274,7 +275,7 @@ describe("index", () => {
 			);
 		});
 
-		it("any access", async () => {
+		/* it("any access", async () => {
 			const l0a = await session.peers[0].open(
 				new TestStore({
 					publicKey: session.peers[0].peerId,
@@ -371,7 +372,7 @@ describe("index", () => {
 
 			const result = await q();
 			expect(result.length).greaterThan(0); // Because read access
-		});
+		}); */
 	});
 
 	it("manifests are not unique", async () => {

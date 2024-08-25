@@ -18,12 +18,14 @@ import {
 	type RPCResponse,
 	queryAll,
 } from "@peerbit/rpc";
-import { SharedLog } from "@peerbit/shared-log";
+import { type ReplicationDomain, SharedLog } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
+import { type Operation, isPutOperation } from "./operation.js";
+import type { ExtractArgs } from "./program.js";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -34,119 +36,17 @@ type BufferedResult<T> = {
 	from: PublicSignKey;
 };
 
-@variant(0)
-export class Operation /* <T> */ {}
-
-export const BORSH_ENCODING_OPERATION = BORSH_ENCODING(Operation);
-
-// @deprecated
-@variant(0)
-export class PutWithKeyOperation extends Operation {
-	@field({ type: "string" })
-	key: string;
-
-	@field({ type: Uint8Array })
-	data: Uint8Array;
-
-	constructor(props: { key: string; data: Uint8Array }) {
-		super();
-		this.key = props.key;
-		this.data = props.data;
-	}
-}
-
-// @deprecated
-/* @variant(1)
-export class PutAllOperation<T> extends Operation<T> {
-	@field({ type: vec(PutOperation) })
-	docs: PutOperation<T>[];
-
-	constructor(props?: { docs: PutOperation<T>[] }) {
-		super();
-		if (props) {
-			this.docs = props.docs;
-		}
-	}
-}
- */
-
-// @deprecated
-@variant(2)
-export class DeleteByStringKeyOperation extends Operation {
-	@field({ type: "string" })
-	key: string;
-
-	constructor(props: { key: string }) {
-		super();
-		this.key = props.key;
-	}
-
-	toDeleteOperation(): DeleteOperation {
-		return new DeleteOperation({ key: indexerTypes.toId(this.key) });
-	}
-}
-
-export const coerceDeleteOperation = (
-	operation: DeleteOperation | DeleteByStringKeyOperation,
-): DeleteOperation => {
-	return operation instanceof DeleteByStringKeyOperation
-		? operation.toDeleteOperation()
-		: operation;
-};
-
-@variant(3)
-export class PutOperation extends Operation {
-	@field({ type: Uint8Array })
-	data: Uint8Array;
-
-	constructor(props: { data: Uint8Array }) {
-		super();
-		this.data = props.data;
-	}
-}
-
-export const isPutOperation = (
-	operation: Operation,
-): operation is PutOperation | PutWithKeyOperation => {
-	return (
-		operation instanceof PutOperation ||
-		operation instanceof PutWithKeyOperation
-	);
-};
-
-/**
- * Delete a document at a key
- */
-@variant(4)
-export class DeleteOperation extends Operation {
-	@field({ type: indexerTypes.IdKey })
-	key: indexerTypes.IdKey;
-
-	constructor(props: { key: indexerTypes.IdKey }) {
-		super();
-		this.key = props.key;
-	}
-}
-
-export const isDeleteOperation = (
-	operation: Operation,
-): operation is DeleteOperation | DeleteByStringKeyOperation => {
-	return (
-		operation instanceof DeleteOperation ||
-		operation instanceof DeleteByStringKeyOperation
-	);
-};
-
-export type RemoteQueryOptions<R> = RPCRequestAllOptions<R> & {
-	sync?: boolean;
+export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
+	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
+	domain?: ExtractArgs<D>;
 };
-export type QueryOptions<R> = {
-	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult<R>>;
+export type QueryOptions<R, D> = {
+	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult<R>, D>;
 	local?: boolean;
 };
-export type SearchOptions<R> = QueryOptions<R>;
+export type SearchOptions<R, D> = QueryOptions<R, D>;
 
 type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
 
@@ -156,18 +56,18 @@ export type ResultsIterator<T> = {
 	done: () => boolean;
 };
 
-type QueryDetailedOptions<T> = QueryOptions<T> & {
+type QueryDetailedOptions<T, D> = QueryOptions<T, D> & {
 	onResponse?: (
 		response: types.AbstractSearchResult<T>,
 		from: PublicSignKey,
 	) => void | Promise<void>;
 };
 
-const introduceEntries = async <T>(
+const introduceEntries = async <T, D>(
 	responses: RPCResponse<types.AbstractSearchResult<T>>[],
 	type: AbstractType<T>,
 	sync: (result: types.Results<T>) => Promise<void>,
-	options?: QueryDetailedOptions<T>,
+	options?: QueryDetailedOptions<T, D>,
 ): Promise<RPCResponse<types.Results<T>>[]> => {
 	const results: RPCResponse<types.Results<T>>[] = [];
 	for (const response of responses) {
@@ -177,7 +77,7 @@ const introduceEntries = async <T>(
 
 		if (response.response instanceof types.Results) {
 			response.response.results.forEach((r) => r.init(type));
-			if (typeof options?.remote !== "boolean" && options?.remote?.sync) {
+			if (typeof options?.remote !== "boolean" && options?.remote?.replicate) {
 				await sync(response.response);
 			}
 			options?.onResponse &&
@@ -290,11 +190,10 @@ const isTransformerWithFunction = <T, I>(
 	return (options as TransformerAsFunction<T, I>).transform != null;
 };
 
-export type OpenOptions<T, I> = {
+export type OpenOptions<T, I, D extends ReplicationDomain<any, Operation>> = {
 	documentType: AbstractType<T>;
-
 	dbType: AbstractType<types.IDocumentStore<T>>;
-	log: SharedLog<Operation>;
+	log: SharedLog<Operation, D>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
 	sync: (result: types.Results<T>) => Promise<void>;
@@ -308,9 +207,11 @@ type IndexableClass<I> = new (
 ) => IDocumentWithContext<I>;
 
 @variant("documents_index")
-export class DocumentIndex<T, I extends Record<string, any>> extends Program<
-	OpenOptions<T, I>
-> {
+export class DocumentIndex<
+	T,
+	I extends Record<string, any>,
+	D extends ReplicationDomain<any, Operation>,
+> extends Program<OpenOptions<T, I, D>> {
 	@field({ type: RPC })
 	_query: RPC<
 		indexerTypes.AbstractSearchRequest,
@@ -342,7 +243,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 
 	private _sync: (result: types.Results<T>) => Promise<void>;
 
-	private _log: SharedLog<Operation>;
+	private _log: SharedLog<Operation, D>;
 
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache: Cache<T>;
@@ -372,7 +273,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 		return this._valueEncoding;
 	}
 
-	async open(properties: OpenOptions<T, I>) {
+	async open(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
 
 		this.documentType = properties.documentType;
@@ -527,7 +428,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 
 	public async get(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
-		options?: QueryOptions<T>,
+		options?: QueryOptions<T, D>,
 	): Promise<T | undefined> {
 		return (
 			await this.getDetailed(
@@ -579,7 +480,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 
 	public async getDetailed(
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
-		options?: QueryOptions<T>,
+		options?: QueryOptions<T, D>,
 	): Promise<types.Results<T>[] | undefined> {
 		let results: types.Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
@@ -808,11 +709,12 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	 */
 	public async queryDetailed(
 		queryRequest: indexerTypes.SearchRequest,
-		options?: QueryDetailedOptions<T>,
+		options?: QueryDetailedOptions<T, D>,
 	): Promise<types.Results<T>[]> {
 		const local = typeof options?.local === "boolean" ? options?.local : true;
-		let remote: RemoteQueryOptions<types.AbstractSearchResult<T>> | undefined =
-			undefined;
+		let remote:
+			| RemoteQueryOptions<types.AbstractSearchResult<T>, D>
+			| undefined = undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
 				remote = {};
@@ -829,7 +731,6 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			remote.priority = 1;
 		}
 
-		const promises: Promise<types.Results<T>[] | undefined>[] = [];
 		if (!local && !remote) {
 			throw new Error(
 				"Expecting either 'options.remote' or 'options.local' to be true",
@@ -850,53 +751,50 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 			}
 		}
 
+		let resolved: types.Results<T>[] = [];
 		if (remote) {
-			const replicatorGroups = await this._log.getReplicatorUnion(
+			const replicatorGroups = await this._log.getCover(
+				remote.domain ?? (undefined as any),
 				remote.minAge,
 			);
 
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
-				const fn = async () => {
-					const rs: types.Results<T>[] = [];
-					const responseHandler = async (
-						results: RPCResponse<types.AbstractSearchResult<T>>[],
-					) => {
-						for (const r of await introduceEntries(
-							results,
-							this.documentType,
-							this._sync,
-							options,
-						)) {
-							rs.push(r.response);
-						}
-					};
-					try {
-						if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
-							// don't wait for responses
-							await this._query.request(queryRequest, { mode: remote!.mode });
-						} else {
-							await queryAll(
-								this._query,
-								groupHashes,
-								queryRequest,
-								responseHandler,
-								remote,
-							);
-						}
-					} catch (error) {
-						if (error instanceof MissingResponsesError) {
-							logger.warn("Did not reciveve responses from all shard");
-							if (remote?.throwOnMissing) {
-								throw error;
-							}
-						} else {
+				const responseHandler = async (
+					results: RPCResponse<types.AbstractSearchResult<T>>[],
+				) => {
+					for (const r of await introduceEntries(
+						results,
+						this.documentType,
+						this._sync,
+						options,
+					)) {
+						resolved.push(r.response);
+					}
+				};
+				try {
+					if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
+						// don't wait for responses
+						await this._query.request(queryRequest, { mode: remote!.mode });
+					} else {
+						await queryAll(
+							this._query,
+							groupHashes,
+							queryRequest,
+							responseHandler,
+							remote,
+						);
+					}
+				} catch (error) {
+					if (error instanceof MissingResponsesError) {
+						logger.warn("Did not reciveve responses from all shard");
+						if (remote?.throwOnMissing) {
 							throw error;
 						}
+					} else {
+						throw error;
 					}
-					return rs;
-				};
-				promises.push(fn());
+				}
 			} else {
 				// TODO send without direction out to the world? or just assume we can insert?
 				/* 	promises.push(
@@ -909,7 +807,6 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 				); */
 			}
 		}
-		const resolved = await Promise.all(promises);
 		for (const r of resolved) {
 			if (r) {
 				if (r instanceof Array) {
@@ -930,7 +827,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	 */
 	public async search(
 		queryRequest: indexerTypes.SearchRequest,
-		options?: SearchOptions<T>,
+		options?: SearchOptions<T, D>,
 	): Promise<T[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
 		queryRequest.fetch = queryRequest.fetch ?? 0xffffffff;
@@ -966,7 +863,7 @@ export class DocumentIndex<T, I extends Record<string, any>> extends Program<
 	 */
 	public iterate(
 		queryRequest: indexerTypes.SearchRequest,
-		options?: QueryOptions<T>,
+		options?: QueryOptions<T, D>,
 	): ResultsIterator<T> {
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<

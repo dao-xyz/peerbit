@@ -538,7 +538,7 @@ export class Log<T> {
 		}
 
 		const changes: Change<T> = {
-			added: [entry],
+			added: [{ head: true, entry }],
 			removed,
 		};
 
@@ -621,6 +621,7 @@ export class Log<T> {
 			verifySignatures?: boolean;
 			trim?: TrimOptions;
 			timeout?: number;
+			onChange?: OnChange<T>;
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
@@ -643,6 +644,10 @@ export class Log<T> {
 					entries.push(element);
 					references.set(element.hash, element);
 				} else if (typeof element === "string") {
+					if (await this.has(element)) {
+						continue; // already in log
+					}
+
 					let entry = await Entry.fromMultihash<T>(this._storage, element, {
 						timeout: options?.timeout,
 					});
@@ -651,6 +656,10 @@ export class Log<T> {
 					}
 					entries.push(entry);
 				} else if (element instanceof ShallowEntry) {
+					if (await this.has(element.hash)) {
+						continue; // already in log
+					}
+
 					let entry = await Entry.fromMultihash<T>(
 						this._storage,
 						element.hash,
@@ -690,11 +699,11 @@ export class Log<T> {
 				heads.set(next, false);
 			}
 		}
-
 		for (const entry of entries) {
+			let isHead = heads.get(entry.hash)!;
 			const p = this.joinRecursively(entry, {
 				references,
-				isHead: heads.get(entry.hash)!,
+				isHead,
 				...options,
 			});
 			this._joining.set(entry.hash, p);
@@ -721,10 +730,11 @@ export class Log<T> {
 			references?: Map<string, Entry<T>>;
 			isHead: boolean;
 			timeout?: number;
+			onChange?: OnChange<T>;
 		},
-	) {
+	): Promise<boolean> {
 		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
-			return;
+			return false;
 		}
 
 		if (!entry.hash) {
@@ -732,7 +742,7 @@ export class Log<T> {
 		}
 
 		if (await this.has(entry.hash)) {
-			return;
+			return false;
 		}
 
 		entry.init(this);
@@ -743,10 +753,6 @@ export class Log<T> {
 					'Invalid signature entry with hash "' + entry.hash + '"',
 				);
 			}
-		}
-
-		if (this?._canAppend && !(await this?._canAppend(entry))) {
-			return;
 		}
 
 		const headsWithGid: JoinableEntry[] = await this.entryIndex
@@ -761,7 +767,7 @@ export class Log<T> {
 					v.meta.next.includes(entry.hash) &&
 					Sorting.compare(entry, v, this._sortFn) < 0
 				) {
-					return; // already deleted
+					return false; // already deleted
 				}
 			}
 		}
@@ -792,6 +798,10 @@ export class Log<T> {
 			}
 		}
 
+		if (this?._canAppend && !(await this?._canAppend(entry))) {
+			return false;
+		}
+
 		const clock = await entry.getClock();
 		this._hlc.update(clock.timestamp);
 
@@ -810,7 +820,16 @@ export class Log<T> {
 			}
 		}
 
-		await this?._onChange?.({ added: [entry], removed: removed });
+		await options?.onChange?.({
+			added: [{ head: options.isHead, entry }],
+			removed: removed,
+		});
+		await this._onChange?.({
+			added: [{ head: options.isHead, entry }],
+			removed: removed,
+		});
+
+		return true;
 	}
 
 	private async processEntry(entry: Entry<T>): Promise<ShallowEntry[]> {

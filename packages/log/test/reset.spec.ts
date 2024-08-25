@@ -24,8 +24,8 @@ describe("reset", function () {
 		await log.open(store, signKey, {
 			encoding: JSON_ENCODING,
 			onChange: (change) => {
-				for (const eleent of change.added) {
-					added.push(eleent);
+				for (const element of change.added) {
+					added.push(element.entry);
 				}
 
 				for (const element of change.removed) {

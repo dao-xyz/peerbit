@@ -19,6 +19,7 @@ import {
 import { logger as loggerFn } from "@peerbit/logger";
 import { Program, type ProgramEvents } from "@peerbit/program";
 import {
+	type ReplicationDomain,
 	type SharedAppendOptions,
 	SharedLog,
 	type SharedLogOptions,
@@ -26,17 +27,19 @@ import {
 import { MAX_BATCH_SIZE } from "./constants.js";
 import {
 	BORSH_ENCODING_OPERATION,
-	type CanRead,
-	type CanSearch,
 	DeleteOperation,
-	DocumentIndex,
-	Operation,
+	type Operation,
 	PutOperation,
 	PutWithKeyOperation,
-	type TransformOptions,
 	coerceDeleteOperation,
 	isDeleteOperation,
 	isPutOperation,
+} from "./operation.js";
+import {
+	type CanRead,
+	type CanSearch,
+	DocumentIndex,
+	type TransformOptions,
 } from "./search.js";
 
 const logger = loggerFn({ module: "document" });
@@ -74,7 +77,11 @@ export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
 
-export type SetupOptions<T, I = T> = {
+export type SetupOptions<
+	T,
+	I = T,
+	D extends ReplicationDomain<any, Operation> = any,
+> = {
 	type: AbstractType<T>;
 	canOpen?: (program: T) => MaybePromise<boolean>;
 	canPerform?: CanPerform<T>;
@@ -88,26 +95,29 @@ export type SetupOptions<T, I = T> = {
 		trim?: TrimOptions;
 	};
 	compatibility?: 6;
-} & Exclude<SharedLogOptions<Operation>, "compatibility">;
+} & Exclude<SharedLogOptions<Operation, D>, "compatibility">;
+
+export type ExtractArgs<T> =
+	T extends ReplicationDomain<infer Args, any> ? Args : never;
 
 @variant("documents")
 export class Documents<
 	T,
 	I extends Record<string, any> = T extends Record<string, any> ? T : any,
-> extends Program<SetupOptions<T, I>, DocumentEvents<T> & ProgramEvents> {
+	D extends ReplicationDomain<any, Operation> = any,
+> extends Program<SetupOptions<T, I, D>, DocumentEvents<T> & ProgramEvents> {
 	@field({ type: SharedLog })
-	log: SharedLog<Operation>;
+	log: SharedLog<Operation, D>;
 
 	@field({ type: "bool" })
 	immutable: boolean; // "Can I overwrite a document?"
 
 	@field({ type: DocumentIndex })
-	private _index: DocumentIndex<T, I>;
+	private _index: DocumentIndex<T, I, D>;
 
 	private _clazz!: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
-	private _manuallySynced!: Set<string>;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 
 	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
@@ -117,7 +127,7 @@ export class Documents<
 	constructor(properties?: {
 		id?: Uint8Array;
 		immutable?: boolean;
-		index?: DocumentIndex<T, I>;
+		index?: DocumentIndex<T, I, ExtractArgs<D>>;
 	}) {
 		super();
 
@@ -126,11 +136,11 @@ export class Documents<
 		this._index = properties?.index || new DocumentIndex();
 	}
 
-	get index(): DocumentIndex<T, I> {
+	get index(): DocumentIndex<T, I, D> {
 		return this._index;
 	}
 
-	async open(options: SetupOptions<T, I>) {
+	async open(options: SetupOptions<T, I, D>) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
 
@@ -144,7 +154,6 @@ export class Documents<
 		}
 
 		this._optionCanPerform = options.canPerform;
-		this._manuallySynced = new Set();
 		const idProperty = options.index?.idProperty || "id";
 		const idResolver =
 			options.id ||
@@ -167,12 +176,10 @@ export class Documents<
 				// here we arrive for all the results we want to persist.
 				// we we need to do here is
 				// 1. add the entry to a list of entries that we should persist through prunes
-				let heads: string[] = [];
-				for (const entry of result.results) {
-					this._manuallySynced.add(entry.context.gid);
-					heads.push(entry.context.head);
-				}
-				return this.log.log.join(heads);
+				await this.log.join(
+					result.results.map((x) => x.context.head),
+					{ replicate: true },
+				);
 			},
 			dbType: this.constructor,
 		});
@@ -185,11 +192,7 @@ export class Documents<
 			trim: options?.log?.trim,
 			replicate: options?.replicate,
 			replicas: options?.replicas,
-			sync: (entry: any) => {
-				// here we arrive when ever a insertion/pruning behaviour processes an entry
-				// returning true means that it should persist
-				return this._manuallySynced.has(entry.gid);
-			},
+			domain: options?.domain,
 
 			// document v6 and below need log compatibility of v8 or below
 			compatibility:
@@ -403,7 +406,10 @@ export class Documents<
 
 	public async put(
 		doc: T,
-		options?: SharedAppendOptions<Operation> & { unique?: boolean },
+		options?: SharedAppendOptions<Operation> & {
+			unique?: boolean;
+			replicate?: boolean;
+		},
 	) {
 		const keyValue = this.idResolver(doc);
 
@@ -424,7 +430,7 @@ export class Documents<
 			: (
 					await this._index.getDetailed(keyValue, {
 						local: true,
-						remote: { sync: true }, // only query remote if we know they exist
+						remote: { replicate: options?.replicate }, // only query remote if we know they exist
 					})
 				)?.[0]?.results[0];
 
@@ -458,6 +464,7 @@ export class Documents<
 			onChange: (change) => {
 				return this.handleChanges(change, { document: doc, operation });
 			},
+			replicate: options?.replicate,
 		});
 
 		return appended;
@@ -471,7 +478,7 @@ export class Documents<
 		const existing = (
 			await this._index.getDetailed(key, {
 				local: true,
-				remote: { sync: true },
+				remote: { replicate: options?.replicate },
 			})
 		)?.[0]?.results[0];
 
@@ -479,6 +486,7 @@ export class Documents<
 			throw new Error(`No entry with key '${key.primitive}' in the database`);
 		}
 
+		const entry = await this._resolveEntry(existing.context.head);
 		return this.log.append(
 			new DeleteOperation({
 				key,
@@ -486,7 +494,7 @@ export class Documents<
 			{
 				...options,
 				meta: {
-					next: [await this._resolveEntry(existing.context.head)],
+					next: [entry],
 					type: EntryType.CUT,
 					...options?.meta,
 				},
@@ -507,7 +515,7 @@ export class Documents<
 		}
 
 		const sortedEntries = [
-			...change.added,
+			...change.added.map((x) => x.entry),
 			...((await Promise.all(
 				change.removed.map((x) =>
 					x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash),
@@ -545,7 +553,6 @@ export class Documents<
 
 					// get index key from value
 					const keyObject = this.idResolver(value);
-
 					const key = indexerTypes.toId(keyObject);
 
 					// document is already updated with more recent entry
@@ -574,8 +581,6 @@ export class Documents<
 					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
-					this._manuallySynced.delete(item.meta.gid);
-
 					let value: T;
 					let key: indexerTypes.IdKey;
 

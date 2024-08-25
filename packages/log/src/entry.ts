@@ -86,7 +86,9 @@ export abstract class Entry<T> {
 		hash: string,
 		options?: { timeout?: number; replicate?: boolean },
 	) => {
-		if (!hash) throw new Error(`Invalid hash: ${hash}`);
+		if (!hash) {
+			throw new Error(`Invalid hash: ${hash}`);
+		}
 		const bytes = await store.get(hash, options);
 		if (!bytes) {
 			throw new Error("Failed to resolve block: " + hash);

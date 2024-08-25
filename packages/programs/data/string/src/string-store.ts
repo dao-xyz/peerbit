@@ -5,7 +5,11 @@ import { type AppendOptions, type Change, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { Program, type ProgramEvents } from "@peerbit/program";
 import { RPC, type RPCRequestOptions, type RequestContext } from "@peerbit/rpc";
-import { SharedLog, type SharedLogOptions } from "@peerbit/shared-log";
+import {
+	type ReplicationDomainHash,
+	SharedLog,
+	type SharedLogOptions,
+} from "@peerbit/shared-log";
 import { concat, fromString } from "uint8arrays";
 import {
 	AbstractSearchResult,
@@ -50,7 +54,7 @@ export type CanPerform = (
 export type Args = {
 	canRead?: CanRead;
 	canPerform?: CanPerform;
-	log?: SharedLogOptions<StringOperation>;
+	log?: SharedLogOptions<StringOperation, ReplicationDomainHash>;
 };
 
 export type TransactionContext = {

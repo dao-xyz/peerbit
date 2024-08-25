@@ -1,4 +1,3 @@
-// @ts-nocheck
 // ts ignore implicit any
 import {
 	deserialize,
@@ -13,18 +12,22 @@ import {
 	type PublicSignKey,
 	randomBytes,
 } from "@peerbit/crypto";
-import { NoAccess, Results } from "@peerbit/document-interface";
+import {
+	AbstractSearchResult,
+	NoAccess,
+	Results,
+} from "@peerbit/document-interface";
 import {
 	AbstractSearchRequest,
 	ByteMatchQuery,
 	CloseIteratorRequest,
+	CollectNextRequest,
 	Compare,
 	IntegerCompare,
 	SearchRequest,
 	Sort,
 	SortDirection,
 	StringMatch,
-	StringMatchMethod,
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
@@ -36,17 +39,22 @@ import {
 } from "@peerbit/shared-log";
 import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import { v4 as uuid } from "uuid";
+import {
+	Operation,
+	PutOperation,
+	PutWithKeyOperation,
+} from "../src/operation.js";
 import {
 	Documents,
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
-import { Operation, PutOperation, PutWithKeyOperation } from "../src/search.js";
-import { Document, TestStore } from "./data.js";
+import type { CanRead } from "../src/search.js";
+import { Document, StoreWithCustomDomain, TestStore } from "./data.js";
 
 describe("index", () => {
 	let session: TestSession;
@@ -101,7 +109,7 @@ describe("index", () => {
 
 				const putOperation2 = (await store.docs.put(doc2)).entry;
 				expect(await store.docs.index.getSize()).equal(2);
-				expect(putOperation2.next).to.have.members([]); // because doc 2 is independent of doc 1
+				expect(putOperation2.meta.next).to.have.members([]); // because doc 2 is independent of doc 1
 
 				expect(changes.length).equal(2);
 				expect(changes[1].added).to.have.length(1);
@@ -110,7 +118,7 @@ describe("index", () => {
 
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
-				expect(deleteOperation.next).to.have.members([putOperation.hash]); // because delete is dependent on put
+				expect(deleteOperation.meta.next).to.have.members([putOperation.hash]); // because delete is dependent on put
 				expect(await store.docs.index.getSize()).equal(1);
 
 				expect(changes.length).equal(3);
@@ -186,11 +194,11 @@ describe("index", () => {
 					name: "Hello world 2",
 				});
 
-				const xxx = await store.docs.put(doc);
+				await store.docs.put(doc);
 				expect(await store.docs.index.getSize()).equal(1);
 				const putOperation2 = (await store.docs.put(editDoc)).entry;
 				expect(await store.docs.index.getSize()).equal(1);
-				expect(putOperation2.next).to.have.length(1);
+				expect(putOperation2.meta.next).to.have.length(1);
 
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
@@ -799,46 +807,53 @@ describe("index", () => {
 					expect(results).to.have.length(4);
 				});
 
-				/*  TODO feat
-				describe("sync", () => {
-					it("can match sync", async () => {
+				describe("replicate", () => {
+					it("can match replicate", async () => {
+						await stores[1].docs.log.unreplicate();
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).have.length(0);
 						expect(await stores[1].docs.index.getSize()).equal(0);
+
 						let canPerformEvents = 0;
 						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
 							stores[1].docs,
 						);
-						let syncEvents = 0;
-						let sync = stores[1].docs.index["_sync"].bind(stores[1].docs.index);
-						stores[1].docs.index["_sync"] = async (r) => {
-							syncEvents += 1;
-							return sync(r);
-						};
+
 						stores[1].docs["_optionCanPerform"] = async (props) => {
 							canPerformEvents += 1;
 							return !canPerform || canPerform(props);
 						};
 
-						await stores[1].docs.index.search(
+						const results = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { amount: 1, sync: true } },
+							{ remote: { replicate: true } },
 						);
+						expect(results).to.have.length(4);
+
 						await waitForResolved(async () =>
 							expect(await stores[1].docs.index.getSize()).equal(4),
 						);
+
 						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
 						expect(canPerformEvents).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						expect(syncEvents).equal(1);
+						const segments =
+							await stores[1].docs.log.getMyReplicationSegments();
+
+						expect(segments).to.have.length(4);
 
 						await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { amount: 1, sync: true } },
+							{ remote: { replicate: true } },
 						);
-						await waitFor(() => syncEvents === 2);
 						expect(canPerformEvents).equal(6); // no new checks, since all docs already added
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(4); // no new segments
 					});
 					it("will persist synced entries through prunes", async () => {
 						stores[0].docs.log.replicas = {
@@ -848,43 +863,27 @@ describe("index", () => {
 							min: new AbsoluteReplicas(1),
 						};
 
-						// add new doc, now wirth min replicas set to 1
+						// add new doc, now with min replicas set to 1
+
 						await stores[0].docs.put(new Document({ id: uuid() }));
 
 						await stores[1].docs.log.replicate({ factor: 0 });
 						expect(await stores[1].docs.index.getSize()).equal(0);
-						await stores[1].docs.index.search(
+
+						const results = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
 							}),
-							{ remote: { sync: true } },
+							{ remote: { replicate: true } },
 						);
+
+						expect(results).to.have.length(5);
 						expect(await stores[1].docs.index.getSize()).equal(5);
 						await stores[1].docs.log.distribute();
 						await delay(2000); // wait some time so that pruningacn take place
 						expect(await stores[1].docs.index.getSize()).equal(5);
 					});
-
-					it("removes sync cache when delete", async () => {
-						await stores[1].docs.index.search(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { sync: true } },
-						);
-
-						expect(stores[1].docs["_manuallySynced"].size).equal(4);
-						for (const [k, _v] of stores[0].docs.index.engine.iterator()) {
-							await stores[0].docs.del(k, { target: "all" });
-						}
-						await waitForResolved(
-							() => expect(stores[1].docs["_manuallySynced"].size).equal(0),
-							{
-								timeout: 3e4,
-							},
-						);
-					});
-				}); */
+				});
 
 				/* TODO feat
 				describe("array", () => {
@@ -1242,7 +1241,6 @@ describe("index", () => {
 						}
 						lastLength = store1.docs.log.log.length;
 						for (const store of [store1, store2, store3]) {
-							let t0 = +new Date();
 							const collected = await store.docs.index.search(
 								new SearchRequest({ fetch: count }),
 							);
@@ -1477,8 +1475,8 @@ describe("index", () => {
 					await waitForResolved(
 						() =>
 							expect(
-								stores[i].docs.log["syncInFlight"]
-									.get(stores[storeIndex].node.identity.publicKey.hashcode())
+								stores[i].docs.log.syncInFlight
+									.get(stores[storeIndex].node.identity.publicKey.hashcode())!
 									.has(resp.entry.hash),
 							).to.be.true,
 					);
@@ -1768,10 +1766,11 @@ describe("index", () => {
 					}
 				}
 
-				await stores[0].docs.index.open({
+				// TODO fix types
+				await (stores[0].docs as any).index.open({
 					transform: {
 						type: IndexClass,
-						transform: async (obj) => {
+						transform: async (obj: any) => {
 							return new IndexClass({ id: obj.id, [KEY]: obj.number });
 						},
 					},
@@ -1939,6 +1938,76 @@ describe("index", () => {
 
 			// TODO session timeouts?
 		});
+
+		describe("domain", () => {
+			before(async () => {
+				session = await TestSession.connected(2);
+			});
+
+			after(async () => {
+				await session.stop();
+			});
+
+			it("custom domain", async () => {
+				const store = await session.peers[0].open(new StoreWithCustomDomain(), {
+					args: {
+						replicate: {
+							normalized: false,
+							factor: 1,
+							offset: 1,
+							strict: true,
+						},
+					},
+				});
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: {
+							normalized: false,
+							offset: 2,
+							factor: 2,
+							strict: true,
+						},
+					},
+				});
+
+				await store.docs.put(new Document({ id: "1", number: 1n }));
+				await store2.docs.put(new Document({ id: "2", number: 2n }));
+				await store2.docs.put(new Document({ id: "3", number: 3n }));
+
+				await delay(3000); // wait for sometime so that potential replication could have happened
+
+				expect(await store.docs.index.getSize()).to.equal(1);
+				expect(await store2.docs.index.getSize()).to.equal(2);
+
+				// test querying with the same domain but different peers and assert results are correct
+				const resultsWithRemoteRightDomain = await store.docs.index.search(
+					new SearchRequest(),
+					{
+						remote: {
+							domain: {
+								from: 2,
+								to: 3,
+							},
+						},
+					},
+				);
+
+				expect(resultsWithRemoteRightDomain).to.have.length(3);
+
+				const resultsWhenRemoteDoesNotHaveRightDomain =
+					await store.docs.index.search(new SearchRequest(), {
+						remote: {
+							domain: {
+								from: 4,
+								to: 5,
+							},
+						},
+					});
+
+				expect(resultsWhenRemoteDoesNotHaveRightDomain).to.have.length(1); // only the loal result
+				expect(resultsWhenRemoteDoesNotHaveRightDomain[0].id).to.equal("1");
+			});
+		});
 	});
 
 	describe("acl", () => {
@@ -2013,11 +2082,11 @@ describe("index", () => {
 			);
 			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2032,11 +2101,11 @@ describe("index", () => {
 			);
 			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2093,11 +2162,11 @@ describe("index", () => {
 			);
 			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2112,11 +2181,11 @@ describe("index", () => {
 			);
 			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
-				query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+				query: SearchRequest | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
-					canRead?: CanRead<T>;
+					canRead?: CanRead<any>;
 				},
 			) => {
 				if (!isLocal) {
@@ -2220,7 +2289,7 @@ describe("index", () => {
 
 			constructor(properties: { id: Uint8Array; address: string }) {
 				this.id = properties.id;
-				this.string = properties.string;
+				this.address = properties.address;
 			}
 		}
 		@variant("subprogram")
@@ -2244,13 +2313,17 @@ describe("index", () => {
 		@variant("test_program_documents")
 		class TestStoreSubPrograms extends Program {
 			@field({ type: Documents })
-			docs: Documents<SubProgram>;
+			docs: Documents<SubProgram, SubProgramIndexable>;
 
-			constructor(properties: { docs: Documents<SubProgram> }) {
+			constructor(properties: {
+				docs: Documents<SubProgram, SubProgramIndexable>;
+			}) {
 				super();
 				this.docs = properties.docs;
 			}
-			async open(options?: Partial<SetupOptions<SubProgram>>): Promise<void> {
+			async open(
+				options?: Partial<SetupOptions<SubProgram, SubProgramIndexable>>,
+			): Promise<void> {
 				await this.docs.open({
 					...options,
 					type: SubProgram,
@@ -2295,7 +2368,7 @@ describe("index", () => {
 								session.peers[i].services.blocks,
 							))!
 						: new TestStoreSubPrograms({
-								docs: new Documents<SubProgram>(),
+								docs: new Documents<SubProgram, SubProgramIndexable>(),
 							});
 
 				await session.peers[i].open(store, {
@@ -2416,7 +2489,7 @@ describe("index", () => {
 			@variant("test_program_documents_custom_fields")
 			class TestStoreSubPrograms extends Program {
 				@field({ type: Documents })
-				docs: Documents<SubProgram>;
+				docs: Documents<SubProgram, Indexable>;
 
 				constructor() {
 					super();
@@ -2510,7 +2583,7 @@ describe("index", () => {
 			});
 
 			it("all", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = async () => [
 					stores[1].node.identity.publicKey.hashcode(),
 					stores[2].node.identity.publicKey.hashcode(),
 				];
@@ -2521,7 +2594,7 @@ describe("index", () => {
 			});
 
 			it("will always query locally", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [] as any;
+				stores[0].docs.log.getCover = () => [] as any;
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
 				expect(counters[0]).equal(1);
 				expect(counters[1]).equal(0);
@@ -2529,7 +2602,7 @@ describe("index", () => {
 			});
 
 			it("one", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = async () => [
 					stores[1].node.identity.publicKey.hashcode(),
 				];
 				await stores[0].docs.index.search(new SearchRequest({ query: [] }));
@@ -2539,7 +2612,7 @@ describe("index", () => {
 			});
 
 			it("non-local", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = async () => [
 					stores[1].node.identity.publicKey.hashcode(),
 					stores[2].node.identity.publicKey.hashcode(),
 				];
@@ -2565,7 +2638,7 @@ describe("index", () => {
 				});
 
 				it("will iterate on shard until response", async () => {
-					stores[0].docs.log.getReplicatorUnion = () => [
+					stores[0].docs.log.getCover = async () => [
 						stores[1].node.identity.publicKey.hashcode(),
 						stores[2].node.identity.publicKey.hashcode(),
 					];
@@ -2594,7 +2667,7 @@ describe("index", () => {
 				});
 
 				it("will fail silently if can not reach all shards", async () => {
-					stores[0].docs.log.getReplicatorUnion = () => [
+					stores[0].docs.log.getCover = async () => [
 						stores[1].node.identity.publicKey.hashcode(),
 						stores[2].node.identity.publicKey.hashcode(),
 					];
@@ -2801,10 +2874,10 @@ describe("index", () => {
 			expect(counters[2]).equal(1);
 		}); */
 
-/*  TODO getReplicatorUnion to provide query alternatives
+/*  TODO getCover to provide query alternatives
 		
 			it("ignore shard if I am replicator", async () => {
-				stores[0].docs.log.getReplicatorUnion = () => [
+				stores[0].docs.log.getCover = () => [
 					stores[0].node.identity.publicKey.hashcode(),
 					stores[1].node.identity.publicKey.hashcode()
 				];
@@ -2814,7 +2887,7 @@ describe("index", () => {
 				expect(counters[2]).equal(0);
 			}); */
 
-/* TODO getReplicatorUnion to provide query alternatives
+/* TODO getCover to provide query alternatives
 	
 it("ignore myself if I am a new replicator", async () => {
 	// and the other peer has been around for longer

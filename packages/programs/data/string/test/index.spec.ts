@@ -286,11 +286,15 @@ describe("events", () => {
 
 		await waitForResolved(() => expect(events1).to.have.length(1));
 		expect(events1[0].added).to.have.length(1);
-		expect((await events1[0].added[0].getPayloadValue()).value).equal("hello");
+		expect((await events1[0].added[0].entry.getPayloadValue()).value).equal(
+			"hello",
+		);
 
 		await waitForResolved(() => expect(events2).to.have.length(1));
 		expect(events2[0].added).to.have.length(1);
-		expect((await events2[0].added[0].getPayloadValue()).value).equal("hello");
+		expect((await events2[0].added[0].entry.getPayloadValue()).value).equal(
+			"hello",
+		);
 
 		await store2.add(
 			"world",
@@ -302,11 +306,15 @@ describe("events", () => {
 
 		await waitForResolved(() => expect(events1).to.have.length(2));
 		expect(events1[1].added).to.have.length(1);
-		expect((await events1[1].added[0].getPayloadValue()).value).equal("world");
+		expect((await events1[1].added[0].entry.getPayloadValue()).value).equal(
+			"world",
+		);
 
 		await waitForResolved(() => expect(events2).to.have.length(2));
 		expect(events2[1].added).to.have.length(1);
-		expect((await events2[1].added[0].getPayloadValue()).value).equal("world");
+		expect((await events2[1].added[0].entry.getPayloadValue()).value).equal(
+			"world",
+		);
 		expect(await store1.getValue()).equal("hello world");
 		expect(await store2.getValue()).equal("hello world");
 	});

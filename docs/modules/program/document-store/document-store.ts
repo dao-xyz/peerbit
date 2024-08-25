@@ -319,10 +319,12 @@ const postsLocally: Post[] = await channelFromClient2.posts.index.search(
 		local: true,
 	},
 );
+
 expect(postsLocally).to.have.length(1);
 expect(postsLocally.map((x) => x.message)).to.deep.equal([
 	"No, it just a big duck",
 ]);
+
 /// [search-locally]
 
 /// [search-for-one]
@@ -466,12 +468,12 @@ await iterator.close();
 /// [sync]
 const iterateAndSync = await channelFromClient2.posts.index.iterate(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
-	{ local: true, remote: { sync: true } },
+	{ local: true, remote: { replicate: true } },
 );
 
 const searchAndSync = await channelFromClient2.posts.index.search(
 	new SearchRequest({ sort: new Sort({ key: POST_TIMESTAMP_PROPERTY }) }),
-	{ local: true, remote: { sync: true } },
+	{ local: true, remote: { replicate: true } },
 );
 /// [sync]
 

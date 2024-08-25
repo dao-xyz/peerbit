@@ -1,9 +1,7 @@
-// @ts-nocheck
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import assert from "assert";
 import { expect } from "chai";
-import { log } from "console";
 import { compare } from "uint8arrays";
 import { createEntry } from "../src/entry-create.js";
 import { EntryType } from "../src/entry-type.js";
@@ -153,15 +151,13 @@ describe("join", function () {
 			expect((await logA.getHeads().all()).length).equal(1);
 			await logA.join(await logB.getHeads(true).all());
 
-			/* 			expect(logA.length).equal(
-					items3.length + items2.length + items1.length
-				);
-				// The last Entry<T>, 'entryC100', should be the only head
-				// (it points to entryB100, entryB100 and entryC99)
-				expect((await logA.getHeads().all()).length).equal(1);
-	
-				await checkedStorage(logA);
-				await checkedStorage(logB); */
+			expect(logA.length).equal(items3.length + items2.length + items1.length);
+			// The last Entry<T>, 'entryC100', should be the only head
+			// (it points to entryB100, entryB100 and entryC99)
+			expect((await logA.getHeads().all()).length).equal(1);
+
+			await checkedStorage(logA);
+			await checkedStorage(logB);
 		});
 
 		it("will update cache", async () => {
@@ -173,13 +169,72 @@ describe("join", function () {
 			expect(await log2.length).equal(1);
 		});
 
+		it("will no-refetch blocks when already joined by has", async () => {
+			await log1.append(new Uint8Array([0, 1]));
+			const blockGet = log2["_storage"].get.bind(log2.blocks);
+			let fetched: string[] = [];
+			log2["_storage"].get = (cid: any, options: any) => {
+				fetched.push(cid);
+				return blockGet(cid, options);
+			};
+
+			await log2.join((await log1.getHeads(true).all()).map((x) => x.hash));
+			expect(log2.length).equal(1);
+			expect(fetched).to.have.length(1);
+
+			await log2.join((await log1.getHeads(true).all()).map((x) => x.hash));
+			expect(log2.length).equal(1);
+			expect(fetched).to.have.length(1);
+		});
+
+		it("will no-refetch blocks when already joined by shallow entry", async () => {
+			await log1.append(new Uint8Array([0, 1]));
+			const blockGet = log2["_storage"].get.bind(log2.blocks);
+			let fetched: string[] = [];
+			log2["_storage"].get = (cid: any, options: any) => {
+				fetched.push(cid);
+				return blockGet(cid, options);
+			};
+
+			await log2.join(
+				(await log1.getHeads(true).all()).map((x) => x.toShallow(true)),
+			);
+			expect(log2.length).equal(1);
+			expect(fetched).to.have.length(1);
+
+			await log2.join(
+				(await log1.getHeads(true).all()).map((x) => x.toShallow(true)),
+			);
+			expect(log2.length).equal(1);
+			expect(fetched).to.have.length(1);
+		});
+
 		it("joins only unique items", async () => {
 			await log1.append(new Uint8Array([0, 1]));
-			await log2.append(new Uint8Array([1, 0]));
+			let b0 = await log2.append(new Uint8Array([1, 0]));
 			await log1.append(new Uint8Array([0, 2]));
-			await log2.append(new Uint8Array([1, 1]));
-			await log1.join(await log2.getHeads(true).all());
-			await log1.join(await log2.getHeads(true).all());
+			let b1 = await log2.append(new Uint8Array([1, 1]));
+			let joinedFirst: { head: boolean; entry: Entry<any> }[] = [];
+			await log1.join(await log2.getHeads(true).all(), {
+				onChange: (change) => {
+					joinedFirst.push(...change.added);
+				},
+			});
+
+			expect(joinedFirst).to.have.length(2);
+			expect(joinedFirst.map((x) => x.entry.hash)).to.deep.equal([
+				b0.entry.hash,
+				b1.entry.hash,
+			]);
+			expect(joinedFirst.map((x) => x.head)).to.deep.equal([false, true]);
+
+			let joinedSecond: { head: boolean; entry: Entry<any> }[] = [];
+			await log1.join(await log2.getHeads(true).all(), {
+				onChange: (change) => {
+					joinedSecond.push(...change.added);
+				},
+			});
+			expect(joinedSecond).to.have.length(0);
 
 			const expectedData = [
 				new Uint8Array([0, 1]),
@@ -198,6 +253,27 @@ describe("join", function () {
 			const item = last(await log1.toArray());
 			expect(item.next.length).equal(1);
 			expect((await log1.getHeads().all()).length).equal(2);
+		});
+
+		it("canAppend bottom first", async () => {
+			await log1.append(new Uint8Array([1]));
+			await log1.append(new Uint8Array([2]));
+
+			let canAppendCheckedData: Uint8Array[] = [];
+
+			const canAppend2 = log2["_canAppend"]!.bind(log2);
+			log2["_canAppend"] = async (entry) => {
+				const result = await canAppend2(entry);
+				canAppendCheckedData.push(entry.payload.getValue());
+				return result;
+			};
+
+			expect(await log1.getHeads().all()).to.have.length(1);
+			await log2.join(await log1.getHeads(true).all());
+			expect(canAppendCheckedData).to.deep.equal([
+				new Uint8Array([1]),
+				new Uint8Array([2]),
+			]);
 		});
 
 		describe("cut", () => {
@@ -494,8 +570,8 @@ describe("join", function () {
 
 			expect(await log1.getHeads(true).all()).to.have.members([a2, b2]);
 			expect(await log2.getHeads(true).all()).to.have.members([a2, b2]);
-			expect(a2.next).to.have.members([a1.hash]);
-			expect(b2.next).to.have.members([b1.hash]);
+			expect(a2.meta.next).to.have.members([a1.hash]);
+			expect(b2.meta.next).to.have.members([b1.hash]);
 
 			expect((await log1.toArray()).map((e) => e.hash)).to.deep.equal(
 				(await log2.toArray()).map((e) => e.hash),
@@ -745,69 +821,69 @@ describe("join", function () {
 
 			await log4.join(await log1.getHeads(true).all());
 			const { entry: d6 } = await log4.append(new Uint8Array([3, 5]));
-			expect(d5.gid).equal(a5.gid);
-			expect(d6.gid).equal(a5.gid);
+			expect(d5.meta.gid).equal(a5.meta.gid);
+			expect(d6.meta.gid).equal(a5.meta.gid);
 
 			const expectedData = [
 				{
 					payload: new Uint8Array([0, 1]),
-					gid: a1.gid,
+					gid: a1.meta.gid,
 				},
 				{
 					payload: new Uint8Array([1, 0]),
-					gid: b1.gid,
+					gid: b1.meta.gid,
 				},
 
 				{
 					payload: new Uint8Array([0, 2]),
-					gid: a2.gid,
+					gid: a2.meta.gid,
 				},
 				{
 					payload: new Uint8Array([1, 1]),
-					gid: b2.gid,
+					gid: b2.meta.gid,
 				},
 				{
 					payload: new Uint8Array([2, 0]),
-					gid: a1.gid,
+					gid: a1.meta.gid,
 				},
 				{
 					payload: new Uint8Array([2, 1]),
-					gid: c2.gid,
+					gid: c2.meta.gid,
 				},
 				{
 					payload: new Uint8Array([3, 0]),
-					gid: d2.gid,
+					gid: d2.meta.gid,
 				},
 				{
 					payload: new Uint8Array([3, 1]),
-					gid: d2.gid,
+					gid: d2.meta.gid,
 				},
 				{
 					payload: new Uint8Array([3, 2]),
-					gid: d3.gid,
+					gid: d3.meta.gid,
 				},
 				{
 					payload: new Uint8Array([3, 3]),
-					gid: d3.gid,
+					gid: d3.meta.gid,
 				},
 				{
 					payload: new Uint8Array([3, 4]),
-					gid: d5.gid,
+					gid: d5.meta.gid,
 				},
 				{
 					payload: new Uint8Array([0, 4]),
-					gid: a5.gid,
+					gid: a5.meta.gid,
 				},
 				{
 					payload: new Uint8Array([3, 5]),
-					gid: d6.gid,
+					gid: d6.meta.gid,
 				},
 			];
 
 			const transformed = (await log4.toArray()).map((e) => {
 				return {
 					payload: new Uint8Array(e.payload.getValue()),
-					gid: e.gid,
+					gid: e.meta.gid,
 				};
 			});
 
@@ -829,7 +905,7 @@ describe("join", function () {
 			expect(
 				(await log1.getHeads().all())[(await log1.getHeads().all()).length - 1]
 					.meta.gid,
-			).equal(a1.gid);
+			).equal(a1.meta.gid);
 			expect(a2.meta.clock.id).to.deep.equal(signKey.publicKey.bytes);
 			expect(
 				a2.meta.clock.timestamp.compare(a1.meta.clock.timestamp),
@@ -839,7 +915,7 @@ describe("join", function () {
 			expect(
 				(await log3.getHeads().all())[(await log3.getHeads().all()).length - 1]
 					.meta.gid,
-			).equal(a1.gid); // because longest
+			).equal(a1.meta.gid); // because longest
 
 			await log3.append(new Uint8Array([2, 0]));
 			await log3.append(new Uint8Array([2, 1]));
@@ -892,9 +968,9 @@ describe("join", function () {
 
 			beforeEach(() => {
 				const joinEntryFn = log2["joinRecursively"].bind(log2);
-				log2["joinRecursively"] = (e, n, s, o) => {
+				log2["joinRecursively"] = (e: any, o: any) => {
 					joinEntryCounter += 1;
-					return joinEntryFn(e, n, s, o);
+					return joinEntryFn(e, o);
 				};
 				fetchCounter = 0;
 				joinEntryCounter = 0;

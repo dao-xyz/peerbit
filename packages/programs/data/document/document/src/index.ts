@@ -2,14 +2,10 @@ export * from "@peerbit/indexer-interface";
 export * from "./program.js";
 export type {
 	CanRead,
-	BORSH_ENCODING_OPERATION,
 	CanSearch,
-	DeleteOperation,
 	DocumentIndex,
 	IDocumentWithContext,
 	OpenOptions,
-	Operation,
-	PutOperation,
 	QueryOptions,
 	RemoteQueryOptions,
 	ResultsIterator,
@@ -18,5 +14,6 @@ export type {
 	TransformerAsConstructor,
 	TransformerAsFunction,
 } from "./search.js";
+export * from "./operation.js";
 export { MAX_BATCH_SIZE as MAX_DOCUMENT_SIZE } from "./constants.js";
 export { ClosedError } from "@peerbit/program";
