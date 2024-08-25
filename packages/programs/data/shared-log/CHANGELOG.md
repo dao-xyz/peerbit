@@ -389,6 +389,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.10...shared-log-v9.1.0) (2024-08-25)
+
+
+### Features
+
+* allow custom replication domains ([8466830](https://github.com/dao-xyz/peerbit/commit/846683037d6c93110b635310b0b904ff986017bf))
+
+
+### Bug Fixes
+
+* add method for join + replicate ([b9b1e73](https://github.com/dao-xyz/peerbit/commit/b9b1e73ce9c1fd3a3f7cb50c454a3896858a0d3f))
+* add null check ([4f6c376](https://github.com/dao-xyz/peerbit/commit/4f6c376b07aa5cbc2edba69f3f6c780ba9b1fe33))
+* make replication range depuplication to also consider covering ranges ([bcbdc56](https://github.com/dao-xyz/peerbit/commit/bcbdc56b0b5c0d929a52a96e300787a8877f5411))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.7 to 4.0.8
+
 ## [9.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.9...shared-log-v9.0.10) (2024-08-15)
 
 

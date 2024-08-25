@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.1.0](https://github.com/dao-xyz/peerbit/compare/document-v7.0.14...document-v7.1.0) (2024-08-25)
+
+
+### Features
+
+* allow for custom replication domain ([4884381](https://github.com/dao-xyz/peerbit/commit/4884381357f953db263ade815d3d78f09ec16e2f))
+
+
+### Bug Fixes
+
+* simplify join + replicate behaviour ([93e02af](https://github.com/dao-xyz/peerbit/commit/93e02afd4c1560e46e07747a56274f70d7ce3749))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 9.0.10 to 9.1.0
+
 ## [7.0.14](https://github.com/dao-xyz/peerbit/compare/document-v7.0.13...document-v7.0.14) (2024-08-15)
 
 

@@ -368,6 +368,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/log-v4.0.7...log-v4.0.8) (2024-08-25)
+
+
+### Bug Fixes
+
+* emit head info onChange ([bacbe9a](https://github.com/dao-xyz/peerbit/commit/bacbe9a30bf7364be474f9b3f13f4cf42ed2f7e1))
+* return heads on join ([614c232](https://github.com/dao-xyz/peerbit/commit/614c23271acc328efc4abf10a1fb2962a509d257))
+
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/log-v4.0.6...log-v4.0.7) (2024-08-12)
 
 

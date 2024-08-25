@@ -566,6 +566,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.0.14...trusted-network-v4.1.0) (2024-08-25)
+
+
+### Features
+
+* allow for custom replication domain ([4884381](https://github.com/dao-xyz/peerbit/commit/4884381357f953db263ade815d3d78f09ec16e2f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 7.0.14 to 7.1.0
+
 ## [4.0.14](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.0.13...trusted-network-v4.0.14) (2024-08-15)
 
 
