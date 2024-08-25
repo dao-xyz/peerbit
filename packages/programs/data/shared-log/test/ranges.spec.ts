@@ -2,7 +2,12 @@ import { Ed25519Keypair, type Ed25519PublicKey } from "@peerbit/crypto";
 import type { Index } from "@peerbit/indexer-interface";
 import { create as createIndices } from "@peerbit/indexer-sqlite3";
 import { expect } from "chai";
-import { getCoverSet, getDistance, getSamples } from "../src/ranges.js";
+import {
+	getCoverSet,
+	getDistance,
+	getSamples,
+	hasCoveringRange,
+} from "../src/ranges.js";
 import {
 	ReplicationIntent,
 	ReplicationRangeIndexable,
@@ -372,5 +377,31 @@ describe("ranges", () => {
                 expect(getDistance(0.1, 0.9, 'closest', 1)).to.be.closeTo(0.2, 0.0001)
             })
         })
+    })
+
+    describe("hasOneOverlapping", () => {
+        const rotations = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+        rotations.forEach((rotation) => {
+            describe('rotation: ' + String(rotation), () => {
+
+                it('includes all', async () => {
+                    const cmp = new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 0.5, offset: (0 + rotation) % 1, timestamp: 0n })
+                    await create(cmp);
+
+                    const inside = new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 0.4, offset: (0.05 + rotation) % 1, timestamp: 0n });
+                    expect(await hasCoveringRange(peers, inside)).to.be.true
+
+                    const outside1 = new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 0.4, offset: (0.2 + rotation) % 1, timestamp: 0n });
+                    expect(await hasCoveringRange(peers, outside1)).to.be.false
+
+                    const outside2 = new ReplicationRangeIndexable({
+                        normalized: true, publicKey: a, length: 0.51, offset: (0.1 + rotation) % 1, timestamp: 0n
+                    });
+                    expect(await hasCoveringRange(peers, outside2)).to.be.false
+
+                })
+            })
+        })
+
     })
 })

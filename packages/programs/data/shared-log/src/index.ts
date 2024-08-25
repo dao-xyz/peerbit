@@ -64,6 +64,7 @@ import { PIDReplicationController } from "./pid.js";
 import {
 	getCoverSet,
 	getSamples,
+	hasCoveringRange,
 	isMatured,
 	minimumWidthToCover,
 } from "./ranges.js";
@@ -170,6 +171,7 @@ export type FixedReplicationOptions = {
 export type ReplicationOptions =
 	| DynamicReplicationOptions
 	| FixedReplicationOptions
+	| FixedReplicationOptions[]
 	| number
 	| boolean;
 
@@ -185,8 +187,17 @@ const isAdaptiveReplicatorOption = (
 	if ((options as FixedReplicationOptions).factor != null) {
 		return false;
 	}
+	if (Array.isArray(options)) {
+		return false;
+	}
 	return true;
 };
+
+const isUnreplicationOptions = (options?: ReplicationOptions): boolean =>
+	options === false ||
+	options === 0 ||
+	((options as FixedReplicationOptions)?.offset === undefined &&
+		(options as FixedReplicationOptions)?.factor === 0);
 
 export type SharedLogOptions<T, D extends ReplicationDomain<any, T>> = {
 	replicate?: ReplicationOptions;
@@ -410,17 +421,20 @@ export class SharedLog<
 		{
 			reset,
 			checkDuplicates,
-		}: { reset?: boolean; checkDuplicates?: boolean } = {},
+			announce,
+		}: {
+			reset?: boolean;
+			checkDuplicates?: boolean;
+			announce?: (
+				msg: AddedReplicationSegmentMessage | AllReplicatingSegmentsMessage,
+			) => void;
+		} = {},
 	) {
 		let offsetWasProvided = false;
-		if (
-			options === false ||
-			options === 0 ||
-			(options as FixedReplicationOptions)?.factor === 0
-		) {
+		if (isUnreplicationOptions(options)) {
 			await this.unreplicate();
 		} else {
-			let range: ReplicationRangeIndexable;
+			let ranges: ReplicationRangeIndexable[] = [];
 
 			if (options == null) {
 				options = {};
@@ -441,59 +455,68 @@ export class SharedLog<
 					// not allowed
 					return;
 				}
-				range = maybeRange;
+				ranges = [maybeRange];
 
 				offsetWasProvided = true;
-			} else if (
-				typeof options === "object" &&
-				Object.keys(options).length === 0
-			) {
-				throw new Error("Unexpected");
 			} else if (options instanceof ReplicationRange) {
-				range = options.toReplicationRangeIndexable(
-					this.node.identity.publicKey,
-				);
+				ranges = [
+					options.toReplicationRangeIndexable(this.node.identity.publicKey),
+				];
 
 				offsetWasProvided = true;
 			} else {
-				let fixedOptions: FixedReplicationOptions;
+				let rangeArgs: FixedReplicationOptions[];
 				if (typeof options === "number") {
-					fixedOptions = {
-						factor: options,
-					} as FixedReplicationOptions;
+					rangeArgs = [
+						{
+							factor: options,
+						} as FixedReplicationOptions,
+					];
 				} else {
-					fixedOptions = { ...options } as FixedReplicationOptions;
+					rangeArgs = (
+						Array.isArray(options) ? options : [{ ...options }]
+					) as FixedReplicationOptions[];
 				}
 
-				// fixed
-				const normalized = fixedOptions.normalized ?? true;
-				offsetWasProvided = fixedOptions.offset != null;
-				const offset =
-					fixedOptions.offset ??
-					(normalized ? Math.random() : scaleToU32(Math.random()));
-				let factor = fixedOptions.factor;
-				let width = normalized ? 1 : scaleToU32(1);
-				range = new ReplicationRangeIndexable({
-					normalized,
-					offset: offset,
-					length:
-						typeof factor === "number"
-							? factor
-							: factor === "all"
-								? width
-								: width - offset,
-					publicKeyHash: this.node.identity.publicKey.hashcode(),
-					mode: fixedOptions.strict
-						? ReplicationIntent.Strict
-						: ReplicationIntent.NonStrict, // automatic means that this range might be reused later for dynamic replication behaviour
-					timestamp: BigInt(+new Date()),
-				});
+				if (rangeArgs.length === 0) {
+					// nothing to do
+					return;
+				}
+
+				for (const rangeArg of rangeArgs) {
+					const normalized = rangeArg.normalized ?? true;
+					offsetWasProvided = rangeArg.offset != null;
+					const offset =
+						rangeArg.offset ??
+						(normalized ? Math.random() : scaleToU32(Math.random()));
+					let factor = rangeArg.factor;
+					let width = normalized ? 1 : scaleToU32(1);
+					ranges.push(
+						new ReplicationRangeIndexable({
+							normalized,
+							offset: offset,
+							length:
+								typeof factor === "number"
+									? factor
+									: factor === "all"
+										? width
+										: width - offset,
+							publicKeyHash: this.node.identity.publicKey.hashcode(),
+							mode: rangeArg.strict
+								? ReplicationIntent.Strict
+								: ReplicationIntent.NonStrict, // automatic means that this range might be reused later for dynamic replication behaviour
+							timestamp: BigInt(+new Date()),
+						}),
+					);
+				}
 			}
 
-			this.oldestOpenTime = Math.min(
-				Number(range.timestamp),
-				this.oldestOpenTime,
-			);
+			for (const range of ranges) {
+				this.oldestOpenTime = Math.min(
+					Number(range.timestamp),
+					this.oldestOpenTime,
+				);
+			}
 
 			let resetRanges = reset;
 			if (!resetRanges && !offsetWasProvided) {
@@ -502,9 +525,10 @@ export class SharedLog<
 				// but ({ replicate: 0.5, offset: 0.5 }) means that we want to add a range
 				// TODO make behaviour more clear
 			}
-			await this.startAnnounceReplicating([range], {
+			await this.startAnnounceReplicating(ranges, {
 				reset: resetRanges ?? false,
 				checkDuplicates,
+				announce,
 			});
 		}
 	}
@@ -539,10 +563,20 @@ export class SharedLog<
 	}
 
 	async replicate(
-		rangeOrEntry?: ReplicationRange | ReplicationOptions | Entry<T>,
-		options?: { reset?: boolean; checkDuplicates?: boolean },
+		rangeOrEntry?:
+			| ReplicationRange
+			| ReplicationOptions
+			| Entry<T>
+			| Entry<T>[],
+		options?: {
+			reset?: boolean;
+			checkDuplicates?: boolean;
+			announce?: (
+				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
+			) => void;
+		},
 	) {
-		let range: ReplicationRange | ReplicationOptions | undefined = undefined;
+		let range: ReplicationRange[] | ReplicationOptions | undefined = undefined;
 
 		if (rangeOrEntry instanceof ReplicationRange) {
 			range = rangeOrEntry;
@@ -552,14 +586,30 @@ export class SharedLog<
 				offset: await this.domain.fromEntry(rangeOrEntry),
 				normalized: false,
 			};
+		} else if (Array.isArray(rangeOrEntry)) {
+			let ranges: (ReplicationRange | FixedReplicationOptions)[] = [];
+			for (const entry of rangeOrEntry) {
+				if (entry instanceof Entry) {
+					ranges.push({
+						factor: 1,
+						offset: await this.domain.fromEntry(entry),
+						normalized: false,
+					});
+				} else {
+					ranges.push(entry);
+				}
+			}
+			range = ranges;
 		} else {
 			range = rangeOrEntry ?? true;
 		}
 
-		await this._replicate(range, options);
+		const newRanges = await this._replicate(range, options);
 
 		// assume new role
 		await this.distribute();
+
+		return newRanges;
 	}
 
 	async unreplicate(rangeOrEntry?: Entry<T> | ReplicationRange) {
@@ -707,19 +757,10 @@ export class SharedLog<
 				);
 			} else if (checkDuplicates) {
 				let deduplicated: any[] = [];
-				for (const range of ranges) {
-					const prev = await this.replicationIndex.query(
-						new SearchRequest({
-							query: {
-								start1: range.start1,
-								width: range.width,
-								mode: range.mode,
-								hash: range.hash,
-							},
-						}),
-					);
 
-					if (prev.results.length === 0) {
+				// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
+				for (const range of ranges) {
+					if (!(await hasCoveringRange(this.replicationIndex, range))) {
 						deduplicated.push(range);
 					}
 				}
@@ -759,12 +800,21 @@ export class SharedLog<
 			}
 			return true;
 		};
+
+		// we sequialize this because we are going to queries to check wether to add or not
+		// if two processes do the same this both process might add a range while only one in practice should
 		return this.pq.add(fn);
 	}
 
 	async startAnnounceReplicating(
 		range: ReplicationRangeIndexable[],
-		options: { reset?: boolean; checkDuplicates?: boolean } = {},
+		options: {
+			reset?: boolean;
+			checkDuplicates?: boolean;
+			announce?: (
+				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
+			) => void;
+		} = {},
 	) {
 		const added = await this.addReplicationRange(
 			range,
@@ -775,23 +825,24 @@ export class SharedLog<
 			logger.warn("Not allowed to replicate by canReplicate");
 		}
 
+		let message: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage;
 		if (added) {
 			if (options.reset) {
-				await this.rpc.send(
-					new AllReplicatingSegmentsMessage({
-						segments: range.map((x) => x.toReplicationRange()),
-					}),
-					{ priority: 1 },
-				);
+				message = new AllReplicatingSegmentsMessage({
+					segments: range.map((x) => x.toReplicationRange()),
+				});
 			} else {
-				await this.rpc.send(
-					new AddedReplicationSegmentMessage({
-						segments: range.map((x) => x.toReplicationRange()),
-					}),
-					{
-						priority: 1,
-					},
-				);
+				message = new AddedReplicationSegmentMessage({
+					segments: range.map((x) => x.toReplicationRange()),
+				});
+			}
+
+			if (options.announce) {
+				return options.announce(message);
+			} else {
+				await this.rpc.send(message, {
+					priority: 1,
+				});
 			}
 		}
 	}
@@ -957,8 +1008,13 @@ export class SharedLog<
 		this._replicationRangeIndex = await replicationIndex.init({
 			schema: ReplicationRangeIndexable,
 		});
+
 		const logIndex = await logScope.scope("log");
+
 		await this.node.indexer.start(); // TODO why do we need to start the indexer here?
+
+		const hasIndexedReplicationInfo =
+			(await this.replicationIndex.getSize()) > 0;
 
 		/* this._totalParticipation = await this.calculateTotalParticipation(); */
 
@@ -1061,7 +1117,15 @@ export class SharedLog<
 			});
 		};
 
-		await this.replicate(options?.replicate, { checkDuplicates: true });
+		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
+		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
+		// we are already unreplicated (as we are just opening)
+		if (
+			hasIndexedReplicationInfo ||
+			isUnreplicationOptions(options?.replicate) === false
+		) {
+			await this.replicate(options?.replicate, { checkDuplicates: true });
+		}
 		requestSync();
 	}
 
@@ -1567,6 +1631,7 @@ export class SharedLog<
 						const prev = this.latestReplicationInfoMessage.get(
 							context.from!.hashcode(),
 						);
+
 						if (prev && prev > context.timestamp) {
 							return;
 						}
@@ -1717,21 +1782,87 @@ export class SharedLog<
 		options?: {
 			verifySignatures?: boolean;
 			timeout?: number;
-			replicate: boolean;
+			replicate?: boolean;
 		},
 	): Promise<void> {
-		await this.log.join(entries, {
-			...options,
-			onChange: async (change) => {
-				if (change.added) {
-					for (const entry of change.added) {
-						if (entry.head) {
-							await this.replicate(entry.entry, { checkDuplicates: true });
-						}
+		let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
+
+		if (options?.replicate) {
+			// TODO this block should perhaps be called from a callback on the this.log.join method on all the ignored element because already joined, like "onAlreadyJoined"
+
+			// check which entrise we already have but not are replicating, and replicate them
+			let alreadyJoined: Entry<T>[] = [];
+			for (const element of entries) {
+				if (typeof element === "string") {
+					const entry = await this.log.get(element);
+					if (entry) {
+						alreadyJoined.push(entry);
+					}
+				} else if (element instanceof Entry) {
+					if (await this.log.has(element.hash)) {
+						alreadyJoined.push(element);
+					}
+				} else {
+					const entry = await this.log.get(element.hash);
+					if (entry) {
+						alreadyJoined.push(entry);
 					}
 				}
-			},
-		});
+			}
+
+			// assume is heads
+			await this.replicate(alreadyJoined, {
+				checkDuplicates: true,
+				announce: (msg) => {
+					if (msg instanceof AllReplicatingSegmentsMessage) {
+						throw new Error("Unexpected");
+					}
+					messageToSend = msg;
+				},
+			});
+		}
+
+		let joinOptions = options?.replicate
+			? {
+					...options,
+					onChange: async (change: Change<T>) => {
+						if (change.added) {
+							for (const entry of change.added) {
+								if (entry.head) {
+									await this.replicate(entry.entry, {
+										checkDuplicates: true,
+
+										// we override the announce step here to make sure we announce all new replication info
+										// in one large message instead
+										announce: (msg) => {
+											if (msg instanceof AllReplicatingSegmentsMessage) {
+												throw new Error("Unexpected");
+											}
+
+											if (messageToSend) {
+												// merge segments to make it into one messages
+												for (const segment of msg.segments) {
+													messageToSend.segments.push(segment);
+												}
+											} else {
+												messageToSend = msg;
+											}
+										},
+									});
+								}
+							}
+						}
+					},
+				}
+			: options;
+
+		await this.log.join(entries, joinOptions);
+
+		if (messageToSend) {
+			await this.rpc.send(messageToSend, {
+				priority: 1,
+			});
+		}
 	}
 
 	async isLeader(
@@ -2194,6 +2325,7 @@ export class SharedLog<
 		);
 		this.latestReplicationInfoMessage.delete(evt.detail.from.hashcode());
 
+		// TODO only emit this if the peer is actually replicating anything
 		this.events.dispatchEvent(
 			new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
 				detail: { publicKey: evt.detail.from },
@@ -2309,7 +2441,7 @@ export class SharedLog<
 				}
 
 				await this.startAnnounceReplicating([dynamicRange], {
-					checkDuplicates: true,
+					checkDuplicates: false,
 					reset: false,
 				});
 

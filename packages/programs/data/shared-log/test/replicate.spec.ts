@@ -13,7 +13,7 @@ import { ReplicationIntent } from "../src/replication.js";
 import { scaleToU32 } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
-describe(`role`, () => {
+describe(`replicate`, () => {
 	let session: TestSession;
 	let db1: EventStore<string>, db2: EventStore<string>;
 

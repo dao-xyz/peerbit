@@ -1,12 +1,14 @@
 import { PublicSignKey, equals } from "@peerbit/crypto";
 import {
 	And,
+	ByteMatchQuery,
 	Compare,
 	type Index,
 	type IndexIterator,
 	type IndexedResult,
 	type IndexedResults,
 	IntegerCompare,
+	Not,
 	Or,
 	type Query,
 	SearchRequest,
@@ -160,6 +162,83 @@ const getClosest = (
 	);
 
 	return joinIterator([iterator, iteratorWrapped], point, direction);
+};
+
+export const hasCoveringRange = async (
+	rects: Index<ReplicationRangeIndexable>,
+	range: ReplicationRangeIndexable,
+) => {
+	return (
+		(await rects.count(
+			new SearchRequest({
+				query: [
+					new Or([
+						new And([
+							new IntegerCompare({
+								key: "start1",
+								compare: Compare.LessOrEqual,
+								value: range.start1,
+							}),
+							new IntegerCompare({
+								key: "end1",
+								compare: Compare.GreaterOrEqual,
+								value: range.end1,
+							}),
+						]),
+						new And([
+							new IntegerCompare({
+								key: "start2",
+								compare: Compare.LessOrEqual,
+								value: range.start1,
+							}),
+							new IntegerCompare({
+								key: "end2",
+								compare: Compare.GreaterOrEqual,
+								value: range.end1,
+							}),
+						]),
+					]),
+					new Or([
+						new And([
+							new IntegerCompare({
+								key: "start1",
+								compare: Compare.LessOrEqual,
+								value: range.start2,
+							}),
+							new IntegerCompare({
+								key: "end1",
+								compare: Compare.GreaterOrEqual,
+								value: range.end2,
+							}),
+						]),
+						new And([
+							new IntegerCompare({
+								key: "start2",
+								compare: Compare.LessOrEqual,
+								value: range.start2,
+							}),
+							new IntegerCompare({
+								key: "end2",
+								compare: Compare.GreaterOrEqual,
+								value: range.end2,
+							}),
+						]),
+					]),
+					new StringMatch({
+						key: "hash",
+						value: range.hash,
+					}),
+					// assume that we are looking for other ranges, not want to update an existing one
+					new Not(
+						new ByteMatchQuery({
+							key: "id",
+							value: range.id,
+						}),
+					),
+				],
+			}),
+		)) > 0
+	);
 };
 
 export const getDistance = (

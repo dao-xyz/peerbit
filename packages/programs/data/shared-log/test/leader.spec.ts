@@ -1,6 +1,5 @@
 import { deserialize } from "@dao-xyz/borsh";
 import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
-import { SearchRequest } from "@peerbit/indexer-interface";
 import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
@@ -8,8 +7,6 @@ import { expect } from "chai";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { slowDownSend } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
-
-/* import { CountRequest } from "@peerbit/indexer-interface"; */
 
 /**
  * TOOD make these test part of ranges.test.ts
@@ -315,38 +312,23 @@ describe(`isLeader`, function () {
 			options,
 		)) as EventStore<string>;
 
-		try {
-			await waitForResolved(async () =>
-				expect(
-					Math.abs((await db1.log.getMyTotalParticipation()) - 0.33),
-				).lessThan(0.02),
-			);
-			await waitForResolved(async () =>
-				expect(
-					Math.abs((await db2.log.getMyTotalParticipation()) - 0.33),
-				).lessThan(0.02),
-			);
-			await waitForResolved(async () =>
-				expect(
-					Math.abs((await db3.log.getMyTotalParticipation()) - 0.33),
-				).lessThan(0.02),
-			);
-		} catch (error) {
-			const a1 = await db1.log.getMyTotalParticipation();
-			const a2 = await db1.log.getMyReplicationSegments();
-			const a3 = await db1.log.replicationIndex.query(new SearchRequest());
-			console.log(a1, a2, a3);
-			const b1 = await db2.log.getMyTotalParticipation();
-			const b2 = await db2.log.getMyReplicationSegments();
-			const b3 = await db2.log.replicationIndex.query(new SearchRequest());
-			console.log(b1, b2, b3);
-			const c1 = await db3.log.getMyTotalParticipation();
-			const c2 = await db3.log.getMyReplicationSegments();
-			const c3 = await db3.log.replicationIndex.query(new SearchRequest());
-			console.log(c1, c2, c3);
+		let allowedError = 0.02;
 
-			throw error;
-		}
+		await waitForResolved(async () =>
+			expect(
+				Math.abs((await db1.log.getMyTotalParticipation()) - 0.33),
+			).lessThan(allowedError),
+		);
+		await waitForResolved(async () =>
+			expect(
+				Math.abs((await db2.log.getMyTotalParticipation()) - 0.33),
+			).lessThan(allowedError),
+		);
+		await waitForResolved(async () =>
+			expect(
+				Math.abs((await db3.log.getMyTotalParticipation()) - 0.33),
+			).lessThan(allowedError),
+		);
 
 		await waitForResolved(async () =>
 			expect((await db1.log.getReplicators()).size).to.equal(3),

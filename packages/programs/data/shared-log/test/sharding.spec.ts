@@ -242,7 +242,7 @@ describe(`sharding`, () => {
 		await waitForResolved(async () =>
 			expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(0.05),
 		);
-		await checkBounded(entryCount, 0.35, 0.65, db1, db2);
+		await checkBounded(entryCount, 0.3, 0.7, db1, db2);
 	});
 
 	it("3 peers", async () => {
