@@ -53,7 +53,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(peers, 1e5, a, MAX_U32, MAX_U32)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
 
                     })
                 })
@@ -67,7 +67,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(peers, 1e5, a, MAX_U32, MAX_U32)]).to.have.members([a.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 })]).to.have.members([a.hashcode()])
                     })
                 })
 
@@ -82,7 +82,20 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(peers, 1e5, a, MAX_U32, MAX_U32)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+
+                    })
+
+
+                    it('full width all unmature', async () => {
+                        await create(
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 1, offset: (0 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: b, length: 1, offset: (0.333 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 1, offset: (0.666 + rotation) % 1, timestamp: BigInt(+new Date) })
+                        );
+
+                        // special case, assume we only look into selef
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 })]).to.have.members([a.hashcode()])
 
                     })
 
@@ -95,10 +108,68 @@ describe("ranges", () => {
 
 
                         // should not be included. TODO is this always expected behaviour?
-                        expect([...await getCoverSet(peers, 1e5, a, MAX_U32, MAX_U32)]).to.have.members([a.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 })]).to.have.members([a.hashcode()])
+
+                    })
+
+
+                })
+
+                describe('eager', () => {
+                    it('all unmature', async () => {
+                        await create(
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 0.34, offset: (0 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: b, length: 0.34, offset: (0.333 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.34, offset: (0.666 + rotation) % 1, timestamp: BigInt(+new Date) })
+                        );
+
+                        // we try to cover 0.5 starting from a
+                        // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32, eager: true })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                    })
+                    it('full width all mature', async () => {
+
+                        await create(
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 1, offset: (0 + rotation) % 1, timestamp: 0n }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: b, length: 1, offset: (0.333 + rotation) % 1, timestamp: 0n }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 1, offset: (0.666 + rotation) % 1, timestamp: 0n })
+                        );
+
+                        // we try to cover 0.5 starting from a
+                        // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32, eager: true })]).to.have.members([a.hashcode()])
+                    })
+
+
+                    it('full width all unmature', async () => {
+                        await create(
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 1, offset: (0 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: b, length: 1, offset: (0.333 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 1, offset: (0.666 + rotation) % 1, timestamp: BigInt(+new Date) })
+                        );
+
+                        // special case, assume we only look into selef
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32, eager: true })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+
+                    })
+
+                    it('two unmature', async () => {
+                        await create(
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 0.34, offset: (0 + rotation) % 1, timestamp: 0n }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: b, length: 0.34, offset: (0.333 + rotation) % 1, timestamp: BigInt(+new Date) }),
+                            new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.34, offset: (0.666 + rotation) % 1, timestamp: BigInt(+new Date) })
+                        );
+
+
+                        // should not be included. TODO is this always expected behaviour?
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32, eager: true })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: b, widthToCoverScaled: MAX_U32, eager: true })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: c, widthToCoverScaled: MAX_U32, eager: true })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
 
                     })
                 })
+
+
                 describe("skip", () => {
                     it('next', async () => {
 
@@ -111,7 +182,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(peers, 1e5, a, MAX_U32 / 2, MAX_U32)]).to.have.members([a.hashcode(), b.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 / 2 })]).to.have.members([a.hashcode(), b.hashcode()])
                     })
                     it('between', async () => {
 
@@ -125,7 +196,7 @@ describe("ranges", () => {
 
                         // we try to cover 0.5 starting from a
                         // this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
-                        expect([...await getCoverSet(peers, 1e5, a, MAX_U32 / 2, MAX_U32)]).to.have.members([a.hashcode(), b.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: MAX_U32 / 2 })]).to.have.members([a.hashcode(), b.hashcode()])
 
                     })
                 })
@@ -140,7 +211,7 @@ describe("ranges", () => {
                         );
 
                         // because of rounding errors, a cover width of 0.5 might yield unecessary results
-                        expect([...await getCoverSet(peers, 0, a, 0.499 * MAX_U32, MAX_U32)]).to.have.members([a.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 0, start: a, widthToCoverScaled: 0.499 * MAX_U32 })]).to.have.members([a.hashcode()])
                     })
 
                     it('after', async () => {
@@ -151,7 +222,7 @@ describe("ranges", () => {
                             new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n })
                         );
 
-                        expect([...await getCoverSet(peers, 0, b, scaleToU32(0.6), MAX_U32)]).to.have.members([b.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 0, start: b, widthToCoverScaled: scaleToU32(0.6) })]).to.have.members([b.hashcode()])
                     })
 
                     it('skip matured', async () => {
@@ -161,7 +232,7 @@ describe("ranges", () => {
                             new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n })
                         );
                         // starting from b, we need both a and c since b is not mature to cover the width
-                        expect([...await getCoverSet(peers, 1e5, a, scaleToU32(0.5), MAX_U32)]).to.have.members([a.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: a, widthToCoverScaled: scaleToU32(0.5) })]).to.have.members([a.hashcode(), c.hashcode()])
                     })
 
                     it('include start node identity', async () => {
@@ -171,7 +242,7 @@ describe("ranges", () => {
                             new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n })
                         );
                         // starting from b, we need both a and c since b is not mature to cover the width
-                        expect([...await getCoverSet(peers, 1e5, b, scaleToU32(0.5), MAX_U32)]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
+                        expect([...await getCoverSet({ peers, roleAge: 1e5, start: b, widthToCoverScaled: scaleToU32(0.5) })]).to.have.members([a.hashcode(), b.hashcode(), c.hashcode()])
                     })
 
                     describe('strict', () => {
@@ -182,7 +253,7 @@ describe("ranges", () => {
                                 new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n, mode: ReplicationIntent.Strict })
                             );
                             // starting from b, we need both a and c since b is not mature to cover the width
-                            expect([...await getCoverSet(peers, 1e5, b, scaleToU32(0.51), MAX_U32)]).to.have.members([b.hashcode()])
+                            expect([...await getCoverSet({ peers, roleAge: 1e5, start: b, widthToCoverScaled: scaleToU32(0.51) })]).to.have.members([b.hashcode()])
                         })
 
                         it('empty set boundary', async () => {
@@ -191,7 +262,7 @@ describe("ranges", () => {
                                 new ReplicationRangeIndexable({ normalized: true, publicKey: c, length: 0.1, offset: (0.81 + rotation) % 1, timestamp: 0n, mode: ReplicationIntent.Strict })
                             );
                             // starting from b, we need both a and c since b is not mature to cover the width
-                            expect([...await getCoverSet(peers, 1e5, scaleToU32((0.5 + rotation) % 1), scaleToU32(0.3), MAX_U32)]).to.have.members([])
+                            expect([...await getCoverSet({ peers, roleAge: 1e5, start: scaleToU32((0.5 + rotation) % 1), widthToCoverScaled: scaleToU32(0.3) })]).to.have.members([])
                         })
 
                         it('overlapping', async () => {
@@ -199,7 +270,7 @@ describe("ranges", () => {
                                 new ReplicationRangeIndexable({ normalized: true, publicKey: a, length: 0.1, offset: (0.2 + rotation) % 1, timestamp: 0n, mode: ReplicationIntent.Strict }),
                             );
                             // starting from b, we need both a and c since b is not mature to cover the width
-                            expect([...await getCoverSet(peers, 1e5, scaleToU32((0 + rotation) % 1), scaleToU32(0.6), MAX_U32)]).to.have.members([a.hashcode()])
+                            expect([...await getCoverSet({ peers, roleAge: 1e5, start: scaleToU32((0 + rotation) % 1), widthToCoverScaled: scaleToU32(0.6) })]).to.have.members([a.hashcode()])
                         })
                     })
                 })

@@ -404,7 +404,7 @@ describe(`replicate`, () => {
 					).to.deep.equal([db1.node.identity.publicKey.hashcode()]);
 				});
 
-				// assume other nodes except me are mature if the open before me
+				// assume other nodes except me are mature if they open before me
 				selfMatured = isMatured(
 					(await db2.log.getMyReplicationSegments())[0],
 					now,

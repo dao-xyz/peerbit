@@ -142,7 +142,7 @@ describe("ReplicationDomainTime", function () {
 					from: someTimeInTheFuture,
 					to: someTimeInTheFuture + 100,
 				},
-				0,
+				{ roleAge: 0 },
 			);
 
 			expect(replicatorsDefined).to.have.members([
@@ -154,7 +154,7 @@ describe("ReplicationDomainTime", function () {
 					from: someTimeInTheFuture - 100,
 					to: someTimeInTheFuture - 10,
 				},
-				0,
+				{ roleAge: 0 },
 			);
 
 			expect(resplicatorsUndefined).to.have.length(0);

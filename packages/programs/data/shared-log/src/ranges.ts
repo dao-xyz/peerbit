@@ -532,36 +532,70 @@ export const minimumWidthToCover = async (
 	return widthToCoverScaled;
 };
 
-export const getCoverSet = async (
-	peers: Index<ReplicationRangeIndexable>,
-	roleAge: number,
-	start: number | PublicSignKey | undefined,
-	widthToCoverScaled: number,
-	intervalWidth: number = MAX_U32,
-): Promise<Set<string>> => {
+export const getCoverSet = async (properties: {
+	peers: Index<ReplicationRangeIndexable>;
+	start: number | PublicSignKey | undefined;
+	widthToCoverScaled: number;
+	roleAge: number;
+	intervalWidth?: number;
+	eager?:
+		| {
+				unmaturedFetchCoverSize?: number;
+		  }
+		| boolean;
+}): Promise<Set<string>> => {
+	let intervalWidth: number = properties.intervalWidth ?? MAX_U32;
+	const { peers, start, widthToCoverScaled, roleAge } = properties;
+
+	const now = Date.now();
 	const { startNode, startLocation, endLocation } = await getStartAndEnd(
 		peers,
 		start,
 		widthToCoverScaled,
 		roleAge,
-		Date.now(),
+		now,
 		intervalWidth,
 	);
 
-	let results: ReplicationRangeIndexable[] = [];
+	let ret = new Set<string>();
 
-	let now = +new Date();
+	// if start node (assume is self) and not mature, ask all known remotes if limited
+	// TODO consider a more robust stragety here in a scenario where there are many nodes, lets say
+	// a social media app with 1m user, then it does not makes sense to query "all" just because we started
+	if (properties.eager) {
+		const eagerFetch =
+			properties.eager === true
+				? 1000
+				: properties.eager.unmaturedFetchCoverSize;
+
+		// pull all umatured
+		const rects = await peers.query(
+			new SearchRequest({
+				fetch: eagerFetch,
+				query: [
+					new IntegerCompare({
+						key: "timestamp",
+						compare: Compare.GreaterOrEqual,
+						value: BigInt(now - roleAge),
+					}),
+				],
+			}),
+		);
+		for (const rect of rects.results) {
+			ret.add(rect.value.hash);
+		}
+	}
 
 	const endIsWrapped = endLocation <= startLocation;
 
 	if (!startNode) {
-		return new Set();
+		return ret;
 	}
 
 	let current = startNode;
 
 	// push edges
-	results.push(current);
+	ret.add(current.hash);
 
 	const resolveNextContaining = async (
 		nextLocation: number,
@@ -609,7 +643,8 @@ export const getCoverSet = async (
 	};
 	addLength(startLocation);
 
-	let maturedCoveredLength = coveredLength;
+	let maturedCoveredLength =
+		coveredLength; /* TODO only increase matured length when startNode is matured? i.e. do isMatured(startNode, now, roleAge) ? coveredLength : 0; */
 	let nextLocation = current.end2;
 
 	while (
@@ -657,7 +692,7 @@ export const getCoverSet = async (
 					getDistance(current.end2, endLocation, "closest"),
 				)
 		) {
-			results.push(current);
+			ret.add(current.hash);
 		}
 
 		if (isLast && !nextCandidate[1] /*  || equals(endRect.id, current.id) */) {
@@ -675,10 +710,8 @@ export const getCoverSet = async (
 			: Math.min(current.end2, endLocation);
 	}
 
-	const res = new Set(results.map((x) => x.hash));
-
-	start instanceof PublicSignKey && res.add(start.hashcode());
-	return res;
+	start instanceof PublicSignKey && ret.add(start.hashcode());
+	return ret;
 };
 
 export const fetchOneFromPublicKey = async (

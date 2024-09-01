@@ -41,6 +41,7 @@ export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
 	minAge?: number;
 	throwOnMissing?: boolean;
 	domain?: ExtractArgs<D>;
+	eager?: boolean; // whether to query newly joined peers before they have matured
 };
 export type QueryOptions<R, D> = {
 	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult<R>, D>;
@@ -755,7 +756,10 @@ export class DocumentIndex<
 		if (remote) {
 			const replicatorGroups = await this._log.getCover(
 				remote.domain ?? (undefined as any),
-				remote.minAge,
+				{
+					roleAge: remote.minAge,
+					eager: remote.eager,
+				},
 			);
 
 			if (replicatorGroups) {

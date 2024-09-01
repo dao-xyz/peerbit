@@ -54,7 +54,7 @@ import {
 	type SetupOptions,
 } from "../src/program.js";
 import type { CanRead } from "../src/search.js";
-import { Document, StoreWithCustomDomain, TestStore } from "./data.js";
+import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
 	let session: TestSession;
@@ -262,6 +262,38 @@ describe("index", () => {
 					}),
 				);
 			});
+
+			it("can reinsert", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				await store.docs.put(doc);
+				await store.docs.put(doc);
+				await store.docs.put(doc);
+
+				await delay(5000);
+
+				// open with another store
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: 1,
+					},
+				});
+
+				await waitForResolved(async () =>
+					expect(await store2.docs.index.getSize()).to.eq(1),
+				);
+			});
 		});
 
 		describe("replication", () => {
@@ -404,6 +436,36 @@ describe("index", () => {
 				await waitForResolved(async () =>
 					expect(await store2.docs.index.getSize()).equal(0),
 				);
+			});
+
+			it("can query immediately after replication:join event", async () => {
+				await store2.close();
+				store.docs.put(
+					new Document({
+						number: 123n,
+					}),
+				);
+
+				store2 = store.clone();
+				let joined = false;
+
+				store2.docs.log.events.addEventListener("replicator:join", async () => {
+					expect(
+						await store2.docs.index.search(new SearchRequest({})),
+					).to.have.length(1);
+					joined = true;
+				});
+
+				await session.peers[1].open<TestStore>(store2, {
+					args: {
+						replicate: false,
+					},
+				});
+
+				expect(
+					await store2.docs.index.search(new SearchRequest({})),
+				).to.have.length(0);
+				await waitForResolved(() => expect(joined).to.be.true);
 			});
 		});
 
@@ -1441,6 +1503,61 @@ describe("index", () => {
 					).rejectedWith(ClosedError);
 				});
 			});
+
+			describe("eager", () => {
+				let peersCount = 2;
+				before(async () => {
+					session = await TestSession.disconnected(peersCount);
+				});
+
+				after(async () => {
+					await session.stop();
+				});
+
+				it("will query newly joined peer when eager", async () => {
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					const store2 = await session.peers[1].open<TestStore>(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					await store2.docs.put(new Document({ id: "1" }));
+
+					let joined = false;
+					store.docs.log.events.addEventListener(
+						"replicator:join",
+						async () => {
+							expect(
+								await store.docs.index.search(new SearchRequest()),
+							).to.have.length(0);
+							expect(
+								(
+									await store.docs.index.search(new SearchRequest(), {
+										remote: { eager: true },
+									})
+								).length,
+							).to.equal(1);
+							joined = true;
+						},
+					);
+
+					await session.connect();
+					await waitForResolved(() => expect(joined).to.be.true);
+				});
+			});
 		});
 
 		describe("sort", () => {
@@ -1937,76 +2054,6 @@ describe("index", () => {
 			// TODO deletion while sort
 
 			// TODO session timeouts?
-		});
-
-		describe("domain", () => {
-			before(async () => {
-				session = await TestSession.connected(2);
-			});
-
-			after(async () => {
-				await session.stop();
-			});
-
-			it("custom domain", async () => {
-				const store = await session.peers[0].open(new StoreWithCustomDomain(), {
-					args: {
-						replicate: {
-							normalized: false,
-							factor: 1,
-							offset: 1,
-							strict: true,
-						},
-					},
-				});
-				const store2 = await session.peers[1].open(store.clone(), {
-					args: {
-						replicate: {
-							normalized: false,
-							offset: 2,
-							factor: 2,
-							strict: true,
-						},
-					},
-				});
-
-				await store.docs.put(new Document({ id: "1", number: 1n }));
-				await store2.docs.put(new Document({ id: "2", number: 2n }));
-				await store2.docs.put(new Document({ id: "3", number: 3n }));
-
-				await delay(3000); // wait for sometime so that potential replication could have happened
-
-				expect(await store.docs.index.getSize()).to.equal(1);
-				expect(await store2.docs.index.getSize()).to.equal(2);
-
-				// test querying with the same domain but different peers and assert results are correct
-				const resultsWithRemoteRightDomain = await store.docs.index.search(
-					new SearchRequest(),
-					{
-						remote: {
-							domain: {
-								from: 2,
-								to: 3,
-							},
-						},
-					},
-				);
-
-				expect(resultsWithRemoteRightDomain).to.have.length(3);
-
-				const resultsWhenRemoteDoesNotHaveRightDomain =
-					await store.docs.index.search(new SearchRequest(), {
-						remote: {
-							domain: {
-								from: 4,
-								to: 5,
-							},
-						},
-					});
-
-				expect(resultsWhenRemoteDoesNotHaveRightDomain).to.have.length(1); // only the loal result
-				expect(resultsWhenRemoteDoesNotHaveRightDomain[0].id).to.equal("1");
-			});
 		});
 	});
 

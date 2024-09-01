@@ -1194,19 +1194,31 @@ export class SharedLog<
 		}
 	}
 
-	async getCover(args: ExtractDomainArgs<D>, roleAge?: number) {
-		roleAge = roleAge ?? (await this.getDefaultMinRoleAge());
-
+	async getCover(
+		args: ExtractDomainArgs<D>,
+		options?: {
+			roleAge?: number;
+			eager?:
+				| {
+						unmaturedFetchCoverSize?: number;
+				  }
+				| boolean;
+		},
+	) {
+		let roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
+		let eager = options?.eager ?? false;
 		const range = await this.domain.fromArgs(args, this);
 
-		const set = await getCoverSet(
-			this.replicationIndex,
-			roleAge,
-			range.offset,
-			range.length ??
+		const set = await getCoverSet({
+			peers: this.replicationIndex,
+			start: range.offset,
+			widthToCoverScaled:
+				range.length ??
 				(await minimumWidthToCover(this.replicas.min.getValue(this))),
-			MAX_U32,
-		);
+			roleAge,
+			eager,
+			intervalWidth: MAX_U32,
+		});
 
 		// add all in flight
 		for (const [key, _] of this.syncInFlight) {
@@ -1949,8 +1961,11 @@ export class SharedLog<
 			replLength > 1 ? now - this.oldestOpenTime - 1 : Number.MAX_SAFE_INTEGER;
 		return Math.min(
 			this.timeUntilRoleMaturity,
-			diffToOldest,
-			Math.round((this.timeUntilRoleMaturity * Math.log(replLength + 1)) / 3),
+			Math.max(diffToOldest, this.timeUntilRoleMaturity),
+			Math.max(
+				Math.round((this.timeUntilRoleMaturity * Math.log(replLength + 1)) / 3),
+				this.timeUntilRoleMaturity,
+			),
 		); // / 3 so that if 2 replicators and timeUntilRoleMaturity = 1e4 the result will be 1
 	}
 
