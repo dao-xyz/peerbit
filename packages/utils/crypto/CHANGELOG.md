@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.1](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.0...crypto-v2.3.1) (2024-09-01)
+
+
+### Bug Fixes
+
+* bump libp2p ([b064d22](https://github.com/dao-xyz/peerbit/commit/b064d228eaf7da2ef9da3dff95616dc00a31d9de))
+
 ## [2.3.0](https://github.com/dao-xyz/peerbit/compare/crypto-v2.2.0...crypto-v2.3.0) (2024-07-20)
 
 

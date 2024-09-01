@@ -43,6 +43,23 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.0.8](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.7...stream-v4.0.8) (2024-09-01)
+
+
+### Bug Fixes
+
+* bump libp2p ([b064d22](https://github.com/dao-xyz/peerbit/commit/b064d228eaf7da2ef9da3dff95616dc00a31d9de))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.0 to 2.3.1
+    * @peerbit/stream-interface bumped from ^5.0.3 to ^5.0.4
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.4 to 2.1.5
+
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.6...stream-v4.0.7) (2024-07-31)
 
 

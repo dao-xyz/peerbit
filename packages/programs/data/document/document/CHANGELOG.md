@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.1.1](https://github.com/dao-xyz/peerbit/compare/document-v7.1.0...document-v7.1.1) (2024-09-01)
+
+
+### Bug Fixes
+
+* add eager option for searching remote ([57b8640](https://github.com/dao-xyz/peerbit/commit/57b8640ee53a25d81695f7175ca6747aa9dfe58a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.1 to 5.0.2
+    * @peerbit/rpc bumped from 5.0.7 to 5.0.8
+    * @peerbit/shared-log bumped from 9.1.0 to 9.1.1
+    * @peerbit/indexer-interface bumped from ^1.0.2 to ^1.0.3
+    * @peerbit/indexer-simple bumped from ^1.0.3 to ^1.0.4
+    * @peerbit/indexer-sqlite3 bumped from ^1.0.5 to ^1.0.6
+    * @peerbit/document-interface bumped from ^1.0.3 to ^1.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.41 to 2.0.42
+
 ## [7.1.0](https://github.com/dao-xyz/peerbit/compare/document-v7.0.14...document-v7.1.0) (2024-08-25)
 
 

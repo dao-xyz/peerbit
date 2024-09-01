@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.0...shared-log-v9.1.1) (2024-09-01)
+
+
+### Bug Fixes
+
+* add eager option for searching remote ([57b8640](https://github.com/dao-xyz/peerbit/commit/57b8640ee53a25d81695f7175ca6747aa9dfe58a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.1 to 5.0.2
+    * @peerbit/log bumped from 4.0.8 to 4.0.9
+    * @peerbit/rpc bumped from 5.0.7 to 5.0.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.41 to ^2.0.42
+
 ## [9.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.10...shared-log-v9.1.0) (2024-08-25)
 
 

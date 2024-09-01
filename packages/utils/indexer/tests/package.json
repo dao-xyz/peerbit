@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-tests",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Tests document store index engines",
 	"sideEffects": false,
 	"type": "module",
@@ -61,7 +61,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/indexer-interface": "^1.0.2",
+		"@peerbit/indexer-interface": "^1.0.3",
 		"@types/uuid": "^9.0.8",
 		"benchmark": "^2.1.4"
 	}
