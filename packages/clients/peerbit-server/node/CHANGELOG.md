@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.45](https://github.com/dao-xyz/peerbit/compare/server-v5.0.44...server-v5.0.45) (2024-09-06)
+
+
+### Bug Fixes
+
+* use Node 20 instead of 19 ([4ec760d](https://github.com/dao-xyz/peerbit/commit/4ec760dcffb590e261f7677471f7a263e637104a))
+
 ## [5.0.44](https://github.com/dao-xyz/peerbit/compare/server-v5.0.43...server-v5.0.44) (2024-09-01)
 
 
