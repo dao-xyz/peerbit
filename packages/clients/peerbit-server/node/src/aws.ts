@@ -58,7 +58,7 @@ const setupUserData = (email: string, grantAccess: PeerId[] = []) => {
 	// better-sqlite3 force use to install build-essentials for `make` command, TOOD dont bundle better-sqlite3 by default?
 	return `#!/bin/bash
 cd /home/ubuntu
-curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash - &&\
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - &&\
 sudo apt-get install -y nodejs
 sudo apt-get install -y build-essential
 npm install -g @peerbit/server
