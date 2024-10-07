@@ -1,6 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
-import { CustomEvent, TypedEventEmitter } from "@libp2p/interface";
+import { TypedEventEmitter } from "@libp2p/interface";
 import {
 	type GetOptions,
 	type Blocks as IBlocks,

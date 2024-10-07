@@ -36,7 +36,6 @@ export const create = (properties: {
 			},
 			connectionManager: {
 				maxConnections: Infinity,
-				minConnections: 0,
 			},
 			services: {
 				blocks: (c) =>

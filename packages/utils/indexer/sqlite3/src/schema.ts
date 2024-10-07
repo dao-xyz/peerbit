@@ -823,14 +823,24 @@ export const getTableNameFromPrefixedField = (prefixedField: string) =>
 	prefixedField.split("#")[0];
 
 export const getInlineTableFieldName = (
-	path: string[] | undefined,
+	path: string[] | string | undefined,
 	key?: string,
-) => {
+): string => {
 	if (key) {
-		return path && path.length > 0 ? `${path.join("_")}__${key}` : key;
+		if (Array.isArray(path)) {
+			return path && path.length > 0 ? `${path.join("_")}__${key}` : key;
+		}
+		return path + "__" + key;
 	} else {
 		// last element in the path is the key, the rest is the path
 		// join key with __ , rest with _
+
+		if (!Array.isArray(path)) {
+			if (!path) {
+				throw new Error("Unexpected missing path");
+			}
+			return path;
+		}
 
 		return path!.length > 2
 			? `${path!.slice(0, -1).join("_")}__${path![path!.length - 1]}`
@@ -840,7 +850,7 @@ export const getInlineTableFieldName = (
 
 const matchFieldInShape = (
 	shape: types.Shape | undefined,
-	path: string[] | undefined,
+	path: string[] | string | undefined,
 	field: SQLField,
 ) => {
 	if (!shape) {
@@ -860,7 +870,11 @@ const matchFieldInShape = (
 			if (nextShape === true) {
 				return true;
 			}
-			currentShape = nextShape;
+			if (Array.isArray(nextShape)) {
+				currentShape = nextShape[0];
+			} else {
+				currentShape = nextShape;
+			}
 		}
 	}
 
@@ -969,7 +983,12 @@ export const selectAllFieldsFromTable = (
 					continue;
 				}
 
-				childShape = maybeShape === true ? undefined : maybeShape;
+				childShape =
+					maybeShape === true
+						? undefined
+						: Array.isArray(maybeShape)
+							? maybeShape[0]
+							: maybeShape;
 			}
 
 			stack.push({ table: child, shape: childShape });
@@ -1001,14 +1020,17 @@ const getNonInlinedTable = (from: Table) => {
 };
 
 // the inverse of resolveFieldValues
-export const resolveInstanceFromValue = async <T>(
+export const resolveInstanceFromValue = async <
+	T,
+	S extends types.Shape | undefined,
+>(
 	fromTablePrefixedValues: Record<string, any>,
 	tables: Map<string, Table>,
 	table: Table,
 	resolveChildren: (parentId: any, table: Table) => Promise<any[]>,
 	tablePrefixed: boolean,
-	shape: types.Shape | undefined,
-): Promise<T> => {
+	shape?: S,
+): Promise<types.ReturnTypeFromShape<T, S>> => {
 	const fields = getSchema(table.ctor).fields;
 	const obj: any = {};
 
@@ -1020,7 +1042,23 @@ export const resolveInstanceFromValue = async <T>(
 		const subTables = getTableFromField(table, tables, field); // TODO fix
 
 		let maybeShape = shape?.[field.key];
-		let subshape = maybeShape === true ? undefined : maybeShape;
+		const subshapeIsArray = Array.isArray(maybeShape);
+
+		if (isArray && maybeShape && !subshapeIsArray && maybeShape !== true) {
+			throw new Error(
+				"Shape is not matching the array field type: " +
+					field.key +
+					". Shape: " +
+					JSON.stringify(shape),
+			);
+		}
+
+		let subshape =
+			maybeShape === true
+				? undefined
+				: subshapeIsArray
+					? maybeShape[0]
+					: maybeShape;
 
 		if (isArray) {
 			let once = false;
@@ -1189,35 +1227,62 @@ export const fromRowToObj = (row: any, ctor: Constructor<any>) => {
 };
 
 export const convertDeleteRequestToQuery = (
-	request: types.DeleteRequest,
+	request: types.DeleteOptions,
 	tables: Map<string, Table>,
 	table: Table,
-) => {
-	return `DELETE FROM ${table.name} WHERE ${table.primary} IN (SELECT ${table.primary} from ${table.name} ${convertRequestToQuery(request, tables, table).query}) returning ${table.primary}`;
+): { sql: string; bindable: any[] } => {
+	const { query, bindable } = convertRequestToQuery(
+		"delete",
+		request,
+		tables,
+		table,
+	);
+	return {
+		sql: `DELETE FROM ${table.name} WHERE ${table.primary} IN (SELECT ${table.primary} from ${table.name} ${query}) returning ${table.primary}`,
+		bindable,
+	};
 };
 
 export const convertSumRequestToQuery = (
-	request: types.SumRequest,
+	request: types.SumOptions,
 	tables: Map<string, Table>,
 	table: Table,
-) => {
-	return `SELECT SUM(${table.name}.${getInlineTableFieldName(request.key)}) as sum FROM ${table.name} ${convertRequestToQuery(request, tables, table).query}`;
+): { sql: string; bindable: any[] } => {
+	const { query, bindable } = convertRequestToQuery(
+		"sum",
+		request,
+		tables,
+		table,
+	);
+	return {
+		sql: `SELECT SUM(${table.name}.${getInlineTableFieldName(request.key)}) as sum FROM ${table.name} ${query}`,
+		bindable,
+	};
 };
 
 export const convertCountRequestToQuery = (
-	request: types.CountRequest,
+	request: types.CountOptions | undefined,
 	tables: Map<string, Table>,
 	table: Table,
-) => {
-	return `SELECT count(*) as count FROM ${table.name} ${convertRequestToQuery(request, tables, table).query}`;
+): { sql: string; bindable: any[] } => {
+	const { query, bindable } = convertRequestToQuery(
+		"count",
+		request,
+		tables,
+		table,
+	);
+	return {
+		sql: `SELECT count(*) as count FROM ${table.name} ${query}`,
+		bindable,
+	};
 };
 
 export const convertSearchRequestToQuery = (
-	request: types.SearchRequest,
+	request: types.IterateOptions | undefined,
 	tables: Map<string, Table>,
 	rootTables: Table[],
 	shape: types.Shape | undefined,
-) => {
+): { sql: string; bindable: any[] } => {
 	let unionBuilder = "";
 	let orderByClause: string = "";
 
@@ -1225,12 +1290,13 @@ export const convertSearchRequestToQuery = (
 	let lastError: Error | undefined = undefined;
 
 	const selectsPerTable = selectAllFieldsFromTables(rootTables, shape);
-
+	let bindableBuilder: any[] = [];
 	for (const [i, table] of rootTables.entries()) {
 		const { selects, joins: joinFromSelect } = selectsPerTable[i];
 		const selectQuery = generateSelectQuery(table, selects);
 		try {
-			const { orderBy, query } = convertRequestToQuery(
+			const { orderBy, query, bindable } = convertRequestToQuery(
+				"iterate",
 				request,
 				tables,
 				table,
@@ -1244,6 +1310,7 @@ export const convertSearchRequestToQuery = (
 						: orderBy
 					: orderByClause;
 			matchedOnce = true;
+			bindableBuilder.push(...bindable);
 		} catch (error) {
 			if (error instanceof MissingFieldError) {
 				lastError = error;
@@ -1257,75 +1324,100 @@ export const convertSearchRequestToQuery = (
 		throw lastError;
 	}
 
-	return `${unionBuilder} ${orderByClause ? "ORDER BY " + orderByClause : ""} limit ? offset ?`;
+	return {
+		sql: `${unionBuilder} ${orderByClause ? "ORDER BY " + orderByClause : ""} limit ? offset ?`,
+		bindable: bindableBuilder,
+	};
 };
 
-type SearchQueryParts = { query: string; orderBy: string };
-type CountQueryParts = { query: string; join: string };
+type SearchQueryParts = { query: string; orderBy: string; bindable: any[] };
+type CountQueryParts = { query: string; join: string; bindable: any[] };
+
+function isIterateRequest(
+	request: any,
+	type: string,
+): request is types.IterateOptions | undefined {
+	return type === "iterate";
+}
 
 const convertRequestToQuery = <
-	T extends types.SearchRequest | types.CountRequest | types.SumRequest,
-	R = T extends types.SearchRequest ? SearchQueryParts : CountQueryParts,
+	T extends "iterate" | "count" | "sum" | "delete",
+	R = T extends "iterate" ? SearchQueryParts : CountQueryParts,
 >(
-	request: T,
+	type: T,
+	request:
+		| (T extends "iterate"
+				? types.IterateOptions
+				: T extends "count"
+					? types.CountOptions
+					: T extends "delete"
+						? types.DeleteOptions
+						: types.SumOptions)
+		| undefined,
 	tables: Map<string, Table>,
 	table: Table,
 	extraJoin?: Map<string, JoinTable>,
 	path: string[] = [],
 ): R => {
 	let whereBuilder = "";
+	let bindableBuilder: any[] = [];
 	let orderByBuilder: string | undefined = undefined;
 	/* let tablesToSelect: string[] = [table.name]; */
 	let joinBuilder: Map<string, JoinTable> = extraJoin || new Map();
-
-	if (request.query.length === 1) {
-		const { where } = convertQueryToSQLQuery(
-			request.query[0],
+	const coercedQuery = types.toQuery(request?.query);
+	if (coercedQuery.length === 1) {
+		const { where, bindable } = convertQueryToSQLQuery(
+			coercedQuery[0],
 			tables,
 			table,
 			joinBuilder,
 			path,
 		);
 		whereBuilder += where;
-	} else if (request.query.length > 1) {
-		const { where } = convertQueryToSQLQuery(
-			new types.And(request.query),
+		bindableBuilder.push(...bindable);
+	} else if (coercedQuery.length > 1) {
+		const { where, bindable } = convertQueryToSQLQuery(
+			new types.And(coercedQuery),
 			tables,
 			table,
 			joinBuilder,
 			path,
 		);
 		whereBuilder += where;
+		bindableBuilder.push(...bindable);
 	}
 
-	if (request instanceof types.SearchRequest) {
-		if (request.sort.length > 0) {
-			orderByBuilder = "";
-			let once = false;
-			for (const sort of request.sort) {
-				const { foreignTables, queryKey } = resolveTableToQuery(
-					table,
-					tables,
-					joinBuilder,
-					[...path, ...sort.key],
-					undefined,
-					true,
-				);
-				for (const table of foreignTables) {
-					if (once) {
-						orderByBuilder += ", ";
+	if (isIterateRequest(request, type)) {
+		if (request?.sort) {
+			let sortArr = Array.isArray(request.sort) ? request.sort : [request.sort];
+			if (sortArr.length > 0) {
+				orderByBuilder = "";
+				let once = false;
+				for (const sort of sortArr) {
+					const { foreignTables, queryKey } = resolveTableToQuery(
+						table,
+						tables,
+						joinBuilder,
+						[...path, ...sort.key],
+						undefined,
+						true,
+					);
+					for (const table of foreignTables) {
+						if (once) {
+							orderByBuilder += ", ";
+						}
+						once = true;
+						orderByBuilder += `${table.as}.${queryKey} ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`;
 					}
-					once = true;
-					orderByBuilder += `${table.as}.${queryKey} ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`;
 				}
-			}
 
-			/* orderByBuilder += request.sort
-				.map(
-					(sort) =>
-						`${table.name}.${sort.key} ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`
-				)
-				.join(", "); */
+				/* orderByBuilder += request.sort
+					.map(
+						(sort) =>
+							`${table.name}.${sort.key} ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`
+					)
+					.join(", "); */
+			}
 		}
 	}
 	const where = whereBuilder.length > 0 ? "where " + whereBuilder : undefined;
@@ -1333,16 +1425,14 @@ const convertRequestToQuery = <
 	if (extraJoin && extraJoin.size > 0) {
 		insertMapIntoMap(joinBuilder, extraJoin);
 	}
-	let join = buildJoin(
-		joinBuilder,
-		request instanceof types.SearchRequest ? true : false,
-	);
+	let join = buildJoin(joinBuilder, type === "iterate" ? true : false);
 
 	const query = `${join ? join : ""} ${where ? where : ""}`;
 
 	return {
 		query,
 		orderBy: orderByBuilder,
+		bindable: bindableBuilder,
 	} as R;
 };
 
@@ -1382,8 +1472,9 @@ export const convertQueryToSQLQuery = (
 	joinBuilder: Map<string, JoinTable>,
 	path: string[] = [],
 	tableAlias: string | undefined = undefined,
-): { where: string } => {
+): { where: string; bindable: any[] } => {
 	let whereBuilder = "";
+	let bindableBuilder: any[] = [];
 	/* 	let tablesToSelect: string[] = []; */
 
 	const handleAnd = (
@@ -1392,7 +1483,7 @@ export const convertQueryToSQLQuery = (
 		tableAlias?: string,
 	) => {
 		for (const query of queries) {
-			const { where } = convertQueryToSQLQuery(
+			const { where, bindable } = convertQueryToSQLQuery(
 				query,
 				tables,
 				table,
@@ -1402,11 +1493,12 @@ export const convertQueryToSQLQuery = (
 			);
 			whereBuilder =
 				whereBuilder.length > 0 ? `(${whereBuilder}) AND (${where})` : where;
+			bindableBuilder.push(...bindable);
 		}
 	};
 
 	if (query instanceof types.StateFieldQuery) {
-		const { where } = convertStateFieldQuery(
+		const { where, bindable } = convertStateFieldQuery(
 			query,
 			tables,
 			table,
@@ -1415,6 +1507,7 @@ export const convertQueryToSQLQuery = (
 			tableAlias,
 		);
 		whereBuilder += where;
+		bindableBuilder.push(...bindable);
 	} else if (query instanceof types.Nested) {
 		let joinPrefix = "__" + String(tables.size);
 		path = [...path, query.path];
@@ -1424,7 +1517,7 @@ export const convertQueryToSQLQuery = (
 			handleAnd(query.and, path, tableAlias);
 		} else if (query instanceof types.Or) {
 			for (const subquery of query.or) {
-				const { where } = convertQueryToSQLQuery(
+				const { where, bindable } = convertQueryToSQLQuery(
 					subquery,
 					tables,
 					table,
@@ -1434,9 +1527,10 @@ export const convertQueryToSQLQuery = (
 				);
 				whereBuilder =
 					whereBuilder.length > 0 ? `(${whereBuilder}) OR (${where})` : where;
+				bindableBuilder.push(...bindable);
 			}
 		} else if (query instanceof types.Not) {
-			const { where } = convertQueryToSQLQuery(
+			const { where, bindable } = convertQueryToSQLQuery(
 				query.not,
 				tables,
 				table,
@@ -1445,6 +1539,7 @@ export const convertQueryToSQLQuery = (
 				tableAlias,
 			);
 			whereBuilder = `NOT (${where})`;
+			bindableBuilder.push(...bindable);
 		} else {
 			throw new Error("Unsupported query type: " + query.constructor.name);
 		}
@@ -1454,6 +1549,7 @@ export const convertQueryToSQLQuery = (
 
 	return {
 		where: whereBuilder,
+		bindable: bindableBuilder,
 	};
 };
 
@@ -1607,7 +1703,7 @@ const convertStateFieldQuery = (
 	join: Map<string, JoinTable>,
 	path: string[],
 	tableAlias: string | undefined = undefined,
-): { where: string } => {
+): { where: string; bindable: any[] } => {
 	// if field id represented as foreign table, do join and compare
 	const inlinedName = getInlineTableFieldName(query.key);
 	const tableField = table.fields.find(
@@ -1626,11 +1722,13 @@ const convertStateFieldQuery = (
 		query = cloneQuery(query);
 		query.key = [queryKey];
 		let whereBuilder: string[] = [];
+		let bindableBuilder: any[][] = [];
+
 		for (const ftable of foreignTables) {
 			if (ftable.table === table) {
 				throw new Error("Unexpected");
 			}
-			const { where } = convertQueryToSQLQuery(
+			const { where, bindable } = convertQueryToSQLQuery(
 				query,
 				tables,
 				ftable.table,
@@ -1639,10 +1737,15 @@ const convertStateFieldQuery = (
 				ftable.as,
 			);
 			whereBuilder.push(where);
+			bindableBuilder.push(bindable);
 		}
-		return { where: whereBuilder.join(" OR ") };
+		return {
+			where: whereBuilder.join(" OR "),
+			bindable: bindableBuilder.flat(),
+		};
 	}
 
+	let bindable: any[] = [];
 	const keyWithTable =
 		(tableAlias || table.name) + "." + escapeColumnName(inlinedName);
 	let where: string;
@@ -1650,11 +1753,14 @@ const convertStateFieldQuery = (
 		let statement = "";
 
 		if (query.method === types.StringMatchMethod.contains) {
-			statement = `${keyWithTable} LIKE '%${query.value}%'`;
+			statement = `${keyWithTable} LIKE ?`;
+			bindable.push(`%${query.value}%`);
 		} else if (query.method === types.StringMatchMethod.prefix) {
-			statement = `${keyWithTable} LIKE '${query.value}%'`;
+			statement = `${keyWithTable} LIKE ?`;
+			bindable.push(`${query.value}%`);
 		} else if (query.method === types.StringMatchMethod.exact) {
-			statement = `${keyWithTable} = '${query.value}'`;
+			statement = `${keyWithTable} = ?`;
+			bindable.push(`${query.value}`);
 		}
 		if (query.caseInsensitive) {
 			statement += " COLLATE NOCASE";
@@ -1663,31 +1769,39 @@ const convertStateFieldQuery = (
 	} else if (query instanceof types.ByteMatchQuery) {
 		// compare Blob compule with f.value
 
-		const statement = `${keyWithTable} = x'${toHexString(query.value)}'`;
+		const statement = `${keyWithTable} = ?`;
+		bindable.push(query.value);
 		where = statement;
 	} else if (query instanceof types.IntegerCompare) {
 		if (tableField!.type === "BLOB") {
 			// TODO perf
-			where = `hex(${keyWithTable}) LIKE '%${toHexString(new Uint8Array([Number(query.value.value)]))}%'`;
-		} else if (query.compare === types.Compare.Equal) {
-			where = `${keyWithTable} = ${query.value.value}`;
-		} else if (query.compare === types.Compare.Greater) {
-			where = `${keyWithTable} > ${query.value.value}`;
-		} else if (query.compare === types.Compare.Less) {
-			where = `${keyWithTable} < ${query.value.value}`;
-		} else if (query.compare === types.Compare.GreaterOrEqual) {
-			where = `${keyWithTable} >= ${query.value.value}`;
-		} else if (query.compare === types.Compare.LessOrEqual) {
-			where = `${keyWithTable} <= ${query.value.value}`;
+			where = `hex(${keyWithTable}) LIKE ?`;
+			bindable.push(
+				`%${toHexString(new Uint8Array([Number(query.value.value)]))}%`,
+			);
 		} else {
-			throw new Error(`Unsupported compare type: ${query.compare}`);
+			if (query.compare === types.Compare.Equal) {
+				where = `${keyWithTable} = ?`;
+			} else if (query.compare === types.Compare.Greater) {
+				where = `${keyWithTable} > ?`;
+			} else if (query.compare === types.Compare.Less) {
+				where = `${keyWithTable} < ?`;
+			} else if (query.compare === types.Compare.GreaterOrEqual) {
+				where = `${keyWithTable} >= ?`;
+			} else if (query.compare === types.Compare.LessOrEqual) {
+				where = `${keyWithTable} <= ?`;
+			} else {
+				throw new Error(`Unsupported compare type: ${query.compare}`);
+			}
+			bindable.push(query.value.value);
 		}
 	} else if (query instanceof types.IsNull) {
 		where = `${keyWithTable} IS NULL`;
 	} else if (query instanceof types.BoolQuery) {
-		where = `${keyWithTable} = ${query.value}`;
+		where = `${keyWithTable} = ?`;
+		bindable.push(query.value ? 1 : 0);
 	} else {
 		throw new Error("Unsupported query type: " + query.constructor.name);
 	}
-	return { where };
+	return { where, bindable };
 };

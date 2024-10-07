@@ -1,4 +1,4 @@
-import { CustomEvent, TypedEventEmitter } from "@libp2p/interface";
+import { TypedEventEmitter } from "@libp2p/interface";
 import type {
 	Connection,
 	Libp2pEvents,
@@ -18,7 +18,7 @@ import { Cache } from "@peerbit/cache";
 import {
 	PublicSignKey,
 	type SignatureWithKey,
-	getKeypairFromPeerId,
+	getKeypairFromPrivateKey,
 	getPublicKeyFromPeerId,
 	ready,
 	sha256Base64,
@@ -138,7 +138,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * An AbortController for controlled shutdown of the  treams
 	 */
-	private readonly inboundAbortController: AbortController;
+	private inboundAbortController: AbortController;
+	private outboundAbortController: AbortController;
 
 	private closed: boolean;
 
@@ -154,6 +155,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.publicKey = init.publicKey;
 		this.protocol = init.protocol;
 		this.inboundAbortController = new AbortController();
+		this.outboundAbortController = new AbortController();
+
 		this.closed = false;
 		this.connId = init.connId;
 		this.usedBandWidthTracker = new BandwidthTracker(10);
@@ -284,6 +287,20 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			},
 		);
 
+		/* this.rawInboundStream = stream
+		this.inboundAbortController = new AbortController()
+		this.inboundAbortController.signal.addEventListener('abort', () => {
+			this.rawInboundStream!.close()
+				.catch(err => {
+					this.rawInboundStream?.abort(err)
+				})
+		})
+
+		this.inboundStream = pipe(
+			this.rawInboundStream!,
+			(source) => lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
+		)
+ */
 		this.dispatchEvent(new CustomEvent("stream:inbound"));
 		return this.inboundStream;
 	}
@@ -301,8 +318,15 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			);
 			return;
 		}
+
 		this.rawOutboundStream = stream;
 		this.outboundStream = pushableLanes({ lanes: 2 });
+
+		this.outboundAbortController.signal.addEventListener("abort", () => {
+			this.rawOutboundStream?.close().catch((err) => {
+				this.rawOutboundStream?.abort(err);
+			});
+		});
 
 		pipe(
 			this.outboundStream,
@@ -327,7 +351,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		// End the outbound stream
 		if (this.outboundStream != null) {
 			await this.outboundStream.return();
-			await this.rawOutboundStream?.abort(new AbortError("Closed"));
+			this.rawOutboundStream?.abort(new AbortError("Closed"));
+			this.outboundAbortController.abort();
 		}
 
 		// End the inbound stream
@@ -472,7 +497,7 @@ export abstract class DirectStream<
 			routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD,
 		} = options || {};
 
-		const signKey = getKeypairFromPeerId(components.peerId);
+		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
 		this.sign = signKey.sign.bind(signKey);
 		this.peerId = components.peerId;
@@ -576,7 +601,7 @@ export abstract class DirectStream<
 				this.components.registrar.handle(multicodec, this._onIncomingStream, {
 					maxInboundStreams: this.maxInboundStreams,
 					maxOutboundStreams: this.maxOutboundStreams,
-					runOnTransientConnection: false,
+					runOnLimitedConnection: false,
 				}),
 			),
 		);
@@ -588,7 +613,7 @@ export abstract class DirectStream<
 				this.components.registrar.register(multicodec, {
 					onConnect: this.onPeerConnected.bind(this),
 					onDisconnect: this.onPeerDisconnected.bind(this),
-					notifyOnTransient: false,
+					notifyOnLimitedConnection: false,
 				}),
 			),
 		);
@@ -779,15 +804,6 @@ export abstract class DirectStream<
 		if (!stream) {
 			return;
 		}
-
-		this.addRouteConnection(
-			this.publicKeyHash,
-			peerKey.hashcode(),
-			peerKey,
-			-1,
-			+new Date(),
-			-1,
-		);
 	}
 
 	/**
@@ -796,7 +812,7 @@ export abstract class DirectStream<
 	public async onPeerConnected(peerId: PeerId, connection: Connection) {
 		if (
 			!this.isStarted() ||
-			connection.transient ||
+			connection.limits ||
 			connection.status !== "open"
 		) {
 			return;
@@ -985,6 +1001,15 @@ export abstract class DirectStream<
 			once: true,
 		});
 
+		this.addRouteConnection(
+			this.publicKeyHash,
+			publicKey.hashcode(),
+			publicKey,
+			-1,
+			+new Date(),
+			-1,
+		);
+
 		return peerStreams;
 	}
 
@@ -1022,7 +1047,9 @@ export abstract class DirectStream<
 		try {
 			await pipe(stream, async (source) => {
 				for await (const data of source) {
-					this.processRpc(peerId, peerStreams, data).catch(logError);
+					this.processRpc(peerId, peerStreams, data).catch((e) => {
+						logError(e);
+					});
 				}
 			});
 		} catch (err: any) {
@@ -1246,6 +1273,7 @@ export abstract class DirectStream<
 			const signers = message.header.signatures!.publicKeys.map((x) =>
 				x.hashcode(),
 			);
+
 			await this.publishMessage(
 				this.publicKey,
 				await new ACK({

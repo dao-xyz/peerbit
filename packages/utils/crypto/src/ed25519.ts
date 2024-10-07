@@ -1,7 +1,7 @@
 import { field, fixedArray, variant } from "@dao-xyz/borsh";
-import { supportedKeys } from "@libp2p/crypto/keys";
-import type { Ed25519PeerId, PeerId } from "@libp2p/interface";
-import { peerIdFromKeys } from "@libp2p/peer-id";
+import { publicKeyFromRaw } from "@libp2p/crypto/keys";
+import type { PeerId } from "@libp2p/interface";
+import { peerIdFromPublicKey } from "@libp2p/peer-id";
 import sodium from "libsodium-wrappers";
 import { concat, equals } from "uint8arrays";
 import { coerce } from "./bytes.js";
@@ -36,10 +36,8 @@ export class Ed25519PublicKey extends PublicSignKey {
 		return "ed25119p/" + toHexString(this.publicKey);
 	}
 
-	toPeerId(): Promise<PeerId> {
-		return peerIdFromKeys(
-			new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey).bytes,
-		);
+	toPeerId(): PeerId {
+		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey));
 	}
 
 	/* Don't use keyobject for publicKeys becuse it takes longer time to derive it compare to verifying with sodium
@@ -60,7 +58,7 @@ export class Ed25519PublicKey extends PublicSignKey {
 		}
 		if (id.type === "Ed25519") {
 			return new Ed25519PublicKey({
-				publicKey: coerce(id.publicKey.slice(4)),
+				publicKey: coerce(id.publicKey.raw),
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -94,18 +92,6 @@ export class Ed25519PrivateKey extends PrivateSignKey {
 	}
 
 	keyObject: any; // crypto.KeyObject;
-
-	static fromPeerID(id: PeerId) {
-		if (!id.privateKey) {
-			throw new Error("Missing privateKey key");
-		}
-		if (id.type === "Ed25519") {
-			return new Ed25519PrivateKey({
-				privateKey: coerce(id.privateKey.slice(4, 36)),
-			});
-		}
-		throw new Error("Unsupported key type: " + id.type);
-	}
 }
 
 @variant(0)
@@ -163,13 +149,6 @@ export class Ed25519Keypair extends Keypair implements Identity {
 		return false;
 	}
 
-	static fromPeerId(peerId: PeerId | Ed25519PeerId) {
-		return new Ed25519Keypair({
-			privateKey: Ed25519PrivateKey.fromPeerID(peerId),
-			publicKey: Ed25519PublicKey.fromPeerId(peerId),
-		});
-	}
-
 	_privateKeyPublicKey!: Uint8Array; // length 64
 	get privateKeyPublicKey(): Uint8Array {
 		return (
@@ -181,14 +160,7 @@ export class Ed25519Keypair extends Keypair implements Identity {
 		);
 	}
 
-	toPeerId(): Promise<PeerId> {
-		return peerIdFromKeys(
-			new supportedKeys["ed25519"].Ed25519PublicKey(this.publicKey.publicKey)
-				.bytes,
-			new supportedKeys["ed25519"].Ed25519PrivateKey(
-				this.privateKeyPublicKey,
-				this.publicKey.publicKey,
-			).bytes,
-		);
+	toPeerId(): PeerId {
+		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey.publicKey));
 	}
 }

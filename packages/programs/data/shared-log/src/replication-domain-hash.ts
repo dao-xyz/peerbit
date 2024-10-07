@@ -1,6 +1,7 @@
 import { BinaryReader, BinaryWriter } from "@dao-xyz/borsh";
 import { sha256 } from "@peerbit/crypto";
 import type { ShallowOrFullEntry } from "@peerbit/log";
+import type { EntryReplicated } from "./ranges.js";
 import {
 	type Log,
 	type ReplicationDomain,
@@ -15,7 +16,7 @@ export const hashToU32 = (hash: Uint8Array) => {
 };
 
 const hashTransformer: ReplicationDomainMapper<any> = async (
-	entry: ShallowOrFullEntry<any>,
+	entry: ShallowOrFullEntry<any> | EntryReplicated,
 ) => {
 	// For a fixed set or members, the choosen leaders will always be the same (address invariant)
 	// This allows for that same content is always chosen to be distributed to same peers, to remove unecessary copies
@@ -29,6 +30,7 @@ const hashTransformer: ReplicationDomainMapper<any> = async (
 	// convert hash of slot to a number
 	return hashToU32(seed);
 };
+
 export type ReplicationDomainHash = ReplicationDomain<undefined, any>;
 export const createReplicationDomainHash: () => ReplicationDomainHash = () => {
 	return {

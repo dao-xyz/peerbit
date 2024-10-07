@@ -1,4 +1,5 @@
 export * from "@peerbit/indexer-interface";
+export * from "@peerbit/document-interface";
 export * from "./program.js";
 export type {
 	CanRead,

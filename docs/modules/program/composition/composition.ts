@@ -119,7 +119,7 @@ const client = await Peerbit.create();
 const forum = await client.open(new Forum("dforum"));
 
 const channel = new Channel("general");
-await forum.channels.put(channel);
+await forum.channels.put(channel, { replicate: true });
 await channel.db.posts.put(new Post("Hello world!"));
 
 // Another peer

@@ -1,5 +1,4 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { CustomEvent } from "@libp2p/interface";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { type AppendOptions, type Change, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";

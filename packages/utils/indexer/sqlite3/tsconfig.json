@@ -4,7 +4,6 @@
 		"checkJs": false,
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
-		"strictNullChecks": false,
 		"outDir": "dist"
 	},
 	"include": ["src", "test", "benchmark"]

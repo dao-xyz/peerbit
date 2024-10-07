@@ -5,7 +5,6 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { CustomEvent } from "@libp2p/interface";
 import { AccessError } from "@peerbit/crypto";
 import * as documentsTypes from "@peerbit/document-interface";
 import * as indexerTypes from "@peerbit/indexer-interface";

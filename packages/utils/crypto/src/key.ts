@@ -19,7 +19,7 @@ export abstract class Keypair {
 		throw new Error("Not implemented");
 	}
 
-	toPeerId(): Promise<PeerId> {
+	toPeerId(): PeerId {
 		throw new Error("Not implemented");
 	}
 
@@ -39,7 +39,7 @@ export abstract class PublicSignKey implements Key {
 		return this._hashcode || (this._hashcode = sha256Base64Sync(this.bytes));
 	}
 
-	toPeerId(): Promise<PeerId> {
+	toPeerId(): PeerId {
 		throw new Error("Not implemented");
 	}
 }

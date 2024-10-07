@@ -35,17 +35,18 @@ class Statement implements IStatement {
 
 	async bind(values: any[]) {
 		await this.statement.bind(values);
-		return this;
+		return this as IStatement;
 	}
 
 	async finalize() {
-		if ((await this.statement.finalize()) > 0) {
+		const out = await this.statement.finalize();
+		if (out != null && out > 0) {
 			throw new Error("Error finalizing statement");
 		}
 	}
 
 	get(values?: BindableValue[]) {
-		if (values) {
+		if (values && values?.length > 0) {
 			this.statement.bind(values);
 		}
 		let step = this.statement.step();
@@ -66,7 +67,7 @@ class Statement implements IStatement {
 
 	async reset() {
 		await this.statement.reset();
-		return this;
+		return this as IStatement;
 	}
 
 	all(values: BindableValue[]) {
@@ -92,7 +93,7 @@ const log = (...args: any) => console.log(...args);
 // eslint-disable-next-line no-console
 const error = (...args: any) => console.error(...args);
 
-let poolUtil: SAHPoolUtil = undefined;
+let poolUtil: SAHPoolUtil | undefined = undefined;
 let sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | undefined =
 	undefined;
 
@@ -122,14 +123,14 @@ const create = async (directory?: string) => {
 
 			poolUtil =
 				poolUtil ||
-				(await sqlite3.installOpfsSAHPoolVfs({
+				(await sqlite3!.installOpfsSAHPoolVfs({
 					directory: "peerbit/sqlite", // encodeName("peerbit")
 				}));
 
 			await poolUtil.reserveMinimumCapacity(100);
 			sqliteDb = new poolUtil.OpfsSAHPoolDb(dbFileName);
 		} else {
-			sqliteDb = new sqlite3.oo1.DB(":memory:");
+			sqliteDb = new sqlite3!.oo1.DB(":memory:");
 		}
 
 		sqliteDb.exec("PRAGMA journal_mode = WAL");
@@ -139,24 +140,30 @@ const create = async (directory?: string) => {
 	return {
 		close,
 		exec: (sql: string) => {
-			return sqliteDb.exec(sql);
+			return sqliteDb!.exec(sql);
 		},
 		open,
-		prepare: (sql: string, id?: string) => {
+		prepare: async (sql: string, id?: string) => {
 			if (id == null) {
 				id = uuid();
 			}
-			const statement = sqliteDb.prepare(sql);
+			let prev = statements.get(id);
+			if (prev) {
+				await prev.reset();
+				return prev;
+			}
+
+			const statement = sqliteDb!.prepare(sql);
 			const wrappedStatement = new Statement(statement, id);
 			statements.set(id, wrappedStatement);
 			return wrappedStatement;
 		},
 		get(sql: string) {
-			return sqliteDb.exec({ sql, rowMode: "array" });
+			return sqliteDb!.exec({ sql, rowMode: "array" });
 		},
 
 		run(sql: string, bind: any[]) {
-			return sqliteDb.exec(sql, { bind, rowMode: "array" });
+			return sqliteDb!.exec(sql, { bind, rowMode: "array" });
 		},
 		status: () => (sqliteDb?.isOpen() ? "open" : "closed"),
 		statements,

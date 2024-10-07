@@ -4,7 +4,6 @@ import {
 	type Index,
 	type IndexEngineInitProperties,
 	type Indices,
-	SearchRequest,
 	getIdProperty,
 	id,
 } from "@peerbit/indexer-interface";
@@ -77,11 +76,11 @@ const boolQueryBenchmark = async (
 		.add("bool query - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				await boolIndexPrefilled.store.query(
-					new SearchRequest({
+				await (
+					await boolIndexPrefilled.store.iterate({
 						query: new BoolQuery({ key: "bool", value: out }),
-					}),
-				);
+					})
+				).all();
 				deferred.resolve();
 			},
 			defer: true,
@@ -179,12 +178,11 @@ const nestedBoolQueryBenchmark = async (
 		.add("nested bool query - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				await boolIndexPrefilled.store.query(
-					new SearchRequest({
-						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-						fetch: 10,
-					}),
-				);
+				const iterator = await boolIndexPrefilled.store.iterate({
+					query: new BoolQuery({ key: ["nested", "bool"], value: out }),
+				});
+				await iterator.next(10);
+				await iterator.close();
 				deferred.resolve();
 			},
 			defer: true,
@@ -279,12 +277,11 @@ const shapedQueryBenchmark = async (
 		.add("unshaped - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				const results = await boolIndexPrefilled.store.query(
-					new SearchRequest({
-						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-						fetch,
-					}),
-				);
+				let iterator = await boolIndexPrefilled.store.iterate({
+					query: new BoolQuery({ key: ["nested", "bool"], value: out }),
+				});
+				const results = await iterator.next(fetch);
+				await iterator.close();
 				if (results.results.length !== fetch) {
 					throw new Error("Missing results");
 				}
@@ -297,13 +294,14 @@ const shapedQueryBenchmark = async (
 		.add("shaped - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				const results = await boolIndexPrefilled.store.query(
-					new SearchRequest({
+				const iterator = await boolIndexPrefilled.store.iterate(
+					{
 						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-						fetch,
-					}),
+					},
 					{ shape: { id: true } },
 				);
+				const results = await iterator.next(fetch);
+				await iterator.close();
 				if (results.results.length !== fetch) {
 					throw new Error("Missing results");
 				}

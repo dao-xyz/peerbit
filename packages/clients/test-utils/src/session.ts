@@ -66,6 +66,9 @@ export class TestSession {
 					...o?.libp2p?.services,
 				} as any, /// TODO types
 				streamMuxers: [yamux()],
+				connectionMonitor: {
+					enabled: false,
+				},
 			};
 		};
 		let optionsWithServices:

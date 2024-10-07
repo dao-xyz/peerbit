@@ -1,7 +1,6 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { Wallet } from "@ethersproject/wallet";
-import { supportedKeys } from "@libp2p/crypto/keys";
-import { createSecp256k1PeerId } from "@libp2p/peer-id-factory";
+import { generateKeyPair } from "@libp2p/crypto/keys";
 import { expect } from "chai";
 import sodium from "libsodium-wrappers";
 import {
@@ -14,12 +13,12 @@ import {
 } from "../src/ed25519-sign.js";
 import {
 	Ed25519Keypair,
-	Ed25519PrivateKey,
 	Ed25519PublicKey,
 	Secp256k1Keypair,
 	Secp256k1PublicKey,
 	SignatureWithKey,
 	X25519Keypair,
+	getKeypairFromPrivateKey,
 	verify,
 	verifySignatureSecp256k1,
 } from "../src/index.js";
@@ -40,11 +39,7 @@ describe("Ed25519", () => {
 		it("keypair", async () => {
 			const kp = await Ed25519Keypair.create();
 			const peerId = await kp.toPeerId();
-			const privateKeyFromPeerId = Ed25519PrivateKey.fromPeerID(peerId);
-			const keyPairFromPeerId = Ed25519Keypair.fromPeerId(peerId);
-			expect(keyPairFromPeerId.equals(kp)).to.be.true;
-			expect(privateKeyFromPeerId.equals(keyPairFromPeerId.privateKey)).to.be
-				.true;
+			expect(peerId.publicKey!.raw).to.deep.eq(kp.publicKey.publicKey);
 		});
 
 		it("publickey", async () => {
@@ -216,24 +211,13 @@ describe("Sepck2561k1", () => {
 		expect(isNotVerified).to.be.false;
 	});
 	it("keypair sign", async () => {
-		const peerId = await createSecp256k1PeerId();
-		const keypair = Secp256k1Keypair.fromPeerId(peerId);
-		const privateKey = new supportedKeys["secp256k1"].Secp256k1PrivateKey(
-			peerId.privateKey!.slice(4),
-		);
-		const publicKeyComputed = privateKey.public;
-		expect(publicKeyComputed.bytes).to.deep.equal(peerId.publicKey);
+		const privateKeyGenerated = await generateKeyPair("secp256k1");
+		const keypair = getKeypairFromPrivateKey(privateKeyGenerated);
 		const signature = await keypair.sign(data, PreHash.ETH_KECCAK_256);
 		expect(await verifySignatureSecp256k1(signature, data)).to.be.true;
 	});
 
 	describe("PeerId", () => {
-		it("keypair", async () => {
-			const kp = await Secp256k1Keypair.create();
-			const peerId = await kp.toPeerId();
-			expect(Secp256k1Keypair.fromPeerId(peerId).equals(kp));
-		});
-
 		it("publickey", async () => {
 			const kp = await Secp256k1Keypair.create();
 			const peerId = await kp.publicKey.toPeerId();

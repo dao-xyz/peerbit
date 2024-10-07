@@ -1,12 +1,13 @@
 import { type Constructor } from "@dao-xyz/borsh";
 import type { PublicSignKey } from "@peerbit/crypto";
-import { delay } from "@peerbit/time";
+import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import {
 	type EntryWithRefs,
 	ExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
-import type { SharedLog } from "../src/index.js";
+import { maxReplicas, type SharedLog } from "../src/index.js";
 import type { TransportMessage } from "../src/message";
+import { expect } from 'chai'
 
 export const collectMessages = (log: SharedLog<any>) => {
 	const messages: [TransportMessage, PublicSignKey][] = [];
@@ -66,7 +67,7 @@ export const waitForConverged = async (
 	let lastResult = undefined;
 	let c = 0;
 	let ok = 0;
-	for (;;) {
+	for (; ;) {
 		const current = await fn();
 		if (lastResult === current) {
 			ok += 1;
@@ -84,3 +85,79 @@ export const waitForConverged = async (
 		}
 	}
 };
+export const getUnionSize = async (dbs: { log: SharedLog<any> }[], expectedUnionSize: number) => {
+	const union = new Set<string>();
+	for (const db of dbs) {
+		for (const value of await db.log.log.toArray()) {
+			union.add(value.hash);
+		}
+	}
+	return union.size
+
+}
+export const checkBounded = async (
+	entryCount: number,
+	lower: number,
+	higher: number,
+	...dbs: { log: SharedLog<any> }[]
+) => {
+	for (const [_i, db] of dbs.entries()) {
+		await waitForResolved(
+			() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+			{
+				timeout: 25 * 1000,
+			},
+		);
+	}
+
+	const checkConverged = async (db: { log: SharedLog<any> }) => {
+		const a = db.log.log.length;
+		await delay(100); // arb delay
+		return a === db.log.log.length;
+	};
+
+	for (const [_i, db] of dbs.entries()) {
+		await waitFor(() => checkConverged(db), {
+			timeout: 25000,
+			delayInterval: 2500,
+		});
+	}
+
+	for (const [_i, db] of dbs.entries()) {
+		await waitForResolved(() =>
+			expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+		);
+		await waitForResolved(() =>
+			expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+		);
+	}
+
+	await checkReplicas(
+		dbs,
+		maxReplicas(dbs[0].log, [...(await dbs[0].log.log.toArray())]),
+		entryCount,
+	);
+};
+
+
+export const checkReplicas = async (
+	dbs: { log: SharedLog<any> }[],
+	minReplicas: number,
+	entryCount: number,
+) => {
+	await waitForResolved(async () => {
+		const map = new Map<string, number>();
+		for (const db of dbs) {
+			for (const value of await db.log.log.toArray()) {
+				expect(await db.log.log.blocks.has(value.hash)).to.be.true;
+				map.set(value.hash, (map.get(value.hash) || 0) + 1);
+			}
+		}
+		for (const [_k, v] of map) {
+			expect(v).greaterThanOrEqual(minReplicas);
+			expect(v).lessThanOrEqual(dbs.length);
+		}
+		expect(map.size).equal(entryCount);
+	});
+};
+

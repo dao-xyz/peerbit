@@ -1,8 +1,4 @@
-import {
-	CodeError,
-	CustomEvent,
-	type PeerId as Libp2pPeerId,
-} from "@libp2p/interface";
+import { type PeerId as Libp2pPeerId } from "@libp2p/interface";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { logger as logFn } from "@peerbit/logger";
 import {
@@ -234,11 +230,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		to?: PublicSignKey,
 	): Promise<void> {
 		if (!this.started) {
-			throw new CodeError("not started yet", "ERR_NOT_STARTED_YET");
+			throw new NotStartedError();
 		}
 
 		if (topic == null) {
-			throw new CodeError("topic is required", "ERR_NOT_VALID_TOPIC");
+			throw new Error("ERR_NOT_VALID_TOPIC");
 		}
 
 		if (topic.length === 0) {

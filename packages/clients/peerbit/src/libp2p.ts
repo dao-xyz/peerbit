@@ -1,5 +1,5 @@
+import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { noise } from "@dao-xyz/libp2p-noise";
 import type { CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { DirectBlock } from "@peerbit/blocks";
@@ -59,7 +59,6 @@ export const createLibp2pExtended = (
 	return createLibp2p({
 		...opts,
 		connectionManager: {
-			minConnections: 0,
 			...opts.connectionManager,
 		},
 		addresses: {
@@ -67,7 +66,7 @@ export const createLibp2pExtended = (
 			...opts.addresses,
 		},
 		transports: opts.transports || transports(),
-		connectionEncryption: opts.connectionEncryption || [noise()],
+		connectionEncrypters: opts.connectionEncrypters || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],
 		services: {
 			pubsub:

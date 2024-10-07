@@ -19,12 +19,14 @@ import {
 } from "@peerbit/document-interface";
 import {
 	AbstractSearchRequest,
-	ByteMatchQuery,
 	CloseIteratorRequest,
 	CollectNextRequest,
+	SearchRequest,
+} from "@peerbit/document-interface";
+import {
+	ByteMatchQuery,
 	Compare,
 	IntegerCompare,
-	SearchRequest,
 	Sort,
 	SortDirection,
 	StringMatch,
@@ -941,7 +943,8 @@ describe("index", () => {
 
 						expect(results).to.have.length(5);
 						expect(await stores[1].docs.index.getSize()).equal(5);
-						await stores[1].docs.log.distribute();
+						await ((stores[1].docs.log as any)["distribute"] as any)();
+
 						await delay(2000); // wait some time so that pruningacn take place
 						expect(await stores[1].docs.index.getSize()).equal(5);
 					});
@@ -1424,7 +1427,7 @@ describe("index", () => {
 						await writeStore.docs.put(
 							new Document({ id, data: randomBytes(msgSize) }),
 						);
-						await writeStore.docs.log.distribute();
+						await ((writeStore.docs.log as any)["distribute"] as any)();
 						interval = setTimeout(() => insertFn(), lag / 2);
 					};
 					insertFn();
@@ -1578,7 +1581,8 @@ describe("index", () => {
 				const resp = await stores[storeIndex].docs.put(doc);
 				// --- wait for all others to "want" this entry ---
 
-				await stores[storeIndex].docs.log.distribute(); //  we need to call this to make other peers know that they are missing out of this hashes
+				await ((stores[storeIndex].docs.log as any)["distribute"] as any)(); //  we need to call this to make other peers know that they are missing out of this hashes
+
 				// because we have overriding the append to not send entries right away
 
 				for (let i = 0; i < stores.length; i++) {
@@ -1772,7 +1776,7 @@ describe("index", () => {
 				});
 				const iterator = stores[0].docs.index.iterate(req);
 				let acc: Document[] = [];
-				while (iterator.done() === false) {
+				while (iterator.done() !== true) {
 					const v = await iterator.next(20);
 					acc = [...acc, ...v];
 				}

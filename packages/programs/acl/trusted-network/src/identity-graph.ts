@@ -1,7 +1,6 @@
 import { field, fixedArray, serialize, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { Documents } from "@peerbit/document";
-import { SearchRequest, StringMatch } from "@peerbit/indexer-interface";
+import { Documents, SearchRequest, StringMatch } from "@peerbit/document";
 import { concat } from "uint8arrays";
 
 export type RelationResolver = {

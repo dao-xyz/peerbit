@@ -1,5 +1,4 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
-import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { EntryType } from "../src/entry-type.js";
 import { Entry } from "../src/entry.js";
@@ -112,6 +111,26 @@ describe("delete", function () {
 				encoding: JSON_ENCODING,
 				onChange: async (change) => {
 					if (change.removed.length > 0) {
+						deleted += change.removed.length;
+					}
+				},
+			});
+			const { entry: e1 } = await log.append(new Uint8Array([1]));
+
+			await log.remove(e1);
+			await log.remove(e1);
+
+			expect(deleted).to.equal(1);
+		});
+
+		it("if already removed no change", async () => {
+			const log = new Log();
+			let deleted: number = 0;
+
+			await log.open(store, signKey, {
+				encoding: JSON_ENCODING,
+				onChange: async (change) => {
+					if (change.removed.length > 0) {
 						// try to resolve the full entry
 						await Promise.all(
 							change.removed.map(async (e) => {
@@ -131,7 +150,55 @@ describe("delete", function () {
 
 			await log.remove(e2);
 
-			await waitForResolved(() => expect(deleted).to.equal(1));
+			expect(deleted).to.equal(1);
+		});
+
+		it("concurrently after join", async () => {
+			const log1 = new Log();
+			const log2 = new Log();
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
+			await log2.open(store, signKey, { encoding: JSON_ENCODING });
+
+			const { entry: e1 } = await log2.append(new Uint8Array([1]), {
+				meta: { next: [] },
+			});
+			const { entry: e2 } = await log2.append(new Uint8Array([2]), {
+				meta: { next: [] },
+			});
+
+			await log1.join(log2);
+			expect((await log1.toArray()).map((x) => x.hash)).to.deep.equal([
+				e1.hash,
+				e2.hash,
+			]);
+			expect(log1.length).to.equal(2);
+			const p1 = log1.remove(e1, { recursively: true });
+			const p2 = log1.remove(e2, { recursively: true });
+			await Promise.all([p1, p2]);
+			expect((await log1.toArray()).map((x) => x.hash)).to.be.empty;
+			expect(log1.length).to.equal(0);
+		});
+
+		it("concurrently delete same after join", async () => {
+			const log1 = new Log();
+			const log2 = new Log();
+			await log1.open(store, signKey, { encoding: JSON_ENCODING });
+			await log2.open(store, signKey, { encoding: JSON_ENCODING });
+
+			const { entry: e1 } = await log2.append(new Uint8Array([1]), {
+				meta: { next: [] },
+			});
+
+			await log1.join(log2);
+			expect((await log1.toArray()).map((x) => x.hash)).to.deep.equal([
+				e1.hash,
+			]);
+			expect(log1.length).to.equal(1);
+			const p1 = log1.remove(e1, { recursively: true });
+			const p2 = log1.remove(e1, { recursively: true });
+			await Promise.all([p1, p2]);
+			expect((await log1.toArray()).map((x) => x.hash)).to.be.empty;
+			expect(log1.length).to.equal(0);
 		});
 	});
 

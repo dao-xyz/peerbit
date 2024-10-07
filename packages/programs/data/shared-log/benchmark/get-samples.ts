@@ -2,8 +2,7 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import type { Index } from "@peerbit/indexer-interface";
 import { create as createIndex } from "@peerbit/indexer-sqlite3";
 import B from "benchmark";
-import { getSamples } from "../src/ranges.js";
-import { ReplicationRangeIndexable } from "../src/replication.js";
+import { ReplicationRangeIndexable, getSamples } from "../src/ranges.js";
 
 // Run with "node --loader ts-node/esm ./benchmark/get-samples.ts"
 

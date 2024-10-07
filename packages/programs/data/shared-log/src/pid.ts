@@ -1,8 +1,8 @@
 export class PIDReplicationController {
-	integral: number;
-	prevError: number;
-	prevMemoryUsage: number;
-	prevTotalFactor: number;
+	integral!: number;
+	prevError!: number;
+	prevMemoryUsage!: number;
+	prevTotalFactor!: number;
 	kp: number;
 	ki: number;
 	kd: number;
@@ -43,7 +43,7 @@ export class PIDReplicationController {
 		this.prevMemoryUsage = memoryUsage;
 
 		const estimatedTotalSize =
-			currentFactor > 0 ? memoryUsage / currentFactor : 0;
+			currentFactor > 0 ? memoryUsage / currentFactor : 1e5;
 
 		let errorMemory = 0;
 
@@ -53,6 +53,7 @@ export class PIDReplicationController {
 					? Math.max(Math.min(1, this.maxMemoryLimit / estimatedTotalSize), 0) -
 						currentFactor
 					: 0;
+			// Math.max(Math.min((this.maxMemoryLimit - memoryUsage) / 100e5, 1), -1)// Math.min(Math.max((this.maxMemoryLimit - memoryUsage, 0) / 10e5, 0), 1);
 		}
 
 		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
@@ -91,6 +92,7 @@ export class PIDReplicationController {
 			totalError =
 				errorMemory * errorMemoryFactor + totalError * (1 - errorMemoryFactor);
 		}
+		// (this.id === "rRcHKy8yCun+32/dvRAkNMqvmXVb/N/X3Sis/wkDxKQ=") && console.log("MEMORY ERROR ? ", { errorMemory, errorMemoryFactor, memoryLimit: this.maxMemoryLimit, estimatedTotalSize, currentFactor, memoryUsage });
 
 		// Computer is getting too hot?
 		if (this.maxCPUUsage != null && (cpuUsage || 0) > this.maxCPUUsage) {
@@ -132,26 +134,26 @@ export class PIDReplicationController {
 			this.integral = 0;
 		}
 
-		/* 	
-		console.log({
-				id: this.id,
-				currentFactor,
-				newFactor,
-				factorDiff: newFactor - currentFactor,
-				pTerm,
-				dTerm,
-				iTerm,
-				totalError,
-				errorTarget: errorBalance,
-				errorCoverage,
-				errorMemory,
-				errorCPU,
-				peerCount,
-				totalFactor,
-				targetScaler: balanceErrorScaler,
-				memoryUsage,
-				estimatedTotalSize
-			}); */
+		/* console.log({
+			id: this.id,
+			currentFactor,
+			newFactor,
+			factorDiff: newFactor - currentFactor,
+			pTerm,
+			dTerm,
+			iTerm,
+			totalError,
+			errorFromEven,
+			errorTarget: errorBalance,
+			errorCoverage,
+			errorMemory,
+			errorCPU,
+			peerCount,
+			totalFactor,
+			targetScaler: balanceErrorScaler,
+			memoryUsage,
+			estimatedTotalSize,
+		}); */
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

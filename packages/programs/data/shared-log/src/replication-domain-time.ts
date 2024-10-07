@@ -1,4 +1,5 @@
 import type { ShallowOrFullEntry } from "@peerbit/log";
+import type { EntryReplicated } from "./ranges.js";
 import {
 	type ReplicationDomain,
 	type ReplicationDomainMapper,
@@ -27,7 +28,7 @@ export const fromEntry = (
 	const scalar = scalarNanoToUnit[unit];
 	const originTime = +origin / scalarMilliToUnit[unit];
 
-	const fn = (entry: ShallowOrFullEntry<any>) => {
+	const fn = (entry: ShallowOrFullEntry<any> | EntryReplicated) => {
 		const cursor = entry.meta.clock.timestamp.wallTime / scalar;
 		return Math.round(Number(cursor) - originTime);
 	};

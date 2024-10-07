@@ -5,7 +5,7 @@ import { EventStore } from "./stores";
 @variant("test_simple")
 export class SimpleStoreContract extends Program {
 	@field({ type: EventStore })
-	store: EventStore<string>;
+	store!: EventStore<string>;
 
 	constructor(properties?: { store: EventStore<string> }) {
 		super();

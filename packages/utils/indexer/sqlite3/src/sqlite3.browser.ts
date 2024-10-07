@@ -93,13 +93,14 @@ class ProxyStatement implements IStatement {
 
 class ProxyDatabase implements IDatabase {
 	statements: Map<string, ProxyStatement> = new Map();
+
 	resolvers: {
 		[hash in string]: {
 			resolve: (...args: any) => void;
 			reject: (...args: any) => void;
 		};
 	} = {};
-	databaseId: string;
+	databaseId!: string;
 	constructor(
 		readonly send: <T>(
 			message: messages.DatabaseMessages | messages.StatementMessages,
@@ -125,7 +126,14 @@ class ProxyDatabase implements IDatabase {
 		});
 	}
 
-	async prepare(sql: string) {
+	async prepare(sql: string, id?: string) {
+		if (id != null) {
+			const prev = this.statements.get(id);
+			if (prev) {
+				await prev.reset();
+				return prev;
+			}
+		}
 		const statementId = await this.send<string>({
 			type: "prepare",
 			sql,
@@ -138,6 +146,11 @@ class ProxyDatabase implements IDatabase {
 			statementId,
 		);
 		this.statements.set(statementId, statement);
+
+		if (id != null) {
+			this.statements.set(id, statement);
+		}
+
 		return statement;
 	}
 

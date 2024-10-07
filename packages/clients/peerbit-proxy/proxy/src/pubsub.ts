@@ -1,5 +1,5 @@
 import { deserialize, field, option, variant, vec } from "@dao-xyz/borsh";
-import { CustomEvent, type PeerId } from "@libp2p/interface";
+import { type PeerId } from "@libp2p/interface";
 import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
 import {
 	DataEvent,

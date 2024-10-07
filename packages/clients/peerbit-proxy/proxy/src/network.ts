@@ -1,11 +1,12 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
 import type { PeerId } from "@libp2p/interface";
-import { peerIdFromBytes } from "@libp2p/peer-id";
 import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
 import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
 	type Identity,
+	PublicSignKey,
+	getPublicKeyFromPeerId,
 } from "@peerbit/crypto";
 import { Message } from "./message.js";
 
@@ -17,16 +18,16 @@ export class REQ_PeerId extends NetworkMessage {}
 
 @variant(1)
 export class RESP_PeerId extends NetworkMessage {
-	@field({ type: Uint8Array })
-	private _bytes: Uint8Array;
+	@field({ type: PublicSignKey })
+	private _publicKey: PublicSignKey;
 
 	private _peerId: PeerId;
 	get peerId(): PeerId {
-		return this._peerId || (this._peerId = peerIdFromBytes(this._bytes));
+		return this._peerId || (this._peerId = this._publicKey.toPeerId());
 	}
 	constructor(peerId: PeerId) {
 		super();
-		this._bytes = peerId.toBytes();
+		this._publicKey = getPublicKeyFromPeerId(peerId);
 	}
 }
 

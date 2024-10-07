@@ -9,13 +9,18 @@ export type Database = {
 	prepare: (sql: string, id?: string) => Promise<Statement> | Statement;
 	close: (err?: (err: any) => any) => Promise<any> | any;
 	open(): Promise<any> | any;
+	statements: {
+		get: (id: string) => Statement | undefined;
+		size: number;
+	};
 	status: () => Promise<"open" | "closed"> | "open" | "closed";
 };
 
-export type StatementGetResult = { [key: string]: SQLLiteValue };
+export type StatementGetResult = { [key: string]: SQLLiteValue } | undefined;
 
 export type Statement = {
 	id: string;
+
 	bind: (
 		values: BindableValue[],
 		err?: (err: any) => any,
