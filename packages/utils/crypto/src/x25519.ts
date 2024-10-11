@@ -148,11 +148,6 @@ export class X25519Keypair extends Keypair {
 		return kp;
 	}
 
-	static fromPeerId(peerId: PeerId) {
-		const ed = Ed25519Keypair.fromPeerId(peerId);
-		return X25519Keypair.from(ed);
-	}
-
 	equals(other: Keypair) {
 		if (other instanceof X25519Keypair) {
 			return (
