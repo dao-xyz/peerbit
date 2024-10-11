@@ -6,13 +6,12 @@ import {
 	splitSignature,
 } from "@ethersproject/bytes";
 import { Wallet } from "@ethersproject/wallet";
-import { generateKeyPair, supportedKeys } from "@libp2p/crypto/keys";
+import { generateKeyPair, publicKeyFromRaw } from "@libp2p/crypto/keys";
 import { type PeerId } from "@libp2p/interface";
-import { peerIdFromKeys } from "@libp2p/peer-id";
+import { peerIdFromPublicKey } from "@libp2p/peer-id";
 import utf8 from "@protobufjs/utf8";
 import _ec from "elliptic";
 import { equals } from "uint8arrays";
-import { coerce } from "./bytes.js";
 import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
 import { PreHash, prehashFn } from "./prehash.js";
 import { SignatureWithKey } from "./signature.js";
@@ -62,10 +61,8 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		return "sepc256k1/" + toHexString(this.publicKey);
 	}
 
-	toPeerId(): Promise<PeerId> {
-		return peerIdFromKeys(
-			new supportedKeys["secp256k1"].Secp256k1PublicKey(this.publicKey).bytes,
-		);
+	toPeerId(): PeerId {
+		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey));
 	}
 
 	static fromPeerId(id: PeerId) {
@@ -74,7 +71,7 @@ export class Secp256k1PublicKey extends PublicSignKey {
 		}
 		if (id.type === "secp256k1") {
 			return new Secp256k1PublicKey({
-				publicKey: id.publicKey.slice(4), // computeAddress(!.slice(4)),
+				publicKey: id.publicKey.raw,
 			});
 		}
 		throw new Error("Unsupported key type: " + id.type);
@@ -105,18 +102,6 @@ export class Secp256k1PrivateKey extends PrivateSignKey {
 	toString(): string {
 		return "secp256k1s/" + toHexString(this.privateKey);
 	}
-
-	static from(id: PeerId) {
-		if (!id.privateKey) {
-			throw new Error("Missing privateKey key");
-		}
-		if (id.type === "secp256k1") {
-			return new Secp256k1PrivateKey({
-				privateKey: coerce(id.privateKey.slice(4)),
-			});
-		}
-		throw new Error("Unsupported key type: " + id.type);
-	}
 }
 
 @variant(2)
@@ -141,10 +126,10 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		const generated = await generateKeyPair("secp256k1");
 		const kp = new Secp256k1Keypair({
 			publicKey: new Secp256k1PublicKey({
-				publicKey: generated.public.marshal(),
+				publicKey: generated.publicKey.raw,
 			}),
 			privateKey: new Secp256k1PrivateKey({
-				privateKey: generated.marshal(),
+				privateKey: generated.raw,
 			}),
 		});
 
@@ -182,23 +167,8 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		return false;
 	}
 
-	static fromPeerId(peerId: PeerId) {
-		return new Secp256k1Keypair({
-			privateKey: Secp256k1PrivateKey.from(peerId),
-			publicKey: Secp256k1PublicKey.fromPeerId(peerId),
-		});
-	}
-
-	toPeerId(): Promise<PeerId> {
-		return peerIdFromKeys(
-			new supportedKeys["secp256k1"].Secp256k1PublicKey(
-				this.publicKey.publicKey,
-			).bytes,
-			new supportedKeys["secp256k1"].Secp256k1PrivateKey(
-				this.privateKey.privateKey,
-				this.publicKey.publicKey,
-			).bytes,
-		);
+	toPeerId(): PeerId {
+		return peerIdFromPublicKey(publicKeyFromRaw(this.publicKey.publicKey));
 	}
 }
 

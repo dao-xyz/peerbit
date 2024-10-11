@@ -1,4 +1,5 @@
 // Include test utilities
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -52,8 +53,34 @@ describe("load", function () {
 
 	it("load after prune", async () => {
 		session = await TestSession.connected(2, [
-			{ directory: "./tmp/shared-log/load-after-prune/" + uuid() },
-			{ directory: "./tmp/shared-log/load-after-prune/" + uuid() },
+			{
+				directory: "./tmp/shared-log/load-after-prune/" + uuid(),
+				libp2p: {
+					privateKey: privateKeyFromRaw(
+						new Uint8Array([
+							204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
+							168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
+							159, 64, 83, 52, 197, 24, 246, 24, 234, 141, 183, 151, 82, 53,
+							142, 57, 25, 148, 150, 26, 209, 223, 22, 212, 40, 201, 6, 191, 72,
+							148, 82, 66, 138, 199, 185,
+						]),
+					),
+				},
+			},
+			{
+				directory: "./tmp/shared-log/load-after-prune/" + uuid(),
+				libp2p: {
+					privateKey: privateKeyFromRaw(
+						new Uint8Array([
+							237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
+							157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120,
+							122, 222, 174, 242, 120, 50, 165, 97, 8, 235, 97, 186, 148, 251,
+							100, 168, 49, 10, 119, 71, 246, 246, 174, 163, 198, 54, 224, 6,
+							174, 212, 159, 187, 2, 137, 47, 192,
+						]),
+					),
+				},
+			},
 		]);
 
 		db1 = await session.peers[0].open(new EventStore<string>(), {
@@ -61,11 +88,14 @@ describe("load", function () {
 				replicate: { factor: 0.5 },
 				replicas: {
 					min: 1,
-				},
+				} /* 
+				timeUntilRoleMaturity: 0 */,
 			},
 		});
 
-		for (let i = 0; i < 100; i++) {
+		let count = 100;
+
+		for (let i = 0; i < count; i++) {
 			await db1.add("hello" + i, { meta: { next: [] } });
 		}
 
@@ -77,13 +107,15 @@ describe("load", function () {
 					replicate: { factor: 0.5 },
 					replicas: {
 						min: 1,
-					},
+					} /* 
+					timeUntilRoleMaturity: 0 */,
 				},
 			},
 		);
 
-		await waitForResolved(() => expect(db1.log.log.length).lessThan(100)); // pruning started
+		await waitForResolved(() => expect(db1.log.log.length).lessThan(count)); // pruning started
 		await waitForConverged(() => db1.log.log.length); // pruning done
+
 		const lengthBeforeClose = db1.log.log.length;
 		await waitForConverged(() => db2.log.log.length);
 		await session.peers[1].stop();

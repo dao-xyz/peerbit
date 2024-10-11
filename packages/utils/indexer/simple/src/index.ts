@@ -1,5 +1,4 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { Cache } from "@peerbit/cache";
 import * as types from "@peerbit/indexer-interface";
 import { logger as loggerFn } from "@peerbit/logger";
 import { equals } from "uint8arrays";
@@ -26,15 +25,6 @@ const getBatchFromResults = <T extends Record<string, any>>(
 	results.splice(0, batch.length);
 	return batch;
 };
-
-/* const resolveNestedAliasesRecursively = (request: types.SearchRequest) => {
-	const map = new Map();
-	for (const query of request.query) {
-		_resolveNestedAliasesRecursively(query, map);
-	}
-	return map;
-}
- */
 const cloneResults = <T>(
 	indexed: types.IndexedValue<T>[],
 	schema: any,
@@ -43,48 +33,18 @@ const cloneResults = <T>(
 		return { id: x.id, value: deserialize(serialize(x.value), schema) };
 	});
 };
-/* 
-const _resolveNestedAliasesRecursively = (query: types.Query, aliases: Map<string, string>) => {
-
-	if (query instanceof types.Nested) {
-		aliases.set(query.id, query.path);
-		for (const subQuery of query.query) {
-			_resolveNestedAliasesRecursively(subQuery, aliases);
-		}
-	}
-	else if (query instanceof types.And) {
-		for (const subQuery of query.and) {
-			_resolveNestedAliasesRecursively(subQuery, aliases);
-		}
-	}
-	else if (query instanceof types.Or) {
-		for (const subQuery of query.or) {
-			_resolveNestedAliasesRecursively(subQuery, aliases);
-		}
-	}
-	else if (query instanceof types.Not) {
-		_resolveNestedAliasesRecursively(query.not, aliases);
-	}
-
-}
- */
 
 export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	implements types.Index<T, NestedType>
 {
-	private _index: Map<string | bigint | number, types.IndexedValue<T>>;
-	private _resultsCollectQueue: Cache<{
-		arr: types.IndexedValue<T>[];
-		reference: boolean | undefined;
-	}>;
+	private _index!: Map<string | bigint | number, types.IndexedValue<T>>;
 
-	private indexByArr: string[];
-	private properties: types.IndexEngineInitProperties<T, NestedType>;
+	private indexByArr!: string[];
+	private properties!: types.IndexEngineInitProperties<T, NestedType>;
 
 	init(properties: types.IndexEngineInitProperties<T, NestedType>) {
 		this.properties = properties;
 		this._index = new Map();
-		this._resultsCollectQueue = new Cache({ max: 10000 }); // TODO choose limit better
 		if (properties.indexBy) {
 			this.indexByArr = Array.isArray(properties.indexBy)
 				? properties.indexBy
@@ -122,7 +82,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		this._index.set(id.primitive, { id, value });
 	}
 
-	async del(query: types.DeleteRequest): Promise<types.IdKey[]> {
+	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		let deleted: types.IdKey[] = [];
 		for (const doc of await this.queryAll(query)) {
 			if (this._index.delete(doc.id.primitive)) {
@@ -145,13 +105,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		// nothing to do
 	}
 
-	stop(): void | Promise<void> {
-		this._resultsCollectQueue.clear();
-	}
+	stop(): void | Promise<void> {}
 
 	drop() {
 		this._index.clear();
-		this._resultsCollectQueue.clear();
 		/* for (const subindex of this.subIndices) {
 			subindex[1].clear()
 		} */
@@ -165,11 +122,11 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		}
 	 */
 
-	async sum(query: types.SumRequest): Promise<number | bigint> {
+	async sum(query: types.SumOptions): Promise<number | bigint> {
 		let sum: undefined | number | bigint = undefined;
 		outer: for (const doc of await this.queryAll(query)) {
 			let value: any = doc.value;
-			for (const path of query.key) {
+			for (const path of Array.isArray(query.key) ? query.key : [query.key]) {
 				value = value[path];
 				if (!value) {
 					continue outer;
@@ -185,24 +142,25 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		return sum != null ? sum : 0;
 	}
 
-	async count(query: types.CountRequest): Promise<number> {
+	async count(query: types.CountOptions): Promise<number> {
 		return (await this.queryAll(query)).length;
 	}
 
 	private async queryAll(
-		query:
-			| types.SearchRequest
-			| types.DeleteRequest
-			| types.CountRequest
-			| types.SumRequest,
+		query?:
+			| types.IterateOptions
+			| types.DeleteOptions
+			| types.CountOptions
+			| types.SumOptions,
 	): Promise<types.IndexedValue<T>[]> {
+		const queryCoerced = types.toQuery(query?.query);
 		if (
-			query.query.length === 1 &&
-			(query.query[0] instanceof types.ByteMatchQuery ||
-				query.query[0] instanceof types.StringMatch) &&
-			types.stringArraysEquals(query.query[0].key, this.indexByArr)
+			queryCoerced.length === 1 &&
+			(queryCoerced[0] instanceof types.ByteMatchQuery ||
+				queryCoerced[0] instanceof types.StringMatch) &&
+			types.stringArraysEquals(queryCoerced[0].key, this.indexByArr)
 		) {
-			const firstQuery = query.query[0];
+			const firstQuery = queryCoerced[0];
 			if (firstQuery instanceof types.ByteMatchQuery) {
 				const doc = this._index.get(types.toId(firstQuery.value).primitive);
 				return doc ? [doc] : [];
@@ -218,7 +176,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 
 		// Handle query normally
 		const indexedDocuments = await this._queryDocuments(async (doc) => {
-			for (const f of query.query) {
+			for (const f of queryCoerced) {
 				if (!(await this.handleQueryObject(f, doc.value))) {
 					return false;
 				}
@@ -229,78 +187,91 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		return indexedDocuments;
 	}
 
-	async query(
-		query: types.SearchRequest,
-		properties: { reference?: boolean },
-	): Promise<types.IndexedResults<T>> {
-		const indexedDocuments = await this.queryAll(query);
-		if (indexedDocuments.length <= 1) {
-			return {
-				kept: 0,
-				results: indexedDocuments,
-			};
-		}
+	iterate<S extends types.Shape | undefined>(
+		query: types.IterateOptions,
+		properties: { shape?: S; reference?: boolean },
+	): types.IndexIterator<T, S> {
+		let done: boolean | undefined = undefined;
+		let queue:
+			| {
+					arr: types.IndexedValue<T>[];
+					reference: boolean | undefined;
+			  }
+			| undefined = undefined;
+		const fetch = async (
+			n: number,
+		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+			if (!queue && !done) {
+				const indexedDocuments = await this.queryAll(query);
+				if (indexedDocuments.length > 1) {
+					// Sort
+					if (query.sort) {
+						const sortArr = Array.isArray(query.sort)
+							? query.sort
+							: [query.sort];
+						sortArr.length > 0 &&
+							indexedDocuments.sort((a, b) =>
+								types.extractSortCompare(a.value, b.value, sortArr),
+							);
+					}
+				}
 
-		/* const aliases = resolveNestedAliasesRecursively(query) */
+				if (indexedDocuments.length > 0) {
+					queue = {
+						arr: indexedDocuments,
+						reference: properties?.reference,
+					}; // cache resulst not returned
+					done = false;
+				} else {
+					done = true;
+				}
+			}
+			if (queue && queue.arr.length <= n) {
+				done = true;
+			}
 
-		// Sort
-		indexedDocuments.sort((a, b) =>
-			types.extractSortCompare(a.value, b.value, query.sort),
-		);
-		const batch = getBatchFromResults<T>(
-			indexedDocuments,
-			query.fetch,
-			/* 	this.properties.iterator.batch, */
-		);
+			if (!queue) {
+				return [];
+			}
 
-		if (indexedDocuments.length > 0) {
-			this._resultsCollectQueue.add(query.idString, {
-				arr: indexedDocuments,
-				reference: properties?.reference,
-			}); // cache resulst not returned
-		}
+			const batch = getBatchFromResults<T>(
+				queue.arr,
+				n,
+				/* this.properties.iterator.batch */
+			);
+
+			return (
+				queue.reference ? batch : cloneResults(batch, this.properties.schema)
+			) as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
+		};
 
 		// TODO dont leak kept if canRead is defined, or return something random
-		return {
+
+		/* return {
 			kept: indexedDocuments.length,
-			results: properties?.reference
+			results: (properties?.reference
 				? batch
-				: cloneResults(batch, this.properties.schema),
-		};
-	}
+				: cloneResults(batch, this.properties.schema)) as any, // TODO fix this type,
+		}; */
 
-	async next(
-		query: types.CollectNextRequest,
-	): Promise<types.IndexedResults<T>> {
-		const results = this._resultsCollectQueue.get(query.idString);
-		if (!results) {
-			return {
-				results: [],
-				kept: 0,
-			};
-		}
-
-		const batch = getBatchFromResults<T>(
-			results.arr,
-			query.amount,
-			/* this.properties.iterator.batch */
-		);
-
-		if (results.arr.length === 0) {
-			this._resultsCollectQueue.del(query.idString); // TODO add tests for proper cleanup/timeouts
-		}
-
-		// TODO dont leak kept if canRead is defined, or return something random
 		return {
-			results: results.reference
-				? batch
-				: cloneResults(batch, this.properties.schema),
-			kept: results.arr.length,
+			all: async () => {
+				const results = await fetch(Infinity);
+				return results;
+			},
+			next: (n: number) => fetch(n),
+			done: () => done,
+			pending: async () => {
+				if (done == null) {
+					await fetch(0);
+				}
+				return done ? 0 : (queue?.arr.length ?? 0);
+			},
+			close: () => {
+				done = true;
+				queue = undefined;
+			},
 		};
-	}
-
-	close(query: types.CloseIteratorRequest): void {
-		this._resultsCollectQueue.del(query.idString);
 	}
 
 	private async handleFieldQuery(
@@ -341,10 +312,9 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			if (this.properties.nested?.match(obj)) {
 				const queryCloned = f.clone();
 				queryCloned.key.splice(0, i + 1); // remove key path until the document store
-				const results = await this.properties.nested.query(
-					obj,
-					new types.SearchRequest({ query: [queryCloned] }),
-				);
+				const results = await this.properties.nested.iterate(obj, {
+					query: [queryCloned],
+				});
 				return results.length > 0 ? true : false; // TODO return INNER HITS?
 			}
 		}
@@ -479,14 +449,6 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			}
 		}
 		return results;
-	}
-
-	getPending(cursorId: string): number | undefined {
-		return this._resultsCollectQueue.get(cursorId)?.arr.length;
-	}
-
-	get cursorCount(): number {
-		return this._resultsCollectQueue.size;
 	}
 }
 

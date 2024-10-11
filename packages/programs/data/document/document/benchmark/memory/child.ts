@@ -113,6 +113,5 @@ try {
 } catch (error: any) {
 	throw new Error("Failed to insert: " + error?.message);
 } finally {
-	console.log("DONE!");
 	await session!.stop();
 }

@@ -1,15 +1,13 @@
-import { deserialize } from "@dao-xyz/borsh";
-import { Ed25519Keypair } from "@peerbit/crypto";
-import { CountRequest, SearchRequest, Sort } from "@peerbit/indexer-interface";
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { Sort } from "@peerbit/indexer-interface";
 import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
-import { isMatured } from "../src/ranges.js";
+import { ReplicationIntent, isMatured } from "../src/ranges.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
-import { ReplicationIntent } from "../src/replication.js";
 import { scaleToU32 } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
@@ -21,44 +19,41 @@ describe(`replicate`, () => {
 		session = await TestSession.disconnected(3, [
 			{
 				libp2p: {
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192,
-							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
-							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
-							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
-							62, 133, 97, 57, 150, 187, 247, 215,
+							204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
+							168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
+							159, 64, 83, 52, 197, 24, 246, 24, 234, 141, 183, 151, 82, 53,
+							142, 57, 25, 148, 150, 26, 209, 223, 22, 212, 40, 201, 6, 191, 72,
+							148, 82, 66, 138, 199, 185,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 				},
 			},
 			{
 				libp2p: {
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45,
-							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
-							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
-							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
-							112, 65, 202, 154, 27, 63, 15,
+							237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
+							157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120,
+							122, 222, 174, 242, 120, 50, 165, 97, 8, 235, 97, 186, 148, 251,
+							100, 168, 49, 10, 119, 71, 246, 246, 174, 163, 198, 54, 224, 6,
+							174, 212, 159, 187, 2, 137, 47, 192,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 				},
 			},
 			{
 				libp2p: {
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34, 23,
-							12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231,
-							155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84,
-							137, 152, 227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187,
-							239, 56, 174, 184, 34, 141, 45, 242,
+							27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
+							197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203,
+							18, 179, 181, 105, 158, 64, 215, 56, 13, 71, 156, 41, 178, 86,
+							159, 80, 222, 167, 73, 3, 37, 251, 67, 86, 6, 90, 212, 16, 251,
+							206, 54, 49, 141, 91, 171,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 				},
 			},
 		]);
@@ -86,7 +81,9 @@ describe(`replicate`, () => {
 	});
 
 	it("none", async () => {
-		db1 = await session.peers[0].open(new EventStore<string>());
+		db1 = await session.peers[0].open(new EventStore<string>(), {
+			args: { replicate: { factor: 1 } },
+		});
 
 		db2 = (await EventStore.open<EventStore<string>>(
 			db1.address!,
@@ -265,43 +262,20 @@ describe(`replicate`, () => {
 		it("dynamic by default", async () => {
 			db1 = await session.peers[0].open(new EventStore<string>());
 
+			const roles: any[] = [];
+			db1.log.events.addEventListener("replication:change", (change) => {
+				if (
+					change.detail.publicKey.equals(session.peers[0].identity.publicKey)
+				) {
+					roles.push(change.detail);
+				}
+			});
+
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
 				session.peers[1],
 			))!;
-			const roles: any[] = [];
-			db2.log.events.addEventListener("replication:change", (change) => {
-				if (
-					change.detail.publicKey.equals(session.peers[1].identity.publicKey)
-				) {
-					roles.push(change.detail);
-				}
-			});
-			/// expect role to update a few times
-			await waitForResolved(() => expect(roles.length).greaterThan(3));
-		});
 
-		it("passing by string evens by default", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
-
-			db2 = await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1],
-				{
-					args: {
-						replicate: true,
-					},
-				},
-			);
-
-			const roles: any[] = [];
-			db2.log.events.addEventListener("replication:change", (change) => {
-				if (
-					change.detail.publicKey.equals(session.peers[1].identity.publicKey)
-				) {
-					roles.push(change.detail);
-				}
-			});
 			/// expect role to update a few times
 			await waitForResolved(() => expect(roles.length).greaterThan(3));
 		});
@@ -397,7 +371,7 @@ describe(`replicate`, () => {
 				await waitForResolved(async () => {
 					const minRoleAge = await db1.log.getDefaultMinRoleAge();
 					expect(
-						(await db1.log.replicationIndex.query(new SearchRequest())).results
+						(await db1.log.replicationIndex.iterate().all())
 							.map((x) => x.value)
 							.filter((x) => isMatured(x, now, minRoleAge))
 							.map((x) => x.hash),
@@ -414,11 +388,7 @@ describe(`replicate`, () => {
 
 				const minRoleAge = await db2.log.getDefaultMinRoleAge();
 				expect(
-					(
-						await db2.log.replicationIndex.query(
-							new SearchRequest({ fetch: 0xffffffff }),
-						)
-					).results
+					(await db2.log.replicationIndex.iterate().all())
 						.map((x) => x.value)
 						.map((x) => isMatured(x, now, minRoleAge)),
 				).to.have.members([false, true]);
@@ -450,15 +420,11 @@ describe(`replicate`, () => {
 				});
 
 				await waitForResolved(async () =>
-					expect(
-						await db1.log.replicationIndex.count(new CountRequest()),
-					).to.equal(2),
+					expect(await db1.log.replicationIndex.count()).to.equal(2),
 				);
-				const segments = (
-					await db1.log.replicationIndex.query(
-						new SearchRequest({ sort: [new Sort({ key: "start1" })] }),
-					)
-				).results;
+				const segments = await db1.log.replicationIndex
+					.iterate({ sort: [new Sort({ key: "start1" })] })
+					.all();
 
 				expect(segments[0].value.start1).to.eq(0);
 				expect(segments[0].value.mode).to.eq(ReplicationIntent.NonStrict);
@@ -493,21 +459,17 @@ describe(`replicate`, () => {
 				) => {
 					const offset = await domain.fromEntry(added.entry);
 
-					const ranges = await db.log.replicationIndex.query(
-						new SearchRequest(),
-					);
-					expect(ranges.results).to.have.length(1);
+					const ranges = await db.log.replicationIndex.iterate().all();
+					expect(ranges).to.have.length(1);
 
-					const range = ranges.results[0].value.toReplicationRange();
+					const range = ranges[0].value.toReplicationRange();
 					expect(range.offset).to.be.closeTo(offset, 0.0001);
 					expect(range.factor).to.equal(1); // mininum unit of length
 				};
 
 				const checkUnreplication = async (db: EventStore<string>) => {
-					const ranges = await db.log.replicationIndex.query(
-						new SearchRequest(),
-					);
-					expect(ranges.results).to.have.length(0);
+					const ranges = await db.log.replicationIndex.iterate().all();
+					expect(ranges).to.have.length(0);
 				};
 
 				const added = await db1.add("data", { replicate: true });
@@ -552,27 +514,27 @@ describe(`replicate`, () => {
 				) => {
 					const offset = await domain.fromEntry(added.entry);
 
-					const ranges = await db.log.replicationIndex.query(
-						new SearchRequest({ sort: new Sort({ key: ["start1"] }) }),
-					);
-					expect(ranges.results).to.have.length(2);
+					const ranges = await db.log.replicationIndex
+						.iterate({ sort: new Sort({ key: ["start1"] }) })
+						.all();
+					expect(ranges).to.have.length(2);
 
-					const rangeStart = ranges.results[0].value.toReplicationRange();
+					const rangeStart = ranges[0].value.toReplicationRange();
 					expect(rangeStart.offset).to.be.eq(startOffset);
 					expect(rangeStart.factor).to.equal(startFactor);
 
-					const rangeEntry = ranges.results[1].value.toReplicationRange();
+					const rangeEntry = ranges[1].value.toReplicationRange();
 					expect(rangeEntry.offset).to.be.closeTo(offset, 0.0001);
 					expect(rangeEntry.factor).to.equal(1); // mininum unit of length
 				};
 
 				const checkUnreplication = async (db: EventStore<string>) => {
-					const ranges = await db.log.replicationIndex.query(
-						new SearchRequest({ sort: new Sort({ key: ["start1"] }) }),
-					);
-					expect(ranges.results).to.have.length(1);
+					const ranges = await db.log.replicationIndex
+						.iterate({ sort: new Sort({ key: ["start1"] }) })
+						.all();
+					expect(ranges).to.have.length(1);
 
-					const rangeStart = ranges.results[0].value.toReplicationRange();
+					const rangeStart = ranges[0].value.toReplicationRange();
 					expect(rangeStart.offset).to.be.eq(startOffset);
 					expect(rangeStart.factor).to.equal(startFactor);
 				};
@@ -598,46 +560,44 @@ describe(`replicate`, () => {
 				session = await TestSession.disconnected(3, [
 					{
 						libp2p: {
-							peerId: await deserialize(
+							privateKey: privateKeyFromRaw(
 								new Uint8Array([
-									0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187,
-									192, 93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9,
-									207, 165, 88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61,
-									235, 154, 68, 205, 124, 143, 217, 234, 222, 254, 15, 18, 64,
-									197, 13, 62, 84, 62, 133, 97, 57, 150, 187, 247, 215,
+									113, 203, 231, 235, 7, 120, 3, 194, 138, 113, 131, 40, 251,
+									158, 121, 38, 190, 114, 116, 252, 100, 202, 107, 97, 119, 184,
+									24, 56, 27, 76, 150, 62, 132, 22, 246, 177, 200, 6, 179, 117,
+									218, 216, 120, 235, 147, 249, 48, 157, 232, 161, 145, 3, 63,
+									158, 217, 111, 65, 105, 99, 83, 4, 113, 62, 15,
 								]),
-								Ed25519Keypair,
-							).toPeerId(),
+							),
 						},
 						directory: path.join(directory, "0"),
 					},
 					{
 						libp2p: {
-							peerId: await deserialize(
+							privateKey: privateKeyFromRaw(
 								new Uint8Array([
-									0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158,
-									45, 46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219,
-									238, 163, 44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16,
-									89, 240, 71, 145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185,
-									206, 109, 168, 112, 65, 202, 154, 27, 63, 15,
+									27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54,
+									162, 197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197,
+									8, 203, 18, 179, 181, 105, 158, 64, 215, 56, 13, 71, 156, 41,
+									178, 86, 159, 80, 222, 167, 73, 3, 37, 251, 67, 86, 6, 90,
+									212, 16, 251, 206, 54, 49, 141, 91, 171,
 								]),
-								Ed25519Keypair,
-							).toPeerId(),
+							),
 						},
 						directory: path.join(directory, "1"),
 					},
+
 					{
 						libp2p: {
-							peerId: await deserialize(
+							privateKey: privateKeyFromRaw(
 								new Uint8Array([
-									0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34,
-									23, 12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5,
-									210, 231, 155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18,
-									236, 54, 84, 137, 152, 227, 77, 127, 108, 252, 59, 138, 246,
-									221, 120, 187, 239, 56, 174, 184, 34, 141, 45, 242,
+									74, 93, 20, 232, 197, 192, 134, 244, 246, 38, 182, 15, 230,
+									234, 217, 208, 198, 116, 172, 72, 115, 255, 45, 169, 152, 186,
+									201, 53, 92, 19, 38, 58, 2, 71, 5, 140, 64, 40, 151, 4, 130,
+									48, 131, 62, 123, 138, 241, 43, 59, 196, 181, 214, 205, 240,
+									100, 152, 182, 122, 244, 49, 134, 190, 116, 106,
 								]),
-								Ed25519Keypair,
-							).toPeerId(),
+							),
 						},
 						directory: path.join(directory, "2"),
 					},
@@ -654,7 +614,7 @@ describe(`replicate`, () => {
 				await session.stop();
 			});
 
-			it("restart", async () => {
+			it("restart after adding", async () => {
 				db1 = await session.peers[0].open(new EventStore<string>(), {
 					args: {
 						replicate: {
@@ -667,28 +627,55 @@ describe(`replicate`, () => {
 				await db1.log.replicate({ factor: 0.2, offset: 0.6 });
 
 				const checkSegments = async (db: EventStore<string>) => {
-					const segments = await db.log.replicationIndex.query(
-						new SearchRequest({ sort: [new Sort({ key: "start1" })] }),
+					const segments = await db.log.replicationIndex
+						.iterate({ sort: [new Sort({ key: "start1" })] })
+						.all();
+					expect(segments).to.have.length(2);
+					expect(segments[0].value.toReplicationRange().factor).to.equal(
+						scaleToU32(0.1),
 					);
-					expect(segments.results).to.have.length(2);
-					expect(
-						segments.results[0].value.toReplicationRange().factor,
-					).to.equal(scaleToU32(0.1));
-					expect(
-						segments.results[0].value.toReplicationRange().offset,
-					).to.equal(scaleToU32(0.3));
+					expect(segments[0].value.toReplicationRange().offset).to.equal(
+						scaleToU32(0.3),
+					);
 
-					expect(
-						segments.results[1].value.toReplicationRange().factor,
-					).to.equal(scaleToU32(0.2));
-					expect(
-						segments.results[1].value.toReplicationRange().offset,
-					).to.equal(scaleToU32(0.6));
+					expect(segments[1].value.toReplicationRange().factor).to.equal(
+						scaleToU32(0.2),
+					);
+					expect(segments[1].value.toReplicationRange().offset).to.equal(
+						scaleToU32(0.6),
+					);
 				};
 				await checkSegments(db1);
 
+				// true will not start replicating dynamically since we already have a replication segment persisted
 				await db1.close();
 				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: true,
+					},
+				});
+
+				await checkSegments(db1);
+
+				// empty object treated the same way
+				await db1.close();
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: {},
+					},
+				});
+
+				// no options treated the same way
+				await db1.close();
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {},
+				});
+
+				await checkSegments(db1);
+			});
+
+			it("restart another settings", async () => {
+				db1 = await session.peers[0].open(new EventStore<string>(), {
 					args: {
 						replicate: {
 							offset: 0.3,
@@ -696,8 +683,19 @@ describe(`replicate`, () => {
 						},
 					},
 				});
+				await db1.close();
 
-				await checkSegments(db1);
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+					},
+				});
+
+				const segments = await db1.log.replicationIndex.iterate().all();
+				await waitForResolved(() => expect(segments).to.have.length(1));
 			});
 		});
 	});

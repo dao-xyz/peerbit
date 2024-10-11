@@ -13,28 +13,25 @@ import {
 	BoolQuery,
 	ByteMatchQuery,
 	Compare,
-	CountRequest,
-	DeleteRequest,
 	type Index,
 	type IndexEngineInitProperties,
+	type IndexIterator,
 	type Indices,
 	IntegerCompare,
 	IsNull,
+	type IterateOptions,
 	Nested,
 	Not,
 	Or,
 	Query,
-	SearchRequest,
 	type Shape,
 	Sort,
 	SortDirection,
 	StringMatch,
 	StringMatchMethod,
-	SumRequest,
 	extractFieldValue,
 	getIdProperty,
 	id,
-	iterate,
 	toId,
 } from "@peerbit/indexer-interface";
 import {
@@ -125,14 +122,21 @@ class DocumentNext extends Base {
 const bigIntSort = <T extends number | bigint>(a: T, b: T): number =>
 	a > b ? 1 : 0 || -(a < b);
 
-const search = <T>(
+const search = <T, S extends Shape | undefined>(
 	index: Index<T, any>,
-	query: SearchRequest,
-	options?: { shape: Shape },
+	query: IterateOptions,
+	options?: { shape: S },
 ) => {
 	// fetch max u32
-	query.fetch = 0xffffffff;
-	return index.query(query, options);
+	return index.iterate<S>(query, options).all();
+};
+
+const assertIteratorIsDone = async (iterator: IndexIterator<any, any>) => {
+	const next = await iterator.next(1);
+	if (next.length > 0) {
+		throw new Error(`Iterator is not done, got more results`);
+	}
+	expect(iterator.done()).to.be.true;
 };
 
 export const tests = (
@@ -307,11 +311,9 @@ export const tests = (
 					}
 				}
 
-				await store.del(
-					new DeleteRequest({
-						query: deleteQueryObject,
-					}),
-				);
+				await store.del({
+					query: deleteQueryObject,
+				});
 				expect(await store.getSize()).equal(0);
 				result = await store.get(toId(docId));
 
@@ -396,20 +398,17 @@ export const tests = (
 
 					await store.put(doc);
 
-					const results = await search(
-						store,
-						new SearchRequest({
-							query: [
-								new StringMatch({
-									key: "id",
-									value: "123",
-									caseInsensitive: false,
-									method: StringMatchMethod.contains,
-								}),
-							],
-						}),
-					);
-					expect(results.results).to.have.length(1);
+					const results = await search(store, {
+						query: [
+							new StringMatch({
+								key: "id",
+								value: "123",
+								caseInsensitive: false,
+								method: StringMatchMethod.contains,
+							}),
+						],
+					});
+					expect(results).to.have.length(1);
 				});
 			});
 
@@ -569,9 +568,9 @@ export const tests = (
 				it("no-args", async () => {
 					await setupDefault();
 
-					const results = await search(store, new SearchRequest({ query: [] }));
-					expect(results.results).to.have.length(4);
-					for (const result of results.results) {
+					const results = await search(store, { query: [] });
+					expect(results).to.have.length(4);
+					for (const result of results) {
 						checkDocument(result.value, ...defaultDocs);
 					}
 				});
@@ -581,136 +580,115 @@ export const tests = (
 						await setupDefault();
 					});
 					it("exact", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new StringMatch({
-										key: "name",
-										value: "hello world",
-										caseInsensitive: true,
-									}),
-								],
-							}),
-						);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1", "2"]);
+						const responses = await search(store, {
+							query: [
+								new StringMatch({
+									key: "name",
+									value: "hello world",
+									caseInsensitive: true,
+								}),
+							],
+						});
+						expect(responses.map((x) => x.id.primitive)).to.have.members([
+							"1",
+							"2",
+						]);
 					});
 
 					it("exact-case-insensitive", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new StringMatch({
-										key: "name",
-										value: "Hello World",
-										caseInsensitive: true,
-									}),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(2);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1", "2"]);
+						const responses = await search(store, {
+							query: [
+								new StringMatch({
+									key: "name",
+									value: "Hello World",
+									caseInsensitive: true,
+								}),
+							],
+						});
+						expect(responses).to.have.length(2);
+						expect(responses.map((x) => x.id.primitive)).to.have.members([
+							"1",
+							"2",
+						]);
 					});
 
 					it("exact case sensitive", async () => {
-						let responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new StringMatch({
-										key: "name",
-										value: "Hello World",
-										caseInsensitive: false,
-									}),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(1);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["2"]);
-						responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new StringMatch({
-										key: "name",
-										value: "hello world",
-										caseInsensitive: false,
-									}),
-								],
-							}),
-						);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1"]);
+						let responses = await search(store, {
+							query: [
+								new StringMatch({
+									key: "name",
+									value: "Hello World",
+									caseInsensitive: false,
+								}),
+							],
+						});
+						expect(responses).to.have.length(1);
+						expect(responses.map((x) => x.id.primitive)).to.have.members(["2"]);
+						responses = await search(store, {
+							query: [
+								new StringMatch({
+									key: "name",
+									value: "hello world",
+									caseInsensitive: false,
+								}),
+							],
+						});
+						expect(responses.map((x) => x.id.primitive)).to.have.members(["1"]);
 					});
 					it("prefix", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new StringMatch({
-										key: "name",
-										value: "hel",
-										method: StringMatchMethod.prefix,
-										caseInsensitive: true,
-									}),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(2);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1", "2"]);
+						const responses = await search(store, {
+							query: [
+								new StringMatch({
+									key: "name",
+									value: "hel",
+									method: StringMatchMethod.prefix,
+									caseInsensitive: true,
+								}),
+							],
+						});
+						expect(responses).to.have.length(2);
+						expect(responses.map((x) => x.id.primitive)).to.have.members([
+							"1",
+							"2",
+						]);
 					});
 
 					it("contains", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new StringMatch({
-										key: "name",
-										value: "ello",
-										method: StringMatchMethod.contains,
-										caseInsensitive: true,
-									}),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(2);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1", "2"]);
+						const responses = await search(store, {
+							query: [
+								new StringMatch({
+									key: "name",
+									value: "ello",
+									method: StringMatchMethod.contains,
+									caseInsensitive: true,
+								}),
+							],
+						});
+						expect(responses).to.have.length(2);
+						expect(responses.map((x) => x.id.primitive)).to.have.members([
+							"1",
+							"2",
+						]);
 					});
 
 					describe("arr", () => {
 						it("arr", async () => {
-							const responses = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new StringMatch({
-											key: "tags",
-											value: "world",
-											method: StringMatchMethod.contains,
-											caseInsensitive: true,
-										}),
-									],
-								}),
-							);
-							expect(responses.results).to.have.length(1);
-							expect(
-								responses.results.map((x) => x.id.primitive),
-							).to.have.members(["2"]);
+							const responses = await search(store, {
+								query: [
+									new StringMatch({
+										key: "tags",
+										value: "world",
+										method: StringMatchMethod.contains,
+										caseInsensitive: true,
+									}),
+								],
+							});
+							expect(responses).to.have.length(1);
+							expect(responses.map((x) => x.id.primitive)).to.have.members([
+								"2",
+							]);
 
-							checkDocument(responses.results[0].value, ...defaultDocs);
+							checkDocument(responses[0].value, ...defaultDocs);
 						});
 					});
 				});
@@ -718,21 +696,16 @@ export const tests = (
 				it("missing", async () => {
 					await setupDefault();
 
-					const responses = await search(
-						store,
-						new SearchRequest({
-							query: [
-								new IsNull({
-									key: "name",
-								}),
-							],
-						}),
-					);
+					const responses = await search(store, {
+						query: [
+							new IsNull({
+								key: "name",
+							}),
+						],
+					});
 
-					expect(responses.results).to.have.length(1);
-					expect(responses.results.map((x) => x.id.primitive)).to.deep.equal([
-						"4",
-					]);
+					expect(responses).to.have.length(1);
+					expect(responses.map((x) => x.id.primitive)).to.deep.equal(["4"]);
 				});
 
 				describe("uint8arrays", () => {
@@ -741,77 +714,65 @@ export const tests = (
 							it("matches", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new ByteMatchQuery({
-												key: "data",
-												value: new Uint8Array([1]),
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.have.length(1);
-								expect(
-									responses.results.map((x) => x.id.primitive),
-								).to.deep.equal(["1"]);
+								const responses = await search(store, {
+									query: [
+										new ByteMatchQuery({
+											key: "data",
+											value: new Uint8Array([1]),
+										}),
+									],
+								});
+								expect(responses).to.have.length(1);
+								expect(responses.map((x) => x.id.primitive)).to.deep.equal([
+									"1",
+								]);
 							});
 							it("un-matches", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new ByteMatchQuery({
-												key: "data",
-												value: new Uint8Array([199]),
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.be.empty;
+								const responses = await search(store, {
+									query: [
+										new ByteMatchQuery({
+											key: "data",
+											value: new Uint8Array([199]),
+										}),
+									],
+								});
+								expect(responses).to.be.empty;
 							});
 						});
 						describe("integer", () => {
 							it("exists", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new IntegerCompare({
-												key: "data",
-												compare: Compare.Equal,
-												value: 1,
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.have.length(1);
-								expect(
-									responses.results.map((x) => x.id.primitive),
-								).to.deep.equal(["1"]);
+								const responses = await search(store, {
+									query: [
+										new IntegerCompare({
+											key: "data",
+											compare: Compare.Equal,
+											value: 1,
+										}),
+									],
+								});
+								expect(responses).to.have.length(1);
+								expect(responses.map((x) => x.id.primitive)).to.deep.equal([
+									"1",
+								]);
 							});
 
 							it("does not exist", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new IntegerCompare({
-												key: "data",
-												compare: Compare.Equal,
-												value: 199,
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.be.empty;
+								const responses = await search(store, {
+									query: [
+										new IntegerCompare({
+											key: "data",
+											compare: Compare.Equal,
+											value: 199,
+										}),
+									],
+								});
+								expect(responses).to.be.empty;
 							});
 						});
 					});
@@ -821,77 +782,65 @@ export const tests = (
 							it("matches", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new ByteMatchQuery({
-												key: "fixedData",
-												value: new Uint8Array(32).fill(1),
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.have.length(1);
-								expect(
-									responses.results.map((x) => x.id.primitive),
-								).to.deep.equal(["1"]);
+								const responses = await search(store, {
+									query: [
+										new ByteMatchQuery({
+											key: "fixedData",
+											value: new Uint8Array(32).fill(1),
+										}),
+									],
+								});
+								expect(responses).to.have.length(1);
+								expect(responses.map((x) => x.id.primitive)).to.deep.equal([
+									"1",
+								]);
 							});
 							it("un-matches", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new ByteMatchQuery({
-												key: "data",
-												value: new Uint8Array(32).fill(99),
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.be.empty;
+								const responses = await search(store, {
+									query: [
+										new ByteMatchQuery({
+											key: "data",
+											value: new Uint8Array(32).fill(99),
+										}),
+									],
+								});
+								expect(responses).to.be.empty;
 							});
 						});
 						describe("integer", () => {
 							it("exists", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new IntegerCompare({
-												key: "data",
-												compare: Compare.Equal,
-												value: 1,
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.have.length(1);
-								expect(
-									responses.results.map((x) => x.id.primitive),
-								).to.deep.equal(["1"]);
+								const responses = await search(store, {
+									query: [
+										new IntegerCompare({
+											key: "data",
+											compare: Compare.Equal,
+											value: 1,
+										}),
+									],
+								});
+								expect(responses).to.have.length(1);
+								expect(responses.map((x) => x.id.primitive)).to.deep.equal([
+									"1",
+								]);
 							});
 
 							it("does not exist", async () => {
 								await setupDefault();
 
-								const responses = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new IntegerCompare({
-												key: "data",
-												compare: Compare.Equal,
-												value: 199,
-											}),
-										],
-									}),
-								);
-								expect(responses.results).to.be.empty;
+								const responses = await search(store, {
+									query: [
+										new IntegerCompare({
+											key: "data",
+											compare: Compare.Equal,
+											value: 199,
+										}),
+									],
+								});
+								expect(responses).to.be.empty;
 							});
 						});
 					});
@@ -899,21 +848,16 @@ export const tests = (
 				+it("bool", async () => {
 					await setupDefault();
 
-					const responses = await search(
-						store,
-						new SearchRequest({
-							query: [
-								new BoolQuery({
-									key: "bool",
-									value: true,
-								}),
-							],
-						}),
-					);
-					expect(responses.results).to.have.length(1);
-					expect(responses.results.map((x) => x.id.primitive)).to.deep.equal([
-						"1",
-					]);
+					const responses = await search(store, {
+						query: [
+							new BoolQuery({
+								key: "bool",
+								value: true,
+							}),
+						],
+					});
+					expect(responses).to.have.length(1);
+					expect(responses.map((x) => x.id.primitive)).to.deep.equal(["1"]);
 				});
 
 				describe("array", () => {
@@ -944,20 +888,15 @@ export const tests = (
 								}),
 							);
 
-							const results = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new ByteMatchQuery({
-											key: "bytesArrays",
-											value: new Uint8Array([2]),
-										}),
-									],
-								}),
-							);
-							expect(results.results.map((x) => x.value.id)).to.deep.equal([
-								d1.id,
-							]);
+							const results = await search(store, {
+								query: [
+									new ByteMatchQuery({
+										key: "bytesArrays",
+										value: new Uint8Array([2]),
+									}),
+								],
+							});
+							expect(results.map((x) => x.value.id)).to.deep.equal([d1.id]);
 						});
 					});
 
@@ -993,19 +932,14 @@ export const tests = (
 								}),
 							);
 
-							const results = await search(
-								store,
-								new SearchRequest({
-									query: new IntegerCompare({
-										key: ["documents", "number"],
-										compare: Compare.Equal,
-										value: d1.documents[0]!.number,
-									}),
+							const results = await search(store, {
+								query: new IntegerCompare({
+									key: ["documents", "number"],
+									compare: Compare.Equal,
+									value: d1.documents[0]!.number,
 								}),
-							);
-							expect(results.results.map((x) => x.value.id)).to.deep.equal([
-								d1.id,
-							]);
+							});
+							expect(results.map((x) => x.value.id)).to.deep.equal([d1.id]);
 						});
 
 						it("update array", async () => {
@@ -1028,32 +962,26 @@ export const tests = (
 							// should have update results
 							expect(
 								(
-									await search(
-										store,
-										new SearchRequest({
-											query: new IntegerCompare({
-												key: ["documents", "number"],
-												compare: Compare.Equal,
-												value: 123n,
-											}),
+									await search(store, {
+										query: new IntegerCompare({
+											key: ["documents", "number"],
+											compare: Compare.Equal,
+											value: 123n,
 										}),
-									)
-								).results.length,
+									})
+								).length,
 							).to.equal(0);
 
 							expect(
 								(
-									await search(
-										store,
-										new SearchRequest({
-											query: new IntegerCompare({
-												key: ["documents", "number"],
-												compare: Compare.Equal,
-												value: 124n,
-											}),
+									await search(store, {
+										query: new IntegerCompare({
+											key: ["documents", "number"],
+											compare: Compare.Equal,
+											value: 124n,
 										}),
-									)
-								).results.map((x) => x.value.id),
+									})
+								).map((x) => x.value.id),
 							).to.deep.equal([d1.id]);
 						});
 
@@ -1067,29 +995,24 @@ export const tests = (
 							});
 
 							await store.put(d1);
-							const [deleted] = await store.del(
-								new DeleteRequest({
-									query: {
-										id: d1.id,
-									},
-								}),
-							);
+							const [deleted] = await store.del({
+								query: {
+									id: d1.id,
+								},
+							});
 
 							expect(deleted.key).to.deep.equal(d1.id);
 
 							expect(
 								(
-									await search(
-										store,
-										new SearchRequest({
-											query: new IntegerCompare({
-												key: ["documents", "number"],
-												compare: Compare.Equal,
-												value: 123n,
-											}),
+									await search(store, {
+										query: new IntegerCompare({
+											key: ["documents", "number"],
+											compare: Compare.Equal,
+											value: 123n,
 										}),
-									)
-								).results.length,
+									})
+								).length,
 							).to.equal(0);
 
 							d1.documents = [
@@ -1099,32 +1022,26 @@ export const tests = (
 
 							expect(
 								(
-									await search(
-										store,
-										new SearchRequest({
-											query: new IntegerCompare({
-												key: ["documents", "number"],
-												compare: Compare.Equal,
-												value: 124n,
-											}),
+									await search(store, {
+										query: new IntegerCompare({
+											key: ["documents", "number"],
+											compare: Compare.Equal,
+											value: 124n,
 										}),
-									)
-								).results.map((x) => x.value.id),
+									})
+								).map((x) => x.value.id),
 							).to.deep.equal([d1.id]);
 
 							expect(
 								(
-									await search(
-										store,
-										new SearchRequest({
-											query: new IntegerCompare({
-												key: ["documents", "number"],
-												compare: Compare.Equal,
-												value: 123n,
-											}),
+									await search(store, {
+										query: new IntegerCompare({
+											key: ["documents", "number"],
+											compare: Compare.Equal,
+											value: 123n,
 										}),
-									)
-								).results.length,
+									})
+								).length,
 							).to.equal(0);
 						});
 					});
@@ -1136,78 +1053,69 @@ export const tests = (
 					});
 
 					it("and", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new And([
-										new StringMatch({
-											key: "name",
-											value: "hello",
-											caseInsensitive: true,
-											method: StringMatchMethod.contains,
-										}),
-										new StringMatch({
-											key: "name",
-											value: "world",
-											caseInsensitive: true,
-											method: StringMatchMethod.contains,
-										}),
-									]),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(2);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1", "2"]);
+						const responses = await search(store, {
+							query: [
+								new And([
+									new StringMatch({
+										key: "name",
+										value: "hello",
+										caseInsensitive: true,
+										method: StringMatchMethod.contains,
+									}),
+									new StringMatch({
+										key: "name",
+										value: "world",
+										caseInsensitive: true,
+										method: StringMatchMethod.contains,
+									}),
+								]),
+							],
+						});
+						expect(responses).to.have.length(2);
+						expect(responses.map((x) => x.id.primitive)).to.have.members([
+							"1",
+							"2",
+						]);
 					});
 
 					it("or", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new Or([
-										new StringMatch({
-											key: "id",
-											value: "1",
-										}),
-										new StringMatch({
-											key: "id",
-											value: "2",
-										}),
-									]),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(2);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1", "2"]);
+						const responses = await search(store, {
+							query: [
+								new Or([
+									new StringMatch({
+										key: "id",
+										value: "1",
+									}),
+									new StringMatch({
+										key: "id",
+										value: "2",
+									}),
+								]),
+							],
+						});
+						expect(responses).to.have.length(2);
+						expect(responses.map((x) => x.id.primitive)).to.have.members([
+							"1",
+							"2",
+						]);
 					});
 
 					it("not", async () => {
-						const responses = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new And([
-										new Not(
-											new IntegerCompare({
-												key: "number",
-												compare: Compare.Greater,
-												value: 1n,
-											}),
-										),
-									]),
-								],
-							}),
-						);
-						expect(responses.results).to.have.length(1);
-						expect(
-							responses.results.map((x) => x.id.primitive),
-						).to.have.members(["1"]);
+						const responses = await search(store, {
+							query: [
+								new And([
+									new Not(
+										new IntegerCompare({
+											key: "number",
+											compare: Compare.Greater,
+											value: 1n,
+										}),
+									),
+								]),
+							],
+						});
+						expect(responses).to.have.length(1);
+						expect(responses.map((x) => x.id.primitive)).to.have.members(["1"]);
 					});
 				});
 
@@ -1216,96 +1124,81 @@ export const tests = (
 						await setupDefault();
 					});
 					it("equal", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "number",
-										compare: Compare.Equal,
-										value: 2n,
-									}),
-								],
-							}),
-						);
-						expect(response.results).to.have.length(1);
-						expect(response.results[0].value.number).to.be.oneOf([2n, 2]);
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "number",
+									compare: Compare.Equal,
+									value: 2n,
+								}),
+							],
+						});
+						expect(response).to.have.length(1);
+						expect(response[0].value.number).to.be.oneOf([2n, 2]);
 					});
 
 					it("gt", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "number",
-										compare: Compare.Greater,
-										value: 2n,
-									}),
-								],
-							}),
-						);
-						expect(response.results).to.have.length(1);
-						expect(response.results[0].value.number).to.be.oneOf([3n, 3]);
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "number",
+									compare: Compare.Greater,
+									value: 2n,
+								}),
+							],
+						});
+						expect(response).to.have.length(1);
+						expect(response[0].value.number).to.be.oneOf([3n, 3]);
 					});
 
 					it("gte", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "number",
-										compare: Compare.GreaterOrEqual,
-										value: 2n,
-									}),
-								],
-							}),
-						);
-						response.results.sort((a, b) =>
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "number",
+									compare: Compare.GreaterOrEqual,
+									value: 2n,
+								}),
+							],
+						});
+						response.sort((a, b) =>
 							bigIntSort(a.value.number as bigint, b.value.number as bigint),
 						);
-						expect(response.results).to.have.length(2);
-						expect(response.results[0].value.number).to.be.oneOf([2n, 2]);
-						expect(response.results[1].value.number).to.be.oneOf([3n, 3]);
+						expect(response).to.have.length(2);
+						expect(response[0].value.number).to.be.oneOf([2n, 2]);
+						expect(response[1].value.number).to.be.oneOf([3n, 3]);
 					});
 
 					it("lt", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "number",
-										compare: Compare.Less,
-										value: 2n,
-									}),
-								],
-							}),
-						);
-						expect(response.results).to.have.length(1);
-						expect(response.results[0].value.number).to.be.oneOf([1n, 1]);
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "number",
+									compare: Compare.Less,
+									value: 2n,
+								}),
+							],
+						});
+						expect(response).to.have.length(1);
+						expect(response[0].value.number).to.be.oneOf([1n, 1]);
 					});
 
 					it("lte", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "number",
-										compare: Compare.LessOrEqual,
-										value: 2n,
-									}),
-								],
-							}),
-						);
-						response.results.sort((a, b) =>
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "number",
+									compare: Compare.LessOrEqual,
+									value: 2n,
+								}),
+							],
+						});
+						response.sort((a, b) =>
 							bigIntSort(a.value.number as bigint, b.value.number as bigint),
 						);
-						expect(response.results).to.have.length(2);
-						expect(response.results[0].value.number).to.be.oneOf([1n, 1]);
-						expect(response.results[1].value.number).to.be.oneOf([2n, 2]);
+						expect(response).to.have.length(2);
+						expect(response[0].value.number).to.be.oneOf([1n, 1]);
+						expect(response[1].value.number).to.be.oneOf([2n, 2]);
 					});
 				});
 
@@ -1340,97 +1233,82 @@ export const tests = (
 					});
 
 					it("equal", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "bigint",
-										compare: Compare.Equal,
-										value: first,
-									}),
-								],
-							}),
-						);
-						expect(response.results).to.have.length(1);
-						expect(response.results[0].value.bigint).to.equal(first);
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "bigint",
+									compare: Compare.Equal,
+									value: first,
+								}),
+							],
+						});
+						expect(response).to.have.length(1);
+						expect(response[0].value.bigint).to.equal(first);
 					});
 
 					it("gt", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "bigint",
-										compare: Compare.Greater,
-										value: second,
-									}),
-								],
-							}),
-						);
-						expect(response.results).to.have.length(1);
-						expect(response.results[0].value.bigint).to.equal(third);
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "bigint",
+									compare: Compare.Greater,
+									value: second,
+								}),
+							],
+						});
+						expect(response).to.have.length(1);
+						expect(response[0].value.bigint).to.equal(third);
 					});
 
 					it("gte", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "bigint",
-										compare: Compare.GreaterOrEqual,
-										value: second,
-									}),
-								],
-							}),
-						);
-						response.results.sort((a, b) =>
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "bigint",
+									compare: Compare.GreaterOrEqual,
+									value: second,
+								}),
+							],
+						});
+						response.sort((a, b) =>
 							bigIntSort(a.value.bigint as bigint, b.value.bigint as bigint),
 						);
-						expect(response.results).to.have.length(2);
-						expect(response.results[0].value.bigint).to.equal(second);
-						expect(response.results[1].value.bigint).to.equal(third);
+						expect(response).to.have.length(2);
+						expect(response[0].value.bigint).to.equal(second);
+						expect(response[1].value.bigint).to.equal(third);
 					});
 
 					it("lt", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "bigint",
-										compare: Compare.Less,
-										value: second,
-									}),
-								],
-							}),
-						);
-						expect(response.results).to.have.length(1);
-						expect(response.results[0].value.bigint).to.equal(first);
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "bigint",
+									compare: Compare.Less,
+									value: second,
+								}),
+							],
+						});
+						expect(response).to.have.length(1);
+						expect(response[0].value.bigint).to.equal(first);
 					});
 
 					it("lte", async () => {
-						const response = await search(
-							store,
-							new SearchRequest({
-								query: [
-									new IntegerCompare({
-										key: "bigint",
-										compare: Compare.LessOrEqual,
-										value: second,
-									}),
-								],
-							}),
-						);
-						response.results.sort((a, b) =>
+						const response = await search(store, {
+							query: [
+								new IntegerCompare({
+									key: "bigint",
+									compare: Compare.LessOrEqual,
+									value: second,
+								}),
+							],
+						});
+						response.sort((a, b) =>
 							bigIntSort(a.value.number as bigint, b.value.number as bigint),
 						);
 
-						expect(response.results).to.have.length(2);
-						expect(response.results[0].value.bigint).to.equal(first);
-						expect(response.results[1].value.bigint).to.equal(second);
+						expect(response).to.have.length(2);
+						expect(response[0].value.bigint).to.equal(first);
+						expect(response[1].value.bigint).to.equal(second);
 					});
 				});
 
@@ -1480,22 +1358,19 @@ export const tests = (
 							});
 							await store.put(doc2);
 
-							const response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new IntegerCompare({
-											key: ["nested", "number"],
-											compare: Compare.GreaterOrEqual,
-											value: 2n,
-										}),
-									],
-								}),
-							);
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("2");
+							const response = await search(store, {
+								query: [
+									new IntegerCompare({
+										key: ["nested", "number"],
+										compare: Compare.GreaterOrEqual,
+										value: 2n,
+									}),
+								],
+							});
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("2");
 
-							checkDocument(response.results[0].value, doc2);
+							checkDocument(response[0].value, doc2);
 						});
 
 						it("bool", async () => {
@@ -1511,35 +1386,29 @@ export const tests = (
 							});
 
 							await store.put(doc2);
-							let response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new BoolQuery({
-											key: ["nested", "bool"],
-											value: true,
-										}),
-									],
-								}),
-							);
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("2");
-							checkDocument(response.results[0].value, doc2);
+							let response = await search(store, {
+								query: [
+									new BoolQuery({
+										key: ["nested", "bool"],
+										value: true,
+									}),
+								],
+							});
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("2");
+							checkDocument(response[0].value, doc2);
 
-							response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new BoolQuery({
-											key: ["nested", "bool"],
-											value: false,
-										}),
-									],
-								}),
-							);
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("1");
-							checkDocument(response.results[0].value, doc1);
+							response = await search(store, {
+								query: [
+									new BoolQuery({
+										key: ["nested", "bool"],
+										value: false,
+									}),
+								],
+							});
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("1");
+							checkDocument(response[0].value, doc1);
 						});
 					});
 
@@ -1584,35 +1453,29 @@ export const tests = (
 							});
 
 							await store.put(doc2);
-							let response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new BoolQuery({
-											key: ["nested", "bool"],
-											value: true,
-										}),
-									],
-								}),
-							);
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("2");
-							checkDocument(response.results[0].value, doc2);
+							let response = await search(store, {
+								query: [
+									new BoolQuery({
+										key: ["nested", "bool"],
+										value: true,
+									}),
+								],
+							});
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("2");
+							checkDocument(response[0].value, doc2);
 
-							response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new BoolQuery({
-											key: ["nested", "bool"],
-											value: false,
-										}),
-									],
-								}),
-							);
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("1");
-							checkDocument(response.results[0].value, doc1);
+							response = await search(store, {
+								query: [
+									new BoolQuery({
+										key: ["nested", "bool"],
+										value: false,
+									}),
+								],
+							});
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("1");
+							checkDocument(response[0].value, doc1);
 						});
 					});
 
@@ -1670,22 +1533,19 @@ export const tests = (
 							});
 							await store.put(doc2);
 
-							const response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new IntegerCompare({
-											key: ["nested", "nestedAgain", "number"],
-											compare: Compare.GreaterOrEqual,
-											value: 2n,
-										}),
-									],
-								}),
-							);
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("2");
+							const response = await search(store, {
+								query: [
+									new IntegerCompare({
+										key: ["nested", "nestedAgain", "number"],
+										compare: Compare.GreaterOrEqual,
+										value: 2n,
+									}),
+								],
+							});
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("2");
 
-							checkDocument(response.results[0].value, doc2);
+							checkDocument(response[0].value, doc2);
 						});
 					});
 
@@ -1756,27 +1616,24 @@ export const tests = (
 							});
 							await store.put(doc2);
 
-							const response = await search(
-								store,
-								new SearchRequest({
-									query: [
-										new IntegerCompare({
-											key: [
-												"nested",
-												"nestedAgain",
-												"nestedAgainAgain",
-												"number",
-											],
-											compare: Compare.GreaterOrEqual,
-											value: 2n,
-										}),
-									],
-								}),
-							);
+							const response = await search(store, {
+								query: [
+									new IntegerCompare({
+										key: [
+											"nested",
+											"nestedAgain",
+											"nestedAgainAgain",
+											"number",
+										],
+										compare: Compare.GreaterOrEqual,
+										value: 2n,
+									}),
+								],
+							});
 
-							expect(response.results).to.have.length(1);
-							expect(response.results[0].value.id).to.equal("2");
-							checkDocument(response.results[0].value, doc2);
+							expect(response).to.have.length(1);
+							expect(response[0].value.id).to.equal("2");
+							checkDocument(response[0].value, doc2);
 						});
 					});
 
@@ -1841,22 +1698,19 @@ export const tests = (
 								});
 								await store.put(doc2);
 
-								const response = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new StringMatch({
-												key: ["nested", "string"],
-												value: "hello",
-											}),
-										],
-									}),
-								);
+								const response = await search(store, {
+									query: [
+										new StringMatch({
+											key: ["nested", "string"],
+											value: "hello",
+										}),
+									],
+								});
 
-								expect(response.results).to.have.length(1);
-								expect(response.results[0].value.id).to.equal("2");
+								expect(response).to.have.length(1);
+								expect(response[0].value.id).to.equal("2");
 
-								checkDocument(response.results[0].value, doc2);
+								checkDocument(response[0].value, doc2);
 							});
 						});
 
@@ -1934,22 +1788,19 @@ export const tests = (
 								});
 								await store.put(doc2);
 
-								const response = await search(
-									store,
-									new SearchRequest({
-										query: [
-											new StringMatch({
-												key: ["nested", "nestedAgain", "string"],
-												value: "hello",
-											}),
-										],
-									}),
-								);
+								const response = await search(store, {
+									query: [
+										new StringMatch({
+											key: ["nested", "nestedAgain", "string"],
+											value: "hello",
+										}),
+									],
+								});
 
-								expect(response.results).to.have.length(1);
-								expect(response.results[0].value.id).to.equal("2");
+								expect(response).to.have.length(1);
+								expect(response[0].value.id).to.equal("2");
 
-								checkDocument(response.results[0].value, doc2);
+								checkDocument(response[0].value, doc2);
 							});
 						});
 
@@ -2026,21 +1877,18 @@ export const tests = (
 
 									await store.put(doc2);
 
-									const response = await search(
-										store,
-										new SearchRequest({
-											query: [
-												new StringMatch({
-													key: ["array", "string"],
-													value: "world",
-												}),
-											],
-										}),
-									);
+									const response = await search(store, {
+										query: [
+											new StringMatch({
+												key: ["array", "string"],
+												value: "world",
+											}),
+										],
+									});
 
-									expect(response.results).to.have.length(1);
-									expect(response.results[0].value.id).to.equal("2");
-									checkDocument(response.results[0].value, doc2);
+									expect(response).to.have.length(1);
+									expect(response[0].value.id).to.equal("2");
+									checkDocument(response[0].value, doc2);
 								});
 							});
 
@@ -2107,21 +1955,18 @@ export const tests = (
 
 									await store.put(doc2);
 
-									const response = await search(
-										store,
-										new SearchRequest({
-											query: [
-												new StringMatch({
-													key: ["base", "string"],
-													value: "world",
-												}),
-											],
-										}),
-									);
+									const response = await search(store, {
+										query: [
+											new StringMatch({
+												key: ["base", "string"],
+												value: "world",
+											}),
+										],
+									});
 
-									expect(response.results).to.have.length(1);
-									expect(response.results[0].value.id).to.equal("2");
-									checkDocument(response.results[0].value, doc2);
+									expect(response).to.have.length(1);
+									expect(response[0].value.id).to.equal("2");
+									checkDocument(response[0].value, doc2);
 								});
 							});
 
@@ -2171,23 +2016,20 @@ export const tests = (
 									});
 									await store.put(doc2);
 
-									const response = await search(
-										store,
-										new SearchRequest({
-											query: [
-												new StringMatch({
-													key: ["nested", "arr"],
-													value: "värld",
-												}),
-											],
-										}),
-									);
+									const response = await search(store, {
+										query: [
+											new StringMatch({
+												key: ["nested", "arr"],
+												value: "värld",
+											}),
+										],
+									});
 
-									expect(response.results).to.have.length(1);
-									expect(
-										response.results.map((x) => x.value.id),
-									).to.have.members(["2"]);
-									checkDocument(response.results[0].value, doc2);
+									expect(response).to.have.length(1);
+									expect(response.map((x) => x.value.id)).to.have.members([
+										"2",
+									]);
+									checkDocument(response[0].value, doc2);
 								});
 							});
 
@@ -2250,30 +2092,27 @@ export const tests = (
 										}),
 									);
 
-									const response = await search(
-										store,
-										new SearchRequest({
-											query: [
-												new Nested({
-													path: "array",
-													query: new And([
-														new StringMatch({
-															key: "a",
-															value: "hello",
-														}),
-														new StringMatch({
-															key: "b",
-															value: "world",
-														}),
-													]),
-												}),
-											],
-										}),
-									);
+									const response = await search(store, {
+										query: [
+											new Nested({
+												path: "array",
+												query: new And([
+													new StringMatch({
+														key: "a",
+														value: "hello",
+													}),
+													new StringMatch({
+														key: "b",
+														value: "world",
+													}),
+												]),
+											}),
+										],
+									});
 
-									expect(response.results).to.have.length(1);
-									expect(response.results[0].value.id).to.equal("1");
-									checkDocument(response.results[0].value, doc1);
+									expect(response).to.have.length(1);
+									expect(response[0].value.id).to.equal("1");
+									checkDocument(response[0].value, doc1);
 								});
 
 								it("nested partial match", async () => {
@@ -2305,24 +2144,21 @@ export const tests = (
 										}),
 									);
 
-									const response = await search(
-										store,
-										new SearchRequest({
-											query: [
-												new StringMatch({
-													key: ["array", "a"],
-													value: "hello",
-												}),
-												new StringMatch({
-													key: ["array", "b"],
-													value: "world",
-												}),
-											],
-										}),
-									);
+									const response = await search(store, {
+										query: [
+											new StringMatch({
+												key: ["array", "a"],
+												value: "hello",
+											}),
+											new StringMatch({
+												key: ["array", "b"],
+												value: "world",
+											}),
+										],
+									});
 
-									expect(response.results).to.have.length(2);
-									checkDocument(response.results[0].value, doc1);
+									expect(response).to.have.length(2);
+									checkDocument(response[0].value, doc1);
 								});
 							});
 						});
@@ -2337,15 +2173,12 @@ export const tests = (
 					it("can query one of the version", async () => {
 						await store.put(new DocumentNext({ anotherField: "hello" }));
 
-						const result = await search(
-							store,
-							new SearchRequest({
-								query: new StringMatch({ key: "anotherField", value: "hello" }),
-							}),
-						);
-						expect(result.results).to.have.length(1);
+						const result = await search(store, {
+							query: new StringMatch({ key: "anotherField", value: "hello" }),
+						});
+						expect(result).to.have.length(1);
 
-						const [doc] = result.results;
+						const [doc] = result;
 						expect(doc.value).to.be.instanceOf(DocumentNext);
 					});
 
@@ -2354,15 +2187,12 @@ export const tests = (
 						await store.put(new DocumentNext({ name }));
 						await store.put(new DocumentNext({ name }));
 
-						const result = await search(
-							store,
-							new SearchRequest({
-								query: new StringMatch({ key: "name", value: name }),
-							}),
-						);
+						const result = await search(store, {
+							query: new StringMatch({ key: "name", value: name }),
+						});
 
-						expect(result.results).to.have.length(2);
-						for (const doc of result.results) {
+						expect(result).to.have.length(2);
+						for (const doc of result) {
 							expect(doc.value).to.be.instanceOf(DocumentNext);
 						}
 					});
@@ -2377,11 +2207,11 @@ export const tests = (
 					it("filter field", async () => {
 						const results = await search(
 							store,
-							new SearchRequest({ query: [] }),
+							{ query: [] },
 							{ shape: { id: true } },
 						);
-						expect(results.results).to.have.length(4);
-						for (const result of results.results) {
+						expect(results).to.have.length(4);
+						for (const result of results) {
 							if (shapingSupported) {
 								expect(Object.keys(result.value)).to.have.length(1);
 								expect(result.value["id"]).to.exist;
@@ -2397,11 +2227,11 @@ export const tests = (
 					it("nested field", async () => {
 						const results = await search(
 							store,
-							new SearchRequest({ query: [] }),
-							{ shape: { nestedVec: { number: true } } },
+							{ query: [] },
+							{ shape: { nestedVec: [{ number: true }] } },
 						);
-						expect(results.results).to.have.length(4);
-						for (const value of results.results) {
+						expect(results).to.have.length(4);
+						for (const value of results) {
 							const arr = value.value["nestedVec"];
 							expect(arr).to.be.exist;
 
@@ -2470,29 +2300,31 @@ export const tests = (
 							),
 						);
 
-						const shapedResults = await iterate(
-							index.store,
-							new SearchRequest({
-								query: new BoolQuery({ key: ["nested", "bool"], value: false }),
-								fetch: 1,
-							}),
-						).all({ shape: { id: true } });
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: new BoolQuery({
+										key: ["nested", "bool"],
+										value: false,
+									}),
+								},
+								{ shape: { id: true } },
+							)
+							.all();
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal("2");
 
 						if (shapingSupported) {
-							expect(shapedResults[0].value.nested).to.be.undefined;
+							expect(shapedResults[0].value["nested"]).to.be.undefined;
 						} else {
-							expect(shapedResults[0].value.nested).to.exist;
+							expect(shapedResults[0].value["nested"]).to.exist;
 						}
 
-						const unshapedResults = await iterate(
-							index.store,
-							new SearchRequest({
+						const unshapedResults = await index.store
+							.iterate({
 								query: new BoolQuery({ key: ["nested", "bool"], value: false }),
-								fetch: 1,
-							}),
-						).all();
+							})
+							.all();
 						expect(unshapedResults).to.have.length(1);
 						expect(unshapedResults[0].value.id).to.equal("2");
 						expect(unshapedResults[0].value.nested).to.exist;
@@ -2513,24 +2345,24 @@ export const tests = (
 						await index.store.put(d1);
 						await index.store.put(d2);
 
-						const unshapedResults = await iterate(
-							index.store,
-							new SearchRequest({
+						const unshapedResults = await index.store
+							.iterate({
 								query: new StringMatch({ key: ["id"], value: "2" }),
-								fetch: 1,
-							}),
-						).all();
+							})
+							.all();
 						expect(unshapedResults).to.have.length(1);
 						expect(unshapedResults[0].value.id).to.equal(d2.id);
 						expect(unshapedResults[0].value.nested).to.deep.equal(d2.nested);
 
-						const shapedResults = await iterate(
-							index.store,
-							new SearchRequest({
-								query: new StringMatch({ key: ["id"], value: "2" }),
-								fetch: 1,
-							}),
-						).all({ shape: { id: true, nested: { bool: true } } });
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: new StringMatch({ key: ["id"], value: "2" }),
+								},
+								{ shape: { id: true, nested: { bool: true } } },
+							)
+							.all();
+
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal(d2.id);
 
@@ -2620,31 +2452,35 @@ export const tests = (
 							),
 						);
 
-						const shapedResults = await iterate(
-							index.store,
-							new SearchRequest({
-								query: new BoolQuery({ key: ["nested", "bool"], value: false }),
-								fetch: 1,
-							}),
-						).all({ shape: { id: true } });
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: new BoolQuery({
+										key: ["nested", "bool"],
+										value: false,
+									}),
+								},
+								{ shape: { id: true } },
+							)
+							.all();
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal("2");
 
 						if (shapingSupported) {
-							expect(shapedResults[0].value.nested).to.be.undefined;
+							expect(shapedResults[0].value["nested"]).to.be.undefined;
 						} else {
-							expect(shapedResults[0].value.nested).to.exist;
+							expect(shapedResults[0].value["nested"]).to.exist;
 						}
 
-						const unshapedResults = await iterate(
-							index.store,
-							new SearchRequest({
+						const unshapedResults = await index.store
+							.iterate({
 								query: new BoolQuery({ key: ["nested", "bool"], value: false }),
-								fetch: 1,
-							}),
-						).all();
+							})
+							.all();
+
 						expect(unshapedResults).to.have.length(1);
 						expect(unshapedResults[0].value.id).to.equal("2");
+
 						expect(unshapedResults[0].value.nested).to.exist;
 					});
 
@@ -2663,24 +2499,23 @@ export const tests = (
 						await index.store.put(d1);
 						await index.store.put(d2);
 
-						const unshapedResults = await iterate(
-							index.store,
-							new SearchRequest({
+						const unshapedResults = await index.store
+							.iterate({
 								query: new StringMatch({ key: ["id"], value: "2" }),
-								fetch: 1,
-							}),
-						).all();
+							})
+							.all();
 						expect(unshapedResults).to.have.length(1);
 						expect(unshapedResults[0].value.id).to.equal(d2.id);
 						expect(unshapedResults[0].value.nested).to.deep.equal(d2.nested);
 
-						const shapedResults = await iterate(
-							index.store,
-							new SearchRequest({
-								query: new StringMatch({ key: ["id"], value: "2" }),
-								fetch: 1,
-							}),
-						).all({ shape: { id: true, nested: { bool: true } } });
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: new StringMatch({ key: ["id"], value: "2" }),
+								},
+								{ shape: { id: true, nested: { bool: true } } },
+							)
+							.all();
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal(d2.id);
 
@@ -2747,29 +2582,31 @@ export const tests = (
 							),
 						);
 
-						const shapedResults = await iterate(
-							index.store,
-							new SearchRequest({
-								query: new BoolQuery({ key: ["nested", "bool"], value: false }),
-								fetch: 1,
-							}),
-						).all({ shape: { id: true } });
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: new BoolQuery({
+										key: ["nested", "bool"],
+										value: false,
+									}),
+								},
+								{ shape: { id: true } },
+							)
+							.all();
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal("2");
 
 						if (shapingSupported) {
-							expect(shapedResults[0].value.nested).to.be.undefined;
+							expect(shapedResults[0].value["nested"]).to.be.undefined;
 						} else {
-							expect(shapedResults[0].value.nested).to.exist;
+							expect(shapedResults[0].value["nested"]).to.exist;
 						}
 
-						const unshapedResults = await iterate(
-							index.store,
-							new SearchRequest({
+						const unshapedResults = await index.store
+							.iterate({
 								query: new BoolQuery({ key: ["nested", "bool"], value: false }),
-								fetch: 1,
-							}),
-						).all();
+							})
+							.all();
 						expect(unshapedResults).to.have.length(1);
 						expect(unshapedResults[0].value.id).to.equal("2");
 						expect(unshapedResults[0].value.nested).to.exist;
@@ -2790,13 +2627,14 @@ export const tests = (
 						await index.store.put(d1);
 						await index.store.put(d2);
 
-						const shapedResults = await iterate(
-							index.store,
-							new SearchRequest({
-								query: new StringMatch({ key: ["id"], value: "2" }),
-								fetch: 1,
-							}),
-						).all({ shape: { id: true, nested: { bool: true } } });
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: new StringMatch({ key: ["id"], value: "2" }),
+								},
+								{ shape: { id: true, nested: [{ bool: true }] } },
+							)
+							.all();
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal(d2.id);
 
@@ -2810,17 +2648,41 @@ export const tests = (
 							);
 						}
 
-						const unshapedResults = await iterate(
-							index.store,
-							new SearchRequest({
+						const unshapedResults = await index.store
+							.iterate({
 								query: new StringMatch({ key: ["id"], value: "2" }),
-								fetch: 1,
-							}),
-						).all();
+							})
+							.all();
 						expect(unshapedResults).to.have.length(1);
 						expect(unshapedResults[0].value.id).to.equal(d2.id);
 						expect(unshapedResults[0].value.nested[0]).to.deep.equal(
 							d2.nested[0],
+						);
+					});
+
+					it("true resolves fully", async () => {
+						index = await setup({ schema: NestedBoolQueryDocument });
+
+						const d1 = new NestedBoolQueryDocument(
+							"1",
+							new MultifieldNested(true, 1, ["1"]),
+						);
+
+						await index.store.put(d1);
+
+						const shapedResults = await index.store
+							.iterate(
+								{
+									query: [],
+								},
+								{ shape: { id: true, nested: true } },
+							)
+							.all();
+						expect(shapedResults).to.have.length(1);
+						expect(shapedResults[0].value.id).to.equal(d1.id);
+
+						expect(shapedResults[0].value.nested[0]).to.deep.equal(
+							d1.nested[0],
 						);
 					});
 				});
@@ -2853,24 +2715,30 @@ export const tests = (
 				],
 			) => {
 				await waitForResolved(async () => {
-					const req = new SearchRequest({
+					const req = {
 						query,
 						sort,
-					});
-					const iterator = iterate(store, req);
+					};
+					const iterator = store.iterate(req);
+
+					// No fetches has been made, so we don't know whether we are done yet
+					expect(iterator.done()).to.be.undefined;
 
 					if (batches.length === 0) {
-						// No fetches has been made, so we don't know whether we are done yet
-						expect(iterator.done()).to.be.false;
+						await assertIteratorIsDone(iterator);
 					} else {
+						let first = true;
 						for (const batch of batches) {
-							expect(iterator.done()).to.be.false;
+							first
+								? expect(iterator.done()).to.be.undefined
+								: expect(iterator.done()).to.be.false;
+							first = false;
 							const next = await iterator.next(batch.length);
-							expect(
-								next.results.map((x) => Number(x.value.number)),
-							).to.deep.equal(batch.map((x) => Number(x)));
+							expect(next.map((x) => Number(x.value.number))).to.deep.equal(
+								batch.map((x) => Number(x)),
+							);
 						}
-						expect(iterator.done()).to.be.true;
+						await assertIteratorIsDone(iterator);
 					}
 				});
 			};
@@ -2901,38 +2769,24 @@ export const tests = (
 				await put(1);
 				await put(2);
 				{
-					const iterator = await iterate(
-						store,
-						new SearchRequest({
-							query: [],
-							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
-						}),
-					);
-					expect(iterator.done()).to.be.false;
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
 					const next = await iterator.next(3);
-					expect(next.results.map((x) => x.value.name)).to.deep.equal([
-						"0",
-						"1",
-						"2",
-					]);
-					expect(iterator.done()).to.be.true;
+					expect(next.map((x) => x.value.name)).to.deep.equal(["0", "1", "2"]);
+					await assertIteratorIsDone(iterator);
 				}
 				{
-					const iterator = await iterate(
-						store,
-						new SearchRequest({
-							query: [],
-							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
-						}),
-					);
-					expect(iterator.done()).to.be.false;
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
 					const next = await iterator.next(3);
-					expect(next.results.map((x) => x.value.name)).to.deep.equal([
-						"2",
-						"1",
-						"0",
-					]);
-					expect(iterator.done()).to.be.true;
+					expect(next.map((x) => x.value.name)).to.deep.equal(["2", "1", "0"]);
+					await assertIteratorIsDone(iterator);
 				}
 			});
 
@@ -2941,21 +2795,14 @@ export const tests = (
 				await put(1);
 				await put(2);
 
-				const iterator = await iterate(
-					store,
-					new SearchRequest({
-						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
-					}),
-				);
-				expect(iterator.done()).to.be.false;
+				const iterator = await store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+				expect(iterator.done()).to.be.undefined;
 				const next = await iterator.next(3);
-				expect(next.results.map((x) => x.value.name)).to.deep.equal([
-					"0",
-					"1",
-					"2",
-				]);
-				expect(iterator.done()).to.be.true;
+				expect(next.map((x) => x.value.name)).to.deep.equal(["0", "1", "2"]);
+				await assertIteratorIsDone(iterator);
 			});
 
 			describe("nested", () => {
@@ -2971,20 +2818,18 @@ export const tests = (
 					await store.put(doc1);
 					await store.put(doc2);
 
-					const iterator = iterate(
-						store,
-						new SearchRequest({
-							sort: [
-								new Sort({
-									direction: SortDirection.DESC,
-									key: ["nested", "number"],
-								}),
-							],
-						}),
-					);
-					expect(iterator.done()).to.be.false;
+					const iterator = store.iterate({
+						sort: [
+							new Sort({
+								direction: SortDirection.DESC,
+								key: ["nested", "number"],
+							}),
+						],
+					});
+					expect(iterator.done()).to.be.undefined;
 					const next = await iterator.next(2);
-					expect(next.results.map((x) => x.value.id)).to.deep.equal(["2", "1"]);
+					expect(next.map((x) => x.value.id)).to.deep.equal(["2", "1"]);
+					await assertIteratorIsDone(iterator);
 				});
 
 				describe("nested-nested-invariant", () => {
@@ -3029,23 +2874,18 @@ export const tests = (
 					});
 
 					it("nested-variants", async () => {
-						const iterator = iterate(
-							store,
-							new SearchRequest({
-								sort: [
-									new Sort({
-										direction: SortDirection.DESC,
-										key: ["nested", "v0", "number"],
-									}),
-								],
-							}),
-						);
-						expect(iterator.done()).to.be.false;
+						const iterator = store.iterate({
+							sort: [
+								new Sort({
+									direction: SortDirection.DESC,
+									key: ["nested", "v0", "number"],
+								}),
+							],
+						});
+						expect(iterator.done()).to.be.undefined;
 						const next = await iterator.next(2);
-						expect(next.results.map((x) => x.value.id)).to.deep.equal([
-							"2",
-							"1",
-						]);
+						expect(next.map((x) => x.value.id)).to.deep.equal(["2", "1"]);
+						await assertIteratorIsDone(iterator);
 					});
 				});
 
@@ -3092,82 +2932,76 @@ export const tests = (
 					});
 
 					it("nested-variants", async () => {
-						const iterator = iterate(
-							store,
-							new SearchRequest({
-								sort: [
-									new Sort({
-										direction: SortDirection.DESC,
-										key: ["nested", "v0", "number"],
-									}),
-								],
-							}),
-						);
-						expect(iterator.done()).to.be.false;
+						const iterator = store.iterate({
+							sort: [
+								new Sort({
+									direction: SortDirection.DESC,
+									key: ["nested", "v0", "number"],
+								}),
+							],
+						});
+						expect(iterator.done()).to.be.undefined;
 						const next = await iterator.next(2);
-						expect(next.results.map((x) => x.value.id)).to.deep.equal([
-							"2",
-							"1",
-						]);
+						expect(next.map((x) => x.value.id)).to.deep.equal(["2", "1"]);
 					});
 				});
 				/*  TODO (requires sort join interleaving)
 				
 				describe("nested-nested-variant", () => {
-
+		
 					abstract class Base { }
-
+		
 					@variant(0)
 					class V0 extends Base {
-
+		
 						@field({ type: 'u64' })
 						number: bigint;
-
+		
 						constructor(number: bigint) {
 							super()
 							this.number = number;
 						}
 					}
-
+		
 					@variant(1)
 					class V1 extends Base {
-
+		
 						@field({ type: 'u64' })
 						number: bigint;
-
+		
 						constructor(number: bigint) {
 							super()
 							this.number = number;
 						}
 					}
-
+		
 					class NestedValue {
 						@field({ type: Base })
 						v0: Base;
-
+		
 						constructor(v0?: Base) {
 							this.v0 = v0;
 						}
 					}
-
+		
 					class Document {
 						@id({ type: 'string' })
 						id: string;
-
+		
 						@field({ type: NestedValue })
 						nested: NestedValue;
-
+		
 						constructor(id: string, nested: NestedValue) {
 							this.id = id;
 							this.nested = nested;
 						}
 					}
-
+		
 					const doc1 = new Document("1", new NestedValue(new V0(1n)));
 					const doc2 = new Document("2", new NestedValue(new V0(2n)));
 					const doc3 = new Document("3", new NestedValue(new V1(3n)));
 					const doc4 = new Document("4", new NestedValue(new V1(4n)));
-
+		
 					beforeEach(async () => {
 						await setup({ schema: Document });
 						await store.put(doc1);
@@ -3175,15 +3009,15 @@ export const tests = (
 						await store.put(doc3);
 						await store.put(doc4);
 					});
-
+		
 					it("nested-variants", async () => {
-						const iterator = iterate(store, new SearchRequest({ sort: [new Sort({ direction: SortDirection.DESC, key: ["nested", "v0", "number"] })] }));
+						const iterator = iterate(store, ({ sort: [new Sort({ direction: SortDirection.DESC, key: ["nested", "v0", "number"] })] }));
 						expect(iterator.done()).to.be.false;
 						const next = await iterator.next(4);
 						expect(next.results.map((x) => x.value.id)).to.deep.equal(["4", "3", "2", "1"]);
-
+		
 					})
-
+		
 				})*/
 
 				/* TODO 
@@ -3210,7 +3044,7 @@ export const tests = (
 					await store.put(doc2);
 					await store.put(doc3);
 		
-					const iterator = iterate(store, new SearchRequest({ query: [new IntegerCompare({ key: 'number', compare: 'gte', value: 102n }), new Nested({ path: 'nestedVec', id: 'path-to-nested', query: [new IntegerCompare({ key: 'number', compare: 'gte', value: 200 })] })], sort: [new Sort({ direction: SortDirection.DESC, key: ["path-to-nested", "number"] })] }));
+					const iterator = iterate(store, ({ query: [new IntegerCompare({ key: 'number', compare: 'gte', value: 102n }), new Nested({ path: 'nestedVec', id: 'path-to-nested', query: [new IntegerCompare({ key: 'number', compare: 'gte', value: 200 })] })], sort: [new Sort({ direction: SortDirection.DESC, key: ["path-to-nested", "number"] })] }));
 					expect(iterator.done()).to.be.false;
 					const next = await iterator.next(2);
 					expect(next.results.map((x) => x.value.id)).to.deep.equal(["2", "1"]);
@@ -3223,51 +3057,45 @@ export const tests = (
 					await put(0);
 					await put(1);
 					await put(2);
-					const request = new SearchRequest({
+					const request = {
 						query: [],
-					});
-					const iterator = iterate(store, request);
-					expect(iterator.done()).to.be.false;
+					};
+					const iterator = store.iterate(request);
+					expect(iterator.done()).to.be.undefined;
 					await iterator.next(2); // fetch some, but not all
-					expect(store.getPending(request.idString)).equal(1);
+					expect(iterator.done()).to.be.false;
+					expect(await iterator.pending()).equal(1);
 					await iterator.close();
-					await waitForResolved(
-						() => expect(store.getPending(request.idString)).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 },
-					);
+					expect(await iterator.pending()).equal(0);
+					expect(iterator.done()).to.be.true;
 				});
 
 				it("end of iterator", async () => {
 					await put(0);
 					await put(1);
 					await put(2);
-					const request = new SearchRequest({
+					const request = {
 						query: [],
-					});
-					const iterator = await iterate(store, request);
-					expect(iterator.done()).to.be.false;
+					};
+					const iterator = store.iterate(request);
+					expect(iterator.done()).to.be.undefined;
 					await iterator.next(3); // fetch all
-					await waitForResolved(
-						() => expect(store.getPending(request.idString)).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 },
-					);
+					expect(await iterator.pending()).equal(0);
+					expect(iterator.done()).to.be.true;
 				});
 
 				it("end of iterator, multiple nexts", async () => {
 					await put(0);
 					await put(1);
 					await put(2);
-					const request = new SearchRequest({
+					const request = {
 						query: [],
-					});
-					const iterator = await iterate(store, request);
+					};
+					const iterator = store.iterate(request);
 					await iterator.next(2);
 					await iterator.next(1);
-					expect(iterator.done()).to.be.true;
-					await waitForResolved(
-						() => expect(store.getPending(request.idString)).equal(undefined),
-						{ timeout: 3000, delayInterval: 50 },
-					);
+					assertIteratorIsDone(iterator);
+					expect(await iterator.pending()).equal(0);
 				});
 			});
 
@@ -3281,7 +3109,7 @@ export const tests = (
 		describe("sum", () => {
 			it("it returns sum", async () => {
 				await setupDefault();
-				const sum = await store.sum(new SumRequest({ key: "number" }));
+				const sum = await store.sum({ key: "number" });
 				typeof sum === "bigint"
 					? expect(sum).to.equal(6n)
 					: expect(sum).to.equal(6);
@@ -3289,19 +3117,17 @@ export const tests = (
 
 			it("it returns sum with query", async () => {
 				await setupDefault();
-				const sum = await store.sum(
-					new SumRequest({
-						key: "number",
-						query: [
-							new StringMatch({
-								key: "tags",
-								value: "world",
-								method: StringMatchMethod.contains,
-								caseInsensitive: true,
-							}),
-						],
-					}),
-				);
+				const sum = await store.sum({
+					key: "number",
+					query: [
+						new StringMatch({
+							key: "tags",
+							value: "world",
+							method: StringMatchMethod.contains,
+							caseInsensitive: true,
+						}),
+					],
+				});
 				typeof sum === "bigint"
 					? expect(sum).to.equal(2n)
 					: expect(sum).to.equal(2);
@@ -3328,11 +3154,9 @@ export const tests = (
 				await store.put(doc2);
 				await store.put(doc3);
 
-				const sum = await store.sum(
-					new SumRequest({
-						key: ["nested", "number"],
-					}),
-				);
+				const sum = await store.sum({
+					key: ["nested", "number"],
+				});
 
 				typeof sum === "bigint"
 					? expect(sum).to.equal(3n)
@@ -3343,24 +3167,22 @@ export const tests = (
 		describe("count", () => {
 			it("it returns count", async () => {
 				await setupDefault();
-				const sum = await store.count(new CountRequest());
+				const sum = await store.count();
 				expect(sum).to.equal(4);
 			});
 
 			it("it returns count with query", async () => {
 				await setupDefault();
-				const sum = await store.count(
-					new CountRequest({
-						query: [
-							new StringMatch({
-								key: "tags",
-								value: "world",
-								method: StringMatchMethod.contains,
-								caseInsensitive: true,
-							}),
-						],
-					}),
-				);
+				const sum = await store.count({
+					query: [
+						new StringMatch({
+							key: "tags",
+							value: "world",
+							method: StringMatchMethod.contains,
+							caseInsensitive: true,
+						}),
+					],
+				});
 				expect(sum).to.equal(1);
 			});
 		});
@@ -3368,18 +3190,16 @@ export const tests = (
 		describe("delete", () => {
 			it("delete with query", async () => {
 				await setupDefault();
-				await store.del(
-					new DeleteRequest({
-						query: [
-							new StringMatch({
-								key: "tags",
-								value: "world",
-								method: StringMatchMethod.contains,
-								caseInsensitive: true,
-							}),
-						],
-					}),
-				);
+				await store.del({
+					query: [
+						new StringMatch({
+							key: "tags",
+							value: "world",
+							method: StringMatchMethod.contains,
+							caseInsensitive: true,
+						}),
+					],
+				});
 				expect(await store.getSize()).to.equal(3);
 			});
 		});
@@ -3415,7 +3235,7 @@ export const tests = (
 				for (let i = 0; i < 100; i++) {
 					promises.push(
 						(async () => {
-							results.push(await store.count(new CountRequest()));
+							results.push(await store.count());
 						})(),
 					);
 				}
@@ -3598,14 +3418,10 @@ export const tests = (
 				await aIndex.put(
 					new Document({ id: "a", name: "hello", number: 1n, tags: [] }),
 				);
-				expect(
-					await aIndex.count(new CountRequest({ query: { id: "a" } })),
-				).to.eq(1);
+				expect(await aIndex.count({ query: { id: "a" } })).to.eq(1);
 
 				await bIndex.put(new AnotherDocument("b"));
-				expect(
-					await bIndex.count(new CountRequest({ query: { id: "b" } })),
-				).to.eq(1);
+				expect(await bIndex.count({ query: { id: "b" } })).to.eq(1);
 			});
 		});
 	});
@@ -3658,7 +3474,7 @@ describe("multi-dimensional", () => {
 									promises.push(
 										search(
 											store,
-											new SearchRequest({
+											({
 												query: [
 													new IntegerCompare({
 														key: "number",
@@ -3673,7 +3489,7 @@ describe("multi-dimensional", () => {
 									promises.push(
 										search(
 											store,
-											new SearchRequest({
+											({
 												query: [
 													new IntegerCompare({
 														key: "number",

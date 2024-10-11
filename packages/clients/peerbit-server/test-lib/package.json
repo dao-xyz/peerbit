@@ -7,7 +7,6 @@
 		"url": "https://github.com/dao-xyz/peerbit"
 	},
 	"license": "Apache-2.0",
-	"type": "module",
 	"sideEffects": false,
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -64,8 +63,9 @@
 		"test": "aegir test -t node"
 	},
 	"devDependencies": {
+		"tty-table": "^4.2.1",
 		"@peerbit/test-utils": "*",
-		"libp2p": "^1.9.2"
+		"libp2p": "^2.1.8"
 	},
 	"dependencies": {
 		"@peerbit/string": "*",

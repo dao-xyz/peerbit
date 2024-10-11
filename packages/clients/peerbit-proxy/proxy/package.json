@@ -54,7 +54,7 @@
 		"@peerbit/program": "^5.0.2",
 		"@peerbit/any-store-interface": "^1.0.0",
 		"@peerbit/indexer-simple": "^1.0.4",
-		"uuid": "^9.0.0"
+		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "2.0.43"

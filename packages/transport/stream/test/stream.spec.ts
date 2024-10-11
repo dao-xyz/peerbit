@@ -1,6 +1,7 @@
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { type YamuxStream } from "@chainsafe/libp2p-yamux/stream";
 import { deserialize, serialize } from "@dao-xyz/borsh";
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import { type PeerId } from "@libp2p/interface";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
@@ -1898,6 +1899,113 @@ describe("streams", function () {
 
 			await p;
 		});
+
+		it("multi-direction can concurrently seek and wait for ack", async () => {
+			let count = 300;
+			let docSize = 1e1;
+
+			for (let i = 0; i < count; i++) {
+				if (i % 2 === 0) {
+					streams[0].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[1].stream.components.peerId],
+						}),
+					});
+
+					streams[0].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
+				} else {
+					streams[0].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[1].stream.components.peerId],
+						}),
+					});
+
+					streams[0].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
+				}
+
+				if (i % 2 === 0) {
+					streams[1].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[0].stream.components.peerId],
+						}),
+					});
+
+					streams[1].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
+				} else {
+					streams[1].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[0].stream.components.peerId],
+						}),
+					});
+
+					streams[1].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SilentDelivery({
+							redundancy: 1,
+							to: [streams[2].stream.components.peerId],
+						}),
+					});
+				}
+
+				if (i % 2 === 0) {
+					streams[2].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[0].stream.components.peerId],
+						}),
+					});
+
+					streams[2].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[1].stream.components.peerId],
+						}),
+					});
+				} else {
+					streams[2].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[0].stream.components.peerId],
+						}),
+					});
+
+					streams[2].stream.publish(crypto.randomBytes(docSize), {
+						mode: new SeekDelivery({
+							redundancy: 1,
+							to: [streams[1].stream.components.peerId],
+						}),
+					});
+				}
+			}
+
+			await waitForResolved(() =>
+				expect(streams[0].received).to.have.length(count * 2),
+			);
+			await waitForResolved(() =>
+				expect(streams[1].received).to.have.length(count * 2),
+			);
+			await waitForResolved(() =>
+				expect(streams[2].received).to.have.length(count * 2),
+			);
+		});
 	});
 
 	describe("limits", () => {
@@ -1985,11 +2093,9 @@ describe("join/leave", () => {
 					streams[0].stream.components.connectionManager,
 				),
 			);
-			let x = false;
 			streams[0].stream.components.connectionManager.openConnection = (
 				...args
 			) => {
-				x = true;
 				return dialFn(...args);
 			};
 
@@ -2012,7 +2118,6 @@ describe("join/leave", () => {
 				expect(streams[0].stream.peers.size).to.be.greaterThanOrEqual(2),
 			);
 
-			console.log(x);
 			expect(dialFn.calledOnce).to.be.true;
 
 			// Republishing will not result in an additional dial
@@ -2209,6 +2314,58 @@ describe("join/leave", () => {
 			expect(dials).to.have.length(2);
 		});
 
+		it("can transmit during dialing", async () => {
+			expect(streams[0].stream.peers.size).equal(1);
+			expect(streams[2].received).to.have.length(0);
+			expect(streams[2].stream.peers.size).equal(2);
+			expect(streams[2].stream.peers.has(streams[0].stream.publicKeyHash)).to.be
+				.false;
+			expect(streams[0].stream.peers.has(streams[2].stream.publicKeyHash)).to.be
+				.false;
+
+			let c = 1;
+			streams[0].stream.publish(data, {
+				mode: new SeekDelivery({
+					to: [streams[2].stream.peerId],
+					redundancy: 1,
+				}),
+			});
+
+			let extraInsertions = 100;
+			let maxCount = 30000;
+
+			while (c < maxCount) {
+				await streams[0].stream.publish(data, {
+					to: [streams[2].stream.peerId],
+				});
+				await delay(1); // seems we need some delay between messages to make the test to have CPU time to pass
+				c++;
+				if (
+					streams[2].stream.peers.has(streams[0].stream.publicKeyHash) &&
+					streams[0].stream.peers.has(streams[2].stream.publicKeyHash)
+				) {
+					for (let i = 0; i < extraInsertions; i++) {
+						await streams[0].stream.publish(data, {
+							to: [streams[2].stream.peerId],
+						});
+						c++;
+					}
+					break;
+				}
+			}
+
+			expect(streams[2].received.length).to.be.lessThan(maxCount);
+			expect(
+				streams[2].stream.peers.has(streams[0].stream.publicKeyHash) &&
+					streams[0].stream.peers.has(streams[2].stream.publicKeyHash),
+			).to.be.true;
+
+			await waitForResolved(() =>
+				expect(streams[2].received.length).to.equal(c),
+			);
+			expect(streams[2].stream.peers.size).equal(3);
+		});
+
 		/* TODO test that autodialler tries multiple addresses 
 		
 		it("through relay if fails", async () => {
@@ -2263,16 +2420,15 @@ describe("join/leave", () => {
 		beforeEach(async () => {
 			session = await disconnected(4, [
 				{
-					peerId: await deserialize(
+					privateKey: await privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192,
-							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
-							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
-							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
-							62, 133, 97, 57, 150, 187, 247, 215,
+							204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
+							168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
+							159, 64, 83, 52, 197, 24, 246, 24, 234, 141, 183, 151, 82, 53,
+							142, 57, 25, 148, 150, 26, 209, 223, 22, 212, 40, 201, 6, 191, 72,
+							148, 82, 66, 138, 199, 185,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
@@ -2282,16 +2438,15 @@ describe("join/leave", () => {
 					},
 				},
 				{
-					peerId: await deserialize(
+					privateKey: await privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45,
-							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
-							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
-							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
-							112, 65, 202, 154, 27, 63, 15,
+							237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
+							157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120,
+							122, 222, 174, 242, 120, 50, 165, 97, 8, 235, 97, 186, 148, 251,
+							100, 168, 49, 10, 119, 71, 246, 246, 174, 163, 198, 54, 224, 6,
+							174, 212, 159, 187, 2, 137, 47, 192,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
@@ -2301,16 +2456,15 @@ describe("join/leave", () => {
 					},
 				},
 				{
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34, 23,
-							12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231,
-							155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84,
-							137, 152, 227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187,
-							239, 56, 174, 184, 34, 141, 45, 242,
+							27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
+							197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203,
+							18, 179, 181, 105, 158, 64, 215, 56, 13, 71, 156, 41, 178, 86,
+							159, 80, 222, 167, 73, 3, 37, 251, 67, 86, 6, 90, 212, 16, 251,
+							206, 54, 49, 141, 91, 171,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
@@ -2320,16 +2474,15 @@ describe("join/leave", () => {
 					},
 				},
 				{
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 89, 189, 223, 17, 89, 221, 173, 81, 113, 69, 226, 180, 190,
-							119, 201, 16, 59, 208, 95, 19, 142, 231, 71, 166, 43, 90, 10, 250,
-							109, 68, 89, 118, 0, 27, 51, 234, 79, 160, 31, 81, 189, 54, 105,
-							205, 202, 34, 30, 101, 16, 64, 52, 113, 222, 160, 31, 73, 148,
-							161, 240, 201, 36, 71, 121, 134, 83,
+							176, 30, 32, 212, 227, 61, 222, 213, 141, 55, 56, 33, 95, 29, 21,
+							143, 15, 130, 94, 221, 124, 176, 12, 225, 198, 214, 83, 46, 114,
+							69, 187, 104, 51, 28, 15, 14, 240, 27, 110, 250, 130, 74, 127,
+							194, 243, 32, 169, 162, 109, 127, 172, 232, 208, 152, 149, 108,
+							74, 52, 229, 109, 23, 50, 249, 249,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 					services: {
 						directstream: (c) =>
 							new TestDirectStream(c, {
@@ -2415,14 +2568,14 @@ describe("join/leave", () => {
 		/*  TMP DISABLE GITHUB ACTIONS FLAKY
 		it("neighbour drop", async () => {
 			await connectLine(session);
-
+	
 			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
 			});
-
+	
 			expect(
 				streams[0].stream.routes
 					.findNeighbor(
@@ -2431,7 +2584,7 @@ describe("join/leave", () => {
 					)
 					?.list?.map((x) => x.hash),
 			).to.deep.equal([streams[1].stream.publicKeyHash]);
-
+	
 			await session.peers[1].stop();
 			await waitForResolved(() =>
 				expect(streams[0].unrechable.map((x) => x.hashcode())).to.have.members([
@@ -2583,13 +2736,13 @@ describe("join/leave", () => {
 			).to.deep.equal([streams[1].stream.publicKeyHash]);
 
 			await waitForResolved(() =>
-				expect(streams[0].reachable.map((x) => x.hashcode())).to.deep.equal([
+				expect(streams[0].reachable.map((x) => x.hashcode())).to.have.members([
 					streams[1].stream.publicKeyHash,
 					streams[3].stream.publicKeyHash,
 				]),
 			);
 			await waitForResolved(() =>
-				expect(streams[1].reachable.map((x) => x.hashcode())).to.deep.equal([
+				expect(streams[1].reachable.map((x) => x.hashcode())).to.have.members([
 					streams[0].stream.publicKeyHash,
 					streams[2].stream.publicKeyHash,
 				]),
@@ -2599,9 +2752,9 @@ describe("join/leave", () => {
 
 			await waitForResolved(
 				() =>
-					expect(streams[0].unrechable.map((x) => x.hashcode())).to.deep.equal([
-						streams[3].stream.publicKeyHash,
-					]),
+					expect(
+						streams[0].unrechable.map((x) => x.hashcode()),
+					).to.have.members([streams[3].stream.publicKeyHash]),
 				{ timeout: 20 * 1000 },
 			);
 			expect(streams[1].unrechable.map((x) => x.hashcode())).to.be.empty; // because node 3 was never "reachable" directly from 2, just as a relay
@@ -2898,6 +3051,8 @@ describe("start/stop", () => {
 		await stream(session, 1).start();
 
 		await waitFor(() => stream(session, 0).peers.size === 1);
+		await waitFor(() => stream(session, 1).peers.size === 1);
+
 		await waitForPeerStreams(stream(session, 0), stream(session, 1));
 	});
 	it("can connect after start", async () => {

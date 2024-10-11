@@ -22,14 +22,12 @@ import { getTrustPath } from "../src/config.js";
 import { startApiServer } from "../src/server.js";
 import { Trust } from "../src/trust.js";
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const client = (keypair: Identity<Ed25519PublicKey>, address?: string) => {
 	return createClient(keypair, address ? { address } : undefined);
 };
-
 describe("libp2p only", () => {
+	// eslint-disable-next-line @typescript-eslint/naming-convention
+
 	let session: TestSession, server: http.Server;
 	let configDirectory: string;
 
@@ -41,8 +39,9 @@ describe("libp2p only", () => {
 		session.peers[0].services.pubsub.subscribe("1");
 		session.peers[0].services.pubsub.subscribe("2");
 		session.peers[0].services.pubsub.subscribe("3");
+		const dirnameResolved = dirname(fileURLToPath(import.meta.url));
 		configDirectory = path.join(
-			__dirname,
+			dirnameResolved,
 			"tmp",
 			"api-test",
 			"libp2ponly",
@@ -97,7 +96,14 @@ describe("server", () => {
 		before(async () => {});
 
 		beforeEach(async () => {
-			let directory = path.join(__dirname, "tmp", "api-test", "api", uuid());
+			const dirnameResolved = dirname(fileURLToPath(import.meta.url));
+			let directory = path.join(
+				dirnameResolved,
+				"tmp",
+				"api-test",
+				"api",
+				uuid(),
+			);
 			session = await TestSession.connected(1, {
 				libp2p: { transports: [tcp(), webSockets()] },
 			});

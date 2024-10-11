@@ -26,6 +26,7 @@ import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import { type Operation, isPutOperation } from "./operation.js";
 import type { ExtractArgs } from "./program.js";
+import { ResumableIterators } from "./resumable-iterator.js";
 
 const logger = loggerFn({ module: "document-index" });
 
@@ -119,7 +120,7 @@ if (!(await this.canRead(message.sender))) {
 } */
 
 export type CanSearch = (
-	request: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+	request: types.SearchRequest | types.CollectNextRequest,
 	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
@@ -214,10 +215,7 @@ export class DocumentIndex<
 	D extends ReplicationDomain<any, Operation>,
 > extends Program<OpenOptions<T, I, D>> {
 	@field({ type: RPC })
-	_query: RPC<
-		indexerTypes.AbstractSearchRequest,
-		types.AbstractSearchResult<T>
-	>;
+	_query: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
 
 	// Original document representation
 	documentType: AbstractType<T>;
@@ -236,6 +234,7 @@ export class DocumentIndex<
 	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
 	index: indexerTypes.Index<IDocumentWithContext<I>>;
+	private _resumableIterators: ResumableIterators<IDocumentWithContext<I>>;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
@@ -261,10 +260,7 @@ export class DocumentIndex<
 	>;
 
 	constructor(properties?: {
-		query?: RPC<
-			indexerTypes.AbstractSearchRequest,
-			types.AbstractSearchResult<T>
-		>;
+		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
@@ -344,11 +340,13 @@ export class DocumentIndex<
 				nested: {
 					match: (obj: any): obj is types.IDocumentStore<any> =>
 						obj instanceof this.dbType,
-					query: async (obj: types.IDocumentStore<any>, query) =>
+					iterate: async (obj: types.IDocumentStore<any>, query) =>
 						obj.index.search(query),
 				},
 				/* maxBatchSize: MAX_BATCH_SIZE */
 			})) || new HashmapIndex<IDocumentWithContext<I>>();
+
+		this._resumableIterators = new ResumableIterators(this.index);
 
 		await this._query.open({
 			topic: sha256Base64Sync(
@@ -362,26 +360,24 @@ export class DocumentIndex<
 
 				if (
 					properties.canSearch &&
-					(query instanceof indexerTypes.SearchRequest ||
-						query instanceof indexerTypes.CollectNextRequest) &&
+					(query instanceof types.SearchRequest ||
+						query instanceof types.CollectNextRequest) &&
 					!(await properties.canSearch(
-						query as
-							| indexerTypes.SearchRequest
-							| indexerTypes.CollectNextRequest,
+						query as types.SearchRequest | types.CollectNextRequest,
 						ctx.from,
 					))
 				) {
 					return new types.NoAccess();
 				}
 
-				if (query instanceof indexerTypes.CloseIteratorRequest) {
+				if (query instanceof types.CloseIteratorRequest) {
 					this.processCloseIteratorRequest(query, ctx.from);
 				} else {
 					const results = await this.processQuery(
 						query as
-							| indexerTypes.SearchRequest
-							| indexerTypes.SearchRequest
-							| indexerTypes.CollectNextRequest,
+							| types.SearchRequest
+							| types.SearchRequest
+							| types.CollectNextRequest,
 						ctx.from,
 						false,
 						{
@@ -397,17 +393,17 @@ export class DocumentIndex<
 				}
 			},
 			responseType: types.AbstractSearchResult,
-			queryType: indexerTypes.AbstractSearchRequest,
+			queryType: types.AbstractSearchRequest,
 		});
 	}
 
-	getPending(cursorId: string): number | undefined {
+	async getPending(cursorId: string): Promise<number | undefined> {
 		const queue = this._resultQueue.get(cursorId);
 		if (queue) {
 			return queue.queue.length + queue.keptInIndex;
 		}
 
-		return this.index.getPending(cursorId);
+		return this._resumableIterators.getPending(cursorId);
 	}
 
 	async close(from?: Program): Promise<boolean> {
@@ -472,11 +468,9 @@ export class DocumentIndex<
 		} else {
 			this._resolverCache.del(key.primitive);
 		}
-		return this.index.del(
-			new indexerTypes.DeleteRequest({
-				query: [indexerTypes.getMatcher(this.indexBy, key.key)],
-			}),
-		);
+		return this.index.del({
+			query: [indexerTypes.getMatcher(this.indexBy, key.key)],
+		});
 	}
 
 	public async getDetailed(
@@ -486,7 +480,7 @@ export class DocumentIndex<
 		let results: types.Results<T>[] | undefined;
 		if (key instanceof Uint8Array) {
 			results = await this.queryDetailed(
-				new indexerTypes.SearchRequest({
+				new types.SearchRequest({
 					query: [
 						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
 					],
@@ -501,7 +495,7 @@ export class DocumentIndex<
 				typeof indexableKey === "bigint"
 			) {
 				results = await this.queryDetailed(
-					new indexerTypes.SearchRequest({
+					new types.SearchRequest({
 						query: [
 							new indexerTypes.IntegerCompare({
 								key: this.indexBy,
@@ -514,7 +508,7 @@ export class DocumentIndex<
 				);
 			} else if (typeof indexableKey === "string") {
 				results = await this.queryDetailed(
-					new indexerTypes.SearchRequest({
+					new types.SearchRequest({
 						query: [
 							new indexerTypes.StringMatch({
 								key: this.indexBy,
@@ -526,7 +520,7 @@ export class DocumentIndex<
 				);
 			} else if (indexableKey instanceof Uint8Array) {
 				results = await this.queryDetailed(
-					new indexerTypes.SearchRequest({
+					new types.SearchRequest({
 						query: [
 							new indexerTypes.ByteMatchQuery({
 								key: this.indexBy,
@@ -586,7 +580,7 @@ export class DocumentIndex<
 	}
 
 	async processQuery(
-		query: indexerTypes.SearchRequest | indexerTypes.CollectNextRequest,
+		query: types.SearchRequest | types.CollectNextRequest,
 		from: PublicSignKey,
 		isLocal: boolean,
 		options?: {
@@ -605,13 +599,13 @@ export class DocumentIndex<
 		let indexedResult:
 			| indexerTypes.IndexedResults<IDocumentWithContext<I>>
 			| undefined = undefined;
-		if (query instanceof indexerTypes.SearchRequest) {
-			indexedResult = await this.index.query(query);
-		} else if (query instanceof indexerTypes.CollectNextRequest) {
+		if (query instanceof types.SearchRequest) {
+			indexedResult = await this._resumableIterators.iterateAndFetch(query);
+		} else if (query instanceof types.CollectNextRequest) {
 			indexedResult =
 				prevQueued?.keptInIndex === 0
-					? { kept: 0, results: [] }
-					: await this.index.next(query);
+					? []
+					: await this._resumableIterators.next(query);
 		} else {
 			throw new Error("Unsupported");
 		}
@@ -619,13 +613,15 @@ export class DocumentIndex<
 		let resultSize = 0;
 
 		let toIterate = prevQueued
-			? [...prevQueued.queue, ...indexedResult.results]
-			: indexedResult.results;
+			? [...prevQueued.queue, ...indexedResult]
+			: indexedResult;
 
 		if (prevQueued) {
 			this._resultQueue.delete(query.idString);
 			prevQueued = undefined;
 		}
+
+		let kept = (await this._resumableIterators.getPending(query.idString)) ?? 0;
 
 		if (!isLocal) {
 			prevQueued = {
@@ -634,7 +630,7 @@ export class DocumentIndex<
 				timeout: setTimeout(() => {
 					this._resultQueue.delete(query.idString);
 				}, 6e4),
-				keptInIndex: indexedResult.kept,
+				keptInIndex: kept,
 			};
 			this._resultQueue.set(query.idString, prevQueued);
 		}
@@ -667,7 +663,7 @@ export class DocumentIndex<
 		}
 		const results: types.Results<T> = new types.Results({
 			results: filteredResults,
-			kept: BigInt(indexedResult.kept + (prevQueued?.queue.length || 0)),
+			kept: BigInt(kept + (prevQueued?.queue.length || 0)),
 		});
 
 		if (!isLocal && results.kept === 0n) {
@@ -679,9 +675,9 @@ export class DocumentIndex<
 
 	clearResultsQueue(
 		query:
-			| indexerTypes.SearchRequest
-			| indexerTypes.CollectNextRequest
-			| indexerTypes.CloseIteratorRequest,
+			| types.SearchRequest
+			| types.CollectNextRequest
+			| types.CloseIteratorRequest,
 	) {
 		const queue = this._resultQueue.get(query.idString);
 		if (queue) {
@@ -690,7 +686,7 @@ export class DocumentIndex<
 		}
 	}
 	async processCloseIteratorRequest(
-		query: indexerTypes.CloseIteratorRequest,
+		query: types.CloseIteratorRequest,
 		publicKey: PublicSignKey,
 	): Promise<void> {
 		const queueData = this._resultQueue.get(query.idString);
@@ -699,7 +695,7 @@ export class DocumentIndex<
 			return;
 		}
 		this.clearResultsQueue(query);
-		return this.index.close(query);
+		return this._resumableIterators.close(query);
 	}
 
 	/**
@@ -709,7 +705,7 @@ export class DocumentIndex<
 	 * @returns
 	 */
 	public async queryDetailed(
-		queryRequest: indexerTypes.SearchRequest,
+		queryRequest: types.SearchRequest,
 		options?: QueryDetailedOptions<T, D>,
 	): Promise<types.Results<T>[]> {
 		const local = typeof options?.local === "boolean" ? options?.local : true;
@@ -777,7 +773,7 @@ export class DocumentIndex<
 					}
 				};
 				try {
-					if (queryRequest instanceof indexerTypes.CloseIteratorRequest) {
+					if (queryRequest instanceof types.CloseIteratorRequest) {
 						// don't wait for responses
 						await this._query.request(queryRequest, { mode: remote!.mode });
 					} else {
@@ -830,7 +826,7 @@ export class DocumentIndex<
 	 * @returns
 	 */
 	public async search(
-		queryRequest: indexerTypes.SearchRequest,
+		queryRequest: types.SearchRequest,
 		options?: SearchOptions<T, D>,
 	): Promise<T[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
@@ -841,10 +837,7 @@ export class DocumentIndex<
 
 		// So that this call will not do any remote requests
 		const allResults: T[] = [];
-		while (
-			iterator.done() === false &&
-			queryRequest.fetch > allResults.length
-		) {
+		while (iterator.done() !== true && queryRequest.fetch > allResults.length) {
 			// We might need to pull .next multiple time due to data message size limitations
 			for (const result of await iterator.next(
 				queryRequest.fetch - allResults.length,
@@ -866,7 +859,7 @@ export class DocumentIndex<
 	 * @returns
 	 */
 	public iterate(
-		queryRequest: indexerTypes.SearchRequest,
+		queryRequest: types.SearchRequest,
 		options?: QueryOptions<T, D>,
 	): ResultsIterator<T> {
 		let fetchPromise: Promise<any> | undefined = undefined;
@@ -986,7 +979,7 @@ export class DocumentIndex<
 
 					// TODO buffer more than deleted?
 					// TODO batch to multiple 'to's
-					const collectRequest = new indexerTypes.CollectNextRequest({
+					const collectRequest = new types.CollectNextRequest({
 						id: queryRequest.id,
 						amount: n - buffer.buffer.length,
 					});
@@ -1179,7 +1172,7 @@ export class DocumentIndex<
 		const close = async () => {
 			controller.abort(new AbortError("Iterator closed"));
 
-			const closeRequest = new indexerTypes.CloseIteratorRequest({
+			const closeRequest = new types.CloseIteratorRequest({
 				id: queryRequest.id,
 			});
 			const promises: Promise<any>[] = [];

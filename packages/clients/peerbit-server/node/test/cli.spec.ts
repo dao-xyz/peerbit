@@ -18,6 +18,7 @@ const runCommandProcess = (args: any): ProcessWithOut => {
 		__dirname,
 		"../",
 		"dist",
+		"src",
 		"bin.js",
 	)} ${args}`;
 	const p = exec(
@@ -30,8 +31,8 @@ const runCommand = (args: any): string => {
 	const cmd = `node --experimental-vm-modules ${path.join(
 		__dirname,
 		"../",
-		"lib",
-		"esm",
+		"dist",
+		"src",
 		"bin.js",
 	)} ${args}`;
 	return execSync(cmd).toString();

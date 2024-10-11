@@ -1,6 +1,5 @@
 import { type AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
-import { CustomEvent } from "@libp2p/interface";
 import { type Multiaddr } from "@multiformats/multiaddr";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import { type Blocks } from "@peerbit/blocks-interface";

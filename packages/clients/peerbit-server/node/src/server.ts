@@ -86,7 +86,7 @@ export const startServerWithNode = async (properties: {
 		directory: getNodePath(properties.directory),
 		domain: properties.domain,
 		listenPort: properties.ports?.node,
-		peerId: await keypair.toPeerId(),
+		keypair,
 	});
 
 	if (properties.bootstrap) {

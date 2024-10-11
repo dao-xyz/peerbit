@@ -3,7 +3,6 @@ import {
 	type Index,
 	type IndexEngineInitProperties,
 	type Indices,
-	SearchRequest,
 	getIdProperty,
 	id,
 } from "@peerbit/indexer-interface";
@@ -55,7 +54,7 @@ describe("table", () => {
 		expect(store.tables.size).to.equal(1);
 		await store.put(new DocumentWithFromProperty("1", "from"));
 
-		const results = await store.query(new SearchRequest());
-		expect(results.results.length).to.equal(1);
+		const results = await store.iterate().all();
+		expect(results.length).to.equal(1);
 	});
 });

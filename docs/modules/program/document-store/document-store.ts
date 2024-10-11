@@ -1,8 +1,7 @@
-// @ts-nocheck
 /// [imports]
 import { field, option, variant } from "@dao-xyz/borsh";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
-import { Documents } from "@peerbit/document";
+import { Documents, SearchRequest } from "@peerbit/document";
 import {
 	And,
 	BoolQuery,
@@ -11,15 +10,14 @@ import {
 	IntegerCompare,
 	IsNull,
 	Or,
-	SearchRequest,
 	Sort,
 	SortDirection,
 	StringMatch,
 	StringMatchMethod,
 } from "@peerbit/indexer-interface";
 import { Program } from "@peerbit/program";
-import { type ReplicationOptions, type RoleOptions } from "@peerbit/shared-log";
-import { delay, waitForResolved } from "@peerbit/time";
+import { type ReplicationOptions } from "@peerbit/shared-log";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";

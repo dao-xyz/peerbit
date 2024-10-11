@@ -1,8 +1,7 @@
 import { field, serialize, variant } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
 import { AccessError, Ed25519Keypair, PublicSignKey } from "@peerbit/crypto";
-import { Documents } from "@peerbit/document";
-import { SearchRequest } from "@peerbit/indexer-interface";
+import { Documents, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions, SharedLog } from "@peerbit/shared-log";
 import { TestSession } from "@peerbit/test-utils";

@@ -1,18 +1,38 @@
-import { Ed25519Keypair, type Ed25519PublicKey } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	type Ed25519PublicKey,
+	randomBytes,
+} from "@peerbit/crypto";
 import type { Index } from "@peerbit/indexer-interface";
 import { create as createIndices } from "@peerbit/indexer-sqlite3";
+import { LamportClock, Meta } from "@peerbit/log";
 import { expect } from "chai";
 import {
-	getCoverSet,
-	getDistance,
-	getSamples,
-	hasCoveringRange,
-} from "../src/ranges.js";
-import {
+	EntryReplicated,
 	ReplicationIntent,
 	ReplicationRangeIndexable,
-} from "../src/replication.js";
-import { MAX_U32, scaleToU32 } from "../src/role.js";
+	getCoverSet,
+	getDistance,
+	getEvenlySpacedU32,
+	getSamples as getSamplesMap,
+	hasCoveringRange,
+	toRebalance,
+} from "../src/ranges.js";
+import { HALF_MAX_U32, MAX_U32, scaleToU32 } from "../src/role.js";
+
+const getSamples = async (
+	offset: number,
+	peers: Index<ReplicationRangeIndexable>,
+	count: number,
+	roleAge: number,
+) => {
+	const map = await getSamplesMap(
+		getEvenlySpacedU32(offset, count),
+		peers,
+		roleAge,
+	);
+	return [...map.keys()];
+};
 
 // prettier-ignore
 describe("ranges", () => {
@@ -32,6 +52,24 @@ describe("ranges", () => {
         a = (await Ed25519Keypair.create()).publicKey;
         b = (await Ed25519Keypair.create()).publicKey;
         c = (await Ed25519Keypair.create()).publicKey;
+
+        // sort keys by hash to make test assertions easier
+        if (a.hashcode() > b.hashcode()) {
+            const tmp = a;
+            a = b;
+            b = tmp;
+        }
+        if (b.hashcode() > c.hashcode()) {
+            const tmp = b;
+            b = c;
+            c = tmp;
+        }
+        if (a.hashcode() > b.hashcode()) {
+            const tmp = a;
+            a = b;
+            b = tmp;
+        }
+
     })
     beforeEach(() => {
         peers = undefined!;
@@ -298,6 +336,55 @@ describe("ranges", () => {
                         new ReplicationRangeIndexable({ normalized: true, publicKey: b, length: 1, offset: (0.847 + rotation) % 1, timestamp: 0n }))
                     expect(await getSamples(scaleToU32(0.78), peers, 1, 0)).to.have.length(2)
                 })
+
+                it("closest to", async () => {
+                    await create(
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: a, length: 1, offset: scaleToU32((0.367 + rotation) % 1), timestamp: 0n }),
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: b, length: 1, offset: scaleToU32((0.847 + rotation) % 1), timestamp: 0n }))
+                    expect(await getSamples(scaleToU32((0.78 + rotation) % 1), peers, 1, 0)).to.deep.eq([b.hashcode()])
+                })
+
+                it("closest to oldest", async () => {
+
+                    // two exactly the same, but one is older
+                    await create(
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: a, length: 1, offset: scaleToU32((0.367 + rotation) % 1), timestamp: 1n }),
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: b, length: 1, offset: scaleToU32((0.367 + rotation) % 1), timestamp: 0n }))
+
+                    expect(await getSamples(scaleToU32((0.78 + rotation) % 1), peers, 1, 0)).to.deep.eq([b.hashcode()])
+                })
+
+                it("closest to hash", async () => {
+
+                    // two exactly the same, but one is older
+                    await create(
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: a, length: 1, offset: scaleToU32((0.367 + rotation) % 1), timestamp: 0n }),
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: b, length: 1, offset: scaleToU32((0.367 + rotation) % 1), timestamp: 0n }))
+
+                    expect(a.hashcode() < b.hashcode()).to.be.true
+                    expect(await getSamples(scaleToU32((0.78 + rotation) % 1), peers, 1, 0)).to.deep.eq([a.hashcode()])
+                })
+
+                it("interescting", async () => {
+
+                    // two exactly the same, but one is older
+                    await create(
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: a, length: HALF_MAX_U32, offset: scaleToU32((0 + rotation) % 1), timestamp: 0n }),
+                        new ReplicationRangeIndexable({ normalized: false, publicKey: b, length: 1, offset: scaleToU32((0.5 + rotation) % 1), timestamp: 0n }))
+
+                    const samples1 = await getSamplesMap(getEvenlySpacedU32(scaleToU32((0.25 + rotation) % 1), 1), peers, 0)
+                    expect([...samples1.values()].filter(x => x.intersecting).length).to.eq(1)
+                    expect(samples1.size).to.eq(1)
+
+                    const samples2 = await getSamplesMap(getEvenlySpacedU32(scaleToU32((0.75 + rotation) % 1), 2), peers, 0)
+                    expect([...samples2.values()].filter(x => x.intersecting).length).to.eq(1)
+                    expect(samples2.size).to.eq(2)
+
+                })
+
+
+                // TODO add breakeven test to make sure it is sorted by hash
+
             })
 
         })
@@ -345,10 +432,10 @@ describe("ranges", () => {
                 let ac = 0, bc = 0, cc = 0;
                 let count = 1000;
                 for (let i = 0; i < count; i++) {
-                    const leaders = await getSamples(scaleToU32(i / count), peers, 1, 0)
-                    if (leaders.includes(a.hashcode())) { ac++; }
-                    if (leaders.includes(b.hashcode())) { bc++; }
-                    if (leaders.includes(c.hashcode())) { cc++; }
+                    const leaders = await getSamplesMap([scaleToU32(i / count)], peers, 0)
+                    if (leaders.has(a.hashcode())) { ac++; }
+                    if (leaders.has(b.hashcode())) { bc++; }
+                    if (leaders.has(c.hashcode())) { cc++; }
                 }
 
                 // check ac, bc and cc are all close to 1/3
@@ -475,4 +562,369 @@ describe("ranges", () => {
         })
 
     })
+
+
+    /*  describe("removeRange", () => {
+ 
+ 
+         it('remove outside', () => {
+             const from = new ReplicationRangeIndexable({ normalized: false, publicKey: a, offset: 1, length: 1, timestamp: 0n })
+             const toRemove = new ReplicationRangeIndexable({ normalized: false, publicKey: a, offset: 0, length: 1, timestamp: 0n })
+             const result = from.removeRange(toRemove)
+             expect(result).to.equal(from)
+ 
+         })
+ 
+         it('remove all', () => {
+             const from = new ReplicationRangeIndexable({ normalized: false, publicKey: a, offset: 1, length: 1, timestamp: 0n })
+             const toRemove = new ReplicationRangeIndexable({ normalized: false, publicKey: a, offset: 1, length: 1, timestamp: 0n })
+             const result = from.removeRange(toRemove)
+             expect(result).to.have.length(0)
+         })
+ 
+         const rotations = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+         rotations.forEach((rotation) => {
+             describe('rotation: ' + String(rotation), () => {
+ 
+                 it('removes end', () => {
+                     const from = new ReplicationRangeIndexable({ normalized: true, publicKey: a, offset: rotation, length: 0.3, timestamp: 0n })
+                     const toRemove = new ReplicationRangeIndexable({ normalized: true, publicKey: a, offset: rotation + 0.2, length: 0.2, timestamp: 0n })
+                     const result = from.removeRange(toRemove)
+                     expect(result).to.have.length(2)
+                     const arr = result as ReplicationRangeIndexable[]
+                     expect(arr[0].start1).to.equal(from.start1)
+                     expect(arr[0].end1).to.equal(toRemove.start1)
+                     expect(arr[1].start2).to.equal(toRemove.start2)
+                     expect(arr[1].end2).to.equal(toRemove.end2)
+                 })
+             })
+         })
+ 
+     }) */
 })
+describe("entry replicated", () => {
+	let index: Index<EntryReplicated>;
+
+	let create = async (...rects: EntryReplicated[]) => {
+		const indices = await createIndices();
+		await indices.start();
+		index = await indices.init({ schema: EntryReplicated });
+		for (const rect of rects) {
+			await index.put(rect);
+		}
+	};
+	let a: Ed25519PublicKey;
+
+	beforeEach(async () => {
+		a = (await Ed25519Keypair.create()).publicKey;
+		index = undefined!;
+	});
+
+	describe("toRebalance", () => {
+		const rotations = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
+
+		const consumeAllFromAsyncIterator = async (
+			iter: AsyncIterable<{ gid: string; entries: EntryReplicated[] }>,
+		) => {
+			const result = [];
+			for await (const entry of iter) {
+				result.push(entry);
+			}
+			return result;
+		};
+
+		rotations.forEach((rotation) => {
+			const rotate = (from: number) => (from + rotation) % 1;
+			describe("rotation: " + String(rotation), () => {
+				it("empty change set", async () => {
+					await create(
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0)),
+							assignedToRangeBoundary: false,
+							hash: "a",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "a",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0.3)),
+							assignedToRangeBoundary: false,
+							hash: "b",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "b",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance([], index),
+					);
+					expect(result).to.have.length(0);
+				});
+
+				describe("update", () => {
+					it("matches prev", async () => {
+						await create(
+							new EntryReplicated({
+								coordinate: scaleToU32(rotate(0)),
+								assignedToRangeBoundary: false,
+								hash: "a",
+								meta: new Meta({
+									clock: new LamportClock({ id: randomBytes(32) }),
+									gid: "a",
+									next: [],
+									type: 0,
+									data: undefined,
+								}),
+							}),
+							new EntryReplicated({
+								coordinate: scaleToU32(rotate(0.3)),
+								assignedToRangeBoundary: false,
+								hash: "b",
+								meta: new Meta({
+									clock: new LamportClock({ id: randomBytes(32) }),
+									gid: "b",
+									next: [],
+									type: 0,
+									data: undefined,
+								}),
+							}),
+						);
+
+						const prev = new ReplicationRangeIndexable({
+							normalized: true,
+							publicKey: a,
+							offset: rotate(0.2),
+							length: 0.2,
+						});
+						const updated = new ReplicationRangeIndexable({
+							id: prev.id,
+							normalized: true,
+							publicKey: a,
+							offset: rotate(0.5),
+							length: 0.2,
+						});
+
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(
+								[
+									{
+										prev,
+										range: updated,
+										type: "updated",
+									},
+								],
+								index,
+							),
+						);
+						expect(result.map((x) => x.gid)).to.deep.equal(["b"]);
+					});
+
+					it("matches next", async () => {
+						await create(
+							new EntryReplicated({
+								coordinate: scaleToU32(rotate(0)),
+								assignedToRangeBoundary: false,
+								hash: "a",
+								meta: new Meta({
+									clock: new LamportClock({ id: randomBytes(32) }),
+									gid: "a",
+									next: [],
+									type: 0,
+									data: undefined,
+								}),
+							}),
+							new EntryReplicated({
+								coordinate: scaleToU32(rotate(0.3)),
+								assignedToRangeBoundary: false,
+								hash: "b",
+								meta: new Meta({
+									clock: new LamportClock({ id: randomBytes(32) }),
+									gid: "b",
+									next: [],
+									type: 0,
+									data: undefined,
+								}),
+							}),
+						);
+
+						const prev = new ReplicationRangeIndexable({
+							normalized: true,
+							publicKey: a,
+							offset: rotate(0.5),
+							length: 0.2,
+						});
+						const updated = new ReplicationRangeIndexable({
+							id: prev.id,
+							normalized: true,
+							publicKey: a,
+							offset: rotate(0.2),
+							length: 0.2,
+						});
+
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(
+								[
+									{
+										prev,
+										range: updated,
+										type: "updated",
+									},
+								],
+								index,
+							),
+						);
+						expect(result.map((x) => x.gid)).to.deep.equal(["b"]);
+					});
+				});
+
+				it("not enoughly replicated after change", async () => {
+					await create(
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0)),
+							assignedToRangeBoundary: false,
+							hash: "a",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "a",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0.3)),
+							assignedToRangeBoundary: false,
+							hash: "b",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "b",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+
+					const prev = new ReplicationRangeIndexable({
+						normalized: true,
+						publicKey: a,
+						offset: rotate(0.2),
+						length: 0.2,
+					});
+					const updated = new ReplicationRangeIndexable({
+						id: prev.id,
+						normalized: true,
+						publicKey: a,
+						offset: rotate(0.4),
+						length: 0.2,
+					});
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance(
+							[
+								{
+									prev,
+									range: updated,
+									type: "updated",
+								},
+							],
+							index,
+						),
+					);
+					expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
+				});
+
+				it("not enoughly replicated after removed", async () => {
+					await create(
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0)),
+							assignedToRangeBoundary: false,
+							hash: "a",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "a",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0.3)),
+							assignedToRangeBoundary: false,
+							hash: "b",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "b",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+
+					const updated = new ReplicationRangeIndexable({
+						normalized: true,
+						publicKey: a,
+						offset: rotate(0.2),
+						length: 0.2,
+					});
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance(
+							[
+								{
+									range: updated,
+									type: "removed",
+								},
+							],
+							index,
+						),
+					);
+					expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
+				});
+
+				it("boundary assigned are always included", async () => {
+					await create(
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0)),
+							assignedToRangeBoundary: false,
+							hash: "a",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "a",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						new EntryReplicated({
+							coordinate: scaleToU32(rotate(0)),
+							assignedToRangeBoundary: true,
+							hash: "b",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "b",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance([], index),
+					);
+					expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
+				});
+			});
+		});
+	});
+});

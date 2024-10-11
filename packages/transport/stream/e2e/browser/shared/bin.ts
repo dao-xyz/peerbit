@@ -1,5 +1,5 @@
+import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { noise } from "@dao-xyz/libp2p-noise";
 import { circuitRelayServer } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import { webSockets } from "@libp2p/websockets";
@@ -26,6 +26,6 @@ const relay = await createLibp2p<{
 	},
 	transports: [webSockets({ filter: all })],
 	streamMuxers: [yamux()],
-	connectionEncryption: [noise()],
+	connectionEncrypters: [noise()],
 });
 console.log(relay.getMultiaddrs().map((x) => x.toString()));

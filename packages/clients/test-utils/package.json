@@ -29,6 +29,10 @@
 		"!**/*.tsbuildinfo"
 	],
 	"exports": {
+		"./log-utils.js": {
+			"types": "./dist/src/log-utils.d.ts",
+			"import": "./dist/src/log-utils.js"
+		},
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"

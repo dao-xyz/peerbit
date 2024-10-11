@@ -4,7 +4,7 @@ import {
 	type Index,
 	type IndexEngineInitProperties,
 	type Indices,
-	SearchRequest,
+	StringMatch,
 	getIdProperty,
 	id,
 } from "@peerbit/indexer-interface";
@@ -34,6 +34,118 @@ const setup = async <T>(
 	return { indices, store, directory };
 };
 
+let preFillCount = 2e4;
+const strinbBenchmark = async (
+	createIndicies: (directory?: string) => Indices | Promise<Indices>,
+	type: "transient" | "persist" = "transient",
+) => {
+	class StringDocument {
+		@id({ type: "string" })
+		id: string;
+
+		@field({ type: "string" })
+		string: string;
+
+		constructor(id: string, string: string) {
+			this.id = id;
+			this.string = string;
+		}
+	}
+
+	const fs = await import("fs");
+
+	const stringIndexPreFilled = await setup(
+		{ schema: StringDocument },
+		createIndicies,
+		type,
+	);
+	let docCount = preFillCount;
+	let fixed = uuid();
+	for (let i = 0; i < docCount; i++) {
+		await stringIndexPreFilled.store.put(
+			new StringDocument(uuid(), i % 100 === 0 ? fixed : uuid()),
+		);
+	}
+
+	const stringIndexEmpty = await setup(
+		{ schema: StringDocument },
+		createIndicies,
+		type,
+	);
+
+	let done = pDefer();
+	const suite = new B.Suite({ delay: 100 });
+	suite
+		.add("string put - " + type, {
+			fn: async (deferred: any) => {
+				await stringIndexEmpty.store.put(new StringDocument(uuid(), uuid()));
+				deferred.resolve();
+			},
+			defer: true,
+			maxTime: 5,
+		})
+		.add("string query matching - " + type, {
+			fn: async (deferred: any) => {
+				const iterator = stringIndexPreFilled.store.iterate({
+					query: new StringMatch({ key: "string", value: fixed }),
+				});
+				await iterator.next(10);
+				await iterator.close();
+				deferred.resolve();
+			},
+			defer: true,
+			maxTime: 5,
+		})
+
+		.add("string count matching - " + type, {
+			fn: async (deferred: any) => {
+				await stringIndexPreFilled.store.count({
+					query: new StringMatch({ key: "string", value: fixed }),
+				});
+				deferred.resolve();
+			},
+			defer: true,
+			maxTime: 5,
+		})
+		.add("string count no-matches - " + type, {
+			fn: async (deferred: any) => {
+				const out = Math.random() > 0.5 ? true : false;
+				await stringIndexPreFilled.store.count({
+					query: new StringMatch({ key: "string", value: uuid() }),
+				});
+				deferred.resolve();
+			},
+			defer: true,
+			maxTime: 5,
+		})
+		.on("cycle", async (event: any) => {
+			// eslint-disable-next-line no-console
+			console.log(String(event.target));
+		})
+		.on("error", (err: any) => {
+			throw err;
+		})
+		.on("complete", async () => {
+			await stringIndexEmpty.indices.stop();
+			stringIndexEmpty.directory &&
+				fs.rmSync(stringIndexEmpty.directory, { recursive: true, force: true });
+
+			await stringIndexPreFilled.indices.stop();
+			stringIndexPreFilled.directory &&
+				fs.rmSync(stringIndexPreFilled.directory, {
+					recursive: true,
+					force: true,
+				});
+
+			done.resolve();
+		})
+		.on("error", (e) => {
+			done.reject(e);
+		})
+		.run();
+	return done.promise;
+};
+
 const boolQueryBenchmark = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
@@ -58,7 +170,7 @@ const boolQueryBenchmark = async (
 		createIndicies,
 		type,
 	);
-	let docCount = 1e4;
+	let docCount = preFillCount;
 	for (let i = 0; i < docCount; i++) {
 		await boolIndexPrefilled.store.put(
 			new BoolQueryDocument(uuid(), Math.random() > 0.5 ? true : false),
@@ -77,11 +189,11 @@ const boolQueryBenchmark = async (
 		.add("bool query - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				await boolIndexPrefilled.store.query(
-					new SearchRequest({
-						query: new BoolQuery({ key: "bool", value: out }),
-					}),
-				);
+				const iterator = await boolIndexPrefilled.store.iterate({
+					query: new BoolQuery({ key: "bool", value: out }),
+				});
+				await iterator.next(10);
+				await iterator.close();
 				deferred.resolve();
 			},
 			defer: true,
@@ -159,7 +271,7 @@ const nestedBoolQueryBenchmark = async (
 		type,
 	);
 
-	let docCount = 1e4;
+	let docCount = preFillCount;
 	for (let i = 0; i < docCount; i++) {
 		await boolIndexPrefilled.store.put(
 			new NestedBoolQueryDocument(uuid(), i % 2 === 0 ? true : false),
@@ -179,12 +291,11 @@ const nestedBoolQueryBenchmark = async (
 		.add("nested bool query - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				await boolIndexPrefilled.store.query(
-					new SearchRequest({
-						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-						fetch: 10,
-					}),
-				);
+				const iterator = await boolIndexPrefilled.store.iterate({
+					query: new BoolQuery({ key: ["nested", "bool"], value: out }),
+				});
+				await iterator.next(10);
+				await iterator.close();
 				deferred.resolve();
 			},
 			defer: true,
@@ -276,16 +387,15 @@ const shapedQueryBenchmark = async (
 	const suite = new B.Suite({ delay: 100 });
 	let fetch = 10;
 	suite
-		.add("unshaped - " + type, {
+		.add("unshaped nested query - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				const results = await boolIndexPrefilled.store.query(
-					new SearchRequest({
-						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-						fetch,
-					}),
-				);
-				if (results.results.length !== fetch) {
+				let iterator = await boolIndexPrefilled.store.iterate({
+					query: new BoolQuery({ key: ["nested", "bool"], value: out }),
+				});
+				const results = await iterator.next(fetch);
+				await iterator.close();
+				if (results.length !== fetch) {
 					throw new Error("Missing results");
 				}
 				deferred.resolve();
@@ -294,17 +404,18 @@ const shapedQueryBenchmark = async (
 			maxTime: 5,
 			async: true,
 		})
-		.add("shaped - " + type, {
+		.add("shaped nested query - " + type, {
 			fn: async (deferred: any) => {
 				const out = Math.random() > 0.5 ? true : false;
-				const results = await boolIndexPrefilled.store.query(
-					new SearchRequest({
+				const iterator = await boolIndexPrefilled.store.iterate(
+					{
 						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-						fetch,
-					}),
+					},
 					{ shape: { id: true } },
 				);
-				if (results.results.length !== fetch) {
+				const results = await iterator.next(fetch);
+				await iterator.close();
+				if (results.length !== fetch) {
 					throw new Error("Missing results");
 				}
 				deferred.resolve();
@@ -334,9 +445,10 @@ const shapedQueryBenchmark = async (
 };
 
 export const benchmarks = async (
-	createIndicies: <T>(directory?: string) => Indices | Promise<Indices>,
+	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
+	await strinbBenchmark(createIndicies, type);
 	await shapedQueryBenchmark(createIndicies, type);
 	await boolQueryBenchmark(createIndicies, type);
 	await nestedBoolQueryBenchmark(createIndicies, type);

@@ -1,12 +1,8 @@
 import { type AbstractType, type Constructor, getSchema } from "@dao-xyz/borsh";
 import type {
-	CloseIteratorRequest,
-	CollectNextRequest,
 	Index,
 	IndexEngineInitProperties,
 	IndexedResult,
-	IndexedResults,
-	SearchRequest,
 	Shape,
 } from "@peerbit/indexer-interface";
 import * as types from "@peerbit/indexer-interface";
@@ -37,25 +33,23 @@ const escapePathToSQLName = (path: string[]) => {
 	return path.map((x) => x.replace(/[^a-zA-Z0-9]/g, "_"));
 };
 
+const putStatementKey = (table: Table) => table.name + "_put";
+const replaceStatementKey = (table: Table) => table.name + "_replicate";
+const resolveChildrenStatement = (table: Table) =>
+	table.name + "_resolve_children";
+
 export class SQLLiteIndex<T extends Record<string, any>>
 	implements Index<T, any>
 {
-	primaryKeyArr: string[];
-	primaryKeyString: string;
-	putStatement: Map<string, Statement>;
-	replaceStatement: Map<string, Statement>;
-	resolveChildrenStatement: Map<string, Statement>;
+	primaryKeyArr!: string[];
+	primaryKeyString!: string;
 	private scopeString?: string;
-	private _rootTables: Table[];
-	private _tables: Map<string, Table>;
-	private _cursor: Map<
+	private _rootTables!: Table[];
+	private _tables!: Map<string, Table>;
+	private _cursor!: Map<
 		string,
 		{
-			kept: number;
-			fetch: (
-				amount: number,
-			) => Promise<{ results: IndexedResult[]; kept: number }>;
-			fetchStatement: Statement;
+			fetch: (amount: number) => Promise<IndexedResult[]>;
 			/* countStatement: Statement; */
 			timeout: ReturnType<typeof setTimeout>;
 		}
@@ -142,9 +136,6 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 		await this.properties.start?.();
 
-		this.putStatement = new Map();
-		this.replaceStatement = new Map();
-		this.resolveChildrenStatement = new Map();
 		this._tables = new Map();
 		this._cursor = new Map();
 
@@ -187,19 +178,12 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			// insert or replace with id already defined
 			let sqlReplace = `insert or replace into ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")});`;
 
-			this.putStatement.set(
-				table.name,
-				await this.properties.db.prepare(sqlPut),
-			);
-			this.replaceStatement.set(
-				table.name,
-				await this.properties.db.prepare(sqlReplace),
-			);
-
+			await this.properties.db.prepare(sqlPut, putStatementKey(table));
+			await this.properties.db.prepare(sqlReplace, replaceStatementKey(table));
 			if (table.parent) {
-				this.resolveChildrenStatement.set(
-					table.name,
-					await this.properties.db.prepare(selectChildren(table)),
+				await this.properties.db.prepare(
+					selectChildren(table),
+					resolveChildrenStatement(table),
 				);
 			}
 		}
@@ -212,21 +196,6 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			// TODO this should never be true, but if we remove this statement the tests faiL for browser tests?
 			return;
 		}
-
-		for (const [_k, v] of this.putStatement) {
-			await v.finalize?.();
-		}
-
-		for (const [_k, v] of this.replaceStatement) {
-			await v.finalize?.();
-		}
-
-		for (const [_k, v] of this.resolveChildrenStatement) {
-			await v.finalize?.();
-		}
-		this.putStatement.clear();
-		this.replaceStatement.clear();
-		this.resolveChildrenStatement.clear();
 	}
 
 	async stop(): Promise<void> {
@@ -266,7 +235,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		parentId: any,
 		table: Table,
 	): Promise<any[]> {
-		const stmt = this.resolveChildrenStatement.get(table.name)!;
+		const stmt = this.properties.db.statements.get(
+			resolveChildrenStatement(table),
+		)!;
 		const results = await stmt.all([parentId]);
 		await stmt.reset?.();
 		return results;
@@ -281,9 +252,8 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				options?.shape,
 			);
 			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? `;
-			const stmt = await this.properties.db.prepare(sql);
+			const stmt = await this.properties.db.prepare(sql, sql);
 			const rows = await stmt.get([id.key]);
-			await stmt.finalize?.();
 			if (!rows) {
 				continue;
 			}
@@ -309,20 +279,27 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				const preId = values[table.primaryIndex];
 
 				if (preId != null) {
-					const statement = this.replaceStatement.get(table.name)!;
+					const statement = this.properties.db.statements.get(
+						replaceStatementKey(table),
+					)!;
 					await statement.run(
 						values.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)),
 					);
 					await statement.reset?.();
 					return preId;
 				} else {
-					const statement = this.putStatement.get(table.name)!;
+					const statement = this.properties.db.statements.get(
+						putStatementKey(table),
+					)!;
 					const out = await statement.get(
 						values.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)),
 					);
 					await statement.reset?.();
 
 					// TODO types
+					if (out == null) {
+						return undefined;
+					}
 					return out[table.primary as string];
 				}
 			},
@@ -341,117 +318,151 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		);
 	}
 
-	async query(
-		request: SearchRequest,
-		options?: { shape: Shape },
-	): Promise<IndexedResults<T>> {
+	iterate<S extends Shape | undefined>(
+		request?: types.IterateOptions,
+		options?: { shape?: S; reference?: boolean },
+	): types.IndexIterator<T, S> {
 		// create a sql statement where the offset and the limit id dynamic and can be updated
 		// TODO don't use offset but sort and limit 'next' calls by the last value of the sort
-		let sqlFetch = convertSearchRequestToQuery(
+		let { sql: sqlFetch, bindable } = convertSearchRequestToQuery(
 			request,
 			this.tables,
 			this._rootTables,
 			options?.shape,
 		);
 
-		const stmt = await this.properties.db.prepare(sqlFetch);
 		/* 	const totalCountKey = "count"; */
 		/* const sqlTotalCount = convertCountRequestToQuery(new types.CountRequest({ query: request.query }), this.tables, this.tables.get(this.rootTableName)!)
 		const countStmt = await this.properties.db.prepare(sqlTotalCount); */
 
 		let offset = 0;
-		let first = false;
+		let once = false;
+		let requestId = uuid();
+		let hasMore = true;
 
+		let stmt: Statement;
+		let kept: number | undefined = undefined;
+
+		/* let totalCount: undefined | number = undefined; */
 		const fetch = async (amount: number) => {
-			if (!first) {
-				stmt.reset?.();
+			kept = undefined;
+			if (!once) {
+				stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
+				// stmt.reset?.(); // TODO dont invoke reset if not needed
 				/* countStmt.reset?.(); */
 
 				// Bump timeout timer
 				clearTimeout(iterator.timeout);
 				iterator.timeout = setTimeout(
-					() => this.clearupIterator(request.idString),
+					() => this.clearupIterator(requestId),
 					this.iteratorTimeout,
 				);
 			}
 
-			first = true;
+			once = true;
 			const offsetStart = offset;
+
 			const allResults: Record<string, any>[] = await stmt.all([
+				...bindable,
 				amount,
 				offsetStart,
 			]);
 
-			let results: IndexedResult<T>[] = await Promise.all(
-				allResults.map(async (row: any) => {
-					let selectedTable = this._rootTables.find(
-						(table /* row["table_name"] === table.name, */) =>
-							row[getTablePrefixedField(table, this.primaryKeyString)] != null,
-					)!;
+			let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
+				await Promise.all(
+					allResults.map(async (row: any) => {
+						let selectedTable = this._rootTables.find(
+							(table /* row["table_name"] === table.name, */) =>
+								row[getTablePrefixedField(table, this.primaryKeyString)] !=
+								null,
+						)!;
 
-					const value = await resolveInstanceFromValue<T>(
-						row,
-						this.tables,
-						selectedTable,
-						this.resolveDependencies.bind(this),
-						true,
-						options?.shape,
-					);
+						const value = await resolveInstanceFromValue<T, S>(
+							row,
+							this.tables,
+							selectedTable,
+							this.resolveDependencies.bind(this),
+							true,
+							options?.shape,
+						);
 
-					return {
-						value,
-						id: types.toId(
-							row[getTablePrefixedField(selectedTable, this.primaryKeyString)],
-						),
-					};
-				}),
-			);
+						return {
+							value,
+							id: types.toId(
+								row[
+									getTablePrefixedField(selectedTable, this.primaryKeyString)
+								],
+							),
+						};
+					}),
+				);
 
-			offset += amount;
+			offset += results.length;
 
-			if (results.length > 0) {
-				const totalCount = await this.count(
-					new types.CountRequest({ query: request.query }),
-				); /*  (await countStmt.get())[totalCountKey] as number; */
+			/* if (results.length > 0) {
+				totalCount =
+					totalCount ??
+					(await this.count(
+						request,
+					));
 				iterator.kept = totalCount - results.length - offsetStart;
 			} else {
 				iterator.kept = 0;
-			}
+			} */
 
-			if (iterator.kept === 0) {
-				await this.clearupIterator(request.idString);
+			if (results.length < amount) {
+				hasMore = false;
+				await this.clearupIterator(requestId);
 				clearTimeout(iterator.timeout);
 			}
-			return { results, kept: iterator.kept };
+			return results;
 		};
 
 		const iterator = {
-			kept: 0,
 			fetch,
-			fetchStatement: stmt,
 			/* countStatement: countStmt, */
 			timeout: setTimeout(
-				() => this.clearupIterator(request.idString),
+				() => this.clearupIterator(requestId),
 				this.iteratorTimeout,
 			),
 		};
 
-		this.cursor.set(request.idString, iterator);
-		return fetch(request.fetch);
-	}
+		this.cursor.set(requestId, iterator);
+		let totalCount: number | undefined = undefined;
+		/* 			return fetch(request.fetch); */
+		return {
+			all: async () => {
+				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
+				while (true) {
+					const res = await fetch(100);
+					results.push(...res);
+					if (res.length === 0) {
+						break;
+					}
+				}
+				return results;
+			},
+			close: () => {
+				hasMore = false;
+				kept = 0;
+				this.clearupIterator(requestId);
+			},
+			next: (amount: number) => fetch(amount),
+			pending: async () => {
+				if (!hasMore) {
+					return 0;
+				}
+				if (kept != null) {
+					return kept;
+				}
+				totalCount = totalCount ?? (await this.count(request));
 
-	next(query: CollectNextRequest): Promise<IndexedResults<T>> {
-		const cache = this.cursor.get(query.idString);
-		if (!cache) {
-			throw new Error("No cursor found with id: " + query.idString);
-		}
-
-		// reuse statement
-		return cache.fetch(query.amount) as Promise<IndexedResults<T>>;
-	}
-
-	close(query: CloseIteratorRequest): void | Promise<void> {
-		return this.clearupIterator(query.idString);
+				kept = totalCount - offset;
+				hasMore = kept > 0;
+				return kept;
+			},
+			done: () => (once ? !hasMore : undefined),
+		};
 	}
 
 	private async clearupIterator(id: string) {
@@ -459,10 +470,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		if (!cache) {
 			return; // already cleared
 		}
-
 		clearTimeout(cache.timeout);
 		/* cache.countStatement.finalize?.(); */
-		await cache.fetchStatement.finalize?.();
+		// 	await cache.fetchStatement.finalize?.();
 		this._cursor.delete(id);
 	}
 
@@ -475,20 +485,23 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		const result = await stmt.get()
 		stmt.finalize?.();
 		return result.total as number */
-		return this.count(new types.CountRequest({ query: {} }));
+		return this.count();
 	}
 
-	async del(query: types.DeleteRequest): Promise<types.IdKey[]> {
+	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		let ret: types.IdKey[] = [];
 		let once = false;
 		let lastError: Error | undefined = undefined;
 		for (const table of this._rootTables) {
 			try {
-				const stmt = await this.properties.db.prepare(
-					convertDeleteRequestToQuery(query, this.tables, table),
+				const { sql, bindable } = convertDeleteRequestToQuery(
+					query,
+					this.tables,
+					table,
 				);
-				const results: any[] = await stmt.all([]);
-				await stmt.finalize?.();
+				const stmt = await this.properties.db.prepare(sql, sql);
+				const results: any[] = await stmt.all(bindable);
+
 				// TODO types
 				for (const result of results) {
 					ret.push(types.toId(result[table.primary as string]));
@@ -505,13 +518,13 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		}
 
 		if (!once) {
-			throw lastError;
+			throw lastError!;
 		}
 
 		return ret;
 	}
 
-	async sum(query: types.SumRequest): Promise<number | bigint> {
+	async sum(query: types.SumOptions): Promise<number | bigint> {
 		let ret: number | bigint | undefined = undefined;
 		let once = false;
 		let lastError: Error | undefined = undefined;
@@ -521,22 +534,27 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			try {
 				if (table.fields.find((x) => x.name === inlinedName) == null) {
 					lastError = new MissingFieldError(
-						"Missing field: " + query.key.join("."),
+						"Missing field: " +
+							(Array.isArray(query.key) ? query.key : [query.key]).join("."),
 					);
 					continue;
 				}
 
-				const stmt = await this.properties.db.prepare(
-					convertSumRequestToQuery(query, this.tables, table),
+				const { sql, bindable } = convertSumRequestToQuery(
+					query,
+					this.tables,
+					table,
 				);
-				const result = await stmt.get();
-				await stmt.finalize?.();
-				if (ret == null) {
-					(ret as any) = result.sum as number;
-				} else {
-					(ret as any) += result.sum as number;
+				const stmt = await this.properties.db.prepare(sql, sql);
+				const result = await stmt.get(bindable);
+				if (result != null) {
+					if (ret == null) {
+						(ret as any) = result.sum as number;
+					} else {
+						(ret as any) += result.sum as number;
+					}
+					once = true;
 				}
-				once = true;
 			} catch (error) {
 				if (error instanceof MissingFieldError) {
 					lastError = error;
@@ -547,25 +565,29 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		}
 
 		if (!once) {
-			throw lastError;
+			throw lastError!;
 		}
 
 		return ret != null ? ret : 0;
 	}
 
-	async count(request: types.CountRequest): Promise<number> {
+	async count(request?: types.CountOptions): Promise<number> {
 		let ret: number = 0;
 		let once = false;
 		let lastError: Error | undefined = undefined;
 		for (const table of this._rootTables) {
 			try {
-				const stmt = await this.properties.db.prepare(
-					convertCountRequestToQuery(request, this.tables, table),
+				const { sql, bindable } = convertCountRequestToQuery(
+					request,
+					this.tables,
+					table,
 				);
-				const result = await stmt.get();
-				await stmt.finalize?.();
-				ret += Number(result.count);
-				once = true;
+				const stmt = await this.properties.db.prepare(sql, sql);
+				const result = await stmt.get(bindable);
+				if (result != null) {
+					ret += Number(result.count);
+					once = true;
+				}
 			} catch (error) {
 				if (error instanceof MissingFieldError) {
 					lastError = error;
@@ -577,17 +599,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		}
 
 		if (!once) {
-			throw lastError;
+			throw lastError!;
 		}
 		return ret;
-	}
-
-	getPending(cursorId: string): number | undefined {
-		const cursor = this.cursor.get(cursorId);
-		if (!cursor) {
-			return;
-		}
-		return cursor.kept;
 	}
 
 	get cursorCount(): number {

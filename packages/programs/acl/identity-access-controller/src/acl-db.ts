@@ -2,12 +2,7 @@ import { field, variant } from "@dao-xyz/borsh";
 import { type PeerId } from "@libp2p/interface";
 import { PublicSignKey, sha256Sync } from "@peerbit/crypto";
 import { type CanPerformOperations, Documents } from "@peerbit/document";
-import {
-	Compare,
-	IntegerCompare,
-	Or,
-	SearchRequest,
-} from "@peerbit/indexer-interface";
+import { Compare, IntegerCompare, Or, SearchRequest } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { type ReplicationOptions } from "@peerbit/shared-log";
 import {

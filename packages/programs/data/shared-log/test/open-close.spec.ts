@@ -118,11 +118,14 @@ describe("replicators", () => {
 					),
 				).to.be.true,
 		); // because db2 is slower
-		expect(
-			db3.log["syncInFlightQueueInverted"].has(
-				db1.node.identity.publicKey.hashcode(),
-			),
-		).to.be.false;
+		await waitForResolved(
+			() =>
+				expect(
+					db3.log["syncInFlightQueueInverted"].has(
+						db1.node.identity.publicKey.hashcode(),
+					),
+				).to.be.false,
+		);
 
 		await db1.close();
 		await db2.close();

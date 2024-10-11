@@ -1,5 +1,4 @@
 import { BorshError, field, variant } from "@dao-xyz/borsh";
-import { CustomEvent } from "@libp2p/interface";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { Cache } from "@peerbit/cache";
 import {
@@ -11,14 +10,10 @@ import {
 import {
 	And,
 	ByteMatchQuery,
-	CountRequest,
-	DeleteRequest,
 	type Index,
 	Or,
-	SearchRequest,
 	Sort,
 	StringMatch,
-	SumRequest,
 } from "@peerbit/indexer-interface";
 import {
 	type AppendOptions,
@@ -43,13 +38,22 @@ import {
 	NotStartedError,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
-import { AbortError, delay, waitFor } from "@peerbit/time";
-import debounce from "p-debounce";
+import {
+	AbortError,
+	/* delay, */
+	waitFor,
+} from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import PQueue from "p-queue";
 import { concat } from "uint8arrays";
 import { BlocksMessage } from "./blocks.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
+import {
+	type DebouncedAccumulatorMap,
+	debounceAcculmulator,
+	debounceFixedInterval,
+	debouncedAccumulatorMap,
+} from "./debounce.js";
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
@@ -62,11 +66,18 @@ import {
 import { TransportMessage } from "./message.js";
 import { PIDReplicationController } from "./pid.js";
 import {
+	EntryReplicated,
+	ReplicationIntent,
+	ReplicationRange,
+	ReplicationRangeIndexable,
 	getCoverSet,
+	getEvenlySpacedU32,
 	getSamples,
 	hasCoveringRange,
 	isMatured,
 	minimumWidthToCover,
+	shouldAssigneToRangeBoundary,
+	toRebalance,
 } from "./ranges.js";
 import {
 	type ReplicationDomainHash,
@@ -79,7 +90,11 @@ import {
 } from "./replication-domain-time.js";
 import {
 	type ExtractDomainArgs,
+	type ReplicationChange,
+	type ReplicationChanges,
 	type ReplicationDomain,
+	debounceAggregationChanges,
+	mergeReplicationChanges,
 	type u32,
 } from "./replication-domain.js";
 import {
@@ -87,10 +102,7 @@ import {
 	AddedReplicationSegmentMessage,
 	AllReplicatingSegmentsMessage,
 	ReplicationError,
-	ReplicationIntent,
 	type ReplicationLimits,
-	ReplicationRange,
-	ReplicationRangeIndexable,
 	RequestReplicationInfoMessage,
 	ResponseRoleMessage,
 	StoppedReplicating,
@@ -99,6 +111,7 @@ import {
 	maxReplicas,
 } from "./replication.js";
 import { MAX_U32, Observer, Replicator, scaleToU32 } from "./role.js";
+import { groupByGid } from "./utils.js";
 
 export {
 	type ReplicationDomain,
@@ -109,7 +122,7 @@ export {
 };
 export { type CPUUsage, CPUUsageIntervalLag };
 export * from "./replication.js";
-
+export { EntryReplicated };
 export const logger = loggerFn({ module: "shared-log" });
 
 const getLatestEntry = (
@@ -128,40 +141,20 @@ const getLatestEntry = (
 	return latest;
 };
 
-const groupByGid = async <
-	T extends ShallowEntry | Entry<any> | EntryWithRefs<any>,
->(
-	entries: T[],
-): Promise<Map<string, T[]>> => {
-	const groupByGid: Map<string, T[]> = new Map();
-	for (const head of entries) {
-		const gid = await (head instanceof Entry
-			? (await head.getMeta()).gid
-			: head instanceof ShallowEntry
-				? head.meta.gid
-				: (await head.entry.getMeta()).gid);
-		let value = groupByGid.get(gid);
-		if (!value) {
-			value = [];
-			groupByGid.set(gid, value);
-		}
-		value.push(head);
-	}
-	return groupByGid;
-};
-
 export type ReplicationLimitsOptions =
 	| Partial<ReplicationLimits>
 	| { min?: number; max?: number };
 
 export type DynamicReplicationOptions = {
 	limits?: {
+		interval?: number;
 		storage?: number;
 		cpu?: number | { max: number; monitor?: CPUUsage };
 	};
 };
 
 export type FixedReplicationOptions = {
+	id?: Uint8Array;
 	normalized?: boolean;
 	factor: number | "all" | "right";
 	strict?: boolean; // if true, only this range will be replicated
@@ -199,12 +192,32 @@ const isUnreplicationOptions = (options?: ReplicationOptions): boolean =>
 	((options as FixedReplicationOptions)?.offset === undefined &&
 		(options as FixedReplicationOptions)?.factor === 0);
 
+const isReplicationOptionsDependentOnPreviousState = (
+	options?: ReplicationOptions,
+): boolean => {
+	if (options === true) {
+		return true;
+	}
+
+	if (options == null) {
+		// when not providing options, we assume previous behaviour
+		return true;
+	}
+
+	// if empty object but with no keys
+	if (typeof options === "object" && Object.keys(options).length === 0) {
+		return true;
+	}
+
+	return false;
+};
+
 export type SharedLogOptions<T, D extends ReplicationDomain<any, T>> = {
 	replicate?: ReplicationOptions;
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
-	sync?: (entry: Entry<T> | ShallowEntry) => boolean;
+	sync?: (entry: ShallowOrFullEntry<T> | EntryReplicated) => boolean;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
 	distributionDebounceTime?: number;
@@ -215,8 +228,26 @@ export type SharedLogOptions<T, D extends ReplicationDomain<any, T>> = {
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 9000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
-const REBALANCE_DEBOUNCE_INTERVAL = 100;
+const PRUNE_DEBOUNCE_INTERVAL = 500;
+
+// DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
+const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
+
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
+
+const getIdForDynamicRange = (publicKey: PublicSignKey) => {
+	return sha256Sync(
+		concat([publicKey.bytes, new TextEncoder().encode("dynamic")]),
+	);
+};
+
+const checkMinReplicasLimit = (minReplicas: number) => {
+	if (minReplicas > 100) {
+		throw new Error(
+			"Higher replication degree than 100 is not recommended for performance reasons",
+		);
+	}
+};
 
 export type Args<
 	T,
@@ -226,17 +257,19 @@ export type Args<
 export type SharedAppendOptions<T> = AppendOptions<T> & {
 	replicas?: AbsoluteReplicas | number;
 	replicate?: boolean;
-	target?: "all" | "replicators";
+	target?: "all" | "replicators" | "none";
 };
 
 type ReplicatorJoinEvent = { publicKey: PublicSignKey };
 type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
-type ReplicationChange = { publicKey: PublicSignKey };
+type ReplicationChangeEvent = { publicKey: PublicSignKey };
+type ReplicatorMatureEvent = { publicKey: PublicSignKey };
 
 export interface SharedLogEvents extends ProgramEvents {
 	"replicator:join": CustomEvent<ReplicatorJoinEvent>;
 	"replicator:leave": CustomEvent<ReplicatorLeaveEvent>;
-	"replication:change": CustomEvent<ReplicationChange>;
+	"replication:change": CustomEvent<ReplicationChangeEvent>;
+	"replicator:mature": CustomEvent<ReplicatorMatureEvent>;
 }
 
 @variant("shared_log")
@@ -251,10 +284,12 @@ export class SharedLog<
 	rpc: RPC<TransportMessage, TransportMessage>;
 
 	// options
-	private _isReplicating: boolean;
-	private _isAdaptiveReplicating: boolean;
+	private _isReplicating!: boolean;
+	private _isAdaptiveReplicating!: boolean;
 
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable>;
+	private _entryCoordinatesIndex!: Index<EntryReplicated>;
+
 	/* private _totalParticipation!: number; */
 	private _gidPeersHistory!: Map<string, Set<string>>;
 
@@ -283,8 +318,22 @@ export class SharedLog<
 
 	private _pendingIHave!: Map<
 		string,
-		{ clear: () => void; callback: (entry: Entry<T>) => void }
+		{
+			resetTimeout: () => void;
+			requesting: Set<string>;
+			clear: () => void;
+			callback: (entry: Entry<T>) => void;
+		}
 	>;
+
+	private pendingMaturity!: Map<
+		string,
+		{
+			timestamp: bigint;
+			ranges: Map<string, ReplicationChange>;
+			timeout: ReturnType<typeof setTimeout>;
+		}
+	>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
 
@@ -293,15 +342,32 @@ export class SharedLog<
 	private openTime!: number;
 	private oldestOpenTime!: number;
 
-	private sync?: (entry: Entry<T> | ShallowEntry) => boolean;
+	private sync?: (entry: ShallowOrFullEntry<T> | EntryReplicated) => boolean;
 
 	// A fn that we can call many times that recalculates the participation role
 	private rebalanceParticipationDebounced:
-		| ReturnType<typeof debounce>
+		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
 
+	// A fn for debouncing the calls for pruning
+	pruneDebouncedFn!: DebouncedAccumulatorMap<
+		Entry<T> | ShallowEntry | EntryReplicated
+	>;
+	private responseToPruneDebouncedFn!: ReturnType<
+		typeof debounceAcculmulator<
+			string,
+			{
+				hashes: string[];
+				peers: string[] | Set<string>;
+			},
+			Map<string, Set<string>>
+		>
+	>;
+	private replicationChangeDebounceFn!: ReturnType<
+		typeof debounceAggregationChanges
+	>;
+
 	// regular distribution checks
-	private distributeInterval!: ReturnType<typeof setInterval>;
 	private distributeQueue?: PQueue;
 
 	// Syncing and dedeplucation work
@@ -324,9 +390,8 @@ export class SharedLog<
 
 	replicationController!: PIDReplicationController;
 	history!: { usedMemory: number; factor: number }[];
-	domain: D;
-
-	private pq: PQueue<any>;
+	domain!: D;
+	interval: any;
 
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
@@ -367,6 +432,7 @@ export class SharedLog<
 		if (!this._isReplicating) {
 			return false;
 		}
+
 		/* 
 		if (isAdaptiveReplicatorOption(this._replicationSettings)) {
 			return true;
@@ -384,27 +450,35 @@ export class SharedLog<
 	} */
 
 	async calculateTotalParticipation() {
-		const sum = await this.replicationIndex.sum(
-			new SumRequest({ key: "width" }),
-		);
+		const sum = await this.replicationIndex.sum({ key: "width" });
 		return Number(sum) / MAX_U32;
 	}
 
 	async countReplicationSegments() {
-		const count = await this.replicationIndex.count(
-			new CountRequest({
-				query: new StringMatch({
-					key: "hash",
-					value: this.node.identity.publicKey.hashcode(),
-				}),
+		const count = await this.replicationIndex.count({
+			query: new StringMatch({
+				key: "hash",
+				value: this.node.identity.publicKey.hashcode(),
 			}),
-		);
+		});
 		return count;
 	}
 
-	private setupRebalanceDebounceFunction() {
+	private setupRebalanceDebounceFunction(
+		interval = RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL,
+	) {
 		this.rebalanceParticipationDebounced = undefined;
-		this.rebalanceParticipationDebounced = debounce(
+
+		// make the rebalancing to respect warmup time
+		let intervalTime = interval * 2;
+		let timeout = setTimeout(() => {
+			intervalTime = interval;
+		}, this.timeUntilRoleMaturity);
+		this._closeController.signal.addEventListener("abort", () => {
+			clearTimeout(timeout);
+		});
+
+		this.rebalanceParticipationDebounced = debounceFixedInterval(
 			() => this.rebalanceParticipation(),
 			/* Math.max(
 				REBALANCE_DEBOUNCE_INTERVAL,
@@ -413,9 +487,10 @@ export class SharedLog<
 					REBALANCE_DEBOUNCE_INTERVAL
 				)
 			) */
-			REBALANCE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
+			() => intervalTime, // TODO make this dynamic on the number of replicators
 		);
 	}
+
 	private async _replicate(
 		options?: ReplicationOptions,
 		{
@@ -493,6 +568,7 @@ export class SharedLog<
 					let width = normalized ? 1 : scaleToU32(1);
 					ranges.push(
 						new ReplicationRangeIndexable({
+							id: rangeArg.id,
 							normalized,
 							offset: offset,
 							length:
@@ -530,11 +606,14 @@ export class SharedLog<
 				checkDuplicates,
 				announce,
 			});
+
+			return ranges;
 		}
 	}
 
 	setupDebouncedRebalancing(options?: DynamicReplicationOptions) {
 		this.cpuUsage?.stop?.();
+
 		this.replicationController = new PIDReplicationController(
 			this.node.identity.publicKey.hashcode(),
 			{
@@ -559,15 +638,11 @@ export class SharedLog<
 				? options?.limits?.cpu?.monitor || new CPUUsageIntervalLag()
 				: new CPUUsageIntervalLag();
 		this.cpuUsage?.start?.();
-		this.setupRebalanceDebounceFunction();
+		this.setupRebalanceDebounceFunction(options?.limits?.interval);
 	}
 
 	async replicate(
-		rangeOrEntry?:
-			| ReplicationRange
-			| ReplicationOptions
-			| Entry<T>
-			| Entry<T>[],
+		rangeOrEntry?: ReplicationOptions | Entry<T> | Entry<T>[],
 		options?: {
 			reset?: boolean;
 			checkDuplicates?: boolean;
@@ -604,12 +679,7 @@ export class SharedLog<
 			range = rangeOrEntry ?? true;
 		}
 
-		const newRanges = await this._replicate(range, options);
-
-		// assume new role
-		await this.distribute();
-
-		return newRanges;
+		return this._replicate(range, options);
 	}
 
 	async unreplicate(rangeOrEntry?: Entry<T> | ReplicationRange) {
@@ -634,16 +704,14 @@ export class SharedLog<
 			throw new Error("Unsupported when adaptive replicating");
 		}
 
-		const indexed = await this.replicationIndex.query(
-			new SearchRequest({
-				query: {
-					width: 1,
-					start1: range.offset,
-				},
-			}),
-		);
+		const indexed = this.replicationIndex.iterate({
+			query: {
+				width: 1,
+				start1: range.offset,
+			},
+		});
 
-		const segmentIds = indexed.results.map((x) => x.id.key as Uint8Array);
+		const segmentIds = (await indexed.all()).map((x) => x.id.key as Uint8Array);
 		await this.removeReplicationRange(segmentIds, this.node.identity.publicKey);
 		await this.rpc.send(new StoppedReplicating({ segmentIds }), {
 			priority: 1,
@@ -652,14 +720,19 @@ export class SharedLog<
 
 	private async removeReplicator(key: PublicSignKey) {
 		const fn = async () => {
-			await this.replicationIndex.del(
-				new DeleteRequest({ query: { hash: key.hashcode() } }),
-			);
+			const deleted = await this.replicationIndex
+				.iterate({
+					query: { hash: key.hashcode() },
+				})
+				.all();
+
+			await this.replicationIndex.del({ query: { hash: key.hashcode() } });
 
 			await this.updateOldestTimestampFromIndex();
 
 			if (this.node.identity.publicKey.equals(key)) {
 				// announce that we are no longer replicating
+
 				await this.rpc.send(
 					new AllReplicatingSegmentsMessage({ segments: [] }),
 					{ priority: 1 },
@@ -667,39 +740,52 @@ export class SharedLog<
 			}
 
 			this.events.dispatchEvent(
-				new CustomEvent<ReplicationChange>("replication:change", {
+				new CustomEvent<ReplicationChangeEvent>("replication:change", {
 					detail: { publicKey: key },
 				}),
 			);
+
+			deleted.forEach((x) => {
+				return this.replicationChangeDebounceFn.add({
+					range: x.value,
+					type: "removed",
+				});
+			});
+
+			const pendingMaturity = this.pendingMaturity.get(key.hashcode());
+			if (pendingMaturity) {
+				clearTimeout(pendingMaturity.timeout);
+				this.pendingMaturity.delete(key.hashcode());
+			}
 
 			if (!key.equals(this.node.identity.publicKey)) {
 				this.rebalanceParticipationDebounced?.();
 			}
 		};
 
-		return this.pq.add(fn);
+		return fn();
 	}
 
 	private async updateOldestTimestampFromIndex() {
-		const oldestTimestampFromDB = (
-			await this.replicationIndex.query(
-				new SearchRequest({
-					fetch: 1,
-					sort: [new Sort({ key: "timestamp", direction: "asc" })],
-				}),
-				{ reference: true },
-			)
-		).results[0]?.value.timestamp;
+		const iterator = await this.replicationIndex.iterate(
+			{
+				sort: [new Sort({ key: "timestamp", direction: "asc" })],
+			},
+			{ reference: true },
+		);
+		const oldestTimestampFromDB = (await iterator.next(1))[0]?.value.timestamp;
+		await iterator.close();
+
 		this.oldestOpenTime =
 			oldestTimestampFromDB != null
 				? Number(oldestTimestampFromDB)
 				: +new Date();
 	}
 
-	private async removeReplicationRange(id: Uint8Array[], from: PublicSignKey) {
+	private async removeReplicationRange(ids: Uint8Array[], from: PublicSignKey) {
 		const fn = async () => {
 			let idMatcher = new Or(
-				id.map((x) => new ByteMatchQuery({ key: "id", value: x })),
+				ids.map((x) => new ByteMatchQuery({ key: "id", value: x })),
 			);
 
 			// make sure we are not removing something that is owned by the replicator
@@ -710,12 +796,23 @@ export class SharedLog<
 
 			let query = new And([idMatcher, identityMatcher]);
 
-			await this.replicationIndex.del(new DeleteRequest({ query }));
+			const pendingMaturity = this.pendingMaturity.get(from.hashcode());
+			if (pendingMaturity) {
+				for (const id of ids) {
+					pendingMaturity.ranges.delete(id.toString());
+				}
+				if (pendingMaturity.ranges.size === 0) {
+					clearTimeout(pendingMaturity.timeout);
+					this.pendingMaturity.delete(from.hashcode());
+				}
+			}
+
+			await this.replicationIndex.del({ query });
 
 			await this.updateOldestTimestampFromIndex();
 
 			this.events.dispatchEvent(
-				new CustomEvent<ReplicationChange>("replication:change", {
+				new CustomEvent<ReplicationChangeEvent>("replication:change", {
 					detail: { publicKey: from },
 				}),
 			);
@@ -725,7 +822,7 @@ export class SharedLog<
 			}
 		};
 
-		return this.pq.add(fn);
+		return fn();
 	}
 
 	private async addReplicationRange(
@@ -741,39 +838,164 @@ export class SharedLog<
 				this._isTrustedReplicator &&
 				!(await this._isTrustedReplicator(from))
 			) {
-				return false;
+				return undefined;
 			}
 
-			let prevCount = await this.replicationIndex.count(
-				new CountRequest({
-					query: new StringMatch({ key: "hash", value: from.hashcode() }),
-				}),
-			);
-			const isNewReplicator = prevCount === 0;
+			let isNewReplicator = false;
 
+			let diffs: ReplicationChanges;
+			let deleted: ReplicationRangeIndexable[] | undefined = undefined;
 			if (reset) {
-				await this.replicationIndex.del(
-					new DeleteRequest({ query: { hash: from.hashcode() } }),
-				);
-			} else if (checkDuplicates) {
-				let deduplicated: any[] = [];
+				deleted = (
+					await this.replicationIndex
+						.iterate({
+							query: { hash: from.hashcode() },
+						})
+						.all()
+				).map((x) => x.value);
+				await this.replicationIndex.del({ query: { hash: from.hashcode() } });
 
-				// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
-				for (const range of ranges) {
-					if (!(await hasCoveringRange(this.replicationIndex, range))) {
-						deduplicated.push(range);
-					}
+				diffs = [
+					...deleted.map((x) => {
+						return { range: x, type: "removed" as const };
+					}),
+					...ranges.map((x) => {
+						return { range: x, type: "added" as const };
+					}),
+				];
+
+				let prevCount = await this.replicationIndex.count({
+					query: new StringMatch({ key: "hash", value: from.hashcode() }),
+				});
+				isNewReplicator = prevCount === 0;
+			} else {
+				let existing = await this.replicationIndex
+					.iterate(
+						{
+							query: ranges.map(
+								(x) => new ByteMatchQuery({ key: "id", value: x.id }),
+							),
+						},
+						{ reference: true },
+					)
+					.all();
+				if (existing.length === 0) {
+					let prevCount = await this.replicationIndex.count({
+						query: new StringMatch({ key: "hash", value: from.hashcode() }),
+					});
+					isNewReplicator = prevCount === 0;
+				} else {
+					isNewReplicator = false;
 				}
-				ranges = deduplicated;
+
+				if (checkDuplicates) {
+					let deduplicated: ReplicationRangeIndexable[] = [];
+
+					// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
+					for (const range of ranges) {
+						if (!(await hasCoveringRange(this.replicationIndex, range))) {
+							deduplicated.push(range);
+						}
+					}
+					ranges = deduplicated;
+				}
+				let existingMap = new Map<string, ReplicationRangeIndexable>();
+				for (const result of existing) {
+					existingMap.set(result.value.idString, result.value);
+				}
+
+				let changes: ReplicationChanges = ranges
+					.map((x) => {
+						const prev = existingMap.get(x.idString);
+						if (prev) {
+							if (prev.equalRange(x)) {
+								return undefined;
+							}
+							return { range: x, prev, type: "updated" };
+						} else {
+							return { range: x, type: "added" };
+						}
+					})
+					.filter((x) => x != null) as ReplicationChanges;
+				diffs = changes;
 			}
 
-			for (const range of ranges) {
-				await this.replicationIndex.put(range);
-				if (!reset) {
-					this.oldestOpenTime = Math.min(
-						Number(range.timestamp),
-						this.oldestOpenTime,
-					);
+			let now = +new Date();
+			let minRoleAge = await this.getDefaultMinRoleAge();
+			let isAllMature = true;
+
+			for (const diff of diffs) {
+				if (diff.type === "added" || diff.type === "updated") {
+					await this.replicationIndex.put(diff.range);
+					if (!reset) {
+						this.oldestOpenTime = Math.min(
+							Number(diff.range.timestamp),
+							this.oldestOpenTime,
+						);
+					}
+
+					const isMature = isMatured(diff.range, now, minRoleAge);
+
+					if (
+						!isMature /* && diff.range.hash !== this.node.identity.publicKey.hashcode() */
+					) {
+						// second condition is to avoid the case where we are adding a range that we own
+						isAllMature = false;
+						let prevPendingMaturity = this.pendingMaturity.get(diff.range.hash);
+						let map: Map<string, ReplicationChange>;
+						let waitForMaturityTime = Math.max(
+							minRoleAge - (now - Number(diff.range.timestamp)),
+							0,
+						);
+
+						if (prevPendingMaturity) {
+							map = prevPendingMaturity.ranges;
+							if (prevPendingMaturity.timestamp < diff.range.timestamp) {
+								// something has changed so we need to reset the timeout
+								clearTimeout(prevPendingMaturity.timeout);
+								prevPendingMaturity.timestamp = diff.range.timestamp;
+								prevPendingMaturity.timeout = setTimeout(() => {
+									this.events.dispatchEvent(
+										new CustomEvent<ReplicationChangeEvent>(
+											"replicator:mature",
+											{
+												detail: { publicKey: from },
+											},
+										),
+									);
+									for (const value of map.values()) {
+										this.replicationChangeDebounceFn.add(value); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+									}
+								}, waitForMaturityTime);
+							}
+						} else {
+							map = new Map();
+							this.pendingMaturity.set(diff.range.hash, {
+								timestamp: diff.range.timestamp,
+								ranges: map,
+								timeout: setTimeout(() => {
+									this.events.dispatchEvent(
+										new CustomEvent<ReplicationChangeEvent>(
+											"replicator:mature",
+											{
+												detail: { publicKey: from },
+											},
+										),
+									);
+									for (const value of map.values()) {
+										this.replicationChangeDebounceFn.add(value); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+									}
+								}, waitForMaturityTime),
+							});
+						}
+
+						map.set(diff.range.idString, diff);
+					}
+				} else {
+					const prev = this.pendingMaturity.get(diff.range.hash);
+					if (prev) {
+						prev.ranges.delete(diff.range.idString);
+					}
 				}
 			}
 
@@ -782,7 +1004,7 @@ export class SharedLog<
 			}
 
 			this.events.dispatchEvent(
-				new CustomEvent<ReplicationChange>("replication:change", {
+				new CustomEvent<ReplicationChangeEvent>("replication:change", {
 					detail: { publicKey: from },
 				}),
 			);
@@ -793,17 +1015,33 @@ export class SharedLog<
 						detail: { publicKey: from },
 					}),
 				);
+
+				if (isAllMature) {
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
+							detail: { publicKey: from },
+						}),
+					);
+				}
 			}
+
+			if (ranges.length === 0 && deleted?.length === 0) {
+				throw new Error("Unexpected");
+			}
+
+			diffs.length > 0 &&
+				diffs.map((x) => this.replicationChangeDebounceFn.add(x));
 
 			if (!from.equals(this.node.identity.publicKey)) {
 				this.rebalanceParticipationDebounced?.();
 			}
-			return true;
+
+			return diffs;
 		};
 
 		// we sequialize this because we are going to queries to check wether to add or not
 		// if two processes do the same this both process might add a range while only one in practice should
-		return this.pq.add(fn);
+		return fn();
 	}
 
 	async startAnnounceReplicating(
@@ -816,17 +1054,19 @@ export class SharedLog<
 			) => void;
 		} = {},
 	) {
-		const added = await this.addReplicationRange(
+		const change = await this.addReplicationRange(
 			range,
 			this.node.identity.publicKey,
 			options,
 		);
-		if (!added) {
+
+		if (!change) {
 			logger.warn("Not allowed to replicate by canReplicate");
 		}
 
 		let message: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage;
-		if (added) {
+
+		if (change) {
 			if (options.reset) {
 				message = new AllReplicatingSegmentsMessage({
 					segments: range.map((x) => x.toReplicationRange()),
@@ -855,13 +1095,15 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		const appendOptions: AppendOptions<T> = { ...options };
-		const minReplicasData = encodeReplicas(
-			options?.replicas
-				? typeof options.replicas === "number"
-					? new AbsoluteReplicas(options.replicas)
-					: options.replicas
-				: this.replicas.min,
-		);
+		const minReplicas = options?.replicas
+			? typeof options.replicas === "number"
+				? new AbsoluteReplicas(options.replicas)
+				: options.replicas
+			: this.replicas.min;
+		const minReplicasValue = minReplicas.getValue(this);
+		const minReplicasData = encodeReplicas(minReplicas);
+
+		checkMinReplicasLimit(minReplicasValue);
 
 		if (!appendOptions.meta) {
 			appendOptions.meta = {
@@ -893,53 +1135,73 @@ export class SharedLog<
 			await this.replicate(result.entry, { checkDuplicates: true });
 		}
 
-		for (const message of await createExchangeHeadsMessages(
-			this.log,
-			[result.entry],
-			this._gidParentCache,
-		)) {
-			if (options?.target === "replicators" || !options?.target) {
-				const minReplicas = decodeReplicas(result.entry).getValue(this);
+		let { leaders, isLeader } = await this.findLeadersPersist(
+			{
+				entry: result.entry,
+				minReplicas: minReplicas.getValue(this),
+			},
+			result.entry,
+			{ persist: {} },
+		);
 
-				let leaders: string[] | Set<string> = await this.findLeaders(
-					result.entry,
-					minReplicas,
-				);
+		// --------------
 
-				const isLeader = leaders.includes(
-					this.node.identity.publicKey.hashcode(),
-				);
-
-				if (message.heads[0].gidRefrences.length > 0) {
-					const newAndOldLeaders = new Set(leaders);
-					for (const ref of message.heads[0].gidRefrences) {
-						const entryFromGid = this.log.entryIndex.getHeads(ref, false);
-						for (const entry of await entryFromGid.all()) {
-							for (const hash of await this.findLeaders(entry, minReplicas)) {
-								newAndOldLeaders.add(hash);
+		if (options?.target !== "none") {
+			for (const message of await createExchangeHeadsMessages(
+				this.log,
+				[result.entry],
+				this._gidParentCache,
+			)) {
+				if (options?.target === "replicators" || !options?.target) {
+					if (message.heads[0].gidRefrences.length > 0) {
+						const newAndOldLeaders = new Map(leaders);
+						for (const ref of message.heads[0].gidRefrences) {
+							const entryFromGid = this.log.entryIndex.getHeads(ref, false);
+							for (const entry of await entryFromGid.all()) {
+								let coordinate = await this.getCoordinates(entry);
+								if (coordinate == null) {
+									coordinate = await this.createCoordinates(
+										entry,
+										minReplicasValue,
+									);
+									// TODO are we every to come here?
+								}
+								for (const [hash, features] of await this.findLeaders(
+									coordinate,
+								)) {
+									newAndOldLeaders.set(hash, features);
+								}
 							}
 						}
+						leaders = newAndOldLeaders;
 					}
-					leaders = newAndOldLeaders;
+
+					let set = this._gidPeersHistory.get(result.entry.meta.gid);
+					if (!set) {
+						set = new Set(leaders.keys());
+						this._gidPeersHistory.set(result.entry.meta.gid, set);
+					} else {
+						for (const [receiver, _features] of leaders) {
+							set.add(receiver);
+						}
+					}
+
+					mode = isLeader
+						? new SilentDelivery({ redundancy: 1, to: leaders.keys() })
+						: new AcknowledgeDelivery({ redundancy: 1, to: leaders.keys() });
 				}
 
-				let set = this._gidPeersHistory.get(result.entry.meta.gid);
-				if (!set) {
-					set = new Set(leaders);
-					this._gidPeersHistory.set(result.entry.meta.gid, set);
-				} else {
-					for (const receiver of leaders) {
-						set.add(receiver);
-					}
-				}
-				mode = isLeader
-					? new SilentDelivery({ redundancy: 1, to: leaders })
-					: new AcknowledgeDelivery({ redundancy: 1, to: leaders });
+				// TODO add options for waiting ?
+				this.rpc.send(message, {
+					mode,
+				});
 			}
+		}
 
-			// TODO add options for waiting ?
-			this.rpc.send(message, {
-				mode,
+		if (!isLeader) {
+			this.pruneDebouncedFn.add({
+				key: result.entry.hash,
+				value: result.entry,
 			});
 		}
 		this.rebalanceParticipationDebounced?.();
@@ -961,7 +1223,7 @@ export class SharedLog<
 				: undefined,
 		};
 		this.domain = options?.domain ?? (createReplicationDomainHash() as D);
-		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 10 * 1000; // TODO make into arg
+		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
 		this._pendingDeletes = new Map();
 		this._pendingIHave = new Map();
 		this.latestReplicationInfoMessage = new Map();
@@ -981,7 +1243,7 @@ export class SharedLog<
 		this._isTrustedReplicator = options?.canReplicate;
 		this.sync = options?.sync;
 		this._logProperties = options;
-		this.pq = new PQueue({ concurrency: 1000 });
+		this.pendingMaturity = new Map();
 
 		const id = sha256Base64Sync(this.log.id);
 		const storage = await this.node.storage.sublevel(id);
@@ -1009,22 +1271,103 @@ export class SharedLog<
 			schema: ReplicationRangeIndexable,
 		});
 
+		this._entryCoordinatesIndex = await replicationIndex.init({
+			schema: EntryReplicated,
+		});
+
 		const logIndex = await logScope.scope("log");
 
 		await this.node.indexer.start(); // TODO why do we need to start the indexer here?
 
 		const hasIndexedReplicationInfo =
-			(await this.replicationIndex.getSize()) > 0;
+			(await this.replicationIndex.count({
+				query: [
+					new StringMatch({
+						key: "hash",
+						value: this.node.identity.publicKey.hashcode(),
+					}),
+				],
+			})) > 0;
 
 		/* this._totalParticipation = await this.calculateTotalParticipation(); */
 
 		this._gidPeersHistory = new Map();
 
+		this.replicationChangeDebounceFn = debounceAggregationChanges(
+			(change) =>
+				this.onReplicationChange(change).then(() =>
+					this.rebalanceParticipationDebounced?.(),
+				),
+			this.distributionDebounceTime,
+		);
+
+		this.pruneDebouncedFn = debouncedAccumulatorMap(
+			(map) => {
+				this.prune(map);
+			},
+			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
+		);
+
+		this.responseToPruneDebouncedFn = debounceAcculmulator<
+			string,
+			{
+				hashes: string[];
+				peers: string[] | Set<string>;
+			},
+			Map<string, Set<string>>
+		>(
+			(result) => {
+				let allRequestingPeers = new Set<string>();
+				let hashes: string[] = [];
+				for (const [hash, requestingPeers] of result) {
+					for (const peer of requestingPeers) {
+						allRequestingPeers.add(peer);
+					}
+					hashes.push(hash);
+				}
+				hashes.length > 0 &&
+					this.rpc.send(new ResponseIPrune({ hashes }), {
+						mode: new SilentDelivery({
+							to: allRequestingPeers,
+							redundancy: 1,
+						}),
+						priority: 1,
+					});
+			},
+			() => {
+				let accumulator = new Map<string, Set<string>>();
+				return {
+					add: (props: { hashes: string[]; peers: string[] | Set<string> }) => {
+						for (const hash of props.hashes) {
+							let prev = accumulator.get(hash);
+							if (!prev) {
+								prev = new Set<string>();
+								accumulator.set(hash, prev);
+							}
+							for (const peer of props.peers) {
+								prev.add(peer);
+							}
+						}
+					},
+					delete: (hash: string) => {
+						accumulator.delete(hash);
+					},
+					finalize: () => {
+						return undefined as any;
+					},
+					size: () => accumulator.size,
+					clear: () => accumulator.clear(),
+					value: accumulator,
+				};
+			},
+			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
+		);
+
 		await this.log.open(this.remoteBlocks, this.node.identity, {
 			keychain: this.node.services.keychain,
 			...this._logProperties,
-			onChange: (change) => {
-				this.onChange(change);
+			onChange: async (change) => {
+				await this.onChange(change);
 				return this._logProperties?.onChange?.(change);
 			},
 			canAppend: async (entry) => {
@@ -1043,7 +1386,7 @@ export class SharedLog<
 		await this.rpc.open({
 			queryType: TransportMessage,
 			responseType: TransportMessage,
-			responseHandler: this._onMessage.bind(this),
+			responseHandler: (query, context) => this._onMessage(query, context),
 			topic: this.topic,
 		});
 
@@ -1063,15 +1406,6 @@ export class SharedLog<
 
 		await this.rpc.subscribe();
 
-		// await this.log.load();
-
-		// TODO (do better)
-		// we do this distribution interval to eliminate the sideeffects arriving from updating roles and joining entries continously.
-		// an alternative to this would be to call distribute/maybe prune after every join if our role has changed
-		this.distributeInterval = setInterval(() => {
-			this.distribute();
-		}, 7.5 * 1000);
-
 		const requestSync = async () => {
 			/**
 			 * This method fetches entries that we potentially want.
@@ -1087,7 +1421,17 @@ export class SharedLog<
 					// TODO test that this if statement actually does anymeaningfull
 					if (value.length > 0) {
 						requestHashes.push(key);
-						from.add(value.shift()!.hashcode());
+						const publicKeyHash = value.shift()!.hashcode();
+						from.add(publicKeyHash);
+						const invertedSet =
+							this.syncInFlightQueueInverted.get(publicKeyHash);
+						if (invertedSet) {
+							if (invertedSet.delete(key)) {
+								if (invertedSet.size === 0) {
+									this.syncInFlightQueueInverted.delete(publicKeyHash);
+								}
+							}
+						}
 					}
 					if (value.length === 0) {
 						this.syncInFlightQueue.delete(key); // no-one more to ask for this entry
@@ -1113,20 +1457,36 @@ export class SharedLog<
 				if (this.closed) {
 					return;
 				}
-				this.syncMoreInterval = setTimeout(requestSync, 1e4);
+				this.syncMoreInterval = setTimeout(requestSync, 3e3);
 			});
 		};
 
 		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
 		// we are already unreplicated (as we are just opening)
-		if (
-			hasIndexedReplicationInfo ||
-			isUnreplicationOptions(options?.replicate) === false
-		) {
+
+		let isUnreplicationOptionsDefined = isUnreplicationOptions(
+			options?.replicate,
+		);
+		if (hasIndexedReplicationInfo && isUnreplicationOptionsDefined) {
 			await this.replicate(options?.replicate, { checkDuplicates: true });
+		} else if (
+			isReplicationOptionsDependentOnPreviousState(options?.replicate) &&
+			hasIndexedReplicationInfo
+		) {
+			// dont do anthing since we are alread replicating stuff
+		} else {
+			await this.replicate(options?.replicate, {
+				checkDuplicates: true,
+				reset: true,
+			});
 		}
+
 		requestSync();
+
+		this.interval = setInterval(() => {
+			this.rebalanceParticipationDebounced?.();
+		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
 	}
 
 	async afterOpen(): Promise<void> {
@@ -1165,6 +1525,7 @@ export class SharedLog<
 			this.onEntryAdded(added.entry);
 		}
 		for (const removed of change.removed) {
+			await this.deleteCoordinates({ hash: removed.hash });
 			this.onEntryRemoved(removed.hash);
 		}
 	}
@@ -1179,6 +1540,8 @@ export class SharedLog<
 			if (Number.isFinite(replicas) === false) {
 				return false;
 			}
+
+			checkMinReplicasLimit(replicas);
 
 			// Don't verify entries that we have created (TODO should we? perf impact?)
 			if (!entry.createdLocally && !(await entry.verifySignatures())) {
@@ -1230,10 +1593,17 @@ export class SharedLog<
 
 	private async _close() {
 		clearTimeout(this.syncMoreInterval);
-		clearInterval(this.distributeInterval);
+
+		for (const [_key, value] of this.pendingMaturity) {
+			clearTimeout(value.timeout);
+		}
+		this.pendingMaturity.clear();
+
 		this.distributeQueue?.clear();
 
 		this._closeController.abort();
+
+		clearInterval(this.interval);
 
 		this.node.services.pubsub.removeEventListener(
 			"subscribe",
@@ -1262,11 +1632,13 @@ export class SharedLog<
 		this.syncInFlight.clear();
 		this.latestReplicationInfoMessage.clear();
 		this._gidPeersHistory.clear();
-
+		this.pruneDebouncedFn = undefined as any;
+		this.rebalanceParticipationDebounced = undefined;
 		this._replicationRangeIndex = undefined as any;
+		this._entryCoordinatesIndex = undefined as any;
+
 		this.cpuUsage?.stop?.();
 		/* this._totalParticipation = 0; */
-		this.pq.clear();
 	}
 	async close(from?: Program): Promise<boolean> {
 		const superClosed = await super.close(from);
@@ -1337,10 +1709,6 @@ export class SharedLog<
 						return;
 					}
 
-					const toMerge: Entry<any>[] = [];
-					let toDelete: Entry<any>[] | undefined = undefined;
-					let maybeDelete: EntryWithRefs<any>[][] | undefined = undefined;
-
 					const groupedByGid = await groupByGid(filteredHeads);
 					const promises: Promise<void>[] = [];
 
@@ -1361,30 +1729,62 @@ export class SharedLog<
 								entries.map((x) => x.entry),
 							);
 
+							const maxMaxReplicas = Math.max(
+								maxReplicasFromHead,
+								maxReplicasFromNewEntries,
+							);
+
+							const cursor = await this.createCoordinates(
+								latestEntry,
+								maxMaxReplicas,
+							);
+
 							const isReplicating = await this.isReplicating();
 
-							let isLeader: string[] | false;
+							let isLeader:
+								| Map<
+										string,
+										{
+											intersecting: boolean;
+										}
+								  >
+								| false;
 
 							if (isReplicating) {
 								isLeader = await this.waitForIsLeader(
-									latestEntry,
-									Math.max(maxReplicasFromHead, maxReplicasFromNewEntries),
+									cursor,
+									this.node.identity.publicKey.hashcode(),
 								);
 							} else {
-								isLeader = await this.findLeaders(
-									latestEntry,
-									Math.max(maxReplicasFromHead, maxReplicasFromNewEntries),
-								);
+								isLeader = await this.findLeaders(cursor);
 
-								isLeader = isLeader.includes(
-									this.node.identity.publicKey.hashcode(),
-								)
+								isLeader = isLeader.has(this.node.identity.publicKey.hashcode())
 									? isLeader
 									: false;
 							}
 
+							if (this.closed) {
+								return;
+							}
+
+							let maybeDelete: EntryWithRefs<any>[][] | undefined;
+							let toMerge: Entry<any>[] = [];
+							let toDelete: Entry<any>[] | undefined;
 							if (isLeader) {
-								if (isLeader.find((x) => x === context.from!.hashcode())) {
+								for (const entry of entries) {
+									this.pruneDebouncedFn.delete(entry.entry.hash);
+								}
+
+								for (const entry of entries) {
+									await this.persistCoordinate({
+										leaders: isLeader,
+										coordinates: cursor,
+										entry: entry.entry,
+									});
+								}
+
+								const fromIsLeader = isLeader.get(context.from!.hashcode());
+								if (fromIsLeader) {
 									let peerSet = this._gidPeersHistory.get(gid);
 									if (!peerSet) {
 										peerSet = new Set();
@@ -1418,151 +1818,183 @@ export class SharedLog<
 									}. Because not leader`,
 								);
 							}
-						};
-						promises.push(fn());
-					}
-					await Promise.all(promises);
 
-					if (this.closed) {
-						return;
-					}
-
-					if (toMerge.length > 0) {
-						await this.log.join(toMerge);
-						toDelete &&
-							Promise.all(this.prune(toDelete)).catch((e) => {
-								logger.info(e.toString());
-							});
-						this.rebalanceParticipationDebounced?.();
-					}
-
-					/// we clear sync in flight here because we want to join before that, so that entries are totally accounted for
-					for (const head of heads) {
-						const set = this.syncInFlight.get(context.from.hashcode());
-						if (set) {
-							set.delete(head.entry.hash);
-							if (set?.size === 0) {
-								this.syncInFlight.delete(context.from.hashcode());
+							if (this.closed) {
+								return;
 							}
-						}
-					}
 
-					if (maybeDelete) {
-						for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-							const headsWithGid = await this.log.entryIndex
-								.getHeads(entries[0].entry.meta.gid)
-								.all();
-							if (headsWithGid && headsWithGid.length > 0) {
-								const minReplicas = maxReplicas(this, headsWithGid.values());
+							if (toMerge.length > 0) {
+								await this.log.join(toMerge);
 
-								const isLeader = await this.isLeader(
-									entries[0].entry,
-									minReplicas,
+								toDelete?.map((x) =>
+									this.pruneDebouncedFn.add({ key: x.hash, value: x }),
 								);
+								this.rebalanceParticipationDebounced?.();
+							}
 
-								if (!isLeader) {
-									Promise.all(this.prune(entries.map((x) => x.entry))).catch(
-										(e) => {
-											logger.info(e.toString());
-										},
-									);
+							/// we clear sync in flight here because we want to join before that, so that entries are totally accounted for
+							for (const entry of entries) {
+								const set = this.syncInFlight.get(context.from!.hashcode());
+								if (set) {
+									set.delete(entry.entry.hash);
+									if (set?.size === 0) {
+										this.syncInFlight.delete(context.from!.hashcode());
+									}
 								}
 							}
-						}
+
+							if (maybeDelete) {
+								for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
+									const headsWithGid = await this.log.entryIndex
+										.getHeads(entries[0].entry.meta.gid)
+										.all();
+									if (headsWithGid && headsWithGid.length > 0) {
+										const minReplicas = maxReplicas(
+											this,
+											headsWithGid.values(),
+										);
+
+										const isLeader = await this.isLeader({
+											entry: entries[0].entry,
+											replicas: minReplicas,
+										});
+
+										if (!isLeader) {
+											entries.map((x) =>
+												this.pruneDebouncedFn.add({
+													key: x.entry.hash,
+													value: x.entry,
+												}),
+											);
+										}
+									}
+								}
+							}
+						};
+						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
 					}
+					await Promise.all(promises);
 				}
 			} else if (msg instanceof RequestIPrune) {
 				const hasAndIsLeader: string[] = [];
+				//	await delay(3000)
 				for (const hash of msg.hashes) {
 					const indexedEntry = await this.log.entryIndex.getShallow(hash);
 					if (
 						indexedEntry &&
-						(await this.isLeader(
-							indexedEntry.value,
-							decodeReplicas(indexedEntry.value).getValue(this),
-						))
+						(
+							await this.findLeadersPersist(
+								{
+									entry: indexedEntry.value,
+									minReplicas: decodeReplicas(indexedEntry.value).getValue(
+										this,
+									),
+								},
+								indexedEntry.value,
+							)
+						).isLeader
 					) {
 						this._gidPeersHistory
 							.get(indexedEntry.value.meta.gid)
 							?.delete(context.from.hashcode());
 						hasAndIsLeader.push(hash);
+
+						hasAndIsLeader.length > 0 &&
+							this.responseToPruneDebouncedFn.add({
+								hashes: hasAndIsLeader,
+								peers: [context.from!.hashcode()],
+							});
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
-						const pendingIHave = {
-							clear: () => {
-								clearTimeout(timeout);
-								prevPendingIHave?.clear();
-							},
-							callback: async (entry: any) => {
-								if (
-									await this.isLeader(
-										entry,
-										decodeReplicas(entry).getValue(this),
-									)
-								) {
-									this._gidPeersHistory
-										.get(entry.meta.gid)
-										?.delete(context.from!.hashcode());
-									this.rpc.send(new ResponseIPrune({ hashes: [entry.hash] }), {
-										mode: new SilentDelivery({
-											to: [context.from!],
-											redundancy: 1,
-										}),
-									});
-								}
+						if (prevPendingIHave) {
+							prevPendingIHave.requesting.add(context.from.hashcode());
+							prevPendingIHave.resetTimeout();
+						} else {
+							const requesting = new Set([context.from.hashcode()]);
 
-								prevPendingIHave && prevPendingIHave.callback(entry);
-								this._pendingIHave.delete(entry.hash);
-							},
-						};
-						const timeout = setTimeout(() => {
-							const pendingIHaveRef = this._pendingIHave.get(hash);
-							if (pendingIHave === pendingIHaveRef) {
+							let timeout = setTimeout(() => {
 								this._pendingIHave.delete(hash);
-							}
-						}, this._respondToIHaveTimeout);
+							}, this._respondToIHaveTimeout);
 
-						this._pendingIHave.set(hash, pendingIHave);
+							const pendingIHave = {
+								requesting,
+								resetTimeout: () => {
+									clearTimeout(timeout);
+									timeout = setTimeout(() => {
+										this._pendingIHave.delete(hash);
+									}, this._respondToIHaveTimeout);
+								},
+								clear: () => {
+									clearTimeout(timeout);
+								},
+								callback: async (entry: Entry<T>) => {
+									if (
+										(
+											await this.findLeadersPersist(
+												{
+													entry,
+													minReplicas: decodeReplicas(entry).getValue(this),
+												},
+												entry,
+											)
+										).isLeader
+									) {
+										for (const peer of requesting) {
+											this._gidPeersHistory.get(entry.meta.gid)?.delete(peer);
+										}
+
+										this.responseToPruneDebouncedFn.add({
+											hashes: [entry.hash],
+											peers: requesting,
+										});
+										this._pendingIHave.delete(hash);
+									}
+								},
+							};
+
+							this._pendingIHave.set(hash, pendingIHave);
+						}
 					}
 				}
-
-				await this.rpc.send(new ResponseIPrune({ hashes: hasAndIsLeader }), {
-					mode: new SilentDelivery({ to: [context.from], redundancy: 1 }),
-				});
 			} else if (msg instanceof ResponseIPrune) {
 				for (const hash of msg.hashes) {
 					this._pendingDeletes.get(hash)?.resolve(context.from.hashcode());
 				}
 			} else if (msg instanceof RequestMaybeSync) {
 				const requestHashes: string[] = [];
+
 				for (const hash of msg.hashes) {
 					const inFlight = this.syncInFlightQueue.get(hash);
 					if (inFlight) {
-						inFlight.push(context.from);
-						let inverted = this.syncInFlightQueueInverted.get(
-							context.from.hashcode(),
-						);
-						if (!inverted) {
-							inverted = new Set();
-							this.syncInFlightQueueInverted.set(
+						if (
+							!inFlight.find((x) => x.hashcode() === context.from!.hashcode())
+						) {
+							inFlight.push(context.from);
+							let inverted = this.syncInFlightQueueInverted.get(
 								context.from.hashcode(),
-								inverted,
 							);
+							if (!inverted) {
+								inverted = new Set();
+								this.syncInFlightQueueInverted.set(
+									context.from.hashcode(),
+									inverted,
+								);
+							}
+							inverted.add(hash);
 						}
-						inverted.add(hash);
 					} else if (!(await this.log.has(hash))) {
 						this.syncInFlightQueue.set(hash, []);
 						requestHashes.push(hash); // request immediately (first time we have seen this hash)
 					}
 				}
-
-				await this.requestSync(requestHashes, [context.from.hashcode()]);
+				requestHashes.length > 0 &&
+					(await this.requestSync(requestHashes, [context.from.hashcode()]));
 			} else if (msg instanceof ResponseMaybeSync) {
 				// TODO better choice of step size
-
 				const entries = (
 					await Promise.all(msg.hashes.map((x) => this.log.get(x)))
 				).filter((x): x is Entry<any> => !!x);
+
 				const messages = await createExchangeHeadsMessages(
 					this.log,
 					entries,
@@ -1647,21 +2079,21 @@ export class SharedLog<
 						if (prev && prev > context.timestamp) {
 							return;
 						}
+
 						this.latestReplicationInfoMessage.set(
 							context.from!.hashcode(),
 							context.timestamp,
 						);
 
 						let reset = msg instanceof AllReplicatingSegmentsMessage;
-						const added = await this.addReplicationRange(
+
+						await this.addReplicationRange(
 							replicationInfoMessage.segments.map((x) =>
 								x.toReplicationRangeIndexable(context.from!),
 							),
 							context.from!,
 							{ reset, checkDuplicates: true },
 						);
-
-						added && (await this.distribute());
 
 						/* await this._modifyReplicators(msg.role, context.from!); */
 					})
@@ -1713,18 +2145,15 @@ export class SharedLog<
 	}
 
 	async getMyReplicationSegments() {
-		const ranges = await this.replicationIndex.query(
-			new SearchRequest({
-				query: [
-					new StringMatch({
-						key: "hash",
-						value: this.node.identity.publicKey.hashcode(),
-					}),
-				],
-				fetch: 0xffffffff,
-			}),
-		);
-		return ranges.results.map((x) => x.value);
+		const ranges = await this.replicationIndex
+			.iterate({
+				query: new StringMatch({
+					key: "hash",
+					value: this.node.identity.publicKey.hashcode(),
+				}),
+			})
+			.all();
+		return ranges.map((x) => x.value);
 	}
 
 	async getMyTotalParticipation() {
@@ -1742,16 +2171,22 @@ export class SharedLog<
 		return this._replicationRangeIndex;
 	}
 
+	get entryCoordinatesIndex(): Index<EntryReplicated> {
+		if (!this._entryCoordinatesIndex) {
+			throw new ClosedError();
+		}
+		return this._entryCoordinatesIndex;
+	}
+
 	/**
 	 * TODO improve efficiency
 	 */
 	async getReplicators() {
-		let set = new Set();
-		const results = await this.replicationIndex.query(
-			new SearchRequest({ fetch: 0xfffffff }),
-			{ reference: true, shape: { hash: true } },
-		);
-		results.results.forEach((result) => {
+		let set = new Set<string>();
+		const results = await this.replicationIndex
+			.iterate({}, { reference: true, shape: { hash: true } })
+			.all();
+		results.forEach((result) => {
 			set.add(result.value.hash);
 		});
 
@@ -1761,14 +2196,13 @@ export class SharedLog<
 	async waitForReplicator(...keys: PublicSignKey[]) {
 		const check = async () => {
 			for (const k of keys) {
-				const rects = await this.replicationIndex?.query(
-					new SearchRequest({
-						query: [new StringMatch({ key: "hash", value: k.hashcode() })],
-					}),
-					{ reference: true },
-				);
-				const rect = await rects.results[0]?.value;
-
+				const rects = await this.replicationIndex
+					?.iterate(
+						{ query: new StringMatch({ key: "hash", value: k.hashcode() }) },
+						{ reference: true },
+					)
+					.all();
+				const rect = rects[0]?.value;
 				if (
 					!rect ||
 					!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
@@ -1877,29 +2311,99 @@ export class SharedLog<
 		}
 	}
 
-	async isLeader(
-		entry: ShallowOrFullEntry<any>,
-		numberOfLeaders: number,
+	private async findLeadersPersist(
+		cursor:
+			| number[]
+			| {
+					entry: ShallowOrFullEntry<any> | EntryReplicated;
+					minReplicas: number;
+			  },
+		entry: ShallowOrFullEntry<any> | EntryReplicated,
 		options?: {
-			candidates?: string[];
+			roleAge?: number;
+			// persist even if not leader
+			persist?: {
+				prev?: EntryReplicated[];
+			};
+		},
+	): Promise<{
+		leaders: Map<string, { intersecting: boolean }>;
+		isLeader: boolean;
+	}> {
+		const coordinates = Array.isArray(cursor)
+			? cursor
+			: await this.createCoordinates(cursor.entry, cursor.minReplicas);
+		const leaders = await this.findLeaders(coordinates, options);
+		const isLeader = leaders.has(this.node.identity.publicKey.hashcode());
+
+		if (isLeader || options?.persist) {
+			let assignToRangeBoundary: boolean | undefined = undefined;
+			if (options?.persist?.prev) {
+				assignToRangeBoundary = shouldAssigneToRangeBoundary(leaders);
+				const prev = options.persist.prev;
+				// dont do anthing if nothing has changed
+				if (prev.length > 0) {
+					let allTheSame = true;
+
+					for (const element of prev) {
+						if (element.assignedToRangeBoundary !== assignToRangeBoundary) {
+							allTheSame = false;
+							break;
+						}
+					}
+
+					if (allTheSame) {
+						return { leaders, isLeader };
+					}
+				}
+			}
+
+			!this.closed &&
+				(await this.persistCoordinate(
+					{
+						leaders,
+						coordinates,
+						entry,
+					},
+					{
+						assignToRangeBoundary: assignToRangeBoundary,
+					},
+				));
+		}
+
+		return { leaders, isLeader };
+	}
+
+	async isLeader(
+		cursor:
+			| number[]
+			| {
+					entry: ShallowOrFullEntry<any> | EntryReplicated;
+					replicas: number;
+			  },
+		options?: {
 			roleAge?: number;
 		},
 	): Promise<boolean> {
-		const isLeader = (
-			await this.findLeaders(entry, numberOfLeaders, options)
-		).find((l) => l === this.node.identity.publicKey.hashcode());
-		return !!isLeader;
+		const leaders = await this.findLeaders(cursor, options);
+		return leaders.has(this.node.identity.publicKey.hashcode());
 	}
 
 	private async waitForIsLeader(
-		entry: ShallowOrFullEntry<T>,
-		numberOfLeaders: number,
-		timeout = this.waitForReplicatorTimeout,
-	): Promise<string[] | false> {
+		cursor: number[],
+		hash: string,
+		options: {
+			timeout: number;
+		} = { timeout: this.waitForReplicatorTimeout },
+	): Promise<Map<string, { intersecting: boolean }> | false> {
 		return new Promise((resolve, reject) => {
 			const removeListeners = () => {
 				this.events.removeEventListener("replication:change", roleListener);
-				this._closeController.signal.addEventListener("abort", abortListener);
+				this.events.removeEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
+				this._closeController.signal.removeEventListener(
+					"abort",
+					abortListener,
+				);
 			};
 			const abortListener = () => {
 				removeListeners();
@@ -1910,13 +2414,11 @@ export class SharedLog<
 			const timer = setTimeout(() => {
 				removeListeners();
 				resolve(false);
-			}, timeout);
+			}, options.timeout);
 
 			const check = () =>
-				this.findLeaders(entry, numberOfLeaders).then((leaders) => {
-					const isLeader = leaders.find(
-						(l) => l === this.node.identity.publicKey.hashcode(),
-					);
+				this.findLeaders(cursor).then((leaders) => {
+					const isLeader = leaders.has(hash);
 					if (isLeader) {
 						removeListeners();
 						clearTimeout(timer);
@@ -1929,25 +2431,127 @@ export class SharedLog<
 			};
 
 			this.events.addEventListener("replication:change", roleListener); // TODO replication:change event  ?
+			this.events.addEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
 			this._closeController.signal.addEventListener("abort", abortListener);
-
 			check();
 		});
 	}
 
 	async findLeaders(
-		entry: ShallowOrFullEntry<any>,
-		numberOfLeaders: number,
+		cursor:
+			| number[]
+			| {
+					entry: ShallowOrFullEntry<any> | EntryReplicated;
+					replicas: number;
+			  },
 		options?: {
 			roleAge?: number;
 		},
-	): Promise<string[]> {
+	): Promise<Map<string, { intersecting: boolean }>> {
 		if (this.closed) {
-			return [this.node.identity.publicKey.hashcode()]; // Assumption: if the store is closed, always assume we have responsibility over the data
+			const map = new Map(); // Assumption: if the store is closed, always assume we have responsibility over the data
+			map.set(this.node.identity.publicKey.hashcode(), { intersecting: false });
+			return map;
 		}
 
+		const coordinates = Array.isArray(cursor)
+			? cursor
+			: await this.createCoordinates(cursor.entry, cursor.replicas);
+		const leaders = await this.findLeadersFromU32(coordinates, options);
+
+		return leaders;
+	}
+
+	private async groupByLeaders(
+		cursors: (
+			| number[]
+			| {
+					entry: ShallowOrFullEntry<any> | EntryReplicated;
+					replicas: number;
+			  }
+		)[],
+		options?: {
+			roleAge?: number;
+		},
+	) {
+		const leaders = await Promise.all(
+			cursors.map((x) => this.findLeaders(x, options)),
+		);
+		const map = new Map<string, number[]>();
+		leaders.forEach((leader, i) => {
+			for (const [hash] of leader) {
+				const arr = map.get(hash) ?? [];
+				arr.push(i);
+				map.set(hash, arr);
+			}
+		});
+
+		return map;
+	}
+
+	private async createCoordinates(
+		entry: ShallowOrFullEntry<any> | EntryReplicated,
+		minReplicas: number,
+	) {
 		const cursor = await this.domain.fromEntry(entry);
-		return this.findLeadersFromU32(cursor, numberOfLeaders, options);
+		const out = getEvenlySpacedU32(cursor, minReplicas);
+		return out;
+	}
+
+	private async getCoordinates(entry: { hash: string }) {
+		const result = await this.entryCoordinatesIndex
+			.iterate({ query: { hash: entry.hash } })
+			.all();
+		return result.map((x) => x.value.coordinate);
+	}
+
+	private async persistCoordinate(
+		properties: {
+			coordinates: number[];
+			entry: ShallowOrFullEntry<any> | EntryReplicated;
+			leaders:
+				| Map<
+						string,
+						{
+							intersecting: boolean;
+						}
+				  >
+				| false;
+		},
+		options?: {
+			assignToRangeBoundary?: boolean;
+		},
+	) {
+		let assignedToRangeBoundary =
+			options?.assignToRangeBoundary ??
+			shouldAssigneToRangeBoundary(properties.leaders);
+
+		for (const coordinate of properties.coordinates) {
+			await this.entryCoordinatesIndex.put(
+				new EntryReplicated({
+					assignedToRangeBoundary,
+					coordinate,
+					meta: properties.entry.meta,
+					hash: properties.entry.hash,
+				}),
+			);
+		}
+
+		if (properties.entry.meta.next.length > 0) {
+			await this.entryCoordinatesIndex.del({
+				query: new Or(
+					properties.entry.meta.next.map(
+						(x) => new StringMatch({ key: "hash", value: x }),
+					),
+				),
+			});
+		}
+	}
+
+	private async deleteCoordinates(
+		properties: { gid: string } | { hash: string },
+	) {
+		await this.entryCoordinatesIndex.del({ query: properties });
 	}
 
 	async getDefaultMinRoleAge(): Promise<number> {
@@ -1970,14 +2574,13 @@ export class SharedLog<
 	}
 
 	private async findLeadersFromU32(
-		cursor: u32,
-		numberOfLeaders: number,
+		cursor: u32[],
 		options?: {
 			roleAge?: number;
 		},
-	) {
+	): Promise<Map<string, { intersecting: boolean }>> {
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
-		return getSamples(cursor, this.replicationIndex, numberOfLeaders, roleAge);
+		return getSamples(cursor, this.replicationIndex, roleAge);
 	}
 
 	async isReplicator(
@@ -1987,7 +2590,10 @@ export class SharedLog<
 			roleAge?: number;
 		},
 	) {
-		return this.isLeader(entry, decodeReplicas(entry).getValue(this), options);
+		return this.isLeader(
+			{ entry, replicas: decodeReplicas(entry).getValue(this) },
+			options,
+		);
 	}
 
 	async handleSubscriptionChange(
@@ -2005,22 +2611,7 @@ export class SharedLog<
 			for (const [_a, b] of this._gidPeersHistory) {
 				b.delete(publicKey.hashcode());
 			}
-			this.syncInFlight.delete(publicKey.hashcode());
-			const waitingHashes = this.syncInFlightQueueInverted.get(
-				publicKey.hashcode(),
-			);
-			if (waitingHashes) {
-				for (const hash of waitingHashes) {
-					let arr = this.syncInFlightQueue.get(hash);
-					if (arr) {
-						arr = arr.filter((x) => !x.equals(publicKey));
-					}
-					if (this.syncInFlightQueue.size === 0) {
-						this.syncInFlightQueue.delete(hash);
-					}
-				}
-			}
-			this.syncInFlightQueueInverted.delete(publicKey.hashcode());
+			this.clearSyncProcessPublicKey(publicKey);
 		}
 
 		if (subscribed) {
@@ -2052,17 +2643,20 @@ export class SharedLog<
 	}
 
 	prune(
-		entries: (Entry<any> | ShallowEntry)[],
+		entries:
+			| (EntryReplicated | ShallowOrFullEntry<any>)[]
+			| Map<string, EntryReplicated | ShallowOrFullEntry<any>>,
 		options?: { timeout?: number; unchecked?: boolean },
 	): Promise<any>[] {
 		if (options?.unchecked) {
-			return entries.map((x) => {
+			return [...entries.values()].map((x) => {
 				this._gidPeersHistory.delete(x.meta.gid);
 				return this.log.remove(x, {
 					recursively: true,
 				});
 			});
 		}
+
 		// ask network if they have they entry,
 		// so I can delete it
 
@@ -2073,8 +2667,10 @@ export class SharedLog<
 		// - Peers join and leave, which means we might not be a replicator anymore
 
 		const promises: Promise<any>[] = [];
-		const filteredEntries: (Entry<any> | ShallowEntry)[] = [];
-		for (const entry of entries) {
+		const filteredEntries: (EntryReplicated | ShallowOrFullEntry<any>)[] = [];
+		const deleted = new Set();
+
+		for (const entry of entries.values()) {
 			const pendingPrev = this._pendingDeletes.get(entry.hash);
 			if (pendingPrev) {
 				promises.push(pendingPrev.promise.promise);
@@ -2104,14 +2700,13 @@ export class SharedLog<
 				deferredPromise.reject(e);
 			};
 
-			const timeout = setTimeout(
-				() => {
-					reject(
-						new Error("Timeout for checked pruning: Closed: " + this.closed),
-					);
-				},
-				options?.timeout ?? 10 * 1000,
-			);
+			let cursor: number[] | undefined = undefined;
+
+			const timeout = setTimeout(async () => {
+				reject(
+					new Error("Timeout for checked pruning: Closed: " + this.closed),
+				);
+			}, options?.timeout ?? 1e4);
 
 			this._pendingDeletes.set(entry.hash, {
 				promise: deferredPromise,
@@ -2125,16 +2720,20 @@ export class SharedLog<
 						? Math.min(minReplicasValue, this.replicas.max.getValue(this))
 						: minReplicasValue;
 
-					const leaders = await this.findLeaders(entry, minMinReplicasValue);
+					const leaders = await this.waitForIsLeader(
+						cursor ??
+							(cursor = await this.createCoordinates(
+								entry,
+								minMinReplicasValue,
+							)),
+						publicKeyHash,
+					);
+					if (leaders) {
+						if (leaders.has(this.node.identity.publicKey.hashcode())) {
+							reject(new Error("Failed to delete, is leader"));
+							return;
+						}
 
-					if (
-						leaders.find((x) => x === this.node.identity.publicKey.hashcode())
-					) {
-						reject(new Error("Failed to delete, is leader"));
-						return;
-					}
-
-					if (leaders.find((x) => x === publicKeyHash)) {
 						existCounter.add(publicKeyHash);
 						if (minMinReplicasValue <= existCounter.size) {
 							clear();
@@ -2144,7 +2743,8 @@ export class SharedLog<
 									recursively: true,
 								})
 								.then(() => {
-									resolve();
+									deleted.add(entry.hash);
+									return resolve();
 								})
 								.catch((e: any) => {
 									reject(new Error("Failed to delete entry: " + e.toString()));
@@ -2161,34 +2761,67 @@ export class SharedLog<
 			return promises;
 		}
 
-		this.rpc.send(
-			new RequestIPrune({ hashes: filteredEntries.map((x) => x.hash) }),
-		);
+		const emitMessages = (entries: string[], to: string) => {
+			this.rpc.send(
+				new RequestIPrune({
+					hashes: entries,
+				}),
+				{
+					mode: new SilentDelivery({
+						to: [to], // TODO group by peers?
+						redundancy: 1,
+					}),
+					priority: 1,
+				},
+			);
+		};
 
-		const onNewPeer = async (e: CustomEvent<ReplicatorJoinEvent>) => {
-			if (e.detail.publicKey.equals(this.node.identity.publicKey) === false) {
-				await this.rpc.send(
-					new RequestIPrune({ hashes: filteredEntries.map((x) => x.hash) }),
-					{
-						mode: new SilentDelivery({
-							to: [e.detail.publicKey.hashcode()],
-							redundancy: 1,
-						}),
-					},
+		const maxReplicasValue = maxReplicas(this, filteredEntries);
+		this.groupByLeaders(
+			filteredEntries.map((x) => {
+				return { entry: x, replicas: maxReplicasValue }; // TODO choose right maxReplicasValue, should it really be for all entries combined?
+			}),
+		).then((map) => {
+			for (const [peer, idx] of map) {
+				emitMessages(
+					idx.map((i) => filteredEntries[i].hash),
+					peer,
 				);
+			}
+		});
+
+		const onPeersChange = async (e: CustomEvent<ReplicatorJoinEvent>) => {
+			if (e.detail.publicKey.equals(this.node.identity.publicKey) === false) {
+				const peerEntries = (
+					await this.groupByLeaders(
+						filteredEntries
+							.filter((x) => !deleted.has(x.hash))
+							.map((x) => {
+								return { entry: x, replicas: maxReplicasValue }; // TODO choose right maxReplicasValue, should it really be for all entries combined?
+							}),
+					)
+				).get(e.detail.publicKey.hashcode());
+				if (peerEntries && peerEntries.length > 0) {
+					emitMessages(
+						peerEntries.map((x) => filteredEntries[x].hash),
+						e.detail.publicKey.hashcode(),
+					);
+				}
 			}
 		};
 
 		// check joining peers
-		this.events.addEventListener("replicator:join", onNewPeer);
-		Promise.allSettled(promises).finally(() =>
-			this.events.removeEventListener("replicator:join", onNewPeer),
-		);
+		this.events.addEventListener("replicator:mature", onPeersChange);
+		this.events.addEventListener("replicator:join", onPeersChange);
+		Promise.allSettled(promises).finally(() => {
+			this.events.removeEventListener("replicator:mature", onPeersChange);
+			this.events.removeEventListener("replicator:join", onPeersChange);
+		});
 
 		return promises;
 	}
 
-	async distribute() {
+	/* async distribute() {
 		// if there is one or more items waiting for run, don't bother adding a new item just wait for the queue to empty
 		if (this.distributeQueue && this.distributeQueue?.size > 0) {
 			return this.distributeQueue.onEmpty();
@@ -2205,10 +2838,59 @@ export class SharedLog<
 					signal: this._closeController.signal,
 				}).then(() => this._distribute()),
 			)
-			.catch(() => {}); // catch ignore delay abort errror
+			.catch(() => { }); // catch ignore delay abort errror
+	} */
+
+	/**
+	 * For debugging
+	 */
+	async getPrunable() {
+		const heads = await this.log.getHeads(true).all();
+		let prunable: Entry<any>[] = [];
+		for (const head of heads) {
+			const isLeader = await this.isLeader({
+				entry: head,
+				replicas: maxReplicas(this, [head]),
+			});
+
+			if (!isLeader) {
+				prunable.push(head);
+			}
+		}
+		return prunable;
 	}
 
-	async _distribute() {
+	async getNonPrunable() {
+		const heads = await this.log.getHeads(true).all();
+		let nonPrunable: Entry<any>[] = [];
+		for (const head of heads) {
+			const isLeader = await this.isLeader({
+				entry: head,
+				replicas: maxReplicas(this, [head]),
+			});
+
+			if (isLeader) {
+				nonPrunable.push(head);
+			}
+		}
+		return nonPrunable;
+	}
+
+	async rebalanceAll() {
+		this.onReplicationChange(
+			(await this.getMyReplicationSegments()).map((x) => {
+				return { range: x, type: "added" };
+			}),
+		);
+	}
+
+	async waitForPruned() {
+		await waitFor(() => this._pendingDeletes.size === 0);
+	}
+
+	async onReplicationChange(
+		changeOrChanges: ReplicationChanges | ReplicationChanges[],
+	) {
 		/**
 		 * TODO use information of new joined/leaving peer to create a subset of heads
 		 * that we potentially need to share with other peers
@@ -2218,95 +2900,112 @@ export class SharedLog<
 			return;
 		}
 
+		const change = mergeReplicationChanges(changeOrChanges);
 		const changed = false;
-		await this.log.trim();
-		const heads = await this.log.getHeads().all();
 
-		const groupedByGid = await groupByGid(heads);
-		const uncheckedDeliver: Map<string, (Entry<any> | ShallowEntry)[]> =
-			new Map();
-		const allEntriesToDelete: (Entry<any> | ShallowEntry)[] = [];
+		try {
+			await this.log.trim();
 
-		for (const [gid, entries] of groupedByGid) {
-			if (this.closed) {
-				break;
-			}
+			const uncheckedDeliver: Map<string, EntryReplicated[]> = new Map();
 
-			if (entries.length === 0) {
-				continue; // TODO maybe close store?
-			}
+			const allEntriesToDelete: EntryReplicated[] = [];
 
-			const oldPeersSet = this._gidPeersHistory.get(gid);
-			const currentPeers = await this.findLeaders(
-				getLatestEntry(entries)!,
-				maxReplicas(this, entries), // pick max replication policy of all entries, so all information is treated equally important as the most important
-			);
+			for await (const { gid, entries: coordinates } of toRebalance(
+				change,
+				this.entryCoordinatesIndex,
+			)) {
+				if (this.closed) {
+					break;
+				}
+				const oldPeersSet = this._gidPeersHistory.get(gid);
 
-			const isLeader = currentPeers.find(
-				(x) => x === this.node.identity.publicKey.hashcode(),
-			);
-			const currentPeersSet = new Set(currentPeers);
-			this._gidPeersHistory.set(gid, currentPeersSet);
-
-			for (const currentPeer of currentPeers) {
-				if (currentPeer === this.node.identity.publicKey.hashcode()) {
-					continue;
+				if (this.closed) {
+					return;
 				}
 
-				if (!oldPeersSet?.has(currentPeer)) {
-					let arr = uncheckedDeliver.get(currentPeer);
-					if (!arr) {
-						arr = [];
-						uncheckedDeliver.set(currentPeer, arr);
-					}
+				let { isLeader, leaders: currentPeers } = await this.findLeadersPersist(
+					coordinates.map((x) => x.coordinate),
+					coordinates[0],
+					{
+						roleAge: 0,
+						persist: {
+							prev: coordinates,
+						},
+					},
+				);
 
-					for (const entry of entries) {
-						arr.push(entry);
+				if (isLeader) {
+					for (const entry of coordinates) {
+						this.pruneDebouncedFn.delete(entry.hash);
 					}
 				}
-			}
 
-			if (!isLeader) {
-				if (currentPeers.length > 0) {
-					// If we are observer, never prune locally created entries, since we dont really know who can store them
-					// if we are replicator, we will always persist entries that we need to so filtering on createdLocally will not make a difference
-					let entriesToDelete = entries;
+				const currentPeersSet = new Set<string>(currentPeers.keys());
+				this._gidPeersHistory.set(gid, currentPeersSet);
 
-					if (this.sync) {
-						entriesToDelete = entriesToDelete.filter(
-							(entry) => this.sync!(entry) === false,
-						);
+				for (const [currentPeer] of currentPeers) {
+					if (currentPeer === this.node.identity.publicKey.hashcode()) {
+						continue;
 					}
-					allEntriesToDelete.push(...entriesToDelete);
+
+					if (!oldPeersSet?.has(currentPeer)) {
+						let arr = uncheckedDeliver.get(currentPeer);
+						if (!arr) {
+							arr = [];
+							uncheckedDeliver.set(currentPeer, arr);
+						}
+
+						for (const entry of coordinates) {
+							arr.push(entry);
+						}
+					}
 				}
-			} else {
-				for (const entry of entries) {
-					await this._pendingDeletes
-						.get(entry.hash)
-						?.reject(
-							new Error(
-								"Failed to delete, is leader again. Closed: " + this.closed,
-							),
-						);
+
+				if (!isLeader) {
+					if (currentPeers.size > 0) {
+						// If we are observer, never prune locally created entries, since we dont really know who can store them
+						// if we are replicator, we will always persist entries that we need to so filtering on createdLocally will not make a difference
+						let entriesToDelete = coordinates;
+
+						if (this.sync) {
+							entriesToDelete = entriesToDelete.filter(
+								(entry) => this.sync!(entry) === false,
+							);
+						}
+						allEntriesToDelete.push(...entriesToDelete);
+					}
+				} else {
+					for (const entry of coordinates) {
+						await this._pendingDeletes
+							.get(entry.hash)
+							?.reject(
+								new Error(
+									"Failed to delete, is leader again. Closed: " + this.closed,
+								),
+							);
+					}
 				}
 			}
-		}
 
-		for (const [target, entries] of uncheckedDeliver) {
-			this.rpc.send(
-				new RequestMaybeSync({ hashes: entries.map((x) => x.hash) }),
-				{
-					mode: new SilentDelivery({ to: [target], redundancy: 1 }),
-				},
-			);
-		}
+			for (const [target, entries] of uncheckedDeliver) {
+				this.rpc.send(
+					new RequestMaybeSync({ hashes: entries.map((x) => x.hash) }),
+					{
+						mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+					},
+				);
+			}
 
-		if (allEntriesToDelete.length > 0) {
-			Promise.allSettled(this.prune(allEntriesToDelete)).catch((e) => {
-				logger.info(e.toString());
-			});
+			if (allEntriesToDelete.length > 0) {
+				allEntriesToDelete.map((x) =>
+					this.pruneDebouncedFn.add({ key: x.hash, value: x }),
+				);
+			}
+			return changed;
+		} catch (error: any) {
+			logger.error(error.toString());
+			throw error;
 		}
-		return changed;
 	}
 
 	private async requestSync(hashes: string[], to: Set<string> | string[]) {
@@ -2336,7 +3035,7 @@ export class SharedLog<
 		logger.debug(
 			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
 				evt.detail.unsubscriptions.map((x) => x),
-			)}'`,
+			)} '`,
 		);
 		this.latestReplicationInfoMessage.delete(evt.detail.from.hashcode());
 
@@ -2400,97 +3099,97 @@ export class SharedLog<
 		);
 	}
 
-	async rebalanceParticipation(onRoleChange = true) {
+	async rebalanceParticipation() {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
 
-		if (this.closed) {
-			return false;
-		}
-
-		// The role is fixed (no changes depending on memory usage or peer count etc)
-		if (!this._isReplicating) {
-			return false;
-		}
-
-		if (this._isAdaptiveReplicating) {
-			const peers = this.replicationIndex;
-			const usedMemory = await this.getMemoryUsage();
-			let dynamicRange = await this.getDynamicRange();
-
-			if (!dynamicRange) {
-				return; // not allowed to replicate
+		const fn = async () => {
+			if (this.closed) {
+				return false;
 			}
 
-			const peersSize = (await peers.getSize()) || 1;
-			const totalParticipation = await this.calculateTotalParticipation();
+			// The role is fixed (no changes depending on memory usage or peer count etc)
+			if (!this._isReplicating) {
+				return false;
+			}
 
-			const newFactor = this.replicationController.step({
-				memoryUsage: usedMemory,
-				currentFactor: dynamicRange.widthNormalized,
-				totalFactor: totalParticipation, // TODO use this._totalParticipation when flakiness is fixed
-				peerCount: peersSize,
-				cpuUsage: this.cpuUsage?.value(),
-			});
+			if (this._isAdaptiveReplicating) {
+				const peers = this.replicationIndex;
+				const usedMemory = await this.getMemoryUsage();
+				let dynamicRange = await this.getDynamicRange();
 
-			const relativeDifference =
-				Math.abs(dynamicRange.widthNormalized - newFactor) /
-				dynamicRange.widthNormalized;
-
-			if (relativeDifference > 0.0001) {
-				// TODO can not reuse old range, since it will (potentially) affect the index because of sideeffects
-				dynamicRange = new ReplicationRangeIndexable({
-					offset: hashToU32(this.node.identity.publicKey.bytes),
-					length: scaleToU32(newFactor),
-					publicKeyHash: dynamicRange.hash,
-					id: dynamicRange.id,
-					mode: dynamicRange.mode,
-					timestamp: dynamicRange.timestamp,
-				});
-
-				const canReplicate =
-					!this._isTrustedReplicator ||
-					(await this._isTrustedReplicator(this.node.identity.publicKey));
-				if (!canReplicate) {
-					return false;
+				if (!dynamicRange) {
+					return; // not allowed to replicate
 				}
 
-				await this.startAnnounceReplicating([dynamicRange], {
-					checkDuplicates: false,
-					reset: false,
+				const peersSize = (await peers.getSize()) || 1;
+				const totalParticipation = await this.calculateTotalParticipation();
+
+				const newFactor = this.replicationController.step({
+					memoryUsage: usedMemory,
+					currentFactor: dynamicRange.widthNormalized,
+					totalFactor: totalParticipation, // TODO use this._totalParticipation when flakiness is fixed
+					peerCount: peersSize,
+					cpuUsage: this.cpuUsage?.value(),
 				});
 
-				/* await this._updateRole(newRole, onRoleChange); */
-				this.rebalanceParticipationDebounced?.();
+				const relativeDifference =
+					Math.abs(dynamicRange.widthNormalized - newFactor) /
+					dynamicRange.widthNormalized;
 
-				return true;
-			} else {
-				this.rebalanceParticipationDebounced?.();
+				if (relativeDifference > 0.0001) {
+					// TODO can not reuse old range, since it will (potentially) affect the index because of sideeffects
+					dynamicRange = new ReplicationRangeIndexable({
+						offset: hashToU32(this.node.identity.publicKey.bytes),
+						length: scaleToU32(newFactor),
+						publicKeyHash: dynamicRange.hash,
+						id: dynamicRange.id,
+						mode: dynamicRange.mode,
+						timestamp: dynamicRange.timestamp,
+					});
+
+					const canReplicate =
+						!this._isTrustedReplicator ||
+						(await this._isTrustedReplicator(this.node.identity.publicKey));
+					if (!canReplicate) {
+						return false;
+					}
+
+					await this.startAnnounceReplicating([dynamicRange], {
+						checkDuplicates: false,
+						reset: false,
+					});
+
+					/* await this._updateRole(newRole, onRoleChange); */
+					this.rebalanceParticipationDebounced?.();
+
+					return true;
+				} else {
+					this.rebalanceParticipationDebounced?.();
+				}
+				return false;
 			}
 			return false;
-		}
-		return false;
+		};
+
+		const resp = await fn();
+
+		return resp;
 	}
 	async getDynamicRange() {
-		let dynamicRangeId = sha256Sync(
-			concat([
-				this.node.identity.publicKey.bytes,
-				new TextEncoder().encode("dynamic"),
-			]),
-		);
+		let dynamicRangeId = getIdForDynamicRange(this.node.identity.publicKey);
 		let range = (
-			await this.replicationIndex.query(
-				new SearchRequest({
+			await this.replicationIndex
+				.iterate({
 					query: [
 						new ByteMatchQuery({
 							key: "id",
 							value: dynamicRangeId,
 						}),
 					],
-					fetch: 1,
-				}),
-			)
-		)?.results[0]?.value;
+				})
+				.all()
+		)?.[0]?.value;
 		if (!range) {
 			range = new ReplicationRangeIndexable({
 				normalized: true,
@@ -2530,12 +3229,33 @@ export class SharedLog<
 			this.syncInFlightQueue.delete(hash);
 		}
 	}
-	private onEntryAdded(entry: Entry<any>) {
+
+	private clearSyncProcessPublicKey(publicKey: PublicSignKey) {
+		this.syncInFlight.delete(publicKey.hashcode());
+		const map = this.syncInFlightQueueInverted.get(publicKey.hashcode());
+		if (map) {
+			for (const hash of map) {
+				const arr = this.syncInFlightQueue.get(hash);
+				if (arr) {
+					const filtered = arr.filter((x) => !x.equals(publicKey));
+					if (filtered.length > 0) {
+						this.syncInFlightQueue.set(hash, filtered);
+					} else {
+						this.syncInFlightQueue.delete(hash);
+					}
+				}
+			}
+			this.syncInFlightQueueInverted.delete(publicKey.hashcode());
+		}
+	}
+
+	private async onEntryAdded(entry: Entry<any>) {
 		const ih = this._pendingIHave.get(entry.hash);
 		if (ih) {
 			ih.clear();
 			ih.callback(entry);
 		}
+
 		this.clearSyncProcess(entry.hash);
 	}
 

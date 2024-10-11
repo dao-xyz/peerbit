@@ -18,6 +18,7 @@ import {
 	SharedLog,
 } from "../../../src/index.js";
 import type { TransportMessage } from "../../../src/message.js";
+import type { EntryReplicated } from "../../../src/ranges.js";
 import type { ReplicationDomainHash } from "../../../src/replication-domain-hash.js";
 import type { ReplicationDomain } from "../../../src/replication-domain.js";
 import { JSON_ENCODING } from "./encoding.js";
@@ -49,7 +50,9 @@ export type Args<T, D extends ReplicationDomain<any, Operation<T>>> = {
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
-	sync?: (entry: Entry<Operation<T>> | ShallowEntry) => boolean;
+	sync?: (
+		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated,
+	) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
@@ -67,7 +70,7 @@ export class EventStore<
 	@field({ type: Uint8Array })
 	id: Uint8Array;
 
-	_index: EventIndex<T>;
+	_index!: EventIndex<T>;
 	_canAppend?: CanAppend<Operation<T>>;
 
 	constructor(properties?: { id: Uint8Array }) {
@@ -106,7 +109,7 @@ export class EventStore<
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 1000,
 			sync: properties?.sync,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
-			distributionDebounceTime: 1, // to make tests fast
+			distributionDebounceTime: 50, // to make tests fast
 			domain: properties?.domain,
 		});
 	}
