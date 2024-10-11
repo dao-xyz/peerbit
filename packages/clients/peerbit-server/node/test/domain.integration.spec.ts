@@ -9,9 +9,11 @@ import { getDomainFromConfig } from "../src/domain.js";
 import { startApiServer } from "../src/server.js";
 import { Trust } from "../src/trust.js";
 
-dotenv.config();
-
 describe("getDomainFromConfig", () => {
+	before(() => {
+		dotenv.config();
+	});
+
 	it("%DOMAIN%", async () => {
 		const config =
 			" ssl_certificate         /etc/letsencrypt/live/%DOMAIN%/fullchain.pem; \nssl_certificate_key     /etc/letsencrypt/live/%DOMAIN%/privkey.pem; ";
@@ -28,6 +30,9 @@ describe("getDomainFromConfig", () => {
 });
 
 describe("ssl", () => {
+	before(() => {
+		dotenv.config();
+	});
 	let session: TestSession, peer: ProgramClient, server: http.Server;
 
 	before(async () => {

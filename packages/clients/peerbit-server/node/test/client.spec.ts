@@ -11,7 +11,7 @@ describe("client", () => {
 	});
 	it("default config will relay messages", async () => {
 		client = await create({
-			peerId: await (await Ed25519Keypair.create()).toPeerId(),
+			keypair: await Ed25519Keypair.create(),
 			directory: "./tmp/server-node/client/" + new Date(),
 			listenPort: 9123,
 		});

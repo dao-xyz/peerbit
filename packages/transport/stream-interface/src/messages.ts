@@ -34,7 +34,12 @@ export const getMsgId = async (msg: Uint8ArrayList | Uint8Array) => {
 	return sha256Base64(msg.subarray(0, 33)); // base64EncArr(msg, 0, ID_LENGTH + 1);
 };
 
-const coerceTo = (tos: (string | PublicSignKey | PeerId)[] | Set<string>) => {
+const coerceTo = (
+	tos:
+		| (string | PublicSignKey | PeerId)[]
+		| Set<string>
+		| IterableIterator<string>,
+) => {
 	const toHashes: string[] = [];
 	let i = 0;
 
@@ -68,6 +73,11 @@ export const deliveryModeHasReceiver = (
 
 export abstract class DeliveryMode {}
 
+type PeerIds =
+	| (string | PublicSignKey | PeerId)[]
+	| Set<string>
+	| IterableIterator<string>;
+
 /**
  * when you just want to deliver at paths, but does not expect acknowledgement
  */
@@ -79,10 +89,7 @@ export class SilentDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: {
-		to: (string | PublicSignKey | PeerId)[] | Set<string>;
-		redundancy: number;
-	}) {
+	constructor(properties: { to: PeerIds; redundancy: number }) {
 		super();
 		this.to = coerceTo(properties.to);
 		this.redundancy = properties.redundancy;
@@ -100,10 +107,7 @@ export class AcknowledgeDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: {
-		to: (string | PublicSignKey | PeerId)[] | Set<string>;
-		redundancy: number;
-	}) {
+	constructor(properties: { to: PeerIds; redundancy: number }) {
 		super();
 		if (this.to?.length === 0) {
 			throw new Error(
@@ -127,10 +131,7 @@ export class SeekDelivery extends DeliveryMode {
 	@field({ type: "u8" })
 	redundancy: number;
 
-	constructor(properties: {
-		to?: (string | PublicSignKey | PeerId)[] | Set<string>;
-		redundancy: number;
-	}) {
+	constructor(properties: { to?: PeerIds; redundancy: number }) {
 		super();
 		if (this.to?.length === 0) {
 			throw new Error(

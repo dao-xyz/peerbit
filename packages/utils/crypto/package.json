@@ -62,8 +62,8 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"devDependencies": {
-		"@types/libsodium-wrappers": "^0.7.10",
-		"uint8arrays": "^4.0.4",
+		"@types/libsodium-wrappers": "^0.7.14",
+		"uint8arrays": "^5.1.0",
 		"@types/elliptic": "^6.4.18",
 		"multiformats": "^13.1.0"
 	},
@@ -72,8 +72,8 @@
 		"@dao-xyz/borsh": "^5.2.3",
 		"@stablelib/sha256": "^2.0.0",
 		"@ethersproject/wallet": "^5.7.0",
-		"@libp2p/crypto": "^4.1.9",
-		"@libp2p/peer-id": "^4.2.4",
-		"libsodium-wrappers": "^0.7.14"
+		"@libp2p/crypto": "^5.0.5",
+		"@libp2p/peer-id": "^5.0.5",
+		"libsodium-wrappers": "^0.7.15"
 	}
 }

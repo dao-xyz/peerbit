@@ -1,5 +1,5 @@
+import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
-import { noise } from "@dao-xyz/libp2p-noise";
 import { type CircuitRelayService } from "@libp2p/circuit-relay-v2";
 import { identify } from "@libp2p/identify";
 import type { Multiaddr } from "@multiformats/multiaddr";
@@ -92,18 +92,20 @@ export class TestSession<T> {
 					addresses: {
 						listen: ["/ip4/127.0.0.1/tcp/0", "/ip4/127.0.0.1/tcp/0/ws"],
 					},
-					connectionManager: definedOptions?.connectionManager ?? {
-						minConnections: 0,
-					},
-					peerId: definedOptions?.peerId,
+					connectionManager: definedOptions?.connectionManager ?? {},
+					privateKey: definedOptions?.privateKey,
 					datastore: definedOptions?.datastore,
 					transports: definedOptions?.transports ?? transports(),
+					connectionMonitor: {
+						enabled: false,
+					},
+
 					services: {
 						relay: relay(),
 						identify: identify(),
 						...definedOptions?.services,
 					} as any,
-					connectionEncryption: [noise()],
+					connectionEncrypters: [noise()],
 					streamMuxers: definedOptions?.streamMuxers || [yamux()],
 					start: definedOptions?.start,
 				});

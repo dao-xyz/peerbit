@@ -58,7 +58,7 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"uuid": "^9.0.0",
+		"uuid": "^10.0.0",
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "^2.3.1"
 	}

@@ -10,7 +10,7 @@ import type { Components } from "libp2p/components";
 
 export const transports = (): Array<(components: Components) => Transport> => [
 	circuitRelayTransport({
-		discoverRelays: 1,
+		discoverRelays: 0,
 		reservationCompletionTimeout: 5000,
 	}),
 	webRTC({}),
