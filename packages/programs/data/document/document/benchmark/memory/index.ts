@@ -1,15 +1,15 @@
 // Run with "node --loader ts-node/esm ./benchmark/memory/index.ts"
-// run insert.ts with ts-node in a subprocess so we can measure memory consumption
+// run child.ts with ts-node in a subprocess so we can measure memory consumption
+import { printMemoryUsage } from "@peerbit/test-utils/log-utils.js";
 import { fork } from "child_process";
 import { dirname, resolve } from "path";
 import pidusage from "pidusage";
-import Table from "tty-table";
 import { fileURLToPath } from "url";
 import type { Message } from "./utils.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const child = fork(resolve(__dirname, "insert.ts"), [], {
+const child = fork(resolve(__dirname, "child.ts"), [], {
 	stdio: ["pipe", "pipe", "pipe", "ipc"],
 });
 
@@ -77,77 +77,35 @@ const send = (message: Message) => {
 let inserts = 150;
 let insertBatchSize = 10;
 let memoryUsages: number[] = [];
+let size = 1e6;
+
 console.log(
 	"Inserting batches of",
 	insertBatchSize,
 	"documents",
 	inserts,
 	"times",
+	"with",
+	size / 1e6,
+	"MB size",
 );
+
 for (let i = 0; i < inserts; i++) {
 	// log a progress bar that is updating without printing newline
 	process.stdout.write(`\r${i}/${inserts}`);
 
-	send({ type: "insert", docs: insertBatchSize, size: 1e6 });
+	send({ type: "insert", docs: insertBatchSize, size });
 
 	await waitForReady();
 	let memory = await ramMemoryUsage();
 	memoryUsages.push(memory);
 }
 
-console.log("DONE!");
-
-// do ascii graph
-let max = Math.max(...memoryUsages);
-let min = Math.min(...memoryUsages);
-let range = max - min;
-let steps = 300;
-let step = range / steps;
-let buckets = Array.from({ length: steps }, (_, i) => {
-	return min + i * step;
-});
-let lines = memoryUsages.map((memory) => {
-	/*  let bucket = Math.floor((memory - min) / step) */
-	return Array.from({ length: steps }, (_, i) => {
-		return memory > buckets[i] ? "█" : " ";
-	}).join("");
-});
-
-console.log("Memory Usage Graph");
-
-// do a nicely tty-table formatted table with "Memory ascii", "Memory bytes (mb)", "# of inserts".
-
-const colorString = (bytes: number, string: string) => {
-	// color encode byte values so that the highest get red color and lowest get green color
-	// and values in between get a color in in shades of red and green
-	let colors = Array.from({ length: steps + 1 }, (_, i) => {
-		let r = Math.floor(255 * (i / steps));
-		let g = Math.floor(255 * ((steps - i) / steps));
-		let b = 0;
-		return `38;2;${r};${g};${b}`;
-	});
-	let bucket = Math.floor((bytes - min) / step);
-	let color = colors[bucket];
-	return `\x1b[${color}m${string}\x1b[0m`;
-};
-
-let table = Table(
-	[
-		{ value: "Memory usage (*)", width: steps + 2, align: "left" },
-		{ value: "Memory bytes (mb)" },
-		{ value: "# of inserts" },
-	],
-	lines.map((line, i) => {
-		return [
-			{ value: colorString(memoryUsages[i], line) },
-			{ value: Math.round(memoryUsages[i] / 1e6) },
-			{ value: insertBatchSize * (i + 1) },
-		];
+printMemoryUsage(
+	memoryUsages.map((x, i) => {
+		return { value: x, progress: insertBatchSize * (i + 1) };
 	}),
+	"# of inserts",
 );
-
-console.log(table.render());
-console.log("Max memory usage", Math.round(max / 1e6), "mb");
-console.log("Min memory usage", Math.round(min / 1e6), "mb");
 
 child.kill();

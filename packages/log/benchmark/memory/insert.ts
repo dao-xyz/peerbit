@@ -41,7 +41,6 @@ try {
 				await log!.append(randomBytes(1024), { meta: { next: [] } });
 			}
 		} else if (message.type === "done") {
-			console.log("DONE!");
 			process.exit(0);
 		}
 
@@ -63,6 +62,5 @@ try {
 } catch (error: any) {
 	throw new Error("Failed to insert: " + error?.message);
 } finally {
-	console.log("DONE!");
 	await session!.stop();
 }

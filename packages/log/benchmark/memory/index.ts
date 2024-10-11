@@ -95,8 +95,6 @@ for (let i = 0; i < inserts; i++) {
 	memoryUsages.push(memory);
 }
 
-console.log("DONE!");
-
 // do ascii graph
 let max = Math.max(...memoryUsages);
 let min = Math.min(...memoryUsages);

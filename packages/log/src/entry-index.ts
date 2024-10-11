@@ -4,20 +4,15 @@ import { Cache } from "@peerbit/cache";
 import type { PublicSignKey } from "@peerbit/crypto";
 import {
 	BoolQuery,
-	CountRequest,
-	DeleteRequest,
 	type Index,
 	Not,
 	Or,
 	type Query,
-	SearchRequest,
 	type Shape,
 	Sort,
 	SortDirection,
 	StringMatch,
 	StringMatchMethod,
-	SumRequest,
-	iterate,
 	toId,
 } from "@peerbit/indexer-interface";
 import type { ShallowEntry } from "./entry-shallow.js";
@@ -29,7 +24,7 @@ import { logger } from "./logger.js";
 export type ResultsIterator<T> = {
 	close: () => void | Promise<void>;
 	next: (number: number) => T[] | Promise<T[]>;
-	done: () => boolean;
+	done: () => boolean | undefined;
 	all(): T[] | Promise<T[]>;
 };
 
@@ -106,7 +101,7 @@ export class EntryIndex<T> {
 				}),
 			);
 		}
-		return this.query(query, undefined, resolve);
+		return this.iterate(query, undefined, resolve);
 	}
 
 	getHasNext<R extends MaybeResolveOptions>(
@@ -121,7 +116,7 @@ export class EntryIndex<T> {
 				method: StringMatchMethod.exact,
 			}),
 		];
-		return this.query(query, undefined, resolve);
+		return this.iterate(query, undefined, resolve);
 	}
 
 	countHasNext(next: string, excludeHash: string | undefined = undefined) {
@@ -145,18 +140,14 @@ export class EntryIndex<T> {
 				),
 			);
 		}
-		return this.properties.index.count(new CountRequest({ query }));
+		return this.properties.index.count({ query });
 	}
 
-	query<R extends MaybeResolveOptions>(
+	iterate<R extends MaybeResolveOptions>(
 		query: Query[],
 		sort = this.properties.sort.sort,
 		options?: R,
 	): ResultsIterator<ReturnTypeFromResolveOptions<R, T>> {
-		const iterator = iterate(
-			this.properties.index,
-			new SearchRequest({ query, sort }),
-		);
 		let resolveInFull = options
 			? options === true
 				? true
@@ -165,28 +156,33 @@ export class EntryIndex<T> {
 		let resolveInFullOptions: ResolveFullyOptions | undefined = resolveInFull
 			? (options as ResolveFullyOptions)
 			: undefined;
+
 		let nextShape = resolveInFull
 			? ({ hash: true } as const)
 			: ((options as { shape: Shape })?.shape as Shape);
 
+		const iterator = this.properties.index.iterate(
+			{ query, sort },
+			{ shape: nextShape },
+		);
+
 		const next = async (
 			amount: number,
 		): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
-			const results = await iterator.next(amount, { shape: nextShape });
+			const results = await iterator.next(amount);
 			if (resolveInFull) {
 				const maybeResolved = await Promise.all(
-					results.results.map((x) =>
-						this.resolve(x.value.hash, resolveInFullOptions),
-					),
+					results.map((x) => this.resolve(x.value.hash, resolveInFullOptions)),
 				);
 				return maybeResolved.filter((x) => !!x) as ReturnTypeFromResolveOptions<
 					R,
 					T
 				>[];
 			} else {
-				return results.results.map(
-					(x) => x.value,
-				) as ReturnTypeFromResolveOptions<R, T>[];
+				return results.map((x) => x.value) as ReturnTypeFromResolveOptions<
+					R,
+					T
+				>[];
 			}
 		};
 
@@ -211,7 +207,7 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(resolve?: T): Promise<R | undefined> {
-		const iterator = this.query([], this.properties.sort.sort, resolve);
+		const iterator = this.iterate([], this.properties.sort.sort, resolve);
 		const results = await iterator.next(1);
 		await iterator.close();
 		return results[0] as R;
@@ -221,7 +217,7 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(resolve?: T): Promise<R | undefined> {
-		const iterator = this.query([], this.sortReversed, resolve);
+		const iterator = this.iterate([], this.sortReversed, resolve);
 		const results = await iterator.next(1);
 		await iterator.close();
 		return results[0] as R;
@@ -231,7 +227,7 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(before: ShallowOrFullEntry<any>, resolve?: T): Promise<R | undefined> {
-		const iterator = this.query(
+		const iterator = this.iterate(
 			this.properties.sort.before(before),
 			this.sortReversed,
 			resolve,
@@ -244,7 +240,7 @@ export class EntryIndex<T> {
 		T extends boolean,
 		R = T extends true ? Entry<any> : ShallowEntry,
 	>(before: ShallowOrFullEntry<any>, resolve?: T): Promise<R | undefined> {
-		const iterator = this.query(
+		const iterator = this.iterate(
 			this.properties.sort.after(before),
 			this.properties.sort.sort,
 			resolve,
@@ -325,7 +321,7 @@ export class EntryIndex<T> {
 					}
 
 					const nextsWithOthersGids: { hash: string; meta: { gid: string } }[] =
-						await this.query(
+						await this.iterate(
 							[
 								new Or(nextMatches),
 								new Not(
@@ -365,17 +361,19 @@ export class EntryIndex<T> {
 		}
 	}
 
-	async delete(k: string) {
+	async delete(k: string, shallow: ShallowEntry | undefined = undefined) {
 		this.cache.del(k);
 
-		let shallow = (await this.getShallow(k))?.value;
+		if (shallow && shallow.hash !== k) {
+			throw new Error("Shallow hash doesn't match the key");
+		}
+
+		shallow = shallow || (await this.getShallow(k))?.value;
 		if (!shallow) {
 			return; // already deleted
 		}
 
-		let deleted = await this.properties.index.del(
-			new DeleteRequest({ query: { hash: k } }),
-		);
+		let deleted = await this.properties.index.del({ query: { hash: k } });
 		await this.properties.store.rm(k);
 
 		if (deleted.length > 0) {
@@ -388,7 +386,7 @@ export class EntryIndex<T> {
 	}
 
 	async getMemoryUsage() {
-		return this.properties.index.sum(new SumRequest({ key: "payloadSize" }));
+		return this.properties.index.sum({ key: "payloadSize" });
 	}
 
 	private async privateUpdateNextHeadProperty(
@@ -425,7 +423,7 @@ export class EntryIndex<T> {
 	}
 
 	async clear() {
-		const iterator = await this.query([], undefined, false);
+		const iterator = await this.iterate([], undefined, false);
 		while (!iterator.done()) {
 			const results = await iterator.next(100);
 			for (const result of results) {

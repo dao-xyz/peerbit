@@ -1,6 +1,7 @@
 {
 	"extends": "aegir/src/config/tsconfig.aegir.json",
 	"compilerOptions": {
+		"checkJs": false,
 		"strictPropertyInitialization": false,
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
