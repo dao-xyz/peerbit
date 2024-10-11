@@ -25,12 +25,10 @@ class Document {
 	bytes: Uint8Array;
 
 	constructor(opts: Document) {
-		if (opts) {
-			this.id = opts.id;
-			this.name = opts.name;
-			this.number = opts.number;
-			this.bytes = opts.bytes;
-		}
+		this.id = opts.id;
+		this.name = opts.name;
+		this.number = opts.number;
+		this.bytes = opts.bytes;
 	}
 }
 

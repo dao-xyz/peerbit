@@ -1,9 +1,9 @@
-import { deserialize } from "@dao-xyz/borsh";
-import { Ed25519Keypair } from "@peerbit/crypto";
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { AbsoluteReplicas } from "../src/replication.js";
+
+/* import { AbsoluteReplicas } from "../src/replication.js"; */
 import { EventStore } from "../test/utils/stores/event-store.js";
 
 // Run with "node --loader ts-node/esm ./benchmark/replication-prune.ts"
@@ -11,45 +11,42 @@ import { EventStore } from "../test/utils/stores/event-store.js";
 let session: TestSession = await TestSession.connected(3, [
 	{
 		libp2p: {
-			peerId: await deserialize(
+			privateKey: await privateKeyFromRaw(
 				new Uint8Array([
-					0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45, 46,
-					27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163, 44, 6,
-					244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71, 145, 18,
-					244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168, 112, 65, 202,
-					154, 27, 63, 15,
+					204, 234, 187, 172, 226, 232, 70, 175, 62, 211, 147, 91, 229, 157,
+					168, 15, 45, 242, 144, 98, 75, 58, 208, 9, 223, 143, 251, 52, 252,
+					159, 64, 83, 52, 197, 24, 246, 24, 234, 141, 183, 151, 82, 53, 142,
+					57, 25, 148, 150, 26, 209, 223, 22, 212, 40, 201, 6, 191, 72, 148, 82,
+					66, 138, 199, 185,
 				]),
-				Ed25519Keypair,
-			).toPeerId(),
+			),
 		},
 	},
 	{
 		libp2p: {
-			peerId: await deserialize(
+			privateKey: await privateKeyFromRaw(
 				new Uint8Array([
-					0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34, 23, 12,
-					215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231, 155,
-					75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84, 137, 152,
-					227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187, 239, 56, 174,
-					184, 34, 141, 45, 242,
+					237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28,
+					157, 208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120, 122,
+					222, 174, 242, 120, 50, 165, 97, 8, 235, 97, 186, 148, 251, 100, 168,
+					49, 10, 119, 71, 246, 246, 174, 163, 198, 54, 224, 6, 174, 212, 159,
+					187, 2, 137, 47, 192,
 				]),
-				Ed25519Keypair,
-			).toPeerId(),
+			),
 		},
 	},
 
 	{
 		libp2p: {
-			peerId: await deserialize(
+			privateKey: await privateKeyFromRaw(
 				new Uint8Array([
-					0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192, 93,
-					202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165, 88, 38,
-					234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68, 205, 124,
-					143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84, 62, 133, 97, 57,
-					150, 187, 247, 215,
+					27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
+					197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203, 18,
+					179, 181, 105, 158, 64, 215, 56, 13, 71, 156, 41, 178, 86, 159, 80,
+					222, 167, 73, 3, 37, 251, 67, 86, 6, 90, 212, 16, 251, 206, 54, 49,
+					141, 91, 171,
 				]),
-				Ed25519Keypair,
-			).toPeerId(),
+			),
 		},
 	},
 ]);
@@ -101,11 +98,11 @@ let minReplicas = 1;
 let maxReplicas = 1;
 
 await init(minReplicas, maxReplicas);
-
+const t1 = +new Date();
 const entryCount = 1e3;
 for (let i = 0; i < entryCount; i++) {
 	await db1!.add("hello", {
-		replicas: new AbsoluteReplicas(100), // will be overriden by 'maxReplicas' above
+		/* replicas: new AbsoluteReplicas(15), */ // will be overriden by 'maxReplicas' above
 		meta: { next: [] },
 	});
 }
@@ -125,5 +122,7 @@ try {
 	console.log("Failed to assert replication done");
 	console.log([db1!, db2!, db3!].map((x) => x.log.log.length));
 } finally {
+	const t2 = +new Date();
+	console.log("Done: " + (t2 - t1));
 	await session.stop();
 }

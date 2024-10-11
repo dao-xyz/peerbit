@@ -19,6 +19,7 @@ describe("append", () => {
 		const canAppend = sinon.spy(store.log.canAppend);
 		store.log.canAppend = canAppend;
 		await store.add("a");
+
 		expect(canAppend.callCount).to.be.eq(1);
 	});
 

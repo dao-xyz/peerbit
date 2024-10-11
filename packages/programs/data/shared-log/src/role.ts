@@ -6,6 +6,7 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
 
 export const MAX_U32 = 4294967295;
+export const HALF_MAX_U32 = 2147483647; // rounded down
 export const scaleToU32 = (value: number) => Math.round(MAX_U32 * value);
 
 export const overlaps = (x1: number, x2: number, y1: number, y2: number) => {

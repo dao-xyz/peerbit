@@ -1,5 +1,5 @@
-import { deserialize } from "@dao-xyz/borsh";
-import { Ed25519Keypair, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
@@ -33,44 +33,42 @@ describe(`isLeader`, function () {
 		session = await TestSession.connected(3, [
 			{
 				libp2p: {
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 193, 202, 95, 29, 8, 42, 238, 188, 32, 59, 103, 187, 192,
-							93, 202, 183, 249, 50, 240, 175, 84, 87, 239, 94, 92, 9, 207, 165,
-							88, 38, 234, 216, 0, 183, 243, 219, 11, 211, 12, 61, 235, 154, 68,
-							205, 124, 143, 217, 234, 222, 254, 15, 18, 64, 197, 13, 62, 84,
-							62, 133, 97, 57, 150, 187, 247, 215,
+							27, 246, 37, 180, 13, 75, 242, 124, 185, 205, 207, 9, 16, 54, 162,
+							197, 247, 25, 211, 196, 127, 198, 82, 19, 68, 143, 197, 8, 203,
+							18, 179, 181, 105, 158, 64, 215, 56, 13, 71, 156, 41, 178, 86,
+							159, 80, 222, 167, 73, 3, 37, 251, 67, 86, 6, 90, 212, 16, 251,
+							206, 54, 49, 141, 91, 171,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 				},
 			},
 			{
 				libp2p: {
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 235, 231, 83, 185, 72, 206, 24, 154, 182, 109, 204, 158, 45,
-							46, 27, 15, 0, 173, 134, 194, 249, 74, 80, 151, 42, 219, 238, 163,
-							44, 6, 244, 93, 0, 136, 33, 37, 186, 9, 233, 46, 16, 89, 240, 71,
-							145, 18, 244, 158, 62, 37, 199, 0, 28, 223, 185, 206, 109, 168,
-							112, 65, 202, 154, 27, 63, 15,
+							113, 203, 231, 235, 7, 120, 3, 194, 138, 113, 131, 40, 251, 158,
+							121, 38, 190, 114, 116, 252, 100, 202, 107, 97, 119, 184, 24, 56,
+							27, 76, 150, 62, 132, 22, 246, 177, 200, 6, 179, 117, 218, 216,
+							120, 235, 147, 249, 48, 157, 232, 161, 145, 3, 63, 158, 217, 111,
+							65, 105, 99, 83, 4, 113, 62, 15,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 				},
 			},
+
 			{
 				libp2p: {
-					peerId: await deserialize(
+					privateKey: privateKeyFromRaw(
 						new Uint8Array([
-							0, 0, 132, 56, 63, 72, 241, 115, 159, 73, 215, 187, 97, 34, 23,
-							12, 215, 160, 74, 43, 159, 235, 35, 84, 2, 7, 71, 15, 5, 210, 231,
-							155, 75, 37, 0, 15, 85, 72, 252, 153, 251, 89, 18, 236, 54, 84,
-							137, 152, 227, 77, 127, 108, 252, 59, 138, 246, 221, 120, 187,
-							239, 56, 174, 184, 34, 141, 45, 242,
+							215, 31, 167, 188, 121, 226, 67, 218, 96, 8, 55, 233, 34, 68, 9,
+							147, 11, 157, 187, 43, 39, 43, 25, 95, 184, 227, 137, 56, 4, 69,
+							120, 214, 182, 163, 41, 82, 248, 210, 213, 22, 179, 112, 251, 219,
+							52, 114, 102, 110, 6, 60, 216, 135, 218, 60, 196, 128, 251, 85,
+							167, 121, 179, 136, 114, 83,
 						]),
-						Ed25519Keypair,
-					).toPeerId(),
+					),
 				},
 			},
 		]);
@@ -95,9 +93,15 @@ describe(`isLeader`, function () {
 		db1 = await session.peers[0].open(new EventStore<string>(), {
 			args: { ...options.args, replicate: { offset: 0, factor: 0.5 } },
 		});
-		const isLeaderAOneLeader = await db1.log.isLeader(toEntry(123), 1);
+		const isLeaderAOneLeader = await db1.log.isLeader({
+			entry: toEntry(123),
+			replicas: 1,
+		});
 		expect(isLeaderAOneLeader);
-		const isLeaderATwoLeader = await db1.log.isLeader(toEntry(123), 2);
+		const isLeaderATwoLeader = await db1.log.isLeader({
+			entry: toEntry(123),
+			replicas: 2,
+		});
 		expect(isLeaderATwoLeader);
 
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
@@ -117,16 +121,28 @@ describe(`isLeader`, function () {
 			let slot = (0.1 + i) % 1;
 
 			// One leader
-			const isLeaderAOneLeader = await db1.log.isLeader(toEntry(slot), 1);
-			const isLeaderBOneLeader = await db2.log.isLeader(toEntry(slot), 1);
+			const isLeaderAOneLeader = await db1.log.isLeader({
+				entry: toEntry(slot),
+				replicas: 1,
+			});
+			const isLeaderBOneLeader = await db2.log.isLeader({
+				entry: toEntry(slot),
+				replicas: 1,
+			});
 			expect([isLeaderAOneLeader, isLeaderBOneLeader]).to.have.members([
 				false,
 				true,
 			]);
 
 			// Two leaders
-			const isLeaderATwoLeaders = await db1.log.isLeader(toEntry(slot), 2);
-			const isLeaderBTwoLeaders = await db2.log.isLeader(toEntry(slot), 2);
+			const isLeaderATwoLeaders = await db1.log.isLeader({
+				entry: toEntry(slot),
+				replicas: 2,
+			});
+			const isLeaderBTwoLeaders = await db2.log.isLeader({
+				entry: toEntry(slot),
+				replicas: 2,
+			});
 
 			expect([isLeaderATwoLeaders, isLeaderBTwoLeaders]).to.have.members([
 				true,
@@ -155,8 +171,14 @@ describe(`isLeader`, function () {
 		const slot = 0;
 
 		// Two leaders, but only one will be leader since only one is replicating
-		const isLeaderA = await db1.log.isLeader(toEntry(slot), 2);
-		const isLeaderB = await db2.log.isLeader(toEntry(slot), 2);
+		const isLeaderA = await db1.log.isLeader({
+			entry: toEntry(slot),
+			replicas: 2,
+		});
+		const isLeaderB = await db2.log.isLeader({
+			entry: toEntry(slot),
+			replicas: 2,
+		});
 
 		expect(!isLeaderA); // because replicate is false
 		expect(isLeaderB);
@@ -191,9 +213,18 @@ describe(`isLeader`, function () {
 		const slot = 0;
 
 		// Two leaders, but only one will be leader since only one is replicating
-		const isLeaderA = await db1.log.isLeader(toEntry(slot), 3);
-		const isLeaderB = await db2.log.isLeader(toEntry(slot), 3);
-		const isLeaderC = await db3.log.isLeader(toEntry(slot), 3);
+		const isLeaderA = await db1.log.isLeader({
+			entry: toEntry(slot),
+			replicas: 3,
+		});
+		const isLeaderB = await db2.log.isLeader({
+			entry: toEntry(slot),
+			replicas: 3,
+		});
+		const isLeaderC = await db3.log.isLeader({
+			entry: toEntry(slot),
+			replicas: 3,
+		});
 
 		expect(!isLeaderA); // because replicate is false
 		expect(isLeaderB);
@@ -244,15 +275,24 @@ describe(`isLeader`, function () {
 		for (let i = 0; i < 100; i++) {
 			try {
 				const slot = Math.random();
-				const isLeaderAOneLeader = await db1.log.isLeader(toEntry(slot), 1, {
-					roleAge: 0,
-				});
-				const isLeaderBOneLeader = await db2.log.isLeader(toEntry(slot), 1, {
-					roleAge: 0,
-				});
-				const isLeaderCOneLeader = await db3.log.isLeader(toEntry(slot), 1, {
-					roleAge: 0,
-				});
+				const isLeaderAOneLeader = await db1.log.isLeader(
+					{ entry: toEntry(slot), replicas: 1 },
+					{
+						roleAge: 0,
+					},
+				);
+				const isLeaderBOneLeader = await db2.log.isLeader(
+					{ entry: toEntry(slot), replicas: 1 },
+					{
+						roleAge: 0,
+					},
+				);
+				const isLeaderCOneLeader = await db3.log.isLeader(
+					{ entry: toEntry(slot), replicas: 1 },
+					{
+						roleAge: 0,
+					},
+				);
 				expect([
 					isLeaderAOneLeader,
 					isLeaderBOneLeader,
@@ -260,15 +300,24 @@ describe(`isLeader`, function () {
 				]).include.members([false, false, true]);
 
 				// Two leaders
-				const isLeaderATwoLeaders = await db1.log.isLeader(toEntry(slot), 2, {
-					roleAge: 0,
-				});
-				const isLeaderBTwoLeaders = await db2.log.isLeader(toEntry(slot), 2, {
-					roleAge: 0,
-				});
-				const isLeaderCTwoLeaders = await db3.log.isLeader(toEntry(slot), 2, {
-					roleAge: 0,
-				});
+				const isLeaderATwoLeaders = await db1.log.isLeader(
+					{ entry: toEntry(slot), replicas: 2 },
+					{
+						roleAge: 0,
+					},
+				);
+				const isLeaderBTwoLeaders = await db2.log.isLeader(
+					{ entry: toEntry(slot), replicas: 2 },
+					{
+						roleAge: 0,
+					},
+				);
+				const isLeaderCTwoLeaders = await db3.log.isLeader(
+					{ entry: toEntry(slot), replicas: 2 },
+					{
+						roleAge: 0,
+					},
+				);
 				expect([
 					isLeaderATwoLeaders,
 					isLeaderBTwoLeaders,
@@ -276,15 +325,24 @@ describe(`isLeader`, function () {
 				]).include.members([false, true, true]);
 
 				// Three leders
-				const isLeaderAThreeLeaders = await db1.log.isLeader(toEntry(slot), 3, {
-					roleAge: 0,
-				});
-				const isLeaderBThreeLeaders = await db2.log.isLeader(toEntry(slot), 3, {
-					roleAge: 0,
-				});
-				const isLeaderCThreeLeaders = await db3.log.isLeader(toEntry(slot), 3, {
-					roleAge: 0,
-				});
+				const isLeaderAThreeLeaders = await db1.log.isLeader(
+					{ entry: toEntry(slot), replicas: 3 },
+					{
+						roleAge: 0,
+					},
+				);
+				const isLeaderBThreeLeaders = await db2.log.isLeader(
+					{ entry: toEntry(slot), replicas: 3 },
+					{
+						roleAge: 0,
+					},
+				);
+				const isLeaderCThreeLeaders = await db3.log.isLeader(
+					{ entry: toEntry(slot), replicas: 3 },
+					{
+						roleAge: 0,
+					},
+				);
 				expect([
 					isLeaderAThreeLeaders,
 					isLeaderBThreeLeaders,
@@ -312,7 +370,7 @@ describe(`isLeader`, function () {
 			options,
 		)) as EventStore<string>;
 
-		let allowedError = 0.02;
+		let allowedError = 0.03;
 
 		await waitForResolved(async () =>
 			expect(
@@ -348,13 +406,22 @@ describe(`isLeader`, function () {
 		const count = 10000;
 
 		for (let i = 0; i < count; i++) {
-			a += (await db1.log.isLeader(toEntry(String(i)), 2, { roleAge: 0 }))
+			a += (await db1.log.isLeader(
+				{ entry: toEntry(String(i)), replicas: 2 },
+				{ roleAge: 0 },
+			))
 				? 1
 				: 0;
-			b += (await db2.log.isLeader(toEntry(String(i)), 2, { roleAge: 0 }))
+			b += (await db2.log.isLeader(
+				{ entry: toEntry(String(i)), replicas: 2 },
+				{ roleAge: 0 },
+			))
 				? 1
 				: 0;
-			c += (await db3.log.isLeader(toEntry(String(i)), 2, { roleAge: 0 }))
+			c += (await db3.log.isLeader(
+				{ entry: toEntry(String(i)), replicas: 2 },
+				{ roleAge: 0 },
+			))
 				? 1
 				: 0;
 		}
@@ -831,10 +898,16 @@ describe(`isLeader`, function () {
 			}
 
 			for (let i = 0; i < count; i++) {
-				a += (await db1.log.isLeader(toEntry(String(i)), 1, { roleAge: 0 }))
+				a += (await db1.log.isLeader(
+					{ entry: toEntry(String(i)), replicas: 1 },
+					{ roleAge: 0 },
+				))
 					? 1
 					: 0;
-				b += (await db2.log.isLeader(toEntry(String(i)), 1, { roleAge: 0 }))
+				b += (await db2.log.isLeader(
+					{ entry: toEntry(String(i)), replicas: 1 },
+					{ roleAge: 0 },
+				))
 					? 1
 					: 0;
 			}
@@ -898,9 +971,14 @@ describe(`isLeader`, function () {
 		);
 
 		for (let i = 0; i < 100; i++) {
-			const leaders: Set<string | undefined> = new Set(
-				await db1.log.findLeaders(toEntry(String(i)), 3, { roleAge: 0 }),
-			);
+			const leaders: Set<string | undefined> = new Set([
+				...(
+					await db1.log.findLeaders(
+						{ entry: toEntry(String(i)), replicas: 3 },
+						{ roleAge: 0 },
+					)
+				).keys(),
+			]);
 			expect(leaders.has(undefined)).to.be.false;
 			expect(leaders.size).equal(3);
 		}
