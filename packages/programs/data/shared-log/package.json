@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/shared-log",
-	"version": "9.1.2",
+	"version": "9.2.0",
 	"description": "Shared log",
 	"sideEffects": false,
 	"type": "module",
@@ -60,13 +60,13 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/logger": "1.0.3",
-		"@peerbit/program": "5.0.2",
-		"@peerbit/log": "4.0.10",
-		"@peerbit/rpc": "5.0.9",
+		"@peerbit/program": "5.0.3",
+		"@peerbit/log": "4.0.11",
+		"@peerbit/rpc": "5.0.10",
 		"@peerbit/time": "2.0.7",
 		"p-debounce": "^4.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^2.0.43"
+		"@peerbit/test-utils": "^2.1.0"
 	}
 }

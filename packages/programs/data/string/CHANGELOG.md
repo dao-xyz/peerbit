@@ -632,6 +632,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.14](https://github.com/dao-xyz/peerbit/compare/string-v5.0.13...string-v5.0.14) (2024-10-11)
+
+
+### Bug Fixes
+
+* update libp2p ([5acd13c](https://github.com/dao-xyz/peerbit/commit/5acd13cc9e847eec8110e6ad9233116678d16b33))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.2 to 5.0.3
+    * @peerbit/shared-log bumped from ^9.1.2 to ^9.2.0
+    * @peerbit/rpc bumped from 5.0.9 to 5.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.43 to ^2.1.0
+
 ## [5.0.13](https://github.com/dao-xyz/peerbit/compare/string-v5.0.12...string-v5.0.13) (2024-09-26)
 
 

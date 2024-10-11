@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [7.1.3](https://github.com/dao-xyz/peerbit/compare/document-v7.1.2...document-v7.1.3) (2024-10-11)
+
+
+### Bug Fixes
+
+* update for new iterator types ([c4f93a1](https://github.com/dao-xyz/peerbit/commit/c4f93a16a6456af8320995b189ae2f161d413814))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.2 to 5.0.3
+    * @peerbit/rpc bumped from 5.0.9 to 5.0.10
+    * @peerbit/shared-log bumped from 9.1.2 to 9.2.0
+    * @peerbit/indexer-interface bumped from ^1.0.3 to ^1.1.0
+    * @peerbit/indexer-simple bumped from ^1.0.4 to ^1.1.0
+    * @peerbit/indexer-sqlite3 bumped from ^1.0.7 to ^1.1.0
+    * @peerbit/document-interface bumped from ^1.0.4 to ^1.0.5
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.0.43 to 2.1.0
+
 ## [7.1.2](https://github.com/dao-xyz/peerbit/compare/document-v7.1.1...document-v7.1.2) (2024-09-26)
 
 

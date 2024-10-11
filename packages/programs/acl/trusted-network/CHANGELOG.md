@@ -566,6 +566,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.3](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.2...trusted-network-v4.1.3) (2024-10-11)
+
+
+### Bug Fixes
+
+* update for new iterator types ([c4f93a1](https://github.com/dao-xyz/peerbit/commit/c4f93a16a6456af8320995b189ae2f161d413814))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.1 to 2.3.2
+    * @peerbit/document bumped from 7.1.2 to 7.1.3
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.43 to ^2.1.0
+
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.1...trusted-network-v4.1.2) (2024-09-26)
 
 

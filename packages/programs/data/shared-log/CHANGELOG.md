@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.2...shared-log-v9.2.0) (2024-10-11)
+
+
+### Features
+
+* efficient replication rebalancing with head indexes ([41bb417](https://github.com/dao-xyz/peerbit/commit/41bb417dbe2e817ca5504131ea768a9ad2e655c0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.2 to 5.0.3
+    * @peerbit/log bumped from 4.0.10 to 4.0.11
+    * @peerbit/rpc bumped from 5.0.9 to 5.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.0.43 to ^2.1.0
+
 ## [9.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.1...shared-log-v9.1.2) (2024-09-26)
 
 

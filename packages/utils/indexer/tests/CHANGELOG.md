@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.0.4...indexer-tests-v1.1.0) (2024-10-11)
+
+
+### Features
+
+* skip calculating iterator sizes on next calls ([a87469d](https://github.com/dao-xyz/peerbit/commit/a87469d4cadb8b8ec988e609ea39f97e40033c4e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^1.0.3 to ^1.1.0
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.0.3...indexer-tests-v1.0.4) (2024-09-01)
 
 

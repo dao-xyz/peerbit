@@ -400,6 +400,26 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.0.43...test-utils-v2.1.0) (2024-10-11)
+
+
+### Features
+
+* logging utils ([f111db5](https://github.com/dao-xyz/peerbit/commit/f111db548820d47338c4a39d5750dded7117dc2a))
+
+
+### Bug Fixes
+
+* disable connectionMonitor ([60f4d9c](https://github.com/dao-xyz/peerbit/commit/60f4d9c19184cf17d8d5c5ad014164d5534d1f81))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.5 to 2.1.6
+    * peerbit bumped from 4.0.17 to 4.0.18
+
 ## [2.0.43](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.0.42...test-utils-v2.0.43) (2024-09-26)
 
 
