@@ -1,4 +1,3 @@
-import { CustomEvent } from "@libp2p/interface";
 import type { TypedEventTarget } from "@libp2p/interface";
 import * as connection from "../src/connection.js";
 

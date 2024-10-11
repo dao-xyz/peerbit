@@ -1,25 +1,33 @@
-import { type PeerId } from "@libp2p/interface";
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import { DirectBlock } from "@peerbit/blocks";
+import type { Ed25519Keypair } from "@peerbit/crypto";
 import { DirectSub } from "@peerbit/pubsub";
 import path from "path";
 import { Peerbit } from "peerbit";
+import { concat } from "uint8arrays";
 
 export const LIBP2P_LISTEN_PORT = 8001;
 export const create = (properties: {
 	directory?: string;
 	domain?: string;
 	listenPort?: number;
-	peerId: PeerId;
+	keypair: Ed25519Keypair;
 }) => {
 	const listenPort = properties.listenPort ?? LIBP2P_LISTEN_PORT;
 	const blocksDirectory =
 		properties.directory != null
 			? path.join(properties.directory, "/blocks").toString()
 			: undefined;
+	const privateKey = privateKeyFromRaw(
+		concat([
+			properties.keypair.privateKey.privateKey,
+			properties.keypair.publicKey.publicKey,
+		]),
+	);
 
 	return Peerbit.create({
 		libp2p: {
-			peerId: properties.peerId,
+			privateKey: privateKey,
 			addresses: {
 				announce: properties.domain
 					? [
@@ -36,7 +44,6 @@ export const create = (properties: {
 			},
 			connectionManager: {
 				maxConnections: Infinity,
-				minConnections: 0,
 			},
 			services: {
 				blocks: (c) =>

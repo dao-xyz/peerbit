@@ -1,3 +1,4 @@
+import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import "@libp2p/peer-id";
 import {
 	type Multiaddr,
@@ -6,7 +7,12 @@ import {
 } from "@multiformats/multiaddr";
 import { type AnyStore, createStore } from "@peerbit/any-store";
 import { DirectBlock } from "@peerbit/blocks";
-import { Ed25519Keypair, Ed25519PublicKey } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	Ed25519PublicKey,
+	Secp256k1Keypair,
+	getKeypairFromPrivateKey,
+} from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { create as createSQLiteIndexer } from "@peerbit/indexer-sqlite3";
 import { DefaultKeychain } from "@peerbit/keychain";
@@ -25,6 +31,7 @@ import { LevelDatastore } from "datastore-level";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
+import { concat } from "uint8arrays";
 import { resolveBootstrapAddresses } from "./bootstrap.js";
 import {
 	type Libp2pCreateOptions as ClientCreateOptions,
@@ -153,14 +160,25 @@ export class Peerbit implements ProgramClient {
 			const keychain = new DefaultKeychain({
 				store,
 			});
-			const peerId =
-				extendedOptions?.peerId ||
-				(await (
-					await keychain.exportById(SELF_IDENTITY_KEY_ID, Ed25519Keypair)
-				)?.toPeerId());
+			let privateKey = extendedOptions?.privateKey;
+			if (!privateKey) {
+				const exported = await keychain.exportById(
+					SELF_IDENTITY_KEY_ID,
+					Ed25519Keypair,
+				);
+				privateKey = exported
+					? privateKeyFromRaw(
+							concat([
+								exported.privateKey.privateKey,
+								exported.publicKey.publicKey,
+							]),
+						)
+					: undefined;
+			}
+
 			libp2pExtended = await createLibp2pExtended({
 				...extendedOptions,
-				peerId,
+				privateKey,
 				services: {
 					keychain: (c: any) => keychain,
 					blocks: (c: any) =>
@@ -196,7 +214,14 @@ export class Peerbit implements ProgramClient {
 			);
 		}
 
-		const identity = Ed25519Keypair.fromPeerId(libp2pExtended.peerId);
+		const identity = getKeypairFromPrivateKey(
+			(libp2pExtended as any)["components"].privateKey, // TODO can we export privateKey in a better way?
+		);
+
+		if (identity instanceof Secp256k1Keypair) {
+			throw new Error("Only Ed25519 keypairs are supported");
+		}
+
 		try {
 			await libp2pExtended.services.keychain.import({
 				keypair: identity,
