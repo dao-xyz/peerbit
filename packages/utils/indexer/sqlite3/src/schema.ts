@@ -1321,7 +1321,7 @@ export const convertSearchRequestToQuery = (
 	}
 
 	if (!matchedOnce) {
-		throw lastError;
+		throw lastError!;
 	}
 
 	return {

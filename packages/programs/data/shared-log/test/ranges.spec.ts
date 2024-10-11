@@ -9,6 +9,8 @@ import { LamportClock, Meta } from "@peerbit/log";
 import { expect } from "chai";
 import {
 	EntryReplicated,
+	ReplicationIntent,
+	ReplicationRangeIndexable,
 	getCoverSet,
 	getDistance,
 	getEvenlySpacedU32,
@@ -16,7 +18,6 @@ import {
 	hasCoveringRange,
 	toRebalance,
 } from "../src/ranges.js";
-import { ReplicationIntent, ReplicationRangeIndexable } from "../src/ranges.js";
 import { HALF_MAX_U32, MAX_U32, scaleToU32 } from "../src/role.js";
 
 const getSamples = async (

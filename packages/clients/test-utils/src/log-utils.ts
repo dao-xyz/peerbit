@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import Table from "tty-table";
 
 export const printMemoryUsage = (

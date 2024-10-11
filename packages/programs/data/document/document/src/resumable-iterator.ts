@@ -1,10 +1,10 @@
 import { Cache } from "@peerbit/cache";
 import {
-	CloseIteratorRequest,
+	type CloseIteratorRequest,
 	type CollectNextRequest,
 	SearchRequest,
 } from "@peerbit/document-interface";
-import * as indexerTypes from "@peerbit/indexer-interface";
+import type * as indexerTypes from "@peerbit/indexer-interface";
 
 export class ResumableIterators<T extends Record<string, any>> {
 	constructor(

@@ -151,15 +151,16 @@ export const checkBounded = async (
 	);
 };
 
-export const checkReplicas = async (
+export const checkReplicas = (
 	dbs: { log: SharedLog<any> }[],
 	minReplicas: number,
 	entryCount: number,
 ) => {
-	await waitForResolved(async () => {
+	return waitForResolved(async () => {
 		const map = new Map<string, number>();
 		for (const db of dbs) {
 			for (const value of await db.log.log.toArray()) {
+				// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 				expect(await db.log.log.blocks.has(value.hash)).to.be.true;
 				map.set(value.hash, (map.get(value.hash) || 0) + 1);
 			}

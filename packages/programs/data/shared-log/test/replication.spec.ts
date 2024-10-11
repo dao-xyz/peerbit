@@ -3,7 +3,7 @@ import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import {
 	BlockRequest,
 	BlockResponse,
-	BlockMessage as InnerBlocksMessage,
+	type BlockMessage as InnerBlocksMessage,
 } from "@peerbit/blocks";
 import {
 	type PublicSignKey,
@@ -280,17 +280,13 @@ describe(`replication`, function () {
 			const sendFn = db1.log.rpc.send.bind(db1.log.rpc);
 
 			db1.log.rpc.send = async (msg, options) => {
-				try {
-					if (msg instanceof ExchangeHeadsMessage) {
-						expect(msg.heads.map((x) => x.entry.hash)).to.deep.equal([
-							entryAB.hash,
-						]);
-						expect(
-							msg.heads.map((x) => x.gidRefrences.map((y) => y)).flat(),
-						).to.deep.equal([entryWithNotSameGid]);
-					}
-				} catch (error) {
-					throw error;
+				if (msg instanceof ExchangeHeadsMessage) {
+					expect(msg.heads.map((x) => x.entry.hash)).to.deep.equal([
+						entryAB.hash,
+					]);
+					expect(
+						msg.heads.map((x) => x.gidRefrences.map((y) => y)).flat(),
+					).to.deep.equal([entryWithNotSameGid]);
 				}
 				return sendFn(msg, options);
 			};
@@ -581,13 +577,9 @@ describe("redundancy", () => {
 			const dataMessages1 = getReceivedHeads(message1);
 			expect(dataMessages1).to.be.empty; // no data is sent back
 		};
-		try {
-			await waitForResolved(() => {
-				check();
-			});
-		} catch (error) {
-			throw error;
-		}
+		await waitForResolved(() => {
+			check();
+		});
 		await delay(3000);
 		check();
 	});
@@ -1518,30 +1510,26 @@ describe("replication degree", () => {
 				min: 1,
 			});
 
-			try {
-				const value = "hello";
-				for (let i = 0; i < entryCount; i++) {
-					await db1.add(value, {
-						replicas: new AbsoluteReplicas(3),
-						meta: { next: [] },
-					});
-				}
-
-				const check = async (log: EventStore<string>) => {
-					let replicated3Times = 0;
-					for (const entry of await log.log.log.toArray()) {
-						if (decodeReplicas(entry).getValue(db2.log) === 3) {
-							replicated3Times += 1;
-						}
-					}
-					expect(replicated3Times).equal(entryCount);
-				};
-
-				await waitForResolved(() => check(db2));
-				await waitForResolved(() => check(db3));
-			} catch (error) {
-				throw error;
+			const value = "hello";
+			for (let i = 0; i < entryCount; i++) {
+				await db1.add(value, {
+					replicas: new AbsoluteReplicas(3),
+					meta: { next: [] },
+				});
 			}
+
+			const check = async (log: EventStore<string>) => {
+				let replicated3Times = 0;
+				for (const entry of await log.log.log.toArray()) {
+					if (decodeReplicas(entry).getValue(db2.log) === 3) {
+						replicated3Times += 1;
+					}
+				}
+				expect(replicated3Times).equal(entryCount);
+			};
+
+			await waitForResolved(() => check(db2));
+			await waitForResolved(() => check(db3));
 		});
 
 		it("mixed control per commmit", async () => {
@@ -1576,12 +1564,8 @@ describe("replication degree", () => {
 				expect(replicated3Times).equal(entryCount);
 				expect(other).greaterThan(0);
 			};
-			try {
-				await waitForResolved(() => check(db2));
-				await waitForResolved(() => check(db3));
-			} catch (error) {
-				throw error;
-			}
+			await waitForResolved(() => check(db2));
+			await waitForResolved(() => check(db3));
 		});
 
 		it("will index replication underflow degree", async () => {
@@ -2045,28 +2029,24 @@ describe("replication degree", () => {
 			for (let i = 0; i < entryCount; i++) {
 				await db1.add("hello" + i, { meta: { next: [] } });
 			}
-			try {
-				await waitForResolved(() =>
-					expect(db2.log.log.length).to.be.above(entryCount / 3),
-				);
+			await waitForResolved(() =>
+				expect(db2.log.log.length).to.be.above(entryCount / 3),
+			);
 
-				await db2.log.replicate(
-					{ factor: u32Div2, offset: u32Div2, normalized: false },
-					{ reset: true },
-				);
+			await db2.log.replicate(
+				{ factor: u32Div2, offset: u32Div2, normalized: false },
+				{ reset: true },
+			);
 
-				await waitForResolved(() =>
-					expect(db1.log.log.length).to.closeTo(entryCount / 2, 20),
-				);
-				await waitForResolved(() =>
-					expect(db2.log.log.length).to.closeTo(entryCount / 2, 20),
-				);
-				await waitForResolved(() =>
-					expect(db1.log.log.length + db2.log.log.length).to.equal(entryCount),
-				);
-			} catch (error) {
-				throw error;
-			}
+			await waitForResolved(() =>
+				expect(db1.log.log.length).to.closeTo(entryCount / 2, 20),
+			);
+			await waitForResolved(() =>
+				expect(db2.log.log.length).to.closeTo(entryCount / 2, 20),
+			);
+			await waitForResolved(() =>
+				expect(db1.log.log.length + db2.log.log.length).to.equal(entryCount),
+			);
 		});
 
 		it("to same range", async () => {
@@ -2167,36 +2147,35 @@ describe("replication degree", () => {
 			await db2.log.replicate({ factor: newFactor, offset: 0, id: range.id });
 			const expectedAmountOfEntriesToPrune = entryCount * newFactor;
 
-			try {
-				await waitForResolved(async () => {
-					expect(db2.log.log.length).to.be.closeTo(
-						entryCount - expectedAmountOfEntriesToPrune,
-						30,
-					);
+			await waitForResolved(async () => {
+				expect(db2.log.log.length).to.be.closeTo(
+					entryCount - expectedAmountOfEntriesToPrune,
+					30,
+				);
 
-					expect(onMessage1.callCount).equal(2); // two messages (the updated range) and request for pruning
-					expect(findLeaders1.callCount).to.be.lessThan(entryCount * 3); // some upper bound, TODO make more strict
-					expect(findLeaders2.callCount).to.be.lessThan(entryCount * 3); // some upper bound, TODO make more strict
-					/* 
-					TODO stricter boundes like below
-					expect(findLeaders1.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + prune about 50% of the entries
-					expect(findLeaders2.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + handle prune requests 
-					*/
-				});
-			} catch (error) {
-				throw error;
-			}
+				expect(onMessage1.callCount).equal(2); // two messages (the updated range) and request for pruning
+				expect(findLeaders1.callCount).to.be.lessThan(entryCount * 3); // some upper bound, TODO make more strict
+				expect(findLeaders2.callCount).to.be.lessThan(entryCount * 3); // some upper bound, TODO make more strict
+				/* 
+				TODO stricter boundes like below
+				expect(findLeaders1.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + prune about 50% of the entries
+				expect(findLeaders2.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + handle prune requests 
+				*/
+			});
+
 			// we do below separetly because this will interefere with the callCounts above
 			await waitForResolved(async () =>
 				expect(await db2.log.getPrunable()).to.length(0),
 			);
 
+			// eslint-disable-next-line no-useless-catch
 			try {
 				expect(onMessage1.getCall(0).args[0]).instanceOf(
 					AddedReplicationSegmentMessage,
 				);
 				expect(onMessage1.getCall(1).args[0]).instanceOf(RequestIPrune);
 			} catch (error) {
+				// eslint-disable-next-line no-useless-catch
 				try {
 					expect(onMessage1.getCall(1).args[0]).instanceOf(
 						AddedReplicationSegmentMessage,

@@ -13,14 +13,12 @@ import {
 	randomBytes,
 } from "@peerbit/crypto";
 import {
-	AbstractSearchResult,
-	NoAccess,
-	Results,
-} from "@peerbit/document-interface";
-import {
 	AbstractSearchRequest,
+	AbstractSearchResult,
 	CloseIteratorRequest,
 	CollectNextRequest,
+	NoAccess,
+	Results,
 	SearchRequest,
 } from "@peerbit/document-interface";
 import {

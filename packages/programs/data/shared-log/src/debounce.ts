@@ -46,12 +46,16 @@ export const debounceFixedInterval = <
 >(
 	fn: T,
 	delay: number | (() => number),
-	options?: { debug?: boolean; onError?: (error: Error) => void },
+	options?: { onError?: (error: Error) => void },
 ) => {
 	// A debounce function that waits for the delay after the async function finishes
 	// before invoking the function again
 	let delayFn: () => number = typeof delay === "number" ? () => delay : delay;
-	const onError = options?.onError || ((error: Error) => console.error(error));
+	const onError =
+		options?.onError ||
+		((error: Error) => {
+			throw error;
+		});
 	let timeout: NodeJS.Timeout | null = null;
 	let lastArgs: any[] | null = null;
 	let lastThis: any;
@@ -70,11 +74,6 @@ export const debounceFixedInterval = <
 		lastArgs = null; // Reset arguments
 		pendingCall = false; // Reset pending call flag
 		isRunning = true;
-
-		if (options?.debug) {
-			console.log("debounceFixedInterval: Invoking function");
-		}
-
 		try {
 			const fnCall = fn.apply(lastThis, args);
 			invokePromise = Promise.resolve(fnCall ?? {});
@@ -86,17 +85,8 @@ export const debounceFixedInterval = <
 			isRunning = false;
 			timeout = null;
 
-			if (options?.debug) {
-				console.log("debounceFixedInterval: Function execution completed");
-			}
-
 			// If there are pending calls, schedule the next invocation
 			if (pendingCall) {
-				if (options?.debug) {
-					console.log(
-						`debounceFixedInterval: Scheduling next call in ${delay}ms`,
-					);
-				}
 				timeout = setTimeout(invoke, delayFn());
 			}
 		}
@@ -109,18 +99,10 @@ export const debounceFixedInterval = <
 
 		if (isRunning || timeout) {
 			// Function is currently running or timeout is set, do nothing
-			if (options?.debug) {
-				console.log(
-					"debounceFixedInterval: Function is running or timeout is set, waiting",
-				);
-			}
 			return;
 		}
 
 		// No function running and no timeout set, so schedule the invocation
-		if (options?.debug) {
-			console.log(`debounceFixedInterval: Setting timeout for ${delay}ms`);
-		}
 		timeout = setTimeout(invoke, delayFn());
 	};
 

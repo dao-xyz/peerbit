@@ -1,5 +1,4 @@
-import { type PeerId } from "@libp2p/interface";
-import { type PrivateKey } from "@libp2p/interface";
+import { type PeerId, type PrivateKey } from "@libp2p/interface";
 import {
 	Ed25519Keypair,
 	Ed25519PrivateKey,

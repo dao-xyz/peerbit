@@ -39,9 +39,9 @@ describe("libp2p only", () => {
 		session.peers[0].services.pubsub.subscribe("1");
 		session.peers[0].services.pubsub.subscribe("2");
 		session.peers[0].services.pubsub.subscribe("3");
-		const __dirname = dirname(fileURLToPath(import.meta.url));
+		const dirnameResolved = dirname(fileURLToPath(import.meta.url));
 		configDirectory = path.join(
-			__dirname,
+			dirnameResolved,
 			"tmp",
 			"api-test",
 			"libp2ponly",
@@ -96,8 +96,14 @@ describe("server", () => {
 		before(async () => {});
 
 		beforeEach(async () => {
-			const __dirname = dirname(fileURLToPath(import.meta.url));
-			let directory = path.join(__dirname, "tmp", "api-test", "api", uuid());
+			const dirnameResolved = dirname(fileURLToPath(import.meta.url));
+			let directory = path.join(
+				dirnameResolved,
+				"tmp",
+				"api-test",
+				"api",
+				uuid(),
+			);
 			session = await TestSession.connected(1, {
 				libp2p: { transports: [tcp(), webSockets()] },
 			});

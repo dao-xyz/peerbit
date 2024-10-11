@@ -68,6 +68,8 @@ import { PIDReplicationController } from "./pid.js";
 import {
 	EntryReplicated,
 	ReplicationIntent,
+	ReplicationRange,
+	ReplicationRangeIndexable,
 	getCoverSet,
 	getEvenlySpacedU32,
 	getSamples,
@@ -77,7 +79,6 @@ import {
 	shouldAssigneToRangeBoundary,
 	toRebalance,
 } from "./ranges.js";
-import { ReplicationRange, ReplicationRangeIndexable } from "./ranges.js";
 import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
@@ -878,7 +879,7 @@ export class SharedLog<
 						{ reference: true },
 					)
 					.all();
-				if (existing.length == 0) {
+				if (existing.length === 0) {
 					let prevCount = await this.replicationIndex.count({
 						query: new StringMatch({ key: "hash", value: from.hashcode() }),
 					});
@@ -915,7 +916,7 @@ export class SharedLog<
 							return { range: x, type: "added" };
 						}
 					})
-					.filter((x) => x != undefined) as ReplicationChanges;
+					.filter((x) => x != null) as ReplicationChanges;
 				diffs = changes;
 			}
 
@@ -1163,9 +1164,7 @@ export class SharedLog<
 										entry,
 										minReplicasValue,
 									);
-									console.error(
-										"Missing coordinate for entry with hash: " + entry.hash,
-									);
+									// TODO are we every to come here?
 								}
 								for (const [hash, features] of await this.findLeaders(
 									coordinate,
@@ -1827,10 +1826,9 @@ export class SharedLog<
 							if (toMerge.length > 0) {
 								await this.log.join(toMerge);
 
-								toDelete &&
-									toDelete.map((x) =>
-										this.pruneDebouncedFn.add({ key: x.hash, value: x }),
-									);
+								toDelete?.map((x) =>
+									this.pruneDebouncedFn.add({ key: x.hash, value: x }),
+								);
 								this.rebalanceParticipationDebounced?.();
 							}
 
@@ -2142,7 +2140,6 @@ export class SharedLog<
 				);
 				return;
 			}
-			console.error(e);
 			logger.error(e);
 		}
 	}

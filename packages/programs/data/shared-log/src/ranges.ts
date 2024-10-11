@@ -1,6 +1,5 @@
 import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { PublicSignKey, equals } from "@peerbit/crypto";
-import { randomBytes, toBase64 } from "@peerbit/crypto";
+import { PublicSignKey, equals, randomBytes, toBase64 } from "@peerbit/crypto";
 import {
 	And,
 	BoolQuery,
@@ -23,8 +22,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { id } from "@peerbit/indexer-interface";
 import { Meta, ShallowMeta } from "@peerbit/log";
-import type { u32 } from "./replication-domain.js";
-import { type ReplicationChanges } from "./replication-domain.js";
+import { type ReplicationChanges, type u32 } from "./replication-domain.js";
 import { MAX_U32, scaleToU32 } from "./role.js";
 import { groupByGidSync } from "./utils.js";
 
@@ -1214,7 +1212,7 @@ export const toRebalance = (
 		let ors: Query[] = [];
 		for (const change of changes) {
 			const matchRange = matchRangeQuery(change.range);
-			if (change.type == "updated") {
+			if (change.type === "updated") {
 				// assuming a range is to be removed, is this entry still enoughly replicated
 				const prevMatchRange = matchRangeQuery(change.prev);
 				ors.push(prevMatchRange);

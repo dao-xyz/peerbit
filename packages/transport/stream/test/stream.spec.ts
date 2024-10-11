@@ -3053,11 +3053,7 @@ describe("start/stop", () => {
 		await waitFor(() => stream(session, 0).peers.size === 1);
 		await waitFor(() => stream(session, 1).peers.size === 1);
 
-		try {
-			await waitForPeerStreams(stream(session, 0), stream(session, 1));
-		} catch (error) {
-			throw error;
-		}
+		await waitForPeerStreams(stream(session, 0), stream(session, 1));
 	});
 	it("can connect after start", async () => {
 		session = await disconnected(2, {

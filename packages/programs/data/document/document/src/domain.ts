@@ -1,6 +1,13 @@
-import { Entry, ShallowEntry } from "@peerbit/log";
-import { EntryReplicated, type ReplicationDomain } from "@peerbit/shared-log";
-import { Documents, Operation, isPutOperation } from "../src/index.js";
+import { Entry, type ShallowEntry } from "@peerbit/log";
+import {
+	type EntryReplicated,
+	type ReplicationDomain,
+} from "@peerbit/shared-log";
+import {
+	type Documents,
+	type Operation,
+	isPutOperation,
+} from "../src/index.js";
 
 type RangeArgs = { from: number; to: number };
 export type CustomDomain = ReplicationDomain<RangeArgs, Operation>;

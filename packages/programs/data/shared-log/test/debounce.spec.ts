@@ -1,5 +1,4 @@
-import { waitForResolved } from "@peerbit/time";
-import { delay } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
 	debounceFixedInterval,

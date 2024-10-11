@@ -6,8 +6,7 @@ import {
 	splitSignature,
 } from "@ethersproject/bytes";
 import { Wallet } from "@ethersproject/wallet";
-import { generateKeyPair } from "@libp2p/crypto/keys";
-import { publicKeyFromRaw } from "@libp2p/crypto/keys";
+import { generateKeyPair, publicKeyFromRaw } from "@libp2p/crypto/keys";
 import { type PeerId } from "@libp2p/interface";
 import { peerIdFromPublicKey } from "@libp2p/peer-id";
 import utf8 from "@protobufjs/utf8";

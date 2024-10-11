@@ -518,7 +518,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		}
 
 		if (!once) {
-			throw lastError;
+			throw lastError!;
 		}
 
 		return ret;
@@ -565,7 +565,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		}
 
 		if (!once) {
-			throw lastError;
+			throw lastError!;
 		}
 
 		return ret != null ? ret : 0;
@@ -599,7 +599,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		}
 
 		if (!once) {
-			throw lastError;
+			throw lastError!;
 		}
 		return ret;
 	}
