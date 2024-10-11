@@ -1,5 +1,4 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { CustomEvent } from "@libp2p/interface";
 import { PublicSignKey, sha256Base64Sync } from "@peerbit/crypto";
 import { type AppendOptions, type Change, Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -88,8 +87,11 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 
 		await this._log.open({
 			encoding,
-			replicas: {
-				min: 0xffffffff, // assume a document can not be sharded?
+			/* replicas: {
+				min: 0xffffffff, // TODO assume a document can not be sharded?
+			}, */
+			replicate: {
+				factor: 1, // we need all entries to represent the full string
 			},
 			canAppend: async (entry) => {
 				const operation = await entry.getPayloadValue();
@@ -152,7 +154,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			}),
 			{
 				...options,
-				meta: { ...options?.meta, next: await this._log.log.getHeads().all() }, // TODO: optimize
+				meta: { ...options?.meta }, // TODO: optimize
 			},
 		);
 	}

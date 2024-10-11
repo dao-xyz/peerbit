@@ -1,7 +1,6 @@
 import { type Constructor, getSchema, variant } from "@dao-xyz/borsh";
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import {
-	CustomEvent,
 	type PeerId as Libp2pPeerId,
 	TypedEventEmitter,
 	type TypedEventTarget,

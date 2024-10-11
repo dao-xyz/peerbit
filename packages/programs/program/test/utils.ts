@@ -1,4 +1,3 @@
-import { CustomEvent } from "@libp2p/interface";
 import {
 	Ed25519Keypair,
 	type PublicSignKey,
