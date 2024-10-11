@@ -71,7 +71,7 @@
 		"@peerbit/any-store-interface": "^1.0.0",
 		"@peerbit/time": "2.0.7",
 		"level": "^8.0.0",
-		"uuid": "^9.0.0"
+		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
 		"@types/uuid": "^9.0.8"
