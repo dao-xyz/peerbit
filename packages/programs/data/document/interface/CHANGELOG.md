@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.4...document-interface-v1.0.5) (2024-10-11)
+
+
+### Bug Fixes
+
+* update for new iterator types ([c4f93a1](https://github.com/dao-xyz/peerbit/commit/c4f93a16a6456af8320995b189ae2f161d413814))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.1 to ^2.3.2
+    * @peerbit/indexer-interface bumped from ^1.0.3 to ^1.1.0
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.3...document-interface-v1.0.4) (2024-09-01)
 
 

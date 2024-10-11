@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.1...any-store-opfs-v1.0.2) (2024-10-11)
+
+
+### Bug Fixes
+
+* update uuid ([5f7f16b](https://github.com/dao-xyz/peerbit/commit/5f7f16bc9e0c8b769e4d3c7bd1050701f58c1187))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.1 to ^2.3.2
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.0...any-store-opfs-v1.0.1) (2024-09-01)
 
 
