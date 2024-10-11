@@ -465,12 +465,6 @@ const containingPoint = <S extends Shape | undefined = undefined>(
 		},
 		options,
 	);
-	/* const results = await rects.query(new SearchRequest({
-		query: queries,
-		sort: options?.sort,
-		fetch: 0xffffffff
-	}))
-	return results.results.map(x => x.value) */
 };
 
 const getClosest = <S extends Shape | undefined = undefined>(
@@ -1257,30 +1251,8 @@ export const toRebalance = (
 				query: assignedRangesQuery(changes),
 			});
 
-			/* 	const iteratorFitlered = index.iterate({
-					query: assignedRangesQuery(changes),
-				}); */
-
 			while (iterator.done() !== true) {
-				const entries = await iterator.next(0xffffffff); // TODO batch sizes
-				/* const entriesFiltered = await iteratorFitlered.next(0xffffffff); // TODO batch sizes
-
-				console.log(
-					"SIZE",
-					await index.getSize(),
-					entries.results.length,
-					entriesFiltered.results.length,
-					Math.min(
-						...entries.results
-							.filter((x) => x.value.assignedToRangeBoundary === false)
-							.map((x) => x.value.coordinate / 0xffffffff),
-					),
-					Math.max(
-						...entries.results
-							.filter((x) => x.value.assignedToRangeBoundary === false)
-							.map((x) => x.value.coordinate / 0xffffffff),
-					),
-				); */
+				const entries = await iterator.next(1000); // TODO choose right batch sizes here for optimal memory usage / speed
 
 				// TODO do we need this
 				const grouped = await groupByGidSync(entries.map((x) => x.value));
