@@ -1,13 +1,6 @@
 import type { AbstractType } from "@dao-xyz/borsh";
 import { type IdKey } from "./id.js";
-import {
-	CloseIteratorRequest,
-	CollectNextRequest,
-	type CountRequest,
-	type DeleteRequest,
-	type SearchRequest,
-	type SumRequest,
-} from "./query.js";
+import type { QueryLike, Sort } from "./query.js";
 
 type MaybePromise<T = void> = Promise<T> | T;
 
@@ -18,21 +11,36 @@ export interface IndexedResult<
 	value: T;
 }
 
-export interface IndexedResults<
+export type IndexedResults<
 	T extends Record<string, any> = Record<string, any>,
-> {
-	results: IndexedResult<T>[];
-	kept: number;
-}
+> = IndexedResult<T>[];
 
 export interface IndexedValue<T = Record<string, any>> {
 	id: IdKey;
 	value: T;
 }
 
+export interface IterateOptions {
+	query?: QueryLike;
+	sort?: Sort | Sort[];
+}
+
+export interface DeleteOptions {
+	query: QueryLike;
+}
+
+export interface SumOptions {
+	query?: QueryLike;
+	key: string | string[];
+}
+
+export interface CountOptions {
+	query?: QueryLike;
+}
+
 export type NestedProperties<T> = {
 	match: (obj: any) => obj is T;
-	query: (nested: T, query: SearchRequest) => Promise<Record<string, any>[]>;
+	iterate: (nested: T, query: IterateOptions) => Promise<Record<string, any>[]>;
 };
 
 export type IteratorBatchProperties = {
@@ -51,7 +59,35 @@ export type QueryOptions = { resolve: ResolveOptions };
 export type ReturnTypeFromQueryOptions<T, O> = O extends { resolve: 'full' } ? T : Partial<T>;
  */
 
-export type Shape = { [key: string]: true | Shape };
+/* export type Shape = { [key: string]: true | Shape }; */
+/* export type ShapeReturnType<T extends Shape> = {
+	[K in keyof T]: T[K] extends true ? any : T[K] extends Shape ? ShapeReturnType<T[K]> : never;
+}; */
+
+export type Shape = { [key: string]: true | Shape | Shape[] };
+
+export type ShapeReturnType<T> = T extends true
+	? any
+	: T extends Shape[]
+		? ShapeReturnType<T[number]>[]
+		: T extends Shape
+			? { [K in keyof T]: ShapeReturnType<T[K]> }
+			: never;
+
+export type ReturnTypeFromShape<T, S> = S extends Shape
+	? ShapeReturnType<S>
+	: T;
+
+export type IndexIterator<T, S extends Shape | undefined> = {
+	next: (
+		amount: number,
+	) => MaybePromise<IndexedResults<ReturnTypeFromShape<T, S>>>;
+	all: () => MaybePromise<IndexedResults<ReturnTypeFromShape<T, S>>>;
+	done: () => boolean | undefined;
+	pending: () => MaybePromise<number>;
+	close: () => MaybePromise<void>;
+};
+
 export interface Index<T extends Record<string, any>, NestedType = any> {
 	init(
 		properties: IndexEngineInitProperties<T, NestedType>,
@@ -62,18 +98,22 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		options?: { shape: Shape },
 	): MaybePromise<IndexedResult<T> | undefined>;
 	put(value: T, id?: IdKey): MaybePromise<void>;
-	del(query: DeleteRequest): MaybePromise<IdKey[]>;
-	sum(query: SumRequest): MaybePromise<bigint | number>;
-	count(query: CountRequest): MaybePromise<number>;
-	query(
+	del(query: DeleteOptions): MaybePromise<IdKey[]>;
+	sum(query: SumOptions): MaybePromise<bigint | number>;
+	count(query?: CountOptions): MaybePromise<number>;
+	iterate<S extends Shape | undefined = undefined>(
+		request?: IterateOptions,
+		options?: { shape?: S; reference?: boolean },
+	): IndexIterator<T, S>;
+	/* query<O extends { shape?: Shape } | undefined>(
 		query: SearchRequest,
-		options?: { shape?: Shape; reference?: boolean },
-	): MaybePromise<IndexedResults<T>>;
-	next(
+		options?: O & { reference?: boolean },
+	): MaybePromise<IndexedResults<O extends { shape: infer S extends Shape } ? ShapeReturnType<S> : T>>;
+	next<O extends { shape?: Shape } | undefined>(
 		query: CollectNextRequest,
-		options?: { shape?: Shape },
-	): MaybePromise<IndexedResults<T>>;
-	close(query: CloseIteratorRequest): MaybePromise<void>;
+		options?: O
+	): MaybePromise<IndexedResults<O extends { shape: infer S extends Shape } ? ShapeReturnType<S> : T>>
+	close(query: CloseIteratorRequest): MaybePromise<void>;; */
 
 	/*
 	query<O extends QueryOptions>(query: SearchRequest, options?: O): MaybePromise<IndexedResults<ReturnTypeFromQueryOptions<T, O>>>;
@@ -81,12 +121,10 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 	*/
 
 	getSize(): MaybePromise<number>;
-	getPending(cursorId: string): number | undefined;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
-	get cursorCount(): number;
 }
-
+/* 
 export type IndexIterator<T> = ReturnType<typeof iterate<T>>;
 export const iterate = <T>(index: Index<T, any>, query: SearchRequest) => {
 	let isDone = false;
@@ -127,22 +165,20 @@ export const iterate = <T>(index: Index<T, any>, query: SearchRequest) => {
 	};
 };
 
-export type ResultsIterator<T> = ReturnType<typeof iterate<T>>;
+export type ResultsIterator<T> = ReturnType<typeof iterate<T>>; */
 
-export const iteratorInSeries = <T>(...iterators: IndexIterator<T>[]) => {
+export const iteratorInSeries = <T, S extends Shape | undefined>(
+	...iterators: IndexIterator<T, S>[]
+): IndexIterator<T, S> => {
 	let i = 0;
 	const done = () => i >= iterators.length;
 	let current = iterators[i];
 	const next = async (count: number) => {
-		let acc: IndexedResults<T> = {
-			kept: 0,
-			results: [],
-		};
+		let acc: IndexedResults<ReturnTypeFromShape<T, S>> = [];
 
 		while (!current.done() && i < iterators.length) {
 			const next = await current.next(count);
-			acc.kept += next.kept;
-			acc.results.push(...next.results);
+			acc.push(...next);
 
 			if (current.done()) {
 				i++;
@@ -152,7 +188,7 @@ export const iteratorInSeries = <T>(...iterators: IndexIterator<T>[]) => {
 				current = iterators[i];
 			}
 
-			if (acc.results.length >= count) {
+			if (acc.length >= count) {
 				break;
 			}
 		}
@@ -170,11 +206,17 @@ export const iteratorInSeries = <T>(...iterators: IndexIterator<T>[]) => {
 		all: async () => {
 			const results = [];
 			while (!done()) {
-				for (const element of (await next(100)).results) {
+				for (const element of await next(100)) {
 					results.push(element);
 				}
 			}
 			return results;
+		},
+		pending: async () => {
+			let allPendings = await Promise.all(
+				iterators.map((iterator) => iterator.pending()),
+			);
+			return allPendings.reduce((acc, pending) => acc + pending, 0);
 		},
 	};
 };
