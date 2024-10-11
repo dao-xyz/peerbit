@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.0...shared-log-v9.2.1) (2024-10-11)
+
+
+### Bug Fixes
+
+* reduce batch sizes when rebalancing ([0b8baa8](https://github.com/dao-xyz/peerbit/commit/0b8baa87b7e0d2f145b276944ff869bbfd1e02ea))
+
 ## [9.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.2...shared-log-v9.2.0) (2024-10-11)
 
 
