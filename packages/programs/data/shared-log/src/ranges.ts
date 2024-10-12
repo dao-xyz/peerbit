@@ -1211,23 +1211,6 @@ export const toRebalance = (
 				const prevMatchRange = matchRangeQuery(change.prev);
 				ors.push(prevMatchRange);
 				ors.push(matchRange);
-
-				/* 	ors.push(
-						new And([
-							// not sufficiently replicated
-							new IntegerCompare({
-								key: "replicatorsMissingShifted",
-								compare: Compare.Greater,
-								value: HALF_MAX_U32 - 1, // + 1 since we are going to remove a replicator for this entry
-							}),
-	
-							// is not the current range
-							new Not(matchRange),
-	
-							// but was in the the previous range
-							prevMatchRange,
-						]),
-					); */
 			} else {
 				ors.push(matchRange);
 			}

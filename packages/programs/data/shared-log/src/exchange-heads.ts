@@ -88,22 +88,26 @@ export class ResponseIPrune extends TransportMessage {
 
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
 
-export const createExchangeHeadsMessages = async (
+export const createExchangeHeadsMessages = async function* (
 	log: Log<any>,
-	heads: Entry<any>[],
+	heads: Entry<any>[] | string[],
 	gidParentCache: Cache<Entry<any>[]>,
-): Promise<ExchangeHeadsMessage<any>[]> => {
-	const messages: ExchangeHeadsMessage<any>[] = [];
+): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: EntryWithRefs<any>[] = [];
 	const visitedHeads = new Set<string>();
 	for (const fromHead of heads) {
-		visitedHeads.add(fromHead.hash);
+		let entry = fromHead instanceof Entry ? fromHead : await log.get(fromHead);
+		if (!entry) {
+			continue; // missing this entry, could be deleted while iterating
+		}
+
+		visitedHeads.add(entry.hash);
 
 		// TODO eventually we don't want to load all refs
 		// since majority of the old leader would not be interested in these anymore
 		const refs = (
-			await allEntriesWithUniqueGids(log, fromHead, gidParentCache)
+			await allEntriesWithUniqueGids(log, entry, gidParentCache)
 		).filter((x) => {
 			if (visitedHeads.has(x.hash)) {
 				return false;
@@ -111,36 +115,32 @@ export const createExchangeHeadsMessages = async (
 			visitedHeads.add(x.hash);
 			return true;
 		});
+
 		if (refs.length > 1000) {
 			logger.warn("Large refs count: ", refs.length);
 		}
 		current.push(
 			new EntryWithRefs({
-				entry: fromHead,
+				entry,
 				gidRefrences: refs.map((x) => x.meta.gid),
 			}),
 		);
 
-		size += fromHead.size;
+		size += entry.size;
 		if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
 			size = 0;
-			messages.push(
-				new ExchangeHeadsMessage({
-					heads: current,
-				}),
-			);
+			yield new ExchangeHeadsMessage({
+				heads: current,
+			});
 			current = [];
 			continue;
 		}
 	}
 	if (current.length > 0) {
-		messages.push(
-			new ExchangeHeadsMessage({
-				heads: current,
-			}),
-		);
+		yield new ExchangeHeadsMessage({
+			heads: current,
+		});
 	}
-	return messages;
 };
 
 export const allEntriesWithUniqueGids = async (

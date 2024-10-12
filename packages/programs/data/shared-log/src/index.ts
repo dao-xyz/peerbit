@@ -1147,7 +1147,7 @@ export class SharedLog<
 		// --------------
 
 		if (options?.target !== "none") {
-			for (const message of await createExchangeHeadsMessages(
+			for await (const message of createExchangeHeadsMessages(
 				this.log,
 				[result.entry],
 				this._gidParentCache,
@@ -1990,26 +1990,16 @@ export class SharedLog<
 				requestHashes.length > 0 &&
 					(await this.requestSync(requestHashes, [context.from.hashcode()]));
 			} else if (msg instanceof ResponseMaybeSync) {
-				// TODO better choice of step size
-				const entries = (
-					await Promise.all(msg.hashes.map((x) => this.log.get(x)))
-				).filter((x): x is Entry<any> => !!x);
-
-				const messages = await createExchangeHeadsMessages(
-					this.log,
-					entries,
-					this._gidParentCache,
-				);
-
 				// TODO perhaps send less messages to more receivers for performance reasons?
 				// TODO wait for previous send to target before trying to send more?
-				let p = Promise.resolve();
-				for (const message of messages) {
-					p = p.then(() =>
-						this.rpc.send(message, {
-							mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-						}),
-					); // push in series, if one fails, then we should just stop
+				for await (const message of createExchangeHeadsMessages(
+					this.log,
+					msg.hashes,
+					this._gidParentCache,
+				)) {
+					await this.rpc.send(message, {
+						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+					});
 				}
 			} else if (msg instanceof BlocksMessage) {
 				await this.remoteBlocks.onMessage(msg.message);
