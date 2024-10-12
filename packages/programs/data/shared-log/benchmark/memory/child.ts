@@ -105,7 +105,7 @@ try {
 					bytes: crypto.randomBytes(message.size ?? 1024),
 				});
 				await store1!.docs.append(doc, { meta: { next: [] }, target: "none" });
-				await store1?.docs.rebalanceAll(); // force replication to happen instead of sending the appending entry directly to the remote peer
+				await store1?.docs.rebalanceAll({ clearCache: true }); // force replication to happen instead of sending the appending entry directly to the remote peer
 				// this will trigger the most memory intesive operation
 			}
 			await waitFor(() => store2!.docs.log.length === totalInsertCount);
