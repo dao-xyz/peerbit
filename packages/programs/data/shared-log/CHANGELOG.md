@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.1...shared-log-v9.2.2) (2024-10-12)
+
+
+### Bug Fixes
+
+* limit memory consumption when exchanging heads ([29dd1b8](https://github.com/dao-xyz/peerbit/commit/29dd1b871003ed14cd09ac9ab0dbbea69d121dc9))
+
 ## [9.2.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.0...shared-log-v9.2.1) (2024-10-11)
 
 
