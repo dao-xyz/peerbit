@@ -2866,7 +2866,11 @@ export class SharedLog<
 		return nonPrunable;
 	}
 
-	async rebalanceAll() {
+	async rebalanceAll(options?: { clearCache?: boolean }) {
+		if (options?.clearCache) {
+			this._gidPeersHistory.clear();
+		}
+
 		this.onReplicationChange(
 			(await this.getMyReplicationSegments()).map((x) => {
 				return { range: x, type: "added" };
