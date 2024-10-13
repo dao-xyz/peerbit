@@ -368,6 +368,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.12](https://github.com/dao-xyz/peerbit/compare/log-v4.0.11...log-v4.0.12) (2024-10-13)
+
+
+### Bug Fixes
+
+* update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.2 to ^1.3.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.0 to 2.1.1
+
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/log-v4.0.10...log-v4.0.11) (2024-10-11)
 
 
