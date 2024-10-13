@@ -853,6 +853,9 @@ export class SharedLog<
 						})
 						.all()
 				).map((x) => x.value);
+
+				let prevCount = deleted.length;
+
 				await this.replicationIndex.del({ query: { hash: from.hashcode() } });
 
 				diffs = [
@@ -864,10 +867,7 @@ export class SharedLog<
 					}),
 				];
 
-				let prevCount = await this.replicationIndex.count({
-					query: new StringMatch({ key: "hash", value: from.hashcode() }),
-				});
-				isNewReplicator = prevCount === 0;
+				isNewReplicator = prevCount === 0 && ranges.length > 0;
 			} else {
 				let existing = await this.replicationIndex
 					.iterate(
@@ -2591,10 +2591,8 @@ export class SharedLog<
 		topics: string[],
 		subscribed: boolean,
 	) {
-		for (const topic of topics) {
-			if (this.log.idString !== topic) {
-				continue;
-			}
+		if (!topics.includes(this.topic)) {
+			return;
 		}
 
 		if (!subscribed) {
@@ -2602,6 +2600,15 @@ export class SharedLog<
 				b.delete(publicKey.hashcode());
 			}
 			this.clearSyncProcessPublicKey(publicKey);
+
+			(await this.replicationIndex.count({
+				query: { hash: publicKey.hashcode() },
+			})) > 0 &&
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+						detail: { publicKey },
+					}),
+				);
 		}
 
 		if (subscribed) {
@@ -3032,13 +3039,6 @@ export class SharedLog<
 			)} '`,
 		);
 		this.latestReplicationInfoMessage.delete(evt.detail.from.hashcode());
-
-		// TODO only emit this if the peer is actually replicating anything
-		this.events.dispatchEvent(
-			new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
-				detail: { publicKey: evt.detail.from },
-			}),
-		);
 
 		return this.handleSubscriptionChange(
 			evt.detail.from,
