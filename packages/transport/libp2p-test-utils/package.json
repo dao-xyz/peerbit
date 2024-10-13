@@ -63,7 +63,7 @@
 		"@libp2p/websockets": "^9.0.8",
 		"@libp2p/identify": "^3.0.8",
 		"@libp2p/circuit-relay-v2": "^2.1.5",
-		"libp2p": "^2.1.8"
+		"libp2p": "^2.1.9"
 	},
 	"scripts": {
 		"clean": "aegir clean",

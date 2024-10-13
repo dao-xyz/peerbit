@@ -72,7 +72,7 @@
 		"@peerbit/indexer-simple": "^1.1.0",
 		"@peerbit/indexer-sqlite3": "^1.1.0",
 		"datastore-level": "^11.0.1",
-		"@chainsafe/libp2p-yamux": "^7.0.0",
+		"@chainsafe/libp2p-yamux": "^7.0.1",
 		"@libp2p/webrtc": "^5.0.13",
 		"@libp2p/websockets": "^9.0.8",
 		"@libp2p/identify": "^3.0.8",
