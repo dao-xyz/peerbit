@@ -368,6 +368,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.13](https://github.com/dao-xyz/peerbit/compare/log-v4.0.12...log-v4.0.13) (2024-10-16)
+
+
+### Bug Fixes
+
+* make reset to consider already added entries ([db0134c](https://github.com/dao-xyz/peerbit/commit/db0134c4381417a9fc45dcef64c97c25985c089b))
+
 ## [4.0.12](https://github.com/dao-xyz/peerbit/compare/log-v4.0.11...log-v4.0.12) (2024-10-13)
 
 
