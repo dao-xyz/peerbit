@@ -423,7 +423,7 @@ export class EntryIndex<T> {
 	}
 
 	async clear() {
-		const iterator = await this.iterate([], undefined, false);
+		const iterator = this.iterate([], undefined, false);
 		while (!iterator.done()) {
 			const results = await iterator.next(100);
 			for (const result of results) {

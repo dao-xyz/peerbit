@@ -546,13 +546,6 @@ export class Log<T> {
 		return { entry, removed };
 	}
 
-	async reset(entries?: Entry<T>[]) {
-		const heads = await this.getHeads(true).all();
-		await this._entryIndex.clear();
-		await this._onChange?.({ added: [], removed: heads });
-		await this.join(entries || heads);
-	}
-
 	async remove(
 		entry:
 			| { hash: string; meta: { next: string[] } }
@@ -612,6 +605,7 @@ export class Log<T> {
 			trim?: TrimOptions;
 			timeout?: number;
 			onChange?: OnChange<T>;
+			reset?: boolean;
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
@@ -634,7 +628,7 @@ export class Log<T> {
 					entries.push(element);
 					references.set(element.hash, element);
 				} else if (typeof element === "string") {
-					if (await this.has(element)) {
+					if ((await this.has(element)) && !options?.reset) {
 						continue; // already in log
 					}
 
@@ -646,7 +640,7 @@ export class Log<T> {
 					}
 					entries.push(entry);
 				} else if (element instanceof ShallowEntry) {
-					if (await this.has(element.hash)) {
+					if ((await this.has(element.hash)) && !options?.reset) {
 						continue; // already in log
 					}
 
@@ -727,6 +721,7 @@ export class Log<T> {
 			references?: Map<string, Entry<T>>;
 			isHead: boolean;
 			timeout?: number;
+			reset?: boolean;
 			onChange?: OnChange<T>;
 		},
 	): Promise<boolean> {
@@ -738,7 +733,7 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		if (await this.has(entry.hash)) {
+		if ((await this.has(entry.hash)) && !options.reset) {
 			return false;
 		}
 
@@ -774,7 +769,7 @@ export class Log<T> {
 				const prev = this._joining.get(a);
 				if (prev) {
 					await prev;
-				} else if (!(await this.has(a))) {
+				} else if (!(await this.has(a)) || options.reset) {
 					const nested =
 						options.references?.get(a) ||
 						(await Entry.fromMultihash<T>(this._storage, a, {
@@ -1013,50 +1008,57 @@ export class Log<T> {
 		}
 
 		// assume they are valid, (let access control reject them if not)
-		await this.load({ reload: true, heads: [...allHeads.values()] });
+		await this.load({ reset: true, heads: [...allHeads.values()] });
 	}
 
 	async load(
 		opts: {
 			heads?: Entry<T>[];
 			fetchEntryTimeout?: number;
-			reset?: boolean;
 			ignoreMissing?: boolean;
 			timeout?: number;
-			reload?: boolean;
+			reset?: boolean;
 		} = {},
 	) {
 		if (this.closed) {
 			throw new Error("Closed");
 		}
 
-		if (this._loadedOnce && !opts.reload && !opts.reset) {
+		if (this._loadedOnce && !opts.reset) {
 			return;
 		}
 
 		this._loadedOnce = true;
-
-		const providedCustomHeads = Array.isArray(opts["heads"]);
-
-		const heads = providedCustomHeads
-			? (opts["heads"] as Array<Entry<T>>)
-			: await this.entryIndex
-					.getHeads(undefined, {
-						type: "full",
-						signal: this._closeController.signal,
-						ignoreMissing: opts.ignoreMissing,
-						timeout: opts.timeout,
-					})
-					.all();
+		const heads =
+			opts.heads ??
+			(await this.entryIndex
+				.getHeads(undefined, {
+					type: "full",
+					signal: this._closeController.signal,
+					ignoreMissing: opts.ignoreMissing,
+					timeout: opts.timeout,
+				})
+				.all());
 
 		if (heads) {
 			// Load the log
-			if (providedCustomHeads || opts.reset) {
-				await this.reset(heads as any as Entry<any>[]);
-			} else {
-				await this.join(heads instanceof Entry ? [heads] : heads, {
-					timeout: opts?.fetchEntryTimeout,
-				});
+			await this.join(heads instanceof Entry ? [heads] : heads, {
+				timeout: opts?.fetchEntryTimeout,
+				reset: opts?.reset,
+			});
+
+			if (opts.heads) {
+				// remove all heads that are not in the provided heads
+				const allHeads = this.getHeads(false);
+				const allProvidedHeadsHashes = new Set(opts.heads.map((x) => x.hash));
+				while (!allHeads.done()) {
+					let next = await allHeads.next(100);
+					for (const head of next) {
+						if (!allProvidedHeadsHashes.has(head.hash)) {
+							await this.remove(head);
+						}
+					}
+				}
 			}
 		}
 	}

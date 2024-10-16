@@ -3,7 +3,10 @@ import { Ed25519Keypair } from "@peerbit/crypto";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import { expect } from "chai";
 import sinon from "sinon";
+import type { Entry, ShallowOrFullEntry } from "../src/entry.js";
 import { Log } from "../src/log.js";
+import { signKey } from "./fixtures/privateKey.js";
+import { JSON_ENCODING } from "./utils/encoding.js";
 
 describe("load", () => {
 	let log: Log<Uint8Array>;
@@ -115,8 +118,102 @@ describe("load", () => {
 		await log.close();
 		expect(() => log.length).to.throw("Closed");
 		await log.open(store, await Ed25519Keypair.create(), { indexer });
-		await log.load({ ignoreMissing: true, reload: true });
+		await log.load({ ignoreMissing: true, reset: true });
 
 		expect(log.length).equal(2); // two entries still exist in the index because we don't want to corrupt the log
+	});
+
+	it("custom heads", async () => {
+		const log = new Log();
+		let deleted: ShallowOrFullEntry<any>[] = [];
+		let added: Entry<any>[] = [];
+		await log.open(store, signKey, {
+			encoding: JSON_ENCODING,
+			onChange: (change) => {
+				for (const element of change.added) {
+					added.push(element.entry);
+				}
+
+				for (const element of change.removed) {
+					deleted.push(element);
+				}
+			},
+		});
+
+		const e1 = await log.append(new Uint8Array([0]), { meta: { next: [] } });
+		const e2 = await log.append(new Uint8Array([1]), { meta: { next: [] } });
+		await log.append(new Uint8Array([2]), { meta: { next: [] } });
+
+		expect(added.length).equal(3);
+		expect(deleted.length).equal(0);
+		expect(log.length).equal(3);
+
+		await log.load({ reset: true, heads: [e1.entry, e2.entry] });
+
+		expect(added.length).equal(5);
+		expect(deleted.length).equal(1);
+		expect(log.length).equal(2);
+	});
+
+	describe("events", () => {
+		it("will emit events on reset", async () => {
+			const log = new Log();
+			let deleted: ShallowOrFullEntry<any>[] = [];
+			let added: Entry<any>[] = [];
+			await log.open(store, signKey, {
+				encoding: JSON_ENCODING,
+				onChange: (change) => {
+					for (const element of change.added) {
+						added.push(element.entry);
+					}
+
+					for (const element of change.removed) {
+						deleted.push(element);
+					}
+				},
+			});
+
+			await log.append(new Uint8Array([0]), { meta: { next: [] } });
+			await log.append(new Uint8Array([1]), { meta: { next: [] } });
+			await log.append(new Uint8Array([2]), { meta: { next: [] } });
+
+			expect(added.length).equal(3);
+			expect(deleted.length).equal(0);
+
+			await log.load({ reset: true });
+
+			expect(added.length).equal(6);
+			expect(deleted.length).equal(0);
+		});
+
+		it("will not emit if no changes", async () => {
+			const log = new Log();
+			let deleted: ShallowOrFullEntry<any>[] = [];
+			let added: Entry<any>[] = [];
+			await log.open(store, signKey, {
+				encoding: JSON_ENCODING,
+				onChange: (change) => {
+					for (const element of change.added) {
+						added.push(element.entry);
+					}
+
+					for (const element of change.removed) {
+						deleted.push(element);
+					}
+				},
+			});
+
+			await log.append(new Uint8Array([0]), { meta: { next: [] } });
+			await log.append(new Uint8Array([1]), { meta: { next: [] } });
+			await log.append(new Uint8Array([2]), { meta: { next: [] } });
+
+			expect(added.length).equal(3);
+			expect(deleted.length).equal(0);
+
+			await log.load();
+
+			expect(added.length).equal(3);
+			expect(deleted.length).equal(0);
+		});
 	});
 });
