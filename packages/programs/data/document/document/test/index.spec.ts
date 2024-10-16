@@ -143,8 +143,8 @@ describe("index", () => {
 					name: "Hello world",
 				});
 
-				const putOperation = (await store.docs.put(doc, { replicas: 123 }))
-					.entry;
+				let replicas = 10;
+				const putOperation = (await store.docs.put(doc, { replicas })).entry;
 				expect(
 					decodeReplicas(
 						putOperation as {
@@ -153,7 +153,7 @@ describe("index", () => {
 							};
 						},
 					).getValue(store.docs.log),
-				).equal(123);
+				).equal(replicas);
 			});
 
 			it("many chunks", async () => {
@@ -229,7 +229,7 @@ describe("index", () => {
 
 				await store.docs.put(doc);
 				await store.docs.del(doc.id);
-				await store.docs.log.reload();
+				await store.docs.log.reset();
 			});
 
 			it("rejects on max message size", async () => {
@@ -280,8 +280,6 @@ describe("index", () => {
 				await store.docs.put(doc);
 				await store.docs.put(doc);
 				await store.docs.put(doc);
-
-				await delay(5000);
 
 				// open with another store
 				const store2 = await session.peers[1].open(store.clone(), {
