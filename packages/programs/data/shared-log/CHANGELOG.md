@@ -389,6 +389,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.3...shared-log-v9.2.4) (2024-10-16)
+
+
+### Bug Fixes
+
+* rn reload to reset ([8e56194](https://github.com/dao-xyz/peerbit/commit/8e56194fee25611071c38ec633cf47160a172bd6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.12 to 4.0.13
+
 ## [9.2.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.2...shared-log-v9.2.3) (2024-10-13)
 
 
