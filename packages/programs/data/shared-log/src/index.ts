@@ -1507,8 +1507,8 @@ export class SharedLog<
 		);
 	}
 
-	async reload() {
-		await this.log.load({ reset: true, reload: true });
+	async reset() {
+		await this.log.load({ reset: true });
 	}
 
 	async getMemoryUsage() {
@@ -2817,26 +2817,6 @@ export class SharedLog<
 
 		return promises;
 	}
-
-	/* async distribute() {
-		// if there is one or more items waiting for run, don't bother adding a new item just wait for the queue to empty
-		if (this.distributeQueue && this.distributeQueue?.size > 0) {
-			return this.distributeQueue.onEmpty();
-		}
-		if (this.closed) {
-			return;
-		}
-		const queue =
-			this.distributeQueue ||
-			(this.distributeQueue = new PQueue({ concurrency: 1 }));
-		return queue
-			.add(() =>
-				delay(Math.min(this.log.length, this.distributionDebounceTime), {
-					signal: this._closeController.signal,
-				}).then(() => this._distribute()),
-			)
-			.catch(() => { }); // catch ignore delay abort errror
-	} */
 
 	/**
 	 * For debugging

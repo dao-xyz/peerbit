@@ -171,10 +171,10 @@ describe("load", function () {
 		});
 
 		expect(db1.log.log.length).to.equal(1);
-		await db1.log.reload();
+		await db1.log.reset();
 		await waitForResolved(() => {
-			expect(removed).equal(1); // because of the reset
 			expect(added).equal(1);
+			expect(removed).equal(0); // no entries were removed
 		});
 	});
 });
