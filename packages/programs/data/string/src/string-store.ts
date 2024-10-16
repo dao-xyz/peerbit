@@ -123,7 +123,7 @@ export class DString extends Program<Args, StringEvents & ProgramEvents> {
 			responseType: StringResult,
 		});
 
-		await this._log.reload(); // TODO make it so that it does not reload the whole log (i.e. persist the generated string in some way)
+		await this._log.reset(); // TODO make it so that it does not reload the whole log (i.e. persist the generated string in some way)
 	}
 
 	private async _canPerform(

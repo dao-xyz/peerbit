@@ -340,7 +340,7 @@ describe("load", () => {
 		await session.stop();
 	});
 
-	it("loads on open", async () => {
+	it("loads on open no-edits", async () => {
 		let data = "hello";
 		await store.add(data, new Range({ offset: 0, length: data.length }));
 		expect(await store.getValue()).equal(data);
@@ -349,5 +349,21 @@ describe("load", () => {
 		expect(store._index._log).equal(undefined);
 		await session.peers[0].open(store);
 		expect(await store.getValue()).to.deep.equal(data);
+	});
+	it("loads on open 1 edit", async () => {
+		let hello = "hello";
+		await store.add(hello, new Range({ offset: 0, length: hello.length }));
+		let world = " world";
+		await store.add(
+			world,
+			new Range({ offset: hello.length, length: world.length }),
+		);
+
+		expect(await store.getValue()).equal("hello world");
+		await store.close();
+		expect(store._index.string).equal("");
+		expect(store._index._log).equal(undefined);
+		await session.peers[0].open(store);
+		expect(await store.getValue()).to.deep.equal("hello world");
 	});
 });
