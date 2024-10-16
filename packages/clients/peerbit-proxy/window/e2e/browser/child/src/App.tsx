@@ -44,7 +44,7 @@ export const App = () => {
 	return (
 		<>
 			<div data-testid="counter">{dbRef.current?.log.length}</div>
-			<button onClick={() => dbRef.current?.log.load({ reload: true })}>
+			<button onClick={() => dbRef.current?.log.load({ reset: true })}>
 				Reload
 			</button>
 		</>
