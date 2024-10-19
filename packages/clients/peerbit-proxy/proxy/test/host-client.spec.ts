@@ -437,5 +437,16 @@ describe("index", () => {
 			await waitForResolved(() => expect(receivedMessages).to.have.length(1));
 			expect(receivedMessages[0]).to.be.instanceOf(GetSubscribers);
 		});
+
+		it("getPublicKey", async () => {
+			await client1.services.pubsub.waitFor(client2.peerId);
+			expect(
+				(
+					await client1.services.pubsub.getPublicKey(
+						client2.identity.publicKey.hashcode(),
+					)
+				).equals(client2.identity.publicKey),
+			);
+		});
 	});
 });

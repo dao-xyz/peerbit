@@ -122,14 +122,17 @@ export class RESP_Iterator extends BlocksMessage {
 
 @variant(10)
 export class REQ_BlockWaitFor extends BlocksMessage {
-	@field({ type: PublicSignKey })
-	publicKey: PublicSignKey;
-	constructor(publicKey: PeerId | PublicSignKey) {
+	@field({ type: "string" })
+	hash: string;
+
+	constructor(publicKey: PeerId | PublicSignKey | string) {
 		super();
-		this.publicKey =
-			publicKey instanceof PublicSignKey
+		this.hash =
+			typeof publicKey === "string"
 				? publicKey
-				: getPublicKeyFromPeerId(publicKey);
+				: publicKey instanceof PublicSignKey
+					? publicKey.hashcode()
+					: getPublicKeyFromPeerId(publicKey).hashcode();
 	}
 }
 

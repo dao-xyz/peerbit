@@ -223,10 +223,17 @@ export class PeerbitProxyClient implements ProgramClient {
 					);
 					return resp.value;
 				},
-				waitFor: async (publicKey: PeerId | PublicSignKey) => {
+				waitFor: async (publicKey: PeerId | PublicSignKey | string) => {
 					await this.request<pubsub.RESP_PubsubWaitFor>(
 						new pubsub.REQ_PubsubWaitFor(publicKey),
 					);
+				},
+
+				getPublicKey: async (hash) => {
+					const resp = await this.request<pubsub.RESP_GetPublicKey>(
+						new pubsub.REQ_GetPublicKey(hash),
+					);
+					return resp.publicKey;
 				},
 			},
 			blocks: {
