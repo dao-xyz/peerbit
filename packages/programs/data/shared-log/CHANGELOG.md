@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.6...shared-log-v9.2.7) (2024-10-19)
+
+
+### Bug Fixes
+
+* re-check remote replicators on restart ([958fad7](https://github.com/dao-xyz/peerbit/commit/958fad7e7c5ef760275cbcfbbe6b1710f4f9448a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.4 to 5.0.5
+    * @peerbit/log bumped from 4.0.14 to 4.0.15
+    * @peerbit/rpc bumped from 5.0.12 to 5.0.13
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.2 to ^2.1.3
+
 ## [9.2.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.5...shared-log-v9.2.6) (2024-10-19)
 
 
