@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-interface",
-	"version": "1.0.5",
+	"version": "1.0.6",
 	"description": "Document store interface",
 	"sideEffects": false,
 	"type": "module",
@@ -60,6 +60,6 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "^2.3.2",
-		"@peerbit/indexer-interface": "^1.1.0"
+		"@peerbit/indexer-interface": "^1.1.1"
 	}
 }
