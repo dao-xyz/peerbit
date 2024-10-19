@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.5...stream-interface-v5.1.0) (2024-10-19)
+
+
+### Features
+
+* add method for resolving publickey from hash ([8ec159b](https://github.com/dao-xyz/peerbit/commit/8ec159b3df85eb5cf6aad57181c4b425e147872a))
+
 ## [5.0.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.4...stream-interface-v5.0.5) (2024-10-11)
 
 

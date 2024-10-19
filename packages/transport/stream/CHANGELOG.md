@@ -43,6 +43,20 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.10...stream-v4.1.0) (2024-10-19)
+
+
+### Features
+
+* add method for resolving publickey from hash ([8ec159b](https://github.com/dao-xyz/peerbit/commit/8ec159b3df85eb5cf6aad57181c4b425e147872a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^5.0.5 to ^5.1.0
+
 ## [4.0.10](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.9...stream-v4.0.10) (2024-10-13)
 
 

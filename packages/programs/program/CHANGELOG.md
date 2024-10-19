@@ -202,6 +202,21 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.0.5](https://github.com/dao-xyz/peerbit/compare/program-v5.0.4...program-v5.0.5) (2024-10-19)
+
+
+### Bug Fixes
+
+* waitFor throw Timeout Error ([e202d1e](https://github.com/dao-xyz/peerbit/commit/e202d1e1b660d6e2131b442c3c974fe248403a9e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.3 to ^1.3.4
+    * @peerbit/pubsub-interface bumped from ^3.0.6 to ^3.1.0
+
 ## [5.0.4](https://github.com/dao-xyz/peerbit/compare/program-v5.0.3...program-v5.0.4) (2024-10-13)
 
 
