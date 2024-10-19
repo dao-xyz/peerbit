@@ -1025,10 +1025,6 @@ export class SharedLog<
 				}
 			}
 
-			if (ranges.length === 0 && deleted?.length === 0) {
-				throw new Error("Unexpected");
-			}
-
 			diffs.length > 0 &&
 				diffs.map((x) => this.replicationChangeDebounceFn.add(x));
 
