@@ -8,7 +8,7 @@ import path from "path";
 import { v4 as uuid } from "uuid";
 import {
 	ReplicationIntent,
-	ReplicationRangeIndexable,
+	type ReplicationRangeIndexable,
 	isMatured,
 } from "../src/ranges.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";

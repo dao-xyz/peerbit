@@ -1943,7 +1943,7 @@ export abstract class DirectStream<
 		options?: { timeout?: number; signal?: AbortSignal; neighbour?: boolean },
 	) {
 		const hash =
-			typeof peer == "string"
+			typeof peer === "string"
 				? peer
 				: (peer instanceof PublicSignKey
 						? peer
