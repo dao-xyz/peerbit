@@ -8,6 +8,7 @@ import {
 	Message,
 	type PeerEvents,
 	type PriorityOptions,
+	type PublicKeyFromHashResolver,
 	type WaitForPeer,
 } from "@peerbit/stream-interface";
 import { PubSubData } from "./messages.js";
@@ -126,7 +127,10 @@ export type PublishOptions = (
 ) & { client?: string } & PriorityOptions &
 	IdentificationOptions;
 
-export interface PubSub extends IEventEmitter<PubSubEvents>, WaitForPeer {
+export interface PubSub
+	extends IEventEmitter<PubSubEvents>,
+		WaitForPeer,
+		PublicKeyFromHashResolver {
 	getSubscribers(topic: string): MaybePromise<PublicSignKey[] | undefined>;
 
 	requestSubscribers(topic: string, from?: PublicSignKey): MaybePromise<void>;

@@ -37,6 +37,7 @@ import {
 	MultiAddrinfo,
 	NotStartedError,
 	type PriorityOptions,
+	type PublicKeyFromHashResolver,
 	SeekDelivery,
 	SilentDelivery,
 	type StreamEvents,
@@ -420,7 +421,7 @@ export abstract class DirectStream<
 		Events extends { [s: string]: any } = StreamEvents,
 	>
 	extends TypedEventEmitter<Events>
-	implements WaitForPeer
+	implements WaitForPeer, PublicKeyFromHashResolver
 {
 	public peerId: PeerId;
 	public publicKey: PublicSignKey;
@@ -1938,12 +1939,16 @@ export abstract class DirectStream<
 	}
 
 	async waitFor(
-		peer: PeerId | PublicSignKey,
+		peer: PeerId | PublicSignKey | string,
 		options?: { timeout?: number; signal?: AbortSignal; neighbour?: boolean },
 	) {
-		const hash = (
-			peer instanceof PublicSignKey ? peer : getPublicKeyFromPeerId(peer)
-		).hashcode();
+		const hash =
+			typeof peer == "string"
+				? peer
+				: (peer instanceof PublicSignKey
+						? peer
+						: getPublicKeyFromPeerId(peer)
+					).hashcode();
 		try {
 			await waitFor(
 				() => {
@@ -1993,6 +1998,10 @@ export abstract class DirectStream<
 				);
 			}
 		}
+	}
+
+	getPublicKey(hash: string): PublicSignKey {
+		return this.peerKeyHashToPublicKey.get(hash);
 	}
 
 	get pending(): boolean {
