@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.5...shared-log-v9.2.6) (2024-10-19)
+
+
+### Bug Fixes
+
+* dont throw on empty addReplicationRange updates ([01f2c90](https://github.com/dao-xyz/peerbit/commit/01f2c909265bd47444d63d8b926002ef78b50cef))
+
 ## [9.2.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.4...shared-log-v9.2.5) (2024-10-19)
 
 
