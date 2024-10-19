@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.1.0...indexer-interface-v1.1.1) (2024-10-19)
+
+
+### Bug Fixes
+
+* make sure IndexIterator generic value extends Record ([451b9f2](https://github.com/dao-xyz/peerbit/commit/451b9f2f77c3d7efb532fa80bd25adc881548666))
+
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.0.3...indexer-interface-v1.1.0) (2024-10-11)
 
 

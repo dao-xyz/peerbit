@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.4...shared-log-v9.2.5) (2024-10-19)
+
+
+### Bug Fixes
+
+* export ReplicationRangeIndexable ([514afbe](https://github.com/dao-xyz/peerbit/commit/514afbe46bfcc719afc76145d0089574711f7e13))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.13 to 4.0.14
+    * @peerbit/rpc bumped from 5.0.11 to 5.0.12
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.1 to ^2.1.2
+
 ## [9.2.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.3...shared-log-v9.2.4) (2024-10-16)
 
 

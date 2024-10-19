@@ -452,6 +452,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.49](https://github.com/dao-xyz/peerbit/compare/server-v5.0.48...server-v5.0.49) (2024-10-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.0.19 to 4.0.20
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.1 to 2.1.2
+
 ## [5.0.48](https://github.com/dao-xyz/peerbit/compare/server-v5.0.47...server-v5.0.48) (2024-10-13)
 
 
