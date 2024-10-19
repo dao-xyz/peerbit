@@ -153,7 +153,7 @@ export class ByteMatchQuery extends StateFieldQuery {
 		this._reserved = 0;
 	}
 
-	_valueString: string;
+	_valueString!: string;
 	/**
 	 * value `asString`
 	 */

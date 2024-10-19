@@ -78,7 +78,10 @@ export type ReturnTypeFromShape<T, S> = S extends Shape
 	? ShapeReturnType<S>
 	: T;
 
-export type IndexIterator<T, S extends Shape | undefined> = {
+export type IndexIterator<
+	T extends Record<string, any>,
+	S extends Shape | undefined,
+> = {
 	next: (
 		amount: number,
 	) => MaybePromise<IndexedResults<ReturnTypeFromShape<T, S>>>;
@@ -105,69 +108,16 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		request?: IterateOptions,
 		options?: { shape?: S; reference?: boolean },
 	): IndexIterator<T, S>;
-	/* query<O extends { shape?: Shape } | undefined>(
-		query: SearchRequest,
-		options?: O & { reference?: boolean },
-	): MaybePromise<IndexedResults<O extends { shape: infer S extends Shape } ? ShapeReturnType<S> : T>>;
-	next<O extends { shape?: Shape } | undefined>(
-		query: CollectNextRequest,
-		options?: O
-	): MaybePromise<IndexedResults<O extends { shape: infer S extends Shape } ? ShapeReturnType<S> : T>>
-	close(query: CloseIteratorRequest): MaybePromise<void>;; */
-
-	/*
-	query<O extends QueryOptions>(query: SearchRequest, options?: O): MaybePromise<IndexedResults<ReturnTypeFromQueryOptions<T, O>>>;
-	next<O extends QueryOptions>(query: CollectNextRequest, options?: O): MaybePromise<IndexedResults<ReturnTypeFromQueryOptions<T, O>>>;
-	*/
 
 	getSize(): MaybePromise<number>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 }
-/* 
-export type IndexIterator<T> = ReturnType<typeof iterate<T>>;
-export const iterate = <T>(index: Index<T, any>, query: SearchRequest) => {
-	let isDone = false;
-	let fetchedOnce = false;
-	const next = async (count: number, options?: { shape?: Shape }) => {
-		let res: IndexedResults<T>;
-		if (!fetchedOnce) {
-			fetchedOnce = true;
-			query.fetch = count;
-			res = await index.query(query, options);
-		} else {
-			res = await index.next(
-				new CollectNextRequest({ id: query.id, amount: count }),
-				options,
-			);
-		}
-		isDone = res.kept === 0;
-		return res;
-	};
-	const done = () => isDone;
-	const close = () => {
-		return index.close(new CloseIteratorRequest({ id: query.id }));
-	};
-	return {
-		next,
-		done,
-		close,
-		all: async (options?: { shape: Shape }) => {
-			const results: IndexedResult<T>[] = [];
-			while (!done()) {
-				for (const element of (await next(100, options)).results) {
-					results.push(element);
-				}
-			}
-			await close();
-			return results;
-		},
-	};
-};
 
-export type ResultsIterator<T> = ReturnType<typeof iterate<T>>; */
-
-export const iteratorInSeries = <T, S extends Shape | undefined>(
+export const iteratorInSeries = <
+	T extends Record<string, any>,
+	S extends Shape | undefined,
+>(
 	...iterators: IndexIterator<T, S>[]
 ): IndexIterator<T, S> => {
 	let i = 0;

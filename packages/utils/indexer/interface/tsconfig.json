@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
-		"strictNullChecks": false,
-		"outDir": "dist"
+		"outDir": "dist",
+		"strictFunctionTypes": true
 	},
 	"include": ["src", "test"]
 }

@@ -93,7 +93,7 @@ export class Uint8ArrayKey extends IdKey {
 		this.key = key;
 	}
 
-	private _keyString: string;
+	private _keyString!: string;
 	get primitive(): string {
 		return this._keyString || (this._keyString = toBase64(this.key));
 	}
