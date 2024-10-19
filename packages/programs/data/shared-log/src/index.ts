@@ -718,19 +718,24 @@ export class SharedLog<
 		});
 	}
 
-	private async removeReplicator(key: PublicSignKey) {
+	private async removeReplicator(
+		key: PublicSignKey | string,
+		options?: { noEvent?: boolean },
+	) {
 		const fn = async () => {
+			const keyHash = typeof key === "string" ? key : key.hashcode();
 			const deleted = await this.replicationIndex
 				.iterate({
-					query: { hash: key.hashcode() },
+					query: { hash: keyHash },
 				})
 				.all();
 
-			await this.replicationIndex.del({ query: { hash: key.hashcode() } });
+			await this.replicationIndex.del({ query: { hash: keyHash } });
 
 			await this.updateOldestTimestampFromIndex();
 
-			if (this.node.identity.publicKey.equals(key)) {
+			const isMe = this.node.identity.publicKey.hashcode() === keyHash;
+			if (isMe) {
 				// announce that we are no longer replicating
 
 				await this.rpc.send(
@@ -739,11 +744,17 @@ export class SharedLog<
 				);
 			}
 
-			this.events.dispatchEvent(
-				new CustomEvent<ReplicationChangeEvent>("replication:change", {
-					detail: { publicKey: key },
-				}),
-			);
+			if (options?.noEvent !== true) {
+				if (key instanceof PublicSignKey) {
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicationChangeEvent>("replication:change", {
+							detail: { publicKey: key },
+						}),
+					);
+				} else {
+					throw new Error("Key was not a PublicSignKey");
+				}
+			}
 
 			deleted.forEach((x) => {
 				return this.replicationChangeDebounceFn.add({
@@ -752,13 +763,13 @@ export class SharedLog<
 				});
 			});
 
-			const pendingMaturity = this.pendingMaturity.get(key.hashcode());
+			const pendingMaturity = this.pendingMaturity.get(keyHash);
 			if (pendingMaturity) {
 				clearTimeout(pendingMaturity.timeout);
-				this.pendingMaturity.delete(key.hashcode());
+				this.pendingMaturity.delete(keyHash);
 			}
 
-			if (!key.equals(this.node.identity.publicKey)) {
+			if (!isMe) {
 				this.rebalanceParticipationDebounced?.();
 			}
 		};
@@ -1489,7 +1500,8 @@ export class SharedLog<
 		await super.afterOpen();
 
 		// We do this here, because these calls requires this.closed == false
-		/* await this._updateRole(); */
+		await this.pruneOfflineReplicators();
+
 		await this.rebalanceParticipation();
 
 		// Take into account existing subscription
@@ -1505,6 +1517,62 @@ export class SharedLog<
 
 	async reset() {
 		await this.log.load({ reset: true });
+	}
+
+	async pruneOfflineReplicators() {
+		// go through all segments and for waitForAll replicators to become reachable if not prune them away
+
+		const promises: Promise<any>[] = [];
+		const iterator = this.replicationIndex.iterate();
+		let checked = new Set<string>();
+		while (!iterator.done()) {
+			for (const segment of await iterator.next(1000)) {
+				if (
+					checked.has(segment.value.hash) ||
+					this.node.identity.publicKey.hashcode() === segment.value.hash
+				) {
+					continue;
+				}
+
+				checked.add(segment.value.hash);
+
+				promises.push(
+					this.waitFor(segment.value.hash, {
+						timeout: this.waitForReplicatorTimeout,
+						signal: this._closeController.signal,
+					})
+						.then(async () => {
+							// is reachable, announce change events
+							const key = await this.node.services.pubsub.getPublicKey(
+								segment.value.hash,
+							);
+							if (!key) {
+								throw new Error(
+									"Failed to resolve public key from hash: " +
+										segment.value.hash,
+								);
+							}
+							this.events.dispatchEvent(
+								new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+									detail: { publicKey: key },
+								}),
+							);
+							this.events.dispatchEvent(
+								new CustomEvent<ReplicationChangeEvent>("replication:change", {
+									detail: { publicKey: key },
+								}),
+							);
+						})
+						.catch((e) => {
+							// not reachable
+							return this.removeReplicator(segment.value.hash, {
+								noEvent: true,
+							}); // done announce since replicator was never reachable
+						}),
+				);
+			}
+		}
+		return Promise.all(promises);
 	}
 
 	async getMemoryUsage() {

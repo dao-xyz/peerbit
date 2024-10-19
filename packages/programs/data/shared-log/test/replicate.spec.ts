@@ -1,12 +1,16 @@
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
-import { Sort } from "@peerbit/indexer-interface";
+import { type IndexedResults, Sort } from "@peerbit/indexer-interface";
 import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
-import { ReplicationIntent, isMatured } from "../src/ranges.js";
+import {
+	ReplicationIntent,
+	ReplicationRangeIndexable,
+	isMatured,
+} from "../src/ranges.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { scaleToU32 } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -695,42 +699,166 @@ describe(`replicate`, () => {
 				});
 
 				const segments = await db1.log.replicationIndex.iterate().all();
-				await waitForResolved(() => expect(segments).to.have.length(1));
+				expect(segments).to.have.length(1);
+			});
+
+			it("will re-check replication segments on restart", async () => {
+				// make sure non-reachable peers are not included in the replication segments
+				db1 = await session.peers[0].open(new EventStore<string>(), {
+					args: {
+						replicate: {
+							offset: 0.3,
+							factor: 0.1,
+						},
+					},
+				});
+
+				db2 = await session.peers[1].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+					},
+				});
+
+				await waitForResolved(async () => {
+					const segments = await db1.log.replicationIndex.iterate().all();
+					expect(segments).to.have.length(2);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db1.node.identity.publicKey.hashcode(),
+					);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db2.node.identity.publicKey.hashcode(),
+					);
+				});
+
+				await db1.close();
+				await db2.close();
+
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+						waitForReplicatorTimeout: 1000,
+					},
+				});
+				let joinEvents = 0;
+				let leaveEvents = 0;
+
+				db1.log.events.addEventListener("replicator:join", () => {
+					joinEvents++;
+				});
+
+				db1.log.events.addEventListener("replicator:leave", () => {
+					leaveEvents++;
+				});
+
+				await waitForResolved(async () => {
+					const segments = await db1.log.replicationIndex.iterate().all();
+					expect(segments).to.have.length(1);
+					expect(segments[0].value.hash).to.equal(
+						db1.node.identity.publicKey.hashcode(),
+					);
+				});
+				expect(joinEvents).to.equal(0);
+				expect(leaveEvents).to.equal(0);
+			});
+
+			it("segments updated while offline", async () => {
+				// make sure non-reachable peers are not included in the replication segments
+				db1 = await session.peers[0].open(new EventStore<string>(), {
+					args: {
+						replicate: {
+							offset: 0.1,
+							factor: 0.1,
+						},
+					},
+				});
+
+				db2 = await session.peers[1].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.2,
+							factor: 0.2,
+						},
+					},
+				});
+
+				await waitForResolved(async () => {
+					const segments = await db1.log.replicationIndex.iterate().all();
+					expect(segments).to.have.length(2);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db1.node.identity.publicKey.hashcode(),
+					);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db2.node.identity.publicKey.hashcode(),
+					);
+				});
+
+				await db1.close();
+				await db2.close();
+
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.3,
+							factor: 0.2,
+						},
+					},
+				});
+
+				let joinEvents = 0;
+				let leaveEvents = 0;
+
+				db1.log.events.addEventListener("replicator:join", () => {
+					joinEvents++;
+				});
+
+				db1.log.events.addEventListener("replicator:leave", () => {
+					leaveEvents++;
+				});
+
+				db2 = await session.peers[1].open(db2.clone(), {
+					args: {
+						replicate: {
+							offset: 0.4,
+							factor: 0.2,
+						},
+					},
+				});
+
+				await waitForResolved(async () => {
+					const checkSegments = (
+						segments: IndexedResults<ReplicationRangeIndexable>,
+					) => {
+						expect(segments).to.have.length(2);
+
+						expect(segments.map((x) => x.value.hash)).to.contain(
+							db1.node.identity.publicKey.hashcode(),
+						);
+						expect(segments.map((x) => x.value.hash)).to.contain(
+							db2.node.identity.publicKey.hashcode(),
+						);
+						expect(
+							segments.map((x) => x.value.toReplicationRange().offset),
+						).to.contain(scaleToU32(0.3));
+						expect(
+							segments.map((x) => x.value.toReplicationRange().offset),
+						).to.contain(scaleToU32(0.4));
+					};
+					checkSegments(await db1.log.replicationIndex.iterate().all());
+					checkSegments(await db2.log.replicationIndex.iterate().all());
+				});
+
+				expect(joinEvents).to.equal(1);
+				expect(leaveEvents).to.equal(0);
 			});
 		});
 	});
 });
-/* 
-describe("segment", () => {
-	describe("overlap", () => {
-		it("non-wrapping", () => {
-			const s1 = new ReplicationSegment({ offset: 0, factor: 0.5 });
-			const s2 = new ReplicationSegment({ offset: 0.45, factor: 0.5 });
-			expect(s1.overlaps(s2)).to.be.true;
-			expect(s2.overlaps(s1)).to.be.true;
-		});
-		it("wrapped", () => {
-			const s1 = new ReplicationSegment({ offset: 0.7, factor: 0.5 });
-			const s2 = new ReplicationSegment({ offset: 0.2, factor: 0.2 });
-			expect(s1.overlaps(s2)).to.be.true;
-			expect(s2.overlaps(s1)).to.be.true;
-		});
-
-		it("inside", () => {
-			const s1 = new ReplicationSegment({ offset: 0.7, factor: 0.5 });
-			const s2 = new ReplicationSegment({ offset: 0.8, factor: 0.1 });
-			expect(s1.overlaps(s2)).to.be.true;
-			expect(s2.overlaps(s1)).to.be.true;
-		});
-		it("insde-wrapped", () => {
-			const s1 = new ReplicationSegment({ offset: 0.7, factor: 0.5 });
-			const s2 = new ReplicationSegment({ offset: 0.1, factor: 0.1 });
-			expect(s1.overlaps(s2)).to.be.true;
-			expect(s2.overlaps(s1)).to.be.true;
-		});
-	});
-}); */
-
 /* it("encrypted clock sync write 1 entry replicate false", async () => {
 	await waitForPeers(session.peers[1], [client1.id], db1.address.toString());
 	const encryptionKey = await client1.keystore.createEd25519Key({
