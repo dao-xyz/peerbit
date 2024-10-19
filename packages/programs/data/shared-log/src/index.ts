@@ -122,7 +122,7 @@ export {
 };
 export { type CPUUsage, CPUUsageIntervalLag };
 export * from "./replication.js";
-export { EntryReplicated };
+export { EntryReplicated, ReplicationRangeIndexable };
 export const logger = loggerFn({ module: "shared-log" });
 
 const getLatestEntry = (
