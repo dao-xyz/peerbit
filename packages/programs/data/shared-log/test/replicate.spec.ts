@@ -6,6 +6,7 @@ import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
+import type { SharedLog } from "../src/index.js";
 import {
 	ReplicationIntent,
 	type ReplicationRangeIndexable,
@@ -14,6 +15,18 @@ import {
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { scaleToU32 } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
+
+const checkRoleIsDynamic = async (log: SharedLog<any>) => {
+	const roles: any[] = [];
+	log.events.addEventListener("replication:change", (change) => {
+		if (change.detail.publicKey.equals(log.node.identity.publicKey)) {
+			roles.push(change.detail);
+		}
+	});
+
+	/// expect role to update a few times
+	await waitForResolved(() => expect(roles.length).greaterThan(3));
+};
 
 describe(`replicate`, () => {
 	let session: TestSession;
@@ -265,23 +278,14 @@ describe(`replicate`, () => {
 
 		it("dynamic by default", async () => {
 			db1 = await session.peers[0].open(new EventStore<string>());
+			await checkRoleIsDynamic(db1.log);
+		});
 
-			const roles: any[] = [];
-			db1.log.events.addEventListener("replication:change", (change) => {
-				if (
-					change.detail.publicKey.equals(session.peers[0].identity.publicKey)
-				) {
-					roles.push(change.detail);
-				}
-			});
-
-			db2 = (await EventStore.open<EventStore<string>>(
-				db1.address!,
-				session.peers[1],
-			))!;
-
-			/// expect role to update a few times
-			await waitForResolved(() => expect(roles.length).greaterThan(3));
+		it("update to dynamic role", async () => {
+			db1 = await session.peers[0].open(new EventStore<string>());
+			await db1.log.replicate(false);
+			await db1.log.replicate({ limits: {} });
+			await checkRoleIsDynamic(db1.log);
 		});
 
 		it("waitForReplicator waits until maturity", async () => {
