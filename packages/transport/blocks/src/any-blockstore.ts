@@ -27,8 +27,10 @@ export class AnyBlockStore implements Blocks {
 		options?: {
 			raw?: boolean;
 			links?: string[];
-			timeout?: number;
 			hasher?: any;
+			remote: {
+				timeout?: number;
+			};
 		},
 	): Promise<Uint8Array | undefined> {
 		const cidObject = cidifyString(cid);

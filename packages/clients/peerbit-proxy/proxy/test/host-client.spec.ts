@@ -260,12 +260,12 @@ describe("index", () => {
 			await client1.services.blocks.rm(cid);
 
 			let t0 = +new Date();
-			expect(await client1.services.blocks.get(cid, { timeout: 1000 })).equal(
-				undefined,
-			);
-			expect(await host1.services.blocks.get(cid, { timeout: 1000 })).equal(
-				undefined,
-			);
+			expect(
+				await client1.services.blocks.get(cid, { remote: { timeout: 1000 } }),
+			).equal(undefined);
+			expect(
+				await host1.services.blocks.get(cid, { remote: { timeout: 1000 } }),
+			).equal(undefined);
 			expect(+new Date() - t0).lessThan(3000);
 
 			expect(await client1.services.blocks.has(cid)).equal(false);

@@ -73,7 +73,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
-		const readDataPromise = store(session, 2).get(cid, { timeout: 5000 });
+		const readDataPromise = store(session, 2).get(cid, {
+			remote: { timeout: 5000 },
+		});
 		await delay(1000);
 		await session.connect([[session.peers[1], session.peers[2]]]);
 
@@ -122,7 +124,7 @@ describe("transport", function () {
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 		const readDataPromise = store(session, 1).get(cid, {
-			from: [session.peers[0].services.blocks.publicKey.hashcode()],
+			remote: { from: [session.peers[0].services.blocks.publicKey.hashcode()] },
 		});
 
 		await session.connect(); // we connect after get request is sent
@@ -157,7 +159,7 @@ describe("transport", function () {
 		const t1 = +new Date();
 		const readData = await store(session, 0).get(
 			"zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr",
-			{ timeout: 3000 },
+			{ remote: { timeout: 3000 } },
 		);
 		const t2 = +new Date();
 		expect(readData).equal(undefined);

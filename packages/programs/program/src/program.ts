@@ -514,7 +514,11 @@ export abstract class Program<
 			timeout?: number;
 		},
 	): Promise<P | undefined> {
-		const bytes = await store.get(address, options);
+		const bytes = await store.get(address, {
+			remote: {
+				timeout: options?.timeout,
+			},
+		});
 		if (!bytes) {
 			return undefined;
 		}

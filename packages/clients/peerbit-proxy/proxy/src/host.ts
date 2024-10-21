@@ -332,8 +332,7 @@ export class PeerbitProxyHost implements ProgramClient {
 					message,
 					new blocks.RESP_GetBlock(
 						await this.services.blocks.get(message.cid, {
-							replicate: message.replicate,
-							timeout: message.timeout,
+							remote: message.remote,
 						}),
 					),
 					from,
