@@ -20,7 +20,7 @@ describe("delete", function () {
 
 	const blockExists = async (hash: string): Promise<boolean> => {
 		try {
-			return !!(await store.get(hash, { timeout: 3000 }));
+			return !!(await store.get(hash, { remote: { timeout: 3000 } }));
 		} catch (error) {
 			return false;
 		}

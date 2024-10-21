@@ -34,9 +34,13 @@ type ResolveFullyOptions =
 	| true
 	| {
 			type: "full";
-			replicate?: boolean;
-			signal?: AbortSignal;
-			timeout?: number;
+			remote?:
+				| {
+						replicate?: boolean;
+						signal?: AbortSignal;
+						timeout?: number;
+				  }
+				| boolean;
 			ignoreMissing?: boolean;
 	  };
 type ResolveShapeOptions = { type: "shape"; shape: Shape };
@@ -471,7 +475,11 @@ export class EntryIndex<T> {
 
 	private async resolveFromStore(
 		k: string,
-		options?: { signal?: AbortSignal; replicate?: boolean; timeout?: number },
+		options?: {
+			remote?:
+				| { signal?: AbortSignal; replicate?: boolean; timeout?: number }
+				| boolean;
+		},
 	): Promise<Entry<T> | null> {
 		const value = await this.properties.store.get(k, options);
 		if (value) {

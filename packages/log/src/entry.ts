@@ -84,7 +84,7 @@ export abstract class Entry<T> {
 	static fromMultihash = async <T>(
 		store: Blocks,
 		hash: string,
-		options?: { timeout?: number; replicate?: boolean },
+		options?: { remote?: { timeout?: number; replicate?: boolean } },
 	) => {
 		if (!hash) {
 			throw new Error(`Invalid hash: ${hash}`);

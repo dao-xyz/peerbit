@@ -368,7 +368,7 @@ describe("join", function () {
 
 				// We need to store a1 somewhere else, becuse log1 will temporarely delete the block since due to the merge order
 				// TODO make this work even though there is not a third party helping
-				await log2.blocks.get(a1.hash, { replicate: true });
+				await log2.blocks.get(a1.hash, { remote: { replicate: true } });
 				expect(await log2.blocks.get(a1.hash)).to.exist;
 				await log1.join([b1, b2]);
 				expect((await log1.toArray()).map((e) => e.hash)).to.deep.equal([
@@ -403,7 +403,7 @@ describe("join", function () {
 
 				// We need to store a1 somewhere else, becuse log1 will temporarely delete the block since due to the merge order
 				// TODO make this work even though there is not a third party helping
-				await log2.blocks.get(a1.hash, { replicate: true });
+				await log2.blocks.get(a1.hash, { remote: { replicate: true } });
 				expect(await log2.blocks.get(a1.hash)).to.exist;
 				await log1.join([b1, b2]);
 				expect((await log1.toArray()).map((e) => e.hash)).to.have.members([

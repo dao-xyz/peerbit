@@ -98,6 +98,49 @@ describe("properties", function () {
 			);
 			assert.deepStrictEqual(entry, undefined);
 		});
+
+		it("does not fetch from remotes by if missing block by default", async () => {
+			const storeGetFn = store.get.bind(store);
+			let remoteFetchOptions: any = undefined;
+			let fetched = false;
+			store.get = async (hash, options) => {
+				remoteFetchOptions = options;
+				fetched = true;
+				return storeGetFn(hash, options);
+			};
+			log.entryIndex.has = () => Promise.resolve(true);
+
+			const entry = await log.get(
+				"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
+			);
+			assert.deepStrictEqual(entry, undefined);
+			expect(fetched).to.be.true;
+			expect(remoteFetchOptions.remote).to.be.undefined;
+		});
+
+		it("fetches remotes with timeout", async () => {
+			const storeGetFn = store.get.bind(store);
+			let timeout: any = undefined;
+			let fetched = false;
+			store.get = async (hash, options) => {
+				timeout = (options?.remote as any)?.["timeout"];
+				fetched = true;
+				return storeGetFn(hash, options);
+			};
+			log.entryIndex.has = () => Promise.resolve(true);
+
+			const entry = await log.get(
+				"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
+				{
+					remote: {
+						timeout: 123,
+					},
+				},
+			);
+			assert.deepStrictEqual(entry, undefined);
+			expect(fetched).to.be.true;
+			expect(timeout).to.eq(123);
+		});
 	});
 
 	describe("setIdentity", () => {

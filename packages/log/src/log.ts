@@ -354,11 +354,22 @@ export class Log<T> {
 	 */
 	get(
 		hash: string,
-		options?: { timeout?: number },
+		options?: { remote?: { timeout?: number } | boolean },
 	): Promise<Entry<T> | undefined> {
 		return this._entryIndex.get(
 			hash,
-			options ? { type: "full", timeout: options.timeout } : undefined,
+			options
+				? {
+						type: "full",
+						remote: options?.remote && {
+							timeout:
+								typeof options?.remote !== "boolean"
+									? options.remote.timeout
+									: undefined,
+						},
+						ignoreMissing: true, // always return undefined instead of throwing errors on missing entries
+					}
+				: { type: "full", ignoreMissing: true },
 		);
 	}
 
@@ -633,7 +644,9 @@ export class Log<T> {
 					}
 
 					let entry = await Entry.fromMultihash<T>(this._storage, element, {
-						timeout: options?.timeout,
+						remote: {
+							timeout: options?.timeout,
+						},
 					});
 					if (!entry) {
 						throw new Error("Missing entry in join by hash: " + element);
@@ -648,7 +661,9 @@ export class Log<T> {
 						this._storage,
 						element.hash,
 						{
-							timeout: options?.timeout,
+							remote: {
+								timeout: options?.timeout,
+							},
 						},
 					);
 					if (!entry) {
@@ -720,9 +735,11 @@ export class Log<T> {
 			length?: number;
 			references?: Map<string, Entry<T>>;
 			isHead: boolean;
-			timeout?: number;
 			reset?: boolean;
 			onChange?: OnChange<T>;
+			remote?: {
+				timeout?: number;
+			};
 		},
 	): Promise<boolean> {
 		if (this.entryIndex.length > (options?.length ?? Number.MAX_SAFE_INTEGER)) {
@@ -773,7 +790,7 @@ export class Log<T> {
 					const nested =
 						options.references?.get(a) ||
 						(await Entry.fromMultihash<T>(this._storage, a, {
-							timeout: options?.timeout,
+							remote: { timeout: options?.remote?.timeout },
 						}));
 
 					if (!nested) {
