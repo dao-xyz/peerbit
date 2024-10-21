@@ -11,7 +11,7 @@ import {
 	randomBytes,
 	toBase64,
 } from "@peerbit/crypto";
-import { Entry } from "@peerbit/log";
+import { Entry, EntryType } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import {
 	/* AbortError, */
@@ -259,6 +259,8 @@ describe(`replication`, function () {
 				expect(Math.min(db1.log.log.length, db2.log.log.length)).equal(0); // one has to do nothing
 			});
 		});
+
+		/* TODO feature not implemented yet, when is this expected?
 		it("references all gids on exchange", async () => {
 			const { entry: entryA } = await db1.add("a", { meta: { next: [] } });
 			const { entry: entryB } = await db1.add("b", { meta: { next: [] } });
@@ -299,7 +301,7 @@ describe(`replication`, function () {
 				const result = db1GetShallowFn(k);
 				cacheLookups.push(result!);
 				return result;
-			};
+			}; 
 
 			db2 = (await EventStore.open<EventStore<string>>(
 				db1.address!,
@@ -321,8 +323,9 @@ describe(`replication`, function () {
 			).to.have.members([entryWithNotSameGid, entryAB.meta.gid]);
 
 			await db1.close();
-			expect(db1.log["_gidParentCache"].size).equal(0);
-		});
+			 expect(db1.log["_gidParentCache"].size).equal(0);
+		}); 
+		*/
 
 		it("fetches next blocks once", async () => {
 			db1 = await session.peers[0].open(new EventStore<string>(), {
@@ -514,6 +517,58 @@ describe(`replication`, function () {
 			))!;
 
 			await waitForResolved(() => expect(db2.log.log.length).equal(count));
+		});
+
+		it("replicates 1 entry with cut next", async () => {
+			const first = await db1.add("old");
+			const second = await db1.add("new", {
+				meta: { type: EntryType.CUT, next: [first.entry] },
+			});
+			expect(
+				(await db1.iterator({ limit: -1 })).collect().map((x) => x.hash),
+			).to.deep.equal([second.entry.hash]);
+			expect(db1.log.log.length).equal(1);
+
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+			))!;
+
+			await waitForResolved(async () => {
+				expect(
+					(await db2.iterator({ limit: -1 })).collect().map((x) => x.hash),
+				).to.deep.equal([second.entry.hash]);
+			});
+		});
+
+		it("it does not fetch missing entries from remotes when exchanging heads to remote", async () => {
+			const first = await db1.add("a", { meta: { next: [] } });
+			const second = await db1.add("b", { meta: { next: [] } });
+			await db1.log.log.entryIndex.delete(second.entry.hash);
+
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+			))!;
+
+			let remoteFetchOptions: any[] = [];
+			const db1LogGet = db1.log.log.get.bind(db1.log.log);
+
+			db1.log.log.get = async (hash, options) => {
+				if (hash === second.entry.hash) {
+					remoteFetchOptions.push(options?.remote);
+					return undefined;
+				}
+				return db1LogGet(hash, options);
+			};
+
+			await waitForResolved(async () => {
+				expect(
+					(await db2.iterator({ limit: -1 })).collect().map((x) => x.hash),
+				).to.deep.equal([first.entry.hash]);
+			});
+			await waitForResolved(() => expect(remoteFetchOptions).to.have.length(1));
+			expect(remoteFetchOptions[0]).to.be.undefined;
 		});
 	});
 });

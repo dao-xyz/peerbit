@@ -1,5 +1,4 @@
 import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
-import { Cache } from "@peerbit/cache";
 import { Entry, EntryType, type ShallowEntry } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -91,7 +90,6 @@ const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be fas
 export const createExchangeHeadsMessages = async function* (
 	log: Log<any>,
 	heads: Entry<any>[] | string[],
-	gidParentCache: Cache<Entry<any>[]>,
 ): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: EntryWithRefs<any>[] = [];
@@ -106,9 +104,7 @@ export const createExchangeHeadsMessages = async function* (
 
 		// TODO eventually we don't want to load all refs
 		// since majority of the old leader would not be interested in these anymore
-		const refs = (
-			await allEntriesWithUniqueGids(log, entry, gidParentCache)
-		).filter((x) => {
+		const refs = (await allEntriesWithUniqueGids(log, entry)).filter((x) => {
 			if (visitedHeads.has(x.hash)) {
 				return false;
 			}
@@ -146,13 +142,7 @@ export const createExchangeHeadsMessages = async function* (
 export const allEntriesWithUniqueGids = async (
 	log: Log<any>,
 	entry: Entry<any>,
-	gidParentCache: Cache<Entry<any>[]>,
 ): Promise<Entry<any>[]> => {
-	const cachedValue = gidParentCache.get(entry.hash);
-	if (cachedValue != null) {
-		return cachedValue;
-	}
-
 	// TODO optimize this
 	const map: Map<string, ShallowEntry | Entry<any>> = new Map();
 	let curr: (Entry<any> | ShallowEntry)[] = [entry];
@@ -180,9 +170,10 @@ export const allEntriesWithUniqueGids = async (
 	}
 	const value = [
 		...(await Promise.all(
-			[...map.values()].map((x) => log.entryIndex.get(x.hash)),
+			[...map.values()].map((x) =>
+				x instanceof Entry ? x : log.entryIndex.get(x.hash),
+			),
 		)),
 	].filter((x) => !!x) as Entry<any>[];
-	gidParentCache.add(entry.hash, value);
 	return value;
 };

@@ -1,6 +1,5 @@
 import { BorshError, field, variant } from "@dao-xyz/borsh";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
-import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
 	PublicSignKey,
@@ -304,7 +303,6 @@ export class SharedLog<
 		LogEvents<T> &
 		SharedLogOptions<T, D>;
 	private _closeController!: AbortController;
-	private _gidParentCache!: Cache<Entry<any>[]>;
 	private _respondToIHaveTimeout!: any;
 	private _pendingDeletes!: Map<
 		string,
@@ -1154,11 +1152,9 @@ export class SharedLog<
 		// --------------
 
 		if (options?.target !== "none") {
-			for await (const message of createExchangeHeadsMessages(
-				this.log,
-				[result.entry],
-				this._gidParentCache,
-			)) {
+			for await (const message of createExchangeHeadsMessages(this.log, [
+				result.entry,
+			])) {
 				if (options?.target === "replicators" || !options?.target) {
 					if (message.heads[0].gidRefrences.length > 0) {
 						const newAndOldLeaders = new Map(leaders);
@@ -1245,7 +1241,6 @@ export class SharedLog<
 			options?.timeUntilRoleMaturity ?? WAIT_FOR_ROLE_MATURITY;
 		this.waitForReplicatorTimeout =
 			options?.waitForReplicatorTimeout || WAIT_FOR_REPLICATOR_TIMEOUT;
-		this._gidParentCache = new Cache({ max: 100 }); // TODO choose a good number
 		this._closeController = new AbortController();
 		this._isTrustedReplicator = options?.canReplicate;
 		this.sync = options?.sync;
@@ -1688,7 +1683,6 @@ export class SharedLog<
 		}
 
 		await this.remoteBlocks.stop();
-		this._gidParentCache.clear();
 		this._pendingDeletes.clear();
 		this._pendingIHave.clear();
 		this.syncInFlightQueue.clear();
@@ -2059,7 +2053,6 @@ export class SharedLog<
 				for await (const message of createExchangeHeadsMessages(
 					this.log,
 					msg.hashes,
-					this._gidParentCache,
 				)) {
 					await this.rpc.send(message, {
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
@@ -2314,9 +2307,6 @@ export class SharedLog<
 			await this.replicate(alreadyJoined, {
 				checkDuplicates: true,
 				announce: (msg) => {
-					if (msg instanceof AllReplicatingSegmentsMessage) {
-						throw new Error("Unexpected");
-					}
 					messageToSend = msg;
 				},
 			});
@@ -2951,7 +2941,7 @@ export class SharedLog<
 		try {
 			await this.log.trim();
 
-			const uncheckedDeliver: Map<string, EntryReplicated[]> = new Map();
+			const uncheckedDeliver: Map<string, Set<string>> = new Map();
 
 			const allEntriesToDelete: EntryReplicated[] = [];
 
@@ -2994,14 +2984,14 @@ export class SharedLog<
 					}
 
 					if (!oldPeersSet?.has(currentPeer)) {
-						let arr = uncheckedDeliver.get(currentPeer);
-						if (!arr) {
-							arr = [];
-							uncheckedDeliver.set(currentPeer, arr);
+						let set = uncheckedDeliver.get(currentPeer);
+						if (!set) {
+							set = new Set();
+							uncheckedDeliver.set(currentPeer, set);
 						}
 
 						for (const entry of coordinates) {
-							arr.push(entry);
+							set.add(entry.hash);
 						}
 					}
 				}
@@ -3033,12 +3023,9 @@ export class SharedLog<
 			}
 
 			for (const [target, entries] of uncheckedDeliver) {
-				this.rpc.send(
-					new RequestMaybeSync({ hashes: entries.map((x) => x.hash) }),
-					{
-						mode: new SilentDelivery({ to: [target], redundancy: 1 }),
-					},
-				);
+				this.rpc.send(new RequestMaybeSync({ hashes: [...entries] }), {
+					mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+				});
 			}
 
 			if (allEntriesToDelete.length > 0) {
