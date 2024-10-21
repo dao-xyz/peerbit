@@ -194,6 +194,13 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [1.3.5](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.3.4...blocks-interface-v1.3.5) (2024-10-21)
+
+
+### Bug Fixes
+
+* refactor remote fetch settings ([d2c5598](https://github.com/dao-xyz/peerbit/commit/d2c559879144cbd112e614164d1888d6afe79c2e))
+
 ## [1.3.4](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.3.3...blocks-interface-v1.3.4) (2024-10-19)
 
 

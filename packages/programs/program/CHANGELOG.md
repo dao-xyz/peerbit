@@ -202,6 +202,20 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.0.6](https://github.com/dao-xyz/peerbit/compare/program-v5.0.5...program-v5.0.6) (2024-10-21)
+
+
+### Bug Fixes
+
+* refactor remote fetch settings ([d2c5598](https://github.com/dao-xyz/peerbit/commit/d2c559879144cbd112e614164d1888d6afe79c2e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.4 to ^1.3.5
+
 ## [5.0.5](https://github.com/dao-xyz/peerbit/compare/program-v5.0.4...program-v5.0.5) (2024-10-19)
 
 

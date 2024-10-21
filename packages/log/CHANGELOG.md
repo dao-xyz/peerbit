@@ -368,6 +368,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.16](https://github.com/dao-xyz/peerbit/compare/log-v4.0.15...log-v4.0.16) (2024-10-21)
+
+
+### Bug Fixes
+
+* prevent resolving blocks from remote by default ([a9702cf](https://github.com/dao-xyz/peerbit/commit/a9702cfb813f011771b68501872a64701f4e7bd4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.4 to ^1.3.5
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.3 to 2.1.4
+
 ## [4.0.15](https://github.com/dao-xyz/peerbit/compare/log-v4.0.14...log-v4.0.15) (2024-10-19)
 
 

@@ -308,6 +308,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.1](https://github.com/dao-xyz/peerbit/compare/proxy-v4.0.0...proxy-v4.0.1) (2024-10-21)
+
+
+### Bug Fixes
+
+* refactor remote fetch settings ([d2c5598](https://github.com/dao-xyz/peerbit/commit/d2c559879144cbd112e614164d1888d6afe79c2e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^5.0.5 to ^5.0.6
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.3 to 2.1.4
+
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v3.1.12...proxy-v4.0.0) (2024-10-19)
 
 

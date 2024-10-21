@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.7...shared-log-v9.2.8) (2024-10-21)
+
+
+### Bug Fixes
+
+* remove gid parent cache feature when exchanging heads ([5614dfb](https://github.com/dao-xyz/peerbit/commit/5614dfb0f292e2c5c71a07037cf95af05f9ab537))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.5 to 5.0.6
+    * @peerbit/log bumped from 4.0.15 to 4.0.16
+    * @peerbit/rpc bumped from 5.0.13 to 5.0.14
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.3 to ^2.1.4
+
 ## [9.2.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.6...shared-log-v9.2.7) (2024-10-19)
 
 
