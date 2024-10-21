@@ -6,6 +6,7 @@ import type {
 	Encoding,
 	EncryptionTemplateMaybeEncrypted,
 	Entry,
+	EntryType,
 	ShallowEntry,
 	TrimOptions,
 } from "@peerbit/log";
@@ -122,6 +123,7 @@ export class EventStore<
 			meta?: {
 				next?: Entry<any>[];
 				gidSeed?: Uint8Array;
+				type?: EntryType;
 			};
 			replicas?: AbsoluteReplicas;
 			target?: "all" | "replicators";
