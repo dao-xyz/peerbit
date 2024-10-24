@@ -22,4 +22,5 @@ export const relay = () =>
 export const listen: () => string[] | undefined = () => [
 	"/ip4/127.0.0.1/tcp/0",
 	"/ip4/127.0.0.1/tcp/0/ws",
+	"/p2p-circuit",
 ];

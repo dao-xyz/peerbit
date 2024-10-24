@@ -10,7 +10,6 @@ import type { Components } from "libp2p/components";
 
 export const transports = (): Array<(components: Components) => Transport> => [
 	circuitRelayTransport({
-		discoverRelays: 0,
 		reservationCompletionTimeout: 5000,
 	}),
 	webRTC({}),
@@ -20,3 +19,9 @@ export const transports = (): Array<(components: Components) => Transport> => [
 // applyDefaultLimit: false because of https://github.com/libp2p/js-libp2p/issues/2622
 export const relay = () =>
 	circuitRelayServer({ reservations: { applyDefaultLimit: false } });
+
+export const listen = () => [
+	"/ip4/127.0.0.1/tcp/0",
+	"/ip4/127.0.0.1/tcp/0/ws",
+	"/p2p-circuit",
+];

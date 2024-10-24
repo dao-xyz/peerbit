@@ -23,14 +23,13 @@ const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	},
 	transports: [
 		circuitRelayTransport({
-			discoverRelays: 1,
 			reservationCompletionTimeout: 5000,
 		}),
 		webRTC(),
 		webSockets({ filter: all }),
 	],
 	addresses: {
-		listen: ["/webrtc"],
+		listen: ["/webrtc", "/p2p-circuit"],
 	},
 	streamMuxers: [yamux()],
 	connectionEncrypters: [noise()],
