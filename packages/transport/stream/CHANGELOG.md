@@ -43,6 +43,23 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.1.1](https://github.com/dao-xyz/peerbit/compare/stream-v4.1.0...stream-v4.1.1) (2024-10-24)
+
+
+### Bug Fixes
+
+* return type for getPublicKey ([74b99cb](https://github.com/dao-xyz/peerbit/commit/74b99cb0f2bb9b9f5d626da044b9e74dcef1000a))
+* update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^5.1.0 to ^5.1.1
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.7 to 2.1.8
+
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.0.10...stream-v4.1.0) (2024-10-19)
 
 

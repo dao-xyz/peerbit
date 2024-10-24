@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub",
-	"version": "3.0.11",
+	"version": "3.0.12",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -74,12 +74,12 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.7"
+		"@peerbit/libp2p-test-utils": "2.1.8"
 	},
 	"dependencies": {
-		"@peerbit/stream": "4.1.0",
+		"@peerbit/stream": "4.1.1",
 		"@peerbit/logger": "1.0.3",
-		"@peerbit/pubsub-interface": "^3.1.0",
+		"@peerbit/pubsub-interface": "^3.1.1",
 		"libp2p": "^2.1.10"
 	}
 }
