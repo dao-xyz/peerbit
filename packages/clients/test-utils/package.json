@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/test-utils",
-	"version": "2.1.4",
+	"version": "2.1.5",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -69,8 +69,8 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.7",
-		"peerbit": "4.0.22"
+		"@peerbit/libp2p-test-utils": "2.1.8",
+		"peerbit": "4.0.23"
 	},
 	"devDependencies": {
 		"@peerbit/time": "2.0.7"
