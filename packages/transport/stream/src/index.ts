@@ -2000,7 +2000,7 @@ export abstract class DirectStream<
 		}
 	}
 
-	getPublicKey(hash: string): PublicSignKey {
+	getPublicKey(hash: string): PublicSignKey | undefined {
 		return this.peerKeyHashToPublicKey.get(hash);
 	}
 

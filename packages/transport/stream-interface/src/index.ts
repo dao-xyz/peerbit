@@ -25,7 +25,9 @@ export interface WaitForPeer {
 }
 
 export interface PublicKeyFromHashResolver {
-	getPublicKey(hash: string): PublicSignKey | Promise<PublicSignKey>;
+	getPublicKey(
+		hash: string,
+	): PublicSignKey | undefined | Promise<PublicSignKey | undefined>;
 }
 
 export class NotStartedError extends Error {
