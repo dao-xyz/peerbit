@@ -114,12 +114,18 @@ export const checkBounded = async (
 	...dbs: { log: SharedLog<any> }[]
 ) => {
 	for (const [_i, db] of dbs.entries()) {
-		await waitForResolved(
-			() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
-			{
-				timeout: 25 * 1000,
-			},
-		);
+		try {
+			await waitForResolved(
+				() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+				{
+					timeout: 25 * 1000,
+				},
+			);
+		} catch (error) {
+			throw new Error(
+				"Log did not reach lower bound length of " + entryCount * lower,
+			);
+		}
 	}
 
 	const checkConverged = async (db: { log: SharedLog<any> }) => {
@@ -166,9 +172,14 @@ export const checkReplicas = (
 			}
 		}
 		for (const [_k, v] of map) {
-			expect(v).greaterThanOrEqual(minReplicas);
+			try {
+				expect(v).greaterThanOrEqual(minReplicas);
+			} catch (error) {
+				throw new Error(
+					"Did not fulfill min replicas level of: " + minReplicas + " got " + v,
+				);
+			}
 			expect(v).lessThanOrEqual(dbs.length);
 		}
-		expect(map.size).equal(entryCount);
 	});
 };

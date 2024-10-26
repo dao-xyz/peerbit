@@ -608,7 +608,7 @@ describe("redundancy", () => {
 	it("only sends entries once, 2 peers dynamic", async () => {
 		db1 = await session.peers[0].open(new EventStore<string>());
 		await db1.log.replicate();
-		let count = 10;
+		let count = 100;
 		for (let i = 0; i < count; i++) {
 			await db1.add("hello " + i, { meta: { next: [] } });
 		}
@@ -632,11 +632,18 @@ describe("redundancy", () => {
 			const dataMessages1 = getReceivedHeads(message1);
 			expect(dataMessages1).to.be.empty; // no data is sent back
 		};
-		await waitForResolved(() => {
+		try {
+			await waitForResolved(() => {
+				check();
+			});
+			await delay(3000);
 			check();
-		});
-		await delay(3000);
-		check();
+		} catch (error) {
+			console.error(error);
+			throw new Error(
+				"Did not resolve all heads. Log length: " + db2.log.log.length,
+			);
+		}
 	});
 
 	it("only sends entries once, 2 peers fixed", async () => {
