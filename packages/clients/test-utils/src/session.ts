@@ -6,7 +6,7 @@ import { type ProgramClient } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
 import {
 	type DirectStream,
-	waitForPeers as waitForPeersStreams,
+	waitForNeighbour as waitForPeersStreams,
 } from "@peerbit/stream";
 import { type Libp2pOptions } from "libp2p";
 import {

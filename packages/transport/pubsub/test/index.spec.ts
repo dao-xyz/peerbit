@@ -19,7 +19,7 @@ import {
 	type UnsubcriptionEvent,
 	Unsubscribe,
 } from "@peerbit/pubsub-interface";
-import { waitForPeers } from "@peerbit/stream";
+import { waitForNeighbour } from "@peerbit/stream";
 import {
 	AcknowledgeDelivery,
 	DataMessage,
@@ -244,8 +244,8 @@ describe("pubsub", function () {
 					for (const peer of session.peers) {
 						streams.push(createMetrics(peer.services.pubsub));
 					}
-					await waitForPeers(streams[0].stream, streams[1].stream);
-					await waitForPeers(streams[1].stream, streams[2].stream);
+					await waitForNeighbour(streams[0].stream, streams[1].stream);
+					await waitForNeighbour(streams[1].stream, streams[2].stream);
 					await subscribAndWait(session, TOPIC);
 				});
 
@@ -556,7 +556,7 @@ describe("pubsub", function () {
 				for (const peer of session.peers) {
 					streams.push(createMetrics(peer.services.pubsub));
 				}
-				await waitForPeers(streams[0].stream, streams[1].stream);
+				await waitForNeighbour(streams[0].stream, streams[1].stream);
 			});
 
 			afterEach(async () => {
@@ -677,19 +677,19 @@ describe("pubsub", function () {
 					[session.peers[2], session.peers[4]],
 				]);
 
-				await waitForPeers(
+				await waitForNeighbour(
 					session.peers[0].services.pubsub,
 					session.peers[1].services.pubsub,
 				);
-				await waitForPeers(
+				await waitForNeighbour(
 					session.peers[1].services.pubsub,
 					session.peers[2].services.pubsub,
 				);
-				await waitForPeers(
+				await waitForNeighbour(
 					session.peers[2].services.pubsub,
 					session.peers[3].services.pubsub,
 				);
-				await waitForPeers(
+				await waitForNeighbour(
 					session.peers[2].services.pubsub,
 					session.peers[4].services.pubsub,
 				);
@@ -1143,8 +1143,8 @@ describe("pubsub", function () {
 				streams.push(createMetrics(peer.services.pubsub));
 			}
 
-			await waitForPeers(streams[0].stream, streams[1].stream);
-			await waitForPeers(streams[1].stream, streams[2].stream);
+			await waitForNeighbour(streams[0].stream, streams[1].stream);
+			await waitForNeighbour(streams[1].stream, streams[2].stream);
 		});
 
 		afterEach(async () => {

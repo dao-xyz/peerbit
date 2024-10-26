@@ -1,7 +1,7 @@
 import { tcp } from "@libp2p/tcp";
 import { stringifyCid } from "@peerbit/blocks-interface";
 import { TestSession } from "@peerbit/libp2p-test-utils";
-import { waitForPeers } from "@peerbit/stream";
+import { waitForNeighbour } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
 import B from "benchmark";
 import crypto from "crypto";
@@ -42,15 +42,15 @@ await session.connect([
 ]);
 
 await session.connect();
-await waitForPeers(
+await waitForNeighbour(
 	session.peers[0].services.blocks,
 	session.peers[1].services.blocks,
 );
-await waitForPeers(
+await waitForNeighbour(
 	session.peers[1].services.blocks,
 	session.peers[2].services.blocks,
 );
-await waitForPeers(
+await waitForNeighbour(
 	session.peers[2].services.blocks,
 	session.peers[3].services.blocks,
 );

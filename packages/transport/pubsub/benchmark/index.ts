@@ -1,7 +1,7 @@
 import { tcp } from "@libp2p/tcp";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { DataEvent } from "@peerbit/pubsub-interface";
-import { waitForPeers } from "@peerbit/stream";
+import { waitForNeighbour } from "@peerbit/stream";
 import B from "benchmark";
 import crypto from "crypto";
 import { DirectSub } from "../src/index.js";
@@ -45,15 +45,15 @@ await session.connect([
 
 const TOPIC = "world";
 session.peers[session.peers.length - 1].services.pubsub.subscribe(TOPIC);
-await waitForPeers(
+await waitForNeighbour(
 	session.peers[0].services.pubsub,
 	session.peers[1].services.pubsub,
 );
-await waitForPeers(
+await waitForNeighbour(
 	session.peers[1].services.pubsub,
 	session.peers[2].services.pubsub,
 );
-await waitForPeers(
+await waitForNeighbour(
 	session.peers[2].services.pubsub,
 	session.peers[3].services.pubsub,
 );
