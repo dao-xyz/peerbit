@@ -75,7 +75,6 @@ describe("index", () => {
 
 	it("dial", async () => {
 		await client1.dial(session.peers[1].getMultiaddrs());
-		expect(session.peers[1]);
 		expect(client1.getMultiaddrs().map((x) => x.toString())).to.deep.equal(
 			host1.getMultiaddrs().map((x) => x.toString()),
 		);
@@ -441,11 +440,9 @@ describe("index", () => {
 		it("getPublicKey", async () => {
 			await client1.services.pubsub.waitFor(client2.peerId);
 			expect(
-				(
-					await client1.services.pubsub.getPublicKey(
-						client2.identity.publicKey.hashcode(),
-					)
-				).equals(client2.identity.publicKey),
+				(await client1.services.pubsub.getPublicKey(
+					client2.identity.publicKey.hashcode(),
+				))!.equals(client2.identity.publicKey),
 			);
 		});
 	});

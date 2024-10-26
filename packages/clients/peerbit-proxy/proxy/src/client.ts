@@ -411,13 +411,17 @@ export class PeerbitProxyClient implements ProgramClient {
 		this.identity = (
 			await this.request<network.RESP_Identity>(new network.REQ_Identity())
 		).identity;
+
+		await this.updateAddresses();
+	}
+
+	private async updateAddresses() {
 		this._multiaddr = (
 			await this.request<network.RESP_GetMultiAddrs>(
 				new network.REQ_GetMultiaddrs(),
 			)
 		).multiaddr;
 	}
-
 	getMultiaddrs(): Multiaddr[] {
 		return this._multiaddr;
 	}
@@ -426,6 +430,7 @@ export class PeerbitProxyClient implements ProgramClient {
 		const response = await this.request<network.RESP_DIAL>(
 			new network.REQ_Dial(address),
 		);
+		await this.updateAddresses();
 		return response.value;
 	}
 
@@ -442,8 +447,9 @@ export class PeerbitProxyClient implements ProgramClient {
 	}
 
 	async start(): Promise<void> {
-		await this.messages.start();
+		this.messages.start();
 		await this.request<lifecycle.RESP_Start>(new lifecycle.REQ_Start());
+		await this.updateAddresses();
 	}
 	async stop(): Promise<void> {
 		await this.messages.stop();

@@ -230,10 +230,10 @@ export class REQ_GetPublicKey extends PubSubMessage {
 
 @variant(20)
 export class RESP_GetPublicKey extends PubSubMessage {
-	@field({ type: PublicSignKey })
-	publicKey: PublicSignKey;
+	@field({ type: option(PublicSignKey) })
+	publicKey?: PublicSignKey;
 
-	constructor(publicKey: PublicSignKey) {
+	constructor(publicKey?: PublicSignKey) {
 		super();
 		this.publicKey = publicKey;
 	}
