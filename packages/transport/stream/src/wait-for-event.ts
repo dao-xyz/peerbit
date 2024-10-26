@@ -1,4 +1,4 @@
-import { TypedEventEmitter } from "@libp2p/interface";
+import type { TypedEventEmitter } from "@libp2p/interface";
 import pDefer, { type DeferredPromise } from "p-defer";
 
 export function waitForEvent<
