@@ -37,15 +37,22 @@ import {
 	type ConnectionManagerArguments,
 	DirectStream,
 	type DirectStreamComponents,
-	waitForPeers as waitForPeerStreams,
+	waitForNeighbour,
 } from "../src/index.js";
 
 type TestSessionStream = TestSession<{ directstream: DirectStream }>;
 
+const slowDownStream = (stream: DirectStream, ms = 100) => {
+	const fn = stream.processMessage.bind(stream);
+	stream.processMessage = async (k, v, msg) => {
+		await delay(ms);
+		return fn(k, v, msg);
+	};
+};
 const connectLine = async (session: TestSessionStream) => {
 	await session.connectLine();
 	for (let i = 0; i < session.peers.length - 1; i++) {
-		await waitForPeerStreams(
+		await waitForNeighbour(
 			session.peers[i].services.directstream,
 			session.peers[i + 1].services.directstream,
 		);
@@ -281,9 +288,9 @@ describe("streams", function () {
 					[session.peers[2], session.peers[3]],
 				]);
 
-				await waitForPeerStreams(streams[0].stream, streams[1].stream);
-				await waitForPeerStreams(streams[1].stream, streams[2].stream);
-				await waitForPeerStreams(streams[2].stream, streams[3].stream);
+				await waitForNeighbour(streams[0].stream, streams[1].stream);
+				await waitForNeighbour(streams[1].stream, streams[2].stream);
+				await waitForNeighbour(streams[2].stream, streams[3].stream);
 			});
 
 			afterEach(async () => {
@@ -476,7 +483,7 @@ describe("streams", function () {
 				*/
 
 				await session.connect([[session.peers[0], session.peers[2]]]);
-				await waitForPeerStreams(streams[0].stream, streams[2].stream);
+				await waitForNeighbour(streams[0].stream, streams[2].stream);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[3].stream.components.peerId],
@@ -518,7 +525,7 @@ describe("streams", function () {
 				*/
 
 				await session.connect([[session.peers[0], session.peers[2]]]);
-				await waitForPeerStreams(streams[0].stream, streams[2].stream);
+				await waitForNeighbour(streams[0].stream, streams[2].stream);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					mode: new SeekDelivery({
@@ -621,7 +628,7 @@ describe("streams", function () {
 				*/
 
 				await session.connect([[session.peers[0], session.peers[2]]]);
-				await waitForPeerStreams(streams[0].stream, streams[2].stream);
+				await waitForNeighbour(streams[0].stream, streams[2].stream);
 
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[3].stream.components.peerId],
@@ -737,7 +744,9 @@ describe("streams", function () {
 
 				streams = collectMetrics(session);
 
-				await waitForPeerStreams(streams[0].stream, streams[1].stream);
+				await waitForNeighbour(streams[0].stream, streams[1].stream);
+				await waitForNeighbour(streams[1].stream, streams[2].stream);
+				await waitForNeighbour(streams[0].stream, streams[2].stream);
 			});
 
 			afterEach(async () => {
@@ -1217,13 +1226,18 @@ describe("streams", function () {
 							[session.peers[3], session.peers[4]],
 						]);
 
-						await waitForPeerStreams(streams[0].stream, streams[1].stream);
-						await waitForPeerStreams(streams[0].stream, streams[2].stream);
-						await waitForPeerStreams(streams[1].stream, streams[3].stream);
-						await waitForPeerStreams(streams[1].stream, streams[4].stream);
-						await waitForPeerStreams(streams[2].stream, streams[3].stream);
-						await waitForPeerStreams(streams[2].stream, streams[4].stream);
-						await waitForPeerStreams(streams[3].stream, streams[4].stream);
+						await waitForNeighbour(streams[0].stream, streams[1].stream);
+						await waitForNeighbour(streams[0].stream, streams[2].stream);
+						await waitForNeighbour(streams[1].stream, streams[3].stream);
+						await waitForNeighbour(streams[1].stream, streams[4].stream);
+						await waitForNeighbour(streams[2].stream, streams[3].stream);
+						await waitForNeighbour(streams[2].stream, streams[4].stream);
+						await waitForNeighbour(streams[3].stream, streams[4].stream);
+						streams.forEach((x) => {
+							// make sure the fastest routes are the expected one. Sometimes during startup a a longer route might be faster just because how the events are triggered
+							// adding a delay ensures that each extra route is penalized
+							slowDownStream(x.stream, 100);
+						});
 					});
 
 					afterEach(async () => {
@@ -1414,7 +1428,7 @@ describe("streams", function () {
 								}),
 						},
 					});
-					await waitForPeerStreams(
+					await waitForNeighbour(
 						session.peers[0].services.directstream,
 						session.peers[1].services.directstream,
 					);
@@ -1452,21 +1466,26 @@ describe("streams", function () {
 								}),
 						},
 					});
+
+					session.peers.map((x) =>
+						slowDownStream(x.services.directstream, 100),
+					);
+
 					await session.connect([
 						[session.peers[0], session.peers[1]],
 						[session.peers[1], session.peers[2]],
 						[session.peers[2], session.peers[3]],
 					]);
 
-					await waitForPeerStreams(
+					await waitForNeighbour(
 						session.peers[0].services.directstream,
 						session.peers[1].services.directstream,
 					);
-					await waitForPeerStreams(
+					await waitForNeighbour(
 						session.peers[1].services.directstream,
 						session.peers[2].services.directstream,
 					);
-					await waitForPeerStreams(
+					await waitForNeighbour(
 						session.peers[2].services.directstream,
 						session.peers[3].services.directstream,
 					);
@@ -1476,9 +1495,21 @@ describe("streams", function () {
 						{ mode: new SeekDelivery({ redundancy: 2 }) },
 					);
 
+					// wait for the route to be established, so that we can track how route updates are happening
+					// if we don't wait the new updated route might rewrite the old one immediately, or the old one might never be set
+					await waitForResolved(async () => {
+						const routes23From01 =
+							session.peers[2].services.directstream.routes.routes
+								.get(session.peers[1].services.directstream.publicKeyHash)
+								?.get(session.peers[3].services.directstream.publicKeyHash);
+						expect(routes23From01?.list.map((x: any) => x.hash)).to.deep.equal([
+							session.peers[3].services.directstream.publicKeyHash,
+						]);
+					});
+
 					await session.connect([[session.peers[0], session.peers[2]]]);
 
-					await waitForPeerStreams(
+					await waitForNeighbour(
 						session.peers[0].services.directstream,
 						session.peers[2].services.directstream,
 					);
@@ -1487,17 +1518,28 @@ describe("streams", function () {
 						new Uint8Array([123]),
 						{ mode: new SeekDelivery({ redundancy: 2 }) },
 					);
+					try {
+						await waitForResolved(async () => {
+							const routes23From01 =
+								session.peers[2].services.directstream.routes.routes
+									.get(session.peers[1].services.directstream.publicKeyHash)
+									?.get(session.peers[3].services.directstream.publicKeyHash);
+							expect(
+								routes23From01?.list.map((x: any) => x.hash),
+							).to.deep.equal([
+								session.peers[3].services.directstream.publicKeyHash,
+								session.peers[3].services.directstream.publicKeyHash,
+							]);
+						});
+					} catch (error) {
+						const f1 = session.peers[2].services.directstream.routes.routes
+							.get(session.peers[1].services.directstream.publicKeyHash)
+							?.get(session.peers[3].services.directstream.publicKeyHash);
 
-					await waitForResolved(async () => {
-						const routes23From01 =
-							session.peers[2].services.directstream.routes.routes
-								.get(session.peers[1].services.directstream.publicKeyHash)
-								?.get(session.peers[3].services.directstream.publicKeyHash);
-						expect(routes23From01?.list.map((x: any) => x.hash)).to.deep.equal([
-							session.peers[3].services.directstream.publicKeyHash,
-							session.peers[3].services.directstream.publicKeyHash,
-						]);
-					});
+						console.log(f1);
+						throw error;
+					}
+
 					const fanout23From01 =
 						session.peers[2].services.directstream.routes.getFanout(
 							session.peers[1].services.directstream.publicKeyHash,
@@ -1516,6 +1558,7 @@ describe("streams", function () {
 						session.peers[2].services.directstream.routes.routes
 							.get(session.peers[1].services.directstream.publicKeyHash)
 							?.get(session.peers[3].services.directstream.publicKeyHash);
+
 					expect(routes23From01?.list.map((x: any) => x.hash)).to.deep.equal([
 						session.peers[3].services.directstream.publicKeyHash,
 					]);
@@ -1644,9 +1687,9 @@ describe("streams", function () {
 				});
 				streams = collectMetrics(session);
 
-				await waitForPeerStreams(streams[0].stream, streams[1].stream);
-				await waitForPeerStreams(streams[0].stream, streams[2].stream);
-				await waitForPeerStreams(streams[1].stream, streams[2].stream);
+				await waitForNeighbour(streams[0].stream, streams[1].stream);
+				await waitForNeighbour(streams[0].stream, streams[2].stream);
+				await waitForNeighbour(streams[1].stream, streams[2].stream);
 			});
 
 			afterEach(async () => {
@@ -1726,7 +1769,12 @@ describe("streams", function () {
 				expect(streams[0].stream.peers.size).equal(2);
 
 				[...streams[0].stream.peers.values()].forEach((x) => {
-					x.outboundStream! = { ...x.outboundStream, readableLength: 2 } as any;
+					if (x.outboundStream) {
+						x.outboundStream = {
+							...x.outboundStream,
+							readableLength: 2,
+						} as any;
+					}
 				});
 				await streams[0].stream.maybePruneConnections();
 				await waitForResolved(() =>
@@ -1857,9 +1905,9 @@ describe("streams", function () {
 			});
 			streams = collectMetrics(session);
 
-			await waitForPeerStreams(streams[0].stream, streams[2].stream);
-			await waitForPeerStreams(streams[0].stream, streams[1].stream);
-			await waitForPeerStreams(streams[1].stream, streams[2].stream);
+			await waitForNeighbour(streams[0].stream, streams[2].stream);
+			await waitForNeighbour(streams[0].stream, streams[1].stream);
+			await waitForNeighbour(streams[1].stream, streams[2].stream);
 		});
 
 		afterEach(async () => {
@@ -2015,7 +2063,7 @@ describe("streams", function () {
 
 		beforeEach(async () => {
 			session = await connected(2);
-			await waitForPeerStreams(
+			await waitForNeighbour(
 				session.peers[0].services.directstream,
 				session.peers[1].services.directstream,
 			);
@@ -2496,6 +2544,7 @@ describe("join/leave", () => {
 			streams = [];
 			for (const peer of session.peers) {
 				streams.push(createMetrics(peer.services.directstream));
+				slowDownStream(peer.services.directstream, 100);
 			}
 		});
 
@@ -2538,7 +2587,9 @@ describe("join/leave", () => {
 			*/
 
 			await session.connect([[session.peers[0], session.peers[3]]]);
-			await waitForPeerStreams(streams[0].stream, streams[3].stream);
+			await waitForNeighbour(streams[0].stream, streams[3].stream);
+
+			streams.map((x) => slowDownStream(x.stream, 100));
 
 			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
@@ -2560,7 +2611,6 @@ describe("join/leave", () => {
 				).to.deep.equal([
 					{ distance: -1, hash: streams[3].stream.publicKeyHash },
 					{ distance: 0, hash: streams[1].stream.publicKeyHash },
-					{ distance: 1, hash: streams[1].stream.publicKeyHash },
 				]);
 			});
 		});
@@ -2597,9 +2647,9 @@ describe("join/leave", () => {
 		it("neighbour drop but maybe reachable", async () => {
 			// V shape
 			await session.connect([[session.peers[0], session.peers[1]]]);
-			await waitForPeerStreams(streams[0].stream, streams[1].stream);
+			await waitForNeighbour(streams[0].stream, streams[1].stream);
 			await session.connect([[session.peers[0], session.peers[2]]]);
-			await waitForPeerStreams(streams[0].stream, streams[2].stream);
+			await waitForNeighbour(streams[0].stream, streams[2].stream);
 
 			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
@@ -2646,7 +2696,7 @@ describe("join/leave", () => {
 
 			await connectLine(session);
 			await session.connect([[session.peers[0], session.peers[3]]]);
-			await waitForPeerStreams(streams[0].stream, streams[3].stream);
+			await waitForNeighbour(streams[0].stream, streams[3].stream);
 
 			await streams[0].stream.publish(new Uint8Array([123]), {
 				mode: new SeekDelivery({
@@ -3038,22 +3088,24 @@ describe("start/stop", () => {
 				directstream: (c) => new TestDirectStream(c),
 			},
 		}); // use 2 transports as this might cause issues if code is not handling multiple connections correctly
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
 
 		await stream(session, 0).stop();
 
 		await stream(session, 1).stop();
-		expect(stream(session, 0).peers.size).equal(0);
+
 		await delay(3000);
+		expect(stream(session, 0).peers.size).equal(0);
+		expect(stream(session, 1).peers.size).equal(0);
 
 		await stream(session, 0).start();
 		await delay(2000);
 		await stream(session, 1).start();
 
-		await waitFor(() => stream(session, 0).peers.size === 1);
-		await waitFor(() => stream(session, 1).peers.size === 1);
+		await waitForResolved(() => expect(stream(session, 0).peers.size).to.eq(1));
+		await waitForResolved(() => expect(stream(session, 1).peers.size).to.eq(1));
 
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
 	});
 	it("can connect after start", async () => {
 		session = await disconnected(2, {
@@ -3064,7 +3116,7 @@ describe("start/stop", () => {
 		});
 
 		await session.connect();
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
 	});
 
 	it("can connect with delay", async () => {
@@ -3074,7 +3126,7 @@ describe("start/stop", () => {
 				directstream: (c) => new TestDirectStream(c),
 			},
 		});
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
 		await session.peers[0].services.directstream.stop();
 		await session.peers[1].services.directstream.stop();
 		await waitFor(
@@ -3086,7 +3138,7 @@ describe("start/stop", () => {
 		await session.peers[1].services.directstream.start();
 		await delay(3000);
 		await session.peers[0].services.directstream.start();
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
 	});
 
 	it("can connect before start", async () => {
@@ -3101,7 +3153,7 @@ describe("start/stop", () => {
 		await stream(session, 0).start();
 		await stream(session, 1).start();
 
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
 	});
 
 	it("one peer can restart line", async () => {
@@ -3127,11 +3179,11 @@ describe("start/stop", () => {
 		await session.peers[1].start();
 
 		await session.connect([[session.peers[1], session.peers[0]]]);
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
-		await waitForPeerStreams(stream(session, 1), stream(session, 0));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 1), stream(session, 0));
 
 		/* 	await delay(13000)
-			await waitForPeerStreams(stream(session, 0), stream(session, 1)); */
+			await waitForNeighbour(stream(session, 0), stream(session, 1)); */
 	});
 
 	it("wait for only waits for reachable", async () => {
@@ -3150,8 +3202,8 @@ describe("start/stop", () => {
 			[session.peers[0], session.peers[1]],
 			[session.peers[1], session.peers[2]],
 		]);
-		await waitForPeerStreams(stream(session, 0), stream(session, 1));
-		await waitForPeerStreams(stream(session, 1), stream(session, 2));
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
+		await waitForNeighbour(stream(session, 1), stream(session, 2));
 
 		expect(
 			session.peers[0].services.directstream.routes.isReachable(

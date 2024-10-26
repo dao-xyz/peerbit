@@ -1,4 +1,9 @@
-import { TypedEventEmitter } from "@libp2p/interface";
+import {
+	MuxerClosedError,
+	StreamResetError,
+	TypedEventEmitter,
+	UnsupportedProtocolError,
+} from "@libp2p/interface";
 import type {
 	Connection,
 	Libp2pEvents,
@@ -48,19 +53,20 @@ import {
 	deliveryModeHasReceiver,
 	getMsgId,
 } from "@peerbit/stream-interface";
-import { AbortError, TimeoutError, delay, waitFor } from "@peerbit/time";
+import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { abortableSource } from "abortable-iterator";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
 import { type Pushable, pushable } from "it-pushable";
 import type { Components } from "libp2p/components";
-import pDefer from "p-defer";
+import pDefer, { type DeferredPromise } from "p-defer";
 import Queue from "p-queue";
 import { Uint8ArrayList } from "uint8arraylist";
 import { logger } from "./logger.js";
 import { type PushableLanes, pushableLanes } from "./pushable-lanes.js";
 import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
 import { BandwidthTracker } from "./stats.js";
+import { waitForEvent } from "./wait-for-event.js";
 
 export { logger };
 
@@ -89,6 +95,8 @@ export interface PeerStreamEvents {
 	"stream:inbound": CustomEvent<never>;
 	"stream:outbound": CustomEvent<never>;
 	close: CustomEvent<never>;
+	"peer:reachable": CustomEvent<PublicSignKey>;
+	"peer:unreachable": CustomEvent<PublicSignKey>;
 }
 
 const SEEK_DELIVERY_TIMEOUT = 10e3;
@@ -580,10 +588,17 @@ export abstract class DirectStream<
 		this.outboundInflightQueue = pushable({ objectMode: true });
 		pipe(this.outboundInflightQueue, async (source) => {
 			for await (const { peerId, connection } of source) {
+				if (this.stopping || this.started === false) {
+					return;
+				}
 				await this.createOutboundStream(peerId, connection);
 			}
 		}).catch((e) => {
 			logger.error("outbound inflight queue error: " + e?.toString());
+		});
+
+		this.closeController.signal.addEventListener("abort", () => {
+			this.outboundInflightQueue.return();
 		});
 
 		this.routes = new Routes(this.publicKeyHash, {
@@ -782,6 +797,12 @@ export abstract class DirectStream<
 					stream.abort(new Error("Stream was not multiplexed"));
 					return;
 				}
+
+				if (!this.started) {
+					// we closed before we could create the stream
+					stream.abort(new Error("Closed"));
+					return;
+				}
 				peer = this.addPeer(peerId, peerKey, stream.protocol!, connection.id); // TODO types
 				await peer.attachOutboundStream(stream);
 			} catch (error: any) {
@@ -790,10 +811,17 @@ export abstract class DirectStream<
 					continue; // Retry
 				}
 
+				if (error instanceof UnsupportedProtocolError) {
+					await delay(100);
+					continue; // Retry
+				}
+
 				if (
 					connection.status !== "open" ||
 					error?.message === "Muxer already closed" ||
-					error.code === "ERR_STREAM_RESET"
+					error.code === "ERR_STREAM_RESET" ||
+					error instanceof StreamResetError ||
+					error instanceof MuxerClosedError
 				) {
 					return; // fail silenty
 				}
@@ -1897,7 +1925,6 @@ export abstract class DirectStream<
 			}
 
 			sentOnce = true;
-
 			promises.push(id.waitForWrite(bytes, message.header.priority));
 		}
 		await Promise.all(promises);
@@ -1949,24 +1976,27 @@ export abstract class DirectStream<
 						? peer
 						: getPublicKeyFromPeerId(peer)
 					).hashcode();
+		const checkIsReachable = (deferred: DeferredPromise<void>) => {
+			if (options?.neighbour && !this.peers.has(hash)) {
+				return;
+			}
+
+			if (!this.routes.isReachable(this.publicKeyHash, hash, 0)) {
+				return;
+			}
+
+			deferred.resolve();
+		};
+		const abortSignals = [this.closeController.signal];
+		if (options?.signal) {
+			abortSignals.push(options.signal);
+		}
+
 		try {
-			await waitFor(
-				() => {
-					if (options?.neighbour && !this.peers.has(hash)) {
-						return false;
-					}
-
-					if (!this.routes.isReachable(this.publicKeyHash, hash, 0)) {
-						return false;
-					}
-
-					return true;
-				},
-				{
-					signal: options?.signal,
-					timeout: options?.timeout ?? 10 * 1000,
-				},
-			);
+			await waitForEvent(this, ["peer:reachable"], checkIsReachable, {
+				signals: abortSignals,
+				timeout: options?.timeout,
+			});
 		} catch (error) {
 			throw new Error(
 				"Stream to " +
@@ -1979,14 +2009,25 @@ export abstract class DirectStream<
 					this.routes.isReachable(this.publicKeyHash, hash, 0),
 			);
 		}
+
 		if (options?.neighbour) {
 			const stream = this.peers.get(hash)!;
 			try {
-				// Dontwait for readlable https://github.com/libp2p/js-libp2p/issues/2321
-				await waitFor(() => /* stream.isReadable && */ stream.isWritable, {
-					signal: options?.signal,
-					timeout: options?.timeout ?? 10 * 1000,
-				});
+				let checkIsWritable = (pDefer: DeferredPromise<void>) => {
+					// Dont wait for readlable https://github.com/libp2p/js-libp2p/issues/2321
+					if (/* stream.isReadable && */ stream.isWritable) {
+						pDefer.resolve();
+					}
+				};
+				await waitForEvent(
+					stream,
+					["stream:outbound", "stream:inbound"],
+					checkIsWritable,
+					{
+						signals: abortSignals,
+						timeout: options?.timeout,
+					},
+				);
 			} catch (error) {
 				throw new Error(
 					"Stream to " +
@@ -2064,7 +2105,7 @@ export abstract class DirectStream<
 	}
 }
 
-export const waitForPeers = async (
+export const waitForReachable = async (
 	...libs: {
 		waitFor: (peer: PeerId | PublicSignKey) => Promise<void>;
 		peerId: PeerId;
@@ -2076,6 +2117,27 @@ export const waitForPeers = async (
 				continue;
 			}
 			await libs[i].waitFor(libs[j].peerId);
+			await libs[j].waitFor(libs[i].peerId);
+		}
+	}
+};
+
+export const waitForNeighbour = async (
+	...libs: {
+		waitFor: (
+			peer: PeerId | PublicSignKey,
+			options?: { neighbour?: boolean },
+		) => Promise<void>;
+		peerId: PeerId;
+	}[]
+) => {
+	for (let i = 0; i < libs.length; i++) {
+		for (let j = 0; j < libs.length; j++) {
+			if (i === j) {
+				continue;
+			}
+			await libs[i].waitFor(libs[j].peerId, { neighbour: true });
+			await libs[j].waitFor(libs[i].peerId, { neighbour: true });
 		}
 	}
 };

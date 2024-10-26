@@ -83,13 +83,17 @@ export class Routes {
 		let prev = fromMap.get(target);
 		const routeDidExist = prev;
 		const isNewSession = !prev || session > prev.session;
+		const isOldSession = prev && session < prev.session;
+
 		if (!prev) {
 			prev = { session, remoteSession, list: [] as RelayInfo[] };
 			fromMap.set(target, prev);
 		}
 
-		if (neighbour === target) {
-			if (from === this.me) {
+		const isRelayed = from !== this.me;
+		const targetIsNeighbour = neighbour === target;
+		if (targetIsNeighbour) {
+			if (!isRelayed) {
 				// force distance to neighbour as targets to always favor directly sending to them
 				// i.e. if target is our neighbour, always assume the shortest path to them is the direct path
 				distance = -1;
@@ -104,6 +108,20 @@ export class Routes {
 		}
 
 		prev.session = Math.max(session, prev.session);
+
+		const scheduleCleanup = () => {
+			return delay(this.routeMaxRetentionPeriod + 100, { signal: this.signal })
+				.then(() => {
+					this.cleanup(from, target);
+				})
+				.catch((e) => {
+					if (e instanceof AbortError) {
+						// skip
+						return;
+					}
+					throw e;
+				});
+		};
 
 		// Update routes and cleanup all old routes that are older than latest session - some threshold
 		if (isNewSession) {
@@ -120,18 +138,10 @@ export class Routes {
 
 			// Initiate cleanup
 			if (distance !== -1 && foundNodeToExpire) {
-				delay(this.routeMaxRetentionPeriod + 100, { signal: this.signal })
-					.then(() => {
-						this.cleanup(from, target);
-					})
-					.catch((e) => {
-						if (e instanceof AbortError) {
-							// skip
-							return;
-						}
-						throw e;
-					});
+				scheduleCleanup();
 			}
+		} else if (isOldSession) {
+			scheduleCleanup();
 		}
 
 		// Modify list for new/update route
@@ -139,16 +149,18 @@ export class Routes {
 		for (const route of prev.list) {
 			if (route.hash === neighbour) {
 				// if route is faster or just as fast, update existing route
-				if (route.distance > distance) {
-					route.distance = distance;
-					route.session = session;
-					route.expireAt = undefined; // remove expiry since we updated
-					prev.list.sort((a, b) => a.distance - b.distance);
-					return isNewRemoteSession ? "restart" : "updated";
-				} else if (route.distance === distance) {
-					route.session = session;
-					route.expireAt = undefined; // remove expiry since we updated
-					return isNewRemoteSession ? "restart" : "updated";
+				if (isNewSession) {
+					if (route.distance > distance) {
+						route.distance = distance;
+						route.session = session;
+						route.expireAt = undefined; // remove expiry since we updated
+						prev.list.sort((a, b) => a.distance - b.distance);
+						return isNewRemoteSession ? "restart" : "updated";
+					} else if (route.distance === distance) {
+						route.session = session;
+						route.expireAt = undefined; // remove expiry since we updated
+						return isNewRemoteSession ? "restart" : "updated";
+					}
 				}
 
 				exist = true;
@@ -157,8 +169,20 @@ export class Routes {
 			}
 		}
 
-		prev.list.push({ distance, session, hash: neighbour });
-		prev.list.sort((a, b) => a.distance - b.distance);
+		// if not exist add new route
+		// else if it exist then we only end up here if the distance is longer than prev, this means that we want to keep prev while adding the new route
+		if (!exist || isNewSession) {
+			prev.list.push({
+				distance,
+				session,
+				hash: neighbour,
+				expireAt: isOldSession
+					? +new Date() + this.routeMaxRetentionPeriod
+					: undefined,
+			});
+			prev.list.sort((a, b) => a.distance - b.distance);
+		}
+
 		return exist ? (isNewRemoteSession ? "restart" : "updated") : "new";
 	}
 
@@ -371,10 +395,11 @@ export class Routes {
 					continue; // don't send to me or backwards
 				}
 
+				// neighbours that are links from 'from' to 'to'
 				const neighbour = this.findNeighbor(from, to);
 				if (neighbour) {
 					let foundClosest = false;
-					let redundancyModified = redundancy;
+					let added = 0;
 					for (let i = 0; i < neighbour.list.length; i++) {
 						const { distance, session, expireAt } = neighbour.list[i];
 
@@ -384,7 +409,7 @@ export class Routes {
 							continue;
 						}
 
-						if (distance >= redundancyModified) {
+						if (distance >= redundancy) {
 							break; // because neighbour listis sorted
 						}
 
@@ -403,12 +428,15 @@ export class Routes {
 							session <= neighbour.session // (<) will never be the case, but we do add routes in the tests with later session timestamps
 						) {
 							foundClosest = true;
-
 							if (distance === -1) {
-								// remove 1 from the expected redunancy since we got a route with negative 1 distance
-								// if we do not do this, we would get 2 routes if redundancy = 1, {-1, 0}, while it should just be
-								// {-1} in this case
-								redundancyModified -= 1;
+								break; // dont send to more peers if we have the direct route
+							}
+						}
+
+						if (!expireAt) {
+							// only count non-expired routes or if we are relaying then also count expired routes
+							added++;
+							if (added >= redundancy) {
 								break;
 							}
 						}

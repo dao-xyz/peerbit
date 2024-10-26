@@ -7,7 +7,7 @@ import crypto from "crypto";
 import {
 	DirectStream,
 	type DirectStreamComponents,
-	waitForPeers,
+	waitForNeighbour,
 } from "../src/index.js";
 
 // Run with "node --loader ts-node/esm ./benchmark/transfer.ts"
@@ -53,9 +53,9 @@ await session.connect([
 const stream = (i: number): TestStreamImpl =>
 	session.peers[i].services.directstream;
 
-await waitForPeers(stream(0), stream(1));
-await waitForPeers(stream(1), stream(2));
-await waitForPeers(stream(2), stream(3));
+await waitForNeighbour(stream(0), stream(1));
+await waitForNeighbour(stream(1), stream(2));
+await waitForNeighbour(stream(2), stream(3));
 
 stream(0).publish(new Uint8Array([123]), {
 	mode: new SeekDelivery({
