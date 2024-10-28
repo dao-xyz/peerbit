@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.1.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.1.0...stream-interface-v5.1.1) (2024-10-28)
+
+
+### Bug Fixes
+
+* return type for getPublicKey ([74b99cb](https://github.com/dao-xyz/peerbit/commit/74b99cb0f2bb9b9f5d626da044b9e74dcef1000a))
+
 ## [5.1.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.0.5...stream-interface-v5.1.0) (2024-10-19)
 
 
