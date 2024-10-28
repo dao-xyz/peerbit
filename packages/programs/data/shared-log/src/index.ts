@@ -2377,13 +2377,17 @@ export class SharedLog<
 		const coordinates = Array.isArray(cursor)
 			? cursor
 			: await this.createCoordinates(cursor.entry, cursor.minReplicas);
+		const minReplicas = coordinates.length;
 		const leaders = await this.findLeaders(coordinates, options);
 		const isLeader = leaders.has(this.node.identity.publicKey.hashcode());
 
 		if (isLeader || options?.persist) {
 			let assignToRangeBoundary: boolean | undefined = undefined;
 			if (options?.persist?.prev) {
-				assignToRangeBoundary = shouldAssigneToRangeBoundary(leaders);
+				assignToRangeBoundary = shouldAssigneToRangeBoundary(
+					leaders,
+					minReplicas,
+				);
 				const prev = options.persist.prev;
 				// dont do anthing if nothing has changed
 				if (prev.length > 0) {
@@ -2410,7 +2414,7 @@ export class SharedLog<
 						entry,
 					},
 					{
-						assignToRangeBoundary: assignToRangeBoundary,
+						assignToRangeBoundary,
 					},
 				));
 		}
@@ -2568,7 +2572,10 @@ export class SharedLog<
 	) {
 		let assignedToRangeBoundary =
 			options?.assignToRangeBoundary ??
-			shouldAssigneToRangeBoundary(properties.leaders);
+			shouldAssigneToRangeBoundary(
+				properties.leaders,
+				properties.coordinates.length,
+			);
 
 		for (const coordinate of properties.coordinates) {
 			await this.entryCoordinatesIndex.put(

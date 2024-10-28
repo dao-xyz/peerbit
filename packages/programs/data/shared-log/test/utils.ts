@@ -123,7 +123,10 @@ export const checkBounded = async (
 			);
 		} catch (error) {
 			throw new Error(
-				"Log did not reach lower bound length of " + entryCount * lower,
+				"Log did not reach lower bound length of " +
+					entryCount * lower +
+					" got " +
+					db.log.log.length,
 			);
 		}
 	}

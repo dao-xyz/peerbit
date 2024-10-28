@@ -1314,8 +1314,6 @@ describe("replication degree", () => {
 			},
 		))!;
 
-		const fff = await db1.log.entryCoordinatesIndex.iterate().all();
-		console.log(fff.length);
 		await waitForResolved(() => expect(db1.log.log.length).equal(0));
 		await waitForResolved(() => expect(db2.log.log.length).equal(1));
 	});
@@ -1665,10 +1663,10 @@ describe("replication degree", () => {
 
 			expect(
 				indexedDb1.filter((x) => x.value.assignedToRangeBoundary),
-			).to.have.length(0);
+			).to.have.length(4);
 			expect(
 				indexedDb2.filter((x) => x.value.assignedToRangeBoundary),
-			).to.have.length(0);
+			).to.have.length(4);
 		});
 	});
 
@@ -2747,6 +2745,74 @@ describe("replication degree", () => {
 			db1.log.onReplicationChange = distribute;
 			await db3.close();
 			await checkBounded(entryCount, 1, 1, db1, db2);
+		});
+
+		it("a smaller replicator join leave joins", async () => {
+			const db1 = await session.peers[0].open(new EventStore<string>(), {
+				args: {
+					replicate: {
+						factor: 1, // this  replicator will get all entries
+					},
+					replicas: {
+						min: 2, // we set min replicas to 2 to ensure second node should have all entries no matter what
+					},
+					timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+				},
+			});
+			let entryCount = 100;
+			for (let i = 0; i < entryCount; i++) {
+				await db1.add("hello" + i, { meta: { next: [] } });
+			}
+
+			let db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicate: {
+							offset: 0.1,
+							factor: 0.1, // some small range
+						},
+						replicas: {
+							min: 2,
+						},
+						timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+					},
+				},
+			))!;
+
+			await waitForResolved(() =>
+				expect(db1.log.log.length).to.be.equal(entryCount),
+			);
+			await waitForResolved(() =>
+				expect(db2.log.log.length).to.be.equal(entryCount),
+			);
+
+			await db2.close();
+			db2 = (await EventStore.open<EventStore<string>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicate: {
+							factor: 0.2, // some small range
+							offset: 0.2, // but on another place
+						},
+						replicas: {
+							min: 2,
+						},
+						timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+					},
+				},
+			))!;
+
+			await waitForResolved(() =>
+				expect(db1.log.log.length).to.be.equal(entryCount),
+			);
+
+			await waitForResolved(() =>
+				expect(db2.log.log.length).to.be.equal(entryCount),
+			);
 		});
 	});
 

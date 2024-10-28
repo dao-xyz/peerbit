@@ -55,8 +55,9 @@ export const shouldAssigneToRangeBoundary = (
 				}
 		  >
 		| false,
+	minReplicas: number,
 ) => {
-	let assignedToRangeBoundary = leaders === false || leaders.size === 0;
+	let assignedToRangeBoundary = leaders === false || leaders.size < minReplicas;
 	if (!assignedToRangeBoundary && leaders) {
 		for (const [_, { intersecting }] of leaders) {
 			if (!intersecting) {
@@ -1227,7 +1228,6 @@ export const toRebalance = (
 		// entry is not sufficiently replicated, and we are to still keep it
 		return new Or(ors);
 	};
-
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			const iterator = index.iterate({
