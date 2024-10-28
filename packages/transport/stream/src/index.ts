@@ -792,7 +792,12 @@ export abstract class DirectStream<
 			}
 
 			try {
-				stream = await connection.newStream(this.multicodecs);
+				stream = await connection.newStream(this.multicodecs, {
+					// TODO this property seems necessary, together with waitFor isReadable when making sure two peers are conencted before talking.
+					// research whether we can do without this so we can push data without beeing able to send
+					// more info here https://github.com/libp2p/js-libp2p/issues/2321
+					negotiateFully: true,
+				});
 				if (stream.protocol == null) {
 					stream.abort(new Error("Stream was not multiplexed"));
 					return;
@@ -2014,8 +2019,7 @@ export abstract class DirectStream<
 			const stream = this.peers.get(hash)!;
 			try {
 				let checkIsWritable = (pDefer: DeferredPromise<void>) => {
-					// Dont wait for readlable https://github.com/libp2p/js-libp2p/issues/2321
-					if (/* stream.isReadable && */ stream.isWritable) {
+					if (stream.isReadable && stream.isWritable) {
 						pDefer.resolve();
 					}
 				};
