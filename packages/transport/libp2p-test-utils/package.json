@@ -58,12 +58,12 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"@libp2p/tcp": "^10.0.10",
-		"@libp2p/webrtc": "^5.0.14",
-		"@libp2p/websockets": "^9.0.9",
-		"@libp2p/identify": "^3.0.8",
-		"@libp2p/circuit-relay-v2": "^3.0.0",
-		"libp2p": "^2.1.10"
+		"@libp2p/tcp": "^10.0.11",
+		"@libp2p/webrtc": "^5.0.16",
+		"@libp2p/websockets": "^9.0.11",
+		"@libp2p/identify": "^3.0.10",
+		"@libp2p/circuit-relay-v2": "^3.1.0",
+		"libp2p": "^2.2.1"
 	},
 	"scripts": {
 		"clean": "aegir clean",
