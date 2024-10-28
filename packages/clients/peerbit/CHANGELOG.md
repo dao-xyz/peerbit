@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.0.24](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.23...peerbit-v4.0.24) (2024-10-28)
+
+
+### Bug Fixes
+
+* update bootstrap address ([1a3d976](https://github.com/dao-xyz/peerbit/commit/1a3d9762a240c9e189c69c1003d5a1c7a314c359))
+
 ## [4.0.23](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.22...peerbit-v4.0.23) (2024-10-28)
 
 
