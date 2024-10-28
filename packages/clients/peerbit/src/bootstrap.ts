@@ -5,7 +5,7 @@ export const resolveBootstrapAddresses = async (
 	return (
 		await (
 			await fetch(
-				`https://bootstrap.peerchecker.com/bootstrap${v ? "-" + v : ""}.env`,
+				`https://bootstrap.peerbit.org/bootstrap${v ? "-" + v : ""}.env`,
 			)
 		).text()
 	)
