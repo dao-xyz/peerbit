@@ -313,6 +313,23 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.0.23](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.22...peerbit-v4.0.23) (2024-10-28)
+
+
+### Bug Fixes
+
+* update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.6 to 5.0.7
+    * @peerbit/pubsub bumped from ^3.0.11 to ^3.0.12
+    * @peerbit/blocks bumped from ^2.1.6 to ^2.1.7
+    * @peerbit/indexer-sqlite3 bumped from ^1.1.1 to ^1.1.2
+
 ## [4.0.22](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.21...peerbit-v4.0.22) (2024-10-21)
 
 

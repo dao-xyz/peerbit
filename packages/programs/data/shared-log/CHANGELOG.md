@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [9.2.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.8...shared-log-v9.2.9) (2024-10-28)
+
+
+### Bug Fixes
+
+* correctly handle unreplicated content where new participants join with non-covering segments ([56ea8ee](https://github.com/dao-xyz/peerbit/commit/56ea8eeb88e83c9998d3ff2ce4d17a5c4911074e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.6 to 5.0.7
+    * @peerbit/log bumped from 4.0.16 to 4.0.17
+    * @peerbit/rpc bumped from 5.0.14 to 5.0.15
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.4 to ^2.1.5
+
 ## [9.2.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.7...shared-log-v9.2.8) (2024-10-21)
 
 

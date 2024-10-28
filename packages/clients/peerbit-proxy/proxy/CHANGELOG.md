@@ -308,6 +308,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v4.0.1...proxy-v5.0.0) (2024-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* handle undefined results for getPublicKey
+
+### Bug Fixes
+
+* handle undefined results for getPublicKey ([34b8c7b](https://github.com/dao-xyz/peerbit/commit/34b8c7bb6d96a8fc42036bb322304f5d6795d2df))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^5.0.6 to ^5.0.7
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.4 to 2.1.5
+
 ## [4.0.1](https://github.com/dao-xyz/peerbit/compare/proxy-v4.0.0...proxy-v4.0.1) (2024-10-21)
 
 
