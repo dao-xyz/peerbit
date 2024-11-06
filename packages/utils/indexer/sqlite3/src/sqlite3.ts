@@ -40,7 +40,8 @@ let create = async (directory?: string) => {
 			fileMustExist: false,
 			readonly: false /* , verbose: (message) => console.log(message)  */,
 		});
-		/* db.pragma('journal_mode = WAL'); */
+		// TODO this test makes things faster, but for benchmarking it might yield wierd results where some runs are faster than others
+		db.pragma("journal_mode = WAL");
 		db.pragma("foreign_keys = on");
 		db.defaultSafeIntegers(true);
 	};

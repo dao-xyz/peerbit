@@ -54,17 +54,31 @@ export type BindableValue =
 	| ArrayBuffer
 	| null;
 
+export const u64ToI64 = (u64: bigint | number) => {
+	try {
+		return (typeof u64 === "number" ? BigInt(u64) : u64) - 9223372036854775808n;
+	} catch (error) {
+		throw error;
+	}
+};
+export const i64ToU64 = (i64: number | bigint) =>
+	(typeof i64 === "number" ? BigInt(i64) : i64) + 9223372036854775808n;
+
 export const convertToSQLType = (
 	value: boolean | bigint | string | number | Uint8Array,
 	type?: FieldType,
 ): BindableValue => {
 	// add bigint when https://github.com/TryGhost/node-sqlite3/pull/1501 fixed
 
-	if (type === "bool") {
-		if (value != null) {
+	if (value != null) {
+		if (type === "bool") {
 			return value ? 1 : 0;
 		}
-		return null;
+		if (type === "u64") {
+			// shift to fit in i64
+
+			return u64ToI64(value as number | bigint);
+		}
 	}
 	return value as BindableValue;
 };
@@ -101,9 +115,15 @@ export const convertFromSQLType = (
 			: nullAsUndefined(value);
 	}
 	if (type === "u64") {
-		return typeof value === "number" || typeof value === "string"
-			? BigInt(value)
-			: nullAsUndefined(value);
+		if (typeof value === "number" || typeof value === "bigint") {
+			return i64ToU64(value as number | bigint); // TODO is not always value type bigint?
+		}
+		if (value == null) {
+			return nullAsUndefined(value);
+		}
+		throw new Error(
+			`Unexpected value type for value ${value} expected number or bigint for u64 field`,
+		);
 	}
 	return nullAsUndefined(value);
 };
@@ -145,7 +165,8 @@ export interface Table {
 	name: string;
 	ctor: Constructor<any>;
 	primary: string | false;
-	primaryIndex: number;
+	primaryIndex: number; // can be -1 for nested tables TODO make it more clear
+	primaryField?: SQLField; // can be undefined for nested tables TODO make it required
 	path: string[];
 	parentPath: string[] | undefined; // field path of the parent where this table originates from
 	fields: SQLField[];
@@ -195,6 +216,7 @@ export const getSQLTable = (
 			ctor,
 			parentPath: path,
 			path: newPath,
+			primaryField: fields.find((x) => x.isPrimary)!,
 			primary,
 			primaryIndex: fields.findIndex((x) => x.isPrimary),
 			children: dependencies,
@@ -1254,8 +1276,16 @@ export const convertSumRequestToQuery = (
 		tables,
 		table,
 	);
+
+	const inlineName = getInlineTableFieldName(request.key);
+	const field = table.fields.find((x) => x.name === inlineName);
+	if (unwrapNestedType(field!.from!.type) === "u64") {
+		throw new Error("Summing is not supported for u64 fields");
+	}
+	const column = `${table.name}.${getInlineTableFieldName(request.key)}`;
+
 	return {
-		sql: `SELECT SUM(${table.name}.${getInlineTableFieldName(request.key)}) as sum FROM ${table.name} ${query}`,
+		sql: `SELECT SUM(${column}) as sum FROM ${table.name} ${query}`,
 		bindable,
 	};
 };
@@ -1281,7 +1311,10 @@ export const convertSearchRequestToQuery = (
 	request: types.IterateOptions | undefined,
 	tables: Map<string, Table>,
 	rootTables: Table[],
-	shape: types.Shape | undefined,
+	options?: {
+		shape?: types.Shape | undefined;
+		stable?: boolean;
+	},
 ): { sql: string; bindable: any[] } => {
 	let unionBuilder = "";
 	let orderByClause: string = "";
@@ -1289,7 +1322,7 @@ export const convertSearchRequestToQuery = (
 	let matchedOnce = false;
 	let lastError: Error | undefined = undefined;
 
-	const selectsPerTable = selectAllFieldsFromTables(rootTables, shape);
+	const selectsPerTable = selectAllFieldsFromTables(rootTables, options?.shape);
 	let bindableBuilder: any[] = [];
 	for (const [i, table] of rootTables.entries()) {
 		const { selects, joins: joinFromSelect } = selectsPerTable[i];
@@ -1301,6 +1334,10 @@ export const convertSearchRequestToQuery = (
 				tables,
 				table,
 				joinFromSelect,
+				[],
+				{
+					stable: options?.stable,
+				},
 			);
 			unionBuilder += `${unionBuilder.length > 0 ? " UNION ALL " : ""} ${selectQuery} ${query}`;
 			orderByClause =
@@ -1358,6 +1395,9 @@ const convertRequestToQuery = <
 	table: Table,
 	extraJoin?: Map<string, JoinTable>,
 	path: string[] = [],
+	options?: {
+		stable?: boolean;
+	},
 ): R => {
 	let whereBuilder = "";
 	let bindableBuilder: any[] = [];
@@ -1388,8 +1428,16 @@ const convertRequestToQuery = <
 	}
 
 	if (isIterateRequest(request, type)) {
-		if (request?.sort) {
-			let sortArr = Array.isArray(request.sort) ? request.sort : [request.sort];
+		let sort = request?.sort;
+		if (!sort && options?.stable) {
+			sort =
+				table.primary && path.length === 0
+					? [{ key: [table.primary], direction: types.SortDirection.ASC }]
+					: undefined;
+		}
+
+		if (sort) {
+			let sortArr = Array.isArray(sort) ? sort : [sort];
 			if (sortArr.length > 0) {
 				orderByBuilder = "";
 				let once = false;
@@ -1793,7 +1841,13 @@ const convertStateFieldQuery = (
 			} else {
 				throw new Error(`Unsupported compare type: ${query.compare}`);
 			}
-			bindable.push(query.value.value);
+
+			if (unwrapNestedType(tableField.from!.type) === "u64") {
+				// shift left because that is how we insert the value
+				bindable.push(u64ToI64(query.value.value));
+			} else {
+				bindable.push(query.value.value);
+			}
 		}
 	} else if (query instanceof types.IsNull) {
 		where = `${keyWithTable} IS NULL`;
