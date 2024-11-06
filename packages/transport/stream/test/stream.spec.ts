@@ -3239,6 +3239,25 @@ describe("start/stop", () => {
 		await session.peers[0].stop();
 		await session.peers[0].start();
 	});
+
+	it("streams are pruned on disconnect", async () => {
+		// https://github.com/libp2p/js-libp2p/issues/2794
+		session = await disconnected(2, {
+			services: {
+				relay: null,
+				directstream: (c: any) => new TestDirectStream(c),
+			},
+		} as any);
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await waitForResolved(() =>
+			expect(session.peers[0].services.directstream.peers.size).to.equal(1),
+		);
+
+		await session.peers[0].hangUp(session.peers[1].peerId);
+		await waitForResolved(() =>
+			expect(session.peers[0].services.directstream.peers.size).to.equal(0),
+		);
+	});
 });
 
 describe("multistream", () => {

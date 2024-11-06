@@ -88,11 +88,22 @@ export class TestSession<T> {
 			const result = async () => {
 				const definedOptions: Libp2pOptions<T> | undefined =
 					(options as any)?.[i] || options;
+
+				const services: any = {
+					identify: identify(),
+					...definedOptions?.services,
+				};
+				if (definedOptions?.services?.relay !== null) {
+					services.relay = relay();
+				} else {
+					delete services.relay;
+				}
+
 				const node = await createLibp2p<T>({
 					addresses: {
 						listen: listen(),
 					},
-					connectionManager: definedOptions?.connectionManager ?? {},
+					connectionManager: definedOptions?.connectionManager,
 					privateKey: definedOptions?.privateKey,
 					datastore: definedOptions?.datastore,
 					transports: definedOptions?.transports ?? transports(),
@@ -100,11 +111,7 @@ export class TestSession<T> {
 						enabled: false,
 					},
 
-					services: {
-						relay: relay(),
-						identify: identify(),
-						...definedOptions?.services,
-					} as any,
+					services,
 					connectionEncrypters: [noise()],
 					streamMuxers: definedOptions?.streamMuxers || [yamux()],
 					start: definedOptions?.start,
