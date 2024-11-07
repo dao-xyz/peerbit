@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.1.2](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.1.1...indexer-simple-v1.1.2) (2024-11-07)
+
+
+### Bug Fixes
+
+* iterate query optional ([e6a267a](https://github.com/dao-xyz/peerbit/commit/e6a267a6ccb7dbc34c33b30a19c0a31d5d5318fd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^1.1.1 to ^2.0.0
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.1.1 to ^1.1.2
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.1.0...indexer-simple-v1.1.1) (2024-10-19)
 
 
