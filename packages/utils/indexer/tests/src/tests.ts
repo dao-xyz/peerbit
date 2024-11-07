@@ -142,7 +142,10 @@ const assertIteratorIsDone = async (iterator: IndexIterator<any, any>) => {
 export const tests = (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
-	shapingSupported: boolean,
+	properties: {
+		shapingSupported: boolean;
+		u64SumSupported: boolean;
+	},
 ) => {
 	return describe("index", () => {
 		let store: Index<any, any>;
@@ -494,10 +497,10 @@ export const tests = (
 					@field({ type: "u64" })
 					id: bigint;
 
-					@field({ type: "string" })
-					value: string;
+					@field({ type: "u64" })
+					value: bigint;
 
-					constructor(properties: { id: bigint; value: string }) {
+					constructor(properties: { id: bigint; value: bigint }) {
 						this.id = properties.id;
 						this.value = properties.value;
 					}
@@ -507,10 +510,10 @@ export const tests = (
 					const { store } = await setup({ schema: DocumentBigintId });
 
 					// make the id less than 2^53, but greater than u32 max
-					const id = BigInt(2 ** 53 - 1);
+					const id = BigInt(2 ** 63 - 1);
 					const doc = new DocumentBigintId({
 						id,
-						value: "Hello world",
+						value: id,
 					});
 					await testIndex(store, doc);
 				});
@@ -2212,7 +2215,7 @@ export const tests = (
 						);
 						expect(results).to.have.length(4);
 						for (const result of results) {
-							if (shapingSupported) {
+							if (properties.shapingSupported) {
 								expect(Object.keys(result.value)).to.have.length(1);
 								expect(result.value["id"]).to.exist;
 							} else {
@@ -2238,7 +2241,7 @@ export const tests = (
 							if (arr.length > 0) {
 								for (const element of arr) {
 									expect(element.number).to.exist;
-									if (shapingSupported) {
+									if (properties.shapingSupported) {
 										expect(Object.keys(element)).to.have.length(1);
 									}
 								}
@@ -2314,7 +2317,7 @@ export const tests = (
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal("2");
 
-						if (shapingSupported) {
+						if (properties.shapingSupported) {
 							expect(shapedResults[0].value["nested"]).to.be.undefined;
 						} else {
 							expect(shapedResults[0].value["nested"]).to.exist;
@@ -2366,7 +2369,7 @@ export const tests = (
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal(d2.id);
 
-						if (shapingSupported) {
+						if (properties.shapingSupported) {
 							expect({ ...shapedResults[0].value.nested }).to.deep.equal({
 								bool: false,
 							});
@@ -2466,7 +2469,7 @@ export const tests = (
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal("2");
 
-						if (shapingSupported) {
+						if (properties.shapingSupported) {
 							expect(shapedResults[0].value["nested"]).to.be.undefined;
 						} else {
 							expect(shapedResults[0].value["nested"]).to.exist;
@@ -2519,7 +2522,7 @@ export const tests = (
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal(d2.id);
 
-						if (shapingSupported) {
+						if (properties.shapingSupported) {
 							expect({ ...shapedResults[0].value.nested }).to.deep.equal({
 								bool: false,
 							});
@@ -2596,7 +2599,7 @@ export const tests = (
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal("2");
 
-						if (shapingSupported) {
+						if (properties.shapingSupported) {
 							expect(shapedResults[0].value["nested"]).to.be.undefined;
 						} else {
 							expect(shapedResults[0].value["nested"]).to.exist;
@@ -2638,7 +2641,7 @@ export const tests = (
 						expect(shapedResults).to.have.length(1);
 						expect(shapedResults[0].value.id).to.equal(d2.id);
 
-						if (shapingSupported) {
+						if (properties.shapingSupported) {
 							expect({ ...shapedResults[0].value.nested[0] }).to.deep.equal({
 								bool: false,
 							});
@@ -2690,9 +2693,9 @@ export const tests = (
 		});
 
 		describe("sort", () => {
-			const put = async (id: number) => {
+			const put = async (id: number, stringId?: string) => {
 				const doc = new Document({
-					id: String(id),
+					id: stringId ?? String(id),
 					name: String(id),
 					number: BigInt(id),
 					tags: [],
@@ -2768,7 +2771,7 @@ export const tests = (
 				await put(0);
 				await put(1);
 				await put(2);
-				{
+				const f1 = async () => {
 					const iterator = store.iterate({
 						query: [],
 						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
@@ -2777,8 +2780,8 @@ export const tests = (
 					const next = await iterator.next(3);
 					expect(next.map((x) => x.value.name)).to.deep.equal(["0", "1", "2"]);
 					await assertIteratorIsDone(iterator);
-				}
-				{
+				};
+				const f2 = async () => {
 					const iterator = store.iterate({
 						query: [],
 						sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
@@ -2787,15 +2790,104 @@ export const tests = (
 					const next = await iterator.next(3);
 					expect(next.map((x) => x.value.name)).to.deep.equal(["2", "1", "0"]);
 					await assertIteratorIsDone(iterator);
-				}
+				};
+				await f1();
+				await f2();
 			});
+
+			it("sorts by order", async () => {
+				await put(0);
+				await put(1);
+				await put(2);
+				const f1 = async () => {
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
+					const next = await iterator.next(3);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["0", "1", "2"]);
+					await assertIteratorIsDone(iterator);
+				};
+				const f2 = async () => {
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
+					const next = await iterator.next(3);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["2", "1", "0"]);
+					await assertIteratorIsDone(iterator);
+				};
+				const f3 = async () => {
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
+					let next = await iterator.next(2);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["0", "1"]);
+					next = await iterator.next(1);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["2"]);
+					await assertIteratorIsDone(iterator);
+				};
+				const f4 = async () => {
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
+					let next = await iterator.next(2);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["2", "1"]);
+					next = await iterator.next(1);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["0"]);
+					await assertIteratorIsDone(iterator);
+				};
+				const f5 = async () => {
+					const iterator = store.iterate({
+						query: [],
+						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+					});
+					expect(iterator.done()).to.be.undefined;
+					let next = await iterator.next(1);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["0"]);
+					next = await iterator.next(1);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["1"]);
+					next = await iterator.next(1);
+					expect(next.map((x) => x.value.name)).to.deep.equal(["2"]);
+					await assertIteratorIsDone(iterator);
+				};
+				await f1();
+				await f2();
+				await f3();
+				await f4();
+				await f5();
+			});
+
+			/* it("no sort is stable", async () => {
+				// TODO this test is actually not a good predictor of stability
+
+				const insertCount = 500;
+				for (let i = 0; i < insertCount; i++) {
+					await put(i, uuid());
+				}
+
+				const resolvedValues: Set<number> = new Set()
+				const batchSize = 123;
+				const iterator = store.iterate();
+				while (!iterator.done()) {
+					const next = await iterator.next(batchSize);
+					next.map((x) => resolvedValues.add(Number(x.value.number)));
+				}
+				expect(resolvedValues.size).to.equal(insertCount);
+			}); */
 
 			it("strings", async () => {
 				await put(0);
 				await put(1);
 				await put(2);
 
-				const iterator = await store.iterate({
+				const iterator = store.iterate({
 					query: [],
 					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
 				});
@@ -3107,24 +3199,70 @@ export const tests = (
 		});
 
 		describe("sum", () => {
+			class SummableDocument {
+				@field({ type: "string" })
+				id: string;
+
+				@field({ type: option("u32") })
+				value?: number;
+
+				constructor(opts: SummableDocument) {
+					this.id = opts.id;
+					this.value = opts.value;
+				}
+			}
 			it("it returns sum", async () => {
-				await setupDefault();
-				const sum = await store.sum({ key: "number" });
+				await setup({ schema: SummableDocument });
+				await store.put(
+					new SummableDocument({
+						id: "1",
+						value: 1,
+					}),
+				);
+				await store.put(
+					new SummableDocument({
+						id: "2",
+						value: 2,
+					}),
+				);
+				const sum = await store.sum({ key: "value" });
 				typeof sum === "bigint"
-					? expect(sum).to.equal(6n)
-					: expect(sum).to.equal(6);
+					? expect(sum).to.equal(3n)
+					: expect(sum).to.equal(3);
 			});
 
+			if (properties.u64SumSupported) {
+				it("u64", async () => {
+					await setupDefault();
+					const sum = await store.sum({ key: "number" });
+					typeof sum === "bigint"
+						? expect(sum).to.equal(6n)
+						: expect(sum).to.equal(6);
+				});
+			}
+
 			it("it returns sum with query", async () => {
-				await setupDefault();
+				await setup({ schema: SummableDocument });
+				await store.put(
+					new SummableDocument({
+						id: "1",
+						value: 1,
+					}),
+				);
+				await store.put(
+					new SummableDocument({
+						id: "2",
+						value: 2,
+					}),
+				);
+
 				const sum = await store.sum({
-					key: "number",
+					key: "value",
 					query: [
-						new StringMatch({
-							key: "tags",
-							value: "world",
-							method: StringMatchMethod.contains,
-							caseInsensitive: true,
+						new IntegerCompare({
+							key: "value",
+							compare: Compare.Greater,
+							value: 1,
 						}),
 					],
 				});

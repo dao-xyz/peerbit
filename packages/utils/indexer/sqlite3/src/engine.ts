@@ -13,9 +13,11 @@ import {
 	buildJoin,
 	convertCountRequestToQuery,
 	convertDeleteRequestToQuery,
+	convertFromSQLType,
 	convertSearchRequestToQuery,
 	/* getTableName, */
 	convertSumRequestToQuery,
+	convertToSQLType,
 	escapeColumnName,
 	generateSelectQuery,
 	getInlineTableFieldName,
@@ -251,9 +253,13 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				table,
 				options?.shape,
 			);
-			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? `;
+			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? limit 1`;
 			const stmt = await this.properties.db.prepare(sql, sql);
-			const rows = await stmt.get([id.key]);
+			const rows = await stmt.get([
+				table.primaryField?.from?.type
+					? convertToSQLType(id.key, table.primaryField.from.type)
+					: id.key,
+			]);
 			if (!rows) {
 				continue;
 			}
@@ -324,12 +330,6 @@ export class SQLLiteIndex<T extends Record<string, any>>
 	): types.IndexIterator<T, S> {
 		// create a sql statement where the offset and the limit id dynamic and can be updated
 		// TODO don't use offset but sort and limit 'next' calls by the last value of the sort
-		let { sql: sqlFetch, bindable } = convertSearchRequestToQuery(
-			request,
-			this.tables,
-			this._rootTables,
-			options?.shape,
-		);
 
 		/* 	const totalCountKey = "count"; */
 		/* const sqlTotalCount = convertCountRequestToQuery(new types.CountRequest({ query: request.query }), this.tables, this.tables.get(this.rootTableName)!)
@@ -342,11 +342,25 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 		let stmt: Statement;
 		let kept: number | undefined = undefined;
+		let bindable: any[] = [];
+		let sqlFetch: string | undefined = undefined;
 
 		/* let totalCount: undefined | number = undefined; */
-		const fetch = async (amount: number) => {
+		const fetch = async (amount: number | "all") => {
 			kept = undefined;
 			if (!once) {
+				let { sql, bindable: toBind } = convertSearchRequestToQuery(
+					request,
+					this.tables,
+					this._rootTables,
+					{
+						shape: options?.shape,
+						stable: typeof amount === "number", // if we are to fetch all, we dont need stable sorting
+					},
+				);
+				sqlFetch = sql;
+				bindable = toBind;
+
 				stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
 				// stmt.reset?.(); // TODO dont invoke reset if not needed
 				/* countStmt.reset?.(); */
@@ -360,12 +374,11 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			}
 
 			once = true;
-			const offsetStart = offset;
 
 			const allResults: Record<string, any>[] = await stmt.all([
 				...bindable,
-				amount,
-				offsetStart,
+				amount === "all" ? Number.MAX_SAFE_INTEGER : amount,
+				offset,
 			]);
 
 			let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
@@ -389,9 +402,12 @@ export class SQLLiteIndex<T extends Record<string, any>>
 						return {
 							value,
 							id: types.toId(
-								row[
-									getTablePrefixedField(selectedTable, this.primaryKeyString)
-								],
+								convertFromSQLType(
+									row[
+										getTablePrefixedField(selectedTable, this.primaryKeyString)
+									],
+									selectedTable.primaryField!.from!.type,
+								),
 							),
 						};
 					}),
@@ -410,7 +426,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				iterator.kept = 0;
 			} */
 
-			if (results.length < amount) {
+			if (amount === "all" || results.length < amount) {
 				hasMore = false;
 				await this.clearupIterator(requestId);
 				clearTimeout(iterator.timeout);
@@ -548,10 +564,12 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				const stmt = await this.properties.db.prepare(sql, sql);
 				const result = await stmt.get(bindable);
 				if (result != null) {
+					const value = result.sum as number;
+
 					if (ret == null) {
-						(ret as any) = result.sum as number;
+						ret = value;
 					} else {
-						(ret as any) += result.sum as number;
+						ret += value;
 					}
 					once = true;
 				}

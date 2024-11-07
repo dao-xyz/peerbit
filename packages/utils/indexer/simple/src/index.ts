@@ -188,8 +188,8 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	}
 
 	iterate<S extends types.Shape | undefined>(
-		query: types.IterateOptions,
-		properties: { shape?: S; reference?: boolean },
+		query?: types.IterateOptions,
+		properties?: { shape?: S; reference?: boolean },
 	): types.IndexIterator<T, S> {
 		let done: boolean | undefined = undefined;
 		let queue:
@@ -205,7 +205,7 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 				const indexedDocuments = await this.queryAll(query);
 				if (indexedDocuments.length > 1) {
 					// Sort
-					if (query.sort) {
+					if (query?.sort) {
 						const sortArr = Array.isArray(query.sort)
 							? query.sort
 							: [query.sort];
