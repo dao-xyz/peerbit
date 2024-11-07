@@ -349,33 +349,28 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		const fetch = async (amount: number | "all") => {
 			kept = undefined;
 			if (!once) {
-				try {
-					let { sql, bindable: toBind } = convertSearchRequestToQuery(
-						request,
-						this.tables,
-						this._rootTables,
-						{
-							shape: options?.shape,
-							stable: typeof amount === "number", // if we are to fetch all, we dont need stable sorting
-						},
-					);
-					sqlFetch = sql;
-					bindable = toBind;
+				let { sql, bindable: toBind } = convertSearchRequestToQuery(
+					request,
+					this.tables,
+					this._rootTables,
+					{
+						shape: options?.shape,
+						stable: typeof amount === "number", // if we are to fetch all, we dont need stable sorting
+					},
+				);
+				sqlFetch = sql;
+				bindable = toBind;
 
-					stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
-					// stmt.reset?.(); // TODO dont invoke reset if not needed
-					/* countStmt.reset?.(); */
+				stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
+				// stmt.reset?.(); // TODO dont invoke reset if not needed
+				/* countStmt.reset?.(); */
 
-					// Bump timeout timer
-					clearTimeout(iterator.timeout);
-					iterator.timeout = setTimeout(
-						() => this.clearupIterator(requestId),
-						this.iteratorTimeout,
-					);
-				} catch (error) {
-					console.error("Error in fetch", error, sqlFetch);
-					throw error;
-				}
+				// Bump timeout timer
+				clearTimeout(iterator.timeout);
+				iterator.timeout = setTimeout(
+					() => this.clearupIterator(requestId),
+					this.iteratorTimeout,
+				);
 			}
 
 			once = true;

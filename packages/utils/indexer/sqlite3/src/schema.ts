@@ -55,11 +55,7 @@ export type BindableValue =
 	| null;
 
 export const u64ToI64 = (u64: bigint | number) => {
-	try {
-		return (typeof u64 === "number" ? BigInt(u64) : u64) - 9223372036854775808n;
-	} catch (error) {
-		throw error;
-	}
+	return (typeof u64 === "number" ? BigInt(u64) : u64) - 9223372036854775808n;
 };
 export const i64ToU64 = (i64: number | bigint) =>
 	(typeof i64 === "number" ? BigInt(i64) : i64) + 9223372036854775808n;
