@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/test-utils",
-	"version": "2.1.8",
+	"version": "2.1.9",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -70,7 +70,7 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/libp2p-test-utils": "2.1.9",
-		"peerbit": "4.0.26"
+		"peerbit": "4.0.27"
 	},
 	"devDependencies": {
 		"@peerbit/time": "2.0.7"
