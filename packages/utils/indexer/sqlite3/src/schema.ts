@@ -54,12 +54,6 @@ export type BindableValue =
 	| ArrayBuffer
 	| null;
 
-export const u64ToI64 = (u64: bigint | number) => {
-	return (typeof u64 === "number" ? BigInt(u64) : u64) - 9223372036854775808n;
-};
-export const i64ToU64 = (i64: number | bigint) =>
-	(typeof i64 === "number" ? BigInt(i64) : i64) + 9223372036854775808n;
-
 export const convertToSQLType = (
 	value: boolean | bigint | string | number | Uint8Array,
 	type?: FieldType,
@@ -69,11 +63,6 @@ export const convertToSQLType = (
 	if (value != null) {
 		if (type === "bool") {
 			return value ? 1 : 0;
-		}
-		if (type === "u64") {
-			// shift to fit in i64
-
-			return u64ToI64(value as number | bigint);
 		}
 	}
 	return value as BindableValue;
@@ -111,15 +100,9 @@ export const convertFromSQLType = (
 			: nullAsUndefined(value);
 	}
 	if (type === "u64") {
-		if (typeof value === "number" || typeof value === "bigint") {
-			return i64ToU64(value as number | bigint); // TODO is not always value type bigint?
-		}
-		if (value == null) {
-			return nullAsUndefined(value);
-		}
-		throw new Error(
-			`Unexpected value type for value ${value} expected number or bigint for u64 field`,
-		);
+		return typeof value === "number" || typeof value === "string"
+			? BigInt(value)
+			: nullAsUndefined(value);
 	}
 	return nullAsUndefined(value);
 };
@@ -1840,7 +1823,7 @@ const convertStateFieldQuery = (
 
 			if (unwrapNestedType(tableField.from!.type) === "u64") {
 				// shift left because that is how we insert the value
-				bindable.push(u64ToI64(query.value.value));
+				bindable.push(query.value.value);
 			} else {
 				bindable.push(query.value.value);
 			}
