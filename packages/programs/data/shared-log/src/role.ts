@@ -4,10 +4,7 @@
  * Roles have been replaces with just replication segments.
  */
 import { field, variant, vec } from "@dao-xyz/borsh";
-
-export const MAX_U32 = 4294967295;
-export const HALF_MAX_U32 = 2147483647; // rounded down
-export const scaleToU32 = (value: number) => Math.round(MAX_U32 * value);
+import { MAX_U32, denormalizer } from "./integers.js";
 
 export const overlaps = (x1: number, x2: number, y1: number, y2: number) => {
 	if (x1 <= y2 && y1 <= x2) {
@@ -40,6 +37,7 @@ export class Observer extends Role {
 
 export const REPLICATOR_TYPE_VARIANT = new Uint8Array([2]);
 
+const denormalizeru32 = denormalizer("u32");
 export class RoleReplicationSegment {
 	@field({ type: "u64" })
 	timestamp: bigint;
@@ -61,12 +59,12 @@ export class RoleReplicationSegment {
 		}
 
 		this.timestamp = timestamp ?? BigInt(+new Date());
-		this.factorNominator = Math.round(MAX_U32 * factor);
+		this.factorNominator = denormalizeru32(factor);
 
 		if (offset > 1 || offset < 0) {
 			throw new Error("Expecting offset to be between 0 and 1, got: " + offset);
 		}
-		this.offsetNominator = Math.round(MAX_U32 * offset);
+		this.offsetNominator = denormalizeru32(factor);
 	}
 
 	get factor(): number {

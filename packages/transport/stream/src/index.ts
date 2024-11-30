@@ -2084,6 +2084,8 @@ export abstract class DirectStream<
 		if (this.peers.size <= this.connectionManagerOptions.minConnections) {
 			return;
 		}
+		console.log("PRUNE!");
+
 		const sorted = [...this.peers.values()]
 			.sort((x, y) => x.usedBandwidth - y.usedBandwidth)
 			.map((x) => x.publicKey.hashcode());

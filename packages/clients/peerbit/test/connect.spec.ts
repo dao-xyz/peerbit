@@ -1,5 +1,5 @@
 import { SeekDelivery } from "@peerbit/stream-interface";
-import { waitFor } from "@peerbit/time";
+import { waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "../src/index.js";
 
@@ -49,6 +49,39 @@ describe(`dial`, function () {
 		expect(clients[0].services.pubsub.connectionManagerOptions.pruner).to.exist;
 		expect(clients[1].services.blocks.connectionManagerOptions.pruner).equal(
 			undefined,
+		);
+	});
+});
+
+describe(`hangup`, function () {
+	let clients: [Peerbit, Peerbit];
+
+	beforeEach(async () => {
+		clients = [
+			await Peerbit.create({
+				relay: false, // https://github.com/libp2p/js-libp2p/issues/2794
+			}),
+			await Peerbit.create({
+				relay: false, // https://github.com/libp2p/js-libp2p/issues/2794
+			}),
+		];
+	});
+
+	afterEach(async () => {
+		await Promise.all(clients.map((c) => c.stop()));
+	});
+
+	it("pubsub subscribers clears up", async () => {
+		let topic = "topic";
+		await clients[0].services.pubsub.subscribe(topic);
+		await clients[1].services.pubsub.subscribe(topic);
+		await clients[0].dial(clients[1].getMultiaddrs()[0]);
+		await waitForResolved(() =>
+			expect(clients[0].services.pubsub.peers.size).to.eq(1),
+		);
+		await clients[0].hangUp(clients[1].peerId);
+		await waitForResolved(() =>
+			expect(clients[0].services.pubsub.peers.size).to.eq(0),
 		);
 	});
 });

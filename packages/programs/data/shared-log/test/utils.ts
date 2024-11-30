@@ -1,15 +1,23 @@
 import { type Constructor } from "@dao-xyz/borsh";
 import type { PublicSignKey } from "@peerbit/crypto";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
 	type EntryWithRefs,
 	ExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
-import { type SharedLog, maxReplicas } from "../src/index.js";
+import {
+	type ReplicationDomainHash,
+	type SharedLog,
+	createReplicationDomainHash,
+	maxReplicas,
+} from "../src/index.js";
 import type { TransportMessage } from "../src/message";
+import type { SynchronizerConstructor } from "../src/sync/index.js";
+import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
+import { SimpleSyncronizer } from "../src/sync/simple.js";
 
-export const collectMessages = (log: SharedLog<any>) => {
+export const collectMessages = (log: SharedLog<any, any>) => {
 	const messages: [TransportMessage, PublicSignKey][] = [];
 
 	// TODO types
@@ -21,7 +29,7 @@ export const collectMessages = (log: SharedLog<any>) => {
 	return messages;
 };
 
-export const collectMessagesFn = (log: SharedLog<any>) => {
+export const collectMessagesFn = (log: SharedLog<any, any>) => {
 	const messages: [TransportMessage, PublicSignKey][] = [];
 	const onMessageOrg = log._onMessage.bind(log);
 	const fn = async (msg: any, ctx: any) => {
@@ -32,7 +40,7 @@ export const collectMessagesFn = (log: SharedLog<any>) => {
 };
 
 export const slowDownSend = (
-	log: SharedLog<any>,
+	log: SharedLog<any, any>,
 	type: Constructor<TransportMessage>,
 	tms: number,
 	abortSignal?: AbortSignal,
@@ -96,7 +104,7 @@ export const waitForConverged = async (
 	}
 };
 export const getUnionSize = async (
-	dbs: { log: SharedLog<any> }[],
+	dbs: { log: SharedLog<any, any> }[],
 	expectedUnionSize: number,
 ) => {
 	const union = new Set<string>();
@@ -111,7 +119,7 @@ export const checkBounded = async (
 	entryCount: number,
 	lower: number,
 	higher: number,
-	...dbs: { log: SharedLog<any> }[]
+	...dbs: { log: SharedLog<any, any> }[]
 ) => {
 	for (const [_i, db] of dbs.entries()) {
 		try {
@@ -131,17 +139,25 @@ export const checkBounded = async (
 		}
 	}
 
-	const checkConverged = async (db: { log: SharedLog<any> }) => {
+	const checkConverged = async (db: { log: SharedLog<any, any> }) => {
 		const a = db.log.log.length;
 		await delay(100); // arb delay
-		return a === db.log.log.length;
+		// covergence is when the difference is less than 1% of the max
+		return (
+			Math.abs(a - db.log.log.length) <
+			Math.max(Math.round(Math.max(a, db.log.log.length) * 0.01), 1)
+		); // TODO make this a parameter
 	};
 
 	for (const [_i, db] of dbs.entries()) {
-		await waitFor(() => checkConverged(db), {
-			timeout: 25000,
-			delayInterval: 2500,
-		});
+		try {
+			await waitForResolved(() => checkConverged(db), {
+				timeout: 25000,
+				delayInterval: 2500,
+			});
+		} catch (error) {
+			throw new Error("Log length did not converge");
+		}
 	}
 
 	for (const [_i, db] of dbs.entries()) {
@@ -161,7 +177,7 @@ export const checkBounded = async (
 };
 
 export const checkReplicas = (
-	dbs: { log: SharedLog<any> }[],
+	dbs: { log: SharedLog<any, any> }[],
 	minReplicas: number,
 	entryCount: number,
 ) => {
@@ -185,4 +201,50 @@ export const checkReplicas = (
 			expect(v).lessThanOrEqual(dbs.length);
 		}
 	});
+};
+
+export const generateTestsFromResolutions = (
+	fn: (domain: ReplicationDomainHash<"u32" | "u64">) => void,
+) => {
+	const resolutions = ["u32", "u64"] as const;
+	for (const resolution of resolutions) {
+		describe(resolution, () => {
+			fn(createReplicationDomainHash(resolution));
+		});
+	}
+};
+
+export type TestSetupConfig<R extends "u32" | "u64"> = {
+	type: R;
+	domain: ReplicationDomainHash<R>;
+	syncronizer: SynchronizerConstructor<R>;
+	name: string;
+};
+
+export const testSetups: TestSetupConfig<any>[] = [
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple",
+	},
+	{
+		domain: createReplicationDomainHash("u64"),
+		type: "u64",
+		syncronizer: SimpleSyncronizer,
+		name: "u64-simple",
+	},
+	{
+		domain: createReplicationDomainHash("u64"),
+		type: "u64",
+		syncronizer: RatelessIBLTSynchronizer,
+		name: "u64-iblt",
+	},
+];
+export const checkIfSetupIsUsed = (
+	setup: TestSetupConfig<any>,
+	log: SharedLog<any, any, any>,
+) => {
+	expect(log.domain).to.equal(setup.domain);
+	expect(log.syncronizer.constructor).to.equal(setup.syncronizer);
 };

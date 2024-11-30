@@ -1,9 +1,13 @@
 import { Entry, ShallowEntry } from "@peerbit/log";
 import type { EntryWithRefs } from "./exchange-heads.js";
-import { EntryReplicated } from "./ranges.js";
+import { type EntryReplicated, isEntryReplicated } from "./ranges.js";
 
 export const groupByGid = async <
-	T extends ShallowEntry | Entry<any> | EntryWithRefs<any> | EntryReplicated,
+	T extends
+		| ShallowEntry
+		| Entry<any>
+		| EntryWithRefs<any>
+		| EntryReplicated<any>,
 >(
 	entries: T[],
 ): Promise<Map<string, T[]>> => {
@@ -14,7 +18,7 @@ export const groupByGid = async <
 				? (await head.getMeta()).gid
 				: head instanceof ShallowEntry
 					? head.meta.gid
-					: head instanceof EntryReplicated
+					: isEntryReplicated(head)
 						? head.gid
 						: (await head.entry.getMeta()).gid;
 		let value = groupByGid.get(gid);
@@ -27,7 +31,9 @@ export const groupByGid = async <
 	return groupByGid;
 };
 
-export const groupByGidSync = async <T extends ShallowEntry | EntryReplicated>(
+export const groupByGidSync = async <
+	T extends ShallowEntry | EntryReplicated<any>,
+>(
 	entries: T[],
 ): Promise<Map<string, T[]>> => {
 	const groupByGid: Map<string, T[]> = new Map();

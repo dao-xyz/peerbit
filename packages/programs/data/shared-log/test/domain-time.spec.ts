@@ -3,11 +3,11 @@ import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { denormalizer } from "../src/integers.js";
 import {
 	type ReplicationDomainTime,
 	createReplicationDomainTime,
 } from "../src/replication-domain-time.js";
-import { scaleToU32 } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 /**
@@ -128,9 +128,12 @@ describe("ReplicationDomainTime", function () {
 				factor: factor,
 				strict: true,
 			});
+
 			await waitForResolved(async () =>
 				expect(
-					scaleToU32(await db2.log.calculateTotalParticipation()),
+					denormalizer("u32")(
+						await db2.log.calculateTotalParticipation({ sum: true }),
+					),
 				).to.be.closeTo(factor, 1),
 			);
 
@@ -162,8 +165,7 @@ describe("ReplicationDomainTime", function () {
 describe(`e2e`, function () {
 	let session: TestSession;
 	let db1: EventStore<string, ReplicationDomainTime>,
-		db2: EventStore<string, ReplicationDomainTime>,
-		db3: EventStore<string, ReplicationDomainTime>;
+		db2: EventStore<string, ReplicationDomainTime>;
 
 	const options = {
 		args: {
@@ -227,7 +229,6 @@ describe(`e2e`, function () {
 	afterEach(async () => {
 		if (db1 && db1.closed === false) await db1.drop();
 		if (db2 && db2.closed === false) await db2.drop();
-		if (db3 && db3.closed === false) await db3.drop();
 	});
 
 	it("select leaders for one or two peers", async () => {

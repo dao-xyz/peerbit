@@ -39,28 +39,6 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	}
 }
 
-@variant([0, 1])
-export class RequestMaybeSync extends TransportMessage {
-	@field({ type: vec("string") })
-	hashes: string[];
-
-	constructor(props: { hashes: string[] }) {
-		super();
-		this.hashes = props.hashes;
-	}
-}
-
-@variant([0, 2])
-export class ResponseMaybeSync extends TransportMessage {
-	@field({ type: vec("string") })
-	hashes: string[];
-
-	constructor(props: { hashes: string[] }) {
-		super();
-		this.hashes = props.hashes;
-	}
-}
-
 @variant([0, 3])
 export class RequestIPrune extends TransportMessage {
 	// Hashes which I want to prune
@@ -89,7 +67,7 @@ const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be fas
 
 export const createExchangeHeadsMessages = async function* (
 	log: Log<any>,
-	heads: Entry<any>[] | string[],
+	heads: Entry<any>[] | string[] | Set<string>,
 ): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: EntryWithRefs<any>[] = [];

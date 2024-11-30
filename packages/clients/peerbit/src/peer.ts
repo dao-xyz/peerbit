@@ -1,4 +1,5 @@
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import type { PeerId } from "@libp2p/interface";
 import "@libp2p/peer-id";
 import {
 	type Multiaddr,
@@ -10,6 +11,7 @@ import { DirectBlock } from "@peerbit/blocks";
 import {
 	Ed25519Keypair,
 	Ed25519PublicKey,
+	PublicSignKey,
 	Secp256k1Keypair,
 	getKeypairFromPrivateKey,
 } from "@peerbit/crypto";
@@ -119,7 +121,7 @@ export class Peerbit implements ProgramClient {
 		let libp2pExtended: Libp2pExtended | undefined = (options as Libp2pOptions)
 			.libp2p as Libp2pExtended;
 
-		const asRelay = (options as SimpleLibp2pOptions).relay;
+		const asRelay = (options as SimpleLibp2pOptions).relay ?? true;
 
 		const directory = options.directory;
 		const hasDir = directory != null;
@@ -176,19 +178,25 @@ export class Peerbit implements ProgramClient {
 					: undefined;
 			}
 
+			const services: any = {
+				keychain: (c: any) => keychain,
+				blocks: (c: any) =>
+					new DirectBlock(c, {
+						canRelayMessage: asRelay,
+						directory: blocksDirectory,
+					}),
+				pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
+				...extendedOptions?.services,
+			};
+
+			if (!asRelay) {
+				services.relay = null;
+			}
+
 			libp2pExtended = await createLibp2pExtended({
 				...extendedOptions,
 				privateKey,
-				services: {
-					keychain: (c: any) => keychain,
-					blocks: (c: any) =>
-						new DirectBlock(c, {
-							canRelayMessage: asRelay,
-							directory: blocksDirectory,
-						}),
-					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: asRelay }),
-					...extendedOptions?.services,
-				} as any, // TODO types are funky
+				services,
 				datastore,
 			});
 		}
@@ -280,6 +288,7 @@ export class Peerbit implements ProgramClient {
 					? address
 					: address.getMultiaddrs();
 		const connection = await this.libp2p.dial(maddress);
+
 		const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 
 		// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
@@ -290,6 +299,17 @@ export class Peerbit implements ProgramClient {
 					this.libp2p.services.blocks.peers.has(publicKey.hashcode()),
 			)) || false
 		);
+	}
+
+	async hangUp(address: PeerId | PublicSignKey | string | Multiaddr) {
+		await this.libp2p.hangUp(
+			address instanceof PublicSignKey
+				? address.toPeerId()
+				: typeof address === "string"
+					? multiaddr(address)
+					: address,
+		);
+		// TODO wait for pubsub and blocks to disconnect?
 	}
 
 	async start() {

@@ -29,7 +29,6 @@ export type ResultsIterator<T> = {
 };
 
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
-
 type ResolveFullyOptions =
 	| true
 	| {
@@ -264,6 +263,10 @@ export class EntryIndex<T> {
 	}
 
 	async has(k: string) {
+		let mem = this.cache.get(k);
+		if (mem) {
+			return true;
+		}
 		const result = await this.properties.index.get(toId(k), {
 			shape: { hash: true },
 		});
@@ -301,11 +304,12 @@ export class EntryIndex<T> {
 			return existingPromise;
 		} else {
 			const fn = async () => {
-				this.cache.add(entry.hash, entry);
-
 				if (properties.unique === true || !(await this.has(entry.hash))) {
 					this._length++;
 				}
+
+				// add cache after .has check before .has uses the cache
+				this.cache.add(entry.hash, entry);
 
 				await this.properties.index.put(entry.toShallow(properties.isHead));
 
@@ -456,21 +460,21 @@ export class EntryIndex<T> {
 		options?: ResolveFullyOptions,
 	): Promise<Entry<T> | undefined> {
 		let coercedOptions = typeof options === "object" ? options : undefined;
-		if (await this.has(k)) {
-			let mem = this.cache.get(k);
-			if (mem === undefined) {
-				mem = await this.resolveFromStore(k, coercedOptions);
-				if (mem) {
-					this.properties.init(mem);
-					mem.hash = k;
-				} else if (coercedOptions?.ignoreMissing !== true) {
-					throw new Error("Failed to load entry from head with hash: " + k);
-				}
-				this.cache.add(k, mem ?? undefined);
+		/* if (await this.has(k)) { */
+		let mem = this.cache.get(k);
+		if (mem === undefined) {
+			mem = await this.resolveFromStore(k, coercedOptions);
+			if (mem) {
+				this.properties.init(mem);
+				mem.hash = k;
+			} else if (coercedOptions?.ignoreMissing !== true) {
+				throw new Error("Failed to load entry from head with hash: " + k);
 			}
-			return mem ? mem : undefined;
+			this.cache.add(k, mem ?? undefined);
 		}
-		return undefined;
+		return mem ? mem : undefined;
+		/* }
+		return undefined; */
 	}
 
 	private async resolveFromStore(

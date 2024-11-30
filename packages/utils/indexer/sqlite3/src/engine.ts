@@ -7,6 +7,7 @@ import type {
 } from "@peerbit/indexer-interface";
 import * as types from "@peerbit/indexer-interface";
 import { v4 as uuid } from "uuid";
+import { PlannableQuery, QueryPlanner } from "./query-planner.js";
 import {
 	MissingFieldError,
 	type Table,
@@ -14,6 +15,9 @@ import {
 	convertCountRequestToQuery,
 	convertDeleteRequestToQuery,
 	convertFromSQLType,
+	/* convertFromSQLType, */
+
+	/* convertFromSQLType, */
 	convertSearchRequestToQuery,
 	/* getTableName, */
 	convertSumRequestToQuery,
@@ -41,10 +45,10 @@ const resolveChildrenStatement = (table: Table) =>
 	table.name + "_resolve_children";
 
 export class SQLLiteIndex<T extends Record<string, any>>
-	implements Index<T, any>
-{
+	implements Index<T, any> {
 	primaryKeyArr!: string[];
 	primaryKeyString!: string;
+	planner: QueryPlanner;
 	private scopeString?: string;
 	private _rootTables!: Table[];
 	private _tables!: Map<string, Table>;
@@ -78,6 +82,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				? "_" + escapePathToSQLName(properties.scope).join("_")
 				: undefined;
 		this.iteratorTimeout = options?.iteratorTimeout || 60e3;
+		this.planner = new QueryPlanner({
+			exec: this.properties.db.exec.bind(this.properties.db),
+		});
 	}
 
 	get tables() {
@@ -169,10 +176,40 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			}
 
 			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")}) strict`;
-			const sqlCreateIndex = `create index if not exists ${table.name}_index on ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")})`;
-
 			this.properties.db.exec(sqlCreateTable);
-			this.properties.db.exec(sqlCreateIndex);
+
+			/* const fieldsToIndex = table.fields.filter(
+				(field) =>
+					field.key !== ARRAY_INDEX_COLUMN && field.key !== table.primary,
+			);
+			if (fieldsToIndex.length > 0) {
+				let arr = fieldsToIndex.map((field) => escapeColumnName(field.name));
+		
+				const createIndex = async (columns: string[]) => {
+					const key = createIndexKey(table.name, columns)
+					const command = `create index if not exists ${key} on ${table.name} (${columns.map((n) => escapeColumnName(n)).join(", ")})`;
+					await this.properties.db.exec(command);
+					table.indices.add(key);
+		
+		
+		
+					const rev = columns.reverse()
+					const key2 = createIndexKey(table.name, rev)
+					const command2 = `create index if not exists ${key2} on ${table.name} (${rev.join(", ")})`;
+					await this.properties.db.exec(command2);
+					table.indices.add(key2);
+				}
+				await createIndex(fieldsToIndex.map(x => x.name));
+				await createIndex([table.primary as string, ...fieldsToIndex.map(x => x.name)]);
+		
+				if (arr.length > 1) {
+					for (const field of fieldsToIndex) {
+						await createIndex([field.name]);
+						await createIndex([table.primary as string, field.name]);
+		
+					}
+				}
+			} */
 
 			// put and return the id
 			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
@@ -182,6 +219,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 			await this.properties.db.prepare(sqlPut, putStatementKey(table));
 			await this.properties.db.prepare(sqlReplace, replaceStatementKey(table));
+
 			if (table.parent) {
 				await this.properties.db.prepare(
 					selectChildren(table),
@@ -253,14 +291,17 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				table,
 				options?.shape,
 			);
-			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? limit 1`;
+			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${this.primaryKeyString} = ? limit 1`;
 			const stmt = await this.properties.db.prepare(sql, sql);
 			const rows = await stmt.get([
 				table.primaryField?.from?.type
 					? convertToSQLType(id.key, table.primaryField.from.type)
 					: id.key,
 			]);
-			if (!rows) {
+			if (
+				!rows ||
+				rows[getTablePrefixedField(table, table.primary as string)] == null
+			) {
 				continue;
 			}
 			return {
@@ -324,9 +365,18 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		);
 	}
 
+	async optimize(tables: Table[] = this._rootTables) {
+		/* console.log("HERE!", tables)
+		for (const table of tables) {
+			await this.properties.db.exec(`analyze ${table.name}`);
+			await this.optimize(table.children);
+		} */
+		/* await this.properties.db.exec(`ANALYZE;`); */
+	}
+
 	iterate<S extends Shape | undefined>(
 		request?: types.IterateOptions,
-		options?: { shape?: S; reference?: boolean },
+		options?: { shape?: S; reference?: boolean; optimize?: boolean },
 	): types.IndexIterator<T, S> {
 		// create a sql statement where the offset and the limit id dynamic and can be updated
 		// TODO don't use offset but sort and limit 'next' calls by the last value of the sort
@@ -345,25 +395,55 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		let bindable: any[] = [];
 		let sqlFetch: string | undefined = undefined;
 
+		const normalizedQuery = new PlannableQuery({
+			query: types.toQuery(request?.query),
+			sort: request?.sort,
+		});
+		let planningScope: any = undefined;
+
 		/* let totalCount: undefined | number = undefined; */
 		const fetch = async (amount: number | "all") => {
 			kept = undefined;
 			if (!once) {
+				planningScope = this.planner.scope(normalizedQuery);
+
 				let { sql, bindable: toBind } = convertSearchRequestToQuery(
-					request,
+					normalizedQuery,
 					this.tables,
 					this._rootTables,
 					{
+						planner: planningScope,
 						shape: options?.shape,
-						stable: typeof amount === "number", // if we are to fetch all, we dont need stable sorting
+						fetchAll: amount === "all", // if we are to fetch all, we dont need stable sorting
 					},
 				);
+
+				/* 	if (indexesToCreate) {
+						for (const index of indexesToCreate) {
+							console.log(index);
+							await this.properties.db.exec(index);
+						}
+					} */
+
 				sqlFetch = sql;
+				/* this.x++;
+				if (this.x % 1000 === 0) {
+					console.log("SQL FETCH", sqlFetch);
+				} */
+				/* console.log("SQL FETCH", sqlFetch); */
+
+				/* if (sqlFetch.trim() === `select class_NumberQueryDocument."id" as 'class_NumberQueryDocument#id', class_NumberQueryDocument."number" as 'class_NumberQueryDocument#number' FROM class_NumberQueryDocument  where class_NumberQueryDocument."number" < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`) {
+					// sqlFetch = `select class_NumberQueryDocument."id" as 'class_NumberQueryDocument#id', class_NumberQueryDocument."number" as 'class_NumberQueryDocument#number'  FROM class_NumberQueryDocument INDEXED BY class_NumberQueryDocument_index  where class_NumberQueryDocument.number < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`
+					sqlFetch = `select class_NumberQueryDocument.id as 'class_NumberQueryDocument#id', class_NumberQueryDocument.number as 'class_NumberQueryDocument#number'  FROM class_NumberQueryDocument  where class_NumberQueryDocument.number < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`
+		
+				} */
+
+				/* 	sqlFetch = `explain query plan ${sqlFetch}`; */
 				bindable = toBind;
 
+				await planningScope.beforePrepare();
+
 				stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
-				// stmt.reset?.(); // TODO dont invoke reset if not needed
-				/* countStmt.reset?.(); */
 
 				// Bump timeout timer
 				clearTimeout(iterator.timeout);
@@ -375,17 +455,29 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 			once = true;
 
-			const allResults: Record<string, any>[] = await stmt.all([
-				...bindable,
-				amount === "all" ? Number.MAX_SAFE_INTEGER : amount,
-				offset,
-			]);
+			/* 		console.log("----------------------")
+					console.log(sqlFetch);
+		 */
 
+			const allResults = await planningScope.perform(async () => {
+				const allResults: Record<string, any>[] = await stmt.all([
+					...bindable,
+					...(amount !== "all" ? [amount, offset] : []),
+				]);
+				return allResults;
+			});
+
+			/* const allResults: Record<string, any>[] = await stmt.all([
+				...bindable,
+				...(amount !== "all" ? [amount, 
+					offset] : [])
+			]);
+	*/
 			let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
 				await Promise.all(
 					allResults.map(async (row: any) => {
 						let selectedTable = this._rootTables.find(
-							(table /* row["table_name"] === table.name, */) =>
+							(table) =>
 								row[getTablePrefixedField(table, this.primaryKeyString)] !=
 								null,
 						)!;
@@ -404,7 +496,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 							id: types.toId(
 								convertFromSQLType(
 									row[
-										getTablePrefixedField(selectedTable, this.primaryKeyString)
+									getTablePrefixedField(selectedTable, this.primaryKeyString)
 									],
 									selectedTable.primaryField!.from!.type,
 								),
@@ -450,9 +542,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			all: async () => {
 				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
 				while (true) {
-					const res = await fetch(100);
+					const res = await fetch("all");
 					results.push(...res);
-					if (res.length === 0) {
+					if (hasMore === false) {
 						break;
 					}
 				}
@@ -551,7 +643,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				if (table.fields.find((x) => x.name === inlinedName) == null) {
 					lastError = new MissingFieldError(
 						"Missing field: " +
-							(Array.isArray(query.key) ? query.key : [query.key]).join("."),
+						(Array.isArray(query.key) ? query.key : [query.key]).join("."),
 					);
 					continue;
 				}

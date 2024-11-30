@@ -14,7 +14,7 @@ import { EventStore } from "./utils/stores/event-store.js";
 
 describe(`migration-8-9`, function () {
 	let session: TestSession;
-	let db1: EventStore<string>, db2: EventStore<string>;
+	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	const setup = async (compatibility?: number, order: boolean = false) => {
 		session = await TestSession.connected(2, [
@@ -46,7 +46,7 @@ describe(`migration-8-9`, function () {
 			},
 		]);
 
-		const db = new EventStore<string>();
+		const db = new EventStore<string, any>();
 
 		const createV8 = () => {
 			const db1 = db.clone();

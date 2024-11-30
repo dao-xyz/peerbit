@@ -9,7 +9,7 @@ import { waitForConverged } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe("load", function () {
-	let db1: EventStore<string>, db2: EventStore<string>;
+	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	let session: TestSession;
 
@@ -28,8 +28,8 @@ describe("load", function () {
 	it("load after replicate", async () => {
 		session = await TestSession.connected(2);
 
-		db1 = await session.peers[0].open(new EventStore<string>());
-		db2 = await EventStore.open<EventStore<string>>(
+		db1 = await session.peers[0].open(new EventStore<string, any>());
+		db2 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 		);
@@ -83,7 +83,7 @@ describe("load", function () {
 			},
 		]);
 
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
 				replicate: { factor: 0.5 },
 				replicas: {
@@ -99,7 +99,7 @@ describe("load", function () {
 			await db1.add("hello" + i, { meta: { next: [] } });
 		}
 
-		db2 = await EventStore.open<EventStore<string>>(
+		db2 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{
@@ -120,7 +120,7 @@ describe("load", function () {
 		await waitForConverged(() => db2.log.log.length);
 		await session.peers[1].stop();
 		await db1.close();
-		db1 = await EventStore.open<EventStore<string>>(
+		db1 = await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[0],
 			{
@@ -142,7 +142,7 @@ describe("load", function () {
 			{ directory: "./tmp/shared-log/load-events/" + uuid() },
 		]);
 
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
 				replicate: { factor: 1 },
 				replicas: {

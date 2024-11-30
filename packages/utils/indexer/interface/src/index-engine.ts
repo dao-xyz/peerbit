@@ -106,9 +106,8 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 	count(query?: CountOptions): MaybePromise<number>;
 	iterate<S extends Shape | undefined = undefined>(
 		request?: IterateOptions,
-		options?: { shape?: S; reference?: boolean },
+		options?: { shape?: S; reference?: boolean; optimize?: boolean },
 	): IndexIterator<T, S>;
-
 	getSize(): MaybePromise<number>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;

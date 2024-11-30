@@ -50,10 +50,12 @@ let session: TestSession = await TestSession.connected(3, [
 		},
 	},
 ]);
-let db1: EventStore<string>, db2: EventStore<string>, db3: EventStore<string>;
+let db1: EventStore<string, any>,
+	db2: EventStore<string, any>,
+	db3: EventStore<string, any>;
 
 const init = async (min: number, max?: number) => {
-	db1 = await session.peers[0].open(new EventStore<string>(), {
+	db1 = await session.peers[0].open(new EventStore<string, any>(), {
 		args: {
 			replicas: {
 				min,
@@ -62,7 +64,7 @@ const init = async (min: number, max?: number) => {
 			replicate: false,
 		},
 	});
-	db2 = (await EventStore.open<EventStore<string>>(
+	db2 = (await EventStore.open<EventStore<string, any>>(
 		db1.address!,
 		session.peers[1],
 		{
@@ -75,7 +77,7 @@ const init = async (min: number, max?: number) => {
 		},
 	))!;
 
-	db3 = (await EventStore.open<EventStore<string>>(
+	db3 = (await EventStore.open<EventStore<string, any>>(
 		db1.address!,
 		session.peers[2],
 		{

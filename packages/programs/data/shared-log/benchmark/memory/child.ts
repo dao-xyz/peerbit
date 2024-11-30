@@ -37,15 +37,15 @@ class Document {
 }
 
 @variant("test_documents")
-class TestStore extends Program<Partial<Args<Document>>> {
+class TestStore extends Program<Partial<Args<Document, any>>> {
 	@field({ type: SharedLog })
-	docs: SharedLog<Document>;
+	docs: SharedLog<Document, any>;
 
-	constructor(properties: { docs: SharedLog<Document> }) {
+	constructor(properties: { docs: SharedLog<Document, any> }) {
 		super();
 		this.docs = properties.docs;
 	}
-	async open(options?: Partial<Args<Document>>): Promise<void> {
+	async open(options?: Partial<Args<Document, any>>): Promise<void> {
 		await this.docs.open({ ...options, encoding: BORSH_ENCODING(Document) });
 	}
 }
@@ -77,7 +77,7 @@ try {
 			]);
 
 			store1 = new TestStore({
-				docs: new SharedLog<Document>(),
+				docs: new SharedLog<Document, any>(),
 			});
 
 			const client: ProgramClient = session.peers[0];

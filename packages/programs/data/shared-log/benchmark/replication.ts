@@ -39,13 +39,13 @@ let session: TestSession = await TestSession.connected(2, [
 	},
 ]);
 
-let db1: EventStore<string>, db2: EventStore<string>;
+let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 let abortController = new AbortController();
 
 let resolvers: Map<string, { resolve: () => void }> = new Map();
 
-db1 = await session.peers[0].open(new EventStore<string>(), {
+db1 = await session.peers[0].open(new EventStore<string, any>(), {
 	args: {
 		replicate: {
 			factor: 1,
@@ -53,7 +53,7 @@ db1 = await session.peers[0].open(new EventStore<string>(), {
 	},
 });
 
-db2 = (await EventStore.open<EventStore<string>>(
+db2 = (await EventStore.open<EventStore<string, any>>(
 	db1.address!,
 	session.peers[1],
 	{
