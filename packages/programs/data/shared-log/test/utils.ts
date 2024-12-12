@@ -77,15 +77,16 @@ export const getReceivedHeads = (
 
 export const waitForConverged = async (
 	fn: () => any,
-	options: { timeout: number; tests: number } = {
+	options: { timeout: number; tests: number; interval: number } = {
 		tests: 3,
 		timeout: 30 * 1000,
+		interval: 1000,
 	},
 ) => {
 	let lastResult = undefined;
 	let c = 0;
 	let ok = 0;
-	for (;;) {
+	for (; ;) {
 		const current = await fn();
 		if (lastResult === current) {
 			ok += 1;
@@ -96,9 +97,9 @@ export const waitForConverged = async (
 			ok = 0;
 		}
 		lastResult = current;
-		await delay(1000);
+		await delay(options.interval);
 		c++;
-		if (c * 1000 > options.timeout) {
+		if (c * options.interval > options.timeout) {
 			throw new Error("Timeout");
 		}
 	}
@@ -130,11 +131,23 @@ export const checkBounded = async (
 				},
 			);
 		} catch (error) {
+			const replicationRanges = await Promise.all(
+				[...dbs].map((x) => x.log.getAllReplicationSegments()),
+			);
+			console.error(
+				"Log did not reach lower bound length of " +
+				entryCount * lower +
+				" got " +
+				db.log.log.length,
+				"Ranges size: ",
+				replicationRanges.map((x) => x.length),
+			);
+			await dbgLogs(dbs.map((x) => x.log));
 			throw new Error(
 				"Log did not reach lower bound length of " +
-					entryCount * lower +
-					" got " +
-					db.log.log.length,
+				entryCount * lower +
+				" got " +
+				db.log.log.length,
 			);
 		}
 	}
@@ -247,4 +260,30 @@ export const checkIfSetupIsUsed = (
 ) => {
 	expect(log.domain).to.equal(setup.domain);
 	expect(log.syncronizer.constructor).to.equal(setup.syncronizer);
+};
+
+export const dbgLogs = async (log: SharedLog<any, any>[]) => {
+	for (const l of log) {
+		console.error(
+			"Id:",
+			l.node.identity.publicKey.hashcode(),
+			"Log length:",
+			l.log.length,
+			"Replication segments:",
+			(await l.getAllReplicationSegments()).map(x => x.toString()),
+			"Prunable: " + (await l.getPrunable()).length,
+			"log length: ",
+			l.log.length,
+			"To prune:",
+			l.toPrune?.size,
+			"RQ I prune",
+			l.requestIPrune?.size,
+			"RR",
+			l.addedReplciationRangesFrom.size,
+			"Received heads",
+			l.receivedHeads?.size,
+			"Leader heads",
+			l.leaderHeads?.size
+		);
+	}
 };

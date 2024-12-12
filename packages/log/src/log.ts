@@ -360,15 +360,15 @@ export class Log<T> {
 			hash,
 			options
 				? {
-						type: "full",
-						remote: options?.remote && {
-							timeout:
-								typeof options?.remote !== "boolean"
-									? options.remote.timeout
-									: undefined,
-						},
-						ignoreMissing: true, // always return undefined instead of throwing errors on missing entries
-					}
+					type: "full",
+					remote: options?.remote && {
+						timeout:
+							typeof options?.remote !== "boolean"
+								? options.remote.timeout
+								: undefined,
+					},
+					ignoreMissing: true, // always return undefined instead of throwing errors on missing entries
+				}
 				: { type: "full", ignoreMissing: true },
 		);
 	}
@@ -497,11 +497,11 @@ export class Log<T> {
 			encoding: this._encoding,
 			encryption: options.encryption
 				? {
-						keypair: options.encryption.keypair,
-						receiver: {
-							...options.encryption.receiver,
-						},
-					}
+					keypair: options.encryption.keypair,
+					receiver: {
+						...options.encryption.receiver,
+					},
+				}
 				: undefined,
 			canAppend: options.canAppend || this._canAppend,
 		});
@@ -792,7 +792,6 @@ export class Log<T> {
 						(await Entry.fromMultihash<T>(this._storage, a, {
 							remote: { timeout: options?.remote?.timeout },
 						}));
-
 					if (!nested) {
 						throw new Error("Missing entry in joinRecursively: " + a);
 					}

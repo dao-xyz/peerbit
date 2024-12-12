@@ -24,7 +24,6 @@ import {
 	Sort,
 	SortDirection,
 	StringMatch,
-	iteratorInSeries,
 } from "@peerbit/indexer-interface";
 import { id } from "@peerbit/indexer-interface";
 import { Meta, ShallowMeta } from "@peerbit/log";
@@ -63,7 +62,7 @@ const getSegmentsFromOffsetAndRange = <T extends number | bigint>(
 		// @ts-ignore
 		end1Unscaled > max
 			? // @ts-ignore
-				[zero, (factor !== max ? offset + factor : offset) % max]
+			[zero, (factor !== max ? offset + factor : offset) % max]
 			: [start1, end1],
 	];
 };
@@ -71,11 +70,11 @@ const getSegmentsFromOffsetAndRange = <T extends number | bigint>(
 export const shouldAssigneToRangeBoundary = (
 	leaders:
 		| Map<
-				string,
-				{
-					intersecting: boolean;
-				}
-		  >
+			string,
+			{
+				intersecting: boolean;
+			}
+		>
 		| false,
 	minReplicas: number,
 ) => {
@@ -91,8 +90,7 @@ export const shouldAssigneToRangeBoundary = (
 	return assignedToRangeBoundary;
 };
 export interface EntryReplicated<R extends "u32" | "u64"> {
-	id: string; // hash + coordinate
-	hash: string;
+	hash: string; // id of the entry
 	gid: string;
 	coordinates: NumberFromType<R>[];
 	wallTime: bigint;
@@ -104,27 +102,8 @@ export const isEntryReplicated = (x: any): x is EntryReplicated<any> => {
 	return x instanceof EntryReplicatedU32 || x instanceof EntryReplicatedU64;
 };
 
-const hashNumberArray = (numbers: number[]) => {
-	let out = 0;
-	for (const number of numbers) {
-		out ^= number;
-	}
-	return out;
-};
-
-const hashBigIntArray = (numbers: bigint[]) => {
-	let out = BigInt(0);
-	for (const number of numbers) {
-		out ^= number;
-	}
-	return out;
-};
-
 export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	@id({ type: "string" })
-	id: string; // hash + coordinate
-
-	@field({ type: "string" })
 	hash: string;
 
 	@field({ type: "string" })
@@ -153,7 +132,6 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
 		this.gid = properties.meta.gid;
-		this.id = this.hash + "-" + hashNumberArray(this.coordinates);
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
 		const shallow =
 			properties.meta instanceof Meta
@@ -175,9 +153,6 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 
 export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	@id({ type: "string" })
-	id: string; // hash + coordinate
-
-	@field({ type: "string" })
 	hash: string;
 
 	@field({ type: "string" })
@@ -206,7 +181,6 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
 		this.gid = properties.meta.gid;
-		this.id = this.hash + "-" + hashBigIntArray(this.coordinates);
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
 		const shallow =
 			properties.meta instanceof Meta
@@ -241,7 +215,7 @@ export const isReplicationRangeMessage = (
 	return x instanceof ReplicationRangeMessage;
 };
 
-export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> {}
+export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> { }
 
 @variant(0)
 export class ReplicationRangeMessageU32 extends ReplicationRangeMessage<"u32"> {
@@ -436,8 +410,7 @@ export interface ReplicationRangeIndexable<R extends "u32" | "u64"> {
 }
 
 export class ReplicationRangeIndexableU32
-	implements ReplicationRangeIndexable<"u32">
-{
+	implements ReplicationRangeIndexable<"u32"> {
 	@id({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -612,8 +585,7 @@ export class ReplicationRangeIndexableU32
 }
 
 export class ReplicationRangeIndexableU64
-	implements ReplicationRangeIndexable<"u64">
-{
+	implements ReplicationRangeIndexable<"u64"> {
 	@id({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -862,99 +834,202 @@ export const mergeRanges = <R extends "u32" | "u64">(
 
 const createContainingPointQuery = <R extends "u32" | "u64">(
 	points: NumberFromType<R>[] | NumberFromType<R>,
-	roleAgeLimit: number,
-	matured: boolean,
-	now: number,
+	options?: {
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
 ) => {
-	if (false as any) {
-		const or: Query[] = [];
-		for (const point of Array.isArray(points) ? points : [points]) {
-			or.push(
-				new And([
-					new IntegerCompare({
-						key: "start1",
-						compare: Compare.LessOrEqual,
-						value: point,
-					}),
-					new IntegerCompare({
-						key: "end1",
-						compare: Compare.Greater,
-						value: point,
-					}),
-				]),
-			);
-			or.push(
-				new And([
-					new IntegerCompare({
-						key: "start2",
-						compare: Compare.LessOrEqual,
-						value: point,
-					}),
-					new IntegerCompare({
-						key: "end2",
-						compare: Compare.Greater,
-						value: point,
-					}),
-				]),
-			);
-		}
+	const or: Query[] = [];
+	for (const point of Array.isArray(points) ? points : [points]) {
+		or.push(
+			new And([
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: point,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.Greater,
+					value: point,
+				}),
+			]),
+		);
+		or.push(
+			new And([
+				new IntegerCompare({
+					key: "start2",
+					compare: Compare.LessOrEqual,
+					value: point,
+				}),
+				new IntegerCompare({
+					key: "end2",
+					compare: Compare.Greater,
+					value: point,
+				}),
+			]),
+		);
+	}
+	if (options?.time) {
 		let queries = [
 			new Or(or),
 			new IntegerCompare({
 				key: "timestamp",
-				compare: matured ? Compare.LessOrEqual : Compare.Greater,
-				value: BigInt(now - roleAgeLimit),
+				compare: options.time.matured ? Compare.LessOrEqual : Compare.Greater,
+				value: BigInt(options.time.now - options.time.roleAgeLimit),
 			}),
 		];
 		return queries;
+	} else {
+		return new Or(or);
 	}
-	return [
-		new IntegerCompare({
-			key: "start2",
-			compare: Compare.LessOrEqual,
-			value: 0,
-		}),
-		new IntegerCompare({
-			key: "end2",
-			compare: Compare.Greater,
-			value: 0,
-		}),
-	];
 };
+
+const createContainingPartialPointQuery = <R extends "u32" | "u64">(
+	point: NumberFromType<R>,
+	first: boolean,
+	options?: {
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+) => {
+	let query: Query[];
+	if (first) {
+		query = [
+			new IntegerCompare({
+				key: "start1",
+				compare: Compare.LessOrEqual,
+				value: point,
+			}),
+			new IntegerCompare({
+				key: "end1",
+				compare: Compare.Greater,
+				value: point,
+			}),
+		];
+	} else {
+		query = [
+			new IntegerCompare({
+				key: "start2",
+				compare: Compare.LessOrEqual,
+				value: point,
+			}),
+			new IntegerCompare({
+				key: "end2",
+				compare: Compare.Greater,
+				value: point,
+			}),
+		];
+	}
+
+	if (options?.time) {
+		query.push(
+			new IntegerCompare({
+				key: "timestamp",
+				compare: options.time.matured ? Compare.LessOrEqual : Compare.Greater,
+				value: BigInt(options.time.now - options.time.roleAgeLimit),
+			}),
+		);
+	}
+
+	return query;
+};
+
 const iterateRangesContainingPoint = <
 	S extends Shape | undefined,
 	R extends "u32" | "u64",
 >(
 	rects: Index<ReplicationRangeIndexable<R>>,
 	points: NumberFromType<R>[] | NumberFromType<R>,
-	roleAgeLimit: number,
-	matured: boolean,
-	now: number,
+
 	options?: {
 		shape?: S;
 		sort?: Sort[];
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
 	},
 ): IndexIterator<ReplicationRangeIndexable<R>, S> => {
 	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
 
 	return rects.iterate(
 		{
-			query: createContainingPointQuery(points, roleAgeLimit, matured, now), // new Or(points.map(point => new And(createContainingPointQuery(point, roleAgeLimit, matured, now)))
+			query: createContainingPointQuery(points, {
+				time: options?.time,
+			}), // new Or(points.map(point => new And(createContainingPointQuery(point, roleAgeLimit, matured, now)))
 			sort: options?.sort,
 		},
 		options,
 	);
 };
 
-const countRangesContainingPoint = <R extends "u32" | "u64">(
+const allRangesContainingPoint = async <
+	S extends Shape | undefined,
+	R extends "u32" | "u64",
+>(
+	rects: Index<ReplicationRangeIndexable<R>>,
+	points: NumberFromType<R>[] | NumberFromType<R>,
+	options?: {
+		shape?: S;
+		sort?: Sort[];
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+) => {
+	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
+
+	let allResults: IndexedResult<
+		ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
+	>[] = [];
+	for (const point of Array.isArray(points) ? points : [points]) {
+		const firstIterator = rects.iterate(
+			{
+				query: createContainingPartialPointQuery(point, false, options),
+				sort: options?.sort,
+			},
+			options,
+		);
+
+		const secondIterator = rects.iterate(
+			{
+				query: createContainingPartialPointQuery(point, true, options),
+				sort: options?.sort,
+			},
+			options,
+		);
+
+		[...(await firstIterator.all()), ...(await secondIterator.all())].forEach(
+			(x) => allResults.push(x),
+		);
+	}
+	return allResults;
+	/* return [...await iterateRangesContainingPoint(rects, points, options).all()]; */
+};
+
+const countRangesContainingPoint = async <R extends "u32" | "u64">(
 	rects: Index<ReplicationRangeIndexable<R>>,
 	point: NumberFromType<R>,
-	roleAgeLimit: number,
-	matured: boolean,
-	now: number,
+	options?: {
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
 ) => {
-	return rects.count({
-		query: createContainingPointQuery(point, roleAgeLimit, matured, now),
+	return await rects.count({
+		query: createContainingPointQuery(point, options),
 	});
 };
 
@@ -969,15 +1044,15 @@ export const appromixateCoverage = async <R extends "u32" | "u64">(properties: {
 		properties.numbers.zero,
 		properties.samples,
 	);
-	const now = +new Date();
+	/* const now = +new Date(); */
 	let hits = 0;
 	for (const point of grid) {
 		const count = await countRangesContainingPoint(
 			properties.peers,
 			point,
-			properties?.roleAge ?? 0,
+			/* properties?.roleAge ?? 0,
 			true,
-			now,
+			now, */
 		);
 		hits += properties.normalized ? (count > 0 ? 1 : 0) : count;
 	}
@@ -1366,7 +1441,7 @@ const getClosestAround = <
 		numbers,
 		options,
 	);
-	const containing = iterateRangesContainingPoint<S, R>(
+	/* const containing = iterateRangesContainingPoint<S, R>(
 		peers,
 		point,
 		roleAge,
@@ -1378,6 +1453,12 @@ const getClosestAround = <
 	return iteratorInSeries(
 		containing,
 		joinIterator<S, R>([closestBelow, closestAbove], point, "closest", numbers),
+	); */
+	return joinIterator<S, R>(
+		[closestBelow, closestAbove],
+		point,
+		"closest",
+		numbers,
 	);
 };
 
@@ -1489,9 +1570,12 @@ const collectClosestAround = async <R extends "u32" | "u64">(
 		"closest",
 		numbers,
 	);
+
+	let visited = new Set<string>();
 	while (aroundIterator.done() !== true && done() !== true) {
 		const res = await aroundIterator.next(1);
 		for (const rect of res) {
+			visited.add(rect.value.idString);
 			collector(rect.value, isMatured(rect.value, now, roleAge));
 			if (done()) {
 				return;
@@ -1509,6 +1593,10 @@ export const getSamples = async <R extends "u32" | "u64">(
 	peers: Index<ReplicationRangeIndexable<R>>,
 	roleAge: number,
 	numbers: Numbers<R>,
+	options?: {
+		onlyIntersecting?: boolean;
+		uniqueReplicators?: Set<string>;
+	},
 ): Promise<Map<string, { intersecting: boolean }>> => {
 	const leaders: Map<string, { intersecting: boolean }> = new Map();
 	if (!peers) {
@@ -1516,114 +1604,58 @@ export const getSamples = async <R extends "u32" | "u64">(
 	}
 
 	const now = +new Date();
+	let matured = 0;
 
-	/* 
-	const maturedLeaders = new Set();
 	for (let i = 0; i < cursor.length; i++) {
-	
-		await collectNodesAroundPoint(
-			roleAge,
+		let point = cursor[i];
+
+		const allContaining = await allRangesContainingPoint<undefined, R>(
 			peers,
-			(rect, m, intersecting) => {
-				if (m) {
-					maturedLeaders.add(rect.hash);
-				}
-
-				const prev = leaders.get(rect.hash);
-
-				if (!prev || (intersecting && !prev.intersecting)) {
-					leaders.set(rect.hash, { intersecting });
-				}
-			},
-			cursor[i],
-			now,
-			numbers,
-			() => {
-				if (maturedLeaders.size > i) {
-					return true;
-				}
-				return false;
-			},
+			point,
 		);
-	}
 
-	return leaders; */
-
-	const containing = iterateRangesContainingPoint<undefined, R>(
-		peers,
-		cursor,
-		0,
-		true,
-		now,
-	);
-
-	const allContaining = await containing.all();
-	for (const rect of allContaining) {
-		leaders.set(rect.value.hash, { intersecting: true });
-	}
-
-	if (true as any) {
-		return leaders;
-	}
-
-	const cursorPerPeer: { peers: Set<string>; cursor: NumberFromType<R> }[] = [];
-	for (const point of cursor) {
-		// find at least one matured intersecting, else get closest
-		let result = { peers: new Set<string>(), cursor: point };
 		for (const rect of allContaining) {
-			if (rect.value.contains(point) && isMatured(rect.value, now, roleAge)) {
-				result.peers.add(rect.value.hash);
-				// TODO why does test pass even if we add a break here? Add a test that fails if we add a break here
+			let prev = leaders.get(rect.value.hash);
+			if (!prev) {
+				if (isMatured(rect.value, now, roleAge)) {
+					matured++;
+				}
+				leaders.set(rect.value.hash, { intersecting: true });
+			} else {
+				prev.intersecting = true;
 			}
 		}
-		cursorPerPeer.push(result);
-	}
 
-	// now we need to figure out what cursor points that truly does not have any unique intersecting
-	// and fetch the closest one there instead
-	// this thing is a bit tricky, we need to make sure that we do not fetch the same range twice
-	// like 2 points my be covered by the same range but only one range can have that node
-	// so we need to make sure that we do not fetch the same range twice
-	while (cursorPerPeer.length > 0) {
-		cursorPerPeer.sort((a, b) => a.peers.size - b.peers.size);
-		const { peers: peerForCursor, cursor } = cursorPerPeer.shift()!;
+		if (options?.uniqueReplicators?.size === leaders.size) {
+			break; // nothing ore to find
+		}
 
-		let first = peerForCursor.values().next().value; // TODO sort and use the narrowest range
-		if (first) {
-			for (let i = 0; i < cursorPerPeer.length; i++) {
-				cursorPerPeer[i].peers.delete(first);
-			}
+		if (options?.onlyIntersecting || matured > i) {
 			continue;
 		}
 
-		// remove the first peer that is in the list from every other cursor
-
-		let found = false;
+		let foundOneUniqueMatured = false;
 		await collectClosestAround(
 			roleAge,
 			peers,
 			(rect, m) => {
 				const prev = leaders.get(rect.hash);
-				if (!prev) {
-					// we are only looking for new ones
-					leaders.set(rect.hash, { intersecting: false });
-					if (m) {
-						found = true;
+				if (m) {
+					if (!prev) {
+						matured++;
+						leaders.set(rect.hash, { intersecting: false });
+					}
+					if (matured > i) {
+						foundOneUniqueMatured = true;
 					}
 				}
 			},
-			cursor,
+			point,
 			now,
 			numbers,
-			() => found,
+			() => foundOneUniqueMatured,
 		);
 	}
-
-	/* 
-		
-			
-	*/
-
 	return leaders;
 };
 
@@ -1657,10 +1689,10 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 	roleAge: number;
 	numbers: Numbers<R>;
 	eager?:
-		| {
-				unmaturedFetchCoverSize?: number;
-		  }
-		| boolean;
+	| {
+		unmaturedFetchCoverSize?: number;
+	}
+	| boolean;
 }): Promise<Set<string>> => {
 	const { peers, start, widthToCoverScaled, roleAge } = properties;
 
@@ -1714,16 +1746,14 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		roleAge: number,
 	) => {
 		let next = await fetchOne(
-			iterateRangesContainingPoint<undefined, R>(
-				peers,
-				nextLocation,
-				roleAge,
-				true,
-				now,
-				{
-					sort: [new Sort({ key: "end2", direction: SortDirection.DESC })],
+			iterateRangesContainingPoint<undefined, R>(peers, nextLocation, {
+				sort: [new Sort({ key: "end2", direction: SortDirection.DESC })],
+				time: {
+					matured: true,
+					roleAgeLimit: roleAge,
+					now,
 				},
-			),
+			}),
 		); // get entersecting sort by largest end2
 		return next;
 	};
@@ -1831,20 +1861,20 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 					properties.numbers.maxValue,
 				),
 			) >
-				properties.numbers.min(
-					getDistance(
-						current.start1,
-						endLocation,
-						"closest",
-						properties.numbers.maxValue,
-					),
-					getDistance(
-						current.end2,
-						endLocation,
-						"closest",
-						properties.numbers.maxValue,
-					),
-				)
+			properties.numbers.min(
+				getDistance(
+					current.start1,
+					endLocation,
+					"closest",
+					properties.numbers.maxValue,
+				),
+				getDistance(
+					current.end2,
+					endLocation,
+					"closest",
+					properties.numbers.maxValue,
+				),
+			)
 		) {
 			ret.add(current.hash);
 		}
@@ -1929,6 +1959,7 @@ export const toRebalance = <R extends "u32" | "u64">(
 ): AsyncIterable<EntryReplicated<R>> => {
 	const assignedRangesQuery = (changes: ReplicationChanges) => {
 		let ors: Query[] = [];
+		/* if (false as any) */
 		for (const change of changes) {
 			const matchRange = matchEntriesInRangeQuery(change.range);
 			if (change.type === "updated") {
@@ -1958,14 +1989,17 @@ export const toRebalance = <R extends "u32" | "u64">(
 				query: assignedRangesQuery(changes),
 			});
 
-			const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
-			/* const grouped = await groupByGidSync(entries.map((x) => x.value));
-			for (const [gid, entries] of grouped.entries()) {
-				yield { gid, entries };
-			} */
+			while (iterator.done() !== true) {
+				const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
 
-			for (const entry of entries) {
-				yield entry.value;
+				/* const grouped = await groupByGidSync(entries.map((x) => x.value));
+				for (const [gid, entries] of grouped.entries()) {
+					yield { gid, entries };
+				} */
+
+				for (const entry of entries) {
+					yield entry.value;
+				}
 			}
 		},
 	};

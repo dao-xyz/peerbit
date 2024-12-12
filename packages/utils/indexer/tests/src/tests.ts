@@ -20,7 +20,6 @@ import {
 	IntegerCompare,
 	IsNull,
 	type IterateOptions,
-	Nested,
 	Not,
 	Or,
 	Query,
@@ -912,7 +911,10 @@ export const tests = (
 							@field({ type: vec(Document) })
 							documents: Document[];
 
-							constructor(properties?: { documents: Document[] }) {
+							constructor(properties?: {
+								id?: Uint8Array;
+								documents: Document[];
+							}) {
 								this.id = randomBytes(32);
 								this.documents = properties?.documents || [];
 							}
@@ -928,6 +930,7 @@ export const tests = (
 								store = out.store;
 
 								d1 = new DocumentsVec({
+									id: new Uint8Array([0]),
 									documents: [
 										new Document({ id: uuid(), number: 123n, tags: [] }),
 									],
@@ -935,6 +938,7 @@ export const tests = (
 								await store.put(d1);
 
 								d2 = new DocumentsVec({
+									id: new Uint8Array([1]),
 									documents: [
 										new Document({ id: uuid(), number: 124n, tags: [] }),
 									],
@@ -943,6 +947,7 @@ export const tests = (
 								await store.put(d2);
 
 								d3 = new DocumentsVec({
+									id: new Uint8Array([2]),
 									documents: [
 										new Document({ id: uuid(), number: 122n, tags: [] }),
 										new Document({ id: uuid(), number: 125n, tags: [] }),
@@ -1072,6 +1077,36 @@ export const tests = (
 										sha256Base64Sync(d2.id),
 									]);
 								});
+
+								it("or arr, or field", async () => {
+									const results3 = await search(store, {
+										query: [
+											new Or([
+												new IntegerCompare({
+													key: ["documents", "number"],
+													compare: Compare.Equal,
+													value: 123n,
+												}),
+												new IntegerCompare({
+													key: ["documents", "number"],
+													compare: Compare.Equal,
+													value: 124n,
+												}),
+												new ByteMatchQuery({
+													key: "id",
+													value: new Uint8Array([1]),
+												}),
+											]),
+										],
+									});
+
+									expect(
+										results3.map((x) => sha256Base64Sync(x.value.id)),
+									).to.have.members([
+										sha256Base64Sync(d1.id),
+										sha256Base64Sync(d2.id),
+									]);
+								});
 							});
 						});
 
@@ -1187,8 +1222,8 @@ export const tests = (
 							@field({ type: vec("u32") })
 							array: number[];
 
-							constructor(properties?: { array: number[] }) {
-								this.id = randomBytes(32);
+							constructor(properties?: { id?: Uint8Array; array: number[] }) {
+								this.id = properties.id || randomBytes(32);
 								this.array = properties?.array || [];
 							}
 						}
@@ -1203,17 +1238,20 @@ export const tests = (
 								store = out.store;
 
 								d1 = new ArrayDocument({
+									id: new Uint8Array([0]),
 									array: [1],
 								});
 								await store.put(d1);
 
 								d2 = new ArrayDocument({
+									id: new Uint8Array([1]),
 									array: [2],
 								});
 
 								await store.put(d2);
 
 								d3 = new ArrayDocument({
+									id: new Uint8Array([2]),
 									array: [0, 3],
 								});
 
@@ -1340,6 +1378,76 @@ export const tests = (
 										results3.map((x) => sha256Base64Sync(x.value.id)),
 									).to.have.members([
 										sha256Base64Sync(d1.id),
+										sha256Base64Sync(d3.id),
+									]);
+								});
+
+								it("or array, or field", async () => {
+									const results3 = await search(store, {
+										query: [
+											new Or([
+												new And([
+													new IntegerCompare({
+														key: ["array"],
+														compare: Compare.LessOrEqual,
+														value: 0,
+													}),
+													new IntegerCompare({
+														key: ["array"],
+														compare: Compare.LessOrEqual,
+														value: 1,
+													}),
+												]),
+												new ByteMatchQuery({
+													key: "id",
+													value: new Uint8Array([0]),
+												}),
+											]),
+										],
+									});
+
+									expect(
+										results3.map((x) => sha256Base64Sync(x.value.id)),
+									).to.have.members([
+										sha256Base64Sync(d1.id),
+										sha256Base64Sync(d3.id),
+									]);
+								});
+
+								it("or all", async () => {
+									const results = await search(store, {
+										query: [
+											new Or([
+												new Or([
+													new And([
+														new IntegerCompare({
+															key: ["array"],
+															compare: Compare.GreaterOrEqual,
+															value: 0,
+														}),
+													]),
+													new And([
+														new IntegerCompare({
+															key: ["array"],
+															compare: Compare.GreaterOrEqual,
+															value: 0,
+														}),
+													]),
+												]),
+												new IntegerCompare({
+													key: ["array"],
+													compare: Compare.GreaterOrEqual,
+													value: 0,
+												}),
+											]),
+										],
+									});
+
+									expect(
+										results.map((x) => sha256Base64Sync(x.value.id)),
+									).to.have.members([
+										sha256Base64Sync(d1.id),
+										sha256Base64Sync(d2.id),
 										sha256Base64Sync(d3.id),
 									]);
 								});
@@ -2541,21 +2649,16 @@ export const tests = (
 									);
 
 									const response = await search(store, {
-										query: [
-											new Nested({
-												path: "array",
-												query: new And([
-													new StringMatch({
-														key: ["array", "a"],
-														value: "hello",
-													}),
-													new StringMatch({
-														key: ["array", "b"],
-														value: "world",
-													}),
-												]),
+										query: new And([
+											new StringMatch({
+												key: ["array", "a"],
+												value: "hello",
 											}),
-										],
+											new StringMatch({
+												key: ["array", "b"],
+												value: "world",
+											}),
+										]),
 									});
 
 									expect(response).to.have.length(1);

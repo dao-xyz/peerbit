@@ -16,7 +16,7 @@ import {
 } from "@dao-xyz/borsh";
 import { fromHexString, toHexString } from "@peerbit/crypto";
 import * as types from "@peerbit/indexer-interface";
-import { type PlanningSession } from "./query-planner.js";
+import { type PlanningSession, flattenQuery } from "./query-planner.js";
 
 const SQLConversionMap: any = {
 	u8: "INTEGER",
@@ -56,7 +56,7 @@ export type BindableValue =
 	| null;
 
 let JSON_GROUP_ARRAY = "json_group_array";
-let JSON_OBJECT = "json_object";
+let JSON_OBJECT = "distinct json_object";
 
 export const u64ToI64 = (u64: bigint | number) => {
 	return (typeof u64 === "number" ? BigInt(u64) : u64) - 9223372036854775808n;
@@ -267,6 +267,14 @@ export const getTableName = (
 	path: string[] = [],
 	clazz: string | Constructor<any>,
 ) => {
+	let pathKey = path.length > 0 ? path.join("__") + "__" : "";
+	if (typeof clazz !== "string") {
+		const tableName = (clazz as any)["__table_" + pathKey];
+		if (tableName) {
+			return tableName;
+		}
+	}
+
 	let name: string = typeof clazz === "string" ? clazz : getNameOfClass(clazz);
 
 	// prefix the generated table name so that the name is a valid SQL identifier (table name)
@@ -274,9 +282,11 @@ export const getTableName = (
 
 	// leading _ to allow path to have numbers
 
-	const ret =
-		(path.length > 0 ? path.join("__") + "__" : "") +
-		name.replace(/[^a-zA-Z0-9_]/g, "_");
+	const ret = pathKey + name.replace(/[^a-zA-Z0-9_]/g, "_");
+
+	if (typeof clazz !== "string") {
+		(clazz as any)["__table_" + pathKey] = ret;
+	}
 	return ret;
 };
 
@@ -325,45 +335,46 @@ export const getSQLFields = (
 		primary === false
 			? addJoinFieldFromParent
 			: (fields: SQLField[], contstraints: SQLConstraint[]) => {
-				// we resolve primary field here since it might be unknown until this point
-				const primaryField =
-					primary != null
-						? sqlFields.find((field) => field.name === primary)
-						: undefined;
-				const parentPrimaryFieldName = primaryField?.key || CHILD_TABLE_ID;
-				const parentPrimaryFieldType = primaryField
-					? primaryField.type
-					: "INTEGER";
+					// we resolve primary field here since it might be unknown until this point
+					const parentPrimaryField =
+						primary != null
+							? sqlFields.find((field) => field.name === primary)
+							: undefined;
+					const parentPrimaryFieldName =
+						parentPrimaryField?.key || CHILD_TABLE_ID;
+					const parentPrimaryFieldType = parentPrimaryField
+						? parentPrimaryField.type
+						: "INTEGER";
 
-				fields.unshift(
-					{
-						name: CHILD_TABLE_ID,
-						key: CHILD_TABLE_ID,
-						definition: `${CHILD_TABLE_ID} INTEGER PRIMARY KEY`,
-						type: "INTEGER",
-						isPrimary: true,
-						from: undefined,
-						unwrappedType: undefined,
-						path: [CHILD_TABLE_ID],
-					},
+					fields.unshift(
+						{
+							name: CHILD_TABLE_ID,
+							key: CHILD_TABLE_ID,
+							definition: `${CHILD_TABLE_ID} INTEGER PRIMARY KEY`,
+							type: "INTEGER",
+							isPrimary: true,
+							from: undefined,
+							unwrappedType: undefined,
+							path: [CHILD_TABLE_ID],
+						},
 
-					// foreign key parent document
-					{
-						name: PARENT_TABLE_ID,
-						key: PARENT_TABLE_ID,
-						definition: `${PARENT_TABLE_ID} ${parentPrimaryFieldType}`,
-						type: parentPrimaryFieldType,
-						from: primaryField?.from,
-						unwrappedType: primaryField?.unwrappedType,
-						isPrimary: false,
-						path: [PARENT_TABLE_ID],
-					},
-				);
-				contstraints.push({
-					name: `${PARENT_TABLE_ID}_fk`,
-					definition: `CONSTRAINT ${PARENT_TABLE_ID}_fk FOREIGN KEY(${PARENT_TABLE_ID}) REFERENCES ${tableName}(${parentPrimaryFieldName}) ON DELETE CASCADE`,
-				});
-			};
+						// foreign key parent document
+						{
+							name: PARENT_TABLE_ID,
+							key: PARENT_TABLE_ID,
+							definition: `${PARENT_TABLE_ID} ${parentPrimaryFieldType}`,
+							type: parentPrimaryFieldType,
+							from: parentPrimaryField?.from,
+							unwrappedType: parentPrimaryField?.unwrappedType,
+							isPrimary: false,
+							path: [PARENT_TABLE_ID],
+						},
+					);
+					contstraints.push({
+						name: `${PARENT_TABLE_ID}_fk`,
+						definition: `CONSTRAINT ${PARENT_TABLE_ID}_fk FOREIGN KEY(${PARENT_TABLE_ID}) REFERENCES ${tableName}(${parentPrimaryFieldName}) ON DELETE CASCADE`,
+					});
+				};
 
 	const handleNestedType = (
 		key: string,
@@ -643,16 +654,16 @@ const getTableFromValue = (
 	field: Field,
 	value?: any,
 ): Table => {
-	let clazzName: string | undefined = undefined;
+	let clazzName: string | Constructor<any> | undefined = undefined;
 	if (!isNestedType(field.type)) {
 		clazzName = WRAPPED_SIMPLE_VALUE_VARIANT;
 	} else {
 		const testCtors = value?.constructor
 			? [value?.constructor]
 			: ([
-				unwrapNestedType(field.type),
-				...(getDependencies(unwrapNestedType(field.type) as any, 0) || []),
-			] as Constructor<any>[]);
+					unwrapNestedType(field.type),
+					...(getDependencies(unwrapNestedType(field.type) as any, 0) || []),
+				] as Constructor<any>[]);
 		for (const ctor of testCtors) {
 			if (!ctor) {
 				continue;
@@ -662,7 +673,7 @@ const getTableFromValue = (
 				continue;
 			}
 			if (ctor) {
-				clazzName = getNameOfClass(ctor);
+				clazzName = ctor;
 				break;
 			}
 		}
@@ -722,7 +733,7 @@ export const insert = async (
 				? item
 				: subTable.isSimpleValue
 					? // eslint-disable-next-line new-cap
-					new subTable.ctor(item)
+						new subTable.ctor(item)
 					: Object.assign(Object.create(subTable.ctor.prototype), item),
 			tables,
 			subTable,
@@ -794,7 +805,7 @@ export const insert = async (
 					for (const _field of subTable.fields) {
 						bindableValues.push(null);
 					}
-					bindableValues[bindableValues.length - 1] = false; // assign the value "false" to the exist field column
+					bindableValues[bindableValues.length - 1] = 0; // assign the value "false" to the exist field column
 					continue;
 				}
 
@@ -803,7 +814,7 @@ export const insert = async (
 						if (table.inline) {
 							bindableValues.push(...values); // insert the bindable values into the parent bindable array
 							if (field.type instanceof OptionKind) {
-								bindableValues.push(true); // assign the value "true" to the exist field column
+								bindableValues.push(1); // assign the value "true" to the exist field column
 							}
 							return undefined;
 						} else {
@@ -941,12 +952,11 @@ export const selectAllFieldsFromTables = (
 			join: joinFromSelect,
 			groupBy,
 		} = selectAllFieldsFromTable(table, shape);
+
 		selectsPerTable.push({ selects, joins: joinFromSelect, groupBy });
 	}
 
 	// pad with empty selects to make sure all selects have the same length
-	/* const maxSelects = Math.max(...selectsPerTable.map(x => x.selects.length)); */
-
 	let newSelects: {
 		from: string;
 		as: string;
@@ -988,8 +998,12 @@ export const selectAllFieldsFromTable = (
 	for (const tableAndShape of stack) {
 		if (tableAndShape.table.referencedInArray) {
 			let selectBuilder = `${JSON_GROUP_ARRAY}(${JSON_OBJECT}(`;
+
 			groupByParentId = true; // we need to group by the parent id as else we will not be returned with more than 1 result
+
 			let first = false;
+			const as = createReconstructReferenceName(tableAndShape.table);
+
 			for (const field of tableAndShape.table.fields) {
 				if (
 					(field.isPrimary ||
@@ -999,7 +1013,7 @@ export const selectAllFieldsFromTable = (
 						field.name === ARRAY_INDEX_COLUMN) &&
 					field.name !== PARENT_TABLE_ID
 				) {
-					let resolveField = `${tableAndShape.table.name}.${escapeColumnName(field.name)}`;
+					let resolveField = `${as}.${escapeColumnName(field.name)}`;
 					// if field is bigint we need to convert it to string, so that later in a JSON.parse scenario it is not converted to a number, but remains a string until we can convert it back to a bigint manually
 					if (field.unwrappedType === "u64") {
 						resolveField = `CAST(${resolveField} AS TEXT)`;
@@ -1021,16 +1035,26 @@ export const selectAllFieldsFromTable = (
 
 			fieldResolvers.push({
 				from: selectBuilder,
-				as: tableAndShape.table.name,
+				as,
 			});
 
-			join.set(tableAndShape.table.name, {
-				as: tableAndShape.table.name,
+			join.set(createReconstructReferenceName(tableAndShape.table), {
+				as,
 				table: tableAndShape.table,
 				type: "left" as const,
 				columns: [],
 			});
 		} else if (!tableAndShape.table.inline) {
+			// we end up here when we have simple joins we want to make that are not arrays, and not inlined
+			if (tableAndShape.table.parent != null) {
+				join.set(createReconstructReferenceName(tableAndShape.table), {
+					as: tableAndShape.table.name,
+					table: tableAndShape.table,
+					type: "left" as const,
+					columns: [],
+				});
+			}
+
 			for (const field of tableAndShape.table.fields) {
 				if (
 					field.isPrimary ||
@@ -1046,77 +1070,25 @@ export const selectAllFieldsFromTable = (
 		}
 
 		for (const child of tableAndShape.table.children) {
-			/* if (child.referencedInArray) {
-				let selectBuilder = `${JSON_GROUP_ARRAY}(${JSON_OBJECT}(`;
-				groupByParentId = true; // we need to group by the parent id as else we will not be returned with more than 1 result
-				let first = false
-				for (const field of child.fields) {
-					if (
-						field.isPrimary ||
-						!tableAndShape.shape ||
-						matchFieldInShape(tableAndShape.shape, [], field)
-					) {
-						let resolveField = `${child.name}.${escapeColumnName(field.name)}`;
-						// if field is bigint we need to convert it to string, so that later in a JSON.parse scenario it is not converted to a number, but remains a string until we can convert it back to a bigint manually
-						if (field.unwrappedType === "u64") {
-							resolveField = `CAST(${resolveField} AS TEXT)`;
-						}
+			let childShape: types.Shape | undefined = undefined;
+			if (tableAndShape.shape) {
+				const parentPath = child.parentPath?.slice(1);
+				let maybeShape = parentPath
+					? tableAndShape.shape?.[parentPath[parentPath.length - 1]]
+					: undefined;
 
-						// if field is blob we need to convert it to hex string
-						if (field.type === "BLOB") {
-							resolveField = `HEX(${resolveField})`;
-						}
-
-						if (first) {
-							selectBuilder += `, `;
-						}
-						first = true;
-						selectBuilder += `${escapeColumnName(field.name, "'")}, ${resolveField}`;
-
-					}
+				if (!maybeShape) {
+					continue;
 				}
 
-				selectBuilder += `))`;
-
-				fieldResolvers.push({
-					from: selectBuilder,
-					as: child.name,
-				});
-
-				join.set(child.name, { as: child.name, table: child });
-
-				stack.push({ table: child });
-			} else */ {
-				let childShape: types.Shape | undefined = undefined;
-				if (tableAndShape.shape) {
-					const parentPath = child.parentPath?.slice(1);
-					let maybeShape = parentPath
-						? tableAndShape.shape?.[parentPath[parentPath.length - 1]]
-						: undefined;
-
-					if (!maybeShape) {
-						continue;
-					}
-
-					childShape =
-						maybeShape === true
-							? undefined
-							: Array.isArray(maybeShape)
-								? maybeShape[0]
-								: maybeShape;
-				}
-				stack.push({ table: child, shape: childShape });
-
-				//  TODO is this needed?
-				/* if (!child.inline) {
-					join.set(child.name, {
-						as: child.name,
-						table: child,
-						type: "left" as const,
-						columns: []
-					});
-				} */
+				childShape =
+					maybeShape === true
+						? undefined
+						: Array.isArray(maybeShape)
+							? maybeShape[0]
+							: maybeShape;
 			}
+			stack.push({ table: child, shape: childShape });
 		}
 	}
 
@@ -1127,7 +1099,7 @@ export const selectAllFieldsFromTable = (
 	return {
 		groupBy: groupByParentId
 			? `${table.name}.${escapeColumnName(table.primary as string)}` ||
-			undefined
+				undefined
 			: undefined,
 		selects: fieldResolvers, //  `SELECT ${fieldResolvers.join(", ")} FROM ${table.name}`,
 		join,
@@ -1173,9 +1145,9 @@ export const resolveInstanceFromValue = async <
 		if (isArray && maybeShape && !subshapeIsArray && maybeShape !== true) {
 			throw new Error(
 				"Shape is not matching the array field type: " +
-				field.key +
-				". Shape: " +
-				JSON.stringify(shape),
+					field.key +
+					". Shape: " +
+					JSON.stringify(shape),
 			);
 		}
 
@@ -1187,16 +1159,17 @@ export const resolveInstanceFromValue = async <
 					: maybeShape;
 
 		if (isArray) {
-			let once = false;
+			/* let once = false; */
 			let resolvedArr = [];
 
 			for (const subtable of subTables) {
 				// check if the array already in the provided row
 				let arr: any[] | undefined = undefined;
-				if (fromTablePrefixedValues[subtable.name]) {
-					let arr = JSON.parse(fromTablePrefixedValues[subtable.name]) as Array<any>;
+				const tableName = createReconstructReferenceName(subtable);
+				if (fromTablePrefixedValues[tableName]) {
+					arr = JSON.parse(fromTablePrefixedValues[tableName]) as Array<any>;
 					try {
-						arr = arr.filter(x => x[subtable.primary as string] != null);
+						arr = arr.filter((x) => x[subtable.primary as string] != null);
 
 						// we need to go over all fields that are to be bigints and convert
 						// them back to bigints
@@ -1223,27 +1196,29 @@ export const resolveInstanceFromValue = async <
 							} */
 						}
 					} catch (error) {
-						throw error
+						throw error;
 					}
-
-
-
 				} else {
-					// TODO types
-					let rootTable = getNonInlinedTable(table);
-					arr = await resolveChildren(
-						fromTablePrefixedValues[
-						getTablePrefixedField(
-							rootTable,
-							rootTable.primary as string,
-							!tablePrefixed,
-						)
-						],
-						subtable,
-					);
+					if (subtable.children) {
+						// TODO we only end up where when we resolve nested arrays,
+						// which shoulld instead be resolved in a nested select (with json_group_array and json_object)
+						let rootTable = getNonInlinedTable(table);
+						const parentId =
+							fromTablePrefixedValues[
+								getTablePrefixedField(
+									rootTable,
+									rootTable.primary as string,
+									!tablePrefixed,
+								)
+							];
+
+						arr = await resolveChildren(parentId, subtable);
+					} else {
+						arr = [];
+					}
 				}
-				if (arr) {
-					once = true;
+				if (arr && arr.length > 0) {
+					/* once = true; */
 					for (const element of arr) {
 						const resolved: SimpleNested | any = await resolveInstanceFromValue(
 							element,
@@ -1261,11 +1236,7 @@ export const resolveInstanceFromValue = async <
 				}
 			}
 
-			if (!once) {
-				obj[field.key] = undefined;
-			} else {
-				obj[field.key] = resolvedArr;
-			}
+			obj[field.key] = resolvedArr; // we can not do option(vec('T')) since we dont store the option type for Arrays (TODO)
 		} else {
 			// resolve nested object from row directly
 			/* let extracted: any = {} */
@@ -1275,11 +1246,11 @@ export const resolveInstanceFromValue = async <
 					// TODO types
 					if (
 						fromTablePrefixedValues[
-						getTablePrefixedField(
-							table,
-							table.primary as string,
-							!tablePrefixed,
-						)
+							getTablePrefixedField(
+								table,
+								table.primary as string,
+								!tablePrefixed,
+							)
 						] != null
 					) {
 						subTable = table;
@@ -1305,10 +1276,10 @@ export const resolveInstanceFromValue = async <
 
 				const isNull =
 					!fromTablePrefixedValues[
-					getTablePrefixedField(
-						rootTable,
-						subTable.fields[subTable.fields.length - 1].name,
-					)
+						getTablePrefixedField(
+							rootTable,
+							subTable.fields[subTable.fields.length - 1].name,
+						)
 					];
 
 				if (isNull) {
@@ -1321,7 +1292,7 @@ export const resolveInstanceFromValue = async <
 			if (
 				subTable.primary !== false &&
 				fromTablePrefixedValues[
-				getTablePrefixedField(subTable, subTable.primary, !tablePrefixed)
+					getTablePrefixedField(subTable, subTable.primary, !tablePrefixed)
 				] == null
 			) {
 				obj[field.key] = undefined;
@@ -1351,12 +1322,12 @@ export const resolveInstanceFromValue = async <
 		);
 		const fieldValue = referencedField
 			? fromTablePrefixedValues[
-			getTablePrefixedField(
-				rootTable,
-				referencedField!.name,
-				!tablePrefixed,
-			)
-			]
+					getTablePrefixedField(
+						rootTable,
+						referencedField!.name,
+						!tablePrefixed,
+					)
+				]
 			: undefined;
 		if (typeof field.type === "string" || isUint8ArrayType(field.type)) {
 			obj[field.key] = convertFromSQLType(fieldValue, field.type);
@@ -1473,48 +1444,33 @@ export const convertSearchRequestToQuery = (
 	for (const [i, table] of rootTables.entries()) {
 		const { selects, joins, groupBy } = selectsPerTable[i];
 		const selectQuery = generateSelectQuery(table, selects);
-		try {
-
-			const { orderBy, query, bindable } = convertRequestToQuery(
-				"iterate",
-				request,
-				tables,
-				table,
-				joins,
-				[],
-				options,
-			);
-			/* const joinTable = joins.get(table.name);
-			const usedColumns = joinTable!.columns;
-			const indexToUse = createIndexKey(table.name, [...usedColumns, table.primary as string]);
-
-			let hasIndex = table.indices.has(indexToUse)
-			if (!hasIndex && options?.optimize) {
-
-				// create the index!
-				const columns = [...usedColumns]
-				const key = createIndexKey(table.name, columns);
-				(indexesToCreate || (indexesToCreate = [])).push(`create index if not exists ${key} on ${table.name} (${columns.map((n) => escapeColumnName(n)).join(", ")})`);
-				table.indices.add(key);
-				hasIndex = true;
+		for (const flattenRequest of flattenQuery(request)) {
+			try {
+				const { orderBy, query, bindable } = convertRequestToQuery(
+					"iterate",
+					flattenRequest,
+					tables,
+					table,
+					new Map(joins), // copy the map, else we might might do unececessary joins
+					[],
+					options,
+				);
+				unionBuilder += `${unionBuilder.length > 0 ? " UNION " : ""} ${selectQuery} ${query} ${groupBy ? "GROUP BY " + groupBy : ""}`;
+				orderByClause =
+					orderBy?.length > 0
+						? orderByClause.length > 0
+							? orderByClause + ", " + orderBy
+							: orderBy
+						: orderByClause;
+				matchedOnce = true;
+				bindableBuilder.push(...bindable);
+			} catch (error) {
+				if (error instanceof MissingFieldError) {
+					lastError = error;
+					continue;
+				}
+				throw error;
 			}
-			let indexedBy = hasIndex ? `INDEXED BY ${indexToUse}` : ""; */
-
-			unionBuilder += `${unionBuilder.length > 0 ? " UNION ALL " : ""} ${selectQuery}  ${query} ${groupBy ? "GROUP BY " + groupBy : ""}`;
-			orderByClause =
-				orderBy?.length > 0
-					? orderByClause.length > 0
-						? orderByClause + ", " + orderBy
-						: orderBy
-					: orderByClause;
-			matchedOnce = true;
-			bindableBuilder.push(...bindable);
-		} catch (error) {
-			if (error instanceof MissingFieldError) {
-				lastError = error;
-				continue;
-			}
-			throw error;
 		}
 	}
 
@@ -1557,22 +1513,22 @@ const convertRequestToQuery = <
 	type: T,
 	request:
 		| (T extends "iterate"
-			? {
-				query?: types.Query[];
-				sort?: types.Sort[] | types.Sort;
-			}
-			: T extends "count"
-			? {
-				query?: types.Query[];
-			}
-			: T extends "delete"
-			? {
-				query?: types.Query[];
-			}
-			: {
-				query?: types.Query[];
-				key: string | string[];
-			})
+				? {
+						query?: types.Query[];
+						sort?: types.Sort[] | types.Sort;
+					}
+				: T extends "count"
+					? {
+							query?: types.Query[];
+						}
+					: T extends "delete"
+						? {
+								query?: types.Query[];
+							}
+						: {
+								query?: types.Query[];
+								key: string | string[];
+							})
 		| undefined,
 	tables: Map<string, Table>,
 	table: Table,
@@ -1589,14 +1545,13 @@ const convertRequestToQuery = <
 	/* let tablesToSelect: string[] = [table.name]; */
 	let joinBuilder: Map<string, JoinOrRootTable> = extraJoin || new Map();
 
-	joinBuilder.set(createQueryTableReferenceName(table, undefined), {
+	joinBuilder.set(createQueryTableReferenceName(table), {
 		// add the root as a join even though it is not, just so we can collect the columns it will be queried
 		table: table,
 		type: "root",
 		as: table.name,
 		columns: [],
 	});
-
 
 	const coercedQuery = types.toQuery(request?.query);
 	if (coercedQuery.length === 1) {
@@ -1663,13 +1618,6 @@ const convertRequestToQuery = <
 						orderByBuilder += `${foreignTable.as}.${queryKey} ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`;
 					}
 				}
-
-				/* orderByBuilder += request.sort
-					.map(
-						(sort) =>
-							`${table.name}.${sort.key} ${sort.direction === types.SortDirection.ASC ? "ASC" : "DESC"}`
-					)
-					.join(", "); */
 			}
 		}
 	}
@@ -1787,7 +1735,7 @@ export const convertQueryToSQLQuery = (
 				keysOffset,
 			);
 			whereBuilder =
-				whereBuilder.length > 0 ? `(${whereBuilder}) AND(${where})` : where;
+				whereBuilder.length > 0 ? `(${whereBuilder}) AND (${where})` : where;
 			bindableBuilder.push(...bindable);
 		}
 	};
@@ -1872,27 +1820,28 @@ type RootTable = {
 	columns: string[];
 };
 
-const createQueryTableReferenceName = (
+/* const createQueryTableReferenceName = (
 	table: Table,
 	alias: string | undefined,
-	/* fieldType: FieldType | undefined,
-	joinSize: number, */
 ) => {
-	/* if (true as any) {
-		return table.name;
-	} */
+	
 	if (
-		!alias /* &&
-		(fieldType instanceof VecKind ||
-			(fieldType instanceof OptionKind &&
-				fieldType.elementType instanceof VecKind)) */
+		!alias 
 	) {
 		let aliasSuffix =
-			"_query"; /* "_" + String(joinSize); TODO this property will make every join unique, which is not wanted unless (ever?) since we can do OR in SQL which means we can do one join and perform AND/OR logic without joining multiple times to apply multiple conditions*/
+			"_query"; //  "_" + String(joinSize); TODO this property will make every join unique, which is not wanted unless (ever?) since we can do OR in SQL which means we can do one join and perform AND/OR logic without joining multiple times to apply multiple conditions
 		alias = aliasSuffix;
 	}
 	const tableNameAs = alias ? alias + "_" + table.name : table.name;
 	return tableNameAs;
+}; */
+
+const createQueryTableReferenceName = (table: Table) => {
+	return table.parent == null ? table.name : "_query_" + table.name;
+};
+
+const createReconstructReferenceName = (table: Table) => {
+	return table.name; /* table.parent == null ? table.name : "_rec_" + table.name; */
 };
 
 const resolveTableToQuery = (
@@ -1919,7 +1868,9 @@ const resolveTableToQuery = (
 		if (field) {
 			return {
 				queryKey: field.name,
-				foreignTables: [join.get(createQueryTableReferenceName(table, undefined)) as RootTable],
+				foreignTables: [
+					join.get(createQueryTableReferenceName(table)) as RootTable,
+				],
 			};
 		}
 	}
@@ -1950,9 +1901,9 @@ const resolveTableToQuery = (
 			for (const child of currentTable.children) {
 				const tableNameAs = createQueryTableReferenceName(
 					child,
-					alias /* ,
+					/* alias */ /* ,
 					field.type,
-					join.size, */,
+					join.size, */
 				);
 				let isMatching =
 					child.parentPath![child.parentPath!.length - 1] === key;
@@ -2081,9 +2032,7 @@ const convertStateFieldQuery = (
 		};
 	}
 
-	const columnAggregator = join.get(
-		createQueryTableReferenceName(table, undefined),
-	)!;
+	const columnAggregator = join.get(createQueryTableReferenceName(table))!;
 	if (!columnAggregator) {
 		throw new Error("Unexpected");
 	}
@@ -2121,7 +2070,7 @@ const convertStateFieldQuery = (
 			// TODO perf
 			where = `hex(${keyWithTable}) LIKE ? `;
 			bindable.push(
-				`% ${toHexString(new Uint8Array([Number(query.value.value)]))}% `,
+				`%${toHexString(new Uint8Array([Number(query.value.value)]))}%`,
 			);
 		} else {
 			if (query.compare === types.Compare.Equal) {

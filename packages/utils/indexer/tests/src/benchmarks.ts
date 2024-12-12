@@ -8,14 +8,14 @@ import {
 	type Indices,
 	IntegerCompare,
 	Or,
+	Query,
 	Sort,
 	StringMatch,
 	getIdProperty,
 	id,
 } from "@peerbit/indexer-interface";
-import B from "benchmark";
 import sodium from "libsodium-wrappers";
-import pDefer from "p-defer";
+import * as B from "tinybench";
 import { v4 as uuid } from "uuid";
 
 const setup = async <T>(
@@ -78,77 +78,44 @@ const stringBenchmark = async (
 		type,
 	);
 
-	let done = pDefer();
-	const suite = new B.Suite({ delay: 100 });
-	suite
-		.add("string put - " + type, {
-			fn: async (deferred: any) => {
-				await stringIndexEmpty.store.put(new StringDocument(uuid(), uuid()));
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
+	const suite = new B.Bench({ warmupIterations: 1000 });
+	await suite
+		.add("string put - " + type, async () => {
+			await stringIndexEmpty.store.put(new StringDocument(uuid(), uuid()));
 		})
-		.add("string query matching - " + type, {
-			fn: async (deferred: any) => {
-				const iterator = stringIndexPreFilled.store.iterate({
-					query: new StringMatch({ key: "string", value: fixed }),
-				});
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
+		.add("string query matching - " + type, async () => {
+			const iterator = stringIndexPreFilled.store.iterate({
+				query: new StringMatch({ key: "string", value: fixed }),
+			});
+			await iterator.next(10);
+			await iterator.close();
 		})
 
-		.add("string count matching - " + type, {
-			fn: async (deferred: any) => {
-				await stringIndexPreFilled.store.count({
-					query: new StringMatch({ key: "string", value: fixed }),
-				});
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
+		.add("string count matching - " + type, async () => {
+			await stringIndexPreFilled.store.count({
+				query: new StringMatch({ key: "string", value: fixed }),
+			});
 		})
-		.add("string count no-matches - " + type, {
-			fn: async (deferred: any) => {
-				const out = Math.random() > 0.5 ? true : false;
-				await stringIndexPreFilled.store.count({
-					query: new StringMatch({ key: "string", value: uuid() }),
-				});
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-		})
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			throw err;
-		})
-		.on("complete", async () => {
-			await stringIndexEmpty.indices.stop();
-			stringIndexEmpty.directory &&
-				fs.rmSync(stringIndexEmpty.directory, { recursive: true, force: true });
-
-			await stringIndexPreFilled.indices.stop();
-			stringIndexPreFilled.directory &&
-				fs.rmSync(stringIndexPreFilled.directory, {
-					recursive: true,
-					force: true,
-				});
-
-			done.resolve();
-		})
-		.on("error", (e) => {
-			done.reject(e);
+		.add("string count no-matches - " + type, async () => {
+			const out = Math.random() > 0.5 ? true : false;
+			await stringIndexPreFilled.store.count({
+				query: new StringMatch({ key: "string", value: uuid() }),
+			});
 		})
 		.run();
-	return done.promise;
+
+	await stringIndexEmpty.indices.stop();
+	stringIndexEmpty.directory &&
+		fs.rmSync(stringIndexEmpty.directory, { recursive: true, force: true });
+
+	await stringIndexPreFilled.indices.stop();
+	stringIndexPreFilled.directory &&
+		fs.rmSync(stringIndexPreFilled.directory, {
+			recursive: true,
+			force: true,
+		});
+
+	console.table(suite.table());
 };
 
 const boolQueryBenchmark = async (
@@ -188,82 +155,48 @@ const boolQueryBenchmark = async (
 		type,
 	);
 
-	let done = pDefer();
-	const suite = new B.Suite({ delay: 100 });
+	const suite = new B.Bench({ warmupIterations: 1000 });
 	let fetch = 10;
-	suite
-		.add(`bool query fetch ${fetch} - ${type}`, {
-			fn: async (deferred: any) => {
-				const out = Math.random() > 0.5 ? true : false;
-				const iterator = await boolIndexPrefilled.store.iterate({
-					query: new BoolQuery({ key: "bool", value: out }),
-				});
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
+	await suite
+		.add(`bool query fetch ${fetch} - ${type}`, async () => {
+			const out = Math.random() > 0.5 ? true : false;
+			const iterator = await boolIndexPrefilled.store.iterate({
+				query: new BoolQuery({ key: "bool", value: out }),
+			});
+			await iterator.next(10);
+			await iterator.close();
 		})
-		.add(`non bool query fetch ${fetch} - ${type}`, {
-			fn: async (deferred: any) => {
-				const iterator = await boolIndexPrefilled.store.iterate();
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
+		.add(`non bool query fetch ${fetch} - ${type}`, async () => {
+			const iterator = await boolIndexPrefilled.store.iterate();
+			await iterator.next(10);
+			await iterator.close();
 		})
 
-		.add(`non bool query fetch with sort ${fetch} - ${type}`, {
-			fn: async (deferred: any) => {
-				const iterator = boolIndexPrefilled.store.iterate({
-					sort: [new Sort({ key: "id" })],
-				});
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
+		.add(`non bool query fetch with sort ${fetch} - ${type}`, async () => {
+			const iterator = boolIndexPrefilled.store.iterate({
+				sort: [new Sort({ key: "id" })],
+			});
+			await iterator.next(10);
+			await iterator.close();
 		})
-		.add(`bool put - ${type}`, {
-			fn: async (deferred: any) => {
-				await boolIndexEmpty.store.put(
-					new BoolQueryDocument(uuid(), Math.random() > 0.5 ? true : false),
-				);
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-		})
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			throw err;
-		})
-		.on("complete", async () => {
-			await boolIndexEmpty.indices.stop();
-			boolIndexEmpty.directory &&
-				fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
-
-			await boolIndexPrefilled.indices.stop();
-			boolIndexPrefilled.directory &&
-				fs.rmSync(boolIndexPrefilled.directory, {
-					recursive: true,
-					force: true,
-				});
-
-			done.resolve();
-		})
-		.on("error", (e) => {
-			done.reject(e);
+		.add(`bool put - ${type}`, async () => {
+			await boolIndexEmpty.store.put(
+				new BoolQueryDocument(uuid(), Math.random() > 0.5 ? true : false),
+			);
 		})
 		.run();
-	return done.promise;
+
+	await boolIndexEmpty.indices.stop();
+	boolIndexEmpty.directory &&
+		fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
+
+	await boolIndexPrefilled.indices.stop();
+	boolIndexPrefilled.directory &&
+		fs.rmSync(boolIndexPrefilled.directory, {
+			recursive: true,
+			force: true,
+		});
+	console.table(suite.table());
 };
 
 const inequalityBenchmark = async (
@@ -314,80 +247,46 @@ const inequalityBenchmark = async (
 		await iterator.close();
 	}
 
-	let done = pDefer();
-	const suite = new B.Suite({ delay: 100 });
+	const suite = new B.Bench({ warmupIterations: 1000 });
 	let fetch = 10;
-	suite
-		.add(`number query fetch ${fetch} - ${type}`, {
-			fn: async (deferred: any) => {
-				const iterator = numberIndexPrefilled.store.iterate({
-					query: new IntegerCompare({
-						key: "number",
-						compare: Compare.Less,
-						value: 11,
-					}),
-				});
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
+	await suite
+		.add(`number query fetch ${fetch} - ${type}`, async () => {
+			const iterator = numberIndexPrefilled.store.iterate({
+				query: new IntegerCompare({
+					key: "number",
+					compare: Compare.Less,
+					value: 11,
+				}),
+			});
+			await iterator.next(10);
+			await iterator.close();
 		})
 
-		.add(`non number query fetch ${fetch} - ${type}`, {
-			fn: async (deferred: any) => {
-				const iterator = numberIndexPrefilled.store.iterate();
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
+		.add(`non number query fetch ${fetch} - ${type}`, async () => {
+			const iterator = numberIndexPrefilled.store.iterate();
+			await iterator.next(10);
+			await iterator.close();
 		})
 
-		.add(`number put - ${type}`, {
-			fn: async (deferred: any) => {
-				await boolIndexEmpty.store.put(
-					new NumberQueryDocument(
-						uuid(),
-						Math.round(Math.random() * 0xffffffff),
-					),
-				);
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			throw err;
-		})
-		.on("complete", async () => {
-			await boolIndexEmpty.indices.stop();
-			boolIndexEmpty.directory &&
-				fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
-
-			await numberIndexPrefilled.indices.stop();
-			numberIndexPrefilled.directory &&
-				fs.rmSync(numberIndexPrefilled.directory, {
-					recursive: true,
-					force: true,
-				});
-
-			done.resolve();
-		})
-		.on("error", (e) => {
-			done.reject(e);
+		.add(`number put - ${type}`, async () => {
+			await boolIndexEmpty.store.put(
+				new NumberQueryDocument(uuid(), Math.round(Math.random() * 0xffffffff)),
+			);
 		})
 		.run();
-	return done.promise;
+
+	await boolIndexEmpty.indices.stop();
+	boolIndexEmpty.directory &&
+		fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
+
+	await numberIndexPrefilled.indices.stop();
+	numberIndexPrefilled.directory &&
+		fs.rmSync(numberIndexPrefilled.directory, {
+			recursive: true,
+			force: true,
+		});
+
+	console.table(suite.table());
 };
 
 const getBenchmark = async (
@@ -430,46 +329,26 @@ const getBenchmark = async (
 		type,
 	);
 
-	let done = pDefer();
-	const suite = new B.Suite({ delay: 100 });
-	suite
-		.add("get by id - " + type, {
-			fn: async (deferred: any) => {
-				await boolIndexPrefilled.store.get(
-					ids[Math.floor(Math.random() * ids.length)],
-				);
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-		})
-
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			throw err;
-		})
-		.on("complete", async () => {
-			await boolIndexEmpty.indices.stop();
-			boolIndexEmpty.directory &&
-				fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
-
-			await boolIndexPrefilled.indices.stop();
-			boolIndexPrefilled.directory &&
-				fs.rmSync(boolIndexPrefilled.directory, {
-					recursive: true,
-					force: true,
-				});
-
-			done.resolve();
-		})
-		.on("error", (e) => {
-			done.reject(e);
+	const suite = new B.Bench({ warmupIterations: 1000 });
+	await suite
+		.add("get by id - " + type, async () => {
+			await boolIndexPrefilled.store.get(
+				ids[Math.floor(Math.random() * ids.length)],
+			);
 		})
 		.run();
-	return done.promise;
+	await boolIndexEmpty.indices.stop();
+	boolIndexEmpty.directory &&
+		fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
+
+	await boolIndexPrefilled.indices.stop();
+	boolIndexPrefilled.directory &&
+		fs.rmSync(boolIndexPrefilled.directory, {
+			recursive: true,
+			force: true,
+		});
+
+	console.table(suite.table());
 };
 
 const nestedBoolQueryBenchmark = async (
@@ -519,60 +398,34 @@ const nestedBoolQueryBenchmark = async (
 		type,
 	);
 
-	let done = pDefer();
-	const suite = new B.Suite({ delay: 100 });
+	const suite = new B.Bench({ warmupIterations: 1000 });
 
-	suite
-		.add("nested bool query - " + type, {
-			fn: async (deferred: any) => {
-				const out = Math.random() > 0.5 ? true : false;
-				const iterator = await boolIndexPrefilled.store.iterate({
-					query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-				});
-				await iterator.next(10);
-				await iterator.close();
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
+	await suite
+		.add("nested bool query - " + type, async () => {
+			const out = Math.random() > 0.5 ? true : false;
+			const iterator = await boolIndexPrefilled.store.iterate({
+				query: new BoolQuery({ key: ["nested", "bool"], value: out }),
+			});
+			await iterator.next(10);
+			await iterator.close();
 		})
-		.add("nested bool put - " + type, {
-			fn: async (deferred: any) => {
-				await boolIndexEmpty.store.put(
-					new NestedBoolQueryDocument(
-						uuid(),
-						Math.random() > 0.5 ? true : false,
-					),
-				);
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			done.reject(err);
-		})
-		.on("complete", async () => {
-			await boolIndexEmpty.indices.stop();
-			boolIndexEmpty.directory &&
-				fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
-
-			await boolIndexPrefilled.indices.stop();
-			boolIndexPrefilled.directory &&
-				fs.rmSync(boolIndexPrefilled.directory, {
-					recursive: true,
-					force: true,
-				});
-			done.resolve();
+		.add("nested bool put - " + type, async () => {
+			await boolIndexEmpty.store.put(
+				new NestedBoolQueryDocument(uuid(), Math.random() > 0.5 ? true : false),
+			);
 		})
 		.run();
-	return done.promise;
+	await boolIndexEmpty.indices.stop();
+	boolIndexEmpty.directory &&
+		fs.rmSync(boolIndexEmpty.directory, { recursive: true, force: true });
+
+	await boolIndexPrefilled.indices.stop();
+	boolIndexPrefilled.directory &&
+		fs.rmSync(boolIndexPrefilled.directory, {
+			recursive: true,
+			force: true,
+		});
+	console.table(suite.table());
 };
 
 const shapedQueryBenchmark = async (
@@ -618,83 +471,54 @@ const shapedQueryBenchmark = async (
 		);
 	}
 
-	let done = pDefer();
-	const suite = new B.Suite({ delay: 100 });
+	const suite = new B.Bench({ warmupIterations: 1000 });
 	let fetch = 10;
-	suite
-		.add("unshaped nested array query - " + type, {
-			fn: async (deferred: any) => {
-				const out = Math.random() > 0.5 ? true : false;
-				let iterator = await boolIndexPrefilled.store.iterate({
+	await suite
+		.add("unshaped nested array query - " + type, async () => {
+			const out = Math.random() > 0.5 ? true : false;
+			let iterator = await boolIndexPrefilled.store.iterate({
+				query: new BoolQuery({ key: ["nested", "bool"], value: out }),
+			});
+			const results = await iterator.next(fetch);
+			await iterator.close();
+			if (results.length !== fetch) {
+				throw new Error("Missing results");
+			}
+		})
+		.add("shaped nested array query - " + type, async () => {
+			const out = Math.random() > 0.5 ? true : false;
+			const iterator = boolIndexPrefilled.store.iterate(
+				{
 					query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-				});
-				const results = await iterator.next(fetch);
-				await iterator.close();
-				if (results.length !== fetch) {
-					throw new Error("Missing results");
-				}
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
+				},
+				{ shape: { id: true } },
+			);
+			const results = await iterator.next(fetch);
+			await iterator.close();
+			if (results.length !== fetch) {
+				throw new Error("Missing results");
+			}
 		})
-		.add("shaped nested array query - " + type, {
-			fn: async (deferred: any) => {
-				const out = Math.random() > 0.5 ? true : false;
-				const iterator = boolIndexPrefilled.store.iterate(
-					{
-						query: new BoolQuery({ key: ["nested", "bool"], value: out }),
-					},
-					{ shape: { id: true } },
-				);
-				const results = await iterator.next(fetch);
-				await iterator.close();
-				if (results.length !== fetch) {
-					throw new Error("Missing results");
-				}
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
-		.add("nested fetch without query - " + type, {
-			fn: async (deferred: any) => {
-				const out = Math.random() > 0.5 ? true : false;
-				const iterator = boolIndexPrefilled.store.iterate(
-					{},
-					{ shape: { id: true } },
-				);
-				const results = await iterator.next(fetch);
-				await iterator.close();
-				if (results.length !== fetch) {
-					throw new Error("Missing results");
-				}
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			done.reject(err);
-		})
-		.on("complete", async () => {
-			await boolIndexPrefilled.indices.stop();
-			boolIndexPrefilled.directory &&
-				fs.rmSync(boolIndexPrefilled.directory, {
-					recursive: true,
-					force: true,
-				});
-			done.resolve();
+		.add("nested fetch without query - " + type, async () => {
+			const iterator = boolIndexPrefilled.store.iterate(
+				{},
+				{ shape: { id: true } },
+			);
+			const results = await iterator.next(fetch);
+			await iterator.close();
+			if (results.length !== fetch) {
+				throw new Error("Missing results");
+			}
 		})
 		.run();
-	return done.promise;
+
+	await boolIndexPrefilled.indices.stop();
+	boolIndexPrefilled.directory &&
+		fs.rmSync(boolIndexPrefilled.directory, {
+			recursive: true,
+			force: true,
+		});
+	console.table(suite.table());
 };
 
 const multiFieldQueryBenchmark = async (
@@ -774,127 +598,139 @@ const multiFieldQueryBenchmark = async (
 		);
 	}
 
-	const suite = new B.Suite({ delay: 100 });
+	const suite = new B.Bench({ warmupIterations: 500 });
 	let fetch = 10;
-	let done = pDefer();
+
 	const fs = await import("fs");
 	const ors: any[] = [];
-	for (const point of [5 /* , docCount - 4, 40, docCount - 20 */]) {
+	for (const point of [10, docCount - 4]) {
 		ors.push(
-			new Or([
-				new And([
-					new IntegerCompare({
-						key: "start1",
-						compare: Compare.LessOrEqual,
-						value: point,
-					}),
-					new IntegerCompare({
-						key: "end1",
-						compare: Compare.Greater,
-						value: point,
-					}),
-				]),
-				new And([
-					new IntegerCompare({
-						key: "start2",
-						compare: Compare.LessOrEqual,
-						value: point,
-					}),
-					new IntegerCompare({
-						key: "end2",
-						compare: Compare.Greater,
-						value: point,
-					}),
-				]),
+			new And([
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: point,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.Greater,
+					value: point,
+				}),
+			]),
+		);
+		ors.push(
+			new And([
+				new IntegerCompare({
+					key: "start2",
+					compare: Compare.LessOrEqual,
+					value: point,
+				}),
+				new IntegerCompare({
+					key: "end2",
+					compare: Compare.Greater,
+					value: point,
+				}),
 			]),
 		);
 	}
-	let query = [
-		...ors,
-		/* , new IntegerCompare({
+	let complicatedQuery = [
+		new Or(ors) /* ,
+		new IntegerCompare({
 			key: "timestamp",
-			compare: Compare.Greater,
-			value: 0,
-		}) */
+			compare: Compare.Less,
+			value: 100
+		}) */,
 	];
-	suite
-		.add("multi field query small fetch - " + type, {
-			fn: async (deferred: any) => {
-				const iterator = await indexPrefilled.store.iterate({
-					query,
-				});
-				const results = await iterator.next(fetch);
-				await iterator.close();
 
-				if (results.length === 0) {
-					throw new Error("No results");
-				}
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
-		.add("multi field no query small fetch - " + type, {
-			fn: async (deferred: any) => {
-				const iterator = await indexPrefilled.store.iterate();
-				const results = await iterator.next(fetch);
-				await iterator.close();
+	const suites: { query: Query[]; name: string }[] = [
+		/* {
+			query: [
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: 5,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.Greater,
+					value: 5,
+				})
+			], name: "2-fields query"
+		},
+		{
+			query: [
 
-				if (results.length === 0) {
-					throw new Error("No results");
-				}
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
-		.add("multi field query all fetch - " + type, {
-			fn: async (deferred: any) => {
-				const iterator = indexPrefilled.store.iterate({
-					query,
-				});
-				const results = await iterator.all();
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: 5,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.Greater,
+					value: 5,
+				}),
+				new IntegerCompare({
+					key: "timestamp",
+					compare: Compare.Less,
+					value: 10,
+				}),
+			], name: "3-fields query"
+		}, */
+		{ query: complicatedQuery, name: "3-fields or query" },
+	];
+	suites.forEach(({ query, name }) => {
+		suite.add(`m-field ${name} query small fetch - ${type}`, async () => {
+			const iterator = await indexPrefilled.store.iterate({
+				query,
+			});
+			const results = await iterator.next(fetch);
+			await iterator.close();
 
-				if (results.length === 0) {
-					throw new Error("No results");
-				}
-				deferred.resolve();
-			},
-			defer: true,
-			maxTime: 5,
-			async: true,
-		})
+			if (results.length === 0) {
+				throw new Error("No results");
+			}
+		});
 
-		.on("cycle", async (event: any) => {
-			// eslint-disable-next-line no-console
-			console.log(String(event.target));
-		})
-		.on("error", (err: any) => {
-			done.reject(err);
-		})
-		.on("complete", async () => {
-			await indexPrefilled.indices.stop();
-			indexPrefilled.directory &&
-				fs.rmSync(indexPrefilled.directory, {
-					recursive: true,
-					force: true,
-				});
-			done.resolve();
-		})
-		.run();
-	return done.promise;
+		/* .add(`m-field ${name} query all fetch - ${type}`, async () => {
+			const iterator = indexPrefilled.store.iterate({
+				query,
+			});
+			const results = await iterator.all();
+
+			if (results.length === 0) {
+				throw new Error("No results");
+			}
+		}) */
+	});
+
+	/* suite.add("m-field no query small fetch - " + type, async () => {
+		const iterator = await indexPrefilled.store.iterate();
+		const results = await iterator.next(fetch);
+		await iterator.close();
+
+		if (results.length === 0) {
+			throw new Error("No results");
+		}
+	}) */
+	await suite.run();
+
+	await indexPrefilled.indices.stop();
+	indexPrefilled.directory &&
+		fs.rmSync(indexPrefilled.directory, {
+			recursive: true,
+			force: true,
+		});
+
+	console.table(suite.table());
 };
 
 export const benchmarks = async (
 	createIndicies: (directory?: string) => Indices | Promise<Indices>,
 	type: "transient" | "persist" = "transient",
 ) => {
-	/* 	await inequalityBenchmark(createIndicies, type); */
-	await multiFieldQueryBenchmark(createIndicies, type);
-
-	/* 
+	/* await inequalityBenchmark(createIndicies, type); */
+	await multiFieldQueryBenchmark(createIndicies, type); /* 
 	await stringBenchmark(createIndicies, type);
 	await shapedQueryBenchmark(createIndicies, type);
 	await getBenchmark(createIndicies, type);

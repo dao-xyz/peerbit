@@ -1,4 +1,5 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
+import { Cache } from "@peerbit/cache";
 import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, Log } from "@peerbit/log";
@@ -140,7 +141,7 @@ const buildEncoderOrDecoderFromRange = async <
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
 
-	const buildDecoderStart = +new Date();
+	/* const buildDecoderStart = +new Date(); */
 	let symbolCount = 0;
 	const hashes = new Set<any>();
 
@@ -174,7 +175,7 @@ const buildEncoderOrDecoderFromRange = async <
 		hashes.add(entry.value);
 	}
 
-	console.log(
+	/* console.log(
 		(type === "encoder" ? "Encoder" : "Decoder") + " build time (s): ",
 		(+new Date() - buildDecoderStart) / 1000,
 		"Symbols: ",
@@ -183,7 +184,7 @@ const buildEncoderOrDecoderFromRange = async <
 		+hashes.size,
 		", Range: ",
 		ranges,
-	);
+	); */
 	return encoder as E;
 };
 /* 
@@ -340,6 +341,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 			rangeIndex: Index<ReplicationRangeIndexable<"u64">, any>;
 			entryIndex: Index<EntryReplicated<"u64">, any>;
 			log: Log<any>;
+			coordinateToHash: Cache<string>;
 		},
 	) {
 		this.simple = new SimpleSyncronizer(properties);
@@ -444,6 +446,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 		this.outgoingSyncProcesses.set(getSyncIdString(startSync), obj);
 		this.simple.rpc.send(startSync, {
 			mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
+			priority: 1,
 		});
 	}
 
@@ -471,6 +474,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 					}),
 					{
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+						priority: 1,
 					},
 				);
 				return true;
@@ -492,6 +496,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 			};
 
 			let count = 0;
+			/* let t0 = +new Date(); */
 			const obj = {
 				decoder,
 				timeout: createTimeout(),
@@ -515,7 +520,8 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 							allMissingSymbolsInRemote.push(missingSymbol);
 						}
 
-						console.log("Done decoding after", count, "symbols");
+						/* 	let t1 = +new Date();
+							console.log("Done decoding after", count, "symbols", "allMissingSymbolsInRemote: ", allMissingSymbolsInRemote.length, "time: ", (t1 - t0) / 1000, "s"); */
 
 						// now we want to resolve the hashes from the symbols
 						this.simple.queueSync(allMissingSymbolsInRemote, context.from!, {
@@ -549,6 +555,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+					priority: 1,
 				},
 			);
 
@@ -572,6 +579,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+					priority: 1,
 				},
 			);
 
@@ -595,6 +603,7 @@ export class RatelessIBLTSynchronizer implements Syncronizer<"u64"> {
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+					priority: 1,
 				},
 			);
 			return true;

@@ -45,6 +45,20 @@ describe(`shared`, () => {
 		);
 	});
 
+	it("is open on open", async () => {
+		const instance = new TestProgram();
+		const openFn = instance.open.bind(instance);
+		let openInvoked = false;
+		instance.open = async () => {
+			expect(instance.closed).to.be.false;
+			await openFn();
+			openInvoked = true;
+		};
+
+		await client.open(instance);
+		expect(openInvoked).to.be.true;
+	});
+
 	it("rejects duplicate concurrently", async () => {
 		const p1 = new TestProgram();
 		const p2 = p1.clone();

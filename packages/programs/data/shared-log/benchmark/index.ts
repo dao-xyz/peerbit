@@ -74,12 +74,14 @@ await client.open<TestStore>(store, {
 
 const suite = new Bench({ name: "put" });
 
+const bytes = crypto.randomBytes(1200);
+
 suite.add("put", async () => {
 	const doc = new Document({
 		id: uuid(),
 		name: "hello",
 		number: 1n,
-		bytes: crypto.randomBytes(1200),
+		bytes,
 	});
 	await store.logs.append(doc, { meta: { next: [] } });
 });

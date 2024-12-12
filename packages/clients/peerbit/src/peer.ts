@@ -28,7 +28,6 @@ import {
 	ProgramHandler,
 } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
-import { waitFor } from "@peerbit/time";
 import { LevelDatastore } from "datastore-level";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
@@ -292,13 +291,22 @@ export class Peerbit implements ProgramClient {
 		const publicKey = Ed25519PublicKey.fromPeerId(connection.remotePeer);
 
 		// TODO, do this as a promise instead using the onPeerConnected vents in pubsub and blocks
-		return (
-			(await waitFor(
-				() =>
-					this.libp2p.services.pubsub.peers.has(publicKey.hashcode()) &&
-					this.libp2p.services.blocks.peers.has(publicKey.hashcode()),
-			)) || false
-		);
+		try {
+			await this.libp2p.services.pubsub.waitFor(publicKey.hashcode(), {
+				neighbour: true,
+			});
+		} catch (error) {
+			throw new Error(`Failed to dial peer. Not available on Pubsub`);
+		}
+
+		try {
+			await this.libp2p.services.blocks.waitFor(publicKey.hashcode(), {
+				neighbour: true,
+			});
+		} catch (error) {
+			throw new Error(`Failed to dial peer. Not available on Blocks`);
+		}
+		return true;
 	}
 
 	async hangUp(address: PeerId | PublicSignKey | string | Multiaddr) {

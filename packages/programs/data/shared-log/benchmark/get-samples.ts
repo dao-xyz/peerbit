@@ -55,78 +55,110 @@ for (const resolution of resolutions) {
 	let b = (await Ed25519Keypair.create()).publicKey;
 	let c = (await Ed25519Keypair.create()).publicKey;
 
-	const suite = new B.Bench({ name: resolution });
+	const suite = new B.Bench({ name: resolution, warmupIterations: 1000 });
 
 	let index: Index<any, unknown> | undefined;
 	let indices: any = undefined;
-	/* 
-		suite.add("get samples sparse - " + resolution, async () => {
-			await getSamples(
-				numbers.getGrid(numbers.denormalize(Math.random()), 2),
+
+	let sampleSize = 2;
+	let rangeCount = 1e4;
+
+	// this bench tests that the getSamples function can handle overlapping ranges in a more performant way than the sparse ranges
+	suite.add(
+		"get samples one range - " + resolution,
+		async () => {
+			const samples = await getSamples(
+				numbers.getGrid(numbers.denormalize(Math.random()), sampleSize),
 				index!,
 				0,
 				numbers,
 			);
-	
-		}, {
+
+			if (samples.size !== 1) {
+				throw new Error(
+					"Expected at least " + 1 + " samples, got " + samples.size,
+				);
+			}
+		},
+		{
 			beforeAll: async () => {
-				let ranges: any[] = [];
-				let rangeCount = 1e4;
-				for (let i = 0; i < rangeCount; i++) {
-					ranges.push(
-						...[
-							createReplicationRangeFromNormalized({
-								publicKey: a,
-								length: 0.2 / rangeCount,
-								offset: (0 + i / rangeCount) % 1,
-								timestamp: 0n,
-							}),
-							createReplicationRangeFromNormalized({
-								publicKey: b,
-								length: 0.4 / rangeCount,
-								offset: (0.333 + i / rangeCount) % 1,
-								timestamp: 0n,
-							}),
-							createReplicationRangeFromNormalized({
-								publicKey: c,
-								length: 0.6 / rangeCount,
-								offset: (0.666 + i / rangeCount) % 1,
-								timestamp: 0n,
-							}),
-							createReplicationRangeFromNormalized({
-								publicKey: c,
-								length: 0.6 / rangeCount,
-								offset: (0.666 + i / rangeCount) % 1,
-								timestamp: 0n,
-							}),
-						],
-					);
-				}
-	
-				const out = await create(...ranges);
+				const out = await create(
+					createReplicationRangeFromNormalized({
+						publicKey: a,
+						length: 1,
+						offset: Math.random(),
+						timestamp: 0n,
+					}),
+				);
 				index = out[0];
 				indices = out[1];
 			},
 			afterAll: async () => {
 				await indices.stop();
 			},
-		}); */
+		},
+	);
 
-	// this bench tests that the getSamples function can handle overlapping ranges in a more performant way than the sparse ranges
 	suite.add(
-		"get samples overlapping - " + resolution,
+		"get samples one range unique replicators provided - " + resolution,
 		async () => {
-			await getSamples(
-				numbers.getGrid(numbers.denormalize(Math.random()), 2),
+			const samples = await getSamples(
+				numbers.getGrid(numbers.denormalize(Math.random()), sampleSize),
 				index!,
 				0,
 				numbers,
+				{
+					uniqueReplicators: new Set([a.hashcode()]),
+				},
 			);
+
+			if (samples.size !== 1) {
+				throw new Error(
+					"Expected at least " + 1 + " samples, got " + samples.size,
+				);
+			}
+		},
+		{
+			beforeAll: async () => {
+				const out = await create(
+					createReplicationRangeFromNormalized({
+						publicKey: a,
+						length: 1,
+						offset: Math.random(),
+						timestamp: 0n,
+					}),
+				);
+				index = out[0];
+				indices = out[1];
+			},
+			afterAll: async () => {
+				await indices.stop();
+			},
+		},
+	);
+
+	suite.add(
+		"get samples overlapping - " + resolution,
+		async () => {
+			const point = numbers.denormalize(Math.random());
+			const samples = await getSamples(
+				numbers.getGrid(point, sampleSize),
+				index!,
+				0,
+				numbers,
+				{
+					onlyIntersecting: true,
+				},
+			);
+			if (samples.size < sampleSize) {
+				throw new Error(
+					"Expected at least " + sampleSize + " samples, got " + samples.size,
+				);
+			}
 		},
 		{
 			beforeAll: async () => {
 				let ranges: any[] = [];
-				let rangeCount = 1e4;
 
 				// add 2 overlapping ranges
 				ranges.push(
@@ -153,25 +185,86 @@ for (const resolution of resolutions) {
 							createReplicationRangeFromNormalized({
 								publicKey: a,
 								length: 0.2 / rangeCount,
-								offset: (0 + i / rangeCount) % 1,
+								offset: Math.random(),
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: b,
 								length: 0.4 / rangeCount,
-								offset: (0.333 + i / rangeCount) % 1,
+								offset: Math.random(),
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: c,
 								length: 0.6 / rangeCount,
-								offset: (0.666 + i / rangeCount) % 1,
+								offset: Math.random(),
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: c,
 								length: 0.6 / rangeCount,
-								offset: (0.666 + i / rangeCount) % 1,
+								offset: Math.random(),
+								timestamp: 0n,
+							}),
+						],
+					);
+				}
+
+				const out = await create(...ranges);
+				index = out[0];
+				indices = out[1];
+			},
+			afterAll: async () => {
+				await indices.stop();
+			},
+		},
+	);
+
+	suite.add(
+		"get samples sparse - " + resolution,
+		async () => {
+			const samples = await getSamples(
+				numbers.getGrid(numbers.denormalize(Math.random()), sampleSize),
+				index!,
+				0,
+				numbers,
+			);
+
+			if (samples.size < sampleSize) {
+				throw new Error(
+					"Expected at least " + sampleSize + " samples, got " + samples.size,
+				);
+			}
+		},
+		{
+			beforeAll: async () => {
+				let ranges: any[] = [];
+
+				for (let i = 0; i < rangeCount; i++) {
+					ranges.push(
+						...[
+							createReplicationRangeFromNormalized({
+								publicKey: a,
+								length: 0.2 / rangeCount,
+								offset: Math.random(),
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: b,
+								length: 0.4 / rangeCount,
+								offset: Math.random(),
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: c,
+								length: 0.6 / rangeCount,
+								offset: Math.random(),
+								timestamp: 0n,
+							}),
+							createReplicationRangeFromNormalized({
+								publicKey: c,
+								length: 0.6 / rangeCount,
+								offset: Math.random(),
 								timestamp: 0n,
 							}),
 						],

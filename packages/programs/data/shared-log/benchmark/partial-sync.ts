@@ -108,7 +108,9 @@ for (const setup of testSetups) {
 		},
 	]);
 
+	console.log("Resetting...");
 	await reset(session, setup);
+	console.log("Reset");
 
 	if (!db1 || !db2) {
 		throw new Error("db1 or db2 is undefined");

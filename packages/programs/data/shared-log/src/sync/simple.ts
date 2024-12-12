@@ -1,4 +1,5 @@
 import { field, variant, vec } from "@dao-xyz/borsh";
+import { Cache } from "@peerbit/cache";
 import type { PublicSignKey } from "@peerbit/crypto";
 import {
 	Compare,
@@ -8,7 +9,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { Entry, Log } from "@peerbit/log";
 import type { RPC, RequestContext } from "@peerbit/rpc";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import { AcknowledgeDelivery, SilentDelivery } from "@peerbit/stream-interface";
 import type { SyncableKey, Syncronizer } from ".";
 import {
 	EntryWithRefs,
@@ -53,22 +54,35 @@ export class RequestMaybeSyncCoordinate extends TransportMessage {
 const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,
+	coordinateToHash: Cache<string>,
 ) => {
 	let queries: IntegerCompare[] = [];
-	let batchSize = 20; // TODO arg
+	let batchSize = 1; // TODO arg
 	let results = new Set<string>();
 	const handleBatch = async (end = false) => {
 		if (queries.length >= batchSize || (end && queries.length > 0)) {
 			const entries = await entryIndex
-				.iterate({ query: new Or(queries) })
+				.iterate(
+					{ query: queries.length > 1 ? new Or(queries) : queries },
+					{ shape: { hash: true, coordinates: true } },
+				)
 				.all();
 			queries = [];
 			for (const entry of entries) {
 				results.add(entry.value.hash);
+				for (const coordinate of entry.value.coordinates) {
+					coordinateToHash.add(coordinate, entry.value.hash);
+				}
 			}
 		}
 	};
 	for (let i = 0; i < symbols.length; i++) {
+		const fromCache = coordinateToHash.get(symbols[i]);
+		if (fromCache) {
+			results.add(fromCache);
+			continue;
+		}
+
 		const matchQuery = new IntegerCompare({
 			key: "coordinates",
 			compare: Compare.Equal,
@@ -83,8 +97,7 @@ const getHashesFromSymbols = async (
 };
 
 export class SimpleSyncronizer<R extends "u32" | "u64">
-	implements Syncronizer<R>
-{
+	implements Syncronizer<R> {
 	// map of hash to public keys that we can ask for entries
 	syncInFlightQueue: Map<SyncableKey, PublicSignKey[]>;
 	syncInFlightQueueInverted: Map<string, Set<SyncableKey>>;
@@ -95,6 +108,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	rpc: RPC<TransportMessage, TransportMessage>;
 	log: Log<any>;
 	entryIndex: Index<EntryReplicated<R>, any>;
+	coordinateToHash: Cache<string>;
 
 	// Syncing and dedeplucation work
 	syncMoreInterval?: ReturnType<typeof setTimeout>;
@@ -105,6 +119,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		rpc: RPC<TransportMessage, TransportMessage>;
 		entryIndex: Index<EntryReplicated<R>, any>;
 		log: Log<any>;
+		coordinateToHash: Cache<string>;
 	}) {
 		this.syncInFlightQueue = new Map();
 		this.syncInFlightQueueInverted = new Map();
@@ -112,18 +127,23 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.rpc = properties.rpc;
 		this.log = properties.log;
 		this.entryIndex = properties.entryIndex;
+		this.coordinateToHash = properties.coordinateToHash;
 	}
 
 	onMaybeMissingEntries(properties: {
 		entries: Map<string, EntryReplicated<R>>;
 		targets: string[];
 	}): Promise<void> {
+		console.log("SEND REQUEST MAYBE SYNC", this.log.identity.publicKey.hashcode(), properties.targets, [...properties.entries.keys()])
 		return this.rpc.send(
 			new RequestMaybeSync({ hashes: [...properties.entries.keys()] }),
 			{
-				mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
+				priority: 1,
+				mode: new AcknowledgeDelivery({ to: properties.targets, redundancy: 1 }),
 			},
-		);
+		).finally(() => {
+			console.log("DELIVERED REQUEST MAYBE SYNC", this.log.identity.publicKey.hashcode(), properties.targets, [...properties.entries.keys()])
+		});
 	}
 
 	async onMessage(
@@ -132,15 +152,19 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	): Promise<boolean> {
 		const from = context.from!;
 		if (msg instanceof RequestMaybeSync) {
+			console.log("QUEUE SYNC", this.log.identity.publicKey.hashcode(), [...msg.hashes])
 			await this.queueSync(msg.hashes, from);
 			return true;
 		} else if (msg instanceof ResponseMaybeSync) {
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			// TODO wait for previous send to target before trying to send more?
+			console.log("RB", this.log.identity.publicKey.hashcode(), context.from!.hashcode(), [...msg.hashes])
+
 			for await (const message of createExchangeHeadsMessages(
 				this.log,
 				msg.hashes,
 			)) {
+
 				await this.rpc.send(message, {
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
 				});
@@ -150,16 +174,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const hashes = await getHashesFromSymbols(
 				msg.coordinates,
 				this.entryIndex,
+				this.coordinateToHash,
 			);
 
 			for await (const message of createExchangeHeadsMessages(
 				this.log,
 				hashes,
 			)) {
+
 				await this.rpc.send(message, {
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+					priority: 1,
 				});
 			}
+
 			return true;
 		} else {
 			return false; // no message was consumed
@@ -188,7 +216,6 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	) {
 		const requestHashes: SyncableKey[] = [];
 
-		console.time("queueSync");
 		for (const coordinateOrHash of keys) {
 			const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
 			if (inFlight) {
@@ -209,7 +236,6 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
 			}
 		}
-		console.timeEnd("queueSync");
 
 		requestHashes.length > 0 &&
 			(await this.requestSync(requestHashes as string[] | bigint[], [
@@ -244,6 +270,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				: new ResponseMaybeSync({ hashes: hashes as string[] }),
 			{
 				mode: new SilentDelivery({ to, redundancy: 1 }),
+				priority: 1,
 			},
 		);
 	}

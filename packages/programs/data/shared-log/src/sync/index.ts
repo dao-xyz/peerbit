@@ -1,3 +1,4 @@
+import { Cache } from "@peerbit/cache";
 import type { PublicSignKey } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry } from "@peerbit/log";
@@ -14,6 +15,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	rangeIndex: Index<ReplicationRangeIndexable<R>, any>;
 	entryIndex: Index<EntryReplicated<R>, any>;
 	log: Log<any>;
+	coordinateToHash: Cache<string>;
 };
 export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
 	properties: SynchronizerComponents<R>,

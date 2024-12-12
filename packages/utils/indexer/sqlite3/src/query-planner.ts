@@ -1,9 +1,25 @@
 // track timing for optimal index selection
 import { field, serialize, vec } from "@dao-xyz/borsh";
 import { sha256Base64Sync } from "@peerbit/crypto";
-import { Query, Sort } from "@peerbit/indexer-interface";
+import {
+	And,
+	BigUnsignedIntegerValue,
+	BoolQuery,
+	ByteMatchQuery,
+	Compare,
+	IntegerCompare,
+	IntegerValue,
+	IsNull,
+	Nested,
+	Not,
+	Or,
+	Query,
+	Sort,
+	StringMatch,
+	UnsignedIntegerValue,
+} from "@peerbit/indexer-interface";
 import { hrtime } from "@peerbit/time";
-import { escapeColumnName } from "./schema";
+import { escapeColumnName } from "./schema.js";
 
 export interface QueryIndexPlanner {
 	// assumes withing a query, each index can be picked independently. For example if we are to join two tables, we can pick the best index for each table
@@ -28,6 +44,120 @@ const getSortedNameKey = (tableName: string, names: string[]) =>
 const createIndexKey = (tableName: string, fields: string[]) =>
 	`${tableName}_index_${fields.map((x) => x).join("_")}`;
 
+const HALF_MAX_U32 = 2147483647; // rounded down
+const HALF_MAX_U64 = 9223372036854775807n; // rounded down
+
+export const flattenQuery = function* (props?: {
+	query: Query[];
+	sort?: Sort[] | Sort;
+}): Generator<{ query: Query[]; sort?: Sort[] | Sort } | undefined> {
+	if (!props) {
+		return yield props;
+	}
+	// if query contains OR statements, split query into multiple queries so we can run each query with union and then sort
+
+	// TODO this only works atm for one OR statement in the query
+	let ors: Query[] = [];
+	let ands: Query[] = [];
+	let stack = [...props.query];
+	let foundOr = false;
+	for (const q of stack) {
+		if (q instanceof Or) {
+			if (foundOr) {
+				// multiple ORs are not supported
+				yield props;
+				return;
+			}
+
+			ors = q.or;
+			foundOr = true;
+		} else if (q instanceof And) {
+			for (const a of q.and) {
+				stack.push(a);
+			}
+		} else {
+			ands.push(q);
+		}
+	}
+
+	let maxFlatten = 4; // max 4 ORs else the query will be too big
+	if (ors.length === 0 || ors.length >= maxFlatten) {
+		yield {
+			query: ands,
+			sort: props.sort,
+		};
+		return;
+	}
+	for (const or of ors) {
+		yield {
+			query: [...ands, ...(Array.isArray(or) ? or : [or])],
+			sort: props.sort,
+		};
+	}
+};
+
+const reduceResolution = (value: IntegerValue): IntegerValue => {
+	if (value instanceof UnsignedIntegerValue) {
+		return value.number > HALF_MAX_U32
+			? new UnsignedIntegerValue(HALF_MAX_U32)
+			: new UnsignedIntegerValue(0);
+	}
+
+	if (value instanceof BigUnsignedIntegerValue) {
+		return value.value > HALF_MAX_U64
+			? new BigUnsignedIntegerValue(HALF_MAX_U64)
+			: new BigUnsignedIntegerValue(0n);
+	}
+
+	throw new Error("Unknown integer value type: " + value);
+};
+const nullifyQuery = (query: Query): Query => {
+	if (query instanceof IntegerCompare) {
+		return new IntegerCompare({
+			compare: Compare.Equal,
+			value: reduceResolution(query.value),
+			key: query.key,
+		});
+	} else if (query instanceof StringMatch) {
+		return new StringMatch({
+			key: query.key,
+			value: "",
+			method: query.method,
+		});
+	} else if (query instanceof ByteMatchQuery) {
+		return new ByteMatchQuery({
+			key: query.key,
+			value: new Uint8Array(),
+		});
+	} else if (query instanceof BoolQuery) {
+		return new BoolQuery({
+			key: query.key,
+			value: false,
+		});
+	} else if (query instanceof And) {
+		let and: Query[] = [];
+		for (const condition of query.and) {
+			and.push(nullifyQuery(condition));
+		}
+		return new And(and);
+	} else if (query instanceof Or) {
+		let or: Query[] = [];
+		for (const condition of query.or) {
+			or.push(nullifyQuery(condition));
+		}
+		return new Or(or);
+	} else if (query instanceof Not) {
+		return new Not(nullifyQuery(query.not));
+	} else if (query instanceof IsNull) {
+		return query;
+	} else if (query instanceof Nested) {
+		// TODO remove
+		throw new Error("Unsupported query type, deprecated");
+	}
+
+	throw new Error("Unknown query type: " + query);
+};
+
 export class PlannableQuery {
 	@field({ type: vec(Query) })
 	query: Query[];
@@ -45,7 +175,12 @@ export class PlannableQuery {
 	}
 
 	get key(): string {
-		return sha256Base64Sync(serialize(this));
+		let query = this.query.map((x) => nullifyQuery(x));
+		let nullifiedPlannableQuery = new PlannableQuery({
+			query: query,
+			sort: this.sort,
+		});
+		return sha256Base64Sync(serialize(nullifiedPlannableQuery));
 	}
 }
 export type PlanningSession = ReturnType<QueryPlanner["scope"]>;
@@ -53,9 +188,18 @@ export type PlanningSession = ReturnType<QueryPlanner["scope"]>;
 export class QueryPlanner {
 	stats: StmtStats = new Map();
 
+	pendingIndexCreation: Map<string, Promise<void>> = new Map();
+
 	constructor(
 		readonly props: { exec: (query: string) => Promise<any> | any },
 	) {}
+
+	async stop() {
+		for (const promise of this.pendingIndexCreation.values()) {
+			await promise.catch(() => {});
+		}
+		this.stats.clear();
+	}
 
 	scope(query: PlannableQuery) {
 		let obj = this.stats.get(query.key);
@@ -67,15 +211,27 @@ export class QueryPlanner {
 		}
 
 		// returns a function that takes column names and return the index to use
-		let indexCreateCommands: string[] | undefined = undefined;
+		let indexCreateCommands: { key: string; cmd: string }[] | undefined =
+			undefined;
 		let pickedIndexKeys: Map<string, string> = new Map(); // index key to column names key
 		return {
 			beforePrepare: async () => {
 				// create missing indices
 				if (indexCreateCommands != null) {
-					for (const cmd of indexCreateCommands) {
-						// console.log(cmd)
-						await this.props.exec(cmd);
+					for (const { key, cmd } of indexCreateCommands) {
+						if (this.pendingIndexCreation.has(key)) {
+							await this.pendingIndexCreation.get(key);
+						}
+						const promise = this.props.exec(cmd);
+						this.pendingIndexCreation.set(key, promise);
+						await promise;
+						this.pendingIndexCreation.delete(key);
+					}
+				}
+
+				if (this.pendingIndexCreation.size > 0) {
+					for (const picked of pickedIndexKeys.keys()) {
+						await this.pendingIndexCreation.get(picked);
 					}
 				}
 			},
@@ -98,7 +254,11 @@ export class QueryPlanner {
 						const indexKey = createIndexKey(tableName, columns);
 						const command = `create index if not exists ${indexKey} on ${tableName} (${columns.map((n) => escapeColumnName(n)).join(", ")})`;
 
-						(indexCreateCommands || (indexCreateCommands = [])).push(command);
+						(indexCreateCommands || (indexCreateCommands = [])).push({
+							cmd: command,
+							key: indexKey,
+						});
+
 						indexStats.results.push({
 							used: 0,
 							times: [],
@@ -113,13 +273,22 @@ export class QueryPlanner {
 				fastestIndex.used++;
 				pickedIndexKeys.set(fastestIndex.indexKey, sortedNameKey);
 
-				/*    console.log("INDEX STATS", indexStats.results.map(x => {
-                       return {
-                           key: x.indexKey,
-                           used: x.used,
-                           avg: x.avg,
-                       }
-                   }), columns); */
+				/*   if (fastestIndex.used % 300 === 0) {
+					  console.log("INDEX STATS", indexStats.results.map(x => {
+						  return {
+							  key: x.indexKey,
+							  used: x.used,
+							  avg: x.avg,
+						  }
+					  }));
+				  } */
+				/*  console.log("INDEX STATS", indexStats.results.map(x => {
+					 return {
+						 key: x.indexKey,
+						 used: x.used,
+						 avg: x.avg,
+					 }
+				 }), columns); */
 
 				//  console.log("FASTEST", fastestIndex.indexKey)
 				return fastestIndex.indexKey!;
@@ -144,7 +313,7 @@ export class QueryPlanner {
 
 					// recalculate the avg by updating the time array and calculating the average
 					index.times.push(time);
-					if (index.times.length > 10) {
+					if (index.times.length > 20) {
 						index.times.shift();
 					}
 					index.avg =
@@ -165,21 +334,21 @@ const generatePermutations = (list: string[]) => {
 	return [list, [...list].reverse()];
 };
 /* const generatePermutations = (list: string[]) => {
-    const results: string[][] = [];
+	const results: string[][] = [];
 
-    function permute(arr: string[], start: number) {
-        if (start === arr.length - 1) {
-            results.push([...arr]); // Push a copy of the current permutation
-            return;
-        }
+	function permute(arr: string[], start: number) {
+		if (start === arr.length - 1) {
+			results.push([...arr]); // Push a copy of the current permutation
+			return;
+		}
 
-        for (let i = start; i < arr.length; i++) {
-            [arr[start], arr[i]] = [arr[i], arr[start]]; // Swap
-            permute(arr, start + 1); // Recurse
-            [arr[start], arr[i]] = [arr[i], arr[start]]; // Swap back (backtrack)
-        }
-    }
+		for (let i = start; i < arr.length; i++) {
+			[arr[start], arr[i]] = [arr[i], arr[start]]; // Swap
+			permute(arr, start + 1); // Recurse
+			[arr[start], arr[i]] = [arr[i], arr[start]]; // Swap back (backtrack)
+		}
+	}
 
-    permute(list, 0);
-    return results;
+	permute(list, 0);
+	return results;
 } */
