@@ -62,7 +62,7 @@ const getSegmentsFromOffsetAndRange = <T extends number | bigint>(
 		// @ts-ignore
 		end1Unscaled > max
 			? // @ts-ignore
-			[zero, (factor !== max ? offset + factor : offset) % max]
+				[zero, (factor !== max ? offset + factor : offset) % max]
 			: [start1, end1],
 	];
 };
@@ -70,11 +70,11 @@ const getSegmentsFromOffsetAndRange = <T extends number | bigint>(
 export const shouldAssigneToRangeBoundary = (
 	leaders:
 		| Map<
-			string,
-			{
-				intersecting: boolean;
-			}
-		>
+				string,
+				{
+					intersecting: boolean;
+				}
+		  >
 		| false,
 	minReplicas: number,
 ) => {
@@ -215,7 +215,7 @@ export const isReplicationRangeMessage = (
 	return x instanceof ReplicationRangeMessage;
 };
 
-export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> { }
+export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> {}
 
 @variant(0)
 export class ReplicationRangeMessageU32 extends ReplicationRangeMessage<"u32"> {
@@ -410,7 +410,8 @@ export interface ReplicationRangeIndexable<R extends "u32" | "u64"> {
 }
 
 export class ReplicationRangeIndexableU32
-	implements ReplicationRangeIndexable<"u32"> {
+	implements ReplicationRangeIndexable<"u32">
+{
 	@id({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -585,7 +586,8 @@ export class ReplicationRangeIndexableU32
 }
 
 export class ReplicationRangeIndexableU64
-	implements ReplicationRangeIndexable<"u64"> {
+	implements ReplicationRangeIndexable<"u64">
+{
 	@id({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -1689,10 +1691,10 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 	roleAge: number;
 	numbers: Numbers<R>;
 	eager?:
-	| {
-		unmaturedFetchCoverSize?: number;
-	}
-	| boolean;
+		| {
+				unmaturedFetchCoverSize?: number;
+		  }
+		| boolean;
 }): Promise<Set<string>> => {
 	const { peers, start, widthToCoverScaled, roleAge } = properties;
 
@@ -1861,20 +1863,20 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 					properties.numbers.maxValue,
 				),
 			) >
-			properties.numbers.min(
-				getDistance(
-					current.start1,
-					endLocation,
-					"closest",
-					properties.numbers.maxValue,
-				),
-				getDistance(
-					current.end2,
-					endLocation,
-					"closest",
-					properties.numbers.maxValue,
-				),
-			)
+				properties.numbers.min(
+					getDistance(
+						current.start1,
+						endLocation,
+						"closest",
+						properties.numbers.maxValue,
+					),
+					getDistance(
+						current.end2,
+						endLocation,
+						"closest",
+						properties.numbers.maxValue,
+					),
+				)
 		) {
 			ret.add(current.hash);
 		}
@@ -1959,7 +1961,6 @@ export const toRebalance = <R extends "u32" | "u64">(
 ): AsyncIterable<EntryReplicated<R>> => {
 	const assignedRangesQuery = (changes: ReplicationChanges) => {
 		let ors: Query[] = [];
-		/* if (false as any) */
 		for (const change of changes) {
 			const matchRange = matchEntriesInRangeQuery(change.range);
 			if (change.type === "updated") {

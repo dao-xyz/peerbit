@@ -57,6 +57,7 @@ export type Args<
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
+	waitForPruneDelay?: number;
 	waitForReplicatorTimeout?: number;
 	sync?: (
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
@@ -124,7 +125,8 @@ export class EventStore<
 			replicas: properties?.replicas,
 			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,
 			encoding: JSON_ENCODING,
-			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 1000,
+			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
+			waitForPruneDelay: properties?.waitForPruneDelay ?? 300,
 			sync: properties?.sync,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast

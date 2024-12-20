@@ -33,7 +33,7 @@ describe("routes", () => {
 					.get(me)!
 					.get(b)!
 					.list.map((x) => x.hash),
-			).to.deep.equal([a, c]);
+			).to.deep.equal([c, a]); // [c, a]  order because a is expiring, and we want to prioritize c
 
 			await delay(routeMaxRetentionPeriod + 1000);
 
@@ -159,6 +159,18 @@ describe("routes", () => {
 			expect(fanout!.size).equal(2);
 			expect(fanout!.get(b)!.size).equal(1);
 			expect(fanout!.get(d)!.size).equal(1);
+		});
+
+		it("will send through expired routes directly if not yet have updated info", async () => {
+			const routes = new Routes(me, { signal: controller.signal });
+			let session = 0;
+
+			routes.add(a, c, c, -1, session, 0); // lower distance but older session
+			routes.add(a, d, c, 1, session + 1, 0); // higher distance but newer session
+
+			const fanout = routes.getFanout(a, [c], 2);
+			expect(fanout!.size).equal(1); // only c will be used because it is a direct route (no matter if new expire information has been assigned to this route)
+			expect(fanout!.get(c)!.size).equal(1);
 		});
 	});
 });

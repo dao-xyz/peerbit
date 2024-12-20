@@ -1,5 +1,8 @@
 import { type Constructor } from "@dao-xyz/borsh";
 import type { PublicSignKey } from "@peerbit/crypto";
+import type { Entry } from "@peerbit/log";
+import type { ProgramClient } from "@peerbit/program";
+import type { DirectSub } from "@peerbit/pubsub";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
@@ -39,7 +42,28 @@ export const collectMessagesFn = (log: SharedLog<any, any>) => {
 	return { messages, fn };
 };
 
-export const slowDownSend = (
+export const slowDownSend = async (
+	from: ProgramClient,
+	to: ProgramClient,
+	ms = 3000,
+) => {
+	const directsub = from.services.pubsub as DirectSub;
+	for (const [_key, peer] of directsub.peers) {
+		if (peer.publicKey.equals(to.identity.publicKey)) {
+			const writeFn = peer.write.bind(peer);
+			peer.write = async (msg, priority) => {
+				await delay(ms);
+				if (peer.outboundStream) {
+					return writeFn(msg, priority);
+				}
+			};
+			return;
+		}
+	}
+	throw new Error("Could not find peer");
+};
+
+export const slowDownMessage = (
 	log: SharedLog<any, any>,
 	type: Constructor<TransportMessage>,
 	tms: number,
@@ -77,18 +101,30 @@ export const getReceivedHeads = (
 
 export const waitForConverged = async (
 	fn: () => any,
-	options: { timeout: number; tests: number; interval: number } = {
+	options: {
+		timeout: number;
+		tests: number;
+		interval: number;
+		delta: number;
+		debug?: boolean;
+	} = {
 		tests: 3,
+		delta: 1,
 		timeout: 30 * 1000,
 		interval: 1000,
+		debug: false,
 	},
 ) => {
 	let lastResult = undefined;
 	let c = 0;
 	let ok = 0;
-	for (; ;) {
+	for (;;) {
 		const current = await fn();
-		if (lastResult === current) {
+		if (options.debug) {
+			console.log("Waiting for convergence: " + current);
+		}
+
+		if (lastResult != null && Math.abs(lastResult - current) <= options.delta) {
 			ok += 1;
 			if (options.tests <= ok) {
 				break;
@@ -122,36 +158,6 @@ export const checkBounded = async (
 	higher: number,
 	...dbs: { log: SharedLog<any, any> }[]
 ) => {
-	for (const [_i, db] of dbs.entries()) {
-		try {
-			await waitForResolved(
-				() => expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
-				{
-					timeout: 25 * 1000,
-				},
-			);
-		} catch (error) {
-			const replicationRanges = await Promise.all(
-				[...dbs].map((x) => x.log.getAllReplicationSegments()),
-			);
-			console.error(
-				"Log did not reach lower bound length of " +
-				entryCount * lower +
-				" got " +
-				db.log.log.length,
-				"Ranges size: ",
-				replicationRanges.map((x) => x.length),
-			);
-			await dbgLogs(dbs.map((x) => x.log));
-			throw new Error(
-				"Log did not reach lower bound length of " +
-				entryCount * lower +
-				" got " +
-				db.log.log.length,
-			);
-		}
-	}
-
 	const checkConverged = async (db: { log: SharedLog<any, any> }) => {
 		const a = db.log.log.length;
 		await delay(100); // arb delay
@@ -173,47 +179,120 @@ export const checkBounded = async (
 		}
 	}
 
-	for (const [_i, db] of dbs.entries()) {
-		await waitForResolved(() =>
-			expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
-		);
-		await waitForResolved(() =>
-			expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
-		);
-	}
-
 	await checkReplicas(
 		dbs,
 		maxReplicas(dbs[0].log, [...(await dbs[0].log.log.toArray())]),
 		entryCount,
 	);
+
+	for (const [_i, db] of dbs.entries()) {
+		try {
+			await waitForResolved(() =>
+				expect(db.log.log.length).greaterThanOrEqual(entryCount * lower),
+			);
+		} catch (error) {
+			await dbgLogs(dbs.map((x) => x.log));
+			throw new Error(
+				"Log did not reach lower bound length of " +
+					entryCount * lower +
+					" got " +
+					db.log.log.length,
+			);
+		}
+
+		try {
+			await waitForResolved(() =>
+				expect(db.log.log.length).lessThanOrEqual(entryCount * higher),
+			);
+		} catch (error) {
+			await dbgLogs(dbs.map((x) => x.log));
+			throw new Error(
+				"Log did not reach upper bound length of " +
+					entryCount * higher +
+					" got " +
+					db.log.log.length,
+			);
+		}
+	}
 };
 
-export const checkReplicas = (
+export const checkReplicas = async (
 	dbs: { log: SharedLog<any, any> }[],
 	minReplicas: number,
 	entryCount: number,
 ) => {
-	return waitForResolved(async () => {
-		const map = new Map<string, number>();
-		for (const db of dbs) {
-			for (const value of await db.log.log.toArray()) {
-				// eslint-disable-next-line @typescript-eslint/no-unused-expressions
-				expect(await db.log.log.blocks.has(value.hash)).to.be.true;
-				map.set(value.hash, (map.get(value.hash) || 0) + 1);
+	try {
+		await waitForResolved(async () => {
+			const map = new Map<string, number>();
+			const hashToEntry = new Map<string, Entry<any>>();
+			for (const db of dbs) {
+				for (const value of await db.log.log.toArray()) {
+					// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+					expect(await db.log.log.blocks.has(value.hash)).to.be.true;
+					map.set(value.hash, (map.get(value.hash) || 0) + 1);
+					hashToEntry.set(value.hash, value);
+				}
 			}
-		}
-		for (const [_k, v] of map) {
-			try {
-				expect(v).greaterThanOrEqual(minReplicas);
-			} catch (error) {
-				throw new Error(
-					"Did not fulfill min replicas level of: " + minReplicas + " got " + v,
-				);
+			for (const [_k, v] of map) {
+				try {
+					expect(v).greaterThanOrEqual(minReplicas);
+				} catch (error) {
+					const entry = hashToEntry.get(_k)!;
+					const gid = entry.meta.gid;
+					throw new Error(
+						"Did not fulfill min replicas level for " +
+							entry.hash +
+							" of: " +
+							minReplicas +
+							" got " +
+							v +
+							". Gid to peer history? " +
+							JSON.stringify(
+								dbs.map((x) => x.log._gidPeersHistory.get(gid)?.size || 0) +
+									". Has? " +
+									JSON.stringify(
+										await Promise.all(
+											dbs.map((x) => x.log.log.has(entry.hash)),
+										),
+									) +
+									". Sent?: " +
+									JSON.stringify([
+										dbs.map((x) => x.log.sentHeads.has(entry.hash)),
+									]) +
+									". Received?: " +
+									JSON.stringify([
+										dbs.map((x) => x.log.receivedHeads.has(entry.hash)),
+									]) +
+									" Rebalanced?: " +
+									JSON.stringify([
+										dbs.map((x) => x.log.toRebalance.has(entry.hash)),
+									]) +
+									" Prunes from peer 0? " +
+									JSON.stringify([
+										dbs.map((x) => x.log.requestIPrune.has(entry.hash)),
+									]) +
+									" Prunes but dont have from peer 0? " +
+									JSON.stringify([
+										dbs.map((x) =>
+											x.log.requsetIPruneButDontHave?.has(entry.hash),
+										),
+									]) +
+									" --- sync in flight ? " +
+									JSON.stringify(
+										dbs.map((x) =>
+											x.log.syncronizer.syncInFlight.has(entry.hash),
+										),
+									),
+							),
+					);
+				}
+				expect(v).lessThanOrEqual(dbs.length);
 			}
-			expect(v).lessThanOrEqual(dbs.length);
-		}
-	});
+		});
+	} catch (error) {
+		await dbgLogs(dbs.map((x) => x.log));
+		throw error;
+	}
 };
 
 export const generateTestsFromResolutions = (
@@ -270,20 +349,26 @@ export const dbgLogs = async (log: SharedLog<any, any>[]) => {
 			"Log length:",
 			l.log.length,
 			"Replication segments:",
-			(await l.getAllReplicationSegments()).map(x => x.toString()),
+			(await l.getAllReplicationSegments()).map((x) => x.toString()),
 			"Prunable: " + (await l.getPrunable()).length,
 			"log length: ",
 			l.log.length,
 			"To prune:",
 			l.toPrune?.size,
+			"To prune done",
+			l.toPruneDone?.size,
 			"RQ I prune",
 			l.requestIPrune?.size,
 			"RR",
 			l.addedReplciationRangesFrom.size,
 			"Received heads",
 			l.receivedHeads?.size,
+			"Owned heads",
+			l.ownedHeads?.size,
 			"Leader heads",
-			l.leaderHeads?.size
+			l.leaderHeads?.size,
+			"To rebalance",
+			l.toRebalance?.size,
 		);
 	}
 };

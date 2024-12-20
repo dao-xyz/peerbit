@@ -1,7 +1,7 @@
 import type { PublicSignKey } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, ShallowEntry } from "@peerbit/log";
-import { debounceAcculmulator } from "./debounce.js";
+import { debounceAccumulator } from "./debounce.js";
 import type { ReplicationRangeIndexable } from "./index.js";
 import type { NumberFromType } from "./integers.js";
 import type { EntryReplicated } from "./ranges.js";
@@ -61,7 +61,7 @@ export const debounceAggregationChanges = (
 	fn: (changeOrChanges: ReplicationChange[]) => void,
 	delay: number,
 ) => {
-	return debounceAcculmulator(
+	return debounceAccumulator(
 		(result) => {
 			return fn([...result.values()]);
 		},
