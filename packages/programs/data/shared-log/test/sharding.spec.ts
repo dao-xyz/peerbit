@@ -535,6 +535,7 @@ testSetups.forEach((setup) => {
 							offset: 0,
 						},
 						setup,
+						timeUntilRoleMaturity: 0,
 					},
 				});
 
@@ -547,6 +548,7 @@ testSetups.forEach((setup) => {
 								offset: 0.3333,
 							},
 							setup,
+							timeUntilRoleMaturity: 0,
 						},
 					},
 				);
@@ -559,6 +561,7 @@ testSetups.forEach((setup) => {
 								offset: 0.6666,
 							},
 							setup,
+							timeUntilRoleMaturity: 0,
 						},
 					},
 				);
