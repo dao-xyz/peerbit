@@ -110,6 +110,15 @@ const create = async (directory?: string) => {
 		await sqliteDb?.close();
 		sqliteDb = undefined;
 	};
+	let dbFileName: string;
+
+	let drop = async () => {
+		if (poolUtil && dbFileName != null) {
+			poolUtil.unlink(dbFileName);
+		}
+
+		return close();
+	};
 	let open = async () => {
 		if (sqliteDb) {
 			return sqliteDb;
@@ -119,7 +128,7 @@ const create = async (directory?: string) => {
 			// TODO show warning if directory is not absolute?
 			directory = directory.replace(/^\./, "");
 
-			let dbFileName = `${directory}/db.sqlite`;
+			dbFileName = `${directory}/db.sqlite`;
 
 			poolUtil =
 				poolUtil ||
@@ -143,6 +152,7 @@ const create = async (directory?: string) => {
 			return sqliteDb!.exec(sql);
 		},
 		open,
+		drop,
 		prepare: async (sql: string, id?: string) => {
 			if (id == null) {
 				id = uuid();

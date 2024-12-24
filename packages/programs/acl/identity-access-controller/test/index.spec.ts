@@ -82,7 +82,7 @@ describe("index", () => {
 	it("replicates by default", async () => {
 		const s = new TestStore({ publicKey: session.peers[0].peerId });
 		const l0a = await session.peers[0].open(s);
-		const checkRole = async (log: SharedLog<any>) => {
+		const checkRole = async (log: SharedLog<any, any>) => {
 			expect(await log.isReplicating()).to.be.true;
 			expect(
 				(await log.getMyReplicationSegments()).reduce(

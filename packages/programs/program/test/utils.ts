@@ -53,6 +53,7 @@ export const createPeer = async (
 		identity: keypair,
 		getMultiaddrs: () => [],
 		dial: () => Promise.resolve(false),
+		hangUp: () => Promise.resolve(),
 		services: {
 			blocks: {
 				get: (c) => blocks.get(c),

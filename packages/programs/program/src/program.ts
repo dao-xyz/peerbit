@@ -192,6 +192,11 @@ export abstract class Program<
 			await next.beforeOpen(node, { ...options, parent: this });
 		}
 
+		await this._eventOptions?.onBeforeOpen?.(this);
+		this.closed = false;
+	}
+
+	async afterOpen() {
 		await this.node.services.pubsub.addEventListener(
 			"subscribe",
 			this._subscriptionEventListener ||
@@ -205,13 +210,8 @@ export abstract class Program<
 					!this.closed && this._emitLeaveNetworkEvents(s.detail)),
 		);
 
-		await this._eventOptions?.onBeforeOpen?.(this);
-	}
-
-	async afterOpen() {
 		this.emitEvent(new CustomEvent("open", { detail: this }), true);
 		await this._eventOptions?.onOpen?.(this);
-		this.closed = false;
 		const nexts = this.programs;
 		for (const next of nexts) {
 			await next.afterOpen();

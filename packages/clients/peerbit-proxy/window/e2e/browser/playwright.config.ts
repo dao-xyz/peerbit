@@ -74,10 +74,12 @@ export default defineConfig({
 		{
 			command: "yarn --cwd ./child start",
 			url: "http://localhost:5201",
+			reuseExistingServer: true,
 		},
 		{
 			command: "yarn --cwd ./parent start",
 			url: "http://localhost:5202",
+			reuseExistingServer: true,
 		},
 	],
 });

@@ -19,7 +19,7 @@ describe(`shared`, () => {
 
 	it("open same store twice will share instance", async () => {
 		const db1 = await client.open(new TestProgram());
-		await expect(await client.open(db1)).equal(db1);
+		expect(await client.open(db1)).equal(db1);
 	});
 
 	it("can open different dbs concurrently", async () => {
@@ -43,6 +43,20 @@ describe(`shared`, () => {
 		await expect(client.open(db1.address)).rejectedWith(
 			`Program at ${db1.address} is already open`,
 		);
+	});
+
+	it("is open on open", async () => {
+		const instance = new TestProgram();
+		const openFn = instance.open.bind(instance);
+		let openInvoked = false;
+		instance.open = async () => {
+			expect(instance.closed).to.be.false;
+			await openFn();
+			openInvoked = true;
+		};
+
+		await client.open(instance);
+		expect(openInvoked).to.be.true;
 	});
 
 	it("rejects duplicate concurrently", async () => {
@@ -124,6 +138,30 @@ describe(`shared`, () => {
 		expect(db2Open === p1).to.be.true;
 		expect(p1.nested.openInvoked).to.be.true;
 		expect(p2.nested.openInvoked).to.not.be.true;
+	});
+
+	it("reuse clone multiple times and close", async () => {
+		const p1 = new TestProgram();
+		const db1Promise = client.open(p1);
+		await db1Promise;
+		const p2 = await client.open(p1.clone(), { existing: "reuse" });
+		const p3 = await client.open(p1.clone(), { existing: "reuse" });
+		expect(p2 === p1).to.be.true;
+		expect(p3 === p1).to.be.true;
+		await p2.close();
+		expect(p1.closed).to.be.true;
+	});
+
+	it("reuse multiple times and close", async () => {
+		const p1 = new TestProgram();
+		const db1Promise = client.open(p1);
+		await db1Promise;
+		const p2 = await client.open(p1, { existing: "reuse" });
+		const p3 = await client.open(p1, { existing: "reuse" });
+		expect(p2 === p1).to.be.true;
+		expect(p3 === p1).to.be.true;
+		await p2.close();
+		expect(p1.closed).to.be.true;
 	});
 
 	it("rejects", async () => {

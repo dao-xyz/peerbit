@@ -20,8 +20,9 @@ import {
 } from "../../../src/index.js";
 import type { TransportMessage } from "../../../src/message.js";
 import type { EntryReplicated } from "../../../src/ranges.js";
-import type { ReplicationDomainHash } from "../../../src/replication-domain-hash.js";
 import type { ReplicationDomain } from "../../../src/replication-domain.js";
+import type { SynchronizerConstructor } from "../../../src/sync/index.js";
+import type { TestSetupConfig } from "../../utils.js";
 import { JSON_ENCODING } from "./encoding.js";
 
 // TODO: generalize the Iterator functions and spin to its own module
@@ -32,8 +33,8 @@ export interface Operation<T> {
 }
 
 export class EventIndex<T> {
-	_log: SharedLog<Operation<T>>;
-	constructor(log: SharedLog<Operation<T>>) {
+	_log: SharedLog<Operation<T>, any>;
+	constructor(log: SharedLog<Operation<T>, any>) {
 		this._log = log;
 	}
 
@@ -42,37 +43,50 @@ export class EventIndex<T> {
 	}
 }
 
-export type Args<T, D extends ReplicationDomain<any, Operation<T>>> = {
+export type Args<
+	T,
+	D extends ReplicationDomain<any, Operation<T>, R>,
+	R extends "u32" | "u64" = D extends ReplicationDomain<any, T, infer I>
+		? I
+		: "u32",
+> = {
 	onChange?: (change: Change<Operation<T>>) => void;
-	replicate?: ReplicationOptions;
+	replicate?: ReplicationOptions<R>;
 	trim?: TrimOptions;
 	replicas?: ReplicationLimitsOptions;
 	encoding?: Encoding<Operation<T>>;
 	respondToIHaveTimeout?: number;
 	timeUntilRoleMaturity?: number;
+	waitForPruneDelay?: number;
 	waitForReplicatorTimeout?: number;
 	sync?: (
-		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated,
+		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
 	) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
 	compatibility?: number;
+	setup?: TestSetupConfig<R>;
 	domain?: D;
 };
 @variant("event_store")
 export class EventStore<
 	T,
-	D extends ReplicationDomain<any, Operation<T>> = ReplicationDomainHash,
-> extends Program<Args<T, D>> {
+	D extends ReplicationDomain<any, Operation<T>, R>,
+	R extends "u32" | "u64" = D extends ReplicationDomain<any, T, infer I>
+		? I
+		: "u32",
+> extends Program<Args<T, D, R>> {
 	@field({ type: SharedLog })
-	log: SharedLog<Operation<T>, D>;
+	log: SharedLog<Operation<T>, D, R>;
 
 	@field({ type: Uint8Array })
 	id: Uint8Array;
 
 	_index!: EventIndex<T>;
 	_canAppend?: CanAppend<Operation<T>>;
+
+	static staticArgs: Args<any, any, any> | undefined;
 
 	constructor(properties?: { id: Uint8Array }) {
 		super();
@@ -84,11 +98,15 @@ export class EventStore<
 		this._canAppend = canAppend;
 	}
 
-	async open(properties?: Args<T, D>) {
+	async open(properties?: Args<T, D, R>) {
 		this._index = new EventIndex(this.log);
 
 		if (properties?.onMessage) {
 			this.log._onMessage = properties.onMessage;
+		}
+
+		if (properties?.domain && properties?.setup?.domain) {
+			throw new Error("Cannot have both domain and setup.domain");
 		}
 
 		await this.log.open({
@@ -107,11 +125,15 @@ export class EventStore<
 			replicas: properties?.replicas,
 			waitForReplicatorTimeout: properties?.waitForReplicatorTimeout,
 			encoding: JSON_ENCODING,
-			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 1000,
+			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
+			waitForPruneDelay: properties?.waitForPruneDelay ?? 300,
 			sync: properties?.sync,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast
-			domain: properties?.domain,
+			domain: properties?.domain ?? properties?.setup?.domain,
+			syncronizer: properties?.setup?.syncronizer as SynchronizerConstructor<R>,
+
+			...(((this.constructor as typeof EventStore).staticArgs ?? {}) as any),
 		});
 	}
 

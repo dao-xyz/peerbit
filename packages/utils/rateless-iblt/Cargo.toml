@@ -1,0 +1,31 @@
+[package]
+name = "riblt"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust port of RIBLT library by yang1996"
+repository = "https://github.com/Intersubjective/riblt-rust"
+readme = "README.md"
+exclude = [
+  "TODO",
+  "mapping_ref.txt",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bench]]
+name = "riblt_bench"
+harness = false
+
+[dev-dependencies]
+criterion = "0.5.1"
+sha2 = "0.10.8"
+
+[dependencies]
+js-sys = "0.3.76"
+wasm-bindgen = { version = "0.2.99" }
+
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

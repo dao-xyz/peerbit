@@ -256,15 +256,15 @@ export class Nested extends Query {
 	@field({ type: "string" })
 	id: string;
 
-	@field({ type: "string" })
-	path: string;
+	@field({ type: vec("string") })
+	path: string[];
 
 	@field({ type: vec(Query) })
 	query: Query[];
 
 	constructor(props: {
 		id?: string;
-		path: string;
+		path: string | string[];
 		query:
 			| Query[]
 			| Query
@@ -274,7 +274,7 @@ export class Nested extends Query {
 			  >;
 	}) {
 		super();
-		this.path = props.path;
+		this.path = Array.isArray(props.path) ? props.path : [props.path];
 		this.id = props.id ?? uuid();
 		this.query = toQuery(props.query);
 	}

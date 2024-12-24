@@ -1620,6 +1620,7 @@ export abstract class DirectStream<
 		if (message.header.mode instanceof AnyWhere) {
 			return { promise: Promise.resolve() };
 		}
+
 		const idString = toBase64(message.id);
 
 		const existing = this._ackCallbacks.get(idString);
@@ -1659,6 +1660,7 @@ export abstract class DirectStream<
 		}
 
 		const deliveryDeferredPromise = pDefer<void>();
+
 		if (!haveReceivers) {
 			deliveryDeferredPromise.resolve(); // we dont know how many answer to expect, just resolve immediately
 		}
@@ -1747,6 +1749,7 @@ export abstract class DirectStream<
 					// only remove callback function if we actually expected a expected amount of responses
 					clear();
 				}
+
 				deliveryDeferredPromise.resolve();
 				return true;
 			}
@@ -1800,6 +1803,7 @@ export abstract class DirectStream<
 			},
 			clear: () => {
 				clear();
+
 				deliveryDeferredPromise.resolve();
 			},
 		});
@@ -1869,7 +1873,7 @@ export abstract class DirectStream<
 				(message.header.mode instanceof AcknowledgeDelivery ||
 					message.header.mode instanceof SilentDelivery) &&
 				!to &&
-				message.header.mode.to
+				message.header.mode.to.length > 0
 			) {
 				const fanout = this.routes.getFanout(
 					from.hashcode(),
@@ -1891,13 +1895,14 @@ export abstract class DirectStream<
 						return delivereyPromise; // we are done sending the message in all direction with updates 'to' lists
 					}
 
-					return; // we defintely that we should not forward the message anywhere
+					return; // we defintely know that we should not forward the message anywhere
 				}
 
-				return;
-
-				// else send to all (fallthrough to code below)
-			}
+				// we end up here because we don't have enough information yet in how to send data to the peer (TODO test this codepath)
+				if (relayed) {
+					return;
+				}
+			} // else send to all (fallthrough to code below)
 		}
 
 		// We fils to send the message directly, instead fallback to floodsub
@@ -2084,6 +2089,7 @@ export abstract class DirectStream<
 		if (this.peers.size <= this.connectionManagerOptions.minConnections) {
 			return;
 		}
+
 		const sorted = [...this.peers.values()]
 			.sort((x, y) => x.usedBandwidth - y.usedBandwidth)
 			.map((x) => x.publicKey.hashcode());

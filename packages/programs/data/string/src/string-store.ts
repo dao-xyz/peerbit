@@ -53,7 +53,7 @@ export type CanPerform = (
 export type Args = {
 	canRead?: CanRead;
 	canPerform?: CanPerform;
-	log?: SharedLogOptions<StringOperation, ReplicationDomainHash>;
+	log?: SharedLogOptions<StringOperation, ReplicationDomainHash<any>>;
 };
 
 export type TransactionContext = {
@@ -62,7 +62,7 @@ export type TransactionContext = {
 @variant("dstring")
 export class DString extends Program<Args, StringEvents & ProgramEvents> {
 	@field({ type: SharedLog })
-	_log: SharedLog<StringOperation>;
+	_log: SharedLog<StringOperation, any>;
 
 	@field({ type: RPC })
 	query: RPC<SearchRequest, AbstractSearchResult>;

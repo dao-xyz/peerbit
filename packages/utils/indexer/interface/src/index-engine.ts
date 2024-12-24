@@ -108,7 +108,6 @@ export interface Index<T extends Record<string, any>, NestedType = any> {
 		request?: IterateOptions,
 		options?: { shape?: S; reference?: boolean },
 	): IndexIterator<T, S>;
-
 	getSize(): MaybePromise<number>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;

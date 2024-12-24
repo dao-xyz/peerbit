@@ -79,7 +79,7 @@ export type CanPerform<T> = (
 export type SetupOptions<
 	T,
 	I = T,
-	D extends ReplicationDomain<any, Operation> = any,
+	D extends ReplicationDomain<any, Operation, any> = any,
 > = {
 	type: AbstractType<T>;
 	canOpen?: (program: T) => MaybePromise<boolean>;
@@ -97,13 +97,13 @@ export type SetupOptions<
 } & Exclude<SharedLogOptions<Operation, D>, "compatibility">;
 
 export type ExtractArgs<T> =
-	T extends ReplicationDomain<infer Args, any> ? Args : never;
+	T extends ReplicationDomain<infer Args, any, any> ? Args : never;
 
 @variant("documents")
 export class Documents<
 	T,
 	I extends Record<string, any> = T extends Record<string, any> ? T : any,
-	D extends ReplicationDomain<any, Operation> = any,
+	D extends ReplicationDomain<any, Operation, any> = any,
 > extends Program<SetupOptions<T, I, D>, DocumentEvents<T> & ProgramEvents> {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation, D>;
@@ -562,10 +562,7 @@ export class Documents<
 					// Program specific
 					if (value instanceof Program) {
 						// if replicator, then open
-						if (
-							(await this.canOpen!(value, item)) &&
-							(await this.log.isReplicator(item)) // TODO types, throw runtime error if replicator is not provided
-						) {
+						if (await this.canOpen!(value, item)) {
 							value = (await this.node.open(value, {
 								parent: this as Program<any, any>,
 								existing: "reuse",

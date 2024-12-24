@@ -134,9 +134,9 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 			}
 
 			if (typeof value === "number") {
-				sum = ((sum as number) || 0) + value;
+				sum = ((sum as unknown as number) || 0) + value;
 			} else if (typeof value === "bigint") {
-				sum = ((sum as bigint) || 0n) + value;
+				sum = ((sum as unknown as bigint) || 0n) + value;
 			}
 		}
 		return sum != null ? sum : 0;
@@ -176,8 +176,9 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 
 		// Handle query normally
 		const indexedDocuments = await this._queryDocuments(async (doc) => {
+			let innerHits = new Map();
 			for (const f of queryCoerced) {
-				if (!(await this.handleQueryObject(f, doc.value))) {
+				if (!(await this.handleQueryObject(f, doc.value, innerHits))) {
 					return false;
 				}
 			}
@@ -277,37 +278,67 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	private async handleFieldQuery(
 		f: types.StateFieldQuery,
 		obj: any,
-		startIndex: number,
+		skipKeys: number,
+		innerHits: Map<string, any[] | false>,
+		buildInnerHits = true,
 	): Promise<boolean | undefined> {
 		// this clause is needed if we have a field that is of type [][] (we will recursively go through each subarray)
+
+		const handleArrayResults = async (
+			path: string[],
+			obj: any[] | Uint8Array,
+			skipKeys: number,
+		): Promise<boolean> => {
+			const pathKey = buildInnerHits ? path.join(".") : undefined;
+			const innerHitsValeu = pathKey ? innerHits.get(pathKey) : undefined;
+			if (pathKey && innerHitsValeu === false) {
+				return false;
+			}
+
+			const fromInnerHits = pathKey;
+			const objArr =
+				fromInnerHits && innerHitsValeu && (innerHitsValeu as []).length > 0
+					? (innerHitsValeu as any[])
+					: obj; // we already have iterated over this array before, we will just go over the hits from the last iteration
+			let newInnerHits: any[] | undefined = fromInnerHits ? [] : undefined;
+			for (const element of objArr!) {
+				if (await this.handleFieldQuery(f, element, skipKeys, innerHits)) {
+					if (!buildInnerHits) {
+						return true;
+					}
+					newInnerHits!.push(element);
+				}
+			}
+			if (!fromInnerHits) {
+				return false;
+			}
+
+			if (newInnerHits!.length === 0) {
+				innerHits.set(pathKey!, false);
+				return false;
+			}
+
+			innerHits.set(pathKey!, newInnerHits!);
+			return true;
+		};
 
 		if (
 			Array.isArray(obj) ||
 			(obj instanceof Uint8Array && f instanceof types.ByteMatchQuery === false)
 		) {
-			for (const element of obj) {
-				if (await this.handleFieldQuery(f, element, startIndex)) {
-					return true;
-				}
-			}
-			return false;
+			return handleArrayResults(f.key, obj, skipKeys);
 		}
 
 		// Resolve the field from the key path. If we reach an array or nested Document store,
 		// then do a recursive call or a search to look into them
-		for (let i = startIndex; i < f.key.length; i++) {
+		for (let i = skipKeys; i < f.key.length; i++) {
 			obj = obj[f.key[i]];
 			if (
 				Array.isArray(obj) ||
 				(obj instanceof Uint8Array &&
 					f instanceof types.ByteMatchQuery === false)
 			) {
-				for (const element of obj) {
-					if (await this.handleFieldQuery(f, element, i + 1)) {
-						return true;
-					}
-				}
-				return false;
+				return handleArrayResults(f.key.slice(0, i + 1), obj, i + 1);
 			}
 			if (this.properties.nested?.match(obj)) {
 				const queryCloned = f.clone();
@@ -366,28 +397,51 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 	private async handleQueryObject(
 		f: types.Query,
 		value: Record<string, any> | T,
-	): Promise<boolean | undefined> {
+		innerHits: Map<string, any[]>,
+		skipKeys = 0,
+	): Promise<{ result: true; innerHits: any[] } | boolean | undefined> {
 		if (f instanceof types.StateFieldQuery) {
-			return this.handleFieldQuery(f, value as T, 0);
+			return this.handleFieldQuery(f, value as T, skipKeys, innerHits);
 		} else if (f instanceof types.Nested) {
+			// TODO experimental
 			// assume field valua is of array type and iterate over each object and match its parts
-			let arr = value[f.path];
+			let arr = value;
+
+			// we skip the first element as it is the root objec
+			for (let i = skipKeys; i < f.path.length; i++) {
+				arr = arr[f.path[i]];
+			}
+
 			if (!Array.isArray(arr)) {
 				throw new Error("Nested field is not an array");
 			}
 
-			for (const element of arr) {
+			const newSkipKeys = skipKeys + f.path.length;
+			outer: for (const element of arr) {
 				for (const query of f.query) {
-					if (await this.handleQueryObject(query, element)) {
-						return true;
+					if (
+						!(await this.handleQueryObject(
+							query,
+							element,
+							innerHits,
+							newSkipKeys,
+						))
+					) {
+						continue outer;
 					}
 				}
+				return true;
 			}
 			return false; // TODO test this codepath
 		} else if (f instanceof types.LogicalQuery) {
 			if (f instanceof types.And) {
 				for (const and of f.and) {
-					const ret = await this.handleQueryObject(and, value);
+					const ret = await this.handleQueryObject(
+						and,
+						value,
+						innerHits,
+						skipKeys,
+					);
 					if (!ret) {
 						return ret;
 					}
@@ -397,7 +451,13 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 
 			if (f instanceof types.Or) {
 				for (const or of f.or) {
-					const ret = await this.handleQueryObject(or, value);
+					const innerHits = new Map(); // in an Or context we isolate each nested hits so we can hit against multiple features independently
+					const ret = await this.handleQueryObject(
+						or,
+						value,
+						innerHits,
+						skipKeys,
+					);
 					if (ret === true) {
 						return true;
 					} else if (ret === undefined) {
@@ -407,7 +467,12 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 				return false;
 			}
 			if (f instanceof types.Not) {
-				const ret = await this.handleQueryObject(f.not, value);
+				const ret = await this.handleQueryObject(
+					f.not,
+					value,
+					innerHits,
+					skipKeys,
+				);
 				if (ret === undefined) {
 					return undefined;
 				}

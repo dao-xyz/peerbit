@@ -98,6 +98,7 @@ describe("domain", () => {
 							from: 2,
 							to: 3,
 						},
+						eager: true,
 					},
 				},
 			);

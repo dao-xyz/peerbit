@@ -8,6 +8,7 @@ import type {
 let create = async (directory?: string) => {
 	let db: DB.Database | undefined = undefined;
 	let statements: Map<string, IStatement> = new Map();
+	let dbFileName: string;
 
 	let close = () => {
 		for (const stmt of statements.values()) {
@@ -20,26 +21,35 @@ let create = async (directory?: string) => {
 			db = undefined;
 		}
 	};
+	let drop = () => {
+		if (db && !db?.memory) {
+			fs.rmSync(dbFileName);
+			db = undefined;
+		}
+		return close();
+	};
 	let open = () => {
-		if (db) {
+		if (db?.open) {
 			return db;
 		}
 
-		let dbFileName: string;
-		if (directory) {
-			// if directory is provided, check if directory exist, if not create it
-			if (!fs.existsSync(directory)) {
-				fs.mkdirSync(directory, { recursive: true });
+		if (!db) {
+			if (directory) {
+				// if directory is provided, check if directory exist, if not create it
+				if (!fs.existsSync(directory)) {
+					fs.mkdirSync(directory, { recursive: true });
+				}
+				dbFileName = `${directory}/db.sqlite`;
+			} else {
+				dbFileName = ":memory:";
 			}
-			dbFileName = `${directory}/db.sqlite`;
-		} else {
-			dbFileName = ":memory:";
+
+			db = new DB(dbFileName, {
+				fileMustExist: false,
+				readonly: false /* , verbose: (message) => console.log(message)  */,
+			});
 		}
 
-		db = new DB(dbFileName, {
-			fileMustExist: false,
-			readonly: false /* , verbose: (message) => console.log(message)  */,
-		});
 		// TODO this test makes things faster, but for benchmarking it might yield wierd results where some runs are faster than others
 		db.pragma("journal_mode = WAL");
 		db.pragma("foreign_keys = on");
@@ -69,6 +79,7 @@ let create = async (directory?: string) => {
 		},
 		statements,
 		close,
+		drop,
 		open,
 		status: () => (db ? "open" : "closed"),
 	} as IDatabase; // TODO fix this

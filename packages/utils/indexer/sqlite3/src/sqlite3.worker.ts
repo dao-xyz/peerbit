@@ -21,7 +21,9 @@ class SqliteWorkerHandler {
 				if (message.type === "close") {
 					return; // ignore close message if database is not found
 				}
-
+				if (message.type === "drop") {
+					return; // ignore close message if database is not found
+				}
 				if (message.type === "status") {
 					return "closed";
 				}
@@ -44,6 +46,9 @@ class SqliteWorkerHandler {
 				return statementId;
 			} else if (message.type === "close") {
 				await db.close();
+				this.databases.delete(message.databaseId);
+			} else if (message.type === "drop") {
+				await db.drop();
 				this.databases.delete(message.databaseId);
 			} else if (message.type === "open") {
 				await db.open();

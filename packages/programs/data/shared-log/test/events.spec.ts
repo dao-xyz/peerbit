@@ -1,3 +1,4 @@
+import { randomBytes } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -92,5 +93,108 @@ describe("events", () => {
 		expect(db1JoinEvents).to.have.members([
 			session.peers[1].identity.publicKey.hashcode(),
 		]); // no new join events
+	});
+
+	it("replicator:mature not emitted more than once on update same same range id", async () => {
+		session = await TestSession.connected(2);
+
+		const store = new EventStore();
+		let db1JoinEvents: string[] = [];
+		let timeUntilRoleMaturity = 1e3;
+		const store1 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity,
+			},
+		});
+		store1.log.events.addEventListener("replicator:mature", (event) => {
+			db1JoinEvents.push(event.detail.publicKey.hashcode());
+		});
+
+		let rangeId = randomBytes(32);
+		const store2 = await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { id: rangeId, factor: 1 },
+				timeUntilRoleMaturity,
+			},
+		});
+		await waitForResolved(() =>
+			expect(db1JoinEvents).to.have.members([
+				session.peers[0].identity.publicKey.hashcode(),
+				session.peers[1].identity.publicKey.hashcode(),
+			]),
+		);
+
+		// reset: true means we will re-initalize hence we expect a maturity event
+		await store2.log.replicate({ id: rangeId, factor: 0.5 }, { reset: true });
+
+		await waitForResolved(async () => {
+			const store2Role = await store1.log.replicationIndex
+				.iterate({ query: { hash: store2.node.identity.publicKey.hashcode() } })
+				.all();
+			expect(store2Role).to.have.length(1);
+			expect(store2Role[0].value.widthNormalized).to.be.closeTo(0.5, 0.01);
+		});
+		expect(store.log.pendingMaturity.size).to.be.eq(0);
+
+		await delay(timeUntilRoleMaturity * 2); // wait a little bit more
+		expect(db1JoinEvents).to.have.members([
+			session.peers[0].identity.publicKey.hashcode(),
+			session.peers[1].identity.publicKey.hashcode(),
+		]); // no new join events
+
+		expect(store.log.pendingMaturity.size).to.eq(0);
+	});
+
+	it("replicator:mature emit twice on update reset", async () => {
+		session = await TestSession.connected(2);
+
+		const store = new EventStore();
+		let db1JoinEvents: string[] = [];
+		let timeUntilRoleMaturity = 1e3;
+		const store1 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity,
+			},
+		});
+		store1.log.events.addEventListener("replicator:mature", (event) => {
+			db1JoinEvents.push(event.detail.publicKey.hashcode());
+		});
+
+		const store2 = await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity,
+			},
+		});
+		await waitForResolved(() =>
+			expect(db1JoinEvents).to.have.members([
+				session.peers[0].identity.publicKey.hashcode(),
+				session.peers[1].identity.publicKey.hashcode(),
+			]),
+		);
+
+		// reset: true means we will re-initalize hence we expect a maturity event
+		await store2.log.replicate({ factor: 0.5 }, { reset: true });
+
+		await waitForResolved(async () => {
+			const store2Role = await store1.log.replicationIndex
+				.iterate({ query: { hash: store2.node.identity.publicKey.hashcode() } })
+				.all();
+			expect(store2Role).to.have.length(1);
+			expect(store2Role[0].value.widthNormalized).to.be.closeTo(0.5, 0.01);
+		});
+		expect(store.log.pendingMaturity.size).to.be.greaterThan(0);
+
+		await waitForResolved(() =>
+			expect(db1JoinEvents).to.have.members([
+				session.peers[0].identity.publicKey.hashcode(),
+				session.peers[1].identity.publicKey.hashcode(),
+				session.peers[1].identity.publicKey.hashcode(),
+			]),
+		);
+
+		expect(store.log.pendingMaturity.size).to.eq(0);
 	});
 });

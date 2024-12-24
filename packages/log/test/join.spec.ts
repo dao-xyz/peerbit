@@ -299,6 +299,30 @@ describe("join", function () {
 				Entry.fromMultihash = fromMultihash;
 			});
 
+			it("can resolve full entry", async () => {
+				const { entry: a1 } = await log1.append(new Uint8Array([1]));
+				const { entry: b1 } = await log1.append(new Uint8Array([2]), {
+					meta: {
+						next: [a1],
+						type: EntryType.CUT,
+					},
+				});
+
+				let resolved: any = undefined;
+
+				await log2.join([a1]);
+				await log2.join([b1], {
+					onChange: async (change) => {
+						if (change.removed.length > 0) {
+							resolved = await (
+								await log2.get(change.removed[0].hash)
+							)?.getPayloadValue();
+						}
+					},
+				});
+				expect(resolved).to.deep.eq(new Uint8Array([1]));
+			});
+
 			it("joins cut", async () => {
 				const { entry: a1 } = await log1.append(new Uint8Array([0, 1]));
 				const { entry: b1 } = await log2.append(new Uint8Array([1, 0]), {

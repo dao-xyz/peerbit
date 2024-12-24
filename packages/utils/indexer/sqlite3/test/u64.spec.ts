@@ -30,6 +30,20 @@ describe("u64", () => {
 		}
 	}
 
+	it("all", async () => {
+		index = await setup({ schema: DocumentWithBigint }, create);
+		await index.store.put(new DocumentWithBigint(0n, 0n));
+		await index.store.put(
+			new DocumentWithBigint(18446744073709551615n, 18446744073709551615n),
+		);
+		await index.store.put(new DocumentWithBigint(123n, 123n));
+
+		const all: IndexedResults<DocumentWithBigint> = await index.store
+			.iterate()
+			.all();
+		expect(all.length).to.equal(3);
+	});
+
 	it("fetch bounds ", async () => {
 		index = await setup({ schema: DocumentWithBigint }, create);
 		const store = index.store as SQLLiteIndex<DocumentWithBigint>;

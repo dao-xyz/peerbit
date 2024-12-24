@@ -2,8 +2,8 @@ import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
 import { type ProgramClient } from "@peerbit/program";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
-import B from "benchmark";
 import crypto from "crypto";
+import { Bench } from "tinybench";
 import { v4 as uuid } from "uuid";
 import { type Args, SharedLog } from "../src/index.js";
 
@@ -33,16 +33,16 @@ class Document {
 }
 
 @variant("test_shared_log")
-class TestStore extends Program<Args<Document>> {
+class TestStore extends Program<Args<Document, any>> {
 	@field({ type: SharedLog })
-	logs: SharedLog<Document>;
+	logs: SharedLog<Document, any>;
 
-	constructor(properties?: { logs: SharedLog<Document> }) {
+	constructor(properties?: { logs: SharedLog<Document, any> }) {
 		super();
 		this.logs = properties?.logs || new SharedLog();
 	}
 
-	async open(options?: Args<Document>): Promise<void> {
+	async open(options?: Args<Document, any>): Promise<void> {
 		await this.logs.open({
 			...options,
 			encoding: {
@@ -57,7 +57,7 @@ const peersCount = 1;
 const session = await TestSession.connected(peersCount);
 
 const store = new TestStore({
-	logs: new SharedLog<Document>({
+	logs: new SharedLog<Document, any>({
 		id: new Uint8Array(32),
 	}),
 });
@@ -69,44 +69,24 @@ await client.open<TestStore>(store, {
 			factor: 1,
 		},
 		trim: { type: "length" as const, to: 100 },
-		onChange: (change) => {
-			change.added.forEach(async (added) => {
-				const doc = await added.entry.getPayloadValue();
-				resolver.get(doc.id)!();
-				resolver.delete(doc.id);
-			});
-		},
 	},
 });
 
-const resolver: Map<string, () => void> = new Map();
-const suite = new B.Suite();
-suite
-	.add("put", {
-		fn: async (deferred: any) => {
-			const doc = new Document({
-				id: uuid(),
-				name: "hello",
-				number: 1n,
-				bytes: crypto.randomBytes(1200),
-			});
-			resolver.set(doc.id, () => {
-				deferred.resolve();
-			});
-			await store.logs.append(doc, { meta: { next: [] } });
-		},
+const suite = new Bench({ name: "put" });
 
-		minSamples: 300,
-		defer: true,
-	})
-	.on("cycle", (event: any) => {
-		console.log(String(event.target));
-	})
-	.on("error", (err: any) => {
-		throw err;
-	})
-	.on("complete", async function (this: any, ...args: any[]) {
-		await store.drop();
-		await session.stop();
-	})
-	.run();
+const bytes = crypto.randomBytes(1200);
+
+suite.add("put", async () => {
+	const doc = new Document({
+		id: uuid(),
+		name: "hello",
+		number: 1n,
+		bytes,
+	});
+	await store.logs.append(doc, { meta: { next: [] } });
+});
+
+await suite.run();
+console.table(suite.table());
+await store.drop();
+await session.stop();

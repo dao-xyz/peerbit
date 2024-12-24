@@ -8,7 +8,7 @@ const client = await createClient("*");
 
 export const App = () => {
 	const mounted = useRef<boolean>(false);
-	const dbRef = useRef<SharedLog>();
+	const dbRef = useRef<SharedLog<any, any>>();
 	const [_, forceUpdate] = useReducer((x) => x + 1, 0);
 	useEffect(() => {
 		const queryParameters = new URLSearchParams(window.location.search);
@@ -18,19 +18,22 @@ export const App = () => {
 		}
 		mounted.current = true;
 		client
-			.open<SharedLog<Uint8Array>>(new SharedLog({ id: new Uint8Array(32) }), {
-				args: {
-					onChange: (change: Change<Uint8Array>) => {
-						forceUpdate();
-						setTimeout(() => {
-							dbRef.current?.log.load().then(() => {
-								forceUpdate();
-								console.log(client.messages.id, dbRef.current?.log.length);
-							});
-						}, 1000);
+			.open<SharedLog<Uint8Array, any>>(
+				new SharedLog({ id: new Uint8Array(32) }),
+				{
+					args: {
+						onChange: (change: Change<Uint8Array>) => {
+							forceUpdate();
+							setTimeout(() => {
+								dbRef.current?.log.load().then(() => {
+									forceUpdate();
+									console.log(client.messages.id, dbRef.current?.log.length);
+								});
+							}, 1000);
+						},
 					},
 				},
-			})
+			)
 			.then((x: any) => {
 				dbRef.current = x;
 				if (queryParameters.get("read") !== "true") {

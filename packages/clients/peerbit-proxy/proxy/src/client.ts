@@ -434,6 +434,12 @@ export class PeerbitProxyClient implements ProgramClient {
 		return response.value;
 	}
 
+	async hangUp(
+		_address: PeerId | PublicSignKey | string | Multiaddr,
+	): Promise<void> {
+		throw new Error("Not implemented");
+	}
+
 	get services(): { pubsub: PubSub; blocks: Blocks; keychain: Keychain } {
 		return this._services;
 	}

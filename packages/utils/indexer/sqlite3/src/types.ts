@@ -8,6 +8,7 @@ export type Database = {
 	exec: (sql: string) => Promise<any> | any;
 	prepare: (sql: string, id?: string) => Promise<Statement> | Statement;
 	close: (err?: (err: any) => any) => Promise<any> | any;
+	drop: () => Promise<any> | any;
 	open(): Promise<any> | any;
 	statements: {
 		get: (id: string) => Statement | undefined;

@@ -36,6 +36,12 @@ jobs:
         with:
           node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          yarn
+
       - name: Build Packages
         if: ${{ steps.release.outputs.releases_created }}
         run: |

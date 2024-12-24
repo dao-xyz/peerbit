@@ -75,7 +75,9 @@ describe("server", () => {
 		let node: Peerbit;
 
 		afterEach(async () => {
+			// @ts-ignore
 			await node?.stop();
+			// @ts-ignore
 			server?.close();
 		});
 		it("bootstrap on start", async () => {
@@ -92,7 +94,6 @@ describe("server", () => {
 	describe("api", () => {
 		let session: TestSession, peer: ProgramClient, server: http.Server;
 		let db: PermissionedString;
-
 		before(async () => {});
 
 		beforeEach(async () => {

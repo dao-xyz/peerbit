@@ -14,6 +14,24 @@ type RouteInfo = {
 	list: RelayInfo[];
 };
 
+const sortRoutes = (routes: RelayInfo[]) => {
+	// sort by distance, if same distance make the routes without expire time first
+
+	const sorted = routes.sort((a, b) => {
+		if (a.distance === b.distance) {
+			if (a.expireAt && !b.expireAt) {
+				return 1;
+			}
+			if (!a.expireAt && b.expireAt) {
+				return -1;
+			}
+			return 0;
+		}
+		return a.distance - b.distance;
+	});
+	return sorted;
+};
+
 export class Routes {
 	// FROM -> TO -> { ROUTE INFO, A list of neighbours that we can send data through to reach to}
 	routes: Map<string, Map<string, RouteInfo>> = new Map();
@@ -154,7 +172,7 @@ export class Routes {
 						route.distance = distance;
 						route.session = session;
 						route.expireAt = undefined; // remove expiry since we updated
-						prev.list.sort((a, b) => a.distance - b.distance);
+						sortRoutes(prev.list);
 						return isNewRemoteSession ? "restart" : "updated";
 					} else if (route.distance === distance) {
 						route.session = session;
@@ -180,7 +198,7 @@ export class Routes {
 					? +new Date() + this.routeMaxRetentionPeriod
 					: undefined,
 			});
-			prev.list.sort((a, b) => a.distance - b.distance);
+			sortRoutes(prev.list);
 		}
 
 		return exist ? (isNewRemoteSession ? "restart" : "updated") : "new";
@@ -400,13 +418,21 @@ export class Routes {
 				if (neighbour) {
 					let foundClosest = false;
 					let added = 0;
+
+					let foundPathForDistance = -2;
 					for (let i = 0; i < neighbour.list.length; i++) {
 						const { distance, session, expireAt } = neighbour.list[i];
 
-						if (expireAt && !relaying) {
+						if (expireAt) {
 							// don't send on old paths if not relaying
-							// TODO there could be a benifit of doing this (?)
-							continue;
+							// and if we have already found a path for the same distance
+							if (!relaying && foundPathForDistance === distance) {
+								// TODO there could be a benifit of doing this (?)
+
+								continue; // we already have an path for this distance, so we can skip this one
+							}
+						} else {
+							foundPathForDistance = distance;
 						}
 
 						if (distance >= redundancy) {
@@ -416,6 +442,7 @@ export class Routes {
 						let fanout: Map<string, { to: string; timestamp: number }> = (
 							fanoutMap || (fanoutMap = new Map())
 						).get(neighbour.list[i].hash);
+
 						if (!fanout) {
 							fanout = new Map();
 							fanoutMap.set(neighbour.list[i].hash, fanout);
