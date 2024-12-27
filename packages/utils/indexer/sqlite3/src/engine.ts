@@ -7,6 +7,7 @@ import type {
 } from "@peerbit/indexer-interface";
 import * as types from "@peerbit/indexer-interface";
 import { v4 as uuid } from "uuid";
+import { PlannableQuery, QueryPlanner } from "./query-planner.js";
 import {
 	MissingFieldError,
 	type Table,
@@ -14,6 +15,9 @@ import {
 	convertCountRequestToQuery,
 	convertDeleteRequestToQuery,
 	convertFromSQLType,
+	/* convertFromSQLType, */
+
+	/* convertFromSQLType, */
 	convertSearchRequestToQuery,
 	/* getTableName, */
 	convertSumRequestToQuery,
@@ -45,6 +49,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 {
 	primaryKeyArr!: string[];
 	primaryKeyString!: string;
+	planner: QueryPlanner;
 	private scopeString?: string;
 	private _rootTables!: Table[];
 	private _tables!: Map<string, Table>;
@@ -53,9 +58,10 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		{
 			fetch: (amount: number) => Promise<IndexedResult[]>;
 			/* countStatement: Statement; */
-			timeout: ReturnType<typeof setTimeout>;
+			expire: number;
 		}
 	>; // TODO choose limit better
+	private cursorPruner: ReturnType<typeof setInterval> | undefined;
 
 	iteratorTimeout: number;
 	closed: boolean = true;
@@ -78,25 +84,28 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				? "_" + escapePathToSQLName(properties.scope).join("_")
 				: undefined;
 		this.iteratorTimeout = options?.iteratorTimeout || 60e3;
+		this.planner = new QueryPlanner({
+			exec: this.properties.db.exec.bind(this.properties.db),
+		});
 	}
 
 	get tables() {
 		if (this.closed) {
-			throw new Error("Not started");
+			throw new types.NotStartedError();
 		}
 		return this._tables;
 	}
 
 	get rootTables() {
 		if (this.closed) {
-			throw new Error("Not started");
+			throw new types.NotStartedError();
 		}
 		return this._rootTables;
 	}
 
 	get cursor() {
 		if (this.closed) {
-			throw new Error("Not started");
+			throw new types.NotStartedError();
 		}
 		return this._cursor;
 	}
@@ -169,10 +178,40 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			}
 
 			const sqlCreateTable = `create table if not exists ${table.name} (${[...table.fields, ...table.constraints].map((s) => s.definition).join(", ")}) strict`;
-			const sqlCreateIndex = `create index if not exists ${table.name}_index on ${table.name} (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")})`;
-
 			this.properties.db.exec(sqlCreateTable);
-			this.properties.db.exec(sqlCreateIndex);
+
+			/* const fieldsToIndex = table.fields.filter(
+				(field) =>
+					field.key !== ARRAY_INDEX_COLUMN && field.key !== table.primary,
+			);
+			if (fieldsToIndex.length > 0) {
+				let arr = fieldsToIndex.map((field) => escapeColumnName(field.name));
+		
+				const createIndex = async (columns: string[]) => {
+					const key = createIndexKey(table.name, columns)
+					const command = `create index if not exists ${key} on ${table.name} (${columns.map((n) => escapeColumnName(n)).join(", ")})`;
+					await this.properties.db.exec(command);
+					table.indices.add(key);
+		
+		
+		
+					const rev = columns.reverse()
+					const key2 = createIndexKey(table.name, rev)
+					const command2 = `create index if not exists ${key2} on ${table.name} (${rev.join(", ")})`;
+					await this.properties.db.exec(command2);
+					table.indices.add(key2);
+				}
+				await createIndex(fieldsToIndex.map(x => x.name));
+				await createIndex([table.primary as string, ...fieldsToIndex.map(x => x.name)]);
+		
+				if (arr.length > 1) {
+					for (const field of fieldsToIndex) {
+						await createIndex([field.name]);
+						await createIndex([table.primary as string, field.name]);
+		
+					}
+				}
+			} */
 
 			// put and return the id
 			let sqlPut = `insert into ${table.name}  (${table.fields.map((field) => escapeColumnName(field.name)).join(", ")}) VALUES (${table.fields.map((_x) => "?").join(", ")}) RETURNING ${table.primary};`;
@@ -182,6 +221,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 			await this.properties.db.prepare(sqlPut, putStatementKey(table));
 			await this.properties.db.prepare(sqlReplace, replaceStatementKey(table));
+
 			if (table.parent) {
 				await this.properties.db.prepare(
 					selectChildren(table),
@@ -189,6 +229,15 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				);
 			}
 		}
+
+		this.cursorPruner = setInterval(() => {
+			const now = Date.now();
+			for (const [k, v] of this._cursor) {
+				if (v.expire < now) {
+					this.clearupIterator(k);
+				}
+			}
+		}, this.iteratorTimeout);
 
 		this.closed = false;
 	}
@@ -205,6 +254,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			return;
 		}
 		this.closed = true;
+		clearInterval(this.cursorPruner!);
 
 		await this.clearStatements();
 
@@ -213,15 +263,23 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		for (const [k, _v] of this._cursor) {
 			await this.clearupIterator(k);
 		}
+
+		await this.planner.stop();
 	}
 
 	async drop(): Promise<void> {
+		if (this.closed) {
+			throw new Error(`Already closed index ${this.id}, can not drop`);
+		}
+
 		this.closed = true;
+		clearInterval(this.cursorPruner!);
 
 		await this.clearStatements();
 
 		// drop root table and cascade
 		// drop table faster by dropping constraints first
+
 		for (const table of this._rootTables) {
 			await this.properties.db.exec(`drop table if exists ${table.name}`);
 		}
@@ -231,6 +289,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		for (const [k, _v] of this._cursor) {
 			await this.clearupIterator(k);
 		}
+		await this.planner.stop();
 	}
 
 	private async resolveDependencies(
@@ -253,27 +312,36 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				table,
 				options?.shape,
 			);
-			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap, true)} where ${this.primaryKeyString} = ? limit 1`;
-			const stmt = await this.properties.db.prepare(sql, sql);
-			const rows = await stmt.get([
-				table.primaryField?.from?.type
-					? convertToSQLType(id.key, table.primaryField.from.type)
-					: id.key,
-			]);
-			if (!rows) {
-				continue;
+			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${this.primaryKeyString} = ? limit 1`;
+			try {
+				const stmt = await this.properties.db.prepare(sql, sql);
+				const rows = await stmt.get([
+					table.primaryField?.from?.type
+						? convertToSQLType(id.key, table.primaryField.from.type)
+						: id.key,
+				]);
+				if (
+					rows?.[getTablePrefixedField(table, table.primary as string)] == null
+				) {
+					continue;
+				}
+				return {
+					value: (await resolveInstanceFromValue(
+						rows,
+						this.tables,
+						table,
+						this.resolveDependencies.bind(this),
+						true,
+						options?.shape,
+					)) as unknown as T,
+					id,
+				};
+			} catch (error) {
+				if (this.closed) {
+					throw new types.NotStartedError();
+				}
+				throw error;
 			}
-			return {
-				value: (await resolveInstanceFromValue(
-					rows,
-					this.tables,
-					table,
-					this.resolveDependencies.bind(this),
-					true,
-					options?.shape,
-				)) as unknown as T,
-				id,
-			};
 		}
 		return undefined;
 	}
@@ -282,24 +350,20 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		const classOfValue = value.constructor as Constructor<T>;
 		return insert(
 			async (values, table) => {
-				const preId = values[table.primaryIndex];
+				let preId = values[table.primaryIndex];
 
 				if (preId != null) {
 					const statement = this.properties.db.statements.get(
 						replaceStatementKey(table),
 					)!;
-					await statement.run(
-						values.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)),
-					);
+					await statement.run(values);
 					await statement.reset?.();
 					return preId;
 				} else {
 					const statement = this.properties.db.statements.get(
 						putStatementKey(table),
 					)!;
-					const out = await statement.get(
-						values.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)),
-					);
+					const out = await statement.get(values);
 					await statement.reset?.();
 
 					// TODO types
@@ -345,47 +409,84 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		let bindable: any[] = [];
 		let sqlFetch: string | undefined = undefined;
 
+		const normalizedQuery = new PlannableQuery({
+			query: types.toQuery(request?.query),
+			sort: request?.sort,
+		});
+		let planningScope: ReturnType<QueryPlanner["scope"]>;
+
 		/* let totalCount: undefined | number = undefined; */
 		const fetch = async (amount: number | "all") => {
 			kept = undefined;
 			if (!once) {
+				planningScope = this.planner.scope(normalizedQuery);
+
 				let { sql, bindable: toBind } = convertSearchRequestToQuery(
-					request,
+					normalizedQuery,
 					this.tables,
 					this._rootTables,
 					{
+						planner: planningScope,
 						shape: options?.shape,
-						stable: typeof amount === "number", // if we are to fetch all, we dont need stable sorting
+						fetchAll: amount === "all", // if we are to fetch all, we dont need stable sorting
 					},
 				);
+
+				/* 	if (indexesToCreate) {
+						for (const index of indexesToCreate) {
+							console.log(index);
+							await this.properties.db.exec(index);
+						}
+					} */
+
 				sqlFetch = sql;
+				// sqlFetch = ` select   NULL as 'v_0#id', NULL as 'v_0#value', v_1."id" as 'v_1#id', json_group_array(distinct json_object('__id', v_1__nested__class_DocumentWithProperties."__id", '__index', v_1__nested__class_DocumentWithProperties."__index", 'a', v_1__nested__class_DocumentWithProperties."a", 'b', v_1__nested__class_DocumentWithProperties."b", 'bool', v_1__nested__class_DocumentWithProperties."bool", 'c', v_1__nested__class_DocumentWithProperties."c", 'd', v_1__nested__class_DocumentWithProperties."d"))   as v_1__nested__class_DocumentWithProperties, v_1."id" as 'v_1.id' FROM v_1  INDEXED BY v_1_index_id  LEFT JOIN v_1__nested__class_DocumentWithProperties AS v_1__nested__class_DocumentWithProperties  INDEXED BY v_1__nested__class_DocumentWithProperties_index___parent_id  ON v_1.id = v_1__nested__class_DocumentWithProperties.__parent_id  LEFT JOIN v_1__nested__class_DocumentWithProperties AS _query_v_1__nested__class_DocumentWithProperties  INDEXED BY v_1__nested__class_DocumentWithProperties_index___parent_id_bool  ON v_1.id = _query_v_1__nested__class_DocumentWithProperties.__parent_id  where _query_v_1__nested__class_DocumentWithProperties."bool" = ? GROUP BY v_1."id" ORDER BY "v_0#id" ASC limit ? offset ?`
+				/* this.x++;
+				if (this.x % 1000 === 0) {
+					console.log("SQL FETCH", sqlFetch);
+				} */
+				/* console.log("SQL FETCH", sqlFetch); */
+
+				/* if (sqlFetch.trim() === `select class_NumberQueryDocument."id" as 'class_NumberQueryDocument#id', class_NumberQueryDocument."number" as 'class_NumberQueryDocument#number' FROM class_NumberQueryDocument  where class_NumberQueryDocument."number" < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`) {
+					// sqlFetch = `select class_NumberQueryDocument."id" as 'class_NumberQueryDocument#id', class_NumberQueryDocument."number" as 'class_NumberQueryDocument#number'  FROM class_NumberQueryDocument INDEXED BY class_NumberQueryDocument_index  where class_NumberQueryDocument.number < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`
+					sqlFetch = `select class_NumberQueryDocument.id as 'class_NumberQueryDocument#id', class_NumberQueryDocument.number as 'class_NumberQueryDocument#number'  FROM class_NumberQueryDocument  where class_NumberQueryDocument.number < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`
+		
+				} */
+
+				/* 	sqlFetch = `explain query plan ${sqlFetch}`; */
 				bindable = toBind;
 
+				await planningScope.beforePrepare();
+
 				stmt = await this.properties.db.prepare(sqlFetch, sqlFetch);
-				// stmt.reset?.(); // TODO dont invoke reset if not needed
-				/* countStmt.reset?.(); */
 
 				// Bump timeout timer
-				clearTimeout(iterator.timeout);
-				iterator.timeout = setTimeout(
-					() => this.clearupIterator(requestId),
-					this.iteratorTimeout,
-				);
+				iterator.expire = Date.now() + this.iteratorTimeout;
 			}
 
 			once = true;
 
-			const allResults: Record<string, any>[] = await stmt.all([
-				...bindable,
-				amount === "all" ? Number.MAX_SAFE_INTEGER : amount,
-				offset,
-			]);
+			/* 	console.log("----------------------")
+				console.log(sqlFetch); */
+			const allResults = await planningScope.perform(async () => {
+				const allResults: Record<string, any>[] = await stmt.all([
+					...bindable,
+					...(amount !== "all" ? [amount, offset] : []),
+				]);
+				return allResults;
+			});
 
+			/* const allResults: Record<string, any>[] = await stmt.all([
+				...bindable,
+				...(amount !== "all" ? [amount, 
+					offset] : [])
+			]);
+	*/
 			let results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
 				await Promise.all(
 					allResults.map(async (row: any) => {
 						let selectedTable = this._rootTables.find(
-							(table /* row["table_name"] === table.name, */) =>
+							(table) =>
 								row[getTablePrefixedField(table, this.primaryKeyString)] !=
 								null,
 						)!;
@@ -415,21 +516,14 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 			offset += results.length;
 
-			/* if (results.length > 0) {
-				totalCount =
-					totalCount ??
-					(await this.count(
-						request,
-					));
-				iterator.kept = totalCount - results.length - offsetStart;
-			} else {
-				iterator.kept = 0;
+			/* const uniqueIds = new Set(results.map((x) => x.id.primitive));
+			if (uniqueIds.size !== results.length) {
+				throw new Error("Duplicate ids in result set");
 			} */
 
 			if (amount === "all" || results.length < amount) {
 				hasMore = false;
 				await this.clearupIterator(requestId);
-				clearTimeout(iterator.timeout);
 			}
 			return results;
 		};
@@ -437,10 +531,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		const iterator = {
 			fetch,
 			/* countStatement: countStmt, */
-			timeout: setTimeout(
-				() => this.clearupIterator(requestId),
-				this.iteratorTimeout,
-			),
+			expire: Date.now() + this.iteratorTimeout,
 		};
 
 		this.cursor.set(requestId, iterator);
@@ -450,9 +541,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			all: async () => {
 				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
 				while (true) {
-					const res = await fetch(100);
+					const res = await fetch("all");
 					results.push(...res);
-					if (res.length === 0) {
+					if (hasMore === false) {
 						break;
 					}
 				}
@@ -486,7 +577,6 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		if (!cache) {
 			return; // already cleared
 		}
-		clearTimeout(cache.timeout);
 		/* cache.countStatement.finalize?.(); */
 		// 	await cache.fetchStatement.finalize?.();
 		this._cursor.delete(id);
@@ -717,10 +807,16 @@ export class SQLiteIndices implements types.Indices {
 			await scope.drop();
 		}
 
-		for (const index of this.indices) {
-			await index.index.drop();
+		if (!this.properties.parent) {
+			for (const index of this.indices) {
+				await index.index.stop();
+			}
+			await this.properties.db.drop();
+		} else {
+			for (const index of this.indices) {
+				await index.index.drop();
+			}
 		}
-
 		this.scopes.clear();
 	}
 }

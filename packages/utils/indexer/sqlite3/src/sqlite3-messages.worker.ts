@@ -24,6 +24,10 @@ interface Close extends Message {
 	type: "close";
 }
 
+interface Drop extends Message {
+	type: "drop";
+}
+
 interface Open extends Message {
 	type: "open";
 }
@@ -107,6 +111,7 @@ export type DatabaseMessages =
 	| Exec
 	| Prepare
 	| Close
+	| Drop
 	| Open
 	| Run
 	| Status;
