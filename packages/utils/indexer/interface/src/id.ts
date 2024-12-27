@@ -35,7 +35,7 @@ export class UnsignedIntegerValue extends IntegerValue {
 	constructor(number: number) {
 		super();
 		if (!Number.isInteger(number) || number > 4294967295 || number < 0) {
-			throw new Error("Number is not u32");
+			throw new Error("Number is not u32: " + number);
 		}
 		this.number = number;
 	}

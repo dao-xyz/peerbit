@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.0...indexer-interface-v2.0.1) (2024-11-08)
+
+
+### Bug Fixes
+
+* revert i64  -&gt; u64 shifting changes ([4d7d8ba](https://github.com/dao-xyz/peerbit/commit/4d7d8ba0a90e147ed1c8bffbf55219db521dc853))
+
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.1.1...indexer-interface-v2.0.0) (2024-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* support u64 integer keys
+
+### Features
+
+* support u64 integer keys ([b0ef425](https://github.com/dao-xyz/peerbit/commit/b0ef4251c727eca8ab93155b0d458a5853667bf4))
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v1.1.0...indexer-interface-v1.1.1) (2024-10-19)
 
 
