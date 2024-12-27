@@ -1,0 +1,5 @@
+To-Do list
+
+1.  Get rid of bloated dependencies: criterion, sha2
+2.  Sketch code is never used and doesn't have the test coverage. Consider removing it or add tests.
+3.  Investigate mapping determinism.
