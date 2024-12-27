@@ -89,7 +89,7 @@
 		"@peerbit/stream-interface": "^5.1.1",
 		"@peerbit/time": "^2.0.7",
 		"@peerbit/logger": "^1.0.3",
-		"libp2p": "^2.2.1",
+		"libp2p": "^2.3.1",
 		"yallist": "^4.0.0",
 		"abortable-iterator": "^5.0.1"
 	}
