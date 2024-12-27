@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.1.3](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.2...indexer-tests-v1.1.3) (2024-11-08)
+
+
+### Bug Fixes
+
+* revert i64  -&gt; u64 shifting changes ([4d7d8ba](https://github.com/dao-xyz/peerbit/commit/4d7d8ba0a90e147ed1c8bffbf55219db521dc853))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^2.0.0 to ^2.0.1
+
+## [1.1.2](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.1...indexer-tests-v1.1.2) (2024-11-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^1.1.1 to ^2.0.0
+
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.0...indexer-tests-v1.1.1) (2024-10-19)
 
 
