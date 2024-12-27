@@ -173,10 +173,8 @@ describe("from", function () {
 			await log1.join(log2);
 
 			expect(log1.length).equal(16);
-			assert.deepStrictEqual(
-				(await log1.toArray()).map((e) => e.payload.getValue()),
-				firstWriteExpectedData,
-			);
+			const out = (await log1.toArray()).map((e) => e.payload.getValue());
+			assert.deepStrictEqual(out, firstWriteExpectedData);
 		});
 
 		it("respects timeout parameter", async () => {

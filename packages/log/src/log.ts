@@ -104,6 +104,11 @@ export const ENTRY_JOIN_SHAPE = {
 	meta: { type: true, next: true, gid: true, clock: true },
 } as const;
 
+type PendingDelete<T> = {
+	entry: ShallowOrFullEntry<T>;
+	fn: () => Promise<ShallowEntry | undefined>;
+};
+
 @variant(0)
 export class Log<T> {
 	@field({ type: fixedArray("u8", 32) })
@@ -536,7 +541,10 @@ export class Log<T> {
 			toMultiHash: false,
 		});
 
-		const removed: ShallowOrFullEntry<T>[] = await this.processEntry(entry);
+		const pendingDeletes: (
+			| PendingDelete<T>
+			| { entry: Entry<T>; fn: undefined }
+		)[] = await this.processEntry(entry);
 
 		entry.init({ encoding: this._encoding, keychain: this._keychain });
 
@@ -544,16 +552,17 @@ export class Log<T> {
 
 		if (trimmed) {
 			for (const entry of trimmed) {
-				removed.push(entry);
+				pendingDeletes.push({ entry, fn: undefined });
 			}
 		}
-
+		const removed = pendingDeletes.map((x) => x.entry);
 		const changes: Change<T> = {
 			added: [{ head: true, entry }],
 			removed,
 		};
 
 		await (options?.onChange || this._onChange)?.(changes);
+		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
 		return { entry, removed };
 	}
 
@@ -792,7 +801,6 @@ export class Log<T> {
 						(await Entry.fromMultihash<T>(this._storage, a, {
 							remote: { timeout: options?.remote?.timeout },
 						}));
-
 					if (!nested) {
 						throw new Error("Missing entry in joinRecursively: " + a);
 					}
@@ -823,14 +831,19 @@ export class Log<T> {
 			toMultiHash: true,
 		});
 
-		const removed: ShallowOrFullEntry<T>[] = await this.processEntry(entry);
+		const pendingDeletes: (
+			| PendingDelete<T>
+			| { entry: Entry<T>; fn: undefined }
+		)[] = await this.processEntry(entry);
 		const trimmed = await this.trim(options?.trim);
 
 		if (trimmed) {
 			for (const entry of trimmed) {
-				removed.push(entry);
+				pendingDeletes.push({ entry, fn: undefined });
 			}
 		}
+
+		const removed = pendingDeletes.map((x) => x.entry);
 
 		await options?.onChange?.({
 			added: [{ head: options.isHead, entry }],
@@ -841,12 +854,18 @@ export class Log<T> {
 			removed: removed,
 		});
 
+		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
 		return true;
 	}
 
-	private async processEntry(entry: Entry<T>): Promise<ShallowEntry[]> {
+	private async processEntry(entry: Entry<T>): Promise<
+		{
+			entry: ShallowOrFullEntry<T>;
+			fn: () => Promise<ShallowEntry | undefined>;
+		}[]
+	> {
 		if (entry.meta.type === EntryType.CUT) {
-			return this.deleteRecursively(entry, true);
+			return this.prepareDeleteRecursively(entry, true);
 		}
 		return [];
 	}
@@ -880,10 +899,7 @@ export class Log<T> {
 		const stack = Array.isArray(from) ? [...from] : [from];
 		const promises: (Promise<void> | void)[] = [];
 		let counter = 0;
-		const toDelete: {
-			entry: ShallowOrFullEntry<T>;
-			fn: () => Promise<ShallowEntry | undefined>;
-		}[] = [];
+		const toDelete: PendingDelete<T>[] = [];
 
 		while (stack.length > 0) {
 			const entry = stack.pop()!;
@@ -918,10 +934,7 @@ export class Log<T> {
 
 	async prepareDelete(
 		hash: string,
-	): Promise<
-		| { entry: ShallowEntry; fn: () => Promise<ShallowEntry | undefined> }
-		| { entry: undefined }
-	> {
+	): Promise<PendingDelete<T> | { entry: undefined }> {
 		let entry = await this._entryIndex.getShallow(hash);
 		if (!entry) {
 			return { entry: undefined };
@@ -930,7 +943,10 @@ export class Log<T> {
 			entry: entry.value,
 			fn: async () => {
 				await this._trim.deleteFromCache(hash);
-				const removedEntry = await this._entryIndex.delete(hash, entry.value);
+				const removedEntry = (await this._entryIndex.delete(
+					hash,
+					entry.value,
+				)) as ShallowEntry;
 				return removedEntry;
 			},
 		};

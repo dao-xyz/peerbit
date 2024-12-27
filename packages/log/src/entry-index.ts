@@ -5,6 +5,7 @@ import type { PublicSignKey } from "@peerbit/crypto";
 import {
 	BoolQuery,
 	type Index,
+	type IndexedResults,
 	Not,
 	Or,
 	type Query,
@@ -29,7 +30,6 @@ export type ResultsIterator<T> = {
 };
 
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
-
 type ResolveFullyOptions =
 	| true
 	| {
@@ -174,6 +174,19 @@ export class EntryIndex<T> {
 			amount: number,
 		): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
 			const results = await iterator.next(amount);
+			return coerce(results);
+		};
+
+		const all = async (): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
+			const results = await iterator.all();
+			return coerce(results);
+		};
+
+		const coerce = async (
+			results: IndexedResults<{
+				[x: string]: any;
+			}>,
+		): Promise<ReturnTypeFromResolveOptions<R, T>[]> => {
 			if (resolveInFull) {
 				const maybeResolved = await Promise.all(
 					results.map((x) => this.resolve(x.value.hash, resolveInFullOptions)),
@@ -194,16 +207,7 @@ export class EntryIndex<T> {
 			close: iterator.close,
 			done: iterator.done,
 			next,
-			all: async () => {
-				const results: ReturnTypeFromResolveOptions<R, T>[] = [];
-				while (!iterator.done()) {
-					for (const element of await next(100)) {
-						results.push(element);
-					}
-				}
-				await iterator.close();
-				return results;
-			},
+			all,
 		};
 	}
 
@@ -264,6 +268,10 @@ export class EntryIndex<T> {
 	}
 
 	async has(k: string) {
+		let mem = this.cache.get(k);
+		if (mem) {
+			return true;
+		}
 		const result = await this.properties.index.get(toId(k), {
 			shape: { hash: true },
 		});
@@ -301,11 +309,12 @@ export class EntryIndex<T> {
 			return existingPromise;
 		} else {
 			const fn = async () => {
-				this.cache.add(entry.hash, entry);
-
 				if (properties.unique === true || !(await this.has(entry.hash))) {
 					this._length++;
 				}
+
+				// add cache after .has check before .has uses the cache
+				this.cache.add(entry.hash, entry);
 
 				await this.properties.index.put(entry.toShallow(properties.isHead));
 
@@ -365,15 +374,15 @@ export class EntryIndex<T> {
 		}
 	}
 
-	async delete(k: string, shallow: ShallowEntry | undefined = undefined) {
+	async delete(k: string, from?: Entry<any> | ShallowEntry) {
 		this.cache.del(k);
 
-		if (shallow && shallow.hash !== k) {
+		if (from && from.hash !== k) {
 			throw new Error("Shallow hash doesn't match the key");
 		}
 
-		shallow = shallow || (await this.getShallow(k))?.value;
-		if (!shallow) {
+		from = from || (await this.getShallow(k))?.value;
+		if (!from) {
 			return; // already deleted
 		}
 
@@ -384,8 +393,8 @@ export class EntryIndex<T> {
 			this._length -= deleted.length;
 
 			// mark all next entries as new heads
-			await this.privateUpdateNextHeadProperty(shallow, true);
-			return shallow;
+			await this.privateUpdateNextHeadProperty(from, true);
+			return from;
 		}
 	}
 
@@ -456,21 +465,21 @@ export class EntryIndex<T> {
 		options?: ResolveFullyOptions,
 	): Promise<Entry<T> | undefined> {
 		let coercedOptions = typeof options === "object" ? options : undefined;
-		if (await this.has(k)) {
-			let mem = this.cache.get(k);
-			if (mem === undefined) {
-				mem = await this.resolveFromStore(k, coercedOptions);
-				if (mem) {
-					this.properties.init(mem);
-					mem.hash = k;
-				} else if (coercedOptions?.ignoreMissing !== true) {
-					throw new Error("Failed to load entry from head with hash: " + k);
-				}
-				this.cache.add(k, mem ?? undefined);
+		/* if (await this.has(k)) { */
+		let mem = this.cache.get(k);
+		if (mem === undefined) {
+			mem = await this.resolveFromStore(k, coercedOptions);
+			if (mem) {
+				this.properties.init(mem);
+				mem.hash = k;
+			} else if (coercedOptions?.ignoreMissing !== true) {
+				throw new Error("Failed to load entry from head with hash: " + k);
 			}
-			return mem ? mem : undefined;
+			this.cache.add(k, mem ?? undefined);
 		}
-		return undefined;
+		return mem ? mem : undefined;
+		/* }
+		return undefined; */
 	}
 
 	private async resolveFromStore(

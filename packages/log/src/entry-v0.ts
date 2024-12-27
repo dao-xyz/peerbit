@@ -19,6 +19,7 @@ import {
 	X25519PublicKey,
 	randomBytes,
 	sha256Base64,
+	toBase64,
 } from "@peerbit/crypto";
 import { verify } from "@peerbit/crypto";
 import { type Keychain } from "@peerbit/keychain";
@@ -387,8 +388,8 @@ export class EntryV0<T>
 		await store.rm(this.hash);
 	}
 
-	static createGid(seed?: Uint8Array): Promise<string> {
-		return sha256Base64(seed || randomBytes(32));
+	static createGid(seed?: Uint8Array): Promise<string> | string {
+		return seed ? sha256Base64(seed) : toBase64(randomBytes(32));
 	}
 
 	static async create<T>(properties: {
