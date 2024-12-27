@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/server",
-	"version": "5.0.54",
+	"version": "5.0.56",
 	"author": "dao.xyz",
 	"repository": {
 		"type": "git",
@@ -62,12 +62,12 @@
 		"build-lib": "tsc -p tsconfig.json",
 		"build-ui": "cd ../frontend && yarn build && cd ../node",
 		"postbuild": "cp src/nginx-template.conf dist/src/ && cp -r ../frontend/dist/. dist/ui",
-		"test": "aegir test",
+		"test": "aegir test --t node",
 		"lint": "aegir lint"
 	},
 	"devDependencies": {
 		"@peerbit/test-lib": "^0.0.1",
-		"@peerbit/test-utils": "2.1.7",
+		"@peerbit/test-utils": "2.1.9",
 		"@types/yargs": "17.0.24",
 		"aws-sdk": "^2.1259.0",
 		"dotenv": "^16.1.4",
@@ -78,7 +78,7 @@
 	"dependencies": {
 		"axios": "^1.4.0",
 		"chalk": "^5.3.0",
-		"peerbit": "4.0.25",
+		"peerbit": "4.0.27",
 		"yargs": "^17.7.2",
 		"tar-stream": "^3.1.7",
 		"tmp": "^0.2.1",
