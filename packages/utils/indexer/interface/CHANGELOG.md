@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.2](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.1...indexer-interface-v2.0.2) (2024-12-28)
+
+
+### Bug Fixes
+
+* rm comment ([e5f6c17](https://github.com/dao-xyz/peerbit/commit/e5f6c17f09764f0b54c3376ec9d42944a7654789))
+
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.0...indexer-interface-v2.0.1) (2024-11-08)
 
 
