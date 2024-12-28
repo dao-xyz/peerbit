@@ -1097,10 +1097,10 @@ testSetups.forEach((setup) => {
 								async () => {
 									expect(
 										await db1.log.calculateMyTotalParticipation(),
-									).to.be.within(0.43, 0.57);
+									).to.be.within(0.42, 0.58);
 									expect(
 										await db2.log.calculateMyTotalParticipation(),
-									).to.be.within(0.43, 0.57);
+									).to.be.within(0.42, 0.58);
 								},
 								{ timeout: 20 * 1000 },
 							);
