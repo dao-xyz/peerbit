@@ -50,7 +50,7 @@
 		"benchmark": "cargo bench",
 		"clean": "cargo clear",
 		"build": "wasm-pack build --target web && shx rm -rf ./pkg/package.json",
-		"test": "cargo test",
+		"test": "cargo test && aegir test",
 		"lint": "cargo fmt"
 	},
 	"author": "dao.xyz",
