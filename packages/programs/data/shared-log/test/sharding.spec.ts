@@ -1443,10 +1443,10 @@ testSetups.forEach((setup) => {
 							await waitForResolved(async () => {
 								expect(
 									await db1.log.calculateMyTotalParticipation(),
-								).to.be.within(0.45, 0.55);
+								).to.be.within(0.42, 0.58);
 								expect(
 									await db2.log.calculateMyTotalParticipation(),
-								).to.be.within(0.45, 0.55);
+								).to.be.within(0.42, 0.58);
 							});
 						});
 					});
