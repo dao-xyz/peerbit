@@ -35,7 +35,7 @@ export class UnsignedIntegerValue extends IntegerValue {
 	constructor(number: number) {
 		super();
 		if (!Number.isInteger(number) || number > 4294967295 || number < 0) {
-			throw new Error("Number is not u32");
+			throw new Error("Number is not u32: " + number);
 		}
 		this.number = number;
 	}
@@ -129,10 +129,26 @@ export class IntegerKey extends IdKey {
 	}
 }
 
+@variant(3)
+export class LargeIntegerKey extends IdKey {
+	@field({ type: "u64" }) // max value is 2^63 - 1 (9007199254740991)
+	key: bigint;
+
+	constructor(key: bigint) {
+		super();
+		this.key = key;
+	}
+
+	get primitive() {
+		return this.key;
+	}
+}
+
 export type Ideable = string | number | bigint | Uint8Array;
 
 const idKeyTypes = new Set(["string", "number", "bigint"]);
 
+const u64Max = 18446744073709551615n;
 export const toId = (obj: Ideable): IdKey => {
 	if (typeof obj === "string") {
 		return new StringKey(obj);
@@ -141,11 +157,14 @@ export const toId = (obj: Ideable): IdKey => {
 		return new IntegerKey(obj);
 	}
 	if (typeof obj === "bigint") {
-		if (obj <= Number.MAX_SAFE_INTEGER && obj >= 0n) {
-			return new IntegerKey(Number(obj));
+		if (obj <= u64Max && obj >= 0n) {
+			return new LargeIntegerKey(obj);
 		}
 		throw new Error(
-			"BigInt is not less than 2^53. Max value is 9007199254740991",
+			"BigInt is not less than 2^64 - 1. Max value is " +
+				(2 ** 64 - 1) +
+				". Provided value: " +
+				obj,
 		);
 	}
 	if (obj instanceof Uint8Array) {

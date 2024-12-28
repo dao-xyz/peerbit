@@ -60,6 +60,10 @@ export type ProgramInitializationOptions<Args, T extends Manageable<Args>> = {
 	EventOptions;
 
 export const addParent = (child: Manageable<any>, parent?: Manageable<any>) => {
+	if (child.parents && child.parents.includes(parent) && parent == null) {
+		return; // prevent root parents to exist multiple times. This will allow use to close a program onces even if it is reused multiple times
+	}
+
 	(child.parents || (child.parents = [])).push(parent);
 	if (parent) {
 		(parent.children || (parent.children = [])).push(child);

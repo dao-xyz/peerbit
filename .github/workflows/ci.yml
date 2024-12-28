@@ -29,7 +29,9 @@ jobs:
           cache: yarn
       - name: Install deps
         run: |
-          yarn && npx playwright install-deps
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          yarn 
+          npx playwright install-deps
       - name: Build
         run: |
           yarn build
@@ -59,7 +61,9 @@ jobs:
           cache: yarn
       - name: Install deps
         run: |
-          yarn && npx playwright install-deps
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          yarn
+          npx playwright install-deps
       - name: Build
         run: |
           yarn build

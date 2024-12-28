@@ -3,7 +3,7 @@ import { type PeerId } from "@libp2p/interface";
 import { type Multiaddr } from "@multiformats/multiaddr";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import { type Blocks } from "@peerbit/blocks-interface";
-import { Ed25519Keypair } from "@peerbit/crypto";
+import { Ed25519Keypair, type PublicSignKey } from "@peerbit/crypto";
 import type { Indices } from "@peerbit/indexer-interface";
 import { type Keychain } from "@peerbit/keychain";
 import { type ProgramClient } from "@peerbit/program";
@@ -80,6 +80,10 @@ export class PeerbitProxyHost implements ProgramClient {
 
 	dial(address: string | Multiaddr | Multiaddr[]): Promise<boolean> {
 		return this.hostClient.dial(address);
+	}
+
+	hangUp(address: PeerId | PublicSignKey | string | Multiaddr): Promise<void> {
+		return this.hostClient.hangUp(address);
 	}
 
 	get services(): { pubsub: PubSub; blocks: Blocks; keychain: Keychain } {

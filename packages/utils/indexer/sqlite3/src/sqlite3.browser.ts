@@ -166,6 +166,14 @@ class ProxyDatabase implements IDatabase {
 		});
 	}
 
+	async drop() {
+		return this.send({
+			type: "drop",
+			id: uuid(),
+			databaseId: this.databaseId,
+		});
+	}
+
 	async status() {
 		return this.send<"open" | "closed">({
 			type: "status",

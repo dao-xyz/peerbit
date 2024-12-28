@@ -79,7 +79,7 @@ export type CanPerform<T> = (
 export type SetupOptions<
 	T,
 	I = T,
-	D extends ReplicationDomain<any, Operation> = any,
+	D extends ReplicationDomain<any, Operation, any> = any,
 > = {
 	type: AbstractType<T>;
 	canOpen?: (program: T) => MaybePromise<boolean>;
@@ -93,17 +93,17 @@ export type SetupOptions<
 	log?: {
 		trim?: TrimOptions;
 	};
-	compatibility?: 6;
+	compatibility?: 6 | 7;
 } & Exclude<SharedLogOptions<Operation, D>, "compatibility">;
 
 export type ExtractArgs<T> =
-	T extends ReplicationDomain<infer Args, any> ? Args : never;
+	T extends ReplicationDomain<infer Args, any, any> ? Args : never;
 
 @variant("documents")
 export class Documents<
 	T,
 	I extends Record<string, any> = T extends Record<string, any> ? T : any,
-	D extends ReplicationDomain<any, Operation> = any,
+	D extends ReplicationDomain<any, Operation, any> = any,
 > extends Program<SetupOptions<T, I, D>, DocumentEvents<T> & ProgramEvents> {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation, D>;
@@ -121,7 +121,7 @@ export class Documents<
 
 	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
 
-	compatibility: 6 | undefined;
+	compatibility: 6 | 7 | undefined;
 
 	constructor(properties?: {
 		id?: Uint8Array;
@@ -183,6 +183,14 @@ export class Documents<
 			dbType: this.constructor,
 		});
 
+		// document v6 and below need log compatibility of v8 or below
+		// document v7 needs log compatibility of v9
+		let logCompatiblity: number | undefined = undefined;
+		if (options.compatibility === 6) {
+			logCompatiblity = 8;
+		} else if (options.compatibility === 7) {
+			logCompatiblity = 9;
+		}
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
 			canReplicate: options?.canReplicate,
@@ -192,10 +200,7 @@ export class Documents<
 			replicate: options?.replicate,
 			replicas: options?.replicas,
 			domain: options?.domain,
-
-			// document v6 and below need log compatibility of v8 or below
-			compatibility:
-				(options?.compatibility ?? Number.MAX_SAFE_INTEGER < 7) ? 8 : undefined,
+			compatibility: logCompatiblity,
 		});
 	}
 
@@ -562,10 +567,7 @@ export class Documents<
 					// Program specific
 					if (value instanceof Program) {
 						// if replicator, then open
-						if (
-							(await this.canOpen!(value, item)) &&
-							(await this.log.isReplicator(item)) // TODO types, throw runtime error if replicator is not provided
-						) {
+						if (await this.canOpen!(value, item)) {
 							value = (await this.node.open(value, {
 								parent: this as Program<any, any>,
 								existing: "reuse",

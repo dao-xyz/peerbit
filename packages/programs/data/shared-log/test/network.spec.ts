@@ -10,7 +10,7 @@ import { EventStore } from "./utils/stores/event-store.js";
 
 describe(`network`, () => {
 	let session: TestSession;
-	let db1: EventStore<string>, db2: EventStore<string>;
+	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	after(async () => {});
 
@@ -32,7 +32,7 @@ describe(`network`, () => {
 		await session.peers[0].services.blocks.waitFor(session.peers[2].peerId);
 		await session.peers[1].services.blocks.waitFor(session.peers[2].peerId);
 
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
 				replicate: {
 					factor: 1,
@@ -40,7 +40,7 @@ describe(`network`, () => {
 			},
 		});
 
-		db2 = await await EventStore.open<EventStore<string>>(
+		db2 = await await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{

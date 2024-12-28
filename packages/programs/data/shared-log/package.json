@@ -28,6 +28,9 @@
 		"!dist/test",
 		"!**/*.tsbuildinfo"
 	],
+	"browser": {
+		"./dist/src/sync/wasm-init.js": "./dist/src/sync/wasm-init.browser.js"
+	},
 	"exports": {
 		".": {
 			"types": "./dist/src/index.d.ts",
@@ -63,7 +66,8 @@
 		"@peerbit/program": "5.0.8",
 		"@peerbit/log": "4.0.21",
 		"@peerbit/rpc": "5.0.19",
-		"@peerbit/time": "2.0.7"
+		"@peerbit/time": "2.0.7",
+		"@peerbit/riblt": "0.0.1"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "^2.1.9"

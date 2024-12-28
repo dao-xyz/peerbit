@@ -1892,7 +1892,6 @@ describe("streams", function () {
 	describe("concurrency", () => {
 		let session: TestSessionStream;
 		let streams: ReturnType<typeof createMetrics>[];
-		let timer: ReturnType<typeof setTimeout>;
 
 		before(async () => {});
 
@@ -1911,7 +1910,6 @@ describe("streams", function () {
 		});
 
 		afterEach(async () => {
-			timer && clearTimeout(timer);
 			await session.stop();
 		});
 
@@ -2826,11 +2824,9 @@ describe("join/leave", () => {
 	});
 
 	describe("invalidation", () => {
-		let extraSession: TestSessionStream;
 		beforeEach(async () => {});
 		afterEach(async () => {
 			await session?.stop();
-			await extraSession?.stop();
 		});
 
 		it("will not get blocked for slow writes", async () => {

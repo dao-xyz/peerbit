@@ -11,8 +11,9 @@ import { type Index } from "@peerbit/indexer-interface";
 import { TransportMessage } from "./message.js";
 import {
 	ReplicationIntent,
-	ReplicationRange,
 	type ReplicationRangeIndexable,
+	ReplicationRangeMessage,
+	ReplicationRangeMessageU32,
 } from "./ranges.js";
 import { Observer, Replicator, Role } from "./role.js";
 
@@ -20,7 +21,7 @@ export type ReplicationLimits = { min: MinReplicas; max?: MinReplicas };
 
 interface SharedLog {
 	replicas: Partial<ReplicationLimits>;
-	replicationIndex: Index<ReplicationRangeIndexable> | undefined;
+	replicationIndex: Index<ReplicationRangeIndexable<any>> | undefined;
 }
 
 export class MinReplicas {
@@ -67,7 +68,7 @@ export class ResponseRoleMessage extends TransportMessage {
 			segments:
 				this.role instanceof Replicator
 					? this.role.segments.map((x) => {
-							return new ReplicationRange({
+							return new ReplicationRangeMessageU32({
 								id: randomBytes(32),
 								offset: x.offset,
 								factor: x.factor,
@@ -82,10 +83,10 @@ export class ResponseRoleMessage extends TransportMessage {
 
 @variant([1, 2])
 export class AllReplicatingSegmentsMessage extends TransportMessage {
-	@field({ type: vec(ReplicationRange) })
-	segments: ReplicationRange[];
+	@field({ type: vec(ReplicationRangeMessage) })
+	segments: ReplicationRangeMessage<any>[];
 
-	constructor(properties: { segments: ReplicationRange[] }) {
+	constructor(properties: { segments: ReplicationRangeMessage<any>[] }) {
 		super();
 		this.segments = properties.segments;
 	}
@@ -93,10 +94,10 @@ export class AllReplicatingSegmentsMessage extends TransportMessage {
 
 @variant([1, 3])
 export class AddedReplicationSegmentMessage extends TransportMessage {
-	@field({ type: vec(ReplicationRange) })
-	segments: ReplicationRange[];
+	@field({ type: vec(ReplicationRangeMessage) })
+	segments: ReplicationRangeMessage<any>[];
 
-	constructor(properties: { segments: ReplicationRange[] }) {
+	constructor(properties: { segments: ReplicationRangeMessage<any>[] }) {
 		super();
 		this.segments = properties.segments;
 	}

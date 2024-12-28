@@ -79,7 +79,6 @@
 	"dependencies": {
 		"@peerbit/stream": "4.1.2",
 		"@peerbit/logger": "1.0.3",
-		"@peerbit/pubsub-interface": "^3.1.1",
-		"libp2p": "^2.2.1"
+		"@peerbit/pubsub-interface": "^3.1.1"
 	}
 }

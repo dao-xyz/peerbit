@@ -62,7 +62,7 @@
 		"build-lib": "tsc -p tsconfig.json",
 		"build-ui": "cd ../frontend && yarn build && cd ../node",
 		"postbuild": "cp src/nginx-template.conf dist/src/ && cp -r ../frontend/dist/. dist/ui",
-		"test": "aegir test",
+		"test": "aegir test --t node",
 		"lint": "aegir lint"
 	},
 	"devDependencies": {

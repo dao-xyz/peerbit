@@ -192,7 +192,11 @@ const isTransformerWithFunction = <T, I>(
 	return (options as TransformerAsFunction<T, I>).transform != null;
 };
 
-export type OpenOptions<T, I, D extends ReplicationDomain<any, Operation>> = {
+export type OpenOptions<
+	T,
+	I,
+	D extends ReplicationDomain<any, Operation, any>,
+> = {
 	documentType: AbstractType<T>;
 	dbType: AbstractType<types.IDocumentStore<T>>;
 	log: SharedLog<Operation, D>;
@@ -212,7 +216,7 @@ type IndexableClass<I> = new (
 export class DocumentIndex<
 	T,
 	I extends Record<string, any>,
-	D extends ReplicationDomain<any, Operation>,
+	D extends ReplicationDomain<any, Operation, any>,
 > extends Program<OpenOptions<T, I, D>> {
 	@field({ type: RPC })
 	_query: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
@@ -433,6 +437,13 @@ export class DocumentIndex<
 				options,
 			)
 		)?.[0]?.results[0]?.value;
+	}
+
+	public async getFromGid(gid: string) {
+		const iterator = this.index.iterate({ query: { gid } });
+		const one = await iterator.next(1);
+		await iterator.close();
+		return one[0];
 	}
 
 	public async put(value: T, entry: Entry<Operation>, id: indexerTypes.IdKey) {

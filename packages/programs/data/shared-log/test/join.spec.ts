@@ -10,7 +10,7 @@ import { EventStore } from "./utils/stores/event-store.js";
 
 describe("join", () => {
 	let session: TestSession;
-	let db1: EventStore<string>, db2: EventStore<string>;
+	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	before(async () => {
 		session = await TestSession.disconnected(3, [
@@ -78,9 +78,15 @@ describe("join", () => {
 	});
 
 	it("can join replicate", async () => {
-		db1 = await session.peers[0].open(new EventStore<string>());
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: {
+					factor: 1,
+				},
+			},
+		});
 
-		db2 = (await EventStore.open<EventStore<string>>(
+		db2 = (await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{
@@ -89,15 +95,53 @@ describe("join", () => {
 		))!;
 
 		await db1.waitFor(session.peers[1].peerId);
+		await db2.log.waitForReplicator(db1.node.identity.publicKey); // in order to make the join operation to index correctly replicator info we want to wait here
+
 		const e1 = await db1.add("hello");
 		expect(await db2.log.getMyReplicationSegments()).to.have.length(0);
 		await db2.log.join([e1.entry], { replicate: true });
-		expect(await db2.log.getMyReplicationSegments()).to.have.length(1);
+		expect(
+			(await db2.log.getMyReplicationSegments()).map((x) => x.width),
+		).to.deep.eq([1n]); // a single pin
 		expect(db2.log.log.length).to.equal(1);
+
+		// expect entry to be indexed min replicas times
+		expect(await db2.log.entryCoordinatesIndex.count()).to.eq(1);
+
+		const indexedEntry = await db2.log.entryCoordinatesIndex.iterate().all();
+
+		expect(indexedEntry[0].value.assignedToRangeBoundary).to.be.false; // since there should be 2 overlapping segments
+	});
+
+	it("can join replicate and merge segments", async () => {
+		db1 = await session.peers[0].open(new EventStore<string, any>());
+
+		db2 = (await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { replicate: false },
+			},
+		))!;
+
+		await db1.waitFor(session.peers[1].peerId);
+
+		const e1 = await db1.add("hello", { meta: { next: [] } });
+		const e2 = await db1.add("hello again", { meta: { next: [] } });
+
+		expect(await db2.log.getMyReplicationSegments()).to.have.length(0);
+		await db2.log.join([e1.entry, e2.entry], {
+			replicate: { mergeSegments: true },
+		});
+		expect(await db2.log.getMyReplicationSegments()).to.have.length(1);
+		expect(
+			Number((await db2.log.getMyReplicationSegments())[0].width),
+		).to.be.greaterThan(1); // a segment covering more than one entry
+		expect(db2.log.log.length).to.equal(2);
 	});
 
 	it("will emit one message when replicating multiple entries", async () => {
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: { replicate: false },
 		});
 		db2 = db1.clone();
@@ -143,7 +187,7 @@ describe("join", () => {
 	});
 
 	it("will emit one message when replicating new and already joined entries", async () => {
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: { replicate: false },
 		});
 		db2 = db1.clone();
@@ -194,9 +238,9 @@ describe("join", () => {
 
 	describe("already but not replicated", () => {
 		it("entry", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 
-			db2 = (await EventStore.open<EventStore<string>>(
+			db2 = (await EventStore.open<EventStore<string, any>>(
 				db1.address!,
 				session.peers[1],
 				{
@@ -216,9 +260,9 @@ describe("join", () => {
 		});
 
 		it("hash", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 
-			db2 = (await EventStore.open<EventStore<string>>(
+			db2 = (await EventStore.open<EventStore<string, any>>(
 				db1.address!,
 				session.peers[1],
 				{
@@ -237,9 +281,9 @@ describe("join", () => {
 			expect(db2.log.log.length).to.equal(1);
 		});
 		it("shallow entry", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 
-			db2 = (await EventStore.open<EventStore<string>>(
+			db2 = (await EventStore.open<EventStore<string, any>>(
 				db1.address!,
 				session.peers[1],
 				{

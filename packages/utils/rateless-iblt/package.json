@@ -1,0 +1,58 @@
+{
+	"name": "@peerbit/riblt",
+	"version": "0.0.1",
+	"description": "Riblt",
+	"sideEffects": false,
+	"type": "module",
+	"types": "./pkg/riblt.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"pkg/*",
+				"pkg/*/index"
+			],
+			"src/*": [
+				"*",
+				"pkg/*",
+				"pkg/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./pkg/riblt.d.ts",
+			"import": "./pkg/riblt.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"benchmark": "cargo bench",
+		"clean": "cargo clear",
+		"build": "wasm-pack build --target web && shx rm -rf ./pkg/package.json",
+		"test": "cargo test && aegir test",
+		"lint": "cargo fmt"
+	},
+	"author": "dao.xyz",
+	"license": "MIT"
+}

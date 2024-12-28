@@ -1,5 +1,11 @@
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
-import { PublicSignKey, equals, randomBytes, toBase64 } from "@peerbit/crypto";
+import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import {
+	PublicSignKey,
+	equals,
+	randomBytes,
+	sha256Base64Sync,
+	toBase64,
+} from "@peerbit/crypto";
 import {
 	And,
 	BoolQuery,
@@ -18,30 +24,48 @@ import {
 	Sort,
 	SortDirection,
 	StringMatch,
-	iteratorInSeries,
+	/* 	iteratorInSeries, */
 } from "@peerbit/indexer-interface";
 import { id } from "@peerbit/indexer-interface";
 import { Meta, ShallowMeta } from "@peerbit/log";
-import { type ReplicationChanges, type u32 } from "./replication-domain.js";
-import { MAX_U32, scaleToU32 } from "./role.js";
-import { groupByGidSync } from "./utils.js";
+import {
+	MAX_U32,
+	MAX_U64,
+	type NumberFromType,
+	type Numbers,
+} from "./integers.js";
+import { type ReplicationChanges } from "./replication-domain.js";
 
 export enum ReplicationIntent {
 	NonStrict = 0, // indicates that the segment will be replicated and nearby data might be replicated as well
 	Strict = 1, // only replicate data in the segment to the specified replicator, not any other data
 }
 
-export const getSegmentsFromOffsetAndRange = (
-	offset: number,
-	factor: number,
-): [[number, number], [number, number]] => {
+export enum SyncStatus {
+	Unsynced = 0,
+	Synced = 1,
+}
+
+const min = (a: number | bigint, b: number | bigint) => (a < b ? a : b);
+
+const getSegmentsFromOffsetAndRange = <T extends number | bigint>(
+	offset: T,
+	factor: T,
+	zero: T,
+	max: T,
+): [[T, T], [T, T]] => {
 	let start1 = offset;
+	// @ts-ignore
 	let end1Unscaled = offset + factor; // only add factor if it is not 1 to prevent numerical issues (like (0.9 + 1) % 1 => 0.8999999)
-	let end1 = Math.min(end1Unscaled, MAX_U32);
+	let end1: T = min(end1Unscaled, max) as T;
 	return [
 		[start1, end1],
-		end1Unscaled > MAX_U32
-			? [0, (factor !== MAX_U32 ? offset + factor : offset) % MAX_U32]
+		/* eslint-disable no-irregular-whitespace */
+		// @ts-ignore
+		end1Unscaled > max
+			? /* eslint-disable no-irregular-whitespace */
+				// @ts-ignore
+				[zero, (factor !== max ? offset + factor : offset) % max]
 			: [start1, end1],
 	];
 };
@@ -59,8 +83,8 @@ export const shouldAssigneToRangeBoundary = (
 ) => {
 	let assignedToRangeBoundary = leaders === false || leaders.size < minReplicas;
 	if (!assignedToRangeBoundary && leaders) {
-		for (const [_, { intersecting }] of leaders) {
-			if (!intersecting) {
+		for (const [_, value] of leaders) {
+			if (!value.intersecting) {
 				assignedToRangeBoundary = true;
 				break;
 			}
@@ -68,18 +92,28 @@ export const shouldAssigneToRangeBoundary = (
 	}
 	return assignedToRangeBoundary;
 };
-export class EntryReplicated {
-	@id({ type: "string" })
-	id: string; // hash + coordinate
+export interface EntryReplicated<R extends "u32" | "u64"> {
+	hash: string; // id of the entry
+	gid: string;
+	coordinates: NumberFromType<R>[];
+	wallTime: bigint;
+	assignedToRangeBoundary: boolean;
+	get meta(): ShallowMeta;
+}
 
-	@field({ type: "string" })
+export const isEntryReplicated = (x: any): x is EntryReplicated<any> => {
+	return x instanceof EntryReplicatedU32 || x instanceof EntryReplicatedU64;
+};
+
+export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
+	@id({ type: "string" })
 	hash: string;
 
 	@field({ type: "string" })
 	gid: string;
 
-	@field({ type: "u32" })
-	coordinate: number;
+	@field({ type: vec("u32") })
+	coordinates: number[];
 
 	@field({ type: "u64" })
 	wallTime: bigint;
@@ -93,15 +127,14 @@ export class EntryReplicated {
 	private _metaResolved: ShallowMeta;
 
 	constructor(properties: {
-		coordinate: number;
+		coordinates: number[];
 		hash: string;
 		meta: Meta;
 		assignedToRangeBoundary: boolean;
 	}) {
-		this.coordinate = properties.coordinate;
+		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
 		this.gid = properties.meta.gid;
-		this.id = this.hash + "-" + this.coordinate;
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
 		const shallow =
 			properties.meta instanceof Meta
@@ -121,8 +154,74 @@ export class EntryReplicated {
 	}
 }
 
+export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
+	@id({ type: "string" })
+	hash: string;
+
+	@field({ type: "string" })
+	gid: string;
+
+	@field({ type: vec("u64") })
+	coordinates: bigint[];
+
+	@field({ type: "u64" })
+	wallTime: bigint;
+
+	@field({ type: "bool" })
+	assignedToRangeBoundary: boolean;
+
+	@field({ type: Uint8Array })
+	private _meta: Uint8Array;
+
+	private _metaResolved: ShallowMeta;
+
+	constructor(properties: {
+		coordinates: bigint[];
+		hash: string;
+		meta: Meta;
+		assignedToRangeBoundary: boolean;
+	}) {
+		this.coordinates = properties.coordinates;
+		this.hash = properties.hash;
+		this.gid = properties.meta.gid;
+		this.wallTime = properties.meta.clock.timestamp.wallTime;
+		const shallow =
+			properties.meta instanceof Meta
+				? new ShallowMeta(properties.meta)
+				: properties.meta;
+		this._meta = serialize(shallow);
+		this._metaResolved = deserialize(this._meta, ShallowMeta);
+		this._metaResolved = properties.meta;
+		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
+	}
+
+	get meta(): ShallowMeta {
+		if (!this._metaResolved) {
+			this._metaResolved = deserialize(this._meta, ShallowMeta);
+		}
+		return this._metaResolved;
+	}
+}
+
+export interface ReplicationRangeMessage<R extends "u32" | "u64"> {
+	id: Uint8Array;
+	timestamp: bigint;
+	get offset(): NumberFromType<R>;
+	get factor(): NumberFromType<R>;
+	mode: ReplicationIntent;
+	toReplicationRangeIndexable(key: PublicSignKey): ReplicationRangeIndexable<R>;
+}
+
+export const isReplicationRangeMessage = (
+	x: any,
+): x is ReplicationRangeMessage<any> => {
+	return x instanceof ReplicationRangeMessage;
+};
+
+export abstract class ReplicationRangeMessage<R extends "u32" | "u64"> {}
+
 @variant(0)
-export class ReplicationRange {
+export class ReplicationRangeMessageU32 extends ReplicationRangeMessage<"u32"> {
 	@field({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -145,6 +244,7 @@ export class ReplicationRange {
 		timestamp: bigint;
 		mode: ReplicationIntent;
 	}) {
+		super();
 		const { id, offset, factor, timestamp, mode } = properties;
 		this.id = id;
 		this._offset = offset;
@@ -161,8 +261,10 @@ export class ReplicationRange {
 		return this._offset;
 	}
 
-	toReplicationRangeIndexable(key: PublicSignKey): ReplicationRangeIndexable {
-		return new ReplicationRangeIndexable({
+	toReplicationRangeIndexable(
+		key: PublicSignKey,
+	): ReplicationRangeIndexableU32 {
+		return new ReplicationRangeIndexableU32({
 			id: this.id,
 			publicKeyHash: key.hashcode(),
 			offset: this.offset,
@@ -173,7 +275,146 @@ export class ReplicationRange {
 	}
 }
 
-export class ReplicationRangeIndexable {
+@variant(1)
+export class ReplicationRangeMessageU64 extends ReplicationRangeMessage<"u64"> {
+	@field({ type: Uint8Array })
+	id: Uint8Array;
+
+	@field({ type: "u64" })
+	timestamp: bigint;
+
+	@field({ type: "u64" })
+	private _offset: bigint;
+
+	@field({ type: "u64" })
+	private _factor: bigint;
+
+	@field({ type: "u8" })
+	mode: ReplicationIntent;
+
+	constructor(properties: {
+		id: Uint8Array;
+		offset: bigint;
+		factor: bigint;
+		timestamp: bigint;
+		mode: ReplicationIntent;
+	}) {
+		super();
+		const { id, offset, factor, timestamp, mode } = properties;
+		this.id = id;
+		this._offset = offset;
+		this._factor = factor;
+		this.timestamp = timestamp;
+		this.mode = mode;
+	}
+
+	get factor(): bigint {
+		return this._factor;
+	}
+
+	get offset(): bigint {
+		return this._offset;
+	}
+
+	toReplicationRangeIndexable(
+		key: PublicSignKey,
+	): ReplicationRangeIndexableU64 {
+		return new ReplicationRangeIndexableU64({
+			id: this.id,
+			publicKeyHash: key.hashcode(),
+			offset: this.offset,
+			length: this.factor,
+			timestamp: this.timestamp,
+			mode: this.mode,
+		});
+	}
+}
+
+class HashableSegmentU32 {
+	@field({ type: "u32" })
+	start1!: number;
+
+	@field({ type: "u32" })
+	end1!: number;
+
+	@field({ type: "u32" })
+	start2!: number;
+
+	@field({ type: "u32" })
+	end2!: number;
+
+	@field({ type: "u8" })
+	mode: ReplicationIntent;
+
+	constructor(properties: {
+		start1: number;
+		start2: number;
+		end1: number;
+		end2: number;
+		mode: ReplicationIntent;
+	}) {
+		this.start1 = properties.start1;
+		this.end1 = properties.end1;
+		this.start2 = properties.start2;
+		this.end2 = properties.end2;
+		this.mode = properties.mode;
+	}
+}
+
+class HashableSegmentU64 {
+	@field({ type: "u64" })
+	start1!: bigint;
+
+	@field({ type: "u64" })
+	end1!: bigint;
+
+	@field({ type: "u64" })
+	start2!: bigint;
+
+	@field({ type: "u64" })
+	end2!: bigint;
+
+	@field({ type: "u8" })
+	mode: ReplicationIntent;
+
+	constructor(properties: {
+		start1: bigint;
+		start2: bigint;
+		end1: bigint;
+		end2: bigint;
+		mode: ReplicationIntent;
+	}) {
+		this.start1 = properties.start1;
+		this.end1 = properties.end1;
+		this.start2 = properties.start2;
+		this.end2 = properties.end2;
+		this.mode = properties.mode;
+	}
+}
+
+export interface ReplicationRangeIndexable<R extends "u32" | "u64"> {
+	id: Uint8Array;
+	idString: string;
+	hash: string;
+	timestamp: bigint;
+	start1: NumberFromType<R>;
+	end1: NumberFromType<R>;
+	start2: NumberFromType<R>;
+	end2: NumberFromType<R>;
+	width: NumberFromType<R>;
+	widthNormalized: number;
+	mode: ReplicationIntent;
+	wrapped: boolean;
+	toUniqueSegmentId(): string;
+	toReplicationRange(): ReplicationRangeMessage<R>;
+	contains(point: NumberFromType<R>): boolean;
+	equalRange(other: ReplicationRangeIndexable<R>): boolean;
+	overlaps(other: ReplicationRangeIndexable<R>): boolean;
+}
+
+export class ReplicationRangeIndexableU32
+	implements ReplicationRangeIndexable<"u32">
+{
 	@id({ type: Uint8Array })
 	id: Uint8Array;
 
@@ -204,7 +445,6 @@ export class ReplicationRangeIndexable {
 	constructor(
 		properties: {
 			id?: Uint8Array;
-			normalized?: boolean;
 			offset: number;
 			length: number;
 			mode?: ReplicationIntent;
@@ -215,14 +455,7 @@ export class ReplicationRangeIndexable {
 		this.hash =
 			(properties as { publicKeyHash: string }).publicKeyHash ||
 			(properties as { publicKey: PublicSignKey }).publicKey.hashcode();
-		if (!properties.normalized) {
-			this.transform({ length: properties.length, offset: properties.offset });
-		} else {
-			this.transform({
-				length: scaleToU32(properties.length),
-				offset: scaleToU32(properties.offset),
-			});
-		}
+		this.transform({ length: properties.length, offset: properties.offset });
 
 		this.mode = properties.mode ?? ReplicationIntent.NonStrict;
 		this.timestamp = properties.timestamp || BigInt(0);
@@ -232,6 +465,8 @@ export class ReplicationRangeIndexable {
 		const ranges = getSegmentsFromOffsetAndRange(
 			properties.offset,
 			properties.length,
+			0,
+			MAX_U32,
 		);
 		this.start1 = Math.round(ranges[0][0]);
 		this.end1 = Math.round(ranges[0][1]);
@@ -244,11 +479,11 @@ export class ReplicationRangeIndexable {
 			(this.end2 < this.end1 ? this.end2 - this.start2 : 0);
 
 		if (
-			this.start1 > 0xffffffff ||
-			this.end1 > 0xffffffff ||
-			this.start2 > 0xffffffff ||
-			this.end2 > 0xffffffff ||
-			this.width > 0xffffffff ||
+			this.start1 > MAX_U32 ||
+			this.end1 > MAX_U32 ||
+			this.start2 > MAX_U32 ||
+			this.end2 > MAX_U32 ||
+			this.width > MAX_U32 ||
 			this.width < 0
 		) {
 			throw new Error("Segment coordinate out of bounds");
@@ -266,7 +501,7 @@ export class ReplicationRangeIndexable {
 		);
 	}
 
-	overlaps(other: ReplicationRangeIndexable, checkOther = true): boolean {
+	overlaps(other: ReplicationRangeIndexableU32, checkOther = true): boolean {
 		if (
 			this.contains(other.start1) ||
 			this.contains(other.start2) ||
@@ -282,7 +517,7 @@ export class ReplicationRangeIndexable {
 		return false;
 	}
 	toReplicationRange() {
-		return new ReplicationRange({
+		return new ReplicationRangeMessageU32({
 			id: this.id,
 			offset: this.start1,
 			factor: this.width,
@@ -291,15 +526,6 @@ export class ReplicationRangeIndexable {
 		});
 	}
 
-	distanceTo(point: number) {
-		let wrappedPoint = MAX_U32 - point;
-		return Math.min(
-			Math.abs(this.start1 - point),
-			Math.abs(this.end2 - point),
-			Math.abs(this.start1 - wrappedPoint),
-			Math.abs(this.end2 - wrappedPoint),
-		);
-	}
 	get wrapped() {
 		return this.end2 < this.end1;
 	}
@@ -308,7 +534,7 @@ export class ReplicationRangeIndexable {
 		return this.width / MAX_U32;
 	}
 
-	equals(other: ReplicationRangeIndexable) {
+	equals(other: ReplicationRangeIndexableU32) {
 		if (
 			equals(this.id, other.id) &&
 			this.hash === other.hash &&
@@ -326,7 +552,7 @@ export class ReplicationRangeIndexable {
 		return false;
 	}
 
-	equalRange(other: ReplicationRangeIndexable) {
+	equalRange(other: ReplicationRangeIndexableU32) {
 		return (
 			this.start1 === other.start1 &&
 			this.end1 === other.end1 &&
@@ -348,86 +574,268 @@ export class ReplicationRangeIndexable {
 		return `(hash ${this.hash} range: ${this.toString()})`;
 	}
 
-	/* removeRange(other: ReplicationRangeIndexable): ReplicationRangeIndexable | ReplicationRangeIndexable[] {
-		if (!this.overlaps(other)) {
-			return this
-		}
-
-		if (this.equalRange(other)) {
-			return []
-		}
-
-		let diff: ReplicationRangeIndexable[] = [];
-		let start1 = this.start1;
-		if (other.start1 > start1) {
-			diff.push(new ReplicationRangeIndexable({
-				id: this.id,
-				offset: this.start1,
-				length: other.start1 - this.start1,
-				mode: this.mode,
-				publicKeyHash: this.hash,
-				timestamp: this.timestamp,
-				normalized: false
-			}));
-
-			start1 = other.end2
-		}
-
-		if (other.end1 < this.end1) {
-			diff.push(new ReplicationRangeIndexable({
-				id: this.id,
-				offset: other.end1,
-				length: this.end1 - other.end1,
-				mode: this.mode,
-				publicKeyHash: this.hash,
-				timestamp: this.timestamp,
-				normalized: false
-			}));
-		}
-
-		if (other.start2 > this.start2) {
-			diff.push(new ReplicationRangeIndexable({
-				id: this.id,
-				offset: this.start2,
-				length: other.start2 - this.start2,
-				mode: this.mode,
-				publicKeyHash: this.hash,
-				timestamp: this.timestamp,
-				normalized: false
-			}));
-		}
-
-		if (other.end2 < this.end2) {
-			diff.push(new ReplicationRangeIndexable({
-				id: this.id,
-				offset: other.end2,
-				length: this.end2 - other.end2,
-				mode: this.mode,
-				publicKeyHash: this.hash,
-				timestamp: this.timestamp,
-				normalized: false
-			}));
-		}
-
-		return diff;
-	} */
+	toUniqueSegmentId() {
+		// return a unique id as a function of the segments location and the replication intent
+		const hashable = new HashableSegmentU32(this);
+		return sha256Base64Sync(serialize(hashable));
+	}
 }
 
-const containingPoint = <S extends Shape | undefined = undefined>(
-	rects: Index<ReplicationRangeIndexable>,
-	point: number,
-	roleAgeLimit: number,
-	matured: boolean,
-	now: number,
-	options?: {
-		shape?: S;
-		sort?: Sort[];
-	},
-): IndexIterator<ReplicationRangeIndexable, S> => {
-	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
+export class ReplicationRangeIndexableU64
+	implements ReplicationRangeIndexable<"u64">
+{
+	@id({ type: Uint8Array })
+	id: Uint8Array;
 
-	let queries = [
-		new Or([
+	@field({ type: "string" })
+	hash: string;
+
+	@field({ type: "u64" })
+	timestamp: bigint;
+
+	@field({ type: "u64" })
+	start1!: bigint;
+
+	@field({ type: "u64" })
+	end1!: bigint;
+
+	@field({ type: "u64" })
+	start2!: bigint;
+
+	@field({ type: "u64" })
+	end2!: bigint;
+
+	@field({ type: "u64" })
+	width!: bigint;
+
+	@field({ type: "u8" })
+	mode: ReplicationIntent;
+
+	constructor(
+		properties: {
+			id?: Uint8Array;
+			offset: bigint | number;
+			length: bigint | number;
+			mode?: ReplicationIntent;
+			timestamp?: bigint;
+		} & ({ publicKeyHash: string } | { publicKey: PublicSignKey }),
+	) {
+		this.id = properties.id ?? randomBytes(32);
+		this.hash =
+			(properties as { publicKeyHash: string }).publicKeyHash ||
+			(properties as { publicKey: PublicSignKey }).publicKey.hashcode();
+		this.transform({ length: properties.length, offset: properties.offset });
+
+		this.mode = properties.mode ?? ReplicationIntent.NonStrict;
+		this.timestamp = properties.timestamp || BigInt(0);
+	}
+
+	private transform(properties: {
+		offset: bigint | number;
+		length: bigint | number;
+	}) {
+		const ranges = getSegmentsFromOffsetAndRange(
+			BigInt(properties.offset),
+			BigInt(properties.length),
+			0n,
+			MAX_U64,
+		);
+		this.start1 = ranges[0][0];
+		this.end1 = ranges[0][1];
+		this.start2 = ranges[1][0];
+		this.end2 = ranges[1][1];
+
+		this.width =
+			this.end1 -
+			this.start1 +
+			(this.end2 < this.end1 ? this.end2 - this.start2 : 0n);
+
+		if (
+			this.start1 > MAX_U64 ||
+			this.end1 > MAX_U64 ||
+			this.start2 > MAX_U64 ||
+			this.end2 > MAX_U64 ||
+			this.width > MAX_U64 ||
+			this.width < 0n
+		) {
+			throw new Error("Segment coordinate out of bounds");
+		}
+	}
+
+	get idString() {
+		return toBase64(this.id);
+	}
+
+	contains(point: bigint) {
+		return (
+			(point >= this.start1 && point < this.end1) ||
+			(point >= this.start2 && point < this.end2)
+		);
+	}
+
+	overlaps(other: ReplicationRangeIndexableU64, checkOther = true): boolean {
+		if (
+			this.contains(other.start1) ||
+			this.contains(other.start2) ||
+			this.contains(other.end1 - 1n) ||
+			this.contains(other.end2 - 1n)
+		) {
+			return true;
+		}
+
+		if (checkOther) {
+			return other.overlaps(this, false);
+		}
+		return false;
+	}
+	toReplicationRange() {
+		return new ReplicationRangeMessageU64({
+			id: this.id,
+			offset: this.start1,
+			factor: this.width,
+			timestamp: this.timestamp,
+			mode: this.mode,
+		});
+	}
+
+	get wrapped() {
+		return this.end2 < this.end1;
+	}
+
+	get widthNormalized() {
+		return Number(this.width) / Number(MAX_U64);
+	}
+
+	equals(other: ReplicationRangeIndexableU64) {
+		if (
+			equals(this.id, other.id) &&
+			this.hash === other.hash &&
+			this.timestamp === other.timestamp &&
+			this.mode === other.mode &&
+			this.start1 === other.start1 &&
+			this.end1 === other.end1 &&
+			this.start2 === other.start2 &&
+			this.end2 === other.end2 &&
+			this.width === other.width
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
+	equalRange(other: ReplicationRangeIndexableU64) {
+		return (
+			this.start1 === other.start1 &&
+			this.end1 === other.end1 &&
+			this.start2 === other.start2 &&
+			this.end2 === other.end2
+		);
+	}
+
+	toString() {
+		let roundToTwoDecimals = (num: number) => Math.round(num * 100) / 100;
+
+		if (Math.abs(Number(this.start1 - this.start2)) < 0.0001) {
+			return `([${roundToTwoDecimals(Number(this.start1) / Number(MAX_U64))}, ${roundToTwoDecimals(Number(this.start1) / Number(MAX_U64))}])`;
+		}
+		return `([${roundToTwoDecimals(Number(this.start1) / Number(MAX_U64))}, ${roundToTwoDecimals(Number(this.start1) / Number(MAX_U64))}] [${roundToTwoDecimals(Number(this.start2) / Number(MAX_U64))}, ${roundToTwoDecimals(Number(this.end2) / Number(MAX_U64))}])`;
+	}
+
+	toStringDetailed() {
+		return `(hash ${this.hash} range: ${this.toString()})`;
+	}
+
+	toUniqueSegmentId() {
+		// return a unique id as a function of the segments location and the replication intent
+		const hashable = new HashableSegmentU64(this);
+		return sha256Base64Sync(serialize(hashable));
+	}
+}
+
+export const mergeRanges = <R extends "u32" | "u64">(
+	segments: ReplicationRangeIndexable<R>[],
+	numbers: { zero: NumberFromType<R>; maxValue: NumberFromType<R> },
+) => {
+	if (segments.length === 0) {
+		throw new Error("No segments to merge");
+	}
+	if (segments.length === 1) {
+		return segments[0];
+	}
+
+	// only allow merging from same publicKeyHash
+	const sameHash = segments.every((x) => x.hash === segments[0].hash);
+	if (!sameHash) {
+		throw new Error("Segments have different publicKeyHash");
+	}
+
+	// only allow merging segments with length 1 (trivial)
+	const sameLength = segments.every((x) => x.width === 1 || x.width === 1n);
+	if (!sameLength) {
+		throw new Error(
+			"Segments have different length, only merging of segments length 1 is supported",
+		);
+	}
+
+	const sorted = segments.sort((a, b) => Number(a.start1 - b.start1));
+
+	let calculateLargeGap = (): [NumberFromType<R>, number] => {
+		let last = sorted[sorted.length - 1];
+		let largestArc = numbers.zero;
+		let largestArcIndex = -1;
+		for (let i = 0; i < sorted.length; i++) {
+			const current = sorted[i];
+			if (current.start1 !== last.start1) {
+				let arc = numbers.zero;
+				if (current.start1 < last.end2) {
+					arc += ((numbers.maxValue as any) - last.end2) as any;
+
+					arc += (current.start1 - numbers.zero) as any;
+				} else {
+					arc += (current.start1 - last.end2) as any;
+				}
+
+				if (arc > largestArc) {
+					largestArc = arc;
+					largestArcIndex = i;
+				}
+			}
+			last = current;
+		}
+
+		return [largestArc, largestArcIndex];
+	};
+	const [largestArc, largestArcIndex] = calculateLargeGap();
+
+	let totalLengthFinal: number = numbers.maxValue - largestArc;
+
+	if (largestArcIndex === -1) {
+		return segments[0]; // all ranges are the same
+	}
+	// use segments[0] constructor to create a new object
+
+	const proto = segments[0].constructor;
+	return new (proto as any)({
+		length: totalLengthFinal,
+		offset: segments[largestArcIndex].start1,
+		publicKeyHash: segments[0].hash,
+	});
+};
+
+const createContainingPointQuery = <R extends "u32" | "u64">(
+	points: NumberFromType<R>[] | NumberFromType<R>,
+	options?: {
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+) => {
+	const or: Query[] = [];
+	for (const point of Array.isArray(points) ? points : [points]) {
+		or.push(
 			new And([
 				new IntegerCompare({
 					key: "start1",
@@ -440,6 +848,8 @@ const containingPoint = <S extends Shape | undefined = undefined>(
 					value: point,
 				}),
 			]),
+		);
+		or.push(
 			new And([
 				new IntegerCompare({
 					key: "start2",
@@ -452,33 +862,206 @@ const containingPoint = <S extends Shape | undefined = undefined>(
 					value: point,
 				}),
 			]),
-		]),
-		new IntegerCompare({
-			key: "timestamp",
-			compare: matured ? Compare.LessOrEqual : Compare.Greater,
-			value: BigInt(now - roleAgeLimit),
-		}),
-	];
+		);
+	}
+	if (options?.time) {
+		let queries = [
+			new Or(or),
+			new IntegerCompare({
+				key: "timestamp",
+				compare: options.time.matured ? Compare.LessOrEqual : Compare.Greater,
+				value: BigInt(options.time.now - options.time.roleAgeLimit),
+			}),
+		];
+		return queries;
+	} else {
+		return new Or(or);
+	}
+};
+
+const createContainingPartialPointQuery = <R extends "u32" | "u64">(
+	point: NumberFromType<R>,
+	first: boolean,
+	options?: {
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+) => {
+	let query: Query[];
+	if (first) {
+		query = [
+			new IntegerCompare({
+				key: "start1",
+				compare: Compare.LessOrEqual,
+				value: point,
+			}),
+			new IntegerCompare({
+				key: "end1",
+				compare: Compare.Greater,
+				value: point,
+			}),
+		];
+	} else {
+		query = [
+			new IntegerCompare({
+				key: "start2",
+				compare: Compare.LessOrEqual,
+				value: point,
+			}),
+			new IntegerCompare({
+				key: "end2",
+				compare: Compare.Greater,
+				value: point,
+			}),
+		];
+	}
+
+	if (options?.time) {
+		query.push(
+			new IntegerCompare({
+				key: "timestamp",
+				compare: options.time.matured ? Compare.LessOrEqual : Compare.Greater,
+				value: BigInt(options.time.now - options.time.roleAgeLimit),
+			}),
+		);
+	}
+
+	return query;
+};
+
+const iterateRangesContainingPoint = <
+	S extends Shape | undefined,
+	R extends "u32" | "u64",
+>(
+	rects: Index<ReplicationRangeIndexable<R>>,
+	points: NumberFromType<R>[] | NumberFromType<R>,
+
+	options?: {
+		shape?: S;
+		sort?: Sort[];
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+): IndexIterator<ReplicationRangeIndexable<R>, S> => {
+	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
+
 	return rects.iterate(
 		{
-			query: queries,
+			query: createContainingPointQuery(points, {
+				time: options?.time,
+			}), // new Or(points.map(point => new And(createContainingPointQuery(point, roleAgeLimit, matured, now)))
 			sort: options?.sort,
 		},
 		options,
 	);
 };
 
-const getClosest = <S extends Shape | undefined = undefined>(
+const allRangesContainingPoint = async <
+	S extends Shape | undefined,
+	R extends "u32" | "u64",
+>(
+	rects: Index<ReplicationRangeIndexable<R>>,
+	points: NumberFromType<R>[] | NumberFromType<R>,
+	options?: {
+		shape?: S;
+		sort?: Sort[];
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+) => {
+	// point is between 0 and 1, and the range can start at any offset between 0 and 1 and have length between 0 and 1
+
+	let allResults: IndexedResult<
+		ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
+	>[] = [];
+	for (const point of Array.isArray(points) ? points : [points]) {
+		const firstIterator = rects.iterate(
+			{
+				query: createContainingPartialPointQuery(point, false, options),
+				sort: options?.sort,
+			},
+			options,
+		);
+
+		const secondIterator = rects.iterate(
+			{
+				query: createContainingPartialPointQuery(point, true, options),
+				sort: options?.sort,
+			},
+			options,
+		);
+
+		[...(await firstIterator.all()), ...(await secondIterator.all())].forEach(
+			(x) => allResults.push(x),
+		);
+	}
+	return allResults;
+	/* return [...await iterateRangesContainingPoint(rects, points, options).all()]; */
+};
+
+const countRangesContainingPoint = async <R extends "u32" | "u64">(
+	rects: Index<ReplicationRangeIndexable<R>>,
+	point: NumberFromType<R>,
+	options?: {
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
+) => {
+	return rects.count({
+		query: createContainingPointQuery(point, options),
+	});
+};
+
+export const appromixateCoverage = async <R extends "u32" | "u64">(properties: {
+	peers: Index<ReplicationRangeIndexable<R>>;
+	samples: number;
+	numbers: Numbers<R>;
+	roleAge?: number;
+	normalized?: boolean; // if true, we dont care about the actual number of ranges, only if there is a range, hence the output will be between 0 and 1
+}) => {
+	const grid = properties.numbers.getGrid(
+		properties.numbers.zero,
+		properties.samples,
+	);
+	/* const now = +new Date(); */
+	let hits = 0;
+	for (const point of grid) {
+		const count = await countRangesContainingPoint(
+			properties.peers,
+			point,
+			/* properties?.roleAge ?? 0,
+			true,
+			now, */
+		);
+		hits += properties.normalized ? (count > 0 ? 1 : 0) : count;
+	}
+	return hits / properties.samples;
+};
+
+const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 	direction: "above" | "below",
-	rects: Index<ReplicationRangeIndexable>,
-	point: number,
+	rects: Index<ReplicationRangeIndexable<R>>,
+	point: NumberFromType<R>,
 	roleAgeLimit: number,
 	matured: boolean,
 	now: number,
 	includeStrict: boolean,
+	numbers: Numbers<R>,
 	options?: { shape?: S },
-): IndexIterator<ReplicationRangeIndexable, S> => {
-	const createQueries = (p: number, equality: boolean) => {
+): IndexIterator<ReplicationRangeIndexable<R>, S> => {
+	const createQueries = (p: NumberFromType<R>, equality: boolean) => {
 		let queries: Query[];
 		if (direction === "below") {
 			queries = [
@@ -507,6 +1090,7 @@ const getClosest = <S extends Shape | undefined = undefined>(
 				}),
 			];
 		}
+
 		queries.push(
 			new IntegerCompare({ key: "width", compare: Compare.Greater, value: 0 }),
 		);
@@ -542,7 +1126,10 @@ const getClosest = <S extends Shape | undefined = undefined>(
 
 	const iteratorWrapped = rects.iterate(
 		{
-			query: createQueries(direction === "below" ? MAX_U32 : 0, true),
+			query: createQueries(
+				direction === "below" ? numbers.maxValue : numbers.zero,
+				true,
+			),
 			sort: [
 				direction === "below"
 					? new Sort({ key: ["end2"], direction: "desc" })
@@ -554,68 +1141,83 @@ const getClosest = <S extends Shape | undefined = undefined>(
 		options,
 	);
 
-	return joinIterator<S>([iterator, iteratorWrapped], point, direction);
+	return joinIterator<S, R>(
+		[iterator, iteratorWrapped],
+		point,
+		direction,
+		numbers,
+	);
 };
 
-export const hasCoveringRange = async (
-	rects: Index<ReplicationRangeIndexable>,
-	range: ReplicationRangeIndexable,
+export const getCoveringRangeQuery = (range: {
+	start1: number | bigint;
+	end1: number | bigint;
+	start2: number | bigint;
+	end2: number | bigint;
+}) => {
+	return [
+		new Or([
+			new And([
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: range.start1,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.GreaterOrEqual,
+					value: range.end1,
+				}),
+			]),
+			new And([
+				new IntegerCompare({
+					key: "start2",
+					compare: Compare.LessOrEqual,
+					value: range.start1,
+				}),
+				new IntegerCompare({
+					key: "end2",
+					compare: Compare.GreaterOrEqual,
+					value: range.end1,
+				}),
+			]),
+		]),
+		new Or([
+			new And([
+				new IntegerCompare({
+					key: "start1",
+					compare: Compare.LessOrEqual,
+					value: range.start2,
+				}),
+				new IntegerCompare({
+					key: "end1",
+					compare: Compare.GreaterOrEqual,
+					value: range.end2,
+				}),
+			]),
+			new And([
+				new IntegerCompare({
+					key: "start2",
+					compare: Compare.LessOrEqual,
+					value: range.start2,
+				}),
+				new IntegerCompare({
+					key: "end2",
+					compare: Compare.GreaterOrEqual,
+					value: range.end2,
+				}),
+			]),
+		]),
+	];
+};
+export const iHaveCoveringRange = async <R extends "u32" | "u64">(
+	rects: Index<ReplicationRangeIndexable<R>>,
+	range: ReplicationRangeIndexable<R>,
 ) => {
 	return (
 		(await rects.count({
 			query: [
-				new Or([
-					new And([
-						new IntegerCompare({
-							key: "start1",
-							compare: Compare.LessOrEqual,
-							value: range.start1,
-						}),
-						new IntegerCompare({
-							key: "end1",
-							compare: Compare.GreaterOrEqual,
-							value: range.end1,
-						}),
-					]),
-					new And([
-						new IntegerCompare({
-							key: "start2",
-							compare: Compare.LessOrEqual,
-							value: range.start1,
-						}),
-						new IntegerCompare({
-							key: "end2",
-							compare: Compare.GreaterOrEqual,
-							value: range.end1,
-						}),
-					]),
-				]),
-				new Or([
-					new And([
-						new IntegerCompare({
-							key: "start1",
-							compare: Compare.LessOrEqual,
-							value: range.start2,
-						}),
-						new IntegerCompare({
-							key: "end1",
-							compare: Compare.GreaterOrEqual,
-							value: range.end2,
-						}),
-					]),
-					new And([
-						new IntegerCompare({
-							key: "start2",
-							compare: Compare.LessOrEqual,
-							value: range.start2,
-						}),
-						new IntegerCompare({
-							key: "end2",
-							compare: Compare.GreaterOrEqual,
-							value: range.end2,
-						}),
-					]),
-				]),
+				...getCoveringRangeQuery(range),
 				new StringMatch({
 					key: "hash",
 					value: range.hash,
@@ -632,54 +1234,55 @@ export const hasCoveringRange = async (
 	);
 };
 
-export const getDistance = (
-	from: number,
-	to: number,
+// TODO
+export function getDistance(
+	from: any,
+	to: any,
 	direction: "above" | "below" | "closest",
-	end = MAX_U32,
-) => {
-	// if direction is 'above' only measure distance from 'from to 'to' from above.
-	// i.e if from < to, then from needs to wrap around 0 to 1 and then to to
-	// if direction is 'below' and from > to, then from needs to wrap around 1 to 0 and then to to
-	// if direction is 'closest' then the shortest distance is the distance
-
-	// also from is 0.1 and to is 0.9, then distance should be 0.2 not 0.8
-	// same as for if from is 0.9 and to is 0.1, then distance should be 0.2 not 0.8
+	end: any,
+): any {
+	const abs = (value: number | bigint): number | bigint =>
+		value < 0 ? -value : value;
+	const diff = <T extends number | bigint>(a: T, b: T): T => abs(a - b) as T;
 
 	if (direction === "closest") {
 		if (from === to) {
-			return 0;
+			return typeof from === "number" ? 0 : 0n; // returns 0 of the correct type
 		}
-
-		return Math.min(Math.abs(from - to), Math.abs(end - Math.abs(from - to)));
+		return diff(from, to) < diff(end, diff(from, to))
+			? diff(from, to)
+			: diff(end, diff(from, to));
 	}
 
 	if (direction === "above") {
 		if (from <= to) {
-			return Math.abs(end - to) + from;
+			return end - to + from;
 		}
 		return from - to;
 	}
 
 	if (direction === "below") {
 		if (from >= to) {
-			return Math.abs(end - from) + to;
+			return end - from + to;
 		}
 		return to - from;
 	}
 
 	throw new Error("Invalid direction");
-};
+}
 
-const joinIterator = <S extends Shape | undefined = undefined>(
-	iterators: IndexIterator<ReplicationRangeIndexable, S>[],
-	point: number,
+const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
+	iterators: IndexIterator<ReplicationRangeIndexable<R>, S>[],
+	point: NumberFromType<R>,
 	direction: "above" | "below" | "closest",
-): IndexIterator<ReplicationRangeIndexable, S> => {
+	numbers: Numbers<R>,
+): IndexIterator<ReplicationRangeIndexable<R>, S> => {
 	let queues: {
 		elements: {
-			result: IndexedResult<ReturnTypeFromShape<ReplicationRangeIndexable, S>>;
-			dist: number;
+			result: IndexedResult<
+				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
+			>;
+			dist: NumberFromType<R>;
 		}[];
 	}[] = [];
 
@@ -687,10 +1290,10 @@ const joinIterator = <S extends Shape | undefined = undefined>(
 		next: async (
 			count: number,
 		): Promise<
-			IndexedResults<ReturnTypeFromShape<ReplicationRangeIndexable, S>>
+			IndexedResults<ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>>
 		> => {
 			let results: IndexedResults<
-				ReturnTypeFromShape<ReplicationRangeIndexable, S>
+				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
 			> = [];
 			for (let i = 0; i < iterators.length; i++) {
 				let queue = queues[i];
@@ -705,16 +1308,36 @@ const joinIterator = <S extends Shape | undefined = undefined>(
 					for (const el of res) {
 						const closest = el.value;
 
-						let dist: number;
+						let dist: NumberFromType<R>;
 						if (direction === "closest") {
-							dist = Math.min(
-								getDistance(closest.start1, point, direction),
-								getDistance(closest.end2, point, direction),
+							dist = numbers.min(
+								getDistance(
+									closest.start1,
+									point as any,
+									direction,
+									numbers.maxValue as any,
+								) as NumberFromType<R>,
+								getDistance(
+									closest.end2,
+									point as any,
+									direction,
+									numbers.maxValue as any,
+								) as NumberFromType<R>,
 							);
 						} else if (direction === "above") {
-							dist = getDistance(closest.start1, point, direction);
+							dist = getDistance(
+								closest.start1,
+								point as any,
+								direction,
+								numbers.maxValue as any,
+							) as NumberFromType<R>;
 						} else if (direction === "below") {
-							dist = getDistance(closest.end2, point, direction);
+							dist = getDistance(
+								closest.end2,
+								point as any,
+								direction,
+								numbers.maxValue as any,
+							) as NumberFromType<R>;
 						} else {
 							throw new Error("Invalid direction");
 						}
@@ -728,7 +1351,7 @@ const joinIterator = <S extends Shape | undefined = undefined>(
 
 			for (let i = 0; i < count; i++) {
 				let closestQueue = -1;
-				let closestDist = Number.MAX_SAFE_INTEGER;
+				let closestDist: bigint | number = Number.MAX_VALUE;
 				for (let j = 0; j < queues.length; j++) {
 					let queue = queues[j];
 					if (queue && queue.elements.length > 0) {
@@ -763,7 +1386,7 @@ const joinIterator = <S extends Shape | undefined = undefined>(
 		},
 		all: async () => {
 			let results: IndexedResult<
-				ReturnTypeFromShape<ReplicationRangeIndexable, S>
+				ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
 			>[] = [];
 			for (const iterator of iterators) {
 				let res = await iterator.all();
@@ -775,17 +1398,19 @@ const joinIterator = <S extends Shape | undefined = undefined>(
 };
 
 const getClosestAround = <
-	S extends (Shape & { timestamp: true }) | undefined = undefined,
+	S extends (Shape & { timestamp: true }) | undefined,
+	R extends "u32" | "u64",
 >(
-	peers: Index<ReplicationRangeIndexable>,
-	point: number,
+	peers: Index<ReplicationRangeIndexable<R>>,
+	point: NumberFromType<R>,
 	roleAge: number,
 	now: number,
 	includeStrictBelow: boolean,
 	includeStrictAbove: boolean,
+	numbers: Numbers<R>,
 	options?: { shape?: S },
 ) => {
-	const closestBelow = getClosest<S>(
+	const closestBelow = getClosest<S, R>(
 		"below",
 		peers,
 		point,
@@ -793,9 +1418,10 @@ const getClosestAround = <
 		true,
 		now,
 		includeStrictBelow,
+		numbers,
 		options,
 	);
-	const closestAbove = getClosest<S>(
+	const closestAbove = getClosest<S, R>(
 		"above",
 		peers,
 		point,
@@ -803,43 +1429,59 @@ const getClosestAround = <
 		true,
 		now,
 		includeStrictAbove,
+		numbers,
 		options,
 	);
-	const containing = containingPoint<S>(
+	/* const containing = iterateRangesContainingPoint<S, R>(
 		peers,
 		point,
-		roleAge,
-		true,
-		now,
-		options,
+		{
+			time: {
+				roleAgeLimit: roleAge,
+				matured: true,
+				now,
+			}
+		}
 	);
 
 	return iteratorInSeries(
 		containing,
-		joinIterator<S>([closestBelow, closestAbove], point, "closest"),
+		joinIterator<S, R>([closestBelow, closestAbove], point, "closest", numbers),
+	); */
+	return joinIterator<S, R>(
+		[closestBelow, closestAbove],
+		point,
+		"closest",
+		numbers,
 	);
 };
 
-const collectNodesAroundPoint = async (
+export const isMatured = (
+	segment: { timestamp: bigint },
+	now: number,
+	minAge: number,
+) => {
+	return now - Number(segment.timestamp) >= minAge;
+};
+/* 
+
+const collectNodesAroundPoint = async <R extends "u32" | "u64">(
 	roleAge: number,
-	peers: Index<ReplicationRangeIndexable>,
+	peers: Index<ReplicationRangeIndexable<R>>,
 	collector: (
 		rect: { hash: string },
 		matured: boolean,
-		interescting: boolean,
+		intersecting: boolean,
 	) => void,
-	point: u32,
+	point: NumberFromType<R>,
 	now: number,
+	numbers: Numbers<R>,
 	done: () => boolean = () => true,
 ) => {
-	/* let shape = { timestamp: true, hash: true } as const */
-	const containing = containingPoint(
-		peers,
-		point,
-		0,
-		true,
-		now /* , { shape } */,
-	);
+	const containing = iterateRangesContainingPoint<
+		{ timestamp: true, hash: true },
+		R
+	>(peers, point, 0, true, now, { shape: { timestamp: true, hash: true } as const });
 	const allContaining = await containing.all();
 	for (const rect of allContaining) {
 		collector(rect.value, isMatured(rect.value, now, roleAge), true);
@@ -849,28 +1491,31 @@ const collectNodesAroundPoint = async (
 		return;
 	}
 
-	const closestBelow = getClosest(
+	const closestBelow = getClosest<undefined, R>(
 		"below",
 		peers,
 		point,
 		0,
 		true,
 		now,
-		false /* , { shape } */,
+		false,
+		numbers
 	);
-	const closestAbove = getClosest(
+	const closestAbove = getClosest<undefined, R>(
 		"above",
 		peers,
 		point,
 		0,
 		true,
 		now,
-		false /* , { shape } */,
+		false,
+		numbers
 	);
-	const aroundIterator = joinIterator(
+	const aroundIterator = joinIterator<undefined, R>(
 		[closestBelow, closestAbove],
 		point,
 		"closest",
+		numbers,
 	);
 	while (aroundIterator.done() !== true && done() !== true) {
 		const res = await aroundIterator.next(1);
@@ -882,30 +1527,75 @@ const collectNodesAroundPoint = async (
 		}
 	}
 };
+ */
 
-export const getEvenlySpacedU32 = (from: number, count: number) => {
-	let ret: number[] = new Array(count);
-	for (let i = 0; i < count; i++) {
-		ret[i] = Math.round(from + (i * MAX_U32) / count) % MAX_U32;
-	}
-	return ret;
-};
-
-export const isMatured = (
-	segment: { timestamp: bigint },
+const collectClosestAround = async <R extends "u32" | "u64">(
+	roleAge: number,
+	peers: Index<ReplicationRangeIndexable<R>>,
+	collector: (rect: { hash: string }, matured: boolean) => void,
+	point: NumberFromType<R>,
 	now: number,
-	minAge: number,
+	numbers: Numbers<R>,
+	done: () => boolean = () => true,
 ) => {
-	return now - Number(segment.timestamp) >= minAge;
+	const closestBelow = getClosest<undefined, R>(
+		"below",
+		peers,
+		point,
+		0,
+		true,
+		now,
+		false,
+		numbers,
+	);
+	const closestAbove = getClosest<undefined, R>(
+		"above",
+		peers,
+		point,
+		0,
+		true,
+		now,
+		false,
+		numbers,
+	);
+	/* 	const containingIterator = iterateRangesContainingPoint<undefined, R>(
+			peers,
+			point,
+		);
+	 */
+	const aroundIterator = joinIterator<undefined, R>(
+		[/* containingIterator,  */ closestBelow, closestAbove],
+		point,
+		"closest",
+		numbers,
+	);
+
+	let visited = new Set<string>();
+	while (aroundIterator.done() !== true && done() !== true) {
+		const res = await aroundIterator.next(100);
+		for (const rect of res) {
+			visited.add(rect.value.idString);
+			collector(rect.value, isMatured(rect.value, now, roleAge));
+			if (done()) {
+				return;
+			}
+		}
+	}
 };
+
 // get peer sample that are responsible for the cursor point
 // will return a list of peers that want to replicate the data,
 // but also if necessary a list of peers that are responsible for the data
 // but have not explicitly replicating a range that cover the cursor point
-export const getSamples = async (
-	cursor: u32[],
-	peers: Index<ReplicationRangeIndexable>,
+export const getSamples = async <R extends "u32" | "u64">(
+	cursor: NumberFromType<R>[],
+	peers: Index<ReplicationRangeIndexable<R>>,
 	roleAge: number,
+	numbers: Numbers<R>,
+	options?: {
+		onlyIntersecting?: boolean;
+		uniqueReplicators?: Set<string>;
+	},
 ): Promise<Map<string, { intersecting: boolean }>> => {
 	const leaders: Map<string, { intersecting: boolean }> = new Map();
 	if (!peers) {
@@ -913,50 +1603,87 @@ export const getSamples = async (
 	}
 
 	const now = +new Date();
+	let matured = 0;
 
-	const maturedLeaders = new Set();
+	/* let missingForCursors: NumberFromType<R>[] = [] */
+	let uniqueVisited = new Set<string>();
 	for (let i = 0; i < cursor.length; i++) {
-		// evenly distributed
+		let point = cursor[i];
 
-		// aquire at least one unique node for each point
-		await collectNodesAroundPoint(
+		const allContaining = await allRangesContainingPoint<undefined, R>(
+			peers,
+			point,
+		);
+
+		for (const rect of allContaining) {
+			uniqueVisited.add(rect.value.hash);
+			let prev = leaders.get(rect.value.hash);
+			if (!prev) {
+				if (isMatured(rect.value, now, roleAge)) {
+					matured++;
+				}
+				leaders.set(rect.value.hash, { intersecting: true });
+			} else {
+				prev.intersecting = true;
+			}
+		}
+
+		if (options?.uniqueReplicators) {
+			if (
+				options.uniqueReplicators.size === leaders.size ||
+				options.uniqueReplicators.size === uniqueVisited.size
+			) {
+				break; // nothing more to find
+			}
+		}
+
+		if (options?.onlyIntersecting || matured > i) {
+			continue;
+		}
+
+		let foundOneUniqueMatured = false;
+		await collectClosestAround(
 			roleAge,
 			peers,
-			(rect, m, intersecting) => {
-				if (m) {
-					maturedLeaders.add(rect.hash);
-				}
-
+			(rect, m) => {
+				uniqueVisited.add(rect.hash);
 				const prev = leaders.get(rect.hash);
-
-				if (!prev || (intersecting && !prev.intersecting)) {
-					leaders.set(rect.hash, { intersecting });
+				if (m) {
+					if (!prev) {
+						matured++;
+						leaders.set(rect.hash, { intersecting: false });
+					}
+					if (matured > i) {
+						foundOneUniqueMatured = true;
+					}
 				}
 			},
-			cursor[i],
+			point,
 			now,
-			() => {
-				if (maturedLeaders.size > i) {
-					return true;
-				}
-				return false;
-			},
+			numbers,
+			() => foundOneUniqueMatured,
 		);
+		/* if (!foundOneUniqueMatured) {
+			missingForCursors.push(point);
+		} */
 	}
-
+	/* if (leaders.size < cursor.length) {
+		throw new Error("Missing leaders got: " + leaders.size + " -- expected -- " + cursor.length + " role age " + roleAge + " missing " + missingForCursors.length + " replication index size: " + (await peers.count()));
+	} */
 	return leaders;
 };
 
-const fetchOne = async <S extends Shape | undefined>(
-	iterator: IndexIterator<ReplicationRangeIndexable, S>,
+const fetchOne = async <S extends Shape | undefined, R extends "u32" | "u64">(
+	iterator: IndexIterator<ReplicationRangeIndexable<R>, S>,
 ) => {
 	const value = await iterator.next(1);
 	await iterator.close();
 	return value[0]?.value;
 };
 
-export const minimumWidthToCover = async (
+export const minimumWidthToCover = async <R extends "u32" | "u64">(
 	minReplicas: number /* , replicatorCount: number */,
+	numbers: Numbers<R>,
 ) => {
 	/* minReplicas = Math.min(minReplicas, replicatorCount); */ // TODO do we need this?
 
@@ -965,34 +1692,29 @@ export const minimumWidthToCover = async (
 	// to make sure we reach sufficient amount of nodes such that at least one one has
 	// the entry we are looking for
 
-	let widthToCoverScaled = Math.round(MAX_U32 / minReplicas);
+	let widthToCoverScaled = numbers.divRound(numbers.maxValue, minReplicas);
 	return widthToCoverScaled;
 };
 
-export const getCoverSet = async (properties: {
-	peers: Index<ReplicationRangeIndexable>;
-	start: number | PublicSignKey | undefined;
-	widthToCoverScaled: number;
+export const getCoverSet = async <R extends "u32" | "u64">(properties: {
+	peers: Index<ReplicationRangeIndexable<R>>;
+	start: NumberFromType<R> | PublicSignKey | undefined;
+	widthToCoverScaled: NumberFromType<R>;
 	roleAge: number;
-	intervalWidth?: number;
+	numbers: Numbers<R>;
 	eager?:
 		| {
 				unmaturedFetchCoverSize?: number;
 		  }
 		| boolean;
 }): Promise<Set<string>> => {
-	let intervalWidth: number = properties.intervalWidth ?? MAX_U32;
 	const { peers, start, widthToCoverScaled, roleAge } = properties;
 
 	const now = Date.now();
-	const { startNode, startLocation, endLocation } = await getStartAndEnd(
-		peers,
-		start,
-		widthToCoverScaled,
-		roleAge,
-		now,
-		intervalWidth,
-	);
+	const { startNode, startLocation, endLocation } = await getStartAndEnd<
+		undefined,
+		R
+	>(peers, start, widthToCoverScaled, roleAge, now, properties.numbers);
 
 	let ret = new Set<string>();
 
@@ -1034,29 +1756,46 @@ export const getCoverSet = async (properties: {
 	ret.add(current.hash);
 
 	const resolveNextContaining = async (
-		nextLocation: number,
+		nextLocation: NumberFromType<R>,
 		roleAge: number,
 	) => {
 		let next = await fetchOne(
-			containingPoint(peers, nextLocation, roleAge, true, now, {
+			iterateRangesContainingPoint<undefined, R>(peers, nextLocation, {
 				sort: [new Sort({ key: "end2", direction: SortDirection.DESC })],
+				time: {
+					matured: true,
+					roleAgeLimit: roleAge,
+					now,
+				},
 			}),
 		); // get entersecting sort by largest end2
 		return next;
 	};
 
-	const resolveNextAbove = async (nextLocation: number, roleAge: number) => {
+	const resolveNextAbove = async (
+		nextLocation: NumberFromType<R>,
+		roleAge: number,
+	) => {
 		// if not get closest from above
-		let next = await fetchOne(
-			getClosest("above", peers, nextLocation, roleAge, true, now, true),
+		let next = await fetchOne<undefined, R>(
+			getClosest(
+				"above",
+				peers,
+				nextLocation,
+				roleAge,
+				true,
+				now,
+				true,
+				properties.numbers,
+			),
 		);
 		return next;
 	};
 
 	const resolveNext = async (
-		nextLocation: number,
+		nextLocation: NumberFromType<R>,
 		roleAge: number,
-	): Promise<[ReplicationRangeIndexable, boolean]> => {
+	): Promise<[ReplicationRangeIndexable<R>, boolean]> => {
 		const containing = await resolveNextContaining(nextLocation, roleAge);
 		if (containing) {
 			return [containing, true];
@@ -1067,13 +1806,16 @@ export const getCoverSet = async (properties: {
 	// fill the middle
 	let wrappedOnce = current.end2 < current.end1;
 
-	let coveredLength = 0;
-	const addLength = (from: number) => {
+	let coveredLength = properties.numbers.zero;
+	const addLength = (from: NumberFromType<R>) => {
 		if (current.end2 < from || current.wrapped) {
 			wrappedOnce = true;
-			coveredLength += MAX_U32 - from;
+			// @ts-ignore
+			coveredLength += properties.numbers.maxValue - from;
+			// @ts-ignore
 			coveredLength += current.end2;
 		} else {
+			// @ts-ignore
 			coveredLength += current.end1 - from;
 		}
 	};
@@ -1085,7 +1827,7 @@ export const getCoverSet = async (properties: {
 
 	while (
 		maturedCoveredLength < widthToCoverScaled && // eslint-disable-line no-unmodified-loop-condition
-		coveredLength <= MAX_U32 // eslint-disable-line no-unmodified-loop-condition
+		coveredLength <= properties.numbers.maxValue // eslint-disable-line no-unmodified-loop-condition
 	) {
 		let nextCandidate = await resolveNext(nextLocation, roleAge);
 		/* let fromAbove = false; */
@@ -1119,13 +1861,33 @@ export const getCoverSet = async (properties: {
 		if (
 			!isLast ||
 			nextCandidate[1] ||
-			Math.min(
-				getDistance(last.start1, endLocation, "closest"),
-				getDistance(last.end2, endLocation, "closest"),
+			properties.numbers.min(
+				getDistance(
+					last.start1,
+					endLocation,
+					"closest",
+					properties.numbers.maxValue,
+				),
+				getDistance(
+					last.end2,
+					endLocation,
+					"closest",
+					properties.numbers.maxValue,
+				),
 			) >
-				Math.min(
-					getDistance(current.start1, endLocation, "closest"),
-					getDistance(current.end2, endLocation, "closest"),
+				properties.numbers.min(
+					getDistance(
+						current.start1,
+						endLocation,
+						"closest",
+						properties.numbers.maxValue,
+					),
+					getDistance(
+						current.end2,
+						endLocation,
+						"closest",
+						properties.numbers.maxValue,
+					),
 				)
 		) {
 			ret.add(current.hash);
@@ -1141,9 +1903,9 @@ export const getCoverSet = async (properties: {
 
 		nextLocation = endIsWrapped
 			? wrappedOnce
-				? Math.min(current.end2, endLocation)
+				? properties.numbers.min(current.end2, endLocation)
 				: current.end2
-			: Math.min(current.end2, endLocation);
+			: properties.numbers.min(current.end2, endLocation);
 	}
 
 	start instanceof PublicSignKey && ret.add(start.hashcode());
@@ -1153,63 +1915,69 @@ export const getCoverSet = async (properties: {
 	// reduce the change set to only regions that are changed for each peer
 	// i.e. subtract removed regions from added regions, and vice versa
 	const result = new Map<string, { range: ReplicationRangeIndexable, added: boolean }[]>();
-
+	
 	for (const addedChange of changes.added ?? []) {
 		let prev = result.get(addedChange.hash) ?? [];
 		for (const [_hash, ranges] of result.entries()) {
 			for (const r of ranges) {
-
+	
 			}
 		}
 	}
 }
  */
 
-const matchRangeQuery = (range: ReplicationRangeIndexable) => {
-	let ors = [];
-	ors.push(
-		new And([
-			new IntegerCompare({
-				key: "coordinate",
-				compare: "gte",
-				value: range.start1,
-			}),
-			new IntegerCompare({
-				key: "coordinate",
-				compare: "lt",
-				value: range.end1,
-			}),
-		]),
-	);
+export const matchEntriesInRangeQuery = (range: {
+	start1: number | bigint;
+	end1: number | bigint;
+	start2: number | bigint;
+	end2: number | bigint;
+}) => {
+	const c1 = new And([
+		new IntegerCompare({
+			key: "coordinates",
+			compare: "gte",
+			value: range.start1,
+		}),
+		new IntegerCompare({
+			key: "coordinates",
+			compare: "lt",
+			value: range.end1,
+		}),
+	]);
 
-	ors.push(
+	if (range.start2 === range.end2) {
+		return c1;
+	}
+
+	let ors = [
+		c1,
 		new And([
 			new IntegerCompare({
-				key: "coordinate",
+				key: "coordinates",
 				compare: "gte",
 				value: range.start2,
 			}),
 			new IntegerCompare({
-				key: "coordinate",
+				key: "coordinates",
 				compare: "lt",
 				value: range.end2,
 			}),
 		]),
-	);
-
+	];
 	return new Or(ors);
 };
-export const toRebalance = (
+export const toRebalance = <R extends "u32" | "u64">(
 	changes: ReplicationChanges,
-	index: Index<EntryReplicated>,
-): AsyncIterable<{ gid: string; entries: EntryReplicated[] }> => {
+	index: Index<EntryReplicated<R>>,
+): AsyncIterable<EntryReplicated<R>> => {
 	const assignedRangesQuery = (changes: ReplicationChanges) => {
 		let ors: Query[] = [];
 		for (const change of changes) {
-			const matchRange = matchRangeQuery(change.range);
+			const matchRange = matchEntriesInRangeQuery(change.range);
 			if (change.type === "updated") {
 				// assuming a range is to be removed, is this entry still enoughly replicated
-				const prevMatchRange = matchRangeQuery(change.prev);
+				const prevMatchRange = matchEntriesInRangeQuery(change.prev);
 				ors.push(prevMatchRange);
 				ors.push(matchRange);
 			} else {
@@ -1235,13 +2003,15 @@ export const toRebalance = (
 			});
 
 			while (iterator.done() !== true) {
-				const entries = await iterator.next(1000); // TODO choose right batch sizes here for optimal memory usage / speed
+				const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
 
-				// TODO do we need this
-				const grouped = await groupByGidSync(entries.map((x) => x.value));
-
+				/* const grouped = await groupByGidSync(entries.map((x) => x.value));
 				for (const [gid, entries] of grouped.entries()) {
 					yield { gid, entries };
+				} */
+
+				for (const entry of entries) {
+					yield entry.value;
 				}
 			}
 		},
@@ -1249,12 +2019,14 @@ export const toRebalance = (
 };
 
 export const fetchOneFromPublicKey = async <
-	S extends (Shape & { timestamp: true }) | undefined = undefined,
+	S extends (Shape & { timestamp: true }) | undefined,
+	R extends "u32" | "u64",
 >(
 	publicKey: PublicSignKey,
-	index: Index<ReplicationRangeIndexable>,
+	index: Index<ReplicationRangeIndexable<R>>,
 	roleAge: number,
 	now: number,
+	numbers: Numbers<R>,
 	options?: {
 		shape: S;
 	},
@@ -1271,13 +2043,14 @@ export const fetchOneFromPublicKey = async <
 	if (node) {
 		if (!isMatured(node, now, roleAge)) {
 			const matured = await fetchOne(
-				getClosestAround<S>(
+				getClosestAround<S, R>(
 					index,
 					node.start1,
 					roleAge,
 					now,
 					false,
 					false,
+					numbers,
 					options,
 				),
 			);
@@ -1291,33 +2064,36 @@ export const fetchOneFromPublicKey = async <
 
 export const getStartAndEnd = async <
 	S extends (Shape & { timestamp: true }) | undefined,
+	R extends "u32" | "u64",
 >(
-	peers: Index<ReplicationRangeIndexable>,
-	start: number | PublicSignKey | undefined | undefined,
-	widthToCoverScaled: number,
+	peers: Index<ReplicationRangeIndexable<R>>,
+	start: NumberFromType<R> | PublicSignKey | undefined | undefined,
+	widthToCoverScaled: NumberFromType<R>,
 	roleAge: number,
 	now: number,
-	intervalWidth: number,
+	numbers: Numbers<R>,
 	options?: { shape: S },
 ): Promise<{
-	startNode: ReturnTypeFromShape<ReplicationRangeIndexable, S> | undefined;
-	startLocation: number;
-	endLocation: number;
+	startNode: ReturnTypeFromShape<ReplicationRangeIndexable<R>, S> | undefined;
+	startLocation: NumberFromType<R>;
+	endLocation: NumberFromType<R>;
 }> => {
 	// find a good starting point
-	let startNode: ReturnTypeFromShape<ReplicationRangeIndexable, S> | undefined =
-		undefined;
-	let startLocation: number | undefined = undefined;
+	let startNode:
+		| ReturnTypeFromShape<ReplicationRangeIndexable<R>, S>
+		| undefined = undefined;
+	let startLocation: NumberFromType<R> | undefined = undefined;
 
-	const nodeFromPoint = async (point = scaleToU32(Math.random())) => {
+	const nodeFromPoint = async (point = numbers.random()) => {
 		startLocation = point;
-		startNode = await fetchOneClosest(
+		startNode = await fetchOneClosest<S, R>(
 			peers,
 			startLocation,
 			roleAge,
 			now,
 			false,
 			true,
+			numbers,
 			options,
 		);
 	};
@@ -1329,6 +2105,7 @@ export const getStartAndEnd = async <
 			peers,
 			roleAge,
 			now,
+			numbers,
 			options,
 		);
 		if (!startNode) {
@@ -1337,62 +2114,76 @@ export const getStartAndEnd = async <
 		} else {
 			startLocation = startNode.start1;
 		}
-	} else if (typeof start === "number") {
+	} else if (typeof start === "number" || typeof start === "bigint") {
 		await nodeFromPoint(start);
 	} else {
 		await nodeFromPoint();
 	}
 
 	if (!startNode || startLocation == null) {
-		return { startNode: undefined, startLocation: 0, endLocation: 0 };
+		return {
+			startNode: undefined,
+			startLocation: numbers.zero,
+			endLocation: numbers.zero,
+		};
 	}
 
-	let endLocation = startLocation + widthToCoverScaled;
-	if (intervalWidth != null) {
-		endLocation = endLocation % intervalWidth;
-	}
+	// @ts-ignore
+	let endLocation: T = (startLocation + widthToCoverScaled) % numbers.maxValue;
 
-	// if start location is after endLocation and startNode is strict then return undefined because this is not a node we want to choose
-	let coveredDistanceToStart = 0;
-	if (startNode.start1 < startLocation) {
-		coveredDistanceToStart += intervalWidth - startLocation + startNode.start1;
-	} else {
-		coveredDistanceToStart += startNode.start1 - startLocation;
-	}
+	// if the start node range is not containing the start point, then figure out if the startNode is ideal
+	if (!startNode.contains(startLocation)) {
+		let coveredDistanceToStart = numbers.zero;
+		if (startNode.start1 < startLocation) {
+			coveredDistanceToStart +=
+				numbers.maxValue - startLocation + startNode.start1;
+		} else {
+			coveredDistanceToStart += ((startNode.start1 as any) -
+				startLocation) as any;
+		}
 
-	if (
-		startNode.mode === ReplicationIntent.Strict &&
-		coveredDistanceToStart > widthToCoverScaled
-	) {
-		return { startNode: undefined, startLocation: 0, endLocation: 0 };
+		// in this case, the gap to the start point is larger than the width we want to cover. Assume there are no good points
+		if (
+			startNode.mode === ReplicationIntent.Strict &&
+			coveredDistanceToStart > widthToCoverScaled
+		) {
+			return {
+				startNode: undefined,
+				startLocation: numbers.zero,
+				endLocation: numbers.zero,
+			};
+		}
 	}
 
 	return {
 		startNode,
-		startLocation: Math.round(startLocation),
-		endLocation: Math.round(endLocation),
+		startLocation,
+		endLocation,
 	};
 };
 
 export const fetchOneClosest = <
-	S extends (Shape & { timestamp: true }) | undefined = undefined,
+	S extends (Shape & { timestamp: true }) | undefined,
+	R extends "u32" | "u64",
 >(
-	peers: Index<ReplicationRangeIndexable>,
-	point: number,
+	peers: Index<ReplicationRangeIndexable<R>>,
+	point: NumberFromType<R>,
 	roleAge: number,
 	now: number,
 	includeStrictBelow: boolean,
 	includeStrictAbove: boolean,
+	numbers: Numbers<R>,
 	options?: { shape?: S },
 ) => {
-	return fetchOne(
-		getClosestAround<S>(
+	return fetchOne<S, R>(
+		getClosestAround<S, R>(
 			peers,
 			point,
 			roleAge,
 			now,
 			includeStrictBelow,
 			includeStrictAbove,
+			numbers,
 			options,
 		),
 	);

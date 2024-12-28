@@ -81,6 +81,24 @@ describe("append", function () {
 			expect(await blockExists(e2.hash)).to.be.false;
 			expect(await blockExists(e3.hash)).to.be.true;
 		});
+
+		it("can resolve the full entry from deleted", async () => {
+			const log = new Log();
+
+			let resolved: any = undefined;
+			await log.open(store, signKey, {
+				onChange: async (change) => {
+					if (change.removed.length > 0) {
+						resolved = await (
+							await log.get(change.removed[0].hash)
+						)?.getPayloadValue();
+					}
+				},
+			});
+			await log.append(new Uint8Array([1]));
+			await log.append(new Uint8Array([2]), { meta: { type: EntryType.CUT } });
+			expect(resolved).to.deep.eq(new Uint8Array([1]));
+		});
 	});
 
 	describe("append 100 items to a log", () => {

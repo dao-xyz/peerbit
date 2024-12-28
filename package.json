@@ -43,7 +43,8 @@
 		"packages/utils/cache",
 		"packages/utils/logger",
 		"packages/utils/keychain",
-		"packages/utils/indexer/*"
+		"packages/utils/indexer/*",
+		"packages/utils/rateless-iblt"
 	],
 	"engines": {
 		"node": ">=18"
@@ -87,6 +88,7 @@
 		"aegir": "github:marcus-pousette/aegir#multiple-assets",
 		"eslint-config-peerbit": "https://github.com/dao-xyz/eslint-config-peerbit",
 		"benchmark": "^2.1.4",
+		"tinybench": "^3",
 		"chai-as-promised": "^7.1.1",
 		"dotenv": "^16.4.5",
 		"eslint-plugin-n": "^17.10.2",

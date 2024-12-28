@@ -9,7 +9,7 @@ import { SharedLog } from "../src/index.js";
 @variant("encrypt_store")
 class SimpleStore extends Program {
 	@field({ type: SharedLog })
-	log: SharedLog<Uint8Array>; // Documents<?> provide document store functionality around your Posts
+	log: SharedLog<Uint8Array, any>; // Documents<?> provide document store functionality around your Posts
 
 	constructor() {
 		super();

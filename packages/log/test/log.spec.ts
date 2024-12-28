@@ -115,7 +115,7 @@ describe("properties", function () {
 			);
 			assert.deepStrictEqual(entry, undefined);
 			expect(fetched).to.be.true;
-			expect(remoteFetchOptions.remote).to.be.undefined;
+			expect(!remoteFetchOptions.remote).to.be.true;
 		});
 
 		it("fetches remotes with timeout", async () => {

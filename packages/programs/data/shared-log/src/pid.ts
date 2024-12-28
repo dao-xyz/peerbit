@@ -37,8 +37,9 @@ export class PIDReplicationController {
 		peerCount: number;
 		cpuUsage: number | undefined;
 	}) {
-		const { memoryUsage, totalFactor, peerCount, cpuUsage, currentFactor } =
+		let { memoryUsage, totalFactor, peerCount, cpuUsage, currentFactor } =
 			properties;
+
 		this.prevTotalFactor = totalFactor;
 		this.prevMemoryUsage = memoryUsage;
 
@@ -92,7 +93,6 @@ export class PIDReplicationController {
 			totalError =
 				errorMemory * errorMemoryFactor + totalError * (1 - errorMemoryFactor);
 		}
-		// (this.id === "rRcHKy8yCun+32/dvRAkNMqvmXVb/N/X3Sis/wkDxKQ=") && console.log("MEMORY ERROR ? ", { errorMemory, errorMemoryFactor, memoryLimit: this.maxMemoryLimit, estimatedTotalSize, currentFactor, memoryUsage });
 
 		// Computer is getting too hot?
 		if (this.maxCPUUsage != null && (cpuUsage || 0) > this.maxCPUUsage) {
@@ -134,26 +134,27 @@ export class PIDReplicationController {
 			this.integral = 0;
 		}
 
-		/* console.log({
-			id: this.id,
-			currentFactor,
-			newFactor,
-			factorDiff: newFactor - currentFactor,
-			pTerm,
-			dTerm,
-			iTerm,
-			totalError,
-			errorFromEven,
-			errorTarget: errorBalance,
-			errorCoverage,
-			errorMemory,
-			errorCPU,
-			peerCount,
-			totalFactor,
-			targetScaler: balanceErrorScaler,
-			memoryUsage,
-			estimatedTotalSize,
-		}); */
+		/* if (this.id === "3YUU2tgXPB1v7NMdPob37WDcixg4vi7qF1PkbSJFNc4=")
+			console.log({
+				id: this.id,
+				currentFactor,
+				newFactor,
+				factorDiff: newFactor - currentFactor,
+				pTerm,
+				dTerm,
+				iTerm,
+				totalError,
+				errorFromEven,
+				errorTarget: errorBalance,
+				errorCoverage,
+				errorMemory,
+				errorCPU,
+				peerCount,
+				totalFactor,
+				targetScaler: balanceErrorScaler,
+				memoryUsage,
+				estimatedTotalSize,
+			}); */
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

@@ -10,14 +10,14 @@ import {
 } from "../src/index.js";
 
 type RangeArgs = { from: number; to: number };
-export type CustomDomain = ReplicationDomain<RangeArgs, Operation>;
+export type CustomDomain = ReplicationDomain<RangeArgs, Operation, "u32">;
 
 export const createDocumentDomain = <T extends object>(
 	db: Documents<T, any, CustomDomain>,
 	options: {
 		fromValue: (value: T) => number;
 		fromMissing?: (
-			entry: EntryReplicated | ShallowEntry | Entry<Operation>,
+			entry: EntryReplicated<"u32"> | ShallowEntry | Entry<Operation>,
 		) => number;
 	},
 ): CustomDomain => {
@@ -25,6 +25,7 @@ export const createDocumentDomain = <T extends object>(
 	const fromMissing = options.fromMissing || (() => 0xffffffff);
 	return {
 		type: "custom",
+		resolution: "u32",
 		fromArgs(args, log) {
 			if (!args) {
 				return { offset: log.node.identity.publicKey };

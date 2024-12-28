@@ -69,12 +69,12 @@
 	"author": "dao.xyz",
 	"license": "MIT",
 	"dependencies": {
-		"better-sqlite3": "^11.5.0",
+		"better-sqlite3": "^11.6.0",
 		"@peerbit/indexer-interface": "^2.0.1",
-		"@sqlite.org/sqlite-wasm": "^3.47.0-build1"
+		"@sqlite.org/sqlite-wasm": "^3.47.2-build1"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^7.6.11",
+		"@types/better-sqlite3": "^7.6.12",
 		"@peerbit/indexer-tests": "^1.1.3"
 	}
 }

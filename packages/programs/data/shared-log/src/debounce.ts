@@ -1,46 +1,3 @@
-/* export const debounceFixedInterval = <
-	T extends (...args: any[]) => any | Promise<any>,
->(
-	fn: T,
-	delay: number,
-	options?: { debug?: boolean, onError?: (error: Error) => void },
-) => {
-	// a debounce function that will always wait for the delay to pass before invoking the function
-	// though if delay time has passed it will call the function immediately instead of resetting the timer
-
-	let onError = options?.onError || ((error: Error) => console.error(error));
-	let timeout: NodeJS.Timeout | null = null;
-	let lastArgs: any[] = [];
-	let lastThis: any;
-	let invokePromise = Promise.resolve();
-	const invoke = async () => {
-		const fnCall = fn.apply(lastThis, lastArgs);
-		invokePromise = Promise.resolve(fnCall ?? {});
-		await invokePromise.then((res) => {
-			
-			timeout = null;
-			return res;
-		}).catch(onError);
-	};
-
-	const debounced = (...args: Parameters<T>) => {
-		lastArgs = args;
-		lastThis = this;
-		if (timeout) {
-			return;
-		}
-		invokePromise.then(() => {
-			timeout && clearTimeout(timeout);
-			timeout = setTimeout(invoke, delay);
-			if (options?.debug) {
-				console.log("debounceFixedInterval: timeout set", timeout);
-			}
-		});
-	};
-
-	return debounced as T;
-};
- */
 export const debounceFixedInterval = <
 	T extends (...args: any[]) => any | Promise<any>,
 >(
@@ -109,7 +66,7 @@ export const debounceFixedInterval = <
 	return debounced as T;
 };
 
-export const debounceAcculmulator = <K, T, V>(
+export const debounceAccumulator = <K, T, V>(
 	fn: (args: V) => any,
 	create: () => {
 		delete: (string: K) => void;
@@ -145,18 +102,26 @@ export const debounceAcculmulator = <K, T, V>(
 export const debouncedAccumulatorMap = <T>(
 	fn: (args: Map<string, T>) => any,
 	delay: number,
+	merge?: (into: T, from: T) => void,
 ) => {
-	return debounceAcculmulator<
-		string,
-		{ key: string; value: T },
-		Map<string, T>
-	>(
+	return debounceAccumulator<string, { key: string; value: T }, Map<string, T>>(
 		fn,
 		() => {
 			const map = new Map();
+			let add = merge
+				? (props: { key: string; value: T }) => {
+						let prev = map.get(props.key);
+						if (prev != null) {
+							merge(prev, props.value);
+						} else {
+							map.set(props.key, props.value);
+						}
+					}
+				: (props: { key: string; value: T }) => {
+						map.set(props.key, props.value);
+					};
 			return {
-				add: (props: { key: string; value: T }) =>
-					map.set(props.key, props.value),
+				add,
 				delete: (key: string) => map.delete(key),
 				size: () => map.size,
 				value: map,
