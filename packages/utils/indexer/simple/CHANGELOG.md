@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.4](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.1.3...indexer-simple-v1.1.4) (2024-12-28)
+
+
+### Bug Fixes
+
+* correct array handling for inner hits ([d283a50](https://github.com/dao-xyz/peerbit/commit/d283a50a134589617269563fde51fb4c34ed2260))
+
 ## [1.1.3](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.1.2...indexer-simple-v1.1.3) (2024-11-08)
 
 

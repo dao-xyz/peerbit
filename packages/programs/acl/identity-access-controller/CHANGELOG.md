@@ -630,6 +630,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.0](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v4.0.31...identity-access-controller-v5.0.0) (2024-12-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rateless-iblt-sync protocol
+
+### Features
+
+* rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 7.1.16 to 8.0.0
+    * @peerbit/trusted-network bumped from 4.1.16 to 4.1.17
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.9 to ^2.1.10
+
 ## [4.0.31](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v4.0.30...identity-access-controller-v4.0.31) (2024-11-08)
 
 

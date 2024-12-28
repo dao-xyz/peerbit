@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.1.4...indexer-sqlite3-v1.2.0) (2024-12-28)
+
+
+### Features
+
+* query planner ([04264c6](https://github.com/dao-xyz/peerbit/commit/04264c66ef120ee0a3fd1d295411018163248fa8))
+
+
+### Bug Fixes
+
+* Merge branch 'master' into rateless ([01d5af7](https://github.com/dao-xyz/peerbit/commit/01d5af70d493c782a21e80733ec34007d33f843a))
+
 ## [1.1.4](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.1.3...indexer-sqlite3-v1.1.4) (2024-11-08)
 
 

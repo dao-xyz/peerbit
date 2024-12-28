@@ -389,6 +389,34 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.13...shared-log-v10.0.0) (2024-12-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rateless-iblt-sync protocol
+
+### Features
+
+* rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
+
+
+### Bug Fixes
+
+* Merge branch 'master' into rateless ([01d5af7](https://github.com/dao-xyz/peerbit/commit/01d5af70d493c782a21e80733ec34007d33f843a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.8 to 5.1.0
+    * @peerbit/log bumped from 4.0.21 to 4.0.22
+    * @peerbit/rpc bumped from 5.0.19 to 5.0.20
+    * @peerbit/riblt bumped from 0.0.1 to 1.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.9 to ^2.1.10
+
 ## [9.2.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.12...shared-log-v9.2.13) (2024-11-08)
 
 

@@ -308,6 +308,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/proxy-v5.0.4...proxy-v5.1.0) (2024-12-28)
+
+
+### Features
+
+* hangup ([f877a73](https://github.com/dao-xyz/peerbit/commit/f877a7301a1fef7f21649ef6e4bd0038fa36d9c6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from ^5.0.8 to ^5.1.0
+    * @peerbit/indexer-simple bumped from ^1.1.3 to ^1.1.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.9 to 2.1.10
+
 ## [5.0.4](https://github.com/dao-xyz/peerbit/compare/proxy-v5.0.3...proxy-v5.0.4) (2024-11-08)
 
 
