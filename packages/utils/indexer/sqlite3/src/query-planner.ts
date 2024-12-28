@@ -273,24 +273,6 @@ export class QueryPlanner {
 				fastestIndex.used++;
 				pickedIndexKeys.set(fastestIndex.indexKey, sortedNameKey);
 
-				/*   if (fastestIndex.used % 300 === 0) {
-					  console.log("INDEX STATS", indexStats.results.map(x => {
-						  return {
-							  key: x.indexKey,
-							  used: x.used,
-							  avg: x.avg,
-						  }
-					  }));
-				  } */
-				/*  console.log("INDEX STATS", indexStats.results.map(x => {
-					 return {
-						 key: x.indexKey,
-						 used: x.used,
-						 avg: x.avg,
-					 }
-				 }), columns); */
-
-				//  console.log("FASTEST", fastestIndex.indexKey)
 				return fastestIndex.indexKey!;
 			},
 			perform: async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -299,7 +281,6 @@ export class QueryPlanner {
 				const out = await fn();
 				let t1 = hrtime.bigint();
 				const time = Number(t1 - t0);
-				//  console.log("MEASURE TIME", time, "FOR", [...pickedIndexKeys.keys()]);
 
 				for (const [indexKey, columnsKey] of pickedIndexKeys) {
 					const indexStats = obj.columnsToIndexes.get(columnsKey);
@@ -320,7 +301,6 @@ export class QueryPlanner {
 						index.times.reduce((a, b) => a + b, 0) / index.times.length;
 
 					indexStats.results.sort((a, b) => a.avg - b.avg); // make sure fastest is first
-					//   console.log("INDEX STATS", indexStats.results.map(x => x.lastTime));
 				}
 
 				return out;

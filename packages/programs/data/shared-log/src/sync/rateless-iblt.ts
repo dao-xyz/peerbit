@@ -178,148 +178,8 @@ const buildEncoderOrDecoderFromRange = async <
 		}
 	}
 
-	/* console.log(
-		"symbol count",
-		symbolCount +
-		" from " +
-		(Number(ranges.start1 - ranges.end1) / Number(MAX_U64) +
-			Number(ranges.start2 - ranges.end2) / Number(MAX_U64)),
-		ranges,
-	); */
-
-	/* console.log(
-		(type === "encoder" ? "Encoder" : "Decoder") + " build time (s): ",
-		(+new Date() - buildDecoderStart) / 1000,
-		"Symbols: ",
-		symbolCount,
-		", Hashes size: ",
-		+hashes.size,
-		", Range: ",
-		ranges,
-	); */
 	return encoder as E;
 };
-/* 
-class RangeToEncoders {
-	encoders: Map<string, EncoderWrapper>;
-
-	constructor(
-		readonly me: PublicSignKey,
-		readonly rangeIndex: Index<ReplicationRangeIndexable<"u64">>,
-		readonly entryIndex: Index<EntryReplicated<"u64">>,
-	) {
-		this.encoders = new Map();
-	}
-
-	async build() {
-		// for all ranges in rangeIndex that belong to me
-		// fetch all cursors from entryIndex and build encoder with key from rangeId
-		for (const range of await this.rangeIndex
-			.iterate({ query: { hash: this.me.hashcode() } })
-			.all()) {
-			const encoder = await buildEncoderOrDecoderFromRange(
-				range.value,
-				this.entryIndex,
-				"encoder",
-			);
-			this.encoders.set(range.value.toUniqueSegmentId(), encoder);
-		}
-	}
-
-	createSymbolGenerator(range: ReplicationRangeIndexable<"u64">): {
-		next: () => Symbol;
-		free: () => void;
-	} {
-		let encoder = this.encoders.get(range.toUniqueSegmentId());
-		if (!encoder) {
-			throw new Error("No encoder found for range");
-		}
-		const cloned = encoder.clone();
-		return {
-			next: (): Symbol => {
-				return cloned.produce_next_coded_symbol();
-			},
-			free: () => {
-				// TODO?
-			},
-		};
-	}
-}
-
-
-
-const getAllOverlappingRanges = async (properties: {
-	range: {
-		// To match
-		start1: bigint | number;
-		end1: bigint | number;
-		start2: bigint | number;
-		end2: bigint | number;
-	};
-	publicKey: PublicSignKey;
-	rangeIndex: Index<ReplicationRangeIndexable<"u64">, any>;
-}): Promise<IndexedResults<ReplicationRangeIndexable<"u64">>> => {
-	const ranges = await properties.rangeIndex
-		.iterate({
-			query: [
-				...getCoveringRangeQuery(properties.range),
-				new StringMatch({
-					key: "hash",
-					value: properties.publicKey.hashcode(),
-				}),
-			],
-		})
-		.all();
-	return ranges;
-}; */
-
-/* const getMissingValuesInRemote = async (properties: {
-	myEncoder: RangeToEncoders;
-	remoteRange: {
-		start1: bigint;
-		end1: bigint;
-		start2: bigint;
-		end2: bigint;
-	};
-}) => {
-	const findOverlappingRangesIOwn = await getAllOverlappingRanges({
-		range: properties.remoteRange,
-		publicKey: properties.myEncoder.me,
-		rangeIndex: properties.myEncoder.rangeIndex,
-	});
-
-	const decoders: Map<string, DecoderWrapper> = new Map();
-	for (const range of findOverlappingRangesIOwn) {
-		const segmentId = range.value.toUniqueSegmentId();
-		const encoder: EncoderWrapper | undefined =
-			properties.myEncoder.encoders.get(segmentId);
-		if (encoder) {
-			decoders.set(segmentId, encoder.to_decoder());
-		}
-	}
-
-	return {
-		process: (encodedSymbol: any) => {
-			let allMissingSymbols: any[] = [];
-			for (const [k, decoder] of decoders) {
-				decoder.add_coded_symbol(encodedSymbol);
-				decoder.try_decode();
-				if (decoder.decoded()) {
-					for (const missingSymbol of decoder.get_local_symbols()) {
-						allMissingSymbols.push(missingSymbol);
-					}
-					decoders.delete(k);
-				}
-			}
-			return {
-				missing: allMissingSymbols,
-				done: decoders.size === 0,
-			};
-		},
-	};
-};
-
-export { RangeToEncoders, getMissingValuesInRemote }; */
 
 export class RatelessIBLTSynchronizer<
 	D extends "u32" | "u64",
@@ -564,13 +424,6 @@ export class RatelessIBLTSynchronizer<
 				return true;
 			}
 
-			/* console.log(
-				"ALREADY HAVE ENTRIES",
-				await this.properties.entryIndex.count(),
-				"but log ?",
-				this.properties.log.length,
-			); */
-
 			const createTimeout = () => {
 				return setTimeout(() => {
 					// decoder.free(); TODO?
@@ -629,19 +482,6 @@ export class RatelessIBLTSynchronizer<
 							allMissingSymbolsInRemote.push(missingSymbol);
 						}
 
-						/* 	let t1 = +new Date();
-							console.log("Done decoding after", count, "symbols", "allMissingSymbolsInRemote: ", allMissingSymbolsInRemote.length, "time: ", (t1 - t0) / 1000, "s"); */
-
-						// now we want to resolve the hashes from the symbols
-						/* console.log(
-							"NODE: " +
-								this.properties.rpc.node.identity.publicKey.hashcode() +
-								" --> " +
-								context.from?.hashcode() +
-								" is missing in remote: ",
-							allMissingSymbolsInRemote.length + " remote is missing from me  ",
-							decoder.get_local_symbols().length + " consumed symbols " + count,
-						); */
 						this.simple.queueSync(allMissingSymbolsInRemote, context.from!, {
 							skipCheck: true,
 						});

@@ -93,7 +93,6 @@ export class PIDReplicationController {
 			totalError =
 				errorMemory * errorMemoryFactor + totalError * (1 - errorMemoryFactor);
 		}
-		// (this.id === "rRcHKy8yCun+32/dvRAkNMqvmXVb/N/X3Sis/wkDxKQ=") && console.log("MEMORY ERROR ? ", { errorMemory, errorMemoryFactor, memoryLimit: this.maxMemoryLimit, estimatedTotalSize, currentFactor, memoryUsage });
 
 		// Computer is getting too hot?
 		if (this.maxCPUUsage != null && (cpuUsage || 0) > this.maxCPUUsage) {

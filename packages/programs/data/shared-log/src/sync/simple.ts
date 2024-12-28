@@ -226,17 +226,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				options?.skipCheck ||
 				!(await this.checkHasCoordinateOrHash(coordinateOrHash))
 			) {
-				/* if ((this.dbg)) {
-					console.log("I NEED TO SYNC!", coordinateOrHash)
-				} */
-
 				this.syncInFlightQueue.set(coordinateOrHash, []);
 				requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
-			} else {
-				/* if ((this.dbg)) {
-					console.log("ALREAD HAVE SYNC?", coordinateOrHash)
-
-				} */
 			}
 		}
 

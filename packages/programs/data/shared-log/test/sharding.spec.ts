@@ -1030,30 +1030,22 @@ testSetups.forEach((setup) => {
 								// insert 1mb
 								await db2.add(data, { meta: { next: [] } });
 							}
-							try {
-								await waitForConverged(async () => {
-									const diff = Math.abs(
-										(await db2.log.calculateMyTotalParticipation()) -
-											(await db1.log.calculateMyTotalParticipation()),
-									);
+							await waitForConverged(async () => {
+								const diff = Math.abs(
+									(await db2.log.calculateMyTotalParticipation()) -
+										(await db1.log.calculateMyTotalParticipation()),
+								);
 
-									return Math.round(diff * 100);
-								});
+								return Math.round(diff * 100);
+							});
 
-								await waitForResolved(
-									async () =>
-										expect(
-											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-										).lessThan((memoryLimit / 100) * 10), // 10% error at most
-									{ timeout: 20 * 1000, delayInterval: 1000 },
-								); // 10% error at most
-							} catch (error) {
-								const weight1 = await db2.log.getMemoryUsage();
-
-								const weight2 = await db2.log.getMemoryUsage();
-								console.log("weight", weight1, weight2);
-								throw error;
-							}
+							await waitForResolved(
+								async () =>
+									expect(
+										Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
+									).lessThan((memoryLimit / 100) * 10), // 10% error at most
+								{ timeout: 20 * 1000, delayInterval: 1000 },
+							); // 10% error at most
 						});
 
 						it("underflow limited", async () => {

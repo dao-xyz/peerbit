@@ -432,28 +432,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 					},
 				);
 
-				/* 	if (indexesToCreate) {
-						for (const index of indexesToCreate) {
-							console.log(index);
-							await this.properties.db.exec(index);
-						}
-					} */
-
 				sqlFetch = sql;
-				// sqlFetch = ` select   NULL as 'v_0#id', NULL as 'v_0#value', v_1."id" as 'v_1#id', json_group_array(distinct json_object('__id', v_1__nested__class_DocumentWithProperties."__id", '__index', v_1__nested__class_DocumentWithProperties."__index", 'a', v_1__nested__class_DocumentWithProperties."a", 'b', v_1__nested__class_DocumentWithProperties."b", 'bool', v_1__nested__class_DocumentWithProperties."bool", 'c', v_1__nested__class_DocumentWithProperties."c", 'd', v_1__nested__class_DocumentWithProperties."d"))   as v_1__nested__class_DocumentWithProperties, v_1."id" as 'v_1.id' FROM v_1  INDEXED BY v_1_index_id  LEFT JOIN v_1__nested__class_DocumentWithProperties AS v_1__nested__class_DocumentWithProperties  INDEXED BY v_1__nested__class_DocumentWithProperties_index___parent_id  ON v_1.id = v_1__nested__class_DocumentWithProperties.__parent_id  LEFT JOIN v_1__nested__class_DocumentWithProperties AS _query_v_1__nested__class_DocumentWithProperties  INDEXED BY v_1__nested__class_DocumentWithProperties_index___parent_id_bool  ON v_1.id = _query_v_1__nested__class_DocumentWithProperties.__parent_id  where _query_v_1__nested__class_DocumentWithProperties."bool" = ? GROUP BY v_1."id" ORDER BY "v_0#id" ASC limit ? offset ?`
-				/* this.x++;
-				if (this.x % 1000 === 0) {
-					console.log("SQL FETCH", sqlFetch);
-				} */
-				/* console.log("SQL FETCH", sqlFetch); */
-
-				/* if (sqlFetch.trim() === `select class_NumberQueryDocument."id" as 'class_NumberQueryDocument#id', class_NumberQueryDocument."number" as 'class_NumberQueryDocument#number' FROM class_NumberQueryDocument  where class_NumberQueryDocument."number" < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`) {
-					// sqlFetch = `select class_NumberQueryDocument."id" as 'class_NumberQueryDocument#id', class_NumberQueryDocument."number" as 'class_NumberQueryDocument#number'  FROM class_NumberQueryDocument INDEXED BY class_NumberQueryDocument_index  where class_NumberQueryDocument.number < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`
-					sqlFetch = `select class_NumberQueryDocument.id as 'class_NumberQueryDocument#id', class_NumberQueryDocument.number as 'class_NumberQueryDocument#number'  FROM class_NumberQueryDocument  where class_NumberQueryDocument.number < ?  ORDER BY class_NumberQueryDocument.id ASC limit ? offset ?`
-		
-				} */
-
-				/* 	sqlFetch = `explain query plan ${sqlFetch}`; */
 				bindable = toBind;
 
 				await planningScope.beforePrepare();
