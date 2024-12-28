@@ -45,13 +45,16 @@ export const createLibp2pExtended = (
 ): Promise<Libp2pExtended> => {
 	let extraServices: any = {};
 
-	if (!opts.services?.["relay"]) {
+	if (opts.services?.["relay"] === null) {
+		delete opts.services?.["relay"];
+	} else if (!opts.services?.["relay"]) {
 		const relayComponent = relay();
 		if (relayComponent) {
 			// will be null in browser
 			extraServices["relay"] = relayComponent;
 		}
 	}
+
 	if (!opts.services?.["identify"]) {
 		extraServices["identify"] = identify();
 	}

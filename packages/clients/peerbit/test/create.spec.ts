@@ -47,6 +47,7 @@ describe("Create", function () {
 		const client = await Peerbit.create();
 		expect(client.services.blocks.canRelayMessage).equal(true);
 		expect(client.services.pubsub.canRelayMessage).equal(true);
+		expect(client.services.relay).to.exist;
 		await client.stop();
 	});
 });
