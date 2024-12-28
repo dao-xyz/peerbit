@@ -65,6 +65,6 @@
 		"packages/utils/indexer/sqlite3": {},
 		"packages/utils/indexer/tests": {},
 		"packages/utils/indexer/interface": {},
-		"packages/utils/indexer/rateless-iblt": {}
+		"packages/utils/rateless-iblt": {}
 	}
 }
