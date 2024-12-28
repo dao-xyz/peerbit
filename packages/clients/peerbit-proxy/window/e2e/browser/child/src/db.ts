@@ -5,7 +5,7 @@ import { SharedLog } from "@peerbit/shared-log";
 @variant("test-log")
 export class TestLog extends Program {
 	@field({ type: SharedLog })
-	log: SharedLog<Uint8Array>;
+	log: SharedLog<Uint8Array, any>;
 
 	constructor() {
 		super();
