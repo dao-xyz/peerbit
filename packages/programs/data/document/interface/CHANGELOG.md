@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.8...document-interface-v1.0.9) (2024-12-28)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^2.0.1 to ^2.0.2
+
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.7...document-interface-v1.0.8) (2024-11-08)
 
 
