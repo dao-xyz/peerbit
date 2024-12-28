@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.2...riblt-v1.0.3) (2024-12-28)
+
+
+### Bug Fixes
+
+* rm .gitignore from dist folder ([91f517a](https://github.com/dao-xyz/peerbit/commit/91f517a5c64a52af3c6dd6188f34fd8971d1b623))
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.1...riblt-v1.0.2) (2024-12-28)
 
 
