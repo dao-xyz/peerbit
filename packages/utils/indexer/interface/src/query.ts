@@ -280,36 +280,6 @@ export class Nested extends Query {
 	}
 }
 
-// TODO MemoryCompareQuery can be replaces with ByteMatchQuery? Or Nesteed Queries + ByteMatchQuery?
-/* @variant(0)
-export class MemoryCompare {
-	@field({ type: Uint8Array })
-	bytes: Uint8Array;
-
-	@field({ type: "u64" })
-	offset: bigint;
-
-	constructor(opts?: { bytes: Uint8Array; offset: bigint }) {
-		if (opts) {
-			this.bytes = opts.bytes;
-			this.offset = opts.offset;
-		}
-	}
-}
-
-@variant(4)
-export class MemoryCompareQuery extends Query {
-	@field({ type: vec(MemoryCompare) })
-	compares: MemoryCompare[];
-
-	constructor(opts?: { compares: MemoryCompare[] }) {
-		super();
-		if (opts) {
-			this.compares = opts.compares;
-		}
-	}
-} */
-
 export type QueryLike =
 	| Query[]
 	| Query
