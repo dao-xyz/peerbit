@@ -313,6 +313,24 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.27...peerbit-v4.1.0) (2024-12-28)
+
+
+### Features
+
+* hangup ([f877a73](https://github.com/dao-xyz/peerbit/commit/f877a7301a1fef7f21649ef6e4bd0038fa36d9c6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.8 to 5.1.0
+    * @peerbit/pubsub bumped from ^3.0.13 to ^3.0.14
+    * @peerbit/blocks bumped from ^2.1.8 to ^2.1.9
+    * @peerbit/indexer-simple bumped from ^1.1.3 to ^1.1.4
+    * @peerbit/indexer-sqlite3 bumped from ^1.1.4 to ^1.2.0
+
 ## [4.0.27](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.0.26...peerbit-v4.0.27) (2024-11-08)
 
 

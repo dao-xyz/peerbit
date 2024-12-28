@@ -456,6 +456,30 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [8.0.0](https://github.com/dao-xyz/peerbit/compare/document-v7.1.16...document-v8.0.0) (2024-12-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rateless-iblt-sync protocol
+
+### Features
+
+* rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.0.8 to 5.1.0
+    * @peerbit/rpc bumped from 5.0.19 to 5.0.20
+    * @peerbit/shared-log bumped from 9.2.13 to 10.0.0
+    * @peerbit/indexer-simple bumped from ^1.1.3 to ^1.1.4
+    * @peerbit/indexer-sqlite3 bumped from ^1.1.4 to ^1.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.9 to 2.1.10
+
 ## [7.1.16](https://github.com/dao-xyz/peerbit/compare/document-v7.1.15...document-v7.1.16) (2024-11-08)
 
 

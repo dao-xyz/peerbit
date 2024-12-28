@@ -202,6 +202,21 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/program-v5.0.8...program-v5.1.0) (2024-12-28)
+
+
+### Features
+
+* close once even if program is opened multiple times ([84101b6](https://github.com/dao-xyz/peerbit/commit/84101b62544fd8c166d75976e9066d96da60be0c))
+* hangup ([f877a73](https://github.com/dao-xyz/peerbit/commit/f877a7301a1fef7f21649ef6e4bd0038fa36d9c6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.7 to ^1.3.8
+
 ## [5.0.8](https://github.com/dao-xyz/peerbit/compare/program-v5.0.7...program-v5.0.8) (2024-10-28)
 
 

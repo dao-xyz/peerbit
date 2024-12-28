@@ -368,6 +368,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.22](https://github.com/dao-xyz/peerbit/compare/log-v4.0.21...log-v4.0.22) (2024-12-28)
+
+
+### Bug Fixes
+
+* delete after change event are emitted for append and join ([b4bdc4c](https://github.com/dao-xyz/peerbit/commit/b4bdc4ccbc4fb635b7da3155f88640d0e235966c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.7 to ^1.3.8
+    * @peerbit/indexer-simple bumped from ^1.1.3 to ^1.1.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.9 to 2.1.10
+
 ## [4.0.21](https://github.com/dao-xyz/peerbit/compare/log-v4.0.20...log-v4.0.21) (2024-11-08)
 
 

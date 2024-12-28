@@ -279,6 +279,18 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.1.9](https://github.com/dao-xyz/peerbit/compare/blocks-v2.1.8...blocks-v2.1.9) (2024-12-28)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.1.2 to 4.1.3
+    * @peerbit/blocks-interface bumped from 1.3.7 to 1.3.8
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.9 to 2.1.10
+
 ## [2.1.8](https://github.com/dao-xyz/peerbit/compare/blocks-v2.1.7...blocks-v2.1.8) (2024-10-28)
 
 

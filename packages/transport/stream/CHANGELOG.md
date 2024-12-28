@@ -43,6 +43,20 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.1.3](https://github.com/dao-xyz/peerbit/compare/stream-v4.1.2...stream-v4.1.3) (2024-12-28)
+
+
+### Bug Fixes
+
+* handle intermediate relay route state correctly ([a8e4ed5](https://github.com/dao-xyz/peerbit/commit/a8e4ed58c8fc1e57da40bb02e31a68abb4369235))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.9 to 2.1.10
+
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/stream-v4.1.1...stream-v4.1.2) (2024-10-28)
 
 
