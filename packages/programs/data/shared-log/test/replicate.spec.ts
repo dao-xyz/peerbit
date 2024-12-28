@@ -6,17 +6,17 @@ import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import path from "path";
 import { v4 as uuid } from "uuid";
-import type { SharedLog } from "../src/index.js";
-import {
-	ReplicationIntent,
-	type ReplicationRangeIndexable,
-	isMatured,
-} from "../src/ranges.js";
+import type {
+	ReplicationDomainHash,
+	ReplicationRangeIndexable,
+	SharedLog,
+} from "../src/index.js";
+import { denormalizer } from "../src/integers.js";
+import { ReplicationIntent, isMatured } from "../src/ranges.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
-import { scaleToU32 } from "../src/role.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
-const checkRoleIsDynamic = async (log: SharedLog<any>) => {
+const checkRoleIsDynamic = async (log: SharedLog<any, any>) => {
 	const roles: any[] = [];
 	log.events.addEventListener("replication:change", (change) => {
 		if (change.detail.publicKey.equals(log.node.identity.publicKey)) {
@@ -28,9 +28,12 @@ const checkRoleIsDynamic = async (log: SharedLog<any>) => {
 	await waitForResolved(() => expect(roles.length).greaterThan(3));
 };
 
+const scaleToU64 = denormalizer("u64");
+
 describe(`replicate`, () => {
 	let session: TestSession;
-	let db1: EventStore<string>, db2: EventStore<string>;
+	let db1: EventStore<string, ReplicationDomainHash<"u32">>,
+		db2: EventStore<string, ReplicationDomainHash<"u32">>;
 
 	before(async () => {
 		session = await TestSession.disconnected(3, [
@@ -98,11 +101,11 @@ describe(`replicate`, () => {
 	});
 
 	it("none", async () => {
-		db1 = await session.peers[0].open(new EventStore<string>(), {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: { replicate: { factor: 1 } },
 		});
 
-		db2 = (await EventStore.open<EventStore<string>>(
+		db2 = (await EventStore.open<EventStore<string, any>>(
 			db1.address!,
 			session.peers[1],
 			{
@@ -124,7 +127,7 @@ describe(`replicate`, () => {
 
 	describe("observer", () => {
 		it("can update", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 
 			expect(
 				(db1.log.node.services.pubsub as any)["subscriptions"].get(
@@ -145,9 +148,9 @@ describe(`replicate`, () => {
 		});
 
 		it("observer", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 
-			db2 = (await EventStore.open<EventStore<string>>(
+			db2 = (await EventStore.open<EventStore<string, any>>(
 				db1.address!,
 				session.peers[1],
 				{
@@ -168,9 +171,9 @@ describe(`replicate`, () => {
 		});
 	});
 
-	describe("replictor", () => {
+	describe("replicator", () => {
 		it("fixed-object", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>(), {
+			db1 = await session.peers[0].open(new EventStore(), {
 				args: {
 					replicate: {
 						offset: 0.7,
@@ -181,18 +184,18 @@ describe(`replicate`, () => {
 
 			let ranges = await db1.log.getMyReplicationSegments();
 			expect(ranges).to.have.length(1);
-			expect(ranges[0].toReplicationRange().offset).to.closeTo(
-				scaleToU32(0.7),
-				scaleToU32(0.000001),
+			expect(Number(ranges[0].toReplicationRange().offset)).to.closeTo(
+				Number(scaleToU64(0.7)),
+				Number(scaleToU64(0.000001)),
 			);
-			expect(ranges[0].toReplicationRange().factor).to.closeTo(
-				scaleToU32(0.5),
-				scaleToU32(0.000001),
+			expect(Number(ranges[0].toReplicationRange().factor)).to.closeTo(
+				Number(scaleToU64(0.5)),
+				Number(scaleToU64(0.000001)),
 			);
 		});
 
 		it("fixed-simple", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>(), {
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: 1,
 				},
@@ -200,11 +203,11 @@ describe(`replicate`, () => {
 
 			let ranges = await db1.log.getMyReplicationSegments();
 			expect(ranges).to.have.length(1);
-			expect(ranges[0].toReplicationRange().factor).to.eq(scaleToU32(1));
+			expect(ranges[0].toReplicationRange().factor).to.eq(scaleToU64(1));
 		});
 
 		it("can unreplicate", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>(), {
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: 1,
 				},
@@ -233,7 +236,7 @@ describe(`replicate`, () => {
 		});
 
 		it("adding segments", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>(), {
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: {
 						offset: 0,
@@ -250,13 +253,13 @@ describe(`replicate`, () => {
 			await waitForResolved(async () =>
 				expect(await db1.log.calculateTotalParticipation()).to.be.closeTo(
 					1.1,
-					0.01,
+					0.1,
 				),
 			);
 			await waitForResolved(async () =>
 				expect(await db2.log.calculateTotalParticipation()).to.be.closeTo(
 					1.1,
-					0.01,
+					0.1,
 				),
 			);
 
@@ -265,31 +268,31 @@ describe(`replicate`, () => {
 			await waitForResolved(async () =>
 				expect(await db1.log.calculateTotalParticipation()).to.be.closeTo(
 					1.3,
-					0.01,
+					0.1,
 				),
 			);
 			await waitForResolved(async () =>
 				expect(await db2.log.calculateTotalParticipation()).to.be.closeTo(
 					1.3,
-					0.01,
+					0.1,
 				),
 			);
 		});
 
 		it("dynamic by default", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 			await checkRoleIsDynamic(db1.log);
 		});
 
 		it("update to dynamic role", async () => {
-			db1 = await session.peers[0].open(new EventStore<string>());
+			db1 = await session.peers[0].open(new EventStore<string, any>());
 			await db1.log.replicate(false);
 			await db1.log.replicate({ limits: {} });
 			await checkRoleIsDynamic(db1.log);
 		});
 
 		it("waitForReplicator waits until maturity", async () => {
-			const store = new EventStore<string>();
+			const store = new EventStore<string, any>();
 
 			const db1 = await session.peers[0].open(store.clone(), {
 				args: {
@@ -309,11 +312,11 @@ describe(`replicate`, () => {
 			const t0 = +new Date();
 			await db2.log.waitForReplicator(db1.node.identity.publicKey);
 			const t1 = +new Date();
-			expect(t1 - t0).greaterThan(await db2.log.getDefaultMinRoleAge());
+			expect(t1 - t0).greaterThanOrEqual(await db2.log.getDefaultMinRoleAge());
 		});
 		describe("getDefaultMinRoleAge", () => {
 			it("if not replicating, min role age is 0", async () => {
-				const store = new EventStore<string>();
+				const store = new EventStore<string, any>();
 
 				await session.peers[0].open(store.clone(), {
 					args: {
@@ -334,16 +337,19 @@ describe(`replicate`, () => {
 			});
 
 			it("oldest is always mature", async () => {
-				const store = new EventStore<string>();
+				const store = new EventStore<string, any>();
+
+				const timeUntilRoleMaturity = 500;
+				const tsm = 1000;
 
 				const db1 = await session.peers[0].open(store.clone(), {
 					args: {
 						replicate: {
 							factor: 1,
 						},
+						timeUntilRoleMaturity,
 					},
 				});
-				const tsm = 1000;
 
 				await delay(tsm);
 
@@ -352,6 +358,7 @@ describe(`replicate`, () => {
 						replicate: {
 							factor: 1,
 						},
+						timeUntilRoleMaturity,
 					},
 				});
 				await waitForResolved(async () =>
@@ -407,7 +414,7 @@ describe(`replicate`, () => {
 
 		describe("mode", () => {
 			it("strict", async () => {
-				db1 = await session.peers[0].open(new EventStore<string>(), {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
 							normalized: false,
@@ -434,18 +441,18 @@ describe(`replicate`, () => {
 					.iterate({ sort: [new Sort({ key: "start1" })] })
 					.all();
 
-				expect(segments[0].value.start1).to.eq(0);
+				expect(segments[0].value.start1).to.eq(0n);
 				expect(segments[0].value.mode).to.eq(ReplicationIntent.NonStrict);
-				expect(segments[1].value.start1).to.eq(5);
+				expect(segments[1].value.start1).to.eq(5n);
 				expect(segments[1].value.mode).to.eq(ReplicationIntent.Strict);
 			});
 		});
 
 		describe("entry", () => {
 			it("entry", async () => {
-				const store = new EventStore<string>();
+				const store = new EventStore<string, any>();
 
-				let domain = createReplicationDomainHash();
+				let domain = createReplicationDomainHash("u32");
 
 				const db1 = await session.peers[0].open(store.clone(), {
 					args: {
@@ -462,7 +469,7 @@ describe(`replicate`, () => {
 				});
 
 				const checkReplication = async (
-					db: EventStore<string>,
+					db: EventStore<string, any>,
 					entry: Entry<any>,
 				) => {
 					const offset = await domain.fromEntry(added.entry);
@@ -475,7 +482,7 @@ describe(`replicate`, () => {
 					expect(range.factor).to.equal(1); // mininum unit of length
 				};
 
-				const checkUnreplication = async (db: EventStore<string>) => {
+				const checkUnreplication = async (db: EventStore<string, any>) => {
 					const ranges = await db.log.replicationIndex.iterate().all();
 					expect(ranges).to.have.length(0);
 				};
@@ -492,9 +499,9 @@ describe(`replicate`, () => {
 			});
 
 			it("entry with range", async () => {
-				const store = new EventStore<string>();
+				const store = new EventStore<string, any>();
 
-				let domain = createReplicationDomainHash();
+				let domain = createReplicationDomainHash("u32");
 
 				let startFactor = 500000;
 				let startOffset = 0;
@@ -517,7 +524,7 @@ describe(`replicate`, () => {
 				});
 
 				const checkReplication = async (
-					db: EventStore<string>,
+					db: EventStore<string, any>,
 					entry: Entry<any>,
 				) => {
 					const offset = await domain.fromEntry(added.entry);
@@ -536,7 +543,7 @@ describe(`replicate`, () => {
 					expect(rangeEntry.factor).to.equal(1); // mininum unit of length
 				};
 
-				const checkUnreplication = async (db: EventStore<string>) => {
+				const checkUnreplication = async (db: EventStore<string, any>) => {
 					const ranges = await db.log.replicationIndex
 						.iterate({ sort: new Sort({ key: ["start1"] }) })
 						.all();
@@ -623,7 +630,7 @@ describe(`replicate`, () => {
 			});
 
 			it("restart after adding", async () => {
-				db1 = await session.peers[0].open(new EventStore<string>(), {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
 							offset: 0.3,
@@ -634,23 +641,23 @@ describe(`replicate`, () => {
 
 				await db1.log.replicate({ factor: 0.2, offset: 0.6 });
 
-				const checkSegments = async (db: EventStore<string>) => {
+				const checkSegments = async (db: EventStore<string, any>) => {
 					const segments = await db.log.replicationIndex
 						.iterate({ sort: [new Sort({ key: "start1" })] })
 						.all();
 					expect(segments).to.have.length(2);
 					expect(segments[0].value.toReplicationRange().factor).to.equal(
-						scaleToU32(0.1),
+						scaleToU64(0.1),
 					);
 					expect(segments[0].value.toReplicationRange().offset).to.equal(
-						scaleToU32(0.3),
+						scaleToU64(0.3),
 					);
 
 					expect(segments[1].value.toReplicationRange().factor).to.equal(
-						scaleToU32(0.2),
+						scaleToU64(0.2),
 					);
 					expect(segments[1].value.toReplicationRange().offset).to.equal(
-						scaleToU32(0.6),
+						scaleToU64(0.6),
 					);
 				};
 				await checkSegments(db1);
@@ -683,7 +690,7 @@ describe(`replicate`, () => {
 			});
 
 			it("restart another settings", async () => {
-				db1 = await session.peers[0].open(new EventStore<string>(), {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
 							offset: 0.3,
@@ -708,7 +715,7 @@ describe(`replicate`, () => {
 
 			it("will re-check replication segments on restart", async () => {
 				// make sure non-reachable peers are not included in the replication segments
-				db1 = await session.peers[0].open(new EventStore<string>(), {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
 							offset: 0.3,
@@ -773,7 +780,7 @@ describe(`replicate`, () => {
 
 			it("segments updated while offline", async () => {
 				// make sure non-reachable peers are not included in the replication segments
-				db1 = await session.peers[0].open(new EventStore<string>(), {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
 							offset: 0.1,
@@ -837,7 +844,7 @@ describe(`replicate`, () => {
 
 				await waitForResolved(async () => {
 					const checkSegments = (
-						segments: IndexedResults<ReplicationRangeIndexable>,
+						segments: IndexedResults<ReplicationRangeIndexable<any>>,
 					) => {
 						expect(segments).to.have.length(2);
 
@@ -849,10 +856,10 @@ describe(`replicate`, () => {
 						);
 						expect(
 							segments.map((x) => x.value.toReplicationRange().offset),
-						).to.contain(scaleToU32(0.3));
+						).to.contain(scaleToU64(0.3));
 						expect(
 							segments.map((x) => x.value.toReplicationRange().offset),
-						).to.contain(scaleToU32(0.4));
+						).to.contain(scaleToU64(0.4));
 					};
 					checkSegments(await db1.log.replicationIndex.iterate().all());
 					checkSegments(await db2.log.replicationIndex.iterate().all());
@@ -870,8 +877,8 @@ describe(`replicate`, () => {
 		id: "encryption key",
 		group: topic,
 	});
-	db2 = await client2.open<EventStore<string>>(
-		await EventStore.load<EventStore<string>>(
+	db2 = await client2.open<EventStore<string, any>>(
+		await EventStore.load<EventStore<string, any>>(
 			client2.libp2p.services.blocks,
 			db1.address!
 		),

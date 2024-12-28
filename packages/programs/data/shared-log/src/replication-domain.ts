@@ -1,15 +1,15 @@
 import type { PublicSignKey } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, ShallowEntry } from "@peerbit/log";
-import { debounceAcculmulator } from "./debounce.js";
-import type { EntryReplicated, ReplicationRangeIndexable } from "./ranges.js";
+import { debounceAccumulator } from "./debounce.js";
+import type { ReplicationRangeIndexable } from "./index.js";
+import type { NumberFromType } from "./integers.js";
+import type { EntryReplicated } from "./ranges.js";
 import type { ReplicationLimits } from "./replication.js";
-import { MAX_U32 } from "./role.js";
 
-export type u32 = number;
-export type ReplicationDomainMapper<T> = (
-	entry: Entry<T> | ShallowEntry | EntryReplicated,
-) => Promise<u32> | u32;
+export type ReplicationDomainMapper<T, R extends "u32" | "u64"> = (
+	entry: Entry<T> | ShallowEntry | EntryReplicated<R>,
+) => Promise<NumberFromType<R>> | NumberFromType<R>;
 
 export type Log = {
 	replicas: ReplicationLimits;
@@ -18,8 +18,7 @@ export type Log = {
 			publicKey: PublicSignKey;
 		};
 	};
-	syncInFlight: Map<string, Map<string, { timestamp: number }>>;
-	replicationIndex: Index<ReplicationRangeIndexable>;
+	replicationIndex: Index<ReplicationRangeIndexable<any>>;
 	getDefaultMinRoleAge: () => Promise<number>;
 };
 export type ReplicationDomainCoverSet<Args> = (
@@ -28,24 +27,24 @@ export type ReplicationDomainCoverSet<Args> = (
 	args: Args,
 ) => Promise<string[]> | string[]; // minimum set of peers that covers all the data
 
-type CoverRange = {
-	offset: number | PublicSignKey;
-	length?: number;
+type CoverRange<T extends number | bigint> = {
+	offset: T | PublicSignKey;
+	length?: T;
 };
 export type ReplicationChanges = ReplicationChange[];
 export type ReplicationChange =
 	| {
 			type: "added";
-			range: ReplicationRangeIndexable;
+			range: ReplicationRangeIndexable<any>;
 	  }
 	| {
 			type: "removed";
-			range: ReplicationRangeIndexable;
+			range: ReplicationRangeIndexable<any>;
 	  }
 	| {
 			type: "updated";
-			range: ReplicationRangeIndexable;
-			prev: ReplicationRangeIndexable;
+			range: ReplicationRangeIndexable<any>;
+			prev: ReplicationRangeIndexable<any>;
 	  };
 
 export const mergeReplicationChanges = (
@@ -62,7 +61,7 @@ export const debounceAggregationChanges = (
 	fn: (changeOrChanges: ReplicationChange[]) => void,
 	delay: number,
 ) => {
-	return debounceAcculmulator(
+	return debounceAccumulator(
 		(result) => {
 			return fn([...result.values()]);
 		},
@@ -90,24 +89,15 @@ export const debounceAggregationChanges = (
 	);
 };
 
-export type ReplicationDomain<Args, T> = {
+export type ReplicationDomain<Args, T, R extends "u32" | "u64"> = {
+	resolution: R;
 	type: string;
-	fromEntry: ReplicationDomainMapper<T>;
+	fromEntry: ReplicationDomainMapper<T, R>;
 	fromArgs: (
 		args: Args | undefined,
 		log: Log,
-	) => Promise<CoverRange> | CoverRange;
-
-	// to rebalance will return an async iterator of objects that will be added to the log
-	/* toRebalance(
-		change: ReplicationChange,
-		index: Index<EntryWithCoordinate>
-	): AsyncIterable<{ gid: string, entries: { coordinate: number, hash: string }[] }> | Promise<AsyncIterable<{ gid: string, entries: EntryWithCoordinate[] }>>; */
-};
-
-export const uniformToU32 = (cursor: number) => {
-	return cursor * MAX_U32;
+	) => Promise<CoverRange<NumberFromType<R>>> | CoverRange<NumberFromType<R>>;
 };
 
 export type ExtractDomainArgs<T> =
-	T extends ReplicationDomain<infer Args, any> ? Args : never;
+	T extends ReplicationDomain<infer Args, any, any> ? Args : never;

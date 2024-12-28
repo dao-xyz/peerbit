@@ -40,7 +40,9 @@ export class Document {
 
 @variant("test_documents")
 export class TestStore<
-	D extends ReplicationDomain<any, Operation> = ReplicationDomainHash,
+	D extends ReplicationDomain<any, Operation, any> = ReplicationDomainHash<
+		"u32" | "u64"
+	>,
 > extends Program<Partial<SetupOptions<Document, Document, D>>> {
 	@field({ type: Uint8Array })
 	id: Uint8Array;

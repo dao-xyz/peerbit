@@ -15,7 +15,7 @@ describe("append", () => {
 	it("canAppend checked once", async () => {
 		session = await TestSession.disconnected(1);
 
-		const store = await session.peers[0].open(new EventStore<string>());
+		const store = await session.peers[0].open(new EventStore<string, any>());
 		const canAppend = sinon.spy(store.log.canAppend);
 		store.log.canAppend = canAppend;
 		await store.add("a");
@@ -26,7 +26,7 @@ describe("append", () => {
 	it("override option canAppend checked once", async () => {
 		session = await TestSession.disconnected(1);
 
-		const store = await session.peers[0].open(new EventStore<string>());
+		const store = await session.peers[0].open(new EventStore<string, any>());
 		const canAppend = sinon.spy(store.log.canAppend);
 		store.log.canAppend = canAppend;
 

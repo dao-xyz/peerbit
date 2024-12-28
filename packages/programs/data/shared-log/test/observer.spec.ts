@@ -20,8 +20,8 @@ describe("observer", () => {
 			[session.peers[1], session.peers[2]],
 		]);
 
-		let stores: EventStore<string>[] = [];
-		const s = new EventStore<string>();
+		let stores: EventStore<string, any>[] = [];
+		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
 		let replicatorEndIndex = 1;
 
@@ -70,7 +70,7 @@ describe("observer", () => {
 		session = await TestSession.connected(2);
 		await session.connect([[session.peers[0], session.peers[1]]]);
 
-		const s = new EventStore<string>();
+		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
 
 		const replicator = await session.peers[0].open(createStore(), {
@@ -108,7 +108,7 @@ describe("observer", () => {
 			[session.peers[1], session.peers[2]],
 		]);
 
-		const s = new EventStore<string>();
+		const s = new EventStore<string, any>();
 		const createStore = () => deserialize(serialize(s), EventStore);
 		const replicator = await session.peers[0].open(createStore(), {
 			args: {

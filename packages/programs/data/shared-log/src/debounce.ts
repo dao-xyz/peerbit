@@ -109,7 +109,7 @@ export const debounceFixedInterval = <
 	return debounced as T;
 };
 
-export const debounceAcculmulator = <K, T, V>(
+export const debounceAccumulator = <K, T, V>(
 	fn: (args: V) => any,
 	create: () => {
 		delete: (string: K) => void;
@@ -145,18 +145,26 @@ export const debounceAcculmulator = <K, T, V>(
 export const debouncedAccumulatorMap = <T>(
 	fn: (args: Map<string, T>) => any,
 	delay: number,
+	merge?: (into: T, from: T) => void,
 ) => {
-	return debounceAcculmulator<
-		string,
-		{ key: string; value: T },
-		Map<string, T>
-	>(
+	return debounceAccumulator<string, { key: string; value: T }, Map<string, T>>(
 		fn,
 		() => {
 			const map = new Map();
+			let add = merge
+				? (props: { key: string; value: T }) => {
+						let prev = map.get(props.key);
+						if (prev != null) {
+							merge(prev, props.value);
+						} else {
+							map.set(props.key, props.value);
+						}
+					}
+				: (props: { key: string; value: T }) => {
+						map.set(props.key, props.value);
+					};
 			return {
-				add: (props: { key: string; value: T }) =>
-					map.set(props.key, props.value),
+				add,
 				delete: (key: string) => map.delete(key),
 				size: () => map.size,
 				value: map,

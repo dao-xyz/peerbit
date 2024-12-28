@@ -1,8 +1,8 @@
 import { field, option, variant } from "@dao-xyz/borsh";
 import { Program, type ProgramClient } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
-import B from "benchmark";
 import crypto from "crypto";
+import * as B from "tinybench";
 import { v4 as uuid } from "uuid";
 import { Documents, type SetupOptions } from "../src/program.js";
 
@@ -68,41 +68,20 @@ await client.open(store, {
 	},
 });
 
-const resolver: Map<string, () => void> = new Map();
-store.docs.events.addEventListener("change", (change) => {
-	change.detail.added.forEach((doc) => {
-		resolver.get(doc.id)!();
-		resolver.delete(doc.id);
+const suite = new B.Bench({ name: "put", warmupIterations: 1000 });
+suite.add("put", async () => {
+	const doc = new Document({
+		id: uuid(),
+		name: "hello",
+		number: 1n,
+		bytes: crypto.randomBytes(1200),
+	});
+	await store.docs.put(doc, {
+		unique: true,
 	});
 });
 
-const suite = new B.Suite();
-suite
-	.add("put", {
-		fn: async (deferred: any) => {
-			const doc = new Document({
-				id: uuid(),
-				name: "hello",
-				number: 1n,
-				bytes: crypto.randomBytes(1200),
-			});
-			resolver.set(doc.id, () => {
-				deferred.resolve();
-			});
-			await store.docs.put(doc, { unique: true });
-		},
-
-		minSamples: 300,
-		defer: true,
-	})
-	.on("cycle", (event: any) => {
-		console.log(String(event.target));
-	})
-	.on("error", (err: any) => {
-		throw err;
-	})
-	.on("complete", async function (this: any, ...args: any[]) {
-		await store.drop();
-		await session.stop();
-	})
-	.run();
+await suite.run();
+console.table(suite.table());
+await store.drop();
+await session.stop();

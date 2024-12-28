@@ -37,8 +37,9 @@ export class PIDReplicationController {
 		peerCount: number;
 		cpuUsage: number | undefined;
 	}) {
-		const { memoryUsage, totalFactor, peerCount, cpuUsage, currentFactor } =
+		let { memoryUsage, totalFactor, peerCount, cpuUsage, currentFactor } =
 			properties;
+
 		this.prevTotalFactor = totalFactor;
 		this.prevMemoryUsage = memoryUsage;
 
@@ -134,26 +135,27 @@ export class PIDReplicationController {
 			this.integral = 0;
 		}
 
-		/* console.log({
-			id: this.id,
-			currentFactor,
-			newFactor,
-			factorDiff: newFactor - currentFactor,
-			pTerm,
-			dTerm,
-			iTerm,
-			totalError,
-			errorFromEven,
-			errorTarget: errorBalance,
-			errorCoverage,
-			errorMemory,
-			errorCPU,
-			peerCount,
-			totalFactor,
-			targetScaler: balanceErrorScaler,
-			memoryUsage,
-			estimatedTotalSize,
-		}); */
+		/* if (this.id === "3YUU2tgXPB1v7NMdPob37WDcixg4vi7qF1PkbSJFNc4=")
+			console.log({
+				id: this.id,
+				currentFactor,
+				newFactor,
+				factorDiff: newFactor - currentFactor,
+				pTerm,
+				dTerm,
+				iTerm,
+				totalError,
+				errorFromEven,
+				errorTarget: errorBalance,
+				errorCoverage,
+				errorMemory,
+				errorCPU,
+				peerCount,
+				totalFactor,
+				targetScaler: balanceErrorScaler,
+				memoryUsage,
+				estimatedTotalSize,
+			}); */
 
 		return Math.max(Math.min(newFactor, 1), 0);
 	}

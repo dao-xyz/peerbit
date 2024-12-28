@@ -1,9 +1,8 @@
 import type { ShallowOrFullEntry } from "@peerbit/log";
-import type { EntryReplicated } from "./ranges.js";
+import { type EntryReplicated } from "./ranges.js";
 import {
 	type ReplicationDomain,
 	type ReplicationDomainMapper,
-	type u32,
 } from "./replication-domain.js";
 
 type TimeUnit = "seconds" | "milliseconds" | "microseconds" | "nanoseconds";
@@ -24,11 +23,11 @@ const scalarMilliToUnit = {
 export const fromEntry = (
 	origin: Date,
 	unit: TimeUnit = "milliseconds",
-): ReplicationDomainMapper<any> => {
+): ReplicationDomainMapper<any, "u32"> => {
 	const scalar = scalarNanoToUnit[unit];
 	const originTime = +origin / scalarMilliToUnit[unit];
 
-	const fn = (entry: ShallowOrFullEntry<any> | EntryReplicated) => {
+	const fn = (entry: ShallowOrFullEntry<any> | EntryReplicated<"u32">) => {
 		const cursor = entry.meta.clock.timestamp.wallTime / scalar;
 		return Math.round(Number(cursor) - originTime);
 	};
@@ -37,9 +36,9 @@ export const fromEntry = (
 
 type TimeRange = { from: number; to: number };
 
-export type ReplicationDomainTime = ReplicationDomain<TimeRange, any> & {
-	fromTime: (time: number | Date) => u32;
-	fromDuration: (duration: number) => u32;
+export type ReplicationDomainTime = ReplicationDomain<TimeRange, any, "u32"> & {
+	fromTime: (time: number | Date) => number;
+	fromDuration: (duration: number) => number;
 };
 
 export const createReplicationDomainTime = (
@@ -48,16 +47,17 @@ export const createReplicationDomainTime = (
 ): ReplicationDomainTime => {
 	const originScaled = +origin * scalarMilliToUnit[unit];
 	const fromMilliToUnit = scalarMilliToUnit[unit];
-	const fromTime = (time: number | Date): u32 => {
+	const fromTime = (time: number | Date): number => {
 		return (
 			(typeof time === "number" ? time : +time * fromMilliToUnit) - originScaled
 		);
 	};
 
-	const fromDuration = (duration: number): u32 => {
+	const fromDuration = (duration: number): number => {
 		return duration;
 	};
 	return {
+		resolution: "u32",
 		type: "time",
 		fromTime,
 		fromDuration,

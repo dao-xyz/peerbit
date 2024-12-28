@@ -10,11 +10,13 @@ import {
 	ResponseRoleMessage,
 } from "../src/replication.js";
 import { Replicator } from "../src/role.js";
+import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
+import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe(`migration-8-9`, function () {
 	let session: TestSession;
-	let db1: EventStore<string>, db2: EventStore<string>;
+	let db1: EventStore<string, any>, db2: EventStore<string, any>;
 
 	const setup = async (compatibility?: number, order: boolean = false) => {
 		session = await TestSession.connected(2, [
@@ -46,7 +48,7 @@ describe(`migration-8-9`, function () {
 			},
 		]);
 
-		const db = new EventStore<string>();
+		const db = new EventStore<string, any>();
 
 		const createV8 = () => {
 			const db1 = db.clone();
@@ -148,5 +150,20 @@ describe(`migration-8-9`, function () {
 				throw new Error("timeout");
 			}),
 		).to.be.rejectedWith("timeout");
+	});
+
+	it("v8 uses simple sync", async () => {
+		await setup(8);
+		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
+	});
+
+	it("v9 uses simple sync", async () => {
+		await setup(9);
+		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
+	});
+
+	it("v10+ uses iblt", async () => {
+		await setup(undefined);
+		expect(db1.log.syncronizer).to.be.instanceOf(RatelessIBLTSynchronizer);
 	});
 });
