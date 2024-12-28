@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { DecoderWrapper, EncoderWrapper, initSync } from "./index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-initSync(fs.readFileSync(path.join(__dirname, "../dist/riblt_bg.wasm")));
+initSync(fs.readFileSync(path.join(__dirname, "../dist/index_bg.wasm")));
 
 describe("riblt", () => {
 	it("diff", async () => {

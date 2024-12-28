@@ -4,7 +4,7 @@
 	"description": "Riblt",
 	"sideEffects": false,
 	"type": "module",
-	"types": "./dist/riblt.d.ts",
+	"types": "./dist/index.d.ts",
 	"typesVersions": {
 		"*": {
 			"*": [
@@ -27,8 +27,8 @@
 	],
 	"exports": {
 		".": {
-			"types": "./dist/riblt.d.ts",
-			"import": "./dist/riblt.js"
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
 		}
 	},
 	"eslintConfig": {
@@ -49,7 +49,7 @@
 	"scripts": {
 		"benchmark": "cargo bench",
 		"clean": "cargo clear",
-		"build": "wasm-pack build --target web --out-dir dist && shx rm -rf ./dist/package.json",
+		"build": "wasm-pack build --target web --out-dir dist --out-name index  && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json",
 		"test": "cargo test && aegir test",
 		"lint": "cargo fmt"
 	},
