@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.1...riblt-v1.0.2) (2024-12-28)
+
+
+### Bug Fixes
+
+* build into dist instead of pkg ([10f303c](https://github.com/dao-xyz/peerbit/commit/10f303c46fd4a7dea48820b931c16e9cae74a143))
+
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.0...riblt-v1.0.1) (2024-12-28)
 
 
