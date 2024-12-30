@@ -31,6 +31,9 @@
 			"import": "./dist/index.js"
 		}
 	},
+	"browser": {
+		"./dist/wasm-init.js": "./dist/wasm-init.browser.js"
+	},
 	"eslintConfig": {
 		"extends": "peerbit",
 		"parserOptions": {
@@ -49,7 +52,8 @@
 	"scripts": {
 		"benchmark": "cargo bench",
 		"clean": "cargo clear",
-		"build": "wasm-pack build --target web --out-dir dist --out-name index  && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json",
+		"cp-src-js": "shx cp -r ./src_js/* ./dist",
+		"build": "npm run cp-src-js && wasm-pack build --target web --out-dir dist --out-name rateless_iblt && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json",
 		"test": "cargo test && aegir test",
 		"lint": "cargo fmt"
 	},
