@@ -207,7 +207,7 @@ export const checkBounded = async (
 		} catch (error) {
 			await dbgLogs(dbs.map((x) => x.log));
 			throw new Error(
-				"Log did not reach upper bound length of " +
+				"Log did not conform to upper bound length of " +
 					entryCount * higher +
 					" got " +
 					db.log.log.length,
