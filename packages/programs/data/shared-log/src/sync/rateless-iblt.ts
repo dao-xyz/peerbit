@@ -3,7 +3,7 @@ import { Cache } from "@peerbit/cache";
 import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, Log } from "@peerbit/log";
-import init, { DecoderWrapper, EncoderWrapper } from "@peerbit/riblt";
+import { DecoderWrapper, EncoderWrapper } from "@peerbit/riblt";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import type { SyncableKey, Syncronizer } from ".";
@@ -16,9 +16,6 @@ import {
 	matchEntriesInRangeQuery,
 } from "../ranges.js";
 import { SimpleSyncronizer } from "./simple.js";
-import "./wasm-init.js";
-
-await init();
 
 type NumberOrBigint = number | bigint;
 
