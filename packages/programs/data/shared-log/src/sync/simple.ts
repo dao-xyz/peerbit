@@ -178,7 +178,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			)) {
 				await this.rpc.send(message, {
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: 1,
+					// dont set priority 1 here because this will block other messages that should higher priority
 				});
 			}
 
