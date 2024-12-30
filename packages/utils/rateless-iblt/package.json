@@ -53,7 +53,7 @@
 		"benchmark": "cargo bench",
 		"clean": "cargo clear",
 		"cp-src-js": "shx cp -r ./src_js/* ./dist",
-		"build": "npm run cp-src-js && wasm-pack build --target web --out-dir dist --out-name rateless_iblt && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json",
+		"build": "wasm-pack build --target web --out-dir dist --out-name rateless_iblt && shx rm -rf ./dist/.gitignore && shx rm -rf ./dist/package.json && npm run cp-src-js",
 		"test": "cargo test && aegir test",
 		"lint": "cargo fmt"
 	},
