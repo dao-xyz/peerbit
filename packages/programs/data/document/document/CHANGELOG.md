@@ -456,6 +456,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [8.0.5](https://github.com/dao-xyz/peerbit/compare/document-v8.0.4...document-v8.0.5) (2024-12-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 10.0.4 to 10.0.5
+
 ## [8.0.4](https://github.com/dao-xyz/peerbit/compare/document-v8.0.3...document-v8.0.4) (2024-12-28)
 
 
