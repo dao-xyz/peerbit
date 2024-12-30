@@ -28,9 +28,6 @@
 		"!dist/test",
 		"!**/*.tsbuildinfo"
 	],
-	"browser": {
-		"./dist/src/sync/wasm-init.js": "./dist/src/sync/wasm-init.browser.js"
-	},
 	"exports": {
 		".": {
 			"types": "./dist/src/index.d.ts",
