@@ -389,6 +389,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.4...shared-log-v10.0.5) (2024-12-30)
+
+
+### Bug Fixes
+
+* more sparse handling of RequestIPrune ([39e9da6](https://github.com/dao-xyz/peerbit/commit/39e9da6d397ea3edaa019167f774509213e31bc9))
+* reduce priority for exchange heads message ([5e48036](https://github.com/dao-xyz/peerbit/commit/5e480364d4b5a4b1f77154f2c83c40f352ed1b4a))
+
 ## [10.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.3...shared-log-v10.0.4) (2024-12-28)
 
 
