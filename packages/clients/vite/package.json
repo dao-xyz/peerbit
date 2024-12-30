@@ -66,9 +66,13 @@
 	"license": "MIT",
 	"dependencies": {
 		"vite-plugin-static-copy": "^1.0.0",
-		"vite": "^5.0.10"
+		"vite": "^6.0.6"
 	},
-	"devDependencies": {},
+	"devDependencies": {
+		"@peerbit/indexer-sqlite3": "*",
+		"@peerbit/any-store": "*",
+		"@peerbit/any-store-opfs": "*"
+	},
 	"localMaintainers": [
 		"dao.xyz"
 	]
