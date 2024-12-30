@@ -260,4 +260,19 @@ describe("lifecycle", () => {
 			abortController.abort("Done");
 		});
 	});
+
+	describe("prune", () => {
+		it("prune after close is no-op", async () => {
+			session = await TestSession.connected(1);
+			const store = new EventStore();
+			const db = await session.peers[0].open(store);
+			const { entry } = await db.add("hello");
+			await db.close();
+			let pruneMap = new Map([[entry.hash, { entry, leaders: new Map() }]]);
+			let t0 = +new Date();
+			await Promise.all(db.log.prune(pruneMap));
+			let t1 = +new Date();
+			expect(t1 - t0).to.be.lessThan(100);
+		});
+	});
 });
