@@ -3391,9 +3391,10 @@ export class SharedLog<
 					set = new Set();
 					this._requestIPruneSent.set(entry, set);
 				}
-				/* 	if (set.has(to)) {
-						continue;
-					} */
+				/* TODO why can we not have this statement? 
+				if (set.has(to)) {
+					continue;
+				} */
 				set.add(to);
 				filteredSet.push(entry);
 			}
