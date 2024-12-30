@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.3...riblt-v1.0.4) (2024-12-30)
+
+
+### Bug Fixes
+
+* copy js after rust build ([f5c8aec](https://github.com/dao-xyz/peerbit/commit/f5c8aece92d30a74b57f604a4526066e47b8feb0))
+* init non-browser wasm module by default ([8abb258](https://github.com/dao-xyz/peerbit/commit/8abb2588613c378f7f78112f7ddab4bf8d3a8815))
+* init wasm correctly for module bundling ([90e5ecc](https://github.com/dao-xyz/peerbit/commit/90e5ecc7fdf974cf6990a8b09539501b69a7215b))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.2...riblt-v1.0.3) (2024-12-28)
 
 

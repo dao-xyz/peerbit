@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.5...shared-log-v10.0.6) (2024-12-30)
+
+
+### Bug Fixes
+
+* remove wasm init call ([96db150](https://github.com/dao-xyz/peerbit/commit/96db1508398a415a9ca2afc9d7d3a01fd2d620a2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.23 to 4.0.24
+    * @peerbit/rpc bumped from 5.0.21 to 5.0.22
+    * @peerbit/riblt bumped from 1.0.3 to 1.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.11 to ^2.1.12
+
 ## [10.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.4...shared-log-v10.0.5) (2024-12-30)
 
 

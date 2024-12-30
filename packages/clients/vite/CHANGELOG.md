@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.4...vite-v1.0.5) (2024-12-30)
+
+
+### Bug Fixes
+
+* add rateless_iblt wasm file ([a4c9ea1](https://github.com/dao-xyz/peerbit/commit/a4c9ea1473b974c5c1b0bb5d617a7c02ca564656))
+* vite 6 ([39e4541](https://github.com/dao-xyz/peerbit/commit/39e4541074a2d3f8ab03b3ce01947aaad7f31a99))
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.3...vite-v1.0.4) (2024-08-03)
 
 
