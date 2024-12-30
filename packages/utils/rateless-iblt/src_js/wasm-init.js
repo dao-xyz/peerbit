@@ -1,6 +1,6 @@
 // Override globalThis.fetch to intercept .wasm requests
 import { readFile } from "fs/promises";
-import "./wasm-init.js";
+import init from "./rateless_iblt.js";
 
 const defaultFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = async (url, options) => {
@@ -13,3 +13,5 @@ globalThis.fetch = async (url, options) => {
 
 	return defaultFetch(url, options);
 };
+
+await init();

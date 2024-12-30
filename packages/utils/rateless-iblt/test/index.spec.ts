@@ -1,13 +1,5 @@
 import { expect } from "chai";
-import * as fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import { DecoderWrapper, EncoderWrapper, initSync } from "../dist/index.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-initSync(
-	fs.readFileSync(path.join(__dirname, "../dist/rateless_iblt_bg.wasm")),
-);
+import { DecoderWrapper, EncoderWrapper } from "../dist/index.js";
 
 describe("riblt", () => {
 	it("diff", async () => {
