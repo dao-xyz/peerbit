@@ -89,6 +89,7 @@ const findLibraryInNodeModules = (library: string) => {
 let pathsToCopy = [
 	"@peerbit/any-store-opfs/dist/peerbit",
 	"@peerbit/indexer-sqlite3/dist/peerbit",
+	"@peerbit/riblt/dist/rateless_iblt_bg.wasm",
 ];
 export default (
 	options: {
@@ -123,9 +124,10 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 		throw new Error(`File ${srcPath} does not exist`);
 	}
 
+	fs.mkdirSync(path.dirname(destPath), { recursive: true });
+
 	if (fs.statSync(srcPath).isDirectory()) {
 		fs.mkdirSync(destPath, { recursive: true });
-
 		fs.readdirSync(srcPath).forEach((file) => {
 			const srcFilePath = path.join(srcPath, file);
 			const destFilePath = path.join(destPath, file);
@@ -133,8 +135,12 @@ function copyAssets(srcPath: string, destPath: string, base: string) {
 			copyAssets(srcFilePath, destFilePath, base);
 		});
 	} else {
-		fs.mkdirSync(path.dirname(destPath), { recursive: true });
+		let destPathAsFile = destPath;
+		if (fs.existsSync(destPath) && fs.statSync(destPath).isDirectory()) {
+			// get file ending and add it
+			destPathAsFile = path.join(destPath, path.basename(srcPath));
+		}
 
-		fs.copyFileSync(srcPath, destPath);
+		fs.copyFileSync(srcPath, destPathAsFile);
 	}
 }
