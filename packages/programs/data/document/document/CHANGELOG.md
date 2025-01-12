@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [8.1.1](https://github.com/dao-xyz/peerbit/compare/document-v8.1.0...document-v8.1.1) (2025-01-12)
+
+
+### Bug Fixes
+
+* add exports for CustomDocumentDomain ([43685b6](https://github.com/dao-xyz/peerbit/commit/43685b6f45a87c63ea4c2985387d9f9b72e9c701))
+
 ## [8.1.0](https://github.com/dao-xyz/peerbit/compare/document-v8.0.6...document-v8.1.0) (2025-01-12)
 
 
