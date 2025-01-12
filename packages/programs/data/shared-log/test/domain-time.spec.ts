@@ -1,4 +1,5 @@
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
+import { Ed25519Keypair } from "@peerbit/crypto";
 import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -8,6 +9,11 @@ import {
 	type ReplicationDomainTime,
 	createReplicationDomainTime,
 } from "../src/replication-domain-time.js";
+import type {
+	Log,
+	ReplicationDomainConstructor,
+} from "../src/replication-domain.js";
+import { AbsoluteReplicas } from "../src/replication.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 /**
@@ -22,10 +28,26 @@ const toEntry = (time: bigint | number) => {
 };
 
 describe("ReplicationDomainTime", function () {
+	let dummyLog: Log;
+	before(async () => {
+		dummyLog = {
+			getDefaultMinRoleAge: () => Promise.resolve(0),
+			node: {
+				identity: {
+					publicKey: (await Ed25519Keypair.create()).publicKey,
+				},
+			},
+			replicas: {
+				min: new AbsoluteReplicas(2),
+			},
+			replicationIndex: undefined as any,
+		};
+	});
+
 	describe("fromTime", () => {
 		it("milliseconds", () => {
 			const origin = new Date();
-			const domain = createReplicationDomainTime(origin);
+			const domain = createReplicationDomainTime({ origin })(dummyLog);
 			const step = 1000;
 			const someTimeInTheFuture = origin.getTime() + step;
 			expect(domain.fromTime(someTimeInTheFuture)).to.be.equal(step);
@@ -35,7 +57,10 @@ describe("ReplicationDomainTime", function () {
 	describe("fromEntry", () => {
 		it("milliseconds", () => {
 			const origin = new Date();
-			const domain = createReplicationDomainTime(origin, "milliseconds");
+			const domain = createReplicationDomainTime({
+				origin,
+				unit: "milliseconds",
+			})(dummyLog);
 			const step = 1000;
 			const someTimeInTheFuture = origin.getTime() + step;
 			expect(
@@ -45,7 +70,9 @@ describe("ReplicationDomainTime", function () {
 
 		it("seconds", () => {
 			const origin = new Date();
-			const domain = createReplicationDomainTime(origin, "seconds");
+			const domain = createReplicationDomainTime({ origin, unit: "seconds" })(
+				dummyLog,
+			);
 			const step = 30;
 			const someTimeInTheFuture = origin.getTime() + step * 1000;
 			expect(
@@ -96,13 +123,15 @@ describe("ReplicationDomainTime", function () {
 			await session.stop();
 		});
 
-		const setup = async (domain: ReplicationDomainTime) => {
+		const setup = async (
+			domain: ReplicationDomainConstructor<ReplicationDomainTime>,
+		) => {
 			db1 = await session.peers[0].open(
 				new EventStore<string, ReplicationDomainTime>(),
 				{
 					args: {
 						replicate: false,
-						domain: domain,
+						domain,
 					},
 				},
 			);
@@ -110,7 +139,7 @@ describe("ReplicationDomainTime", function () {
 			db2 = await session.peers[1].open(db1.clone(), {
 				args: {
 					replicate: false,
-					domain: domain,
+					domain,
 				},
 			});
 
@@ -118,13 +147,13 @@ describe("ReplicationDomainTime", function () {
 		};
 		it("milliseconds", async () => {
 			const origin = new Date();
-			const domain = createReplicationDomainTime(origin);
+			const domain = createReplicationDomainTime({ origin });
 			const { db1, db2 } = await setup(domain);
 			const someTimeInTheFuture = origin.getTime() + 1000;
-			const factor = domain.fromDuration(100);
+			const factor = db1.log.domain.fromDuration(100);
 			await db1.log.replicate({
 				normalized: false,
-				offset: domain.fromTime(someTimeInTheFuture),
+				offset: db1.log.domain.fromTime(someTimeInTheFuture),
 				factor: factor,
 				strict: true,
 			});
@@ -236,7 +265,7 @@ describe(`e2e`, function () {
 		// perhaps do an event based get peers using the pubsub peers api
 
 		const originTime = new Date();
-		const domain = createReplicationDomainTime(originTime);
+		const domain = createReplicationDomainTime({ origin: originTime });
 
 		const someTimeInTheFuture = originTime.getTime() + 1000;
 
@@ -245,28 +274,31 @@ describe(`e2e`, function () {
 			{
 				args: {
 					...options.args,
-					replicate: {
-						normalized: false,
-						offset: domain.fromTime(someTimeInTheFuture),
-						factor: "right",
-					},
+					replicate: false,
 					domain,
 				},
 			},
 		);
 
+		await db1.log.replicate({
+			normalized: false,
+			offset: db1.log.domain.fromTime(someTimeInTheFuture),
+			factor: "right",
+		});
+
 		db2 = (await EventStore.open(db1.address!, session.peers[1], {
 			args: {
 				...options.args,
-				replicate: {
-					normalized: false,
-					offset: domain.fromTime(someTimeInTheFuture - 1000),
-					factor: 999,
-				},
+				replicate: false,
 				domain,
 			},
 		})) as EventStore<string, ReplicationDomainTime>;
 
+		await db2.log.replicate({
+			normalized: false,
+			offset: db2.log.domain.fromTime(someTimeInTheFuture - 1000),
+			factor: 999,
+		});
 		await waitForResolved(async () =>
 			expect((await db1.log.getReplicators()).size).to.equal(2),
 		);

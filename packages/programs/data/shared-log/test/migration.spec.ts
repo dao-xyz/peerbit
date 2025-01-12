@@ -152,18 +152,21 @@ describe(`migration-8-9`, function () {
 		).to.be.rejectedWith("timeout");
 	});
 
-	it("v8 uses simple sync", async () => {
+	it("v8 uses simple sync u32", async () => {
 		await setup(8);
 		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
+		expect(db1.log.domain.resolution).to.equal("u32");
 	});
 
-	it("v9 uses simple sync", async () => {
+	it("v9 uses simple sync u32", async () => {
 		await setup(9);
 		expect(db1.log.syncronizer).to.be.instanceOf(SimpleSyncronizer);
+		expect(db1.log.domain.resolution).to.equal("u32");
 	});
 
-	it("v10+ uses iblt", async () => {
+	it("v10+ uses iblt u64", async () => {
 		await setup(undefined);
 		expect(db1.log.syncronizer).to.be.instanceOf(RatelessIBLTSynchronizer);
+		expect(db1.log.domain.resolution).to.equal("u64");
 	});
 });

@@ -1,7 +1,6 @@
 import type { PublicSignKey } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, ShallowEntry } from "@peerbit/log";
-import { debounceAccumulator } from "./debounce.js";
 import type { ReplicationRangeIndexable } from "./index.js";
 import type { NumberFromType } from "./integers.js";
 import type { EntryReplicated } from "./ranges.js";
@@ -31,63 +30,6 @@ type CoverRange<T extends number | bigint> = {
 	offset: T | PublicSignKey;
 	length?: T;
 };
-export type ReplicationChanges = ReplicationChange[];
-export type ReplicationChange =
-	| {
-			type: "added";
-			range: ReplicationRangeIndexable<any>;
-	  }
-	| {
-			type: "removed";
-			range: ReplicationRangeIndexable<any>;
-	  }
-	| {
-			type: "updated";
-			range: ReplicationRangeIndexable<any>;
-			prev: ReplicationRangeIndexable<any>;
-	  };
-
-export const mergeReplicationChanges = (
-	changes: ReplicationChanges | ReplicationChanges[],
-): ReplicationChanges => {
-	let first = changes[0];
-	if (!Array.isArray(first)) {
-		return changes as ReplicationChanges;
-	}
-	return (changes as ReplicationChanges[]).flat();
-};
-
-export const debounceAggregationChanges = (
-	fn: (changeOrChanges: ReplicationChange[]) => void,
-	delay: number,
-) => {
-	return debounceAccumulator(
-		(result) => {
-			return fn([...result.values()]);
-		},
-		() => {
-			let aggregated: Map<string, ReplicationChange> = new Map();
-			return {
-				add: (change: ReplicationChange) => {
-					const prev = aggregated.get(change.range.idString);
-					if (prev) {
-						if (prev.range.timestamp < change.range.timestamp) {
-							aggregated.set(change.range.idString, change);
-						}
-					} else {
-						aggregated.set(change.range.idString, change);
-					}
-				},
-				delete: (key: string) => {
-					aggregated.delete(key);
-				},
-				size: () => aggregated.size,
-				value: aggregated,
-			};
-		},
-		delay,
-	);
-};
 
 export type ReplicationDomain<Args, T, R extends "u32" | "u64"> = {
 	resolution: R;
@@ -95,9 +37,15 @@ export type ReplicationDomain<Args, T, R extends "u32" | "u64"> = {
 	fromEntry: ReplicationDomainMapper<T, R>;
 	fromArgs: (
 		args: Args | undefined,
-		log: Log,
 	) => Promise<CoverRange<NumberFromType<R>>> | CoverRange<NumberFromType<R>>;
+	canMerge?: (
+		from: ReplicationRangeIndexable<R>,
+		into: ReplicationRangeIndexable<R>,
+	) => boolean;
 };
 
+export type ReplicationDomainConstructor<
+	D extends ReplicationDomain<any, any, any>,
+> = (log: Log) => D;
 export type ExtractDomainArgs<T> =
 	T extends ReplicationDomain<infer Args, any, any> ? Args : never;

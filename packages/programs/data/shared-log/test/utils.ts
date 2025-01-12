@@ -16,6 +16,7 @@ import {
 	maxReplicas,
 } from "../src/index.js";
 import type { TransportMessage } from "../src/message";
+import type { ReplicationDomainConstructor } from "../src/replication-domain.js";
 import type { SynchronizerConstructor } from "../src/sync/index.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
@@ -284,20 +285,9 @@ export const checkReplicas = async (
 	}
 };
 
-export const generateTestsFromResolutions = (
-	fn: (domain: ReplicationDomainHash<"u32" | "u64">) => void,
-) => {
-	const resolutions = ["u32", "u64"] as const;
-	for (const resolution of resolutions) {
-		describe(resolution, () => {
-			fn(createReplicationDomainHash(resolution));
-		});
-	}
-};
-
 export type TestSetupConfig<R extends "u32" | "u64"> = {
 	type: R;
-	domain: ReplicationDomainHash<R>;
+	domain: ReplicationDomainConstructor<ReplicationDomainHash<R>>;
 	syncronizer: SynchronizerConstructor<R>;
 	name: string;
 };
@@ -326,7 +316,7 @@ export const checkIfSetupIsUsed = (
 	setup: TestSetupConfig<any>,
 	log: SharedLog<any, any, any>,
 ) => {
-	expect(log.domain).to.equal(setup.domain);
+	expect(log.domain.type).to.equal(setup.domain(log).type);
 	expect(log.syncronizer.constructor).to.equal(setup.syncronizer);
 };
 

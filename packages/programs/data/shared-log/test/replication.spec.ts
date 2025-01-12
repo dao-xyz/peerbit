@@ -3608,20 +3608,15 @@ testSetups.forEach((setup) => {
 					const sampleSize = 1e3;
 					const entryCount = sampleSize;
 
-					try {
-						await waitForResolved(async () =>
-							expect(await db1.log.replicationIndex?.getSize()).equal(3),
-						);
-						await waitForResolved(async () =>
-							expect(await db2.log.replicationIndex?.getSize()).equal(3),
-						);
-						await waitForResolved(async () =>
-							expect(await db3.log.replicationIndex?.getSize()).equal(3),
-						);
-					} catch (error) {
-						await dbgLogs([db1.log, db2.log, db3.log]);
-						throw error;
-					}
+					await waitForResolved(async () =>
+						expect(await db1.log.replicationIndex?.getSize()).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect(await db2.log.replicationIndex?.getSize()).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect(await db3.log.replicationIndex?.getSize()).equal(3),
+					);
 
 					const promises: Promise<any>[] = [];
 					for (let i = 0; i < entryCount; i++) {
@@ -3639,6 +3634,79 @@ testSetups.forEach((setup) => {
 					const distribute = sinon.spy(db1.log.onReplicationChange);
 					db1.log.onReplicationChange = distribute;
 					await db3.close();
+					await checkBounded(entryCount, 1, 1, db1, db2);
+				});
+
+				it("unreplicate", async () => {
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: {
+								factor: 0.333,
+								offset: 0.333,
+							},
+							setup,
+						},
+					});
+
+					db2 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[1],
+						{
+							args: {
+								replicate: {
+									factor: 0.333,
+									offset: 0,
+								},
+								setup,
+							},
+						},
+					);
+					db3 = await EventStore.open<EventStore<string, any>>(
+						db1.address!,
+						session.peers[2],
+						{
+							args: {
+								replicate: {
+									factor: 0.333,
+									offset: 0.666,
+								},
+								setup,
+							},
+						},
+					);
+
+					const sampleSize = 1e3;
+					const entryCount = sampleSize;
+
+					await waitForResolved(async () =>
+						expect(await db1.log.replicationIndex?.getSize()).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect(await db2.log.replicationIndex?.getSize()).equal(3),
+					);
+					await waitForResolved(async () =>
+						expect(await db3.log.replicationIndex?.getSize()).equal(3),
+					);
+
+					const promises: Promise<any>[] = [];
+					for (let i = 0; i < entryCount; i++) {
+						promises.push(
+							db1.add(toBase64(new Uint8Array([i])), {
+								meta: { next: [] },
+							}),
+						);
+					}
+
+					await Promise.all(promises);
+
+					await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+
+					const distribute = sinon.spy(db1.log.onReplicationChange);
+					db1.log.onReplicationChange = distribute;
+
+					const segments = await db3.log.replicationIndex.iterate().all();
+					await db3.log.unreplicate(segments.map((x) => x.value));
+
 					await checkBounded(entryCount, 1, 1, db1, db2);
 				});
 

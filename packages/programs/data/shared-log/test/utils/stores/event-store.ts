@@ -20,7 +20,10 @@ import {
 } from "../../../src/index.js";
 import type { TransportMessage } from "../../../src/message.js";
 import type { EntryReplicated } from "../../../src/ranges.js";
-import type { ReplicationDomain } from "../../../src/replication-domain.js";
+import type {
+	ReplicationDomain,
+	ReplicationDomainConstructor,
+} from "../../../src/replication-domain.js";
 import type { SynchronizerConstructor } from "../../../src/sync/index.js";
 import type { TestSetupConfig } from "../../utils.js";
 import { JSON_ENCODING } from "./encoding.js";
@@ -67,7 +70,7 @@ export type Args<
 	onMessage?: (msg: TransportMessage, context: RequestContext) => Promise<void>;
 	compatibility?: number;
 	setup?: TestSetupConfig<R>;
-	domain?: D;
+	domain?: ReplicationDomainConstructor<D>;
 };
 @variant("event_store")
 export class EventStore<

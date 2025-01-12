@@ -1,4 +1,5 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import type { Cache } from "@peerbit/cache";
 import {
 	PublicSignKey,
 	equals,
@@ -24,17 +25,18 @@ import {
 	Sort,
 	SortDirection,
 	StringMatch,
+	iteratorInSeries,
 	/* 	iteratorInSeries, */
 } from "@peerbit/indexer-interface";
 import { id } from "@peerbit/indexer-interface";
 import { Meta, ShallowMeta } from "@peerbit/log";
+import { debounceAccumulator } from "./debounce.js";
 import {
 	MAX_U32,
 	MAX_U64,
 	type NumberFromType,
 	type Numbers,
 } from "./integers.js";
-import { type ReplicationChanges } from "./replication-domain.js";
 
 export enum ReplicationIntent {
 	NonStrict = 0, // indicates that the segment will be replicated and nearby data might be replicated as well
@@ -268,7 +270,7 @@ export class ReplicationRangeMessageU32 extends ReplicationRangeMessage<"u32"> {
 			id: this.id,
 			publicKeyHash: key.hashcode(),
 			offset: this.offset,
-			length: this.factor,
+			width: this.factor,
 			timestamp: this.timestamp,
 			mode: this.mode,
 		});
@@ -323,7 +325,7 @@ export class ReplicationRangeMessageU64 extends ReplicationRangeMessage<"u64"> {
 			id: this.id,
 			publicKeyHash: key.hashcode(),
 			offset: this.offset,
-			length: this.factor,
+			width: this.factor,
 			timestamp: this.timestamp,
 			mode: this.mode,
 		});
@@ -410,6 +412,246 @@ export interface ReplicationRangeIndexable<R extends "u32" | "u64"> {
 	contains(point: NumberFromType<R>): boolean;
 	equalRange(other: ReplicationRangeIndexable<R>): boolean;
 	overlaps(other: ReplicationRangeIndexable<R>): boolean;
+	toString(): string;
+	get rangeHash(): string;
+}
+
+export type NumericType = "u32" | "u64";
+
+/**
+ * Convert a GeneralRange<N> into one or two `[bigint, bigint]` segments.
+ * - If it’s not wrapped, there’s one segment: [start1, end1).
+ * - If it’s wrapped, there’s two: [start1, end1) and [start2, end2).
+ *
+ * We always do the conversion to bigints internally.
+ */
+export function toSegmentsBigInt<N extends NumericType>(
+	range: ReplicationRangeIndexable<N>,
+): Array<[bigint, bigint]> {
+	// Safely convert the numeric fields to bigint
+	const s1: bigint =
+		typeof range.start1 === "number" ? BigInt(range.start1) : range.start1;
+	const e1: bigint =
+		typeof range.end1 === "number" ? BigInt(range.end1) : range.end1;
+	const s2: bigint =
+		typeof range.start2 === "number" ? BigInt(range.start2) : range.start2;
+	const e2: bigint =
+		typeof range.end2 === "number" ? BigInt(range.end2) : range.end2;
+
+	const segments: Array<[bigint, bigint]> = [];
+
+	segments.push([s1, e1]);
+
+	if (s2 !== s1 && s2 !== e2) {
+		segments.push([s2, e2]);
+	}
+
+	return segments;
+}
+
+/**
+ * Build an array of new GeneralRange<N> objects from leftover `[bigint, bigint]` segments.
+ * We split them in pairs, each range can hold up to two segments:
+ *
+ * - [seg1Start, seg1End)
+ * - [seg2Start, seg2End) (if available)
+ *
+ * We convert bigints back to the correct numeric type, if needed.
+ */
+function buildRangesFromBigIntSegments<N extends NumericType>(
+	segments: Array<[bigint, bigint]>,
+	templateRange: ReplicationRangeIndexable<N>,
+): Array<ReplicationRangeIndexable<N>> {
+	// Sort by start
+	segments.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+
+	const result: Array<ReplicationRangeIndexable<N>> = [];
+	let i = 0;
+	const proto = Object.getPrototypeOf(templateRange);
+
+	while (i < segments.length) {
+		const seg1 = segments[i];
+		i++;
+		let seg2: [bigint, bigint] | null = null;
+		if (i < segments.length) {
+			seg2 = segments[i];
+			i++;
+		}
+
+		// Convert back to the original numeric type
+		const [s1, e1] = toOriginalType<N>(seg1, templateRange);
+		const [s2, e2] = seg2
+			? toOriginalType<N>(seg2, templateRange)
+			: ([s1, e1] as [NumberFromType<N>, NumberFromType<N>]);
+
+		// Build a new range object. You can clone or replicate metadata as needed.
+		const newRange = Object.assign(Object.create(proto), {
+			...templateRange,
+			start1: s1,
+			end1: e1,
+			start2: s2,
+			end2: e2,
+		});
+
+		result.push(newRange);
+	}
+	return result;
+}
+
+/**
+ * Subtract one bigint segment [bStart, bEnd) from [aStart, aEnd).
+ * Returns 0..2 leftover segments in bigint form.
+ */
+
+function subtractBigIntSegment(
+	aStart: bigint,
+	aEnd: bigint,
+	bStart: bigint,
+	bEnd: bigint,
+): Array<[bigint, bigint]> {
+	const result: Array<[bigint, bigint]> = [];
+
+	// No overlap
+	if (bEnd <= aStart || bStart >= aEnd) {
+		result.push([aStart, aEnd]);
+		return result;
+	}
+
+	// Fully contained
+	if (bStart <= aStart && bEnd >= aEnd) {
+		return [];
+	}
+
+	// Partial overlaps
+	if (bStart > aStart) {
+		result.push([aStart, bStart]);
+	}
+	if (bEnd < aEnd) {
+		result.push([bEnd, aEnd]);
+	}
+
+	return result;
+}
+
+/**
+ * Helper: convert `[bigint, bigint]` to `[number, number]` if N is "u32",
+ * or keep as `[bigint, bigint]` if N is "u64".
+ */
+function toOriginalType<N extends NumericType>(
+	segment: [bigint, bigint],
+	templateRange: ReplicationRangeIndexable<N>,
+): [NumberFromType<N>, NumberFromType<N>] {
+	const [start, end] = segment;
+	if (isU32Range(templateRange)) {
+		// Convert back to number
+		return [Number(start), Number(end)] as any;
+	} else {
+		// Keep as bigint
+		return [start, end] as any;
+	}
+}
+
+/**
+ * Merge any adjacent or overlapping `[bigint, bigint]` segments.
+ * E.g. [10,20) and [20,25) => [10,25)
+ */
+export function mergeBigIntSegments(
+	segments: Array<[bigint, bigint]>,
+): Array<[bigint, bigint]> {
+	if (segments.length < 2) return segments;
+
+	// Sort by start
+	segments.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+
+	const merged: Array<[bigint, bigint]> = [];
+	let current = segments[0];
+
+	for (let i = 1; i < segments.length; i++) {
+		const next = segments[i];
+		// If current overlaps or touches next
+		if (current[1] >= next[0]) {
+			// Merge
+			current = [current[0], current[1] > next[1] ? current[1] : next[1]];
+		} else {
+			merged.push(current);
+			current = next;
+		}
+	}
+	merged.push(current);
+
+	return merged;
+}
+
+/**
+ * Figure out if a given range is "u32" or "u64".
+ * You might also store this in the object itself if you prefer.
+ */
+function isU32Range<N extends NumericType>(
+	range: ReplicationRangeIndexable<N>,
+): boolean {
+	// If you store a separate `type: "u32" | "u64"` in the range, you can just check that:
+	// return range.type === "u32";
+	// or we do a hack by checking the type of start1, e.g.:
+
+	// If "start1" is a number (not a bigint), we treat it as u32
+	return typeof range.start1 === "number";
+}
+
+export function symmetricDifferenceRanges<N extends NumericType>(
+	rangeA: ReplicationRangeIndexable<N>,
+	rangeB: ReplicationRangeIndexable<N>,
+): {
+	rangesFromA: Array<ReplicationRangeIndexable<N>>;
+	rangesFromB: Array<ReplicationRangeIndexable<N>>;
+} {
+	const segmentsA = toSegmentsBigInt(rangeA);
+	const segmentsB = toSegmentsBigInt(rangeB);
+
+	const resultSegmentsA: Array<[bigint, bigint]> = [];
+	const resultSegmentsB: Array<[bigint, bigint]> = [];
+
+	// Compute symmetric difference for A
+	for (const [aStart, aEnd] of segmentsA) {
+		let leftover = [[aStart, aEnd]] as Array<[bigint, bigint]>;
+		for (const [bStart, bEnd] of segmentsB) {
+			const newLeftover = [];
+			for (const [start, end] of leftover) {
+				newLeftover.push(...subtractBigIntSegment(start, end, bStart, bEnd));
+			}
+			leftover = newLeftover;
+		}
+		resultSegmentsA.push(...leftover);
+	}
+
+	// Compute symmetric difference for B
+	for (const [bStart, bEnd] of segmentsB) {
+		let leftover = [[bStart, bEnd]] as Array<[bigint, bigint]>;
+		for (const [aStart, aEnd] of segmentsA) {
+			const newLeftover = [];
+			for (const [start, end] of leftover) {
+				newLeftover.push(...subtractBigIntSegment(start, end, aStart, aEnd));
+			}
+			leftover = newLeftover;
+		}
+		resultSegmentsB.push(...leftover);
+	}
+
+	// Remove zero-length or invalid segments
+	const validSegmentsA = resultSegmentsA.filter(([start, end]) => start < end);
+	const validSegmentsB = resultSegmentsB.filter(([start, end]) => start < end);
+
+	// Merge and deduplicate segments
+	const mergedSegmentsA = mergeBigIntSegments(validSegmentsA);
+	const mergedSegmentsB = mergeBigIntSegments(validSegmentsB);
+
+	// Build ranges
+	const rangesFromA = buildRangesFromBigIntSegments(mergedSegmentsA, rangeA);
+	const rangesFromB = buildRangesFromBigIntSegments(mergedSegmentsB, rangeB);
+
+	return {
+		rangesFromA,
+		rangesFromB,
+	};
 }
 
 export class ReplicationRangeIndexableU32
@@ -446,7 +688,7 @@ export class ReplicationRangeIndexableU32
 		properties: {
 			id?: Uint8Array;
 			offset: number;
-			length: number;
+			width: number;
 			mode?: ReplicationIntent;
 			timestamp?: bigint;
 		} & ({ publicKeyHash: string } | { publicKey: PublicSignKey }),
@@ -455,16 +697,16 @@ export class ReplicationRangeIndexableU32
 		this.hash =
 			(properties as { publicKeyHash: string }).publicKeyHash ||
 			(properties as { publicKey: PublicSignKey }).publicKey.hashcode();
-		this.transform({ length: properties.length, offset: properties.offset });
+		this.transform({ width: properties.width, offset: properties.offset });
 
 		this.mode = properties.mode ?? ReplicationIntent.NonStrict;
 		this.timestamp = properties.timestamp || BigInt(0);
 	}
 
-	private transform(properties: { offset: number; length: number }) {
+	private transform(properties: { offset: number; width: number }) {
 		const ranges = getSegmentsFromOffsetAndRange(
 			properties.offset,
-			properties.length,
+			properties.width,
 			0,
 			MAX_U32,
 		);
@@ -492,6 +734,11 @@ export class ReplicationRangeIndexableU32
 
 	get idString() {
 		return toBase64(this.id);
+	}
+
+	get rangeHash() {
+		const ser = serialize(this);
+		return sha256Base64Sync(ser);
 	}
 
 	contains(point: number) {
@@ -554,6 +801,7 @@ export class ReplicationRangeIndexableU32
 
 	equalRange(other: ReplicationRangeIndexableU32) {
 		return (
+			this.hash === other.hash &&
 			this.start1 === other.start1 &&
 			this.end1 === other.end1 &&
 			this.start2 === other.start2 &&
@@ -588,7 +836,7 @@ export class ReplicationRangeIndexableU64
 	id: Uint8Array;
 
 	@field({ type: "string" })
-	hash: string;
+	hash: string; // publickey hash
 
 	@field({ type: "u64" })
 	timestamp: bigint;
@@ -615,7 +863,7 @@ export class ReplicationRangeIndexableU64
 		properties: {
 			id?: Uint8Array;
 			offset: bigint | number;
-			length: bigint | number;
+			width: bigint | number;
 			mode?: ReplicationIntent;
 			timestamp?: bigint;
 		} & ({ publicKeyHash: string } | { publicKey: PublicSignKey }),
@@ -624,7 +872,7 @@ export class ReplicationRangeIndexableU64
 		this.hash =
 			(properties as { publicKeyHash: string }).publicKeyHash ||
 			(properties as { publicKey: PublicSignKey }).publicKey.hashcode();
-		this.transform({ length: properties.length, offset: properties.offset });
+		this.transform({ width: properties.width, offset: properties.offset });
 
 		this.mode = properties.mode ?? ReplicationIntent.NonStrict;
 		this.timestamp = properties.timestamp || BigInt(0);
@@ -632,11 +880,11 @@ export class ReplicationRangeIndexableU64
 
 	private transform(properties: {
 		offset: bigint | number;
-		length: bigint | number;
+		width: bigint | number;
 	}) {
 		const ranges = getSegmentsFromOffsetAndRange(
 			BigInt(properties.offset),
-			BigInt(properties.length),
+			BigInt(properties.width),
 			0n,
 			MAX_U64,
 		);
@@ -671,6 +919,11 @@ export class ReplicationRangeIndexableU64
 			(point >= this.start1 && point < this.end1) ||
 			(point >= this.start2 && point < this.end2)
 		);
+	}
+
+	get rangeHash() {
+		const ser = serialize(this);
+		return sha256Base64Sync(ser);
 	}
 
 	overlaps(other: ReplicationRangeIndexableU64, checkOther = true): boolean {
@@ -726,6 +979,7 @@ export class ReplicationRangeIndexableU64
 
 	equalRange(other: ReplicationRangeIndexableU64) {
 		return (
+			this.hash === other.hash &&
 			this.start1 === other.start1 &&
 			this.end1 === other.end1 &&
 			this.start2 === other.start2 &&
@@ -770,22 +1024,24 @@ export const mergeRanges = <R extends "u32" | "u64">(
 		throw new Error("Segments have different publicKeyHash");
 	}
 
-	// only allow merging segments with length 1 (trivial)
-	const sameLength = segments.every((x) => x.width === 1 || x.width === 1n);
-	if (!sameLength) {
-		throw new Error(
-			"Segments have different length, only merging of segments length 1 is supported",
-		);
-	}
-
 	const sorted = segments.sort((a, b) => Number(a.start1 - b.start1));
 
-	let calculateLargeGap = (): [NumberFromType<R>, number] => {
+	let calculateLargeGap = (): [
+		NumberFromType<R>,
+		number,
+		ReplicationIntent,
+	] => {
 		let last = sorted[sorted.length - 1];
 		let largestArc = numbers.zero;
 		let largestArcIndex = -1;
+		let mode = ReplicationIntent.NonStrict;
 		for (let i = 0; i < sorted.length; i++) {
 			const current = sorted[i];
+
+			if (current.mode === ReplicationIntent.Strict) {
+				mode = ReplicationIntent.Strict;
+			}
+
 			if (current.start1 !== last.start1) {
 				let arc = numbers.zero;
 				if (current.start1 < last.end2) {
@@ -804,22 +1060,32 @@ export const mergeRanges = <R extends "u32" | "u64">(
 			last = current;
 		}
 
-		return [largestArc, largestArcIndex];
+		return [largestArc, largestArcIndex, mode];
 	};
-	const [largestArc, largestArcIndex] = calculateLargeGap();
+	const [largestArc, largestArcIndex, mode] = calculateLargeGap();
 
 	let totalLengthFinal: number = numbers.maxValue - largestArc;
 
+	const proto = segments[0].constructor;
+
 	if (largestArcIndex === -1) {
+		if (mode !== segments[0].mode) {
+			return new (proto as any)({
+				width: segments[0].width,
+				offset: segments[0].start1,
+				publicKeyHash: segments[0].hash,
+				mode,
+			});
+		}
 		return segments[0]; // all ranges are the same
 	}
 	// use segments[0] constructor to create a new object
 
-	const proto = segments[0].constructor;
 	return new (proto as any)({
-		length: totalLengthFinal,
+		width: totalLengthFinal,
 		offset: segments[largestArcIndex].start1,
 		publicKeyHash: segments[0].hash,
+		mode,
 	});
 };
 
@@ -1054,12 +1320,17 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 	direction: "above" | "below",
 	rects: Index<ReplicationRangeIndexable<R>>,
 	point: NumberFromType<R>,
-	roleAgeLimit: number,
-	matured: boolean,
-	now: number,
 	includeStrict: boolean,
 	numbers: Numbers<R>,
-	options?: { shape?: S },
+	options?: {
+		shape?: S;
+		hash?: string;
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
 ): IndexIterator<ReplicationRangeIndexable<R>, S> => {
 	const createQueries = (p: NumberFromType<R>, equality: boolean) => {
 		let queries: Query[];
@@ -1070,11 +1341,6 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 					compare: equality ? Compare.LessOrEqual : Compare.Less,
 					value: p,
 				}),
-				new IntegerCompare({
-					key: "timestamp",
-					compare: matured ? Compare.LessOrEqual : Compare.GreaterOrEqual,
-					value: BigInt(now - roleAgeLimit),
-				}),
 			];
 		} else {
 			queries = [
@@ -1083,12 +1349,19 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 					compare: equality ? Compare.GreaterOrEqual : Compare.Greater,
 					value: p,
 				}),
+			];
+		}
+
+		if (options?.time) {
+			queries.push(
 				new IntegerCompare({
 					key: "timestamp",
-					compare: matured ? Compare.LessOrEqual : Compare.GreaterOrEqual,
-					value: BigInt(now - roleAgeLimit),
+					compare: options?.time?.matured
+						? Compare.LessOrEqual
+						: Compare.GreaterOrEqual,
+					value: BigInt(options.time.now - options.time.roleAgeLimit),
 				}),
-			];
+			);
 		}
 
 		queries.push(
@@ -1103,6 +1376,9 @@ const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 					value: ReplicationIntent.NonStrict,
 				}),
 			);
+		}
+		if (options?.hash) {
+			queries.push(new StringMatch({ key: "hash", value: options.hash }));
 		}
 		return queries;
 	};
@@ -1210,7 +1486,7 @@ export const getCoveringRangeQuery = (range: {
 		]),
 	];
 };
-export const iHaveCoveringRange = async <R extends "u32" | "u64">(
+export const countCoveringRangesSameOwner = async <R extends "u32" | "u64">(
 	rects: Index<ReplicationRangeIndexable<R>>,
 	range: ReplicationRangeIndexable<R>,
 ) => {
@@ -1232,6 +1508,35 @@ export const iHaveCoveringRange = async <R extends "u32" | "u64">(
 			],
 		})) > 0
 	);
+};
+
+export const getCoveringRangesSameOwner = <R extends "u32" | "u64">(
+	rects: Index<ReplicationRangeIndexable<R>>,
+	range: {
+		start1: number | bigint;
+		end1: number | bigint;
+		start2: number | bigint;
+		end2: number | bigint;
+		hash: string;
+		id: Uint8Array;
+	},
+) => {
+	return rects.iterate({
+		query: [
+			...getCoveringRangeQuery(range),
+			new StringMatch({
+				key: "hash",
+				value: range.hash,
+			}),
+			// assume that we are looking for other ranges, not want to update an existing one
+			new Not(
+				new ByteMatchQuery({
+					key: "id",
+					value: range.id,
+				}),
+			),
+		],
+	});
 };
 
 // TODO
@@ -1397,26 +1702,29 @@ const joinIterator = <S extends Shape | undefined, R extends "u32" | "u64">(
 	};
 };
 
-const getClosestAround = <
+const getClosestAroundOrContaining = <
 	S extends (Shape & { timestamp: true }) | undefined,
 	R extends "u32" | "u64",
 >(
 	peers: Index<ReplicationRangeIndexable<R>>,
 	point: NumberFromType<R>,
-	roleAge: number,
-	now: number,
 	includeStrictBelow: boolean,
 	includeStrictAbove: boolean,
 	numbers: Numbers<R>,
-	options?: { shape?: S },
+	options?: {
+		shape?: S;
+		hash?: string;
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
 ) => {
 	const closestBelow = getClosest<S, R>(
 		"below",
 		peers,
 		point,
-		roleAge,
-		true,
-		now,
 		includeStrictBelow,
 		numbers,
 		options,
@@ -1425,35 +1733,92 @@ const getClosestAround = <
 		"above",
 		peers,
 		point,
-		roleAge,
-		true,
-		now,
 		includeStrictAbove,
 		numbers,
 		options,
 	);
-	/* const containing = iterateRangesContainingPoint<S, R>(
-		peers,
-		point,
-		{
-			time: {
-				roleAgeLimit: roleAge,
-				matured: true,
-				now,
-			}
-		}
-	);
+	const containing = iterateRangesContainingPoint<S, R>(peers, point, options);
 
 	return iteratorInSeries(
 		containing,
 		joinIterator<S, R>([closestBelow, closestAbove], point, "closest", numbers),
-	); */
-	return joinIterator<S, R>(
-		[closestBelow, closestAbove],
-		point,
-		"closest",
-		numbers,
 	);
+};
+
+export const getAdjecentSameOwner = async <R extends "u32" | "u64">(
+	peers: Index<ReplicationRangeIndexable<R>>,
+	range: {
+		idString?: string;
+		start1: NumberFromType<R>;
+		end2: NumberFromType<R>;
+		hash: string;
+	},
+	numbers: Numbers<R>,
+): Promise<{
+	below?: ReplicationRangeIndexable<R>;
+	above?: ReplicationRangeIndexable<R>;
+}> => {
+	const closestBelowIterator = getClosest<undefined, R>(
+		"below",
+		peers,
+		range.start1,
+		true,
+		numbers,
+		{
+			hash: range.hash,
+		},
+	);
+	const closestBelow = await closestBelowIterator.next(1);
+	closestBelowIterator.close();
+	const closestAboveIterator = getClosest<undefined, R>(
+		"above",
+		peers,
+		range.end2,
+		true,
+		numbers,
+		{
+			hash: range.hash,
+		},
+	);
+	const closestAbove = await closestAboveIterator.next(1);
+	closestAboveIterator.close();
+	return {
+		below:
+			range.idString === closestBelow[0]?.value.idString
+				? undefined
+				: closestBelow[0]?.value,
+		above:
+			closestBelow[0]?.id.primitive === closestAbove[0]?.id.primitive ||
+			range.idString === closestBelow[0]?.value.idString
+				? undefined
+				: closestAbove[0]?.value,
+	};
+};
+
+export const getAllMergeCandiates = async <R extends "u32" | "u64">(
+	peers: Index<ReplicationRangeIndexable<R>>,
+	range: {
+		idString?: string;
+		start1: NumberFromType<R>;
+		start2: NumberFromType<R>;
+		end1: NumberFromType<R>;
+		end2: NumberFromType<R>;
+		hash: string;
+		id: Uint8Array;
+	},
+	numbers: Numbers<R>,
+): Promise<ReplicationRangeIndexable<R>[]> => {
+	const adjacent = await getAdjecentSameOwner(peers, range, numbers);
+	const covering = await getCoveringRangesSameOwner(peers, range).all();
+
+	let ret: ReplicationRangeIndexable<R>[] = [];
+	if (adjacent.below) {
+		ret.push(adjacent.below);
+	}
+	if (adjacent.above) {
+		ret.push(adjacent.above);
+	}
+	return [...ret, ...covering.map((x) => x.value)];
 };
 
 export const isMatured = (
@@ -1542,27 +1907,31 @@ const collectClosestAround = async <R extends "u32" | "u64">(
 		"below",
 		peers,
 		point,
-		0,
-		true,
-		now,
 		false,
 		numbers,
+		/* {
+			time: {
+				matured: true,
+				roleAgeLimit: 0,
+				now
+			}
+		} */
 	);
 	const closestAbove = getClosest<undefined, R>(
 		"above",
 		peers,
 		point,
-		0,
-		true,
-		now,
 		false,
 		numbers,
+		/* {
+			time: {
+				matured: true,
+				roleAgeLimit: 0,
+				now
+			}
+		} */
 	);
-	/* 	const containingIterator = iterateRangesContainingPoint<undefined, R>(
-			peers,
-			point,
-		);
-	 */
+
 	const aroundIterator = joinIterator<undefined, R>(
 		[/* containingIterator,  */ closestBelow, closestAbove],
 		point,
@@ -1714,7 +2083,13 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 	const { startNode, startLocation, endLocation } = await getStartAndEnd<
 		undefined,
 		R
-	>(peers, start, widthToCoverScaled, roleAge, now, properties.numbers);
+	>(peers, start, widthToCoverScaled, properties.numbers, {
+		time: {
+			roleAgeLimit: roleAge,
+			now,
+			matured: true,
+		},
+	});
 
 	let ret = new Set<string>();
 
@@ -1778,16 +2153,13 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 	) => {
 		// if not get closest from above
 		let next = await fetchOne<undefined, R>(
-			getClosest(
-				"above",
-				peers,
-				nextLocation,
-				roleAge,
-				true,
-				now,
-				true,
-				properties.numbers,
-			),
+			getClosest("above", peers, nextLocation, true, properties.numbers, {
+				time: {
+					matured: true,
+					roleAgeLimit: roleAge,
+					now,
+				},
+			}),
 		);
 		return next;
 	};
@@ -1967,31 +2339,197 @@ export const matchEntriesInRangeQuery = (range: {
 	];
 	return new Or(ors);
 };
+
+export type ReplicationChanges<
+	T extends ReplicationRangeIndexable<any> = ReplicationRangeIndexable<any>,
+> = ReplicationChange<T>[];
+export type ReplicationChange<
+	T extends ReplicationRangeIndexable<any> = ReplicationRangeIndexable<any>,
+> = (
+	| {
+			type: "added";
+			range: T;
+			matured?: boolean;
+	  }
+	| {
+			type: "removed";
+			range: T;
+	  }
+	| {
+			type: "replaced";
+			range: T;
+	  }
+) & { timestamp: bigint };
+
+export const debounceAggregationChanges = <
+	T extends ReplicationRangeIndexable<any>,
+>(
+	fn: (changeOrChanges: ReplicationChange<T>[]) => void,
+	delay: number,
+) => {
+	return debounceAccumulator(
+		(result) => {
+			return fn([...result.values()]);
+		},
+		() => {
+			let aggregated: Map<string, ReplicationChange<T>> = new Map();
+			return {
+				add: (change: ReplicationChange<T>) => {
+					const prev = aggregated.get(change.range.idString);
+					if (prev) {
+						if (prev.range.timestamp < change.range.timestamp) {
+							aggregated.set(change.range.idString, change);
+						}
+					} else {
+						aggregated.set(change.range.idString, change);
+					}
+				},
+				delete: (key: string) => {
+					aggregated.delete(key);
+				},
+				size: () => aggregated.size,
+				value: aggregated,
+			};
+		},
+		delay,
+	);
+};
+
+export const mergeReplicationChanges = <R extends NumericType>(
+	changesOrChangesArr:
+		| ReplicationChanges<ReplicationRangeIndexable<R>>
+		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
+	rebalanceHistory: Cache<string>,
+): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
+	let first = changesOrChangesArr[0];
+	let changes: ReplicationChange<ReplicationRangeIndexable<R>>[];
+	if (!Array.isArray(first)) {
+		changes = changesOrChangesArr as ReplicationChange<
+			ReplicationRangeIndexable<R>
+		>[];
+	} else {
+		changes = changesOrChangesArr.flat() as ReplicationChange<
+			ReplicationRangeIndexable<R>
+		>[];
+	}
+
+	// group by hash so we can cancel out changes
+	const grouped = new Map<
+		string,
+		ReplicationChange<ReplicationRangeIndexable<R>>[]
+	>();
+	for (const change of changes) {
+		const prev = grouped.get(change.range.hash);
+		if (prev) {
+			prev.push(change);
+		} else {
+			grouped.set(change.range.hash, [change]);
+		}
+	}
+
+	let all: ReplicationChange<ReplicationRangeIndexable<R>>[] = [];
+	for (const [_k, v] of grouped) {
+		if (v.length > 1) {
+			// sort by timestamp so newest is last
+			v.sort((a, b) =>
+				a.range.timestamp < b.range.timestamp
+					? -1
+					: a.range.timestamp > b.range.timestamp
+						? 1
+						: 0,
+			);
+
+			let results: ReplicationChange<ReplicationRangeIndexable<R>>[] = [];
+			let consumed: Set<number> = new Set();
+			for (let i = 0; i < v.length; i++) {
+				// if segment is removed and we have previously processed it
+				// then go over each overlapping added segment add remove the removal,
+				// equivalent is that this would represent  (1 - 1 + 1) = 1
+				if (v[i].type === "removed" || v[i].type === "replaced") {
+					if (rebalanceHistory.has(v[i].range.rangeHash)) {
+						let vStart = v.length;
+						for (let j = i + 1; j < vStart; j++) {
+							const newer = v[j];
+							if (newer.type === "added" && !newer.matured) {
+								const {
+									rangesFromA: updatedRemoved,
+									rangesFromB: updatedNewer,
+								} = symmetricDifferenceRanges(v[i].range, newer.range);
+								for (const diff of updatedRemoved) {
+									results.push({
+										range: diff,
+										type: "removed" as const,
+										timestamp: v[i].timestamp,
+									});
+								}
+								for (const diff of updatedNewer) {
+									v.push({
+										range: diff,
+										type: "added" as const,
+										timestamp: newer.timestamp,
+									});
+								}
+								consumed.add(j);
+							}
+						}
+						rebalanceHistory.del(v[i].range.rangeHash);
+					} else {
+						results.push(v[i]);
+					}
+				} else if (v[i].type === "added") {
+					// TODO should the below clause be used?
+					// after testing it seems that certain changes are not propagating as expected using this
+					/* if (rebalanceHistory.has(v[i].range.rangeHash)) {
+						continue;
+					} */
+
+					rebalanceHistory.add(v[i].range.rangeHash);
+					if (!consumed.has(i)) {
+						results.push(v[i]);
+					}
+				} else {
+					results.push(v[i]);
+				}
+			}
+
+			all.push(...results);
+		} else {
+			rebalanceHistory.add(v[0].range.rangeHash);
+			all.push(v[0]);
+		}
+	}
+	return all;
+};
+
 export const toRebalance = <R extends "u32" | "u64">(
-	changes: ReplicationChanges,
+	changeOrChanges:
+		| ReplicationChanges<ReplicationRangeIndexable<R>>
+		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
 	index: Index<EntryReplicated<R>>,
+	rebalanceHistory: Cache<string>,
 ): AsyncIterable<EntryReplicated<R>> => {
+	const change = mergeReplicationChanges(changeOrChanges, rebalanceHistory);
+
 	const assignedRangesQuery = (changes: ReplicationChanges) => {
 		let ors: Query[] = [];
+		let onlyStrict = true;
 		for (const change of changes) {
 			const matchRange = matchEntriesInRangeQuery(change.range);
-			if (change.type === "updated") {
-				// assuming a range is to be removed, is this entry still enoughly replicated
-				const prevMatchRange = matchEntriesInRangeQuery(change.prev);
-				ors.push(prevMatchRange);
-				ors.push(matchRange);
-			} else {
-				ors.push(matchRange);
+			ors.push(matchRange);
+			if (change.range.mode === ReplicationIntent.NonStrict) {
+				onlyStrict = false;
 			}
 		}
 
 		// entry is assigned to a range boundary, meaning it is due to be inspected
-		ors.push(
-			new BoolQuery({
-				key: "assignedToRangeBoundary",
-				value: true,
-			}),
-		);
+		if (!onlyStrict || changes.length === 0) {
+			ors.push(
+				new BoolQuery({
+					key: "assignedToRangeBoundary",
+					value: true,
+				}),
+			);
+		}
 
 		// entry is not sufficiently replicated, and we are to still keep it
 		return new Or(ors);
@@ -1999,7 +2537,7 @@ export const toRebalance = <R extends "u32" | "u64">(
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			const iterator = index.iterate({
-				query: assignedRangesQuery(changes),
+				query: assignedRangesQuery(change),
 			});
 
 			while (iterator.done() !== true) {
@@ -2024,11 +2562,14 @@ export const fetchOneFromPublicKey = async <
 >(
 	publicKey: PublicSignKey,
 	index: Index<ReplicationRangeIndexable<R>>,
-	roleAge: number,
-	now: number,
 	numbers: Numbers<R>,
 	options?: {
-		shape: S;
+		shape?: S;
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
 	},
 ) => {
 	let iterator = index.iterate<S>(
@@ -2041,13 +2582,14 @@ export const fetchOneFromPublicKey = async <
 	await iterator.close();
 	let node = result[0]?.value;
 	if (node) {
-		if (!isMatured(node, now, roleAge)) {
+		if (
+			options?.time &&
+			!isMatured(node, options.time.now, options.time.roleAgeLimit)
+		) {
 			const matured = await fetchOne(
-				getClosestAround<S, R>(
+				getClosestAroundOrContaining<S, R>(
 					index,
 					node.start1,
-					roleAge,
-					now,
 					false,
 					false,
 					numbers,
@@ -2069,10 +2611,15 @@ export const getStartAndEnd = async <
 	peers: Index<ReplicationRangeIndexable<R>>,
 	start: NumberFromType<R> | PublicSignKey | undefined | undefined,
 	widthToCoverScaled: NumberFromType<R>,
-	roleAge: number,
-	now: number,
 	numbers: Numbers<R>,
-	options?: { shape: S },
+	options?: {
+		shape?: S;
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
 ): Promise<{
 	startNode: ReturnTypeFromShape<ReplicationRangeIndexable<R>, S> | undefined;
 	startLocation: NumberFromType<R>;
@@ -2089,8 +2636,6 @@ export const getStartAndEnd = async <
 		startNode = await fetchOneClosest<S, R>(
 			peers,
 			startLocation,
-			roleAge,
-			now,
 			false,
 			true,
 			numbers,
@@ -2100,14 +2645,7 @@ export const getStartAndEnd = async <
 
 	if (start instanceof PublicSignKey) {
 		// start at our node (local first)
-		startNode = await fetchOneFromPublicKey(
-			start,
-			peers,
-			roleAge,
-			now,
-			numbers,
-			options,
-		);
+		startNode = await fetchOneFromPublicKey(start, peers, numbers, options);
 		if (!startNode) {
 			// fetch randomly
 			await nodeFromPoint();
@@ -2168,19 +2706,23 @@ export const fetchOneClosest = <
 >(
 	peers: Index<ReplicationRangeIndexable<R>>,
 	point: NumberFromType<R>,
-	roleAge: number,
-	now: number,
 	includeStrictBelow: boolean,
 	includeStrictAbove: boolean,
 	numbers: Numbers<R>,
-	options?: { shape?: S },
+	options?: {
+		shape?: S;
+		time?: {
+			roleAgeLimit: number;
+			matured: boolean;
+			now: number;
+		};
+	},
 ) => {
 	return fetchOne<S, R>(
-		getClosestAround<S, R>(
+		getClosestAroundOrContaining<S, R>(
 			peers,
 			point,
-			roleAge,
-			now,
+
 			includeStrictBelow,
 			includeStrictAbove,
 			numbers,

@@ -1,7 +1,12 @@
 import type { ShallowOrFullEntry } from "@peerbit/log";
-import { type EntryReplicated } from "./ranges.js";
 import {
+	type EntryReplicated,
+	type ReplicationRangeIndexable,
+} from "./ranges.js";
+import {
+	type Log,
 	type ReplicationDomain,
+	type ReplicationDomainConstructor,
 	type ReplicationDomainMapper,
 } from "./replication-domain.js";
 
@@ -41,46 +46,47 @@ export type ReplicationDomainTime = ReplicationDomain<TimeRange, any, "u32"> & {
 	fromDuration: (duration: number) => number;
 };
 
-export const createReplicationDomainTime = (
-	origin: Date,
-	unit: TimeUnit = "milliseconds",
-): ReplicationDomainTime => {
-	const originScaled = +origin * scalarMilliToUnit[unit];
-	const fromMilliToUnit = scalarMilliToUnit[unit];
-	const fromTime = (time: number | Date): number => {
-		return (
-			(typeof time === "number" ? time : +time * fromMilliToUnit) - originScaled
-		);
-	};
+export const createReplicationDomainTime =
+	(properties: {
+		origin?: Date;
+		unit?: TimeUnit;
+		canMerge?: (
+			from: ReplicationRangeIndexable<"u32">,
+			into: ReplicationRangeIndexable<"u32">,
+		) => boolean;
+	}): ReplicationDomainConstructor<ReplicationDomainTime> =>
+	(log: Log) => {
+		const origin = properties.origin || new Date();
+		const unit = properties.unit || "milliseconds";
+		const originScaled = +origin * scalarMilliToUnit[unit];
+		const fromMilliToUnit = scalarMilliToUnit[unit];
+		const fromTime = (time: number | Date): number => {
+			return (
+				(typeof time === "number" ? time : +time * fromMilliToUnit) -
+				originScaled
+			);
+		};
 
-	const fromDuration = (duration: number): number => {
-		return duration;
-	};
-	return {
-		resolution: "u32",
-		type: "time",
-		fromTime,
-		fromDuration,
-		fromEntry: fromEntry(origin, unit),
-		fromArgs: async (args: TimeRange | undefined, log) => {
-			if (!args) {
+		const fromDuration = (duration: number): number => {
+			return duration;
+		};
+		return {
+			resolution: "u32",
+			type: "time",
+			fromTime,
+			fromDuration,
+			fromEntry: fromEntry(origin, unit),
+			fromArgs: async (args: TimeRange | undefined) => {
+				if (!args) {
+					return {
+						offset: log.node.identity.publicKey,
+					};
+				}
 				return {
-					offset: log.node.identity.publicKey,
+					offset: fromTime(args.from),
+					length: fromDuration(args.to - args.from),
 				};
-			}
-			return {
-				offset: fromTime(args.from),
-				length: fromDuration(args.to - args.from),
-			};
-			/* 	roleAge = roleAge ?? (await log.getDefaultMinRoleAge());
-				const ranges = await getCoverSet(
-					log.replicationIndex,
-					roleAge,
-					fromTime(args.from),
-					fromDuration(args.to - args.from),
-					undefined,
-				);
-				return [...ranges]; */
-		},
+			},
+			canMerge: properties.canMerge,
+		};
 	};
-};

@@ -312,7 +312,9 @@ describe(`replicate`, () => {
 			const t0 = +new Date();
 			await db2.log.waitForReplicator(db1.node.identity.publicKey);
 			const t1 = +new Date();
-			expect(t1 - t0).greaterThanOrEqual(await db2.log.getDefaultMinRoleAge());
+			expect(t1 - t0).greaterThanOrEqual(
+				(await db2.log.getDefaultMinRoleAge()) - 100,
+			); // - 100 for handle timer inaccuracy
 		});
 		describe("getDefaultMinRoleAge", () => {
 			it("if not replicating, min role age is 0", async () => {
@@ -472,7 +474,7 @@ describe(`replicate`, () => {
 					db: EventStore<string, any>,
 					entry: Entry<any>,
 				) => {
-					const offset = await domain.fromEntry(added.entry);
+					const offset = await db.log.domain.fromEntry(added.entry);
 
 					const ranges = await db.log.replicationIndex.iterate().all();
 					expect(ranges).to.have.length(1);
@@ -527,8 +529,7 @@ describe(`replicate`, () => {
 					db: EventStore<string, any>,
 					entry: Entry<any>,
 				) => {
-					const offset = await domain.fromEntry(added.entry);
-
+					const offset = await db.log.domain.fromEntry(added.entry);
 					const ranges = await db.log.replicationIndex
 						.iterate({ sort: new Sort({ key: ["start1"] }) })
 						.all();

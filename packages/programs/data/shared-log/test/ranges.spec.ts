@@ -1,3 +1,4 @@
+import { Cache } from "@peerbit/cache";
 import {
 	Ed25519Keypair,
 	type Ed25519PublicKey,
@@ -22,10 +23,11 @@ import {
 	ReplicationRangeIndexableU32,
 	ReplicationRangeIndexableU64,
 	appromixateCoverage,
+	countCoveringRangesSameOwner,
+	getAdjecentSameOwner,
 	getCoverSet as getCoverSetGeneric,
 	getDistance,
 	getSamples as getSamplesMap,
-	iHaveCoveringRange,
 	mergeRanges,
 	toRebalance,
 } from "../src/ranges.js";
@@ -75,7 +77,7 @@ resolutions.forEach((resolution) => {
 		const createReplicationRangeFromNormalized = (properties: {
 			id?: Uint8Array;
 			publicKey: PublicSignKey;
-			length: number;
+			width: number;
 			offset: number;
 			timestamp?: bigint;
 			mode?: ReplicationIntent;
@@ -85,7 +87,7 @@ resolutions.forEach((resolution) => {
 				publicKey: properties.publicKey,
 				mode: properties.mode,
 				// @ts-ignore
-				length: denormalizeFn(properties.length),
+				width: denormalizeFn(properties.width),
 				// @ts-ignore
 				offset: denormalizeFn(properties.offset),
 				timestamp: properties.timestamp,
@@ -95,7 +97,7 @@ resolutions.forEach((resolution) => {
 		const createReplicationRange = (properties: {
 			id?: Uint8Array;
 			publicKey: PublicSignKey;
-			length: number | bigint;
+			width: number | bigint;
 			offset: number | bigint;
 			timestamp?: bigint;
 			mode?: ReplicationIntent;
@@ -106,7 +108,7 @@ resolutions.forEach((resolution) => {
 				publicKey: properties.publicKey,
 				mode: properties.mode,
 				// @ts-ignore
-				length: coerceNumber(properties.length),
+				width: coerceNumber(properties.width),
 				// @ts-ignore
 				offset: coerceNumber(properties.offset),
 				timestamp: properties.timestamp,
@@ -162,19 +164,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.1,
+										width: 0.1,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.333 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.666 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -198,19 +200,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 1,
+										width: 1,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 1,
+										width: 1,
 										offset: (0.333 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 1,
+										width: 1,
 										offset: (0.666 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -232,19 +234,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.34,
+										width: 0.34,
 										offset: (0 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.333 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.666 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -264,19 +266,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 1,
+										width: 1,
 										offset: (0 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 1,
+										width: 1,
 										offset: (0.333 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 1,
+										width: 1,
 										offset: (0.666 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -297,19 +299,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.34,
+										width: 0.34,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.333 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.666 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -332,19 +334,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.34,
+										width: 0.34,
 										offset: (0 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.333 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.666 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -366,19 +368,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 1,
+										width: 1,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 1,
+										width: 1,
 										offset: (0.333 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 1,
+										width: 1,
 										offset: (0.666 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -401,19 +403,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 1,
+										width: 1,
 										offset: (0 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 1,
+										width: 1,
 										offset: (0.333 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 1,
+										width: 1,
 										offset: (0.666 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -435,19 +437,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.34,
+										width: 0.34,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.333 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.666 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -489,19 +491,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.34,
+										width: 0.34,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.41,
+										width: 0.41,
 										offset: (0.1 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.3 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
@@ -522,19 +524,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.34,
+										width: 0.34,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.2 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.34,
+										width: 0.34,
 										offset: (0.3 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -558,13 +560,13 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.2 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.5 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -585,19 +587,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.21 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.5 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.81 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -617,19 +619,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.2 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.5 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.81 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -649,19 +651,19 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.2 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.5 + rotation) % 1,
 										timestamp: BigInt(+new Date()),
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: c,
-										length: 0.1,
+										width: 0.1,
 										offset: (0.81 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -682,21 +684,21 @@ resolutions.forEach((resolution) => {
 									await create(
 										createReplicationRangeFromNormalized({
 											publicKey: a,
-											length: 0.1,
+											width: 0.1,
 											offset: (0.2 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
 										}),
 										createReplicationRangeFromNormalized({
 											publicKey: b,
-											length: 0.5,
+											width: 0.5,
 											offset: (0.5 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
 										}),
 										createReplicationRangeFromNormalized({
 											publicKey: c,
-											length: 0.1,
+											width: 0.1,
 											offset: (0.81 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
@@ -717,14 +719,14 @@ resolutions.forEach((resolution) => {
 									await create(
 										createReplicationRangeFromNormalized({
 											publicKey: a,
-											length: 0.1,
+											width: 0.1,
 											offset: (0.2 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
 										}),
 										createReplicationRangeFromNormalized({
 											publicKey: c,
-											length: 0.1,
+											width: 0.1,
 											offset: (0.81 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
@@ -744,7 +746,7 @@ resolutions.forEach((resolution) => {
 									await create(
 										createReplicationRangeFromNormalized({
 											publicKey: a,
-											length: 0.1,
+											width: 0.1,
 											offset: (0.2 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
@@ -765,17 +767,14 @@ resolutions.forEach((resolution) => {
 									await create(
 										createReplicationRangeFromNormalized({
 											publicKey: a,
-											length: 0.1,
+											width: 0.1,
 											offset: (0 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
 										}),
-									);
-
-									await create(
 										createReplicationRangeFromNormalized({
 											publicKey: b,
-											length: 0.1,
+											width: 0.1,
 											offset: (0.2 + rotation) % 1,
 											timestamp: 0n,
 											mode: ReplicationIntent.Strict,
@@ -791,7 +790,135 @@ resolutions.forEach((resolution) => {
 										})),
 									]).to.have.members([b.hashcode()]);
 								});
+
+								it("starting at", async () => {
+									await create(
+										createReplicationRange({
+											publicKey: a,
+											width: 1,
+											offset: 1,
+											timestamp: 0n,
+											mode: ReplicationIntent.Strict,
+										}),
+										createReplicationRange({
+											publicKey: b,
+											width: 2,
+											offset: 2,
+											timestamp: 0n,
+											mode: ReplicationIntent.Strict,
+										}),
+									);
+
+									expect([
+										...(await getCoverSet({
+											peers,
+											roleAge: 1e5,
+											start: coerceNumber(2),
+											widthToCoverScaled: coerceNumber(1),
+										})),
+									]).to.have.members([b.hashcode()]);
+								});
 							});
+						});
+					});
+				});
+			});
+
+			describe("getAdjecentSameOwner", () => {
+				const rotations = [0, 0.333, 0.5, 0.8];
+				rotations.forEach((rotation) => {
+					describe("rotation: " + rotation, () => {
+						it("no adjecent", async () => {
+							const range = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.2625,
+								offset: (0 + rotation) % 1,
+								timestamp: 0n,
+							});
+							await create(
+								range,
+								createReplicationRangeFromNormalized({
+									publicKey: b,
+									width: 1,
+									offset: (0.5 + rotation) % 1,
+									timestamp: 0n,
+								}),
+							);
+
+							const adjecent = await getAdjecentSameOwner(
+								peers,
+								range,
+								numbers,
+							);
+							expect(adjecent.below).to.be.undefined;
+							expect(adjecent.above).to.be.undefined;
+						});
+
+						it("one adjecent", async () => {
+							const from = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.001,
+								offset: (0.4 + rotation) % 1,
+								timestamp: 0n,
+							});
+							const below = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.2625,
+								offset: (0 + rotation) % 1,
+								timestamp: 0n,
+							});
+							await create(
+								below,
+								createReplicationRangeFromNormalized({
+									publicKey: b,
+									width: 1,
+									offset: (0.5 + rotation) % 1,
+									timestamp: 0n,
+								}),
+							);
+
+							const adjecent = await getAdjecentSameOwner(peers, from, numbers);
+							expect(adjecent.below?.idString).to.eq(below.idString);
+							expect(adjecent.above).to.be.undefined;
+						});
+
+						it("two adjecent", async () => {
+							const from = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.001,
+								offset: (0.4 + rotation) % 1,
+								timestamp: 0n,
+							});
+							const below = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.2625,
+								offset: (0 + rotation) % 1,
+								timestamp: 0n,
+							});
+							const above = createReplicationRangeFromNormalized({
+								publicKey: a,
+								width: 0.2625,
+								offset: (0.5 + rotation) % 1,
+								timestamp: 0n,
+							});
+
+							console.log(from.toString());
+							console.log(below.toString());
+							console.log(above.toString());
+							await create(
+								below,
+								above,
+								createReplicationRangeFromNormalized({
+									publicKey: b,
+									width: 1,
+									offset: (0.5 + rotation) % 1,
+									timestamp: 0n,
+								}),
+							);
+
+							const adjecent = await getAdjecentSameOwner(peers, from, numbers);
+							expect(adjecent.below?.idString).to.eq(below.idString);
+							expect(adjecent.above?.idString).to.eq(above.idString);
 						});
 					});
 				});
@@ -805,13 +932,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRangeFromNormalized({
 									publicKey: a,
-									length: 0.2625,
+									width: 0.2625,
 									offset: (0.367 + rotation) % 1,
 									timestamp: 0n,
 								}),
 								createReplicationRangeFromNormalized({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: (0.847 + rotation) % 1,
 									timestamp: 0n,
 								}),
@@ -828,13 +955,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRangeFromNormalized({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									offset: (0.367 + rotation) % 1,
 									timestamp: 0n,
 								}),
 								createReplicationRangeFromNormalized({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: (0.847 + rotation) % 1,
 									timestamp: 0n,
 								}),
@@ -848,19 +975,19 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRangeFromNormalized({
 									publicKey: a,
-									length: 0.3333,
+									width: 0.3333,
 									offset: (0 + rotation) % 1,
 									timestamp: 0n,
 								}),
 								createReplicationRangeFromNormalized({
 									publicKey: b,
-									length: 0.3333,
+									width: 0.3333,
 									offset: (0.3333 + rotation) % 1,
 									timestamp: 0n,
 								}),
 								createReplicationRangeFromNormalized({
 									publicKey: c,
-									length: 0.3333,
+									width: 0.3333,
 									offset: (0.6666 + rotation) % 1,
 									timestamp: 0n,
 								}),
@@ -874,13 +1001,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.367 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.847 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -900,13 +1027,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.367 + rotation) % 1),
 									timestamp: 1n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.367 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -927,13 +1054,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.367 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.367 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -954,13 +1081,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRange({
 									publicKey: a,
-									length: numbers.divRound(numbers.maxValue, 2),
+									width: numbers.divRound(numbers.maxValue, 2),
 									offset: denormalizeFn((0 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.5 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -993,13 +1120,13 @@ resolutions.forEach((resolution) => {
 							await create(
 								createReplicationRange({
 									publicKey: a,
-									length: numbers.divRound(numbers.maxValue, 2),
+									width: numbers.divRound(numbers.maxValue, 2),
 									offset: denormalizeFn((0 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: numbers.maxValue,
+									width: numbers.maxValue,
 									offset: denormalizeFn((0.5 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -1033,13 +1160,13 @@ resolutions.forEach((resolution) => {
 								// reversed insertion order
 								createReplicationRange({
 									publicKey: b,
-									length: numbers.maxValue,
+									width: numbers.maxValue,
 									offset: denormalizeFn((0.5 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: a,
-									length: numbers.divRound(numbers.maxValue, 2),
+									width: numbers.divRound(numbers.maxValue, 2),
 									offset: denormalizeFn((0 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -1074,13 +1201,13 @@ resolutions.forEach((resolution) => {
 
 								createReplicationRange({
 									publicKey: a,
-									length: numbers.divRound(numbers.maxValue, 2),
+									width: numbers.divRound(numbers.maxValue, 2),
 									offset: denormalizeFn((0.5 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: numbers.divRound(numbers.maxValue, 2),
+									width: numbers.divRound(numbers.maxValue, 2),
 									offset: denormalizeFn((0.5 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -1102,13 +1229,13 @@ resolutions.forEach((resolution) => {
 
 								createReplicationRange({
 									publicKey: a,
-									length: numbers.divRound(numbers.maxValue, 2),
+									width: numbers.divRound(numbers.maxValue, 2),
 									offset: denormalizeFn((0.4 + rotation) % 1),
 									timestamp: 0n,
 								}),
 								createReplicationRange({
 									publicKey: b,
-									length: 1,
+									width: 1,
 									offset: denormalizeFn((0.5 + rotation) % 1),
 									timestamp: 0n,
 								}),
@@ -1133,19 +1260,19 @@ resolutions.forEach((resolution) => {
 					await create(
 						createReplicationRangeFromNormalized({
 							publicKey: a,
-							length: 0,
+							width: 0,
 							offset: 0.367 % 1,
 							timestamp: 0n,
 						}),
 						createReplicationRangeFromNormalized({
 							publicKey: b,
-							length: 1,
+							width: 1,
 							offset: 0.567 % 1,
 							timestamp: 0n,
 						}),
 						createReplicationRangeFromNormalized({
 							publicKey: c,
-							length: 1,
+							width: 1,
 							offset: 0.847 % 1,
 							timestamp: 0n,
 						}),
@@ -1159,19 +1286,19 @@ resolutions.forEach((resolution) => {
 					await create(
 						createReplicationRangeFromNormalized({
 							publicKey: a,
-							length: 1,
+							width: 1,
 							offset: 0.145,
 							timestamp: 0n,
 						}),
 						createReplicationRangeFromNormalized({
 							publicKey: b,
-							length: 0,
+							width: 0,
 							offset: 0.367,
 							timestamp: 0n,
 						}),
 						createReplicationRangeFromNormalized({
 							publicKey: c,
-							length: 1,
+							width: 1,
 							offset: 0.8473,
 							timestamp: 0n,
 						}),
@@ -1185,19 +1312,19 @@ resolutions.forEach((resolution) => {
 					await create(
 						createReplicationRangeFromNormalized({
 							publicKey: a,
-							length: 0.2,
+							width: 0.2,
 							offset: 0.145,
 							timestamp: 0n,
 						}),
 						createReplicationRangeFromNormalized({
 							publicKey: b,
-							length: 0,
+							width: 0,
 							offset: 0.367,
 							timestamp: 0n,
 						}),
 						createReplicationRangeFromNormalized({
 							publicKey: c,
-							length: 0.2,
+							width: 0.2,
 							offset: 0.8473,
 							timestamp: 0n,
 						}),
@@ -1212,19 +1339,19 @@ resolutions.forEach((resolution) => {
 						await create(
 							createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.2,
+								width: 0.2,
 								offset: (0.2333 + rotation) % 1,
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: b,
-								length: 0.2,
+								width: 0.2,
 								offset: (0.56666 + rotation) % 1,
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: c,
-								length: 0.2,
+								width: 0.2,
 								offset: (0.9 + rotation) % 1,
 								timestamp: 0n,
 							}),
@@ -1264,19 +1391,19 @@ resolutions.forEach((resolution) => {
 						await create(
 							createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.333,
+								width: 0.333,
 								offset: 0.333 % 1,
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: b,
-								length: 0.333,
+								width: 0.333,
 								offset: 0.666 % 1,
 								timestamp: BigInt(+new Date()),
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: c,
-								length: 0.3333,
+								width: 0.3333,
 								offset: 0.999 % 1,
 								timestamp: 0n,
 							}),
@@ -1290,19 +1417,19 @@ resolutions.forEach((resolution) => {
 						await create(
 							createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.333,
+								width: 0.333,
 								offset: 0.333 % 1,
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: b,
-								length: 0.333,
+								width: 0.333,
 								offset: 0.666 % 1,
 								timestamp: BigInt(+new Date()),
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: c,
-								length: 0.3333,
+								width: 0.3333,
 								offset: 0.999 % 1,
 								timestamp: 0n,
 							}),
@@ -1317,19 +1444,19 @@ resolutions.forEach((resolution) => {
 						await create(
 							createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.333,
+								width: 0.333,
 								offset: 0.333 % 1,
 								timestamp: 0n,
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: b,
-								length: 0.333,
+								width: 0.333,
 								offset: 0.666 % 1,
 								timestamp: BigInt(+new Date()),
 							}),
 							createReplicationRangeFromNormalized({
 								publicKey: c,
-								length: 0.3333,
+								width: 0.3333,
 								offset: 0.999 % 1,
 								timestamp: 0n,
 							}),
@@ -1350,13 +1477,13 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.2,
+										width: 0.2,
 										offset: offsetNonStrict,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: b,
-										length: 0.2,
+										width: 0.2,
 										offset: (0.3 + rotation) % 1,
 										timestamp: 0n,
 										mode: ReplicationIntent.Strict,
@@ -1433,14 +1560,14 @@ resolutions.forEach((resolution) => {
 				});
 			});
 
-			describe("hasOneOverlapping", () => {
+			describe("countCoveringRangesSameOwner", () => {
 				const rotations = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
 				rotations.forEach((rotation) => {
 					describe("rotation: " + String(rotation), () => {
 						it("includes all", async () => {
 							const cmp = createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.5,
+								width: 0.5,
 								offset: (0 + rotation) % 1,
 								timestamp: 0n,
 							});
@@ -1448,27 +1575,30 @@ resolutions.forEach((resolution) => {
 
 							const inside = createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.4,
+								width: 0.4,
 								offset: (0.05 + rotation) % 1,
 								timestamp: 0n,
 							});
-							expect(await iHaveCoveringRange(peers, inside)).to.be.true;
+							expect(await countCoveringRangesSameOwner(peers, inside)).to.be
+								.true;
 
 							const outside1 = createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.4,
+								width: 0.4,
 								offset: (0.2 + rotation) % 1,
 								timestamp: 0n,
 							});
-							expect(await iHaveCoveringRange(peers, outside1)).to.be.false;
+							expect(await countCoveringRangesSameOwner(peers, outside1)).to.be
+								.false;
 
 							const outside2 = createReplicationRangeFromNormalized({
 								publicKey: a,
-								length: 0.51,
+								width: 0.51,
 								offset: (0.1 + rotation) % 1,
 								timestamp: 0n,
 							});
-							expect(await iHaveCoveringRange(peers, outside2)).to.be.false;
+							expect(await countCoveringRangesSameOwner(peers, outside2)).to.be
+								.false;
 						});
 					});
 				});
@@ -1489,7 +1619,7 @@ resolutions.forEach((resolution) => {
 								//@ts-ignore
 								const range1 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset1 % numbers.maxValue,
 									timestamp: 0n,
@@ -1498,7 +1628,7 @@ resolutions.forEach((resolution) => {
 								//@ts-ignore
 								const range2 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset2 % numbers.maxValue,
 									timestamp: 0n,
@@ -1518,7 +1648,7 @@ resolutions.forEach((resolution) => {
 								//@ts-ignore
 								const range1 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset % numbers.maxValue,
 									timestamp: 0n,
@@ -1527,7 +1657,7 @@ resolutions.forEach((resolution) => {
 								//@ts-ignore
 								const range2 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									offset:
 										// @ts-ignore
 										(offset + (typeof offset === "bigint" ? 1n : 1)) %
@@ -1546,7 +1676,7 @@ resolutions.forEach((resolution) => {
 								//@ts-ignore
 								const range1 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset % numbers.maxValue,
 									timestamp: 0n,
@@ -1554,7 +1684,7 @@ resolutions.forEach((resolution) => {
 								//@ts-ignore
 								const range2 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset % numbers.maxValue,
 									timestamp: 0n,
@@ -1563,6 +1693,111 @@ resolutions.forEach((resolution) => {
 								const merged = mergeRanges([range1, range2], numbers);
 								expect(Number(merged.width)).to.eq(1);
 								//  expect(merged.start1).to.equal(range1.start1)
+							});
+
+							it("different lengths", async () => {
+								const offset = denormalizeFn(0.2 + rotation);
+
+								//@ts-ignore
+								const range1 = createReplicationRange({
+									publicKey: a,
+									width: 10,
+									// @ts-ignore
+									offset: offset % numbers.maxValue,
+									timestamp: 0n,
+								});
+								//@ts-ignore
+								const range2 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset: (offset + coerceNumber(20)) % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								const merged = mergeRanges([range1, range2], numbers);
+								expect(Number(merged.width)).to.eq(120);
+								expect(merged.start1).to.equal(range1.start1);
+							});
+
+							describe("mode", () => {
+								it("equal ranges but different mode", async () => {
+									const offset = denormalizeFn(0.2 + rotation);
+
+									//@ts-ignore
+									const range1 = createReplicationRange({
+										publicKey: a,
+										width: 1,
+										// @ts-ignore
+										offset: offset % numbers.maxValue,
+										timestamp: 0n,
+										mode: ReplicationIntent.NonStrict,
+									});
+									//@ts-ignore
+									const range2 = createReplicationRange({
+										publicKey: a,
+										width: 1,
+										// @ts-ignore
+										offset: offset % numbers.maxValue,
+										timestamp: 0n,
+										mode: ReplicationIntent.Strict,
+									});
+
+									const merged = mergeRanges([range1, range2], numbers);
+									expect(merged.mode).to.eq(ReplicationIntent.Strict);
+								});
+
+								it("different ranges different modes", async () => {
+									const offset = denormalizeFn(0.2 + rotation);
+
+									//@ts-ignore
+									const range1 = createReplicationRange({
+										publicKey: a,
+										width: 1,
+										// @ts-ignore
+										offset,
+										timestamp: 0n,
+										mode: ReplicationIntent.NonStrict,
+									});
+									//@ts-ignore
+									const range2 = createReplicationRange({
+										publicKey: a,
+										width: 1,
+										// @ts-ignore
+										offset,
+										timestamp: 0n,
+										mode: ReplicationIntent.Strict,
+									});
+
+									const merged = mergeRanges([range1, range2], numbers);
+									expect(merged.mode).to.eq(ReplicationIntent.Strict);
+								});
+
+								it("same mode", async () => {
+									const offset = denormalizeFn(0.2 + rotation);
+
+									//@ts-ignore
+									const range1 = createReplicationRange({
+										publicKey: a,
+										width: 1,
+										// @ts-ignore
+										offset,
+										timestamp: 0n,
+										mode: ReplicationIntent.NonStrict,
+									});
+									//@ts-ignore
+									const range2 = createReplicationRange({
+										publicKey: a,
+										width: 1,
+										// @ts-ignore
+										offset,
+										timestamp: 0n,
+										mode: ReplicationIntent.NonStrict,
+									});
+
+									const merged = mergeRanges([range1, range2], numbers);
+									expect(merged.mode).to.eq(ReplicationIntent.NonStrict);
+								});
 							});
 						});
 
@@ -1578,7 +1813,7 @@ resolutions.forEach((resolution) => {
 								// @ts-ignore
 								const range1 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset1 % numbers.maxValue,
 									timestamp: 0n,
@@ -1586,14 +1821,14 @@ resolutions.forEach((resolution) => {
 								// @ts-ignore
 								const range2 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset2 % numbers.maxValue,
 									timestamp: 0n,
 								});
 								const range3 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset3 % numbers.maxValue,
 									timestamp: 0n,
@@ -1619,7 +1854,7 @@ resolutions.forEach((resolution) => {
 								// @ts-ignore
 								const range1 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset1 % numbers.maxValue,
 									timestamp: 0n,
@@ -1627,7 +1862,7 @@ resolutions.forEach((resolution) => {
 								// @ts-ignore
 								const range2 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset2 % numbers.maxValue,
 									timestamp: 0n,
@@ -1636,7 +1871,7 @@ resolutions.forEach((resolution) => {
 								// @ts-ignore
 								const range3 = createReplicationRange({
 									publicKey: a,
-									length: 1,
+									width: 1,
 									// @ts-ignore
 									offset: offset3 % numbers.maxValue,
 									timestamp: 0n,
@@ -1644,6 +1879,41 @@ resolutions.forEach((resolution) => {
 
 								const merged = mergeRanges([range1, range2, range3], numbers);
 								expect(Number(merged.width)).to.eq(3);
+							});
+
+							it("different lengths", async () => {
+								const offset = denormalizeFn(0.2 + rotation);
+
+								//@ts-ignore
+								const range1 = createReplicationRange({
+									publicKey: a,
+									width: 10,
+									// @ts-ignore
+									offset: offset % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								//@ts-ignore
+								const range2 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset: (offset + coerceNumber(20)) % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								//@ts-ignore
+								const range3 = createReplicationRange({
+									publicKey: a,
+									width: 5,
+									// @ts-ignore
+									offset: (offset + coerceNumber(130)) % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								const merged = mergeRanges([range1, range2, range3], numbers);
+								expect(Number(merged.width)).to.eq(135);
+								expect(merged.start1).to.equal(range1.start1);
 							});
 						});
 					});
@@ -1659,7 +1929,7 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 1,
+										width: 1,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -1681,13 +1951,13 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.5,
+										width: 0.5,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.5,
+										width: 0.5,
 										offset: (0.5 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -1711,7 +1981,7 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.5,
+										width: 0.5,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -1733,13 +2003,13 @@ resolutions.forEach((resolution) => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.25,
+										width: 0.25,
 										offset: (0 + rotation) % 1,
 										timestamp: 0n,
 									}),
 									createReplicationRangeFromNormalized({
 										publicKey: a,
-										length: 0.25,
+										width: 0.25,
 										offset: (0.5 + rotation) % 1,
 										timestamp: 0n,
 									}),
@@ -1834,13 +2104,15 @@ resolutions.forEach((resolution) => {
 				};
 
 				const createEntryReplicated = (properties: {
-					coordinate: NumberFromType<R>;
+					coordinate: NumberFromType<R> | NumberFromType<R>[];
 					hash: string;
 					meta: Meta;
 					assignedToRangeBoundary: boolean;
 				}) => {
 					return new entryClass({
-						coordinates: [properties.coordinate],
+						coordinates: Array.isArray(properties.coordinate)
+							? properties.coordinate
+							: [properties.coordinate],
 						assignedToRangeBoundary: properties.assignedToRangeBoundary,
 						hash: properties.hash,
 						meta: properties.meta,
@@ -1877,9 +2149,10 @@ resolutions.forEach((resolution) => {
 									}),
 								}),
 							);
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
 
 							const result = await consumeAllFromAsyncIterator(
-								toRebalance([], index),
+								toRebalance([], index, cache),
 							);
 							expect(result).to.have.length(0);
 						});
@@ -1916,25 +2189,34 @@ resolutions.forEach((resolution) => {
 								const prev = createReplicationRangeFromNormalized({
 									publicKey: a,
 									offset: rotate(0.2),
-									length: 0.2,
+									width: 0.2,
 								});
 								const updated = createReplicationRangeFromNormalized({
 									id: prev.id,
 									publicKey: a,
 									offset: rotate(0.5),
-									length: 0.2,
+									width: 0.2,
 								});
+
+								const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
 
 								const result = await consumeAllFromAsyncIterator(
 									toRebalance(
 										[
 											{
-												prev,
+												range: prev,
+												type: "replaced",
+												timestamp: 0n,
+											},
+
+											{
 												range: updated,
-												type: "updated",
+												type: "added",
+												timestamp: 1n,
 											},
 										],
 										index,
+										cache,
 									),
 								);
 								expect(result.map((x) => x.gid)).to.deep.equal(["b"]);
@@ -1971,28 +2253,232 @@ resolutions.forEach((resolution) => {
 								const prev = createReplicationRangeFromNormalized({
 									publicKey: a,
 									offset: rotate(0.5),
-									length: 0.2,
+									width: 0.2,
 								});
 								const updated = createReplicationRangeFromNormalized({
 									id: prev.id,
 									publicKey: a,
 									offset: rotate(0.2),
-									length: 0.2,
+									width: 0.2,
 								});
+								const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
 
 								const result = await consumeAllFromAsyncIterator(
 									toRebalance(
 										[
 											{
-												prev,
+												range: prev,
+												type: "replaced",
+												timestamp: 0n,
+											},
+
+											{
 												range: updated,
-												type: "updated",
+												type: "added",
+												timestamp: 1n,
 											},
 										],
 										index,
+										cache,
 									),
 								);
 								expect(result.map((x) => x.gid)).to.deep.equal(["b"]);
+							});
+						});
+
+						describe("replace", () => {
+							it("differential between added and removed", async () => {
+								await create(
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.05)),
+										assignedToRangeBoundary: false,
+										hash: "a",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "a",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.15)),
+										assignedToRangeBoundary: false,
+										hash: "b",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "b",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.29)),
+										assignedToRangeBoundary: false,
+										hash: "c",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "c",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+								);
+
+								const first = createReplicationRangeFromNormalized({
+									publicKey: a,
+									offset: rotate(0),
+									width: 0.2,
+								});
+
+								// second covers first and a little bit more
+								const second = createReplicationRangeFromNormalized({
+									publicKey: a,
+									offset: rotate(0),
+									width: 0.3,
+								});
+
+								// the differential makes it so that only range:
+								// (0,0.1)
+								// (0.2, 0.3)
+								// needs to be considered
+								const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+								let result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "added",
+												timestamp: 0n,
+											},
+										],
+										index,
+										cache,
+									),
+								);
+								expect(result.map((x) => x.gid)).to.deep.equal(["a", "b"]);
+
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "removed",
+												timestamp: 1n,
+											},
+
+											{
+												range: second,
+												type: "added",
+												timestamp: 2n,
+											},
+										],
+										index,
+										cache,
+									),
+								);
+								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
+							});
+
+							it("differential between added and replaced", async () => {
+								await create(
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.05)),
+										assignedToRangeBoundary: false,
+										hash: "a",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "a",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.15)),
+										assignedToRangeBoundary: false,
+										hash: "b",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "b",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.29)),
+										assignedToRangeBoundary: false,
+										hash: "c",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "c",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+								);
+
+								const first = createReplicationRangeFromNormalized({
+									publicKey: a,
+									offset: rotate(0),
+									width: 0.2,
+								});
+
+								// second covers first and a little bit more
+								const second = createReplicationRangeFromNormalized({
+									publicKey: a,
+									offset: rotate(0),
+									width: 0.3,
+								});
+
+								// the differential makes it so that only range:
+								// (0,0.1)
+								// (0.2, 0.3)
+								// needs to be considered
+								const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+								let result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "added",
+												timestamp: 0n,
+											},
+										],
+										index,
+										cache,
+									),
+								);
+								expect(result.map((x) => x.gid)).to.deep.equal(["a", "b"]);
+
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "replaced",
+												timestamp: 1n,
+											},
+
+											{
+												range: second,
+												type: "added",
+												timestamp: 2n,
+											},
+										],
+										index,
+										cache,
+									),
+								);
+								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
 							});
 						});
 
@@ -2027,25 +2513,33 @@ resolutions.forEach((resolution) => {
 							const prev = createReplicationRangeFromNormalized({
 								publicKey: a,
 								offset: rotate(0.2),
-								length: 0.2,
+								width: 0.2,
 							});
 							const updated = createReplicationRangeFromNormalized({
 								id: prev.id,
 								publicKey: a,
 								offset: rotate(0.4),
-								length: 0.2,
+								width: 0.2,
 							});
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
 
 							const result = await consumeAllFromAsyncIterator(
 								toRebalance(
 									[
 										{
-											prev,
+											range: prev,
+											type: "replaced",
+											timestamp: 0n,
+										},
+
+										{
 											range: updated,
-											type: "updated",
+											type: "added",
+											timestamp: 1n,
 										},
 									],
 									index,
+									cache,
 								),
 							);
 							expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
@@ -2082,8 +2576,10 @@ resolutions.forEach((resolution) => {
 							const updated = createReplicationRangeFromNormalized({
 								publicKey: a,
 								offset: rotate(0.2),
-								length: 0.2,
+								width: 0.2,
 							});
+
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
 
 							const result = await consumeAllFromAsyncIterator(
 								toRebalance(
@@ -2091,15 +2587,17 @@ resolutions.forEach((resolution) => {
 										{
 											range: updated,
 											type: "removed",
+											timestamp: 0n,
 										},
 									],
 									index,
+									cache,
 								),
 							);
 							expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
 						});
 
-						it("boundary assigned are always included", async () => {
+						it("boundary assigned are always included for empty set", async () => {
 							await create(
 								createEntryReplicated({
 									coordinate: denormalizeFn(rotate(0)),
@@ -2126,10 +2624,255 @@ resolutions.forEach((resolution) => {
 									}),
 								}),
 							);
+
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
 							const result = await consumeAllFromAsyncIterator(
-								toRebalance([], index),
+								toRebalance([], index, cache),
 							);
 							expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
+						});
+
+						it("boundary assigned excluded when strict intent and not overlapping", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0)),
+									assignedToRangeBoundary: true,
+									hash: "a",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "a",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0.51)),
+									assignedToRangeBoundary: false,
+									hash: "b",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "b",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							const range = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+							});
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+							const result = await consumeAllFromAsyncIterator(
+								toRebalance(
+									[{ range: range, type: "added", timestamp: 0n }],
+									index,
+									cache,
+								),
+							);
+							expect(result.map((x) => x.gid)).to.deep.eq(["b"]);
+						});
+
+						it("boundary assigned included when mixed strictness", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0)),
+									assignedToRangeBoundary: true,
+									hash: "a",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "a",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0.51)),
+									assignedToRangeBoundary: false,
+									hash: "b",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "b",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							const range = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+							});
+
+							const rangeNonStrict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.NonStrict,
+							});
+
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+							const result = await consumeAllFromAsyncIterator(
+								toRebalance(
+									[
+										{ range: range, type: "added", timestamp: 0n },
+										{ range: rangeNonStrict, type: "added", timestamp: 1n },
+									],
+									index,
+									cache,
+								),
+							);
+							expect(result.map((x) => x.gid)).to.deep.eq(["a", "b"]);
+						});
+
+						it("boundary assigned included when updated mixed strictness", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0)),
+									assignedToRangeBoundary: true,
+									hash: "a",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "a",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0.51)),
+									assignedToRangeBoundary: false,
+									hash: "b",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "b",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							const range = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+							});
+
+							const rangeNonStrict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.NonStrict,
+							});
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: range,
+													type: "replaced",
+													timestamp: 0n,
+												},
+
+												{
+													range: rangeNonStrict,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											new Cache<string>({ max: 1000, ttl: 1e5 }),
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a", "b"]);
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: range,
+													type: "replaced",
+													timestamp: 0n,
+												},
+
+												{
+													range: rangeNonStrict,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											new Cache<string>({ max: 1000, ttl: 1e5 }),
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a", "b"]);
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: rangeNonStrict,
+													type: "replaced",
+													timestamp: 0n,
+												},
+
+												{
+													range: rangeNonStrict,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											new Cache<string>({ max: 1000, ttl: 1e5 }),
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a", "b"]);
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: range,
+													type: "replaced",
+													timestamp: 0n,
+												},
+
+												{
+													range: range,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											new Cache<string>({ max: 1000, ttl: 1e5 }),
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["b"]);
 						});
 
 						it("many items", async () => {
@@ -2151,13 +2894,308 @@ resolutions.forEach((resolution) => {
 									}),
 								);
 							}
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
 
 							await create(...entries);
 							expect(
-								await consumeAllFromAsyncIterator(toRebalance([], index)).then(
-									(x) => x.length,
-								),
+								await consumeAllFromAsyncIterator(
+									toRebalance([], index, cache),
+								).then((x) => x.length),
 							).to.eq(count);
+						});
+
+						it("between coordinates", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: [0, 10],
+									assignedToRangeBoundary: true,
+									hash: "a",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "a",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: [5, 15],
+									assignedToRangeBoundary: false,
+									hash: "b",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "b",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+							const rangeIncludingB = createReplicationRange({
+								publicKey: a,
+								offset: 3,
+								width: 3,
+								mode: ReplicationIntent.Strict,
+							});
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: rangeIncludingB,
+													type: "added",
+													timestamp: 0n,
+												},
+											],
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["b"]);
+
+							const rangeIncludingA = createReplicationRange({
+								publicKey: a,
+								offset: 8,
+								width: 3,
+								mode: ReplicationIntent.Strict,
+							});
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: rangeIncludingA,
+													type: "added",
+													timestamp: 0n,
+												},
+											],
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a"]);
+						});
+
+						it("multiple ranges", async () => {
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+							await create(
+								createEntryReplicated({
+									coordinate: [0, 10],
+									assignedToRangeBoundary: true,
+									hash: "a",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "a",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: [5, 13],
+									assignedToRangeBoundary: false,
+									hash: "b",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "b",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: [15, 20],
+									assignedToRangeBoundary: false,
+									hash: "c",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "c",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							const rangeIncludingA = createReplicationRange({
+								publicKey: a,
+								offset: 8,
+								width: 3,
+								mode: ReplicationIntent.Strict,
+							});
+
+							const rangeIncludingC = createReplicationRange({
+								publicKey: a,
+								offset: 14,
+								width: 2,
+								mode: ReplicationIntent.Strict,
+							});
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: rangeIncludingA,
+													type: "added",
+													timestamp: 0n,
+												},
+												{
+													range: rangeIncludingC,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a", "c"]);
+						});
+
+						it("multiple ranges (many)", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: [3000],
+									assignedToRangeBoundary: false,
+									hash: "c",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "c",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							let ranges: (
+								| ReplicationRangeIndexableU32
+								| ReplicationRangeIndexableU64
+							)[] = [];
+							for (let i = 0; i < 300; i += 10) {
+								ranges.push(
+									createReplicationRange({
+										publicKey: a,
+										offset: 0,
+										width: 10,
+										mode: ReplicationIntent.Strict,
+									}),
+								);
+							}
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											ranges.map((range) => ({
+												range,
+												type: "added",
+												timestamp: 0n,
+											})),
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq([]);
+						});
+
+						it("maturity will retrigger rebalance", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: [0],
+									assignedToRangeBoundary: false,
+									hash: "a",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "a",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							const range = createReplicationRange({
+								publicKey: a,
+								offset: 0,
+								width: 1,
+								mode: ReplicationIntent.Strict,
+							});
+
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range,
+													type: "added",
+													timestamp: 0n,
+												},
+											],
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a"]);
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range,
+													type: "removed",
+													timestamp: 0n,
+												},
+												{
+													range,
+													type: "added",
+													timestamp: 1n,
+												},
+											],
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq([]);
+
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range,
+													type: "added",
+													timestamp: 0n,
+													matured: true,
+												},
+											],
+											index,
+											cache,
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq(["a"]);
 						});
 					});
 				});

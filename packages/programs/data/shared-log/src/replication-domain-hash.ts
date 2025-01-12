@@ -6,24 +6,9 @@ import { type EntryReplicated } from "./ranges.js";
 import {
 	type Log,
 	type ReplicationDomain,
+	type ReplicationDomainConstructor,
 	type ReplicationDomainMapper,
 } from "./replication-domain.js";
-
-/* const hashToU32 = (hash: Uint8Array) => {
-	const seedNumber = new BinaryReader(
-		hash.subarray(hash.length - 4, hash.length),
-	).u32();
-	return seedNumber;
-};
-
-
-const hashToU64 = (hash: Uint8Array): bigint => {
-	const seedNumber = new BinaryReader(
-		hash.subarray(hash.length - 4, hash.length), //  
-	).u64();
-	return seedNumber;
-};
- */
 
 const hashTransformer = <R extends "u32" | "u64">(
 	resolution: R,
@@ -54,17 +39,19 @@ export type ReplicationDomainHash<R extends "u32" | "u64"> = ReplicationDomain<
 	R
 >;
 
-export const createReplicationDomainHash = <R extends "u32" | "u64">(
-	resolution: R,
-): ReplicationDomainHash<R> => {
-	return {
-		resolution,
-		type: "hash",
-		fromEntry: hashTransformer<R>(resolution),
-		fromArgs: async (args: undefined, log: Log) => {
-			return {
-				offset: log.node.identity.publicKey,
-			};
-		},
+export const createReplicationDomainHash =
+	<R extends "u32" | "u64">(
+		resolution: R,
+	): ReplicationDomainConstructor<ReplicationDomainHash<R>> =>
+	(log: Log) => {
+		return {
+			resolution,
+			type: "hash",
+			fromEntry: hashTransformer<R>(resolution),
+			fromArgs: async (args: undefined) => {
+				return {
+					offset: log.node.identity.publicKey,
+				};
+			},
+		};
 	};
-};

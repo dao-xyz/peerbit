@@ -63,6 +63,7 @@ import {
 } from "./exchange-heads.js";
 import {
 	MAX_U32,
+	MAX_U64,
 	type NumberFromType,
 	type Numbers,
 	bytesToNumber,
@@ -75,6 +76,8 @@ import {
 	type EntryReplicated,
 	EntryReplicatedU32,
 	EntryReplicatedU64,
+	type ReplicationChange,
+	type ReplicationChanges,
 	ReplicationIntent,
 	type ReplicationRangeIndexable,
 	ReplicationRangeIndexableU32,
@@ -82,9 +85,11 @@ import {
 	ReplicationRangeMessage,
 	SyncStatus,
 	appromixateCoverage,
+	countCoveringRangesSameOwner,
+	debounceAggregationChanges,
+	getAllMergeCandiates,
 	getCoverSet,
 	getSamples,
-	iHaveCoveringRange,
 	isMatured,
 	isReplicationRangeMessage,
 	mergeRanges,
@@ -102,11 +107,8 @@ import {
 } from "./replication-domain-time.js";
 import {
 	type ExtractDomainArgs,
-	type ReplicationChange,
-	type ReplicationChanges,
 	type ReplicationDomain,
-	debounceAggregationChanges,
-	mergeReplicationChanges,
+	type ReplicationDomainConstructor,
 } from "./replication-domain.js";
 import {
 	AbsoluteReplicas,
@@ -143,6 +145,7 @@ export {
 	EntryReplicatedU32,
 	EntryReplicatedU64,
 };
+export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn({ module: "shared-log" });
 
 const getLatestEntry = (
@@ -183,7 +186,6 @@ export type FixedReplicationOptions = {
 	factor: number | bigint | "all" | "right";
 	strict?: boolean; // if true, only this range will be replicated
 	offset?: number | bigint;
-	syncStatus?: SyncStatus;
 };
 
 export type ReplicationOptions<R extends "u32" | "u64" = any> =
@@ -249,7 +251,7 @@ interface IndexableDomain<R extends "u32" | "u64"> {
 		properties: {
 			id?: Uint8Array;
 			offset: NumberFromType<R>;
-			length: NumberFromType<R>;
+			width: NumberFromType<R>;
 			mode?: ReplicationIntent;
 			timestamp?: bigint;
 		} & ({ publicKeyHash: string } | { publicKey: PublicSignKey }),
@@ -299,7 +301,7 @@ export type SharedLogOptions<
 	waitForPruneDelay?: number;
 	distributionDebounceTime?: number;
 	compatibility?: number;
-	domain?: D;
+	domain?: ReplicationDomainConstructor<D>;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -374,6 +376,8 @@ export class SharedLog<
 	private _replicationRangeIndex!: Index<ReplicationRangeIndexable<R>>;
 	private _entryCoordinatesIndex!: Index<EntryReplicated<R>>;
 	private coordinateToHash!: Cache<string>;
+	private recentlyRebalanced!: Cache<string>;
+
 	private uniqueReplicators!: Set<string>;
 
 	/* private _totalParticipation!: number; */
@@ -459,7 +463,7 @@ export class SharedLog<
 	private _requestIPruneResponseReplicatorSet!: Map<string, Set<string>>; // tracks entry hash to peer hash
 
 	private replicationChangeDebounceFn!: ReturnType<
-		typeof debounceAggregationChanges
+		typeof debounceAggregationChanges<ReplicationRangeIndexable<R>>
 	>;
 
 	// regular distribution checks
@@ -557,13 +561,11 @@ export class SharedLog<
 		{
 			reset,
 			checkDuplicates,
-			syncStatus,
 			announce,
 			mergeSegments,
 		}: {
 			reset?: boolean;
 			checkDuplicates?: boolean;
-			syncStatus?: SyncStatus;
 			mergeSegments?: boolean;
 			announce?: (
 				msg: AddedReplicationSegmentMessage | AllReplicatingSegmentsMessage,
@@ -574,7 +576,8 @@ export class SharedLog<
 		if (isUnreplicationOptions(options)) {
 			await this.unreplicate();
 		} else {
-			let ranges: ReplicationRangeIndexable<any>[] = [];
+			let rangesToReplicate: ReplicationRangeIndexable<R>[] = [];
+			let rangesToUnreplicate: ReplicationRangeIndexable<R>[] = [];
 
 			if (options == null) {
 				options = {};
@@ -595,11 +598,11 @@ export class SharedLog<
 					// not allowed
 					return;
 				}
-				ranges = [maybeRange];
+				rangesToReplicate = [maybeRange];
 
 				offsetWasProvided = true;
 			} else if (isReplicationRangeMessage(options)) {
-				ranges = [
+				rangesToReplicate = [
 					options.toReplicationRangeIndexable(this.node.identity.publicKey),
 				];
 
@@ -650,60 +653,62 @@ export class SharedLog<
 					let factorDenormalized = !normalized
 						? factor
 						: this.indexableDomain.numbers.denormalize(factor as number);
-					ranges.push(
+					rangesToReplicate.push(
 						new this.indexableDomain.constructorRange({
 							id: rangeArg.id,
 							// @ts-ignore
 							offset: offset,
 							// @ts-ignore
-							length: (factor === "all"
+							width: (factor === "all"
 								? fullWidth
 								: factor === "right"
 									? // @ts-ignore
 										fullWidth - offset
 									: factorDenormalized) as NumberFromType<R>,
-							/* typeof factor === "number"
-								? factor
-								: factor === "all"
-									? width
-									// @ts-ignore
-									: width - offset, */
 							publicKeyHash: this.node.identity.publicKey.hashcode(),
 							mode: rangeArg.strict
 								? ReplicationIntent.Strict
 								: ReplicationIntent.NonStrict, // automatic means that this range might be reused later for dynamic replication behaviour
 							timestamp: timestamp ?? BigInt(+new Date()),
 						}),
-						/* new ReplicationRangeIndexable({
-							id: rangeArg.id,
-							normalized,
-							offset: offset,
-							length:
-								typeof factor === "number"
-									? factor
-									: factor === "all"
-										? width
-										// @ts-ignore
-										: width - offset,
-							publicKeyHash: this.node.identity.publicKey.hashcode(),
-							mode: rangeArg.strict
-								? ReplicationIntent.Strict
-								: ReplicationIntent.NonStrict, // automatic means that this range might be reused later for dynamic replication behaviour
-							timestamp: BigInt(+new Date()),
-						}), */
 					);
 				}
 
-				if (mergeSegments && ranges.length > 1) {
-					const mergedSegment = mergeRanges(
-						ranges,
-						this.indexableDomain.numbers,
-					);
-					ranges = [mergedSegment];
+				if (mergeSegments) {
+					let range =
+						rangesToReplicate.length > 1
+							? mergeRanges(rangesToReplicate, this.indexableDomain.numbers)
+							: rangesToReplicate[0];
+
+					// also merge segments that are already in the index
+					if (this.domain.canMerge) {
+						const mergable = await getAllMergeCandiates(
+							this.replicationIndex,
+							range,
+							this.indexableDomain.numbers,
+						);
+						const mergeableFiltered: ReplicationRangeIndexable<R>[] = [range];
+
+						for (const mergeCandidate of mergable) {
+							if (this.domain.canMerge(mergeCandidate, range)) {
+								mergeableFiltered.push(mergeCandidate);
+								if (mergeCandidate.idString !== range.idString) {
+									rangesToUnreplicate.push(mergeCandidate);
+								}
+							}
+						}
+						if (mergeableFiltered.length > 1) {
+							range = mergeRanges(
+								mergeableFiltered,
+								this.indexableDomain.numbers,
+							);
+						}
+					}
+					rangesToReplicate = [range];
 				}
 			}
 
-			for (const range of ranges) {
+			for (const range of rangesToReplicate) {
 				this.oldestOpenTime = Math.min(
 					Number(range.timestamp),
 					this.oldestOpenTime,
@@ -717,14 +722,29 @@ export class SharedLog<
 				// but ({ replicate: 0.5, offset: 0.5 }) means that we want to add a range
 				// TODO make behaviour more clear
 			}
-			await this.startAnnounceReplicating(ranges, {
+			await this.startAnnounceReplicating(rangesToReplicate, {
 				reset: resetRanges ?? false,
 				checkDuplicates,
 				announce,
-				syncStatus,
 			});
 
-			return ranges;
+			if (rangesToUnreplicate.length > 0) {
+				await this.removeReplicationRanges(
+					rangesToUnreplicate,
+					this.node.identity.publicKey,
+				);
+
+				await this.rpc.send(
+					new StoppedReplicating({
+						segmentIds: rangesToUnreplicate.map((x) => x.id),
+					}),
+					{
+						priority: 1,
+					},
+				);
+			}
+
+			return rangesToReplicate;
 		}
 	}
 
@@ -773,7 +793,6 @@ export class SharedLog<
 			| ReplicationRangeMessage<any>[]
 			| ReplicationOptions<R>
 			| undefined = undefined;
-		let syncStatus = SyncStatus.Unsynced;
 
 		if (rangeOrEntry instanceof ReplicationRangeMessage) {
 			range = rangeOrEntry;
@@ -783,7 +802,6 @@ export class SharedLog<
 				offset: await this.domain.fromEntry(rangeOrEntry),
 				normalized: false,
 			};
-			syncStatus = SyncStatus.Synced; /// we already have the entries
 		} else if (Array.isArray(rangeOrEntry)) {
 			let ranges: (ReplicationRangeMessage<any> | FixedReplicationOptions)[] =
 				[];
@@ -793,9 +811,8 @@ export class SharedLog<
 						factor: 1,
 						offset: await this.domain.fromEntry(entry),
 						normalized: false,
+						strict: true,
 					});
-
-					syncStatus = SyncStatus.Synced; /// we already have the entries
 				} else {
 					ranges.push(entry);
 				}
@@ -805,18 +822,34 @@ export class SharedLog<
 			range = rangeOrEntry ?? true;
 		}
 
-		return this._replicate(range, { ...options, syncStatus });
+		return this._replicate(range, options);
 	}
 
-	async unreplicate(rangeOrEntry?: Entry<T> | ReplicationRangeMessage<R>) {
-		let range: FixedReplicationOptions;
+	async unreplicate(rangeOrEntry?: Entry<T> | { id: Uint8Array }[]) {
+		let segmentIds: Uint8Array<ArrayBufferLike>[];
 		if (rangeOrEntry instanceof Entry) {
-			range = {
+			let range: FixedReplicationOptions = {
 				factor: 1,
 				offset: await this.domain.fromEntry(rangeOrEntry),
 			};
-		} else if (rangeOrEntry instanceof ReplicationRangeMessage) {
-			range = rangeOrEntry;
+			const indexed = this.replicationIndex.iterate({
+				query: {
+					width: 1,
+					start1: range.offset /* ,
+					hash: this.node.identity.publicKey.hashcode(), */,
+				},
+			});
+			segmentIds = (await indexed.all()).map((x) => x.id.key as Uint8Array);
+			if (segmentIds.length === 0) {
+				logger.warn("No segment found to unreplicate");
+				return;
+			}
+		} else if (Array.isArray(rangeOrEntry)) {
+			segmentIds = rangeOrEntry.map((x) => x.id);
+			if (segmentIds.length === 0) {
+				logger.warn("No segment found to unreplicate");
+				return;
+			}
 		} else {
 			this._isReplicating = false;
 			this._isAdaptiveReplicating = false;
@@ -830,15 +863,14 @@ export class SharedLog<
 			throw new Error("Unsupported when adaptive replicating");
 		}
 
-		const indexed = this.replicationIndex.iterate({
-			query: {
-				width: 1,
-				start1: range.offset,
-			},
-		});
-
-		const segmentIds = (await indexed.all()).map((x) => x.id.key as Uint8Array);
-		await this.removeReplicationRange(segmentIds, this.node.identity.publicKey);
+		const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
+			segmentIds,
+			this.node.identity.publicKey,
+		);
+		await this.removeReplicationRanges(
+			rangesToRemove,
+			this.node.identity.publicKey,
+		);
 		await this.rpc.send(new StoppedReplicating({ segmentIds }), {
 			priority: 1,
 		});
@@ -881,10 +913,12 @@ export class SharedLog<
 			}
 		}
 
+		const timestamp = BigInt(+new Date());
 		for (const x of deleted) {
 			this.replicationChangeDebounceFn.add({
 				range: x.value,
 				type: "removed",
+				timestamp,
 			});
 		}
 
@@ -917,7 +951,10 @@ export class SharedLog<
 				: +new Date();
 	}
 
-	private async removeReplicationRange(ids: Uint8Array[], from: PublicSignKey) {
+	private async resolveReplicationRangesFromIdsAndKey(
+		ids: Uint8Array[],
+		from: PublicSignKey,
+	) {
 		let idMatcher = new Or(
 			ids.map((x) => new ByteMatchQuery({ key: "id", value: x })),
 		);
@@ -929,10 +966,17 @@ export class SharedLog<
 		});
 
 		let query = new And([idMatcher, identityMatcher]);
-
+		return (await this.replicationIndex.iterate({ query }).all()).map(
+			(x) => x.value,
+		);
+	}
+	private async removeReplicationRanges(
+		ranges: ReplicationRangeIndexable<R>[],
+		from: PublicSignKey,
+	) {
 		const pendingMaturity = this.pendingMaturity.get(from.hashcode());
 		if (pendingMaturity) {
-			for (const id of ids) {
+			for (const id of ranges) {
 				const info = pendingMaturity.get(id.toString());
 				if (info) {
 					clearTimeout(info.timeout);
@@ -944,7 +988,11 @@ export class SharedLog<
 			}
 		}
 
-		await this.replicationIndex.del({ query });
+		await this.replicationIndex.del({
+			query: new Or(
+				ranges.map((x) => new ByteMatchQuery({ key: "id", value: x.id })),
+			),
+		});
 
 		const otherSegmentsIterator = this.replicationIndex.iterate(
 			{ query: { hash: from.hashcode() } },
@@ -974,15 +1022,17 @@ export class SharedLog<
 		{
 			reset,
 			checkDuplicates,
-		}: { reset?: boolean; checkDuplicates?: boolean } = {},
+			timestamp: ts,
+		}: { reset?: boolean; checkDuplicates?: boolean; timestamp?: number } = {},
 	) {
 		if (this._isTrustedReplicator && !(await this._isTrustedReplicator(from))) {
 			return undefined;
 		}
 		let isNewReplicator = false;
+		let timestamp = BigInt(ts ?? +new Date());
 
-		let diffs: ReplicationChanges;
-		let deleted: ReplicationRangeIndexable<any>[] | undefined = undefined;
+		let diffs: ReplicationChanges<ReplicationRangeIndexable<R>>;
+		let deleted: ReplicationRangeIndexable<R>[] | undefined = undefined;
 		if (reset) {
 			deleted = (
 				await this.replicationIndex
@@ -998,10 +1048,10 @@ export class SharedLog<
 
 			diffs = [
 				...deleted.map((x) => {
-					return { range: x, type: "removed" as const };
+					return { range: x, type: "removed" as const, timestamp };
 				}),
 				...ranges.map((x) => {
-					return { range: x, type: "added" as const };
+					return { range: x, type: "added" as const, timestamp };
 				}),
 			];
 
@@ -1031,7 +1081,9 @@ export class SharedLog<
 
 				// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
 				for (const range of ranges) {
-					if (!(await iHaveCoveringRange(this.replicationIndex, range))) {
+					if (
+						!(await countCoveringRangesSameOwner(this.replicationIndex, range))
+					) {
 						deduplicated.push(range);
 					}
 				}
@@ -1042,19 +1094,31 @@ export class SharedLog<
 				existingMap.set(result.value.idString, result.value);
 			}
 
-			let changes: ReplicationChanges = ranges
+			let changes: ReplicationChanges<ReplicationRangeIndexable<R>> = ranges
 				.map((x) => {
 					const prev = existingMap.get(x.idString);
 					if (prev) {
 						if (prev.equalRange(x)) {
-							return undefined;
+							return [];
 						}
-						return { range: x, prev, type: "updated" };
+						return [
+							{
+								range: prev,
+								timestamp: x.timestamp - 1n,
+								prev,
+								type: "replaced" as const,
+							},
+							{
+								range: x,
+								timestamp: x.timestamp,
+								type: "added" as const,
+							},
+						];
 					} else {
-						return { range: x, type: "added" };
+						return { range: x, timestamp: x.timestamp, type: "added" as const };
 					}
 				})
-				.filter((x) => x != null) as ReplicationChanges;
+				.flat() as ReplicationChanges<ReplicationRangeIndexable<R>>;
 			diffs = changes;
 		}
 
@@ -1065,7 +1129,7 @@ export class SharedLog<
 		let isAllMature = true;
 
 		for (const diff of diffs) {
-			if (diff.type === "added" || diff.type === "updated") {
+			if (diff.type === "added") {
 				/* if (this.closed) {
 					return;
 				} */
@@ -1104,7 +1168,7 @@ export class SharedLog<
 								}),
 							);
 
-							this.replicationChangeDebounceFn.add(diff); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+							this.replicationChangeDebounceFn.add({ ...diff, matured: true }); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
 							pendingRanges.delete(diff.range.idString);
 							if (pendingRanges.size === 0) {
 								this.pendingMaturity.delete(diff.range.hash);
@@ -1123,7 +1187,7 @@ export class SharedLog<
 						});
 					}
 				}
-			} else {
+			} else if (diff.type === "removed") {
 				const pendingFromPeer = this.pendingMaturity.get(diff.range.hash);
 				if (pendingFromPeer) {
 					const prev = pendingFromPeer.get(diff.range.idString);
@@ -1136,6 +1200,7 @@ export class SharedLog<
 					}
 				}
 			}
+			// else replaced, do nothing
 		}
 
 		if (reset) {
@@ -1394,10 +1459,10 @@ export class SharedLog<
 
 		// TODO types
 		this.domain = options?.domain
-			? (options.domain as any as D)
+			? (options.domain(this) as D)
 			: (createReplicationDomainHash(
 					options?.compatibility && options?.compatibility < 10 ? "u32" : "u64",
-				) as D);
+				)(this) as D);
 		this.indexableDomain = createIndexableDomainFromResolution(
 			this.domain.resolution,
 		);
@@ -1406,6 +1471,7 @@ export class SharedLog<
 		this._pendingIHave = new Map();
 		this.latestReplicationInfoMessage = new Map();
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
+		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
 		this.uniqueReplicators = new Set();
 
@@ -1476,7 +1542,9 @@ export class SharedLog<
 		this._requestIPruneSent = new Map();
 		this._requestIPruneResponseReplicatorSet = new Map();
 
-		this.replicationChangeDebounceFn = debounceAggregationChanges(
+		this.replicationChangeDebounceFn = debounceAggregationChanges<
+			ReplicationRangeIndexable<R>
+		>(
 			(change) =>
 				this.onReplicationChange(change).then(() =>
 					this.rebalanceParticipationDebounced?.(),
@@ -1800,17 +1868,18 @@ export class SharedLog<
 	) {
 		let roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
 		let eager = options?.eager ?? false;
-		const range = await this.domain.fromArgs(args, this);
+		const range = await this.domain.fromArgs(args);
 
+		const width =
+			range.length ??
+			(await minimumWidthToCover<R>(
+				this.replicas.min.getValue(this),
+				this.indexableDomain.numbers,
+			));
 		const set = await getCoverSet<R>({
 			peers: this.replicationIndex,
 			start: range.offset,
-			widthToCoverScaled:
-				range.length ??
-				(await minimumWidthToCover<R>(
-					this.replicas.min.getValue(this),
-					this.indexableDomain.numbers,
-				)),
+			widthToCoverScaled: width,
 			roleAge,
 			eager,
 			numbers: this.indexableDomain.numbers,
@@ -1837,6 +1906,7 @@ export class SharedLog<
 
 		this.distributeQueue?.clear();
 		this.coordinateToHash.clear();
+		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
 
 		this._closeController.abort();
@@ -2378,7 +2448,11 @@ export class SharedLog<
 								x.toReplicationRangeIndexable(context.from!),
 							),
 							context.from!,
-							{ reset, checkDuplicates: true },
+							{
+								reset,
+								checkDuplicates: true,
+								timestamp: Number(context.timestamp),
+							},
 						);
 
 						/* await this._modifyReplicators(msg.role, context.from!); */
@@ -2403,7 +2477,19 @@ export class SharedLog<
 					return;
 				}
 
-				await this.removeReplicationRange(msg.segmentIds, context.from);
+				const rangesToRemove = await this.resolveReplicationRangesFromIdsAndKey(
+					msg.segmentIds,
+					context.from,
+				);
+				await this.removeReplicationRanges(rangesToRemove, context.from);
+				const timestamp = BigInt(+new Date());
+				for (const range of rangesToRemove) {
+					this.replicationChangeDebounceFn.add({
+						range,
+						type: "removed",
+						timestamp,
+					});
+				}
 			} else {
 				throw new Error("Unexpected message");
 			}
@@ -2563,6 +2649,7 @@ export class SharedLog<
 				| boolean
 				| {
 						mergeSegments?: boolean;
+						assumeSynced?: boolean;
 				  };
 		},
 	): Promise<void> {
@@ -2605,11 +2692,20 @@ export class SharedLog<
 
 		const persistCoordinate = async (entry: Entry<T>) => {
 			const minReplicas = decodeReplicas(entry).getValue(this);
-			await this.findLeaders(
+			const leaders = await this.findLeaders(
 				await this.createCoordinates(entry, minReplicas),
 				entry,
 				{ persist: {} },
 			);
+
+			if (
+				options?.replicate &&
+				typeof options.replicate !== "boolean" &&
+				options.replicate.assumeSynced
+			) {
+				// make sure we dont start to initate syncing process outwards for this entry
+				this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
+			}
 		};
 		let entriesToPersist: Entry<T>[] = [];
 		let joinOptions = {
@@ -3468,9 +3564,10 @@ export class SharedLog<
 			this._gidPeersHistory.clear();
 		}
 
+		const timestamp = BigInt(+new Date());
 		this.onReplicationChange(
 			(await this.getAllReplicationSegments()).map((x) => {
-				return { range: x, type: "added" };
+				return { range: x, type: "added", timestamp };
 			}),
 		);
 	}
@@ -3480,7 +3577,9 @@ export class SharedLog<
 	}
 
 	async onReplicationChange(
-		changeOrChanges: ReplicationChanges | ReplicationChanges[],
+		changeOrChanges:
+			| ReplicationChanges<ReplicationRangeIndexable<R>>
+			| ReplicationChanges<ReplicationRangeIndexable<R>>[],
 	) {
 		/**
 		 * TODO use information of new joined/leaving peer to create a subset of heads
@@ -3493,7 +3592,6 @@ export class SharedLog<
 
 		await this.log.trim();
 
-		const change = mergeReplicationChanges(changeOrChanges);
 		const changed = false;
 
 		try {
@@ -3502,14 +3600,16 @@ export class SharedLog<
 				Map<string, EntryReplicated<any>>
 			> = new Map();
 
+			let c = 0;
 			for await (const entryReplicated of toRebalance<R>(
-				change,
+				changeOrChanges,
 				this.entryCoordinatesIndex,
+				this.recentlyRebalanced,
 			)) {
 				if (this.closed) {
 					break;
 				}
-
+				c++;
 				let oldPeersSet = this._gidPeersHistory.get(entryReplicated.gid);
 				let isLeader = false;
 
@@ -3660,7 +3760,7 @@ export class SharedLog<
 					// TODO can not reuse old range, since it will (potentially) affect the index because of sideeffects
 					dynamicRange = new this.indexableDomain.constructorRange({
 						offset: dynamicRange.start1,
-						length: this.indexableDomain.numbers.denormalize(newFactor),
+						width: this.indexableDomain.numbers.denormalize(newFactor),
 						publicKeyHash: dynamicRange.hash,
 						id: dynamicRange.id,
 						mode: dynamicRange.mode,
@@ -3729,7 +3829,7 @@ export class SharedLog<
 		if (!range) {
 			range = new this.indexableDomain.constructorRange({
 				offset: this.getDynamicRangeOffset(),
-				length: this.indexableDomain.numbers.zero,
+				width: this.indexableDomain.numbers.zero,
 				publicKeyHash: this.node.identity.publicKey.hashcode(),
 				mode: ReplicationIntent.NonStrict,
 				timestamp: BigInt(+new Date()),

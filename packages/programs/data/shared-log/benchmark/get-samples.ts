@@ -34,7 +34,7 @@ for (const resolution of resolutions) {
 			publicKey: properties.publicKey,
 			mode: properties.mode,
 			// @ts-ignore
-			length: denormalizeFn(properties.length),
+			width: denormalizeFn(properties.length),
 			// @ts-ignore
 			offset: denormalizeFn(properties.offset),
 			timestamp: properties.timestamp,
