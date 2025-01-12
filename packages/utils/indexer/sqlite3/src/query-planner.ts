@@ -83,7 +83,7 @@ export const flattenQuery = function* (props?: {
 	let maxFlatten = 4; // max 4 ORs else the query will be too big
 	if (ors.length === 0 || ors.length >= maxFlatten) {
 		yield {
-			query: ands,
+			query: ors.length === 0 ? ands : props.query,
 			sort: props.sort,
 		};
 		return;
