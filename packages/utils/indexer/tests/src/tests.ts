@@ -1306,7 +1306,7 @@ export const tests = (
 							const resultsNested = await search(store, {
 								query: new StringMatch({
 									key: ["documents", "property"],
-									value: "property 2",
+									value: "nested property 2",
 									caseInsensitive: false,
 								}),
 							});
