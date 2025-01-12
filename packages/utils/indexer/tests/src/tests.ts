@@ -920,6 +920,36 @@ export const tests = (
 							}
 						}
 
+						class DocumentWithProperty {
+							@field({ type: "string" })
+							property: string;
+
+							constructor(property: string) {
+								this.property = property;
+							}
+						}
+
+						class DocumentsVecWithPropertyDocument {
+							@field({ type: Uint8Array })
+							id: Uint8Array;
+
+							@field({ type: "string" })
+							property: string;
+
+							@field({ type: vec(DocumentWithProperty) })
+							documents: DocumentWithProperty[];
+
+							constructor(properties: {
+								id?: Uint8Array;
+								property: string;
+								documents: DocumentWithProperty[];
+							}) {
+								this.id = randomBytes(32);
+								this.property = properties.property;
+								this.documents = properties?.documents || [];
+							}
+						}
+
 						describe("search", () => {
 							let d1: DocumentsVec;
 							let d2: DocumentsVec;
@@ -1078,6 +1108,36 @@ export const tests = (
 									]);
 								});
 
+								it("many or", async () => {
+									let conditions: IntegerCompare[] = [];
+									for (let i = 0; i < 100; i++) {
+										conditions.push(
+											new IntegerCompare({
+												key: ["documents", "number"],
+												compare: Compare.Equal,
+												value: 123n,
+											}),
+										);
+										conditions.push(
+											new IntegerCompare({
+												key: ["documents", "number"],
+												compare: Compare.Equal,
+												value: 124n,
+											}),
+										);
+									}
+									const results3 = await search(store, {
+										query: [new Or(conditions)],
+									});
+
+									expect(
+										results3.map((x) => sha256Base64Sync(x.value.id)),
+									).to.have.members([
+										sha256Base64Sync(d1.id),
+										sha256Base64Sync(d2.id),
+									]);
+								});
+
 								it("or arr, or field", async () => {
 									const results3 = await search(store, {
 										query: [
@@ -1211,6 +1271,48 @@ export const tests = (
 									})
 								).length,
 							).to.equal(0);
+						});
+
+						it("can use re-use same property name", async () => {
+							const out = await setup({
+								schema: DocumentsVecWithPropertyDocument,
+							});
+							store = out.store;
+
+							const d1 = new DocumentsVecWithPropertyDocument({
+								property: "property 1",
+								documents: [new DocumentWithProperty("nested property 1")],
+							});
+
+							const d2 = new DocumentsVecWithPropertyDocument({
+								property: "property 2",
+								documents: [new DocumentWithProperty("nested property 2")],
+							});
+
+							await store.put(d1);
+							await store.put(d2);
+
+							const results = await search(store, {
+								query: new StringMatch({
+									key: "property",
+									value: "property 1",
+									caseInsensitive: false,
+								}),
+							});
+
+							expect(results).to.have.length(1);
+							expect(results[0].value.property).to.equal("property 1");
+
+							const resultsNested = await search(store, {
+								query: new StringMatch({
+									key: ["documents", "property"],
+									value: "property 2",
+									caseInsensitive: false,
+								}),
+							});
+
+							expect(resultsNested).to.have.length(1);
+							expect(resultsNested[0].value.property).to.equal("property 2");
 						});
 					});
 
