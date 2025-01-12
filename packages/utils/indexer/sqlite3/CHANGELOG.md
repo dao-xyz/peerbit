@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.1...indexer-sqlite3-v1.2.2) (2025-01-12)
+
+
+### Bug Fixes
+
+* handle many or conditions ([4395991](https://github.com/dao-xyz/peerbit/commit/439599115aa3553f94d9190be7a677ffd84bace6))
+
 ## [1.2.1](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.0...indexer-sqlite3-v1.2.1) (2024-12-28)
 
 

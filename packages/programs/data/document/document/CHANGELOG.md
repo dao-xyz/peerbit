@@ -456,6 +456,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [8.1.0](https://github.com/dao-xyz/peerbit/compare/document-v8.0.6...document-v8.1.0) (2025-01-12)
+
+
+### Features
+
+* add merge functionality for replication domains for documents ([6d2cda9](https://github.com/dao-xyz/peerbit/commit/6d2cda9af75bee473cfb1f203908124d2f9c318c))
+
+
+### Bug Fixes
+
+* correctly clear up iterator queues on iterator drop ([61cfb6d](https://github.com/dao-xyz/peerbit/commit/61cfb6dfb22733a6b5f5086156ef0dc93b9e4360))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.0.22 to 5.0.23
+    * @peerbit/shared-log bumped from 10.0.6 to 10.1.0
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.1 to ^1.2.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.12 to 2.1.13
+
 ## [8.0.6](https://github.com/dao-xyz/peerbit/compare/document-v8.0.5...document-v8.0.6) (2024-12-30)
 
 
