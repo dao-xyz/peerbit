@@ -3600,7 +3600,6 @@ export class SharedLog<
 				Map<string, EntryReplicated<any>>
 			> = new Map();
 
-			let c = 0;
 			for await (const entryReplicated of toRebalance<R>(
 				changeOrChanges,
 				this.entryCoordinatesIndex,
@@ -3609,7 +3608,6 @@ export class SharedLog<
 				if (this.closed) {
 					break;
 				}
-				c++;
 				let oldPeersSet = this._gidPeersHistory.get(entryReplicated.gid);
 				let isLeader = false;
 
