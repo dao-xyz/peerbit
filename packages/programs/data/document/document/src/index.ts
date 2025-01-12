@@ -18,3 +18,8 @@ export type {
 export * from "./operation.js";
 export { MAX_BATCH_SIZE as MAX_DOCUMENT_SIZE } from "./constants.js";
 export { ClosedError } from "@peerbit/program";
+export {
+	type CustomDocumentDomain,
+	createDocumentDomain,
+	createDocumentDomainFromProperty,
+} from "./domain.js";
