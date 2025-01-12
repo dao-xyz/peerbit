@@ -313,6 +313,15 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.3](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.2...peerbit-v4.1.3) (2025-01-12)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.1 to ^1.2.2
+
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.1...peerbit-v4.1.2) (2024-12-30)
 
 
