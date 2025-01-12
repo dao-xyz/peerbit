@@ -15,11 +15,7 @@ import {
 	convertCountRequestToQuery,
 	convertDeleteRequestToQuery,
 	convertFromSQLType,
-	/* convertFromSQLType, */
-
-	/* convertFromSQLType, */
 	convertSearchRequestToQuery,
-	/* getTableName, */
 	convertSumRequestToQuery,
 	convertToSQLType,
 	escapeColumnName,
