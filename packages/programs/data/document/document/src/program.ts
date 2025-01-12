@@ -24,6 +24,7 @@ import {
 	type SharedLogOptions,
 } from "@peerbit/shared-log";
 import { MAX_BATCH_SIZE } from "./constants.js";
+import type { CustomDocumentDomain } from "./domain.js";
 import {
 	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
@@ -76,9 +77,11 @@ export type CanPerform<T> = (
 	properties: CanPerformOperations<T>,
 ) => MaybePromise<boolean>;
 
+type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
+
 export type SetupOptions<
 	T,
-	I = T,
+	I extends Record<string, any> = T extends Record<string, any> ? T : any,
 	D extends ReplicationDomain<any, Operation, any> = any,
 > = {
 	type: AbstractType<T>;
@@ -94,7 +97,8 @@ export type SetupOptions<
 		trim?: TrimOptions;
 	};
 	compatibility?: 6 | 7;
-} & Exclude<SharedLogOptions<Operation, D>, "compatibility">;
+	domain?: (db: Documents<T, I, D>) => CustomDocumentDomain<InferR<D>>;
+} & Omit<SharedLogOptions<Operation, D, InferR<D>>, "compatibility" | "domain">;
 
 export type ExtractArgs<T> =
 	T extends ReplicationDomain<infer Args, any, any> ? Args : never;
@@ -106,7 +110,7 @@ export class Documents<
 	D extends ReplicationDomain<any, Operation, any> = any,
 > extends Program<SetupOptions<T, I, D>, DocumentEvents<T> & ProgramEvents> {
 	@field({ type: SharedLog })
-	log: SharedLog<Operation, D>;
+	log: SharedLog<Operation, D, InferR<D>>;
 
 	@field({ type: "bool" })
 	immutable: boolean; // "Can I overwrite a document?"
@@ -118,6 +122,7 @@ export class Documents<
 
 	private _optionCanPerform?: CanPerform<T>;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
+	private domain?: CustomDocumentDomain<InferR<D>>;
 
 	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
 
@@ -171,13 +176,16 @@ export class Documents<
 			documentType: this._clazz,
 			transform: options.index,
 			indexBy: idProperty,
-			sync: async (result: documentsTypes.Results<T>) => {
+			sync: async (
+				query: documentsTypes.SearchRequest,
+				result: documentsTypes.Results<T>,
+			) => {
 				// here we arrive for all the results we want to persist.
-				// we we need to do here is
-				// 1. add the entry to a list of entries that we should persist through prunes
+
+				let mergeSegments = this.domain?.canProjectToOneSegment(query);
 				await this.log.join(
 					result.results.map((x) => x.context.head),
-					{ replicate: true },
+					{ replicate: { assumeSynced: true, mergeSegments } },
 				);
 			},
 			dbType: this.constructor,
@@ -191,6 +199,8 @@ export class Documents<
 		} else if (options.compatibility === 7) {
 			logCompatiblity = 9;
 		}
+
+		this.domain = options.domain?.(this);
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
 			canReplicate: options?.canReplicate,
@@ -199,7 +209,9 @@ export class Documents<
 			trim: options?.log?.trim,
 			replicate: options?.replicate,
 			replicas: options?.replicas,
-			domain: options?.domain,
+			domain: (options?.domain
+				? (log: any) => options.domain!(this)
+				: undefined) as any, /// TODO types,
 			compatibility: logCompatiblity,
 		});
 	}

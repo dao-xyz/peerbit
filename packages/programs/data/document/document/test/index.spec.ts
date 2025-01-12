@@ -27,6 +27,7 @@ import {
 	IntegerCompare,
 	Sort,
 	SortDirection,
+	StringMatch,
 	/* StringMatch, */
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
@@ -361,40 +362,6 @@ describe("index", () => {
 
 				await store2.docs.log.replicate(false);
 
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(0),
-				);
-			});
-
-			it("drops when no longer replicating as observer", async () => {
-				let COUNT = 10;
-				await store.docs.log.replicate({
-					factor: 1,
-				});
-				for (let i = 0; i < COUNT; i++) {
-					await store.docs.put(
-						new Document({
-							id: uuid(),
-							name: "Hello world",
-						}),
-					);
-				}
-
-				await waitForResolved(async () =>
-					expect(await store2.docs.index.getSize()).equal(COUNT),
-				);
-
-				store3 = await session.peers[2].open<TestStore>(store.clone(), {
-					args: {
-						replicate: {
-							factor: 1,
-						},
-					},
-				});
-				await store2.docs.log.replicate(false);
-				await waitForResolved(async () =>
-					expect(await store3.docs.index.getSize()).equal(COUNT),
-				);
 				await waitForResolved(async () =>
 					expect(await store2.docs.index.getSize()).equal(0),
 				);
@@ -864,7 +831,7 @@ describe("index", () => {
 				});
 
 				describe("replicate", () => {
-					it("can match replicate", async () => {
+					it("search replicate", async () => {
 						await stores[1].docs.log.unreplicate();
 						expect(
 							await stores[1].docs.log.getMyReplicationSegments(),
@@ -911,6 +878,38 @@ describe("index", () => {
 							await stores[1].docs.log.getMyReplicationSegments(),
 						).to.have.length(4); // no new segments
 					});
+
+					it("iterate replicate", async () => {
+						await stores[1].docs.log.unreplicate();
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).have.length(0);
+						expect(await stores[1].docs.index.getSize()).equal(0);
+
+						const iterator = stores[1].docs.index.iterate(
+							new SearchRequest({
+								query: [],
+							}),
+							{ remote: { replicate: true } },
+						);
+
+						const results = [
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+						];
+
+						expect(results).to.have.length(4);
+
+						await waitForResolved(async () =>
+							expect(await stores[1].docs.index.getSize()).equal(4),
+						);
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(4); // no new segments
+					});
+
 					it("will persist synced entries through prunes", async () => {
 						stores[0].docs.log.replicas = {
 							min: new AbsoluteReplicas(1),
@@ -937,6 +936,29 @@ describe("index", () => {
 						expect(await stores[1].docs.index.getSize()).equal(5);
 						await stores[1].docs.log.waitForPruned();
 						expect(await stores[1].docs.index.getSize()).equal(5);
+					});
+
+					it("will only replicate the synced entries", async () => {
+						expect(stores[1].docs.log.log.length).equal(0);
+						const results = await stores[1].docs.index
+							.iterate(
+								new SearchRequest({
+									query: [
+										new StringMatch({
+											key: "id",
+											value: "4",
+										}),
+									],
+								}),
+								{ remote: { replicate: true } },
+							)
+							.all();
+
+						expect(results).to.have.length(1);
+						expect(results[0].id).equal("4");
+						expect(await stores[1].docs.index.getSize()).equal(1);
+						await delay(3000); // wait for any replcation processes to finish
+						expect(stores[1].docs.log.log.length).equal(1);
 					});
 				});
 
@@ -2022,6 +2044,42 @@ describe("index", () => {
 							).to.eq(0),
 						{ timeout: 3000, delayInterval: 50 },
 					);
+				});
+
+				it("closing store will result queues", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+
+					const request = new SearchRequest({
+						query: [],
+					});
+					const iterator = stores[1].docs.index.iterate(request);
+					await iterator.next(1);
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						2,
+					); // two more results
+					await stores[0].close();
+					expect(await stores[0].docs.index.getPending(request.idString)).to.be
+						.undefined;
+				});
+
+				it("dropping store will result queues", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+
+					const request = new SearchRequest({
+						query: [],
+					});
+					const iterator = stores[1].docs.index.iterate(request);
+					await iterator.next(1);
+					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
+						2,
+					); // two more results
+					await stores[0].drop();
+					expect(await stores[0].docs.index.getPending(request.idString)).to.be
+						.undefined;
 				});
 
 				it("end of iterator, multiple nexts", async () => {

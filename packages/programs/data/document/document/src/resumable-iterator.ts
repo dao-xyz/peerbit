@@ -1,6 +1,5 @@
 import { Cache } from "@peerbit/cache";
 import {
-	type CloseIteratorRequest,
 	type CollectNextRequest,
 	SearchRequest,
 } from "@peerbit/document-interface";
@@ -44,7 +43,7 @@ export class ResumableIterators<T extends Record<string, any>> {
 		return next;
 	}
 
-	async close(close: CloseIteratorRequest) {
+	close(close: { idString: string }) {
 		this.clear(close.idString);
 	}
 

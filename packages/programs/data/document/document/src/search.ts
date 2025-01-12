@@ -56,6 +56,7 @@ export type ResultsIterator<T> = {
 	close: () => Promise<void>;
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
+	all: () => Promise<T[]>;
 };
 
 type QueryDetailedOptions<T, D> = QueryOptions<T, D> & {
@@ -66,9 +67,13 @@ type QueryDetailedOptions<T, D> = QueryOptions<T, D> & {
 };
 
 const introduceEntries = async <T, D>(
+	queryRequest: types.SearchRequest,
 	responses: RPCResponse<types.AbstractSearchResult<T>>[],
 	type: AbstractType<T>,
-	sync: (result: types.Results<T>) => Promise<void>,
+	sync: (
+		queryRequest: types.SearchRequest,
+		result: types.Results<T>,
+	) => Promise<void>,
 	options?: QueryDetailedOptions<T, D>,
 ): Promise<RPCResponse<types.Results<T>>[]> => {
 	const results: RPCResponse<types.Results<T>>[] = [];
@@ -80,7 +85,7 @@ const introduceEntries = async <T, D>(
 		if (response.response instanceof types.Results) {
 			response.response.results.forEach((r) => r.init(type));
 			if (typeof options?.remote !== "boolean" && options?.remote?.replicate) {
-				await sync(response.response);
+				await sync(queryRequest, response.response);
 			}
 			options?.onResponse &&
 				(await options.onResponse(response.response, response.from!)); // TODO fix types
@@ -199,10 +204,13 @@ export type OpenOptions<
 > = {
 	documentType: AbstractType<T>;
 	dbType: AbstractType<types.IDocumentStore<T>>;
-	log: SharedLog<Operation, D>;
+	log: SharedLog<Operation, D, any>;
 	canRead?: CanRead<T>;
 	canSearch?: CanSearch;
-	sync: (result: types.Results<T>) => Promise<void>;
+	sync: (
+		request: types.SearchRequest,
+		result: types.Results<T>,
+	) => Promise<void>;
 	indexBy?: string | string[];
 	transform?: TransformOptions<T, I>;
 };
@@ -245,9 +253,12 @@ export class DocumentIndex<
 
 	private _valueEncoding: Encoding<T>;
 
-	private _sync: (result: types.Results<T>) => Promise<void>;
+	private _sync: (
+		reques: types.SearchRequest,
+		result: types.Results<T>,
+	) => Promise<void>;
 
-	private _log: SharedLog<Operation, D>;
+	private _log: SharedLog<Operation, D, any>;
 
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache: Cache<T>;
@@ -413,6 +424,7 @@ export class DocumentIndex<
 	async close(from?: Program): Promise<boolean> {
 		const closed = await super.close(from);
 		if (closed) {
+			this.clearAllResultQueues();
 			await this.index.stop?.();
 		}
 		return closed;
@@ -421,6 +433,7 @@ export class DocumentIndex<
 	async drop(from?: Program): Promise<boolean> {
 		const dropped = await super.drop(from);
 		if (dropped) {
+			this.clearAllResultQueues();
 			await this.index.drop?.();
 			await this.index.stop?.();
 		}
@@ -629,6 +642,7 @@ export class DocumentIndex<
 
 		if (prevQueued) {
 			this._resultQueue.delete(query.idString);
+			clearTimeout(prevQueued.timeout);
 			prevQueued = undefined;
 		}
 
@@ -684,7 +698,7 @@ export class DocumentIndex<
 		return results;
 	}
 
-	clearResultsQueue(
+	private clearResultsQueue(
 		query:
 			| types.SearchRequest
 			| types.CollectNextRequest
@@ -696,6 +710,15 @@ export class DocumentIndex<
 			this._resultQueue.delete(query.idString);
 		}
 	}
+
+	private clearAllResultQueues() {
+		for (const [key, queue] of this._resultQueue) {
+			clearTimeout(queue.timeout);
+			this._resultQueue.delete(key);
+			this._resumableIterators.close({ idString: key });
+		}
+	}
+
 	async processCloseIteratorRequest(
 		query: types.CloseIteratorRequest,
 		publicKey: PublicSignKey,
@@ -775,6 +798,7 @@ export class DocumentIndex<
 					results: RPCResponse<types.AbstractSearchResult<T>>[],
 				) => {
 					for (const r of await introduceEntries(
+						queryRequest,
 						results,
 						this.documentType,
 						this._sync,
@@ -1062,6 +1086,7 @@ export class DocumentIndex<
 								})
 								.then((response) =>
 									introduceEntries(
+										queryRequest,
 										response,
 										this.documentType,
 										this._sync,
@@ -1212,11 +1237,19 @@ export class DocumentIndex<
 			}
 			await Promise.all(promises);
 		};
-
+		let doneFn = () => done;
 		return {
 			close,
 			next,
-			done: () => done,
+			done: doneFn,
+			all: async () => {
+				let result: T[] = [];
+				while (doneFn() !== true) {
+					let batch = await next(100);
+					result.push(...batch);
+				}
+				return result;
+			},
 		};
 	}
 }
