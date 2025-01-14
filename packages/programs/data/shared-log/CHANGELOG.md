@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.1.0...shared-log-v10.2.0) (2025-01-14)
+
+
+### Features
+
+* replicate: 'resume' ([9af6cc5](https://github.com/dao-xyz/peerbit/commit/9af6cc58c0848e0e8f9f9e02e6eda8ceacce8201))
+
 ## [10.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.6...shared-log-v10.1.0) (2025-01-12)
 
 
