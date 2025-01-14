@@ -758,15 +758,10 @@ describe(`replicate`, () => {
 					},
 				});
 				let joinEvents = 0;
-				/* let leaveEvents = 0; */
 
 				db1.log.events.addEventListener("replicator:join", () => {
 					joinEvents++;
 				});
-
-				/* db1.log.events.addEventListener("replicator:leave", () => {
-					leaveEvents++;
-				}); */
 
 				await waitForResolved(async () => {
 					const segments = await db1.log.replicationIndex.iterate().all();
@@ -776,7 +771,6 @@ describe(`replicate`, () => {
 					);
 				});
 				expect(joinEvents).to.equal(0);
-				/* expect(leaveEvents).to.equal(0); */ // TODO assert correctly (this assertion is flaky since leave events can happen due to that the goodbye from the pubsub layer is delayed)
 			});
 
 			it("segments updated while offline", async () => {
@@ -868,6 +862,38 @@ describe(`replicate`, () => {
 
 				expect(joinEvents).to.equal(1);
 				/* expect(leaveEvents).to.equal(0); */ // TODO assert correctly (this assertion is flaky since leave events can happen due to that the goodbye from the pubsub layer is delayed)
+			});
+
+			it('replicate "resume"', async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0.3,
+							factor: 0.1,
+						},
+					},
+				});
+
+				await db1.log.replicate({ factor: 0.2, offset: 0.6 });
+				await db1.close();
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: "resume",
+					},
+				});
+
+				let segments = await db1.log.replicationIndex.iterate().all();
+				expect(segments).to.have.length(2);
+
+				await db1.close();
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+
+				segments = await db1.log.replicationIndex.iterate().all();
+				expect(segments).to.have.length(0);
 			});
 		});
 	});

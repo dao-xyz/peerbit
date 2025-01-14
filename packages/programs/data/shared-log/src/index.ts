@@ -193,7 +193,8 @@ export type ReplicationOptions<R extends "u32" | "u64" = any> =
 	| FixedReplicationOptions
 	| FixedReplicationOptions[]
 	| number
-	| boolean;
+	| boolean
+	| "resume";
 
 const isAdaptiveReplicatorOption = (
 	options: ReplicationOptions<any>,
@@ -223,6 +224,10 @@ const isReplicationOptionsDependentOnPreviousState = (
 	options?: ReplicationOptions<any>,
 ): boolean => {
 	if (options === true) {
+		return true;
+	}
+
+	if (options === "resume") {
 		return true;
 	}
 
@@ -575,6 +580,8 @@ export class SharedLog<
 		let offsetWasProvided = false;
 		if (isUnreplicationOptions(options)) {
 			await this.unreplicate();
+		} else if (options === "resume") {
+			// don't do anything
 		} else {
 			let rangesToReplicate: ReplicationRangeIndexable<R>[] = [];
 			let rangesToUnreplicate: ReplicationRangeIndexable<R>[] = [];
@@ -722,6 +729,13 @@ export class SharedLog<
 				// but ({ replicate: 0.5, offset: 0.5 }) means that we want to add a range
 				// TODO make behaviour more clear
 			}
+			if (rangesToUnreplicate.length > 0) {
+				await this.removeReplicationRanges(
+					rangesToUnreplicate,
+					this.node.identity.publicKey,
+				);
+			}
+
 			await this.startAnnounceReplicating(rangesToReplicate, {
 				reset: resetRanges ?? false,
 				checkDuplicates,
@@ -729,11 +743,6 @@ export class SharedLog<
 			});
 
 			if (rangesToUnreplicate.length > 0) {
-				await this.removeReplicationRanges(
-					rangesToUnreplicate,
-					this.node.identity.publicKey,
-				);
-
 				await this.rpc.send(
 					new StoppedReplicating({
 						segmentIds: rangesToUnreplicate.map((x) => x.id),
