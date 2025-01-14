@@ -1807,18 +1807,21 @@ export const getAllMergeCandiates = async <R extends "u32" | "u64">(
 		id: Uint8Array;
 	},
 	numbers: Numbers<R>,
-): Promise<ReplicationRangeIndexable<R>[]> => {
+): Promise<MapIterator<ReplicationRangeIndexable<R>>> => {
 	const adjacent = await getAdjecentSameOwner(peers, range, numbers);
 	const covering = await getCoveringRangesSameOwner(peers, range).all();
 
-	let ret: ReplicationRangeIndexable<R>[] = [];
+	let ret: Map<string, ReplicationRangeIndexable<R>> = new Map();
 	if (adjacent.below) {
-		ret.push(adjacent.below);
+		ret.set(adjacent.below.idString, adjacent.below);
 	}
 	if (adjacent.above) {
-		ret.push(adjacent.above);
+		ret.set(adjacent.above.idString, adjacent.above);
 	}
-	return [...ret, ...covering.map((x) => x.value)];
+	for (const range of covering) {
+		ret.set(range.value.idString, range.value);
+	}
+	return ret.values();
 };
 
 export const isMatured = (
@@ -1828,72 +1831,6 @@ export const isMatured = (
 ) => {
 	return now - Number(segment.timestamp) >= minAge;
 };
-/* 
-
-const collectNodesAroundPoint = async <R extends "u32" | "u64">(
-	roleAge: number,
-	peers: Index<ReplicationRangeIndexable<R>>,
-	collector: (
-		rect: { hash: string },
-		matured: boolean,
-		intersecting: boolean,
-	) => void,
-	point: NumberFromType<R>,
-	now: number,
-	numbers: Numbers<R>,
-	done: () => boolean = () => true,
-) => {
-	const containing = iterateRangesContainingPoint<
-		{ timestamp: true, hash: true },
-		R
-	>(peers, point, 0, true, now, { shape: { timestamp: true, hash: true } as const });
-	const allContaining = await containing.all();
-	for (const rect of allContaining) {
-		collector(rect.value, isMatured(rect.value, now, roleAge), true);
-	}
-
-	if (done()) {
-		return;
-	}
-
-	const closestBelow = getClosest<undefined, R>(
-		"below",
-		peers,
-		point,
-		0,
-		true,
-		now,
-		false,
-		numbers
-	);
-	const closestAbove = getClosest<undefined, R>(
-		"above",
-		peers,
-		point,
-		0,
-		true,
-		now,
-		false,
-		numbers
-	);
-	const aroundIterator = joinIterator<undefined, R>(
-		[closestBelow, closestAbove],
-		point,
-		"closest",
-		numbers,
-	);
-	while (aroundIterator.done() !== true && done() !== true) {
-		const res = await aroundIterator.next(1);
-		for (const rect of res) {
-			collector(rect.value, isMatured(rect.value, now, roleAge), false);
-			if (done()) {
-				return;
-			}
-		}
-	}
-};
- */
-
 const collectClosestAround = async <R extends "u32" | "u64">(
 	roleAge: number,
 	peers: Index<ReplicationRangeIndexable<R>>,
@@ -1909,13 +1846,6 @@ const collectClosestAround = async <R extends "u32" | "u64">(
 		point,
 		false,
 		numbers,
-		/* {
-			time: {
-				matured: true,
-				roleAgeLimit: 0,
-				now
-			}
-		} */
 	);
 	const closestAbove = getClosest<undefined, R>(
 		"above",
@@ -1923,13 +1853,6 @@ const collectClosestAround = async <R extends "u32" | "u64">(
 		point,
 		false,
 		numbers,
-		/* {
-			time: {
-				matured: true,
-				roleAgeLimit: 0,
-				now
-			}
-		} */
 	);
 
 	const aroundIterator = joinIterator<undefined, R>(
@@ -2283,21 +2206,6 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 	start instanceof PublicSignKey && ret.add(start.hashcode());
 	return ret;
 };
-/* export const getReplicationDiff = (changes: ReplicationChange) => {
-	// reduce the change set to only regions that are changed for each peer
-	// i.e. subtract removed regions from added regions, and vice versa
-	const result = new Map<string, { range: ReplicationRangeIndexable, added: boolean }[]>();
-	
-	for (const addedChange of changes.added ?? []) {
-		let prev = result.get(addedChange.hash) ?? [];
-		for (const [_hash, ranges] of result.entries()) {
-			for (const r of ranges) {
-	
-			}
-		}
-	}
-}
- */
 
 export const matchEntriesInRangeQuery = (range: {
 	start1: number | bigint;
