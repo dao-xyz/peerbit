@@ -196,7 +196,6 @@ export class RemoteBlocks implements IBlocks {
 		from?: string,
 	) {
 		if (!from) {
-			console.trace("No from in handleFetchRequest");
 			logger.warn("No from in handleFetchRequest");
 			return;
 		}
