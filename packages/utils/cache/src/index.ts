@@ -18,7 +18,7 @@ export class Cache<T = undefined> {
 	ttl?: number;
 	constructor(options: { max: number; ttl?: number }) {
 		if (options.max <= 0) {
-			throw new Error("Expecting max >= 0");
+			throw new Error("Expecting max > 0");
 		}
 		this.max = options.max;
 		this.ttl = options.ttl;
