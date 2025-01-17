@@ -6,6 +6,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
+import { BlockRequest } from "@peerbit/blocks";
 import {
 	AccessError,
 	Ed25519PublicKey,
@@ -34,7 +35,11 @@ import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 
 /* import { DirectSub } from "@peerbit/pubsub"; */
-import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
+import {
+	AbsoluteReplicas,
+	BlocksMessage,
+	decodeReplicas,
+} from "@peerbit/shared-log";
 import {
 	/* AcknowledgeDelivery, */
 	SilentDelivery,
@@ -877,6 +882,150 @@ describe("index", () => {
 						expect(
 							await stores[1].docs.log.getMyReplicationSegments(),
 						).to.have.length(4); // no new segments
+					});
+
+					it("replicate with eagerEmitBlocks", async () => {
+						// in this test we will test that the eagerEmitBlocks option will emit the blocks immediately
+						// so that replication of search results can be done immediately
+						await stores[0].close();
+						stores[0] = await session.peers[0].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: true,
+									index: {
+										emitBlocksEagerly: true,
+									},
+								},
+							},
+						);
+						let blockRequestsSent = 0;
+
+						const sendFn = stores[1].docs.log.rpc.send.bind(
+							stores[1].docs.log.rpc,
+						);
+						stores[1].docs.log.rpc.send = async (request, options) => {
+							if (request instanceof BlocksMessage) {
+								if (request.message instanceof BlockRequest) {
+									blockRequestsSent++;
+								}
+							}
+							return sendFn(request, options);
+						};
+
+						const messageFn = stores[1].docs.log.onMessage.bind(
+							stores[1].docs.log,
+						);
+
+						let blocksMessagesReceived: BlocksMessage[] = [];
+						stores[1].docs.log.onMessage = async (message, options) => {
+							if (message instanceof BlocksMessage) {
+								blocksMessagesReceived.push(message);
+							}
+							return messageFn(message, options);
+						};
+
+						const results = await stores[1].docs.index
+							.iterate(
+								new SearchRequest({
+									query: [],
+								}),
+								{ remote: { replicate: true } },
+							)
+							.all();
+
+						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
+						expect(results).to.have.length(4);
+						expect(
+							blocksMessagesReceived.filter((x) => x instanceof BlockRequest),
+						).to.have.length(0);
+						expect(blockRequestsSent).to.within(2, 4);
+						// for the two edits
+						// there might more block requests because of bad implemnetaiton in how the block resolver request blocks from joinng peers TODO fix this (it should be 2)
+					});
+
+					it("can set earlyBlocks cache size", async () => {
+						// in this test we will test that we can nullify the early blocks cache size so that we always have to fetch new blocks on sync
+						await stores[0].close();
+						stores[0] = await session.peers[0].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: true,
+									index: {
+										emitBlocksEagerly: true,
+									},
+									earlyBlocks: {
+										cacheSize: 1,
+									},
+								},
+							},
+						);
+
+						await stores[1].close();
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+									index: {
+										emitBlocksEagerly: true,
+									},
+									earlyBlocks: false,
+								},
+							},
+						);
+						await stores[1].docs.index.waitFor(
+							session.peers[0].identity.publicKey,
+						);
+						console.log("--------------------");
+						// await delay(3000)
+
+						let blockRequestsSent = 0;
+						let blockRequestsSentSet = new Set();
+						const sendFn = stores[1].docs.log.rpc.send.bind(
+							stores[1].docs.log.rpc,
+						);
+						stores[1].docs.log.rpc.send = async (request, options) => {
+							if (request instanceof BlocksMessage) {
+								if (request.message instanceof BlockRequest) {
+									blockRequestsSent++;
+									blockRequestsSentSet.add(request.message.cid);
+								}
+							}
+							return sendFn(request, options);
+						};
+
+						const messageFn = stores[1].docs.log.onMessage.bind(
+							stores[1].docs.log,
+						);
+
+						let blocksMessagesReceived: BlocksMessage[] = [];
+						stores[1].docs.log.onMessage = async (message, options) => {
+							if (message instanceof BlocksMessage) {
+								blocksMessagesReceived.push(message);
+							}
+							return messageFn(message, options);
+						};
+
+						await waitForResolved(async () => {
+							// because we do close open behaviour there might be Unsubscription  and Subscribe events that are propagating late
+							// so query directly might not work until all events has propagated, hence we put this results check in a waitFor loop
+							const results = await stores[1].docs.index
+								.iterate(
+									new SearchRequest({
+										query: [],
+									}),
+									{ remote: { minAge: 0, replicate: true, eager: true } },
+								)
+								.all();
+							expect(results).to.have.length(4);
+						});
+						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
+						expect(
+							blocksMessagesReceived.filter((x) => x instanceof BlockRequest),
+						).to.have.length(0);
+						expect(blockRequestsSent).to.be.greaterThanOrEqual(6); // there might more block requests because of bad implemnetaiton in how the block resolver request blocks from joinng peers TODO fix this (it should be six)
 					});
 
 					it("iterate replicate", async () => {

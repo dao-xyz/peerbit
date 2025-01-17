@@ -1,4 +1,5 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
+import { BlockResponse } from "@peerbit/blocks";
 import { Cache } from "@peerbit/cache";
 import {
 	type MaybePromise,
@@ -18,7 +19,11 @@ import {
 	type RPCResponse,
 	queryAll,
 } from "@peerbit/rpc";
-import { type ReplicationDomain, SharedLog } from "@peerbit/shared-log";
+import {
+	BlocksMessage,
+	type ReplicationDomain,
+	SharedLog,
+} from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
@@ -213,6 +218,7 @@ export type OpenOptions<
 	) => Promise<void>;
 	indexBy?: string | string[];
 	transform?: TransformOptions<T, I>;
+	emitBlocksEagerly?: boolean;
 };
 
 type IndexableClass<I> = new (
@@ -247,6 +253,8 @@ export class DocumentIndex<
 	private indexByResolver: (obj: any) => string | Uint8Array;
 	index: indexerTypes.Index<IDocumentWithContext<I>>;
 	private _resumableIterators: ResumableIterators<IDocumentWithContext<I>>;
+
+	emitBlocksEagerly: boolean;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
@@ -292,6 +300,8 @@ export class DocumentIndex<
 		this.indexedTypeIsDocumentType =
 			!properties.transform?.type ||
 			properties.transform?.type === properties.documentType;
+
+		this.emitBlocksEagerly = properties.emitBlocksEagerly || false;
 
 		@variant(0)
 		class IndexedClassWithContext {
@@ -399,6 +409,29 @@ export class DocumentIndex<
 							canRead: properties.canRead,
 						},
 					);
+
+					if (this.emitBlocksEagerly) {
+						await Promise.all(
+							results.results.map(async (x) => {
+								const hash = x.context.head;
+								const block = await this._log.log.blocks.get(hash);
+								if (!block) {
+									return;
+								}
+
+								// todo dont do bytes -> entry -> bytes, but send the block directly
+								return this._log.rpc.send(
+									new BlocksMessage(new BlockResponse(hash, block)),
+									{
+										mode: new SilentDelivery({
+											to: [ctx.from!],
+											redundancy: 1,
+										}),
+									},
+								);
+							}),
+						);
+					}
 
 					return new types.Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results

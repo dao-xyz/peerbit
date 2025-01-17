@@ -89,6 +89,9 @@ export type SetupOptions<
 	canPerform?: CanPerform<T>;
 	id?: (obj: any) => indexerTypes.IdPrimitive;
 	index?: {
+		// emit blocks early? so peers who get search results can quickly fetch the blocks
+		emitBlocksEagerly?: boolean;
+
 		canSearch?: CanSearch;
 		canRead?: CanRead<T>;
 		idProperty?: string | string[];
@@ -176,6 +179,7 @@ export class Documents<
 			documentType: this._clazz,
 			transform: options.index,
 			indexBy: idProperty,
+			emitBlocksEagerly: options.index?.emitBlocksEagerly,
 			sync: async (
 				query: documentsTypes.SearchRequest,
 				result: documentsTypes.Results<T>,
@@ -213,6 +217,7 @@ export class Documents<
 				? (log: any) => options.domain!(this)
 				: undefined) as any, /// TODO types,
 			compatibility: logCompatiblity,
+			earlyBlocks: options?.earlyBlocks,
 		});
 	}
 
