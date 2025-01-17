@@ -425,6 +425,8 @@ export interface DirectStreamComponents extends Components {
 	events: TypedEventTarget<Libp2pEvents>;
 }
 
+export type PublishOptions = (WithMode | WithTo) & PriorityOptions;
+
 export abstract class DirectStream<
 		Events extends { [s: string]: any } = StreamEvents,
 	>
@@ -1558,7 +1560,7 @@ export abstract class DirectStream<
 	 */
 	async publish(
 		data: Uint8Array | Uint8ArrayList | undefined,
-		options: (WithMode | WithTo) & PriorityOptions = {
+		options: PublishOptions = {
 			mode: new SeekDelivery({ redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY }),
 		},
 	): Promise<Uint8Array> {
@@ -1566,14 +1568,34 @@ export abstract class DirectStream<
 			throw new NotStartedError();
 		}
 
-		if ((options as WithMode).mode && (options as WithTo).to) {
-			throw new Error(
-				"Expecting either 'to' or 'mode' to be provided not both",
-			);
-		}
-
 		const message = await this.createMessage(data, options);
-		await this.publishMessage(this.publicKey, message, undefined);
+		const withTo = (options as WithTo).to;
+		const withMode = (options as WithMode).mode;
+
+		let to: PeerStreams[] | undefined = undefined;
+		if (withTo && withMode) {
+			// a special case where we want to pick neighbours to send to aswell as delivery recipents
+			to = [];
+			for (const peer of withTo) {
+				const toHash =
+					typeof peer === "string"
+						? peer
+						: peer instanceof PublicSignKey
+							? peer.hashcode()
+							: getPublicKeyFromPeerId(peer).hashcode();
+				const stream = this.peers.get(toHash);
+				if (stream) {
+					to.push(stream);
+				} else {
+					logger.warn(
+						`Peer ${peer} not found in peers, skipping neighbor selection`,
+					);
+					to = undefined;
+					break;
+				}
+			}
+		}
+		await this.publishMessage(this.publicKey, message, to);
 		return message.id;
 	}
 
@@ -2145,6 +2167,9 @@ export const waitForNeighbour = async (
 		for (let j = 0; j < libs.length; j++) {
 			if (i === j) {
 				continue;
+			}
+			if (libs[i].peerId.equals(libs[j].peerId)) {
+				throw new Error("Unexpected waiting for self");
 			}
 			await libs[i].waitFor(libs[j].peerId, { neighbour: true });
 			await libs[j].waitFor(libs[i].peerId, { neighbour: true });

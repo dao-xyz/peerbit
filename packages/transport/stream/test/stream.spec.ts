@@ -699,6 +699,47 @@ describe("streams", function () {
 					).lessThanOrEqual(2),
 				);
 			});
+
+			it("to will override message to", async () => {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+				await session.connect([[session.peers[0], session.peers[2]]]);
+				await session.connect([[session.peers[0], session.peers[3]]]);
+				await waitForNeighbour(streams[0].stream, streams[1].stream);
+				await waitForNeighbour(streams[0].stream, streams[2].stream);
+				await waitForNeighbour(streams[0].stream, streams[3].stream);
+
+				await streams[0].stream.publish(data, {
+					mode: new SeekDelivery({
+						to: [
+							streams[1].stream.components.peerId,
+							streams[2].stream.components.peerId,
+						],
+						redundancy: 1,
+					}),
+				});
+
+				await waitForResolved(() => {
+					expect(streams[1].received).to.have.length(1);
+					expect(streams[2].received).to.have.length(1);
+				});
+
+				await streams[0].stream.publish(data, {
+					to: [streams[1].stream.components.peerId],
+					mode: new SilentDelivery({
+						to: [
+							streams[1].stream.components.peerId,
+							streams[2].stream.components.peerId,
+						],
+						redundancy: 1,
+					}),
+				});
+				// expect no message to reaach stream[2] because the graph should be fully connect and so streams[1] will not forward any thing to streams[2]
+				// as reduncancy is set to 1 and the shortest path to streams[2] is direct from streams[0]
+
+				await delay(1000);
+				expect(streams[1].received).to.have.length(2);
+				expect(streams[2].received).to.have.length(1);
+			});
 		});
 
 		describe("seek", () => {
@@ -910,7 +951,7 @@ describe("streams", function () {
 			/* it("always relays if target is neighbour", async () => {
 				await session.peers[0].hangUp(session.peers[2].peerId);
 				streams.map(x => x.stream.routes.clear());
-
+	
 				// 0 -> 1 -> 2 still works
 				streams[0].stream.routes.add(
 					streams[0].stream.publicKeyHash,
@@ -920,14 +961,14 @@ describe("streams", function () {
 					+new Date(),
 					+new Date()
 				);
-
+	
 				await streams[0].stream.publish(crypto.randomBytes(1e2), {
 					to: [streams[2].stream.components.peerId]
 				});
 				await waitForResolved(() =>
 					expect(streams[2].received).to.have.length(1)
 				);
-
+	
 				// ...yet make sure the data has not travelled this path
 				expect(
 					streams[1].messages.filter((x) => x instanceof DataMessage)
