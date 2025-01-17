@@ -66,6 +66,15 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.1.2](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.1.1...stream-interface-v5.1.2) (2025-01-17)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.2 to 2.3.3
+
 ## [5.1.1](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.1.0...stream-interface-v5.1.1) (2024-10-28)
 
 

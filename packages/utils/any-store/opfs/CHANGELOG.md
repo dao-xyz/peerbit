@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.3](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.2...any-store-opfs-v1.0.3) (2025-01-17)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.2 to ^2.3.3
+
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.1...any-store-opfs-v1.0.2) (2024-10-11)
 
 

@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.2.0...shared-log-v10.3.0) (2025-01-17)
+
+
+### Features
+
+* add options for caching early blocks ([3f42f1b](https://github.com/dao-xyz/peerbit/commit/3f42f1bda75ab7d0f5e726765c80deb0faeb5adc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.0 to 5.1.1
+    * @peerbit/log bumped from 4.0.25 to 4.0.26
+    * @peerbit/rpc bumped from 5.0.23 to 5.0.24
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.13 to ^2.1.14
+
 ## [10.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.1.0...shared-log-v10.2.0) (2025-01-14)
 
 

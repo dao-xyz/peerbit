@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [8.2.0](https://github.com/dao-xyz/peerbit/compare/document-v8.1.2...document-v8.2.0) (2025-01-17)
+
+
+### Features
+
+* emitBlocksEagerly options, emit blocks to search result recipients before they request them ([f7fcb37](https://github.com/dao-xyz/peerbit/commit/f7fcb379e50a77e9690e2f98ba2aaa276ab08b69))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.0 to 5.1.1
+    * @peerbit/rpc bumped from 5.0.23 to 5.0.24
+    * @peerbit/shared-log bumped from 10.2.0 to 10.3.0
+    * @peerbit/indexer-interface bumped from ^2.0.2 to ^2.0.3
+    * @peerbit/indexer-simple bumped from ^1.1.5 to ^1.1.6
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.2 to ^1.2.3
+    * @peerbit/document-interface bumped from ^1.0.9 to ^1.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.13 to 2.1.14
+
 ## [8.1.2](https://github.com/dao-xyz/peerbit/compare/document-v8.1.1...document-v8.1.2) (2025-01-14)
 
 

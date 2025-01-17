@@ -279,6 +279,23 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/blocks-v2.1.10...blocks-v2.2.0) (2025-01-17)
+
+
+### Features
+
+* earlyBlocks options, cache blocks before requesting them ([f5afead](https://github.com/dao-xyz/peerbit/commit/f5afead3ac0508b7a61d72b911fc27a9f9f173ee))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.1.2 to ^2.1.3
+    * @peerbit/stream bumped from 4.1.4 to 4.2.0
+    * @peerbit/blocks-interface bumped from 1.3.8 to 1.3.9
+    * @peerbit/crypto bumped from 2.3.2 to 2.3.3
+
 ## [2.1.10](https://github.com/dao-xyz/peerbit/compare/blocks-v2.1.9...blocks-v2.1.10) (2024-12-30)
 
 
