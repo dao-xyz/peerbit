@@ -52,7 +52,7 @@ describe(`migration-8-9`, function () {
 
 		const createV8 = () => {
 			const db1 = db.clone();
-			const onMessageDefault = db1.log._onMessage.bind(db1.log);
+			const onMessageDefault = db1.log.onMessage.bind(db1.log);
 			return session.peers[0].open(db1, {
 				args: {
 					replicate: {

@@ -105,7 +105,7 @@ export class EventStore<
 		this._index = new EventIndex(this.log);
 
 		if (properties?.onMessage) {
-			this.log._onMessage = properties.onMessage;
+			this.log.onMessage = properties.onMessage;
 		}
 
 		if (properties?.domain && properties?.setup?.domain) {

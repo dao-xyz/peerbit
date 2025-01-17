@@ -35,7 +35,7 @@ export const collectMessages = (log: SharedLog<any, any>) => {
 
 export const collectMessagesFn = (log: SharedLog<any, any>) => {
 	const messages: [TransportMessage, PublicSignKey][] = [];
-	const onMessageOrg = log._onMessage.bind(log);
+	const onMessageOrg = log.onMessage.bind(log);
 	const fn = async (msg: any, ctx: any) => {
 		messages.push([msg, ctx.from]);
 		onMessageOrg(msg, ctx);

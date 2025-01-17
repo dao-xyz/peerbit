@@ -37,10 +37,12 @@ import {
 import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
 	AcknowledgeDelivery,
+	AnyWhere,
 	DeliveryMode,
 	NotStartedError,
 	SeekDelivery,
 	SilentDelivery,
+	type WithMode,
 } from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
@@ -195,6 +197,7 @@ export type ReplicationOptions<R extends "u32" | "u64" = any> =
 	| number
 	| boolean
 	| "resume";
+export { BlocksMessage };
 
 const isAdaptiveReplicatorOption = (
 	options: ReplicationOptions<any>,
@@ -307,6 +310,7 @@ export type SharedLogOptions<
 	distributionDebounceTime?: number;
 	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
+	earlyBlocks?: boolean | { cacheSize?: number };
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -1513,12 +1517,13 @@ export class SharedLog<
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,
 			publish: (message, options) =>
-				this.rpc.send(new BlocksMessage(message), {
-					mode: options?.to
-						? new SilentDelivery({ to: options.to, redundancy: 1 })
-						: undefined,
-				}),
+				this.rpc.send(
+					new BlocksMessage(message),
+					(options as WithMode).mode instanceof AnyWhere ? undefined : options,
+				),
 			waitFor: this.rpc.waitFor.bind(this.rpc),
+			publicKey: this.node.identity.publicKey,
+			earlyBlocks: options?.earlyBlocks ?? true,
 		});
 
 		await this.remoteBlocks.start();
@@ -1691,7 +1696,7 @@ export class SharedLog<
 		await this.rpc.open({
 			queryType: TransportMessage,
 			responseType: TransportMessage,
-			responseHandler: (query, context) => this._onMessage(query, context),
+			responseHandler: (query, context) => this.onMessage(query, context),
 			topic: this.topic,
 		});
 
@@ -1984,7 +1989,7 @@ export class SharedLog<
 	}
 
 	// Callback for receiving a message from the network
-	async _onMessage(
+	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
 	): Promise<void> {
@@ -2332,48 +2337,11 @@ export class SharedLog<
 				}
 			} else if (await this.syncronizer.onMessage(msg, context)) {
 				return; // the syncronizer has handled the message
-			} /* else if (msg instanceof RequestMaybeSync) {
-				const requestHashes: string[] = [];
-
-				for (const hash of msg.hashes) {
-					const inFlight = this.syncInFlightQueue.get(hash);
-					if (inFlight) {
-						if (
-							!inFlight.find((x) => x.hashcode() === context.from!.hashcode())
-						) {
-							inFlight.push(context.from);
-							let inverted = this.syncInFlightQueueInverted.get(
-								context.from.hashcode(),
-							);
-							if (!inverted) {
-								inverted = new Set();
-								this.syncInFlightQueueInverted.set(
-									context.from.hashcode(),
-									inverted,
-								);
-							}
-							inverted.add(hash);
-						}
-					} else if (!(await this.log.has(hash))) {
-						this.syncInFlightQueue.set(hash, []);
-						requestHashes.push(hash); // request immediately (first time we have seen this hash)
-					}
-				}
-				requestHashes.length > 0 &&
-					(await this.requestSync(requestHashes, [context.from.hashcode()]));
-			} else if (msg instanceof ResponseMaybeSync) {
-				// TODO perhaps send less messages to more receivers for performance reasons?
-				// TODO wait for previous send to target before trying to send more?
-				for await (const message of createExchangeHeadsMessages(
-					this.log,
-					msg.hashes,
-				)) {
-					await this.rpc.send(message, {
-						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					});
-				}
-			}  */ else if (msg instanceof BlocksMessage) {
-				await this.remoteBlocks.onMessage(msg.message);
+			} else if (msg instanceof BlocksMessage) {
+				await this.remoteBlocks.onMessage(
+					msg.message,
+					context.from!.hashcode(),
+				);
 			} else if (msg instanceof RequestReplicationInfoMessage) {
 				// TODO this message type is never used, should we remove it?
 
@@ -3609,6 +3577,7 @@ export class SharedLog<
 				Map<string, EntryReplicated<any>>
 			> = new Map();
 
+			let c = 0;
 			for await (const entryReplicated of toRebalance<R>(
 				changeOrChanges,
 				this.entryCoordinatesIndex,
@@ -3617,6 +3586,8 @@ export class SharedLog<
 				if (this.closed) {
 					break;
 				}
+				c++;
+
 				let oldPeersSet = this._gidPeersHistory.get(entryReplicated.gid);
 				let isLeader = false;
 

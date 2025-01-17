@@ -430,7 +430,7 @@ testSetups.forEach((setup) => {
 						},
 					))!;
 
-					const onMessageFn1 = db1.log._onMessage.bind(db1.log);
+					const onMessageFn1 = db1.log.onMessage.bind(db1.log);
 
 					let receivedMessageDb1: InnerBlocksMessage[] = [];
 					db1.log.rpc["_responseHandler"] = async (msg: any, cxt: any) => {
@@ -441,7 +441,7 @@ testSetups.forEach((setup) => {
 					};
 
 					let receivedMessageDb2: InnerBlocksMessage[] = [];
-					const onMessageFn2 = db2.log._onMessage.bind(db2.log);
+					const onMessageFn2 = db2.log.onMessage.bind(db2.log);
 					db2.log.rpc["_responseHandler"] = async (msg: any, cxt: any) => {
 						if (msg instanceof BlocksMessage) {
 							receivedMessageDb2.push(msg.message);
@@ -1368,7 +1368,6 @@ testSetups.forEach((setup) => {
 							);
 	
 						} catch (error) {
-							console.log("???", await Promise.all([db1.log.replicationIndex?.getSize(), db2.log.replicationIndex?.getSize(), db3.log.replicationIndex?.getSize()]));
 							throw error;
 						}
 	
@@ -2512,7 +2511,7 @@ testSetups.forEach((setup) => {
 				// TODO this test is flaky because background prune calls are intefering with assertions
 				// Todo make sure no background prunes are done (?)
 
-				const onMessageFn = db2.log._onMessage.bind(db2.log);
+				const onMessageFn = db2.log.onMessage.bind(db2.log);
 				db2.log.rpc["_responseHandler"] = async (msg: any, cxt: any) => {
 					if (msg instanceof ExchangeHeadsMessage) {
 						return; // prevent replication
@@ -2855,7 +2854,7 @@ testSetups.forEach((setup) => {
 
 					const findLeaders1 = sinon.spy(db1.log, "findLeaders");
 					const findLeaders2 = sinon.spy(db2.log, "findLeaders");
-					const onMessage1 = sinon.spy(db1.log, "_onMessage");
+					const onMessage1 = sinon.spy(db1.log, "onMessage");
 
 					const range = (
 						await db2.log.getMyReplicationSegments()
@@ -2920,7 +2919,7 @@ testSetups.forEach((setup) => {
 
 					const findLeaders1 = sinon.spy(db1.log, "findLeaders");
 					const findLeaders2 = sinon.spy(db2.log, "findLeaders");
-					const onMessage1 = sinon.spy(db1.log, "_onMessage");
+					const onMessage1 = sinon.spy(db1.log, "onMessage");
 
 					const range = (
 						await db2.log.getMyReplicationSegments()

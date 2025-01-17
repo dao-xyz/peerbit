@@ -38,8 +38,8 @@ describe("rateless-iblt-syncronizer", () => {
 	const collectMessages = async (
 		log: EventStore<string, ReplicationDomainHash<"u64">>,
 	) => {
-		const onMessageDb = sinon.spy(log.log, "_onMessage");
-		log.log._onMessage = onMessageDb;
+		const onMessageDb = sinon.spy(log.log, "onMessage");
+		log.log.onMessage = onMessageDb;
 		return {
 			get calls(): TransportMessage[] {
 				return onMessageDb.getCalls().map((x) => x.args[0]);
