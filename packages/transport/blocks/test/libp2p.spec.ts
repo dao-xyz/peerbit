@@ -1,9 +1,12 @@
+import { serialize } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForNeighbour } from "@peerbit/stream";
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import sinon from "sinon";
 import { DirectBlock } from "../src/libp2p.js";
+import { BlockResponse, type RemoteBlocks } from "../src/remote.js";
 
 const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
@@ -84,6 +87,47 @@ describe("transport", function () {
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
+	it("only responds to peer that needs block", async () => {
+		session = await TestSession.disconnected(3, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+
+		await store(session, 0).start();
+		await store(session, 1).start();
+		await store(session, 2).start();
+
+		await session.connect([[session.peers[0], session.peers[1]]]);
+		await session.connect([[session.peers[1], session.peers[2]]]);
+
+		await waitForNeighbour(store(session, 0), store(session, 1));
+		await waitForNeighbour(store(session, 1), store(session, 2));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		let receivedblockInfo = false;
+		const db1 = store(session, 1) as DirectBlock;
+		const rmb1 = db1["remoteBlocks"] as RemoteBlocks;
+		const onMessage1 = rmb1.onMessage.bind(rmb1);
+		rmb1.onMessage = (data: any, from: any) => {
+			if (data instanceof BlockResponse) {
+				receivedblockInfo = true;
+			}
+			return onMessage1(data, from);
+		};
+
+		expect(
+			new Uint8Array(
+				(await store(session, 2).get(cid, {
+					remote: { timeout: 5000 },
+				}))!,
+			),
+		).to.deep.equal(data);
+		await delay(3000);
+		expect(receivedblockInfo).to.be.false;
+	});
+
 	it("read concurrently", async () => {
 		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) },
@@ -124,7 +168,7 @@ describe("transport", function () {
 
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 		const readDataPromise = store(session, 1).get(cid, {
-			remote: { from: [session.peers[0].services.blocks.publicKey.hashcode()] },
+			remote: true,
 		});
 
 		await session.connect(); // we connect after get request is sent
@@ -181,6 +225,61 @@ describe("transport", function () {
 			expect(resolved[0]).equal(cid);
 		}
 		expect(once).to.be.true;
+	});
+
+	it("waitForRequest option", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c, { earlyBlocks: true }) },
+		});
+
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const db1 = store(session, 0) as DirectBlock;
+		const db2 = store(session, 1) as DirectBlock;
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+
+		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
+
+		const db2ReceivedBlockResponse = pDefer();
+		let timeout = setTimeout(() => {
+			db2ReceivedBlockResponse.reject(new Error("Timed out"));
+		}, 5000);
+		db2ReceivedBlockResponse.promise.finally(() => {
+			clearTimeout(timeout);
+		});
+		const rmb2 = db2["remoteBlocks"] as RemoteBlocks;
+		const onMessage2 = rmb2.onMessage.bind(rmb2);
+		rmb2.onMessage = (data, from) => {
+			if (data instanceof BlockResponse) {
+				db2ReceivedBlockResponse.resolve();
+			}
+			return onMessage2(data, from);
+		};
+		await db1.publish(
+			serialize(
+				new BlockResponse(
+					"zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
+					data,
+				),
+			),
+			{ to: [session.peers[1].peerId] },
+		);
+		await db2ReceivedBlockResponse.promise;
+
+		// now try to fetch the block and make sure no requests are sent
+		let sent = false;
+		rmb2.options.publish = async () => {
+			sent = true;
+		};
+
+		const bytes = await db2.get(
+			"zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
+			{ remote: true },
+		);
+		expect(bytes).to.deep.equal(data);
+		expect(sent).to.be.false;
 	});
 
 	/* it('can handle conurrent read/write', async () => {

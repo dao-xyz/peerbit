@@ -4,7 +4,7 @@ import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
 import { type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
 import { type DirectStreamComponents } from "@peerbit/stream";
-import { AnyWhere, type DataMessage } from "@peerbit/stream-interface";
+import { type DataMessage } from "@peerbit/stream-interface";
 import { AnyBlockStore } from "./any-blockstore.js";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
 
@@ -22,6 +22,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
+			earlyBlocks?: boolean | { cacheSize?: number };
 		},
 	) {
 		super(components, ["/lazyblock/0.0.0"], {
@@ -34,11 +35,12 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		});
 		this.remoteBlocks = new RemoteBlocks({
 			local: new AnyBlockStore(createStore(options?.directory)),
-			publish: (message) =>
-				this.publish(serialize(message), { mode: new AnyWhere() }),
+			publish: (message, options) => this.publish(serialize(message), options),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			waitFor: this.waitFor.bind(this),
+			publicKey: this.publicKey,
+			earlyBlocks: options?.earlyBlocks,
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
@@ -46,6 +48,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				data.detail?.data.length > 0 &&
 				this.remoteBlocks.onMessage(
 					deserialize(data.detail.data!, BlockMessage),
+					data.detail.header.signatures?.publicKeys[0]?.hashcode(),
 				);
 		};
 		this.onPeerConnectedFn = (evt: CustomEvent<PublicSignKey>) =>

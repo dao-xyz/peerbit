@@ -9,8 +9,11 @@ import {
 	codecCodes,
 	stringifyCid,
 } from "@peerbit/blocks-interface";
+import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
+import type { PublishOptions } from "@peerbit/stream";
+import { AnyWhere, SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
@@ -51,8 +54,10 @@ export class BlockResponse extends BlockMessage {
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
-	private _responseHandler?: (data: BlockMessage) => any;
+	private _responseHandler?: (data: BlockMessage, from?: string) => any;
 	private _resolvers: Map<string, (data: Uint8Array) => void>;
+	private _blockCache?: Cache<Uint8Array>;
+
 	private _loadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<
 		string,
@@ -69,11 +74,20 @@ export class RemoteBlocks implements IBlocks {
 			local: AnyBlockStore;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
+			publicKey: PublicSignKey;
+			earlyBlocks?: boolean | { cacheSize?: number };
 			publish: (
-				message: BlockRequest | BlockResponse,
-				options?: { to?: string[] },
+				data: BlockRequest | BlockResponse,
+				options: PublishOptions,
 			) => Promise<Uint8Array | void>;
-			waitFor(peer: PeerId | PublicSignKey): Promise<void>;
+			waitFor: (
+				peer: PeerId | PublicSignKey | string,
+				options?: {
+					timeout?: number;
+					signal?: AbortSignal;
+					neighbour?: boolean;
+				},
+			) => Promise<void>;
 		},
 	) {
 		const localTimeout = options?.localTimeout || 1000;
@@ -83,17 +97,33 @@ export class RemoteBlocks implements IBlocks {
 		this.localStore = options?.local;
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
+		this._blockCache = options?.earlyBlocks
+			? new Cache<Uint8Array>({
+					max:
+						typeof options.earlyBlocks === "boolean"
+							? 1e3
+							: (options.earlyBlocks.cacheSize ?? 1e3),
+					ttl: 1e4,
+				})
+			: undefined;
 
-		this._responseHandler = async (message: BlockMessage) => {
+		this._responseHandler = async (message: BlockMessage, from?: string) => {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
 					this._loadFetchQueue.add(() =>
-						this.handleFetchRequest(message, localTimeout),
+						this.handleFetchRequest(message, localTimeout, from),
 					);
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-
-					this._resolvers.get(message.cid)?.(message.bytes);
+					let resolver = this._resolvers.get(message.cid);
+					if (!resolver) {
+						if (options.earlyBlocks) {
+							// wait for the resolve to exist
+							this._blockCache!.add(message.cid, message.bytes);
+						}
+					} else {
+						resolver(message.bytes);
+					}
 				}
 			} catch (error) {
 				logger.error("Got error for libp2p block transport: ", error);
@@ -151,8 +181,8 @@ export class RemoteBlocks implements IBlocks {
 		this._open = true;
 	}
 
-	onMessage(data: BlockMessage) {
-		return this._responseHandler!(data);
+	onMessage(data: BlockMessage, from?: string) {
+		return this._responseHandler!(data, from);
 	}
 	onReachable(publicKey: PublicSignKey) {
 		this._events.dispatchEvent(
@@ -163,17 +193,24 @@ export class RemoteBlocks implements IBlocks {
 	private async handleFetchRequest(
 		request: BlockRequest,
 		localTimeout: number,
+		from?: string,
 	) {
+		if (!from) {
+			console.trace("No from in handleFetchRequest");
+			logger.warn("No from in handleFetchRequest");
+			return;
+		}
 		const cid = stringifyCid(request.cid);
 		const bytes = await this.localStore.get(cid, {
 			remote: {
 				timeout: localTimeout,
 			},
 		});
+
 		if (!bytes) {
 			return;
 		}
-		await this.options.publish(new BlockResponse(cid, bytes));
+		await this.options.publish(new BlockResponse(cid, bytes), { to: [from] });
 	}
 
 	private async _readFromPeers(
@@ -187,6 +224,28 @@ export class RemoteBlocks implements IBlocks {
 		} = {},
 	): Promise<Uint8Array | undefined> {
 		const codec = (codecCodes as any)[cidObject.code];
+
+		const tryDecode = async (bytes: Uint8Array) => {
+			const value = await checkDecodeBlock(cidObject, bytes, {
+				codec,
+				hasher: options?.hasher,
+			});
+
+			return value;
+		};
+		const cachedValue = this.options.earlyBlocks
+			? this._blockCache?.get(cidString)
+			: undefined;
+		if (cachedValue) {
+			this._blockCache.del(cidString);
+			try {
+				const result = await tryDecode(cachedValue);
+				return result.bytes;
+			} catch (error) {
+				// ignore
+			}
+		}
+
 		let promise = this._readFromPeersPromises.get(cidString);
 		if (!promise) {
 			promise = new Promise<Block<any, any, any, 1> | undefined>(
@@ -211,10 +270,7 @@ export class RemoteBlocks implements IBlocks {
 					options?.signal?.addEventListener("abort", abortHandler);
 
 					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
-						const value = await checkDecodeBlock(cidObject, bytes, {
-							codec,
-							hasher: options?.hasher,
-						});
+						const value = await tryDecode(bytes);
 
 						clearTimeout(timeoutCallback);
 						this._resolvers.delete(cidString); // TODO concurrency might not work as expected here
@@ -229,22 +285,23 @@ export class RemoteBlocks implements IBlocks {
 
 			this._readFromPeersPromises.set(cidString, promise);
 
-			const publish = (to: string) => {
+			const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) => {
+				const to = e.detail.hashcode();
 				if (!options?.from || options.from.includes(to)) {
 					return this.options.publish(new BlockRequest(cidString), {
+						// We dont sent explicitly to 'to' here because we want the message to propagate beyond the first peer
 						to: [to],
+						mode: new AnyWhere(),
 					});
 				}
 			};
 
-			const publishOnNewPeers = (e: CustomEvent<PublicSignKey>) => {
-				return publish(e.detail.hashcode());
-			};
 			this._events.addEventListener("peer:reachable", publishOnNewPeers);
-			this.options.publish(new BlockRequest(cidString), {
-				to: options.from,
+			await this.options.publish(new BlockRequest(cidString), {
+				mode: options.from
+					? new SilentDelivery({ to: options.from, redundancy: 1 })
+					: new AnyWhere(),
 			});
-
 			// we want to make sure that if some new peers join, we also try to ask them
 
 			const result = await promise;
@@ -269,6 +326,7 @@ export class RemoteBlocks implements IBlocks {
 		await this.localStore?.stop();
 		this._readFromPeersPromises.clear();
 		this._resolvers.clear();
+		this._blockCache?.clear();
 		this._open = false;
 		// we dont cleanup subscription because we dont know if someone else is sbuscribing also
 	}
