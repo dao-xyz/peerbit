@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.0...cache-v2.1.1) (2025-01-17)
+
+
+### Bug Fixes
+
+* improve error message ([d39737a](https://github.com/dao-xyz/peerbit/commit/d39737a4d089356a9fc9ba3bfd4be021fb7b387d))
+
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/cache-v2.0.6...cache-v2.1.0) (2024-07-20)
 
 
