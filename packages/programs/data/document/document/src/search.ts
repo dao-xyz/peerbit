@@ -1055,12 +1055,8 @@ export class DocumentIndex<
 						this._sync,
 						options,
 					);
-					try {
-						for (const r of resultInitialized) {
-							resolved.push(r.response as any);
-						}
-					} catch (error) {
-						throw error;
+					for (const r of resultInitialized) {
+						resolved.push(r.response);
 					}
 				};
 				try {
@@ -1107,7 +1103,7 @@ export class DocumentIndex<
 				}
 			}
 		}
-		return allResults as any;
+		return allResults as any; // TODO types
 	}
 
 	public search(

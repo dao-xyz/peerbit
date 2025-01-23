@@ -1041,7 +1041,7 @@ export class SharedLog<
 			reset,
 			checkDuplicates,
 			timestamp: ts,
-			rebalance: rebalance,
+			rebalance,
 		}: {
 			reset?: boolean;
 			rebalance?: boolean;
