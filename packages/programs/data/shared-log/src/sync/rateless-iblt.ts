@@ -3,6 +3,7 @@ import { Cache } from "@peerbit/cache";
 import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
 import { type Index } from "@peerbit/indexer-interface";
 import type { Entry, Log } from "@peerbit/log";
+import { logger as loggerFn } from "@peerbit/logger";
 import { DecoderWrapper, EncoderWrapper } from "@peerbit/riblt";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
@@ -16,6 +17,8 @@ import {
 	matchEntriesInRangeQuery,
 } from "../ranges.js";
 import { SimpleSyncronizer } from "./simple.js";
+
+export const logger = loggerFn({ module: "shared-log" });
 
 type NumberOrBigint = number | bigint;
 
@@ -470,7 +473,16 @@ export class RatelessIBLTSynchronizer<
 					for (const symbol of message.symbols) {
 						decoder.add_coded_symbol(symbol);
 					}
-					decoder.try_decode();
+					try {
+						decoder.try_decode();
+					} catch (error: any) {
+						if (error?.message === "Invalid degree") {
+							logger.error(error?.message);
+							return false;
+						} else {
+							throw error;
+						}
+					}
 					count += message.symbols.length;
 
 					if (decoder.decoded()) {
