@@ -80,6 +80,27 @@ export class Sort {
 	}
 }
 
+export type SortLike =
+	| string
+	| { key: string[] | string; direction?: SortDirection | "asc" | "desc" };
+export const toSort = (sort?: SortLike | SortLike[]): Sort[] => {
+	if (!sort) {
+		return [];
+	}
+	if (typeof sort === "string") {
+		return [new Sort({ key: sort })];
+	}
+	if (Array.isArray(sort)) {
+		return sort.map((x) => {
+			if (typeof x === "string") {
+				return new Sort({ key: x });
+			}
+			return new Sort({ key: x.key, direction: x.direction });
+		});
+	}
+	return [new Sort({ key: sort.key, direction: sort.direction })];
+};
+
 @variant(1)
 export abstract class LogicalQuery extends Query {}
 
