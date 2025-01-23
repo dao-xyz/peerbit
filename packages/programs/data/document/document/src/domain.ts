@@ -1,4 +1,4 @@
-import type * as types from "@peerbit/document-interface";
+import type { Query, Sort } from "@peerbit/indexer-interface";
 import { Entry, type ShallowEntry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import {
@@ -30,11 +30,17 @@ type RangeArgs<R extends "u32" | "u64"> = {
 	from: NumberFromType<R>;
 	to: NumberFromType<R>;
 };
+
 export type CustomDocumentDomain<R extends "u32" | "u64"> = ReplicationDomain<
 	RangeArgs<R>,
 	Operation,
 	R
-> & { canProjectToOneSegment: (request: types.SearchRequest) => boolean };
+> & {
+	canProjectToOneSegment: (request: {
+		query: Query[];
+		sort: Sort[];
+	}) => boolean;
+};
 
 type FromEntry<R extends "u32" | "u64"> = {
 	fromEntry?: (
@@ -53,7 +59,10 @@ type CreateArgs<
 	DB extends Documents<any, any, any>,
 > = {
 	resolution: R;
-	canProjectToOneSegment: (request: types.SearchRequest) => boolean;
+	canProjectToOneSegment: (request: {
+		query: Query[];
+		sort: Sort[];
+	}) => boolean;
 	mergeSegmentMaxDelta?: number;
 } & (FromEntry<R> | FromValue<InferT<DB>, R>);
 

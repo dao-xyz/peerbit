@@ -6,7 +6,6 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { BlockRequest } from "@peerbit/blocks";
 import {
 	AccessError,
 	Ed25519PublicKey,
@@ -21,6 +20,7 @@ import {
 	NoAccess,
 	Results,
 	SearchRequest,
+	SearchRequestIndexed,
 } from "@peerbit/document-interface";
 import {
 	ByteMatchQuery,
@@ -29,21 +29,11 @@ import {
 	Sort,
 	SortDirection,
 	StringMatch,
-	/* StringMatch, */
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
-
-/* import { DirectSub } from "@peerbit/pubsub"; */
-import {
-	AbsoluteReplicas,
-	BlocksMessage,
-	decodeReplicas,
-} from "@peerbit/shared-log";
-import {
-	/* AcknowledgeDelivery, */
-	SilentDelivery,
-} from "@peerbit/stream-interface";
+import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
+import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -59,7 +49,7 @@ import {
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
-import type { CanRead } from "../src/search.js";
+import { type CanRead } from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -435,6 +425,365 @@ describe("index", () => {
 				).to.have.length(0);
 				await waitForResolved(() => expect(joined).to.be.true);
 			});
+
+			describe("search replicate", () => {
+				let stores: TestStore[];
+
+				before(async () => {
+					session = await TestSession.connected(2);
+				});
+
+				after(async () => {
+					await session.stop();
+				});
+
+				beforeEach(async () => {
+					stores = [];
+				});
+				afterEach(async () => {
+					for (const store of stores) {
+						if (store && store.closed === false) {
+							await store.close();
+						}
+					}
+				});
+
+				describe("v7", () => {
+					it("iterate replicate", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+									compatibility: 7,
+								},
+							},
+						);
+
+						let docCount = 5;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(
+								new Document({
+									id: String(i),
+								}),
+							);
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+									compatibility: 7,
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							session.peers[0].identity.publicKey,
+						);
+
+						const iterator = stores[1].docs.index.iterate(
+							new SearchRequest({
+								query: [],
+							}),
+							{ remote: { replicate: true } },
+						);
+
+						const results = [
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+						];
+
+						expect(results).to.have.length(4);
+
+						await waitForResolved(async () =>
+							expect(await stores[1].docs.index.getSize()).equal(4),
+						);
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(4); // no new segments
+					});
+				});
+
+				describe("v8+", () => {
+					it("search replicate", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						let docCount = 5;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(new Document({ id: String(i) }));
+						}
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						let canPerformEvents = 0;
+						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
+							stores[1].docs,
+						);
+
+						stores[1].docs["_optionCanPerform"] = async (props) => {
+							canPerformEvents += 1;
+							return !canPerform || canPerform(props);
+						};
+
+						const results = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [],
+							}),
+							{ remote: { replicate: true } },
+						);
+						expect(results).to.have.length(docCount);
+
+						await waitForResolved(async () =>
+							expect(await stores[1].docs.index.getSize()).equal(docCount),
+						);
+
+						expect(stores[1].docs.log.log.length).equal(docCount);
+						expect(canPerformEvents).equal(docCount);
+
+						const segments =
+							await stores[1].docs.log.getMyReplicationSegments();
+
+						expect(segments).to.have.length(docCount);
+
+						await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [],
+							}),
+							{ remote: { replicate: true } },
+						);
+						expect(canPerformEvents).equal(docCount); // no new checks, since all docs already added
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(docCount); // no new segments
+					});
+
+					it("iterate replicate", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						let docCount = 5;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(
+								new Document({
+									id: String(i),
+								}),
+							);
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const iterator = stores[1].docs.index.iterate(
+							new SearchRequest({
+								query: [],
+							}),
+							{ remote: { replicate: true } },
+						);
+
+						const results = [
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+							...(await iterator.next(1)),
+						];
+
+						expect(results).to.have.length(4);
+
+						await waitForResolved(async () =>
+							expect(await stores[1].docs.index.getSize()).equal(4),
+						);
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(4); // no new segments
+					});
+
+					it("will persist synced entries through prunes", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+									replicas: {
+										min: new AbsoluteReplicas(1),
+									},
+								},
+							},
+						);
+
+						let docCount = 5;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(
+								new Document({
+									id: String(i),
+								}),
+							);
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+									replicas: {
+										min: new AbsoluteReplicas(1),
+									},
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const results = await stores[1].docs.index.search(
+							new SearchRequest({
+								query: [],
+							}),
+							{ remote: { replicate: true } },
+						);
+
+						expect(results).to.have.length(docCount);
+						expect(await stores[1].docs.index.getSize()).equal(docCount);
+						await stores[1].docs.log.waitForPruned();
+						expect(await stores[1].docs.index.getSize()).equal(docCount);
+					});
+
+					it("will only replicate the synced entries", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						let docCount = 5;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(
+								new Document({
+									id: String(i),
+								}),
+							);
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						expect(stores[1].docs.log.log.length).equal(0);
+						const results = await stores[1].docs.index
+							.iterate(
+								new SearchRequest({
+									query: [
+										new StringMatch({
+											key: "id",
+											value: "4",
+										}),
+									],
+								}),
+								{ remote: { replicate: true } },
+							)
+							.all();
+
+						expect(results).to.have.length(1);
+						expect(results[0].id).equal("4");
+						expect(await stores[1].docs.index.getSize()).equal(1);
+						await delay(3000); // wait for any replcation processes to finish
+						expect(stores[1].docs.log.log.length).equal(1);
+					});
+
+					it("many", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						let docCount = 1e3;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(
+								new Document({
+									id: String(i),
+								}),
+							);
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						let t0 = +new Date();
+						const results = await stores[1].docs.index
+							.iterate({}, { remote: { replicate: true } })
+							.all();
+						let t1 = +new Date();
+						expect(results.length).to.eq(docCount);
+						expect(t1 - t0).to.be.lessThan(5000); // TODO this.log.join(... { replicate: true }) is very slow
+						expect(
+							(await stores[1].docs.log.getMyReplicationSegments()).length,
+						).to.eq(docCount);
+					});
+				});
+			});
 		});
 
 		describe("memory", () => {
@@ -474,8 +823,8 @@ describe("index", () => {
 				store = await session.peers[0].open<TestStore>(store.address);
 				expect(await store.docs.index.getSize()).equal(COUNT);
 				await store.drop();
-				store = await session.peers[0].open<TestStore>(
-					deserialize(serialize(store), TestStore),
+				store = await session.peers[0].open<TestStore<any, any>>(
+					deserialize(serialize(store), TestStore) as TestStore<any, any>,
 				);
 				expect(await store.docs.index.getSize()).equal(0);
 			});
@@ -540,7 +889,7 @@ describe("index", () => {
 						);
 					} else {
 						stores.push(
-							await TestStore.open(store.address, peer, {
+							await TestStore.open<TestStore<any, any>>(store.address, peer, {
 								args: {
 									replicate: {
 										factor: 1,
@@ -805,7 +1154,9 @@ describe("index", () => {
 				});
 
 				afterEach(async () => {
-					await Promise.all(stores.map((x) => x.drop()));
+					await Promise.all(
+						stores.map((x) => (x.closed === false ? x.drop() : undefined)),
+					);
 				});
 
 				it("no-args", async () => {
@@ -833,282 +1184,6 @@ describe("index", () => {
 						{ remote: { amount: 1 } },
 					);
 					expect(results).to.have.length(4);
-				});
-
-				describe("replicate", () => {
-					it("search replicate", async () => {
-						await stores[1].docs.log.unreplicate();
-						expect(
-							await stores[1].docs.log.getMyReplicationSegments(),
-						).have.length(0);
-						expect(await stores[1].docs.index.getSize()).equal(0);
-
-						let canPerformEvents = 0;
-						let canPerform = stores[1].docs["_optionCanPerform"]?.bind(
-							stores[1].docs,
-						);
-
-						stores[1].docs["_optionCanPerform"] = async (props) => {
-							canPerformEvents += 1;
-							return !canPerform || canPerform(props);
-						};
-
-						const results = await stores[1].docs.index.search(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { replicate: true } },
-						);
-						expect(results).to.have.length(4);
-
-						await waitForResolved(async () =>
-							expect(await stores[1].docs.index.getSize()).equal(4),
-						);
-
-						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						expect(canPerformEvents).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						const segments =
-							await stores[1].docs.log.getMyReplicationSegments();
-
-						expect(segments).to.have.length(4);
-
-						await stores[1].docs.index.search(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { replicate: true } },
-						);
-						expect(canPerformEvents).equal(6); // no new checks, since all docs already added
-						expect(
-							await stores[1].docs.log.getMyReplicationSegments(),
-						).to.have.length(4); // no new segments
-					});
-
-					it("replicate with eagerEmitBlocks", async () => {
-						// in this test we will test that the eagerEmitBlocks option will emit the blocks immediately
-						// so that replication of search results can be done immediately
-						await stores[0].close();
-						stores[0] = await session.peers[0].open<TestStore>(
-							stores[0].clone(),
-							{
-								args: {
-									replicate: true,
-									index: {
-										emitBlocksEagerly: true,
-									},
-								},
-							},
-						);
-						let blockRequestsSent = 0;
-
-						const sendFn = stores[1].docs.log.rpc.send.bind(
-							stores[1].docs.log.rpc,
-						);
-						stores[1].docs.log.rpc.send = async (request, options) => {
-							if (request instanceof BlocksMessage) {
-								if (request.message instanceof BlockRequest) {
-									blockRequestsSent++;
-								}
-							}
-							return sendFn(request, options);
-						};
-
-						const messageFn = stores[1].docs.log.onMessage.bind(
-							stores[1].docs.log,
-						);
-
-						let blocksMessagesReceived: BlocksMessage[] = [];
-						stores[1].docs.log.onMessage = async (message, options) => {
-							if (message instanceof BlocksMessage) {
-								blocksMessagesReceived.push(message);
-							}
-							return messageFn(message, options);
-						};
-
-						const results = await stores[1].docs.index
-							.iterate(
-								new SearchRequest({
-									query: [],
-								}),
-								{ remote: { replicate: true } },
-							)
-							.all();
-
-						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						expect(results).to.have.length(4);
-						expect(
-							blocksMessagesReceived.filter((x) => x instanceof BlockRequest),
-						).to.have.length(0);
-						expect(blockRequestsSent).to.within(2, 4);
-						// for the two edits
-						// there might more block requests because of bad implemnetaiton in how the block resolver request blocks from joinng peers TODO fix this (it should be 2)
-					});
-
-					it("can set earlyBlocks cache size", async () => {
-						// in this test we will test that we can nullify the early blocks cache size so that we always have to fetch new blocks on sync
-						await stores[0].close();
-						stores[0] = await session.peers[0].open<TestStore>(
-							stores[0].clone(),
-							{
-								args: {
-									replicate: true,
-									index: {
-										emitBlocksEagerly: true,
-									},
-									earlyBlocks: {
-										cacheSize: 1,
-									},
-								},
-							},
-						);
-
-						await stores[1].close();
-						stores[1] = await session.peers[1].open<TestStore>(
-							stores[0].clone(),
-							{
-								args: {
-									replicate: false,
-									index: {
-										emitBlocksEagerly: true,
-									},
-									earlyBlocks: false,
-								},
-							},
-						);
-						await stores[1].docs.index.waitFor(
-							session.peers[0].identity.publicKey,
-						);
-						console.log("--------------------");
-						// await delay(3000)
-
-						let blockRequestsSent = 0;
-						let blockRequestsSentSet = new Set();
-						const sendFn = stores[1].docs.log.rpc.send.bind(
-							stores[1].docs.log.rpc,
-						);
-						stores[1].docs.log.rpc.send = async (request, options) => {
-							if (request instanceof BlocksMessage) {
-								if (request.message instanceof BlockRequest) {
-									blockRequestsSent++;
-									blockRequestsSentSet.add(request.message.cid);
-								}
-							}
-							return sendFn(request, options);
-						};
-
-						const messageFn = stores[1].docs.log.onMessage.bind(
-							stores[1].docs.log,
-						);
-
-						let blocksMessagesReceived: BlocksMessage[] = [];
-						stores[1].docs.log.onMessage = async (message, options) => {
-							if (message instanceof BlocksMessage) {
-								blocksMessagesReceived.push(message);
-							}
-							return messageFn(message, options);
-						};
-
-						await waitForResolved(async () => {
-							// because we do close open behaviour there might be Unsubscription  and Subscribe events that are propagating late
-							// so query directly might not work until all events has propagated, hence we put this results check in a waitFor loop
-							const results = await stores[1].docs.index
-								.iterate(
-									new SearchRequest({
-										query: [],
-									}),
-									{ remote: { minAge: 0, replicate: true, eager: true } },
-								)
-								.all();
-							expect(results).to.have.length(4);
-						});
-						expect(stores[1].docs.log.log.length).equal(6); // 4 documents where 2 have been edited once (4 + 2)
-						expect(
-							blocksMessagesReceived.filter((x) => x instanceof BlockRequest),
-						).to.have.length(0);
-						expect(blockRequestsSent).to.be.greaterThanOrEqual(6); // there might more block requests because of bad implemnetaiton in how the block resolver request blocks from joinng peers TODO fix this (it should be six)
-					});
-
-					it("iterate replicate", async () => {
-						await stores[1].docs.log.unreplicate();
-						expect(
-							await stores[1].docs.log.getMyReplicationSegments(),
-						).have.length(0);
-						expect(await stores[1].docs.index.getSize()).equal(0);
-
-						const iterator = stores[1].docs.index.iterate(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { replicate: true } },
-						);
-
-						const results = [
-							...(await iterator.next(1)),
-							...(await iterator.next(1)),
-							...(await iterator.next(1)),
-							...(await iterator.next(1)),
-						];
-
-						expect(results).to.have.length(4);
-
-						await waitForResolved(async () =>
-							expect(await stores[1].docs.index.getSize()).equal(4),
-						);
-						expect(
-							await stores[1].docs.log.getMyReplicationSegments(),
-						).to.have.length(4); // no new segments
-					});
-
-					it("will persist synced entries through prunes", async () => {
-						stores[0].docs.log.replicas = {
-							min: new AbsoluteReplicas(1),
-						};
-						stores[1].docs.log.replicas = {
-							min: new AbsoluteReplicas(1),
-						};
-
-						// add new doc, now with min replicas set to 1
-
-						await stores[0].docs.put(new Document({ id: uuid() }));
-
-						await stores[1].docs.log.replicate({ factor: 0 });
-						expect(await stores[1].docs.index.getSize()).equal(0);
-
-						const results = await stores[1].docs.index.search(
-							new SearchRequest({
-								query: [],
-							}),
-							{ remote: { replicate: true } },
-						);
-
-						expect(results).to.have.length(5);
-						expect(await stores[1].docs.index.getSize()).equal(5);
-						await stores[1].docs.log.waitForPruned();
-						expect(await stores[1].docs.index.getSize()).equal(5);
-					});
-
-					it("will only replicate the synced entries", async () => {
-						expect(stores[1].docs.log.log.length).equal(0);
-						const results = await stores[1].docs.index
-							.iterate(
-								new SearchRequest({
-									query: [
-										new StringMatch({
-											key: "id",
-											value: "4",
-										}),
-									],
-								}),
-								{ remote: { replicate: true } },
-							)
-							.all();
-
-						expect(results).to.have.length(1);
-						expect(results[0].id).equal("4");
-						expect(await stores[1].docs.index.getSize()).equal(1);
-						await delay(3000); // wait for any replcation processes to finish
-						expect(stores[1].docs.log.log.length).equal(1);
-					});
 				});
 
 				/* TODO feat
@@ -1221,7 +1296,7 @@ describe("index", () => {
 							canReadInvocation.push([a, b]);
 							return Promise.resolve(false);
 						};
-						let allResponses: AbstractSearchResult<Document>[] = [];
+						let allResponses: AbstractSearchResult[] = [];
 						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
@@ -1254,7 +1329,7 @@ describe("index", () => {
 							canSearchInvocations.push([a, b]);
 							return Promise.resolve(false);
 						};
-						let allResponses: AbstractSearchResult<Document>[] = [];
+						let allResponses: AbstractSearchResult[] = [];
 						let responses: Document[] = await stores[1].docs.index.search(
 							new SearchRequest({
 								query: [],
@@ -1473,6 +1548,7 @@ describe("index", () => {
 							const collected = await store.docs.index.search(
 								new SearchRequest({ fetch: count }),
 							);
+
 							try {
 								expect(collected.length).equal(count);
 							} catch (error) {
@@ -2066,11 +2142,13 @@ describe("index", () => {
 					documentType: Document,
 				});
 
+				let store = stores[0] as any as TestStore<IndexClass, any>;
+
 				await put(0, 0);
 				await put(0, 1);
 				await put(0, 2);
 
-				const iterator = await stores[0].docs.index.iterate(
+				const iteratorValues = store.docs.index.iterate(
 					new SearchRequest({
 						query: [],
 						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
@@ -2080,9 +2158,9 @@ describe("index", () => {
 						remote: false,
 					},
 				);
-				const next = await iterator.next(3);
-				expect(next.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
-				expect(iterator.done()).to.be.true;
+				const nextValues = await iteratorValues.next(3);
+				expect(nextValues.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
+				expect(iteratorValues.done()).to.be.true;
 			});
 
 			it("will retrieve partial results of not having read access", async () => {
@@ -2285,7 +2363,7 @@ describe("index", () => {
 			).rejectedWith(AccessError);
 		});
 
-		it("reject entries with unexpected payloads", async () => {
+		it("reject entries with unexpected payloads entry", async () => {
 			store = await session.peers[0].open(
 				new TestStore({
 					docs: new Documents<Document>(),
@@ -2304,7 +2382,7 @@ describe("index", () => {
 				})) as Entry<Operation>,
 			);
 
-			await expect(canAppend).to.be.false;
+			expect(canAppend).to.be.false;
 		});
 
 		it("does not query remote when canAppend check", async () => {
@@ -2332,7 +2410,7 @@ describe("index", () => {
 			);
 			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
-				query: SearchRequest | CollectNextRequest,
+				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
@@ -2343,7 +2421,7 @@ describe("index", () => {
 					remoteQueries1++;
 				}
 
-				return processQuery1(query, from, isLocal, options);
+				return processQuery1(query, from, isLocal, options) as any;
 			};
 
 			const processQuery2 = store2.docs.index.processQuery.bind(
@@ -2351,7 +2429,7 @@ describe("index", () => {
 			);
 			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
-				query: SearchRequest | CollectNextRequest,
+				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
@@ -2362,7 +2440,7 @@ describe("index", () => {
 					remoteQueries2++;
 				}
 
-				return processQuery2(query, from, isLocal, options);
+				return processQuery2(query, from, isLocal, options) as any;
 			};
 
 			for (let i = 0; i < 10; i++) {
@@ -2412,7 +2490,7 @@ describe("index", () => {
 			);
 			let remoteQueries1 = 0;
 			store1.docs.index.processQuery = async (
-				query: SearchRequest | CollectNextRequest,
+				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
@@ -2423,7 +2501,7 @@ describe("index", () => {
 					remoteQueries1++;
 				}
 
-				return processQuery1(query, from, isLocal, options);
+				return processQuery1(query, from, isLocal, options) as any;
 			};
 
 			const processQuery2 = store2.docs.index.processQuery.bind(
@@ -2431,7 +2509,7 @@ describe("index", () => {
 			);
 			let remoteQueries2 = 0;
 			store2.docs.index.processQuery = async (
-				query: SearchRequest | CollectNextRequest,
+				query: SearchRequest | SearchRequestIndexed | CollectNextRequest,
 				from: PublicSignKey,
 				isLocal: boolean,
 				options?: {
@@ -2442,7 +2520,7 @@ describe("index", () => {
 					remoteQueries2++;
 				}
 
-				return processQuery2(query, from, isLocal, options);
+				return processQuery2(query, from, isLocal, options) as any;
 			};
 
 			const doc1 = new Document({
@@ -2795,6 +2873,207 @@ describe("index", () => {
 					}
 				}
 			});
+		});
+	});
+
+	describe("custom index", () => {
+		let peersCount = 2,
+			stores: TestStore<Indexable>[] = [];
+
+		class Indexable {
+			@field({ type: "string" })
+			id: string;
+
+			@field({ type: "string" })
+			nameTransformed: string;
+
+			constructor(from: Document) {
+				this.id = from.id;
+				this.nameTransformed = from.name?.toLocaleUpperCase() ?? "_MISSING_";
+			}
+		}
+
+		before(async () => {
+			session = await TestSession.connected(peersCount);
+		});
+
+		after(async () => {
+			await session.stop();
+		});
+
+		beforeEach(async () => {
+			// Create store
+			stores = [];
+			for (let i = 0; i < peersCount; i++) {
+				const store =
+					i > 0
+						? (await TestStore.load<TestStore<Indexable>>(
+								stores[0].address!,
+								session.peers[i].services.blocks,
+							))!
+						: new TestStore<Indexable>({
+								docs: new Documents<Document, Indexable>(),
+							});
+				await session.peers[i].open(store, {
+					args: {
+						replicate: i === 0,
+						index: {
+							type: Indexable,
+							transform: (arg, ctx) => new Indexable(arg),
+						},
+					},
+				});
+				stores.push(store);
+			}
+
+			await stores[0].docs.put(new Document({ id: "1", name: "name1" }));
+			await stores[0].docs.put(new Document({ id: "2", name: "name2" }));
+			await stores[0].docs.put(new Document({ id: "3", name: "name3" }));
+			await waitForResolved(async () =>
+				expect((await stores[1].docs.log.getReplicators()).size).to.eq(1),
+			);
+		});
+
+		afterEach(async () => {
+			await Promise.all(stores.map((x) => x.drop()));
+		});
+
+		it("get", async () => {
+			const get = await stores[0].docs.index.get("1");
+			expect(get!.name).to.eq("name1");
+
+			const getRemote = await stores[1].docs.index.get("1");
+			expect(getRemote!.name).to.eq("name1");
+		});
+
+		it("get indexed", async () => {
+			const get = await stores[0].docs.index.get("1", { resolve: false });
+			expect(get!.nameTransformed).to.eq("NAME1");
+			expect(get instanceof Indexable).to.be.true;
+
+			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
+			expect(getRemote!.nameTransformed).to.eq("NAME1");
+			expect(getRemote instanceof Indexable).to.be.true;
+		});
+
+		it("iterate", async () => {
+			for (const iterator of [
+				stores[0].docs.index.iterate({
+					sort: "id",
+				}),
+				stores[1].docs.index.iterate({
+					sort: "id",
+				}),
+			]) {
+				const first = await iterator.next(1);
+				const second = await iterator.next(2);
+				expect(first[0].name).to.eq("name1");
+				expect(first[0] instanceof Document).to.be.true;
+				expect(second[0].name).to.eq("name2");
+				expect(second[1].name).to.eq("name3");
+				expect(second[0] instanceof Document).to.be.true;
+				expect(second[1] instanceof Document).to.be.true;
+			}
+		});
+
+		it("iterate indexed", async () => {
+			for (const iterator of [
+				stores[0].docs.index.iterate(
+					{
+						sort: "id",
+					},
+					{
+						resolve: false,
+					},
+				),
+				stores[1].docs.index.iterate(
+					{
+						sort: "id",
+					},
+					{
+						resolve: false,
+					},
+				),
+			]) {
+				const first = await iterator.next(1);
+				const second = await iterator.next(2);
+				expect(first[0].nameTransformed).to.eq("NAME1");
+				expect(first[0] instanceof Indexable).to.be.true;
+				expect(second[0].nameTransformed).to.eq("NAME2");
+				expect(second[1].nameTransformed).to.eq("NAME3");
+				expect(second[0] instanceof Indexable).to.be.true;
+				expect(second[1] instanceof Indexable).to.be.true;
+			}
+		});
+
+		it("iterate replicate", async () => {
+			for (const iterator of [
+				stores[0].docs.index.iterate(
+					{
+						sort: "id",
+					},
+					{
+						remote: {
+							replicate: true,
+						},
+					},
+				),
+				stores[1].docs.index.iterate(
+					{
+						sort: "id",
+					},
+					{
+						remote: {
+							replicate: true,
+						},
+					},
+				),
+			]) {
+				const first = await iterator.next(1);
+				const second = await iterator.next(2);
+				expect(first[0].name).to.eq("name1");
+				expect(first[0] instanceof Document).to.be.true;
+				expect(second[0].name).to.eq("name2");
+				expect(second[1].name).to.eq("name3");
+				expect(second[0] instanceof Document).to.be.true;
+				expect(second[1] instanceof Document).to.be.true;
+			}
+		});
+
+		it("iterate replicate indexed", async () => {
+			for (const iterator of [
+				stores[0].docs.index.iterate(
+					{
+						sort: "id",
+					},
+					{
+						resolve: false,
+						remote: {
+							replicate: true,
+						},
+					},
+				),
+				stores[1].docs.index.iterate(
+					{
+						sort: "id",
+					},
+					{
+						resolve: false,
+						remote: {
+							replicate: true,
+						},
+					},
+				),
+			]) {
+				const first = await iterator.next(1);
+				const second = await iterator.next(2);
+				expect(first[0].nameTransformed).to.eq("NAME1");
+				expect(first[0] instanceof Indexable).to.be.true;
+				expect(second[0].nameTransformed).to.eq("NAME2");
+				expect(second[1].nameTransformed).to.eq("NAME3");
+				expect(second[0] instanceof Indexable).to.be.true;
+				expect(second[1] instanceof Indexable).to.be.true;
+			}
 		});
 	});
 

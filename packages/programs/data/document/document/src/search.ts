@@ -1,9 +1,10 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
-import { BlockResponse } from "@peerbit/blocks";
+import type { PeerId } from "@libp2p/interface";
 import { Cache } from "@peerbit/cache";
 import {
 	type MaybePromise,
 	PublicSignKey,
+	getPublicKeyFromPeerId,
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
@@ -19,13 +20,9 @@ import {
 	type RPCResponse,
 	queryAll,
 } from "@peerbit/rpc";
-import {
-	BlocksMessage,
-	type ReplicationDomain,
-	SharedLog,
-} from "@peerbit/shared-log";
+import { type ReplicationDomain, SharedLog } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import { AbortError } from "@peerbit/time";
+import { AbortError, waitFor } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
@@ -35,9 +32,9 @@ import { ResumableIterators } from "./resumable-iterator.js";
 
 const logger = loggerFn({ module: "document-index" });
 
-type BufferedResult<T> = {
+type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;
-	indexed: Record<string, any>;
+	indexed: I;
 	context: types.Context;
 	from: PublicSignKey;
 };
@@ -49,11 +46,16 @@ export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
 	domain?: ExtractArgs<D>;
 	eager?: boolean; // whether to query newly joined peers before they have matured
 };
-export type QueryOptions<R, D> = {
-	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult<R>, D>;
+export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
+	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult, D>;
 	local?: boolean;
+	resolve?: Resolve;
 };
-export type SearchOptions<R, D> = QueryOptions<R, D>;
+export type SearchOptions<
+	R,
+	D,
+	Resolve extends boolean | undefined,
+> = QueryOptions<R, D, Resolve>;
 
 type Transformer<T, I> = (obj: T, context: types.Context) => MaybePromise<I>;
 
@@ -64,37 +66,104 @@ export type ResultsIterator<T> = {
 	all: () => Promise<T[]>;
 };
 
-type QueryDetailedOptions<T, D> = QueryOptions<T, D> & {
+type QueryDetailedOptions<
+	T,
+	D,
+	Resolve extends boolean | undefined,
+> = QueryOptions<T, D, Resolve> & {
 	onResponse?: (
-		response: types.AbstractSearchResult<T>,
+		response: types.AbstractSearchResult,
 		from: PublicSignKey,
 	) => void | Promise<void>;
 };
 
-const introduceEntries = async <T, D>(
-	queryRequest: types.SearchRequest,
-	responses: RPCResponse<types.AbstractSearchResult<T>>[],
-	type: AbstractType<T>,
+type QueryLike /* <Resolve extends boolean | undefined>  */ = {
+	query?: indexerTypes.Query[] | indexerTypes.QueryLike;
+	sort?: indexerTypes.Sort[] | indexerTypes.Sort | indexerTypes.SortLike;
+	/* 	resolve?: Resolve; */
+};
+
+/* type ExtractResolve<R> =
+	R extends QueryLike<infer X>
+	? X extends boolean // if X is a boolean (true or false)
+	? X
+	: true // else default to true
+	: true; // if R isn't QueryLike at all, default to true */
+
+type ExtractResolveFromOptions<O> =
+	O extends QueryOptions<any, any, infer X>
+		? X extends boolean // if X is a boolean (true or false)
+			? X
+			: true // else default to true
+		: true; // if R isn't QueryLike at all, default to true
+
+const coerceQuery = <Resolve extends boolean | undefined>(
+	query: types.SearchRequest | types.SearchRequestIndexed | QueryLike,
+	options?: QueryOptions<any, any, Resolve>,
+) => {
+	let replicate =
+		typeof options?.remote !== "boolean" ? options?.remote?.replicate : false;
+
+	if (
+		query instanceof types.SearchRequestIndexed &&
+		query.replicate === false &&
+		replicate
+	) {
+		query.replicate = true;
+		return query;
+	}
+	if (query instanceof types.SearchRequest) {
+		return query;
+	}
+
+	const queryObject = query as QueryLike;
+
+	return options?.resolve || options?.resolve == null
+		? new types.SearchRequest({
+				query: indexerTypes.toQuery(queryObject.query),
+				sort: indexerTypes.toSort(query.sort),
+			})
+		: new types.SearchRequestIndexed({
+				query: indexerTypes.toQuery(queryObject.query),
+				sort: indexerTypes.toSort(query.sort),
+				replicate,
+			});
+};
+
+const introduceEntries = async <
+	T,
+	I,
+	D,
+	R extends types.SearchRequest | types.SearchRequestIndexed,
+>(
+	queryRequest: R,
+	responses: RPCResponse<types.AbstractSearchResult>[],
+	documentType: AbstractType<T>,
+	indexedType: AbstractType<I>,
 	sync: (
-		queryRequest: types.SearchRequest,
-		result: types.Results<T>,
+		request: types.SearchRequest | types.SearchRequestIndexed,
+		response: types.Results<any>,
 	) => Promise<void>,
-	options?: QueryDetailedOptions<T, D>,
-): Promise<RPCResponse<types.Results<T>>[]> => {
-	const results: RPCResponse<types.Results<T>>[] = [];
+	options?: QueryDetailedOptions<T, D, any>,
+): Promise<RPCResponse<types.Results<types.ResultTypeFromRequest<R>>>[]> => {
+	const results: RPCResponse<types.Results<any>>[] = [];
 	for (const response of responses) {
 		if (!response.from) {
 			logger.error("Missing from for response");
 		}
 
 		if (response.response instanceof types.Results) {
-			response.response.results.forEach((r) => r.init(type));
+			response.response.results.forEach((r) =>
+				r instanceof types.ResultValue
+					? r.init(documentType)
+					: r.init(indexedType),
+			);
 			if (typeof options?.remote !== "boolean" && options?.remote?.replicate) {
 				await sync(queryRequest, response.response);
 			}
 			options?.onResponse &&
 				(await options.onResponse(response.response, response.from!)); // TODO fix types
-			results.push(response as RPCResponse<types.Results<T>>);
+			results.push(response as RPCResponse<types.Results<any>>);
 		} else if (response.response instanceof types.NoAccess) {
 			logger.error("Search resulted in access error");
 		} else {
@@ -138,6 +207,17 @@ export type CanRead<T> = (
 	result: T,
 	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
+
+export type CanReadIndexed<I> = (
+	result: I,
+	from: PublicSignKey,
+) => Promise<boolean> | boolean;
+
+type ValueTypeFromRequest<
+	Resolve extends boolean | undefined,
+	T,
+	I,
+> = Resolve extends false ? I : T;
 
 @variant(0)
 export class IndexableContext implements types.Context {
@@ -210,15 +290,19 @@ export type OpenOptions<
 	documentType: AbstractType<T>;
 	dbType: AbstractType<types.IDocumentStore<T>>;
 	log: SharedLog<Operation, D, any>;
-	canRead?: CanRead<T>;
+	canRead?: CanRead<I>;
 	canSearch?: CanSearch;
-	sync: (
-		request: types.SearchRequest,
-		result: types.Results<T>,
+	replicate: (
+		request: types.SearchRequest | types.SearchRequestIndexed,
+		results: types.Results<
+			types.ResultTypeFromRequest<
+				types.SearchRequest | types.SearchRequestIndexed
+			>
+		>,
 	) => Promise<void>;
 	indexBy?: string | string[];
 	transform?: TransformOptions<T, I>;
-	emitBlocksEagerly?: boolean;
+	compatibility: 6 | 7 | 8 | undefined;
 };
 
 type IndexableClass<I> = new (
@@ -233,7 +317,7 @@ export class DocumentIndex<
 	D extends ReplicationDomain<any, Operation, any>,
 > extends Program<OpenOptions<T, I, D>> {
 	@field({ type: RPC })
-	_query: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+	_query: RPC<types.AbstractSearchRequest, types.AbstractSearchResult>;
 
 	// Original document representation
 	documentType: AbstractType<T>;
@@ -243,6 +327,7 @@ export class DocumentIndex<
 
 	// The indexed document wrapped in a context
 	wrappedIndexedType: IndexableClass<I>;
+	indexedType: AbstractType<I>;
 
 	// The database type, for recursive indexing
 	dbType: AbstractType<types.IDocumentStore<T>>;
@@ -254,16 +339,16 @@ export class DocumentIndex<
 	index: indexerTypes.Index<IDocumentWithContext<I>>;
 	private _resumableIterators: ResumableIterators<IDocumentWithContext<I>>;
 
-	emitBlocksEagerly: boolean;
+	compatibility: 6 | 7 | 8 | undefined;
 
 	// Transformation, indexer
 	/* fields: IndexableFields<T, I>; */
 
 	private _valueEncoding: Encoding<T>;
 
-	private _sync: (
-		reques: types.SearchRequest,
-		result: types.Results<T>,
+	private _sync: <V extends types.ResultValue<T> | types.ResultIndexedValue<I>>(
+		request: types.SearchRequest | types.SearchRequestIndexed,
+		results: types.Results<V>,
 	) => Promise<void>;
 
 	private _log: SharedLog<Operation, D, any>;
@@ -283,7 +368,7 @@ export class DocumentIndex<
 	>;
 
 	constructor(properties?: {
-		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult<T>>;
+		query?: RPC<types.AbstractSearchRequest, types.AbstractSearchResult>;
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
@@ -301,7 +386,7 @@ export class DocumentIndex<
 			!properties.transform?.type ||
 			properties.transform?.type === properties.documentType;
 
-		this.emitBlocksEagerly = properties.emitBlocksEagerly || false;
+		this.compatibility = properties.compatibility;
 
 		@variant(0)
 		class IndexedClassWithContext {
@@ -315,10 +400,8 @@ export class DocumentIndex<
 		}
 
 		// copy all prototype values from indexedType to IndexedClassWithContext
-		copySerialization(
-			(properties.transform?.type || properties.documentType)!,
-			IndexedClassWithContext,
-		);
+		this.indexedType = (properties.transform?.type || properties.documentType)!;
+		copySerialization(this.indexedType, IndexedClassWithContext);
 
 		this.wrappedIndexedType = IndexedClassWithContext as new (
 			value: I,
@@ -329,7 +412,56 @@ export class DocumentIndex<
 		this._isProgramValues = this.documentType instanceof Program;
 		this.dbType = properties.dbType;
 		this._resultQueue = new Map();
-		this._sync = properties.sync;
+		this._sync = async (request, results) => {
+			/*  			
+			let allPromises: Promise<void> | undefined = undefined
+				if (waitForValue) {
+					let promises: Map<string, DeferredPromise<T>> = new Map();
+	
+				for (const result of results) {
+					for (let i = 0; i < result.results.length; i++) {
+						let promise = defer<T>(); 
+						let r = result.results[i];
+							promises.set(r.context.head, promise); 
+						const head = result.results[0].context.head;
+						let listeners = this.hashToValueListener.get(head);
+						if (!listeners) {
+							listeners = [];
+							this.hashToValueListener.set(head, listeners);
+						}
+						listeners.push(async (value) => {
+								promise.resolve(value); 
+							result.results[i] = new types.ResultValue<T>({
+								context: r.context,
+								value,
+								source: serialize(value),
+								indexed: r.indexed,
+							}) as any;
+						});
+						promise.promise.finally(() => {
+							this.hashToValueListener.delete(head);
+						});
+					}
+				}
+
+				let timeout = setTimeout(() => {
+					for (const promise of promises!) {
+						promise[1].reject("Timed out resolving search result from value");
+					}
+				}, 1e4);
+
+				allPromises = Promise.all([...promises.values()].map((x) => x.promise)).then(
+					() => {
+						clearTimeout(timeout);
+					},
+				);
+			} */
+
+			await properties.replicate(request, results);
+			/* if (allPromises) {
+				await allPromises;
+			} */
+		};
 
 		const transformOptions = properties.transform;
 		this.transformer = transformOptions
@@ -401,7 +533,7 @@ export class DocumentIndex<
 					const results = await this.processQuery(
 						query as
 							| types.SearchRequest
-							| types.SearchRequest
+							| types.SearchRequestIndexed
 							| types.CollectNextRequest,
 						ctx.from,
 						false,
@@ -409,29 +541,6 @@ export class DocumentIndex<
 							canRead: properties.canRead,
 						},
 					);
-
-					if (this.emitBlocksEagerly) {
-						await Promise.all(
-							results.results.map(async (x) => {
-								const hash = x.context.head;
-								const block = await this._log.log.blocks.get(hash);
-								if (!block) {
-									return;
-								}
-
-								// todo dont do bytes -> entry -> bytes, but send the block directly
-								return this._log.rpc.send(
-									new BlocksMessage(new BlockResponse(hash, block)),
-									{
-										mode: new SilentDelivery({
-											to: [ctx.from!],
-											redundancy: 1,
-										}),
-									},
-								);
-							}),
-						);
-					}
 
 					return new types.Results({
 						// Even if results might have length 0, respond, because then we now at least there are no matching results
@@ -473,10 +582,20 @@ export class DocumentIndex<
 		return dropped;
 	}
 
-	public async get(
+	public async get<Options extends QueryOptions<T, D, true | undefined>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
-		options?: QueryOptions<T, D>,
-	): Promise<T | undefined> {
+		options?: Options,
+	): Promise<T>;
+
+	public async get<Options extends QueryOptions<T, D, false>>(
+		key: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: Options,
+	): Promise<I>;
+
+	public async get<
+		Options extends QueryOptions<T, D, Resolve>,
+		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
+	>(key: indexerTypes.Ideable | indexerTypes.IdKey, options?: Options) {
 		return (
 			await this.getDetailed(
 				key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key),
@@ -530,14 +649,26 @@ export class DocumentIndex<
 		});
 	}
 
-	public async getDetailed(
+	public async getDetailed<
+		Options extends QueryOptions<T, D, Resolve>,
+		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
+		RT extends types.Result = Resolve extends true
+			? types.ResultValue<T>
+			: types.ResultIndexedValue<I>,
+	>(
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
-		options?: QueryOptions<T, D>,
-	): Promise<types.Results<T>[] | undefined> {
-		let results: types.Results<T>[] | undefined;
+		options?: QueryOptions<T, D, Resolve>,
+	): Promise<types.Results<RT>[] | undefined> {
+		let results:
+			| types.Results<types.ResultValue<T> | types.ResultIndexedValue<I>>[]
+			| undefined;
+		const resolve = options?.resolve || options?.resolve == null;
+		let requestClazz = resolve
+			? types.SearchRequest
+			: types.SearchRequestIndexed;
 		if (key instanceof Uint8Array) {
-			results = await this.queryDetailed(
-				new types.SearchRequest({
+			results = await this.queryCommence(
+				new requestClazz({
 					query: [
 						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
 					],
@@ -551,8 +682,8 @@ export class DocumentIndex<
 				typeof indexableKey === "number" ||
 				typeof indexableKey === "bigint"
 			) {
-				results = await this.queryDetailed(
-					new types.SearchRequest({
+				results = await this.queryCommence(
+					new requestClazz({
 						query: [
 							new indexerTypes.IntegerCompare({
 								key: this.indexBy,
@@ -564,8 +695,8 @@ export class DocumentIndex<
 					options,
 				);
 			} else if (typeof indexableKey === "string") {
-				results = await this.queryDetailed(
-					new types.SearchRequest({
+				results = await this.queryCommence(
+					new requestClazz({
 						query: [
 							new indexerTypes.StringMatch({
 								key: this.indexBy,
@@ -576,8 +707,8 @@ export class DocumentIndex<
 					options,
 				);
 			} else if (indexableKey instanceof Uint8Array) {
-				results = await this.queryDetailed(
-					new types.SearchRequest({
+				results = await this.queryCommence(
+					new requestClazz({
 						query: [
 							new indexerTypes.ByteMatchQuery({
 								key: this.indexBy,
@@ -590,19 +721,56 @@ export class DocumentIndex<
 			}
 		}
 
-		return results;
+		if (
+			resolve &&
+			requestClazz === types.SearchRequestIndexed &&
+			!this.indexedTypeIsDocumentType &&
+			results
+		) {
+			for (const set of results) {
+				let coercedResult: types.ResultValue<T>[] = [];
+
+				for (const value of set.results) {
+					const resolved =
+						value instanceof types.ResultIndexedValue
+							? (
+									await this.resolveDocument({
+										indexed: value.value,
+										head: value.context.head,
+									})
+								)?.value
+							: value.value;
+					if (resolved) {
+						coercedResult.push(
+							new types.ResultValue({
+								context: value.context,
+								value: resolved,
+							}),
+						);
+					}
+				}
+				set.results = coercedResult;
+			}
+		}
+
+		return results as any as types.Results<RT>[];
 	}
 
 	getSize(): Promise<number> | number {
 		return this.index.getSize();
 	}
 
-	private async resolveDocument(
-		value: indexerTypes.IndexedResult<IDocumentWithContext<I>>,
-	): Promise<{ value: T } | undefined> {
+	private async resolveDocument(value: {
+		id?: indexerTypes.IdPrimitive;
+		indexed: I;
+		head: string;
+	}): Promise<{ value: T } | undefined> {
+		const id =
+			value.id ??
+			indexerTypes.toId(this.indexByResolver(value.indexed)).primitive;
+
 		const cached =
-			this._resolverCache.get(value.id.primitive) ||
-			this._resolverProgramCache?.get(value.id.primitive);
+			this._resolverCache.get(id) || this._resolverProgramCache?.get(id);
 		if (cached != null) {
 			return { value: cached };
 		}
@@ -611,13 +779,13 @@ export class DocumentIndex<
 			// cast value to T, i.e. convert the class but keep all properties except the __context
 			const obj = Object.assign(
 				Object.create(this.documentType.prototype),
-				value.value,
+				value.indexed,
 			);
 			delete obj.__context;
 			return { value: obj as T };
 		}
 
-		const head = await this._log.log.get(value.value.__context.head);
+		const head = await this._log.log.get(value.head);
 		if (!head) {
 			return undefined; // we could end up here if we recently pruned the document and other peers never persisted the entry
 			// TODO update changes in index before removing entries from log entry storage
@@ -636,14 +804,19 @@ export class DocumentIndex<
 		);
 	}
 
-	async processQuery(
-		query: types.SearchRequest | types.CollectNextRequest,
+	async processQuery<
+		R extends
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.CollectNextRequest,
+	>(
+		query: R,
 		from: PublicSignKey,
 		isLocal: boolean,
 		options?: {
-			canRead?: CanRead<T>;
+			canRead?: CanRead<I>;
 		},
-	): Promise<types.Results<T>> {
+	): Promise<types.Results<types.ResultTypeFromRequest<R>>> {
 		// We do special case for querying the id as we can do it faster than iterating
 
 		let prevQueued = isLocal
@@ -656,9 +829,16 @@ export class DocumentIndex<
 		let indexedResult:
 			| indexerTypes.IndexedResults<IDocumentWithContext<I>>
 			| undefined = undefined;
-		if (query instanceof types.SearchRequest) {
+
+		let fromQuery: types.SearchRequest | types.SearchRequestIndexed | undefined;
+		if (
+			query instanceof types.SearchRequest ||
+			query instanceof types.SearchRequestIndexed
+		) {
+			fromQuery = query;
 			indexedResult = await this._resumableIterators.iterateAndFetch(query);
 		} else if (query instanceof types.CollectNextRequest) {
+			fromQuery = this._resumableIterators.queues.get(query.idString)?.request;
 			indexedResult =
 				prevQueued?.keptInIndex === 0
 					? []
@@ -666,7 +846,7 @@ export class DocumentIndex<
 		} else {
 			throw new Error("Unsupported");
 		}
-		const filteredResults: types.ResultWithSource<T>[] = [];
+
 		let resultSize = 0;
 
 		let toIterate = prevQueued
@@ -693,6 +873,8 @@ export class DocumentIndex<
 			this._resultQueue.set(query.idString, prevQueued);
 		}
 
+		const filteredResults: types.Result[] = [];
+
 		for (const result of toIterate) {
 			if (!isLocal) {
 				resultSize += result.value.__context.size;
@@ -701,25 +883,55 @@ export class DocumentIndex<
 					continue;
 				}
 			}
+			const indexedUnwrapped = Object.assign(
+				Object.create(this.indexedType.prototype),
+				result.value,
+			);
 
-			const value = await this.resolveDocument(result);
 			if (
-				!value ||
-				(options?.canRead && !(await options.canRead(value.value, from)))
+				options?.canRead &&
+				!(await options.canRead(indexedUnwrapped, from))
 			) {
 				continue;
 			}
-
-			filteredResults.push(
-				new types.ResultWithSource({
-					context: result.value.__context.toContext(),
-					value: value.value,
-					source: serialize(value.value),
+			if (fromQuery instanceof types.SearchRequest) {
+				const value = await this.resolveDocument({
 					indexed: result.value,
-				}),
-			);
+					head: result.value.__context.head,
+				});
+
+				if (!value) {
+					continue;
+				}
+
+				filteredResults.push(
+					new types.ResultValue({
+						context: result.value.__context.toContext(),
+						value: value.value,
+						source: serialize(value.value),
+						indexed: indexedUnwrapped,
+					}),
+				);
+			} else if (fromQuery instanceof types.SearchRequestIndexed) {
+				const context = result.value.__context.toContext();
+				const head = await this._log.log.get(context.head);
+				// assume remote peer will start to replicate (TODO is this ideal?)
+				if (fromQuery.replicate) {
+					this._log.addPeersToGidPeerHistory(context.gid, [from.hashcode()]);
+				}
+
+				filteredResults.push(
+					new types.ResultIndexedValue({
+						context,
+						source: serialize(indexedUnwrapped),
+						indexed: indexedUnwrapped,
+						entries: head ? [head] : [],
+					}),
+				);
+			}
 		}
-		const results: types.Results<T> = new types.Results({
+
+		const results: types.Results<any> = new types.Results<any>({
 			results: filteredResults,
 			kept: BigInt(kept + (prevQueued?.queue.length || 0)),
 		});
@@ -734,6 +946,7 @@ export class DocumentIndex<
 	private clearResultsQueue(
 		query:
 			| types.SearchRequest
+			| types.SearchRequestIndexed
 			| types.CollectNextRequest
 			| types.CloseIteratorRequest,
 	) {
@@ -771,14 +984,18 @@ export class DocumentIndex<
 	 * @param options
 	 * @returns
 	 */
-	public async queryDetailed(
-		queryRequest: types.SearchRequest,
-		options?: QueryDetailedOptions<T, D>,
-	): Promise<types.Results<T>[]> {
+	private async queryCommence<
+		R extends types.SearchRequest | types.SearchRequestIndexed,
+		RT extends types.Result = R extends types.SearchRequest
+			? types.ResultValue<T>
+			: types.ResultIndexedValue<I>,
+	>(
+		queryRequest: R,
+		options?: QueryDetailedOptions<T, D, boolean | undefined>,
+	): Promise<types.Results<RT>[]> {
 		const local = typeof options?.local === "boolean" ? options?.local : true;
-		let remote:
-			| RemoteQueryOptions<types.AbstractSearchResult<T>, D>
-			| undefined = undefined;
+		let remote: RemoteQueryOptions<types.AbstractSearchResult, D> | undefined =
+			undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
 				remote = {};
@@ -800,7 +1017,7 @@ export class DocumentIndex<
 				"Expecting either 'options.remote' or 'options.local' to be true",
 			);
 		}
-		const allResults: types.Results<T>[] = [];
+		const allResults: types.Results<types.ResultTypeFromRequest<R>>[] = [];
 
 		if (local) {
 			const results = await this.processQuery(
@@ -815,7 +1032,7 @@ export class DocumentIndex<
 			}
 		}
 
-		let resolved: types.Results<T>[] = [];
+		let resolved: types.Results<types.ResultTypeFromRequest<R>>[] = [];
 		if (remote) {
 			const replicatorGroups = await this._log.getCover(
 				remote.domain ?? (undefined as any),
@@ -828,16 +1045,22 @@ export class DocumentIndex<
 			if (replicatorGroups) {
 				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
 				const responseHandler = async (
-					results: RPCResponse<types.AbstractSearchResult<T>>[],
+					results: RPCResponse<types.AbstractSearchResult>[],
 				) => {
-					for (const r of await introduceEntries(
+					const resultInitialized = await introduceEntries(
 						queryRequest,
 						results,
 						this.documentType,
+						this.indexedType,
 						this._sync,
 						options,
-					)) {
-						resolved.push(r.response);
+					);
+					try {
+						for (const r of resultInitialized) {
+							resolved.push(r.response as any);
+						}
+					} catch (error) {
+						throw error;
 					}
 				};
 				try {
@@ -884,8 +1107,17 @@ export class DocumentIndex<
 				}
 			}
 		}
-		return allResults;
+		return allResults as any;
 	}
+
+	public search(
+		queryRequest: QueryLike,
+		options?: SearchOptions<T, D, true>,
+	): Promise<ValueTypeFromRequest<true, T, I>[]>;
+	public search(
+		queryRequest: QueryLike,
+		options?: SearchOptions<T, D, false>,
+	): Promise<ValueTypeFromRequest<false, T, I>[]>;
 
 	/**
 	 * Query and retrieve results
@@ -893,32 +1125,52 @@ export class DocumentIndex<
 	 * @param options
 	 * @returns
 	 */
-	public async search(
-		queryRequest: types.SearchRequest,
-		options?: SearchOptions<T, D>,
-	): Promise<T[]> {
+	public async search<
+		R extends types.SearchRequest | types.SearchRequestIndexed | QueryLike,
+		O extends SearchOptions<T, D, Resolve>,
+		Resolve extends boolean | undefined = ExtractResolveFromOptions<O>,
+	>(
+		queryRequest: R,
+		options?: SearchOptions<T, D, Resolve>,
+	): Promise<ValueTypeFromRequest<Resolve, T, I>[]> {
 		// Set fetch to search size, or max value (default to max u32 (4294967295))
-		queryRequest.fetch = queryRequest.fetch ?? 0xffffffff;
+		const coercedRequest: types.SearchRequest | types.SearchRequestIndexed =
+			coerceQuery(queryRequest, options);
+		coercedRequest.fetch = coercedRequest.fetch ?? 0xffffffff;
 
 		// So that the iterator is pre-fetching the right amount of entries
-		const iterator = this.iterate(queryRequest, options);
+		const iterator = this.iterate(coercedRequest, options);
 
 		// So that this call will not do any remote requests
-		const allResults: T[] = [];
-		while (iterator.done() !== true && queryRequest.fetch > allResults.length) {
+		const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
+
+		while (
+			iterator.done() !== true &&
+			coercedRequest.fetch > allResults.length
+		) {
 			// We might need to pull .next multiple time due to data message size limitations
+
 			for (const result of await iterator.next(
-				queryRequest.fetch - allResults.length,
+				coercedRequest.fetch - allResults.length,
 			)) {
-				allResults.push(result);
+				allResults.push(result as ValueTypeFromRequest<Resolve, T, I>);
 			}
 		}
 
 		await iterator.close();
 
-		//s Deduplicate and return values directly
+		// Deduplicate and return values directly
 		return dedup(allResults, this.indexByResolver);
 	}
+
+	public iterate(
+		query: QueryLike,
+		options?: QueryOptions<T, D, undefined>,
+	): ResultsIterator<ValueTypeFromRequest<true, T, I>>;
+	public iterate<Resolve extends boolean>(
+		query: QueryLike,
+		options?: QueryOptions<T, D, Resolve>,
+	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>>;
 
 	/**
 	 * Query and retrieve documents in a iterator
@@ -926,16 +1178,58 @@ export class DocumentIndex<
 	 * @param options
 	 * @returns
 	 */
-	public iterate(
-		queryRequest: types.SearchRequest,
-		options?: QueryOptions<T, D>,
-	): ResultsIterator<T> {
+	public iterate<
+		R extends types.SearchRequest | types.SearchRequestIndexed | QueryLike,
+		O extends SearchOptions<T, D, Resolve>,
+		Resolve extends boolean | undefined = ExtractResolveFromOptions<O>,
+	>(
+		queryRequest: R,
+		options?: QueryOptions<T, D, Resolve>,
+	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>> {
+		let queryRequestCoerced: types.SearchRequest | types.SearchRequestIndexed =
+			coerceQuery(queryRequest, options);
+
+		let resolve = false;
+		if (
+			options?.remote &&
+			typeof options.remote !== "boolean" &&
+			options.remote.replicate &&
+			options?.resolve !== false
+		) {
+			if (
+				(queryRequest instanceof types.SearchRequestIndexed === false &&
+					this.compatibility == null) ||
+				(this.compatibility != null && this.compatibility > 8)
+			) {
+				queryRequestCoerced = new types.SearchRequestIndexed({
+					query: queryRequestCoerced.query,
+					fetch: queryRequestCoerced.fetch,
+					sort: queryRequestCoerced.sort,
+				});
+				resolve = true;
+			}
+		}
+
+		let replicate =
+			options?.remote &&
+			typeof options.remote !== "boolean" &&
+			options.remote.replicate;
+		if (
+			replicate &&
+			queryRequestCoerced instanceof types.SearchRequestIndexed
+		) {
+			queryRequestCoerced.replicate = true;
+		}
+
 		let fetchPromise: Promise<any> | undefined = undefined;
 		const peerBufferMap: Map<
 			string,
 			{
 				kept: number;
-				buffer: BufferedResult<T>[];
+				buffer: BufferedResult<
+					types.ResultValue<T> | types.ResultIndexedValue<I>,
+					I
+				>[];
 			}
 		> = new Map();
 		const visited = new Set<string | number | bigint>();
@@ -947,8 +1241,8 @@ export class DocumentIndex<
 		const controller = new AbortController();
 
 		const peerBuffers = (): {
-			indexed: Record<string, any>;
-			value: T;
+			indexed: I;
+			value: types.ResultValue<T> | types.ResultIndexedValue<I>;
 			from: PublicSignKey;
 			context: types.Context;
 		}[] => {
@@ -957,8 +1251,8 @@ export class DocumentIndex<
 
 		const fetchFirst = async (n: number): Promise<boolean> => {
 			done = true; // Assume we are donne
-			queryRequest.fetch = n;
-			await this.queryDetailed(queryRequest, {
+			queryRequestCoerced.fetch = n;
+			await this.queryCommence(queryRequestCoerced, {
 				...options,
 				onResponse: async (response, from) => {
 					if (!from) {
@@ -969,7 +1263,9 @@ export class DocumentIndex<
 						logger.error("Dont have access");
 						return;
 					} else if (response instanceof types.Results) {
-						const results = response as types.Results<T>;
+						const results = response as types.Results<
+							types.ResultTypeFromRequest<R>
+						>;
 						if (results.kept === 0n && results.results.length === 0) {
 							return;
 						}
@@ -977,24 +1273,42 @@ export class DocumentIndex<
 						if (results.kept > 0n) {
 							done = false; // we have more to do later!
 						}
-						const buffer: BufferedResult<T>[] = [];
+						const buffer: BufferedResult<types.ResultTypeFromRequest<R>, I>[] =
+							[];
 
 						for (const result of results.results) {
-							const indexKey = indexerTypes.toId(
-								this.indexByResolver(result.value),
-							).primitive;
-							if (visited.has(indexKey)) {
-								continue;
+							if (result instanceof types.ResultValue) {
+								const indexKey = indexerTypes.toId(
+									this.indexByResolver(result.value),
+								).primitive;
+								if (visited.has(indexKey)) {
+									continue;
+								}
+								visited.add(indexKey);
+								buffer.push({
+									value: result.value,
+									context: result.context,
+									from,
+									indexed:
+										(result.indexed as I) ||
+										(await this.transformer(result.value, result.context)),
+								});
+							} else {
+								const indexKey = indexerTypes.toId(
+									this.indexByResolver(result.value),
+								).primitive;
+
+								if (visited.has(indexKey)) {
+									continue;
+								}
+								visited.add(indexKey);
+								buffer.push({
+									value: result.value,
+									context: result.context,
+									from,
+									indexed: result.indexed || result.value,
+								});
 							}
-							visited.add(indexKey);
-							buffer.push({
-								value: result.value,
-								context: result.context,
-								from,
-								indexed:
-									result.indexed ||
-									(await this.transformer(result.value, result.context)),
-							});
 						}
 
 						peerBufferMap.set(from.hashcode(), {
@@ -1010,7 +1324,7 @@ export class DocumentIndex<
 			});
 
 			if (done) {
-				this.clearResultsQueue(queryRequest);
+				this.clearResultsQueue(queryRequestCoerced);
 			}
 
 			return done;
@@ -1048,7 +1362,7 @@ export class DocumentIndex<
 					// TODO buffer more than deleted?
 					// TODO batch to multiple 'to's
 					const collectRequest = new types.CollectNextRequest({
-						id: queryRequest.id,
+						id: queryRequestCoerced.id,
 						amount: n - buffer.buffer.length,
 					});
 					// Fetch locally?
@@ -1119,57 +1433,54 @@ export class DocumentIndex<
 								})
 								.then((response) =>
 									introduceEntries(
-										queryRequest,
+										queryRequestCoerced,
 										response,
 										this.documentType,
+										this.indexedType,
 										this._sync,
 										options,
 									)
-										.then((responses) => {
-											responses.map((response) => {
-												resultsLeft += Number(response.response.kept);
-												if (!response.from) {
-													logger.error("Missing from for sorted query");
-													return;
-												}
-
-												if (response.response.results.length === 0) {
-													if (peerBufferMap.get(peer)?.buffer.length === 0) {
-														peerBufferMap.delete(peer); // No more results
-													}
-												} else {
-													const peerBuffer = peerBufferMap.get(peer);
-													if (!peerBuffer) {
+										.then(async (responses) => {
+											return Promise.all(
+												responses.map(async (response, i) => {
+													resultsLeft += Number(response.response.kept);
+													const from = responses[i].from;
+													if (!from) {
+														logger.error("Missing from for sorted query");
 														return;
 													}
-													peerBuffer.kept = Number(response.response.kept);
-													for (const result of response.response.results) {
-														if (
-															visited.has(
-																indexerTypes.toId(
-																	this.indexByResolver(result.value),
-																).primitive,
-															)
-														) {
-															continue;
+
+													if (response.response.results.length === 0) {
+														if (peerBufferMap.get(peer)?.buffer.length === 0) {
+															peerBufferMap.delete(peer); // No more results
 														}
-														visited.add(
-															indexerTypes.toId(
+													} else {
+														const peerBuffer = peerBufferMap.get(peer);
+														if (!peerBuffer) {
+															return;
+														}
+														peerBuffer.kept = Number(response.response.kept);
+														for (const result of response.response.results) {
+															const idPrimitive = indexerTypes.toId(
 																this.indexByResolver(result.value),
-															).primitive,
-														);
-														peerBuffer.buffer.push({
-															value: result.value,
-															context: result.context,
-															from: response.from!,
-															indexed: this.transformer(
-																result.value,
-																result.context,
-															),
-														});
+															).primitive;
+															if (visited.has(idPrimitive)) {
+																continue;
+															}
+															visited.add(idPrimitive);
+															peerBuffer.buffer.push({
+																value: result.value,
+																context: result.context,
+																from: from!,
+																indexed: await this.transformer(
+																	result.value,
+																	result.context,
+																),
+															});
+														}
 													}
-												}
-											});
+												}),
+											);
 										})
 										.catch((e) => {
 											logger.error(
@@ -1210,7 +1521,7 @@ export class DocumentIndex<
 				indexerTypes.extractSortCompare(
 					a.indexed,
 					b.indexed,
-					queryRequest.sort,
+					queryRequestCoerced.sort,
 				),
 			);
 
@@ -1231,18 +1542,38 @@ export class DocumentIndex<
 			}
 
 			done = fetchedAll && !pendingMoreResults;
+			let coercedBatch: ValueTypeFromRequest<Resolve, T, I>[];
+			if (resolve) {
+				coercedBatch = (
+					await Promise.all(
+						batch.map(async (x) =>
+							x.value instanceof this.documentType
+								? x.value
+								: (
+										await this.resolveDocument({
+											head: x.context.head,
+											indexed: x.indexed,
+										})
+									)?.value,
+						),
+					)
+				).filter((x) => !!x) as ValueTypeFromRequest<Resolve, T, I>[];
+			} else {
+				coercedBatch = batch.map((x) => x.value) as ValueTypeFromRequest<
+					Resolve,
+					T,
+					I
+				>[];
+			}
 
-			return dedup(
-				batch.map((x) => x.value),
-				this.indexByResolver,
-			);
+			return dedup(coercedBatch, this.indexByResolver);
 		};
 
 		const close = async () => {
 			controller.abort(new AbortError("Iterator closed"));
 
 			const closeRequest = new types.CloseIteratorRequest({
-				id: queryRequest.id,
+				id: queryRequestCoerced.id,
 			});
 			const promises: Promise<any>[] = [];
 			for (const [peer, buffer] of peerBufferMap) {
@@ -1276,7 +1607,7 @@ export class DocumentIndex<
 			next,
 			done: doneFn,
 			all: async () => {
-				let result: T[] = [];
+				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				while (doneFn() !== true) {
 					let batch = await next(100);
 					result.push(...batch);
@@ -1284,5 +1615,35 @@ export class DocumentIndex<
 				return result;
 			},
 		};
+	}
+
+	public async waitFor(
+		other:
+			| PublicSignKey
+			| PeerId
+			| string
+			| (PublicSignKey | string | PeerId)[],
+		options?: { signal?: AbortSignal; timeout?: number },
+	): Promise<void> {
+		await super.waitFor(other, options);
+		const ids = Array.isArray(other) ? other : [other];
+		const expectedHashes = new Set(
+			ids.map((x) =>
+				typeof x === "string"
+					? x
+					: x instanceof PublicSignKey
+						? x.hashcode()
+						: getPublicKeyFromPeerId(x).hashcode(),
+			),
+		);
+
+		for (const key of expectedHashes) {
+			await waitFor(
+				async () =>
+					(await this._log.replicationIndex.count({ query: { hash: key } })) >
+					0,
+				options,
+			);
+		}
 	}
 }

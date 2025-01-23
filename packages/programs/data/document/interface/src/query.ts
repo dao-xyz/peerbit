@@ -5,6 +5,8 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
+import { Entry } from "@peerbit/log";
+import type { SearchRequest, SearchRequestIndexed } from "./request.js";
 
 /// ----- RESULTS -----
 
@@ -38,7 +40,7 @@ export class Context {
 }
 
 @variant(0)
-export class ResultWithSource<T> extends Result {
+export class ResultValue<T> extends Result {
 	@field({ type: Uint8Array })
 	_source: Uint8Array;
 
@@ -47,7 +49,7 @@ export class ResultWithSource<T> extends Result {
 
 	_type: AbstractType<T>;
 	constructor(opts: {
-		source: Uint8Array;
+		source?: Uint8Array;
 		context: Context;
 		value?: T;
 		indexed?: Record<string, any>;
@@ -79,18 +81,65 @@ export class ResultWithSource<T> extends Result {
 	indexed?: Record<string, any>;
 }
 
+@variant(1)
+export class ResultIndexedValue<I> extends Result {
+	@field({ type: Uint8Array })
+	_source: Uint8Array;
+
+	@field({ type: vec(Entry) })
+	entries: Entry<any>[];
+
+	@field({ type: Context })
+	context: Context;
+
+	_type: AbstractType<I>;
+
+	constructor(opts: {
+		source: Uint8Array;
+		indexed: I;
+		entries: Entry<any>[];
+		context: Context;
+	}) {
+		super();
+		this._source = opts.source;
+		this.context = opts.context;
+		this.indexed = opts.indexed;
+		this.entries = opts.entries;
+		this._value = opts.indexed;
+	}
+
+	init(type: AbstractType<I>) {
+		this._type = type;
+	}
+
+	_value?: I;
+	get value(): I {
+		if (this._value) {
+			return this._value;
+		}
+		if (!this._source) {
+			throw new Error("Missing source binary");
+		}
+		this._value = deserialize(this._source, this._type);
+		return this._value;
+	}
+
+	// we never send this over the wire since we can always reconstruct it from value
+	indexed?: I;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export abstract class AbstractSearchResult<T> {}
+export abstract class AbstractSearchResult {}
 
 @variant(0)
-export class Results<T> extends AbstractSearchResult<T> {
-	@field({ type: vec(ResultWithSource) })
-	results: ResultWithSource<T>[];
+export class Results<R extends Result> extends AbstractSearchResult {
+	@field({ type: vec(Result) })
+	results: R[];
 
 	@field({ type: "u64" })
 	kept: bigint; // how many results that were not sent, but can be collected later
 
-	constructor(properties: { results: ResultWithSource<T>[]; kept: bigint }) {
+	constructor(properties: { results: R[]; kept: bigint }) {
 		super();
 		this.kept = properties.kept;
 		this.results = properties.results;
@@ -98,7 +147,14 @@ export class Results<T> extends AbstractSearchResult<T> {
 }
 
 @variant(1)
-export class NoAccess extends AbstractSearchResult<any> {}
+export class NoAccess extends AbstractSearchResult {}
+
+// for SearchRequest we wnat to return ResultsWithSource<T> for IndexedSearchRequest we want to return ResultsIndexed<T>
+export type ResultTypeFromRequest<R> = R extends SearchRequest
+	? ResultValue<any>
+	: R extends SearchRequestIndexed
+		? ResultIndexedValue<any>
+		: ResultIndexedValue<any> | ResultValue<any>;
 
 /* @variant(5)
 export class LogQuery extends Query { } */

@@ -132,6 +132,7 @@ let iterator = client.docs.index.iterate(
 	},
 );
 
+const t0 = +new Date();
 let uniqueResults = new Set<string>();
 let c = 0;
 while (iterator.done() !== true) {
@@ -143,9 +144,17 @@ while (iterator.done() !== true) {
 	}
 }
 
+console.log(
+	"done, fetched results: ",
+	uniqueResults.size +
+		". Number of segments: " +
+		(await client.docs.log.getMyReplicationSegments()).length +
+		". In " +
+		Math.round(+new Date() - t0) +
+		" ms",
+);
+
 await client.close();
 await host.close();
 await Promise.all(peers.map((x) => x.stop()));
 await Promise.all(peers.map((x) => x.libp2p.stop()));
-
-console.log("done, fetched results: ", uniqueResults.size);

@@ -40,25 +40,24 @@ export class Document {
 
 @variant("test_documents")
 export class TestStore<
+	I extends Record<string, any> = Document,
 	D extends ReplicationDomain<any, Operation, any> = ReplicationDomainHash<
 		"u32" | "u64"
 	>,
-> extends Program<Partial<SetupOptions<Document, Document, D>>> {
+> extends Program<Partial<SetupOptions<Document, I, D>>> {
 	@field({ type: Uint8Array })
 	id: Uint8Array;
 
 	@field({ type: Documents })
-	docs: Documents<Document, Document, D>;
+	docs: Documents<Document, I, D>;
 
-	constructor(properties: { docs: Documents<Document, Document, D> }) {
+	constructor(properties: { docs: Documents<Document, I, D> }) {
 		super();
 		this.id = randomBytes(32);
 		this.docs = properties.docs;
 	}
 
-	async open(
-		options?: Partial<SetupOptions<Document, Document, D>>,
-	): Promise<void> {
+	async open(options?: Partial<SetupOptions<Document, I, D>>): Promise<void> {
 		await this.docs.open({
 			...options,
 			type: Document,

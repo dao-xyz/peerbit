@@ -6,7 +6,7 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import { AccessError } from "@peerbit/crypto";
-import * as documentsTypes from "@peerbit/document-interface";
+import { ResultIndexedValue } from "@peerbit/document-interface";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {
 	type Change,
@@ -89,11 +89,8 @@ export type SetupOptions<
 	canPerform?: CanPerform<T>;
 	id?: (obj: any) => indexerTypes.IdPrimitive;
 	index?: {
-		// emit blocks early? so peers who get search results can quickly fetch the blocks
-		emitBlocksEagerly?: boolean;
-
 		canSearch?: CanSearch;
-		canRead?: CanRead<T>;
+		canRead?: CanRead<I>;
 		idProperty?: string | string[];
 	} & TransformOptions<T, I>;
 	log?: {
@@ -179,16 +176,19 @@ export class Documents<
 			documentType: this._clazz,
 			transform: options.index,
 			indexBy: idProperty,
-			emitBlocksEagerly: options.index?.emitBlocksEagerly,
-			sync: async (
-				query: documentsTypes.SearchRequest,
-				result: documentsTypes.Results<T>,
-			) => {
+			compatibility: options.compatibility,
+			replicate: async (query, results) => {
 				// here we arrive for all the results we want to persist.
 
 				let mergeSegments = this.domain?.canProjectToOneSegment(query);
 				await this.log.join(
-					result.results.map((x) => x.context.head),
+					results.results
+						.flat()
+						.map((x) =>
+							x instanceof ResultIndexedValue && x.entries.length > 0
+								? x.entries[0]
+								: x.context.head,
+						),
 					{ replicate: { assumeSynced: true, mergeSegments } },
 				);
 			},
@@ -217,7 +217,6 @@ export class Documents<
 				? (log: any) => options.domain!(this)
 				: undefined) as any, /// TODO types,
 			compatibility: logCompatiblity,
-			earlyBlocks: options?.earlyBlocks,
 		});
 	}
 
@@ -340,6 +339,7 @@ export class Documents<
 
 				const existingDocument = (
 					await this.index.getDetailed(key, {
+						resolve: false,
 						local: true,
 						remote: this.immutable,
 					})
@@ -390,6 +390,7 @@ export class Documents<
 				}
 				const existingDocument = (
 					await this.index.getDetailed(operation.key, {
+						resolve: false,
 						local: true,
 						remote: this.immutable,
 					})
@@ -430,6 +431,7 @@ export class Documents<
 		options?: SharedAppendOptions<Operation> & {
 			unique?: boolean;
 			replicate?: boolean;
+			checkRemote?: boolean;
 		},
 	) {
 		const keyValue = this.idResolver(doc);
@@ -450,8 +452,11 @@ export class Documents<
 			? undefined
 			: (
 					await this._index.getDetailed(keyValue, {
+						resolve: false,
 						local: true,
-						remote: { replicate: options?.replicate }, // only query remote if we know they exist
+						remote: options?.checkRemote
+							? { replicate: options?.replicate }
+							: false, // only query remote if we know they exist
 					})
 				)?.[0]?.results[0];
 
@@ -498,6 +503,7 @@ export class Documents<
 		const key = indexerTypes.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {
+				resolve: false,
 				local: true,
 				remote: { replicate: options?.replicate },
 			})

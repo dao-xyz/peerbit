@@ -49,6 +49,49 @@ export class SearchRequest extends AbstractSearchRequest {
 	}
 }
 
+@variant(1)
+export class SearchRequestIndexed extends AbstractSearchRequest {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array; // Session id
+
+	@field({ type: vec(Query) })
+	query: Query[];
+
+	@field({ type: vec(Sort) })
+	sort: Sort[];
+
+	@field({ type: "u32" })
+	fetch: number;
+
+	@field({ type: "bool" })
+	replicate: boolean; // is the intent to replicate?
+
+	constructor(props?: {
+		query?:
+			| Query[]
+			| Query
+			| Record<
+					string,
+					string | number | bigint | Uint8Array | boolean | null | undefined
+			  >;
+		sort?: Sort[] | Sort;
+		fetch?: number;
+		replicate?: boolean;
+	}) {
+		super();
+		this.id = randomBytes(32);
+		this.query = props?.query ? toQuery(props.query) : [];
+		this.sort = toArray(props?.sort);
+		this.fetch = props?.fetch ?? 10; // default fetch 10 documents
+		this.replicate = props.replicate ?? false;
+	}
+
+	private _idString: string;
+	get idString(): string {
+		return this._idString || (this._idString = sha256Base64Sync(this.id));
+	}
+}
+
 /**
  * Collect documents from peers using 'collect' session ids. This is used for distributed sorting internally
  */
