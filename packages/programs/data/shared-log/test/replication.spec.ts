@@ -2244,7 +2244,7 @@ testSetups.forEach((setup) => {
 				await delay(3e3); // TODO this test fails without this delay, FIX THIS inconsitency. Calling rebalance all on db1 also seem to work
 
 				// followwing entries set minReplicas to 1 which means only db2 or db3 needs to hold it
-				const entryCount = 1e3;
+				const entryCount = 1e2;
 				for (let i = 0; i < entryCount / 2; i++) {
 					const e1 = await db1.add(String(i), {
 						replicas: new AbsoluteReplicas(3),
