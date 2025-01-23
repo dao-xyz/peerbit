@@ -68,7 +68,7 @@ const canPerformByRelation = async (
 };
 
 type IdentityGraphArgs = {
-	canRead?: CanRead<IdentityRelation>;
+	canRead?: CanRead<FromTo>;
 	replicate?: ReplicationOptions;
 };
 
