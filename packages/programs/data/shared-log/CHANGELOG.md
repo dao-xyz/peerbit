@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.0...shared-log-v10.3.1) (2025-01-23)
+
+
+### Bug Fixes
+
+* don't rebalance on strict range maturity ([038d05b](https://github.com/dao-xyz/peerbit/commit/038d05bdd7f82faf23634ae854c829fb010b9c8e))
+* don't throw on Invalid degree error ([f130f6a](https://github.com/dao-xyz/peerbit/commit/f130f6a185677b46509a068b7191a0eccbac9c25))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.26 to 4.0.27
+    * @peerbit/rpc bumped from 5.0.24 to 5.0.25
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.14 to ^2.1.15
+
 ## [10.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.2.0...shared-log-v10.3.0) (2025-01-17)
 
 

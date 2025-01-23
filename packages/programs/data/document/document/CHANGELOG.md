@@ -456,6 +456,31 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.0](https://github.com/dao-xyz/peerbit/compare/document-v8.2.0...document-v9.0.0) (2025-01-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* add support for querying indexed values
+
+### Features
+
+* add support for querying indexed values ([36fe71c](https://github.com/dao-xyz/peerbit/commit/36fe71c047869a74add052612eb641966409354f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.0.24 to 5.0.25
+    * @peerbit/shared-log bumped from 10.3.0 to 10.3.1
+    * @peerbit/indexer-interface bumped from ^2.0.3 to ^2.0.4
+    * @peerbit/indexer-simple bumped from ^1.1.6 to ^1.1.7
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.3 to ^1.2.4
+    * @peerbit/document-interface bumped from ^1.0.10 to ^2.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.14 to 2.1.15
+
 ## [8.2.0](https://github.com/dao-xyz/peerbit/compare/document-v8.1.2...document-v8.2.0) (2025-01-17)
 
 

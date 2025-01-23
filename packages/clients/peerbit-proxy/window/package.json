@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy-window",
-	"version": "3.0.59",
+	"version": "3.0.60",
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -59,10 +59,10 @@
 		"node": ">=16.15.1"
 	},
 	"dependencies": {
-		"@peerbit/proxy": "^5.1.4"
+		"@peerbit/proxy": "^5.1.5"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.1.14"
+		"@peerbit/test-utils": "2.1.15"
 	},
 	"scripts": {
 		"clean": "aegir clean",

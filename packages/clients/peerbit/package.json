@@ -1,6 +1,6 @@
 {
 	"name": "peerbit",
-	"version": "4.1.4",
+	"version": "4.1.5",
 	"description": "Peerbit client",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -69,8 +69,8 @@
 		"@peerbit/program": "5.1.1",
 		"@peerbit/pubsub": "^3.0.16",
 		"@peerbit/blocks": "^2.2.0",
-		"@peerbit/indexer-simple": "^1.1.6",
-		"@peerbit/indexer-sqlite3": "^1.2.3",
+		"@peerbit/indexer-simple": "^1.1.7",
+		"@peerbit/indexer-sqlite3": "^1.2.4",
 		"datastore-level": "^11.0.1",
 		"@chainsafe/libp2p-yamux": "^7.0.1",
 		"@libp2p/webrtc": "^5.0.19",
