@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.0.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.10...document-interface-v2.0.0) (2025-01-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* add support for querying indexed values
+
+### Features
+
+* add support for querying indexed values ([36fe71c](https://github.com/dao-xyz/peerbit/commit/36fe71c047869a74add052612eb641966409354f))
+
+
+### Bug Fixes
+
+* add dependency peerbit/log ([a4ac71a](https://github.com/dao-xyz/peerbit/commit/a4ac71a85b2078eaf66b672d05b0818c91cb8baf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^2.0.3 to ^2.0.4
+    * @peerbit/log bumped from 4.0.26 to 4.0.27
+
 ## [1.0.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.9...document-interface-v1.0.10) (2025-01-17)
 
 

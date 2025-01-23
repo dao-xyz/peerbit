@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.4](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.3...indexer-interface-v2.0.4) (2025-01-23)
+
+
+### Bug Fixes
+
+* add toSort utility method for construction sort object ([c0815d4](https://github.com/dao-xyz/peerbit/commit/c0815d47712ef30d5f22950e7d7e35a37cd2cb33))
+
 ## [2.0.3](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.2...indexer-interface-v2.0.3) (2025-01-17)
 
 

@@ -566,6 +566,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.28](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.27...trusted-network-v4.1.28) (2025-01-23)
+
+
+### Bug Fixes
+
+* updates types for canRead ([53b49c5](https://github.com/dao-xyz/peerbit/commit/53b49c52ff05371b4f873f85f1eb3a85c2a653d4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 8.2.0 to 9.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.14 to ^2.1.15
+
 ## [4.1.27](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.26...trusted-network-v4.1.27) (2025-01-17)
 
 
