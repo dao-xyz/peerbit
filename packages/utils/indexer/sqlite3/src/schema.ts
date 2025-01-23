@@ -589,7 +589,7 @@ export const resolveTable = <
 		);
 	if (!table && throwOnMissing) {
 		throw new Error(
-			`Table not found for ${name}: ${Array.from(tables.keys())}`,
+			`Table not found for ${name}. Got tables: ${Array.from(tables.keys())}`,
 		);
 	}
 	return table as R;
