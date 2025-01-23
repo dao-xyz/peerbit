@@ -60,6 +60,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "^2.3.3",
-		"@peerbit/indexer-interface": "^2.0.3"
+		"@peerbit/indexer-interface": "^2.0.3",
+		"@peerbit/log": "4.0.26"
 	}
 }
