@@ -13,7 +13,6 @@ export class BlocksMessage extends TransportMessage {
 
 	constructor(message: BlockRequest | BlockResponse) {
 		super();
-
 		this.message = message;
 	}
 }

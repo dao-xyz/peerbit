@@ -43,11 +43,6 @@ export enum ReplicationIntent {
 	Strict = 1, // only replicate data in the segment to the specified replicator, not any other data
 }
 
-export enum SyncStatus {
-	Unsynced = 0,
-	Synced = 1,
-}
-
 const min = (a: number | bigint, b: number | bigint) => (a < b ? a : b);
 
 const getSegmentsFromOffsetAndRange = <T extends number | bigint>(
@@ -1897,7 +1892,6 @@ export const getSamples = async <R extends "u32" | "u64">(
 	const now = +new Date();
 	let matured = 0;
 
-	/* let missingForCursors: NumberFromType<R>[] = [] */
 	let uniqueVisited = new Set<string>();
 	for (let i = 0; i < cursor.length; i++) {
 		let point = cursor[i];
@@ -1962,6 +1956,7 @@ export const getSamples = async <R extends "u32" | "u64">(
 	/* if (leaders.size < cursor.length) {
 		throw new Error("Missing leaders got: " + leaders.size + " -- expected -- " + cursor.length + " role age " + roleAge + " missing " + missingForCursors.length + " replication index size: " + (await peers.count()));
 	} */
+
 	return leaders;
 };
 
@@ -2277,6 +2272,9 @@ export const debounceAggregationChanges = <
 ) => {
 	return debounceAccumulator(
 		(result) => {
+			if (result.size === 0) {
+				return;
+			}
 			return fn([...result.values()]);
 		},
 		() => {
@@ -2450,12 +2448,6 @@ export const toRebalance = <R extends "u32" | "u64">(
 
 			while (iterator.done() !== true) {
 				const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
-
-				/* const grouped = await groupByGidSync(entries.map((x) => x.value));
-				for (const [gid, entries] of grouped.entries()) {
-					yield { gid, entries };
-				} */
-
 				for (const entry of entries) {
 					yield entry.value;
 				}

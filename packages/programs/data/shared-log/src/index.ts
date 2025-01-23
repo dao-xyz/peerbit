@@ -85,7 +85,6 @@ import {
 	ReplicationRangeIndexableU32,
 	ReplicationRangeIndexableU64,
 	ReplicationRangeMessage,
-	SyncStatus,
 	appromixateCoverage,
 	countCoveringRangesSameOwner,
 	debounceAggregationChanges,
@@ -572,15 +571,17 @@ export class SharedLog<
 			checkDuplicates,
 			announce,
 			mergeSegments,
+			rebalance,
 		}: {
 			reset?: boolean;
 			checkDuplicates?: boolean;
 			mergeSegments?: boolean;
+			rebalance?: boolean;
 			announce?: (
 				msg: AddedReplicationSegmentMessage | AllReplicatingSegmentsMessage,
 			) => void;
 		} = {},
-	) {
+	): Promise<ReplicationRangeIndexable<R>[]> {
 		let offsetWasProvided = false;
 		if (isUnreplicationOptions(options)) {
 			await this.unreplicate();
@@ -607,7 +608,7 @@ export class SharedLog<
 				const maybeRange = await this.getDynamicRange();
 				if (!maybeRange) {
 					// not allowed
-					return;
+					return [];
 				}
 				rangesToReplicate = [maybeRange];
 
@@ -634,7 +635,7 @@ export class SharedLog<
 
 				if (rangeArgs.length === 0) {
 					// nothing to do
-					return;
+					return [];
 				}
 
 				for (const rangeArg of rangeArgs) {
@@ -744,6 +745,7 @@ export class SharedLog<
 				reset: resetRanges ?? false,
 				checkDuplicates,
 				announce,
+				rebalance,
 			});
 
 			if (rangesToUnreplicate.length > 0) {
@@ -759,6 +761,8 @@ export class SharedLog<
 
 			return rangesToReplicate;
 		}
+
+		return [];
 	}
 
 	setupDebouncedRebalancing(options?: DynamicReplicationOptions<R>) {
@@ -796,6 +800,7 @@ export class SharedLog<
 		options?: {
 			reset?: boolean;
 			checkDuplicates?: boolean;
+			rebalance?: boolean;
 			mergeSegments?: boolean;
 			announce?: (
 				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
@@ -1036,13 +1041,20 @@ export class SharedLog<
 			reset,
 			checkDuplicates,
 			timestamp: ts,
-		}: { reset?: boolean; checkDuplicates?: boolean; timestamp?: number } = {},
+			rebalance: rebalance,
+		}: {
+			reset?: boolean;
+			rebalance?: boolean;
+			checkDuplicates?: boolean;
+			timestamp?: number;
+		} = {},
 	) {
 		if (this._isTrustedReplicator && !(await this._isTrustedReplicator(from))) {
 			return undefined;
 		}
 		let isNewReplicator = false;
 		let timestamp = BigInt(ts ?? +new Date());
+		rebalance = rebalance == null ? true : rebalance;
 
 		let diffs: ReplicationChanges<ReplicationRangeIndexable<R>>;
 		let deleted: ReplicationRangeIndexable<R>[] | undefined = undefined;
@@ -1070,16 +1082,25 @@ export class SharedLog<
 
 			isNewReplicator = prevCount === 0 && ranges.length > 0;
 		} else {
-			let existing = await this.replicationIndex
-				.iterate(
-					{
-						query: ranges.map(
-							(x) => new ByteMatchQuery({ key: "id", value: x.id }),
-						),
-					},
-					{ reference: true },
-				)
-				.all();
+			let batchSize = 100;
+			let existing: ReplicationRangeIndexable<R>[] = [];
+			for (let i = 0; i < ranges.length; i += batchSize) {
+				const results = await this.replicationIndex
+					.iterate(
+						{
+							query: (ranges.length <= batchSize
+								? ranges
+								: ranges.slice(i, i + batchSize)
+							).map((x) => new ByteMatchQuery({ key: "id", value: x.id })),
+						},
+						{ reference: true },
+					)
+					.all();
+				for (const result of results) {
+					existing.push(result.value);
+				}
+			}
+
 			if (existing.length === 0) {
 				let prevCount = await this.replicationIndex.count({
 					query: new StringMatch({ key: "hash", value: from.hashcode() }),
@@ -1104,7 +1125,7 @@ export class SharedLog<
 			}
 			let existingMap = new Map<string, ReplicationRangeIndexable<any>>();
 			for (const result of existing) {
-				existingMap.set(result.value.idString, result.value);
+				existingMap.set(result.idString, result);
 			}
 
 			let changes: ReplicationChanges<ReplicationRangeIndexable<R>> = ranges
@@ -1181,7 +1202,13 @@ export class SharedLog<
 								}),
 							);
 
-							this.replicationChangeDebounceFn.add({ ...diff, matured: true }); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+							if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
+								// TODO this statement (might) cause issues with triggering pruning if the segment is strict and maturity timings will affect the outcome of rebalancing
+								this.replicationChangeDebounceFn.add({
+									...diff,
+									matured: true,
+								}); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+							}
 							pendingRanges.delete(diff.range.idString);
 							if (pendingRanges.size === 0) {
 								this.pendingMaturity.delete(diff.range.hash);
@@ -1242,7 +1269,7 @@ export class SharedLog<
 			}
 		}
 
-		if (diffs.length > 0) {
+		if (rebalance && diffs.length > 0) {
 			for (const diff of diffs) {
 				this.replicationChangeDebounceFn.add(diff);
 			}
@@ -1258,9 +1285,9 @@ export class SharedLog<
 	async startAnnounceReplicating(
 		range: ReplicationRangeIndexable<R>[],
 		options: {
-			syncStatus?: SyncStatus;
 			reset?: boolean;
 			checkDuplicates?: boolean;
+			rebalance?: boolean;
 			announce?: (
 				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
 			) => void;
@@ -1315,7 +1342,7 @@ export class SharedLog<
 		}
 	}
 
-	private addPeersToGidPeerHistory(
+	addPeersToGidPeerHistory(
 		gid: string,
 		publicKeys: Iterable<string>,
 		reset?: boolean,
@@ -1922,7 +1949,6 @@ export class SharedLog<
 		this.coordinateToHash.clear();
 		this.recentlyRebalanced.clear();
 		this.uniqueReplicators.clear();
-
 		this._closeController.abort();
 
 		clearInterval(this.interval);
@@ -2667,6 +2693,10 @@ export class SharedLog<
 				}
 			: undefined;
 
+		let assumeSynced =
+			options?.replicate &&
+			typeof options.replicate !== "boolean" &&
+			options.replicate.assumeSynced;
 		const persistCoordinate = async (entry: Entry<T>) => {
 			const minReplicas = decodeReplicas(entry).getValue(this);
 			const leaders = await this.findLeaders(
@@ -2675,11 +2705,7 @@ export class SharedLog<
 				{ persist: {} },
 			);
 
-			if (
-				options?.replicate &&
-				typeof options.replicate !== "boolean" &&
-				options.replicate.assumeSynced
-			) {
+			if (assumeSynced) {
 				// make sure we dont start to initate syncing process outwards for this entry
 				this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
 			}
@@ -2711,7 +2737,9 @@ export class SharedLog<
 
 		if (options?.replicate) {
 			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
+
 			await this.replicate(entriesToReplicate, {
+				rebalance: assumeSynced ? false : true,
 				checkDuplicates: true,
 				mergeSegments:
 					typeof options.replicate !== "boolean" && options.replicate
@@ -2736,6 +2764,7 @@ export class SharedLog<
 				},
 			});
 
+			// it is importat that we call persistCoordinate after this.replicate(entries) as else there might be a prune job deleting the entry before replication duties has been assigned to self
 			for (const entry of entriesToPersist) {
 				await persistCoordinate(entry);
 			}
@@ -2747,39 +2776,6 @@ export class SharedLog<
 			}
 		}
 	}
-	/* 
-		private async updateLeaders(
-			cursor: NumberFromType<R>,
-			prev: EntryReplicated<R>,
-			options?: {
-				roleAge?: number;
-			},
-		): Promise<{
-			isLeader: boolean;
-			leaders: Map<string, { intersecting: boolean }>;
-		}> {
-			// we consume a list of coordinates in this method since if we are leader of one coordinate we want to persist all of them
-			const leaders = await this._findLeaders(cursor, options);
-			const isLeader = leaders.has(this.node.identity.publicKey.hashcode());
-			const isAtRangeBoundary = shouldAssignToRangeBoundary(leaders, 1);
-	
-			// dont do anthing if nothing has changed
-			if (prev.assignedToRangeBoundary !== isAtRangeBoundary) {
-				return { isLeader, leaders };
-			}
-	
-			await this.entryCoordinatesIndex.put(
-				new this.indexableDomain.constructorEntry({
-					assignedToRangeBoundary: isAtRangeBoundary,
-					coordinate: cursor,
-					meta: prev.meta,
-					hash: prev.hash,
-				}),
-			);
-	
-			return { isLeader, leaders };
-		}
-	 */
 
 	private async _waitForReplicators(
 		cursors: NumberFromType<R>[],
@@ -3411,7 +3407,6 @@ export class SharedLog<
 					const minReplicasValue = minReplicasObj.getValue(this);
 
 					// TODO is this check necessary
-
 					if (
 						!(await this._waitForReplicators(
 							cursor ??
@@ -3542,7 +3537,7 @@ export class SharedLog<
 		}
 
 		const timestamp = BigInt(+new Date());
-		this.onReplicationChange(
+		return this.onReplicationChange(
 			(await this.getAllReplicationSegments()).map((x) => {
 				return { range: x, type: "added", timestamp };
 			}),
@@ -3577,7 +3572,6 @@ export class SharedLog<
 				Map<string, EntryReplicated<any>>
 			> = new Map();
 
-			let c = 0;
 			for await (const entryReplicated of toRebalance<R>(
 				changeOrChanges,
 				this.entryCoordinatesIndex,
@@ -3586,7 +3580,6 @@ export class SharedLog<
 				if (this.closed) {
 					break;
 				}
-				c++;
 
 				let oldPeersSet = this._gidPeersHistory.get(entryReplicated.gid);
 				let isLeader = false;

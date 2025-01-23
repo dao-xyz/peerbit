@@ -4,7 +4,9 @@ import type { Entry } from "@peerbit/log";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import path from "path";
+import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import type {
 	ReplicationDomainHash,
@@ -415,38 +417,128 @@ describe(`replicate`, () => {
 		});
 
 		describe("mode", () => {
-			it("strict", async () => {
-				db1 = await session.peers[0].open(new EventStore<string, any>(), {
-					args: {
-						replicate: {
-							normalized: false,
-							offset: 0,
-							factor: 1,
+			describe("strict", () => {
+				it("on open", async () => {
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: {
+								normalized: false,
+								offset: 0,
+								factor: 1,
+							},
 						},
-					},
-				});
-				db2 = await session.peers[1].open(db1.clone(), {
-					args: {
-						replicate: {
-							normalized: false,
-							factor: 2,
-							offset: 5,
-							strict: true,
+					});
+					db2 = await session.peers[1].open(db1.clone(), {
+						args: {
+							replicate: {
+								normalized: false,
+								factor: 2,
+								offset: 5,
+								strict: true,
+							},
 						},
-					},
+					});
+
+					await waitForResolved(async () =>
+						expect(await db1.log.replicationIndex.count()).to.equal(2),
+					);
+					const segments = await db1.log.replicationIndex
+						.iterate({ sort: [new Sort({ key: "start1" })] })
+						.all();
+
+					expect(segments[0].value.start1).to.eq(0n);
+					expect(segments[0].value.mode).to.eq(ReplicationIntent.NonStrict);
+					expect(segments[1].value.start1).to.eq(5n);
+					expect(segments[1].value.mode).to.eq(ReplicationIntent.Strict);
 				});
 
-				await waitForResolved(async () =>
-					expect(await db1.log.replicationIndex.count()).to.equal(2),
-				);
-				const segments = await db1.log.replicationIndex
-					.iterate({ sort: [new Sort({ key: "start1" })] })
-					.all();
+				it("will not rebalance on maturity of strict", async () => {
+					let maturityTime = 1e3;
 
-				expect(segments[0].value.start1).to.eq(0n);
-				expect(segments[0].value.mode).to.eq(ReplicationIntent.NonStrict);
-				expect(segments[1].value.start1).to.eq(5n);
-				expect(segments[1].value.mode).to.eq(ReplicationIntent.Strict);
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: false,
+							timeUntilRoleMaturity: maturityTime,
+						},
+					});
+					db2 = await session.peers[1].open(db1.clone(), {
+						args: {
+							replicate: false,
+							timeUntilRoleMaturity: maturityTime,
+						},
+					});
+
+					const maturedObservedFrom1 = pDefer<void>();
+
+					db1.log.events.addEventListener("replicator:mature", (e) => {
+						if (e.detail.publicKey.equals(db2.node.identity.publicKey)) {
+							maturedObservedFrom1.resolve();
+						}
+					});
+
+					const maturedObservedFrom2 = pDefer<void>();
+
+					db2.log.events.addEventListener("replicator:mature", (e) => {
+						if (e.detail.publicKey.equals(db2.node.identity.publicKey)) {
+							maturedObservedFrom2.resolve();
+						}
+					});
+
+					const onReplicationChange1 = sinon.spy(db1.log.onReplicationChange);
+					db1.log.onReplicationChange = onReplicationChange1;
+					const onReplicationChange2 = sinon.spy(db2.log.onReplicationChange);
+					db2.log.onReplicationChange = onReplicationChange2;
+
+					await db2.log.replicate({ factor: 1, strict: true });
+					await maturedObservedFrom1.promise;
+					await maturedObservedFrom2.promise;
+
+					await delay(3e3);
+					expect(
+						onReplicationChange1.getCalls().map((x) => x.firstArg[0].matured),
+					).to.deep.eq([undefined]);
+					expect(
+						onReplicationChange1
+							.getCalls()
+							.map((x) => x.firstArg[0].range.hash),
+					).to.deep.eq([db2.node.identity.publicKey.hashcode()]);
+					expect(
+						onReplicationChange2.getCalls().map((x) => x.firstArg[0].matured),
+					).to.deep.eq([undefined]);
+					expect(
+						onReplicationChange2
+							.getCalls()
+							.map((x) => x.firstArg[0].range.hash),
+					).to.deep.eq([db2.node.identity.publicKey.hashcode()]);
+				});
+
+				it("will prune on replication fulfillment", async () => {
+					let maturityTime = 1e3;
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: false,
+							timeUntilRoleMaturity: maturityTime,
+							replicas: {
+								min: 1,
+							},
+						},
+					});
+					await db1.add("0");
+
+					db2 = await session.peers[1].open(db1.clone(), {
+						args: {
+							replicate: false,
+							timeUntilRoleMaturity: maturityTime,
+							replicas: {
+								min: 1,
+							},
+						},
+					});
+
+					await db2.log.replicate({ factor: 1, strict: true });
+					await waitForResolved(() => expect(db1.log.log.length).to.eq(0));
+					expect(db2.log.log.length).to.eq(1);
+				});
 			});
 		});
 

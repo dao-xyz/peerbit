@@ -251,6 +251,19 @@ testSetups.forEach((setup) => {
 				expect(db4.log.log.length).equal(0);
 			});
 
+			it("can replicate many ranges", async () => {
+				const startSize = await db1.log.replicationIndex.getSize();
+				const toReplicate = 1600;
+				let ranges: { factor: number; offset: number }[] = [];
+				for (let i = 0; i < toReplicate; i++) {
+					ranges.push({ factor: 0.0001, offset: Math.random() });
+				}
+				await db1.log.replicate(ranges);
+				expect(await db1.log.replicationIndex.getSize()).to.eq(
+					toReplicate + startSize,
+				);
+			});
+
 			describe("references", () => {
 				it("joins by references", async () => {
 					db1.log.replicas = { min: new AbsoluteReplicas(1) };
@@ -908,7 +921,6 @@ testSetups.forEach((setup) => {
 					await delay(3000);
 					check();
 				} catch (error) {
-					console.log("------------------------");
 					console.error(error);
 					throw new Error(
 						"Did not resolve all heads. Log length: " + db2.log.log.length,
@@ -1548,6 +1560,7 @@ testSetups.forEach((setup) => {
 						replicate: false,
 						timeUntilRoleMaturity: 1000,
 						setup,
+						waitForPruneDelay: 5e3,
 					},
 				});
 
@@ -1558,13 +1571,13 @@ testSetups.forEach((setup) => {
 					{
 						args: {
 							replicas: props,
-
 							replicate: {
 								factor: 0.5,
 								offset: 0,
 							},
 							timeUntilRoleMaturity: 1000,
 							setup,
+							waitForPruneDelay: 5e3,
 						},
 					},
 				))!;
@@ -1582,6 +1595,7 @@ testSetups.forEach((setup) => {
 							},
 							timeUntilRoleMaturity: 1000,
 							setup,
+							waitForPruneDelay: 5e3,
 						},
 					},
 				))!;
@@ -2227,8 +2241,10 @@ testSetups.forEach((setup) => {
 			it("min replicas with be maximum value for gid", async () => {
 				await init({ min: 1 });
 
+				await delay(3e3); // TODO this test fails without this delay, FIX THIS inconsitency. Calling rebalance all on db1 also seem to work
+
 				// followwing entries set minReplicas to 1 which means only db2 or db3 needs to hold it
-				const entryCount = 100;
+				const entryCount = 1e3;
 				for (let i = 0; i < entryCount / 2; i++) {
 					const e1 = await db1.add(String(i), {
 						replicas: new AbsoluteReplicas(3),

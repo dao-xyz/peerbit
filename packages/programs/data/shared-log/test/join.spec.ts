@@ -1,6 +1,6 @@
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import { TestSession } from "@peerbit/test-utils";
-import { waitForResolved } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
@@ -274,6 +274,7 @@ describe("join", () => {
 					syncronizer: SimpleSyncronizer, // we set this synchronizer so we can test the assumeSynced option that it does not initate syncing
 					type: "u32",
 				},
+				waitForReplicatorTimeout: 1e3,
 			},
 		});
 
@@ -289,6 +290,7 @@ describe("join", () => {
 						syncronizer: SimpleSyncronizer, // we set this synchronizer so we can test the assumeSynced option that it does not initate syncing
 						type: "u32",
 					},
+					waitForReplicatorTimeout: 1e3,
 				},
 			},
 		))!;
@@ -304,13 +306,13 @@ describe("join", () => {
 			return sendFn(message, options);
 		};
 
-		let rebalancePromise = pDefer();
+		let rebalanced = false;
 
 		const onReplicationChange = db2.log.onReplicationChange.bind(db2.log);
 
 		db2.log.onReplicationChange = async (changes) => {
 			const out = await onReplicationChange(changes);
-			rebalancePromise.resolve();
+			rebalanced = true;
 			return out;
 		};
 
@@ -318,8 +320,59 @@ describe("join", () => {
 			replicate: { mergeSegments: true, assumeSynced: true },
 		});
 
-		await rebalancePromise.promise;
+		await delay(3e3);
 		expect(syncMessagesSent).to.be.false;
+		expect(rebalanced).to.be.false;
+
+		// checkl that no rebalance occurs
+	});
+
+	it("join with slow replicate", async () => {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: { factor: 1 },
+				waitForReplicatorTimeout: 1e3,
+				replicas: {
+					min: 1,
+				},
+			},
+		});
+
+		db2 = (await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: {
+					replicate: false,
+					waitForReplicatorTimeout: 1e3,
+					replicas: {
+						min: 1, // make sure that we can prune even if there is one replicator
+					},
+				},
+			},
+		))!;
+
+		await db2.log.waitForReplicator(session.peers[0].identity.publicKey);
+		const e1 = await db1.add("hello", { meta: { next: [] } });
+		const replicateFn = db2.log.replicate.bind(db2.log);
+
+		let deferred = pDefer();
+		db2.log.replicate = async (range, options) => {
+			await deferred.promise;
+			return replicateFn(range, options);
+		};
+
+		const joinPromise = db2.log.join([e1.entry], { replicate: true });
+
+		await waitForResolved(() => expect(db2.log.log.length).to.eq(1));
+
+		await db2.log.rebalanceAll();
+		await delay(3000);
+
+		// checkl that no rebalance occurs
+		expect(db2.log.log.length).to.eq(1);
+		deferred.resolve();
+		await joinPromise;
 	});
 
 	it("will emit one message when replicating multiple entries", async () => {
