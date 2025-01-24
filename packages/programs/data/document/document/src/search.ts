@@ -1468,10 +1468,13 @@ export class DocumentIndex<
 																value: result.value,
 																context: result.context,
 																from: from!,
-																indexed: await this.transformer(
-																	result.value,
-																	result.context,
-																),
+																indexed:
+																	result instanceof types.ResultIndexedValue
+																		? result.value
+																		: await this.transformer(
+																				result.value,
+																				result.context,
+																			),
 															});
 														}
 													}

@@ -2889,6 +2889,9 @@ describe("index", () => {
 
 			constructor(from: Document) {
 				this.id = from.id;
+				if (from && (from as any as Indexable)["nameTransformed"]) {
+					throw new Error("Unexpected");
+				}
 				this.nameTransformed = from.name?.toLocaleUpperCase() ?? "_MISSING_";
 			}
 		}
