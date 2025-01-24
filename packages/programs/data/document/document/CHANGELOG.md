@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.1](https://github.com/dao-xyz/peerbit/compare/document-v9.0.0...document-v9.0.1) (2025-01-24)
+
+
+### Bug Fixes
+
+* don't use transformer when resolving indexed value on CollectNextRequest ([63e24d5](https://github.com/dao-xyz/peerbit/commit/63e24d546ff88f868df76c93e7e22c7ff4528d5e))
+
 ## [9.0.0](https://github.com/dao-xyz/peerbit/compare/document-v8.2.0...document-v9.0.0) (2025-01-23)
 
 
