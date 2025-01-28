@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.4...indexer-sqlite3-v1.2.5) (2025-01-28)
+
+
+### Bug Fixes
+
+* prevent kept count to become negative in case of concurrent database mutation ([de947ae](https://github.com/dao-xyz/peerbit/commit/de947ae774f2062afafcfae98a8c43d8be48c152))
+
 ## [1.2.4](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.3...indexer-sqlite3-v1.2.4) (2025-01-23)
 
 
