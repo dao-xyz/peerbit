@@ -5,5 +5,6 @@ describe("all", () => {
 	tests(create, "transient", {
 		shapingSupported: false,
 		u64SumSupported: true,
+		iteratorsMutable: false,
 	});
 });

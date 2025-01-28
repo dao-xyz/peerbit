@@ -144,6 +144,7 @@ export const tests = (
 	properties: {
 		shapingSupported: boolean;
 		u64SumSupported: boolean;
+		iteratorsMutable: boolean;
 	},
 ) => {
 	return describe("index", () => {
@@ -3850,6 +3851,31 @@ export const tests = (
 					expect(next.results.map((x) => x.value.id)).to.deep.equal(["2", "1"]);
 					expect(iterator.done()).to.be.true;
 				})*/
+			});
+
+			it("add while sorting", async () => {
+				await put(0);
+				await put(1);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+				expect(iterator.done()).to.be.undefined;
+				const next = await iterator.next(1);
+				expect(next.map((x) => x.value.name)).to.deep.equal(["0"]);
+				expect(iterator.done()).to.be.false;
+				expect(await iterator.pending()).to.eq(1);
+
+				await put(2);
+
+				const nextAgain = await iterator.next(2);
+				if (properties.iteratorsMutable) {
+					expect(nextAgain.map((x) => x.value.name)).to.deep.equal(["1", "2"]);
+				} else {
+					expect(nextAgain.map((x) => x.value.name)).to.deep.equal(["1"]);
+				}
+				expect(await iterator.pending()).to.eq(0);
 			});
 
 			describe("close", () => {
