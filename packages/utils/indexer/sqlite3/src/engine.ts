@@ -539,7 +539,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				}
 				totalCount = totalCount ?? (await this.count(request));
 
-				kept = totalCount - offset;
+				kept = Math.max(totalCount - offset, 0); // this could potentially be negative if new records are added and we iterate concurrently, so we do Math.max here
 				hasMore = kept > 0;
 				return kept;
 			},
