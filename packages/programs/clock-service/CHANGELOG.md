@@ -655,6 +655,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [3.0.46](https://github.com/dao-xyz/peerbit/compare/clock-service-v3.0.45...clock-service-v3.0.46) (2025-02-01)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/trusted-network bumped from 4.1.30 to 4.1.31
+
 ## [3.0.45](https://github.com/dao-xyz/peerbit/compare/clock-service-v3.0.44...clock-service-v3.0.45) (2025-01-28)
 
 

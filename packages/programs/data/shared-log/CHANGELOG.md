@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.2...shared-log-v10.3.3) (2025-02-01)
+
+
+### Bug Fixes
+
+* correctly merge overlapping segments ([6b5241d](https://github.com/dao-xyz/peerbit/commit/6b5241de467f57de5acd9573b9e9f103721eb3fe))
+
 ## [10.3.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.1...shared-log-v10.3.2) (2025-01-28)
 
 
