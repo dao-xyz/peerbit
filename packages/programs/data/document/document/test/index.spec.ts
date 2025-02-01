@@ -782,6 +782,71 @@ describe("index", () => {
 							(await stores[1].docs.log.getMyReplicationSegments()).length,
 						).to.eq(docCount);
 					});
+
+					it("re-replicate will not emit any message", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: {
+										factor: 1,
+									},
+								},
+							},
+						);
+
+						await stores[0].docs.put(
+							new Document({
+								id: String("0"),
+							}),
+						);
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(0);
+						let results = await stores[1].docs.index
+							.iterate({}, { remote: { replicate: true } })
+							.all();
+
+						expect(results).to.have.length(1);
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(1);
+
+						await delay(3e3);
+						const emittedMessage: any[] = [];
+
+						const sendFn = stores[1].docs.log.rpc.send.bind(
+							stores[1].docs.log.rpc,
+						);
+						stores[1].docs.log.rpc.send = (message, options) => {
+							emittedMessage.push(message);
+							return sendFn(message, options);
+						};
+
+						results = await stores[1].docs.index
+							.iterate({}, { remote: { replicate: true } })
+							.all();
+
+						expect(results).to.have.length(1);
+						expect(
+							await stores[1].docs.log.getMyReplicationSegments(),
+						).to.have.length(1);
+						expect(emittedMessage).to.have.length(0);
+					});
 				});
 			});
 		});

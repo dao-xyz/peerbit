@@ -694,26 +694,31 @@ export class SharedLog<
 
 					// also merge segments that are already in the index
 					if (this.domain.canMerge) {
-						const mergable = await getAllMergeCandiates(
+						const mergeRangesThatAlreadyExist = await getAllMergeCandiates(
 							this.replicationIndex,
 							range,
 							this.indexableDomain.numbers,
 						);
-						const mergeableFiltered: ReplicationRangeIndexable<R>[] = [range];
+						const mergeableFiltered: ReplicationRangeIndexable<R>[] = [];
 
-						for (const mergeCandidate of mergable) {
+						for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
 							if (this.domain.canMerge(mergeCandidate, range)) {
 								mergeableFiltered.push(mergeCandidate);
-								if (mergeCandidate.idString !== range.idString) {
-									rangesToUnreplicate.push(mergeCandidate);
-								}
 							}
 						}
+
+						mergeableFiltered.push(range); // * we push this last, because mergeRanges will reuse ids of the first elements
 						if (mergeableFiltered.length > 1) {
+							// ** this is important here as we want to reuse ids of what we already persist, not the new ranges, so we dont get a delet add op, but just a update op
 							range = mergeRanges(
 								mergeableFiltered,
 								this.indexableDomain.numbers,
 							);
+						}
+						for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
+							if (mergeCandidate.idString !== range.idString) {
+								rangesToUnreplicate.push(mergeCandidate);
+							}
 						}
 					}
 					rangesToReplicate = [range];
@@ -1004,6 +1009,9 @@ export class SharedLog<
 			if (pendingMaturity.size === 0) {
 				this.pendingMaturity.delete(from.hashcode());
 			}
+		}
+		if (ranges.length === 0) {
+			throw new Error("???");
 		}
 
 		await this.replicationIndex.del({
@@ -1303,24 +1311,29 @@ export class SharedLog<
 			logger.warn("Not allowed to replicate by canReplicate");
 		}
 
-		let message: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage;
-
 		if (change) {
-			if (options.reset) {
-				message = new AllReplicatingSegmentsMessage({
-					segments: range.map((x) => x.toReplicationRange()),
-				});
-			} else {
-				message = new AddedReplicationSegmentMessage({
-					segments: range.map((x) => x.toReplicationRange()),
-				});
-			}
-			if (options.announce) {
-				return options.announce(message);
-			} else {
-				await this.rpc.send(message, {
-					priority: 1,
-				});
+			let addedOrReplaced = change.filter((x) => x.type !== "removed");
+			if (addedOrReplaced.length > 0) {
+				let message:
+					| AllReplicatingSegmentsMessage
+					| AddedReplicationSegmentMessage
+					| undefined = undefined;
+				if (options.reset) {
+					message = new AllReplicatingSegmentsMessage({
+						segments: addedOrReplaced.map((x) => x.range.toReplicationRange()),
+					});
+				} else {
+					message = new AddedReplicationSegmentMessage({
+						segments: addedOrReplaced.map((x) => x.range.toReplicationRange()),
+					});
+				}
+				if (options.announce) {
+					return options.announce(message);
+				} else {
+					await this.rpc.send(message, {
+						priority: 1,
+					});
+				}
 			}
 		}
 	}
@@ -2284,10 +2297,7 @@ export class SharedLog<
 					}
 
 					if (isLeader) {
-						//console.log("IS  LEADER", this.node.identity.publicKey.hashcode(), hash);
-
 						hasAndIsLeader.push(hash);
-
 						hasAndIsLeader.length > 0 &&
 							this.responseToPruneDebouncedFn.add({
 								hashes: hasAndIsLeader,
@@ -2484,6 +2494,7 @@ export class SharedLog<
 					msg.segmentIds,
 					context.from,
 				);
+
 				await this.removeReplicationRanges(rangesToRemove, context.from);
 				const timestamp = BigInt(+new Date());
 				for (const range of rangesToRemove) {
@@ -3635,7 +3646,6 @@ export class SharedLog<
 						});
 					}
 
-					// console.log("DELETE RESPONSE AS LEADER", this.node.identity.publicKey.hashcode(), entryReplicated.hash)
 					this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
 				} else {
 					this.pruneDebouncedFn.delete(entryReplicated.hash);

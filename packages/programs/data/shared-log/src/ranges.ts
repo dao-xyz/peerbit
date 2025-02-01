@@ -1019,68 +1019,112 @@ export const mergeRanges = <R extends "u32" | "u64">(
 		throw new Error("Segments have different publicKeyHash");
 	}
 
-	const sorted = segments.sort((a, b) => Number(a.start1 - b.start1));
+	// 1) Sort by start offset (avoid subtracting bigints).
+	//    We do slice() to avoid mutating the original 'segments'.
+	const sorted = segments.slice().sort((a, b) => {
+		if (a.start1 < b.start1) return -1;
+		if (a.start1 > b.start1) return 1;
+		return 0;
+	});
 
-	let calculateLargeGap = (): [
-		NumberFromType<R>,
-		number,
-		ReplicationIntent,
-	] => {
-		let last = sorted[sorted.length - 1];
-		let largestArc = numbers.zero;
-		let largestArcIndex = -1;
-		let mode = ReplicationIntent.NonStrict;
-		for (let i = 0; i < sorted.length; i++) {
-			const current = sorted[i];
-
-			if (current.mode === ReplicationIntent.Strict) {
-				mode = ReplicationIntent.Strict;
+	// 2) Merge overlapping arcs in a purely functional way
+	//    so we don’t mutate any intermediate objects.
+	const merged = sorted.reduce<ReplicationRangeIndexable<R>[]>(
+		(acc, current) => {
+			if (acc.length === 0) {
+				return [current];
 			}
 
-			if (current.start1 !== last.start1) {
-				let arc = numbers.zero;
-				if (current.start1 < last.end2) {
-					arc += ((numbers.maxValue as any) - last.end2) as any;
+			const last = acc[acc.length - 1];
 
-					arc += (current.start1 - numbers.zero) as any;
-				} else {
-					arc += (current.start1 - last.end2) as any;
-				}
+			// Check overlap: next arc starts before (or exactly at) last arc's end => overlap
+			if (current.start1 <= last.end2) {
+				// Merge them:
+				// - end2 is the max of last.end2 and current.end2
+				// - width is adjusted so total covers both
+				// - mode is strict if either arc is strict
+				const newEnd2 = last.end2 > current.end2 ? last.end2 : current.end2;
+				const extendedWidth = Number(newEnd2 - last.start1); // safe if smaller arcs
 
-				if (arc > largestArc) {
-					largestArc = arc;
-					largestArcIndex = i;
-				}
+				// If you need to handle big widths carefully, you might do BigInt logic here.
+				const newMode =
+					last.mode === ReplicationIntent.Strict ||
+					current.mode === ReplicationIntent.Strict
+						? ReplicationIntent.Strict
+						: ReplicationIntent.NonStrict;
+
+				// Create a new merged arc object (no mutation of last)
+				const proto = segments[0].constructor as any;
+				const mergedArc = new proto({
+					width: extendedWidth,
+					offset: last.start1,
+					publicKeyHash: last.hash,
+					mode: newMode,
+					id: last.id, // re-use id
+				});
+
+				// Return a new array with the last item replaced by mergedArc
+				return [...acc.slice(0, -1), mergedArc];
+			} else {
+				// No overlap => just append current
+				return [...acc, current];
 			}
-			last = current;
-		}
+		},
+		[],
+	);
 
-		return [largestArc, largestArcIndex, mode];
-	};
-	const [largestArc, largestArcIndex, mode] = calculateLargeGap();
-
-	let totalLengthFinal: number = numbers.maxValue - largestArc;
-
-	const proto = segments[0].constructor;
-
-	if (largestArcIndex === -1) {
-		if (mode !== segments[0].mode) {
-			return new (proto as any)({
-				width: segments[0].width,
-				offset: segments[0].start1,
-				publicKeyHash: segments[0].hash,
-				mode,
-			});
-		}
-		return segments[0]; // all ranges are the same
+	// After the merge pass:
+	if (merged.length === 1) {
+		// Everything merged into one arc already
+		return merged[0];
 	}
-	// use segments[0] constructor to create a new object
 
-	return new (proto as any)({
-		width: totalLengthFinal,
-		offset: segments[largestArcIndex].start1,
+	// 3) OPTIONAL: If your existing logic always wants to produce a single ring arc
+	//    that covers "everything except the largest gap," do it here:
+
+	// Determine if any arc ended up Strict
+	const finalMode = merged.some((m) => m.mode === ReplicationIntent.Strict)
+		? ReplicationIntent.Strict
+		: ReplicationIntent.NonStrict;
+
+	// Find the largest gap on a ring among these disjoint arcs
+	const { largestGap, largestGapIndex } = merged.reduce<{
+		largestGap: NumberFromType<R>;
+		largestGapIndex: number;
+	}>(
+		(acc, arc, i, arr) => {
+			// next arc in a ring
+			const nextArc = arr[(i + 1) % arr.length];
+
+			// measure gap from arc.end2 -> nextArc.start1
+			let gap: NumberFromType<R>;
+			if (nextArc.start1 < arc.end2) {
+				// wrap-around scenario
+				gap = (numbers.maxValue -
+					arc.end2 +
+					(nextArc.start1 - numbers.zero)) as NumberFromType<R>;
+			} else {
+				gap = (nextArc.start1 - arc.end2) as NumberFromType<R>;
+			}
+
+			if (gap > acc.largestGap) {
+				return { largestGap: gap, largestGapIndex: (i + 1) % arr.length };
+			}
+			return acc;
+		},
+		{ largestGap: numbers.zero, largestGapIndex: -1 },
+	);
+
+	// Single arc coverage = "the ring minus largestGap"
+	const totalCoverage = (numbers.maxValue - largestGap) as number;
+	const offset = merged[largestGapIndex].start1;
+
+	const proto = segments[0].constructor as any;
+	return new proto({
+		width: totalCoverage,
+		offset,
 		publicKeyHash: segments[0].hash,
-		mode,
+		mode: finalMode,
 	});
 };
 
@@ -1802,7 +1846,7 @@ export const getAllMergeCandiates = async <R extends "u32" | "u64">(
 		id: Uint8Array;
 	},
 	numbers: Numbers<R>,
-): Promise<MapIterator<ReplicationRangeIndexable<R>>> => {
+): Promise<Map<string, ReplicationRangeIndexable<R>>> => {
 	const adjacent = await getAdjecentSameOwner(peers, range, numbers);
 	const covering = await getCoveringRangesSameOwner(peers, range).all();
 
@@ -1816,7 +1860,7 @@ export const getAllMergeCandiates = async <R extends "u32" | "u64">(
 	for (const range of covering) {
 		ret.set(range.value.idString, range.value);
 	}
-	return ret.values();
+	return ret;
 };
 
 export const isMatured = (

@@ -902,9 +902,6 @@ resolutions.forEach((resolution) => {
 								timestamp: 0n,
 							});
 
-							console.log(from.toString());
-							console.log(below.toString());
-							console.log(above.toString());
 							await create(
 								below,
 								above,
@@ -1693,6 +1690,45 @@ resolutions.forEach((resolution) => {
 								const merged = mergeRanges([range1, range2], numbers);
 								expect(Number(merged.width)).to.eq(1);
 								//  expect(merged.start1).to.equal(range1.start1)
+							});
+
+							it("overlapping", async () => {
+								const offset1 = denormalizeFn(rotation);
+
+								//@ts-ignore
+								const offset2 =
+									//@ts-ignore
+									offset1 + (typeof offset1 === "number" ? 1 : 1n);
+
+								//@ts-ignore
+								const diff = numbers.abs(offset1 - offset2);
+
+								//@ts-ignore
+								const range1 = createReplicationRange({
+									publicKey: a,
+									width: 1e3,
+									// @ts-ignore
+									offset: offset1 % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								//@ts-ignore
+								const range2 = createReplicationRange({
+									publicKey: a,
+									width: 10,
+									// @ts-ignore
+									offset: offset2 % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								const merged = mergeRanges([range1, range2], numbers);
+
+								expect(Number(merged.width)).to.eq(1e3); // + 1 for the length of the last range
+								expect(merged.start1).to.equal(range1.start1);
+								expect(
+									merged.idString === range1.idString ||
+										merged.idString === range2.idString,
+								).to.be.true;
 							});
 
 							it("different lengths", async () => {

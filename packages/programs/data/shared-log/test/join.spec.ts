@@ -145,7 +145,7 @@ describe("join", () => {
 			expect(db2.log.log.length).to.equal(2);
 		});
 
-		it("can join and merge with existing segments", async () => {
+		it("can join and merge with existing segments (2)", async () => {
 			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					domain: createReplicationDomainTime({
@@ -217,6 +217,135 @@ describe("join", () => {
 			});
 		});
 
+		it("can join and merge with existing segments (3)", async () => {
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+					domain: createReplicationDomainTime({
+						canMerge: (_a, _b) => true,
+					}),
+				},
+			});
+
+			db2 = (await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicate: false,
+						domain: createReplicationDomainTime({
+							canMerge: (_a, _b) => true,
+						}),
+					},
+				},
+			))!;
+
+			await db1.waitFor(session.peers[1].peerId);
+
+			const e1 = await db1.add("hello", { meta: { next: [] } });
+
+			await db2.log.join([e1.entry], {
+				replicate: { mergeSegments: false },
+			});
+
+			const e2 = await db1.add("hello again", { meta: { next: [] } });
+
+			await db2.log.join([e2.entry], {
+				replicate: { mergeSegments: false },
+			});
+
+			const mySegments = await db2.log.getMyReplicationSegments();
+			expect(mySegments).to.have.length(2);
+
+			await waitForResolved(async () => {
+				// make sure segment update propagate correctly
+				const node2SegmentsInNode1 = await db1.log.replicationIndex
+					.iterate({ query: { hash: db2.node.identity.publicKey.hashcode() } })
+					.all();
+				expect(node2SegmentsInNode1).to.have.length(2);
+			});
+
+			const e3 = await db1.add("hello again again", { meta: { next: [] } });
+
+			await db2.log.join([e3.entry], {
+				replicate: { mergeSegments: true },
+			});
+
+			const mySegmentsAfterSecondJoin =
+				await db2.log.getMyReplicationSegments();
+			expect(mySegmentsAfterSecondJoin).to.have.length(1);
+
+			expect(
+				Number((await db2.log.getMyReplicationSegments())[0].width),
+			).to.be.greaterThan(1); // a segment covering more than one entry
+			expect(mySegmentsAfterSecondJoin[0].idString).to.not.eq(
+				mySegments[0].idString,
+			);
+			expect(db2.log.log.length).to.equal(3);
+
+			await waitForResolved(async () => {
+				// make sure segment update propagate correctly
+				const node2SegmentsInNode1 = await db1.log.replicationIndex
+					.iterate({ query: { hash: db2.node.identity.publicKey.hashcode() } })
+					.all();
+				expect(node2SegmentsInNode1.map((x) => x.value.idString)).to.deep.eq([
+					mySegmentsAfterSecondJoin[0].idString,
+				]);
+			});
+		});
+
+		it("can join merge into existing segment", async () => {
+			let origin = new Date(+new Date() - 1e3); // some time back so we can replicate ranges below with negative offsets without going negative
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+					domain: createReplicationDomainTime({
+						origin,
+						canMerge: (_a, _b) => true,
+					}),
+				},
+			});
+
+			const domain = createReplicationDomainTime({
+				origin,
+				canMerge: (_a, _b) => true,
+			});
+
+			db2 = (await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicate: false,
+						domain,
+					},
+				},
+			))!;
+
+			const e1 = await db1.add("hello", { meta: { next: [] } });
+
+			await db1.close(); // does not need for this test
+
+			const expectedCoordinate = await domain(db2.log).fromEntry(e1.entry);
+
+			await db2.log.replicate({
+				factor: 1e3,
+				offset: expectedCoordinate - 10,
+				normalized: false,
+			});
+			await db2.log.join([e1.entry], {
+				replicate: { mergeSegments: true },
+			});
+
+			const mergedSegments = await db2.log.getMyReplicationSegments();
+			expect(mergedSegments).to.have.length(1);
+			expect(mergedSegments[0].width).to.eq(1e3);
+		});
+
 		it("rejoins same entry with canMerge", async () => {
 			db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
@@ -250,6 +379,14 @@ describe("join", () => {
 			const mySegments = await db2.log.getMyReplicationSegments();
 			expect(mySegments).to.have.length(1);
 
+			const emittedMessages: any[] = [];
+
+			const sendFn = db2.log.rpc.send.bind(db2.log.rpc);
+			db2.log.rpc.send = (message, options) => {
+				emittedMessages.push(message);
+				return sendFn(message, options);
+			};
+
 			await db2.log.join([e1.entry], {
 				replicate: { mergeSegments: true },
 			});
@@ -261,6 +398,8 @@ describe("join", () => {
 			expect(mySegmentsAgain.map((x) => x.width)).to.deep.eq(
 				mySegments.map((x) => x.width),
 			);
+
+			expect(emittedMessages).to.have.length(0);
 		});
 	});
 
