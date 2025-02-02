@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.3...shared-log-v10.3.4) (2025-02-02)
+
+
+### Bug Fixes
+
+* persist separate replication segments when can not merge ([2ec6eb5](https://github.com/dao-xyz/peerbit/commit/2ec6eb5047ce2679dc16cdc3bd0eb17c42dc5abe))
+
 ## [10.3.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.2...shared-log-v10.3.3) (2025-02-01)
 
 
