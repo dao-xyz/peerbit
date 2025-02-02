@@ -401,6 +401,45 @@ describe("join", () => {
 
 			expect(emittedMessages).to.have.length(0);
 		});
+
+		it("will persist both segments when can not merge", async () => {
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					domain: createReplicationDomainTime({
+						canMerge: (_a, _b) => false,
+					}),
+				},
+			});
+
+			db2 = (await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicate: false,
+						domain: createReplicationDomainTime({
+							canMerge: (_a, _b) => false,
+						}),
+					},
+				},
+			))!;
+
+			await db1.waitFor(session.peers[1].peerId);
+
+			const e1 = await db1.add("hello", { meta: { next: [] } });
+			const e2 = await db2.add("hello again", { meta: { next: [] } });
+
+			await db2.log.join([e1.entry], {
+				replicate: { mergeSegments: true },
+			});
+
+			await db2.log.join([e2.entry], {
+				replicate: { mergeSegments: true },
+			});
+
+			const mySegments = await db2.log.getMyReplicationSegments();
+			expect(mySegments).to.have.length(2);
+		});
 	});
 
 	it("join replicate, assume synced", async () => {

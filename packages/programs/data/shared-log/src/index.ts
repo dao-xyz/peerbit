@@ -700,10 +700,13 @@ export class SharedLog<
 							this.indexableDomain.numbers,
 						);
 						const mergeableFiltered: ReplicationRangeIndexable<R>[] = [];
+						const toKeep: Set<string> = new Set();
 
 						for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
 							if (this.domain.canMerge(mergeCandidate, range)) {
 								mergeableFiltered.push(mergeCandidate);
+							} else {
+								toKeep.add(mergeCandidate.idString);
 							}
 						}
 
@@ -716,7 +719,10 @@ export class SharedLog<
 							);
 						}
 						for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
-							if (mergeCandidate.idString !== range.idString) {
+							if (
+								mergeCandidate.idString !== range.idString &&
+								!toKeep.has(mergeCandidate.idString)
+							) {
 								rangesToUnreplicate.push(mergeCandidate);
 							}
 						}
