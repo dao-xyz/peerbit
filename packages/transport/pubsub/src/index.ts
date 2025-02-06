@@ -752,7 +752,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 }
 
 export const waitForSubscribers = async (
-	libp2p: { services: { pubsub: DirectSub } },
+	libp2p: { services: { pubsub: PubSub } },
 	peersToWait:
 		| PeerId
 		| PeerId[]
@@ -761,6 +761,7 @@ export const waitForSubscribers = async (
 		| string
 		| string[],
 	topic: string,
+	options?: { signal?: AbortSignal; timeout?: number },
 ) => {
 	const peersToWaitArr = Array.isArray(peersToWait)
 		? peersToWait
@@ -782,6 +783,22 @@ export const waitForSubscribers = async (
 	// await libp2p.services.pubsub.requestSubscribers(topic);
 	return new Promise<void>((resolve, reject) => {
 		let counter = 0;
+		options?.signal?.addEventListener("abort", () => {
+			reject(new Error("waitForSubscribers was aborted"));
+		});
+		let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
+		if (options?.timeout) {
+			timeout = setTimeout(() => {
+				reject(new Error("waitForSubscribers timed out"));
+			}, options.timeout);
+			options.signal?.addEventListener("abort", () => {
+				clearTimeout(timeout);
+			});
+		}
+		const clear = () => {
+			clearInterval(interval);
+			timeout && clearTimeout(timeout);
+		};
 		const interval = setInterval(async () => {
 			counter += 1;
 			if (counter > 100) {
@@ -791,18 +808,18 @@ export const waitForSubscribers = async (
 				);
 			}
 			try {
-				const peers = await libp2p.services.pubsub.topics.get(topic);
+				const peers = await libp2p.services.pubsub.getSubscribers(topic);
 				const hasAllPeers =
-					peerIdsToWait.map((e) => peers?.has(e)).filter((e) => e === false)
+					peerIdsToWait.filter((e) => !peers?.find((x) => x.hashcode() === e))
 						.length === 0;
 
 				// FIXME: Does not fail on timeout, not easily fixable
 				if (hasAllPeers) {
-					clearInterval(interval);
+					clear();
 					resolve();
 				}
 			} catch (e) {
-				clearInterval(interval);
+				clear();
 				reject(e);
 			}
 		}, 200);
