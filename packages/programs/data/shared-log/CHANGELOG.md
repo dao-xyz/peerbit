@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.4...shared-log-v10.3.5) (2025-02-06)
+
+
+### Bug Fixes
+
+* don't block open when waiting for old replicators ([da51255](https://github.com/dao-xyz/peerbit/commit/da51255210f5fbe3337860222fe03ec4a08b3fba))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.28 to 4.0.29
+    * @peerbit/rpc bumped from 5.0.26 to 5.0.27
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.16 to ^2.1.17
+
 ## [10.3.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.3...shared-log-v10.3.4) (2025-02-02)
 
 
