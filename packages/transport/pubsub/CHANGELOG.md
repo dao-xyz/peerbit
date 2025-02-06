@@ -188,6 +188,13 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.16...pubsub-v3.0.17) (2025-02-06)
+
+
+### Bug Fixes
+
+* waitForSubscribers abortable ([cba571d](https://github.com/dao-xyz/peerbit/commit/cba571d8072106d3f2060a6fba3583efb536a7e2))
+
 ## [3.0.16](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.15...pubsub-v3.0.16) (2025-01-17)
 
 
