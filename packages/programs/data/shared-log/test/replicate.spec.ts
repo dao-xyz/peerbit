@@ -806,7 +806,7 @@ describe(`replicate`, () => {
 				expect(segments).to.have.length(1);
 			});
 
-			it("will re-check replication segments on restart", async () => {
+			it("will re-check replication segments on restart and prune offline", async () => {
 				// make sure non-reachable peers are not included in the replication segments
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
@@ -840,7 +840,16 @@ describe(`replicate`, () => {
 				await db1.close();
 				await db2.close();
 
-				db1 = await session.peers[0].open(db1.clone(), {
+				/* 				
+				await waitForResolved(async () => expect((await db1.node.services.pubsub.getSubscribers(db1.log.rpc.topic))).to.have.length(1))
+				 */
+				db1 = db1.clone();
+				let joinEvents = 0;
+				db1.log.events.addEventListener("replicator:join", () => {
+					joinEvents++;
+				});
+
+				db1 = await session.peers[0].open(db1, {
 					args: {
 						replicate: {
 							offset: 0.6,
@@ -848,11 +857,6 @@ describe(`replicate`, () => {
 						},
 						waitForReplicatorTimeout: 1000,
 					},
-				});
-				let joinEvents = 0;
-
-				db1.log.events.addEventListener("replicator:join", () => {
-					joinEvents++;
 				});
 
 				await waitForResolved(async () => {
@@ -862,7 +866,108 @@ describe(`replicate`, () => {
 						db1.node.identity.publicKey.hashcode(),
 					);
 				});
+
 				expect(joinEvents).to.equal(0);
+			});
+
+			it("will re-check replication segments on restart and announce online", async () => {
+				// make sure non-reachable peers are not included in the replication segments
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0.3,
+							factor: 0.1,
+						},
+					},
+				});
+
+				db2 = await session.peers[1].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+					},
+				});
+
+				await waitForResolved(async () => {
+					const segments = await db1.log.replicationIndex.iterate().all();
+					expect(segments).to.have.length(2);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db1.node.identity.publicKey.hashcode(),
+					);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db2.node.identity.publicKey.hashcode(),
+					);
+				});
+
+				await db1.close();
+
+				db1 = db1.clone();
+				let joinEvents = 0;
+				db1.log.events.addEventListener("replicator:join", () => {
+					joinEvents++;
+				});
+
+				db1 = await session.peers[0].open(db1, {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+						waitForReplicatorTimeout: 5e3,
+					},
+				});
+
+				await waitForResolved(() => expect(joinEvents).to.equal(1));
+			});
+
+			it("will not be blocked by replicator re-check on start", async () => {
+				// make sure non-reachable peers are not included in the replication segments
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0.3,
+							factor: 0.1,
+						},
+					},
+				});
+
+				db2 = await session.peers[1].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+					},
+				});
+
+				await waitForResolved(async () => {
+					const segments = await db1.log.replicationIndex.iterate().all();
+					expect(segments).to.have.length(2);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db1.node.identity.publicKey.hashcode(),
+					);
+					expect(segments.map((x) => x.value.hash)).to.contain(
+						db2.node.identity.publicKey.hashcode(),
+					);
+				});
+
+				await db1.close();
+				await db2.close();
+
+				let t0 = +new Date();
+				db1 = await session.peers[0].open(db1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.6,
+							factor: 0.2,
+						},
+						waitForReplicatorTimeout: 1e4, // long wait check
+					},
+				});
+
+				expect(+new Date() - t0).to.be.lessThan(1e3); // not blocked by waitForReplicatorTimeout
 			});
 
 			it("segments updated while offline", async () => {
@@ -952,7 +1057,7 @@ describe(`replicate`, () => {
 					checkSegments(await db2.log.replicationIndex.iterate().all());
 				});
 
-				expect(joinEvents).to.equal(1);
+				await waitForResolved(() => expect(joinEvents).to.equal(1));
 				/* expect(leaveEvents).to.equal(0); */ // TODO assert correctly (this assertion is flaky since leave events can happen due to that the goodbye from the pubsub layer is delayed)
 			});
 

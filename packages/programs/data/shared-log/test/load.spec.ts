@@ -5,7 +5,7 @@ import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import mapSeries from "p-each-series";
 import { v4 as uuid } from "uuid";
-import { dbgLogs, waitForConverged } from "./utils.js";
+import { waitForConverged } from "./utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe("load", function () {
@@ -113,12 +113,8 @@ describe("load", function () {
 			},
 		);
 
-		try {
-			await waitForResolved(() => expect(db1.log.log.length).lessThan(count)); // pruning started
-		} catch (error) {
-			await dbgLogs([db1.log, db2.log]);
-			throw error;
-		}
+		await waitForResolved(() => expect(db1.log.log.length).lessThan(count)); // pruning started
+
 		await waitForConverged(() => db1.log.log.length); // pruning done
 
 		const lengthBeforeClose = db1.log.log.length;

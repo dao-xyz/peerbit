@@ -30,6 +30,7 @@ import {
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
+import { waitForSubscribers } from "@peerbit/pubsub";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
@@ -1257,42 +1258,43 @@ export class SharedLog<
 			// else replaced, do nothing
 		}
 
-		if (reset) {
-			await this.updateOldestTimestampFromIndex();
-		}
+		if (diffs.length > 0) {
+			if (reset) {
+				await this.updateOldestTimestampFromIndex();
+			}
 
-		this.events.dispatchEvent(
-			new CustomEvent<ReplicationChangeEvent>("replication:change", {
-				detail: { publicKey: from },
-			}),
-		);
-
-		if (isNewReplicator) {
 			this.events.dispatchEvent(
-				new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+				new CustomEvent<ReplicationChangeEvent>("replication:change", {
 					detail: { publicKey: from },
 				}),
 			);
 
-			if (isAllMature) {
+			if (isNewReplicator) {
 				this.events.dispatchEvent(
-					new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
+					new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
 						detail: { publicKey: from },
 					}),
 				);
+
+				if (isAllMature) {
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicatorMatureEvent>("replicator:mature", {
+							detail: { publicKey: from },
+						}),
+					);
+				}
+			}
+
+			if (rebalance) {
+				for (const diff of diffs) {
+					this.replicationChangeDebounceFn.add(diff);
+				}
+			}
+
+			if (!from.equals(this.node.identity.publicKey)) {
+				this.rebalanceParticipationDebounced?.();
 			}
 		}
-
-		if (rebalance && diffs.length > 0) {
-			for (const diff of diffs) {
-				this.replicationChangeDebounceFn.add(diff);
-			}
-		}
-
-		if (!from.equals(this.node.identity.publicKey)) {
-			this.rebalanceParticipationDebounced?.();
-		}
-
 		return diffs;
 	}
 
@@ -1793,7 +1795,7 @@ export class SharedLog<
 		await super.afterOpen();
 
 		// We do this here, because these calls requires this.closed == false
-		await this.pruneOfflineReplicators();
+		this.pruneOfflineReplicators();
 
 		await this.rebalanceParticipation();
 
@@ -1830,7 +1832,7 @@ export class SharedLog<
 				checkedIsAlive.add(segment.value.hash);
 
 				promises.push(
-					this.waitFor(segment.value.hash, {
+					waitForSubscribers(this.node, segment.value.hash, this.rpc.topic, {
 						timeout: this.waitForReplicatorTimeout,
 						signal: this._closeController.signal,
 					})
@@ -1839,13 +1841,13 @@ export class SharedLog<
 							const key = await this.node.services.pubsub.getPublicKey(
 								segment.value.hash,
 							);
-
 							if (!key) {
 								throw new Error(
 									"Failed to resolve public key from hash: " +
 										segment.value.hash,
 								);
 							}
+
 							this.events.dispatchEvent(
 								new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
 									detail: { publicKey: key },
@@ -1857,7 +1859,7 @@ export class SharedLog<
 								}),
 							);
 						})
-						.catch((e) => {
+						.catch(async (e) => {
 							// not reachable
 							return this.removeReplicator(segment.value.hash, {
 								noEvent: true,
@@ -2868,111 +2870,6 @@ export class SharedLog<
 			check();
 		});
 	}
-
-	/* 
-		private async waitForIsLeader(
-			cursors: NumberFromType<R>[],
-			hash: string,
-			options: {
-				timeout: number;
-			} = { timeout: this.waitForReplicatorTimeout },
-		): Promise<Map<string, { intersecting: boolean }> | false> {
-			return new Promise((resolve, reject) => {
-				const removeListeners = () => {
-					this.events.removeEventListener("replication:change", roleListener);
-					this.events.removeEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
-					this._closeController.signal.removeEventListener(
-						"abort",
-						abortListener,
-					);
-				};
-				const abortListener = () => {
-					removeListeners();
-					clearTimeout(timer);
-					resolve(false);
-				};
-	
-				const timer = setTimeout(() => {
-					removeListeners();
-					resolve(false);
-				}, options.timeout);
-	
-				const check = async () => {
-					const leaders = await this.mergeLeadersMap(await Promise.all(cursors.map(x => this.findLeaders(x))));
-					const isLeader = leaders.has(hash);
-					if (isLeader) {
-						removeListeners();
-						clearTimeout(timer);
-						resolve(leaders);
-					}
-				}
-	
-				const roleListener = () => {
-					check();
-				};
-	
-				this.events.addEventListener("replication:change", roleListener); // TODO replication:change event  ?
-				this.events.addEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
-				this._closeController.signal.addEventListener("abort", abortListener);
-				check();
-			});
-		} */
-
-	/* async findLeaders(
-		cursor:
-			| NumberFromType<R>[]
-			| {
-				entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
-				replicas: number;
-			},
-		options?: {
-			roleAge?: number;
-		},
-	): Promise<Map<string, { intersecting: boolean }>> {
-		if (this.closed) {
-			const map = new Map(); // Assumption: if the store is closed, always assume we have responsibility over the data
-			map.set(this.node.identity.publicKey.hashcode(), { intersecting: false });
-			return map;
-		}
-
-		const coordinates = Array.isArray(cursor)
-			? cursor
-			: await this.createCoordinates(cursor.entry, cursor.replicas);
-		const leaders = await this.findLeadersFromN(coordinates, options);
-
-		return leaders;
-	} */
-
-	/* private async groupByLeaders(
-		entries: (ShallowOrFullEntry<any> | EntryReplicated<R>)[],
-		options?: {
-			roleAge?: number;
-		},
-	) {
-		try {
-			const leaders = await Promise.all(
-				entries.map(async (x) => {
-					return this.findLeadersFromEntry(x, decodeReplicas(x).getValue(this), options);
-				}),
-			);
-			const map = new Map<string, number[]>();
-			leaders.forEach((leader, i) => {
-				for (const [hash] of leader) {
-					const arr = map.get(hash) ?? [];
-					arr.push(i);
-					map.set(hash, arr);
-				}
-			});
-			return map;
-		} catch (error) {
-			if (error instanceof NotStartedError || error instanceof IndexNotStartedError) {
-				// ignore because we are shutting down
-				return new Map<string, number[]>();
-			} else {
-				throw error;
-			}
-		}
-	} */
 
 	async createCoordinates(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R> | NumberFromType<R>,
