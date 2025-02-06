@@ -26,6 +26,7 @@ import {
 	ByteMatchQuery,
 	Compare,
 	IntegerCompare,
+	Or,
 	Sort,
 	SortDirection,
 	StringMatch,
@@ -285,6 +286,40 @@ describe("index", () => {
 				await waitForResolved(async () =>
 					expect(await store2.docs.index.getSize()).to.eq(1),
 				);
+			});
+
+			it("will clear resumable iterators on end of iteration", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				await store.docs.put(doc);
+
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+				await store2.docs.index.waitFor(store.node.identity.publicKey);
+
+				const document = await store2.docs.index.get(doc.id);
+
+				expect(document).to.exist;
+				expect(
+					(store.docs.index as any)["_resumableIterators"].queues.size,
+				).to.eq(0);
+				expect(
+					(store2.docs.index as any)["_resumableIterators"].queues.size,
+				).to.eq(0);
 			});
 		});
 
@@ -1536,6 +1571,75 @@ describe("index", () => {
 						new SearchRequest(),
 					);
 					expect(collected).to.have.length(10);
+				});
+
+				it("can handle many ORs with large payload", async () => {
+					let ids = new Set<string>();
+					let count = 33;
+					for (let i = 0; i < count; i++) {
+						const doc = new Document({
+							id: String(i),
+							data: randomBytes(5e5 - 1300),
+						});
+						await writeStore.docs.put(doc);
+						ids.add(doc.id);
+					}
+
+					await readStore.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey,
+					);
+
+					const collected = await readStore.docs.index.search(
+						new SearchRequest({
+							query: new Or(
+								new Array(count).fill(0).map((_, i) => {
+									return new StringMatch({
+										key: "id",
+										value: String(i),
+									});
+								}),
+							),
+							fetch: 0xffffffff,
+						}),
+					);
+
+					expect(collected).to.have.length(count);
+				});
+
+				it("can handle many ORs with large payload and replicate", async () => {
+					let ids = new Set<string>();
+					let count = 33;
+					for (let i = 0; i < count; i++) {
+						const doc = new Document({
+							id: String(i),
+							data: randomBytes(5e5 - 1300),
+						});
+						await writeStore.docs.put(doc);
+						ids.add(doc.id);
+					}
+
+					await readStore.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey,
+					);
+
+					const collected = await readStore.docs.index.search(
+						new SearchRequest({
+							query: new Or(
+								new Array(count).fill(0).map((_, i) => {
+									return new StringMatch({
+										key: "id",
+										value: String(i),
+									});
+								}),
+							),
+							fetch: 0xffffffff,
+						}),
+						{
+							remote: { replicate: true },
+						},
+					);
+
+					expect(collected).to.have.length(count);
 				});
 			});
 

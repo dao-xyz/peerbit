@@ -364,6 +364,7 @@ export class DocumentIndex<
 			keptInIndex: number;
 			timeout: ReturnType<typeof setTimeout>;
 			queue: indexerTypes.IndexedResult<IDocumentWithContext<I>>[];
+			fromQuery: types.SearchRequest | types.SearchRequestIndexed;
 		}
 	>;
 
@@ -838,7 +839,9 @@ export class DocumentIndex<
 			fromQuery = query;
 			indexedResult = await this._resumableIterators.iterateAndFetch(query);
 		} else if (query instanceof types.CollectNextRequest) {
-			fromQuery = this._resumableIterators.queues.get(query.idString)?.request;
+			fromQuery =
+				prevQueued?.fromQuery ||
+				this._resumableIterators.queues.get(query.idString)?.request;
 			indexedResult =
 				prevQueued?.keptInIndex === 0
 					? []
@@ -869,6 +872,9 @@ export class DocumentIndex<
 					this._resultQueue.delete(query.idString);
 				}, 6e4),
 				keptInIndex: kept,
+				fromQuery: (fromQuery || query) as
+					| types.SearchRequest
+					| types.SearchRequestIndexed,
 			};
 			this._resultQueue.set(query.idString, prevQueued);
 		}
@@ -1600,7 +1606,9 @@ export class DocumentIndex<
 			}
 			await Promise.all(promises);
 		};
-		let doneFn = () => done;
+		let doneFn = () => {
+			return done;
+		};
 		return {
 			close,
 			next,
