@@ -837,6 +837,13 @@ describe("index", () => {
 							return sendFn(message, options);
 						};
 
+						stores[1].docs.log.events.addEventListener(
+							"replication:change",
+							(ev) => {
+								throw new Error("Expected no replication changes");
+							},
+						);
+
 						results = await stores[1].docs.index
 							.iterate({}, { remote: { replicate: true } })
 							.all();
