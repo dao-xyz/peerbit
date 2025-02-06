@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.6](https://github.com/dao-xyz/peerbit/compare/document-v9.0.5...document-v9.0.6) (2025-02-06)
+
+
+### Bug Fixes
+
+* correctly handle remote iterations when result size exceeds max message size ([115f7aa](https://github.com/dao-xyz/peerbit/commit/115f7aa9456b8a2682d7a5cd42948965c8ff4639))
+
 ## [9.0.5](https://github.com/dao-xyz/peerbit/compare/document-v9.0.4...document-v9.0.5) (2025-02-06)
 
 
