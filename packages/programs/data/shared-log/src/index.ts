@@ -148,10 +148,6 @@ export {
 	type EntryReplicated,
 	EntryReplicatedU32,
 	EntryReplicatedU64,
-	type ReplicationChangeEvent,
-	type ReplicatorJoinEvent,
-	type ReplicatorLeaveEvent,
-	type ReplicatorMatureEvent,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn({ module: "shared-log" });
@@ -358,10 +354,10 @@ export type SharedAppendOptions<T> = AppendOptions<T> & {
 	target?: "all" | "replicators" | "none";
 };
 
-type ReplicatorJoinEvent = { publicKey: PublicSignKey };
-type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
-type ReplicationChangeEvent = { publicKey: PublicSignKey };
-type ReplicatorMatureEvent = { publicKey: PublicSignKey };
+export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
+export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
+export type ReplicationChangeEvent = { publicKey: PublicSignKey };
+export type ReplicatorMatureEvent = { publicKey: PublicSignKey };
 
 export interface SharedLogEvents extends ProgramEvents {
 	"replicator:join": CustomEvent<ReplicatorJoinEvent>;
