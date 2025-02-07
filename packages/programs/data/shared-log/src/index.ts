@@ -143,9 +143,15 @@ export { type CPUUsage, CPUUsageIntervalLag };
 export * from "./replication.js";
 export {
 	type ReplicationRangeIndexable,
+	ReplicationRangeIndexableU32,
+	ReplicationRangeIndexableU64,
 	type EntryReplicated,
 	EntryReplicatedU32,
 	EntryReplicatedU64,
+	type ReplicationChangeEvent,
+	type ReplicatorJoinEvent,
+	type ReplicatorLeaveEvent,
+	type ReplicatorMatureEvent,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn({ module: "shared-log" });
@@ -1004,6 +1010,9 @@ export class SharedLog<
 		ranges: ReplicationRangeIndexable<R>[],
 		from: PublicSignKey,
 	) {
+		if (ranges.length === 0) {
+			return;
+		}
 		const pendingMaturity = this.pendingMaturity.get(from.hashcode());
 		if (pendingMaturity) {
 			for (const id of ranges) {
@@ -1016,9 +1025,6 @@ export class SharedLog<
 			if (pendingMaturity.size === 0) {
 				this.pendingMaturity.delete(from.hashcode());
 			}
-		}
-		if (ranges.length === 0) {
-			throw new Error("???");
 		}
 
 		await this.replicationIndex.del({
