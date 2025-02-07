@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.5...shared-log-v10.3.6) (2025-02-07)
+
+
+### Bug Fixes
+
+* handle no-op for removeReplicationRanges ([5d427a8](https://github.com/dao-xyz/peerbit/commit/5d427a8f179476797bf475d9ca2c6f45d2b91fac))
+
 ## [10.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.4...shared-log-v10.3.5) (2025-02-06)
 
 
