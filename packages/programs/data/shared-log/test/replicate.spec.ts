@@ -8,10 +8,11 @@ import pDefer from "p-defer";
 import path from "path";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
-import type {
-	ReplicationDomainHash,
-	ReplicationRangeIndexable,
-	SharedLog,
+import {
+	type ReplicationDomainHash,
+	type ReplicationRangeIndexable,
+	type SharedLog,
+	createReplicationDomainTime,
 } from "../src/index.js";
 import { denormalizer } from "../src/integers.js";
 import { ReplicationIntent, isMatured } from "../src/ranges.js";
@@ -279,6 +280,40 @@ describe(`replicate`, () => {
 					0.1,
 				),
 			);
+		});
+
+		it("merge segments", async () => {
+			let domain = createReplicationDomainTime({
+				canMerge: () => true,
+			});
+
+			db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					replicate: {
+						offset: 0.3,
+						factor: 0.3,
+					},
+					domain,
+				},
+			});
+
+			db2 = await session.peers[1].open(db1.clone(), {
+				args: {
+					replicate: 1,
+					domain,
+				},
+			});
+
+			await db1.log.replicate(
+				{ offset: 0.15, factor: 0.3 },
+				{ mergeSegments: true },
+			);
+
+			const segmentsAfterReplicate = await db1.log.getMyReplicationSegments();
+			expect(segmentsAfterReplicate).to.have.length(1);
+			expect(
+				segmentsAfterReplicate.map((x) => x.widthNormalized)[0],
+			).to.be.closeTo(0.45, 0.001);
 		});
 
 		it("dynamic by default", async () => {

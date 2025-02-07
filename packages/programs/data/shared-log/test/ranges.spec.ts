@@ -1731,6 +1731,73 @@ resolutions.forEach((resolution) => {
 								).to.be.true;
 							});
 
+							it("overlapping with a gap", async () => {
+								const offset = denormalizeFn(0.2 + rotation);
+
+								//@ts-ignore
+								const range1 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset: offset % numbers.maxValue,
+									timestamp: 0n,
+								});
+								//@ts-ignore
+								const range2 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset:
+										// @ts-ignore
+										(offset + (typeof offset === "number" ? 60 : 60n)) %
+										numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								const merged = mergeRanges([range1, range2], numbers);
+								expect(Number(merged.width)).to.eq(160);
+							});
+
+							it("three overlapping", async () => {
+								const offset = denormalizeFn(0.2 + rotation);
+
+								//@ts-ignore
+								const range1 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset: offset % numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								//@ts-ignore
+								const range2 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset:
+										// @ts-ignore
+										(offset + (typeof offset === "number" ? 50 : 50n)) %
+										numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								//@ts-ignore
+								const range3 = createReplicationRange({
+									publicKey: a,
+									width: 100,
+									// @ts-ignore
+									offset:
+										// @ts-ignore
+										(offset + (typeof offset === "number" ? 150 : 150n)) %
+										numbers.maxValue,
+									timestamp: 0n,
+								});
+
+								const merged = mergeRanges([range1, range2, range3], numbers);
+								expect(Number(merged.width)).to.eq(250);
+							});
+
 							it("different lengths", async () => {
 								const offset = denormalizeFn(0.2 + rotation);
 
