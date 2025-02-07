@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.7](https://github.com/dao-xyz/peerbit/compare/document-v9.0.6...document-v9.0.7) (2025-02-07)
+
+
+### Bug Fixes
+
+* don't create resumable iterators if iterator is ending on first request ([e0d6483](https://github.com/dao-xyz/peerbit/commit/e0d6483fcc0efba72f0decbab932b3cfab14a057))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 10.3.5 to 10.3.6
+
 ## [9.0.6](https://github.com/dao-xyz/peerbit/compare/document-v9.0.5...document-v9.0.6) (2025-02-06)
 
 
