@@ -17,14 +17,18 @@ export class ResumableIterators<T extends Record<string, any>> {
 		// TODO choose upper limit better
 	}
 
-	iterateAndFetch(request: SearchRequest | SearchRequestIndexed) {
+	async iterateAndFetch(request: SearchRequest | SearchRequestIndexed) {
 		const iterator = this.index.iterate(request);
+		const firstResult = await iterator.next(request.fetch);
+		if (iterator.done() === true) {
+			return firstResult;
+		}
 		const cachedIterator = {
 			iterator,
 			request,
 		};
 		this.queues.add(request.idString, cachedIterator);
-		return this.next(request, cachedIterator);
+		return firstResult;
 	}
 
 	async next(
