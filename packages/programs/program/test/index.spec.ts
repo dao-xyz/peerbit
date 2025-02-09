@@ -8,7 +8,7 @@ import {
 	getProgramFromVariant,
 } from "../src/program.js";
 import { getValuesWithType } from "../src/utils.js";
-import { EmbeddedStore, Log, P2, P3, P4 } from "./samples.js";
+import { EmbeddedStore, Log, P1, P2, P3, P4 } from "./samples.js";
 import { createPeer } from "./utils.js";
 
 describe("getValuesWithType", () => {
@@ -341,6 +341,16 @@ describe("program", () => {
 		});
 	});
 
+	describe("waitFor", () => {
+		let peer: ProgramClient;
+		beforeEach(async () => {
+			peer = await createPeer();
+		});
+		it("self", async () => {
+			const p = await peer.open(new P1());
+			await p.waitFor(p.node.identity.publicKey);
+		});
+	});
 	describe("events", () => {
 		it("join/leave", async () => {
 			const eventHandlers = new Map();

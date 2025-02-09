@@ -380,13 +380,15 @@ export abstract class Program<
 	): Promise<void> {
 		const ids = Array.isArray(other) ? other : [other];
 		const expectedHashes = new Set(
-			ids.map((x) =>
-				typeof x === "string"
-					? x
-					: x instanceof PublicSignKey
-						? x.hashcode()
-						: getPublicKeyFromPeerId(x).hashcode(),
-			),
+			ids
+				.map((x) =>
+					typeof x === "string"
+						? x
+						: x instanceof PublicSignKey
+							? x.hashcode()
+							: getPublicKeyFromPeerId(x).hashcode(),
+				)
+				.filter((x) => x !== this.node.identity.publicKey.hashcode()),
 		);
 
 		// make sure nodes are reachable
