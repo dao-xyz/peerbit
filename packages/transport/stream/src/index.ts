@@ -2008,6 +2008,10 @@ export abstract class DirectStream<
 						? peer
 						: getPublicKeyFromPeerId(peer)
 					).hashcode();
+		if (hash === this.publicKeyHash) {
+			return; // TODO throw error instead?
+		}
+
 		const checkIsReachable = (deferred: DeferredPromise<void>) => {
 			if (options?.neighbour && !this.peers.has(hash)) {
 				return;

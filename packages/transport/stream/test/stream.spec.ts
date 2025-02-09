@@ -3223,50 +3223,75 @@ describe("start/stop", () => {
 			await waitForNeighbour(stream(session, 0), stream(session, 1)); */
 	});
 
-	it("wait for only waits for reachable", async () => {
-		session = await disconnected(3, {
-			transports: [tcp()],
-			services: {
-				directstream: (c) =>
-					new TestDirectStream(c, {
-						connectionManager: { dialer: false, pruner: false },
-					}),
-			},
+	describe("waitFor", () => {
+		it("wait only for reachable", async () => {
+			session = await disconnected(3, {
+				transports: [tcp()],
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: { dialer: false, pruner: false },
+						}),
+				},
+			});
+
+			await session.connect([
+				// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
+			await waitForNeighbour(stream(session, 0), stream(session, 1));
+			await waitForNeighbour(stream(session, 1), stream(session, 2));
+
+			expect(
+				session.peers[0].services.directstream.routes.isReachable(
+					session.peers[0].services.directstream.publicKey.hashcode(),
+					session.peers[2].services.directstream.publicKey.hashcode(),
+				),
+			).to.be.false;
+			await session.peers[0].services.directstream.publish(
+				new Uint8Array([0]),
+				{
+					mode: new SeekDelivery({ redundancy: 1 }),
+				},
+			);
+			await session.peers[0].services.directstream.waitFor(
+				session.peers[2].peerId,
+			);
+			await expect(
+				session.peers[0].services.directstream.waitFor(
+					session.peers[2].peerId,
+					{
+						neighbour: true,
+						timeout: 1000,
+					},
+				),
+			).rejectedWith();
+
+			await expect(
+				session.peers[0].services.directstream.waitFor(
+					session.peers[1].peerId,
+					{
+						neighbour: true,
+						timeout: 1000,
+					},
+				),
+			);
 		});
 
-		await session.connect([
-			// behaviour seems to be more predictable if we connect after start (TODO improve startup to use existing connections in a better way)
-			[session.peers[0], session.peers[1]],
-			[session.peers[1], session.peers[2]],
-		]);
-		await waitForNeighbour(stream(session, 0), stream(session, 1));
-		await waitForNeighbour(stream(session, 1), stream(session, 2));
+		it("wait for self resolves", async () => {
+			session = await disconnected(1, {
+				transports: [tcp()],
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: { dialer: false, pruner: false },
+						}),
+				},
+			});
 
-		expect(
-			session.peers[0].services.directstream.routes.isReachable(
-				session.peers[0].services.directstream.publicKey.hashcode(),
-				session.peers[2].services.directstream.publicKey.hashcode(),
-			),
-		).to.be.false;
-		await session.peers[0].services.directstream.publish(new Uint8Array([0]), {
-			mode: new SeekDelivery({ redundancy: 1 }),
+			await stream(session, 0).waitFor(stream(session, 0).publicKey);
 		});
-		await session.peers[0].services.directstream.waitFor(
-			session.peers[2].peerId,
-		);
-		await expect(
-			session.peers[0].services.directstream.waitFor(session.peers[2].peerId, {
-				neighbour: true,
-				timeout: 1000,
-			}),
-		).rejectedWith();
-
-		await expect(
-			session.peers[0].services.directstream.waitFor(session.peers[1].peerId, {
-				neighbour: true,
-				timeout: 1000,
-			}),
-		);
 	});
 
 	it("start and stop", async () => {
