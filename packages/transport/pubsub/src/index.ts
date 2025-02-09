@@ -34,6 +34,7 @@ import {
 	SilentDelivery,
 	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
+import { AbortError, TimeoutError } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
 
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
@@ -784,12 +785,12 @@ export const waitForSubscribers = async (
 	return new Promise<void>((resolve, reject) => {
 		let counter = 0;
 		options?.signal?.addEventListener("abort", () => {
-			reject(new Error("waitForSubscribers was aborted"));
+			reject(new AbortError("waitForSubscribers was aborted"));
 		});
 		let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
 		if (options?.timeout) {
 			timeout = setTimeout(() => {
-				reject(new Error("waitForSubscribers timed out"));
+				reject(new TimeoutError("waitForSubscribers timed out"));
 			}, options.timeout);
 			options.signal?.addEventListener("abort", () => {
 				clearTimeout(timeout);

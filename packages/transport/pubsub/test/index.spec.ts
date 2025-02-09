@@ -26,7 +26,7 @@ import {
 	type Message,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
-import { delay, waitFor, waitForResolved } from "@peerbit/time";
+import { TimeoutError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { equals } from "uint8arrays";
 import { DirectSub, waitForSubscribers } from "../src/index.js";
@@ -1560,6 +1560,82 @@ describe("pubsub", function () {
 				streams[1].stream.lastSubscriptionMessages.delete(dummyPeer);
 				expect(streams[1].stream.lastSubscriptionMessages.size).equal(0);
 			});
+		});
+	});
+
+	describe("waitForSubscribers", () => {
+		let session: TestSession<{ pubsub: DirectSub }>;
+
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("wait for self", async () => {
+			session = await TestSession.disconnected(1, {
+				services: {
+					pubsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: false,
+						}),
+				},
+			});
+			const topic = "TOPIC";
+			session.peers[0].services.pubsub.subscribe(topic);
+			await waitForSubscribers(
+				session.peers[0],
+				[session.peers[0].peerId],
+				topic,
+			);
+		});
+
+		it("timeout when not available", async () => {
+			session = await TestSession.connected(2, {
+				services: {
+					pubsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: false,
+						}),
+				},
+			});
+			const topic = "TOPIC";
+			const topic2 = "TOPIC_2";
+
+			await session.peers[0].services.pubsub.subscribe(topic);
+			await session.peers[1].services.pubsub.subscribe(topic2);
+
+			try {
+				await waitForSubscribers(
+					session.peers[0],
+					[session.peers[1].peerId],
+					topic,
+					{ timeout: 1e3 },
+				);
+			} catch (error) {
+				expect(error).to.be.instanceOf(TimeoutError);
+			}
+		});
+
+		it("wait for other available", async () => {
+			session = await TestSession.connected(2, {
+				services: {
+					pubsub: (c) =>
+						new DirectSub(c, {
+							canRelayMessage: true,
+							connectionManager: false,
+						}),
+				},
+			});
+			const topic = "TOPIC";
+			session.peers[0].services.pubsub.subscribe(topic);
+			session.peers[1].services.pubsub.subscribe(topic);
+
+			await waitForSubscribers(
+				session.peers[0],
+				[session.peers[1].peerId],
+				topic,
+			);
 		});
 	});
 });
