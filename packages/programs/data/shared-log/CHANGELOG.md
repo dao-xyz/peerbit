@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.6...shared-log-v10.3.7) (2025-02-09)
+
+
+### Bug Fixes
+
+* prevent pruneOfflineReplicators to throw errors on program closing before resolving ([837e7f1](https://github.com/dao-xyz/peerbit/commit/837e7f19fccc69250d5fe9f4476e21c71384251b))
+
 ## [10.3.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.5...shared-log-v10.3.6) (2025-02-07)
 
 
