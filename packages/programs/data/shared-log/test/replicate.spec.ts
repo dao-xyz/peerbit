@@ -841,120 +841,134 @@ describe(`replicate`, () => {
 				expect(segments).to.have.length(1);
 			});
 
-			it("will re-check replication segments on restart and prune offline", async () => {
-				// make sure non-reachable peers are not included in the replication segments
-				db1 = await session.peers[0].open(new EventStore<string, any>(), {
-					args: {
-						replicate: {
-							offset: 0.3,
-							factor: 0.1,
+			describe("pruneOfflineReplicators", () => {
+				it("will re-check replication segments on restart and prune offline", async () => {
+					// make sure non-reachable peers are not included in the replication segments
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: {
+								offset: 0.3,
+								factor: 0.1,
+							},
 						},
-					},
-				});
+					});
 
-				db2 = await session.peers[1].open(db1.clone(), {
-					args: {
-						replicate: {
-							offset: 0.6,
-							factor: 0.2,
+					db2 = await session.peers[1].open(db1.clone(), {
+						args: {
+							replicate: {
+								offset: 0.6,
+								factor: 0.2,
+							},
 						},
-					},
-				});
+					});
 
-				await waitForResolved(async () => {
-					const segments = await db1.log.replicationIndex.iterate().all();
-					expect(segments).to.have.length(2);
-					expect(segments.map((x) => x.value.hash)).to.contain(
-						db1.node.identity.publicKey.hashcode(),
-					);
-					expect(segments.map((x) => x.value.hash)).to.contain(
-						db2.node.identity.publicKey.hashcode(),
-					);
-				});
+					await waitForResolved(async () => {
+						const segments = await db1.log.replicationIndex.iterate().all();
+						expect(segments).to.have.length(2);
+						expect(segments.map((x) => x.value.hash)).to.contain(
+							db1.node.identity.publicKey.hashcode(),
+						);
+						expect(segments.map((x) => x.value.hash)).to.contain(
+							db2.node.identity.publicKey.hashcode(),
+						);
+					});
 
-				await db1.close();
-				await db2.close();
+					await db1.close();
+					await db2.close();
 
-				/* 				
-				await waitForResolved(async () => expect((await db1.node.services.pubsub.getSubscribers(db1.log.rpc.topic))).to.have.length(1))
-				 */
-				db1 = db1.clone();
-				let joinEvents = 0;
-				db1.log.events.addEventListener("replicator:join", () => {
-					joinEvents++;
-				});
+					/* 				
+					await waitForResolved(async () => expect((await db1.node.services.pubsub.getSubscribers(db1.log.rpc.topic))).to.have.length(1))
+					 */
+					db1 = db1.clone();
+					let joinEvents = 0;
+					db1.log.events.addEventListener("replicator:join", () => {
+						joinEvents++;
+					});
 
-				db1 = await session.peers[0].open(db1, {
-					args: {
-						replicate: {
-							offset: 0.6,
-							factor: 0.2,
+					db1 = await session.peers[0].open(db1, {
+						args: {
+							replicate: {
+								offset: 0.6,
+								factor: 0.2,
+							},
+							waitForReplicatorTimeout: 1000,
 						},
-						waitForReplicatorTimeout: 1000,
-					},
+					});
+
+					await waitForResolved(async () => {
+						const segments = await db1.log.replicationIndex.iterate().all();
+						expect(segments).to.have.length(1);
+						expect(segments[0].value.hash).to.equal(
+							db1.node.identity.publicKey.hashcode(),
+						);
+					});
+
+					expect(joinEvents).to.equal(0);
 				});
 
-				await waitForResolved(async () => {
-					const segments = await db1.log.replicationIndex.iterate().all();
-					expect(segments).to.have.length(1);
-					expect(segments[0].value.hash).to.equal(
-						db1.node.identity.publicKey.hashcode(),
-					);
-				});
-
-				expect(joinEvents).to.equal(0);
-			});
-
-			it("will re-check replication segments on restart and announce online", async () => {
-				// make sure non-reachable peers are not included in the replication segments
-				db1 = await session.peers[0].open(new EventStore<string, any>(), {
-					args: {
-						replicate: {
-							offset: 0.3,
-							factor: 0.1,
+				it("will re-check replication segments on restart and announce online", async () => {
+					// make sure non-reachable peers are not included in the replication segments
+					db1 = await session.peers[0].open(new EventStore<string, any>(), {
+						args: {
+							replicate: {
+								offset: 0.3,
+								factor: 0.1,
+							},
 						},
-					},
-				});
+					});
 
-				db2 = await session.peers[1].open(db1.clone(), {
-					args: {
-						replicate: {
-							offset: 0.6,
-							factor: 0.2,
+					db2 = await session.peers[1].open(db1.clone(), {
+						args: {
+							replicate: {
+								offset: 0.6,
+								factor: 0.2,
+							},
 						},
-					},
-				});
+					});
 
-				await waitForResolved(async () => {
-					const segments = await db1.log.replicationIndex.iterate().all();
-					expect(segments).to.have.length(2);
-					expect(segments.map((x) => x.value.hash)).to.contain(
-						db1.node.identity.publicKey.hashcode(),
-					);
-					expect(segments.map((x) => x.value.hash)).to.contain(
-						db2.node.identity.publicKey.hashcode(),
-					);
-				});
+					await waitForResolved(async () => {
+						const segments = await db1.log.replicationIndex.iterate().all();
+						expect(segments).to.have.length(2);
+						expect(segments.map((x) => x.value.hash)).to.contain(
+							db1.node.identity.publicKey.hashcode(),
+						);
+						expect(segments.map((x) => x.value.hash)).to.contain(
+							db2.node.identity.publicKey.hashcode(),
+						);
+					});
 
-				await db1.close();
+					await db1.close();
 
-				db1 = db1.clone();
-				let joinEvents = 0;
-				db1.log.events.addEventListener("replicator:join", () => {
-					joinEvents++;
-				});
+					db1 = db1.clone();
+					let joinEvents = 0;
+					db1.log.events.addEventListener("replicator:join", () => {
+						joinEvents++;
+					});
 
-				db1 = await session.peers[0].open(db1, {
-					args: {
-						replicate: {
-							offset: 0.6,
-							factor: 0.2,
+					db1 = await session.peers[0].open(db1, {
+						args: {
+							replicate: {
+								offset: 0.6,
+								factor: 0.2,
+							},
+							waitForReplicatorTimeout: 5e3,
 						},
-						waitForReplicatorTimeout: 5e3,
-					},
+					});
+
+					await waitForResolved(() => expect(joinEvents).to.equal(1));
 				});
 
-				await waitForResolved(() => expect(joinEvents).to.equal(1));
+				it("will not throw when closed", async () => {
+					session = await TestSession.connected(1);
+					const store = new EventStore();
+					await session.peers[0].open(store, {
+						args: {
+							replicate: false,
+						},
+					});
+					await session.peers[0].stop();
+					await store.log.pruneOfflineReplicators();
+				});
 			});
 
 			it("will not be blocked by replicator re-check on start", async () => {

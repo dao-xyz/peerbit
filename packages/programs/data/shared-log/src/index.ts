@@ -249,6 +249,22 @@ const isReplicationOptionsDependentOnPreviousState = (
 	return false;
 };
 
+const isNotStartedError = (e: Error) => {
+	if (e instanceof AbortError) {
+		return true;
+	}
+	if (e instanceof NotStartedError) {
+		return true;
+	}
+	if (e instanceof IndexNotStartedError) {
+		return true;
+	}
+	if (e instanceof ClosedError) {
+		return true;
+	}
+	return false;
+};
+
 interface IndexableDomain<R extends "u32" | "u64"> {
 	numbers: Numbers<R>;
 	constructorEntry: new (properties: {
@@ -1819,58 +1835,74 @@ export class SharedLog<
 	async pruneOfflineReplicators() {
 		// go through all segments and for waitForAll replicators to become reachable if not prune them away
 
-		const promises: Promise<any>[] = [];
-		const iterator = this.replicationIndex.iterate();
-		let checkedIsAlive = new Set<string>();
-		while (!iterator.done()) {
-			for (const segment of await iterator.next(1000)) {
-				if (
-					checkedIsAlive.has(segment.value.hash) ||
-					this.node.identity.publicKey.hashcode() === segment.value.hash
-				) {
-					continue;
-				}
+		try {
+			const promises: Promise<any>[] = [];
+			const iterator = this.replicationIndex.iterate();
+			let checkedIsAlive = new Set<string>();
 
-				checkedIsAlive.add(segment.value.hash);
+			while (!iterator.done()) {
+				for (const segment of await iterator.next(1000)) {
+					if (
+						checkedIsAlive.has(segment.value.hash) ||
+						this.node.identity.publicKey.hashcode() === segment.value.hash
+					) {
+						continue;
+					}
 
-				promises.push(
-					waitForSubscribers(this.node, segment.value.hash, this.rpc.topic, {
-						timeout: this.waitForReplicatorTimeout,
-						signal: this._closeController.signal,
-					})
-						.then(async () => {
-							// is reachable, announce change events
-							const key = await this.node.services.pubsub.getPublicKey(
-								segment.value.hash,
-							);
-							if (!key) {
-								throw new Error(
-									"Failed to resolve public key from hash: " +
-										segment.value.hash,
-								);
-							}
+					checkedIsAlive.add(segment.value.hash);
 
-							this.events.dispatchEvent(
-								new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
-									detail: { publicKey: key },
-								}),
-							);
-							this.events.dispatchEvent(
-								new CustomEvent<ReplicationChangeEvent>("replication:change", {
-									detail: { publicKey: key },
-								}),
-							);
+					promises.push(
+						waitForSubscribers(this.node, segment.value.hash, this.rpc.topic, {
+							timeout: this.waitForReplicatorTimeout,
+							signal: this._closeController.signal,
 						})
-						.catch(async (e) => {
-							// not reachable
-							return this.removeReplicator(segment.value.hash, {
-								noEvent: true,
-							}); // done announce since replicator was never reachable
-						}),
-				);
+							.then(async () => {
+								// is reachable, announce change events
+								const key = await this.node.services.pubsub.getPublicKey(
+									segment.value.hash,
+								);
+								if (!key) {
+									throw new Error(
+										"Failed to resolve public key from hash: " +
+											segment.value.hash,
+									);
+								}
+
+								this.events.dispatchEvent(
+									new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
+										detail: { publicKey: key },
+									}),
+								);
+								this.events.dispatchEvent(
+									new CustomEvent<ReplicationChangeEvent>(
+										"replication:change",
+										{
+											detail: { publicKey: key },
+										},
+									),
+								);
+							})
+							.catch(async (e) => {
+								if (isNotStartedError(e)) {
+									return; // TODO test this path
+								}
+
+								// not reachable
+								return this.removeReplicator(segment.value.hash, {
+									noEvent: true,
+								}); // done announce since replicator was never reachable
+							}),
+					);
+				}
 			}
+			const results = await Promise.all(promises);
+			return results;
+		} catch (error: any) {
+			if (isNotStartedError(error)) {
+				return;
+			}
+			throw error;
 		}
-		return Promise.all(promises);
 	}
 
 	async getMemoryUsage() {
@@ -2481,13 +2513,7 @@ export class SharedLog<
 						/* await this._modifyReplicators(msg.role, context.from!); */
 					})
 					.catch((e) => {
-						if (e instanceof AbortError) {
-							return;
-						}
-						if (e instanceof NotStartedError) {
-							return;
-						}
-						if (e instanceof IndexNotStartedError) {
+						if (isNotStartedError(e)) {
 							return;
 						}
 						logger.error(
