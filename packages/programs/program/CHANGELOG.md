@@ -202,6 +202,14 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.1.2](https://github.com/dao-xyz/peerbit/compare/program-v5.1.1...program-v5.1.2) (2025-02-09)
+
+
+### Bug Fixes
+
+* allow waitFor self ([313f84c](https://github.com/dao-xyz/peerbit/commit/313f84c10eaac368ce8ec522764fec6e61c892d8))
+* waitFor use filtered non-self ids for stream waitFor check ([e5510e0](https://github.com/dao-xyz/peerbit/commit/e5510e0b4931be060af740f4df62a7aceeb7863b))
+
 ## [5.1.1](https://github.com/dao-xyz/peerbit/compare/program-v5.1.0...program-v5.1.1) (2025-01-17)
 
 
