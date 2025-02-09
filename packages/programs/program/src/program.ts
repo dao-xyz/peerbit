@@ -378,9 +378,8 @@ export abstract class Program<
 			| (PublicSignKey | string | Libp2pPeerId)[],
 		options?: { signal?: AbortSignal; timeout?: number },
 	): Promise<void> {
-		const ids = Array.isArray(other) ? other : [other];
 		const expectedHashes = new Set(
-			ids
+			(Array.isArray(other) ? other : [other])
 				.map((x) =>
 					typeof x === "string"
 						? x
@@ -393,7 +392,7 @@ export abstract class Program<
 
 		// make sure nodes are reachable
 		await Promise.all(
-			ids.map((x) =>
+			[...expectedHashes].map((x) =>
 				this.node.services.pubsub.waitFor(x, { signal: options?.signal }),
 			),
 		);
