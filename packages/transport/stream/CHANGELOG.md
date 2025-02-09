@@ -43,6 +43,13 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.2.1](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.0...stream-v4.2.1) (2025-02-09)
+
+
+### Bug Fixes
+
+* waitFor self resolves immediately ([4d8f105](https://github.com/dao-xyz/peerbit/commit/4d8f105c9ba1a48e01f43c5f3f200c60e563835b))
+
 ## [4.2.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.1.4...stream-v4.2.0) (2025-01-17)
 
 

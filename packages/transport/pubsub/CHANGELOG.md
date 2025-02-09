@@ -188,6 +188,20 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.17...pubsub-v3.0.18) (2025-02-09)
+
+
+### Bug Fixes
+
+* throw Abort and Timeout errors when waitForSubscribers rejects ([06e2bd8](https://github.com/dao-xyz/peerbit/commit/06e2bd8151ff6b54c190d45f81db5e3f9c8683cf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.2.0 to 4.2.1
+
 ## [3.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.16...pubsub-v3.0.17) (2025-02-06)
 
 
