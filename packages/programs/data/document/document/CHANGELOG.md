@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.10](https://github.com/dao-xyz/peerbit/compare/document-v9.0.9...document-v9.0.10) (2025-02-11)
+
+
+### Bug Fixes
+
+* allow del program values that where not openend on put ([e0eabcf](https://github.com/dao-xyz/peerbit/commit/e0eabcf8e205f7d96bb602fd358102bfa4dacf1d))
+
 ## [9.0.9](https://github.com/dao-xyz/peerbit/compare/document-v9.0.8...document-v9.0.9) (2025-02-09)
 
 
