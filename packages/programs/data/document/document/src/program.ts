@@ -92,6 +92,7 @@ export type SetupOptions<
 		canSearch?: CanSearch;
 		canRead?: CanRead<I>;
 		idProperty?: string | string[];
+		cacheSize?: number;
 	} & TransformOptions<T, I>;
 	log?: {
 		trim?: TrimOptions;
@@ -177,6 +178,7 @@ export class Documents<
 			transform: options.index,
 			indexBy: idProperty,
 			compatibility: options.compatibility,
+			cacheSize: options?.index?.cacheSize,
 			replicate: async (query, results) => {
 				// here we arrive for all the results we want to persist.
 
@@ -563,7 +565,9 @@ export class Documents<
 
 		let modified: Set<string | number | bigint> = new Set();
 		for (const item of sortedEntries) {
-			if (!item) continue;
+			if (!item) {
+				continue;
+			}
 
 			try {
 				const payload =
@@ -635,7 +639,11 @@ export class Documents<
 
 					documentsChanged.removed.push(value);
 
-					if (value instanceof Program) {
+					if (
+						value instanceof Program &&
+						value.closed !== true &&
+						value.parents.includes(this)
+					) {
 						await value.drop(this);
 					}
 

@@ -191,6 +191,23 @@ const dedup = <T>(
 	return dedup;
 };
 
+function isSubclassOf(
+	SubClass: AbstractType<any>,
+	SuperClass: AbstractType<any>,
+) {
+	// Start with the immediate parent of SubClass
+	let proto = Object.getPrototypeOf(SubClass);
+
+	while (proto) {
+		if (proto === SuperClass) {
+			return true;
+		}
+		proto = Object.getPrototypeOf(proto);
+	}
+
+	return false;
+}
+
 const DEFAULT_INDEX_BY = "id";
 
 /* 
@@ -302,6 +319,7 @@ export type OpenOptions<
 	) => Promise<void>;
 	indexBy?: string | string[];
 	transform?: TransformOptions<T, I>;
+	cacheSize?: number;
 	compatibility: 6 | 7 | 8 | undefined;
 };
 
@@ -354,7 +372,7 @@ export class DocumentIndex<
 	private _log: SharedLog<Operation, D, any>;
 
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
-	private _resolverCache: Cache<T>;
+	private _resolverCache?: Cache<T>;
 	private _isProgramValues: boolean;
 
 	private _resultQueue: Map<
@@ -410,59 +428,10 @@ export class DocumentIndex<
 		) => IDocumentWithContext<I>;
 
 		// if this.type is a class that extends Program we want to do special functionality
-		this._isProgramValues = this.documentType instanceof Program;
+		this._isProgramValues = isSubclassOf(this.documentType, Program);
 		this.dbType = properties.dbType;
 		this._resultQueue = new Map();
-		this._sync = async (request, results) => {
-			/*  			
-			let allPromises: Promise<void> | undefined = undefined
-				if (waitForValue) {
-					let promises: Map<string, DeferredPromise<T>> = new Map();
-	
-				for (const result of results) {
-					for (let i = 0; i < result.results.length; i++) {
-						let promise = defer<T>(); 
-						let r = result.results[i];
-							promises.set(r.context.head, promise); 
-						const head = result.results[0].context.head;
-						let listeners = this.hashToValueListener.get(head);
-						if (!listeners) {
-							listeners = [];
-							this.hashToValueListener.set(head, listeners);
-						}
-						listeners.push(async (value) => {
-								promise.resolve(value); 
-							result.results[i] = new types.ResultValue<T>({
-								context: r.context,
-								value,
-								source: serialize(value),
-								indexed: r.indexed,
-							}) as any;
-						});
-						promise.promise.finally(() => {
-							this.hashToValueListener.delete(head);
-						});
-					}
-				}
-
-				let timeout = setTimeout(() => {
-					for (const promise of promises!) {
-						promise[1].reject("Timed out resolving search result from value");
-					}
-				}, 1e4);
-
-				allPromises = Promise.all([...promises.values()].map((x) => x.promise)).then(
-					() => {
-						clearTimeout(timeout);
-					},
-				);
-			} */
-
-			await properties.replicate(request, results);
-			/* if (allPromises) {
-				await allPromises;
-			} */
-		};
+		this._sync = (request, results) => properties.replicate(request, results);
 
 		const transformOptions = properties.transform;
 		this.transformer = transformOptions
@@ -483,7 +452,10 @@ export class DocumentIndex<
 		if (this._isProgramValues) {
 			this._resolverProgramCache = new Map();
 		}
-		this._resolverCache = new Cache({ max: 10 }); // TODO choose limit better (adaptive)
+		this._resolverCache =
+			properties.cacheSize === 0
+				? undefined
+				: new Cache({ max: properties.cacheSize ?? 100 }); // TODO choose limit better by default (adaptive)
 
 		this.index =
 			(await (
@@ -614,10 +586,17 @@ export class DocumentIndex<
 
 	public async put(value: T, entry: Entry<Operation>, id: indexerTypes.IdKey) {
 		const idString = id.primitive;
-		if (this._isProgramValues) {
+		if (
+			this._isProgramValues /*
+			TODO should we skip caching program value if they are not openend through this db?
+			&&
+			(value as Program).closed === false &&
+			(value as Program).parents.includes(this._log) */
+		) {
+			// TODO make last condition more efficient if there are many docs
 			this._resolverProgramCache!.set(idString, value);
 		} else {
-			this._resolverCache.add(idString, value);
+			this._resolverCache?.add(idString, value);
 		}
 
 		const existing = await this.index.get(id);
@@ -643,7 +622,7 @@ export class DocumentIndex<
 		if (this._isProgramValues) {
 			this._resolverProgramCache!.delete(key.primitive);
 		} else {
-			this._resolverCache.del(key.primitive);
+			this._resolverCache?.del(key.primitive);
 		}
 		return this.index.del({
 			query: [indexerTypes.getMatcher(this.indexBy, key.key)],
@@ -771,7 +750,7 @@ export class DocumentIndex<
 			indexerTypes.toId(this.indexByResolver(value.indexed)).primitive;
 
 		const cached =
-			this._resolverCache.get(id) || this._resolverProgramCache?.get(id);
+			this._resolverCache?.get(id) || this._resolverProgramCache?.get(id);
 		if (cached != null) {
 			return { value: cached };
 		}

@@ -11,6 +11,7 @@ import {
 	Ed25519PublicKey,
 	type PublicSignKey,
 	randomBytes,
+	toBase64,
 } from "@peerbit/crypto";
 import {
 	AbstractSearchRequest,
@@ -30,6 +31,7 @@ import {
 	Sort,
 	SortDirection,
 	StringMatch,
+	id,
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
@@ -1054,6 +1056,68 @@ describe("index", () => {
 
 			after(async () => {
 				await session.stop();
+			});
+
+			describe("del with indexed value", () => {
+				class DocumentUint8arrayId {
+					@id({ type: Uint8Array })
+					id: Uint8Array;
+
+					constructor(id: Uint8Array) {
+						this.id = id;
+					}
+				}
+
+				class DocumentUnt8arrayIdIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					constructor(track: DocumentUint8arrayId) {
+						this.id = toBase64(track.id);
+					}
+				}
+
+				@variant("test_uint8array_with_indexed_string")
+				class DocumentUint8arrayIdStore extends Program {
+					@field({ type: Documents })
+					docs: Documents<DocumentUint8arrayId, DocumentUnt8arrayIdIndexable>;
+
+					constructor(properties?: {
+						docs?: Documents<
+							DocumentUint8arrayId,
+							DocumentUnt8arrayIdIndexable
+						>;
+					}) {
+						super();
+						this.docs = properties?.docs || new Documents();
+					}
+					async open(
+						options?: Partial<
+							SetupOptions<DocumentUint8arrayId, DocumentUnt8arrayIdIndexable>
+						>,
+					): Promise<void> {
+						await this.docs.open({
+							...options,
+							type: DocumentUint8arrayId,
+							index: {
+								type: DocumentUnt8arrayIdIndexable,
+							},
+						});
+					}
+				}
+
+				it("needs to delete by indexed value", async () => {
+					const store = await session.peers[0].open(
+						new DocumentUint8arrayIdStore(),
+					);
+					const document = new DocumentUint8arrayId(new Uint8Array([1, 2, 3]));
+					await store.docs.put(document);
+					const getResult = await store.docs.index.get(
+						new DocumentUnt8arrayIdIndexable(document).id,
+					);
+					expect(getResult).to.exist;
+					await store.docs.del(new DocumentUnt8arrayIdIndexable(document).id);
+				});
 			});
 
 			it("trim deduplicate changes", async () => {
@@ -2843,6 +2907,7 @@ describe("index", () => {
 								address: await arg.calculateAddress(),
 							});
 						},
+						cacheSize: options?.index?.cacheSize,
 					},
 				});
 			}
@@ -2882,6 +2947,9 @@ describe("index", () => {
 					args: {
 						replicate: i === 0 ? { factor: 1 } : false,
 						canOpen: () => true,
+						index: {
+							cacheSize: 0,
+						},
 					},
 				});
 				stores.push({ store });
@@ -2978,8 +3046,27 @@ describe("index", () => {
 			stores[0].store.docs.canOpen = (_) => Promise.resolve(false);
 			const subProgram = new SubProgram();
 			await stores[0].store.docs.put(subProgram);
-			subProgram.parents = [undefined];
 			expect(subProgram.closed).to.be.true;
+		});
+
+		it("can delete closed subprograms that are no opened on put", async () => {
+			stores[0].store.docs.canOpen = (_) => Promise.resolve(false);
+			const subProgram = new SubProgram();
+			await stores[0].store.docs.put(subProgram);
+			expect(subProgram.closed).to.be.true;
+			expect(await stores[0].store.docs.index.getSize()).to.eq(1);
+			await stores[0].store.docs.del(new SubProgramIndexable(subProgram).id);
+			expect(await stores[0].store.docs.index.getSize()).to.eq(0);
+		});
+
+		it("can delete open subprograms that are no opened on put", async () => {
+			stores[0].store.docs.canOpen = (_) => Promise.resolve(false);
+			const subProgram = await session.peers[0].open(new SubProgram());
+			await stores[0].store.docs.put(subProgram);
+			expect(subProgram.closed).to.be.false;
+			expect(await stores[0].store.docs.index.getSize()).to.eq(1);
+			await stores[0].store.docs.del(new SubProgramIndexable(subProgram).id);
+			expect(await stores[0].store.docs.index.getSize()).to.eq(0);
 		});
 
 		describe("index", () => {
