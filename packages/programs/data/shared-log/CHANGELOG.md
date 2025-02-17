@@ -389,6 +389,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.8...shared-log-v10.3.9) (2025-02-17)
+
+
+### Bug Fixes
+
+* add calculateCoverage method ([03f5b18](https://github.com/dao-xyz/peerbit/commit/03f5b189ddcdbdbf170adf82325f54c3f465ae25))
+* catch Invalid Degree error ([91b73bd](https://github.com/dao-xyz/peerbit/commit/91b73bdf5882c4e80970ebc666947403c809c2e2))
+
 ## [10.3.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.7...shared-log-v10.3.8) (2025-02-09)
 
 
