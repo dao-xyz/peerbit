@@ -23,6 +23,7 @@ import {
 	ReplicationRangeIndexableU32,
 	ReplicationRangeIndexableU64,
 	appromixateCoverage,
+	calculateCoverage,
 	countCoveringRangesSameOwner,
 	getAdjecentSameOwner,
 	getCoverSet as getCoverSetGeneric,
@@ -2128,6 +2129,168 @@ resolutions.forEach((resolution) => {
 										normalized: true,
 									}),
 								).to.be.closeTo(0.5, 1 / (samples - 1));
+							});
+						});
+					});
+				});
+			});
+
+			describe("calculateCoverage", () => {
+				[0, 0.3, 0.6, 0.9].forEach((rotation) => {
+					describe("rotation: " + rotation, () => {
+						describe("100%", () => {
+							it("one range", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 1,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// we try to cover 0.5 starting from a
+								// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.eq(1);
+							});
+
+							it("two ranges", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.51,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.51,
+										offset: (0.4999 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// we try to cover 0.5 starting from a
+								// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.eq(1);
+							});
+						});
+
+						describe("200%", () => {
+							it("two ranges", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 1,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 1,
+										offset: (0.5 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// we try to cover 0.5 starting from a
+								// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.eq(2);
+							});
+
+							it("three ranges", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.51,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.51,
+										offset: (0.4999 + rotation) % 1,
+										timestamp: 0n,
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 1,
+										offset: (1 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// we try to cover 0.5 starting from a
+								// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.eq(2);
+							});
+						});
+
+						describe("50%", () => {
+							it("one range", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.5,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// we try to cover 0.5 starting from a
+								// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.be.eq(0);
+							});
+
+							it("two ranges", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.25,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 0.25,
+										offset: (0.5 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// we try to cover 0.5 starting from a
+								// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.be.eq(0);
 							});
 						});
 					});

@@ -48,6 +48,7 @@ export interface Numbers<T extends "u32" | "u64"> {
 	divRound: (a: NumberFromType<T>, b: number | bigint) => NumberFromType<T>;
 	abs: (a: NumberFromType<T>) => NumberFromType<T>;
 	min: (a: NumberFromType<T>, b: NumberFromType<T>) => NumberFromType<T>;
+	max: (a: NumberFromType<T>, b: NumberFromType<T>) => NumberFromType<T>;
 	denormalize: (value: number) => NumberFromType<T>;
 	bytesToNumber: (bytes: Uint8Array) => NumberFromType<T>;
 }
@@ -81,6 +82,7 @@ export const createNumbers = <N extends "u32" | "u64">(
 			divRound: (a, b) => Math.round(a / Number(b)) as any,
 			abs: (a) => Math.abs(a as number),
 			min: (a, b) => Math.min(a as number, b as number),
+			max: (a, b) => Math.max(a as number, b as number),
 			denormalize: denormalizerFn,
 			bytesToNumber: bytesToNumber(resolution),
 		} as Numbers<N>;
@@ -93,6 +95,7 @@ export const createNumbers = <N extends "u32" | "u64">(
 			divRound: (a, b) => (a as bigint) / BigInt(b),
 			abs: (a) => (a < 0n ? -a : a),
 			min: (a, b) => (a < b ? a : b),
+			max: (a, b) => (a > b ? a : b),
 			denormalize: denormalizerFn,
 			bytesToNumber: bytesToNumber(resolution),
 		} as Numbers<N>;

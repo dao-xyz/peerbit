@@ -1355,6 +1355,66 @@ export const appromixateCoverage = async <R extends "u32" | "u64">(properties: {
 	return hits / properties.samples;
 };
 
+export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
+	peers: Index<ReplicationRangeIndexable<R>>;
+	numbers: Numbers<R>;
+}): Promise<number> => {
+	const contentStart = properties.numbers.zero;
+	const contentEnd = properties.numbers.maxValue;
+	const endpoints: { point: NumberFromType<R>; delta: -1 | 1 }[] = [];
+	let lastPoint = contentStart;
+
+	// For each range, record its start and end as events.
+	for (const r of await properties.peers.iterate().all()) {
+		endpoints.push({ point: r.value.start1, delta: +1 });
+		endpoints.push({ point: r.value.end1, delta: -1 });
+
+		if (r.value.start1 !== r.value.start2) {
+			endpoints.push({ point: r.value.start2, delta: +1 });
+			endpoints.push({ point: r.value.end2, delta: -1 });
+		}
+	}
+
+	// Sort endpoints.
+	// When points are equal, process a start (delta +1) before an end (delta -1)
+	endpoints.sort((a, b) => {
+		if (a.point === b.point) return b.delta - a.delta;
+		return Number(a.point - b.point);
+	});
+
+	let currentCoverage = 0;
+	let minCoverage = Infinity;
+
+	// If the very start of the content space isn’t covered, return 0.
+	if (endpoints.length === 0 || endpoints[0].point > contentStart) {
+		return 0;
+	}
+
+	// Process each endpoint, updating the current coverage.
+	for (const e of endpoints) {
+		// If there is an interval from lastPoint to this endpoint,
+		// then the coverage in that entire segment was currentCoverage.
+		if (e.point > lastPoint) {
+			// Restrict to our content space.
+			const segStart = properties.numbers.max(lastPoint, contentStart);
+			const segEnd = properties.numbers.min(e.point, contentEnd);
+			if (segStart < segEnd) {
+				minCoverage = Math.min(minCoverage, currentCoverage);
+			}
+			lastPoint = e.point;
+		}
+		currentCoverage += e.delta;
+	}
+
+	// Check if the last endpoint left a tail inside the content space.
+	if (lastPoint < contentEnd) {
+		minCoverage = Math.min(minCoverage, currentCoverage);
+	}
+
+	// If any segment has zero coverage or nothing was covered, return 0.
+	return minCoverage === Infinity || minCoverage <= 0 ? 0 : minCoverage;
+};
+
 const getClosest = <S extends Shape | undefined, R extends "u32" | "u64">(
 	direction: "above" | "below",
 	rects: Index<ReplicationRangeIndexable<R>>,

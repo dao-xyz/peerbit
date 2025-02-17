@@ -87,6 +87,7 @@ import {
 	ReplicationRangeIndexableU64,
 	ReplicationRangeMessage,
 	appromixateCoverage,
+	calculateCoverage,
 	countCoveringRangesSameOwner,
 	debounceAggregationChanges,
 	getAllMergeCandiates,
@@ -2586,6 +2587,13 @@ export class SharedLog<
 			peers: this._replicationRangeIndex,
 			numbers: this.indexableDomain.numbers,
 			samples: 25,
+		});
+	}
+
+	async calculateCoverage() {
+		return calculateCoverage({
+			numbers: this.indexableDomain.numbers,
+			peers: this.replicationIndex,
 		});
 	}
 
