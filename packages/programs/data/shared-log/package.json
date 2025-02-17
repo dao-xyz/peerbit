@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/shared-log",
-	"version": "10.3.8",
+	"version": "10.3.9",
 	"description": "Shared log",
 	"sideEffects": false,
 	"type": "module",
