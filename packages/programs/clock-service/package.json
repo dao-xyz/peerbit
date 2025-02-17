@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/clock-service",
-	"version": "3.0.56",
+	"version": "3.0.57",
 	"description": "Clock signing",
 	"type": "module",
 	"sideEffects": false,
@@ -60,7 +60,7 @@
 	"dependencies": {
 		"@peerbit/logger": "1.0.3",
 		"@peerbit/rpc": "5.0.28",
-		"@peerbit/trusted-network": "4.1.41"
+		"@peerbit/trusted-network": "4.1.42"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "^2.1.18"
