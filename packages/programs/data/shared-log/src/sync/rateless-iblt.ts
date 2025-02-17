@@ -476,7 +476,11 @@ export class RatelessIBLTSynchronizer<
 					try {
 						decoder.try_decode();
 					} catch (error: any) {
-						if (error?.message === "Invalid degree") {
+						if (
+							error?.message === "Invalid degree" ||
+							error === "Invalid degree"
+						) {
+							// TODO in some way test this code path
 							logger.error(error?.message);
 							return false;
 						} else {
