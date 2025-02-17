@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.12](https://github.com/dao-xyz/peerbit/compare/document-v9.0.11...document-v9.0.12) (2025-02-17)
+
+
+### Bug Fixes
+
+* re-open indexed program values on restart ([17e5d15](https://github.com/dao-xyz/peerbit/commit/17e5d1574f2f12f0f89b084a6c7ee84d0a7d5b6a))
+
 ## [9.0.11](https://github.com/dao-xyz/peerbit/compare/document-v9.0.10...document-v9.0.11) (2025-02-17)
 
 
