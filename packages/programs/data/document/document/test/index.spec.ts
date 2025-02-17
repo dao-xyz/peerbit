@@ -10,6 +10,7 @@ import {
 	AccessError,
 	Ed25519PublicKey,
 	type PublicSignKey,
+	equals,
 	randomBytes,
 	toBase64,
 } from "@peerbit/crypto";
@@ -3070,34 +3071,60 @@ describe("index", () => {
 				directory: "./tmp/document-store/program-perstance-test/" + new Date(),
 			});
 			const peer = session.peers[0];
+
+			const subProgram1 = new SubProgram();
+
+			const subProgram2 = new SubProgram();
+
 			let store = await peer.open(
 				new TestStoreSubPrograms({
 					docs: new Documents<SubProgram, SubProgramIndexable>(),
 				}),
 				{
 					args: {
-						canOpen: () => true,
+						canOpen: (d) => equals(d.id, subProgram1.id),
 					},
 				},
 			);
 
-			const subProgram = new SubProgram();
-			await store.docs.put(subProgram);
-			expect(subProgram.closed).to.be.false;
+			await store.docs.put(subProgram1);
+			await store.docs.put(subProgram2);
+
+			expect(subProgram1.closed).to.be.false;
+			expect(subProgram2.closed).to.be.true;
 
 			await session.peers[0].stop();
+
+			expect(subProgram1.closed).to.be.true;
+			expect(subProgram2.closed).to.be.true;
+
 			await session.peers[0].start();
 			store = await peer.open(store.clone(), {
 				args: {
-					canOpen: () => true,
+					canOpen: (d) => equals(d.id, subProgram1.id),
 				},
 			});
 
 			const programsInIndex = await store.docs.index
 				.iterate({}, { local: true, remote: false })
 				.all();
-			expect(programsInIndex).to.have.length(1);
-			expect(programsInIndex[0].closed).to.be.false;
+			expect(programsInIndex).to.have.length(2);
+			expect(
+				programsInIndex
+					.map((x) => x.closed)
+					.sort((a, b) => String(a).localeCompare(String(b))),
+			).to.deep.eq([false, true]); // one is allowed to be opened and one is not
+
+			// open all, and make sure that if we query all again, they are all open
+			for (const program of programsInIndex) {
+				program.closed && (await peer.open(program));
+			}
+
+			const programsInIndex2 = await store.docs.index
+				.iterate({}, { local: true, remote: false })
+				.all();
+			expect(programsInIndex2).to.have.length(2);
+			expect(programsInIndex2.map((x) => x.closed)).to.deep.eq([false, false]);
 		});
 
 		describe("index", () => {

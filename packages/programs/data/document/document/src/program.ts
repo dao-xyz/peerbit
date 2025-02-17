@@ -125,7 +125,7 @@ export class Documents<
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 
-	canOpen?: (program: T, entry: Entry<Operation>) => Promise<boolean> | boolean;
+	canOpen?: (program: T) => Promise<boolean> | boolean;
 
 	compatibility: 6 | 7 | undefined;
 
@@ -145,6 +145,16 @@ export class Documents<
 		return this._index;
 	}
 
+	private async maybeSubprogramOpen(value: T & Program): Promise<T & Program> {
+		if (await this.canOpen!(value)) {
+			return (await this.node.open(value, {
+				parent: this as Program<any, any>,
+				existing: "reuse",
+			})) as any as T & Program; // TODO types
+		}
+
+		return value;
+	}
 	async open(options: SetupOptions<T, I, D>) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
@@ -195,6 +205,7 @@ export class Documents<
 				);
 			},
 			dbType: this.constructor,
+			maybeOpen: this.maybeSubprogramOpen.bind(this),
 		});
 
 		// document v6 and below need log compatibility of v8 or below
@@ -594,12 +605,7 @@ export class Documents<
 					// Program specific
 					if (value instanceof Program) {
 						// if replicator, then open
-						if (await this.canOpen!(value, item)) {
-							value = (await this.node.open(value, {
-								parent: this as Program<any, any>,
-								existing: "reuse",
-							})) as any as T; // TODO types
-						}
+						value = await this.maybeSubprogramOpen(value);
 					}
 					documentsChanged.added.push(value);
 					await this._index.put(value, item, key);

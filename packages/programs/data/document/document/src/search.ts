@@ -321,6 +321,7 @@ export type OpenOptions<
 	transform?: TransformOptions<T, I>;
 	cacheSize?: number;
 	compatibility: 6 | 7 | 8 | undefined;
+	maybeOpen: (value: T & Program) => Promise<T & Program>;
 };
 
 type IndexableClass<I> = new (
@@ -374,6 +375,7 @@ export class DocumentIndex<
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache?: Cache<T>;
 	private isProgramValued: boolean;
+	private _maybeOpen: (value: T & Program) => Promise<T & Program>;
 
 	private _resultQueue: Map<
 		string,
@@ -474,7 +476,7 @@ export class DocumentIndex<
 			})) || new HashmapIndex<IDocumentWithContext<I>>();
 
 		this._resumableIterators = new ResumableIterators(this.index);
-
+		this._maybeOpen = properties.maybeOpen;
 		if (this.isProgramValued) {
 			this._resolverProgramCache = new Map();
 		}
@@ -545,8 +547,10 @@ export class DocumentIndex<
 					);
 					continue;
 				}
+				programValue.value = await this._maybeOpen(
+					programValue.value as Program & T,
+				);
 				this._resolverProgramCache.set(id.primitive, programValue.value as T);
-				await this.node.open(programValue.value as Program);
 			}
 		}
 		return super.afterOpen();
