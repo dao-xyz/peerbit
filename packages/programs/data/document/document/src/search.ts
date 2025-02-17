@@ -532,8 +532,6 @@ export class DocumentIndex<
 
 	async afterOpen(): Promise<void> {
 		if (this.isProgramValued) {
-			this._resolverProgramCache = new Map();
-
 			// re-open the program cache
 			for (const { id, value } of await this.index.iterate().all()) {
 				const programValue = await this.resolveDocument({
@@ -550,7 +548,7 @@ export class DocumentIndex<
 				programValue.value = await this._maybeOpen(
 					programValue.value as Program & T,
 				);
-				this._resolverProgramCache.set(id.primitive, programValue.value as T);
+				this._resolverProgramCache!.set(id.primitive, programValue.value as T);
 			}
 		}
 		return super.afterOpen();
