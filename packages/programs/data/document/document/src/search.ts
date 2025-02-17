@@ -373,7 +373,7 @@ export class DocumentIndex<
 
 	private _resolverProgramCache?: Map<string | number | bigint, T>;
 	private _resolverCache?: Cache<T>;
-	private _isProgramValues: boolean;
+	private isProgramValued: boolean;
 
 	private _resultQueue: Map<
 		string,
@@ -428,7 +428,7 @@ export class DocumentIndex<
 		) => IDocumentWithContext<I>;
 
 		// if this.type is a class that extends Program we want to do special functionality
-		this._isProgramValues = isSubclassOf(this.documentType, Program);
+		this.isProgramValued = isSubclassOf(this.documentType, Program);
 		this.dbType = properties.dbType;
 		this._resultQueue = new Map();
 		this._sync = (request, results) => properties.replicate(request, results);
@@ -449,9 +449,6 @@ export class DocumentIndex<
 
 		this._valueEncoding = BORSH_ENCODING(this.documentType);
 
-		if (this._isProgramValues) {
-			this._resolverProgramCache = new Map();
-		}
 		this._resolverCache =
 			properties.cacheSize === 0
 				? undefined
@@ -477,6 +474,10 @@ export class DocumentIndex<
 			})) || new HashmapIndex<IDocumentWithContext<I>>();
 
 		this._resumableIterators = new ResumableIterators(this.index);
+
+		if (this.isProgramValued) {
+			this._resolverProgramCache = new Map();
+		}
 
 		await this._query.open({
 			topic: sha256Base64Sync(
@@ -527,6 +528,29 @@ export class DocumentIndex<
 		});
 	}
 
+	async afterOpen(): Promise<void> {
+		if (this.isProgramValued) {
+			this._resolverProgramCache = new Map();
+
+			// re-open the program cache
+			for (const { id, value } of await this.index.iterate().all()) {
+				const programValue = await this.resolveDocument({
+					indexed: value,
+					head: value.__context.head,
+				});
+				if (!programValue) {
+					logger.error(
+						"Missing program value after re-opening the document index. Hash: " +
+							value.__context.head,
+					);
+					continue;
+				}
+				this._resolverProgramCache.set(id.primitive, programValue.value as T);
+				await this.node.open(programValue.value as Program);
+			}
+		}
+		return super.afterOpen();
+	}
 	async getPending(cursorId: string): Promise<number | undefined> {
 		const queue = this._resultQueue.get(cursorId);
 		if (queue) {
@@ -587,7 +611,7 @@ export class DocumentIndex<
 	public async put(value: T, entry: Entry<Operation>, id: indexerTypes.IdKey) {
 		const idString = id.primitive;
 		if (
-			this._isProgramValues /*
+			this.isProgramValued /*
 			TODO should we skip caching program value if they are not openend through this db?
 			&&
 			(value as Program).closed === false &&
@@ -619,7 +643,7 @@ export class DocumentIndex<
 	}
 
 	public del(key: indexerTypes.IdKey) {
-		if (this._isProgramValues) {
+		if (this.isProgramValued) {
 			this._resolverProgramCache!.delete(key.primitive);
 		} else {
 			this._resolverCache?.del(key.primitive);

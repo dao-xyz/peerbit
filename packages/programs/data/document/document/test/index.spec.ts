@@ -2916,14 +2916,8 @@ describe("index", () => {
 		let stores: { store: TestStoreSubPrograms }[];
 		let peersCount = 2;
 
-		before(async () => {
-			session = await TestSession.connected(peersCount);
-		});
-		after(async () => {
-			await session.stop();
-		});
-
 		beforeEach(async () => {
+			session = await TestSession.connected(peersCount);
 			stores = [];
 
 			// Create store
@@ -2956,7 +2950,7 @@ describe("index", () => {
 			}
 		});
 		afterEach(async () => {
-			await Promise.all(stores.map((x) => x.store.close()));
+			await session.stop();
 		});
 
 		it("can open a subprogram when put", async () => {
@@ -3067,6 +3061,43 @@ describe("index", () => {
 			expect(await stores[0].store.docs.index.getSize()).to.eq(1);
 			await stores[0].store.docs.del(new SubProgramIndexable(subProgram).id);
 			expect(await stores[0].store.docs.index.getSize()).to.eq(0);
+		});
+
+		it("will re-open on load after restart", async () => {
+			await session.stop();
+
+			session = await TestSession.connected(1, {
+				directory: "./tmp/document-store/program-perstance-test/" + new Date(),
+			});
+			const peer = session.peers[0];
+			let store = await peer.open(
+				new TestStoreSubPrograms({
+					docs: new Documents<SubProgram, SubProgramIndexable>(),
+				}),
+				{
+					args: {
+						canOpen: () => true,
+					},
+				},
+			);
+
+			const subProgram = new SubProgram();
+			await store.docs.put(subProgram);
+			expect(subProgram.closed).to.be.false;
+
+			await session.peers[0].stop();
+			await session.peers[0].start();
+			store = await peer.open(store.clone(), {
+				args: {
+					canOpen: () => true,
+				},
+			});
+
+			const programsInIndex = await store.docs.index
+				.iterate({}, { local: true, remote: false })
+				.all();
+			expect(programsInIndex).to.have.length(1);
+			expect(programsInIndex[0].closed).to.be.false;
 		});
 
 		describe("index", () => {
