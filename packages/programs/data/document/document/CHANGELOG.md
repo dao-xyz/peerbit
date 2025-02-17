@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.13](https://github.com/dao-xyz/peerbit/compare/document-v9.0.12...document-v9.0.13) (2025-02-17)
+
+
+### Bug Fixes
+
+* respect canOpen on re-opening programs on program restart ([a97d716](https://github.com/dao-xyz/peerbit/commit/a97d716d7cf7359f9cdbd5f8092b2791df6f1abe))
+
 ## [9.0.12](https://github.com/dao-xyz/peerbit/compare/document-v9.0.11...document-v9.0.12) (2025-02-17)
 
 
