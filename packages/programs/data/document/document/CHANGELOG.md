@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.14](https://github.com/dao-xyz/peerbit/compare/document-v9.0.13...document-v9.0.14) (2025-02-17)
+
+
+### Bug Fixes
+
+* don't reset resolverProgramCache in afterOpen ([961cb66](https://github.com/dao-xyz/peerbit/commit/961cb661b964172d38e6a6f4dc5ebb44b0af979c))
+
 ## [9.0.13](https://github.com/dao-xyz/peerbit/compare/document-v9.0.12...document-v9.0.13) (2025-02-17)
 
 
