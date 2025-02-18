@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.9...shared-log-v10.3.10) (2025-02-18)
+
+
+### Bug Fixes
+
+* add start and end parameter for calculating coverage ([d8eb9b0](https://github.com/dao-xyz/peerbit/commit/d8eb9b03f5d1c3a6dd01fac12433844044e30a23))
+
 ## [10.3.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.8...shared-log-v10.3.9) (2025-02-17)
 
 
