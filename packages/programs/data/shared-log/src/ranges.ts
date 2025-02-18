@@ -1354,21 +1354,45 @@ export const appromixateCoverage = async <R extends "u32" | "u64">(properties: {
 	}
 	return hits / properties.samples;
 };
-
 export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 	peers: Index<ReplicationRangeIndexable<R>>;
 	numbers: Numbers<R>;
+	/** Optional: start of the content range (inclusive) */
+	start?: NumberFromType<R>;
+	/** Optional: end of the content range (exclusive) */
+	end?: NumberFromType<R>;
 }): Promise<number> => {
-	const contentStart = properties.numbers.zero;
-	const contentEnd = properties.numbers.maxValue;
+	// Use the provided content range if given; otherwise use the default full range.
+	const contentStart = properties.start ?? properties.numbers.zero;
+	const contentEnd = properties.end ?? properties.numbers.maxValue;
+
+	// Optional: Validate that the range is nonempty.
+	if (contentStart > contentEnd) {
+		// calculate coveragare for two ranges and take the min (wrapped)
+		const coverage1 = await calculateCoverage({
+			peers: properties.peers,
+			numbers: properties.numbers,
+			start: contentStart,
+			end: properties.numbers.maxValue,
+		});
+		const coverage2 = await calculateCoverage({
+			peers: properties.peers,
+			numbers: properties.numbers,
+			start: properties.numbers.zero,
+			end: contentEnd,
+		});
+
+		return Math.min(coverage1, coverage2);
+	}
+
 	const endpoints: { point: NumberFromType<R>; delta: -1 | 1 }[] = [];
-	let lastPoint = contentStart;
 
 	// For each range, record its start and end as events.
 	for (const r of await properties.peers.iterate().all()) {
 		endpoints.push({ point: r.value.start1, delta: +1 });
 		endpoints.push({ point: r.value.end1, delta: -1 });
 
+		// Process the optional second range if it differs.
 		if (r.value.start1 !== r.value.start2) {
 			endpoints.push({ point: r.value.start2, delta: +1 });
 			endpoints.push({ point: r.value.end2, delta: -1 });
@@ -1379,23 +1403,38 @@ export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 	// When points are equal, process a start (delta +1) before an end (delta -1)
 	endpoints.sort((a, b) => {
 		if (a.point === b.point) return b.delta - a.delta;
-		return Number(a.point - b.point);
+		return Number(a.point) - Number(b.point);
 	});
 
-	let currentCoverage = 0;
-	let minCoverage = Infinity;
-
-	// If the very start of the content space isn’t covered, return 0.
-	if (endpoints.length === 0 || endpoints[0].point > contentStart) {
+	// If there are no endpoints at all, nothing covers the content range.
+	if (endpoints.length === 0) {
 		return 0;
 	}
 
-	// Process each endpoint, updating the current coverage.
-	for (const e of endpoints) {
-		// If there is an interval from lastPoint to this endpoint,
-		// then the coverage in that entire segment was currentCoverage.
+	// Process events occurring before or at contentStart so we have the correct
+	// initial coverage at contentStart.
+	let currentCoverage = 0;
+	let idx = 0;
+	while (idx < endpoints.length && endpoints[idx].point <= contentStart) {
+		currentCoverage += endpoints[idx].delta;
+		idx++;
+	}
+
+	// If no range covers the very beginning of the content space, return 0.
+	if (currentCoverage <= 0) {
+		return 0;
+	}
+
+	let minCoverage = currentCoverage;
+	let lastPoint = contentStart;
+
+	// Process remaining endpoints.
+	for (; idx < endpoints.length; idx++) {
+		const e = endpoints[idx];
+
+		// Only process if the event point advances our sweep.
 		if (e.point > lastPoint) {
-			// Restrict to our content space.
+			// Restrict the segment to our content space.
 			const segStart = properties.numbers.max(lastPoint, contentStart);
 			const segEnd = properties.numbers.min(e.point, contentEnd);
 			if (segStart < segEnd) {
@@ -1403,15 +1442,21 @@ export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 			}
 			lastPoint = e.point;
 		}
+
+		// Once we've passed the content end, we can stop processing.
+		if (lastPoint >= contentEnd) {
+			break;
+		}
+
 		currentCoverage += e.delta;
 	}
 
-	// Check if the last endpoint left a tail inside the content space.
+	// Process any tail at the end of the content range.
 	if (lastPoint < contentEnd) {
 		minCoverage = Math.min(minCoverage, currentCoverage);
 	}
 
-	// If any segment has zero coverage or nothing was covered, return 0.
+	// If any segment has zero (or negative) coverage, or nothing was covered, return 0.
 	return minCoverage === Infinity || minCoverage <= 0 ? 0 : minCoverage;
 };
 

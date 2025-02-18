@@ -2590,18 +2590,20 @@ export class SharedLog<
 		});
 	}
 
-	async calculateCoverage() {
+	async calculateCoverage(properties?: {
+		/** Optional: start of the content range (inclusive) */
+		start?: NumberFromType<R>;
+		/** Optional: end of the content range (exclusive) */
+		end?: NumberFromType<R>;
+	}) {
 		return calculateCoverage({
 			numbers: this.indexableDomain.numbers,
 			peers: this.replicationIndex,
+			end: properties?.end,
+			start: properties?.start,
 		});
 	}
 
-	/* async calculateTotalParticipation() {
-		const sum = await this.replicationIndex.sum({ key: "width" });
-		return Number(sum) / MAX_U32;
-	}
- */
 	async countReplicationSegments() {
 		const count = await this.replicationIndex.count({
 			query: new StringMatch({

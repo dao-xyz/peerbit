@@ -2291,6 +2291,86 @@ resolutions.forEach((resolution) => {
 										numbers,
 									}),
 								).to.be.eq(0);
+
+								expect(
+									await calculateCoverage({
+										peers,
+										numbers,
+									}),
+								).to.be.eq(0);
+							});
+						});
+
+						describe("partial range", () => {
+							describe("100%", () => {
+								it("one range", async () => {
+									const offset = denormalizeFn((0 + rotation) % 1);
+									await create(
+										createReplicationRange({
+											publicKey: a,
+											width: denormalizeFn(0.5),
+											// @ts-ignore
+											offset,
+											timestamp: 0n,
+										}),
+									);
+
+									// we try to cover 0.5 starting from a
+									// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+									expect(
+										await calculateCoverage({
+											peers,
+											numbers,
+											start: coerceNumber(offset),
+											// @ts-ignore
+											end: (offset + coerceNumber(1)) % numbers.maxValue,
+										}),
+									).to.be.eq(1);
+								});
+
+								it("two ranges", async () => {
+									const offset1 = denormalizeFn((0 + rotation) % 1);
+									const offset2 = denormalizeFn((0.23 + rotation) % 1);
+									const width = denormalizeFn(0.25);
+									await create(
+										createReplicationRange({
+											publicKey: a,
+											width,
+											offset: offset1,
+											timestamp: 0n,
+										}),
+										createReplicationRange({
+											publicKey: a,
+											width,
+											offset: offset2,
+											timestamp: 0n,
+										}),
+									);
+
+									// we try to cover 0.5 starting from a
+									// this should mean that we would want a and b, because c is not mature enough, even though it would cover a wider set
+									expect(
+										await calculateCoverage({
+											peers,
+											numbers,
+											start: offset1,
+											end:
+												// @ts-ignore
+												(offset1 + width - coerceNumber(1)) % numbers.maxValue,
+										}),
+									).to.be.eq(1);
+
+									expect(
+										await calculateCoverage({
+											peers,
+											numbers,
+											start: offset2,
+											end:
+												// @ts-ignore
+												(offset2 + width + coerceNumber(1)) % numbers.maxValue, // +1 to be outside a replicate range
+										}),
+									).to.be.eq(0);
+								});
 							});
 						});
 					});
