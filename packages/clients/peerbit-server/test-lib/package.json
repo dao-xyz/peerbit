@@ -65,7 +65,7 @@
 	"devDependencies": {
 		"tty-table": "^4.2.1",
 		"@peerbit/test-utils": "*",
-		"libp2p": "^2.3.1"
+		"libp2p": "^2.6.3"
 	},
 	"dependencies": {
 		"@peerbit/string": "*",

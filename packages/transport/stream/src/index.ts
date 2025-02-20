@@ -340,7 +340,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 		pipe(
 			this.outboundStream,
-			(source) => lp.encode(source),
+			(source) => lp.encode(source, { maxDataLength: MAX_DATA_LENGTH_OUT }),
 			this.rawOutboundStream,
 		).catch(logError);
 
