@@ -145,7 +145,10 @@ export interface PubSub
 		},
 	): MaybePromise<boolean>;
 
-	publish(data: Uint8Array, options?: PublishOptions): MaybePromise<Uint8Array>;
+	publish(
+		data: Uint8Array,
+		options?: PublishOptions,
+	): MaybePromise<Uint8Array | undefined>;
 }
 
 export * from "./messages.js";

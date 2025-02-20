@@ -37,3 +37,4 @@ export class NotStartedError extends Error {
 }
 
 export class DeliveryError extends Error {}
+export class InvalidMessageError extends Error {}

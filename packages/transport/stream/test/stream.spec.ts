@@ -21,6 +21,7 @@ import {
 	DataMessage,
 	DeliveryError,
 	type Goodbye,
+	InvalidMessageError,
 	Message,
 	MessageHeader,
 	SeekDelivery,
@@ -466,6 +467,18 @@ describe("streams", function () {
 				expect(streams[1].received).to.be.empty;
 			});
 
+			it("send to self will throw", async () => {
+				try {
+					await streams[0].stream.publish(data, {
+						to: [streams[0].stream.components.peerId],
+					});
+					throw new Error("Expected to throw");
+				} catch (error) {}
+				await delay(3000);
+				expect(streams[1].messages).to.have.length(0);
+				expect(streams[2].messages).to.have.length(0);
+			});
+
 			it("will favor shortest path", async () => {
 				/* 
 				┌───┐
@@ -764,6 +777,135 @@ describe("streams", function () {
 					),
 				).rejectedWith(DeliveryError);
 				expect(session.peers[0].services.directstream.pending).to.be.false;
+			});
+		});
+
+		describe("self referencing", () => {
+			let session: TestSessionStream;
+
+			before(async () => {});
+
+			afterEach(async () => {
+				await session.stop();
+			});
+
+			it("send to empty receivers will throw", async () => {
+				session = await connected(2);
+				await waitForNeighbour(
+					session.peers[0].services.directstream,
+					session.peers[1].services.directstream,
+				);
+
+				let receivedData: Uint8Array[] = [];
+				session.peers[1].services.directstream.addEventListener("data", (e) => {
+					receivedData.push(e.detail.data!);
+				});
+
+				let receivedMessages: (Uint8Array | undefined)[] = [];
+				session.peers[1].services.directstream.addEventListener(
+					"message",
+					(e) => {
+						const message: DataMessage = e.detail as any;
+						receivedMessages.push(message.data);
+					},
+				);
+
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						to: [],
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						mode: new SilentDelivery({ to: [], redundancy: 1 }),
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						mode: new AcknowledgeDelivery({ to: [], redundancy: 1 }),
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await delay(1500);
+
+				expect(receivedData).to.have.length(0);
+				let seekData = randomBytes(32);
+				await session.peers[0].services.directstream.publish(seekData, {
+					mode: new SeekDelivery({ to: [], redundancy: 1 }),
+				});
+
+				await waitForResolved(() =>
+					expect(receivedMessages).to.deep.equal([seekData]),
+				);
+				await waitForResolved(() => expect(receivedData).to.deep.equal([]));
+			});
+
+			it("send to only self will throw", async () => {
+				session = await connected(2);
+				await waitForNeighbour(
+					session.peers[0].services.directstream,
+					session.peers[1].services.directstream,
+				);
+
+				let receivedData: Uint8Array[] = [];
+				session.peers[1].services.directstream.addEventListener("data", (e) => {
+					receivedData.push(e.detail.data!);
+				});
+
+				let receivedMessages: (Uint8Array | undefined)[] = [];
+				session.peers[1].services.directstream.addEventListener(
+					"message",
+					(e) => {
+						const message: DataMessage = e.detail as any;
+						receivedMessages.push(message.data);
+					},
+				);
+
+				let me = session.peers[0].services.directstream.peerId;
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						to: [me],
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						mode: new SilentDelivery({ to: [me], redundancy: 1 }),
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						mode: new AcknowledgeDelivery({ to: [me], redundancy: 1 }),
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await expect(
+					session.peers[0].services.directstream.publish(data, {
+						mode: new SeekDelivery({ to: [me], redundancy: 1 }),
+					}),
+				).rejectedWith(InvalidMessageError);
+
+				await delay(1500);
+
+				// send to me and target, should not throw
+				expect(receivedData).to.have.length(0);
+				let seekData = randomBytes(32);
+				await session.peers[0].services.directstream.publish(seekData, {
+					mode: new SeekDelivery({
+						to: [me, session.peers[1].services.directstream.peerId],
+						redundancy: 1,
+					}),
+				});
+
+				await waitForResolved(() =>
+					expect(receivedMessages).to.deep.equal([seekData]),
+				);
+				await waitForResolved(() =>
+					expect(receivedData).to.deep.equal([seekData]),
+				);
 			});
 		});
 	});

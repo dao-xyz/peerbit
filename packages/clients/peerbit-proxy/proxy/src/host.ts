@@ -12,6 +12,7 @@ import {
 	type PubSub,
 	PublishEvent,
 } from "@peerbit/pubsub-interface";
+import type { Peerbit } from "peerbit";
 import * as blocks from "./blocks.js";
 import type * as connection from "./connection.js";
 import * as keychain from "./keychain.js";
@@ -40,7 +41,7 @@ export class PeerbitProxyHost implements ProgramClient {
 	>;
 
 	constructor(
-		readonly hostClient: ProgramClient,
+		readonly hostClient: Peerbit,
 		readonly messages: connection.Node,
 	) {
 		if (hostClient.identity instanceof Ed25519Keypair === false) {
@@ -53,6 +54,8 @@ export class PeerbitProxyHost implements ProgramClient {
 		const dispatchFunction = this.hostClient.services.pubsub.dispatchEvent.bind(
 			this.hostClient.services.pubsub,
 		);
+
+		this.hostClient.services.pubsub.dispatchEventOnSelfPublish = true; // necessary to make self sending message to dispatch events
 
 		// Override pubsub dispatchEvent so that data that is published from one client
 		// appears in other clients as incoming data messages.

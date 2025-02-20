@@ -79,8 +79,12 @@ export class REQ_Publish extends PubSubMessage {
 
 @variant(5)
 export class RESP_Publish extends PubSubMessage {
-	constructor(messageId: Uint8Array) {
-		super(messageId);
+	@field({ type: option(Uint8Array) })
+	pubsubMessageId: Uint8Array;
+
+	constructor(pubsubMessageId?: Uint8Array) {
+		super();
+		this.pubsubMessageId = pubsubMessageId;
 	}
 }
 

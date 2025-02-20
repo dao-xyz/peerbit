@@ -75,13 +75,19 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 	public subscriptions: Map<string, { counter: number }>; // topic -> subscription ids
 	public lastSubscriptionMessages: Map<string, Map<string, DataMessage>> =
 		new Map();
+	public dispatchEventOnSelfPublish: boolean;
 
-	constructor(components: DirectSubComponents, props?: DirectStreamOptions) {
+	constructor(
+		components: DirectSubComponents,
+		props?: DirectStreamOptions & { dispatchEventOnSelfPublish?: boolean },
+	) {
 		super(components, ["/lazysub/0.0.0"], props);
 		this.subscriptions = new Map();
 		this.topics = new Map();
 		this.topicsToPeers = new Map();
 		this.peerToTopic = new Map();
+		this.dispatchEventOnSelfPublish =
+			props?.dispatchEventOnSelfPublish || false;
 	}
 
 	stop() {
@@ -285,6 +291,25 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		);
 	} */
 
+	private shouldSendMessage(tos?: string[] | Set<string>) {
+		if (
+			Array.isArray(tos) &&
+			(tos.length === 0 || (tos.length === 1 && tos[0] === this.publicKeyHash))
+		) {
+			// skip this one
+			return false;
+		}
+
+		if (
+			tos instanceof Set &&
+			(tos.size === 0 || (tos.size === 1 && tos.has(this.publicKeyHash)))
+		) {
+			// skip this one
+			return false;
+		}
+
+		return true;
+	}
 	async publish(
 		data: Uint8Array | undefined,
 		options?: {
@@ -293,7 +318,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			mode?: SilentDelivery | AcknowledgeDelivery | SeekDelivery;
 		} & PriorityOptions &
 			IdentificationOptions,
-	): Promise<Uint8Array> {
+	): Promise<Uint8Array | undefined> {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
@@ -318,7 +343,17 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 		const bytes = dataMessage?.bytes();
 		const silentDelivery = options?.mode instanceof SilentDelivery;
-		const message = await this.createMessage(bytes, { ...options, to: tos });
+
+		// do send check before creating and signing the message
+		if (!this.dispatchEventOnSelfPublish && !this.shouldSendMessage(tos)) {
+			return;
+		}
+
+		const message = await this.createMessage(bytes, {
+			...options,
+			to: tos,
+			skipRecipientValidation: this.dispatchEventOnSelfPublish,
+		});
 
 		if (dataMessage) {
 			this.dispatchEvent(
@@ -330,6 +365,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 					}),
 				}),
 			);
+		}
+
+		// for emitSelf we do this check here, since we don't want to send the message to ourselves
+		if (this.dispatchEventOnSelfPublish && !this.shouldSendMessage(tos)) {
+			return message.id;
 		}
 
 		// send to all the other peers

@@ -1,9 +1,9 @@
-import { type ProgramClient } from "@peerbit/program";
 import {
 	PeerbitProxyClient,
 	PeerbitProxyHost,
 	connection,
 } from "@peerbit/proxy";
+import { Peerbit } from "peerbit";
 
 type WindowFunctions = {
 	addEventListener: <K extends keyof WindowEventMap>(
@@ -74,7 +74,7 @@ export const createClient = async (targetOrigin = "*") => {
 	await client.connect();
 	return client;
 };
-export const createHost = async (node: ProgramClient, targetOrigin = "*") => {
+export const createHost = async (node: Peerbit, targetOrigin = "*") => {
 	const client = new PeerbitProxyHost(node, new PostMessageNode(targetOrigin));
 	client.messages.start();
 	await client.init();

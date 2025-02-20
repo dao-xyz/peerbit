@@ -36,6 +36,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
+import type { DirectSub } from "@peerbit/pubsub";
 import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
@@ -323,6 +324,36 @@ describe("index", () => {
 				expect(
 					(store2.docs.index as any)["_resumableIterators"].queues.size,
 				).to.eq(0);
+			});
+
+			it("will not use network on put and no other peers are available", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+					data: randomBytes(1e6),
+				});
+
+				let largeMessagesSent: number = 0;
+				for (const peer of (session.peers[0].services.pubsub as DirectSub)
+					.peers) {
+					const writeFn = peer[1].write.bind(peer[1]);
+					peer[1].write = (message, priority) => {
+						if (message.length >= 1e6) {
+							largeMessagesSent++;
+						}
+						return writeFn(message, priority);
+					};
+				}
+				await store.docs.put(doc);
+				expect(largeMessagesSent).to.eq(0);
 			});
 		});
 

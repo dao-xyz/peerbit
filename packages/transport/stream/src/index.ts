@@ -37,6 +37,7 @@ import {
 	DeliveryError,
 	Goodbye,
 	type IdentificationOptions,
+	InvalidMessageError,
 	Message,
 	MessageHeader,
 	MultiAddrinfo,
@@ -970,7 +971,7 @@ export abstract class DirectStream<
 	}
 
 	public onPeerUnreachable(hash: string) {
-		// override this fn
+		// override this fns
 
 		this.dispatchEvent(
 			// TODO types
@@ -1496,7 +1497,9 @@ export abstract class DirectStream<
 
 	async createMessage(
 		data: Uint8Array | Uint8ArrayList | undefined,
-		options: (WithTo | WithMode) & PriorityOptions & IdentificationOptions,
+		options: (WithTo | WithMode) &
+			PriorityOptions &
+			IdentificationOptions & { skipRecipientValidation?: boolean },
 	) {
 		// dispatch the event if we are interested
 
@@ -1514,8 +1517,24 @@ export abstract class DirectStream<
 			mode instanceof SilentDelivery ||
 			mode instanceof SeekDelivery
 		) {
-			if (mode.to?.find((x) => x === this.publicKeyHash)) {
+			if (mode.to) {
+				let preLength = mode.to.length;
 				mode.to = mode.to.filter((x) => x !== this.publicKeyHash);
+				if (!options.skipRecipientValidation) {
+					if (preLength > 0 && mode.to?.length === 0) {
+						throw new InvalidMessageError(
+							"Unexpected to create a message with self as the only receiver",
+						);
+					}
+
+					if (mode.to.length === 0 && mode instanceof SeekDelivery === false) {
+						throw new InvalidMessageError(
+							"Unexpected to deliver message with mode: " +
+								mode.constructor.name +
+								" without recipents",
+						);
+					}
+				}
 			}
 		}
 
@@ -1563,7 +1582,7 @@ export abstract class DirectStream<
 		options: PublishOptions = {
 			mode: new SeekDelivery({ redundancy: DEFAULT_SEEK_MESSAGE_REDUDANCY }),
 		},
-	): Promise<Uint8Array> {
+	): Promise<Uint8Array | undefined> {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
@@ -1894,9 +1913,12 @@ export abstract class DirectStream<
 			if (
 				(message.header.mode instanceof AcknowledgeDelivery ||
 					message.header.mode instanceof SilentDelivery) &&
-				!to &&
-				message.header.mode.to.length > 0
+				!to
 			) {
+				if (message.header.mode.to.length === 0) {
+					return delivereyPromise; // we defintely know that we should not forward the message anywhere
+				}
+
 				const fanout = this.routes.getFanout(
 					from.hashcode(),
 					message.header.mode.to,
@@ -1963,7 +1985,7 @@ export abstract class DirectStream<
 
 		if (!sentOnce) {
 			if (!relayed) {
-				throw new Error("Message did not have any valid receivers");
+				throw new DeliveryError("Message did not have any valid receivers");
 			}
 		}
 		return delivereyPromise;

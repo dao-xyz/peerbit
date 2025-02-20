@@ -6,6 +6,7 @@ import { DataMessage } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import type { Peerbit } from "peerbit";
 import { PeerbitProxyClient } from "../src/client.js";
 import { PeerbitProxyHost } from "../src/host.js";
 import { EventEmitterNode } from "./utils.js";
@@ -31,7 +32,7 @@ describe("index", () => {
 		const events = new TypedEventEmitter();
 		for (let i = 0; i < 2; i++) {
 			const host = new PeerbitProxyHost(
-				session.peers[i],
+				session.peers[i] as Peerbit,
 				new EventEmitterNode(events).start(),
 			);
 			await host.init();

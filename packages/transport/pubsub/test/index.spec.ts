@@ -345,6 +345,43 @@ describe("pubsub", function () {
 					}
 				});
 
+				it("publish as self as only subscriber is no-op", async () => {
+					const TOPIC_2 = "my-own-topic";
+					await streams[0].stream.subscribe(TOPIC_2);
+					const id = await streams[0].stream.publish(randomBytes(32), {
+						topics: [TOPIC_2],
+					});
+					expect(id).to.be.undefined;
+				});
+
+				it("publish as self as only subscriber will dispatch event if emit self", async () => {
+					const TOPIC_2 = "my-own-topic";
+					streams[0].stream.dispatchEventOnSelfPublish = true;
+					let messages = 0;
+					streams[0].stream.addEventListener("publish", () => {
+						messages++;
+					});
+					await streams[0].stream.subscribe(TOPIC_2);
+					const id = await streams[0].stream.publish(randomBytes(32), {
+						topics: [TOPIC_2],
+					});
+					expect(id).to.exist;
+					expect(messages).to.equal(1);
+				});
+
+				it("publish to self is no-op", async () => {
+					const TOPIC_2 = "my-own-topic";
+					await streams[0].stream.subscribe(TOPIC_2);
+					const id = await streams[0].stream.publish(randomBytes(32), {
+						topics: [TOPIC_2],
+						mode: new SilentDelivery({
+							to: [streams[0].stream.publicKey],
+							redundancy: 1,
+						}),
+					});
+					expect(id).to.be.undefined;
+				});
+
 				/* TODO wanted feature?
 				
 				it("send without topic directly", async () => {
@@ -540,6 +577,7 @@ describe("pubsub", function () {
 				}
 			});
 		});
+
 		describe("mode", () => {
 			beforeEach(async () => {
 				// 0 and 2 not connected

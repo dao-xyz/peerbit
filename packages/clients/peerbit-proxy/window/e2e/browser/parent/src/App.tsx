@@ -2,7 +2,15 @@ import { createHost } from "@peerbit/proxy-window";
 import { Peerbit } from "peerbit";
 import { useEffect, useState } from "react";
 
-const client = createHost(await Peerbit.create({ directory: "hello" }), "*");
+const hostClient = await Peerbit.create({ directory: "hello" });
+const proxy = await createHost(hostClient, "*");
+
+if (hostClient.services.pubsub.dispatchEventOnSelfPublish !== true) {
+	throw new Error(
+		"Expected hostClient.services.pubsub.dispatchEventOnSelfPublish to be true",
+	);
+}
+
 export const App = () => {
 	const queryParameters = new URLSearchParams(window.location.search);
 	const [frames, setFrames] = useState(0);

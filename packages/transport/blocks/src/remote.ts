@@ -79,7 +79,7 @@ export class RemoteBlocks implements IBlocks {
 			publish: (
 				data: BlockRequest | BlockResponse,
 				options: PublishOptions,
-			) => Promise<Uint8Array | void>;
+			) => Promise<Uint8Array | undefined | void>;
 			waitFor: (
 				peer: PeerId | PublicSignKey | string,
 				options?: {
@@ -236,7 +236,7 @@ export class RemoteBlocks implements IBlocks {
 			? this._blockCache?.get(cidString)
 			: undefined;
 		if (cachedValue) {
-			this._blockCache.del(cidString);
+			this._blockCache!.del(cidString);
 			try {
 				const result = await tryDecode(cachedValue);
 				return result.bytes;
