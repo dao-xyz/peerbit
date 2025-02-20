@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.4...riblt-v1.0.5) (2025-02-20)
+
+
+### Bug Fixes
+
+* await init in browser ([182ba4d](https://github.com/dao-xyz/peerbit/commit/182ba4dedabd4a32d4af6a46763892581adfd6d0))
+
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.3...riblt-v1.0.4) (2024-12-30)
 
 
