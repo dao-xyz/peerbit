@@ -68,6 +68,10 @@ export const createLibp2pExtended = (
 			listen: listen(),
 			...opts.addresses,
 		},
+		connectionMonitor: {
+			abortConnectionOnPingFailure: false,
+			...opts?.connectionMonitor,
+		},
 		transports: opts.transports || transports(),
 		connectionEncrypters: opts.connectionEncrypters || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],

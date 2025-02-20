@@ -42,6 +42,9 @@ export const create = (properties: {
 					}/ws`,
 				],
 			},
+			connectionMonitor: {
+				abortConnectionOnPingFailure: false,
+			},
 			connectionManager: {
 				maxConnections: Infinity,
 			},
