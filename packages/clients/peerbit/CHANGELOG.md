@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.10...peerbit-v4.1.11) (2025-02-20)
+
+
+### Bug Fixes
+
+* disable abortConnectionOnPingFailure by default ([58dee0c](https://github.com/dao-xyz/peerbit/commit/58dee0c62ad08a6c22d243551a0c8d41365c4cbf))
+
 ## [4.1.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.9...peerbit-v4.1.10) (2025-02-20)
 
 

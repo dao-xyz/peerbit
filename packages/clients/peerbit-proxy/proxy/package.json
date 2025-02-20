@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy",
-	"version": "5.1.10",
+	"version": "5.1.11",
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -57,7 +57,7 @@
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.1.20"
+		"@peerbit/test-utils": "2.1.21"
 	},
 	"scripts": {
 		"clean": "aegir clean",
