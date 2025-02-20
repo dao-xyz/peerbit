@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.8](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.7...indexer-tests-v1.1.8) (2025-02-20)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^2.0.5 to ^2.0.6
+
 ## [1.1.7](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.6...indexer-tests-v1.1.7) (2025-02-20)
 
 

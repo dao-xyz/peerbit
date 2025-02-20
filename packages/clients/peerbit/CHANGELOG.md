@@ -313,6 +313,21 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.10](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.9...peerbit-v4.1.10) (2025-02-20)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.1.4 to ^2.1.5
+    * @peerbit/crypto bumped from 2.3.4 to 2.3.5
+    * @peerbit/program bumped from 5.1.3 to 5.1.4
+    * @peerbit/pubsub bumped from ^3.0.19 to ^3.0.20
+    * @peerbit/blocks bumped from ^2.2.2 to ^2.2.3
+    * @peerbit/indexer-simple bumped from ^1.1.8 to ^1.1.9
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.7 to ^1.2.8
+
 ## [4.1.9](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.8...peerbit-v4.1.9) (2025-02-20)
 
 

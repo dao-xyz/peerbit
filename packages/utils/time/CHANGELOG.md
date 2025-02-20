@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.8](https://github.com/dao-xyz/peerbit/compare/time-v2.0.7...time-v2.0.8) (2025-02-20)
+
+
+### Bug Fixes
+
+* handle AbortError when signal is aborted before start ([2de0560](https://github.com/dao-xyz/peerbit/commit/2de05606a9ce454b622532b869d5696861a205e0))
+
 ## [2.0.7](https://github.com/dao-xyz/peerbit/compare/time-v2.0.6...time-v2.0.7) (2024-07-20)
 
 
