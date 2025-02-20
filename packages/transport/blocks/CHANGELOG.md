@@ -279,6 +279,25 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.2.2](https://github.com/dao-xyz/peerbit/compare/blocks-v2.2.1...blocks-v2.2.2) (2025-02-20)
+
+
+### Bug Fixes
+
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.1.3 to ^2.1.4
+    * @peerbit/stream bumped from 4.2.1 to 4.2.2
+    * @peerbit/blocks-interface bumped from 1.3.9 to 1.3.10
+    * @peerbit/crypto bumped from 2.3.3 to 2.3.4
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.10 to 2.1.11
+
 ## [2.2.1](https://github.com/dao-xyz/peerbit/compare/blocks-v2.2.0...blocks-v2.2.1) (2025-02-09)
 
 

@@ -108,6 +108,21 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [3.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.2...pubsub-interface-v3.1.3) (2025-02-20)
+
+
+### Bug Fixes
+
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.3 to 2.3.4
+    * @peerbit/stream-interface bumped from ^5.1.2 to ^5.1.3
+
 ## [3.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.1...pubsub-interface-v3.1.2) (2025-01-17)
 
 
