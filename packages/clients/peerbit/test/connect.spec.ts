@@ -1,5 +1,5 @@
 import { SeekDelivery } from "@peerbit/stream-interface";
-import { waitFor, waitForResolved } from "@peerbit/time";
+import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "../src/index.js";
 
@@ -24,17 +24,26 @@ describe(`dial`, function () {
 
 	it("waits for pubsub", async () => {
 		let topic = "topic";
+		await clients[0].services.pubsub.subscribe(topic);
 		await clients[1].services.pubsub.subscribe(topic);
+
 		let data: Uint8Array | undefined = undefined;
 		clients[1].services.pubsub.addEventListener("data", (d) => {
 			data = d.detail.data.data;
 		});
 		await clients[0].dial(clients[1].getMultiaddrs()[0]);
+
+		await waitForResolved(() =>
+			expect(clients[0].services.pubsub.getSubscribers(topic)).to.have.length(
+				2,
+			),
+		);
+
 		await clients[0].services.pubsub.publish(new Uint8Array([1]), {
 			topics: [topic],
 			mode: new SeekDelivery({ redundancy: 1 }),
 		});
-		await waitFor(() => !!data);
+		await waitForResolved(() => expect(data).to.exist);
 		expect(data && new Uint8Array(data)).to.deep.equal(new Uint8Array([1]));
 	});
 
