@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.5...riblt-v1.0.6) (2025-02-20)
+
+
+### Bug Fixes
+
+* add sideEffects declaration for wasm init ([e5392af](https://github.com/dao-xyz/peerbit/commit/e5392af070375f001eb82d9bc13b7bfa5c885c07))
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/riblt-v1.0.4...riblt-v1.0.5) (2025-02-20)
 
 
