@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store",
-	"version": "2.1.4",
+	"version": "2.1.5",
 	"description": "Level with lazy transactions",
 	"sideEffects": false,
 	"type": "module",
@@ -65,11 +65,11 @@
 	},
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/crypto": "^2.3.4",
+		"@peerbit/crypto": "^2.3.5",
 		"@peerbit/logger": "1.0.3",
-		"@peerbit/any-store-opfs": "^1.0.4",
+		"@peerbit/any-store-opfs": "^1.0.5",
 		"@peerbit/any-store-interface": "^1.0.0",
-		"@peerbit/time": "2.0.7",
+		"@peerbit/time": "2.0.8",
 		"level": "^8.0.0",
 		"uuid": "^10.0.0"
 	},
