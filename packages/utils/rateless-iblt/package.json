@@ -2,7 +2,11 @@
 	"name": "@peerbit/riblt",
 	"version": "1.0.5",
 	"description": "Riblt",
-	"sideEffects": false,
+	"sideEffects": [
+		"./dist/wasm-init.js",
+		"./dist/wasm-init.browser.js",
+		"./dist/index.js"
+	],
 	"type": "module",
 	"types": "./dist/index.d.ts",
 	"typesVersions": {
