@@ -43,6 +43,24 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.2.2](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.1...stream-v4.2.2) (2025-02-20)
+
+
+### Bug Fixes
+
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+* update libp2p ([8911d7f](https://github.com/dao-xyz/peerbit/commit/8911d7fb8d4329f32bbaf9d6872a2761ffb1d80e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.3 to 2.3.4
+    * @peerbit/stream-interface bumped from ^5.1.2 to ^5.1.3
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.10 to 2.1.11
+
 ## [4.2.1](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.0...stream-v4.2.1) (2025-02-09)
 
 

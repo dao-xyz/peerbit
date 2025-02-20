@@ -188,6 +188,23 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.19](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.18...pubsub-v3.0.19) (2025-02-20)
+
+
+### Bug Fixes
+
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.2.1 to 4.2.2
+    * @peerbit/pubsub-interface bumped from ^3.1.2 to ^3.1.3
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.10 to 2.1.11
+
 ## [3.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.17...pubsub-v3.0.18) (2025-02-09)
 
 

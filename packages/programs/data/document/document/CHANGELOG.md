@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.0.16](https://github.com/dao-xyz/peerbit/compare/document-v9.0.15...document-v9.0.16) (2025-02-20)
+
+
+### Bug Fixes
+
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.2 to 5.1.3
+    * @peerbit/rpc bumped from 5.0.28 to 5.0.29
+    * @peerbit/shared-log bumped from 10.3.10 to 10.3.11
+    * @peerbit/indexer-interface bumped from ^2.0.4 to ^2.0.5
+    * @peerbit/indexer-simple bumped from ^1.1.7 to ^1.1.8
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.6 to ^1.2.7
+    * @peerbit/document-interface bumped from ^2.0.3 to ^2.0.4
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.18 to 2.1.19
+
 ## [9.0.15](https://github.com/dao-xyz/peerbit/compare/document-v9.0.14...document-v9.0.15) (2025-02-18)
 
 
