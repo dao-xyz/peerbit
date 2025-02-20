@@ -36,12 +36,17 @@ export const waitFor = async <T>(
 	const startTime = Number(new Date());
 	let stop = false;
 
+	let aborted = false;
 	const handleAbort = () => {
 		stop = true;
+		aborted = true;
 		options.signal?.removeEventListener("abort", handleAbort);
 	};
 
 	options.signal?.addEventListener("abort", handleAbort);
+	if (options?.signal?.aborted) {
+		handleAbort();
+	}
 
 	// eslint-disable-next-line no-unmodified-loop-condition
 	while (!stop && Number(new Date()) - startTime < timeout) {
@@ -53,7 +58,11 @@ export const waitFor = async <T>(
 
 		await delay(delayInterval, options);
 	}
-	throw createTimeoutError(options);
+	if (aborted) {
+		throw new AbortError();
+	} else {
+		throw createTimeoutError(options);
+	}
 };
 
 export const waitForResolved = async <T>(
@@ -72,12 +81,17 @@ export const waitForResolved = async <T>(
 	let stop = false;
 	let lastError: Error | undefined;
 
+	let aborted = false;
 	const handleAbort = () => {
 		stop = true;
+		aborted = true;
 		options.signal?.removeEventListener("abort", handleAbort);
 	};
 
 	options.signal?.addEventListener("abort", handleAbort);
+	if (options?.signal?.aborted) {
+		handleAbort();
+	}
 
 	// eslint-disable-next-line no-unmodified-loop-condition
 	while (!stop && Number(new Date()) - startTime < timeout) {
@@ -93,6 +107,10 @@ export const waitForResolved = async <T>(
 			}
 		}
 		await delay(delayInterval, options);
+	}
+
+	if (aborted) {
+		throw new AbortError();
 	}
 
 	throw lastError || createTimeoutError(options);

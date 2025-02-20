@@ -1,6 +1,6 @@
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
-import { AbortError, delay, waitFor } from "../src/index.js";
+import { AbortError, delay, waitFor, waitForResolved } from "../src/index.js";
 
 use(chaiAsPromised);
 
@@ -50,6 +50,21 @@ describe("waitFor", () => {
 		).rejectedWith(AbortError);
 		expect(Number(new Date()) - startTime).lessThan(1500);
 	});
+
+	it("aborted before start", async () => {
+		const startTime = Number(new Date());
+		const controller = new AbortController();
+		controller.abort();
+		await expect(
+			waitFor(
+				() => {
+					return true;
+				},
+				{ signal: controller.signal },
+			),
+		).rejectedWith(AbortError);
+		expect(Number(new Date()) - startTime).lessThan(100);
+	});
 });
 
 describe("waitForResolved", () => {
@@ -59,8 +74,8 @@ describe("waitForResolved", () => {
 		setTimeout(() => {
 			done = true;
 		}, 1000);
-		await waitFor(() => {
-			return done;
+		await waitForResolved(() => {
+			return expect(done).to.be.true;
 		});
 		expect(Number(new Date()) - startTime).lessThan(1500);
 	});
@@ -71,13 +86,25 @@ describe("waitForResolved", () => {
 			done = true;
 		}, 1000);
 		await expect(
-			waitFor(
+			waitForResolved(
 				() => {
-					return done;
+					expect(done).to.be.true;
 				},
 				{ signal: AbortSignal.timeout(1000) },
 			),
 		).rejectedWith(AbortError);
 		expect(Number(new Date()) - startTime).lessThan(1500);
+	});
+
+	it("abort before start", async () => {
+		const startTime = Number(new Date());
+		const controller = new AbortController();
+		controller.abort();
+		await expect(
+			waitForResolved(() => expect(false).to.be.true, {
+				signal: controller.signal,
+			}),
+		).rejectedWith(AbortError);
+		expect(Number(new Date()) - startTime).lessThan(100);
 	});
 });
