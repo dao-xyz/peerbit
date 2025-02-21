@@ -800,7 +800,9 @@ export abstract class DirectStream<
 					// research whether we can do without this so we can push data without beeing able to send
 					// more info here https://github.com/libp2p/js-libp2p/issues/2321
 					negotiateFully: true,
+					signal: this.closeController.signal,
 				});
+
 				if (stream.protocol == null) {
 					stream.abort(new Error("Stream was not multiplexed"));
 					return;
