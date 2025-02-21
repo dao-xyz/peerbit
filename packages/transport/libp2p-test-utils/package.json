@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/libp2p-test-utils",
-	"version": "2.1.12",
+	"version": "2.1.13",
 	"description": "Test utils for Peerbit",
 	"sideEffects": false,
 	"type": "module",

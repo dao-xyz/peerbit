@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.0.69](https://github.com/dao-xyz/peerbit/compare/server-v5.0.68...server-v5.0.69) (2025-02-21)
+
+
+### Bug Fixes
+
+* increate negotiation timeout by defualt ([8cae2b9](https://github.com/dao-xyz/peerbit/commit/8cae2b9f34a2b4aefab9bb7e4ca3191c03bfa7f6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.11 to 4.1.12
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.21 to 2.1.22
+
 ## [5.0.68](https://github.com/dao-xyz/peerbit/compare/server-v5.0.67...server-v5.0.68) (2025-02-20)
 
 
