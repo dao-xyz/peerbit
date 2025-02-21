@@ -46,8 +46,13 @@ export const create = (properties: {
 				abortConnectionOnPingFailure: false,
 			},
 			connectionManager: {
+				inboundStreamProtocolNegotiationTimeout: 1e4,
+				inboundUpgradeTimeout: 1e4,
+				outboundStreamProtocolNegotiationTimeout: 1e4,
+				outboundUpgradeTimeout: 1e4,
 				maxConnections: Infinity,
 			},
+
 			services: {
 				blocks: (c) =>
 					new DirectBlock(c, {

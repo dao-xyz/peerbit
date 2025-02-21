@@ -62,6 +62,10 @@ export const createLibp2pExtended = (
 	return createLibp2p({
 		...opts,
 		connectionManager: {
+			inboundStreamProtocolNegotiationTimeout: 1e4,
+			inboundUpgradeTimeout: 1e4,
+			outboundStreamProtocolNegotiationTimeout: 1e4,
+			outboundUpgradeTimeout: 1e4,
 			...opts.connectionManager,
 		},
 		addresses: {
@@ -72,6 +76,7 @@ export const createLibp2pExtended = (
 			abortConnectionOnPingFailure: false,
 			...opts?.connectionMonitor,
 		},
+
 		transports: opts.transports || transports(),
 		connectionEncrypters: opts.connectionEncrypters || [noise()],
 		streamMuxers: opts.streamMuxers || [yamux()],
