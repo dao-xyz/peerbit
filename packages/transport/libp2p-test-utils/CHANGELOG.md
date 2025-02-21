@@ -54,6 +54,13 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.1.13](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.12...libp2p-test-utils-v2.1.13) (2025-02-21)
+
+
+### Bug Fixes
+
+* bump libp2p ([41cc3d3](https://github.com/dao-xyz/peerbit/commit/41cc3d3bc98f0bac7c56f6489d9c706dcb2e98c5))
+
 ## [2.1.12](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.11...libp2p-test-utils-v2.1.12) (2025-02-20)
 
 

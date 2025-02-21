@@ -313,6 +313,23 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.12](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.11...peerbit-v4.1.12) (2025-02-21)
+
+
+### Bug Fixes
+
+* bump libp2p ([41cc3d3](https://github.com/dao-xyz/peerbit/commit/41cc3d3bc98f0bac7c56f6489d9c706dcb2e98c5))
+* increate negotiation timeout by defualt ([8cae2b9](https://github.com/dao-xyz/peerbit/commit/8cae2b9f34a2b4aefab9bb7e4ca3191c03bfa7f6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.4 to 5.1.5
+    * @peerbit/pubsub bumped from ^3.0.20 to ^3.0.21
+    * @peerbit/blocks bumped from ^2.2.3 to ^2.2.4
+
 ## [4.1.11](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.10...peerbit-v4.1.11) (2025-02-20)
 
 
