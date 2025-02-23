@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.17](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.16...shared-log-v10.3.17) (2025-02-23)
+
+
+### Bug Fixes
+
+* InvalidDegree error log correctly ([baf4bd8](https://github.com/dao-xyz/peerbit/commit/baf4bd8fad2cae2abb3d0d9583b5fd0fa9133c77))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.34 to 4.0.35
+    * @peerbit/rpc bumped from 5.0.32 to 5.0.33
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.22 to ^2.1.23
+
 ## [10.3.16](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.15...shared-log-v10.3.16) (2025-02-21)
 
 

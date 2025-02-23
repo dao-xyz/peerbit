@@ -43,6 +43,14 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.2.5](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.4...stream-v4.2.5) (2025-02-23)
+
+
+### Bug Fixes
+
+* don't throw on deliveryError when non directly publishing ([2bf70ff](https://github.com/dao-xyz/peerbit/commit/2bf70ffea65b5d3bede0e9ea981d552d291d5765))
+* sort addresses before directly dialing ([da013fc](https://github.com/dao-xyz/peerbit/commit/da013fc0cceb7d7d21b453fde2740ec4cdaf67c3))
+
 ## [4.2.4](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.3...stream-v4.2.4) (2025-02-21)
 
 
