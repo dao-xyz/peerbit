@@ -20,6 +20,7 @@ import {
 	type DirectStreamComponents,
 	type DirectStreamOptions,
 	type PeerStreams,
+	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
 	AcknowledgeDelivery,
@@ -46,13 +47,6 @@ const logError = (e?: { message: string }) => {
 };
 const logErrorIfStarted = (e?: { message: string }) => {
 	e instanceof NotStartedError === false && logError(e);
-};
-
-const dontThrowIfDeliveryError = (e: any) => {
-	if (e instanceof DeliveryError) {
-		return;
-	}
-	throw e;
 };
 
 export interface PeerStreamsInit {

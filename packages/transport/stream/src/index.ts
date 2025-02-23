@@ -73,6 +73,17 @@ export { logger };
 
 export { BandwidthTracker }; // might be useful for others
 
+export const dontThrowIfDeliveryError = (e: any) => {
+	if (
+		e instanceof DeliveryError ||
+		e instanceof TimeoutError ||
+		e instanceof AbortError
+	) {
+		return;
+	}
+	throw e;
+};
+
 const logError = (e?: { message: string }) => {
 	if (e?.message === "Cannot push value onto an ended pushable") {
 		return; // ignore since we are trying to push to a closed stream
@@ -240,7 +251,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 					reject(err);
 				};
 				const timer = setTimeout(() => {
-					rejectClear(new Error("Timed out"));
+					rejectClear(
+						new TimeoutError("Failed to deliver message, never reachable"),
+					);
 				}, 3 * 1000); // TODO if this timeout > 10s we run into issues in the tests when running in CI
 				const abortHandler = () => {
 					this.removeEventListener("close", abortHandler);
@@ -915,7 +928,7 @@ export abstract class DirectStream<
 							mode: new SilentDelivery({ to: dependent, redundancy: 2 }),
 						}),
 					}).sign(this.sign),
-				);
+				).catch(dontThrowIfDeliveryError);
 			}
 
 			this.checkIsAlive([peerKeyHash]);
@@ -1338,7 +1351,7 @@ export abstract class DirectStream<
 					}),
 				}).sign(this.sign),
 				[peerStream],
-			);
+			).catch(dontThrowIfDeliveryError);
 		}
 	}
 
@@ -1396,7 +1409,12 @@ export abstract class DirectStream<
 		// relay ACK ?
 		// send exactly backwards same route we got this message
 		if (nextStream) {
-			await this.publishMessage(this.publicKey, message, [nextStream], true);
+			await this.publishMessage(
+				this.publicKey,
+				message,
+				[nextStream],
+				true,
+			).catch(dontThrowIfDeliveryError);
 		} else {
 			if (myIndex !== 0) {
 				// TODO should we throw something, or log?
@@ -1453,7 +1471,9 @@ export abstract class DirectStream<
 			message.header.mode = new SilentDelivery({ to: newTo, redundancy: 1 });
 
 			if (message.header.mode.to.length > 0) {
-				await this.publishMessage(publicKey, message, undefined, true);
+				await this.publishMessage(publicKey, message, undefined, true).catch(
+					dontThrowIfDeliveryError,
+				);
 			}
 		}
 
@@ -1643,7 +1663,9 @@ export abstract class DirectStream<
 				}
 			}
 
-			return this.publishMessage(from, message, to, true);
+			return this.publishMessage(from, message, to, true).catch(
+				dontThrowIfDeliveryError,
+			);
 		} else {
 			logger.debug("Received a message to relay but canRelayMessage is false");
 		}
