@@ -188,6 +188,20 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.0.22](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.21...pubsub-v3.0.22) (2025-02-23)
+
+
+### Bug Fixes
+
+* don't throw on deliveryError when non directly publishing ([2bf70ff](https://github.com/dao-xyz/peerbit/commit/2bf70ffea65b5d3bede0e9ea981d552d291d5765))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.2.4 to 4.2.5
+
 ## [3.0.21](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.20...pubsub-v3.0.21) (2025-02-21)
 
 
