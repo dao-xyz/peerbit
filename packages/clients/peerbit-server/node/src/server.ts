@@ -408,6 +408,9 @@ export const startApiServer = async (
 							case "PUT":
 								try {
 									const startArguments: StartProgram = JSON.parse(body);
+									const extraArgs = { ...startArguments };
+									delete extraArgs.variant;
+									delete extraArgs.base64;
 
 									let program: Program;
 									if ((startArguments as StartByVariant).variant) {
@@ -430,7 +433,12 @@ export const startApiServer = async (
 										);
 									}
 									client
-										.open(program) // TODO all users to pass args
+										.open(program, {
+											args:
+												Object.keys(extraArgs).length > 0
+													? extraArgs
+													: undefined,
+										})
 										.then(async (program) => {
 											// TODO what if this is a reopen?
 											await properties?.session?.programs.add(

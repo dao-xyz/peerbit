@@ -1039,15 +1039,29 @@ export const cli = async (args?: string[]) => {
 															variant: args.variant,
 														};
 													}
+													const knownKeys = new Set([
+														"program",
+														"base64",
+														"variant",
+														"_",
+														"$0",
+													]);
+													const extraArgs = Object.fromEntries(
+														Object.entries(args).filter(
+															([key]) => !knownKeys.has(key),
+														),
+													);
+													const mergedArgs = { ...startArg, ...extraArgs };
+
 													for (const api of apis) {
 														const address =
-															await api.api.program.open(startArg);
+															await api.api.program.open(mergedArgs);
 														api.log("Started program with address: ");
 														api.log(chalk.green(address.toString()));
 													}
 												},
 											})
-											.strict()
+											.strict(false) // because we have generic args
 											.demandCommand();
 										return yargs;
 									})

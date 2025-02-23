@@ -4,7 +4,10 @@ export interface StartByVariant {
 export interface StartByBase64 {
 	base64: string;
 }
-export type StartProgram = StartByVariant | StartByBase64;
+export interface AnyArgs {
+	[key: string]: any; // Allow extra generic properties
+}
+export type StartProgram = (StartByVariant | StartByBase64) & AnyArgs;
 
 export interface InstallWithTGZ {
 	type: "tgz";

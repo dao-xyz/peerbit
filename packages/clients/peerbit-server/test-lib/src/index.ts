@@ -28,7 +28,7 @@ export class PermissionedString extends Program {
 		return this._store;
 	}
 
-	async open(): Promise<void> {
+	async open(_args?: { log?: boolean }): Promise<void> {
 		await this._store.open();
 	}
 

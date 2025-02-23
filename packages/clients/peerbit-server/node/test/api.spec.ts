@@ -15,6 +15,7 @@ import fs from "fs";
 import type http from "http";
 import path, { dirname } from "path";
 import type { Peerbit } from "peerbit";
+import sinon from "sinon";
 import { fileURLToPath } from "url";
 import { v4 as uuid } from "uuid";
 import { createClient } from "../src/client.js";
@@ -92,7 +93,7 @@ describe("server", () => {
 		});
 	});
 	describe("api", () => {
-		let session: TestSession, peer: ProgramClient, server: http.Server;
+		let session: TestSession, serverPeer: ProgramClient, server: http.Server;
 		let db: PermissionedString;
 		before(async () => {});
 
@@ -108,10 +109,10 @@ describe("server", () => {
 			session = await TestSession.connected(1, {
 				libp2p: { transports: [tcp(), webSockets()] },
 			});
-			peer = session.peers[0];
-			db = await peer.open(new PermissionedString({ trusted: [] }));
+			serverPeer = session.peers[0];
+			db = await serverPeer.open(new PermissionedString({ trusted: [] }));
 			fs.mkdirSync(directory, { recursive: true });
-			server = await startApiServer(peer, {
+			server = await startApiServer(serverPeer, {
 				trust: new Trust(getTrustPath(directory)),
 			});
 		});
@@ -124,14 +125,16 @@ describe("server", () => {
 		describe("client", () => {
 			it("id", async () => {
 				const c = await client(session.peers[0].identity);
-				expect(await c.peer.id.get()).equal(peer.peerId.toString());
+				expect(await c.peer.id.get()).equal(serverPeer.peerId.toString());
 			});
 
 			it("addresses", async () => {
 				const c = await client(session.peers[0].identity);
 				expect(
 					(await c.peer.addresses.get()).map((x) => x.toString()),
-				).to.deep.equal((await peer.getMultiaddrs()).map((x) => x.toString()));
+				).to.deep.equal(
+					(await serverPeer.getMultiaddrs()).map((x) => x.toString()),
+				);
 			});
 		});
 
@@ -154,6 +157,19 @@ describe("server", () => {
 						base64: toBase64(serialize(program)),
 					});
 					expect(await c.program.has(address)).to.be.true;
+				});
+
+				it("with args", async () => {
+					const c = await client(session.peers[0].identity);
+					const serverOpen = sinon.spy(serverPeer, "open");
+					serverPeer.open = serverOpen as any;
+
+					const address = await c.program.open({
+						variant: getSchema(PermissionedString).variant! as string,
+						log: true,
+					});
+					expect(await c.program.has(address)).to.be.true;
+					expect(serverOpen.args[0][1]).to.deep.equal({ args: { log: true } });
 				});
 			});
 

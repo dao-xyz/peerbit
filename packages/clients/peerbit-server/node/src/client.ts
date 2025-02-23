@@ -158,11 +158,11 @@ export const createClient = async (
 				return result.status === 200 ? true : false;
 			},
 
-			open: async (program: StartProgram): Promise<Address> => {
+			open: async (args: StartProgram): Promise<Address> => {
 				const resp = throwIfNot200(
 					await axiosInstance.put(
 						endpoint + PROGRAM_PATH,
-						JSON.stringify(program),
+						JSON.stringify(args),
 						{
 							validateStatus,
 						},
