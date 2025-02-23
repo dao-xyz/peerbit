@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/server-v5.0.70...server-v5.1.0) (2025-02-23)
+
+
+### Features
+
+* allow passing args on opening program ([c709e20](https://github.com/dao-xyz/peerbit/commit/c709e20a6c1198a6c10ec0d632b41e9fdfb351d1))
+
 ## [5.0.70](https://github.com/dao-xyz/peerbit/compare/server-v5.0.69...server-v5.0.70) (2025-02-23)
 
 
