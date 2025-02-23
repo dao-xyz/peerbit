@@ -1617,8 +1617,8 @@ describe("streams", function () {
 					);
 
 					// make it so that one node is responsive
-					session.peers[1].services.directstream.publishMessage =
-						(() => {}) as any;
+					session.peers[1].services.directstream.publishMessage = () =>
+						Promise.resolve();
 
 					// now route should persist even if peer can't reach
 					await expect(
@@ -2513,9 +2513,13 @@ describe("join/leave", () => {
 			await waitForResolved(() => expect(streams[0].ack).to.have.length(1));
 
 			// Dialing will yield a new connection
-			await waitFor(() => streams[0].stream.peers.size === 1);
+			await waitForResolved(() =>
+				expect(streams[0].stream.peers.size).to.eq(1),
+			);
 			let expectedDialsCount = 1; // 1 dial directly
-			expect(dials).to.have.length(expectedDialsCount);
+			await waitForResolved(() =>
+				expect(dials).to.have.length(expectedDialsCount),
+			);
 
 			// Republishing will not result in an additional dial
 			await streams[0].stream.publish(data, {
@@ -2529,7 +2533,9 @@ describe("join/leave", () => {
 
 			let t1 = +new Date();
 			expect(dials).to.have.length(expectedDialsCount); // No change, because TTL > autoDialRetryTimeout
-			await waitFor(() => +new Date() - t1 > autoDialRetryDelay);
+			await waitForResolved(() =>
+				expect(+new Date() - t1).to.be.greaterThan(autoDialRetryDelay),
+			);
 
 			// Try again, now expect another dial call, since the retry interval has been reached
 			await streams[0].stream.publish(data, {
@@ -2540,7 +2546,7 @@ describe("join/leave", () => {
 			});
 			await waitForResolved(() => expect(streams[0].ack).to.have.length(3));
 
-			expect(dials).to.have.length(2);
+			await waitForResolved(() => expect(dials).to.have.length(2));
 		});
 
 		it("can transmit during dialing", async () => {
@@ -2799,14 +2805,14 @@ describe("join/leave", () => {
 		/*  TMP DISABLE GITHUB ACTIONS FLAKY
 		it("neighbour drop", async () => {
 			await connectLine(session);
-	
+		
 			await streams[0].stream.publish(new Uint8Array(0), {
 				mode: new SeekDelivery({
 					redundancy: 2,
 					to: [streams[3].stream.publicKeyHash],
 				}),
 			});
-	
+		
 			expect(
 				streams[0].stream.routes
 					.findNeighbor(
@@ -2815,7 +2821,7 @@ describe("join/leave", () => {
 					)
 					?.list?.map((x) => x.hash),
 			).to.deep.equal([streams[1].stream.publicKeyHash]);
-	
+		
 			await session.peers[1].stop();
 			await waitForResolved(() =>
 				expect(streams[0].unrechable.map((x) => x.hashcode())).to.have.members([

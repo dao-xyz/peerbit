@@ -19,6 +19,7 @@ import type {
 	Registrar,
 } from "@libp2p/interface-internal";
 import { multiaddr } from "@multiformats/multiaddr";
+import { Circuit } from "@multiformats/multiaddr-matcher";
 import { Cache } from "@peerbit/cache";
 import {
 	PublicSignKey,
@@ -2029,9 +2030,25 @@ export abstract class DirectStream<
 			.map((x) => multiaddr(x));
 		if (addresses.length > 0) {
 			try {
-				await this.components.connectionManager.openConnection([
-					addresses[addresses.length - 1],
-				]);
+				// sort addresses so circuit addresses are last, because we want to prefer direct connections
+
+				let sortedAddresses = addresses.sort((a, b) => {
+					const aIsCircuit = Circuit.matches(a);
+					const bIsCircuit = Circuit.matches(b);
+					if (aIsCircuit && !bIsCircuit) {
+						return 1;
+					}
+					if (!aIsCircuit && bIsCircuit) {
+						return -1;
+					}
+					return 0;
+				});
+				for (const address of sortedAddresses) {
+					if (await this.components.connectionManager.isDialable(address)) {
+						await this.components.connectionManager.openConnection(address);
+						break;
+					}
+				}
 			} catch (error: any) {
 				logger.info(
 					"Failed to connect directly to: " +
