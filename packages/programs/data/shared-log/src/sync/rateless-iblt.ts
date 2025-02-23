@@ -481,7 +481,7 @@ export class RatelessIBLTSynchronizer<
 							error === "Invalid degree"
 						) {
 							// TODO in some way test this code path
-							logger.error(error?.message);
+							logger.error(error?.message ?? error);
 							return false;
 						} else {
 							throw error;
