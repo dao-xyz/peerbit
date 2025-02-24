@@ -8,14 +8,6 @@ Enable users to prove ownership of both a cryptographic keypair (ed25519) and as
 
 ### Proposed Implementation:
 
-#### Social Media Proof via zk‑regex:
-Mechanism:
-Users are required to post a challenge message or a unique code on their social media account. zk‑regex circuits will verify that the post conforms to a pre‑defined pattern (e.g., a specific format or inclusion of a unique identifier) without revealing the full content.
-
-Selective Disclosure:
-The zk‑regex circuit can be configured to reveal only necessary parts of the message (such as a domain or a reference token) while keeping the rest hidden.
-
-
 #### Email-Based Account Verification:
 Mechanism:
 Users must demonstrate they received an account creation email (or similar verification message) from a service. The email is parsed using [zk‑regex](https://prove.email/blog/zkregex) to verify that:
@@ -26,7 +18,15 @@ The email contains the correct username or identifier.
 Outcome:
 This proof serves as evidence that the user controls the associated email account, thereby linking the social account to the user’s decentralized identity.
 
-Linking with Keypair Ownership:
+#### Social Media Proof via zk‑regex:
+Mechanism:
+Users are required to post a challenge message or a unique code on their social media account. zk‑regex circuits will verify that the post conforms to a pre‑defined pattern (e.g., a specific format or inclusion of a unique identifier) without revealing the full content.
+
+Selective Disclosure:
+The zk‑regex circuit can be configured to reveal only necessary parts of the message (such as a domain or a reference token) while keeping the rest hidden.
+
+
+### Linking with Keypair Ownership:
 
 Alongside social and email verification, the user proves ownership of their ed25519 keypair (e.g., by signing a nonce). The combined ZK proof demonstrates that the user controls both the keypair and the corresponding social/email accounts—all without revealing sensitive data.
 
@@ -86,7 +86,6 @@ Mitigate Distributed Denial-of-Service (DDoS) attacks by ensuring that only legi
 Mechanism:
 Nodes must submit a lightweight ZK proof—either demonstrating a minimal reputation level or solving a cryptographic puzzle—before their request is processed.
 
-Adaptive Rate-Limiting:
 The difficulty or frequency of these challenges can be adjusted dynamically based on network load to ensure that during high-traffic periods, only credible nodes can access critical services.
 
 #### Privacy-Preserving Request Validation:
@@ -99,23 +98,19 @@ Outcome:
 This method filters out spam or attack traffic effectively while maintaining the anonymity and privacy of genuine network participants.
 
 
-# Conclusion & Next Steps
+## Conclusion & Next Steps
 This roadmap outlines key research and implementation directions for integrating zero-knowledge proofs into Peerbit. The primary objectives are to:
 
-## Enhance Social and Email-Based Identity Verification:
-
+### Enhance Social and Email-Based Identity Verification:
 Leverage zk‑regex to verify social media posts and email confirmations (such as account creation emails) that prove ownership of corresponding accounts without exposing full content.
 
-## Build a Robust, Privacy-Preserving Reputation System:
-
+### Build a Robust, Privacy-Preserving Reputation System:
 Implement ZK proofs for reputation scoring that informs pubsub routing decisions, thereby ensuring that only trusted nodes participate in message forwarding.
 
-## Enforce Privacy-Preserving Commit Validation in Databases:
-
+### Enforce Privacy-Preserving Commit Validation in Databases:
 Use ZK proofs to confirm that only valid commits are added to decentralized databases, protecting sensitive content while ensuring data integrity.
 
-## Implement DDoS Protection Measures:
-
+### Implement DDoS Protection Measures:
 Introduce ZK-based challenges and rate-limiting to filter out malicious traffic and ensure that only verified nodes can initiate high-frequency requests.
 
 ## Next Steps:
