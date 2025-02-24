@@ -22,10 +22,14 @@ Modules
 
 Topics
 - [Resource-aware sharding](/topics/sharding/sharding.md)
+- [Custom-domain](/topics/custom-domain/)
+
 - [SQlite-integration](/topics/sqlite-integration/)
 - [Wallet integration](/topics/wallet-integration/)
 - [Data integrity](/topics/integrity/integrity.md)
 - [Peerbit vs [?]](/topics/difference/difference.md)
+- [The use for Zero-knowledge proofs with Peerbit](/topics/difference/difference.md)
+
 
 
 
