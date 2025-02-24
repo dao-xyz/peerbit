@@ -4,7 +4,6 @@ Imagine a system where data replication isn’t fixed but is dynamically mapped 
 
 
 ## A Generalized Address Space
-
 Traditional replication methods rely on fixed partitions or discrete addressing. In contrast, **range-based replication** projects content onto a 1-dimensional line bounded by **[0, 1]**. This continuous space can represent any property you choose:
 
 - **Hash Mapping:**  
@@ -20,18 +19,18 @@ For example, subscribing to a live feed might involve replicating only the lates
 
 <video src="/topics/custom-domain/buffer.mp4" controls muted style="width: 100%" ></video>
 
-or watch a clip for yourself here 
+The timeline will turn more blue and become taller when more replicators/viewers are watching the video.
+
+Watch a clip for yourself here 
 
 https://stream.dao.xyz/#/s/zb2rhmQDEZtBf9i265So2biHppTRLPkb8s4UkA9rxoamfFJgG 
 
 [Source code for the video on demand](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming)
 
 ## Domain Mapping Strategies: Hash vs Time vs Identity
-
 When designing a custom data domain, the choice of mapping strategy is crucial. Here’s a breakdown of the benefits and trade-offs of three common approaches:
 
 ### Hash-Based Domains
-
 - **Benefits:**
   - **Determinism:**  
     A hash consistently maps the same input to the same output, ensuring predictable data placement.
@@ -57,7 +56,6 @@ When designing a custom data domain, the choice of mapping strategy is crucial. 
     High-activity periods may result in many items falling into a small segment of time, leading to imbalanced replication.
 
 ### Identity-Based Domains
-
 - **Benefits:**
   - **Author-Centric Grouping:**  
     Data can be grouped by creator, allowing targeted replication strategies.
@@ -94,6 +92,7 @@ class Document {
   }
 }
 
+@variant("time-based-store")
 class TimeBasedStore extends Program {
   @field({ type: Documents })
   docs: Documents<Document, Document>;
@@ -136,7 +135,6 @@ In this code:
 
 
 ## Bringing It All Together
-
 Peerbit’s custom data domains represent a paradigm shift in replication:
 
 - **Flexibility:**  

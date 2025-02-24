@@ -3,7 +3,6 @@
 This document explains how Peerbit currently encrypts data at rest, the implications of its design without forward secrecy, and the tradeoffs of introducing forward secrecy into the system. It also compares Peerbit’s encryption model with the end-to-end encryption (E2EE) used by Signal, highlighting similarities and differences in approach.
 
 ## Current Encryption Model in Peerbit
-
 Peerbit’s append-only log encodes data using end-to-end encryption (E2EE) with long-term keys. Every log entry is serialized (using Borsh) and then encrypted with keys derived from a node’s static identity (e.g., ed25519 and X25519 keypairs). This approach offers:
 
 - **Simplicity:** A single set of long-term keys is used for encryption and decryption, which simplifies key management and supports straightforward replication.
@@ -12,11 +11,9 @@ Peerbit’s append-only log encodes data using end-to-end encryption (E2EE) with
 However, a major limitation is that if a node’s long-term key is compromised, an attacker can retrospectively decrypt all previously stored data.
 
 ## Tradeoffs in Adding Forward Secrecy
-
 Integrating forward secrecy (FS) would involve using ephemeral keys for each session or data block, ensuring that even if a long-term key is later compromised, past communications remain secure. This introduces several challenges:
 
 ### Decryption Challenges for New Peers
-
 - **Static-Key Model:**  
   New peers can decrypt historical data because all entries use the same long-term key.
 
@@ -30,7 +27,6 @@ Integrating forward secrecy (FS) would involve using ephemeral keys for each ses
      Instead of discarding all ephemeral keys, a portion of the key material (the Forward Key, or FK) is retained securely. The FK acts as a seed to reconstruct the ephemeral keys for previous sessions, enabling new peers to derive them without having direct access to each ephemeral key. This method requires stringent security controls for the FK.
 
 ### Additional Tradeoffs
-
 - **Increased Complexity and Overhead:**  
   Ephemeral key exchanges (e.g., using ephemeral Diffie–Hellman) add computational overhead and complicate key management.
 
@@ -55,7 +51,6 @@ For further reading on Signal’s encryption, see:
 - [Signal’s Technical Overview by Open Whisper Systems](https://signal.org)
 
 ## The Concept of a Forward Key (FK)
-
 A Forward Key (FK) is an additional piece of key material maintained during forward secrecy implementations. Instead of discarding ephemeral keys after each session, a portion of the key material is securely stored or derivable, allowing authorized nodes to reconstruct the ephemeral keys for previous sessions.
 
 **Key aspects of FK:**
