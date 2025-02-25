@@ -105,8 +105,8 @@ export class OPFSStoreWorker {
 							create: true,
 						});
 					}
-					await calculateSize();
 				}
+				await calculateSize();
 				isOpen = true;
 			};
 			return {

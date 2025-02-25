@@ -17,10 +17,10 @@ const __dirname =
 describe(`index`, function () {
 	const testType = ["disc", "memory"];
 	testType.map((type) => {
-		const createStore = () => {
+		const createStore = (id = uuid()) => {
 			return createStoreFn(
 				type === "disc"
-					? path.join(__dirname, "tmp", "anystore", "index", uuid())
+					? path.join(__dirname, "tmp", "anystore", "index", id)
 					: undefined,
 			);
 		};
@@ -29,8 +29,10 @@ describe(`index`, function () {
 			const data = { key: "some-value", value: new Uint8Array([123]) };
 
 			let store: AnyStore;
+			let id: string;
 			beforeEach(async () => {
-				store = await createStore();
+				id = uuid();
+				store = await createStore(id);
 				await store.open();
 
 				await store.put(data.key, data.value);
@@ -84,8 +86,56 @@ describe(`index`, function () {
 
 			it("size", async () => {
 				const result = await store.size();
-
 				expect(result).to.be.greaterThanOrEqual(1); // classic level might calculate with true stored size
+
+				await store.close();
+				store = createStore(id);
+				await store.open();
+				if (type === "disc") {
+					expect(await store.size()).to.equal(result);
+				} else {
+					expect(await store.size()).to.equal(0);
+				}
+			});
+
+			it("size multiple levels", async () => {
+				let levelA = "a";
+				let storeA = await store.sublevel(levelA);
+				await storeA.put("a", new Uint8Array([1]));
+				await storeA.put("b", new Uint8Array([2]));
+				let levelB = "b";
+				let storeB = await store.sublevel(levelB);
+				await storeB.put("a", new Uint8Array([4]));
+
+				let rootSize = await store.size();
+				expect(rootSize).to.be.greaterThan(0);
+
+				const resultA = await storeA.size();
+				expect(resultA).to.be.greaterThanOrEqual(2);
+				const resultB = await storeB.size();
+				expect(resultB).to.be.greaterThanOrEqual(1);
+
+				await store.close();
+				store = createStore(id);
+				await store.open();
+
+				storeA = await store.sublevel(levelA);
+				storeB = await store.sublevel(levelB);
+
+				if (type === "disc") {
+					if (store.constructor.name === "LevelStore") {
+						// we can not do instanceof becauser this will run in the browser and we can not import LevelStore because it depends on fs
+						expect(await store.size()).to.greaterThanOrEqual(rootSize); // Classic level approximates size until restart
+					} else {
+						expect(await store.size()).to.equal(rootSize);
+					}
+					expect(await storeA.size()).to.equal(resultA);
+					expect(await storeB.size()).to.equal(resultB);
+				} else {
+					expect(await store.size()).to.equal(0);
+					expect(await storeA.size()).to.equal(0);
+					expect(await storeB.size()).to.equal(0);
+				}
 			});
 
 			it("del", async () => {

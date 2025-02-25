@@ -128,7 +128,7 @@ export class OPFSStore implements AnyStore {
 		return this.worker ? this.root.status() : "closed";
 	}
 	async close(): Promise<void> {
-		this.worker.terminate();
+		this.worker?.terminate();
 		this.worker = undefined!;
 		this._responseCallbacks.clear();
 		this.levelMap.clear();
