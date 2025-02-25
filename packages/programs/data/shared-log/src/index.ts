@@ -524,6 +524,10 @@ export class SharedLog<
 		return this._logProperties?.compatibility;
 	}
 
+	get isAdaptiveReplicating() {
+		return this._isAdaptiveReplicating;
+	}
+
 	private get v8Behaviour() {
 		return (this.compatibility ?? Number.MAX_VALUE) < 9;
 	}
@@ -618,7 +622,6 @@ export class SharedLog<
 			}
 
 			this._isReplicating = true;
-			this._isAdaptiveReplicating = false;
 
 			if (isAdaptiveReplicatorOption(options!)) {
 				this._isAdaptiveReplicating = true;

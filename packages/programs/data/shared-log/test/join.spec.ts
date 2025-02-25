@@ -117,6 +117,40 @@ describe("join", () => {
 		expect(indexedEntry[0].value.assignedToRangeBoundary).to.be.false; // since there should be 2 overlapping segments
 	});
 
+	it("can join replicate while dynamically replicating", async () => {
+		db1 = await session.peers[0].open(new EventStore<string, any>(), {
+			args: {
+				replicate: {
+					factor: 1,
+				},
+			},
+		});
+
+		db2 = (await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[1],
+			{
+				args: { replicate: true },
+			},
+		))!;
+
+		await db1.waitFor(session.peers[1].peerId);
+		await db2.log.waitForReplicator(db1.node.identity.publicKey); // in order to make the join operation to index correctly replicator info we want to wait here
+
+		const e1 = await db1.add("hello");
+
+		const mySegments = await db2.log.getMyReplicationSegments();
+		expect(mySegments).to.have.length(1);
+		await db2.log.join([e1.entry], { replicate: true });
+		expect(db2.log.log.length).to.equal(1);
+		expect(db2.log.isAdaptiveReplicating).to.be.true;
+		const mySegmentsAfterJoin = await db2.log.getMyReplicationSegments();
+		expect(
+			mySegmentsAfterJoin.find((x) => x.idString === mySegments[0].idString),
+		).to.not.be.undefined;
+		expect(await db2.log.entryCoordinatesIndex.count()).to.eq(1);
+	});
+
 	describe("mergeSegments", () => {
 		it("can join replicate and merge multiple segments", async () => {
 			db1 = await session.peers[0].open(new EventStore<string, any>());
