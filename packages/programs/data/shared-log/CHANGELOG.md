@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.18](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.17...shared-log-v10.3.18) (2025-02-25)
+
+
+### Bug Fixes
+
+* replicate entries while dynamically replicating ([078a794](https://github.com/dao-xyz/peerbit/commit/078a79440b8b1a15e991fb7a86bfbe9b802a4afb))
+
 ## [10.3.17](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.16...shared-log-v10.3.17) (2025-02-23)
 
 
