@@ -33,6 +33,20 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
 
+## [2.1.6](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.5...any-store-v2.1.6) (2025-02-25)
+
+
+### Bug Fixes
+
+* make sure size caches are calcualted in multi-level scenarios ([6dbebf0](https://github.com/dao-xyz/peerbit/commit/6dbebf0cc092663b1c5a367ebbdfe066fbe1861c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store-opfs bumped from ^1.0.5 to ^1.0.6
+
 ## [2.1.5](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.4...any-store-v2.1.5) (2025-02-20)
 
 

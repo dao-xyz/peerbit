@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.5...any-store-opfs-v1.0.6) (2025-02-25)
+
+
+### Bug Fixes
+
+* make sure size caches are calcualted in multi-level scenarios ([6dbebf0](https://github.com/dao-xyz/peerbit/commit/6dbebf0cc092663b1c5a367ebbdfe066fbe1861c))
+
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.4...any-store-opfs-v1.0.5) (2025-02-20)
 
 

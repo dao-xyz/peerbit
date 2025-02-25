@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/vite",
-	"version": "1.0.12",
+	"version": "1.0.13",
 	"description": "Plugin for Vite to use Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -70,8 +70,8 @@
 	},
 	"devDependencies": {
 		"@peerbit/indexer-sqlite3": "1.2.8",
-		"@peerbit/any-store": "2.1.5",
-		"@peerbit/any-store-opfs": "1.0.5"
+		"@peerbit/any-store": "2.1.6",
+		"@peerbit/any-store-opfs": "1.0.6"
 	},
 	"localMaintainers": [
 		"dao.xyz"

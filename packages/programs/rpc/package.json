@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/rpc",
-	"version": "5.0.33",
+	"version": "5.0.34",
 	"description": "RPC calls for peers",
 	"sideEffects": false,
 	"type": "module",
@@ -61,10 +61,10 @@
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "2.3.5",
 		"@peerbit/logger": "1.0.3",
-		"@peerbit/program": "5.1.5",
+		"@peerbit/program": "5.1.6",
 		"@peerbit/time": "2.0.8"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^2.1.23"
+		"@peerbit/test-utils": "^2.1.24"
 	}
 }
