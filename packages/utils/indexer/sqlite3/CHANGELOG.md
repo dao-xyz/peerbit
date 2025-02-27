@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.10](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.9...indexer-sqlite3-v1.2.10) (2025-02-27)
+
+
+### Bug Fixes
+
+* make opfs pool to be installed on a unique place to the directory ([b731f3d](https://github.com/dao-xyz/peerbit/commit/b731f3d7bf4e605053ffa3422190f98902badb5d))
+
 ## [1.2.9](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.8...indexer-sqlite3-v1.2.9) (2025-02-27)
 
 
