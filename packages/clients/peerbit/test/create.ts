@@ -1,4 +1,4 @@
-// Include test utilities
+/* eslint-disable @typescript-eslint/no-unused-expressions */
 import { generateKeyPair } from "@libp2p/crypto/keys";
 import { expect } from "chai";
 import path from "path";
