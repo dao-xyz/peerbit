@@ -19,6 +19,7 @@ import {
 	UnsignedIntegerValue,
 } from "@peerbit/indexer-interface";
 import { hrtime } from "@peerbit/time";
+import pDefer, { type DeferredPromise } from "p-defer";
 import { escapeColumnName } from "./schema.js";
 
 export interface QueryIndexPlanner {
@@ -32,6 +33,8 @@ export interface QueryIndexPlanner {
 				avg: number;
 				times: number[];
 				indexKey: string;
+				created: () => boolean;
+				creationPromiseDeferred: DeferredPromise<void>;
 			}[];
 		}
 	>; //
@@ -211,21 +214,30 @@ export class QueryPlanner {
 		}
 
 		// returns a function that takes column names and return the index to use
-		let indexCreateCommands: { key: string; cmd: string }[] | undefined =
-			undefined;
+		let indexCreateCommands:
+			| { key: string; cmd: string; deferred: DeferredPromise<void> }[]
+			| undefined = undefined;
 		let pickedIndexKeys: Map<string, string> = new Map(); // index key to column names key
+		let indexCreationPromiseToAwait: Promise<void>[] = [];
 		return {
 			beforePrepare: async () => {
 				// create missing indices
 				if (indexCreateCommands != null) {
-					for (const { key, cmd } of indexCreateCommands) {
-						if (this.pendingIndexCreation.has(key)) {
-							await this.pendingIndexCreation.get(key);
+					for (const { key, cmd, deferred } of indexCreateCommands) {
+						try {
+							if (this.pendingIndexCreation.has(key)) {
+								// TODO is this kind of debouncing needed? how do we end up here?
+								await this.pendingIndexCreation.get(key);
+							}
+							const promise = this.props.exec(cmd);
+							this.pendingIndexCreation.set(key, promise);
+							await promise;
+
+							this.pendingIndexCreation.delete(key);
+							deferred.resolve();
+						} catch (error) {
+							deferred.reject(error);
 						}
-						const promise = this.props.exec(cmd);
-						this.pendingIndexCreation.set(key, promise);
-						await promise;
-						this.pendingIndexCreation.delete(key);
 					}
 				}
 
@@ -234,6 +246,8 @@ export class QueryPlanner {
 						await this.pendingIndexCreation.get(picked);
 					}
 				}
+
+				await Promise.all(indexCreationPromiseToAwait);
 			},
 			resolveIndex: (tableName: string, columns: string[]): string => {
 				// first we figure out whether we want to reuse the fastest index or try a new one
@@ -254,16 +268,24 @@ export class QueryPlanner {
 						const indexKey = createIndexKey(tableName, columns);
 						const command = `create index if not exists ${indexKey} on ${tableName} (${columns.map((n) => escapeColumnName(n)).join(", ")})`;
 
+						let deferred = pDefer<void>();
 						(indexCreateCommands || (indexCreateCommands = [])).push({
 							cmd: command,
 							key: indexKey,
+							deferred,
 						});
 
+						let created = false;
+						deferred.promise.then(() => {
+							created = true;
+						});
 						indexStats.results.push({
 							used: 0,
 							times: [],
 							avg: -1, // setting -1 will force the first time to be the fastest (i.e. new indices are always tested once)
 							indexKey,
+							created: () => created,
+							creationPromiseDeferred: deferred,
 						});
 					}
 				}
@@ -271,6 +293,12 @@ export class QueryPlanner {
 				// find the fastest index
 				let fastestIndex = indexStats.results[0];
 				fastestIndex.used++;
+
+				if (!fastestIndex.created()) {
+					indexCreationPromiseToAwait.push(
+						fastestIndex.creationPromiseDeferred.promise,
+					);
+				}
 				pickedIndexKeys.set(fastestIndex.indexKey, sortedNameKey);
 
 				return fastestIndex.indexKey!;

@@ -126,7 +126,7 @@ describe("PlannableQuery", () => {
 describe("QueryPlanner", () => {
 	it("can concurrently with same index", async () => {
 		let executed: string[] = [];
-		let execDelay = 1000;
+		let execDelay = 3000;
 
 		const planner = new QueryPlanner({
 			exec: async (query: string) => {
@@ -142,16 +142,25 @@ describe("QueryPlanner", () => {
 		const index2 = scope2.resolveIndex("table", ["field1"]);
 		expect(index1).to.eq(index2);
 
+		const prepare2 = scope2.beforePrepare(); // prepare 2 before 1 even though resolved index form 1
+		await delay(1e2);
 		const prepare1 = scope1.beforePrepare();
-		const prepare2 = scope2.beforePrepare();
 
-		await prepare2;
-		await scope2.perform(async () => {
-			expect(executed).to.have.length(1);
-			expect(executed[0]).to.contain(index1);
-		});
+		const perform1 = prepare1.then(() =>
+			scope1.perform(async () => {
+				expect(executed).to.have.length(1);
+				expect(executed[0]).to.contain(index1);
+			}),
+		);
+		const perform2 = prepare2.then(() =>
+			scope1.perform(async () => {
+				expect(executed).to.have.length(1);
+				expect(executed[0]).to.contain(index1);
+			}),
+		);
 
-		await prepare1;
+		await perform1;
+		await perform2;
 	});
 });
 
