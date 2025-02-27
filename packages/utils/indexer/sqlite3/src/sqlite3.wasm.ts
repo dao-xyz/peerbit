@@ -129,11 +129,11 @@ const create = async (directory?: string) => {
 			directory = directory.replace(/^\./, "");
 
 			dbFileName = `${directory}/db.sqlite`;
-
+			const poolDirectory = `${directory}/peerbit/sqlite-opfs-pool`;
 			poolUtil =
 				poolUtil ||
 				(await sqlite3!.installOpfsSAHPoolVfs({
-					directory: "peerbit/sqlite", // encodeName("peerbit")
+					directory: poolDirectory,
 				}));
 
 			await poolUtil.reserveMinimumCapacity(100);
