@@ -1,6 +1,5 @@
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import type { PeerId } from "@libp2p/interface";
-import "@libp2p/peer-id";
 import {
 	type Multiaddr,
 	isMultiaddr,
@@ -128,7 +127,6 @@ export class Peerbit implements ProgramClient {
 		const storage = await createCache(
 			directory != null ? path.join(directory, "/cache") : undefined,
 		);
-
 		const indexerFn = options.indexer || createSQLiteIndexer;
 		const indexer =
 			directory != null
