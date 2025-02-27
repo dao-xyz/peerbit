@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.9](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.8...indexer-sqlite3-v1.2.9) (2025-02-27)
+
+
+### Bug Fixes
+
+* handle race-condition where multiple invocations to queryplanner yields index creation ([61693b7](https://github.com/dao-xyz/peerbit/commit/61693b796a1bf56eeac9e476c43757096b1b2006))
+
 ## [1.2.8](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.7...indexer-sqlite3-v1.2.8) (2025-02-20)
 
 
