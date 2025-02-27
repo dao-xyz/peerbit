@@ -90,7 +90,9 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test -t node",
+		"test": "aegir test",
+		"test:browser": "aegir clean && aegir test -t browser",
+		"test:node": "aegir clean && aegir test -t node",
 		"lint": "aegir lint"
 	},
 	"localMaintainers": [

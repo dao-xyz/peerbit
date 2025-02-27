@@ -1,7 +1,6 @@
 // Include test utilities
 import { generateKeyPair } from "@libp2p/crypto/keys";
 import { expect } from "chai";
-import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
 import { Peerbit } from "../src/peer.js";
@@ -26,6 +25,7 @@ describe("Create", function () {
 		});
 
 		it("creates directory", async () => {
+			const fs = await import("fs");
 			expect(fs.existsSync(clientDirectory)).equal(true);
 		});
 

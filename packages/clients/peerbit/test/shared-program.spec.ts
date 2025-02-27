@@ -32,6 +32,14 @@ class TestProgram extends Program {
 		return this.nested.open();
 	}
 }
+const rejectsWithMessage = async (promise: Promise<any>, message: string) => {
+	try {
+		await promise;
+		throw new Error("Expected to throw");
+	} catch (error: any) {
+		expect(error?.message).to.eq(message);
+	}
+};
 
 describe(`shared`, () => {
 	let client: Peerbit;
@@ -51,7 +59,8 @@ describe(`shared`, () => {
 
 	it("open same store twice by address will throw error", async () => {
 		const db1 = await client.open(new TestProgram());
-		await expect(client.open(db1.address)).rejectedWith(
+		await rejectsWithMessage(
+			client.open(db1.address),
 			`Program at ${db1.address} is already open`,
 		);
 	});
@@ -64,7 +73,8 @@ describe(`shared`, () => {
 
 		await db1Promise;
 		//await db2Promise;
-		await expect(db2Promise).rejectedWith(
+		await rejectsWithMessage(
+			db2Promise,
 			`Program at ${p1.address} is already open`,
 		);
 		expect(p1.nested.openInvoked).to.be.true;
@@ -81,7 +91,8 @@ describe(`shared`, () => {
 		const db2Promise = client.open(p2);
 
 		//await db2Promise;
-		await expect(db2Promise).rejectedWith(
+		await rejectsWithMessage(
+			db2Promise,
 			`Program at ${p1.address} is already open`,
 		);
 		expect(p1.nested.openInvoked).to.be.true;

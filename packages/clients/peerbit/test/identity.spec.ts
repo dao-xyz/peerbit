@@ -36,6 +36,27 @@ describe(`identity`, function () {
 			expect(exportedKeypair!.equals(kp)).to.be.true;
 		});
 
+		/*  TODO this does not throw in the browser, but it should when we are building from multiple tabs? or not?
+		it("accessing same directory throws", async () => {
+			const directory = "./tmp/disc/" + +new Date();
+			client = await Peerbit.create({ directory });
+			let didNotThrow = false;
+			try {
+				const anotherClient = await Peerbit.create({ directory });
+				const scope = await anotherClient.indexer.scope("test");
+				await scope.start();
+				const index = await scope.init({ schema: Schema });
+				await index.put(new Schema("1"));
+				didNotThrow = true;
+			} catch (error: any) {
+				// TODO assert error type
+				console.log("Got expected error", error.message);
+			}
+
+			await delay(5000);
+			expect(didNotThrow).to.be.false;
+		}); */
+
 		it("memory", async () => {
 			client = await Peerbit.create({});
 			const id1 = client.peerId;
