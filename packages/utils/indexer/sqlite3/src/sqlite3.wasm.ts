@@ -129,7 +129,7 @@ const create = async (directory?: string) => {
 			directory = directory.replace(/^\./, "");
 
 			dbFileName = `${directory}/db.sqlite`;
-			const poolDirectory = `${directory}/peerbit/sqlite-opfs-pool`;
+			const poolDirectory = `${directory}/peerbit/sqlite-opfs-pool`; // we do a unique directory else we will get problem open a client in multiple tabs
 			poolUtil =
 				poolUtil ||
 				(await sqlite3!.installOpfsSAHPoolVfs({
