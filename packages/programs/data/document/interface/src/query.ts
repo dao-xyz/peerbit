@@ -6,7 +6,7 @@ import {
 	vec,
 } from "@dao-xyz/borsh";
 import { Entry } from "@peerbit/log";
-import type { SearchRequest, SearchRequestIndexed } from "./request.js";
+import type { SearchRequest } from "./request.js";
 
 /// ----- RESULTS -----
 
@@ -150,11 +150,9 @@ export class Results<R extends Result> extends AbstractSearchResult {
 export class NoAccess extends AbstractSearchResult {}
 
 // for SearchRequest we wnat to return ResultsWithSource<T> for IndexedSearchRequest we want to return ResultsIndexed<T>
-export type ResultTypeFromRequest<R> = R extends SearchRequest
-	? ResultValue<any>
-	: R extends SearchRequestIndexed
-		? ResultIndexedValue<any>
-		: ResultIndexedValue<any> | ResultValue<any>;
+export type ResultTypeFromRequest<R, T, I> = R extends SearchRequest
+	? ResultValue<T>
+	: ResultIndexedValue<I>;
 
 /* @variant(5)
 export class LogQuery extends Query { } */
