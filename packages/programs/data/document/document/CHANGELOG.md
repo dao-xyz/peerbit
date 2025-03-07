@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.1.1](https://github.com/dao-xyz/peerbit/compare/document-v9.1.0...document-v9.1.1) (2025-03-07)
+
+
+### Bug Fixes
+
+* export WithContext ([e9b2c20](https://github.com/dao-xyz/peerbit/commit/e9b2c20fffb00c9163d47593f8bcac236daba235))
+
 ## [9.1.0](https://github.com/dao-xyz/peerbit/compare/document-v9.0.26...document-v9.1.0) (2025-03-07)
 
 
