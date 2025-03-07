@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.1.0](https://github.com/dao-xyz/peerbit/compare/document-v9.0.26...document-v9.1.0) (2025-03-07)
+
+
+### Features
+
+* return context for search results ([f0d763d](https://github.com/dao-xyz/peerbit/commit/f0d763dcad9032fd74fa0dd751c8d27e46a0f656))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.0.36 to 5.0.37
+    * @peerbit/shared-log bumped from 10.3.21 to 10.3.22
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.10 to ^1.2.11
+    * @peerbit/document-interface bumped from ^2.0.11 to ^2.0.12
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.26 to 2.1.27
+
 ## [9.0.26](https://github.com/dao-xyz/peerbit/compare/document-v9.0.25...document-v9.0.26) (2025-02-27)
 
 
