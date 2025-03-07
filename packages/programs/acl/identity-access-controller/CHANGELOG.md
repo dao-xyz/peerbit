@@ -630,6 +630,18 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.0.38](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.0.37...identity-access-controller-v5.0.38) (2025-03-07)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 9.0.26 to 9.1.0
+    * @peerbit/trusted-network bumped from 4.1.54 to 4.1.55
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.26 to ^2.1.27
+
 ## [5.0.37](https://github.com/dao-xyz/peerbit/compare/identity-access-controller-v5.0.36...identity-access-controller-v5.0.37) (2025-02-27)
 
 
