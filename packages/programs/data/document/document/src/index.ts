@@ -6,6 +6,7 @@ export type {
 	CanSearch,
 	DocumentIndex,
 	WithIndexedContext,
+	WithContext,
 	OpenOptions,
 	QueryOptions,
 	RemoteQueryOptions,
