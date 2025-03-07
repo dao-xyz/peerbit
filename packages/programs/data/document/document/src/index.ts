@@ -5,7 +5,7 @@ export type {
 	CanRead,
 	CanSearch,
 	DocumentIndex,
-	IDocumentWithContext,
+	WithIndexedContext,
 	OpenOptions,
 	QueryOptions,
 	RemoteQueryOptions,

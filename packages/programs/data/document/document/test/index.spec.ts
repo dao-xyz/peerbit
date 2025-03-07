@@ -3296,19 +3296,27 @@ describe("index", () => {
 		it("get", async () => {
 			const get = await stores[0].docs.index.get("1");
 			expect(get!.name).to.eq("name1");
+			const createdAt = get.__context.created;
+			expect(typeof createdAt).to.eq("bigint");
 
 			const getRemote = await stores[1].docs.index.get("1");
 			expect(getRemote!.name).to.eq("name1");
+			const createdAtRemote = get.__context.created;
+			expect(createdAtRemote).to.eq(createdAt);
 		});
 
 		it("get indexed", async () => {
 			const get = await stores[0].docs.index.get("1", { resolve: false });
 			expect(get!.nameTransformed).to.eq("NAME1");
 			expect(get instanceof Indexable).to.be.true;
+			const createdAt = get.__context.created;
+			expect(typeof createdAt).to.eq("bigint");
 
 			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
 			expect(getRemote!.nameTransformed).to.eq("NAME1");
 			expect(getRemote instanceof Indexable).to.be.true;
+			const createdAtRemote = get.__context.created;
+			expect(createdAtRemote).to.eq(createdAt);
 		});
 
 		it("iterate", async () => {
@@ -3321,6 +3329,7 @@ describe("index", () => {
 				}),
 			]) {
 				const first = await iterator.next(1);
+
 				const second = await iterator.next(2);
 				expect(first[0].name).to.eq("name1");
 				expect(first[0] instanceof Document).to.be.true;
@@ -3328,6 +3337,12 @@ describe("index", () => {
 				expect(second[1].name).to.eq("name3");
 				expect(second[0] instanceof Document).to.be.true;
 				expect(second[1] instanceof Document).to.be.true;
+
+				const firstCreatedAt = first[0].__context.created;
+				expect(typeof firstCreatedAt).to.eq("bigint");
+
+				const secondCreatedAt = second[0].__context.created;
+				expect(secondCreatedAt > firstCreatedAt).to.be.true;
 			}
 		});
 
@@ -3358,6 +3373,54 @@ describe("index", () => {
 				expect(second[1].nameTransformed).to.eq("NAME3");
 				expect(second[0] instanceof Indexable).to.be.true;
 				expect(second[1] instanceof Indexable).to.be.true;
+
+				const firstCreatedAt = first[0].__context.created;
+				expect(typeof firstCreatedAt).to.eq("bigint");
+
+				const secondCreatedAt = second[0].__context.created;
+				expect(secondCreatedAt > firstCreatedAt).to.be.true;
+			}
+		});
+
+		it("iterate and sort by context", async () => {
+			for (const iterator of [
+				stores[0].docs.index.iterate(
+					{
+						sort: {
+							key: ["__context", "created"],
+							direction: SortDirection.DESC,
+						},
+					},
+					{
+						resolve: false,
+					},
+				),
+				stores[1].docs.index.iterate(
+					{
+						sort: {
+							key: ["__context", "created"],
+							direction: SortDirection.DESC,
+						},
+					},
+					{
+						resolve: false,
+					},
+				),
+			]) {
+				const first = await iterator.next(1);
+				const second = await iterator.next(2);
+				expect(first[0].nameTransformed).to.eq("NAME3");
+				expect(first[0] instanceof Indexable).to.be.true;
+				expect(second[0].nameTransformed).to.eq("NAME2");
+				expect(second[1].nameTransformed).to.eq("NAME1");
+				expect(second[0] instanceof Indexable).to.be.true;
+				expect(second[1] instanceof Indexable).to.be.true;
+
+				const firstCreatedAt = first[0].__context.created;
+				expect(typeof firstCreatedAt).to.eq("bigint");
+
+				const secondCreatedAt = second[0].__context.created;
+				expect(secondCreatedAt < firstCreatedAt).to.be.true;
 			}
 		});
 

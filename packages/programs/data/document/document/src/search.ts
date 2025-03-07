@@ -34,7 +34,7 @@ const logger = loggerFn({ module: "document-index" });
 
 type BufferedResult<T, I extends Record<string, any>> = {
 	value: T;
-	indexed: I;
+	indexed: WithContext<I>;
 	context: types.Context;
 	from: PublicSignKey;
 };
@@ -145,7 +145,9 @@ const introduceEntries = async <
 		response: types.Results<any>,
 	) => Promise<void>,
 	options?: QueryDetailedOptions<T, D, any>,
-): Promise<RPCResponse<types.Results<types.ResultTypeFromRequest<R>>>[]> => {
+): Promise<
+	RPCResponse<types.Results<types.ResultTypeFromRequest<R, T, I>>>[]
+> => {
 	const results: RPCResponse<types.Results<any>>[] = [];
 	for (const response of responses) {
 		if (!response.from) {
@@ -234,7 +236,7 @@ type ValueTypeFromRequest<
 	Resolve extends boolean | undefined,
 	T,
 	I,
-> = Resolve extends false ? I : T;
+> = Resolve extends false ? WithContext<I> : WithContext<T>;
 
 @variant(0)
 export class IndexableContext implements types.Context {
@@ -277,8 +279,12 @@ export class IndexableContext implements types.Context {
 	}
 }
 
-export type IDocumentWithContext<I> = {
+export type WithIndexedContext<I> = {
 	__context: IndexableContext;
+} & I;
+
+export type WithContext<I> = {
+	__context: types.Context;
 } & I;
 
 export type TransformerAsConstructor<T, I> = {
@@ -313,7 +319,9 @@ export type OpenOptions<
 		request: types.SearchRequest | types.SearchRequestIndexed,
 		results: types.Results<
 			types.ResultTypeFromRequest<
-				types.SearchRequest | types.SearchRequestIndexed
+				types.SearchRequest | types.SearchRequestIndexed,
+				T,
+				I
 			>
 		>,
 	) => Promise<void>;
@@ -327,7 +335,20 @@ export type OpenOptions<
 type IndexableClass<I> = new (
 	value: I,
 	context: IndexableContext,
-) => IDocumentWithContext<I>;
+) => WithIndexedContext<I>;
+
+const coerceWithContext = <T>(
+	value: T | WithContext<T>,
+	context: types.Context,
+): WithContext<T> => {
+	if ((value as WithContext<T>).__context) {
+		return value as WithContext<T>;
+	}
+
+	let valueWithContext: WithContext<T> = value as any;
+	valueWithContext.__context = context;
+	return valueWithContext;
+};
 
 @variant("documents_index")
 export class DocumentIndex<
@@ -355,8 +376,8 @@ export class DocumentIndex<
 	// Index key
 	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
-	index: indexerTypes.Index<IDocumentWithContext<I>>;
-	private _resumableIterators: ResumableIterators<IDocumentWithContext<I>>;
+	index: indexerTypes.Index<WithIndexedContext<I>>;
+	private _resumableIterators: ResumableIterators<WithIndexedContext<I>>;
 
 	compatibility: 6 | 7 | 8 | undefined;
 
@@ -383,7 +404,7 @@ export class DocumentIndex<
 			from: PublicSignKey;
 			keptInIndex: number;
 			timeout: ReturnType<typeof setTimeout>;
-			queue: indexerTypes.IndexedResult<IDocumentWithContext<I>>[];
+			queue: indexerTypes.IndexedResult<WithIndexedContext<I>>[];
 			fromQuery: types.SearchRequest | types.SearchRequestIndexed;
 		}
 	>;
@@ -427,7 +448,7 @@ export class DocumentIndex<
 		this.wrappedIndexedType = IndexedClassWithContext as new (
 			value: I,
 			context: types.Context,
-		) => IDocumentWithContext<I>;
+		) => WithIndexedContext<I>;
 
 		// if this.type is a class that extends Program we want to do special functionality
 		this.isProgramValued = isSubclassOf(this.documentType, Program);
@@ -473,7 +494,7 @@ export class DocumentIndex<
 						obj.index.search(query),
 				},
 				/* maxBatchSize: MAX_BATCH_SIZE */
-			})) || new HashmapIndex<IDocumentWithContext<I>>();
+			})) || new HashmapIndex<WithIndexedContext<I>>();
 
 		this._resumableIterators = new ResumableIterators(this.index);
 		this._maybeOpen = properties.maybeOpen;
@@ -584,23 +605,24 @@ export class DocumentIndex<
 	public async get<Options extends QueryOptions<T, D, true | undefined>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
-	): Promise<T>;
+	): Promise<WithContext<T>>;
 
 	public async get<Options extends QueryOptions<T, D, false>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
-	): Promise<I>;
+	): Promise<WithContext<I>>;
 
 	public async get<
 		Options extends QueryOptions<T, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 	>(key: indexerTypes.Ideable | indexerTypes.IdKey, options?: Options) {
-		return (
+		const result = (
 			await this.getDetailed(
 				key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key),
 				options,
 			)
-		)?.[0]?.results[0]?.value;
+		)?.[0]?.results[0];
+		return result?.value;
 	}
 
 	public async getFromGid(gid: string) {
@@ -659,14 +681,17 @@ export class DocumentIndex<
 		Options extends QueryOptions<T, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 		RT extends types.Result = Resolve extends true
-			? types.ResultValue<T>
-			: types.ResultIndexedValue<I>,
+			? types.ResultValue<WithContext<T>>
+			: types.ResultIndexedValue<WithContext<I>>,
 	>(
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
 		options?: QueryOptions<T, D, Resolve>,
 	): Promise<types.Results<RT>[] | undefined> {
 		let results:
-			| types.Results<types.ResultValue<T> | types.ResultIndexedValue<I>>[]
+			| types.Results<
+					| types.ResultValue<WithContext<T>>
+					| types.ResultIndexedValue<WithContext<I>>
+			  >[]
 			| undefined;
 		const resolve = options?.resolve || options?.resolve == null;
 		let requestClazz = resolve
@@ -727,35 +752,42 @@ export class DocumentIndex<
 			}
 		}
 
-		if (
+		// if we are to resolve the document we need to go through all results and replace the results with the resolved values
+		const shouldResolve =
 			resolve &&
 			requestClazz === types.SearchRequestIndexed &&
 			!this.indexedTypeIsDocumentType &&
-			results
-		) {
-			for (const set of results) {
-				let coercedResult: types.ResultValue<T>[] = [];
+			results;
 
-				for (const value of set.results) {
-					const resolved =
-						value instanceof types.ResultIndexedValue
-							? (
-									await this.resolveDocument({
-										indexed: value.value,
-										head: value.context.head,
-									})
-								)?.value
-							: value.value;
+		if (results) {
+			for (const set of results) {
+				let missingValues = false;
+				for (let i = 0; i < set.results.length; i++) {
+					let value = set.results[i];
+					let resolved: T | undefined;
+					if (shouldResolve) {
+						resolved =
+							value instanceof types.ResultIndexedValue
+								? (
+										await this.resolveDocument({
+											indexed: value.value,
+											head: value.context.head,
+										})
+									)?.value
+								: value.value;
+					} else {
+						resolved = value.value as T;
+					}
 					if (resolved) {
-						coercedResult.push(
-							new types.ResultValue({
-								context: value.context,
-								value: resolved,
-							}),
-						);
+						set.results[i]._value = coerceWithContext(resolved, value.context);
+					} else {
+						missingValues = true;
 					}
 				}
-				set.results = coercedResult;
+
+				if (missingValues) {
+					set.results = set.results.filter((x) => !!x);
+				}
 			}
 		}
 
@@ -822,7 +854,7 @@ export class DocumentIndex<
 		options?: {
 			canRead?: CanRead<I>;
 		},
-	): Promise<types.Results<types.ResultTypeFromRequest<R>>> {
+	): Promise<types.Results<types.ResultTypeFromRequest<R, T, I>>> {
 		// We do special case for querying the id as we can do it faster than iterating
 
 		let prevQueued = isLocal
@@ -833,7 +865,7 @@ export class DocumentIndex<
 		}
 
 		let indexedResult:
-			| indexerTypes.IndexedResults<IDocumentWithContext<I>>
+			| indexerTypes.IndexedResults<WithIndexedContext<I>>
 			| undefined = undefined;
 
 		let fromQuery: types.SearchRequest | types.SearchRequestIndexed | undefined;
@@ -997,9 +1029,7 @@ export class DocumentIndex<
 	 */
 	private async queryCommence<
 		R extends types.SearchRequest | types.SearchRequestIndexed,
-		RT extends types.Result = R extends types.SearchRequest
-			? types.ResultValue<T>
-			: types.ResultIndexedValue<I>,
+		RT extends types.Result = types.ResultTypeFromRequest<R, T, I>,
 	>(
 		queryRequest: R,
 		options?: QueryDetailedOptions<T, D, boolean | undefined>,
@@ -1028,7 +1058,8 @@ export class DocumentIndex<
 				"Expecting either 'options.remote' or 'options.local' to be true",
 			);
 		}
-		const allResults: types.Results<types.ResultTypeFromRequest<R>>[] = [];
+		const allResults: types.Results<types.ResultTypeFromRequest<R, T, I>>[] =
+			[];
 
 		if (local) {
 			const results = await this.processQuery(
@@ -1043,7 +1074,7 @@ export class DocumentIndex<
 			}
 		}
 
-		let resolved: types.Results<types.ResultTypeFromRequest<R>>[] = [];
+		let resolved: types.Results<types.ResultTypeFromRequest<R, T, I>>[] = [];
 		if (remote) {
 			const replicatorGroups = await this._log.getCover(
 				remote.domain ?? (undefined as any),
@@ -1233,10 +1264,7 @@ export class DocumentIndex<
 			string,
 			{
 				kept: number;
-				buffer: BufferedResult<
-					types.ResultValue<T> | types.ResultIndexedValue<I>,
-					I
-				>[];
+				buffer: BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>[];
 			}
 		> = new Map();
 		const visited = new Set<string | number | bigint>();
@@ -1248,8 +1276,8 @@ export class DocumentIndex<
 		const controller = new AbortController();
 
 		const peerBuffers = (): {
-			indexed: I;
-			value: types.ResultValue<T> | types.ResultIndexedValue<I>;
+			indexed: WithContext<I>;
+			value: types.ResultTypeFromRequest<R, T, I> | I;
 			from: PublicSignKey;
 			context: types.Context;
 		}[] => {
@@ -1271,7 +1299,7 @@ export class DocumentIndex<
 						return;
 					} else if (response instanceof types.Results) {
 						const results = response as types.Results<
-							types.ResultTypeFromRequest<R>
+							types.ResultTypeFromRequest<R, T, I>
 						>;
 						if (results.kept === 0n && results.results.length === 0) {
 							return;
@@ -1280,8 +1308,10 @@ export class DocumentIndex<
 						if (results.kept > 0n) {
 							done = false; // we have more to do later!
 						}
-						const buffer: BufferedResult<types.ResultTypeFromRequest<R>, I>[] =
-							[];
+						const buffer: BufferedResult<
+							types.ResultTypeFromRequest<R, T, I> | I,
+							I
+						>[] = [];
 
 						for (const result of results.results) {
 							if (result instanceof types.ResultValue) {
@@ -1293,12 +1323,14 @@ export class DocumentIndex<
 								}
 								visited.add(indexKey);
 								buffer.push({
-									value: result.value,
+									value: result.value as types.ResultTypeFromRequest<R, T, I>,
 									context: result.context,
 									from,
-									indexed:
+									indexed: coerceWithContext(
 										(result.indexed as I) ||
-										(await this.transformer(result.value, result.context)),
+											(await this.transformer(result.value, result.context)),
+										result.context,
+									),
 								});
 							} else {
 								const indexKey = indexerTypes.toId(
@@ -1313,7 +1345,10 @@ export class DocumentIndex<
 									value: result.value,
 									context: result.context,
 									from,
-									indexed: result.indexed || result.value,
+									indexed: coerceWithContext(
+										result.indexed || result.value,
+										result.context,
+									),
 								});
 							}
 						}
@@ -1411,12 +1446,14 @@ export class DocumentIndex<
 												value: result.value,
 												context: result.context,
 												from: this.node.identity.publicKey,
-												indexed:
+												indexed: coerceWithContext(
 													result.indexed ||
-													(await this.transformer(
-														result.value,
-														result.context,
-													)),
+														(await this.transformer(
+															result.value as any as T, // TODO tyes
+															result.context,
+														)),
+													result.context,
+												),
 											});
 										}
 									}
@@ -1476,16 +1513,23 @@ export class DocumentIndex<
 															}
 															visited.add(idPrimitive);
 															peerBuffer.buffer.push({
-																value: result.value,
+																value:
+																	result.value as types.ResultTypeFromRequest<
+																		R,
+																		T,
+																		I
+																	>,
 																context: result.context,
 																from: from!,
-																indexed:
+																indexed: coerceWithContext(
 																	result instanceof types.ResultIndexedValue
 																		? result.value
 																		: await this.transformer(
 																				result.value,
 																				result.context,
 																			),
+																	result.context,
+																),
 															});
 														}
 													}
@@ -1557,23 +1601,24 @@ export class DocumentIndex<
 				coercedBatch = (
 					await Promise.all(
 						batch.map(async (x) =>
-							x.value instanceof this.documentType
-								? x.value
-								: (
-										await this.resolveDocument({
-											head: x.context.head,
-											indexed: x.indexed,
-										})
-									)?.value,
+							coerceWithContext(
+								x.value instanceof this.documentType
+									? x.value
+									: (
+											await this.resolveDocument({
+												head: x.context.head,
+												indexed: x.indexed,
+											})
+										)?.value,
+								x.context,
+							),
 						),
 					)
 				).filter((x) => !!x) as ValueTypeFromRequest<Resolve, T, I>[];
 			} else {
-				coercedBatch = batch.map((x) => x.value) as ValueTypeFromRequest<
-					Resolve,
-					T,
-					I
-				>[];
+				coercedBatch = batch.map((x) =>
+					coerceWithContext(x.value, x.context),
+				) as ValueTypeFromRequest<Resolve, T, I>[];
 			}
 
 			return dedup(coercedBatch, this.indexByResolver);
