@@ -1827,6 +1827,9 @@ export class SharedLog<
 				if (v.equals(this.node.identity.publicKey)) {
 					return;
 				}
+				if (this.closed) {
+					return;
+				}
 				this.handleSubscriptionChange(v, [this.topic], true);
 			},
 		);
