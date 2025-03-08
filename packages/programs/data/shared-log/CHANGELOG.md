@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.3.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.22...shared-log-v10.3.23) (2025-03-08)
+
+
+### Bug Fixes
+
+* return on closed in afterOpen ([bf9c70f](https://github.com/dao-xyz/peerbit/commit/bf9c70f69e9354151dc232ad2a909c3d81698b5a))
+
 ## [10.3.22](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.21...shared-log-v10.3.22) (2025-03-07)
 
 
