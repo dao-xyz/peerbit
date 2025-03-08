@@ -77,18 +77,10 @@ type QueryDetailedOptions<
 	) => void | Promise<void>;
 };
 
-type QueryLike /* <Resolve extends boolean | undefined>  */ = {
+type QueryLike = {
 	query?: indexerTypes.Query[] | indexerTypes.QueryLike;
 	sort?: indexerTypes.Sort[] | indexerTypes.Sort | indexerTypes.SortLike;
-	/* 	resolve?: Resolve; */
 };
-
-/* type ExtractResolve<R> =
-	R extends QueryLike<infer X>
-	? X extends boolean // if X is a boolean (true or false)
-	? X
-	: true // else default to true
-	: true; // if R isn't QueryLike at all, default to true */
 
 type ExtractResolveFromOptions<O> =
 	O extends QueryOptions<any, any, infer X>
