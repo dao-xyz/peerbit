@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.1.3](https://github.com/dao-xyz/peerbit/compare/document-v9.1.2...document-v9.1.3) (2025-03-09)
+
+
+### Bug Fixes
+
+* make Context to take same shape as IndexedContext ([5226a66](https://github.com/dao-xyz/peerbit/commit/5226a66c77c3f3e02804f4ba619dc2df7fae46b6))
+
+
+### Documentation
+
+* rm comment ([cb65b4c](https://github.com/dao-xyz/peerbit/commit/cb65b4cbd28f5ffbf451aa6395f47e72449e30b5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document-interface bumped from ^2.0.12 to ^2.0.13
+
 ## [9.1.2](https://github.com/dao-xyz/peerbit/compare/document-v9.1.1...document-v9.1.2) (2025-03-08)
 
 
