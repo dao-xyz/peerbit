@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.13](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.12...document-interface-v2.0.13) (2025-03-09)
+
+
+### Bug Fixes
+
+* make Context to take same shape as IndexedContext ([5226a66](https://github.com/dao-xyz/peerbit/commit/5226a66c77c3f3e02804f4ba619dc2df7fae46b6))
+
 ## [2.0.12](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.11...document-interface-v2.0.12) (2025-03-07)
 
 
