@@ -26,16 +26,21 @@ export class Context {
 	@field({ type: "string" })
 	gid: string;
 
+	@field({ type: "u32" })
+	size: number; // bytes, we index this so we can query documents and understand their representation sizes
+
 	constructor(properties: {
 		created: bigint;
 		modified: bigint;
 		head: string;
 		gid: string;
+		size: number;
 	}) {
 		this.created = properties.created;
 		this.modified = properties.modified;
 		this.head = properties.head;
 		this.gid = properties.gid;
+		this.size = properties.size;
 	}
 }
 

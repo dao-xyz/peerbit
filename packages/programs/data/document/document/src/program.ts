@@ -40,6 +40,8 @@ import {
 	type CanSearch,
 	DocumentIndex,
 	type TransformOptions,
+	type WithContext,
+	coerceWithContext,
 } from "./search.js";
 
 const logger = loggerFn({ module: "document" });
@@ -50,8 +52,8 @@ export class OperationError extends Error {
 	}
 }
 export interface DocumentsChange<T> {
-	added: T[];
-	removed: T[];
+	added: WithContext<T>[];
+	removed: WithContext<T>[];
 }
 export interface DocumentEvents<T> {
 	change: CustomEvent<DocumentsChange<T>>;
@@ -607,24 +609,37 @@ export class Documents<
 						// if replicator, then open
 						value = await this.maybeSubprogramOpen(value);
 					}
-					documentsChanged.added.push(value);
-					await this._index.put(value, item, key);
+					const context = await this._index.put(value, key, item);
+					documentsChanged.added.push(coerceWithContext(value, context));
+
 					modified.add(key.primitive);
 				} else if (
 					(isDeleteOperation(payload) && !removedSet.has(item.hash)) ||
 					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
-					let value: T;
+					let value: WithContext<T>;
 					let key: indexerTypes.IdKey;
 
 					if (isPutOperation(payload)) {
-						value = this.index.valueEncoding.decoder(payload.data);
-						key = indexerTypes.toId(this.idResolver(value));
+						const valueWithoutContext = this.index.valueEncoding.decoder(
+							payload.data,
+						);
+						key = indexerTypes.toId(this.idResolver(valueWithoutContext));
 						// document is already updated with more recent entry
 						if (modified.has(key.primitive)) {
 							continue;
 						}
+
+						// we try to fetch it anyway, because we need the context for the events
+						const document = await this._index.get(key, {
+							local: true,
+							remote: false,
+						});
+						if (!document) {
+							continue;
+						}
+						value = document;
 					} else if (isDeleteOperation(payload)) {
 						key = coerceDeleteOperation(payload).key;
 						// document is already updated with more recent entry

@@ -230,51 +230,6 @@ type ValueTypeFromRequest<
 	I,
 > = Resolve extends false ? WithContext<I> : WithContext<T>;
 
-@variant(0)
-export class IndexableContext implements types.Context {
-	@field({ type: "u64" })
-	created: bigint;
-
-	@field({ type: "u64" })
-	modified: bigint;
-
-	@field({ type: "string" })
-	head: string;
-
-	@field({ type: "string" })
-	gid: string;
-
-	@field({ type: "u32" })
-	size: number; // bytes, we index this so we can query documents and understand their representation sizes
-
-	constructor(properties: {
-		created: bigint;
-		modified: bigint;
-		head: string;
-		gid: string;
-		size: number;
-	}) {
-		this.created = properties.created;
-		this.modified = properties.modified;
-		this.head = properties.head;
-		this.gid = properties.gid;
-		this.size = properties.size;
-	}
-
-	toContext(): types.Context {
-		return new types.Context({
-			created: this.created,
-			modified: this.modified,
-			head: this.head,
-			gid: this.gid,
-		});
-	}
-}
-
-export type WithIndexedContext<I> = {
-	__context: IndexableContext;
-} & I;
-
 export type WithContext<I> = {
 	__context: types.Context;
 } & I;
@@ -326,10 +281,10 @@ export type OpenOptions<
 
 type IndexableClass<I> = new (
 	value: I,
-	context: IndexableContext,
-) => WithIndexedContext<I>;
+	context: types.Context,
+) => WithContext<I>;
 
-const coerceWithContext = <T>(
+export const coerceWithContext = <T>(
 	value: T | WithContext<T>,
 	context: types.Context,
 ): WithContext<T> => {
@@ -368,8 +323,8 @@ export class DocumentIndex<
 	// Index key
 	private indexBy: string[];
 	private indexByResolver: (obj: any) => string | Uint8Array;
-	index: indexerTypes.Index<WithIndexedContext<I>>;
-	private _resumableIterators: ResumableIterators<WithIndexedContext<I>>;
+	index: indexerTypes.Index<WithContext<I>>;
+	private _resumableIterators: ResumableIterators<WithContext<I>>;
 
 	compatibility: 6 | 7 | 8 | undefined;
 
@@ -396,7 +351,7 @@ export class DocumentIndex<
 			from: PublicSignKey;
 			keptInIndex: number;
 			timeout: ReturnType<typeof setTimeout>;
-			queue: indexerTypes.IndexedResult<WithIndexedContext<I>>[];
+			queue: indexerTypes.IndexedResult<WithContext<I>>[];
 			fromQuery: types.SearchRequest | types.SearchRequestIndexed;
 		}
 	>;
@@ -424,10 +379,10 @@ export class DocumentIndex<
 
 		@variant(0)
 		class IndexedClassWithContext {
-			@field({ type: IndexableContext })
-			__context: IndexableContext;
+			@field({ type: types.Context })
+			__context: types.Context;
 
-			constructor(value: I, context: IndexableContext) {
+			constructor(value: I, context: types.Context) {
 				Object.assign(this, value);
 				this.__context = context;
 			}
@@ -440,7 +395,7 @@ export class DocumentIndex<
 		this.wrappedIndexedType = IndexedClassWithContext as new (
 			value: I,
 			context: types.Context,
-		) => WithIndexedContext<I>;
+		) => WithContext<I>;
 
 		// if this.type is a class that extends Program we want to do special functionality
 		this.isProgramValued = isSubclassOf(this.documentType, Program);
@@ -486,7 +441,7 @@ export class DocumentIndex<
 						obj.index.search(query),
 				},
 				/* maxBatchSize: MAX_BATCH_SIZE */
-			})) || new HashmapIndex<WithIndexedContext<I>>();
+			})) || new HashmapIndex<WithContext<I>>();
 
 		this._resumableIterators = new ResumableIterators(this.index);
 		this._maybeOpen = properties.maybeOpen;
@@ -623,8 +578,25 @@ export class DocumentIndex<
 		await iterator.close();
 		return one[0];
 	}
+	public async put(value: T, id: indexerTypes.IdKey, entry: Entry<Operation>) {
+		const existing = await this.index.get(id);
+		const context = new types.Context({
+			created:
+				existing?.value.__context.created ||
+				entry.meta.clock.timestamp.wallTime,
+			modified: entry.meta.clock.timestamp.wallTime,
+			head: entry.hash,
+			gid: entry.meta.gid,
+			size: entry.payload.byteLength,
+		});
+		return this.putWithContext(value, id, context);
+	}
 
-	public async put(value: T, entry: Entry<Operation>, id: indexerTypes.IdKey) {
+	public async putWithContext(
+		value: T,
+		id: indexerTypes.IdKey,
+		context: types.Context,
+	) {
 		const idString = id.primitive;
 		if (
 			this.isProgramValued /*
@@ -638,24 +610,13 @@ export class DocumentIndex<
 		} else {
 			this._resolverCache?.add(idString, value);
 		}
-
-		const existing = await this.index.get(id);
-		const context = new IndexableContext({
-			created:
-				existing?.value.__context.created ||
-				entry.meta.clock.timestamp.wallTime,
-			modified: entry.meta.clock.timestamp.wallTime,
-			head: entry.hash,
-			gid: entry.meta.gid,
-			size: entry.payload.byteLength,
-		});
-
 		const valueToIndex = await this.transformer(value, context);
 		const wrappedValueToIndex = new this.wrappedIndexedType(
 			valueToIndex as I,
 			context,
 		);
 		await this.index.put(wrappedValueToIndex);
+		return context;
 	}
 
 	public del(key: indexerTypes.IdKey) {
@@ -856,9 +817,8 @@ export class DocumentIndex<
 			throw new Error("Different from in queued results");
 		}
 
-		let indexedResult:
-			| indexerTypes.IndexedResults<WithIndexedContext<I>>
-			| undefined = undefined;
+		let indexedResult: indexerTypes.IndexedResults<WithContext<I>> | undefined =
+			undefined;
 
 		let fromQuery: types.SearchRequest | types.SearchRequestIndexed | undefined;
 		if (
@@ -941,14 +901,14 @@ export class DocumentIndex<
 
 				filteredResults.push(
 					new types.ResultValue({
-						context: result.value.__context.toContext(),
+						context: result.value.__context,
 						value: value.value,
 						source: serialize(value.value),
 						indexed: indexedUnwrapped,
 					}),
 				);
 			} else if (fromQuery instanceof types.SearchRequestIndexed) {
-				const context = result.value.__context.toContext();
+				const context = result.value.__context;
 				const head = await this._log.log.get(context.head);
 				// assume remote peer will start to replicate (TODO is this ideal?)
 				if (fromQuery.replicate) {

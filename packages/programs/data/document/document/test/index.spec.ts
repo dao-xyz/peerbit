@@ -105,6 +105,7 @@ describe("index", () => {
 				expect(changes[0].added[0] === doc).to.be.true;
 				expect(changes[0].added[0].id).equal(doc.id);
 				expect(changes[0].removed).to.be.empty;
+				expect(changes[0].added[0].__context.size).to.exist;
 
 				const putOperation2 = (await store.docs.put(doc2)).entry;
 				expect(await store.docs.index.getSize()).equal(2);
@@ -113,8 +114,9 @@ describe("index", () => {
 				expect(changes.length).equal(2);
 				expect(changes[1].added).to.have.length(1);
 				expect(changes[1].added[0].id).equal(doc2.id);
-				expect(changes[1].removed).to.be.empty;
+				expect(changes[1].added[0].__context.size).to.exist;
 
+				expect(changes[1].removed).to.be.empty;
 				// delete 1
 				const deleteOperation = (await store.docs.del(doc.id)).entry;
 				expect(deleteOperation.meta.next).to.have.members([putOperation.hash]); // because delete is dependent on put
@@ -124,6 +126,7 @@ describe("index", () => {
 				expect(changes[2].added).to.be.empty;
 				expect(changes[2].removed).to.have.length(1);
 				expect(changes[2].removed[0].id).equal(doc.id);
+				expect(changes[2].removed[0].__context.size).to.exist;
 			});
 
 			it("replication degree", async () => {
