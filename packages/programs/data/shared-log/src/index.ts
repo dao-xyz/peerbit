@@ -89,6 +89,7 @@ import {
 	appromixateCoverage,
 	calculateCoverage,
 	countCoveringRangesSameOwner,
+	createAssignedRangesQuery,
 	debounceAggregationChanges,
 	getAllMergeCandiates,
 	getCoverSet,
@@ -2643,6 +2644,30 @@ export class SharedLog<
 			(acc, { widthNormalized }) => acc + widthNormalized,
 			0,
 		);
+	}
+
+	async countAssignedHeads(options?: { strict: boolean }): Promise<number> {
+		const count = await this.entryCoordinatesIndex.count({
+			query: createAssignedRangesQuery(
+				(await this.getMyReplicationSegments()).map((x) => {
+					return { range: x };
+				}),
+				{ strict: options?.strict },
+			),
+		});
+		return count;
+	}
+
+	async countHeads(_properties: { approximate: true }): Promise<number> {
+		let isReplicating = await this.isReplicating();
+		if (!isReplicating) {
+			throw new Error("Not implemented for non-replicators");
+		}
+
+		const ownedHeadCount = await this.countAssignedHeads({ strict: false });
+		let minReplicasValue = this.replicas.min.getValue(this);
+		const myTotalParticipation = await this.calculateMyTotalParticipation();
+		return Math.round(ownedHeadCount / myTotalParticipation / minReplicasValue); // we devide by minReplicasValue because same head will be counted multiple times because of the sharding
 	}
 
 	get replicationIndex(): Index<ReplicationRangeIndexable<R>> {

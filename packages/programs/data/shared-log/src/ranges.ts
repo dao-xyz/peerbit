@@ -2392,6 +2392,45 @@ export const matchEntriesInRangeQuery = (range: {
 	return new Or(ors);
 };
 
+export const createAssignedRangesQuery = (
+	changes: {
+		range: {
+			start1: number | bigint;
+			end1: number | bigint;
+			start2: number | bigint;
+			end2: number | bigint;
+			mode: ReplicationIntent;
+		};
+	}[],
+	options?: { strict?: boolean },
+) => {
+	let ors: Query[] = [];
+	let onlyStrict = true;
+	// TODO what if the ranges are many many?
+	for (const change of changes) {
+		const matchRange = matchEntriesInRangeQuery(change.range);
+		ors.push(matchRange);
+		if (change.range.mode === ReplicationIntent.NonStrict) {
+			onlyStrict = false;
+		}
+	}
+
+	// entry is assigned to a range boundary, meaning it is due to be inspected
+	if (!options?.strict) {
+		if (!onlyStrict || changes.length === 0) {
+			ors.push(
+				new BoolQuery({
+					key: "assignedToRangeBoundary",
+					value: true,
+				}),
+			);
+		}
+	}
+
+	// entry is not sufficiently replicated, and we are to still keep it
+	return new Or(ors);
+};
+
 export type ReplicationChanges<
 	T extends ReplicationRangeIndexable<any> = ReplicationRangeIndexable<any>,
 > = ReplicationChange<T>[];
@@ -2564,35 +2603,10 @@ export const toRebalance = <R extends "u32" | "u64">(
 	rebalanceHistory: Cache<string>,
 ): AsyncIterable<EntryReplicated<R>> => {
 	const change = mergeReplicationChanges(changeOrChanges, rebalanceHistory);
-
-	const assignedRangesQuery = (changes: ReplicationChanges) => {
-		let ors: Query[] = [];
-		let onlyStrict = true;
-		for (const change of changes) {
-			const matchRange = matchEntriesInRangeQuery(change.range);
-			ors.push(matchRange);
-			if (change.range.mode === ReplicationIntent.NonStrict) {
-				onlyStrict = false;
-			}
-		}
-
-		// entry is assigned to a range boundary, meaning it is due to be inspected
-		if (!onlyStrict || changes.length === 0) {
-			ors.push(
-				new BoolQuery({
-					key: "assignedToRangeBoundary",
-					value: true,
-				}),
-			);
-		}
-
-		// entry is not sufficiently replicated, and we are to still keep it
-		return new Or(ors);
-	};
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			const iterator = index.iterate({
-				query: assignedRangesQuery(change),
+				query: createAssignedRangesQuery(change),
 			});
 
 			while (iterator.done() !== true) {
