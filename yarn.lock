@@ -3764,10 +3764,10 @@
     "@smithy/types" "^4.1.0"
     tslib "^2.6.2"
 
-"@sqlite.org/sqlite-wasm@^3.48.0-build4":
-  version "3.48.0-build4"
-  resolved "https://registry.yarnpkg.com/@sqlite.org/sqlite-wasm/-/sqlite-wasm-3.48.0-build4.tgz#a03e5e541ca05997149e819aa1f9ab473e3ffb72"
-  integrity sha512-hI6twvUkzOmyGZhQMza1gpfqErZxXRw6JEsiVjUbo7tFanVD+8Oil0Ih3l2nGzHdxPI41zFmfUQG7GHqhciKZQ==
+"@sqlite.org/sqlite-wasm@^3.49.1-build2":
+  version "3.49.1-build2"
+  resolved "https://registry.yarnpkg.com/@sqlite.org/sqlite-wasm/-/sqlite-wasm-3.49.1-build2.tgz#dba6fc58f9e68b20812872e6a27b07a267b2f1de"
+  integrity sha512-pZi8OSjNDZEYkvefsTOFKNRRN0GG9S5mtB6qBmrFZ5sraF5vxElPnTOl0DbJgiz9twlsOF5OzVkOce6Uc1TXsw==
 
 "@stablelib/binary@^2.0.1":
   version "2.0.1"
@@ -11602,7 +11602,7 @@ playwright-core@1.50.1, playwright-core@^1.45.2:
     ora "^7.0.1"
     p-timeout "^6.1.2"
     path-browserify "^1.0.1"
-    playwright-core "^1.45.2"
+    playwright-core "^1.41.1"
     polka "^0.5.2"
     premove "^4.0.0"
     process "^0.11.10"
