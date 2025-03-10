@@ -2370,7 +2370,11 @@ export const matchEntriesInRangeQuery = (range: {
 		}),
 	]);
 
-	if (range.start2 === range.end2) {
+	// if range2 has length 0 or range 2 is equal to range 1 only make one query
+	if (
+		range.start2 === range.end2 ||
+		(range.start1 === range.start2 && range.end1 === range.end2)
+	) {
 		return c1;
 	}
 

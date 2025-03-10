@@ -2647,13 +2647,15 @@ export class SharedLog<
 	}
 
 	async countAssignedHeads(options?: { strict: boolean }): Promise<number> {
+		const myRanges = await this.getMyReplicationSegments();
+		const query = createAssignedRangesQuery(
+			myRanges.map((x) => {
+				return { range: x };
+			}),
+			{ strict: options?.strict },
+		);
 		const count = await this.entryCoordinatesIndex.count({
-			query: createAssignedRangesQuery(
-				(await this.getMyReplicationSegments()).map((x) => {
-					return { range: x };
-				}),
-				{ strict: options?.strict },
-			),
+			query,
 		});
 		return count;
 	}
@@ -2663,11 +2665,17 @@ export class SharedLog<
 		if (!isReplicating) {
 			throw new Error("Not implemented for non-replicators");
 		}
-
-		const ownedHeadCount = await this.countAssignedHeads({ strict: false });
-		let minReplicasValue = this.replicas.min.getValue(this);
 		const myTotalParticipation = await this.calculateMyTotalParticipation();
-		return Math.round(ownedHeadCount / myTotalParticipation / minReplicasValue); // we devide by minReplicasValue because same head will be counted multiple times because of the sharding
+		let minReplicasValue = this.replicas.min.getValue(this);
+		const ownedHeadCount = await this.countAssignedHeads({ strict: true });
+
+		// this scale factor arise from that we distribute the content 'minReplicasValue' on the domain axis (i.e. we shard the content)
+		// but if we replicate more than 1/replicasValue space we will encounter the same head multiple times
+		const scaleFactor = Math.max(
+			1,
+			1 / (minReplicasValue * myTotalParticipation),
+		);
+		return Math.round(ownedHeadCount * scaleFactor);
 	}
 
 	get replicationIndex(): Index<ReplicationRangeIndexable<R>> {

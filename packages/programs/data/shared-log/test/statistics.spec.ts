@@ -78,7 +78,7 @@ describe(`countHeads`, function () {
 		let session: TestSession;
 
 		beforeEach(async () => {
-			session = await TestSession.connected(2);
+			session = await TestSession.connected(1);
 		});
 
 		afterEach(async () => {
@@ -88,19 +88,32 @@ describe(`countHeads`, function () {
 		it("throws when not replicating", async () => {
 			let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
+					replicate: false,
+				},
+			});
+
+			await db1.add("hello");
+			await expect(
+				db1.log.countHeads({ approximate: true }),
+			).eventually.rejectedWith("Not implemented for non-replicators");
+		});
+
+		it("counts when replicating all", async () => {
+			let db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
 					replicate: {
 						factor: 1,
 					},
 				},
 			});
 
-			await db1.add("hello");
-			expect(db1.log.countHeads({ approximate: true })).eventually.to.throw(
-				"Not implemented for non-replicators",
-			);
+			await db1.add("hello", { meta: { next: [] } });
+			await db1.add("hello again", { meta: { next: [] } });
+
+			expect(await db1.log.countHeads({ approximate: true })).to.eq(2);
 		});
 
-		it("partial", async () => {
+		it("partial 0.5", async () => {
 			let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 				args: {
 					replicate: {
@@ -109,33 +122,33 @@ describe(`countHeads`, function () {
 					},
 				},
 			});
-
-			let db2 = await session.peers[1].open(db1.clone(), {
-				args: {
-					replicate: {
-						offset: 0.5,
-						factor: 0.5,
-					},
-				},
-			});
-
 			let count = 1000;
-
 			for (let i = 0; i < count; i++) {
 				await db1.add(i.toString(), { meta: { next: [] } });
 			}
 
-			await waitForResolved(() =>
-				expect(db2.log.log.length).to.be.greaterThan(0),
-			);
 			await waitForConverged(() => db1.log.log.length);
-			await waitForConverged(() => db2.log.log.length);
-
 			const total1 = await db1.log.countHeads({ approximate: true });
-			const total2 = await db2.log.countHeads({ approximate: true });
-
 			expect(total1).to.be.within(count * 0.8, count * 1.2);
-			expect(total2).to.be.within(count * 0.8, count * 1.2);
+		});
+
+		it("partial 0.25", async () => {
+			let db1 = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					replicate: {
+						offset: 0,
+						factor: 0.25,
+					},
+				},
+			});
+			let count = 1000;
+			for (let i = 0; i < count; i++) {
+				await db1.add(i.toString(), { meta: { next: [] } });
+			}
+
+			await waitForConverged(() => db1.log.log.length);
+			const total1 = await db1.log.countHeads({ approximate: true });
+			expect(total1).to.be.within(count * 0.8, count * 1.2);
 		});
 	});
 });
