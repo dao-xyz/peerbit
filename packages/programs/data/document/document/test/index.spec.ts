@@ -3799,7 +3799,7 @@ describe("index", () => {
 				for (let i = 0; i < count; i++) {
 					let id = i.toString();
 					await store1.docs.put(new Document({ id }));
-					if (i % 4 == 0) {
+					if (i % 4 === 0) {
 						// delete 25%
 						await store1.docs.del(id);
 					}
