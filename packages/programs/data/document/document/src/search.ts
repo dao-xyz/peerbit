@@ -20,7 +20,11 @@ import {
 	type RPCResponse,
 	queryAll,
 } from "@peerbit/rpc";
-import { type ReplicationDomain, SharedLog } from "@peerbit/shared-log";
+import {
+	type CoverRange,
+	type ReplicationDomain,
+	SharedLog,
+} from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
@@ -43,7 +47,13 @@ export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
 	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
-	domain?: ExtractArgs<D>;
+	domain?:
+		| {
+				args: ExtractArgs<D>;
+		  }
+		| {
+				range: CoverRange<number | bigint>;
+		  };
 	eager?: boolean; // whether to query newly joined peers before they have matured
 };
 export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
@@ -64,6 +74,7 @@ export type ResultsIterator<T> = {
 	next: (number: number) => Promise<T[]>;
 	done: () => boolean;
 	all: () => Promise<T[]>;
+	pending: () => number | undefined;
 };
 
 type QueryDetailedOptions<
@@ -1029,7 +1040,7 @@ export class DocumentIndex<
 		let resolved: types.Results<types.ResultTypeFromRequest<R, T, I>>[] = [];
 		if (remote) {
 			const replicatorGroups = await this._log.getCover(
-				remote.domain ?? (undefined as any),
+				remote.domain ?? { args: undefined },
 				{
 					roleAge: remote.minAge,
 					eager: remote.eager,
@@ -1615,6 +1626,13 @@ export class DocumentIndex<
 			close,
 			next,
 			done: doneFn,
+			pending: () => {
+				let kept = 0;
+				for (const [_, buffer] of peerBufferMap) {
+					kept += buffer.kept;
+				}
+				return kept; // TODO this should be more accurate
+			},
 			all: async () => {
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				while (doneFn() !== true) {

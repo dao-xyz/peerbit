@@ -121,8 +121,10 @@ describe("domain", () => {
 				{
 					remote: {
 						domain: {
-							from: 2n,
-							to: 3n,
+							args: {
+								from: 2n,
+								to: 3n,
+							},
 						},
 						eager: true,
 					},
@@ -135,8 +137,10 @@ describe("domain", () => {
 				await store.docs.index.search(new SearchRequest(), {
 					remote: {
 						domain: {
-							from: 4n,
-							to: 5n,
+							args: {
+								from: 4n,
+								to: 5n,
+							},
 						},
 					},
 				});
@@ -156,8 +160,10 @@ describe("domain", () => {
 				{
 					remote: {
 						domain: {
-							from: 0n,
-							to: 5n,
+							args: {
+								from: 0n,
+								to: 5n,
+							},
 						},
 						eager: true,
 						replicate: true,
@@ -188,8 +194,10 @@ describe("domain", () => {
 				{
 					remote: {
 						domain: {
-							from: 0n,
-							to: 5n,
+							args: {
+								from: 0n,
+								to: 5n,
+							},
 						},
 						eager: true,
 						replicate: true,

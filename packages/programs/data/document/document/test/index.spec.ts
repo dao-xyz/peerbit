@@ -3651,7 +3651,7 @@ describe("index", () => {
 	});
 
 	describe("count", () => {
-		let peersCount = 2;
+		let peersCount = 3;
 
 		before(async () => {
 			session = await TestSession.connected(peersCount);
@@ -3689,21 +3689,6 @@ describe("index", () => {
 		};
 
 		describe("approximate", () => {
-			it("throws when not replicating", async () => {
-				const store = new TestStore({
-					docs: new Documents<Document>(),
-				});
-				await session.peers[0].open(store, {
-					args: {
-						replicate: false,
-					},
-				});
-
-				await expect(store.docs.count({ approximate: true })).eventually.throw(
-					"Not implemented for non-replicators",
-				);
-			});
-
 			it("0 docs", async () => {
 				const store = new TestStore({
 					docs: new Documents<Document>(),
@@ -3712,8 +3697,7 @@ describe("index", () => {
 
 				expect(await store.docs.count({ approximate: true })).to.eq(0);
 			});
-
-			it("returns approximate count", async () => {
+			const createStores = async () => {
 				const store1 = new TestStore({
 					docs: new Documents<Document>(),
 				});
@@ -3741,6 +3725,25 @@ describe("index", () => {
 						timeUntilRoleMaturity: 0,
 					},
 				});
+
+				const store3 = await session.peers[2].open(store1.clone(), {
+					args: {
+						replicate: false,
+						replicas: {
+							min: 1,
+						},
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				return {
+					store1,
+					store2,
+					store3,
+				};
+			};
+
+			it("returns approximate count", async () => {
+				const { store1, store2, store3 } = await createStores();
 
 				let count = 1000;
 
@@ -3760,39 +3763,15 @@ describe("index", () => {
 
 				const approxCount1 = await store1.docs.count({ approximate: true });
 				const approxCount2 = await store2.docs.count({ approximate: true });
+				const approxCount3 = await store3.docs.count({ approximate: true });
 
 				expect(approxCount1).to.be.within(count * 0.9, count * 1.1);
 				expect(approxCount2).to.be.within(count * 0.9, count * 1.1);
+				expect(approxCount3).to.be.within(count * 0.9, count * 1.1);
 			});
 
 			it("returns approximate count with deletions", async () => {
-				const store1 = new TestStore({
-					docs: new Documents<Document>(),
-				});
-				await session.peers[0].open(store1, {
-					args: {
-						replicate: {
-							offset: 0,
-							factor: 0.5,
-						},
-						replicas: {
-							min: 1,
-						},
-						timeUntilRoleMaturity: 0,
-					},
-				});
-				const store2 = await session.peers[1].open(store1.clone(), {
-					args: {
-						replicate: {
-							offset: 0.5,
-							factor: 0.5,
-						},
-						replicas: {
-							min: 1,
-						},
-						timeUntilRoleMaturity: 0,
-					},
-				});
+				const { store1, store2, store3 } = await createStores();
 
 				let count = 1000;
 
@@ -3819,12 +3798,18 @@ describe("index", () => {
 
 				const approxCount1 = await store1.docs.count({ approximate: true });
 				const approxCount2 = await store2.docs.count({ approximate: true });
+				const approxCount3 = await store3.docs.count({ approximate: true });
 
 				expect(approxCount1).to.be.within(
 					expectedDocCountAfterDelete * 0.9,
 					expectedDocCountAfterDelete * 1.1,
 				);
 				expect(approxCount2).to.be.within(
+					expectedDocCountAfterDelete * 0.9,
+					expectedDocCountAfterDelete * 1.1,
+				);
+
+				expect(approxCount3).to.be.within(
 					expectedDocCountAfterDelete * 0.9,
 					expectedDocCountAfterDelete * 1.1,
 				);

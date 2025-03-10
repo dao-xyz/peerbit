@@ -689,7 +689,29 @@ export class Documents<
 	}
 
 	// approximate the amount of documents that exists globally
-	async count(_properties: { approximate: true }): Promise<number> {
+	async count(properties: {
+		approximate: true | { eager?: boolean };
+	}): Promise<number> {
+		let isReplicating = await this.log.isReplicating();
+		if (!isReplicating) {
+			// fetch a subset of posts
+			const iterator = this.index.iterate(
+				{},
+				{
+					remote: {
+						eager:
+							(typeof properties.approximate === "object" &&
+								properties.approximate.eager) ||
+							false,
+					},
+				},
+			);
+			const one = await iterator.next(1);
+			const left = iterator.pending() ?? 0;
+			await iterator.close();
+			return one.length + left;
+		}
+
 		let totalHeadCount = await this.log.countHeads({ approximate: true });
 		let totalAssignedHeads = await this.log.countAssignedHeads({
 			strict: false,
