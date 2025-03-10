@@ -687,4 +687,21 @@ export class Documents<
 			new CustomEvent("change", { detail: documentsChanged }),
 		);
 	}
+
+	// approximate the amount of documents that exists globally
+	async count(_properties: { approximate: true }): Promise<number> {
+		let totalHeadCount = await this.log.countHeads({ approximate: true });
+		let totalAssignedHeads = await this.log.countAssignedHeads({
+			strict: false,
+		});
+
+		let indexedDocumentsCount = await this.index.index.count();
+		if (totalAssignedHeads == 0) {
+			return indexedDocumentsCount; // TODO is this really expected?
+		}
+
+		const nonDeletedDocumentsRatio = indexedDocumentsCount / totalAssignedHeads; // [0, 1]
+		let expectedAmountOfDocuments = totalHeadCount * nonDeletedDocumentsRatio; // if total heads count is 100 and 80% is actual documents, then 80 pieces of non-deleted documents should exist
+		return expectedAmountOfDocuments;
+	}
 }

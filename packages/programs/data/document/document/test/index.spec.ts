@@ -3650,6 +3650,188 @@ describe("index", () => {
 		});
 	});
 
+	describe("count", () => {
+		let peersCount = 2;
+
+		before(async () => {
+			session = await TestSession.connected(peersCount);
+		});
+
+		after(async () => {
+			await session.stop();
+		});
+
+		// wait for store2 and store1 size converge
+		const waitForConverge = async (fn: () => number) => {
+			// call the function until the value converges
+			let lastValue = -1;
+			let value = -1;
+			let timeouForConvergenze = 1e4;
+
+			let deferred = pDefer();
+
+			let timeout = setTimeout(() => {
+				deferred.reject("Timeout");
+			}, timeouForConvergenze);
+
+			const check = async () => {
+				value = await fn();
+				if (value === lastValue) {
+					clearTimeout(timeout);
+					deferred.resolve(value);
+				} else {
+					lastValue = value;
+					setTimeout(check, 2e3);
+				}
+			};
+
+			return check();
+		};
+
+		describe("approximate", () => {
+			it("throws when not replicating", async () => {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+
+				await expect(store.docs.count({ approximate: true })).eventually.throw(
+					"Not implemented for non-replicators",
+				);
+			});
+
+			it("0 docs", async () => {
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store);
+
+				expect(await store.docs.count({ approximate: true })).to.eq(0);
+			});
+
+			it("returns approximate count", async () => {
+				const store1 = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store1, {
+					args: {
+						replicate: {
+							offset: 0,
+							factor: 0.5,
+						},
+						replicas: {
+							min: 1,
+						},
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				const store2 = await session.peers[1].open(store1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.5,
+							factor: 0.5,
+						},
+						replicas: {
+							min: 1,
+						},
+						timeUntilRoleMaturity: 0,
+					},
+				});
+
+				let count = 1000;
+
+				for (let i = 0; i < count; i++) {
+					await store1.docs.put(new Document({ id: i.toString() }));
+				}
+
+				await waitForResolved(() =>
+					expect(store2.docs.log.log.length).to.be.greaterThan(0),
+				);
+				await waitForResolved(() =>
+					expect(store1.docs.log.log.length).to.be.lessThan(count),
+				);
+
+				await waitForConverge(() => store1.docs.log.log.length);
+				await waitForConverge(() => store2.docs.log.log.length);
+
+				const approxCount1 = await store1.docs.count({ approximate: true });
+				const approxCount2 = await store2.docs.count({ approximate: true });
+
+				expect(approxCount1).to.be.within(count * 0.9, count * 1.1);
+				expect(approxCount2).to.be.within(count * 0.9, count * 1.1);
+			});
+
+			it("returns approximate count with deletions", async () => {
+				const store1 = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store1, {
+					args: {
+						replicate: {
+							offset: 0,
+							factor: 0.5,
+						},
+						replicas: {
+							min: 1,
+						},
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				const store2 = await session.peers[1].open(store1.clone(), {
+					args: {
+						replicate: {
+							offset: 0.5,
+							factor: 0.5,
+						},
+						replicas: {
+							min: 1,
+						},
+						timeUntilRoleMaturity: 0,
+					},
+				});
+
+				let count = 1000;
+
+				for (let i = 0; i < count; i++) {
+					let id = i.toString();
+					await store1.docs.put(new Document({ id }));
+					if (i % 4 == 0) {
+						// delete 25%
+						await store1.docs.del(id);
+					}
+				}
+
+				let expectedDocCountAfterDelete = count * 0.75;
+
+				await waitForResolved(() =>
+					expect(store2.docs.log.log.length).to.be.greaterThan(0),
+				);
+				await waitForResolved(() =>
+					expect(store1.docs.log.log.length).to.be.lessThan(count),
+				);
+
+				await waitForConverge(() => store1.docs.log.log.length);
+				await waitForConverge(() => store2.docs.log.log.length);
+
+				const approxCount1 = await store1.docs.count({ approximate: true });
+				const approxCount2 = await store2.docs.count({ approximate: true });
+
+				expect(approxCount1).to.be.within(
+					expectedDocCountAfterDelete * 0.9,
+					expectedDocCountAfterDelete * 1.1,
+				);
+				expect(approxCount2).to.be.within(
+					expectedDocCountAfterDelete * 0.9,
+					expectedDocCountAfterDelete * 1.1,
+				);
+			});
+		});
+	});
+
 	describe("migration", () => {
 		describe("v6-v7", async () => {
 			let store: TestStore;
