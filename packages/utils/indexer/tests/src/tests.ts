@@ -4037,6 +4037,19 @@ export const tests = (
 		});
 
 		describe("count", () => {
+			class NumberArrayDocument {
+				@field({ type: "string" })
+				id: string;
+
+				@field({ type: vec("u32") })
+				numberArray: number[];
+
+				constructor(opts: NumberArrayDocument) {
+					this.id = opts.id;
+					this.numberArray = opts.numberArray;
+				}
+			}
+
 			it("it returns count", async () => {
 				await setupDefault();
 				const sum = await store.count();
@@ -4056,6 +4069,70 @@ export const tests = (
 					],
 				});
 				expect(sum).to.equal(1);
+			});
+
+			it("deduplicates array string hits", async () => {
+				await setupDefault();
+				let count = await store.count({
+					query: [
+						new StringMatch({
+							key: "tags",
+							value: "world",
+							method: StringMatchMethod.contains,
+							caseInsensitive: true,
+						}),
+					],
+				});
+				expect(count).to.equal(1);
+
+				// add a new docs with many "world" strings
+				await store.put(
+					new Document({
+						id: "333",
+						name: "hello",
+						number: 1n,
+						tags: ["world", "world"],
+					}),
+				);
+				count = await store.count({
+					query: [
+						new StringMatch({
+							key: "tags",
+							value: "world",
+							method: StringMatchMethod.contains,
+							caseInsensitive: true,
+						}),
+					],
+				});
+
+				expect(count).to.equal(2);
+			});
+
+			it("deduplicates array number hits", async () => {
+				await setup({ schema: NumberArrayDocument });
+				await store.put(
+					new NumberArrayDocument({
+						id: "1",
+						numberArray: [1, 2],
+					}),
+				);
+
+				const count = await store.count({
+					query: [
+						new IntegerCompare({
+							key: "numberArray",
+							compare: Compare.GreaterOrEqual,
+							value: 0,
+						}),
+						new IntegerCompare({
+							key: "numberArray",
+							compare: Compare.LessOrEqual,
+							value: 10,
+						}),
+					],
+				});
+
+				expect(count).to.equal(1);
 			});
 		});
 
