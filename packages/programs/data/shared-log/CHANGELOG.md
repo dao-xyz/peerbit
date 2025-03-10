@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.4.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.23...shared-log-v10.4.0) (2025-03-10)
+
+
+### Features
+
+* add approximative count heads  method ([857e90b](https://github.com/dao-xyz/peerbit/commit/857e90bb278cd77e5b14dec4c87603f0648e6e3a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.39 to 4.0.40
+    * @peerbit/rpc bumped from 5.0.37 to 5.0.38
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.27 to ^2.1.28
+
 ## [10.3.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.22...shared-log-v10.3.23) (2025-03-08)
 
 

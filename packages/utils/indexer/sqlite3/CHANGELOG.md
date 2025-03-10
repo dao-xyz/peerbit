@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.12](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.11...indexer-sqlite3-v1.2.12) (2025-03-10)
+
+
+### Bug Fixes
+
+* distinct on id when counting ([5b27470](https://github.com/dao-xyz/peerbit/commit/5b2747053609c524c788fef7331f05ca50889af9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.1.8 to ^1.1.9
+
 ## [1.2.11](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.10...indexer-sqlite3-v1.2.11) (2025-03-07)
 
 
