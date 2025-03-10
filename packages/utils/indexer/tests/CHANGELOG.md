@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.9](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.8...indexer-tests-v1.1.9) (2025-03-10)
+
+
+### Bug Fixes
+
+* add  test for counting for multi-condition and number array matching ([df500bc](https://github.com/dao-xyz/peerbit/commit/df500bc9c3f6271514a6cf12637a351aff19a468))
+
 ## [1.1.8](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.7...indexer-tests-v1.1.8) (2025-02-20)
 
 
