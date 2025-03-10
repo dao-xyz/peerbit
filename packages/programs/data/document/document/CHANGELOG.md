@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.2.2](https://github.com/dao-xyz/peerbit/compare/document-v9.2.1...document-v9.2.2) (2025-03-10)
+
+
+### Bug Fixes
+
+* allow non-replicators to count documents ([5652381](https://github.com/dao-xyz/peerbit/commit/5652381b74509644f8ff30cd404eb4ce9955c2c3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 10.4.1 to 10.4.2
+
 ## [9.2.1](https://github.com/dao-xyz/peerbit/compare/document-v9.2.0...document-v9.2.1) (2025-03-10)
 
 

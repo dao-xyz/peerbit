@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.4.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.1...shared-log-v10.4.2) (2025-03-10)
+
+
+### Bug Fixes
+
+* allow passing range as args for getCover ([109adba](https://github.com/dao-xyz/peerbit/commit/109adba7040a982f4adc9da9df551c23817003b0))
+
 ## [10.4.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.0...shared-log-v10.4.1) (2025-03-10)
 
 
