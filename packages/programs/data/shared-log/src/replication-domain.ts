@@ -26,7 +26,7 @@ export type ReplicationDomainCoverSet<Args> = (
 	args: Args,
 ) => Promise<string[]> | string[]; // minimum set of peers that covers all the data
 
-type CoverRange<T extends number | bigint> = {
+export type CoverRange<T extends number | bigint> = {
 	offset: T | PublicSignKey;
 	length?: T;
 };

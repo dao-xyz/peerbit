@@ -168,8 +168,10 @@ describe("ReplicationDomainTime", function () {
 
 			const replicatorsDefined = await db2.log.getCover(
 				{
-					from: someTimeInTheFuture,
-					to: someTimeInTheFuture + 100,
+					args: {
+						from: someTimeInTheFuture,
+						to: someTimeInTheFuture + 100,
+					},
 				},
 				{ roleAge: 0 },
 			);
@@ -180,8 +182,10 @@ describe("ReplicationDomainTime", function () {
 
 			const resplicatorsUndefined = await db2.log.getCover(
 				{
-					from: someTimeInTheFuture - 100,
-					to: someTimeInTheFuture - 10,
+					args: {
+						from: someTimeInTheFuture - 100,
+						to: someTimeInTheFuture - 10,
+					},
 				},
 				{ roleAge: 0 },
 			);

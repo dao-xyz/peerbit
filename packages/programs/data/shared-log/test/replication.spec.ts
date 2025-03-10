@@ -1484,9 +1484,12 @@ testSetups.forEach((setup) => {
 					),
 				);
 
-				const unionFromPeer0 = await db1.log.getCover(undefined, {
-					roleAge: 0,
-				});
+				const unionFromPeer0 = await db1.log.getCover(
+					{ args: undefined },
+					{
+						roleAge: 0,
+					},
+				);
 				let selfIndex = unionFromPeer0.findIndex(
 					(x) => x === db1.node.identity.publicKey.hashcode(),
 				);
@@ -1503,7 +1506,7 @@ testSetups.forEach((setup) => {
 					[db2, db3].map((log) =>
 						waitForResolved(async () =>
 							expect(
-								await log.log.getCover(undefined, { roleAge: 0 }),
+								await log.log.getCover({ args: undefined }, { roleAge: 0 }),
 							).to.have.members([log.node.identity.publicKey.hashcode()]),
 						),
 					),

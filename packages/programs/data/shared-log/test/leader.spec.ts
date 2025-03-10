@@ -500,13 +500,13 @@ describe(`isLeader`, function () {
 
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
-			expect(await db1.log.getCover(undefined, { roleAge: 0 })).to.deep.equal([
-				session.peers[0].identity.publicKey.hashcode(),
-			]);
+			expect(
+				await db1.log.getCover({ args: undefined }, { roleAge: 0 }),
+			).to.deep.equal([session.peers[0].identity.publicKey.hashcode()]);
 
-			expect(await db2.log.getCover(undefined, { roleAge: 0 })).to.deep.equal([
-				session.peers[1].identity.publicKey.hashcode(),
-			]);
+			expect(
+				await db2.log.getCover({ args: undefined }, { roleAge: 0 }),
+			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
 		});
 
 		it("will consider in flight", async () => {
@@ -564,12 +564,12 @@ describe(`isLeader`, function () {
 
 			// expect either db1 to replicate more than 50% or db2 to replicate more than 50%
 			// for these
-			expect(await db2.log.getCover(undefined, { roleAge: 0 })).to.have.members(
-				[
-					session.peers[0].identity.publicKey.hashcode(),
-					session.peers[1].identity.publicKey.hashcode(),
-				],
-			);
+			expect(
+				await db2.log.getCover({ args: undefined }, { roleAge: 0 }),
+			).to.have.members([
+				session.peers[0].identity.publicKey.hashcode(),
+				session.peers[1].identity.publicKey.hashcode(),
+			]);
 
 			abortController.abort("Start sending now");
 			await waitForResolved(() => {
@@ -581,9 +581,9 @@ describe(`isLeader`, function () {
 			});
 
 			// no more inflight
-			expect(await db2.log.getCover(undefined, { roleAge: 0 })).to.deep.equal([
-				session.peers[1].identity.publicKey.hashcode(),
-			]);
+			expect(
+				await db2.log.getCover({ args: undefined }, { roleAge: 0 }),
+			).to.deep.equal([session.peers[1].identity.publicKey.hashcode()]);
 		});
 
 		it("sets replicators groups correctly", async () => {
@@ -651,7 +651,7 @@ describe(`isLeader`, function () {
 				// min replicas 2 only need to query 2
 				// min replicas 1 only need to query 3 (data could end up at any of the 3 nodes)
 				expect(
-					await db1.log.getCover(undefined, { roleAge: 0 }),
+					await db1.log.getCover({ args: undefined }, { roleAge: 0 }),
 				).to.have.length(3 - i + 1);
 			}
 		});
@@ -718,10 +718,13 @@ describe(`isLeader`, function () {
 
 					// Should always include all nodes since no is mature
 					expect(
-						await db3.log.getCover(undefined, {
-							roleAge: 0xffffffff,
-							eager: true,
-						}),
+						await db3.log.getCover(
+							{ args: undefined },
+							{
+								roleAge: 0xffffffff,
+								eager: true,
+							},
+						),
 					).to.have.length(3);
 				}
 			});
@@ -788,7 +791,7 @@ describe(`isLeader`, function () {
 
 				// Should always include all nodes since no is mature
 				expect(
-					await db3.log.getCover(undefined, { roleAge: 0xffffffff }),
+					await db3.log.getCover({ args: undefined }, { roleAge: 0xffffffff }),
 				).to.have.length(1);
 			}
 		});
@@ -862,9 +865,12 @@ describe(`isLeader`, function () {
 
 				for (let i = 1; i < 3; i++) {
 					db3.log.replicas.min = { getValue: () => i };
-					let list = await db3.log.getCover(undefined, {
-						roleAge: MATURE_TIME,
-					});
+					let list = await db3.log.getCover(
+						{ args: undefined },
+						{
+							roleAge: MATURE_TIME,
+						},
+					);
 					expect(list).to.have.length(2); // TODO unmature nodes should not be queried
 					expect(list).to.have.members([
 						session.peers[0].identity.publicKey.hashcode(),
@@ -879,7 +885,10 @@ describe(`isLeader`, function () {
 
 					// all is matured now
 					expect(
-						await db3.log.getCover(undefined, { roleAge: MATURE_TIME }),
+						await db3.log.getCover(
+							{ args: undefined },
+							{ roleAge: MATURE_TIME },
+						),
 					).to.have.length(3 - i + 1); // since I am replicating with factor 1 and is mature
 				}
 			});

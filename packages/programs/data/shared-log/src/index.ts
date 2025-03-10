@@ -110,6 +110,7 @@ import {
 	createReplicationDomainTime,
 } from "./replication-domain-time.js";
 import {
+	type CoverRange,
 	type ExtractDomainArgs,
 	type ReplicationDomain,
 	type ReplicationDomainConstructor,
@@ -150,6 +151,7 @@ export {
 	type EntryReplicated,
 	EntryReplicatedU32,
 	EntryReplicatedU64,
+	type CoverRange,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn({ module: "shared-log" });
@@ -1960,7 +1962,9 @@ export class SharedLog<
 	}
 
 	async getCover(
-		args: ExtractDomainArgs<D>,
+		properties:
+			| { args?: ExtractDomainArgs<D> }
+			| { range: CoverRange<NumberFromType<R>> },
 		options?: {
 			roleAge?: number;
 			eager?:
@@ -1972,7 +1976,12 @@ export class SharedLog<
 	) {
 		let roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
 		let eager = options?.eager ?? false;
-		const range = await this.domain.fromArgs(args);
+		let range: CoverRange<NumberFromType<R>>;
+		if (properties && "range" in properties) {
+			range = properties.range;
+		} else {
+			range = await this.domain.fromArgs(properties.args);
+		}
 
 		const width =
 			range.length ??
