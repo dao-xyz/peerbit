@@ -1401,7 +1401,7 @@ export const convertCountRequestToQuery = (
 		table,
 	);
 	return {
-		sql: `SELECT count(*) as count FROM ${table.name} ${query}`,
+		sql: `SELECT count(DISTINCT ${table.primary!}) as count FROM ${table.name} ${query}`,
 		bindable,
 	};
 };
