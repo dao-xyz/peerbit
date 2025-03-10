@@ -389,6 +389,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.4.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.0...shared-log-v10.4.1) (2025-03-10)
+
+
+### Bug Fixes
+
+* prevent invalid approximative head count calculation for large replication ranges ([6f22b3e](https://github.com/dao-xyz/peerbit/commit/6f22b3ec844ded2fa2a7bef1f7f88fe51b1813f8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.40 to 4.0.41
+    * @peerbit/rpc bumped from 5.0.38 to 5.0.39
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.28 to ^2.1.29
+
 ## [10.4.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.23...shared-log-v10.4.0) (2025-03-10)
 
 
