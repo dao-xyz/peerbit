@@ -358,6 +358,106 @@ describe("index", () => {
 				await store.docs.put(doc);
 				expect(largeMessagesSent).to.eq(0);
 			});
+
+			it("updates are propagated", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+				let doc = new Document({
+					id: uuid(),
+					name: "Hello world",
+				});
+
+				await store.docs.put(doc);
+
+				// open with another store
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: 1,
+					},
+				});
+
+				let eventsFromStore1: DocumentsChange<Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					eventsFromStore1.push(evt.detail);
+				});
+				await waitForResolved(async () =>
+					expect(await store2.docs.index.index.count()).to.eq(1),
+				);
+				const docFromStore2 = await store2.docs.index.get(doc.id);
+				docFromStore2.name = "Goodbye";
+				await store2.docs.put(docFromStore2);
+				await waitForResolved(async () =>
+					expect(eventsFromStore1).to.have.length(1),
+				);
+				const docFromStore1 = await store.docs.index.get(doc.id);
+				expect(docFromStore1.name).to.eq("Goodbye");
+			});
+
+			describe("strictHistory", () => {
+				it("enabled", async () => {
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: 1,
+							strictHistory: true,
+						},
+					});
+					let doc = new Document({
+						id: uuid(),
+						name: "Hello",
+					});
+
+					await store.docs.put(doc);
+
+					let updatedDoc = new Document({
+						id: doc.id,
+						name: "Goodbyte",
+					});
+
+					try {
+						await store.docs.put(updatedDoc, { meta: { next: [] } });
+					} catch (error) {
+						expect(error).to.be.instanceOf(AccessError);
+					}
+
+					const documentFetched = await store.docs.index.get(doc.id);
+					expect(documentFetched.name).to.eq("Hello"); // not updated
+				});
+				it("disabled by default", async () => {
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: 1,
+						},
+					});
+					let doc = new Document({
+						id: uuid(),
+						name: "Hello",
+					});
+
+					await store.docs.put(doc);
+
+					let updatedDoc = new Document({
+						id: doc.id,
+						name: "Goodbye",
+					});
+
+					await store.docs.put(updatedDoc, { meta: { next: [] } });
+
+					const documentFetched = await store.docs.index.get(doc.id);
+					expect(documentFetched.name).to.eq("Goodbye");
+				});
+			});
 		});
 
 		describe("replication", () => {

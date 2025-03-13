@@ -215,11 +215,6 @@ function isSubclassOf(
 
 const DEFAULT_INDEX_BY = "id";
 
-/* 
-if (!(await this.canRead(message.sender))) {
-	throw new AccessError();
-} */
-
 export type CanSearch = (
 	request: types.SearchRequest | types.CollectNextRequest,
 	from: PublicSignKey,

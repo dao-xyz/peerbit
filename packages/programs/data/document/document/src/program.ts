@@ -89,6 +89,7 @@ export type SetupOptions<
 	type: AbstractType<T>;
 	canOpen?: (program: T) => MaybePromise<boolean>;
 	canPerform?: CanPerform<T>;
+	strictHistory?: boolean;
 	id?: (obj: any) => indexerTypes.IdPrimitive;
 	index?: {
 		canSearch?: CanSearch;
@@ -126,7 +127,7 @@ export class Documents<
 	private _optionCanPerform?: CanPerform<T>;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
-
+	private strictHistory: boolean;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
 
 	compatibility: 6 | 7 | undefined;
@@ -181,6 +182,7 @@ export class Documents<
 
 		this.idResolver = idResolver;
 		this.compatibility = options.compatibility;
+		this.strictHistory = options.strictHistory ?? false;
 
 		await this._index.open({
 			log: this.log,
@@ -377,22 +379,28 @@ export class Documents<
 
 						return putOperation;
 					} else {
-						if (entry.meta.next.length !== 1) {
-							return false;
-						}
+						if (this.strictHistory) {
+							// make sure that the next pointer exist and points to the existing documents
+							if (entry.meta.next.length !== 1) {
+								return false;
+							}
 
-						const prevEntry = await this.log.log.entryIndex.get(
-							existingDocument.context.head,
-						);
-						if (!prevEntry) {
-							logger.error(
-								"Failed to find previous entry for document edit: " +
-									entry.hash,
+							const prevEntry = await this.log.log.entryIndex.get(
+								existingDocument.context.head,
 							);
-							return false;
+							if (!prevEntry) {
+								logger.error(
+									"Failed to find previous entry for document edit: " +
+										entry.hash,
+								);
+								return false;
+							}
+							const referenceHistoryCorrectly =
+								await pointsToHistory(prevEntry);
+							return referenceHistoryCorrectly ? putOperation : false;
+						} else {
+							return putOperation;
 						}
-						const referenceHistoryCorrectly = await pointsToHistory(prevEntry);
-						return referenceHistoryCorrectly ? putOperation : false;
 					}
 				} else {
 					if (entry.meta.next.length !== 0) {
@@ -507,7 +515,6 @@ export class Documents<
 			},
 			replicate: options?.replicate,
 		});
-
 		return appended;
 	}
 
