@@ -563,7 +563,7 @@ export class EntryV0<T>
 		});
 
 		if (properties.canAppend && !(await properties.canAppend(entry))) {
-			throw new AccessError();
+			throw new AccessError("Not allowed to append");
 		}
 
 		// Append hash
