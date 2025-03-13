@@ -1,4 +1,5 @@
 import { type Blocks } from "@peerbit/blocks-interface";
+import type { Identity } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
 import PQueue from "p-queue";
 import type { Address } from "./address.js";
@@ -23,6 +24,7 @@ export type OpenOptions<T extends Manageable<ExtractArgs<T>>> = {
 export type WithArgs<Args> = { args?: Args };
 export type WithParent<T> = { parent?: T };
 export type Closeable = { closed: boolean; close(): Promise<boolean> };
+type WithNode = { node: { identity: Identity } };
 export type Addressable = { address: Address };
 export interface Saveable {
 	save(
@@ -50,7 +52,7 @@ export type Manageable<Args> = Closeable &
 	CanEmit & {
 		children: Manageable<any>[];
 		parents: (Manageable<any> | undefined)[];
-	};
+	} & WithNode;
 
 export type ProgramInitializationOptions<Args, T extends Manageable<Args>> = {
 	// TODO
@@ -83,6 +85,7 @@ export class Handler<T extends Manageable<any>> {
 				options?: { timeout?: number },
 			) => Promise<T | undefined>;
 			shouldMonitor: (thing: any) => boolean;
+			identity: Identity;
 		},
 	) {
 		this._openQueue = new Map();
@@ -196,6 +199,16 @@ export class Handler<T extends Manageable<any>> {
 							return existing as S;
 						}
 					} else {
+						if (
+							!program.node.identity.publicKey.equals(
+								this.properties.identity.publicKey,
+							)
+						) {
+							throw new Error(
+								`Program at ${program.address} is already opened with a different client`,
+							);
+						}
+
 						// assume new instance was not added to monitored items, just add it
 						// and return it as we would opened it normally
 						this.items.set(program.address, program);

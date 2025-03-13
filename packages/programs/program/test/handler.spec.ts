@@ -192,6 +192,14 @@ describe(`shared`, () => {
 		expect(p1.closed).to.be.true;
 	});
 
+	it("throws whe open an already open program with another client", async () => {
+		const p1 = new TestProgram();
+		await client.open(p1);
+		await expect(createPeer().then((c) => c.open(p1))).eventually.rejectedWith(
+			`Program at ${p1.address} is already opened with a different client`,
+		);
+	});
+
 	// TODO add tests and define behaviour for cross topic programs
 	// TODO add tests for shared subprogams
 	// TODO add tests for subprograms that is also open as root program

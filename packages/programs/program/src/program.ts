@@ -90,6 +90,7 @@ export type ProgramClient = Client<Program>;
 class ProgramHandler extends Handler<Program> {
 	constructor(properties: { client: ProgramClient }) {
 		super({
+			identity: properties.client.identity,
 			client: properties.client,
 			shouldMonitor: (p) => p instanceof Program,
 			load: Program.load,
