@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.1.8](https://github.com/dao-xyz/peerbit/compare/program-v5.1.7...program-v5.1.8) (2025-03-13)
+
+
+### Bug Fixes
+
+* prevent same program to be opened with multiple client ([f62946a](https://github.com/dao-xyz/peerbit/commit/f62946ac8846deb77aab106acd57f176e8869ff1))
+
 ## [5.1.7](https://github.com/dao-xyz/peerbit/compare/program-v5.1.6...program-v5.1.7) (2025-03-13)
 
 
