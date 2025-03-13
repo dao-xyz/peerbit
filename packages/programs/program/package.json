@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program",
-	"version": "5.1.6",
+	"version": "5.1.7",
 	"description": "Program interface",
 	"sideEffects": false,
 	"type": "module",
@@ -59,10 +59,10 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "2.3.5",
-		"@peerbit/keychain": "^1.0.24",
-		"@peerbit/blocks-interface": "^1.3.12",
-		"@peerbit/pubsub-interface": "^3.1.4",
+		"@peerbit/crypto": "2.3.6",
+		"@peerbit/keychain": "^1.0.25",
+		"@peerbit/blocks-interface": "^1.3.13",
+		"@peerbit/pubsub-interface": "^3.1.5",
 		"@peerbit/any-store-interface": "^1.0.0"
 	}
 }
