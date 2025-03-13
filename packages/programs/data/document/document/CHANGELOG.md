@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.0](https://github.com/dao-xyz/peerbit/compare/document-v9.2.2...document-v9.3.0) (2025-03-13)
+
+
+### Features
+
+* disable strictHistory checks by default ([fca6bff](https://github.com/dao-xyz/peerbit/commit/fca6bffbc98ce9eca8b07ef3c342f166c8c071d3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.6 to 5.1.7
+    * @peerbit/rpc bumped from 5.0.39 to 5.0.40
+    * @peerbit/shared-log bumped from 10.4.2 to 10.4.3
+    * @peerbit/indexer-interface bumped from ^2.0.6 to ^2.0.7
+    * @peerbit/indexer-simple bumped from ^1.1.10 to ^1.1.11
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.13 to ^1.2.14
+    * @peerbit/document-interface bumped from ^2.0.15 to ^2.0.16
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.29 to 2.1.30
+
 ## [9.2.2](https://github.com/dao-xyz/peerbit/compare/document-v9.2.1...document-v9.2.2) (2025-03-10)
 
 

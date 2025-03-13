@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.6](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.5...crypto-v2.3.6) (2025-03-13)
+
+
+### Bug Fixes
+
+* Set default error message for AccessError ([b60ce76](https://github.com/dao-xyz/peerbit/commit/b60ce7608301c733fce4eeb1c094c11f09220ad3))
+
 ## [2.3.5](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.4...crypto-v2.3.5) (2025-02-20)
 
 
