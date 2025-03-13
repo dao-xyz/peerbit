@@ -553,7 +553,7 @@ export class Documents<
 
 	async handleChanges(
 		change: Change<Operation>,
-		reference?: { document: T; operation: PutOperation },
+		reference?: { document: T; operation: PutOperation; unique?: boolean },
 	): Promise<void> {
 		const isAppendOperation =
 			change?.added.length === 1 ? !!change.added[0] : false;
@@ -611,12 +611,28 @@ export class Documents<
 						continue;
 					}
 
+					// if no casual ordering is used, use timestamps to order docs
+					let existing = reference?.unique
+						? null
+						: (await this._index.index.get(key)) || null;
+					if (!this.strictHistory && existing) {
+						// if immutable use oldest, else use newest
+						let shouldIgnoreChange = this.immutable
+							? existing.value.__context.modified <
+								item.meta.clock.timestamp.wallTime
+							: existing.value.__context.modified >
+								item.meta.clock.timestamp.wallTime;
+						if (shouldIgnoreChange) {
+							continue;
+						}
+					}
+
 					// Program specific
 					if (value instanceof Program) {
 						// if replicator, then open
 						value = await this.maybeSubprogramOpen(value);
 					}
-					const context = await this._index.put(value, key, item);
+					const context = await this._index.put(value, key, item, existing);
 					documentsChanged.added.push(coerceWithContext(value, context));
 
 					modified.add(key.primitive);

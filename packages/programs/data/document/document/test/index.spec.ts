@@ -399,6 +399,53 @@ describe("index", () => {
 				expect(docFromStore1.name).to.eq("Goodbye");
 			});
 
+			it("updates are propagated no casual ordering", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.stop();
+
+				session = await TestSession.disconnected(2);
+
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+				let doc = new Document({
+					id: uuid(),
+					name: "First",
+				});
+
+				await store.docs.put(doc, { meta: { next: [] } });
+
+				// open with another store
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: 1,
+					},
+				});
+				let doc2 = new Document({
+					id: doc.id,
+					name: "Second",
+				});
+
+				await store2.docs.put(doc2, { meta: { next: [] } });
+
+				await session.connect();
+
+				await waitForResolved(() => {
+					expect(store?.docs.log.log.length).to.eq(2);
+					expect(store2?.docs.log.log.length).to.eq(2);
+				});
+
+				const docFromStore1 = await store.docs.index.get(doc.id);
+				expect(docFromStore1.name).to.eq("Second");
+
+				const docFromStore2 = await store2.docs.index.get(doc.id);
+				expect(docFromStore2.name).to.eq("Second");
+			});
+
 			describe("strictHistory", () => {
 				it("enabled", async () => {
 					store = new TestStore({

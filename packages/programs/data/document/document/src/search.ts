@@ -584,11 +584,17 @@ export class DocumentIndex<
 		await iterator.close();
 		return one[0];
 	}
-	public async put(value: T, id: indexerTypes.IdKey, entry: Entry<Operation>) {
-		const existing = await this.index.get(id);
+	public async put(
+		value: T,
+		id: indexerTypes.IdKey,
+		entry: Entry<Operation>,
+		existing: indexerTypes.IndexedResult<WithContext<I>> | null | undefined,
+	) {
+		const existingDefined =
+			existing === undefined ? await this.index.get(id) : existing;
 		const context = new types.Context({
 			created:
-				existing?.value.__context.created ||
+				existingDefined?.value.__context.created ||
 				entry.meta.clock.timestamp.wallTime,
 			modified: entry.meta.clock.timestamp.wallTime,
 			head: entry.hash,
