@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.2](https://github.com/dao-xyz/peerbit/compare/document-v9.3.1...document-v9.3.2) (2025-03-21)
+
+
+### Bug Fixes
+
+* allow next pointer to documents with other ids ([5cda03a](https://github.com/dao-xyz/peerbit/commit/5cda03a2fc7cff7e25a64e40530fcd1a5e449df4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.0.41 to 5.0.42
+    * @peerbit/shared-log bumped from 10.4.4 to 10.4.5
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.14 to ^1.2.15
+    * @peerbit/document-interface bumped from ^2.0.17 to ^2.0.18
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.31 to 2.1.32
+
 ## [9.3.1](https://github.com/dao-xyz/peerbit/compare/document-v9.3.0...document-v9.3.1) (2025-03-13)
 
 
