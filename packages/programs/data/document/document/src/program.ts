@@ -403,9 +403,9 @@ export class Documents<
 						}
 					}
 				} else {
-					if (entry.meta.next.length !== 0) {
-						return false;
-					}
+					// TODO should re reject next pointers to other documents?
+					// like if (entry.meta.next.length > 0) { return false; }
+					// for now the default behaviour will allow us to build document dependencies
 				}
 			} else if (isDeleteOperation(operation)) {
 				if (entry.meta.next.length !== 1) {
