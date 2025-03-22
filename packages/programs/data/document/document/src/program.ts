@@ -712,19 +712,20 @@ export class Documents<
 	}
 
 	// approximate the amount of documents that exists globally
-	async count(properties: {
+	async count(options?: {
+		query?: indexerTypes.Query | indexerTypes.QueryLike;
 		approximate: true | { eager?: boolean };
 	}): Promise<number> {
 		let isReplicating = await this.log.isReplicating();
 		if (!isReplicating) {
 			// fetch a subset of posts
 			const iterator = this.index.iterate(
-				{},
+				{ query: options?.query },
 				{
 					remote: {
 						eager:
-							(typeof properties.approximate === "object" &&
-								properties.approximate.eager) ||
+							(typeof options?.approximate === "object" &&
+								options?.approximate.eager) ||
 							false,
 					},
 				},
@@ -740,7 +741,9 @@ export class Documents<
 			strict: false,
 		});
 
-		let indexedDocumentsCount = await this.index.index.count();
+		let indexedDocumentsCount = await this.index.index.count({
+			query: options?.query,
+		});
 		if (totalAssignedHeads == 0) {
 			return indexedDocumentsCount; // TODO is this really expected?
 		}

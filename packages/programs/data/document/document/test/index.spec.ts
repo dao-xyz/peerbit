@@ -3917,6 +3917,62 @@ describe("index", () => {
 				expect(approxCount3).to.be.within(count * 0.9, count * 1.1);
 			});
 
+			it("returns approximate count with query", async () => {
+				const { store1, store2, store3 } = await createStores();
+
+				let count = 1000;
+
+				for (let i = 0; i < count; i++) {
+					await store1.docs.put(
+						new Document({ id: i.toString(), number: BigInt(i) }),
+					);
+				}
+
+				await waitForResolved(() =>
+					expect(store2.docs.log.log.length).to.be.greaterThan(0),
+				);
+				await waitForResolved(() =>
+					expect(store1.docs.log.log.length).to.be.lessThan(count),
+				);
+
+				await waitForConverge(() => store1.docs.log.log.length);
+				await waitForConverge(() => store2.docs.log.log.length);
+
+				let query = new IntegerCompare({
+					key: "number",
+					compare: Compare.Less,
+					value: Math.round(count / 2),
+				});
+
+				const approxCount1 = await store1.docs.count({
+					query,
+					approximate: true,
+				});
+				const approxCount2 = await store2.docs.count({
+					query,
+					approximate: true,
+				});
+				const approxCount3 = await store3.docs.count({
+					query,
+					approximate: true,
+				});
+
+				let expectedCount = Math.round(count / 2);
+
+				expect(approxCount1).to.be.within(
+					expectedCount * 0.9,
+					expectedCount * 1.1,
+				);
+				expect(approxCount2).to.be.within(
+					expectedCount * 0.9,
+					expectedCount * 1.1,
+				);
+				expect(approxCount3).to.be.within(
+					expectedCount * 0.9,
+					expectedCount * 1.1,
+				);
+			});
+
 			it("returns approximate count with deletions", async () => {
 				const { store1, store2, store3 } = await createStores();
 
