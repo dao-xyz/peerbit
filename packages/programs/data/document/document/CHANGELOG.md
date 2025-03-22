@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.4](https://github.com/dao-xyz/peerbit/compare/document-v9.3.3...document-v9.3.4) (2025-03-22)
+
+
+### Bug Fixes
+
+* allow to count with query ([e182140](https://github.com/dao-xyz/peerbit/commit/e182140f7f74389fc3d952a28ebe85478f596b5d))
+
 ## [9.3.3](https://github.com/dao-xyz/peerbit/compare/document-v9.3.2...document-v9.3.3) (2025-03-22)
 
 
