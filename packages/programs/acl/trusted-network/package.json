@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/trusted-network",
-	"version": "4.1.65",
+	"version": "4.1.66",
 	"description": "Access controller that operates on a DB",
 	"sideEffects": false,
 	"type": "module",
@@ -60,7 +60,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "2.3.6",
-		"@peerbit/document": "9.3.3"
+		"@peerbit/document": "9.3.4"
 	},
 	"devDependencies": {
 		"@peerbit/time": "2.0.8",
