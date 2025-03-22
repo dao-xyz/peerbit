@@ -14,6 +14,7 @@ export type {
 	TransformOptions,
 	TransformerAsConstructor,
 	TransformerAsFunction,
+	ValueTypeFromRequest,
 } from "./search.js";
 export * from "./operation.js";
 export { MAX_BATCH_SIZE as MAX_DOCUMENT_SIZE } from "./constants.js";

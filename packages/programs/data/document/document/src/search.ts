@@ -230,7 +230,7 @@ export type CanReadIndexed<I> = (
 	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
-type ValueTypeFromRequest<
+export type ValueTypeFromRequest<
 	Resolve extends boolean | undefined,
 	T,
 	I,
