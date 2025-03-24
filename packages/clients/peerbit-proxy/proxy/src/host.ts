@@ -479,11 +479,11 @@ export class PeerbitProxyHost implements ProgramClient {
 				await this.respond(
 					message,
 					new pubsub.RESP_Publish(
-						await this.services.pubsub.publish(message.data, {
+						(await this.services.pubsub.publish(message.data, {
 							mode: message.mode!,
 							topics: message.topics!,
 							client: from.id,
-						}),
+						}))!, // TODO types
 					),
 					from,
 				); // TODO types));

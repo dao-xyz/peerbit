@@ -80,7 +80,7 @@ export class REQ_Publish extends PubSubMessage {
 @variant(5)
 export class RESP_Publish extends PubSubMessage {
 	@field({ type: option(Uint8Array) })
-	pubsubMessageId: Uint8Array;
+	pubsubMessageId?: Uint8Array;
 
 	constructor(pubsubMessageId?: Uint8Array) {
 		super();
@@ -276,7 +276,7 @@ export const createCustomEventFromType = (
 			detail: deserialize(data, SubscriptionEvent),
 		});
 	} else if (type === "unsubscribe") {
-		return new CustomEvent<UnsubcriptionEvent>("subscribe", {
+		return new CustomEvent<UnsubcriptionEvent>("unsubscribe", {
 			detail: deserialize(data, UnsubcriptionEvent),
 		});
 	} else throw new Error("Unsupported event type: " + String(type));
