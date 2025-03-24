@@ -308,6 +308,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.1.23](https://github.com/dao-xyz/peerbit/compare/proxy-v5.1.22...proxy-v5.1.23) (2025-03-24)
+
+
+### Bug Fixes
+
+* correct handling of pubsub unsubscription event ([d4093c8](https://github.com/dao-xyz/peerbit/commit/d4093c89a971bf20ee5408b3c19a8c0e988c888f))
+
 ## [5.1.22](https://github.com/dao-xyz/peerbit/compare/proxy-v5.1.21...proxy-v5.1.22) (2025-03-21)
 
 
