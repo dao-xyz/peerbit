@@ -417,6 +417,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.1.2](https://github.com/dao-xyz/peerbit/compare/rpc-v5.1.1...rpc-v5.1.2) (2025-03-28)
+
+
+### Bug Fixes
+
+* emit DataMessage on request and response event ([e16ac5f](https://github.com/dao-xyz/peerbit/commit/e16ac5f5f1aa01377f29d35ae073611e837c04c9))
+
 ## [5.1.1](https://github.com/dao-xyz/peerbit/compare/rpc-v5.1.0...rpc-v5.1.1) (2025-03-28)
 
 
