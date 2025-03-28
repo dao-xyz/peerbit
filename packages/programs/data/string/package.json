@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/string",
-	"version": "5.0.68",
+	"version": "5.0.69",
 	"description": "String store",
 	"sideEffects": false,
 	"type": "module",
@@ -61,8 +61,8 @@
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/logger": "1.0.3",
 		"@peerbit/program": "5.1.8",
-		"@peerbit/shared-log": "^10.4.7",
-		"@peerbit/rpc": "5.1.1",
+		"@peerbit/shared-log": "^10.4.8",
+		"@peerbit/rpc": "5.1.2",
 		"@peerbit/time": "2.0.8"
 	},
 	"devDependencies": {
