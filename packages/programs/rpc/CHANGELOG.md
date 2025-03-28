@@ -417,6 +417,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.1.0](https://github.com/dao-xyz/peerbit/compare/rpc-v5.0.42...rpc-v5.1.0) (2025-03-28)
+
+
+### Features
+
+* add response request event handlers ([9084059](https://github.com/dao-xyz/peerbit/commit/90840599cbf46586311e589c83d2764e760fb255))
+
 ## [5.0.42](https://github.com/dao-xyz/peerbit/compare/rpc-v5.0.41...rpc-v5.0.42) (2025-03-21)
 
 
