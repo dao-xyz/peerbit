@@ -43,6 +43,20 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.3.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.6...stream-v4.3.0) (2025-03-28)
+
+
+### Features
+
+* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped from ^5.1.5 to ^5.2.0
+
 ## [4.2.6](https://github.com/dao-xyz/peerbit/compare/stream-v4.2.5...stream-v4.2.6) (2025-03-13)
 
 

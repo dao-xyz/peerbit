@@ -66,6 +66,13 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [5.2.0](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.1.5...stream-interface-v5.2.0) (2025-03-28)
+
+
+### Features
+
+* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
+
 ## [5.1.5](https://github.com/dao-xyz/peerbit/compare/stream-interface-v5.1.4...stream-interface-v5.1.5) (2025-03-13)
 
 

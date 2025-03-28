@@ -188,6 +188,21 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [3.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.23...pubsub-v3.1.0) (2025-03-28)
+
+
+### Features
+
+* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.2.6 to 4.3.0
+    * @peerbit/pubsub-interface bumped from ^3.1.5 to ^3.2.0
+
 ## [3.0.23](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.22...pubsub-v3.0.23) (2025-03-13)
 
 

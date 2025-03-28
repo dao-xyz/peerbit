@@ -417,6 +417,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.2.0](https://github.com/dao-xyz/peerbit/compare/rpc-v5.1.2...rpc-v5.2.0) (2025-03-28)
+
+
+### Features
+
+* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.8 to 5.1.9
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.32 to ^2.1.33
+
 ## [5.1.2](https://github.com/dao-xyz/peerbit/compare/rpc-v5.1.1...rpc-v5.1.2) (2025-03-28)
 
 
