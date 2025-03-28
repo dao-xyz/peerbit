@@ -172,6 +172,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 						this.events.dispatchEvent(
 							new CustomEvent("request", {
+								// TODO should this event also be emitted if the responseHandler is omitted?
 								detail: {
 									request,
 									from,
