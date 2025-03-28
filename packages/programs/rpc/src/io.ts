@@ -5,7 +5,12 @@ import type {
 	X25519PublicKey,
 } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
-import type { PriorityOptions, WithMode } from "@peerbit/stream-interface";
+import type {
+	DataMessage,
+	PriorityOptions,
+	WithExtraSigners,
+	WithMode,
+} from "@peerbit/stream-interface";
 
 export const logger = loggerFn({ module: "rpc" });
 export type RPCRequestResponseOptions<R> = {
@@ -19,7 +24,8 @@ export type RPCRequestResponseOptions<R> = {
 export type RPCRequestOptions<R> = RPCRequestResponseOptions<R> &
 	EncryptionOptions &
 	WithMode &
-	PriorityOptions;
+	PriorityOptions &
+	WithExtraSigners;
 
 export type EncryptionOptions = {
 	encryption?: {
@@ -28,4 +34,8 @@ export type EncryptionOptions = {
 	};
 };
 
-export type RPCResponse<R> = { response: R; from?: PublicSignKey };
+export type RPCResponse<R> = {
+	response: R;
+	message: DataMessage;
+	from?: PublicSignKey;
+};

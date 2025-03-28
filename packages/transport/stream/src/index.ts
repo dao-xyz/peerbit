@@ -37,7 +37,7 @@ import {
 	DataMessage,
 	DeliveryError,
 	Goodbye,
-	type IdentificationOptions,
+	type IdOptions,
 	InvalidMessageError,
 	Message,
 	MessageHeader,
@@ -50,6 +50,7 @@ import {
 	type StreamEvents,
 	TracedDelivery,
 	type WaitForPeer,
+	type WithExtraSigners,
 	type WithMode,
 	type WithTo,
 	deliveryModeHasReceiver,
@@ -440,7 +441,9 @@ export interface DirectStreamComponents extends Components {
 	events: TypedEventTarget<Libp2pEvents>;
 }
 
-export type PublishOptions = (WithMode | WithTo) & PriorityOptions;
+export type PublishOptions = (WithMode | WithTo) &
+	PriorityOptions &
+	WithExtraSigners;
 
 export abstract class DirectStream<
 		Events extends { [s: string]: any } = StreamEvents,
@@ -1522,7 +1525,7 @@ export abstract class DirectStream<
 		data: Uint8Array | Uint8ArrayList | undefined,
 		options: (WithTo | WithMode) &
 			PriorityOptions &
-			IdentificationOptions & { skipRecipientValidation?: boolean },
+			IdOptions & { skipRecipientValidation?: boolean } & WithExtraSigners,
 	) {
 		// dispatch the event if we are interested
 
@@ -1594,7 +1597,13 @@ export abstract class DirectStream<
 		});
 
 		// TODO allow messages to also be sent unsigned (signaturePolicy property)
+
 		await message.sign(this.sign);
+		if (options.extraSigners) {
+			for (const signer of options.extraSigners) {
+				await message.sign(signer);
+			}
+		}
 		return message;
 	}
 	/**

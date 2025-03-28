@@ -27,7 +27,7 @@ import {
 	AnyWhere,
 	DataMessage,
 	DeliveryError,
-	type IdentificationOptions,
+	type IdOptions,
 	MessageHeader,
 	NotStartedError,
 	type PriorityOptions,
@@ -311,7 +311,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		} & { client?: string } & {
 			mode?: SilentDelivery | AcknowledgeDelivery | SeekDelivery;
 		} & PriorityOptions &
-			IdentificationOptions,
+			IdOptions,
 	): Promise<Uint8Array | undefined> {
 		if (!this.started) {
 			throw new NotStartedError();

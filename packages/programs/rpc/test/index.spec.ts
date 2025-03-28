@@ -1,5 +1,9 @@
 import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
-import { PublicSignKey, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import {
+	Ed25519Keypair,
+	PublicSignKey,
+	getPublicKeyFromPeerId,
+} from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { type PeerId } from "@peerbit/pubsub";
 import { SilentDelivery } from "@peerbit/stream-interface";
@@ -153,6 +157,146 @@ describe("rpc", () => {
 			expect(from.hashcode()).equal(
 				responder.node.identity.publicKey.hashcode(),
 			);
+		});
+
+		it("custom signer", async () => {
+			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			responder.query.events.addEventListener("request", (e) => {
+				requestEventFromResponder.push(e);
+			});
+			responder.query.events.addEventListener("response", (e) => {
+				responseEventsFromResponder.push(e);
+			});
+
+			const requestEventFromRequester: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromRequester: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			reader.query.events.addEventListener("request", (e) => {
+				requestEventFromRequester.push(e);
+			});
+
+			reader.query.events.addEventListener("response", (e) => {
+				responseEventsFromRequester.push(e);
+			});
+
+			const keypair1 = await Ed25519Keypair.create();
+			const keypair2 = await Ed25519Keypair.create();
+
+			let results: RPCResponse<Body>[] = await reader.query.request(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{
+					amount: 1,
+					extraSigners: [
+						keypair1.sign.bind(keypair1),
+						keypair2.sign.bind(keypair2),
+					],
+				},
+			);
+
+			await waitForResolved(() => expect(results).to.have.length(1));
+			const expectedSigner = [
+				reader.node.identity.publicKey.hashcode(),
+				keypair1.publicKey.hashcode(),
+				keypair2.publicKey.hashcode(),
+			];
+			expect(
+				results[0].message.header.signatures!.publicKeys.map((x) =>
+					x.hashcode(),
+				),
+			).deep.equal([responder.node.identity.publicKey.hashcode()]);
+
+			expect(results[0].response.arr).to.deep.equal(new Uint8Array([0, 1, 2]));
+			expect(requestEventFromResponder).to.have.length(1);
+			expect(responseEventsFromResponder).to.have.length(0);
+			expect(responseEventsFromRequester).to.have.length(1);
+			expect(requestEventFromRequester).to.have.length(0);
+			expect(requestEventFromResponder[0].detail.request.arr).to.deep.equal(
+				new Uint8Array([0, 1, 2]),
+			);
+
+			let from =
+				requestEventFromResponder[0].detail.message.header.signatures!.publicKeys.map(
+					(x) => x.hashcode(),
+				);
+			expect(from).to.deep.eq(expectedSigner);
+
+			expect(responseEventsFromRequester[0].detail.response.arr).to.deep.equal(
+				new Uint8Array([0, 1, 2]),
+			);
+
+			from =
+				responseEventsFromRequester[0].detail.message.header.signatures!.publicKeys.map(
+					(x) => x.hashcode(),
+				);
+			expect(from).to.deep.eq([responder.node.identity.publicKey.hashcode()]);
+		});
+
+		it("send with custom signer", async () => {
+			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			responder.query.events.addEventListener("request", (e) => {
+				requestEventFromResponder.push(e);
+			});
+			responder.query.events.addEventListener("response", (e) => {
+				responseEventsFromResponder.push(e);
+			});
+
+			const requestEventFromRequester: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromRequester: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			reader.query.events.addEventListener("request", (e) => {
+				requestEventFromRequester.push(e);
+			});
+
+			reader.query.events.addEventListener("response", (e) => {
+				responseEventsFromRequester.push(e);
+			});
+
+			const keypair1 = await Ed25519Keypair.create();
+			const keypair2 = await Ed25519Keypair.create();
+
+			await reader.query.send(
+				new Body({
+					arr: new Uint8Array([0, 1, 2]),
+				}),
+				{
+					extraSigners: [
+						keypair1.sign.bind(keypair1),
+						keypair2.sign.bind(keypair2),
+					],
+				},
+			);
+
+			const expectedSigner = [
+				reader.node.identity.publicKey.hashcode(),
+				keypair1.publicKey.hashcode(),
+				keypair2.publicKey.hashcode(),
+			];
+
+			await waitForResolved(() =>
+				expect(requestEventFromResponder).to.have.length(1),
+			);
+			expect(responseEventsFromResponder).to.have.length(0);
+			expect(responseEventsFromRequester).to.have.length(0);
+			expect(requestEventFromRequester).to.have.length(0);
+			expect(requestEventFromResponder[0].detail.request.arr).to.deep.equal(
+				new Uint8Array([0, 1, 2]),
+			);
+
+			let from =
+				requestEventFromResponder[0].detail.message.header.signatures!.publicKeys.map(
+					(x) => x.hashcode(),
+				);
+			expect(from).to.deep.eq(expectedSigner);
 		});
 
 		it("onResponse", async () => {

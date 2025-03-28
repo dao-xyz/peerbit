@@ -203,8 +203,14 @@ export type PriorityOptions = {
 	priority?: number;
 };
 
-export type IdentificationOptions = {
+export type IdOptions = {
 	id?: Uint8Array;
+};
+
+export type WithExtraSigners = {
+	extraSigners?: ((
+		data: Uint8Array,
+	) => Promise<SignatureWithKey> | SignatureWithKey)[];
 };
 
 const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
@@ -296,7 +302,7 @@ interface WithHeader {
 
 const sign = async <T extends WithHeader>(
 	obj: T,
-	signer: (bytes: Uint8Array) => Promise<SignatureWithKey>,
+	signer: (bytes: Uint8Array) => Promise<SignatureWithKey> | SignatureWithKey,
 ): Promise<T> => {
 	const mode = obj.header.mode;
 	obj.header.mode = undefined as any;
@@ -356,7 +362,7 @@ export abstract class Message<T extends DeliveryMode = DeliveryMode> {
 	abstract get header(): MessageHeader<T>;
 
 	async sign(
-		signer: (bytes: Uint8Array) => Promise<SignatureWithKey>,
+		signer: (bytes: Uint8Array) => Promise<SignatureWithKey> | SignatureWithKey,
 	): Promise<this> {
 		return sign(this, signer);
 	}

@@ -4,12 +4,13 @@ import { PublicSignKey } from "@peerbit/crypto";
 import {
 	DataMessage,
 	DeliveryMode,
-	type IdentificationOptions,
+	type IdOptions,
 	Message,
 	type PeerEvents,
 	type PriorityOptions,
 	type PublicKeyFromHashResolver,
 	type WaitForPeer,
+	type WithExtraSigners,
 } from "@peerbit/stream-interface";
 import { PubSubData } from "./messages.js";
 
@@ -125,7 +126,8 @@ export type PublishOptions = (
 			mode?: DeliveryMode | undefined;
 	  }
 ) & { client?: string } & PriorityOptions &
-	IdentificationOptions;
+	IdOptions &
+	WithExtraSigners;
 
 export interface PubSub
 	extends IEventEmitter<PubSubEvents>,

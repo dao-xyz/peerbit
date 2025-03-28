@@ -24,6 +24,7 @@ import {
 	DataMessage,
 	type PriorityOptions,
 	SilentDelivery,
+	type WithExtraSigners,
 	type WithMode,
 	deliveryModeHasReceiver,
 } from "@peerbit/stream-interface";
@@ -65,11 +66,13 @@ const createValueResolver = <T>(
 export type ResponseEvent<R> = {
 	response: R;
 	message: DataMessage;
+	from?: PublicSignKey;
 };
 
 export type RequestEvent<R> = {
 	request: R;
 	message: DataMessage;
+	from?: PublicSignKey;
 };
 
 export interface RPCEvents<Q, R> extends ProgramEvents {
@@ -176,6 +179,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 								detail: {
 									request,
 									message: message,
+									from: from,
 								},
 							}),
 						);
@@ -288,13 +292,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 	private getPublishOptions(
 		id?: Uint8Array,
-		options?: EncryptionOptions & WithMode & PriorityOptions,
+		options?: EncryptionOptions & WithMode & PriorityOptions & WithExtraSigners,
 	): PubSubPublishOptions {
 		return {
 			id,
 			priority: options?.priority,
 			mode: options?.mode,
 			topics: [this.topic],
+			extraSigners: options?.extraSigners,
 		};
 	}
 
@@ -305,7 +310,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	 */
 	public async send(
 		message: Q,
-		options?: EncryptionOptions & WithMode & PriorityOptions,
+		options?: EncryptionOptions & WithMode & PriorityOptions & WithExtraSigners,
 	): Promise<void> {
 		await this.node.services.pubsub.publish(
 			serialize(await this.seal(message, undefined, options)),
@@ -342,6 +347,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 						detail: {
 							response: resultData,
 							message: message,
+							from: from,
 						},
 					}),
 				);
@@ -349,7 +355,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				if (expectedResponders) {
 					if (from && expectedResponders?.has(from.hashcode())) {
 						options?.onResponse && options?.onResponse(resultData, from);
-						allResults.push({ response: resultData, from });
+						allResults.push({ response: resultData, message, from });
 
 						responders.add(from.hashcode());
 						if (responders.size === expectedResponders.size) {
@@ -358,7 +364,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					}
 				} else {
 					options?.onResponse && options?.onResponse(resultData, from);
-					allResults.push({ response: resultData, from });
+					allResults.push({ response: resultData, message, from });
 					if (
 						options?.amount != null &&
 						allResults.length >= (options?.amount as number)
