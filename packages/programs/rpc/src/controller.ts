@@ -64,12 +64,12 @@ const createValueResolver = <T>(
 
 export type ResponseEvent<R> = {
 	response: R;
-	from: PublicSignKey;
+	message: DataMessage;
 };
 
 export type RequestEvent<R> = {
 	request: R;
-	from: PublicSignKey;
+	message: DataMessage;
 };
 
 export interface RPCEvents<Q, R> extends ProgramEvents {
@@ -175,7 +175,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 								// TODO should this event also be emitted if the responseHandler is omitted?
 								detail: {
 									request,
-									from,
+									message: message,
 								},
 							}),
 						);
@@ -341,7 +341,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 					new CustomEvent("response", {
 						detail: {
 							response: resultData,
-							from,
+							message: message,
 						},
 					}),
 				);

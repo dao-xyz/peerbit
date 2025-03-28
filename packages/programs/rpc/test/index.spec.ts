@@ -137,14 +137,20 @@ describe("rpc", () => {
 			expect(requestEventFromResponder[0].detail.request.arr).to.deep.equal(
 				new Uint8Array([0, 1, 2]),
 			);
-			expect(requestEventFromResponder[0].detail.from.hashcode()).equal(
-				reader.node.identity.publicKey.hashcode(),
-			);
+
+			let from =
+				requestEventFromResponder[0].detail.message.header.signatures!
+					.publicKeys[0]!;
+			expect(from.hashcode()).equal(reader.node.identity.publicKey.hashcode());
 
 			expect(responseEventsFromRequester[0].detail.response.arr).to.deep.equal(
 				new Uint8Array([0, 1, 2]),
 			);
-			expect(responseEventsFromRequester[0].detail.from.hashcode()).equal(
+
+			from =
+				responseEventsFromRequester[0].detail.message.header.signatures!
+					.publicKeys[0]!;
+			expect(from.hashcode()).equal(
 				responder.node.identity.publicKey.hashcode(),
 			);
 		});
