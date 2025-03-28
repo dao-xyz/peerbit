@@ -389,6 +389,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.4.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.6...shared-log-v10.4.7) (2025-03-28)
+
+
+### Bug Fixes
+
+* simple sync if riblt fails ([4682419](https://github.com/dao-xyz/peerbit/commit/4682419f724528ddf88b589fe181b115cf27e43f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.1.0 to 5.1.1
+
 ## [10.4.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.5...shared-log-v10.4.6) (2025-03-28)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/shared-log",
-	"version": "10.4.6",
+	"version": "10.4.7",
 	"description": "Shared log",
 	"sideEffects": false,
 	"type": "module",
@@ -62,7 +62,7 @@
 		"@peerbit/logger": "1.0.3",
 		"@peerbit/program": "5.1.8",
 		"@peerbit/log": "4.0.44",
-		"@peerbit/rpc": "5.1.0",
+		"@peerbit/rpc": "5.1.1",
 		"@peerbit/time": "2.0.8",
 		"@peerbit/riblt": "1.0.6"
 	},
