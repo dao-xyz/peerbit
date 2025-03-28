@@ -177,7 +177,6 @@ const buildEncoderOrDecoderFromRange = async <
 			encoder.add_symbol(coerceBigInt(coordinate));
 		}
 	}
-
 	return encoder as E;
 };
 
@@ -465,12 +464,12 @@ export class RatelessIBLTSynchronizer<
 					}
 					lastSeqNo++;
 
-					const message = messageQueue.shift();
-					if (!message) {
+					const symbolMessage = messageQueue.shift();
+					if (!symbolMessage) {
 						return;
 					}
 
-					for (const symbol of message.symbols) {
+					for (const symbol of symbolMessage.symbols) {
 						decoder.add_coded_symbol(symbol);
 					}
 					try {
@@ -482,12 +481,25 @@ export class RatelessIBLTSynchronizer<
 						) {
 							// TODO in some way test this code path
 							logger.error(error?.message ?? error);
-							return false;
+
+							await this.simple.rpc.send(
+								new RequestAll({
+									syncId: message.syncId,
+								}),
+								{
+									mode: new SilentDelivery({
+										to: [context.from!],
+										redundancy: 1,
+									}),
+									priority: 1,
+								},
+							);
+							return true;
 						} else {
 							throw error;
 						}
 					}
-					count += message.symbols.length;
+					count += symbolMessage.symbols.length;
 
 					if (decoder.decoded()) {
 						let allMissingSymbolsInRemote: bigint[] = [];
