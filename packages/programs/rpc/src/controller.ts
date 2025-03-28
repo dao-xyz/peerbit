@@ -15,7 +15,7 @@ import {
 	randomBytes,
 	toBase64,
 } from "@peerbit/crypto";
-import { Program } from "@peerbit/program";
+import { Program, type ProgramEvents } from "@peerbit/program";
 import {
 	DataEvent,
 	type PublishOptions as PubSubPublishOptions,
@@ -62,8 +62,23 @@ const createValueResolver = <T>(
 	}
 };
 
+export type ResponseEvent<R> = {
+	response: R;
+	from: PublicSignKey;
+};
+
+export type RequestEvent<R> = {
+	request: R;
+	from: PublicSignKey;
+};
+
+export interface RPCEvents<Q, R> extends ProgramEvents {
+	request: CustomEvent<RequestEvent<Q>>;
+	response: CustomEvent<ResponseEvent<R>>;
+}
+
 @variant("rpc")
-export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
+export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	private _subscribed = false;
 	private _responseHandler?: ResponseHandler<Q, (R | undefined) | R>;
 	private _responseResolver!: Map<
@@ -152,13 +167,23 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 						const decrypted = await maybeEncrypted.decrypt(
 							this.node.services.keychain,
 						);
-						const response = await this._responseHandler(
-							this._getRequestValueFn(decrypted),
-							{
-								from: message.header.signatures!.publicKeys[0],
-								timestamp: message.header.timestamp,
-							},
+						const request = this._getRequestValueFn(decrypted);
+						let from = message.header.signatures!.publicKeys[0];
+
+						this.events.dispatchEvent(
+							new CustomEvent("request", {
+								detail: {
+									request,
+									from,
+								},
+							}),
 						);
+
+						const response = await this._responseHandler(request, {
+							from,
+							timestamp: message.header.timestamp,
+						});
+
 						if (response && rpcMessage.respondTo) {
 							// send query and wait for replies in a generator like behaviour
 							const serializedResponse = serialize(response);
@@ -311,10 +336,20 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>> {
 				const decrypted = await maybeEncrypted.decrypt(keypair);
 				const resultData = this._getResponseValueFn(decrypted);
 
+				this.events.dispatchEvent(
+					new CustomEvent("response", {
+						detail: {
+							response: resultData,
+							from,
+						},
+					}),
+				);
+
 				if (expectedResponders) {
 					if (from && expectedResponders?.has(from.hashcode())) {
 						options?.onResponse && options?.onResponse(resultData, from);
 						allResults.push({ response: resultData, from });
+
 						responders.add(from.hashcode());
 						if (responders.size === expectedResponders.size) {
 							promise.resolve();

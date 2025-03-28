@@ -6,7 +6,13 @@ import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { RPC, type RPCResponse, queryAll } from "../src/index.js";
+import {
+	RPC,
+	type RPCResponse,
+	type RequestEvent,
+	type ResponseEvent,
+	queryAll,
+} from "../src/index.js";
 
 @variant("payload")
 class Body {
@@ -88,6 +94,29 @@ describe("rpc", () => {
 		});
 
 		it("any", async () => {
+			const requestEventFromResponder: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromResponder: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			responder.query.events.addEventListener("request", (e) => {
+				requestEventFromResponder.push(e);
+			});
+			responder.query.events.addEventListener("response", (e) => {
+				responseEventsFromResponder.push(e);
+			});
+
+			const requestEventFromRequester: CustomEvent<RequestEvent<Body>>[] = [];
+			const responseEventsFromRequester: CustomEvent<ResponseEvent<Body>>[] =
+				[];
+
+			reader.query.events.addEventListener("request", (e) => {
+				requestEventFromRequester.push(e);
+			});
+
+			reader.query.events.addEventListener("response", (e) => {
+				responseEventsFromRequester.push(e);
+			});
+
 			let results: RPCResponse<Body>[] = await reader.query.request(
 				new Body({
 					arr: new Uint8Array([0, 1, 2]),
@@ -97,6 +126,25 @@ describe("rpc", () => {
 
 			await waitForResolved(() => expect(results).to.have.length(1));
 			expect(results[0].from?.hashcode()).equal(
+				responder.node.identity.publicKey.hashcode(),
+			);
+
+			expect(results[0].response.arr).to.deep.equal(new Uint8Array([0, 1, 2]));
+			expect(requestEventFromResponder).to.have.length(1);
+			expect(responseEventsFromResponder).to.have.length(0);
+			expect(responseEventsFromRequester).to.have.length(1);
+			expect(requestEventFromRequester).to.have.length(0);
+			expect(requestEventFromResponder[0].detail.request.arr).to.deep.equal(
+				new Uint8Array([0, 1, 2]),
+			);
+			expect(requestEventFromResponder[0].detail.from.hashcode()).equal(
+				reader.node.identity.publicKey.hashcode(),
+			);
+
+			expect(responseEventsFromRequester[0].detail.response.arr).to.deep.equal(
+				new Uint8Array([0, 1, 2]),
+			);
+			expect(responseEventsFromRequester[0].detail.from.hashcode()).equal(
 				responder.node.identity.publicKey.hashcode(),
 			);
 		});
