@@ -31,6 +31,14 @@ export class ClosedError extends Error {
 	}
 }
 
+export class MissingAddressError extends Error {
+	constructor() {
+		super(
+			"Address does not exist, please open or save this program once to obtain it",
+		);
+	}
+}
+
 const intersection = (
 	a: Map<string, PublicSignKey> | undefined,
 	b: Map<string, PublicSignKey> | PublicSignKey[],
@@ -120,11 +128,23 @@ export abstract class Program<
 
 	get address(): Address {
 		if (!this._address) {
-			throw new Error(
-				"Address does not exist, please open or save this program once to obtain it",
-			);
+			throw new MissingAddressError();
 		}
 		return this._address;
+	}
+	get rootAddress(): Address {
+		let root: Program = this;
+		while (root.parents && root.parents.length > 0) {
+			if (root.parents.length > 1) {
+				throw new Error("Multiple parents not supported");
+			}
+			const next = root.parents[0] as Program;
+			if (!next) {
+				return root.address;
+			}
+			root = next;
+		}
+		return root.address;
 	}
 
 	set address(address: Address) {

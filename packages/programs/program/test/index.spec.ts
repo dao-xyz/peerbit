@@ -3,6 +3,7 @@ import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import {
 	ClosedError,
+	MissingAddressError,
 	Program,
 	type ProgramClient,
 	getProgramFromVariant,
@@ -217,6 +218,20 @@ describe("program", () => {
 		});
 
 		describe("subprogram", () => {
+			it("rootAddress", async () => {
+				const p = new P4();
+				try {
+					p.child.child.rootAddress;
+					throw new Error("Should not be able to access rootAddress");
+				} catch (error) {
+					expect(error).to.be.instanceOf(MissingAddressError);
+				}
+				await peer.open(p);
+				expect(p.rootAddress).equal(p.address);
+				expect(p.child.rootAddress).equal(p.address);
+				expect(p.child.child.rootAddress).equal(p.address);
+			});
+
 			it("subprogram will not close if opened outside a program", async () => {
 				const p = new P3();
 				const p2 = new P3();
