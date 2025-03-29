@@ -132,6 +132,11 @@ export abstract class Program<
 		}
 		return this._address;
 	}
+
+	set address(address: Address) {
+		this._address = address;
+	}
+
 	private get isRoot() {
 		return this.parents == null || this.parents.filter((x) => !!x).length === 0;
 	}
@@ -147,10 +152,6 @@ export abstract class Program<
 			root = root.parents[0] as Program;
 		}
 		return root.address;
-	}
-
-	set address(address: Address) {
-		this._address = address;
 	}
 
 	async calculateAddress(): Promise<Address> {
