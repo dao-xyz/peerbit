@@ -1613,8 +1613,6 @@ export class SharedLog<
 
 		const logIndex = await logScope.scope("log");
 
-		await this.node.indexer.start(); // TODO why do we need to start the indexer here?
-
 		const hasIndexedReplicationInfo =
 			(await this.replicationIndex.count({
 				query: [

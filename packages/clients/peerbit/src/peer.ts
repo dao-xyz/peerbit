@@ -133,6 +133,8 @@ export class Peerbit implements ProgramClient {
 				? await indexerFn(path.join(directory, "/index"))
 				: await indexerFn();
 
+		await indexer.start();
+
 		const blocksDirectory = hasDir
 			? path.join(directory, "/blocks").toString()
 			: undefined;
