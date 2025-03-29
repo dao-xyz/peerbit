@@ -45,6 +45,14 @@ class SlowBlockStore implements Blocks {
 		return this._store.put(value);
 	}
 
+	maybePut(
+		bytes: Uint8Array,
+		_condition?: (cid: string) => boolean | Promise<boolean>,
+	): string | Promise<string> {
+		// TODO: implement condition
+		return this._store.put(bytes);
+	}
+
 	has(cid: string) {
 		return this._store.has(cid);
 	}
