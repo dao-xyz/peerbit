@@ -132,17 +132,19 @@ export abstract class Program<
 		}
 		return this._address;
 	}
+	private get isRoot() {
+		return this.parents == null || this.parents.filter((x) => !!x).length === 0;
+	}
 	get rootAddress(): Address {
 		let root: Program = this;
 		while (root.parents && root.parents.length > 0) {
 			if (root.parents.length > 1) {
 				throw new Error("Multiple parents not supported");
 			}
-			const next = root.parents[0] as Program;
-			if (!next) {
+			if (root.isRoot) {
 				return root.address;
 			}
-			root = next;
+			root = root.parents[0] as Program;
 		}
 		return root.address;
 	}
@@ -192,8 +194,8 @@ export abstract class Program<
 			);
 		}
 
-		if (!options?.parent) {
-			// only store the root program
+		if (options?.parent || this.isRoot) {
+			// only store the root program, or programs that have been opened with a parent refernece ("loose programs")
 			// TODO do we need addresses for subprograms? if so we also need to call this
 			await this.save(node.services.blocks);
 		}

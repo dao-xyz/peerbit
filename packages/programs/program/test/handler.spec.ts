@@ -1,7 +1,7 @@
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 import { type ProgramClient } from "../src/index.js";
-import { TestProgram } from "./samples.js";
+import { TestParenteRefernceProgram, TestProgram } from "./samples.js";
 import { createPeer } from "./utils.js";
 
 use(chaiAsPromised);
@@ -194,6 +194,18 @@ describe(`shared`, () => {
 		expect(openedAgain.closed).to.be.false;
 		expect(openedAgain.address).to.exist;
 		expect(saveCalled).to.be.false;
+	});
+
+	it("will address children when opening with parent reference", async () => {
+		const p1 = new TestParenteRefernceProgram();
+		await client.open(p1);
+
+		expect(p1.nested.closed).to.be.false;
+		expect(p1.nested.address).to.exist;
+
+		await p1.close();
+		expect(p1.nested.closed).to.be.true;
+		expect(p1.closed).to.be.true;
 	});
 
 	it("rejects", async () => {

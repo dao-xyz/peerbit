@@ -123,3 +123,25 @@ export class TestProgram extends Program {
 		return this.nested.open();
 	}
 }
+
+@variant("test-shared-loose-parent-ref")
+export class TestParenteRefernceProgram extends Program {
+	@field({ type: "u32" })
+	id: number;
+
+	@field({ type: TestNestedProgram })
+	nested: TestNestedProgram;
+
+	constructor(
+		id: number = 0,
+		nested: TestNestedProgram = new TestNestedProgram(),
+	) {
+		super();
+		this.id = id;
+		this.nested = nested;
+	}
+
+	async open(): Promise<void> {
+		await this.node.open(this.nested, { parent: this as Program });
+	}
+}
