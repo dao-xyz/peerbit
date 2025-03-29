@@ -313,6 +313,23 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.24](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.23...peerbit-v4.1.24) (2025-03-29)
+
+
+### Bug Fixes
+
+* open indexer once on client ([48b4568](https://github.com/dao-xyz/peerbit/commit/48b45685e09dda68dce0cb0e03e88096a4a36609))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.9 to 5.1.10
+    * @peerbit/blocks bumped from ^2.2.8 to ^2.3.0
+    * @peerbit/indexer-simple bumped from ^1.1.11 to ^1.1.12
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.15 to ^1.2.16
+
 ## [4.1.23](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.22...peerbit-v4.1.23) (2025-03-28)
 
 

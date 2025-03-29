@@ -194,6 +194,13 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [1.4.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.3.14...blocks-interface-v1.4.0) (2025-03-29)
+
+
+### Features
+
+* maybePut ([539a323](https://github.com/dao-xyz/peerbit/commit/539a323bf4b77553f26c87451fe4cc1abfaeddbf))
+
 ## [1.3.14](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.3.13...blocks-interface-v1.3.14) (2025-03-28)
 
 

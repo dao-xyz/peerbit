@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.11](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.10...indexer-tests-v1.1.11) (2025-03-29)
+
+
+### Bug Fixes
+
+* ensure open is not called on db unecessarely ([87d8ff6](https://github.com/dao-xyz/peerbit/commit/87d8ff6355f8fae9f8be268fd4db4dd81d49a1a2))
+
 ## [1.1.10](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.9...indexer-tests-v1.1.10) (2025-03-13)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.16](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.15...indexer-sqlite3-v1.2.16) (2025-03-29)
+
+
+### Bug Fixes
+
+* ensure open is not called on db unecessarely ([87d8ff6](https://github.com/dao-xyz/peerbit/commit/87d8ff6355f8fae9f8be268fd4db4dd81d49a1a2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.1.10 to ^1.1.11
+
 ## [1.2.15](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.14...indexer-sqlite3-v1.2.15) (2025-03-21)
 
 

@@ -279,6 +279,20 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.3.0](https://github.com/dao-xyz/peerbit/compare/blocks-v2.2.8...blocks-v2.3.0) (2025-03-29)
+
+
+### Features
+
+* maybePut ([539a323](https://github.com/dao-xyz/peerbit/commit/539a323bf4b77553f26c87451fe4cc1abfaeddbf))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from 1.3.14 to 1.4.0
+
 ## [2.2.8](https://github.com/dao-xyz/peerbit/compare/blocks-v2.2.7...blocks-v2.2.8) (2025-03-28)
 
 
