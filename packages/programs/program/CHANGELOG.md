@@ -202,6 +202,18 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.0](https://github.com/dao-xyz/peerbit/compare/program-v5.1.10...program-v5.2.0) (2025-03-29)
+
+
+### Features
+
+* rootAddress ([754960a](https://github.com/dao-xyz/peerbit/commit/754960ae7946945b461c55d73f3965849eaafc5d))
+
+
+### Bug Fixes
+
+* address sub programs if they are opened loosely with parent reference ([263159d](https://github.com/dao-xyz/peerbit/commit/263159df3e85c6bcd9c11e936553ea9da0838945))
+
 ## [5.1.10](https://github.com/dao-xyz/peerbit/compare/program-v5.1.9...program-v5.1.10) (2025-03-29)
 
 
