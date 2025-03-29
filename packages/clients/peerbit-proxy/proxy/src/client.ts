@@ -256,6 +256,13 @@ export class PeerbitProxyClient implements ProgramClient {
 					);
 					return resp.cid;
 				},
+				maybePut: async (bytes, _condition) => {
+					// TODO use condition
+					const resp = await this.request<blocks.RESP_PutBlock>(
+						new blocks.REQ_PutBlock(bytes),
+					);
+					return resp.cid;
+				},
 				rm: async (cid) => {
 					await this.request<blocks.RESP_RmBlock>(new blocks.REQ_RmBlock(cid));
 				},

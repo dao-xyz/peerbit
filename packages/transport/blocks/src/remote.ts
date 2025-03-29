@@ -139,6 +139,16 @@ export class RemoteBlocks implements IBlocks {
 		return this.localStore!.put(bytes);
 	}
 
+	async maybePut(
+		bytes: Uint8Array,
+		condition?: (cid: string) => Promise<boolean> | boolean,
+	): Promise<string> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		return this.localStore.maybePut(bytes, condition);
+	}
+
 	async has(cid: string) {
 		return this.localStore.has(cid);
 	}

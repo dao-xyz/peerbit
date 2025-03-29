@@ -58,8 +58,18 @@ export class AnyBlockStore implements Blocks {
 	}
 
 	async put(bytes: Uint8Array): Promise<string> {
+		return this.maybePut(bytes);
+	}
+
+	async maybePut(
+		bytes: Uint8Array,
+		condition?: (cid: string) => Promise<boolean> | boolean,
+	): Promise<string> {
 		const block = await createBlock(bytes, "raw");
 		const cid = stringifyCid(block.cid);
+		if (condition && !(await condition(cid))) {
+			return cid;
+		}
 		const bbytes = block.bytes;
 		await this._store.put(cid, bbytes);
 		return cid;

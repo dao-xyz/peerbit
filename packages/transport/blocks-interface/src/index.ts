@@ -18,6 +18,10 @@ type MaybePromise<T> = Promise<T> | T;
 
 export interface Blocks extends WaitForPeer {
 	put(bytes: Uint8Array): MaybePromise<string>;
+	maybePut(
+		bytes: Uint8Array,
+		condition?: (cid: string) => MaybePromise<boolean>,
+	): MaybePromise<string>;
 	has(cid: string): MaybePromise<boolean>;
 	get(cid: string, options?: GetOptions): MaybePromise<Uint8Array | undefined>;
 	rm(cid: string): MaybePromise<void>;

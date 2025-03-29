@@ -59,6 +59,13 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		return this.remoteBlocks.put(bytes);
 	}
 
+	async maybePut(
+		bytes: Uint8Array,
+		condition?: (cid: string) => Promise<boolean> | boolean,
+	): Promise<string> {
+		return this.remoteBlocks.maybePut(bytes, condition);
+	}
+
 	async has(cid: string) {
 		return this.remoteBlocks.has(cid);
 	}
