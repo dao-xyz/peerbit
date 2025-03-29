@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [10.4.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.9...shared-log-v10.4.10) (2025-03-29)
+
+
+### Bug Fixes
+
+* open indexer once on client ([48b4568](https://github.com/dao-xyz/peerbit/commit/48b45685e09dda68dce0cb0e03e88096a4a36609))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.1.9 to 5.1.10
+    * @peerbit/log bumped from 4.0.45 to 4.0.46
+    * @peerbit/rpc bumped from 5.2.0 to 5.2.1
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.33 to ^2.1.34
+
 ## [10.4.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.8...shared-log-v10.4.9) (2025-03-28)
 
 

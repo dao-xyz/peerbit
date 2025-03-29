@@ -202,6 +202,20 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.1.10](https://github.com/dao-xyz/peerbit/compare/program-v5.1.9...program-v5.1.10) (2025-03-29)
+
+
+### Bug Fixes
+
+* don't save and hash subprograms by default ([9ce5d02](https://github.com/dao-xyz/peerbit/commit/9ce5d0213ac08270c255f559239e6c72b1955e21))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.3.14 to ^1.4.0
+
 ## [5.1.9](https://github.com/dao-xyz/peerbit/compare/program-v5.1.8...program-v5.1.9) (2025-03-28)
 
 
