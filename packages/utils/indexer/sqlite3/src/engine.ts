@@ -744,14 +744,23 @@ export class SQLiteIndices implements types.Indices {
 				await scope.start();
 			}
 			this.scopes.set(name, scope);
+			return scope;
 		}
-		return this.scopes.get(name)!;
+
+		const scope = this.scopes.get(name)!;
+		if (!this.closed) {
+			// TODO test this code path
+			await scope.start();
+		}
+		return scope;
 	}
 
 	async start(): Promise<void> {
 		this.closed = false;
 
-		await this.properties.db.open(); // TODO only open if parent is not defined ? or this method will not be the opposite of close
+		if (!this.properties.parent) {
+			await this.properties.db.open();
+		}
 
 		for (const scope of this.scopes.values()) {
 			await scope.start();

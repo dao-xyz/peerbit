@@ -4297,8 +4297,9 @@ export const tests = (
 
 			it("drops sub scopes", async () => {
 				const scope = await createIndicies();
-				let subScope = await scope.scope("subindex");
 				await scope.start();
+				let subScope = await scope.scope("subindex");
+
 				let subIndex = await subScope.init({
 					indexBy: ["id"],
 					schema: Document,
@@ -4310,9 +4311,9 @@ export const tests = (
 				await scope.drop();
 
 				// re-init the scope
+				await scope.start();
 				subScope = await scope.scope("subindex");
 				subIndex = await subScope.init({ indexBy: ["id"], schema: Document });
-
 				expect(await subIndex.getSize()).equal(0);
 			});
 
