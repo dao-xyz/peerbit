@@ -32,6 +32,8 @@ export interface Saveable {
 		options?: {
 			format?: string;
 			timeout?: number;
+			skipOnAddress?: boolean;
+			condition?: (address: string) => boolean | Promise<boolean>;
 		},
 	): Promise<Address>;
 
@@ -220,11 +222,13 @@ export class Handler<T extends Manageable<any>> {
 
 			logger.debug(`Open database '${program.constructor.name}`);
 
-			// TODO prevent resave if already saved
-			const address = await program.save(
-				this.properties.client.services.blocks,
-			);
-
+			// todo make this nicer
+			let address = await program.save(this.properties.client.services.blocks, {
+				skipOnAddress: true,
+				condition: (address) => {
+					return !this.items.has(address.toString());
+				},
+			});
 			const existing = await this.checkProcessExisting(
 				address,
 				program,
@@ -241,12 +245,18 @@ export class Handler<T extends Manageable<any>> {
 					}
 				},
 				onClose: (p) => {
-					if (this.properties.shouldMonitor(p)) {
+					if (
+						this.properties.shouldMonitor(p) &&
+						p.parents.filter((x) => !!x).length === 0
+					) {
 						return this._onProgamClose(p as T); // TODO types
 					}
 				},
 				onDrop: (p) => {
-					if (this.properties.shouldMonitor(p)) {
+					if (
+						this.properties.shouldMonitor(p) &&
+						p.parents.filter((x) => !!x).length === 0
+					) {
 						return this._onProgamClose(p);
 					}
 				},
@@ -264,7 +274,6 @@ export class Handler<T extends Manageable<any>> {
 		if (options?.parent) {
 			return fn();
 		}
-
 		let address: string;
 		if (typeof storeOrAddress === "string") {
 			address = storeOrAddress;
@@ -272,6 +281,12 @@ export class Handler<T extends Manageable<any>> {
 			if (storeOrAddress.closed) {
 				address = await storeOrAddress.save(
 					this.properties.client.services.blocks,
+					{
+						skipOnAddress: true,
+						condition: (address) => {
+							return !this.items.has(address.toString());
+						},
+					},
 				);
 			} else {
 				address = storeOrAddress.address;

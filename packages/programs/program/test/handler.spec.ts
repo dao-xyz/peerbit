@@ -120,6 +120,7 @@ describe(`shared`, () => {
 		const p1 = new TestProgram();
 		const p2 = p1.clone();
 		const db1Promise = client.open(p1);
+
 		const db2Promise = client.open(p2, { existing: "reuse" });
 
 		await db1Promise;
@@ -162,6 +163,37 @@ describe(`shared`, () => {
 		expect(p3 === p1).to.be.true;
 		await p2.close();
 		expect(p1.closed).to.be.true;
+	});
+
+	it("will not resave if address already exists", async () => {
+		const p1 = new TestProgram();
+		await client.open(p1);
+		const p1Clone = p1.clone();
+		let saveCalled = false;
+		const put = client.services.blocks.put.bind(client.services.blocks);
+		client.services.blocks.put = async (o) => {
+			saveCalled = true;
+			return put(o);
+		};
+		await client.open(p1Clone, { existing: "reuse" });
+		expect(saveCalled).to.be.false;
+	});
+
+	it("will not resave if opened with address", async () => {
+		const p1 = new TestProgram();
+		await client.open(p1);
+		await p1.close();
+
+		const put = client.services.blocks.put.bind(client.services.blocks);
+		let saveCalled = false;
+		client.services.blocks.put = async (block) => {
+			saveCalled = true;
+			return put(block);
+		};
+		const openedAgain = await client.open(p1.address, { existing: "reuse" });
+		expect(openedAgain.closed).to.be.false;
+		expect(openedAgain.address).to.exist;
+		expect(saveCalled).to.be.false;
 	});
 
 	it("rejects", async () => {

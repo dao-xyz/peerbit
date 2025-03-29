@@ -68,11 +68,11 @@ export interface LifeCycleEvents {
 
 export interface ProgramEvents extends NetworkEvents, LifeCycleEvents {}
 
-const getAllParentAddresses = (p: Program): string[] => {
+/* const getAllParentAddresses = (p: Program): string[] => {
 	return getAllParent(p, [])
 		.filter((x) => x instanceof Program)
 		.map((x) => (x as Program).address);
-};
+}; */
 
 const getAllParent = (a: Program, arr: Program[] = [], includeThis = false) => {
 	includeThis && arr.push(a);
@@ -172,13 +172,19 @@ export abstract class Program<
 			);
 		}
 
-		await this.save(node.services.blocks);
-		if (getAllParentAddresses(this as Program).includes(this.address)) {
-			throw new Error(
-				"Subprogram has same address as some parent program. This is not currently supported",
-			);
+		if (!options?.parent) {
+			// only store the root program
+			// TODO do we need addresses for subprograms? if so we also need to call this
+			await this.save(node.services.blocks);
 		}
-
+		/* 
+			TODO is this check needed? 
+			if (getAllParentAddresses(this as Program).includes(this.address)) {
+				throw new Error(
+					"Subprogram has same address as some parent program. This is not currently supported",
+				);
+			}
+		*/
 		if (!this.closed) {
 			addParent(this, options?.parent);
 			return;
@@ -486,9 +492,25 @@ export abstract class Program<
 
 	getTopics?(): string[];
 
-	async save(store: Blocks = this.node.services.blocks): Promise<Address> {
+	async save(
+		store: Blocks = this.node.services.blocks,
+		options?: {
+			skipOnAddress?: boolean;
+			condition?: (address: string) => boolean | Promise<boolean>;
+		},
+	): Promise<Address> {
 		const existingAddress = this._address;
-		this._address = await store.put(serialize(this));
+		if (existingAddress) {
+			if (!options?.skipOnAddress) {
+				return existingAddress;
+			}
+		}
+		this._address = await store.maybePut(serialize(this), (cid) => {
+			if (options?.condition) {
+				return options.condition(cid);
+			}
+			return true;
+		});
 		if (!this.address) {
 			throw new Error("Unexpected");
 		}
@@ -503,7 +525,7 @@ export abstract class Program<
 	}
 
 	async delete(): Promise<void> {
-		if (this.address) {
+		if (this._address) {
 			return this.node.services.blocks.rm(this.address);
 		}
 		// Not saved

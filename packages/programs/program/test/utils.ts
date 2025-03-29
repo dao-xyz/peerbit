@@ -63,6 +63,17 @@ export const createPeer = async (
 					blocks.set(hash, c);
 					return hash;
 				},
+				maybePut: async (bytes, condition) => {
+					const hash = sha256Base64Sync(bytes);
+					if (blocks.has(hash)) {
+						return hash;
+					}
+					if (condition && !(await condition?.(hash))) {
+						return hash;
+					}
+					blocks.set(hash, bytes);
+					return hash;
+				},
 				rm: (c) => {
 					blocks.delete(c);
 				},
