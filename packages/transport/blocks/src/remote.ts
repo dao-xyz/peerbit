@@ -132,21 +132,13 @@ export class RemoteBlocks implements IBlocks {
 		};
 	}
 
-	async put(bytes: Uint8Array): Promise<string> {
-		if (!this.localStore) {
-			throw new Error("Local store not set");
-		}
-		return this.localStore!.put(bytes);
-	}
-
-	async maybePut(
-		bytes: Uint8Array,
-		condition?: (cid: string) => Promise<boolean> | boolean,
+	async put(
+		bytes: Uint8Array | { block: Block<any, any, any, any>; cid: string },
 	): Promise<string> {
 		if (!this.localStore) {
 			throw new Error("Local store not set");
 		}
-		return this.localStore.maybePut(bytes, condition);
+		return this.localStore!.put(bytes);
 	}
 
 	async has(cid: string) {

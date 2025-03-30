@@ -25,7 +25,9 @@ export type WithArgs<Args> = { args?: Args };
 export type WithParent<T> = { parent?: T };
 export type Closeable = { closed: boolean; close(): Promise<boolean> };
 type WithNode = { node: { identity: Identity } };
-export type Addressable = { address: Address };
+export type Addressable = {
+	address: Address;
+};
 export interface Saveable {
 	save(
 		store: Blocks,
@@ -213,6 +215,13 @@ export class Handler<T extends Manageable<any>> {
 
 						// assume new instance was not added to monitored items, just add it
 						// and return it as we would opened it normally
+
+						await program.save(this.properties.client.services.blocks, {
+							skipOnAddress: false,
+							condition: (address) => {
+								return !this.items.has(address.toString());
+							},
+						});
 						this.items.set(program.address, program);
 						addParent(program, options.parent);
 						return program;
@@ -229,6 +238,7 @@ export class Handler<T extends Manageable<any>> {
 					return !this.items.has(address.toString());
 				},
 			});
+
 			const existing = await this.checkProcessExisting(
 				address,
 				program,
@@ -240,23 +250,17 @@ export class Handler<T extends Manageable<any>> {
 
 			await program.beforeOpen(this.properties.client, {
 				onBeforeOpen: (p) => {
-					if (this.properties.shouldMonitor(program) && !options.parent) {
+					if (this.properties.shouldMonitor(program)) {
 						this.items.set(address, program);
 					}
 				},
 				onClose: (p) => {
-					if (
-						this.properties.shouldMonitor(p) &&
-						p.parents.filter((x) => !!x).length === 0
-					) {
+					if (this.properties.shouldMonitor(p)) {
 						return this._onProgamClose(p as T); // TODO types
 					}
 				},
 				onDrop: (p) => {
-					if (
-						this.properties.shouldMonitor(p) &&
-						p.parents.filter((x) => !!x).length === 0
-					) {
+					if (this.properties.shouldMonitor(p)) {
 						return this._onProgamClose(p);
 					}
 				},

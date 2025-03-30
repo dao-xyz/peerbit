@@ -1,4 +1,5 @@
 import { type WaitForPeer } from "@peerbit/stream-interface";
+import { type Block } from "multiformats/block";
 
 export type GetOptions = {
 	remote?:
@@ -17,10 +18,8 @@ export type PutOptions = {
 type MaybePromise<T> = Promise<T> | T;
 
 export interface Blocks extends WaitForPeer {
-	put(bytes: Uint8Array): MaybePromise<string>;
-	maybePut(
-		bytes: Uint8Array,
-		condition?: (cid: string) => MaybePromise<boolean>,
+	put(
+		data: Uint8Array | { block: Block<any, any, any, any>; cid: string },
 	): MaybePromise<string>;
 	has(cid: string): MaybePromise<boolean>;
 	get(cid: string, options?: GetOptions): MaybePromise<Uint8Array | undefined>;

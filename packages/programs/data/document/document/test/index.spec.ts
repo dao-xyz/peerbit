@@ -3086,7 +3086,7 @@ describe("index", () => {
 						transform: async (arg, ctx) => {
 							return new SubProgramIndexable({
 								id: arg.id,
-								address: await arg.calculateAddress(),
+								address: (await arg.calculateAddress()).address,
 							});
 						},
 						cacheSize: options?.index?.cacheSize,

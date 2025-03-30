@@ -108,7 +108,10 @@ class Forum extends Program<Args> {
 				idProperty: NAME_PROPERTY,
 				type: IndexableChannel,
 				transform: async (channel, _context) =>
-					new IndexableChannel(channel.name, await channel.calculateAddress()),
+					new IndexableChannel(
+						channel.name,
+						(await channel.calculateAddress()).address,
+					),
 			},
 			replicate: args?.replicate,
 		});

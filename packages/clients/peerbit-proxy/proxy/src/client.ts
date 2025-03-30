@@ -250,14 +250,18 @@ export class PeerbitProxyClient implements ProgramClient {
 					);
 					return resp.has;
 				},
-				put: async (bytes) => {
-					const resp = await this.request<blocks.RESP_PutBlock>(
-						new blocks.REQ_PutBlock(bytes),
-					);
-					return resp.cid;
-				},
-				maybePut: async (bytes, _condition) => {
-					// TODO use condition
+				put: async (bytesOrBlock) => {
+					let bytes: Uint8Array;
+
+					if (bytesOrBlock instanceof Uint8Array) {
+						bytes = bytesOrBlock;
+					} else {
+						let isRaw = bytesOrBlock.block.cid.code === 0x55;
+						if (!isRaw) {
+							throw new Error("Only raw blocks are supported");
+						}
+						bytes = bytesOrBlock.block.bytes;
+					}
 					const resp = await this.request<blocks.RESP_PutBlock>(
 						new blocks.REQ_PutBlock(bytes),
 					);

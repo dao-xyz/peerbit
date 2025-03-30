@@ -12,6 +12,7 @@ import {
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
 import { TimeoutError } from "@peerbit/time";
+import { type Block } from "multiformats/block";
 import { type Address } from "./address.js";
 import { type Client } from "./client.js";
 import {
@@ -76,11 +77,11 @@ export interface LifeCycleEvents {
 
 export interface ProgramEvents extends NetworkEvents, LifeCycleEvents {}
 
-/* const getAllParentAddresses = (p: Program): string[] => {
+const getAllParentAddresses = (p: Program): string[] => {
 	return getAllParent(p, [])
 		.filter((x) => x instanceof Program)
 		.map((x) => (x as Program).address);
-}; */
+};
 
 const getAllParent = (a: Program, arr: Program[] = [], includeThis = false) => {
 	includeThis && arr.push(a);
@@ -137,9 +138,10 @@ export abstract class Program<
 		this._address = address;
 	}
 
-	private get isRoot() {
+	get isRoot() {
 		return this.parents == null || this.parents.filter((x) => !!x).length === 0;
 	}
+
 	get rootAddress(): Address {
 		let root: Program = this;
 		while (root.parents && root.parents.length > 0) {
@@ -154,9 +156,18 @@ export abstract class Program<
 		return root.address;
 	}
 
-	async calculateAddress(): Promise<Address> {
-		this._address = await calculateRawCid(serialize(this));
-		return this._address;
+	async calculateAddress(options?: {
+		reset?: boolean;
+	}): Promise<{ address: string; block?: Block<any, any, any, any> }> {
+		if (this._address && !options?.reset) {
+			return { address: this._address, block: undefined };
+		}
+		const out = await calculateRawCid(serialize(this));
+		this._address = out.cid;
+		return {
+			address: out.cid,
+			block: out.block,
+		};
 	}
 
 	get events(): TypedEventTarget<Events> {
@@ -195,19 +206,18 @@ export abstract class Program<
 			);
 		}
 
-		if (options?.parent || this.isRoot) {
-			// only store the root program, or programs that have been opened with a parent refernece ("loose programs")
-			// TODO do we need addresses for subprograms? if so we also need to call this
-			await this.save(node.services.blocks);
+		// only store the root program, or programs that have been opened with a parent refernece ("loose programs")
+		// TODO do we need addresses for subprograms? if so we also need to call this
+		await this.calculateAddress();
+		// await this.save(node.services.blocks, { skipOnAddress: true, save: () => !options?.parent || this.isRoot });
+
+		// TODO is this check needed?
+		if (getAllParentAddresses(this as Program).includes(this.address)) {
+			throw new Error(
+				"Subprogram has same address as some parent program. This is not currently supported",
+			);
 		}
-		/* 
-			TODO is this check needed? 
-			if (getAllParentAddresses(this as Program).includes(this.address)) {
-				throw new Error(
-					"Subprogram has same address as some parent program. This is not currently supported",
-				);
-			}
-		*/
+
 		if (!this.closed) {
 			addParent(this, options?.parent);
 			return;
@@ -519,24 +529,29 @@ export abstract class Program<
 		store: Blocks = this.node.services.blocks,
 		options?: {
 			skipOnAddress?: boolean;
-			condition?: (address: string) => boolean | Promise<boolean>;
+			save?: (address: string) => boolean | Promise<boolean>;
 		},
 	): Promise<Address> {
 		const existingAddress = this._address;
 		if (existingAddress) {
-			if (!options?.skipOnAddress) {
+			if (options?.skipOnAddress) {
 				return existingAddress;
 			}
 		}
-		this._address = await store.maybePut(serialize(this), (cid) => {
-			if (options?.condition) {
-				return options.condition(cid);
-			}
-			return true;
-		});
-		if (!this.address) {
-			throw new Error("Unexpected");
+
+		const toPut = await this.calculateAddress();
+		if (
+			(options?.save && !(await options.save(toPut.address))) ||
+			(await store.has(toPut.address))
+		) {
+			return this.address!;
 		}
+
+		await store.put(
+			toPut.block
+				? { cid: toPut.address, block: toPut.block }
+				: serialize(this),
+		);
 
 		if (existingAddress && existingAddress !== this.address) {
 			throw new Error(
@@ -544,7 +559,7 @@ export abstract class Program<
 			);
 		}
 
-		return this._address!;
+		return this.address!;
 	}
 
 	async delete(): Promise<void> {

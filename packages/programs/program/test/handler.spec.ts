@@ -244,6 +244,67 @@ describe(`shared`, () => {
 		);
 	});
 
+	it("can reopen", async () => {
+		const put = client.services.blocks.put.bind(client.services.blocks);
+		let putCalls = 0;
+		client.services.blocks.put = async (block) => {
+			putCalls++;
+			return put(block);
+		};
+
+		const p1 = new TestProgram();
+		await client.open(p1);
+
+		expect(p1.nested.closed).to.be.false;
+		expect(p1.nested.address).to.exist;
+
+		await p1.close();
+		expect(p1.nested.closed).to.be.true;
+		expect(p1.closed).to.be.true;
+
+		const p1Again = await client.open(p1.clone(), { existing: "reuse" });
+
+		expect(p1Again.nested.closed).to.be.false;
+		expect(p1Again.nested.address).to.exist;
+
+		expect(putCalls).to.equal(1);
+
+		expect(await client.services.blocks.has(p1Again.nested.address)).to.be
+			.false;
+	});
+
+	it("can reopen weak references", async () => {
+		const put = client.services.blocks.put.bind(client.services.blocks);
+		let putCalls = 0;
+		client.services.blocks.put = async (block) => {
+			putCalls++;
+			return put(block);
+		};
+
+		const p1 = new TestParenteRefernceProgram();
+		await client.open(p1);
+
+		expect(p1.nested.closed).to.be.false;
+		expect(p1.nested.address).to.exist;
+
+		await p1.close();
+		expect(p1.nested.closed).to.be.true;
+		expect(p1.closed).to.be.true;
+		expect(await client.services.blocks.has(p1.nested.address)).to.be.true;
+
+		const p1Again = await client.open(p1.clone(), { existing: "reuse" });
+
+		expect(p1Again.nested.closed).to.be.false;
+		expect(p1Again.nested.address).to.exist;
+
+		expect(putCalls).to.equal(2);
+
+		expect(await client.services.blocks.has(p1Again.nested.address)).to.be.true;
+		await p1Again.drop();
+		expect(await client.services.blocks.has(p1Again.nested.address)).to.be
+			.false;
+	});
+
 	// TODO add tests and define behaviour for cross topic programs
 	// TODO add tests for shared subprogams
 	// TODO add tests for subprograms that is also open as root program

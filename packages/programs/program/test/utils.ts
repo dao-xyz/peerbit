@@ -1,8 +1,8 @@
+import { calculateRawCid } from "@peerbit/blocks-interface";
 import {
 	Ed25519Keypair,
 	type PublicSignKey,
 	randomBytes,
-	sha256Base64Sync,
 } from "@peerbit/crypto";
 import {
 	SubscriptionEvent,
@@ -58,21 +58,14 @@ export const createPeer = async (
 			blocks: {
 				get: (c) => blocks.get(c),
 				has: (c) => blocks.has(c),
-				put: (c) => {
-					const hash = sha256Base64Sync(c);
-					blocks.set(hash, c);
-					return hash;
-				},
-				maybePut: async (bytes, condition) => {
-					const hash = sha256Base64Sync(bytes);
-					if (blocks.has(hash)) {
-						return hash;
+				put: async (c) => {
+					if (c instanceof Uint8Array) {
+						const out = await calculateRawCid(c);
+						blocks.set(out.cid, c);
+						return out.cid;
 					}
-					if (condition && !(await condition?.(hash))) {
-						return hash;
-					}
-					blocks.set(hash, bytes);
-					return hash;
+					blocks.set(c.cid, c.block.bytes);
+					return c.cid;
 				},
 				rm: (c) => {
 					blocks.delete(c);

@@ -3,11 +3,10 @@ import { createStore } from "@peerbit/any-store";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import {
 	type Blocks,
+	calculateRawCid,
 	cidifyString,
 	codecCodes,
-	createBlock,
 	defaultHasher,
-	stringifyCid,
 } from "@peerbit/blocks-interface";
 import { type PublicSignKey } from "@peerbit/crypto";
 import { waitFor } from "@peerbit/time";
@@ -57,22 +56,14 @@ export class AnyBlockStore implements Blocks {
 		}
 	}
 
-	async put(bytes: Uint8Array): Promise<string> {
-		return this.maybePut(bytes);
-	}
-
-	async maybePut(
-		bytes: Uint8Array,
-		condition?: (cid: string) => Promise<boolean> | boolean,
+	async put(
+		bytes: Uint8Array | { block: Block<any, any, any, any>; cid: string },
 	): Promise<string> {
-		const block = await createBlock(bytes, "raw");
-		const cid = stringifyCid(block.cid);
-		if (condition && !(await condition(cid))) {
-			return cid;
-		}
-		const bbytes = block.bytes;
-		await this._store.put(cid, bbytes);
-		return cid;
+		const put =
+			bytes instanceof Uint8Array ? await calculateRawCid(bytes) : bytes;
+		const bbytes = put.block.bytes;
+		await this._store.put(put.cid, bbytes);
+		return put.cid;
 	}
 
 	async rm(cid: string): Promise<void> {
