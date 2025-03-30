@@ -368,6 +368,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.48](https://github.com/dao-xyz/peerbit/compare/log-v4.0.47...log-v4.0.48) (2025-03-30)
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.4.0 to ^1.4.1
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.35 to 2.1.36
+
 ## [4.0.47](https://github.com/dao-xyz/peerbit/compare/log-v4.0.46...log-v4.0.47) (2025-03-29)
 
 

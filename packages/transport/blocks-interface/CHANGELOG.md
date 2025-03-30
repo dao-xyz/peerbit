@@ -194,6 +194,13 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [1.4.1](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.4.0...blocks-interface-v1.4.1) (2025-03-30)
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+
 ## [1.4.0](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.3.14...blocks-interface-v1.4.0) (2025-03-29)
 
 

@@ -279,6 +279,20 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.3.1](https://github.com/dao-xyz/peerbit/compare/blocks-v2.3.0...blocks-v2.3.1) (2025-03-30)
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from 1.4.0 to 1.4.1
+
 ## [2.3.0](https://github.com/dao-xyz/peerbit/compare/blocks-v2.2.8...blocks-v2.3.0) (2025-03-29)
 
 

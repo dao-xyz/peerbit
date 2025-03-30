@@ -202,6 +202,20 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.1](https://github.com/dao-xyz/peerbit/compare/program-v5.2.0...program-v5.2.1) (2025-03-30)
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.4.0 to ^1.4.1
+
 ## [5.2.0](https://github.com/dao-xyz/peerbit/compare/program-v5.1.10...program-v5.2.0) (2025-03-29)
 
 
