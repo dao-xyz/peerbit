@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.11](https://github.com/dao-xyz/peerbit/compare/document-v9.3.10...document-v9.3.11) (2025-03-30)
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.0 to 5.2.1
+    * @peerbit/rpc bumped from 5.2.2 to 5.2.3
+    * @peerbit/shared-log bumped from 10.4.11 to 10.4.12
+    * @peerbit/document-interface bumped from ^2.0.21 to ^2.0.22
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.35 to 2.1.36
+
 ## [9.3.10](https://github.com/dao-xyz/peerbit/compare/document-v9.3.9...document-v9.3.10) (2025-03-29)
 
 
