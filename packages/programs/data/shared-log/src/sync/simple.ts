@@ -43,11 +43,11 @@ export class ResponseMaybeSync extends TransportMessage {
 @variant([0, 5])
 export class RequestMaybeSyncCoordinate extends TransportMessage {
 	@field({ type: vec("u64") })
-	coordinates: bigint[];
+	hashNumbers: bigint[];
 
-	constructor(props: { coordinates: bigint[] }) {
+	constructor(props: { hashNumbers: bigint[] }) {
 		super();
-		this.coordinates = props.coordinates;
+		this.hashNumbers = props.hashNumbers;
 	}
 }
 
@@ -64,16 +64,14 @@ const getHashesFromSymbols = async (
 			const entries = await entryIndex
 				.iterate(
 					{ query: queries.length > 1 ? new Or(queries) : queries },
-					{ shape: { hash: true, coordinates: true } },
+					{ shape: { hash: true, hashNumber: true } },
 				)
 				.all();
 			queries = [];
 
 			for (const entry of entries) {
 				results.add(entry.value.hash);
-				for (const coordinate of entry.value.coordinates) {
-					coordinateToHash.add(coordinate, entry.value.hash);
-				}
+				coordinateToHash.add(entry.value.hashNumber, entry.value.hash);
 			}
 		}
 	};
@@ -84,7 +82,7 @@ const getHashesFromSymbols = async (
 			continue;
 		}
 		const matchQuery = new IntegerCompare({
-			key: "coordinates",
+			key: "hashNumber",
 			compare: Compare.Equal,
 			value: symbols[i],
 		});
@@ -168,7 +166,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			return true;
 		} else if (msg instanceof RequestMaybeSyncCoordinate) {
 			const hashes = await getHashesFromSymbols(
-				msg.coordinates,
+				msg.hashNumbers,
 				this.entryIndex,
 				this.coordinateToHash,
 			);
@@ -261,7 +259,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 		await this.rpc.send(
 			isBigInt
-				? new RequestMaybeSyncCoordinate({ coordinates: hashes as bigint[] })
+				? new RequestMaybeSyncCoordinate({ hashNumbers: hashes as bigint[] })
 				: new ResponseMaybeSync({ hashes: hashes as string[] }),
 			{
 				mode: new SilentDelivery({ to, redundancy: 1 }),
@@ -271,7 +269,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 	private async checkHasCoordinateOrHash(key: string | bigint) {
 		return typeof key === "bigint"
-			? (await this.entryIndex.count({ query: { coordinates: key } })) > 0
+			? (await this.entryIndex.count({ query: { hashNumber: key } })) > 0
 			: this.log.has(key);
 	}
 	async open() {

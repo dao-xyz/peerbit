@@ -9,7 +9,7 @@ import type { RPC, RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import type { SyncableKey, Syncronizer } from ".";
 import { type EntryWithRefs } from "../exchange-heads.js";
-import { type NumberFromType, type Numbers } from "../integers.js";
+import { type Numbers } from "../integers.js";
 import { TransportMessage } from "../message.js";
 import {
 	type EntryReplicated,
@@ -145,9 +145,6 @@ const buildEncoderOrDecoderFromRange = async <
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
 
-	/* const buildDecoderStart = +new Date(); */
-	let symbolCount = 0;
-
 	const entries = await entryIndex
 		.iterate(
 			{
@@ -160,7 +157,8 @@ const buildEncoderOrDecoderFromRange = async <
 			},
 			{
 				shape: {
-					coordinates: true,
+					hash: true,
+					hashNumber: true,
 				},
 			},
 		)
@@ -171,19 +169,13 @@ const buildEncoderOrDecoderFromRange = async <
 	}
 
 	for (const entry of entries) {
-		symbolCount += entry.value.coordinates.length;
-
-		for (const coordinate of entry.value.coordinates) {
-			encoder.add_symbol(coerceBigInt(coordinate));
-		}
+		encoder.add_symbol(coerceBigInt(entry.value.hashNumber));
 	}
 	return encoder as E;
 };
 
-export class RatelessIBLTSynchronizer<
-	D extends "u32" | "u64",
-	N = NumberFromType<D>,
-> implements Syncronizer<D>
+export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
+	implements Syncronizer<D>
 {
 	simple: SimpleSyncronizer<D>;
 
@@ -254,9 +246,7 @@ export class RatelessIBLTSynchronizer<
 			) {
 				entriesToSyncNaively.set(entry.hash, entry);
 			} else {
-				for (const coordinate of entry.coordinates) {
-					allCoordinatesToSyncWithIblt.push(coerceBigInt(coordinate));
-				}
+				allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
 			}
 		}
 
@@ -267,7 +257,7 @@ export class RatelessIBLTSynchronizer<
 			// add all coordinates to sync with iblt
 			allCoordinatesToSyncWithIblt = Array.from(
 				properties.entries.values(),
-			).flatMap((entry) => entry.coordinates.map((y) => coerceBigInt(y)));
+			).map((x) => coerceBigInt(x.hashNumber));
 		} else {
 			// TODO what happens if too many
 			await this.simple.onMaybeMissingEntries({
@@ -323,7 +313,7 @@ export class RatelessIBLTSynchronizer<
 		const startSync = new StartSync({ from: start, to: end, symbols: [] });
 		const encoder = new EncoderWrapper();
 		for (const entry of sortedEntries) {
-			encoder.add_symbol(BigInt(entry));
+			encoder.add_symbol(coerceBigInt(entry));
 		}
 
 		let initialSymbols = Math.round(
@@ -336,7 +326,7 @@ export class RatelessIBLTSynchronizer<
 		}
 
 		const clear = () => {
-			// 	encoder.free(); TODO?
+			encoder.free();
 			clearTimeout(
 				this.outgoingSyncProcesses.get(getSyncIdString(startSync))?.timeout,
 			);
@@ -425,7 +415,7 @@ export class RatelessIBLTSynchronizer<
 
 			const createTimeout = () => {
 				return setTimeout(() => {
-					// decoder.free(); TODO?
+					decoder.free();
 					this.ingoingSyncProcesses.delete(syncId);
 				}, 2e4); // TODO arg
 			};
@@ -481,7 +471,7 @@ export class RatelessIBLTSynchronizer<
 						) {
 							// TODO in some way test this code path
 							logger.error(error?.message ?? error);
-
+							obj.free();
 							await this.simple.rpc.send(
 								new RequestAll({
 									syncId: message.syncId,
@@ -516,7 +506,7 @@ export class RatelessIBLTSynchronizer<
 					return false;
 				},
 				free: () => {
-					// decoder.free(); TODO?
+					decoder.free();
 					clearTimeout(this.ingoingSyncProcesses.get(syncId)?.timeout);
 					this.ingoingSyncProcesses.delete(syncId);
 				},

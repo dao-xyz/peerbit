@@ -1,5 +1,6 @@
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
-import { randomBytes, toBase64 } from "@peerbit/crypto";
+import { calculateRawCid } from "@peerbit/blocks-interface";
+import { randomBytes } from "@peerbit/crypto";
 import {
 	type Entry,
 	EntryType,
@@ -18,9 +19,9 @@ import { EventStore } from "./utils/stores/event-store.js";
  * TOOD make these test part of ranges.test.ts
  */
 
-const toEntry = (gid: string | number) => {
+const toEntry = async (gid: string | number) => {
 	return {
-		hash: toBase64(randomBytes(32)),
+		hash: (await calculateRawCid(randomBytes(32))).cid,
 		meta: new Meta({
 			next: [],
 			type: EntryType.APPEND,
@@ -115,12 +116,12 @@ describe(`isLeader`, function () {
 			args: { ...options.args, replicate: { offset: 0, factor: 0.5 } },
 		});
 		const isLeaderAOneLeader = await db1.log.isLeader({
-			entry: toEntry(123),
+			entry: await toEntry(123),
 			replicas: 1,
 		});
 		expect(isLeaderAOneLeader).to.be.true;
 		const isLeaderATwoLeader = await db1.log.isLeader({
-			entry: toEntry(123),
+			entry: await toEntry(123),
 			replicas: 2,
 		});
 		expect(isLeaderATwoLeader).to.be.true;
@@ -143,11 +144,11 @@ describe(`isLeader`, function () {
 
 			// One leader
 			const isLeaderAOneLeader = await db1.log.isLeader({
-				entry: toEntry(slot),
+				entry: await toEntry(slot),
 				replicas: 1,
 			});
 			const isLeaderBOneLeader = await db2.log.isLeader({
-				entry: toEntry(slot),
+				entry: await toEntry(slot),
 				replicas: 1,
 			});
 
@@ -158,11 +159,11 @@ describe(`isLeader`, function () {
 
 			// Two leaders
 			const isLeaderATwoLeaders = await db1.log.isLeader({
-				entry: toEntry(slot),
+				entry: await toEntry(slot),
 				replicas: 2,
 			});
 			const isLeaderBTwoLeaders = await db2.log.isLeader({
-				entry: toEntry(slot),
+				entry: await toEntry(slot),
 				replicas: 2,
 			});
 
@@ -194,11 +195,11 @@ describe(`isLeader`, function () {
 
 		// Two leaders, but only one will be leader since only one is replicating
 		const isLeaderA = await db1.log.isLeader({
-			entry: toEntry(slot),
+			entry: await toEntry(slot),
 			replicas: 2,
 		});
 		const isLeaderB = await db2.log.isLeader({
-			entry: toEntry(slot),
+			entry: await toEntry(slot),
 			replicas: 2,
 		});
 
@@ -236,15 +237,15 @@ describe(`isLeader`, function () {
 
 		// Two leaders, but only one will be leader since only one is replicating
 		const isLeaderA = await db1.log.isLeader({
-			entry: toEntry(slot),
+			entry: await toEntry(slot),
 			replicas: 3,
 		});
 		const isLeaderB = await db2.log.isLeader({
-			entry: toEntry(slot),
+			entry: await toEntry(slot),
 			replicas: 3,
 		});
 		const isLeaderC = await db3.log.isLeader({
-			entry: toEntry(slot),
+			entry: await toEntry(slot),
 			replicas: 3,
 		});
 
@@ -298,19 +299,19 @@ describe(`isLeader`, function () {
 			try {
 				const slot = Math.random();
 				const isLeaderAOneLeader = await db1.log.isLeader(
-					{ entry: toEntry(slot), replicas: 1 },
+					{ entry: await toEntry(slot), replicas: 1 },
 					{
 						roleAge: 0,
 					},
 				);
 				const isLeaderBOneLeader = await db2.log.isLeader(
-					{ entry: toEntry(slot), replicas: 1 },
+					{ entry: await toEntry(slot), replicas: 1 },
 					{
 						roleAge: 0,
 					},
 				);
 				const isLeaderCOneLeader = await db3.log.isLeader(
-					{ entry: toEntry(slot), replicas: 1 },
+					{ entry: await toEntry(slot), replicas: 1 },
 					{
 						roleAge: 0,
 					},
@@ -323,19 +324,19 @@ describe(`isLeader`, function () {
 
 				// Two leaders
 				const isLeaderATwoLeaders = await db1.log.isLeader(
-					{ entry: toEntry(slot), replicas: 2 },
+					{ entry: await toEntry(slot), replicas: 2 },
 					{
 						roleAge: 0,
 					},
 				);
 				const isLeaderBTwoLeaders = await db2.log.isLeader(
-					{ entry: toEntry(slot), replicas: 2 },
+					{ entry: await toEntry(slot), replicas: 2 },
 					{
 						roleAge: 0,
 					},
 				);
 				const isLeaderCTwoLeaders = await db3.log.isLeader(
-					{ entry: toEntry(slot), replicas: 2 },
+					{ entry: await toEntry(slot), replicas: 2 },
 					{
 						roleAge: 0,
 					},
@@ -348,19 +349,19 @@ describe(`isLeader`, function () {
 
 				// Three leders
 				const isLeaderAThreeLeaders = await db1.log.isLeader(
-					{ entry: toEntry(slot), replicas: 3 },
+					{ entry: await toEntry(slot), replicas: 3 },
 					{
 						roleAge: 0,
 					},
 				);
 				const isLeaderBThreeLeaders = await db2.log.isLeader(
-					{ entry: toEntry(slot), replicas: 3 },
+					{ entry: await toEntry(slot), replicas: 3 },
 					{
 						roleAge: 0,
 					},
 				);
 				const isLeaderCThreeLeaders = await db3.log.isLeader(
-					{ entry: toEntry(slot), replicas: 3 },
+					{ entry: await toEntry(slot), replicas: 3 },
 					{
 						roleAge: 0,
 					},
@@ -430,19 +431,19 @@ describe(`isLeader`, function () {
 
 		for (let i = 0; i < count; i++) {
 			a += (await db1.log.isLeader(
-				{ entry: toEntry(String(i)), replicas: 2 },
+				{ entry: await toEntry(String(i)), replicas: 2 },
 				{ roleAge: 0 },
 			))
 				? 1
 				: 0;
 			b += (await db2.log.isLeader(
-				{ entry: toEntry(String(i)), replicas: 2 },
+				{ entry: await toEntry(String(i)), replicas: 2 },
 				{ roleAge: 0 },
 			))
 				? 1
 				: 0;
 			c += (await db3.log.isLeader(
-				{ entry: toEntry(String(i)), replicas: 2 },
+				{ entry: await toEntry(String(i)), replicas: 2 },
 				{ roleAge: 0 },
 			))
 				? 1
@@ -940,13 +941,13 @@ describe(`isLeader`, function () {
 
 			for (let i = 0; i < count; i++) {
 				a += (await db1.log.isLeader(
-					{ entry: toEntry(String(i)), replicas: 1 },
+					{ entry: await toEntry(String(i)), replicas: 1 },
 					{ roleAge: 0 },
 				))
 					? 1
 					: 0;
 				b += (await db2.log.isLeader(
-					{ entry: toEntry(String(i)), replicas: 1 },
+					{ entry: await toEntry(String(i)), replicas: 1 },
 					{ roleAge: 0 },
 				))
 					? 1
@@ -1013,7 +1014,7 @@ describe(`isLeader`, function () {
 
 		for (let i = 0; i < 100; i++) {
 			const leaders: Set<string | undefined> = new Set();
-			const entry = toEntry(String(i));
+			const entry = await toEntry(String(i));
 			await db1.log.findLeaders(
 				await db1.log.createCoordinates(entry, 3),
 				entry,

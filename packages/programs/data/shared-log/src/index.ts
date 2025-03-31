@@ -1,5 +1,6 @@
 import { BorshError, field, variant } from "@dao-xyz/borsh";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
+import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import {
 	AccessError,
@@ -276,6 +277,7 @@ interface IndexableDomain<R extends "u32" | "u64"> {
 		hash: string;
 		meta: Meta;
 		assignedToRangeBoundary: boolean;
+		hashNumber: NumberFromType<R>;
 	}) => EntryReplicated<R>;
 	constructorRange: new (
 		properties: {
@@ -3000,12 +3002,18 @@ export class SharedLog<
 			return; // no change
 		}
 
+		const cidObject = cidifyString(properties.entry.hash);
+		const hashNumber = this.indexableDomain.numbers.bytesToNumber(
+			cidObject.multihash.digest,
+		);
+
 		await this.entryCoordinatesIndex.put(
 			new this.indexableDomain.constructorEntry({
 				assignedToRangeBoundary,
 				coordinates: properties.coordinates,
 				meta: properties.entry.meta,
 				hash: properties.entry.hash,
+				hashNumber,
 			}),
 		);
 

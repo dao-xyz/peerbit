@@ -91,6 +91,7 @@ export const shouldAssigneToRangeBoundary = (
 };
 export interface EntryReplicated<R extends "u32" | "u64"> {
 	hash: string; // id of the entry
+	hashNumber: NumberFromType<R>; // hash of the entry in number format
 	gid: string;
 	coordinates: NumberFromType<R>[];
 	wallTime: bigint;
@@ -105,6 +106,9 @@ export const isEntryReplicated = (x: any): x is EntryReplicated<any> => {
 export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	@id({ type: "string" })
 	hash: string;
+
+	@field({ type: "u32" })
+	hashNumber: number;
 
 	@field({ type: "string" })
 	gid: string;
@@ -128,11 +132,13 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 		hash: string;
 		meta: Meta;
 		assignedToRangeBoundary: boolean;
+		hashNumber: number;
 	}) {
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
 		this.gid = properties.meta.gid;
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
+		this.hashNumber = properties.hashNumber;
 		const shallow =
 			properties.meta instanceof Meta
 				? new ShallowMeta(properties.meta)
@@ -154,6 +160,9 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	@id({ type: "string" })
 	hash: string;
+
+	@field({ type: "u64" })
+	hashNumber: bigint;
 
 	@field({ type: "string" })
 	gid: string;
@@ -177,9 +186,11 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 		hash: string;
 		meta: Meta;
 		assignedToRangeBoundary: boolean;
+		hashNumber: bigint;
 	}) {
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
+		this.hashNumber = properties.hashNumber;
 		this.gid = properties.meta.gid;
 		this.wallTime = properties.meta.clock.timestamp.wallTime;
 		const shallow =
