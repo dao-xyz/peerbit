@@ -389,6 +389,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.12...shared-log-v11.0.0) (2025-03-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* iblt sync using hash instead of gid
+
+### Bug Fixes
+
+* iblt sync using hash instead of gid ([fbb4e31](https://github.com/dao-xyz/peerbit/commit/fbb4e318f46e4968e21765a8f7e271bb61c244cb))
+
 ## [10.4.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.11...shared-log-v10.4.12) (2025-03-30)
 
 
