@@ -19,11 +19,11 @@ export class SubscriptionEvent {
 	from: PublicSignKey;
 
 	@field({ type: vec("string") })
-	subscriptions: string[];
+	topics: string[];
 
-	constructor(from: PublicSignKey, subscriptions: string[]) {
+	constructor(from: PublicSignKey, topics: string[]) {
 		this.from = from;
-		this.subscriptions = subscriptions;
+		this.topics = topics;
 	}
 }
 
@@ -32,11 +32,11 @@ export class UnsubcriptionEvent {
 	from: PublicSignKey;
 
 	@field({ type: vec("string") })
-	unsubscriptions: string[];
+	topics: string[];
 
-	constructor(from: PublicSignKey, unsubscriptions: string[]) {
+	constructor(from: PublicSignKey, topics: string[]) {
 		this.from = from;
-		this.unsubscriptions = unsubscriptions;
+		this.topics = topics;
 	}
 }
 

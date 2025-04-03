@@ -37,6 +37,10 @@ import {
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError } from "@peerbit/time";
 import { Uint8ArrayList } from "uint8arraylist";
+import {
+	type DebouncedAccumulatorCounterMap,
+	debouncedAccumulatorSetCounter,
+} from "./debounced-set.js";
 
 export const toUint8Array = (arr: Uint8ArrayList | Uint8Array) =>
 	arr instanceof Uint8ArrayList ? arr.subarray() : arr;
@@ -71,9 +75,15 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		new Map();
 	public dispatchEventOnSelfPublish: boolean;
 
+	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
+	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
+
 	constructor(
 		components: DirectSubComponents,
-		props?: DirectStreamOptions & { dispatchEventOnSelfPublish?: boolean },
+		props?: DirectStreamOptions & {
+			dispatchEventOnSelfPublish?: boolean;
+			subscriptionDebounceDelay?: number;
+		},
 	) {
 		super(components, ["/lazysub/0.0.0"], props);
 		this.subscriptions = new Map();
@@ -82,6 +92,14 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.peerToTopic = new Map();
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
+		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
+			(set) => this._subscribe([...set.values()]),
+			props?.subscriptionDebounceDelay ?? 100,
+		);
+		this.debounceUnsubscribeAggregator = debouncedAccumulatorSetCounter(
+			(set) => this._unsubscribe([...set.values()]),
+			props?.subscriptionDebounceDelay ?? 100,
+		);
 	}
 
 	stop() {
@@ -89,6 +107,8 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		this.topics.clear();
 		this.peerToTopic.clear();
 		this.topicsToPeers.clear();
+		this.debounceSubscribeAggregator.close();
+		this.debounceUnsubscribeAggregator.close();
 		return super.stop();
 	}
 
@@ -102,26 +122,37 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			this.peerToTopic.set(publicKey.hashcode(), new Set());
 	}
 
+	async subscribe(topic: string) {
+		// this.debounceUnsubscribeAggregator.delete(topic);
+		return this.debounceSubscribeAggregator.add({ key: topic });
+	}
+
 	/**
 	 * Subscribes to a given topic.
 	 */
-	async subscribe(topic: string) {
+	async _subscribe(topics: { key: string; counter: number }[]) {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
 
-		const newTopicsForTopicData: string[] = [];
-		let prev = this.subscriptions.get(topic);
-		if (prev) {
-			prev.counter += 1;
-		} else {
-			prev = {
-				counter: 1,
-			};
-			this.subscriptions.set(topic, prev);
+		if (topics.length === 0) {
+			return;
+		}
 
-			newTopicsForTopicData.push(topic);
-			this.listenForSubscribers(topic);
+		const newTopicsForTopicData: string[] = [];
+		for (const { key: topic, counter } of topics) {
+			let prev = this.subscriptions.get(topic);
+			if (prev) {
+				prev.counter += counter;
+			} else {
+				prev = {
+					counter: counter,
+				};
+				this.subscriptions.set(topic, prev);
+
+				newTopicsForTopicData.push(topic);
+				this.listenForSubscribers(topic);
+			}
 		}
 
 		if (newTopicsForTopicData.length > 0) {
@@ -143,67 +174,74 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		}
 	}
 
-	/**
-	 *
-	 * @param topic
-	 * @param options
-	 * @param options.force
-	 * @param options.data
-	 * @returns true unsubscribed completely
-	 */
-	async unsubscribe(
-		topic: string,
-		options?: { force: boolean; data: Uint8Array },
+	async unsubscribe(topic: string) {
+		if (this.debounceSubscribeAggregator.has(topic)) {
+			this.debounceSubscribeAggregator.delete(topic); // cancel subscription before it performed
+			return false;
+		}
+		const subscriptions = this.subscriptions.get(topic);
+		await this.debounceUnsubscribeAggregator.add({ key: topic });
+		return !!subscriptions;
+	}
+
+	async _unsubscribe(
+		topics: { key: string; counter: number }[],
+		options?: { force: boolean },
 	) {
 		if (!this.started) {
 			throw new NotStartedError();
 		}
 
-		const subscriptions = this.subscriptions.get(topic);
-
-		logger.debug(
-			`unsubscribe from ${topic} - am subscribed with subscriptions ${JSON.stringify(subscriptions)}`,
-		);
-
-		const peersOnTopic = this.topicsToPeers.get(topic);
-		if (peersOnTopic) {
-			for (const peer of peersOnTopic) {
-				this.lastSubscriptionMessages.delete(peer);
+		for (const { key: topic, counter } of topics) {
+			if (counter <= 0) {
+				continue;
 			}
-		}
+			const subscriptions = this.subscriptions.get(topic);
 
-		if (!subscriptions) {
-			return false;
-		}
-
-		if (subscriptions?.counter && subscriptions?.counter >= 0) {
-			subscriptions.counter -= 1;
-		}
-
-		if (!subscriptions.counter || options?.force) {
-			await this.publishMessage(
-				this.publicKey,
-				await new DataMessage({
-					header: new MessageHeader({
-						mode: new AnyWhere(), // TODO make this better
-						session: this.session,
-						priority: 1,
-					}),
-					data: toUint8Array(
-						new Unsubscribe({
-							topics: [topic],
-						}).bytes(),
-					),
-				}).sign(this.sign),
+			logger.debug(
+				`unsubscribe from ${topic} - am subscribed with subscriptions ${JSON.stringify(subscriptions)}`,
 			);
 
-			this.subscriptions.delete(topic);
-			this.topics.delete(topic);
-			this.topicsToPeers.delete(topic);
+			const peersOnTopic = this.topicsToPeers.get(topic);
+			if (peersOnTopic) {
+				for (const peer of peersOnTopic) {
+					this.lastSubscriptionMessages.delete(peer);
+				}
+			}
 
-			return true;
+			if (!subscriptions) {
+				return false;
+			}
+
+			if (subscriptions?.counter && subscriptions?.counter >= 0) {
+				subscriptions.counter -= counter;
+			}
+
+			if (!subscriptions.counter || options?.force) {
+				await this.publishMessage(
+					this.publicKey,
+					await new DataMessage({
+						header: new MessageHeader({
+							mode: new AnyWhere(), // TODO make this better
+							session: this.session,
+							priority: 1,
+						}),
+						data: toUint8Array(
+							new Unsubscribe({
+								topics: [topic],
+							}).bytes(),
+						),
+					}).sign(this.sign),
+				);
+
+				this.subscriptions.delete(topic);
+				this.topics.delete(topic);
+				this.topicsToPeers.delete(topic);
+
+				return true;
+			}
+			return false;
 		}
-		return false;
 	}
 
 	getSubscribers(topic: string): PublicSignKey[] | undefined {

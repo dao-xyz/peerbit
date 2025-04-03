@@ -186,6 +186,93 @@ describe("pubsub", function () {
 			await waitForSubscribers(session.peers[1], [session.peers[0]], TOPIC);
 		});
 
+		it("aggregated subscribe unsubscribe", async () => {
+			const TOPIC = "hello";
+			const TOPIC_2 = "world";
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			streams[1].stream.subscribe(TOPIC);
+			streams[1].stream.subscribe(TOPIC_2);
+
+			const subscriptions: string[][] = [];
+			streams[1].stream.addEventListener("subscribe", (e) =>
+				subscriptions.push(e.detail.topics),
+			);
+
+			const unsubscription: string[][] = [];
+			streams[1].stream.addEventListener("unsubscribe", (e) =>
+				unsubscription.push(e.detail.topics),
+			);
+
+			streams[0].stream.subscribe(TOPIC);
+			streams[0].stream.subscribe(TOPIC_2);
+
+			await waitForResolved(() =>
+				expect(subscriptions).to.deep.eq([[TOPIC, TOPIC_2]]),
+			);
+			await delay(1e3);
+			expect(subscriptions).to.deep.eq([[TOPIC, TOPIC_2]]);
+			streams[0].stream.unsubscribe(TOPIC);
+			streams[0].stream.unsubscribe(TOPIC_2);
+
+			await waitForResolved(() =>
+				expect(subscriptions).to.deep.eq([[TOPIC, TOPIC_2]]),
+			);
+			await delay(1e3);
+			expect(subscriptions).to.deep.eq([[TOPIC, TOPIC_2]]);
+		});
+
+		it("unsubscribe cancels subscribe", async () => {
+			const TOPIC = "hello";
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			streams[1].stream.subscribe(TOPIC);
+
+			const subscriptions: string[][] = [];
+			streams[1].stream.addEventListener("subscribe", (e) =>
+				subscriptions.push(e.detail.topics),
+			);
+
+			const unsubscription: string[][] = [];
+			streams[1].stream.addEventListener("unsubscribe", (e) =>
+				unsubscription.push(e.detail.topics),
+			);
+
+			streams[0].stream.subscribe(TOPIC);
+			streams[0].stream.unsubscribe(TOPIC);
+
+			await delay(3e3);
+			expect(subscriptions).to.have.length(0);
+			expect(unsubscription).to.have.length(0);
+		});
+
+		it("unsubscribe cancels subscribe counting", async () => {
+			const TOPIC = "hello";
+			await session.connect([[session.peers[0], session.peers[1]]]);
+			await streams[1].stream.subscribe(TOPIC);
+
+			const subscriptions: string[][] = [];
+			streams[1].stream.addEventListener("subscribe", (e) =>
+				subscriptions.push(e.detail.topics),
+			);
+
+			const unsubscription: string[][] = [];
+			streams[1].stream.addEventListener("unsubscribe", (e) =>
+				unsubscription.push(e.detail.topics),
+			);
+
+			streams[0].stream.subscribe(TOPIC); // +1
+			streams[0].stream.subscribe(TOPIC); // +2
+			streams[0].stream.unsubscribe(TOPIC); // +1
+
+			try {
+				await waitForResolved(() => expect(subscriptions).to.have.length(1));
+				expect(unsubscription).to.have.length(0);
+			} catch (error) {
+				throw error;
+			}
+		});
+
 		it("can share topics when connecting after subscribe, 3 peers and 1 relay", async () => {
 			const TOPIC = "world";
 			streams[0].stream.subscribe(TOPIC);
@@ -1244,8 +1331,8 @@ describe("pubsub", function () {
 					streams[0].stream.publicKey,
 				),
 			).to.be.true;
-			expect(streams[2].subscriptionEvents[0].subscriptions).to.have.length(1);
-			expect(streams[2].subscriptionEvents[0].subscriptions[0]).equal(TOPIC_1);
+			expect(streams[2].subscriptionEvents[0].topics).to.have.length(1);
+			expect(streams[2].subscriptionEvents[0].topics[0]).equal(TOPIC_1);
 
 			await delay(2000);
 			await streams[0].stream.stop();
@@ -1274,12 +1361,8 @@ describe("pubsub", function () {
 					streams[0].stream.publicKey,
 				),
 			).to.be.true;
-			expect(streams[2].unsubscriptionEvents[0].unsubscriptions).to.have.length(
-				1,
-			);
-			expect(streams[2].unsubscriptionEvents[0].unsubscriptions[0]).equal(
-				TOPIC_1,
-			);
+			expect(streams[2].unsubscriptionEvents[0].topics).to.have.length(1);
+			expect(streams[2].unsubscriptionEvents[0].topics[0]).equal(TOPIC_1);
 		});
 
 		it("can unsubscribe across peers", async () => {
@@ -1315,18 +1398,17 @@ describe("pubsub", function () {
 					?.has(streams[0].stream.publicKeyHash),
 			);
 
-			expect(streams[2].subscriptionEvents).to.have.length(2);
-			expect(streams[1].subscriptionEvents).to.have.length(2);
+			expect(streams[2].subscriptionEvents.map((x) => x.topics)).to.deep.eq([
+				[TOPIC_1, TOPIC_2],
+			]);
+			expect(streams[1].subscriptionEvents.map((x) => x.topics)).to.deep.eq([
+				[TOPIC_1, TOPIC_2],
+			]);
 			expect(
 				streams[2].subscriptionEvents[0].from.equals(
 					streams[0].stream.publicKey,
 				),
 			).to.be.true;
-			expect(streams[2].subscriptionEvents[0].subscriptions).to.have.length(1);
-			expect(streams[2].subscriptionEvents[0].subscriptions[0]).equal(TOPIC_1);
-
-			expect(streams[2].subscriptionEvents[1].subscriptions).to.have.length(1);
-			expect(streams[2].subscriptionEvents[1].subscriptions[0]).equal(TOPIC_2);
 
 			await delay(8000);
 
@@ -1360,12 +1442,8 @@ describe("pubsub", function () {
 					streams[0].stream.publicKey,
 				),
 			).to.be.true;
-			expect(streams[2].unsubscriptionEvents[0].unsubscriptions).to.have.length(
-				1,
-			);
-			expect(streams[2].unsubscriptionEvents[0].unsubscriptions[0]).equal(
-				TOPIC_1,
-			);
+			expect(streams[2].unsubscriptionEvents[0].topics).to.have.length(1);
+			expect(streams[2].unsubscriptionEvents[0].topics[0]).equal(TOPIC_1);
 			streams[0].stream.unsubscribe(TOPIC_2);
 			await waitFor(
 				() =>
@@ -1398,12 +1476,8 @@ describe("pubsub", function () {
 					streams[0].stream.publicKey,
 				),
 			).to.be.true;
-			expect(streams[2].unsubscriptionEvents[1].unsubscriptions).to.have.length(
-				1,
-			);
-			expect(streams[2].unsubscriptionEvents[1].unsubscriptions[0]).equal(
-				TOPIC_2,
-			);
+			expect(streams[2].unsubscriptionEvents[1].topics).to.have.length(1);
+			expect(streams[2].unsubscriptionEvents[1].topics[0]).equal(TOPIC_2);
 		});
 
 		it("can handle multiple subscriptions", async () => {
@@ -1456,15 +1530,34 @@ describe("pubsub", function () {
 		it("resubscription will not emit uncessary message", async () => {
 			// Subscribe with some metadata
 			let sentMessages = 0;
+
+			await streams[0].stream.subscribe("__test__"); // force seeking so we triggeer all reachable evets
 			const publishMessage = streams[0].stream.publishMessage.bind(
 				streams[0].stream,
 			);
-			streams[0].stream.publishMessage = async (a: any, b: any, c: any) => {
+
+			await waitForResolved(() =>
+				expect(streams[0].reachable).to.have.length(2),
+			);
+			streams[0].stream.publishMessage = async (
+				a: any,
+				b: DataMessage,
+				c: any,
+			) => {
 				sentMessages += 1;
-				return publishMessage(a, b, c);
+
+				const deserialized = deserialize(b.data!, PubSubMessage);
+				if (
+					deserialized instanceof Subscribe ||
+					deserialized instanceof Unsubscribe
+				) {
+					return publishMessage(a, b, c);
+				}
 			};
+
 			await streams[0].stream.subscribe(TOPIC_1);
 			expect(sentMessages).equal(1);
+
 			await streams[0].stream.subscribe(TOPIC_1);
 			expect(sentMessages).equal(1); // no new messages sent
 		});
