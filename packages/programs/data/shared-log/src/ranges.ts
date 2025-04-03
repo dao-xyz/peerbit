@@ -30,7 +30,7 @@ import {
 } from "@peerbit/indexer-interface";
 import { id } from "@peerbit/indexer-interface";
 import { Meta, ShallowMeta } from "@peerbit/log";
-import { debounceAccumulator } from "./debounce.js";
+import { debounceAccumulator } from "@peerbit/time";
 import {
 	MAX_U32,
 	MAX_U64,
@@ -2498,6 +2498,7 @@ export const debounceAggregationChanges = <
 				},
 				size: () => aggregated.size,
 				value: aggregated,
+				has: (key: string) => aggregated.has(key),
 			};
 		},
 		delay,

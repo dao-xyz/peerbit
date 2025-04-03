@@ -46,7 +46,12 @@ import {
 	SilentDelivery,
 	type WithMode,
 } from "@peerbit/stream-interface";
-import { AbortError, waitFor } from "@peerbit/time";
+import {
+	AbortError,
+	debounceAccumulator,
+	debounceFixedInterval,
+	waitFor,
+} from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import PQueue from "p-queue";
 import { concat } from "uint8arrays";
@@ -54,8 +59,6 @@ import { BlocksMessage } from "./blocks.js";
 import { type CPUUsage, CPUUsageIntervalLag } from "./cpu.js";
 import {
 	type DebouncedAccumulatorMap,
-	debounceAccumulator,
-	debounceFixedInterval,
 	debouncedAccumulatorMap,
 } from "./debounce.js";
 import {
@@ -988,7 +991,7 @@ export class SharedLog<
 		}
 
 		if (!isMe) {
-			this.rebalanceParticipationDebounced?.();
+			this.rebalanceParticipationDebounced?.call();
 		}
 	}
 
@@ -1072,7 +1075,7 @@ export class SharedLog<
 		);
 
 		if (!from.equals(this.node.identity.publicKey)) {
-			this.rebalanceParticipationDebounced?.();
+			this.rebalanceParticipationDebounced?.call();
 		}
 	}
 
@@ -1319,7 +1322,7 @@ export class SharedLog<
 			}
 
 			if (!from.equals(this.node.identity.publicKey)) {
-				this.rebalanceParticipationDebounced?.();
+				this.rebalanceParticipationDebounced?.call();
 			}
 		}
 		return diffs;
@@ -1524,7 +1527,7 @@ export class SharedLog<
 				value: { entry: result.entry, leaders },
 			});
 		}
-		this.rebalanceParticipationDebounced?.();
+		this.rebalanceParticipationDebounced?.call();
 
 		return result;
 	}
@@ -1634,7 +1637,7 @@ export class SharedLog<
 		>(
 			(change) =>
 				this.onReplicationChange(change).then(() =>
-					this.rebalanceParticipationDebounced?.(),
+					this.rebalanceParticipationDebounced?.call(),
 				),
 			this.distributionDebounceTime,
 		);
@@ -1704,6 +1707,7 @@ export class SharedLog<
 					size: () => accumulator.size,
 					clear: () => accumulator.clear(),
 					value: accumulator,
+					has: (hash: string) => accumulator.has(hash),
 				};
 			},
 			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
@@ -1812,7 +1816,7 @@ export class SharedLog<
 		await this.syncronizer.open();
 
 		this.interval = setInterval(() => {
-			this.rebalanceParticipationDebounced?.();
+			this.rebalanceParticipationDebounced?.call();
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
 	}
 
@@ -2271,7 +2275,7 @@ export class SharedLog<
 										value: { entry: x, leaders: leaders as Map<string, any> },
 									}),
 								);
-								this.rebalanceParticipationDebounced?.();
+								this.rebalanceParticipationDebounced?.call();
 							}
 
 							if (maybeDelete) {
@@ -3667,14 +3671,14 @@ export class SharedLog<
 	async _onUnsubscription(evt: CustomEvent<UnsubcriptionEvent>) {
 		logger.trace(
 			`Peer disconnected '${evt.detail.from.hashcode()}' from '${JSON.stringify(
-				evt.detail.unsubscriptions.map((x) => x),
+				evt.detail.topics.map((x) => x),
 			)} '`,
 		);
 		this.latestReplicationInfoMessage.delete(evt.detail.from.hashcode());
 
 		return this.handleSubscriptionChange(
 			evt.detail.from,
-			evt.detail.unsubscriptions,
+			evt.detail.topics,
 			false,
 		);
 	}
@@ -3682,14 +3686,14 @@ export class SharedLog<
 	async _onSubscription(evt: CustomEvent<SubscriptionEvent>) {
 		logger.trace(
 			`New peer '${evt.detail.from.hashcode()}' connected to '${JSON.stringify(
-				evt.detail.subscriptions.map((x) => x),
+				evt.detail.topics.map((x) => x),
 			)}'`,
 		);
 		this.remoteBlocks.onReachable(evt.detail.from);
 
 		return this.handleSubscriptionChange(
 			evt.detail.from,
-			evt.detail.subscriptions,
+			evt.detail.topics,
 			true,
 		);
 	}
@@ -3756,11 +3760,11 @@ export class SharedLog<
 					});
 
 					/* await this._updateRole(newRole, onRoleChange); */
-					this.rebalanceParticipationDebounced?.();
+					this.rebalanceParticipationDebounced?.call();
 
 					return true;
 				} else {
-					this.rebalanceParticipationDebounced?.();
+					this.rebalanceParticipationDebounced?.call();
 				}
 				return false;
 			}
