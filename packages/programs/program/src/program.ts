@@ -268,7 +268,8 @@ export abstract class Program<
 
 	private async _emitJoinNetworkEvents(s: SubscriptionEvent) {
 		const allTopics = this.programs
-			.map((x) => x.getTopics?.())
+			// TODO test this code path closed true/false
+			.map((x) => x.closed === false && x.getTopics?.())
 			.filter((x) => x)
 			.flat() as string[];
 
@@ -287,7 +288,8 @@ export abstract class Program<
 
 	private async _emitLeaveNetworkEvents(s: UnsubcriptionEvent) {
 		const allTopics = this.programs
-			.map((x) => x.getTopics?.())
+			// TODO test this code path closed true/false
+			.map((x) => x.closed === false && x.getTopics?.())
 			.filter((x) => x)
 			.flat() as string[];
 
