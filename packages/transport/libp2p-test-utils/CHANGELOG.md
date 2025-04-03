@@ -54,6 +54,15 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.1.15](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.14...libp2p-test-utils-v2.1.15) (2025-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 2.0.8 to 2.1.0
+
 ## [2.1.14](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.13...libp2p-test-utils-v2.1.14) (2025-03-13)
 
 

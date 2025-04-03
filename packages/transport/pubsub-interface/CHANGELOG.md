@@ -108,6 +108,25 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.2.0...pubsub-interface-v4.0.0) (2025-04-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* debounce subscription and unsubscription
+
+### Bug Fixes
+
+* debounce subscription and unsubscription ([19917a6](https://github.com/dao-xyz/peerbit/commit/19917a6e8313083963bd0f878818cdab46c7d813))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.6 to 2.3.7
+    * @peerbit/stream-interface bumped from ^5.2.0 to ^5.2.1
+
 ## [3.2.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.5...pubsub-interface-v3.2.0) (2025-03-28)
 
 

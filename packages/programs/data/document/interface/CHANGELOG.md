@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.23](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.22...document-interface-v2.0.23) (2025-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.6 to ^2.3.7
+    * @peerbit/indexer-interface bumped from ^2.0.7 to ^2.0.8
+    * @peerbit/log bumped from 4.0.48 to 4.0.49
+
 ## [2.0.22](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.21...document-interface-v2.0.22) (2025-03-30)
 
 

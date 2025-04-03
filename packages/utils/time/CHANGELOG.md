@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/time-v2.0.8...time-v2.1.0) (2025-04-03)
+
+
+### Features
+
+* add aggregator ([2cbca13](https://github.com/dao-xyz/peerbit/commit/2cbca139e590df9d76807fe0a1d773371bfd5928))
+
 ## [2.0.8](https://github.com/dao-xyz/peerbit/compare/time-v2.0.7...time-v2.0.8) (2025-02-20)
 
 
