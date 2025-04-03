@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.3](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.2...cache-v2.1.3) (2025-04-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped from 2.0.8 to 2.1.0
+
 ## [2.1.2](https://github.com/dao-xyz/peerbit/compare/cache-v2.1.1...cache-v2.1.2) (2025-02-20)
 
 

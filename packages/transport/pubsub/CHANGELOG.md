@@ -188,6 +188,28 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [4.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.1.0...pubsub-v4.0.0) (2025-04-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* debounce subscription and unsubscription
+
+### Bug Fixes
+
+* debounce subscription and unsubscription ([19917a6](https://github.com/dao-xyz/peerbit/commit/19917a6e8313083963bd0f878818cdab46c7d813))
+* reduce default debounce time ([c5f9b43](https://github.com/dao-xyz/peerbit/commit/c5f9b43e124e9189d089dabe5dba113ab68e172e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.3.0 to 4.3.1
+    * @peerbit/pubsub-interface bumped from ^3.2.0 to ^4.0.0
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.14 to 2.1.15
+
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.23...pubsub-v3.1.0) (2025-03-28)
 
 
