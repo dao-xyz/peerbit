@@ -94,11 +94,11 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			props?.dispatchEventOnSelfPublish || false;
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._subscribe([...set.values()]),
-			props?.subscriptionDebounceDelay ?? 100,
+			props?.subscriptionDebounceDelay ?? 50,
 		);
 		this.debounceUnsubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._unsubscribe([...set.values()]),
-			props?.subscriptionDebounceDelay ?? 100,
+			props?.subscriptionDebounceDelay ?? 50,
 		);
 	}
 
