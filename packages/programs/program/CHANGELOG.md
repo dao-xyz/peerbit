@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.3](https://github.com/dao-xyz/peerbit/compare/program-v5.2.2...program-v5.2.3) (2025-04-03)
+
+
+### Bug Fixes
+
+* don't close already closed programs ([f151ed4](https://github.com/dao-xyz/peerbit/commit/f151ed4936d50c43151c94a446d55d4141e7be37))
+
 ## [5.2.2](https://github.com/dao-xyz/peerbit/compare/program-v5.2.1...program-v5.2.2) (2025-04-03)
 
 
