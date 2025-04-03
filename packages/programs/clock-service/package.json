@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/clock-service",
-	"version": "3.0.91",
+	"version": "3.0.92",
 	"description": "Clock signing",
 	"type": "module",
 	"sideEffects": false,
@@ -59,10 +59,10 @@
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/logger": "1.0.3",
-		"@peerbit/rpc": "5.2.5",
-		"@peerbit/trusted-network": "4.1.76"
+		"@peerbit/rpc": "5.2.6",
+		"@peerbit/trusted-network": "4.1.77"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "^2.1.38"
+		"@peerbit/test-utils": "^2.1.39"
 	}
 }
