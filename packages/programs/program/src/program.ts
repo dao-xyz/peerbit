@@ -25,10 +25,10 @@ import {
 import { getValuesWithType } from "./utils.js";
 
 export class ClosedError extends Error {
-	constructor() {
-		super(
-			"Not open. Please invoke 'client.open(...)' before calling this method",
-		);
+	constructor(
+		message: string = "Not open. Please invoke 'client.open(...)' before calling this method",
+	) {
+		super(message);
 	}
 }
 
@@ -237,24 +237,26 @@ export abstract class Program<
 	}
 
 	async afterOpen() {
-		await this.node.services.pubsub.addEventListener(
-			"subscribe",
-			this._subscriptionEventListener ||
-				(this._subscriptionEventListener = (s) =>
-					!this.closed && this._emitJoinNetworkEvents(s.detail)),
-		);
-		await this.node.services.pubsub.addEventListener(
-			"unsubscribe",
-			this._unsubscriptionEventListener ||
-				(this._unsubscriptionEventListener = (s) =>
-					!this.closed && this._emitLeaveNetworkEvents(s.detail)),
-		);
+		if (!this.closed) {
+			await this.node.services.pubsub.addEventListener(
+				"subscribe",
+				this._subscriptionEventListener ||
+					(this._subscriptionEventListener = (s) =>
+						!this.closed && this._emitJoinNetworkEvents(s.detail)),
+			);
+			await this.node.services.pubsub.addEventListener(
+				"unsubscribe",
+				this._unsubscriptionEventListener ||
+					(this._unsubscriptionEventListener = (s) =>
+						!this.closed && this._emitLeaveNetworkEvents(s.detail)),
+			);
 
-		this.emitEvent(new CustomEvent("open", { detail: this }), true);
-		await this._eventOptions?.onOpen?.(this);
-		const nexts = this.programs;
-		for (const next of nexts) {
-			await next.afterOpen();
+			this.emitEvent(new CustomEvent("open", { detail: this }), true);
+			await this._eventOptions?.onOpen?.(this);
+			const nexts = this.programs;
+			for (const next of nexts) {
+				await next.afterOpen();
+			}
 		}
 	}
 
@@ -324,6 +326,11 @@ export abstract class Program<
 
 			if (this.children) {
 				for (const program of this.children) {
+					if (program.closed) {
+						if (type === "close") {
+							continue;
+						}
+					}
 					promises.push(program[type](this as Program)); // TODO types
 				}
 				this.children = [];
@@ -342,7 +349,7 @@ export abstract class Program<
 	private async end(type: "drop" | "close", from?: Program): Promise<boolean> {
 		if (this.closed) {
 			if (type === "drop") {
-				throw new ClosedError();
+				throw new ClosedError("Program is closed, can not drop");
 			}
 			return true;
 		}
@@ -485,14 +492,16 @@ export abstract class Program<
 		let ready: Map<string, PublicSignKey> | undefined = undefined; // the interesection of all ready
 		for (const program of this.allPrograms) {
 			if (program.getTopics) {
-				const topics = program.getTopics();
-				for (const topic of topics) {
-					const subscribers =
-						await this.node.services.pubsub.getSubscribers(topic);
-					if (!subscribers) {
-						continue;
+				if (program.closed === false) {
+					const topics = program.getTopics();
+					for (const topic of topics) {
+						const subscribers =
+							await this.node.services.pubsub.getSubscribers(topic);
+						if (!subscribers) {
+							continue;
+						}
+						ready = intersection(ready, subscribers);
 					}
-					ready = intersection(ready, subscribers);
 				}
 			}
 		}

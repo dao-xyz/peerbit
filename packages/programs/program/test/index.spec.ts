@@ -9,7 +9,7 @@ import {
 	getProgramFromVariant,
 } from "../src/program.js";
 import { getValuesWithType } from "../src/utils.js";
-import { EmbeddedStore, Log, P1, P2, P3, P4 } from "./samples.js";
+import { EmbeddedStore, Log, P1, P2, P3, P4, TestProgram } from "./samples.js";
 import { createPeer } from "./utils.js";
 
 describe("getValuesWithType", () => {
@@ -104,6 +104,41 @@ describe("program", () => {
 				await p.close();
 				expect(p.closed).to.be.true;
 				await expect(p.drop()).rejectedWith(ClosedError);
+			});
+
+			it("does not close closed", async () => {
+				const instance = new TestProgram();
+				let openEvents = 0;
+				instance.events.addEventListener("open", () => {
+					openEvents++;
+				});
+				instance.nested.events.addEventListener("open", () => {
+					openEvents++;
+				});
+
+				await peer.open(instance, { args: { dontOpenNested: true } });
+				expect(instance.closed).to.be.false;
+				expect(instance.nested.closed).to.be.true;
+				expect(openEvents).to.equal(1);
+
+				let subProgramCloseCalls = 0;
+				const subProgramClose = instance.nested.close.bind(instance.nested);
+				instance.nested.close = async () => {
+					subProgramCloseCalls++;
+					return subProgramClose();
+				};
+				expect(instance.closed).to.be.false;
+				await instance.close();
+				expect(instance.closed).to.be.true;
+				expect(subProgramCloseCalls).to.equal(0);
+			});
+
+			it("throwing trying to dropping closed sub-program ", async () => {
+				const instance = new TestProgram();
+				await peer.open(instance, { args: { dontOpenNested: true } });
+				expect(instance.closed).to.be.false;
+				expect(instance.nested.closed).to.be.true;
+				await expect(instance.drop()).rejectedWith(ClosedError);
 			});
 
 			it("can re-open from closed", async () => {
@@ -423,6 +458,14 @@ describe("program", () => {
 
 			expect(leaveEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]);
 			expect(leaveEvents2).to.be.empty;
+		});
+
+		it("will not ask for topics on closed subprogram", async () => {
+			const test = new TestProgram();
+			const peer = await createPeer();
+			await peer.open(test, { args: { dontOpenNested: true } });
+			expect(() => test.nested.getTopics()).to.throw(ClosedError);
+			await test.getReady();
 		});
 	});
 

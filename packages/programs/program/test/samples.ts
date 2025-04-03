@@ -1,6 +1,6 @@
 import { field, option, variant, vec } from "@dao-xyz/borsh";
 import { randomBytes } from "@peerbit/crypto";
-import { Program } from "../src/program.js";
+import { ClosedError, Program } from "../src/program.js";
 
 @variant(0)
 export class Log {}
@@ -100,10 +100,17 @@ export class TestNestedProgram extends Program {
 	async open(): Promise<void> {
 		this.openInvoked = true;
 	}
+
+	getTopics(): string[] {
+		if (this.closed) {
+			throw new ClosedError("Program is closed");
+		}
+		return ["test-shared_nested"];
+	}
 }
 
 @variant("test-shared")
-export class TestProgram extends Program {
+export class TestProgram extends Program<{ dontOpenNested?: boolean }> {
 	@field({ type: "u32" })
 	id: number;
 
@@ -119,7 +126,11 @@ export class TestProgram extends Program {
 		this.nested = nested;
 	}
 
-	async open(): Promise<void> {
+	async open(args?: { dontOpenNested?: boolean }): Promise<void> {
+		if (args?.dontOpenNested) {
+			this.nested.closed = true;
+			return;
+		}
 		return this.nested.open();
 	}
 }
