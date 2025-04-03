@@ -265,12 +265,8 @@ describe("pubsub", function () {
 			streams[0].stream.subscribe(TOPIC); // +2
 			streams[0].stream.unsubscribe(TOPIC); // +1
 
-			try {
-				await waitForResolved(() => expect(subscriptions).to.have.length(1));
-				expect(unsubscription).to.have.length(0);
-			} catch (error) {
-				throw error;
-			}
+			await waitForResolved(() => expect(subscriptions).to.have.length(1));
+			expect(unsubscription).to.have.length(0);
 		});
 
 		it("can share topics when connecting after subscribe, 3 peers and 1 relay", async () => {
