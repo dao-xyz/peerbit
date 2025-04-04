@@ -23,7 +23,7 @@ The timeline will turn more blue and become taller when more replicators/viewers
 
 Watch a clip for yourself here 
 
-https://stream.dao.xyz/#/s/zb2rhmQDEZtBf9i265So2biHppTRLPkb8s4UkA9rxoamfFJgG 
+https://stream.dao.xyz/#/s/zb2rhXbUQc3A28nKNuB3povT1NgMcHV39gZd1uyLcvMzLWEnY
 
 [Source code for the video on demand](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming)
 
@@ -148,4 +148,4 @@ Peerbit’s custom data domains represent a paradigm shift in replication:
 
 Watch the upcoming video demonstration where the buffering timeline of a live video translates directly into the replication domain. As the video buffers, new segments are dynamically replicated, ensuring a seamless, real-time experience.
 
-https://stream.dao.xyz/#/s/zb2rhmQDEZtBf9i265So2biHppTRLPkb8s4UkA9rxoamfFJgG 
+https://stream.dao.xyz/#/s/zb2rhXbUQc3A28nKNuB3povT1NgMcHV39gZd1uyLcvMzLWEnY
