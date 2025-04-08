@@ -15,6 +15,7 @@ import {
 	BOOTSTRAP_PATH,
 	INSTALL_PATH,
 	LOCAL_API_PORT,
+	LOG_PATH, // <-- Added the log route constant
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
@@ -258,6 +259,24 @@ export const createClient = async (
 				}),
 			);
 		},
+		log: {
+			/**
+			 * Fetches the log from the server.
+			 * @param n Optional number of last lines to return.
+			 * @returns The log content as a string.
+			 */
+			fetch: async (n?: number): Promise<string> => {
+				// Build the URL to the log endpoint, adding the query parameter if n is provided.
+				const url = endpoint + LOG_PATH + (n !== undefined ? `?n=${n}` : "");
+				const resp = throwIfNot200(
+					await axiosInstance.get(url, {
+						validateStatus,
+					}),
+				);
+				return resp.data as string;
+			},
+		},
+
 		terminate: async () => {
 			const { terminateNode } = await import("./aws.js");
 			if (remote.origin?.type === "aws") {

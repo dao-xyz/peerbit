@@ -1129,6 +1129,23 @@ export const cli = async (args?: string[]) => {
 											}
 										},
 									})
+									.command({
+										command: "log",
+										describe: "Fetch log file contents from the server",
+										builder: (yargs) => {
+											yargs.option("n", {
+												alias: "lines",
+												type: "number",
+												describe: "Number of last lines to display",
+											});
+											return yargs;
+										},
+										handler: async (args) => {
+											for (const api of apis) {
+												api.log(await api.api.log.fetch(args.n));
+											}
+										},
+									})
 									.help()
 									.strict()
 									.scriptName("")

@@ -29,6 +29,7 @@ import {
 	BOOTSTRAP_PATH,
 	INSTALL_PATH,
 	LOCAL_API_PORT,
+	LOG_PATH,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
@@ -608,6 +609,43 @@ export const startApiServer = async (
 							default:
 								r404();
 								break;
+						}
+					} else if (req.url.startsWith(LOG_PATH)) {
+						if (req.method === "GET") {
+							try {
+								// Use the URL API to parse query parameters.
+								const urlObj = new URL(req.url, `http://localhost:${port}`);
+								const nLinesParam = urlObj.searchParams.get("n");
+
+								// Define the path to your log file. Adjust the path if log.txt is elsewhere.
+								const logFilePath = path.join(process.cwd(), "log.txt");
+
+								// Check that the file exists.
+								if (!fs.existsSync(logFilePath)) {
+									res.writeHead(404, { "Content-Type": "text/plain" });
+									res.end("Log file not found.");
+									return;
+								}
+
+								// Read the log file content.
+								let logContent = fs.readFileSync(logFilePath, "utf8");
+
+								// If the query parameter 'n' is provided, return only that many last lines.
+								if (nLinesParam) {
+									const n = parseInt(nLinesParam, 10);
+									if (!isNaN(n) && n > 0) {
+										const lines = logContent.split("\n");
+										logContent = lines.slice(-n).join("\n");
+									}
+								}
+
+								res.writeHead(200, { "Content-Type": "text/plain" });
+								res.end(logContent);
+							} catch (error: any) {
+								console.error("Error fetching log file:", error);
+								res.writeHead(500, { "Content-Type": "text/plain" });
+								res.end("Error reading log: " + error.message);
+							}
 						}
 					} else if (req.url.startsWith(STOP_PATH)) {
 						switch (req.method) {

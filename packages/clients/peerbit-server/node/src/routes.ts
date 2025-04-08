@@ -22,3 +22,4 @@ export const BOOTSTRAP_PATH = "/network/bootstrap";
 export const RESTART_PATH = "/restart";
 export const TERMINATE_PATH = "/terminate";
 export const STOP_PATH = "/path";
+export const LOG_PATH = "/log";
