@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.2.0](https://github.com/dao-xyz/peerbit/compare/server-v5.1.16...server-v5.2.0) (2025-04-08)
+
+
+### Features
+
+* get logs ([ed011b4](https://github.com/dao-xyz/peerbit/commit/ed011b48d948b84f20e510eddd8bc8bf65e3f0a8))
+
 ## [5.1.16](https://github.com/dao-xyz/peerbit/compare/server-v5.1.15...server-v5.1.16) (2025-04-03)
 
 
