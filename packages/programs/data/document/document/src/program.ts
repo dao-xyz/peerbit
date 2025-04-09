@@ -750,6 +750,6 @@ export class Documents<
 
 		const nonDeletedDocumentsRatio = indexedDocumentsCount / totalAssignedHeads; // [0, 1]
 		let expectedAmountOfDocuments = totalHeadCount * nonDeletedDocumentsRatio; // if total heads count is 100 and 80% is actual documents, then 80 pieces of non-deleted documents should exist
-		return expectedAmountOfDocuments;
+		return Math.round(expectedAmountOfDocuments);
 	}
 }
