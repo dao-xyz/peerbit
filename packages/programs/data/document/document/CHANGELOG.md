@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.17](https://github.com/dao-xyz/peerbit/compare/document-v9.3.16...document-v9.3.17) (2025-04-14)
+
+
+### Bug Fixes
+
+* improve types for updateResults ([e280087](https://github.com/dao-xyz/peerbit/commit/e2800870d080dcce2fbfb4f9ccf87762e1dd57a4))
+
 ## [9.3.16](https://github.com/dao-xyz/peerbit/compare/document-v9.3.15...document-v9.3.16) (2025-04-14)
 
 
