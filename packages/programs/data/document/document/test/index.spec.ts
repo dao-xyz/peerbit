@@ -4191,7 +4191,68 @@ describe("index", () => {
 
 		});
 	}); */
+
+	describe("updateIndex", () => {
+		beforeEach(async () => {
+			session = await TestSession.connected(1);
+		});
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("should update index with proper added and removed results", async () => {
+			// Open a store with a document store inside (docs)
+			const store = await session.peers[0].open(
+				new TestStore({
+					docs: new Documents<Document>(),
+				}),
+			);
+
+			// Add two initial documents.
+			await store.docs.put(new Document({ id: "1", name: "name1" }));
+			await store.docs.put(new Document({ id: "2", name: "name2" }));
+
+			// Wait briefly for the index to update (if needed, use waitForResolved or similar).
+			let initialResults = await store.docs.index.search(
+				new SearchRequest({ query: [] }),
+			);
+			expect(initialResults).to.have.length(2);
+
+			// Simulate a change: remove the document with id "1" and add a new document with id "3".
+			let changeEvents: DocumentsChange<Document>[] = [];
+			store.docs.events.addEventListener("change", (evt) => {
+				changeEvents.push(evt.detail);
+			});
+			await store.docs.put(new Document({ id: "3", name: "name3" }));
+			await store.docs.del("1");
+			await waitForResolved(() => expect(changeEvents.length).to.equal(2));
+
+			// Use a simple query that sorts by "id" in ascending order.
+			const query = {
+				query: {}, // empty query selects all documents
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			};
+
+			// Call updateResults on the document index.
+			// If updateResults is not directly typed on the index, you may cast index as any.
+			let updatedResults = initialResults;
+			for (const change of changeEvents) {
+				updatedResults = await store.docs.index.updateResults(
+					updatedResults,
+					change,
+					query,
+					true,
+				);
+			}
+
+			// Check that the updated results contain the expected documents.
+			expect(updatedResults).to.have.length(2);
+			expect(updatedResults[0].id).to.equal("2");
+			expect(updatedResults[1].id).to.equal("3");
+		});
+	});
 });
+
 /*  TODO query all if undefined?
 		
 		it("query all if undefined", async () => {

@@ -373,6 +373,16 @@ export class DocumentIndex<
 		return this._valueEncoding;
 	}
 
+	private get nestedProperties() {
+		return {
+			match: (obj: any): obj is types.IDocumentStore<any> =>
+				obj instanceof this.dbType,
+			iterate: async (
+				obj: types.IDocumentStore<any>,
+				query: indexerTypes.IterateOptions,
+			) => obj.index.search(query),
+		};
+	}
 	async open(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
 
@@ -440,12 +450,7 @@ export class DocumentIndex<
 			).init({
 				indexBy: this.indexBy,
 				schema: this.wrappedIndexedType,
-				nested: {
-					match: (obj: any): obj is types.IDocumentStore<any> =>
-						obj instanceof this.dbType,
-					iterate: async (obj: types.IDocumentStore<any>, query) =>
-						obj.index.search(query),
-				},
+				nested: this.nestedProperties,
 				/* maxBatchSize: MAX_BATCH_SIZE */
 			})) || new HashmapIndex<WithContext<I>>();
 
@@ -1166,11 +1171,11 @@ export class DocumentIndex<
 	}
 
 	public iterate(
-		query: QueryLike,
+		query?: QueryLike,
 		options?: QueryOptions<T, D, undefined>,
 	): ResultsIterator<ValueTypeFromRequest<true, T, I>>;
 	public iterate<Resolve extends boolean>(
-		query: QueryLike,
+		query?: QueryLike,
 		options?: QueryOptions<T, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>>;
 
@@ -1185,11 +1190,11 @@ export class DocumentIndex<
 		O extends SearchOptions<T, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<O>,
 	>(
-		queryRequest: R,
+		queryRequest?: R,
 		options?: QueryOptions<T, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>> {
 		let queryRequestCoerced: types.SearchRequest | types.SearchRequestIndexed =
-			coerceQuery(queryRequest, options);
+			coerceQuery(queryRequest ?? {}, options);
 
 		let resolve = false;
 		if (
@@ -1643,6 +1648,107 @@ export class DocumentIndex<
 				return result;
 			},
 		};
+	}
+
+	public async updateResults<R extends boolean, RT = R extends true ? T : I>(
+		into: WithContext<RT>[],
+		change: {
+			added?: WithContext<T>[];
+			removed?: WithContext<T>[];
+		},
+		query: {
+			query: indexerTypes.QueryLike;
+			sort: indexerTypes.Sort[];
+		},
+		resolve: R,
+	): Promise<WithContext<RT>[]> {
+		let intoIndexable: WithContext<I>[];
+		if (into.length > 0) {
+			if (resolve && into[0] instanceof this.documentType === false) {
+				throw new Error(
+					"Expecting 'into' to be of type " + this.documentType.name,
+				);
+			} else if (!resolve && into[0] instanceof this.indexedType === false) {
+				throw new Error(
+					"Expecting 'into' to be of type " + this.indexedType.name,
+				);
+			}
+
+			if (resolve) {
+				intoIndexable = await Promise.all(
+					into.map(async (x) => {
+						const transformed = await this.transformer(x as T, x.__context);
+						return coerceWithContext(transformed, x.__context);
+					}),
+				);
+			} else {
+				intoIndexable = into as any as WithContext<I>[];
+			}
+		} else {
+			intoIndexable = [];
+		}
+
+		const temporaryIndex = new HashmapIndex<WithContext<I>>();
+		await temporaryIndex.init({
+			schema: this.wrappedIndexedType,
+			indexBy: this.indexBy,
+			nested: this.nestedProperties,
+		});
+		for (const value of intoIndexable) {
+			temporaryIndex.put(value);
+		}
+
+		let anyChange = false;
+		if (change.added && change.added.length > 0) {
+			for (const added of change.added) {
+				const indexed = coerceWithContext(
+					await this.transformer(added, added.__context),
+					added.__context,
+				);
+				temporaryIndex.put(indexed);
+				anyChange = true;
+			}
+		}
+		if (change.removed && change.removed.length > 0) {
+			for (const removed of change.removed) {
+				const indexed = await this.transformer(removed, removed.__context);
+				const id = indexerTypes.toId(this.indexByResolver(indexed)).primitive;
+				const deleted = await temporaryIndex.del({
+					query: [indexerTypes.getMatcher(this.indexBy, id)],
+				});
+
+				if (deleted.length > 0) {
+					anyChange = true;
+				}
+			}
+		}
+
+		if (!anyChange) {
+			return into;
+		}
+
+		let all = await temporaryIndex
+			.iterate(query, { reference: true, shape: undefined })
+			.all();
+		if (resolve) {
+			return (
+				await Promise.all(
+					all.map(async ({ id, value }) => {
+						return this.resolveDocument({
+							indexed: value,
+							head: value.__context.head,
+							id: id.primitive,
+						}).then((resolved) => {
+							if (resolved) {
+								return coerceWithContext(resolved.value, value.__context) as RT;
+							}
+							return undefined;
+						});
+					}),
+				)
+			).filter((x) => !!x) as WithContext<RT>[];
+		}
+		return all.map((x) => x.value) as any as WithContext<RT>[];
 	}
 
 	public async waitFor(
