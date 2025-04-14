@@ -1056,11 +1056,12 @@ describe("index", () => {
 							return sendFn(message, options);
 						};
 
+						let listener = () => {
+							throw new Error("Expected no replication changes");
+						};
 						stores[1].docs.log.events.addEventListener(
 							"replication:change",
-							(ev) => {
-								throw new Error("Expected no replication changes");
-							},
+							listener,
 						);
 
 						results = await stores[1].docs.index
@@ -1072,6 +1073,10 @@ describe("index", () => {
 							await stores[1].docs.log.getMyReplicationSegments(),
 						).to.have.length(1);
 						expect(emittedMessage).to.have.length(0);
+						stores[1].docs.log.events.removeEventListener(
+							"replication:change",
+							listener,
+						);
 					});
 				});
 			});
