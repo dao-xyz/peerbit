@@ -456,6 +456,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.16](https://github.com/dao-xyz/peerbit/compare/document-v9.3.15...document-v9.3.16) (2025-04-14)
+
+
+### Bug Fixes
+
+* add method for merging changes into search result ([1c45a26](https://github.com/dao-xyz/peerbit/commit/1c45a2601a2860038fc1b3ae181e25f1aed03967))
+* count approximate apply rounding ([bc7e865](https://github.com/dao-xyz/peerbit/commit/bc7e86500bc34e8e6f003cd150e7a36eb1f3bd27))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.4 to 5.2.5
+    * @peerbit/rpc bumped from 5.2.6 to 5.2.7
+    * @peerbit/shared-log bumped from 11.0.3 to 11.0.4
+    * @peerbit/document-interface bumped from ^2.0.25 to ^2.0.26
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.39 to 2.1.40
+
 ## [9.3.15](https://github.com/dao-xyz/peerbit/compare/document-v9.3.14...document-v9.3.15) (2025-04-03)
 
 
