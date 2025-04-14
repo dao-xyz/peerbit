@@ -1656,10 +1656,7 @@ export class DocumentIndex<
 			added?: WithContext<T>[];
 			removed?: WithContext<T>[];
 		},
-		query: {
-			query: indexerTypes.QueryLike;
-			sort: indexerTypes.Sort[];
-		},
+		query: QueryLike,
 		resolve: R,
 	): Promise<WithContext<RT>[]> {
 		let intoIndexable: WithContext<I>[];
@@ -1728,8 +1725,15 @@ export class DocumentIndex<
 		}
 
 		let all = await temporaryIndex
-			.iterate(query, { reference: true, shape: undefined })
+			.iterate(
+				{
+					query: indexerTypes.toQuery(query.query),
+					sort: indexerTypes.toSort(query.sort),
+				},
+				{ reference: true, shape: undefined },
+			)
 			.all();
+
 		if (resolve) {
 			return (
 				await Promise.all(
