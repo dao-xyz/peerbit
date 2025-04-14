@@ -313,6 +313,22 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.30](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.29...peerbit-v4.1.30) (2025-04-14)
+
+
+### Bug Fixes
+
+* update libp2p ([c842f92](https://github.com/dao-xyz/peerbit/commit/c842f9282c6697dd864b731d7c333abcaf16023d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.4 to 5.2.5
+    * @peerbit/pubsub bumped from ^4.0.0 to ^4.0.1
+    * @peerbit/blocks bumped from ^2.3.2 to ^2.3.3
+
 ## [4.1.29](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.28...peerbit-v4.1.29) (2025-04-03)
 
 
