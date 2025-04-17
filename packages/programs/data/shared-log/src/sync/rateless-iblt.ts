@@ -541,7 +541,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (outProcess === true) {
 				return true;
 			} else if (outProcess === undefined) {
-				return false; // we don't have enough information, or received information that is redundant
+				return true; // we don't have enough information, or received information that is redundant
 			}
 
 			// we are not done
