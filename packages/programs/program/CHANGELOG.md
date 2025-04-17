@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.6](https://github.com/dao-xyz/peerbit/compare/program-v5.2.5...program-v5.2.6) (2025-04-17)
+
+
+### Bug Fixes
+
+* add reset option for save ([1c6582b](https://github.com/dao-xyz/peerbit/commit/1c6582bf960066d96eeada653dae7d296528c1df))
+
 ## [5.2.5](https://github.com/dao-xyz/peerbit/compare/program-v5.2.4...program-v5.2.5) (2025-04-14)
 
 

@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.4...shared-log-v11.0.5) (2025-04-17)
+
+
+### Bug Fixes
+
+* return true for failing sync process so that MoreSymbols message get ignored ([cd90eb0](https://github.com/dao-xyz/peerbit/commit/cd90eb08865324a6efac85a5b043ab05e58f2f36))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.5 to 5.2.6
+    * @peerbit/log bumped from 4.0.52 to 4.0.53
+    * @peerbit/rpc bumped from 5.2.7 to 5.2.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.40 to ^2.1.41
+
 ## [11.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.3...shared-log-v11.0.4) (2025-04-14)
 
 
