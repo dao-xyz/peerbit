@@ -196,6 +196,30 @@ describe(`shared`, () => {
 		expect(saveCalled).to.be.false;
 	});
 
+	it("save reset", async () => {
+		const p1 = new TestProgram();
+		await client.open(p1);
+		expect(p1.address).to.exist;
+		const address = p1.address;
+
+		expect(client.services.blocks.has(address)).to.be.true;
+
+		p1.id = 333;
+		try {
+			await p1.save(client.services.blocks);
+			throw new Error("Expected error to throw");
+		} catch (error: any) {
+			expect(error.message).to.equal(
+				"Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized",
+			);
+		}
+
+		await p1.save(client.services.blocks, { reset: true });
+		expect(client.services.blocks.has(address)).to.be.false;
+		expect(p1.address).to.exist;
+		expect(client.services.blocks.has(p1.address)).to.be.true;
+	});
+
 	it("will address children when opening with parent reference", async () => {
 		const p1 = new TestParenteRefernceProgram();
 		await client.open(p1);

@@ -539,6 +539,7 @@ export abstract class Program<
 	async save(
 		store: Blocks = this.node.services.blocks,
 		options?: {
+			reset?: boolean;
 			skipOnAddress?: boolean;
 			save?: (address: string) => boolean | Promise<boolean>;
 		},
@@ -550,7 +551,20 @@ export abstract class Program<
 			}
 		}
 
-		const toPut = await this.calculateAddress();
+		// always reset the address on save
+		const toPut = await this.calculateAddress({ reset: true }); // this will also set the address (this.address)
+
+		if (
+			!options?.reset &&
+			existingAddress &&
+			existingAddress !== this.address
+		) {
+			this._address = existingAddress;
+			throw new Error(
+				"Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized",
+			);
+		}
+
 		if (
 			(options?.save && !(await options.save(toPut.address))) ||
 			(await store.has(toPut.address))
@@ -564,10 +578,11 @@ export abstract class Program<
 				: serialize(this),
 		);
 
-		if (existingAddress && existingAddress !== this.address) {
-			throw new Error(
-				"Program properties has been changed after constructor so that the hash has changed. Make sure that the 'setup(...)' function does not modify any properties that are to be serialized",
-			);
+		if (options?.reset) {
+			// delete the old address if it exists and different from the new one
+			if (existingAddress && existingAddress !== this.address) {
+				await store.rm(existingAddress);
+			}
 		}
 
 		return this.address!;
