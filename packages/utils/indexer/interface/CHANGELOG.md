@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.9](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.8...indexer-interface-v2.0.9) (2025-04-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.7 to ^2.3.8
+
 ## [2.0.8](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v2.0.7...indexer-interface-v2.0.8) (2025-04-03)
 
 

@@ -566,6 +566,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.81](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.80...trusted-network-v4.1.81) (2025-04-19)
+
+
+### Bug Fixes
+
+* update ethereproject wallet ([2491622](https://github.com/dao-xyz/peerbit/commit/2491622347f2d350554372faf6a359e3c0a579fa))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.7 to 2.3.8
+    * @peerbit/document bumped from 9.3.18 to 9.3.19
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.41 to ^2.1.42
+
 ## [4.1.80](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.79...trusted-network-v4.1.80) (2025-04-17)
 
 

@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.8](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.7...crypto-v2.3.8) (2025-04-19)
+
+
+### Bug Fixes
+
+* update ethereproject wallet ([2491622](https://github.com/dao-xyz/peerbit/commit/2491622347f2d350554372faf6a359e3c0a579fa))
+
 ## [2.3.7](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.6...crypto-v2.3.7) (2025-04-03)
 
 

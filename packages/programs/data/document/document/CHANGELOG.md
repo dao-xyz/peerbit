@@ -456,6 +456,28 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.3.19](https://github.com/dao-xyz/peerbit/compare/document-v9.3.18...document-v9.3.19) (2025-04-19)
+
+
+### Bug Fixes
+
+* add method for waiting for coverage ([d8e5bfb](https://github.com/dao-xyz/peerbit/commit/d8e5bfb9165c91433b323566971da970767b6ce5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.6 to 5.2.7
+    * @peerbit/rpc bumped from 5.2.8 to 5.2.9
+    * @peerbit/shared-log bumped from 11.0.5 to 11.0.6
+    * @peerbit/indexer-interface bumped from ^2.0.8 to ^2.0.9
+    * @peerbit/indexer-simple bumped from ^1.1.13 to ^1.1.14
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.17 to ^1.2.18
+    * @peerbit/document-interface bumped from ^2.0.27 to ^2.0.28
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.41 to 2.1.42
+
 ## [9.3.18](https://github.com/dao-xyz/peerbit/compare/document-v9.3.17...document-v9.3.18) (2025-04-17)
 
 

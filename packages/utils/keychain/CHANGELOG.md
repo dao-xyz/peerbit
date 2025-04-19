@@ -111,6 +111,16 @@
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [1.0.27](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.26...keychain-v1.0.27) (2025-04-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.7 to ^2.3.8
+    * @peerbit/any-store bumped from ^2.1.8 to ^2.1.9
+
 ## [1.0.26](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.25...keychain-v1.0.26) (2025-04-03)
 
 

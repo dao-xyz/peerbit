@@ -389,6 +389,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.5...shared-log-v11.0.6) (2025-04-19)
+
+
+### Bug Fixes
+
+* add method for waiting for coverage ([d8e5bfb](https://github.com/dao-xyz/peerbit/commit/d8e5bfb9165c91433b323566971da970767b6ce5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.6 to 5.2.7
+    * @peerbit/log bumped from 4.0.53 to 4.0.54
+    * @peerbit/rpc bumped from 5.2.8 to 5.2.9
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.41 to ^2.1.42
+
 ## [11.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.4...shared-log-v11.0.5) (2025-04-17)
 
 
