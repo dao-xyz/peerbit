@@ -400,6 +400,15 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.1.42](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.41...test-utils-v2.1.42) (2025-04-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.31 to 4.1.32
+
 ## [2.1.41](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.40...test-utils-v2.1.41) (2025-04-17)
 
 

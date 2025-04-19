@@ -279,6 +279,18 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [2.3.4](https://github.com/dao-xyz/peerbit/compare/blocks-v2.3.3...blocks-v2.3.4) (2025-04-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped from ^2.1.8 to ^2.1.9
+    * @peerbit/stream bumped from 4.3.2 to 4.3.3
+    * @peerbit/blocks-interface bumped from 1.4.3 to 1.4.4
+    * @peerbit/crypto bumped from 2.3.7 to 2.3.8
+
 ## [2.3.3](https://github.com/dao-xyz/peerbit/compare/blocks-v2.3.2...blocks-v2.3.3) (2025-04-14)
 
 

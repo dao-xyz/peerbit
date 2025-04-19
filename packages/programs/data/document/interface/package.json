@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-interface",
-	"version": "2.0.27",
+	"version": "2.0.28",
 	"description": "Document store interface",
 	"sideEffects": false,
 	"type": "module",
@@ -59,8 +59,8 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "^2.3.7",
-		"@peerbit/indexer-interface": "^2.0.8",
-		"@peerbit/log": "4.0.53"
+		"@peerbit/crypto": "^2.3.8",
+		"@peerbit/indexer-interface": "^2.0.9",
+		"@peerbit/log": "4.0.54"
 	}
 }
