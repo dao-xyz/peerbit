@@ -1372,6 +1372,9 @@ export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 	start?: NumberFromType<R>;
 	/** Optional: end of the content range (exclusive) */
 	end?: NumberFromType<R>;
+
+	/** Optional: role age limit in milliseconds */
+	roleAge?: number;
 }): Promise<number> => {
 	// Use the provided content range if given; otherwise use the default full range.
 	const contentStart = properties.start ?? properties.numbers.zero;
@@ -1385,12 +1388,14 @@ export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 			numbers: properties.numbers,
 			start: contentStart,
 			end: properties.numbers.maxValue,
+			roleAge: properties.roleAge,
 		});
 		const coverage2 = await calculateCoverage({
 			peers: properties.peers,
 			numbers: properties.numbers,
 			start: properties.numbers.zero,
 			end: contentEnd,
+			roleAge: properties.roleAge,
 		});
 
 		return Math.min(coverage1, coverage2);
@@ -1399,7 +1404,21 @@ export const calculateCoverage = async <R extends "u32" | "u64">(properties: {
 	const endpoints: { point: NumberFromType<R>; delta: -1 | 1 }[] = [];
 
 	// For each range, record its start and end as events.
-	for (const r of await properties.peers.iterate().all()) {
+	const timeThresholdQuery =
+		properties?.roleAge != null
+			? [
+					new IntegerCompare({
+						key: "timestamp",
+						compare: Compare.LessOrEqual,
+						value: BigInt(Date.now() - properties.roleAge),
+					}),
+				]
+			: undefined;
+	for (const r of await properties.peers
+		.iterate({
+			query: timeThresholdQuery,
+		})
+		.all()) {
 		endpoints.push({ point: r.value.start1, delta: +1 });
 		endpoints.push({ point: r.value.end1, delta: -1 });
 

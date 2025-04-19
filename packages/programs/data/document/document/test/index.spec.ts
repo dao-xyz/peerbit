@@ -4255,6 +4255,59 @@ describe("index", () => {
 			expect(updatedResults[0].id).to.equal("2");
 			expect(updatedResults[1].id).to.equal("3");
 		});
+
+		it("it should not add documents in the continued sort order", async () => {
+			// if we have a search result sorted by numbers
+			// like 2, 3, 4, 5
+			// and we add a new document with id 1
+			// it should  be added at the beginning of the result
+			// however if we add a new document with id 6
+			// it should not be added to the result
+			// but invoking next on the iterator would fetch it
+
+			// Open a store with a document store inside (docs)
+			const store = await session.peers[0].open(
+				new TestStore({
+					docs: new Documents<Document>(),
+				}),
+			);
+
+			// Add two initial documents.
+			await store.docs.put(new Document({ id: "2", name: "name2" }));
+			await store.docs.put(new Document({ id: "3", name: "name3" }));
+
+			// Wait briefly for the index to update (if needed, use waitForResolved or similar).
+			let initialResults = await store.docs.index.search(
+				new SearchRequest({ query: [] }),
+			);
+			expect(initialResults).to.have.length(2);
+
+			let changeEvents: DocumentsChange<Document>[] = [];
+			store.docs.events.addEventListener("change", (evt) => {
+				changeEvents.push(evt.detail);
+			});
+
+			await store.docs.put(new Document({ id: "1", name: "name1" }));
+			await store.docs.put(new Document({ id: "4", name: "name4" }));
+			await waitForResolved(() => expect(changeEvents.length).to.equal(2));
+
+			let updatedResults = initialResults;
+
+			// Use a simple query that sorts by "id" in ascending order.
+			const query = {
+				query: {}, // empty query selects all documents
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			};
+
+			for (const change of changeEvents) {
+				updatedResults = await store.docs.index.updateResults(
+					updatedResults,
+					change,
+					query,
+					true,
+				);
+			}
+		});
 	});
 });
 

@@ -48,6 +48,7 @@ import {
 } from "@peerbit/stream-interface";
 import {
 	AbortError,
+	TimeoutError,
 	debounceAccumulator,
 	debounceFixedInterval,
 	waitFor,
@@ -1793,6 +1794,9 @@ export class SharedLog<
 
 		await this.rpc.subscribe();
 
+		// mark all our replicaiton ranges as "new", this would allow other peers to understand that we recently reopend our database and might need some sync and warmup
+		await this.updateTimestampOfOwnedReplicationRanges(); // TODO do we need to do this before subscribing?
+
 		// if we had a previous session with replication info, and new replication info dictates that we unreplicate
 		// we should do that. Otherwise if options is a unreplication we dont need to do anything because
 		// we are already unreplicated (as we are just opening)
@@ -1818,6 +1822,38 @@ export class SharedLog<
 		this.interval = setInterval(() => {
 			this.rebalanceParticipationDebounced?.call();
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
+	}
+
+	private async updateTimestampOfOwnedReplicationRanges(
+		timestamp: number = +new Date(),
+	) {
+		const all = await this.replicationIndex
+			.iterate({
+				query: { hash: this.node.identity.publicKey.hashcode() },
+			})
+			.all();
+		let bnTimestamp = BigInt(timestamp);
+		for (const x of all) {
+			x.value.timestamp = bnTimestamp;
+			await this.replicationIndex.put(x.value);
+		}
+
+		if (all.length > 0) {
+			// emit mature event
+			const maturityTimeout = setTimeout(
+				() => {
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicationChangeEvent>("replicator:mature", {
+							detail: { publicKey: this.node.identity.publicKey },
+						}),
+					);
+				},
+				await this.getDefaultMinRoleAge(),
+			);
+			this._closeController.signal.addEventListener("abort", () => {
+				clearTimeout(maturityTimeout);
+			});
+		}
 	}
 
 	async afterOpen(): Promise<void> {
@@ -2615,12 +2651,16 @@ export class SharedLog<
 		start?: NumberFromType<R>;
 		/** Optional: end of the content range (exclusive) */
 		end?: NumberFromType<R>;
+
+		/** Optional: roleAge (in ms) */
+		roleAge?: number;
 	}) {
 		return calculateCoverage({
 			numbers: this.indexableDomain.numbers,
 			peers: this.replicationIndex,
 			end: properties?.end,
 			start: properties?.start,
+			roleAge: properties?.roleAge,
 		});
 	}
 
@@ -2718,38 +2758,6 @@ export class SharedLog<
 		});
 
 		return set;
-	}
-
-	async waitForReplicator(...keys: PublicSignKey[]) {
-		const check = async () => {
-			for (const k of keys) {
-				const iterator = this.replicationIndex?.iterate(
-					{ query: new StringMatch({ key: "hash", value: k.hashcode() }) },
-					{ reference: true },
-				);
-				const rects = await iterator?.next(1);
-				await iterator.close();
-				const rect = rects[0]?.value;
-				if (
-					!rect ||
-					!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
-				) {
-					return false;
-				}
-			}
-			return true;
-		};
-
-		// TODO do event based
-		return waitFor(() => check(), {
-			signal: this._closeController.signal,
-		}).catch((e) => {
-			if (e instanceof AbortError) {
-				// ignore error
-				return;
-			}
-			throw e;
-		});
 	}
 
 	async join(
@@ -2884,6 +2892,100 @@ export class SharedLog<
 				});
 			}
 		}
+	}
+
+	async waitForReplicator(...keys: PublicSignKey[]) {
+		const check = async () => {
+			for (const k of keys) {
+				const iterator = this.replicationIndex?.iterate(
+					{ query: new StringMatch({ key: "hash", value: k.hashcode() }) },
+					{ reference: true },
+				);
+				const rects = await iterator?.next(1);
+				await iterator.close();
+				const rect = rects[0]?.value;
+				if (
+					!rect ||
+					!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
+				) {
+					return false;
+				}
+			}
+			return true;
+		};
+
+		// TODO do event based
+		return waitFor(() => check(), {
+			signal: this._closeController.signal,
+		}).catch((e) => {
+			if (e instanceof AbortError) {
+				// ignore error
+				return;
+			}
+			throw e;
+		});
+	}
+
+	async waitForReplicators(options?: {
+		timeout?: number;
+		roleAge?: number;
+		signal?: AbortSignal;
+		coverageThreshold?: number;
+	}) {
+		let coverageThreshold = options?.coverageThreshold ?? 0.99;
+		let deferred = pDefer<void>();
+		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
+		const providedCustomRoleAge = options?.roleAge != null;
+
+		let checkCoverage = async () => {
+			const coverage = await this.calculateCoverage({
+				roleAge,
+			});
+			if (coverage > coverageThreshold) {
+				deferred.resolve();
+				return true;
+			}
+			return false;
+		};
+		this.events.addEventListener("replicator:mature", checkCoverage);
+		this.events.addEventListener("replication:change", checkCoverage);
+		await checkCoverage();
+
+		let interval = providedCustomRoleAge
+			? setInterval(() => {
+					checkCoverage();
+				}, 100)
+			: undefined;
+
+		let timeout = options?.timeout ?? this.waitForReplicatorTimeout;
+		const timer = setTimeout(() => {
+			clear();
+			deferred.reject(
+				new TimeoutError(`Timeout waiting for mature replicators`),
+			);
+		}, timeout);
+
+		const abortListener = () => {
+			clear();
+			deferred.reject(new AbortError());
+		};
+
+		if (options?.signal) {
+			options.signal.addEventListener("abort", abortListener);
+		}
+		const clear = () => {
+			interval && clearInterval(interval);
+			this.events.removeEventListener("join", checkCoverage);
+			this.events.removeEventListener("leave", checkCoverage);
+			clearTimeout(timer);
+			if (options?.signal) {
+				options.signal.removeEventListener("abort", abortListener);
+			}
+		};
+
+		return deferred.promise.finally(() => {
+			return clear();
+		});
 	}
 
 	private async _waitForReplicators(
@@ -3046,9 +3148,10 @@ export class SharedLog<
 		}
 
 		const now = +new Date();
-		const subscribers =
-			(await this.node.services.pubsub.getSubscribers(this.rpc.topic))
-				?.length ?? 1;
+		const subscribers = this.rpc.closed
+			? 1
+			: ((await this.node.services.pubsub.getSubscribers(this.rpc.topic))
+					?.length ?? 1);
 		const diffToOldest =
 			subscribers > 1 ? now - this.oldestOpenTime - 1 : Number.MAX_SAFE_INTEGER;
 
