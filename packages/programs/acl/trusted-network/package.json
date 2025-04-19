@@ -64,7 +64,7 @@
 	},
 	"devDependencies": {
 		"@peerbit/time": "2.1.0",
-		"@ethersproject/wallet": "^5.7.0",
+		"@ethersproject/wallet": "^5.8.0",
 		"@peerbit/test-utils": "^2.1.41"
 	}
 }
