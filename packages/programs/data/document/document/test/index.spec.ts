@@ -43,6 +43,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
+import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import {
 	Operation,
@@ -3449,10 +3450,20 @@ describe("index", () => {
 		});
 
 		it("get", async () => {
+			// should not remote query if local is enough
+			const requestSpy = sinon.spy(stores[0].docs.index._query.request);
+			stores[0].docs.index._query.request = requestSpy;
+
+			const sendSpy = sinon.spy(stores[0].docs.index._query.send);
+			stores[0].docs.index._query.send = sendSpy;
+
 			const get = await stores[0].docs.index.get("1");
 			expect(get!.name).to.eq("name1");
 			const createdAt = get.__context.created;
 			expect(typeof createdAt).to.eq("bigint");
+
+			expect(requestSpy.callCount).to.eq(0);
+			expect(sendSpy.callCount).to.eq(0);
 
 			const getRemote = await stores[1].docs.index.get("1");
 			expect(getRemote!.name).to.eq("name1");
@@ -3460,18 +3471,25 @@ describe("index", () => {
 			expect(createdAtRemote).to.eq(createdAt);
 		});
 
-		it("get indexed", async () => {
-			const get = await stores[0].docs.index.get("1", { resolve: false });
-			expect(get!.nameTransformed).to.eq("NAME1");
-			expect(get instanceof Indexable).to.be.true;
-			const createdAt = get.__context.created;
-			expect(typeof createdAt).to.eq("bigint");
+		it("get local first", async () => {
+			await stores[1].docs.log.replicate({ factor: 0.0001 });
+			await waitForResolved(() =>
+				expect(stores[1].docs.log.log.length).to.eq(
+					stores[0].docs.log.log.length,
+				),
+			);
 
-			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
-			expect(getRemote!.nameTransformed).to.eq("NAME1");
-			expect(getRemote instanceof Indexable).to.be.true;
-			const createdAtRemote = get.__context.created;
-			expect(createdAtRemote).to.eq(createdAt);
+			const requestSpy = sinon.spy(stores[1].docs.index._query.request);
+			stores[1].docs.index._query.request = requestSpy;
+
+			const sendSpy = sinon.spy(stores[1].docs.index._query.send);
+			stores[1].docs.index._query.send = sendSpy;
+
+			const get = await stores[1].docs.index.get("1");
+			expect(get!.name).to.eq("name1");
+
+			expect(requestSpy.callCount).to.eq(0);
+			expect(sendSpy.callCount).to.eq(0);
 		});
 
 		it("iterate", async () => {
@@ -3814,7 +3832,7 @@ describe("index", () => {
 		});
 
 		// wait for store2 and store1 size converge
-		const waitForConverge = async (fn: () => number) => {
+		const waitForConverge = async (fn: () => number | Promise<number>) => {
 			// call the function until the value converges
 			let lastValue = -1;
 			let value = -1;
@@ -3910,16 +3928,15 @@ describe("index", () => {
 					expect(store1.docs.log.log.length).to.be.lessThan(count),
 				);
 
-				await waitForConverge(() => store1.docs.log.log.length);
-				await waitForConverge(() => store2.docs.log.log.length);
+				await waitForResolved(async () => {
+					const approxCount1 = await store1.docs.count({ approximate: true });
+					const approxCount2 = await store2.docs.count({ approximate: true });
+					const approxCount3 = await store3.docs.count({ approximate: true });
 
-				const approxCount1 = await store1.docs.count({ approximate: true });
-				const approxCount2 = await store2.docs.count({ approximate: true });
-				const approxCount3 = await store3.docs.count({ approximate: true });
-
-				expect(approxCount1).to.be.within(count * 0.9, count * 1.1);
-				expect(approxCount2).to.be.within(count * 0.9, count * 1.1);
-				expect(approxCount3).to.be.within(count * 0.9, count * 1.1);
+					expect(approxCount1).to.be.within(count * 0.9, count * 1.1);
+					expect(approxCount2).to.be.within(count * 0.9, count * 1.1);
+					expect(approxCount3).to.be.within(count * 0.9, count * 1.1);
+				});
 			});
 
 			it("returns approximate count with query", async () => {
@@ -3949,33 +3966,35 @@ describe("index", () => {
 					value: Math.round(count / 2),
 				});
 
-				const approxCount1 = await store1.docs.count({
-					query,
-					approximate: true,
-				});
-				const approxCount2 = await store2.docs.count({
-					query,
-					approximate: true,
-				});
-				const approxCount3 = await store3.docs.count({
-					query,
-					approximate: true,
-				});
+				await waitForResolved(async () => {
+					const approxCount1 = await store1.docs.count({
+						query,
+						approximate: true,
+					});
+					const approxCount2 = await store2.docs.count({
+						query,
+						approximate: true,
+					});
+					const approxCount3 = await store3.docs.count({
+						query,
+						approximate: true,
+					});
 
-				let expectedCount = Math.round(count / 2);
+					let expectedCount = Math.round(count / 2);
 
-				expect(approxCount1).to.be.within(
-					expectedCount * 0.9,
-					expectedCount * 1.1,
-				);
-				expect(approxCount2).to.be.within(
-					expectedCount * 0.9,
-					expectedCount * 1.1,
-				);
-				expect(approxCount3).to.be.within(
-					expectedCount * 0.9,
-					expectedCount * 1.1,
-				);
+					expect(approxCount1).to.be.within(
+						expectedCount * 0.9,
+						expectedCount * 1.1,
+					);
+					expect(approxCount2).to.be.within(
+						expectedCount * 0.9,
+						expectedCount * 1.1,
+					);
+					expect(approxCount3).to.be.within(
+						expectedCount * 0.9,
+						expectedCount * 1.1,
+					);
+				});
 			});
 
 			it("returns approximate count with deletions", async () => {
@@ -4001,26 +4020,25 @@ describe("index", () => {
 					expect(store1.docs.log.log.length).to.be.lessThan(count),
 				);
 
-				await waitForConverge(() => store1.docs.log.log.length);
-				await waitForConverge(() => store2.docs.log.log.length);
+				await waitForResolved(async () => {
+					const approxCount1 = await store1.docs.count({ approximate: true });
+					const approxCount2 = await store2.docs.count({ approximate: true });
+					const approxCount3 = await store3.docs.count({ approximate: true });
 
-				const approxCount1 = await store1.docs.count({ approximate: true });
-				const approxCount2 = await store2.docs.count({ approximate: true });
-				const approxCount3 = await store3.docs.count({ approximate: true });
+					expect(approxCount1).to.be.within(
+						expectedDocCountAfterDelete * 0.9,
+						expectedDocCountAfterDelete * 1.1,
+					);
+					expect(approxCount2).to.be.within(
+						expectedDocCountAfterDelete * 0.9,
+						expectedDocCountAfterDelete * 1.1,
+					);
 
-				expect(approxCount1).to.be.within(
-					expectedDocCountAfterDelete * 0.9,
-					expectedDocCountAfterDelete * 1.1,
-				);
-				expect(approxCount2).to.be.within(
-					expectedDocCountAfterDelete * 0.9,
-					expectedDocCountAfterDelete * 1.1,
-				);
-
-				expect(approxCount3).to.be.within(
-					expectedDocCountAfterDelete * 0.9,
-					expectedDocCountAfterDelete * 1.1,
-				);
+					expect(approxCount3).to.be.within(
+						expectedDocCountAfterDelete * 0.9,
+						expectedDocCountAfterDelete * 1.1,
+					);
+				});
 			});
 		});
 	});

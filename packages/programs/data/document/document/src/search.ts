@@ -47,6 +47,7 @@ export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
 	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
+	strategy?: "fallback"; // | merge | avg
 	domain?:
 		| {
 				args: ExtractArgs<D>;
@@ -657,13 +658,33 @@ export class DocumentIndex<
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
 		options?: QueryOptions<T, D, Resolve>,
 	): Promise<types.Results<RT>[] | undefined> {
+		let coercedOptions = options;
+		if (options?.remote && typeof options.remote !== "boolean") {
+			{
+				coercedOptions = {
+					...options,
+					remote: {
+						...options.remote,
+						strategy: options.remote?.strategy ?? "fallback",
+					},
+				};
+			}
+		} else if (options?.remote === undefined) {
+			coercedOptions = {
+				...options,
+				remote: {
+					strategy: "fallback",
+				},
+			};
+		}
+
 		let results:
 			| types.Results<
 					| types.ResultValue<WithContext<T>>
 					| types.ResultIndexedValue<WithContext<I>>
 			  >[]
 			| undefined;
-		const resolve = options?.resolve || options?.resolve == null;
+		const resolve = coercedOptions?.resolve || coercedOptions?.resolve == null;
 		let requestClazz = resolve
 			? types.SearchRequest
 			: types.SearchRequestIndexed;
@@ -674,7 +695,7 @@ export class DocumentIndex<
 						new indexerTypes.ByteMatchQuery({ key: this.indexBy, value: key }),
 					],
 				}),
-				options,
+				coercedOptions,
 			);
 		} else {
 			const indexableKey = indexerTypes.toIdeable(key);
@@ -693,7 +714,7 @@ export class DocumentIndex<
 							}),
 						],
 					}),
-					options,
+					coercedOptions,
 				);
 			} else if (typeof indexableKey === "string") {
 				results = await this.queryCommence(
@@ -705,7 +726,7 @@ export class DocumentIndex<
 							}),
 						],
 					}),
-					options,
+					coercedOptions,
 				);
 			} else if (indexableKey instanceof Uint8Array) {
 				results = await this.queryCommence(
@@ -717,7 +738,7 @@ export class DocumentIndex<
 							}),
 						],
 					}),
-					options,
+					coercedOptions,
 				);
 			}
 		}
@@ -1044,7 +1065,7 @@ export class DocumentIndex<
 		}
 
 		let resolved: types.Results<types.ResultTypeFromRequest<R, T, I>>[] = [];
-		if (remote) {
+		if (remote && (remote.strategy !== "fallback" || allResults.length === 0)) {
 			const replicatorGroups = await this._log.getCover(
 				remote.domain ?? { args: undefined },
 				{
