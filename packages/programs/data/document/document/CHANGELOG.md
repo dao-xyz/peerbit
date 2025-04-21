@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.4.0](https://github.com/dao-xyz/peerbit/compare/document-v9.3.19...document-v9.4.0) (2025-04-21)
+
+
+### Features
+
+* add 'strategy' option for remote queries ([1e362c1](https://github.com/dao-xyz/peerbit/commit/1e362c17028ebd29a24a453d00f8929fa6901879))
+
 ## [9.3.19](https://github.com/dao-xyz/peerbit/compare/document-v9.3.18...document-v9.3.19) (2025-04-19)
 
 
