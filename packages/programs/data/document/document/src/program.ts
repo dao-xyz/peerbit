@@ -576,7 +576,7 @@ export class Documents<
 					.reverse(); // sort so we get newest to oldest */
 
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
-		// in combination with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
+		// in combinatpion with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
 
 		let documentsChanged: DocumentsChange<T> = {
 			added: [],
