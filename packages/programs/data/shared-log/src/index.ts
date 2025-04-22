@@ -2932,7 +2932,7 @@ export class SharedLog<
 		signal?: AbortSignal;
 		coverageThreshold?: number;
 	}) {
-		let coverageThreshold = options?.coverageThreshold ?? 0.99;
+		let coverageThreshold = options?.coverageThreshold ?? 1;
 		let deferred = pDefer<void>();
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
 		const providedCustomRoleAge = options?.roleAge != null;
@@ -2941,7 +2941,7 @@ export class SharedLog<
 			const coverage = await this.calculateCoverage({
 				roleAge,
 			});
-			if (coverage > coverageThreshold) {
+			if (coverage >= coverageThreshold) {
 				deferred.resolve();
 				return true;
 			}
