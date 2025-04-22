@@ -87,6 +87,32 @@ export const createClient = async (
 			}),
 		).data;
 
+	const close = async (address: string) => {
+		return throwIfNot200(
+			await axiosInstance.delete(
+				endpoint + PROGRAM_PATH + "/" + encodeURIComponent(address.toString()),
+				{
+					validateStatus,
+				},
+			),
+		);
+	};
+
+	const drop = async (address: string) => {
+		return throwIfNot200(
+			await axiosInstance.delete(
+				endpoint +
+					PROGRAM_PATH +
+					"/" +
+					encodeURIComponent(address.toString()) +
+					"?delete=true",
+				{
+					validateStatus,
+				},
+			),
+		);
+	};
+
 	return {
 		peer: {
 			id: {
@@ -173,32 +199,29 @@ export const createClient = async (
 			},
 
 			close: async (address: string): Promise<void> => {
-				throwIfNot200(
-					await axiosInstance.delete(
-						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()),
-						{
-							validateStatus,
-						},
-					),
+				await close(address);
+			},
+
+			closeAll: async (): Promise<void> => {
+				const resp = throwIfNot200(
+					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
+						validateStatus,
+					}),
 				);
+				await Promise.all(resp.data.map((address: string) => close(address)));
 			},
 
 			drop: async (address: string): Promise<void> => {
-				throwIfNot200(
-					await axiosInstance.delete(
-						endpoint +
-							PROGRAM_PATH +
-							"/" +
-							encodeURIComponent(address.toString()) +
-							"?delete=true",
-						{
-							validateStatus,
-						},
-					),
+				await drop(address);
+			},
+
+			dropAll: async (): Promise<void> => {
+				const resp = throwIfNot200(
+					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
+						validateStatus,
+					}),
 				);
+				await Promise.all(resp.data.map((address: string) => drop(address)));
 			},
 
 			list: async (): Promise<string[]> => {

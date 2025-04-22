@@ -957,6 +957,15 @@ export const cli = async (args?: string[]) => {
 												},
 											})
 											.command({
+												command: "drop-all",
+												describe: "Drop all programs",
+												handler: async () => {
+													for (const api of apis) {
+														await api.api.program.dropAll();
+													}
+												},
+											})
+											.command({
 												command: "close <address>",
 												describe: "Close a program",
 												builder: (yargs: any) => {
@@ -971,6 +980,15 @@ export const cli = async (args?: string[]) => {
 												handler: async (args) => {
 													for (const api of apis) {
 														await api.api.program.close(args.address);
+													}
+												},
+											})
+											.command({
+												command: "close-all",
+												describe: "Close all programs",
+												handler: async () => {
+													for (const api of apis) {
+														await api.api.program.closeAll();
 													}
 												},
 											})
