@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.4.1](https://github.com/dao-xyz/peerbit/compare/document-v9.4.0...document-v9.4.1) (2025-04-22)
+
+
+### Documentation
+
+* typo ([bf22247](https://github.com/dao-xyz/peerbit/commit/bf22247ab46a18a2bbcc9a4c450a98305c30a08a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 11.0.6 to 11.0.7
+
 ## [9.4.0](https://github.com/dao-xyz/peerbit/compare/document-v9.3.19...document-v9.4.0) (2025-04-21)
 
 
