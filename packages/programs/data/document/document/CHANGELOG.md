@@ -456,6 +456,14 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.4.2](https://github.com/dao-xyz/peerbit/compare/document-v9.4.1...document-v9.4.2) (2025-04-23)
+
+
+### Bug Fixes
+
+* don't allow iterate on SearchRequest with resolve === false ([327e5c9](https://github.com/dao-xyz/peerbit/commit/327e5c97c97c85f3abdad4ba3f4ea72f72288849))
+* supported indexed items in the updateResults function change set ([ca1f7f3](https://github.com/dao-xyz/peerbit/commit/ca1f7f377820691278322c172e07706752e8b7b1))
+
 ## [9.4.1](https://github.com/dao-xyz/peerbit/compare/document-v9.4.0...document-v9.4.1) (2025-04-22)
 
 
