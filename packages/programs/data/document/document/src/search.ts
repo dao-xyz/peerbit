@@ -1214,6 +1214,13 @@ export class DocumentIndex<
 		queryRequest?: R,
 		options?: QueryOptions<T, D, Resolve>,
 	): ResultsIterator<ValueTypeFromRequest<Resolve, T, I>> {
+		if (
+			queryRequest instanceof types.SearchRequest &&
+			options?.resolve === false
+		) {
+			throw new Error("Cannot use resolve=false with SearchRequest"); // TODO make this work
+		}
+
 		let queryRequestCoerced: types.SearchRequest | types.SearchRequestIndexed =
 			coerceQuery(queryRequest ?? {}, options);
 
