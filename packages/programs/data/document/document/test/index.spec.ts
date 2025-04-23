@@ -3,6 +3,7 @@ import {
 	deserialize,
 	field,
 	fixedArray,
+	option,
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
@@ -55,7 +56,11 @@ import {
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
-import { type CanRead } from "../src/search.js";
+import {
+	type CanRead,
+	type WithContext,
+	coerceWithContext,
+} from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -4245,6 +4250,84 @@ describe("index", () => {
 			let changeEvents: DocumentsChange<Document>[] = [];
 			store.docs.events.addEventListener("change", (evt) => {
 				changeEvents.push(evt.detail);
+			});
+			await store.docs.put(new Document({ id: "3", name: "name3" }));
+			await store.docs.del("1");
+			await waitForResolved(() => expect(changeEvents.length).to.equal(2));
+
+			// Use a simple query that sorts by "id" in ascending order.
+			const query = {
+				query: {}, // empty query selects all documents
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			};
+
+			// Call updateResults on the document index.
+			// If updateResults is not directly typed on the index, you may cast index as any.
+			let updatedResults = initialResults;
+			for (const change of changeEvents) {
+				updatedResults = await store.docs.index.updateResults(
+					updatedResults,
+					change,
+					query,
+					true,
+				);
+			}
+
+			// Check that the updated results contain the expected documents.
+			expect(updatedResults).to.have.length(2);
+			expect(updatedResults[0].id).to.equal("2");
+			expect(updatedResults[1].id).to.equal("3");
+		});
+
+		@variant("indexed-document")
+		class IndexedDocument {
+			@field({ type: "string" })
+			id: string;
+
+			@field({ type: option("string") })
+			name: string | undefined;
+
+			constructor(document: Document) {
+				this.id = document.id;
+				this.name = document.name;
+			}
+		}
+		it("should update index with indexed added and removed results ", async () => {
+			// Open a store with a document store inside (docs)
+			const store = await session.peers[0].open(
+				new TestStore({
+					docs: new Documents<Document, IndexedDocument>(),
+				}),
+				{
+					args: {
+						index: {
+							type: IndexedDocument,
+						},
+					},
+				},
+			);
+
+			// Add two initial documents.
+			await store.docs.put(new Document({ id: "1", name: "name1" }));
+			await store.docs.put(new Document({ id: "2", name: "name2" }));
+
+			// Wait briefly for the index to update (if needed, use waitForResolved or similar).
+			let initialResults = await store.docs.index.search(
+				new SearchRequest({ query: [] }),
+			);
+			expect(initialResults).to.have.length(2);
+
+			// Simulate a change: remove the document with id "1" and add a new document with id "3".
+			let changeEvents: DocumentsChange<WithContext<IndexedDocument>>[] = [];
+			store.docs.events.addEventListener("change", (evt) => {
+				changeEvents.push({
+					added: evt.detail.added.map((x) =>
+						coerceWithContext(new IndexedDocument(x), x.__context),
+					),
+					removed: evt.detail.removed.map((x) =>
+						coerceWithContext(new IndexedDocument(x), x.__context),
+					),
+				});
 			});
 			await store.docs.put(new Document({ id: "3", name: "name3" }));
 			await store.docs.del("1");

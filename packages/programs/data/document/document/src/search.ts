@@ -1674,8 +1674,8 @@ export class DocumentIndex<
 	public async updateResults<R extends boolean, RT = R extends true ? T : I>(
 		into: WithContext<RT>[],
 		change: {
-			added?: WithContext<T>[];
-			removed?: WithContext<T>[];
+			added?: WithContext<T>[] | WithContext<I>[];
+			removed?: WithContext<T>[] | WithContext<I>[];
 		},
 		query: QueryLike,
 		resolve: R,
@@ -1719,17 +1719,23 @@ export class DocumentIndex<
 		let anyChange = false;
 		if (change.added && change.added.length > 0) {
 			for (const added of change.added) {
-				const indexed = coerceWithContext(
-					await this.transformer(added, added.__context),
-					added.__context,
-				);
+				const indexed =
+					added instanceof this.documentType
+						? coerceWithContext(
+								await this.transformer(added as T, added.__context),
+								added.__context,
+							)
+						: (added as WithContext<I>);
 				temporaryIndex.put(indexed);
 				anyChange = true;
 			}
 		}
 		if (change.removed && change.removed.length > 0) {
 			for (const removed of change.removed) {
-				const indexed = await this.transformer(removed, removed.__context);
+				const indexed =
+					removed instanceof this.documentType
+						? await this.transformer(removed as T, removed.__context)
+						: (removed as WithContext<I>);
 				const id = indexerTypes.toId(this.indexByResolver(indexed)).primitive;
 				const deleted = await temporaryIndex.del({
 					query: [indexerTypes.getMatcher(this.indexBy, id)],
