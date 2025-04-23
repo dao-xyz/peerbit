@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.7...shared-log-v11.0.8) (2025-04-23)
+
+
+### Bug Fixes
+
+* getCoverage handle edge case when self is unmature and replicating full width ([3a4b77c](https://github.com/dao-xyz/peerbit/commit/3a4b77c98d8629379864b2a0c8560235c429dc74))
+
 ## [11.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.6...shared-log-v11.0.7) (2025-04-22)
 
 
