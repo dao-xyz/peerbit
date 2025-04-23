@@ -231,7 +231,7 @@ resolutions.forEach((resolution) => {
 						});
 
 						describe("unmature", () => {
-							it("all unmature", async () => {
+							it("partially overlapping all unmature", async () => {
 								await create(
 									createReplicationRangeFromNormalized({
 										publicKey: a,
@@ -294,6 +294,60 @@ resolutions.forEach((resolution) => {
 										widthToCoverScaled: numbers.maxValue,
 									})),
 								]).to.have.members([a.hashcode()]);
+							});
+
+							it("full one unmature one mature same offset", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 1,
+										offset: (0 + rotation) % 1,
+										timestamp: BigInt(+new Date()),
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: b,
+										width: 1,
+										offset: (0 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// special case, assume we only look into selef
+								expect([
+									...(await getCoverSet({
+										peers,
+										roleAge: 1e5,
+										start: a,
+										widthToCoverScaled: numbers.maxValue,
+									})),
+								]).to.have.members([a.hashcode(), b.hashcode()]);
+							});
+
+							it("full one unmature one mature", async () => {
+								await create(
+									createReplicationRangeFromNormalized({
+										publicKey: a,
+										width: 1,
+										offset: (0 + rotation) % 1,
+										timestamp: BigInt(+new Date()),
+									}),
+									createReplicationRangeFromNormalized({
+										publicKey: b,
+										width: 1,
+										offset: (0.333 + rotation) % 1,
+										timestamp: 0n,
+									}),
+								);
+
+								// special case, assume we only look into selef
+								expect([
+									...(await getCoverSet({
+										peers,
+										roleAge: 1e5,
+										start: a,
+										widthToCoverScaled: numbers.maxValue,
+									})),
+								]).to.have.members([a.hashcode(), b.hashcode()]);
 							});
 
 							it("two unmature", async () => {

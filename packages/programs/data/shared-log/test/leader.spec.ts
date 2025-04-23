@@ -731,70 +731,36 @@ describe(`isLeader`, function () {
 			});
 		});
 
-		it("all non-mature, only me included", async () => {
+		it("me unmature but replicating", async () => {
 			const store = new EventStore<string, any>();
-
+			let timeUntilRoleMaturity = 5e3;
 			db1 = await session.peers[0].open(store, {
 				args: {
-					replicas: {
-						min: 1,
-					},
 					replicate: {
-						factor: 0.34,
+						factor: 1,
 					},
+					timeUntilRoleMaturity,
 				},
 			});
-
+			await delay(timeUntilRoleMaturity);
 			db2 = await EventStore.open<EventStore<string, any>>(
 				db1.address!,
 				session.peers[1],
 				{
 					args: {
-						replicas: {
-							min: 1,
-						},
-						replicate: {
-							factor: 0.34,
-						},
+						replicate: { factor: 1 },
+						timeUntilRoleMaturity,
 					},
 				},
 			);
-
-			db3 = await EventStore.open<EventStore<string, any>>(
-				db1.address!,
-				session.peers[2],
-				{
-					args: {
-						replicas: {
-							min: 1,
-						},
-						replicate: {
-							factor: 0.34,
-						},
-					},
-				},
-			);
-
 			await waitForResolved(async () =>
-				expect((await db1.log.getReplicators()).size).to.equal(3),
+				expect((await db2.log.getReplicators()).size).to.equal(2),
 			);
-
-			await waitForResolved(async () =>
-				expect((await db2.log.getReplicators()).size).to.equal(3),
-			);
-
-			await waitForResolved(async () =>
-				expect((await db3.log.getReplicators()).size).to.equal(3),
-			);
-
-			for (let i = 3; i <= 3; i++) {
-				db3.log.replicas.min = { getValue: () => i };
-
-				// Should always include all nodes since no is mature
-				expect(
-					await db3.log.getCover({ args: undefined }, { roleAge: 0xffffffff }),
-				).to.have.length(1);
-			}
+			const out = await db2.log.getCover({ args: undefined });
+			expect(out).to.have.members([
+				db2.node.identity.publicKey.hashcode(),
+				db1.node.identity.publicKey.hashcode(),
+			]);
 		});
 
 		describe("maturity", () => {

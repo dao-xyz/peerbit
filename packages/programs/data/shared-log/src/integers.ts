@@ -51,6 +51,7 @@ export interface Numbers<T extends "u32" | "u64"> {
 	max: (a: NumberFromType<T>, b: NumberFromType<T>) => NumberFromType<T>;
 	denormalize: (value: number) => NumberFromType<T>;
 	bytesToNumber: (bytes: Uint8Array) => NumberFromType<T>;
+	increment: (value: NumberFromType<T>) => NumberFromType<T>;
 }
 
 const getEvenlySpacedU32 = (from: number, count: number): number[] => {
@@ -85,6 +86,10 @@ export const createNumbers = <N extends "u32" | "u64">(
 			max: (a, b) => Math.max(a as number, b as number),
 			denormalize: denormalizerFn,
 			bytesToNumber: bytesToNumber(resolution),
+			increment(value) {
+				const next = (value as number) + 1;
+				return next > MAX_U32 ? 0 : next;
+			},
 		} as Numbers<N>;
 	} else if (resolution === "u64") {
 		return {
@@ -98,6 +103,10 @@ export const createNumbers = <N extends "u32" | "u64">(
 			max: (a, b) => (a > b ? a : b),
 			denormalize: denormalizerFn,
 			bytesToNumber: bytesToNumber(resolution),
+			increment(value) {
+				const next = (value as bigint) + 1n;
+				return next > MAX_U64 ? 0n : next;
+			},
 		} as Numbers<N>;
 	} else {
 		throw new Error("Unsupported resolution");

@@ -2273,39 +2273,51 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 	};
 
 	// fill the middle
-	let wrappedOnce = current.end2 < current.end1;
 
 	let coveredLength = properties.numbers.zero;
-	const addLength = (from: NumberFromType<R>) => {
-		if (current.end2 < from || current.wrapped) {
+
+	let startIsMature = isMatured(startNode, now, roleAge);
+
+	let wrappedOnce = false;
+
+	const addLength = (
+		to: ReplicationRangeIndexable<R>,
+		from: NumberFromType<R>,
+	) => {
+		const toEnd2 = properties.numbers.increment(to.end2); // TODO investigate why this is needed
+		if (toEnd2 < from || to.wrapped) {
 			wrappedOnce = true;
 			// @ts-ignore
 			coveredLength += properties.numbers.maxValue - from;
 			// @ts-ignore
-			coveredLength += current.end2;
+			coveredLength += toEnd2;
 		} else {
 			// @ts-ignore
-			coveredLength += current.end1 - from;
+			coveredLength += to.end1 - from;
 		}
 	};
-	addLength(startLocation);
 
-	let maturedCoveredLength =
-		coveredLength; /* TODO only increase matured length when startNode is matured? i.e. do isMatured(startNode, now, roleAge) ? coveredLength : 0; */
-	let nextLocation = current.end2;
+	addLength(current, startLocation);
+
+	let maturedCoveredLength = startIsMature
+		? coveredLength
+		: 0; /* TODO we only increase matured length when startNode is matured? i.e. do isMatured(startNode, now, roleAge) ? coveredLength : 0;, however what is the optimal choice here? */
+	let nextLocation = current.end2; /* startIsMature
+		? current.end2
+		: properties.numbers.increment(current.start1);  */ // <--- this clause does not seem to work as expected (run ranges tests to see why)*/
 
 	while (
 		maturedCoveredLength < widthToCoverScaled && // eslint-disable-line no-unmodified-loop-condition
-		coveredLength <= properties.numbers.maxValue // eslint-disable-line no-unmodified-loop-condition
+		(coveredLength <= properties.numbers.maxValue || !wrappedOnce) // eslint-disable-line no-unmodified-loop-condition
 	) {
+		let distanceBefore = coveredLength;
+
 		let nextCandidate = await resolveNext(nextLocation, roleAge);
-		/* let fromAbove = false; */
 		let matured = true;
 
 		if (!nextCandidate[0]) {
 			matured = false;
 			nextCandidate = await resolveNext(nextLocation, 0);
-			/* fromAbove = true; */
 		}
 
 		if (!nextCandidate[0]) {
@@ -2313,15 +2325,20 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 		}
 
 		let nextIsCurrent = equals(nextCandidate[0].id, current.id);
+		let extraDistanceForNext = false;
 		if (nextIsCurrent) {
-			break;
+			let containing = nextCandidate[1];
+			if (containing) {
+				extraDistanceForNext = true;
+			} else {
+				break;
+			}
 		}
+
+		addLength(nextCandidate[0], nextLocation);
+
 		let last = current;
 		current = nextCandidate[0];
-
-		let distanceBefore = coveredLength;
-
-		addLength(nextLocation);
 
 		let isLast =
 			distanceBefore < widthToCoverScaled &&
@@ -2370,11 +2387,14 @@ export const getCoverSet = async <R extends "u32" | "u64">(properties: {
 			maturedCoveredLength = coveredLength;
 		}
 
+		let startForNext = extraDistanceForNext
+			? properties.numbers.increment(current.end2)
+			: current.end2;
 		nextLocation = endIsWrapped
 			? wrappedOnce
-				? properties.numbers.min(current.end2, endLocation)
-				: current.end2
-			: properties.numbers.min(current.end2, endLocation);
+				? properties.numbers.min(startForNext, endLocation)
+				: startForNext
+			: properties.numbers.min(startForNext, endLocation);
 	}
 
 	start instanceof PublicSignKey && ret.add(start.hashcode());
