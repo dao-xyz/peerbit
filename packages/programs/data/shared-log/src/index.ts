@@ -201,13 +201,21 @@ export type FixedReplicationOptions = {
 	offset?: number | bigint;
 };
 
-export type ReplicationOptions<R extends "u32" | "u64" = any> =
+type NewReplicationOptions<R extends "u32" | "u64" = any> =
 	| DynamicReplicationOptions<R>
 	| FixedReplicationOptions
 	| FixedReplicationOptions[]
 	| number
-	| boolean
-	| "resume";
+	| boolean;
+
+type ExistingReplicationOptions<R extends "u32" | "u64" = any> = {
+	type: "resume";
+	default: NewReplicationOptions<R>;
+};
+export type ReplicationOptions<R extends "u32" | "u64" = any> =
+	| NewReplicationOptions<R>
+	| ExistingReplicationOptions<R>;
+
 export { BlocksMessage };
 
 const isAdaptiveReplicatorOption = (
@@ -234,15 +242,24 @@ const isUnreplicationOptions = (options?: ReplicationOptions<any>): boolean =>
 	((options as FixedReplicationOptions)?.offset === undefined &&
 		(options as FixedReplicationOptions)?.factor === 0);
 
-const isReplicationOptionsDependentOnPreviousState = (
-	options?: ReplicationOptions<any>,
-): boolean => {
+const isReplicationOptionsDependentOnPreviousState = async (
+	options: ReplicationOptions<any> | undefined,
+	index: Index<ReplicationRangeIndexable<any>>,
+	me: PublicSignKey,
+): Promise<boolean> => {
 	if (options === true) {
 		return true;
 	}
 
-	if (options === "resume") {
-		return true;
+	if ((options as ExistingReplicationOptions<any>)?.type === "resume") {
+		// check if there is actually previous replication info
+		let countSegments = await index.count({
+			query: new StringMatch({
+				key: "hash",
+				value: me.hashcode(),
+			}),
+		});
+		return countSegments > 0;
 	}
 
 	if (options == null) {
@@ -338,7 +355,7 @@ export type SharedLogOptions<
 	distributionDebounceTime?: number;
 	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
-	earlyBlocks?: boolean | { cacheSize?: number };
+	eagerBlocks?: boolean | { cacheSize?: number };
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -618,194 +635,195 @@ export class SharedLog<
 		let offsetWasProvided = false;
 		if (isUnreplicationOptions(options)) {
 			await this.unreplicate();
-		} else if (options === "resume") {
-			// don't do anything
-		} else {
-			let rangesToReplicate: ReplicationRangeIndexable<R>[] = [];
-			let rangesToUnreplicate: ReplicationRangeIndexable<R>[] = [];
-
-			if (options == null) {
-				options = {};
-			} else if (options === true) {
-				options = {};
-			}
-
-			this._isReplicating = true;
-
-			if (isAdaptiveReplicatorOption(options!)) {
-				this._isAdaptiveReplicating = true;
-				this.setupDebouncedRebalancing(options);
-
-				// initial role in a dynamic setup
-				const maybeRange = await this.getDynamicRange();
-				if (!maybeRange) {
-					// not allowed
-					return [];
-				}
-				rangesToReplicate = [maybeRange];
-
-				offsetWasProvided = true;
-			} else if (isReplicationRangeMessage(options)) {
-				rangesToReplicate = [
-					options.toReplicationRangeIndexable(this.node.identity.publicKey),
-				];
-
-				offsetWasProvided = true;
-			} else {
-				let rangeArgs: FixedReplicationOptions[];
-				if (typeof options === "number") {
-					rangeArgs = [
-						{
-							factor: options,
-						} as FixedReplicationOptions,
-					];
-				} else {
-					rangeArgs = (
-						Array.isArray(options) ? options : [{ ...options }]
-					) as FixedReplicationOptions[];
-				}
-
-				if (rangeArgs.length === 0) {
-					// nothing to do
-					return [];
-				}
-
-				for (const rangeArg of rangeArgs) {
-					let timestamp: bigint | undefined = undefined;
-					if (rangeArg.id != null) {
-						// fetch the previous timestamp if it exists
-						const indexed = await this.replicationIndex.get(toId(rangeArg.id), {
-							shape: { id: true, timestamp: true },
-						});
-						if (indexed) {
-							timestamp = indexed.value.timestamp;
-						}
-					}
-					const normalized = rangeArg.normalized ?? true;
-					offsetWasProvided = rangeArg.offset != null;
-					const offset =
-						rangeArg.offset != null
-							? normalized
-								? this.indexableDomain.numbers.denormalize(
-										rangeArg.offset as number,
-									)
-								: rangeArg.offset
-							: this.indexableDomain.numbers.random();
-					let factor = rangeArg.factor;
-					let fullWidth = this.indexableDomain.numbers.maxValue;
-
-					let factorDenormalized = !normalized
-						? factor
-						: this.indexableDomain.numbers.denormalize(factor as number);
-					rangesToReplicate.push(
-						new this.indexableDomain.constructorRange({
-							id: rangeArg.id,
-							// @ts-ignore
-							offset: offset,
-							// @ts-ignore
-							width: (factor === "all"
-								? fullWidth
-								: factor === "right"
-									? // @ts-ignore
-										fullWidth - offset
-									: factorDenormalized) as NumberFromType<R>,
-							publicKeyHash: this.node.identity.publicKey.hashcode(),
-							mode: rangeArg.strict
-								? ReplicationIntent.Strict
-								: ReplicationIntent.NonStrict, // automatic means that this range might be reused later for dynamic replication behaviour
-							timestamp: timestamp ?? BigInt(+new Date()),
-						}),
-					);
-				}
-
-				if (mergeSegments) {
-					let range =
-						rangesToReplicate.length > 1
-							? mergeRanges(rangesToReplicate, this.indexableDomain.numbers)
-							: rangesToReplicate[0];
-
-					// also merge segments that are already in the index
-					if (this.domain.canMerge) {
-						const mergeRangesThatAlreadyExist = await getAllMergeCandiates(
-							this.replicationIndex,
-							range,
-							this.indexableDomain.numbers,
-						);
-						const mergeableFiltered: ReplicationRangeIndexable<R>[] = [];
-						const toKeep: Set<string> = new Set();
-
-						for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
-							if (this.domain.canMerge(mergeCandidate, range)) {
-								mergeableFiltered.push(mergeCandidate);
-							} else {
-								toKeep.add(mergeCandidate.idString);
-							}
-						}
-
-						mergeableFiltered.push(range); // * we push this last, because mergeRanges will reuse ids of the first elements
-						if (mergeableFiltered.length > 1) {
-							// ** this is important here as we want to reuse ids of what we already persist, not the new ranges, so we dont get a delet add op, but just a update op
-							range = mergeRanges(
-								mergeableFiltered,
-								this.indexableDomain.numbers,
-							);
-						}
-						for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
-							if (
-								mergeCandidate.idString !== range.idString &&
-								!toKeep.has(mergeCandidate.idString)
-							) {
-								rangesToUnreplicate.push(mergeCandidate);
-							}
-						}
-					}
-					rangesToReplicate = [range];
-				}
-			}
-
-			for (const range of rangesToReplicate) {
-				this.oldestOpenTime = Math.min(
-					Number(range.timestamp),
-					this.oldestOpenTime,
-				);
-			}
-
-			let resetRanges = reset;
-			if (!resetRanges && !offsetWasProvided) {
-				resetRanges = true;
-				// because if we do something like replicate ({ factor: 0.5 }) it means that we want to replicate 50%
-				// but ({ replicate: 0.5, offset: 0.5 }) means that we want to add a range
-				// TODO make behaviour more clear
-			}
-			if (rangesToUnreplicate.length > 0) {
-				await this.removeReplicationRanges(
-					rangesToUnreplicate,
-					this.node.identity.publicKey,
-				);
-			}
-
-			await this.startAnnounceReplicating(rangesToReplicate, {
-				reset: resetRanges ?? false,
-				checkDuplicates,
-				announce,
-				rebalance,
-			});
-
-			if (rangesToUnreplicate.length > 0) {
-				await this.rpc.send(
-					new StoppedReplicating({
-						segmentIds: rangesToUnreplicate.map((x) => x.id),
-					}),
-					{
-						priority: 1,
-					},
-				);
-			}
-
-			return rangesToReplicate;
+			return [];
+		}
+		if ((options as ExistingReplicationOptions).type === "resume") {
+			options = (options as ExistingReplicationOptions)
+				.default as ReplicationOptions<R>;
 		}
 
-		return [];
+		let rangesToReplicate: ReplicationRangeIndexable<R>[] = [];
+		let rangesToUnreplicate: ReplicationRangeIndexable<R>[] = [];
+
+		if (options == null) {
+			options = {};
+		} else if (options === true) {
+			options = {};
+		}
+
+		this._isReplicating = true;
+
+		if (isAdaptiveReplicatorOption(options!)) {
+			this._isAdaptiveReplicating = true;
+			this.setupDebouncedRebalancing(options);
+
+			// initial role in a dynamic setup
+			const maybeRange = await this.getDynamicRange();
+			if (!maybeRange) {
+				// not allowed
+				return [];
+			}
+			rangesToReplicate = [maybeRange];
+
+			offsetWasProvided = true;
+		} else if (isReplicationRangeMessage(options)) {
+			rangesToReplicate = [
+				options.toReplicationRangeIndexable(this.node.identity.publicKey),
+			];
+
+			offsetWasProvided = true;
+		} else {
+			let rangeArgs: FixedReplicationOptions[];
+			if (typeof options === "number") {
+				rangeArgs = [
+					{
+						factor: options,
+					} as FixedReplicationOptions,
+				];
+			} else {
+				rangeArgs = (
+					Array.isArray(options) ? options : [{ ...options }]
+				) as FixedReplicationOptions[];
+			}
+
+			if (rangeArgs.length === 0) {
+				// nothing to do
+				return [];
+			}
+
+			for (const rangeArg of rangeArgs) {
+				let timestamp: bigint | undefined = undefined;
+				if (rangeArg.id != null) {
+					// fetch the previous timestamp if it exists
+					const indexed = await this.replicationIndex.get(toId(rangeArg.id), {
+						shape: { id: true, timestamp: true },
+					});
+					if (indexed) {
+						timestamp = indexed.value.timestamp;
+					}
+				}
+				const normalized = rangeArg.normalized ?? true;
+				offsetWasProvided = rangeArg.offset != null;
+				const offset =
+					rangeArg.offset != null
+						? normalized
+							? this.indexableDomain.numbers.denormalize(
+									rangeArg.offset as number,
+								)
+							: rangeArg.offset
+						: this.indexableDomain.numbers.random();
+				let factor = rangeArg.factor;
+				let fullWidth = this.indexableDomain.numbers.maxValue;
+
+				let factorDenormalized = !normalized
+					? factor
+					: this.indexableDomain.numbers.denormalize(factor as number);
+				rangesToReplicate.push(
+					new this.indexableDomain.constructorRange({
+						id: rangeArg.id,
+						// @ts-ignore
+						offset: offset,
+						// @ts-ignore
+						width: (factor === "all"
+							? fullWidth
+							: factor === "right"
+								? // @ts-ignore
+									fullWidth - offset
+								: factorDenormalized) as NumberFromType<R>,
+						publicKeyHash: this.node.identity.publicKey.hashcode(),
+						mode: rangeArg.strict
+							? ReplicationIntent.Strict
+							: ReplicationIntent.NonStrict, // automatic means that this range might be reused later for dynamic replication behaviour
+						timestamp: timestamp ?? BigInt(+new Date()),
+					}),
+				);
+			}
+
+			if (mergeSegments) {
+				let range =
+					rangesToReplicate.length > 1
+						? mergeRanges(rangesToReplicate, this.indexableDomain.numbers)
+						: rangesToReplicate[0];
+
+				// also merge segments that are already in the index
+				if (this.domain.canMerge) {
+					const mergeRangesThatAlreadyExist = await getAllMergeCandiates(
+						this.replicationIndex,
+						range,
+						this.indexableDomain.numbers,
+					);
+					const mergeableFiltered: ReplicationRangeIndexable<R>[] = [];
+					const toKeep: Set<string> = new Set();
+
+					for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
+						if (this.domain.canMerge(mergeCandidate, range)) {
+							mergeableFiltered.push(mergeCandidate);
+						} else {
+							toKeep.add(mergeCandidate.idString);
+						}
+					}
+
+					mergeableFiltered.push(range); // * we push this last, because mergeRanges will reuse ids of the first elements
+					if (mergeableFiltered.length > 1) {
+						// ** this is important here as we want to reuse ids of what we already persist, not the new ranges, so we dont get a delet add op, but just a update op
+						range = mergeRanges(
+							mergeableFiltered,
+							this.indexableDomain.numbers,
+						);
+					}
+					for (const [_key, mergeCandidate] of mergeRangesThatAlreadyExist) {
+						if (
+							mergeCandidate.idString !== range.idString &&
+							!toKeep.has(mergeCandidate.idString)
+						) {
+							rangesToUnreplicate.push(mergeCandidate);
+						}
+					}
+				}
+				rangesToReplicate = [range];
+			}
+		}
+
+		for (const range of rangesToReplicate) {
+			this.oldestOpenTime = Math.min(
+				Number(range.timestamp),
+				this.oldestOpenTime,
+			);
+		}
+
+		let resetRanges = reset;
+		if (!resetRanges && !offsetWasProvided) {
+			resetRanges = true;
+			// because if we do something like replicate ({ factor: 0.5 }) it means that we want to replicate 50%
+			// but ({ replicate: 0.5, offset: 0.5 }) means that we want to add a range
+			// TODO make behaviour more clear
+		}
+		if (rangesToUnreplicate.length > 0) {
+			await this.removeReplicationRanges(
+				rangesToUnreplicate,
+				this.node.identity.publicKey,
+			);
+		}
+
+		await this.startAnnounceReplicating(rangesToReplicate, {
+			reset: resetRanges ?? false,
+			checkDuplicates,
+			announce,
+			rebalance,
+		});
+
+		if (rangesToUnreplicate.length > 0) {
+			await this.rpc.send(
+				new StoppedReplicating({
+					segmentIds: rangesToUnreplicate.map((x) => x.id),
+				}),
+				{
+					priority: 1,
+				},
+			);
+		}
+
+		return rangesToReplicate;
 	}
 
 	setupDebouncedRebalancing(options?: DynamicReplicationOptions<R>) {
@@ -1602,7 +1620,7 @@ export class SharedLog<
 				),
 			waitFor: this.rpc.waitFor.bind(this.rpc),
 			publicKey: this.node.identity.publicKey,
-			earlyBlocks: options?.earlyBlocks ?? true,
+			eagerBlocks: options?.eagerBlocks ?? true,
 		});
 
 		await this.remoteBlocks.start();
@@ -1804,12 +1822,17 @@ export class SharedLog<
 		let isUnreplicationOptionsDefined = isUnreplicationOptions(
 			options?.replicate,
 		);
+
+		const canResumeReplication =
+			(await isReplicationOptionsDependentOnPreviousState(
+				options?.replicate,
+				this.replicationIndex,
+				this.node.identity.publicKey,
+			)) && hasIndexedReplicationInfo;
+
 		if (hasIndexedReplicationInfo && isUnreplicationOptionsDefined) {
 			await this.replicate(options?.replicate, { checkDuplicates: true });
-		} else if (
-			isReplicationOptionsDependentOnPreviousState(options?.replicate) &&
-			hasIndexedReplicationInfo
-		) {
+		} else if (canResumeReplication) {
 			// dont do anthing since we are alread replicating stuff
 		} else {
 			await this.replicate(options?.replicate, {

@@ -255,7 +255,12 @@ describe("events", () => {
 			await store1.close();
 			store1 = await session.peers[0].open(store1, {
 				args: {
-					replicate: "resume",
+					replicate: {
+						type: "resume",
+						default: {
+							factor: 0.5,
+						},
+					},
 				},
 			});
 

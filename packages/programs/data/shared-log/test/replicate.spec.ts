@@ -1114,8 +1114,11 @@ describe(`replicate`, () => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
-							offset: 0.3,
-							factor: 0.1,
+							type: "resume",
+							default: {
+								offset: 0.3,
+								factor: 0.1,
+							},
 						},
 					},
 				});
@@ -1124,12 +1127,14 @@ describe(`replicate`, () => {
 				await db1.close();
 				db1 = await session.peers[0].open(db1.clone(), {
 					args: {
-						replicate: "resume",
+						replicate: { type: "resume", default: { factor: 0.69 } },
 					},
 				});
 
 				let segments = await db1.log.replicationIndex.iterate().all();
-				expect(segments).to.have.length(2);
+				expect(segments.map((x) => x.value.widthNormalized)).to.have.members([
+					0.1, 0.2,
+				]);
 
 				await db1.close();
 				db1 = await session.peers[0].open(db1.clone(), {
