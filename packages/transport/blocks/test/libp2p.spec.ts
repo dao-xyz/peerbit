@@ -229,7 +229,7 @@ describe("transport", function () {
 
 	it("waitForRequest option", async () => {
 		session = await TestSession.connected(2, {
-			services: { blocks: (c) => new DirectBlock(c, { earlyBlocks: true }) },
+			services: { blocks: (c) => new DirectBlock(c, { eagerBlocks: true }) },
 		});
 
 		await waitForNeighbour(store(session, 0), store(session, 1));

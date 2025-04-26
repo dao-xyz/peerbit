@@ -75,7 +75,7 @@ export class RemoteBlocks implements IBlocks {
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
 			publicKey: PublicSignKey;
-			earlyBlocks?: boolean | { cacheSize?: number };
+			eagerBlocks?: boolean | { cacheSize?: number };
 			publish: (
 				data: BlockRequest | BlockResponse,
 				options: PublishOptions,
@@ -97,12 +97,12 @@ export class RemoteBlocks implements IBlocks {
 		this.localStore = options?.local;
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
-		this._blockCache = options?.earlyBlocks
+		this._blockCache = options?.eagerBlocks
 			? new Cache<Uint8Array>({
 					max:
-						typeof options.earlyBlocks === "boolean"
+						typeof options.eagerBlocks === "boolean"
 							? 1e3
-							: (options.earlyBlocks.cacheSize ?? 1e3),
+							: (options.eagerBlocks.cacheSize ?? 1e3),
 					ttl: 1e4,
 				})
 			: undefined;
@@ -117,7 +117,7 @@ export class RemoteBlocks implements IBlocks {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
 					let resolver = this._resolvers.get(message.cid);
 					if (!resolver) {
-						if (options.earlyBlocks) {
+						if (options.eagerBlocks) {
 							// wait for the resolve to exist
 							this._blockCache!.add(message.cid, message.bytes);
 						}
@@ -234,7 +234,7 @@ export class RemoteBlocks implements IBlocks {
 
 			return value;
 		};
-		const cachedValue = this.options.earlyBlocks
+		const cachedValue = this.options.eagerBlocks
 			? this._blockCache?.get(cidString)
 			: undefined;
 		if (cachedValue) {

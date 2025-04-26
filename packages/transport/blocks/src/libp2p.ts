@@ -22,7 +22,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
-			earlyBlocks?: boolean | { cacheSize?: number };
+			eagerBlocks?: boolean | { cacheSize?: number };
 		},
 	) {
 		super(components, ["/lazyblock/0.0.0"], {
@@ -40,7 +40,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			waitFor: this.waitFor.bind(this),
 			publicKey: this.publicKey,
-			earlyBlocks: options?.earlyBlocks,
+			eagerBlocks: options?.eagerBlocks,
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
