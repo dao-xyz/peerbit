@@ -1,0 +1,10 @@
+{
+	"extends": "aegir/src/config/tsconfig.aegir.json",
+	"compilerOptions": {
+		"experimentalDecorators": true,
+		"emitDecoratorMetadata": true,
+		"outDir": "dist",
+		"strictFunctionTypes": true
+	},
+	"include": ["src", "test"]
+}
