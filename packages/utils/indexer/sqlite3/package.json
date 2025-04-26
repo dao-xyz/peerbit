@@ -71,10 +71,10 @@
 	"dependencies": {
 		"better-sqlite3": "^11.9.1",
 		"@peerbit/indexer-interface": "^2.0.9",
-		"@sqlite.org/sqlite-wasm": "^3.49.1-build2"
+		"@sqlite.org/sqlite-wasm": "^3.49.1-build4"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^7.6.12",
+		"@types/better-sqlite3": "^7.6.13",
 		"@peerbit/indexer-tests": "^1.1.13"
 	}
 }
