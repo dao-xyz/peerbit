@@ -1,16 +1,22 @@
+import { isMultiaddr, multiaddr } from "@multiformats/multiaddr";
+import { DirectBlock } from "@peerbit/blocks";
 import { calculateRawCid } from "@peerbit/blocks-interface";
 import {
 	Ed25519Keypair,
 	type PublicSignKey,
+	getKeypairFromPrivateKey,
 	randomBytes,
 } from "@peerbit/crypto";
+import { DefaultKeychain } from "@peerbit/keychain";
+import { TestSession } from "@peerbit/libp2p-test-utils";
+import { DirectSub } from "@peerbit/pubsub";
 import {
 	SubscriptionEvent,
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
 import { type ProgramClient, ProgramHandler } from "../src/program";
 
-export const createPeer = async (
+export const creatMockPeer = async (
 	state: {
 		subsribers: Map<
 			string,
@@ -171,5 +177,72 @@ export const createPeer = async (
 		},
 	};
 	state.peers.set(peer.identity.publicKey.hashcode(), peer);
+	return peer;
+};
+
+export const createLibp2pPeer = async (): Promise<ProgramClient> => {
+	const client = (
+		await TestSession.connected<
+			{
+				pubsub: DirectSub;
+				blocks: DirectBlock;
+				keychain: DefaultKeychain;
+			} & any
+		>(1, {
+			services: {
+				pubsub: (c) => new DirectSub(c),
+				blocks: (c) => new DirectBlock(c),
+				keychain: (c) => new DefaultKeychain(),
+			},
+		})
+	).peers[0];
+
+	const identity = getKeypairFromPrivateKey(
+		(client as any)["components"].privateKey, // TODO can we export privateKey in a better way?
+	);
+
+	let handler: ProgramHandler | undefined = undefined;
+	const peer: ProgramClient = {
+		peerId: await identity.toPeerId(),
+		services: client.services,
+		hangUp: async (_address) => {
+			throw new Error("Not implemented");
+		},
+		getMultiaddrs: () => {
+			return client.getMultiaddrs();
+		},
+		identity,
+		storage: undefined as any, // TODO
+		indexer: undefined as any, // TODO
+		open: async (p, o) => {
+			return (handler || (handler = new ProgramHandler({ client: peer }))).open(
+				p,
+				o,
+			);
+		},
+		start: async () => {
+			await client.start();
+			handler = new ProgramHandler({ client: peer });
+			return peer as any; // TODO
+		},
+		stop: async () => {
+			await handler?.stop();
+			await client.stop();
+		},
+		dial: async (address) => {
+			const maddress =
+				typeof address === "string"
+					? multiaddr(address)
+					: isMultiaddr(address) || Array.isArray(address)
+						? address
+						: undefined;
+
+			if (!maddress) {
+				throw new Error("Invalid address");
+			}
+			const out = await client.dial(maddress);
+			return !!out;
+		},
+	};
 	return peer;
 };

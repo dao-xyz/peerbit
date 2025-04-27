@@ -265,8 +265,15 @@ export abstract class Program<
 	private _clear() {
 		this._allPrograms = undefined;
 	}
-
+	private _emittedEventsFor: Set<string> | undefined;
+	private get emittedEventsFor(): Set<string> {
+		return (this._emittedEventsFor = this._emittedEventsFor || new Set());
+	}
 	private async _emitJoinNetworkEvents(s: SubscriptionEvent) {
+		if (this.emittedEventsFor.has(s.from.hashcode())) {
+			return;
+		}
+
 		const allTopics = this.programs
 			// TODO test this code path closed true/false
 			.map((x) => x.closed === false && x.getTopics?.())
@@ -283,10 +290,17 @@ export abstract class Program<
 				return;
 			}
 		}
+		if (this.emittedEventsFor.has(s.from.hashcode())) {
+			return;
+		}
+		this.emittedEventsFor.add(s.from.hashcode());
 		this.events.dispatchEvent(new CustomEvent("join", { detail: s.from }));
 	}
 
 	private async _emitLeaveNetworkEvents(s: UnsubcriptionEvent) {
+		if (!this.emittedEventsFor.has(s.from.hashcode())) {
+			return;
+		}
 		const allTopics = this.programs
 			// TODO test this code path closed true/false
 			.map((x) => x.closed === false && x.getTopics?.())
@@ -303,6 +317,10 @@ export abstract class Program<
 				return;
 			}
 		}
+		if (!this.emittedEventsFor.has(s.from.hashcode())) {
+			return;
+		}
+		this.emittedEventsFor.delete(s.from.hashcode());
 		this.events.dispatchEvent(new CustomEvent("leave", { detail: s.from }));
 	}
 
@@ -392,6 +410,7 @@ export abstract class Program<
 		return end;
 	}
 	async close(from?: Program): Promise<boolean> {
+		this._emittedEventsFor = undefined;
 		return this.end("close", from);
 	}
 

@@ -2,7 +2,7 @@ import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
 import { type ProgramClient } from "../src/index.js";
 import { TestParenteRefernceProgram, TestProgram } from "./samples.js";
-import { createPeer } from "./utils.js";
+import { creatMockPeer } from "./utils.js";
 
 use(chaiAsPromised);
 
@@ -10,7 +10,7 @@ describe(`shared`, () => {
 	let client: ProgramClient;
 
 	beforeEach(async () => {
-		client = await createPeer();
+		client = await creatMockPeer();
 	});
 
 	afterEach(async () => {
@@ -263,7 +263,9 @@ describe(`shared`, () => {
 	it("throws whe open an already open program with another client", async () => {
 		const p1 = new TestProgram();
 		await client.open(p1);
-		await expect(createPeer().then((c) => c.open(p1))).eventually.rejectedWith(
+		await expect(
+			creatMockPeer().then((c) => c.open(p1)),
+		).eventually.rejectedWith(
 			`Program at ${p1.address} is already opened with a different client`,
 		);
 	});

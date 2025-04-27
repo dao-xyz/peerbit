@@ -10,7 +10,7 @@ import {
 } from "../src/program.js";
 import { getValuesWithType } from "../src/utils.js";
 import { EmbeddedStore, Log, P1, P2, P3, P4, TestProgram } from "./samples.js";
-import { createPeer } from "./utils.js";
+import { creatMockPeer } from "./utils.js";
 
 describe("getValuesWithType", () => {
 	it("can stop at type", () => {
@@ -28,7 +28,7 @@ describe("program", () => {
 	describe("lifecycle", () => {
 		let peer: ProgramClient;
 		beforeEach(async () => {
-			peer = await createPeer();
+			peer = await creatMockPeer();
 		});
 		afterEach(async () => {
 			await peer.stop();
@@ -394,7 +394,7 @@ describe("program", () => {
 	describe("waitFor", () => {
 		let peer: ProgramClient;
 		beforeEach(async () => {
-			peer = await createPeer();
+			peer = await creatMockPeer();
 		});
 		it("self", async () => {
 			const p = await peer.open(new P1());
@@ -406,12 +406,12 @@ describe("program", () => {
 			const eventHandlers = new Map();
 			const subscriptions = new Map();
 			const peers = new Map();
-			const peer = await createPeer({
+			const peer = await creatMockPeer({
 				subsribers: subscriptions,
 				pubsubEventHandlers: eventHandlers,
 				peers,
 			});
-			const peer2 = await createPeer({
+			const peer2 = await creatMockPeer({
 				subsribers: subscriptions,
 				pubsubEventHandlers: eventHandlers,
 				peers,
@@ -462,7 +462,7 @@ describe("program", () => {
 
 		it("will not ask for topics on closed subprogram", async () => {
 			const test = new TestProgram();
-			const peer = await createPeer();
+			const peer = await creatMockPeer();
 			await peer.open(test, { args: { dontOpenNested: true } });
 			expect(() => test.nested.getTopics()).to.throw(ClosedError);
 			await test.getReady();

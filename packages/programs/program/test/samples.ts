@@ -94,6 +94,28 @@ export class P4 extends Program {
 	}
 }
 
+@variant("test-program-with-topics")
+export class TestProgramWithTopics extends Program {
+	openInvoked = false;
+	async open(): Promise<void> {
+		this.openInvoked = true;
+		await this.node.services.pubsub.subscribe("a");
+		await this.node.services.pubsub.subscribe("b");
+	}
+	async close(from?: Program): Promise<boolean> {
+		await this.node.services.pubsub.unsubscribe("a");
+		await this.node.services.pubsub.unsubscribe("b");
+		return super.close(from);
+	}
+
+	getTopics(): string[] {
+		if (this.closed) {
+			throw new ClosedError("Program is closed");
+		}
+		return ["a", "b"];
+	}
+}
+
 @variant("test-shared_nested")
 export class TestNestedProgram extends Program {
 	openInvoked = false;

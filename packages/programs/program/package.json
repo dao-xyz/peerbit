@@ -52,7 +52,7 @@
 	"scripts": {
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
-		"test": "aegir test",
+		"test": "aegir test --target node",
 		"lint": "aegir lint"
 	},
 	"author": "dao.xyz",
@@ -63,6 +63,7 @@
 		"@peerbit/keychain": "^1.0.27",
 		"@peerbit/blocks-interface": "^1.4.4",
 		"@peerbit/pubsub-interface": "^4.0.1",
-		"@peerbit/any-store-interface": "^1.0.0"
+		"@peerbit/any-store-interface": "^1.0.0",
+		"@peerbit/libp2p-test-utils": "^2.1.16"
 	}
 }
