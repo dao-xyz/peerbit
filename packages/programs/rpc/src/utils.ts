@@ -9,6 +9,7 @@ import type {
 	EncryptionOptions,
 	RPCRequestResponseOptions,
 	RPCResponse,
+	RequestResponseInterceptor,
 } from "./io.js";
 
 export class MissingResponsesError extends Error {
@@ -16,15 +17,16 @@ export class MissingResponsesError extends Error {
 		super(message);
 	}
 }
-export type RPCRequestAllOptions<R> = RPCRequestResponseOptions<R> &
-	EncryptionOptions & { mode?: Constructor<DeliveryMode> } & PriorityOptions;
+export type RPCRequestAllOptions<Q, R> = RPCRequestResponseOptions<R> &
+	EncryptionOptions & { mode?: Constructor<DeliveryMode> } & PriorityOptions &
+	RequestResponseInterceptor<R>;
 
 export const queryAll = async <Q, R>(
 	rpc: RPC<Q, R>,
 	groups: string[][],
 	request: Q,
 	responseHandler: (response: RPCResponse<R>[]) => Promise<void> | void,
-	options?: RPCRequestAllOptions<R> | undefined,
+	options?: RPCRequestAllOptions<Q, R> | undefined,
 ) => {
 	// In each shard/group only query a subset
 	groups = [...groups].filter(
@@ -47,7 +49,7 @@ export const queryAll = async <Q, R>(
 			counter++;
 		}
 		if (peersToQuery.length > 0) {
-			const results = await rpc.request(request, {
+			let results: RPCResponse<R>[] = await rpc.request(request, {
 				...options,
 				// eslint-disable-next-line new-cap
 				mode: new sendModeType({ to: peersToQuery, redundancy: 1 }), // TODO configuration redundancy?
@@ -61,7 +63,6 @@ export const queryAll = async <Q, R>(
 			}
 
 			await responseHandler(results);
-
 			const indicesLeft = new Set([...peerToGroupIndex.values()]);
 
 			rng += 1;

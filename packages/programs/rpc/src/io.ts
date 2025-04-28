@@ -21,11 +21,16 @@ export type RPCRequestResponseOptions<R> = {
 	signal?: AbortSignal;
 };
 
+export type RequestResponseInterceptor<R> = {
+	responseInterceptor?: (fn: (response: RPCResponse<R>) => void) => void;
+};
+
 export type RPCRequestOptions<R> = RPCRequestResponseOptions<R> &
 	EncryptionOptions &
 	WithMode &
 	PriorityOptions &
-	WithExtraSigners;
+	WithExtraSigners &
+	RequestResponseInterceptor<R>;
 
 export type EncryptionOptions = {
 	encryption?: {

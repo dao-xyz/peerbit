@@ -453,6 +453,45 @@ describe("rpc", () => {
 			expect(Math.abs(t1 - t0 - waitFor)).lessThan(500); // some threshold
 			expect(results).to.have.length(1);
 		});
+
+		it("responseInterceptor", async () => {
+			// create a request that intentially will not resolve
+			let waitFor = 5000;
+			const keypair = await Ed25519Keypair.create();
+			const t0 = +new Date();
+			let results: Body[] = (
+				await reader.query.request(
+					new Body({
+						arr: new Uint8Array([0, 1, 2]),
+					}),
+					{
+						mode: new SilentDelivery({
+							to: [keypair.publicKey],
+							redundancy: 1,
+						}),
+						responseInterceptor: (
+							fn: (response: RPCResponse<Body>) => void,
+						) => {
+							fn({
+								from: keypair.publicKey,
+								response: new Body({ arr: new Uint8Array([9, 9, 9]) }),
+								message: {
+									header: {
+										signatures: {
+											publicKeys: [keypair.publicKey],
+										},
+									},
+								} as any, // TODO types
+							});
+						},
+					},
+				)
+			).map((x) => x.response);
+			const t1 = +new Date();
+			expect(t1 - t0).lessThan(waitFor); // because we intercepted the response immediately
+			expect(results).to.have.length(1);
+			expect(results[0].arr).to.deep.equal(new Uint8Array([9, 9, 9]));
+		});
 	});
 
 	describe("init", () => {

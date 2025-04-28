@@ -46,7 +46,7 @@ export type RPCSetupOptions<Q, R> = {
 };
 export type RequestContext = {
 	from?: PublicSignKey;
-	timestamp: bigint;
+	message: DataMessage;
 };
 export type ResponseHandler<Q, R> = (
 	query: Q,
@@ -186,7 +186,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 						const response = await this._responseHandler(request, {
 							from,
-							timestamp: message.header.timestamp,
+							message: message,
 						});
 
 						if (response && rpcMessage.respondTo) {
@@ -293,6 +293,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	private getPublishOptions(
 		id?: Uint8Array,
 		options?: EncryptionOptions & WithMode & PriorityOptions & WithExtraSigners,
+		signal?: AbortSignal,
 	): PubSubPublishOptions {
 		return {
 			id,
@@ -300,6 +301,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			mode: options?.mode,
 			topics: [this.topic],
 			extraSigners: options?.extraSigners,
+			signal,
 		};
 	}
 
@@ -318,6 +320,47 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		);
 	}
 
+	private handleDecodedResponse(
+		response: {
+			response: R;
+			message: DataMessage;
+			from?: PublicSignKey;
+		},
+		promise: DeferredPromise<any>,
+		allResults: RPCResponse<R>[],
+		responders: Set<string>,
+		expectedResponders?: Set<string>,
+		options?: RPCRequestOptions<R>,
+	) {
+		this.events.dispatchEvent(
+			new CustomEvent("response", {
+				detail: response,
+			}),
+		);
+
+		if (expectedResponders) {
+			if (response.from && expectedResponders?.has(response.from.hashcode())) {
+				options?.onResponse &&
+					options?.onResponse(response.response, response.from);
+				allResults.push(response);
+
+				responders.add(response.from.hashcode());
+				if (responders.size === expectedResponders.size) {
+					promise.resolve();
+				}
+			}
+		} else {
+			options?.onResponse &&
+				options?.onResponse(response.response, response.from);
+			allResults.push(response);
+			if (
+				options?.amount != null &&
+				allResults.length >= (options?.amount as number)
+			) {
+				promise.resolve();
+			}
+		}
+	}
 	private createResponseHandler(
 		promise: DeferredPromise<any>,
 		keypair: X25519Keypair,
@@ -342,36 +385,18 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				const decrypted = await maybeEncrypted.decrypt(keypair);
 				const resultData = this._getResponseValueFn(decrypted);
 
-				this.events.dispatchEvent(
-					new CustomEvent("response", {
-						detail: {
-							response: resultData,
-							message: message,
-							from: from,
-						},
-					}),
+				this.handleDecodedResponse(
+					{
+						response: resultData,
+						message: message,
+						from: from,
+					},
+					promise,
+					allResults,
+					responders,
+					expectedResponders,
+					options,
 				);
-
-				if (expectedResponders) {
-					if (from && expectedResponders?.has(from.hashcode())) {
-						options?.onResponse && options?.onResponse(resultData, from);
-						allResults.push({ response: resultData, message, from });
-
-						responders.add(from.hashcode());
-						if (responders.size === expectedResponders.size) {
-							promise.resolve();
-						}
-					}
-				} else {
-					options?.onResponse && options?.onResponse(resultData, from);
-					allResults.push({ response: resultData, message, from });
-					if (
-						options?.amount != null &&
-						allResults.length >= (options?.amount as number)
-					) {
-						promise.resolve();
-					}
-				}
 			} catch (error: any) {
 				if (error instanceof AccessError) {
 					return; // Ignore things we can not open
@@ -445,26 +470,46 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 		const messageId = randomBytes(32);
 		const id = toBase64(messageId);
-		this._responseResolver.set(
-			id,
-			this.createResponseHandler(
-				deferredPromise,
-				keypair,
-				allResults,
-				responders,
-				expectedResponders,
-				options,
-			),
+
+		const responseHandler = this.createResponseHandler(
+			deferredPromise,
+			keypair,
+			allResults,
+			responders,
+			expectedResponders,
+			options,
 		);
+		this._responseResolver.set(id, responseHandler);
+		let signal: AbortSignal | undefined = undefined;
+		if (options?.responseInterceptor) {
+			const abortController = new AbortController();
+			deferredPromise.promise.finally(() => {
+				abortController.abort(new AbortError("Resolved early"));
+			});
+			signal = abortController.signal;
+			options.responseInterceptor((response: RPCResponse<R>) => {
+				return this.handleDecodedResponse(
+					response,
+					deferredPromise,
+					allResults,
+					responders,
+					expectedResponders,
+					options,
+				);
+			});
+		}
 
 		try {
 			await this.node.services.pubsub.publish(
 				requestBytes,
-				this.getPublishOptions(messageId, options),
+				this.getPublishOptions(messageId, options, signal),
 			);
 			await deferredPromise.promise;
 		} catch (error: any) {
-			if (error instanceof TimeoutError === false) {
+			if (
+				error instanceof TimeoutError === false &&
+				error instanceof AbortError === false
+			) {
 				throw error;
 			}
 			// Ignore timeout errors only
