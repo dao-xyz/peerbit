@@ -8,6 +8,7 @@ import {
 	sha256Base64Sync,
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
+import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
 import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
@@ -26,11 +27,15 @@ import {
 	SharedLog,
 } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
+import { DataMessage } from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
+import type { QueryPredictor } from "./most-common-query-predictor.js";
+import MostCommonQueryPredictor from "./most-common-query-predictor.js";
 import { type Operation, isPutOperation } from "./operation.js";
+import { Prefetch } from "./prefetch.js";
 import type { ExtractArgs } from "./program.js";
 import { ResumableIterators } from "./resumable-iterator.js";
 
@@ -43,7 +48,7 @@ type BufferedResult<T, I extends Record<string, any>> = {
 	from: PublicSignKey;
 };
 
-export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
+export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
@@ -58,7 +63,13 @@ export type RemoteQueryOptions<R, D> = RPCRequestAllOptions<R> & {
 	eager?: boolean; // whether to query newly joined peers before they have matured
 };
 export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
-	remote?: boolean | RemoteQueryOptions<types.AbstractSearchResult, D>;
+	remote?:
+		| boolean
+		| RemoteQueryOptions<
+				types.AbstractSearchRequest,
+				types.AbstractSearchResult,
+				D
+		  >;
 	local?: boolean;
 	resolve?: Resolve;
 };
@@ -141,7 +152,7 @@ const introduceEntries = async <
 	R extends types.SearchRequest | types.SearchRequestIndexed,
 >(
 	queryRequest: R,
-	responses: RPCResponse<types.AbstractSearchResult>[],
+	responses: { response: types.AbstractSearchResult; from?: PublicSignKey }[],
 	documentType: AbstractType<T>,
 	indexedType: AbstractType<I>,
 	sync: (
@@ -259,6 +270,19 @@ const isTransformerWithFunction = <T, I>(
 	return (options as TransformerAsFunction<T, I>).transform != null;
 };
 
+export type PrefetchOptions = {
+	predictor?: QueryPredictor;
+	ttl: number;
+	accumulator: Prefetch;
+
+	/* When `true` we assume every peer supports prefetch routing,
+	 * so it is safe to drop SearchRequests that the predictor marks
+	 * as `ignore === true`.
+	 *
+	 * Default: `false` – be conservative.
+	 */
+	strict?: boolean;
+};
 export type OpenOptions<
 	T,
 	I,
@@ -281,9 +305,13 @@ export type OpenOptions<
 	) => Promise<void>;
 	indexBy?: string | string[];
 	transform?: TransformOptions<T, I>;
-	cacheSize?: number;
+	cache?: {
+		resolver?: number;
+		query?: QueryCacheOptions;
+	};
 	compatibility: 6 | 7 | 8 | undefined;
 	maybeOpen: (value: T & Program) => Promise<T & Program>;
+	prefetch?: boolean | Partial<PrefetchOptions>;
 };
 
 type IndexableClass<I> = new (
@@ -332,6 +360,7 @@ export class DocumentIndex<
 	private indexByResolver: (obj: any) => string | Uint8Array;
 	index: indexerTypes.Index<WithContext<I>>;
 	private _resumableIterators: ResumableIterators<WithContext<I>>;
+	private _prefetch?: PrefetchOptions | undefined;
 
 	compatibility: 6 | 7 | 8 | undefined;
 
@@ -351,6 +380,9 @@ export class DocumentIndex<
 	private _resolverCache?: Cache<T>;
 	private isProgramValued: boolean;
 	private _maybeOpen: (value: T & Program) => Promise<T & Program>;
+	private canSearch?: CanSearch;
+	private canRead?: CanRead<I>;
+	private _joinListener?: (e: { detail: PublicSignKey }) => Promise<void>;
 
 	private _resultQueue: Map<
 		string,
@@ -386,6 +418,21 @@ export class DocumentIndex<
 	}
 	async open(properties: OpenOptions<T, I, D>) {
 		this._log = properties.log;
+		let prefectOptions =
+			typeof properties.prefetch === "object"
+				? properties.prefetch
+				: properties.prefetch
+					? {}
+					: undefined;
+		this._prefetch = prefectOptions
+			? {
+					...prefectOptions,
+					predictor:
+						prefectOptions.predictor || new MostCommonQueryPredictor(3),
+					ttl: prefectOptions.ttl ?? 5e3,
+					accumulator: prefectOptions.accumulator || new Prefetch(),
+				}
+			: undefined;
 
 		this.documentType = properties.documentType;
 		this.indexedTypeIsDocumentType =
@@ -393,6 +440,8 @@ export class DocumentIndex<
 			properties.transform?.type === properties.documentType;
 
 		this.compatibility = properties.compatibility;
+		this.canRead = properties.canRead;
+		this.canSearch = properties.canSearch;
 
 		@variant(0)
 		class IndexedClassWithContext {
@@ -418,7 +467,30 @@ export class DocumentIndex<
 		this.isProgramValued = isSubclassOf(this.documentType, Program);
 		this.dbType = properties.dbType;
 		this._resultQueue = new Map();
-		this._sync = (request, results) => properties.replicate(request, results);
+		this._sync = (request, results) => {
+			let rq: types.SearchRequest | types.SearchRequestIndexed;
+			let rs: types.Results<
+				types.ResultTypeFromRequest<
+					types.SearchRequest | types.SearchRequestIndexed,
+					T,
+					I
+				>
+			>;
+			if (request instanceof types.PredictedSearchRequest) {
+				rq = request.request;
+				rs = request.results;
+			} else {
+				rq = request;
+				rs = results as types.Results<
+					types.ResultTypeFromRequest<
+						types.SearchRequest | types.SearchRequestIndexed,
+						T,
+						I
+					>
+				>;
+			}
+			return properties.replicate(rq, rs);
+		};
 
 		const transformOptions = properties.transform;
 		this.transformer = transformOptions
@@ -437,9 +509,9 @@ export class DocumentIndex<
 		this._valueEncoding = BORSH_ENCODING(this.documentType);
 
 		this._resolverCache =
-			properties.cacheSize === 0
+			properties.cache?.resolver === 0
 				? undefined
-				: new Cache({ max: properties.cacheSize ?? 100 }); // TODO choose limit better by default (adaptive)
+				: new Cache({ max: properties.cache?.resolver ?? 100 }); // TODO choose limit better by default (adaptive)
 
 		this.index =
 			(await (
@@ -455,6 +527,10 @@ export class DocumentIndex<
 				/* maxBatchSize: MAX_BATCH_SIZE */
 			})) || new HashmapIndex<WithContext<I>>();
 
+		if (properties.cache?.query) {
+			this.index = new CachedIndex(this.index, properties.cache.query);
+		}
+
 		this._resumableIterators = new ResumableIterators(this.index);
 		this._maybeOpen = properties.maybeOpen;
 		if (this.isProgramValued) {
@@ -465,49 +541,103 @@ export class DocumentIndex<
 			topic: sha256Base64Sync(
 				concat([this._log.log.id, fromString("/document")]),
 			),
-			responseHandler: async (query, ctx) => {
-				if (!ctx.from) {
-					logger.info("Receieved query without from");
-					return;
-				}
-
-				if (
-					properties.canSearch &&
-					(query instanceof types.SearchRequest ||
-						query instanceof types.CollectNextRequest) &&
-					!(await properties.canSearch(
-						query as types.SearchRequest | types.CollectNextRequest,
-						ctx.from,
-					))
-				) {
-					return new types.NoAccess();
-				}
-
-				if (query instanceof types.CloseIteratorRequest) {
-					this.processCloseIteratorRequest(query, ctx.from);
-				} else {
-					const results = await this.processQuery(
-						query as
-							| types.SearchRequest
-							| types.SearchRequestIndexed
-							| types.CollectNextRequest,
-						ctx.from,
-						false,
-						{
-							canRead: properties.canRead,
-						},
-					);
-
-					return new types.Results({
-						// Even if results might have length 0, respond, because then we now at least there are no matching results
-						results: results.results,
-						kept: results.kept,
-					});
-				}
-			},
+			responseHandler: this.queryRPCResponseHandler.bind(this),
 			responseType: types.AbstractSearchResult,
 			queryType: types.AbstractSearchRequest,
 		});
+	}
+
+	get prefetch() {
+		return this._prefetch;
+	}
+
+	private async queryRPCResponseHandler(
+		query: types.AbstractSearchRequest,
+		ctx: { from?: PublicSignKey; message: DataMessage },
+	) {
+		if (!ctx.from) {
+			logger.info("Receieved query without from");
+			return;
+		}
+		if (query instanceof types.PredictedSearchRequest) {
+			// put results in a waiting cache so that we eventually in the future will query a matching thing, we already have results available
+			this._prefetch?.accumulator.add(
+				{
+					message: ctx.message,
+					response: query,
+					from: ctx.from,
+				},
+				ctx.from!.hashcode(),
+			);
+			return;
+		}
+
+		if (
+			this.prefetch?.predictor &&
+			(query instanceof types.SearchRequest ||
+				query instanceof types.SearchRequestIndexed)
+		) {
+			const { ignore } = this.prefetch.predictor.onRequest(query, {
+				from: ctx.from!,
+			});
+
+			if (ignore) {
+				if (this.prefetch.strict) {
+					return;
+				}
+			}
+		}
+
+		return this.handleSearchRequest(
+			query as
+				| types.SearchRequest
+				| types.SearchRequestIndexed
+				| types.CollectNextRequest,
+			{
+				from: ctx.from!,
+			},
+		);
+	}
+	private async handleSearchRequest(
+		query:
+			| types.SearchRequest
+			| types.SearchRequestIndexed
+			| types.CollectNextRequest,
+		ctx: { from: PublicSignKey },
+	) {
+		if (
+			this.canSearch &&
+			(query instanceof types.SearchRequest ||
+				query instanceof types.CollectNextRequest) &&
+			!(await this.canSearch(
+				query as types.SearchRequest | types.CollectNextRequest,
+				ctx.from,
+			))
+		) {
+			return new types.NoAccess();
+		}
+
+		if (query instanceof types.CloseIteratorRequest) {
+			this.processCloseIteratorRequest(query, ctx.from);
+		} else {
+			const results = await this.processQuery(
+				query as
+					| types.SearchRequest
+					| types.SearchRequestIndexed
+					| types.CollectNextRequest,
+				ctx.from,
+				false,
+				{
+					canRead: this.canRead,
+				},
+			);
+
+			return new types.Results({
+				// Even if results might have length 0, respond, because then we now at least there are no matching results
+				results: results.results,
+				kept: results.kept,
+			});
+		}
 	}
 
 	async afterOpen(): Promise<void> {
@@ -531,6 +661,35 @@ export class DocumentIndex<
 				this._resolverProgramCache!.set(id.primitive, programValue.value as T);
 			}
 		}
+
+		if (this.prefetch?.predictor) {
+			const predictor = this.prefetch.predictor;
+			this._joinListener = async (e: { detail: PublicSignKey }) => {
+				// create an iterator and send the peer the results
+				let request = predictor.predictedQuery(e.detail);
+
+				if (!request) {
+					return;
+				}
+				const results = await this.handleSearchRequest(request, {
+					from: e.detail,
+				});
+
+				if (results instanceof types.Results) {
+					// start a resumable iterator for the peer
+					const query = new types.PredictedSearchRequest({
+						id: request.id,
+						request,
+						results,
+					});
+					await this._query.send(query, {
+						mode: new SilentDelivery({ to: [e.detail], redundancy: 1 }),
+					});
+				}
+			};
+			this._query.events.addEventListener("join", this._joinListener);
+		}
+
 		return super.afterOpen();
 	}
 	async getPending(cursorId: string): Promise<number | undefined> {
@@ -545,6 +704,7 @@ export class DocumentIndex<
 	async close(from?: Program): Promise<boolean> {
 		const closed = await super.close(from);
 		if (closed) {
+			this._query.events.removeEventListener("join", this._joinListener);
 			this.clearAllResultQueues();
 			await this.index.stop?.();
 		}
@@ -990,6 +1150,10 @@ export class DocumentIndex<
 		}
 	}
 
+	get countIteratorsInProgress() {
+		return this._resumableIterators.queues.size;
+	}
+
 	private clearAllResultQueues() {
 		for (const [key, queue] of this._resultQueue) {
 			clearTimeout(queue.timeout);
@@ -1025,8 +1189,13 @@ export class DocumentIndex<
 		options?: QueryDetailedOptions<T, D, boolean | undefined>,
 	): Promise<types.Results<RT>[]> {
 		const local = typeof options?.local === "boolean" ? options?.local : true;
-		let remote: RemoteQueryOptions<types.AbstractSearchResult, D> | undefined =
-			undefined;
+		let remote:
+			| RemoteQueryOptions<
+					types.AbstractSearchRequest,
+					types.AbstractSearchResult,
+					D
+			  >
+			| undefined = undefined;
 		if (typeof options?.remote === "boolean") {
 			if (options?.remote) {
 				remote = {};
@@ -1066,6 +1235,11 @@ export class DocumentIndex<
 
 		let resolved: types.Results<types.ResultTypeFromRequest<R, T, I>>[] = [];
 		if (remote && (remote.strategy !== "fallback" || allResults.length === 0)) {
+			if (queryRequest instanceof types.CloseIteratorRequest) {
+				// don't wait for responses
+				throw new Error("Unexpected");
+			}
+
 			const replicatorGroups = await this._log.getCover(
 				remote.domain ?? { args: undefined },
 				{
@@ -1075,9 +1249,11 @@ export class DocumentIndex<
 			);
 
 			if (replicatorGroups) {
-				const groupHashes: string[][] = replicatorGroups.map((x) => [x]);
 				const responseHandler = async (
-					results: RPCResponse<types.AbstractSearchResult>[],
+					results: {
+						response: types.AbstractSearchResult;
+						from?: PublicSignKey;
+					}[],
 				) => {
 					const resultInitialized = await introduceEntries(
 						queryRequest,
@@ -1091,19 +1267,105 @@ export class DocumentIndex<
 						resolved.push(r.response);
 					}
 				};
+
+				let extraPromises: Promise<void>[] | undefined = undefined;
+
+				const groupHashes: string[][] = replicatorGroups
+					.filter((hash) => {
+						if (hash === this.node.identity.publicKey.hashcode()) {
+							return false;
+						}
+						const resultAlready = this._prefetch?.accumulator.consume(
+							queryRequest,
+							hash,
+						);
+						if (resultAlready) {
+							(extraPromises || (extraPromises = [])).push(
+								(async () => {
+									let from = await this.node.services.pubsub.getPublicKey(hash);
+									if (from) {
+										return responseHandler([
+											{
+												response: resultAlready.response.results,
+												from,
+											},
+										]);
+									}
+								})(),
+							);
+							return false;
+						}
+						return true;
+					})
+					.map((x) => [x]);
+
+				extraPromises && (await Promise.all(extraPromises));
+				let tearDown: (() => void) | undefined = undefined;
+				const search = this;
+
 				try {
-					if (queryRequest instanceof types.CloseIteratorRequest) {
-						// don't wait for responses
-						await this._query.request(queryRequest, { mode: remote!.mode });
-					} else {
-						await queryAll(
+					groupHashes.length > 0 &&
+						(await queryAll(
 							this._query,
 							groupHashes,
 							queryRequest,
 							responseHandler,
-							remote,
-						);
-					}
+							search._prefetch?.accumulator
+								? {
+										...remote,
+										responseInterceptor(fn) {
+											const listener = (evt: {
+												detail: {
+													consumable: RPCResponse<
+														types.PredictedSearchRequest<any>
+													>;
+												};
+											}) => {
+												const consumable =
+													search._prefetch?.accumulator.consume(
+														queryRequest,
+														evt.detail.consumable.from!.hashcode(),
+													);
+
+												if (consumable) {
+													fn({
+														message: consumable.message,
+														response: consumable.response.results,
+														from: consumable.from,
+													});
+												}
+											};
+
+											for (const groups of groupHashes) {
+												for (const hash of groups) {
+													const consumable =
+														search._prefetch?.accumulator.consume(
+															queryRequest,
+															hash,
+														);
+													if (consumable) {
+														fn({
+															message: consumable.message,
+															response: consumable.response.results,
+															from: consumable.from,
+														});
+													}
+												}
+											}
+											search.prefetch?.accumulator.addEventListener(
+												"add",
+												listener,
+											);
+											tearDown = () => {
+												search.prefetch?.accumulator.removeEventListener(
+													"add",
+													listener,
+												);
+											};
+										},
+									}
+								: remote,
+						));
 				} catch (error) {
 					if (error instanceof MissingResponsesError) {
 						logger.warn("Did not reciveve responses from all shard");
@@ -1113,6 +1375,8 @@ export class DocumentIndex<
 					} else {
 						throw error;
 					}
+				} finally {
+					tearDown && (tearDown as any)();
 				}
 			} else {
 				// TODO send without direction out to the world? or just assume we can insert?
@@ -1400,6 +1664,7 @@ export class DocumentIndex<
 
 					// TODO buffer more than deleted?
 					// TODO batch to multiple 'to's
+
 					const collectRequest = new types.CollectNextRequest({
 						id: queryRequestCoerced.id,
 						amount: n - buffer.buffer.length,
@@ -1464,9 +1729,21 @@ export class DocumentIndex<
 						);
 					} else {
 						// Fetch remotely
+						const idTranslation =
+							this._prefetch?.accumulator.getTranslationMap(
+								queryRequestCoerced,
+							);
+						let remoteCollectRequest: types.CollectNextRequest = collectRequest;
+						if (idTranslation) {
+							remoteCollectRequest = new types.CollectNextRequest({
+								id: idTranslation.get(peer) || collectRequest.id,
+								amount: collectRequest.amount,
+							});
+						}
+
 						promises.push(
 							this._query
-								.request(collectRequest, {
+								.request(remoteCollectRequest, {
 									...options,
 									signal: controller.signal,
 									priority: 1,
@@ -1627,6 +1904,7 @@ export class DocumentIndex<
 			const closeRequest = new types.CloseIteratorRequest({
 				id: queryRequestCoerced.id,
 			});
+			this.prefetch?.accumulator.clear(queryRequestCoerced);
 			const promises: Promise<any>[] = [];
 			for (const [peer, buffer] of peerBufferMap) {
 				if (buffer.kept === 0) {

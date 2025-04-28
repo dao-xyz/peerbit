@@ -26,15 +26,15 @@ export class PutWithKeyOperation extends Operation {
 // @deprecated
 /* @variant(1)
 export class PutAllOperation<T> extends Operation<T> {
-    @field({ type: vec(PutOperation) })
-    docs: PutOperation<T>[];
+	@field({ type: vec(PutOperation) })
+	docs: PutOperation<T>[];
 
-    constructor(props?: { docs: PutOperation<T>[] }) {
-        super();
-        if (props) {
-            this.docs = props.docs;
-        }
-    }
+	constructor(props?: { docs: PutOperation<T>[] }) {
+		super();
+		if (props) {
+			this.docs = props.docs;
+		}
+	}
 }
  */
 

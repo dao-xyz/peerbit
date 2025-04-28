@@ -21,6 +21,7 @@ import {
 	CloseIteratorRequest,
 	CollectNextRequest,
 	NoAccess,
+	PredictedSearchRequest,
 	Results,
 	SearchRequest,
 	SearchRequestIndexed,
@@ -38,6 +39,7 @@ import {
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
 import type { DirectSub } from "@peerbit/pubsub";
+import { RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import { AbsoluteReplicas, decodeReplicas } from "@peerbit/shared-log";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
@@ -46,6 +48,7 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
+import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
 	Operation,
 	PutOperation,
@@ -2699,9 +2702,8 @@ describe("index", () => {
 					await iterator.next(3); // fetch some, but not all
 					await waitForResolved(
 						async () =>
-							expect(
-								await stores[0].docs.index.getPending(request.idString),
-							).to.eq(0),
+							expect(await stores[0].docs.index.getPending(request.idString)).to
+								.be.undefined,
 						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
@@ -2755,9 +2757,8 @@ describe("index", () => {
 					expect(iterator.done()).to.be.true;
 					await waitForResolved(
 						async () =>
-							expect(
-								await stores[0].docs.index.getPending(request.idString),
-							).to.eq(0),
+							expect(await stores[0].docs.index.getPending(request.idString)).to
+								.be.undefined,
 						{ timeout: 3000, delayInterval: 50 },
 					);
 				});
@@ -3100,7 +3101,9 @@ describe("index", () => {
 								address: (await arg.calculateAddress()).address,
 							});
 						},
-						cacheSize: options?.index?.cacheSize,
+						cache: {
+							resolver: options?.index?.cache?.resolver,
+						},
 					},
 				});
 			}
@@ -3135,7 +3138,9 @@ describe("index", () => {
 						replicate: i === 0 ? { factor: 1 } : false,
 						canOpen: () => true,
 						index: {
-							cacheSize: 0,
+							cache: {
+								resolver: 0,
+							},
 						},
 					},
 				});
@@ -4048,6 +4053,335 @@ describe("index", () => {
 		});
 	});
 
+	describe("caching", () => {
+		let peersCount = 1;
+
+		beforeEach(async () => {
+			session = await TestSession.connected(peersCount);
+		});
+
+		afterEach(async () => {
+			await session.stop();
+		});
+
+		it("can pre-cache search results", async () => {
+			const store = new TestStore({
+				docs: new Documents<Document>(),
+			});
+			await session.peers[0].open(store, {
+				args: {
+					replicate: true,
+					index: {
+						cache: {
+							resolver: 0,
+							query: {
+								strategy: "auto",
+								maxTotalSize: 1000,
+								maxSize: 10,
+								prefetchThreshold: 1,
+							},
+						},
+					},
+				},
+			});
+			const docs = [
+				new Document({ id: "1", name: "name1" }),
+				new Document({ id: "2", name: "name2" }),
+				new Document({ id: "3", name: "name3" }),
+			];
+			for (const doc of docs) {
+				await store.docs.put(doc);
+			}
+
+			const iterateAssert = async (modified?: boolean) => {
+				const iterator = store.docs.index.iterate({}, { resolve: false });
+				const first = await iterator.next(1);
+				const second = await iterator.next(2);
+				expect(first[0].name).to.eq("name1");
+				expect(first[0] instanceof Document).to.be.true;
+				expect(second[0].name).to.eq("name2");
+				if (!modified) {
+					expect(second[1].name).to.eq("name3");
+				} else {
+					expect(second[1].name).to.eq("name3-mod");
+				}
+				expect(second[0] instanceof Document).to.be.true;
+				expect(second[1] instanceof Document).to.be.true;
+			};
+			await iterateAssert();
+			await delay(1e3);
+			await iterateAssert();
+			await iterateAssert();
+
+			// force some cache clearence
+			await store.docs.put(new Document({ id: "3", name: "name3-mod" }));
+			await iterateAssert(true);
+			await delay(1e3);
+			await iterateAssert(true);
+		});
+	});
+
+	describe("prefetch", () => {
+		let peersCount = 2;
+
+		beforeEach(async () => {
+			session = await TestSession.connected(peersCount);
+		});
+
+		afterEach(async () => {
+			await session.stop();
+		});
+		const iterateAssert = async (
+			store1: TestStore,
+			store2: TestStore,
+			modified?: boolean,
+		) => {
+			const iterator = store2.docs.index.iterate({}, { resolve: false });
+			const first = await iterator.next(1);
+			const second = await iterator.next(2);
+			await iterator.close();
+			expect(first[0].name).to.eq("name1");
+			expect(first[0] instanceof Document).to.be.true;
+			expect(second[0].name).to.eq("name2");
+			if (!modified) {
+				expect(second[1].name).to.eq("name3");
+			} else {
+				expect(second[1].name).to.eq("name3-mod");
+			}
+			expect(second[0] instanceof Document).to.be.true;
+			expect(second[1] instanceof Document).to.be.true;
+			expect(store1.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
+			expect(store2.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
+		};
+
+		const setupInitialStoresAndPrefetch = async (options?: {
+			beforePrefetch?: Promise<void>;
+			data?: Uint8Array;
+			prefetch?:
+				| false
+				| {
+						strict?: boolean;
+				  };
+		}) => {
+			const store = new TestStore({
+				docs: new Documents<Document>(),
+			});
+
+			let mostCommonQueryPredictorThreshold = 2;
+			await session.peers[0].open(store, {
+				args: {
+					replicate: { factor: 1 },
+					index: {
+						prefetch:
+							options?.prefetch === false
+								? false
+								: {
+										predictor: new MostCommonQueryPredictor(
+											mostCommonQueryPredictorThreshold,
+										),
+										strict: true,
+										...options?.prefetch,
+									},
+					},
+				},
+			});
+			if (options?.beforePrefetch) {
+				const sendFn = store.docs.index._query.send.bind(
+					store.docs.index._query,
+				);
+				store.docs.index._query.send = async (request: any) => {
+					if (request instanceof PredictedSearchRequest) {
+						await options?.beforePrefetch;
+					}
+					return sendFn(request);
+				};
+			}
+			let docCount = 3;
+			let docs: Document[] = [];
+			for (let i = 0; i < docCount; i++) {
+				docs.push(
+					new Document({
+						id: (i + 1).toString(),
+						name: "name" + (i + 1),
+						data: options?.data,
+					}),
+				);
+			}
+
+			for (const doc of docs) {
+				await store.docs.put(doc);
+			}
+
+			let store2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+					index: {
+						prefetch:
+							options?.prefetch === false
+								? false
+								: {
+										strict: true,
+										...options?.prefetch,
+									},
+					},
+				},
+			});
+
+			await store2.docs.log.waitForReplicators();
+
+			await iterateAssert(store, store2);
+			await iterateAssert(store, store2);
+
+			await store2.close();
+
+			// now when we re-open we should have results sent to us before we ask for them
+			store2 = await session.peers[1].open(store2.clone(), {
+				args: {
+					replicate: false,
+					index: {
+						prefetch:
+							options?.prefetch === false
+								? false
+								: {
+										strict: true,
+										...options?.prefetch,
+									},
+					},
+				},
+			});
+			return {
+				store,
+				store2,
+			};
+		};
+
+		it("can prefetch search results", async () => {
+			const { store, store2 } = await setupInitialStoresAndPrefetch();
+			await waitForResolved(() =>
+				expect(store2.docs.index.prefetch?.accumulator.size).to.equal(1),
+			);
+
+			// now requesting data from store2 should not requiry a query to remote
+
+			const sendFn = store2.docs.index._query.send.bind(
+				store2.docs.index._query,
+			);
+			const sendSpy = sinon.spy(sendFn);
+			store2.docs.index._query.send = sendSpy;
+
+			const requestFn = store2.docs.index._query.request.bind(
+				store2.docs.index._query,
+			);
+			const requestSpy = sinon.spy(requestFn);
+			store2.docs.index._query.request = requestSpy;
+
+			await iterateAssert(store, store2);
+			expect(requestSpy.callCount).to.eq(1); // one collect next request
+			expect(requestSpy.getCalls()[0].args[0] instanceof CollectNextRequest).to
+				.be.true;
+			expect(sendSpy.callCount).to.eq(0); // even if we do a ".close()" on the iterator, we should not send a new request, because we only have 3 docs in total and we fetched all
+			expect(store.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
+			expect(store2.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
+		});
+
+		it("will intercept outgoing search queries with incoming prefetch results", async () => {
+			const prefetchSendDelay = pDefer<void>();
+
+			const { store, store2 } = await setupInitialStoresAndPrefetch({
+				beforePrefetch: prefetchSendDelay.promise,
+			});
+
+			const sentData: RPCMessage[] = [];
+			store.node.services.pubsub.addEventListener("publish", (evt) => {
+				if (evt.detail.data.topics.includes(store.docs.index._query.topic)) {
+					{
+						sentData.push(deserialize(evt.detail.data.data, RPCMessage));
+					}
+				}
+			});
+
+			// make it so that requesting results is also delayed, so that we will have an outgoing process (requesting)
+			// and an incoming process (prefetching) at the same time
+			const requestSentPromise = pDefer<void>();
+
+			const requestFn = store2.docs.index._query.request.bind(
+				store2.docs.index._query,
+			);
+
+			store2.docs.index._query.request = async (request, options) => {
+				if (
+					request instanceof SearchRequest ||
+					request instanceof SearchRequestIndexed
+				) {
+					requestSentPromise.resolve();
+				}
+				return requestFn(request, options);
+			};
+
+			const iterator = store2.docs.index.iterate({}, { resolve: false });
+			const promise = iterator.next(1);
+			await requestSentPromise.promise;
+
+			prefetchSendDelay.resolve(); // allow the prefetch to send
+
+			let t0 = Date.now();
+			const results = await promise;
+			expect(sentData.filter((x) => x instanceof ResponseV0).length).to.eq(0);
+
+			const next = await iterator.next(2);
+			await iterator.close();
+			let t1 = Date.now();
+			expect(t1 - t0).to.be.lessThan(3000); // should not be 10 seconds since we are consuming the pretfetch results
+
+			expect(results[0].name).to.eq("name1");
+			expect(results[0] instanceof Document).to.be.true;
+			expect(next[0].name).to.eq("name2");
+			expect(next[1].name).to.eq("name3");
+			expect(next[0] instanceof Document).to.be.true;
+			expect(next[1] instanceof Document).to.be.true;
+
+			await delay(2e3);
+			expect(sentData.filter((x) => x instanceof ResponseV0).length).to.eq(1);
+		});
+
+		/* TODO improve this speed test 
+		it("using prefetch is faster than not using it", async () => {
+
+			const data = randomBytes(1e4)
+			let setup = await setupInitialStoresAndPrefetch({ data });
+
+			const time = async (store: TestStore<Document, any>) => {
+				const t0 = Date.now();
+				const iterator = store.docs.index.iterate({}, { resolve: false });
+				const out = await iterator.next(1);
+				expect(out).to.have.length(1)
+				const t1 = Date.now();
+				await iterator.close();
+				return t1 - t0;
+
+			}
+
+
+			const timeWithPrefetch = await time(setup.store2);
+
+
+			// now we will open the store without prefetch
+			await setup.store.close();
+			await setup.store2.close();
+			setup = await setupInitialStoresAndPrefetch({ data, prefetch: false });
+
+			const timeWithoutPrefetch = await time(setup.store2);
+
+			console.log({
+				timeWithoutPrefetch,
+				timeWithPrefetch
+			})
+			expect(timeWithoutPrefetch).to.be.greaterThan(timeWithPrefetch);
+
+		});
+ */
+	});
+
 	describe("migration", () => {
 		describe("v6-v7", async () => {
 			let store: TestStore;
@@ -4104,27 +4438,27 @@ describe("index", () => {
 		class OtherDoc {
 			@field({ type: "string" })
 			id: string;
-
+	
 			constructor(properties: { id: string }) {
 				this.id = properties.id;
 			}
 		}
-
+	
 		@variant("alternative_store")
 		class AlternativeStore extends Program<Partial<SetupOptions<OtherDoc>>> {
 			@field({ type: Uint8Array })
 			id: Uint8Array;
-
+	
 			@field({ type: Documents })
 			docs: Documents<OtherDoc>;
-
+	
 			constructor(properties: { docs: Documents<OtherDoc> }) {
 				super();
-
+	
 				this.id = randomBytes(32);
 				this.docs = properties.docs;
 			}
-
+	
 			async open(options?: Partial<SetupOptions<OtherDoc>>): Promise<void> {
 				await this.docs.open({
 					...options,
@@ -4133,46 +4467,46 @@ describe("index", () => {
 				});
 			}
 		}
-
+	
 		let session: TestSession;
 		let db1: TestStore;
 		let db2: AlternativeStore;
-
+	
 		beforeEach(async () => {
 			session = await TestSession.connected(1, { directory: "./tmp/document-store/recover/" + uuid() });
-
+	
 			db1 = await session.peers[0].open(
 				new TestStore({ docs: new Documents() })
 			);
-
+	
 			db2 = await session.peers[0].open(
 				new AlternativeStore({ docs: new Documents() })
 			);
 		});
-
+	
 		afterEach(async () => {
 			if (db1) await db1.drop();
 			if (db2) await db2.drop();
-
+	
 			await session.stop();
 		});
-
+	
 		it("can recover from too strict acl", async () => {
 			// We are createing two document store for this, because
 			// we want blocks in our block store that will mess the recovery process
-
+	
 			let sharedId = uuid();
-
+	
 			await db2.docs.put(new OtherDoc({ id: sharedId }));
 			await db2.docs.put(new OtherDoc({ id: uuid() }));
 			await db2.docs.put(new OtherDoc({ id: uuid() }));
-
+	
 			await db1.docs.put(new Document({ id: sharedId }));
 			await db1.docs.put(new Document({ id: uuid() }));
 			await db1.docs.put(new Document({ id: uuid() }));
-
+	
 			await db2.docs.del(sharedId);
-
+	
 			expect(await db1.docs.index.getSize()).equal(3);
 			await db1.close();
 			let canPerform = false;
@@ -4188,15 +4522,15 @@ describe("index", () => {
 			}
 			expect(count).to.equal(3);
 			await db1.docs.log.reload();
-
+	
 			expect(await db1.docs.index.getSize()).equal(0);
-
+	
 			count = 0;
 			for await (const f of db1.docs.log.log.blocks.iterator()) {
 				count++;
 			}
 			expect(count).to.equal(0);
-
+	
 			canPerform = true;
 			await db1.docs.put(new Document({ id: uuid() }));
 			await db1.close();
@@ -4204,19 +4538,19 @@ describe("index", () => {
 			expect(await db1.docs.index.getSize()).equal(1); // heads are ruined
 			await db1.docs.recover();
 			expect(await db1.docs.index.getSize()).equal(4);
-
+	
 			// recovering multiple time should work
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(await db1.docs.index.getSize()).equal(4);
 			await db1.docs.recover();
 			expect(await db1.docs.index.getSize()).equal(4);
-
+	
 			// next time opening db I should not have to recover any more
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(await db1.docs.index.getSize()).equal(4);
-
+	
 		});
 	}); */
 

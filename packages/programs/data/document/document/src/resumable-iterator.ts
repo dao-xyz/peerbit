@@ -62,7 +62,15 @@ export class ResumableIterators<T extends Record<string, any>> {
 		this.queues.del(id);
 	}
 
-	getPending(id: string) {
-		return this.queues.get(id)?.iterator.pending();
+	async getPending(id: string) {
+		let iterator = this.queues.get(id);
+		if (!iterator) {
+			return undefined;
+		}
+		const pending = await iterator.iterator.pending();
+		if (pending === 0 && iterator.iterator.done()) {
+			this.clear(id);
+		}
+		return pending;
 	}
 }

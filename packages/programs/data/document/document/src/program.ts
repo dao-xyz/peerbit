@@ -7,6 +7,7 @@ import {
 } from "@dao-xyz/borsh";
 import { AccessError } from "@peerbit/crypto";
 import { ResultIndexedValue } from "@peerbit/document-interface";
+import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {
 	type Change,
@@ -39,6 +40,7 @@ import {
 	type CanRead,
 	type CanSearch,
 	DocumentIndex,
+	type PrefetchOptions,
 	type TransformOptions,
 	type WithContext,
 	coerceWithContext,
@@ -95,7 +97,11 @@ export type SetupOptions<
 		canSearch?: CanSearch;
 		canRead?: CanRead<I>;
 		idProperty?: string | string[];
-		cacheSize?: number;
+		cache?: {
+			resolver?: number;
+			query?: QueryCacheOptions;
+		};
+		prefetch?: boolean | Partial<PrefetchOptions>;
 	} & TransformOptions<T, I>;
 	log?: {
 		trim?: TrimOptions;
@@ -192,7 +198,7 @@ export class Documents<
 			transform: options.index,
 			indexBy: idProperty,
 			compatibility: options.compatibility,
-			cacheSize: options?.index?.cacheSize,
+			cache: options?.index?.cache,
 			replicate: async (query, results) => {
 				// here we arrive for all the results we want to persist.
 
@@ -210,6 +216,7 @@ export class Documents<
 			},
 			dbType: this.constructor,
 			maybeOpen: this.maybeSubprogramOpen.bind(this),
+			prefetch: options.index?.prefetch,
 		});
 
 		// document v6 and below need log compatibility of v8 or below
