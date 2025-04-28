@@ -1,6 +1,17 @@
 import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
 import { Query, Sort, toQuery } from "@peerbit/indexer-interface";
+import {
+	type Result,
+	type ResultIndexedValue,
+	type ResultValue,
+	Results,
+} from "./query";
+
+// for SearchRequest we wnat to return ResultsWithSource<T> for IndexedSearchRequest we want to return ResultsIndexed<T>
+export type ResultTypeFromRequest<R, T, I> = R extends SearchRequest
+	? ResultValue<T>
+	: ResultIndexedValue<I>;
 
 /**
  * Search with query and collect with sort conditionss
@@ -9,7 +20,20 @@ import { Query, Sort, toQuery } from "@peerbit/indexer-interface";
 const toArray = <T>(arr: T | T[] | undefined) =>
 	(arr ? (Array.isArray(arr) ? arr : [arr]) : undefined) || [];
 
-export abstract class AbstractSearchRequest {}
+export abstract class AbstractSearchRequest {
+	abstract set id(id: Uint8Array);
+	abstract get id(): Uint8Array;
+
+	private _idString: string;
+	private _idStringSet: Uint8Array;
+	get idString(): string {
+		if (this.id !== this._idStringSet) {
+			this._idString = undefined;
+		}
+		this._idStringSet = this.id;
+		return this._idString || (this._idString = sha256Base64Sync(this.id));
+	}
+}
 
 @variant(0)
 export class SearchRequest extends AbstractSearchRequest {
@@ -41,11 +65,6 @@ export class SearchRequest extends AbstractSearchRequest {
 		this.query = props?.query ? toQuery(props.query) : [];
 		this.sort = toArray(props?.sort);
 		this.fetch = props?.fetch ?? 10; // default fetch 10 documents
-	}
-
-	private _idString: string;
-	get idString(): string {
-		return this._idString || (this._idString = sha256Base64Sync(this.id));
 	}
 }
 
@@ -85,11 +104,6 @@ export class SearchRequestIndexed extends AbstractSearchRequest {
 		this.fetch = props?.fetch ?? 10; // default fetch 10 documents
 		this.replicate = props.replicate ?? false;
 	}
-
-	private _idString: string;
-	get idString(): string {
-		return this._idString || (this._idString = sha256Base64Sync(this.id));
-	}
 }
 
 /**
@@ -109,11 +123,6 @@ export class CollectNextRequest extends AbstractSearchRequest {
 		this.id = properties.id;
 		this.amount = properties.amount;
 	}
-
-	private _idString: string;
-	get idString(): string {
-		return this._idString || (this._idString = sha256Base64Sync(this.id));
-	}
 }
 
 @variant(3)
@@ -125,10 +134,30 @@ export class CloseIteratorRequest extends AbstractSearchRequest {
 		super();
 		this.id = properties.id;
 	}
+}
 
-	private _idString: string;
-	get idString(): string {
-		return this._idString || (this._idString = sha256Base64Sync(this.id));
+@variant(4)
+export class PredictedSearchRequest<
+	R extends Result,
+> extends AbstractSearchRequest {
+	@field({ type: fixedArray("u8", 32) })
+	id: Uint8Array; // collect with id
+
+	@field({ type: AbstractSearchRequest })
+	request: SearchRequest | SearchRequestIndexed;
+
+	@field({ type: Results })
+	results: Results<R>;
+
+	constructor(properties: {
+		id?: Uint8Array;
+		request: SearchRequest | SearchRequestIndexed;
+		results: Results<R>;
+	}) {
+		super();
+		this.id = properties.id || randomBytes(32);
+		this.request = properties.request;
+		this.results = properties.results;
 	}
 }
 
