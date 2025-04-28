@@ -1213,7 +1213,11 @@ export class SharedLog<
 							},
 						];
 					} else {
-						return { range: x, timestamp: x.timestamp, type: "added" as const };
+						return {
+							range: x,
+							timestamp: x.timestamp,
+							type: "added" as const,
+						};
 					}
 				})
 				.flat() as ReplicationChanges<ReplicationRangeIndexable<R>>;
@@ -2563,13 +2567,13 @@ export class SharedLog<
 							context.from!.hashcode(),
 						);
 
-						if (prev && prev > context.timestamp) {
+						if (prev && prev > context.message.header.timestamp) {
 							return;
 						}
 
 						this.latestReplicationInfoMessage.set(
 							context.from!.hashcode(),
-							context.timestamp,
+							context.message.header.timestamp,
 						);
 
 						let reset = msg instanceof AllReplicatingSegmentsMessage;
@@ -2586,7 +2590,7 @@ export class SharedLog<
 							{
 								reset,
 								checkDuplicates: true,
-								timestamp: Number(context.timestamp),
+								timestamp: Number(context.message.header.timestamp),
 							},
 						);
 
