@@ -231,63 +231,66 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		);
 	}
 
-	async waitForWrite(bytes: Uint8Array | Uint8ArrayList, priority: number = 0) {
+	/**
+	 * Write to the outbound stream, waiting until it becomes writable.
+	 * All listeners are registered with { once:true } *and* removed again
+	 * in the shared `cleanup()` so nothing can dangle.
+	 */
+	async waitForWrite(
+		bytes: Uint8Array | Uint8ArrayList,
+		priority = 0,
+		signal?: AbortSignal,
+	) {
 		if (this.closed) {
-			logger.error(
-				"Failed to send to stream: " + this.peerId.toString() + ". Closed",
-			);
+			logger.error(`Failed to send to stream ${this.peerId}: closed`);
 			return;
 		}
 
-		if (!this.isWritable) {
-			// Catch the event where the outbound stream is attach, but also abort if we shut down
-			const outboundPromise = new Promise<void>((resolve, reject) => {
-				const resolveClear = () => {
-					this.removeEventListener("stream:outbound", listener);
-					clearTimeout(timer);
-					resolve();
-				};
-				const rejectClear = (err: Error) => {
-					this.removeEventListener("stream:outbound", listener);
-					clearTimeout(timer);
-					reject(err);
-				};
-				const timer = setTimeout(() => {
-					rejectClear(
-						new TimeoutError("Failed to deliver message, never reachable"),
-					);
-				}, 3 * 1000); // TODO if this timeout > 10s we run into issues in the tests when running in CI
-				const abortHandler = () => {
-					this.removeEventListener("close", abortHandler);
-					rejectClear(new AbortError("Closed"));
-				};
-				this.addEventListener("close", abortHandler);
-
-				const listener = () => {
-					resolveClear();
-				};
-				this.addEventListener("stream:outbound", listener);
-				if (this.isWritable) {
-					resolveClear();
-				}
-			});
-
-			await outboundPromise
-				.then(() => {
-					this.write(bytes, priority);
-				})
-				.catch((error) => {
-					if (this.closed) {
-						return; // ignore
-					}
-					if (error instanceof AbortError) {
-						//return;
-					}
-					throw error;
-				});
-		} else {
+		if (this.isWritable) {
 			this.write(bytes, priority);
+			return;
 		}
+
+		const timeoutMs = 3_000;
+
+		await new Promise<void>((resolve, reject) => {
+			const onOutbound = () => {
+				cleanup();
+				resolve();
+			};
+
+			const onAbortOrClose = () => {
+				cleanup();
+				reject(new AbortError("Closed"));
+			};
+
+			const onTimeout = () => {
+				cleanup();
+				reject(new TimeoutError("Failed to deliver message, never reachable"));
+			};
+
+			const timerId = setTimeout(onTimeout, timeoutMs);
+
+			const cleanup = () => {
+				clearTimeout(timerId);
+				this.removeEventListener("stream:outbound", onOutbound);
+				this.removeEventListener("close", onAbortOrClose);
+				signal?.removeEventListener("abort", onAbortOrClose);
+			};
+
+			this.addEventListener("stream:outbound", onOutbound, { once: true });
+			this.addEventListener("close", onAbortOrClose, { once: true });
+			if (signal?.aborted) {
+				onAbortOrClose();
+			} else {
+				signal?.addEventListener("abort", onAbortOrClose, { once: true });
+			}
+
+			// Catch a race where writability flips after the first check.
+			if (this.isWritable) onOutbound();
+		});
+
+		this.write(bytes, priority);
 	}
 
 	/**
@@ -1691,16 +1694,21 @@ export abstract class DirectStream<
 		from: PublicSignKey,
 		message: DataMessage | Goodbye,
 		relayed?: boolean,
+		signal?: AbortSignal,
 	): Promise<{ promise: Promise<void> }> {
 		if (message.header.mode instanceof AnyWhere) {
-			return { promise: Promise.resolve() };
+			return {
+				promise: Promise.resolve(),
+			};
 		}
 
 		const idString = toBase64(message.id);
 
 		const existing = this._ackCallbacks.get(idString);
 		if (existing) {
-			return { promise: existing.promise };
+			return {
+				promise: existing.promise,
+			};
 		}
 
 		const fastestNodesReached = new Map<string, number[]>();
@@ -1769,11 +1777,13 @@ export abstract class DirectStream<
 
 		onUnreachable && this.addEventListener("peer:unreachable", onUnreachable);
 
+		let onAbort: (() => void) | undefined;
 		const clear = () => {
-			clearTimeout(timeout);
+			timeout && clearTimeout(timeout);
 			onUnreachable &&
 				this.removeEventListener("peer:unreachable", onUnreachable);
 			this._ackCallbacks.delete(idString);
+			onAbort && signal?.removeEventListener("abort", onAbort);
 		};
 
 		const timeout = setTimeout(async () => {
@@ -1811,6 +1821,18 @@ export abstract class DirectStream<
 				deliveryDeferredPromise.resolve();
 			}
 		}, this.seekTimeout);
+
+		if (signal) {
+			onAbort = () => {
+				clear();
+				deliveryDeferredPromise.reject(new AbortError("Aborted"));
+			};
+			if (signal.aborted) {
+				onAbort();
+			} else {
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+		}
 
 		const checkDone = () => {
 			// This if clause should never enter for relayed connections, since we don't
@@ -1890,6 +1912,7 @@ export abstract class DirectStream<
 		message: Message,
 		to?: PeerStreams[] | Map<string, PeerStreams>,
 		relayed?: boolean,
+		signal?: AbortSignal,
 	): Promise<void> {
 		if (this.stopping || !this.started) {
 			throw new NotStartedError();
@@ -1927,9 +1950,13 @@ export abstract class DirectStream<
 			(message.header.mode instanceof SeekDelivery ||
 				message.header.mode instanceof AcknowledgeDelivery)
 		) {
-			delivereyPromise = (
-				await this.createDeliveryPromise(from, message, relayed)
-			).promise;
+			const deliveryDeferredPromise = await this.createDeliveryPromise(
+				from,
+				message,
+				relayed,
+				signal,
+			);
+			delivereyPromise = deliveryDeferredPromise.promise;
 		}
 
 		const bytes = message.bytes();
