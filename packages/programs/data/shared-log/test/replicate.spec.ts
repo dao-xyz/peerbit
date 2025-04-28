@@ -1146,6 +1146,19 @@ describe(`replicate`, () => {
 				segments = await db1.log.replicationIndex.iterate().all();
 				expect(segments).to.have.length(0);
 			});
+
+			it('replicate "resume" default false', async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							type: "resume",
+							default: false,
+						},
+					},
+				});
+
+				expect(await db1.log.isReplicating()).to.be.false;
+			});
 		});
 	});
 });

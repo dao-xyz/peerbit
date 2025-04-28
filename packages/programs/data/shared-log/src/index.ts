@@ -897,6 +897,11 @@ export class SharedLog<
 				}
 			}
 			range = ranges;
+		} else if (
+			rangeOrEntry &&
+			(rangeOrEntry as ExistingReplicationOptions<R>).type === "resume"
+		) {
+			range = (rangeOrEntry as ExistingReplicationOptions<R>).default;
 		} else {
 			range = rangeOrEntry ?? true;
 		}
