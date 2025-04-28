@@ -1,10 +1,9 @@
 /* eslint-env mocha */
 import { field } from "@dao-xyz/borsh";
-import { id } from "@peerbit/indexer-interface";
+import { Compare, IntegerCompare, id } from "@peerbit/indexer-interface";
 import type { IterateOptions } from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
-import { waitForResolved } from "@peerbit/time";
-import { delay } from "@peerbit/time";
+import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import type { QueryCacheOptions } from "../src/cache.js";
 import { CachedIndex } from "../src/index.js";
@@ -14,7 +13,9 @@ import { CachedIndex } from "../src/index.js";
 class Document {
 	@id({ type: "string" }) id!: string;
 	@field({ type: "string" }) content!: string;
-	constructor(p: { id: string; content: string }) {
+	@field({ type: "u32" })
+	number!: number;
+	constructor(p: { id: string; content: string; number: number }) {
 		Object.assign(this, p);
 	}
 }
@@ -33,7 +34,9 @@ const makeDb = async (
 	const raw = new HashmapIndex<Document>();
 	await raw.init({ schema: Document, indexBy: ["id"] });
 	for (let i = 0; i < size; i++) {
-		await raw.put(new Document({ id: i.toString(), content: "#" + i }));
+		await raw.put(
+			new Document({ id: i.toString(), content: "#" + i, number: i }),
+		);
 	}
 	return new CachedIndex(raw, cacheOpt);
 };
@@ -52,7 +55,7 @@ const waitForWarmEntries = async (db: CachedIndex<any>, n: number) => {
 	const deadline = Date.now() + 500;
 	while (Date.now() < deadline) {
 		if (db.iteratorCache!._debugStats.activeQueries.length >= n) return;
-		await new Promise((r) => setTimeout(r, 10));
+		await delay(10);
 	}
 };
 
@@ -209,7 +212,7 @@ describe("CachedIndex iterator cache", () => {
 
 		expect((await all()).some((d) => d.id === "999")).to.be.false;
 
-		await db.put(new Document({ id: "999", content: "hello" }));
+		await db.put(new Document({ id: "999", content: "hello", number: 999 }));
 		expect((await all()).some((d) => d.id === "999")).to.be.true;
 
 		await db.del({ query: { id: "999" } });
@@ -225,7 +228,18 @@ describe("CachedIndex iterator cache", () => {
 		});
 
 		for (let q = 0; q < 4; q++) {
-			await collect(db.iterate({ query: { id: q.toString() } }));
+			// generate unique queries for all q that matches all documents
+			await collect(
+				db.iterate({
+					query: [
+						new IntegerCompare({
+							key: "number",
+							compare: Compare.LessOrEqual,
+							value: 99999 + q,
+						}),
+					],
+				}),
+			);
 		}
 		await waitForWarmEntries(db, 3); // at most 3 warmers fit
 		for (const key of db.iteratorCache._debugStats.activeQueries) {

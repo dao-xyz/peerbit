@@ -15,7 +15,7 @@ export { type QueryCacheOptions };
 export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 	implements Index<T, Nested>
 {
-	private cache: IteratorCache<T>;
+	private _cache: IteratorCache<T>;
 
 	constructor(
 		/** the real index implementation */
@@ -27,7 +27,7 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 			prefetchThreshold: 2,
 		}, // default options,
 	) {
-		this.cache = new IteratorCache<T>(opts, (iterate, maxSize) =>
+		this._cache = new IteratorCache<T>(opts, (iterate, maxSize) =>
 			this.origin.iterate(iterate, {
 				reference: true,
 			}),
@@ -42,12 +42,12 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 	start() {
 		return this.origin.start?.();
 	}
-	stop() {
-		this.cache?.clear();
+	async stop() {
+		await this._cache?.clear();
 		return this.origin.stop?.();
 	}
-	drop() {
-		this.cache?.clear();
+	async drop() {
+		await this._cache?.clear();
 		return this.origin.drop();
 	}
 
@@ -68,12 +68,12 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 
 	async put(value: T, id?: any) {
 		await this.origin.put(value, id);
-		await this.cache.refresh();
+		await this._cache.refresh();
 	}
 
 	async del(q: DeleteOptions) {
 		const res = await this.origin.del(q);
-		await this.cache.refresh();
+		await this._cache.refresh();
 		return res;
 	}
 
@@ -81,12 +81,12 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 		iter?: IterateOptions,
 		options?: { shape?: S; reference?: boolean },
 	): IndexIterator<T, S> {
-		if (!this.cache || options?.reference === false)
+		if (!this._cache || options?.reference === false)
 			return this.origin.iterate(iter, options);
-		return this.cache.acquire(iter) as IndexIterator<T, S>;
+		return this._cache.acquire(iter) as IndexIterator<T, S>;
 	}
 
 	get iteratorCache() {
-		return this.cache;
+		return this._cache;
 	}
 }

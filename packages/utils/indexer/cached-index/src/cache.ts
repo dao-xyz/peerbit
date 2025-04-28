@@ -152,12 +152,12 @@ export class IteratorCache<I extends Record<string, any>> {
 
 	async refresh() {
 		const keep = [...this.map.values()].map((e) => e.opts);
-		this.clear();
+		await this.clear();
 		for (const o of keep) this.acquire(o);
 	}
 
-	clear() {
-		this.map.forEach((e) => void e.cached.it.close());
+	async clear() {
+		await Promise.all([...this.map.values()].map((e) => e.cached.it.close()));
 		this.map.clear();
 		this.pendingJob.clear();
 		this.total = 0;
