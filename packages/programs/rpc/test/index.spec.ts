@@ -635,6 +635,8 @@ describe("queryAll", () => {
 		let r: RPCResponse<Body>[][] = [];
 
 		let t1 = +new Date();
+
+		clients[1].delay = 1e4; // make sure client 1 never responds
 		const promise = queryAll(
 			clients[0].query,
 			[[clients[1].node.identity.publicKey.hashcode()]],
@@ -643,8 +645,6 @@ describe("queryAll", () => {
 				r.push(e);
 			},
 		);
-
-		clients[1].delay = 1e4; // make sure client 1 never responds
 
 		await delay(200); // make sure the request is sent
 		clients[0].close();
