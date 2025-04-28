@@ -127,7 +127,9 @@ export type PublishOptions = (
 	  }
 ) & { client?: string } & PriorityOptions &
 	IdOptions &
-	WithExtraSigners;
+	WithExtraSigners & {
+		signal?: AbortSignal;
+	};
 
 export interface PubSub
 	extends IEventEmitter<PubSubEvents>,

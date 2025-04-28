@@ -349,7 +349,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 		} & { client?: string } & {
 			mode?: SilentDelivery | AcknowledgeDelivery | SeekDelivery;
 		} & PriorityOptions &
-			IdOptions,
+			IdOptions & { signal?: AbortSignal },
 	): Promise<Uint8Array | undefined> {
 		if (!this.started) {
 			throw new NotStartedError();
@@ -406,7 +406,13 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 
 		// send to all the other peers
 		try {
-			await this.publishMessage(this.publicKey, message, undefined);
+			await this.publishMessage(
+				this.publicKey,
+				message,
+				undefined,
+				undefined,
+				options?.signal,
+			);
 		} catch (error) {
 			if (error instanceof DeliveryError) {
 				if (silentDelivery === false) {
