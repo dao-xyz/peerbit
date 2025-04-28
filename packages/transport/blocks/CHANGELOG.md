@@ -279,6 +279,24 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/blocks-v2.3.4...blocks-v3.0.0) (2025-04-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename earlyBlocks property to eagerBlocks property
+
+### Bug Fixes
+
+* rename earlyBlocks property to eagerBlocks property ([6f83bc9](https://github.com/dao-xyz/peerbit/commit/6f83bc971d32edeee02b01aa6ae4e2131d140368))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.3.3 to 4.3.4
+
 ## [2.3.4](https://github.com/dao-xyz/peerbit/compare/blocks-v2.3.3...blocks-v2.3.4) (2025-04-19)
 
 

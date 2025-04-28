@@ -417,6 +417,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.3.0](https://github.com/dao-xyz/peerbit/compare/rpc-v5.2.9...rpc-v5.3.0) (2025-04-28)
+
+
+### Features
+
+* add response interceptor ([774d4b9](https://github.com/dao-xyz/peerbit/commit/774d4b918e51d60e63052e410f251a21735cc6e8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.7 to 5.2.8
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.42 to ^2.1.43
+
 ## [5.2.9](https://github.com/dao-xyz/peerbit/compare/rpc-v5.2.8...rpc-v5.2.9) (2025-04-19)
 
 

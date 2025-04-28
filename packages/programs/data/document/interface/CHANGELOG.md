@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.28...document-interface-v2.1.0) (2025-04-28)
+
+
+### Features
+
+* PredictedSearchRequest ([48778a8](https://github.com/dao-xyz/peerbit/commit/48778a8dfea6cfe855fef9d5152d30f3db9e98a3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.54 to 4.0.55
+
 ## [2.0.28](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.27...document-interface-v2.0.28) (2025-04-19)
 
 

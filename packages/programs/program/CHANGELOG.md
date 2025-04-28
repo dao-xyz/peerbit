@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.8](https://github.com/dao-xyz/peerbit/compare/program-v5.2.7...program-v5.2.8) (2025-04-28)
+
+
+### Bug Fixes
+
+* prevent emitted join/leave events more than once for each peer ([8afd4ab](https://github.com/dao-xyz/peerbit/commit/8afd4ab85e1cf3bc8d7d581d742d3cc6829cbbba))
+
 ## [5.2.7](https://github.com/dao-xyz/peerbit/compare/program-v5.2.6...program-v5.2.7) (2025-04-19)
 
 
