@@ -476,8 +476,8 @@ export class DocumentIndex<
 				>
 			>;
 			if (request instanceof types.PredictedSearchRequest) {
-				rq = request.request;
-				rs = request.results;
+				// TODO is this codepath even reachable?
+				throw new Error("Unexpected PredictedSearchRequest in sync operation");
 			} else {
 				rq = request;
 				rs = results as types.Results<
@@ -674,7 +674,7 @@ export class DocumentIndex<
 					from: e.detail,
 				});
 
-				if (results instanceof types.Results) {
+				if (results instanceof types.AbstractSearchResult) {
 					// start a resumable iterator for the peer
 					const query = new types.PredictedSearchRequest({
 						id: request.id,
