@@ -97,15 +97,32 @@ export class P4 extends Program {
 @variant("test-shared_nested")
 export class TestNestedProgram extends Program {
 	openInvoked = false;
+
+	@field({ type: "u32" })
+	seed: number;
+
+	constructor(seed: number = 0) {
+		super();
+		this.seed = seed;
+	}
 	async open(): Promise<void> {
 		this.openInvoked = true;
+		await this.node.services.pubsub.subscribe(
+			"test-shared_nested-" + this.seed,
+		);
+	}
+	async close(from?: Program): Promise<boolean> {
+		await this.node.services.pubsub.unsubscribe(
+			"test-shared_nested-" + this.seed,
+		);
+		return super.close(from);
 	}
 
 	getTopics(): string[] {
 		if (this.closed) {
 			throw new ClosedError("Program is closed");
 		}
-		return ["test-shared_nested"];
+		return ["test-shared_nested-" + this.seed];
 	}
 }
 
@@ -119,7 +136,7 @@ export class TestProgram extends Program<{ dontOpenNested?: boolean }> {
 
 	constructor(
 		id: number = 0,
-		nested: TestNestedProgram = new TestNestedProgram(),
+		nested: TestNestedProgram = new TestNestedProgram(id),
 	) {
 		super();
 		this.id = id;
@@ -167,16 +184,17 @@ export class TestProgramWithTopics extends Program {
 	@field({ type: TestProgram })
 	subprogram: TestProgram;
 
-	constructor(seed: number = 0) {
+	constructor(seed: number = 0, nestedSeed: number = 0) {
 		super();
 		this.seed = seed;
-		this.subprogram = new TestProgram();
+		this.subprogram = new TestProgram(nestedSeed); // nested programs will share the same topics
 	}
 
 	async open(): Promise<void> {
 		this.openInvoked = true;
 		await this.node.services.pubsub.subscribe("a-" + this.seed);
 		await this.node.services.pubsub.subscribe("b-" + this.seed);
+		await this.subprogram.open();
 	}
 	async close(from?: Program): Promise<boolean> {
 		await this.node.services.pubsub.unsubscribe("a-" + this.seed);

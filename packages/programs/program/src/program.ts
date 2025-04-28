@@ -271,7 +271,7 @@ export abstract class Program<
 	}
 
 	private getAllTopicsIncludingThis(): string[] {
-		const allTopics = [this, ...this.programs]
+		const allTopics = [this, ...this.allPrograms]
 			// TODO test this code path closed true/false
 			.map((x) => x.closed === false && x.getTopics?.())
 			.filter((x) => x)
@@ -284,7 +284,6 @@ export abstract class Program<
 		}
 
 		const allTopics = this.getAllTopicsIncludingThis();
-
 		if (allTopics.length === 0) {
 			return; // this is important (see events.spec.ts)
 		}
@@ -495,18 +494,25 @@ export abstract class Program<
 
 			const checkReady = async () => {
 				let ready = true;
-				const allReadyHashes = await this.getReady();
-				for (const hash of expectedHashes) {
-					if (!allReadyHashes.has(hash)) {
-						ready = false;
-						break;
+				try {
+					const allReadyHashes = await this.getReady();
+					for (const hash of expectedHashes) {
+						if (!allReadyHashes.has(hash)) {
+							ready = false;
+							break;
+						}
 					}
-				}
-				if (ready) {
-					this.node.services.pubsub.removeEventListener("subscribe", listener);
-					clearTimeout(timeout);
-					options?.signal?.removeEventListener("abort", abortListener);
-					resolve();
+					if (ready) {
+						this.node.services.pubsub.removeEventListener(
+							"subscribe",
+							listener,
+						);
+						clearTimeout(timeout);
+						options?.signal?.removeEventListener("abort", abortListener);
+						resolve();
+					}
+				} catch (error) {
+					reject(error);
 				}
 			};
 			const listener = () => {

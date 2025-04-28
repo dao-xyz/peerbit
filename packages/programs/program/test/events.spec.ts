@@ -69,7 +69,7 @@ describe("events", () => {
 		expect(leaveEvents).to.have.length(1);
 	});
 
-	it("only emits join/leave events on join", async () => {
+	it("does not emit join/leave events on different program join", async () => {
 		const db1 = await client1.open(new TestProgramWithTopics(0));
 		expect(await client1.open(db1)).equal(db1);
 
@@ -84,6 +84,28 @@ describe("events", () => {
 		});
 
 		const db2 = await client2.open(new TestProgramWithTopics(1)); // another program
+		expect(db2.address).not.equal(db1.address);
+
+		await client1.dial(client2.getMultiaddrs());
+		await delay(3e3);
+		expect(joinEvents).to.have.length(0);
+	});
+
+	it("does not emits join/leave events on partial join", async () => {
+		const db1 = await client1.open(new TestProgramWithTopics(0, 1));
+		expect(await client1.open(db1)).equal(db1);
+
+		let joinEvents: string[] = [];
+		db1.events.addEventListener("join", (event) => {
+			joinEvents.push(event.detail.hashcode());
+		});
+
+		let leaveEvents: string[] = [];
+		db1.events.addEventListener("leave", (event) => {
+			leaveEvents.push(event.detail.hashcode());
+		});
+
+		const db2 = await client2.open(new TestProgramWithTopics(0, 2)); // another program
 		expect(db2.address).not.equal(db1.address);
 
 		await client1.dial(client2.getMultiaddrs());
@@ -189,14 +211,6 @@ describe("events", () => {
 		expect(leaveEvents2).to.be.empty;
 	});
 
-	it("will not ask for topics on closed subprogram", async () => {
-		const test = new TestProgram();
-		const peer = await creatMockPeer();
-		await peer.open(test, { args: { dontOpenNested: true } });
-		expect(() => test.nested.getTopics()).to.throw(ClosedError);
-		await test.getReady();
-	});
-
 	describe("getReady", () => {
 		let peer: ProgramClient, peer2: ProgramClient;
 		afterEach(async () => {
@@ -208,6 +222,16 @@ describe("events", () => {
 			const test = new ProgramWithoutTopics();
 			expect(test.getReady()).rejectedWith(
 				"Program has no topics, cannot get ready",
+			);
+		});
+
+		it("will not ask for topics on closed subprogram", async () => {
+			const test = new TestProgram();
+			const peer = await creatMockPeer();
+			await peer.open(test, { args: { dontOpenNested: true } });
+			expect(() => test.nested.getTopics()).to.throw(ClosedError);
+			expect(test.getReady()).rejectedWith(
+				"Program has no topics, cannot get ready", // will throw this error because now no topics will exist
 			);
 		});
 
@@ -229,5 +253,17 @@ describe("events", () => {
 		});
 		// TODO test if for example 50 % of programs are open, what is the expected join/leave events???
 	});
+
+	describe("waitFor", () => {
+		let peer: ProgramClient;
+		beforeEach(async () => {
+			peer = await creatMockPeer();
+		});
+		it("self", async () => {
+			const p = await peer.open(new TestProgramWithTopics());
+			await p.waitFor(p.node.identity.publicKey);
+		});
+	});
+
 	// TODO test if for example 50 % of programs are open, what is the expected join/leave events???
 });

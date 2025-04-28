@@ -9,7 +9,7 @@ import {
 	getProgramFromVariant,
 } from "../src/program.js";
 import { getValuesWithType } from "../src/utils.js";
-import { EmbeddedStore, Log, P1, P2, P3, P4, TestProgram } from "./samples.js";
+import { EmbeddedStore, Log, P2, P3, P4, TestProgram } from "./samples.js";
 import { creatMockPeer } from "./utils.js";
 
 describe("getValuesWithType", () => {
@@ -388,17 +388,6 @@ describe("program", () => {
 				expect(closeEvents).to.be.empty;
 				expect(dropEvents).to.deep.equal([p, p.child, p.child.child]);
 			});
-		});
-	});
-
-	describe("waitFor", () => {
-		let peer: ProgramClient;
-		beforeEach(async () => {
-			peer = await creatMockPeer();
-		});
-		it("self", async () => {
-			const p = await peer.open(new P1());
-			await p.waitFor(p.node.identity.publicKey);
 		});
 	});
 
