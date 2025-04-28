@@ -112,31 +112,21 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	}
 
 	private async _close(from?: Program): Promise<void> {
-		if (this._subscribed) {
-			await this.node.services.pubsub.unsubscribe(this.topic);
-			await this.node.services.pubsub.removeEventListener(
-				"data",
-				this._onMessageBinded,
-			);
-			this._subscribed = false;
-		}
+		await this.node.services.pubsub.unsubscribe(this.topic);
+		await this.node.services.pubsub.removeEventListener(
+			"data",
+			this._onMessageBinded,
+		);
+		this._subscribed = false;
 	}
 	public async close(from?: Program): Promise<boolean> {
-		const superClosed = await super.close(from);
-		if (!superClosed) {
-			return false;
-		}
 		await this._close(from);
-		return true;
+		return super.close(from);
 	}
 
 	public async drop(from?: Program): Promise<boolean> {
-		const superDropped = await super.drop(from);
-		if (!superDropped) {
-			return false;
-		}
 		await this._close(from);
-		return true;
+		return super.drop(from);
 	}
 
 	private _subscribing: Promise<void> | void | undefined;
@@ -432,7 +422,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 		const allResults: RPCResponse<R>[] = [];
 
-		const deferredPromise = pDefer();
+		const deferredPromise = pDefer<void>();
 
 		if (this.closed) {
 			throw new AbortError("Closed");
@@ -521,7 +511,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			this._responseResolver.delete(id);
 		}
 
-		return allResults;
+		return deferredPromise.promise.then(() => allResults);
 	}
 
 	public get topic(): string {
