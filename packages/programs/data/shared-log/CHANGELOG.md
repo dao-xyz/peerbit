@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.0...shared-log-v11.1.1) (2025-04-28)
+
+
+### Bug Fixes
+
+* correctly handle default case for resume ([2f92713](https://github.com/dao-xyz/peerbit/commit/2f9271312ac79c045917eb50ec4cc1670cf6ce19))
+
 ## [11.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.8...shared-log-v11.1.0) (2025-04-28)
 
 
