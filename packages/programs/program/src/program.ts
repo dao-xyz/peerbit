@@ -269,16 +269,25 @@ export abstract class Program<
 	private get emittedEventsFor(): Set<string> {
 		return (this._emittedEventsFor = this._emittedEventsFor || new Set());
 	}
+
+	private getAllTopicsIncludingThis(): string[] {
+		const allTopics = [this, ...this.programs]
+			// TODO test this code path closed true/false
+			.map((x) => x.closed === false && x.getTopics?.())
+			.filter((x) => x)
+			.flat() as string[];
+		return allTopics;
+	}
 	private async _emitJoinNetworkEvents(s: SubscriptionEvent) {
 		if (this.emittedEventsFor.has(s.from.hashcode())) {
 			return;
 		}
 
-		const allTopics = this.programs
-			// TODO test this code path closed true/false
-			.map((x) => x.closed === false && x.getTopics?.())
-			.filter((x) => x)
-			.flat() as string[];
+		const allTopics = this.getAllTopicsIncludingThis();
+
+		if (allTopics.length === 0) {
+			return; // this is important (see events.spec.ts)
+		}
 
 		// if subscribing to all topics, emit "join" event
 		for (const topic of allTopics) {
@@ -301,11 +310,11 @@ export abstract class Program<
 		if (!this.emittedEventsFor.has(s.from.hashcode())) {
 			return;
 		}
-		const allTopics = this.programs
-			// TODO test this code path closed true/false
-			.map((x) => x.closed === false && x.getTopics?.())
-			.filter((x) => x)
-			.flat() as string[];
+
+		const allTopics = this.getAllTopicsIncludingThis();
+		if (allTopics.length === 0) {
+			return; // this is important (see events.spec.ts)
+		}
 
 		// if subscribing not subscribing to any topics, emit "leave" event
 		for (const topic of allTopics) {
@@ -511,20 +520,17 @@ export abstract class Program<
 	async getReady(): Promise<Map<string, PublicSignKey>> {
 		// all peers that subscribe to all topics
 		let ready: Map<string, PublicSignKey> | undefined = undefined; // the interesection of all ready
-		for (const program of this.allPrograms) {
-			if (program.getTopics) {
-				if (program.closed === false) {
-					const topics = program.getTopics();
-					for (const topic of topics) {
-						const subscribers =
-							await this.node.services.pubsub.getSubscribers(topic);
-						if (!subscribers) {
-							continue;
-						}
-						ready = intersection(ready, subscribers);
-					}
-				}
+		const allTopics = this.getAllTopicsIncludingThis();
+		if (allTopics.length === 0) {
+			throw new Error("Program has no topics, cannot get ready");
+		}
+
+		for (const topic of allTopics) {
+			const subscribers = await this.node.services.pubsub.getSubscribers(topic);
+			if (!subscribers) {
+				continue;
 			}
+			ready = intersection(ready, subscribers);
 		}
 		if (ready == null) {
 			return new Map();

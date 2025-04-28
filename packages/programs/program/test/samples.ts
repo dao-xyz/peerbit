@@ -94,28 +94,6 @@ export class P4 extends Program {
 	}
 }
 
-@variant("test-program-with-topics")
-export class TestProgramWithTopics extends Program {
-	openInvoked = false;
-	async open(): Promise<void> {
-		this.openInvoked = true;
-		await this.node.services.pubsub.subscribe("a");
-		await this.node.services.pubsub.subscribe("b");
-	}
-	async close(from?: Program): Promise<boolean> {
-		await this.node.services.pubsub.unsubscribe("a");
-		await this.node.services.pubsub.unsubscribe("b");
-		return super.close(from);
-	}
-
-	getTopics(): string[] {
-		if (this.closed) {
-			throw new ClosedError("Program is closed");
-		}
-		return ["a", "b"];
-	}
-}
-
 @variant("test-shared_nested")
 export class TestNestedProgram extends Program {
 	openInvoked = false;
@@ -176,5 +154,61 @@ export class TestParenteRefernceProgram extends Program {
 
 	async open(): Promise<void> {
 		await this.node.open(this.nested, { parent: this as Program });
+	}
+}
+
+@variant("test-program-with-topics")
+export class TestProgramWithTopics extends Program {
+	openInvoked = false;
+
+	@field({ type: "u32" })
+	seed: number;
+
+	@field({ type: TestProgram })
+	subprogram: TestProgram;
+
+	constructor(seed: number = 0) {
+		super();
+		this.seed = seed;
+		this.subprogram = new TestProgram();
+	}
+
+	async open(): Promise<void> {
+		this.openInvoked = true;
+		await this.node.services.pubsub.subscribe("a-" + this.seed);
+		await this.node.services.pubsub.subscribe("b-" + this.seed);
+	}
+	async close(from?: Program): Promise<boolean> {
+		await this.node.services.pubsub.unsubscribe("a-" + this.seed);
+		await this.node.services.pubsub.unsubscribe("b-" + this.seed);
+		return super.close(from);
+	}
+
+	getTopics(): string[] {
+		if (this.closed) {
+			throw new ClosedError("Program is closed");
+		}
+		return ["a-" + this.seed, "b-" + this.seed];
+	}
+}
+
+@variant("test-program-without-topics")
+export class ProgramWithoutTopics extends Program {
+	openInvoked = false;
+
+	@field({ type: "u32" })
+	seed: number;
+
+	constructor(seed: number = 0) {
+		super();
+		this.seed = seed;
+	}
+
+	async open(): Promise<void> {
+		this.openInvoked = true;
+	}
+
+	getTopics(): string[] {
+		return [];
 	}
 }

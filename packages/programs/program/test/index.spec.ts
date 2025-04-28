@@ -1,4 +1,4 @@
-import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
+import { field, variant } from "@dao-xyz/borsh";
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import {
@@ -399,73 +399,6 @@ describe("program", () => {
 		it("self", async () => {
 			const p = await peer.open(new P1());
 			await p.waitFor(p.node.identity.publicKey);
-		});
-	});
-	describe("events", () => {
-		it("join/leave", async () => {
-			const eventHandlers = new Map();
-			const subscriptions = new Map();
-			const peers = new Map();
-			const peer = await creatMockPeer({
-				subsribers: subscriptions,
-				pubsubEventHandlers: eventHandlers,
-				peers,
-			});
-			const peer2 = await creatMockPeer({
-				subsribers: subscriptions,
-				pubsubEventHandlers: eventHandlers,
-				peers,
-			});
-
-			const p = new P3();
-			const joinEvents: string[] = [];
-			const leaveEvents: string[] = [];
-
-			p.events.addEventListener("join", (e) => {
-				joinEvents.push(e.detail.hashcode());
-			});
-			p.events.addEventListener("leave", (e) => {
-				leaveEvents.push(e.detail.hashcode());
-			});
-
-			await peer.open(p);
-
-			const joinEvents2: string[] = [];
-			const leaveEvents2: string[] = [];
-
-			const p2 = deserialize(serialize(p), P3);
-			p2.events.addEventListener("join", (e) => {
-				joinEvents2.push(e.detail.hashcode());
-			});
-
-			p2.events.addEventListener("leave", (e) => {
-				leaveEvents2.push(e.detail.hashcode());
-			});
-
-			await peer2.open(p2);
-
-			expect(joinEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]);
-			expect(joinEvents2).to.be.empty;
-
-			await peer2.services.pubsub.requestSubscribers(p.getTopics()[0]);
-
-			expect(joinEvents2).to.deep.equal([peer.identity.publicKey.hashcode()]);
-
-			expect(leaveEvents).to.be.empty;
-			expect(leaveEvents2).to.be.empty;
-
-			await p2.close();
-
-			expect(leaveEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]);
-			expect(leaveEvents2).to.be.empty;
-		});
-
-		it("will not ask for topics on closed subprogram", async () => {
-			const test = new TestProgram();
-			const peer = await creatMockPeer();
-			await peer.open(test, { args: { dontOpenNested: true } });
-			expect(() => test.nested.getTopics()).to.throw(ClosedError);
-			await test.getReady();
 		});
 	});
 
