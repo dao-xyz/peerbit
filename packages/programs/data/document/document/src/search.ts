@@ -51,7 +51,7 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
 	minAge?: number;
 	throwOnMissing?: boolean;
-	strategy?: "fallback"; // | merge | avg
+	strategy?: "fallback";
 	domain?:
 		| {
 				args: ExtractArgs<D>;

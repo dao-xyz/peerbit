@@ -1,8 +1,8 @@
 import { TypedEventEmitter } from "@libp2p/interface";
 import { Cache } from "@peerbit/cache";
 import type * as types from "@peerbit/document-interface";
-import type { RPCResponse } from "@peerbit/rpc/dist/src";
-import { idAgnosticQueryKey } from "./most-common-query-predictor";
+import type { RPCResponse } from "@peerbit/rpc";
+import { idAgnosticQueryKey } from "./most-common-query-predictor.js";
 
 // --- typed helper ---------------------------------------------------------
 type AddEvent = {

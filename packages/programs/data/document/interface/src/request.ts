@@ -6,7 +6,7 @@ import {
 	type ResultIndexedValue,
 	type ResultValue,
 	Results,
-} from "./query";
+} from "./query.js";
 
 // for SearchRequest we wnat to return ResultsWithSource<T> for IndexedSearchRequest we want to return ResultsIndexed<T>
 export type ResultTypeFromRequest<R, T, I> = R extends SearchRequest
