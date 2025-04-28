@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.19](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.18...indexer-sqlite3-v1.2.19) (2025-04-28)
+
+
+### Bug Fixes
+
+* bump sqlite3 ([9c181d3](https://github.com/dao-xyz/peerbit/commit/9c181d39404c7fee71c1fc4719bf2d838cd12df6))
+
 ## [1.2.18](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.17...indexer-sqlite3-v1.2.18) (2025-04-19)
 
 

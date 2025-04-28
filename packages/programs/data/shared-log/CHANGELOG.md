@@ -389,6 +389,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.8...shared-log-v11.1.0) (2025-04-28)
+
+
+### Features
+
+* add 'default' fallback property for resumable replication ([249b71a](https://github.com/dao-xyz/peerbit/commit/249b71ae9c256ce0ea92f0212a24dc4b493b21ff))
+
+
+### Bug Fixes
+
+* rpc event timestamp type ([d8644b4](https://github.com/dao-xyz/peerbit/commit/d8644b43c8fac4ed64c1afe37ee391e98d1e7dae))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.7 to 5.2.8
+    * @peerbit/log bumped from 4.0.54 to 4.0.55
+    * @peerbit/rpc bumped from 5.2.9 to 5.3.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.42 to ^2.1.43
+
 ## [11.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.7...shared-log-v11.0.8) (2025-04-23)
 
 

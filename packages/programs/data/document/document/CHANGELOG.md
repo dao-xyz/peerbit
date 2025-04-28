@@ -456,6 +456,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.5.0](https://github.com/dao-xyz/peerbit/compare/document-v9.4.3...document-v9.5.0) (2025-04-28)
+
+
+### Features
+
+* add prefetch functionality for search ([e747d63](https://github.com/dao-xyz/peerbit/commit/e747d630f1908118fab53942c44af41d3eed8c1b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.7 to 5.2.8
+    * @peerbit/rpc bumped from 5.2.9 to 5.3.0
+    * @peerbit/shared-log bumped from 11.0.8 to 11.1.0
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.18 to ^1.2.19
+    * @peerbit/document-interface bumped from ^2.0.28 to ^2.1.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.42 to 2.1.43
+
 ## [9.4.3](https://github.com/dao-xyz/peerbit/compare/document-v9.4.2...document-v9.4.3) (2025-04-23)
 
 
