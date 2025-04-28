@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.1...document-interface-v2.1.2) (2025-04-28)
+
+
+### Bug Fixes
+
+* PredictedSearchRequest more generic ([d6033fb](https://github.com/dao-xyz/peerbit/commit/d6033fb40aa7984c7ebc36d1a5bb1644a59c7d59))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.55 to 4.0.56
+
 ## [2.1.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.0...document-interface-v2.1.1) (2025-04-28)
 
 

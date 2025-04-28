@@ -202,6 +202,14 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.9](https://github.com/dao-xyz/peerbit/compare/program-v5.2.8...program-v5.2.9) (2025-04-28)
+
+
+### Bug Fixes
+
+* handle nested program join/leave events correctly ([0ba1c72](https://github.com/dao-xyz/peerbit/commit/0ba1c72b5bcb9eef9bcd03754a234b080c92dd72))
+* make join/leave handling to correctly handle self, and empty topics programs ([18cc7a9](https://github.com/dao-xyz/peerbit/commit/18cc7a9392b85814d70ae5f1aa4e91a8c9c02df7))
+
 ## [5.2.8](https://github.com/dao-xyz/peerbit/compare/program-v5.2.7...program-v5.2.8) (2025-04-28)
 
 
