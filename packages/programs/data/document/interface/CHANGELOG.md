@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.0...document-interface-v2.1.1) (2025-04-28)
+
+
+### Bug Fixes
+
+* esm imports ([f5a378c](https://github.com/dao-xyz/peerbit/commit/f5a378c96c3f99c35673ff0a0cc0234c9210dbe6))
+
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.28...document-interface-v2.1.0) (2025-04-28)
 
 
