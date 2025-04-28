@@ -2,10 +2,10 @@ import { field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import { randomBytes, sha256Base64Sync } from "@peerbit/crypto";
 import { Query, Sort, toQuery } from "@peerbit/indexer-interface";
 import {
+	AbstractSearchResult,
 	type Result,
 	type ResultIndexedValue,
 	type ResultValue,
-	Results,
 } from "./query.js";
 
 // for SearchRequest we wnat to return ResultsWithSource<T> for IndexedSearchRequest we want to return ResultsIndexed<T>
@@ -146,13 +146,13 @@ export class PredictedSearchRequest<
 	@field({ type: AbstractSearchRequest })
 	request: SearchRequest | SearchRequestIndexed;
 
-	@field({ type: Results })
-	results: Results<R>;
+	@field({ type: AbstractSearchResult })
+	results: AbstractSearchResult;
 
 	constructor(properties: {
 		id?: Uint8Array;
 		request: SearchRequest | SearchRequestIndexed;
-		results: Results<R>;
+		results: AbstractSearchResult;
 	}) {
 		super();
 		this.id = properties.id || randomBytes(32);
