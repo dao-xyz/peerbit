@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.5.3](https://github.com/dao-xyz/peerbit/compare/document-v9.5.2...document-v9.5.3) (2025-04-28)
+
+
+### Bug Fixes
+
+* throw on unexpected type ([b3ef1a2](https://github.com/dao-xyz/peerbit/commit/b3ef1a237e64c4c0f12e0a390245e013005a27c2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.8 to 5.2.9
+    * @peerbit/rpc bumped from 5.3.0 to 5.3.1
+    * @peerbit/shared-log bumped from 11.1.1 to 11.1.2
+    * @peerbit/document-interface bumped from ^2.1.1 to ^2.1.2
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.43 to 2.1.44
+
 ## [9.5.2](https://github.com/dao-xyz/peerbit/compare/document-v9.5.1...document-v9.5.2) (2025-04-28)
 
 
