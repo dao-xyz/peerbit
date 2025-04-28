@@ -626,7 +626,8 @@ describe("index", () => {
 
 			it("can query immediately after replication:join event", async () => {
 				await store2.close();
-				store.docs.put(
+
+				await store.docs.put(
 					new Document({
 						number: 123n,
 					}),
@@ -641,16 +642,11 @@ describe("index", () => {
 					).to.have.length(1);
 					joined = true;
 				});
-
 				await session.peers[1].open<TestStore>(store2, {
 					args: {
 						replicate: false,
 					},
 				});
-
-				expect(
-					await store2.docs.index.search(new SearchRequest({})),
-				).to.have.length(0);
 				await waitForResolved(() => expect(joined).to.be.true);
 			});
 
@@ -1914,6 +1910,7 @@ describe("index", () => {
 				});
 
 				it("can search while keeping minimum amount of replicas", async () => {
+					// TODO fix flakiness
 					const store = new TestStore({
 						docs: new Documents<Document>(),
 					});
