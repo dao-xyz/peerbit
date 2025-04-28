@@ -26,8 +26,7 @@ import {
 	type ReplicationDomain,
 	SharedLog,
 } from "@peerbit/shared-log";
-import { SilentDelivery } from "@peerbit/stream-interface";
-import { DataMessage } from "@peerbit/stream-interface";
+import { DataMessage, SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
@@ -820,15 +819,13 @@ export class DocumentIndex<
 	): Promise<types.Results<RT>[] | undefined> {
 		let coercedOptions = options;
 		if (options?.remote && typeof options.remote !== "boolean") {
-			{
-				coercedOptions = {
-					...options,
-					remote: {
-						...options.remote,
-						strategy: options.remote?.strategy ?? "fallback",
-					},
-				};
-			}
+			coercedOptions = {
+				...options,
+				remote: {
+					...options.remote,
+					strategy: options.remote?.strategy ?? "fallback",
+				},
+			};
 		} else if (options?.remote === undefined) {
 			coercedOptions = {
 				...options,

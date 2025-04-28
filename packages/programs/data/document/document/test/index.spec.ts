@@ -4294,9 +4294,7 @@ describe("index", () => {
 			const sentData: RPCMessage[] = [];
 			store.node.services.pubsub.addEventListener("publish", (evt) => {
 				if (evt.detail.data.topics.includes(store.docs.index._query.topic)) {
-					{
-						sentData.push(deserialize(evt.detail.data.data, RPCMessage));
-					}
+					sentData.push(deserialize(evt.detail.data.data, RPCMessage));
 				}
 			});
 

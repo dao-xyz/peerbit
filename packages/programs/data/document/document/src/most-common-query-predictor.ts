@@ -1,6 +1,6 @@
 import { type AbstractType, deserialize, serialize } from "@dao-xyz/borsh";
-import { PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
-import * as types from "@peerbit/document-interface";
+import { type PublicSignKey, randomBytes, toBase64 } from "@peerbit/crypto";
+import type * as types from "@peerbit/document-interface";
 
 /* ───────────────────── helpers ───────────────────── */
 
@@ -48,7 +48,7 @@ export default class MostCommonQueryPredictor implements QueryPredictor {
 
 	/**
 	 * predicted:
-	 *   requestKey  →  Map<peerHash, timestamp>
+	 * requestKey  →  Map<peerHash, timestamp>
 	 */
 	private readonly predicted = new Map<string, Map<string, number>>();
 
@@ -59,7 +59,6 @@ export default class MostCommonQueryPredictor implements QueryPredictor {
 	) {}
 
 	/* ───────── housekeeping ───────── */
-
 	private cleanupQueries(now: number) {
 		for (const [key, stats] of this.queries) {
 			if (now - stats.lastSeen > this.ttl) {
