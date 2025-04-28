@@ -52,6 +52,8 @@ describe("load", function () {
 	});
 
 	it("load after prune", async () => {
+		// TODO fix test flakiness
+
 		session = await TestSession.connected(2, [
 			{
 				directory: "./tmp/shared-log/load-after-prune/" + uuid(),
