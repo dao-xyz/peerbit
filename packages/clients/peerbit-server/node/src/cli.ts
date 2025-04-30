@@ -1130,6 +1130,25 @@ export const cli = async (args?: string[]) => {
 										},
 									})
 									.command({
+										command: "versions",
+										describe:
+											"Print <pkg>@<version> for every dependency installed on the target node",
+
+										handler: async (args) => {
+											for (const api of apis) {
+												const packageWithVersion: Record<string, string> =
+													await api.api.dependency.versions();
+
+												for (const [packageName, version] of Object.entries(
+													packageWithVersion,
+												)) {
+													api.log(`${packageName}@${version}`);
+												}
+											}
+										},
+									})
+
+									.command({
 										command: "restart",
 										describe: "Restart the server",
 										handler: async () => {

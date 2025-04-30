@@ -15,7 +15,7 @@ import {
 	BOOTSTRAP_PATH,
 	INSTALL_PATH,
 	LOCAL_API_PORT,
-	LOG_PATH, // <-- Added the log route constant
+	LOG_PATH,
 	PEER_ID_PATH,
 	PROGRAMS_PATH,
 	PROGRAM_PATH,
@@ -24,6 +24,7 @@ import {
 	RESTART_PATH,
 	STOP_PATH,
 	TRUST_PATH,
+	VERSIONS_PATH,
 } from "./routes.js";
 import { signRequest } from "./signed-request.js";
 import type { InstallDependency, StartProgram } from "./types.js";
@@ -256,6 +257,14 @@ export const createClient = async (
 					);
 				}
 				return resp.data;
+			},
+			versions: async (): Promise<Record<string, string>> => {
+				const resp = throwIfNot200(
+					await axiosInstance.get(endpoint + VERSIONS_PATH, {
+						validateStatus,
+					}),
+				);
+				return resp.data as Record<string, string>;
 			},
 		},
 		network: {

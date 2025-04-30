@@ -10,6 +10,7 @@ import {
 } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
 import { execSync, spawn } from "child_process";
+import { spawnSync } from "child_process";
 import { setMaxListeners } from "events";
 import fs from "fs";
 import http from "http";
@@ -37,6 +38,7 @@ import {
 	RESTART_PATH,
 	STOP_PATH,
 	TRUST_PATH,
+	VERSIONS_PATH,
 } from "./routes.js";
 import { Session } from "./session.js";
 import { getBody, verifyRequest } from "./signed-request.js";
@@ -52,6 +54,32 @@ const MAX_LISTENER_LIMIT = 1e5;
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const getInstallDir = (): string | null => {
+	return (
+		process.env.PEERBIT_MODULES_PATH ||
+		findPeerbitProgramFolder(__dirname) || // same util used by /install
+		null
+	);
+};
+// add next to execSync
+
+const listVersions = (dir: string): Record<string, string> => {
+	const proc = spawnSync("npm", ["ls", "--depth", "0", "--json", "--silent"], {
+		cwd: dir,
+		encoding: "utf8",
+	});
+
+	// npm may exit 1, but proc.stdout usually contains valid JSON
+	if (!proc.stdout) throw new Error(proc.stderr || "npm ls failed");
+
+	const tree = JSON.parse(proc.stdout);
+	const versions: Record<string, string> = {};
+	for (const [name, info] of Object.entries(tree.dependencies || {})) {
+		versions[name] = (info as any)?.version || "UNKNOWN";
+	}
+	return versions;
+};
 
 export const stopAndWait = (server: http.Server) => {
 	let closed = false;
@@ -496,9 +524,8 @@ export const startApiServer = async (
 								} else {
 									try {
 										// TODO do this without sudo. i.e. for servers provide arguments so that this app folder is writeable by default by the user
-										const installDir =
-											process.env.PEERBIT_MODULES_PATH ||
-											findPeerbitProgramFolder(__dirname);
+										const installDir = getInstallDir();
+
 										let permission = "";
 										if (!installDir) {
 											res.writeHead(400);
@@ -565,6 +592,31 @@ export const startApiServer = async (
 								break;
 							}
 						}
+					} else if (req.url.startsWith(VERSIONS_PATH)) {
+						if (req.method === "GET") {
+							try {
+								const installDir = getInstallDir();
+								if (!installDir) {
+									res.writeHead(400);
+									res.end("Cannot determine install directory");
+									return;
+								}
+
+								const versions = listVersions(installDir);
+
+								res.setHeader("Content-Type", "application/json");
+								res.writeHead(200);
+								res.end(JSON.stringify(versions, null, 2));
+							} catch (err) {
+								console.error("Failed to list versions:", err);
+								res.writeHead(500);
+								res.end("Error fetching versions");
+							}
+						} else {
+							r404();
+						}
+
+						/* keep the remaining else-if blocks (PEER_ID_PATH, etc.) unchanged */
 					} else if (req.url.startsWith(BOOTSTRAP_PATH)) {
 						switch (req.method) {
 							case "POST":
