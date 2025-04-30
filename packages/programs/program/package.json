@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/program",
-	"version": "5.2.10",
+	"version": "5.2.11",
 	"description": "Program interface",
 	"sideEffects": false,
 	"type": "module",
@@ -60,7 +60,7 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
 		"@peerbit/crypto": "2.3.8",
-		"@peerbit/keychain": "^1.0.27",
+		"@peerbit/keychain": "^1.0.28",
 		"@peerbit/blocks-interface": "^1.4.4",
 		"@peerbit/pubsub-interface": "^4.0.1",
 		"@peerbit/any-store-interface": "^1.0.0",
