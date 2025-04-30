@@ -9,8 +9,7 @@ import {
 	getProgramFromVariants,
 } from "@peerbit/program";
 import { waitFor } from "@peerbit/time";
-import { execSync, spawn } from "child_process";
-import { spawnSync } from "child_process";
+import { execSync, spawn, spawnSync } from "child_process";
 import { setMaxListeners } from "events";
 import fs from "fs";
 import http from "http";
@@ -52,9 +51,6 @@ import type {
 
 const MAX_LISTENER_LIMIT = 1e5;
 
-// eslint-disable-next-line @typescript-eslint/naming-convention
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const getInstallDir = (): string | null => {
 	return (
 		process.env.PEERBIT_MODULES_PATH ||
@@ -62,6 +58,24 @@ const getInstallDir = (): string | null => {
 		null
 	);
 };
+
+// eslint-disable-next-line @typescript-eslint/naming-convention
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const extraNodePath = () => {
+	const installDir = getInstallDir();
+	return installDir ? path.join(installDir, "node_modules") : undefined;
+};
+const extra = extraNodePath();
+if (extra) {
+	process.env.NODE_PATH = process.env.NODE_PATH
+		? process.env.NODE_PATH + path.delimiter + extra
+		: extra;
+
+	// always re-parse NODE_PATH for *this* process
+	((await import("module")).default as any)["_initPaths"]();
+}
+
 // add next to execSync
 
 const listVersions = (dir: string): Record<string, string> => {
@@ -260,24 +274,36 @@ export const startApiServer = async (
 	const port = properties?.port ?? LOCAL_API_PORT;
 
 	const restart = async () => {
-		await client.stop();
-		await stopAndWait(server);
-
-		// We filter out the reset command, since restarting means that we want to resume something
-		spawn(
-			process.argv.shift()!,
-			[
-				...process.execArgv,
-				...process.argv.filter((x) => x !== "--reset" && x !== "-r"),
-			],
-			{
-				cwd: process.cwd(),
-				detached: true,
-				stdio: "inherit",
-				gid: process.getgid!(),
-			},
+		console.log(
+			"Process will be lost during restart. Please find it using a process monitor. Or find it from the port e.g. 'lsof -i tcp:8001'",
 		);
-		process.exit(0);
+		process.nextTick(async () => {
+			await client.stop();
+			await stopAndWait(server);
+
+			// We filter out the reset command, since restarting means that we want to resume something
+			spawn(
+				process.argv.shift()!,
+				[
+					...process.execArgv,
+					...process.argv.filter((x) => x !== "--reset" && x !== "-r"),
+				],
+				{
+					cwd: process.cwd(),
+					detached: true,
+					stdio: "inherit",
+					gid: process.getgid!(),
+					env: {
+						...process.env,
+						NODE_PATH:
+							(process.env.NODE_PATH
+								? process.env.NODE_PATH + path.delimiter
+								: "") + (extraNodePath() ?? ""),
+					},
+				},
+			);
+			process.exit(0);
+		});
 	};
 	if (!client.peerId.equals(await client.identity.publicKey.toPeerId())) {
 		throw new Error("Expecting node identity to equal peerId");
