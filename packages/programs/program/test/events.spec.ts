@@ -37,7 +37,7 @@ describe("events", () => {
 			leaveEvents.push(event.detail.hashcode());
 		});
 
-		await client2.open(db1.clone());
+		const db2 = await client2.open(db1.clone());
 
 		await client1.dial(client2.getMultiaddrs());
 
@@ -52,7 +52,53 @@ describe("events", () => {
 		expect(joinEvents).to.have.length(1);
 		expect(leaveEvents).to.have.length(0);
 
-		await client2.stop();
+		await db2.close();
+
+		await waitForResolved(() =>
+			expect(joinEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
+		);
+		await waitForResolved(() =>
+			expect(leaveEvents).to.deep.equal([
+				client2.identity.publicKey.hashcode(),
+			]),
+		);
+
+		await delay(1000); // allow extra events for additional events to be processed
+		// but no change should be observerd
+		expect(joinEvents).to.have.length(1);
+		expect(leaveEvents).to.have.length(1);
+	});
+
+	it("emit leaves event when one of the subprograms is left", async () => {
+		const db1 = await client1.open(new TestProgramWithTopics());
+		expect(await client1.open(db1)).equal(db1);
+
+		let joinEvents: string[] = [];
+		db1.events.addEventListener("join", (event) => {
+			joinEvents.push(event.detail.hashcode());
+		});
+
+		let leaveEvents: string[] = [];
+		db1.events.addEventListener("leave", (event) => {
+			leaveEvents.push(event.detail.hashcode());
+		});
+
+		const db2 = await client2.open(db1.clone());
+
+		await client1.dial(client2.getMultiaddrs());
+
+		await waitForResolved(() =>
+			expect(joinEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
+		);
+		await waitForResolved(() => expect(leaveEvents).to.have.length(0));
+
+		await delay(1000); // allow extra events for additional events to be processed
+
+		// but no change should be observerd
+		expect(joinEvents).to.have.length(1);
+		expect(leaveEvents).to.have.length(0);
+
+		await db2.subprogram.close();
 
 		await waitForResolved(() =>
 			expect(joinEvents).to.deep.equal([client2.identity.publicKey.hashcode()]),
@@ -111,6 +157,10 @@ describe("events", () => {
 		await client1.dial(client2.getMultiaddrs());
 		await delay(3e3);
 		expect(joinEvents).to.have.length(0);
+
+		await client2.stop();
+		await delay(2e3);
+		expect(leaveEvents).to.have.length(0);
 	});
 
 	it("only emits join/leave events if actually subscribing to something", async () => {
@@ -150,6 +200,8 @@ describe("events", () => {
 		await client1.dial(client2.getMultiaddrs());
 		await delay(3e3);
 		expect(joinEvents).to.have.length(0);
+		await delay(2e3);
+		expect(leaveEvents).to.have.length(0);
 	});
 
 	it("join/leave  multiple times", async () => {
@@ -195,7 +247,9 @@ describe("events", () => {
 
 		await peer2.open(p2);
 
-		expect(joinEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]);
+		await waitForResolved(() =>
+			expect(joinEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]),
+		);
 		expect(joinEvents2).to.be.empty;
 
 		await peer2.services.pubsub.requestSubscribers(p.getTopics()[0]);
@@ -207,7 +261,9 @@ describe("events", () => {
 
 		await p2.close();
 
-		expect(leaveEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]);
+		await waitForResolved(() =>
+			expect(leaveEvents).to.deep.equal([peer2.identity.publicKey.hashcode()]),
+		);
 		expect(leaveEvents2).to.be.empty;
 	});
 

@@ -316,15 +316,22 @@ export abstract class Program<
 		}
 
 		// if subscribing not subscribing to any topics, emit "leave" event
+		let hasAllTopics = true;
 		for (const topic of allTopics) {
 			if (
-				(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
+				!(await this.node.services.pubsub.getSubscribers(topic))?.find((x) =>
 					s.from.equals(x),
 				)
 			) {
-				return;
+				hasAllTopics = false;
+				break;
 			}
 		}
+
+		if (hasAllTopics) {
+			return; // still here!?
+		}
+
 		if (!this.emittedEventsFor.has(s.from.hashcode())) {
 			return;
 		}
