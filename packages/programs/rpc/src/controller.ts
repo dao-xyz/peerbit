@@ -112,11 +112,13 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	}
 
 	private async _close(from?: Program): Promise<void> {
-		await this.node.services.pubsub.unsubscribe(this.topic);
-		await this.node.services.pubsub.removeEventListener(
-			"data",
-			this._onMessageBinded,
-		);
+		if (this._subscribed) {
+			await this.node.services.pubsub.unsubscribe(this.topic);
+			await this.node.services.pubsub.removeEventListener(
+				"data",
+				this._onMessageBinded,
+			);
+		}
 		this._subscribed = false;
 	}
 	public async close(from?: Program): Promise<boolean> {
