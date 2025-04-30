@@ -1,5 +1,6 @@
 /* eslint-env mocha */
 import { field } from "@dao-xyz/borsh";
+import { ready } from "@peerbit/crypto";
 import { Compare, IntegerCompare, id } from "@peerbit/indexer-interface";
 import type { IterateOptions } from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
@@ -62,6 +63,10 @@ const waitForWarmEntries = async (db: CachedIndex<any>, n: number) => {
 /* ---------------------------------------------------------------- tests */
 
 describe("CachedIndex iterator cache", () => {
+	before(async () => {
+		await ready;
+	});
+
 	it("switches seamlessly from prefetched to underlying iterator", async () => {
 		const size = 180;
 		const db = await makeDb(size, {
