@@ -48,6 +48,8 @@ import type {
 	StartProgram,
 } from "./types.js";
 
+const MAX_LISTENER_LIMIT = 1e5;
+
 // eslint-disable-next-line @typescript-eslint/naming-convention
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -692,8 +694,8 @@ export const startApiServer = async (
 		};
 	};
 
-	setMaxListeners(Infinity); // TODO make this better (lower and large enough)
-	process.setMaxListeners(Infinity); // TODO make this better (lower and large enough)
+	setMaxListeners(MAX_LISTENER_LIMIT); // TODO make this better (lower and large enough)
+	process.setMaxListeners(MAX_LISTENER_LIMIT); // TODO make this better (lower and large enough)
 
 	const server = http.createServer(endpoints(client));
 	server.listen(port);
