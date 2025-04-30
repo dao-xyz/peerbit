@@ -216,10 +216,10 @@ describe("pubsub", function () {
 			streams[0].stream.unsubscribe(TOPIC_2);
 
 			await waitForResolved(() =>
-				expect(subscriptions).to.deep.eq([[TOPIC, TOPIC_2]]),
+				expect(unsubscription).to.deep.eq([[TOPIC, TOPIC_2]]),
 			);
 			await delay(1e3);
-			expect(subscriptions).to.deep.eq([[TOPIC, TOPIC_2]]);
+			expect(unsubscription).to.deep.eq([[TOPIC, TOPIC_2]]);
 		});
 
 		it("unsubscribe cancels subscribe", async () => {

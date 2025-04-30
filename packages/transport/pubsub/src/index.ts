@@ -192,6 +192,7 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			throw new NotStartedError();
 		}
 
+		let topicsToUnsubscribe: string[] = [];
 		for (const { key: topic, counter } of topics) {
 			if (counter <= 0) {
 				continue;
@@ -218,29 +219,29 @@ export class DirectSub extends DirectStream<PubSubEvents> implements PubSub {
 			}
 
 			if (!subscriptions.counter || options?.force) {
-				await this.publishMessage(
-					this.publicKey,
-					await new DataMessage({
-						header: new MessageHeader({
-							mode: new AnyWhere(), // TODO make this better
-							session: this.session,
-							priority: 1,
-						}),
-						data: toUint8Array(
-							new Unsubscribe({
-								topics: [topic],
-							}).bytes(),
-						),
-					}).sign(this.sign),
-				);
-
+				topicsToUnsubscribe.push(topic);
 				this.subscriptions.delete(topic);
 				this.topics.delete(topic);
 				this.topicsToPeers.delete(topic);
-
-				return true;
 			}
-			return false;
+		}
+
+		if (topicsToUnsubscribe.length > 0) {
+			await this.publishMessage(
+				this.publicKey,
+				await new DataMessage({
+					header: new MessageHeader({
+						mode: new AnyWhere(), // TODO make this better
+						session: this.session,
+						priority: 1,
+					}),
+					data: toUint8Array(
+						new Unsubscribe({
+							topics: topicsToUnsubscribe,
+						}).bytes(),
+					),
+				}).sign(this.sign),
+			);
 		}
 	}
 
