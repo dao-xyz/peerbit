@@ -452,6 +452,22 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.4.1](https://github.com/dao-xyz/peerbit/compare/server-v5.4.0...server-v5.4.1) (2025-04-30)
+
+
+### Bug Fixes
+
+* handle NODE_PATH on restart ([17866d1](https://github.com/dao-xyz/peerbit/commit/17866d10f04fbff2eac2ed453c891d13ef0477d0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.35 to 4.1.36
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.45 to 2.1.46
+
 ## [5.4.0](https://github.com/dao-xyz/peerbit/compare/server-v5.3.2...server-v5.4.0) (2025-04-30)
 
 

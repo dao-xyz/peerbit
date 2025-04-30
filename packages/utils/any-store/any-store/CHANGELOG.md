@@ -33,6 +33,13 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
 
+## [2.1.10](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.9...any-store-v2.1.10) (2025-04-30)
+
+
+### Bug Fixes
+
+* types ([a762412](https://github.com/dao-xyz/peerbit/commit/a7624121bb0d2af9801ce07f1ce6dd4d372b8018))
+
 ## [2.1.9](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.8...any-store-v2.1.9) (2025-04-19)
 
 

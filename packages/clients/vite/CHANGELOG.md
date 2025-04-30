@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.25](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.24...vite-v1.0.25) (2025-04-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/any-store bumped from 2.1.9 to 2.1.10
+
 ## [1.0.24](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.23...vite-v1.0.24) (2025-04-28)
 
 
