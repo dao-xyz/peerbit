@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/proxy",
-	"version": "5.2.10",
+	"version": "5.2.11",
 	"description": "Peerbit proxy host/server",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -51,13 +51,13 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@peerbit/program": "^5.2.9",
+		"@peerbit/program": "^5.2.10",
 		"@peerbit/any-store-interface": "^1.0.0",
 		"@peerbit/indexer-simple": "^1.1.14",
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.1.44"
+		"@peerbit/test-utils": "2.1.45"
 	},
 	"scripts": {
 		"clean": "aegir clean",

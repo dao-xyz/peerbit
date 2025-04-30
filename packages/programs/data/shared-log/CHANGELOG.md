@@ -389,6 +389,19 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.2...shared-log-v11.1.3) (2025-04-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.9 to 5.2.10
+    * @peerbit/log bumped from 4.0.56 to 4.0.57
+    * @peerbit/rpc bumped from 5.3.1 to 5.3.2
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.44 to ^2.1.45
+
 ## [11.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.1...shared-log-v11.1.2) (2025-04-28)
 
 

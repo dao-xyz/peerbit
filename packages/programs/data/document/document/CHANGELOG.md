@@ -456,6 +456,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.5.4](https://github.com/dao-xyz/peerbit/compare/document-v9.5.3...document-v9.5.4) (2025-04-30)
+
+
+### Bug Fixes
+
+* don't return PredictedSearchQuery if not replicating ([113a98e](https://github.com/dao-xyz/peerbit/commit/113a98e0c8dbe7961ea4edb12068b548517b92a4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.9 to 5.2.10
+    * @peerbit/rpc bumped from 5.3.1 to 5.3.2
+    * @peerbit/shared-log bumped from 11.1.2 to 11.1.3
+    * @peerbit/document-interface bumped from ^2.1.2 to ^2.1.3
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.44 to 2.1.45
+
 ## [9.5.3](https://github.com/dao-xyz/peerbit/compare/document-v9.5.2...document-v9.5.3) (2025-04-28)
 
 

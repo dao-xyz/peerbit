@@ -452,6 +452,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.4.0](https://github.com/dao-xyz/peerbit/compare/server-v5.3.2...server-v5.4.0) (2025-04-30)
+
+
+### Features
+
+* add versions endpoint ([951a98f](https://github.com/dao-xyz/peerbit/commit/951a98fa1e38503d9c1da2506ef2aacac5eef96a))
+
+
+### Bug Fixes
+
+* set max listener limit to 1e5 ([d423a3f](https://github.com/dao-xyz/peerbit/commit/d423a3f2a24b302fd5eb2f138e6e6b0d12edb130))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.34 to 4.1.35
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.44 to 2.1.45
+
 ## [5.3.2](https://github.com/dao-xyz/peerbit/compare/server-v5.3.1...server-v5.3.2) (2025-04-28)
 
 
