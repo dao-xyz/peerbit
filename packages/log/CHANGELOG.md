@@ -368,6 +368,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.57](https://github.com/dao-xyz/peerbit/compare/log-v4.0.56...log-v4.0.57) (2025-04-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.44 to 2.1.45
+
 ## [4.0.56](https://github.com/dao-xyz/peerbit/compare/log-v4.0.55...log-v4.0.56) (2025-04-28)
 
 

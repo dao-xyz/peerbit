@@ -188,6 +188,13 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [4.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.3...pubsub-v4.0.4) (2025-04-30)
+
+
+### Bug Fixes
+
+* correctly handle debounced unsubscription event when multiple topics ([3ef611f](https://github.com/dao-xyz/peerbit/commit/3ef611f3520d7c25030f8559f4bf3c803e9ac14b))
+
 ## [4.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.2...pubsub-v4.0.3) (2025-04-28)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/identity-access-controller",
-	"version": "5.0.72",
+	"version": "5.0.73",
 	"description": "Access controller that operates on a DB",
 	"sideEffects": false,
 	"type": "module",
@@ -59,11 +59,11 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/document": "9.5.3",
-		"@peerbit/trusted-network": "4.1.89"
+		"@peerbit/document": "9.5.4",
+		"@peerbit/trusted-network": "4.1.90"
 	},
 	"devDependencies": {
 		"@peerbit/time": "^2.1.0",
-		"@peerbit/test-utils": "^2.1.44"
+		"@peerbit/test-utils": "^2.1.45"
 	}
 }

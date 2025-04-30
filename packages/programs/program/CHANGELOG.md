@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.10](https://github.com/dao-xyz/peerbit/compare/program-v5.2.9...program-v5.2.10) (2025-04-30)
+
+
+### Bug Fixes
+
+* handle partial program leave events correctly ([9b04735](https://github.com/dao-xyz/peerbit/commit/9b0473500430406578df96919aecc0acad9f2380))
+
 ## [5.2.9](https://github.com/dao-xyz/peerbit/compare/program-v5.2.8...program-v5.2.9) (2025-04-28)
 
 
