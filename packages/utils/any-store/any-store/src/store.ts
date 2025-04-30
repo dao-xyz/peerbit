@@ -7,7 +7,7 @@ import { check } from 'diskusage' */
 
 export const createStore = (directory?: string) => {
 	return directory
-		? new LevelStore(new Level(directory, { valueEncoding: "view" }))
+		? new LevelStore(new Level(directory, { valueEncoding: "view" }) as any) // TODO types? hooks does not seem to be updated
 		: new MemoryStore();
 };
 

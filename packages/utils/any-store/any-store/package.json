@@ -70,7 +70,7 @@
 		"@peerbit/any-store-opfs": "^1.0.9",
 		"@peerbit/any-store-interface": "^1.0.0",
 		"@peerbit/time": "2.1.0",
-		"level": "^8.0.0",
+		"level": "^10.0.0",
 		"uuid": "^10.0.0"
 	},
 	"devDependencies": {

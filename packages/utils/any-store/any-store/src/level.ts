@@ -2,12 +2,27 @@ import { type AnyStore } from "@peerbit/any-store-interface";
 import { type AbstractLevel } from "abstract-level";
 import { ClassicLevel } from "classic-level";
 
-const isNotFoundError = (err: any) =>
-	err.toString().indexOf("NotFoundError: Key not found in database") === -1 &&
-	err.toString().indexOf("NotFound") === -1;
+type GetFn = (
+	key: string,
+) => Uint8Array | undefined | Promise<Uint8Array | undefined>;
+const getOrGetSync = (level: AbstractLevel<any, any, any>): GetFn => {
+	const canGetSync = (level.supports as any)["getSync"] !== false;
+	if (!canGetSync) {
+		return (key: string): Promise<Uint8Array | undefined> => {
+			return level.get(key);
+		};
+	} else {
+		return (key: string): Uint8Array | undefined => {
+			return level.getSync(key);
+		};
+	}
+};
 
 export class LevelStore implements AnyStore {
-	constructor(readonly store: AbstractLevel<any, any, any>) {}
+	private getFn: GetFn;
+	constructor(readonly store: AbstractLevel<any, any, any>) {
+		this.getFn = getOrGetSync(store);
+	}
 
 	status() {
 		return this.store.status;
@@ -36,19 +51,8 @@ export class LevelStore implements AnyStore {
 		}
 	}
 
-	async get(key: string): Promise<Uint8Array | undefined> {
-		return new Promise<Uint8Array | undefined>((resolve, reject) => {
-			this.store.get(key, (err, result) => {
-				if (err) {
-					// Ignore error if key was not found
-					if (isNotFoundError(err)) {
-						return reject(err);
-					}
-					resolve(undefined);
-				}
-				resolve(result);
-			});
-		});
+	get(key: string) {
+		return this.getFn(key);
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
@@ -77,17 +81,7 @@ export class LevelStore implements AnyStore {
 			throw new Error("Cache store not open: " + this.store.status);
 		}
 
-		return new Promise<void>((resolve, reject) => {
-			this.store.del(key, (err) => {
-				if (err) {
-					// Ignore error if key was not found
-					if (isNotFoundError(err)) {
-						return reject(err);
-					}
-				}
-				resolve();
-			});
-		});
+		await this.store.del(key);
 	}
 
 	async size(): Promise<number> {

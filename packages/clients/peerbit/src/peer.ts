@@ -1,3 +1,4 @@
+import { LevelDatastore } from "@dao-xyz/datastore-level";
 import { privateKeyFromRaw } from "@libp2p/crypto/keys";
 import type { PeerId } from "@libp2p/interface";
 import {
@@ -27,7 +28,6 @@ import {
 	ProgramHandler,
 } from "@peerbit/program";
 import { DirectSub } from "@peerbit/pubsub";
-import { LevelDatastore } from "datastore-level";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";

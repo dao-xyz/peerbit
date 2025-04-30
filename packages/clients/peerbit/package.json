@@ -71,15 +71,15 @@
 		"@peerbit/blocks": "^3.0.0",
 		"@peerbit/indexer-simple": "^1.1.14",
 		"@peerbit/indexer-sqlite3": "^1.2.19",
-		"datastore-level": "^11.0.1",
+		"@dao-xyz/datastore-level": "^11.1.0",
 		"@chainsafe/libp2p-yamux": "^7.0.1",
 		"@libp2p/webrtc": "^5.2.10",
 		"@libp2p/websockets": "^9.2.9",
 		"@libp2p/identify": "^3.0.28",
 		"@libp2p/circuit-relay-v2": "^3.2.9",
 		"@libp2p/tcp": "^10.1.9",
-		"level": "^8.0.1",
-		"memory-level": "^1.0.0",
+		"level": "^10.0.0",
+		"memory-level": "^3.1.0",
 		"path-browserify": "^1.0.1"
 	},
 	"devDependencies": {
