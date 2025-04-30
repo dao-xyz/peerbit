@@ -536,6 +536,46 @@ export class DocumentIndex<
 			this._resolverProgramCache = new Map();
 		}
 
+		if (this.prefetch?.predictor) {
+			const predictor = this.prefetch.predictor;
+			this._joinListener = async (e: { detail: PublicSignKey }) => {
+				// on join we emit predicted search results before peers query us (to save latency but for the price of errornous bandwidth usage)
+
+				if ((await this._log.isReplicating()) === false) {
+					return;
+				}
+
+				// TODO
+				// it only makes sense for use to return predicted results if the peer is to choose us as a replicator
+				// so we need to calculate the cover set from the peers perspective
+
+				// create an iterator and send the peer the results
+				let request = predictor.predictedQuery(e.detail);
+
+				if (!request) {
+					return;
+				}
+				const results = await this.handleSearchRequest(request, {
+					from: e.detail,
+				});
+
+				if (results instanceof types.AbstractSearchResult) {
+					// start a resumable iterator for the peer
+					const query = new types.PredictedSearchRequest({
+						id: request.id,
+						request,
+						results,
+					});
+					await this._query.send(query, {
+						mode: new SilentDelivery({ to: [e.detail], redundancy: 1 }),
+					});
+				}
+			};
+
+			// we do this before _query.open so that we can receive the join event, even immediate ones
+			this._query.events.addEventListener("join", this._joinListener);
+		}
+
 		await this._query.open({
 			topic: sha256Base64Sync(
 				concat([this._log.log.id, fromString("/document")]),
@@ -659,34 +699,6 @@ export class DocumentIndex<
 				);
 				this._resolverProgramCache!.set(id.primitive, programValue.value as T);
 			}
-		}
-
-		if (this.prefetch?.predictor) {
-			const predictor = this.prefetch.predictor;
-			this._joinListener = async (e: { detail: PublicSignKey }) => {
-				// create an iterator and send the peer the results
-				let request = predictor.predictedQuery(e.detail);
-
-				if (!request) {
-					return;
-				}
-				const results = await this.handleSearchRequest(request, {
-					from: e.detail,
-				});
-
-				if (results instanceof types.AbstractSearchResult) {
-					// start a resumable iterator for the peer
-					const query = new types.PredictedSearchRequest({
-						id: request.id,
-						request,
-						results,
-					});
-					await this._query.send(query, {
-						mode: new SilentDelivery({ to: [e.detail], redundancy: 1 }),
-					});
-				}
-			};
-			this._query.events.addEventListener("join", this._joinListener);
 		}
 
 		return super.afterOpen();
