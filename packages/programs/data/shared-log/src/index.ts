@@ -62,6 +62,7 @@ import {
 	type DebouncedAccumulatorMap,
 	debouncedAccumulatorMap,
 } from "./debounce.js";
+import { NoPeersError } from "./errors.js";
 import {
 	EntryWithRefs,
 	ExchangeHeadsMessage,
@@ -157,6 +158,7 @@ export {
 	EntryReplicatedU32,
 	EntryReplicatedU64,
 	type CoverRange,
+	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn({ module: "shared-log" });
@@ -2963,7 +2965,16 @@ export class SharedLog<
 		roleAge?: number;
 		signal?: AbortSignal;
 		coverageThreshold?: number;
+		waitForNewPeers?: boolean;
 	}) {
+		// if no remotes, just return
+		const subscribers = await this.node.services.pubsub.getSubscribers(
+			this.rpc.topic,
+		);
+		if (!options?.waitForNewPeers && (subscribers?.length ?? 0) <= 1) {
+			throw new NoPeersError(this.rpc.topic);
+		}
+
 		let coverageThreshold = options?.coverageThreshold ?? 1;
 		let deferred = pDefer<void>();
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());

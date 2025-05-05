@@ -3,6 +3,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { v4 as uuid } from "uuid";
+import { NoPeersError } from "../src/errors.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("events", () => {
@@ -200,7 +201,7 @@ describe("events", () => {
 	});
 
 	describe("waitForReplicators", async () => {
-		it("times out", async () => {
+		it("times out immediately is offline", async () => {
 			session = await TestSession.connected(1);
 			const store = new EventStore();
 			const store1 = await session.peers[0].open(store, {
@@ -208,7 +209,35 @@ describe("events", () => {
 					replicate: false,
 				},
 			});
-			let timeout = 1e3;
+			let timeout = 1e4;
+			let t0 = Date.now();
+			await expect(
+				store1.log.waitForReplicators({
+					timeout,
+				}),
+			).to.be.eventually.rejectedWith(NoPeersError);
+			let t1 = Date.now();
+			expect(t1 - t0).to.be.lessThan(1e3); // "immediately"
+		});
+
+		it("times out after timeout if online", async () => {
+			session = await TestSession.connected(2);
+			const store = new EventStore();
+			const store1 = await session.peers[0].open(store, {
+				args: {
+					replicate: false,
+				},
+			});
+
+			const store2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+				},
+			});
+
+			await store1.log.waitFor(store2.log.node.identity.publicKey);
+
+			let timeout = 3e3;
 			let t0 = Date.now();
 			await expect(
 				store1.log.waitForReplicators({
@@ -216,7 +245,7 @@ describe("events", () => {
 				}),
 			).to.be.eventually.rejectedWith("Timeout");
 			let t1 = Date.now();
-			expect(t1 - t0).to.be.lessThan(timeout + 1e3); // + extra time
+			expect(t1 - t0).to.be.greaterThan(timeout);
 		});
 
 		it("will wait for role age", async () => {
@@ -233,6 +262,7 @@ describe("events", () => {
 			let t0 = Date.now();
 			await store1.log.waitForReplicators({
 				roleAge: waitForRoleAge,
+				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
 			});
 			let t1 = Date.now();
 			expect(t1 - t0).to.be.greaterThan(waitForRoleAge);
@@ -269,6 +299,7 @@ describe("events", () => {
 			await store1.log.waitForReplicators({
 				roleAge: waitForRoleAge,
 				timeout: 1e4,
+				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
 			});
 			let t1 = Date.now();
 			expect(t1 - t0).to.be.greaterThan(waitForRoleAge - 1);
@@ -277,7 +308,6 @@ describe("events", () => {
 
 		it("will wait joining replicator role age", async () => {
 			session = await TestSession.connected(2);
-
 			const store = new EventStore();
 			await session.peers[1].open(store.clone(), {
 				args: {
@@ -297,6 +327,7 @@ describe("events", () => {
 			let t0 = Date.now();
 			await store2.log.waitForReplicators({
 				roleAge: waitForRoleAge,
+				waitForNewPeers: true, // prevent waitForReplicators from resolving immediately
 			});
 
 			let t1 = Date.now();
