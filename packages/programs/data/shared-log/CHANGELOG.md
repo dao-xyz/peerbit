@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.5...shared-log-v11.2.0) (2025-05-08)
+
+
+### Features
+
+* rn 'sync' to 'keep', and filter entries using keep before pruning ([56eb14d](https://github.com/dao-xyz/peerbit/commit/56eb14dd9d95133cbb6f5ab587bfed5565b51713))
+
 ## [11.1.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.4...shared-log-v11.1.5) (2025-05-05)
 
 

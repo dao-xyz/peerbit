@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.6.0](https://github.com/dao-xyz/peerbit/compare/document-v9.5.6...document-v9.6.0) (2025-05-08)
+
+
+### Features
+
+* add keep property to allow filtering documents to keep without replicating. Passing value of 'self' will keep all entries created by self ([363580e](https://github.com/dao-xyz/peerbit/commit/363580e9dcb627eb47e9424bd52ff33116beb375))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 11.1.5 to 11.2.0
+
 ## [9.5.6](https://github.com/dao-xyz/peerbit/compare/document-v9.5.5...document-v9.5.6) (2025-05-05)
 
 
