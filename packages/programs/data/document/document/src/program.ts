@@ -5,7 +5,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { AccessError } from "@peerbit/crypto";
+import { AccessError, SignatureWithKey } from "@peerbit/crypto";
 import { ResultIndexedValue } from "@peerbit/document-interface";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
@@ -19,6 +19,7 @@ import {
 import { logger as loggerFn } from "@peerbit/logger";
 import { Program, type ProgramEvents } from "@peerbit/program";
 import {
+	type EntryReplicated,
 	type ReplicationDomain,
 	type SharedAppendOptions,
 	SharedLog,
@@ -108,7 +109,15 @@ export type SetupOptions<
 	};
 	compatibility?: 6 | 7;
 	domain?: (db: Documents<T, I, D>) => CustomDocumentDomain<InferR<D>>;
-} & Omit<SharedLogOptions<Operation, D, InferR<D>>, "compatibility" | "domain">;
+	keep?:
+		| ((
+				entry: ShallowOrFullEntry<Operation> | EntryReplicated<InferR<D>>,
+		  ) => Promise<boolean> | boolean)
+		| "self";
+} & Omit<
+	SharedLogOptions<Operation, D, InferR<D>>,
+	"compatibility" | "domain" | "keep"
+>;
 
 export type ExtractArgs<T> =
 	T extends ReplicationDomain<infer Args, any, any> ? Args : never;
@@ -164,6 +173,7 @@ export class Documents<
 
 		return value;
 	}
+	private keepCache: Set<string> | undefined = undefined;
 	async open(options: SetupOptions<T, I, D>) {
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
@@ -229,6 +239,42 @@ export class Documents<
 		}
 
 		this.domain = options.domain?.(this);
+
+		let keepFunction:
+			| ((
+					entry: ShallowOrFullEntry<Operation> | EntryReplicated<InferR<D>>,
+			  ) => Promise<boolean> | boolean)
+			| undefined;
+		if (options?.keep === "self") {
+			this.keepCache = new Set();
+			keepFunction = async (e) => {
+				if (this.keepCache?.has(e.hash)) {
+					return true;
+				}
+				let signatures: SignatureWithKey[] | undefined = undefined;
+				if (e instanceof Entry) {
+					signatures = e.signatures;
+				} else {
+					const entry = await this.log.log.get(e.hash);
+					signatures = entry?.signatures;
+				}
+
+				if (!signatures) {
+					return false;
+				}
+
+				for (const signature of signatures) {
+					if (signature.publicKey.equals(this.node.identity.publicKey)) {
+						this.keepCache?.add(e.hash);
+						return true;
+					}
+				}
+				return false; // TODO also cache this?
+			};
+		} else {
+			keepFunction = options?.keep;
+		}
+
 		await this.log.open({
 			encoding: BORSH_ENCODING_OPERATION,
 			canReplicate: options?.canReplicate,
@@ -241,6 +287,7 @@ export class Documents<
 				? (log: any) => options.domain!(this)
 				: undefined) as any, /// TODO types,
 			compatibility: logCompatiblity,
+			keep: keepFunction,
 		});
 	}
 
@@ -522,6 +569,7 @@ export class Documents<
 			},
 			replicate: options?.replicate,
 		});
+		this.keepCache?.add(appended.entry.hash);
 		return appended;
 	}
 
@@ -542,7 +590,9 @@ export class Documents<
 			throw new Error(`No entry with key '${key.primitive}' in the database`);
 		}
 
+		this.keepCache?.delete(existing.value.__context.head);
 		const entry = await this._resolveEntry(existing.context.head);
+
 		return this.log.append(
 			new DeleteOperation({
 				key,
@@ -743,7 +793,8 @@ export class Documents<
 			return one.length + left;
 		}
 
-		let totalHeadCount = await this.log.countHeads({ approximate: true });
+		let totalHeadCount = await this.log.countHeads({ approximate: true }); /* -
+			(this.keepCache?.size || 0); TODO adjust for keep fn */
 		let totalAssignedHeads = await this.log.countAssignedHeads({
 			strict: false,
 		});

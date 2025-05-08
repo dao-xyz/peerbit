@@ -2239,6 +2239,105 @@ describe("index", () => {
 					await waitForResolved(() => expect(joined).to.be.true);
 				});
 			});
+
+			describe("keep", () => {
+				let peersCount = 2;
+				before(async () => {
+					session = await TestSession.connected(peersCount);
+				});
+
+				after(async () => {
+					await session.stop();
+				});
+
+				it("will keep created by self even if not replicating", async () => {
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const store2 = await session.peers[1].open<TestStore>(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+							waitForPruneDelay: 0,
+							keep: "self",
+						},
+					});
+
+					await store2.docs.put(new Document({ id: "1" }));
+					await store2.docs.log.waitForReplicator();
+					await waitForResolved(async () =>
+						expect(await store.docs.index.getSize()).to.eq(1),
+					);
+					// wait for some time to really make sure pruning could have happen
+
+					await delay(5e3);
+
+					// still expect store2 to have the entry
+					await waitForResolved(async () =>
+						expect(await store2.docs.index.getSize()).to.eq(1),
+					);
+				});
+
+				it("will not keep if undefined", async () => {
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+						},
+					});
+
+					const store2 = await session.peers[1].open<TestStore>(store.clone(), {
+						args: {
+							replicate: {
+								factor: 0,
+							},
+							replicas: {
+								min: 1,
+							},
+							timeUntilRoleMaturity: 0,
+							waitForPruneDelay: 0,
+							keep: undefined,
+						},
+					});
+
+					await store2.docs.put(new Document({ id: "1" }));
+					await store2.docs.log.waitForReplicator();
+					await waitForResolved(async () =>
+						expect(await store.docs.index.getSize()).to.eq(1),
+					);
+
+					await waitForResolved(async () =>
+						expect(await store2.docs.index.getSize()).to.eq(0),
+					);
+				});
+
+				// Test fetching docs with keep flag, and log entries
+			});
 		});
 
 		describe("sort", () => {
