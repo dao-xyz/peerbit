@@ -62,7 +62,7 @@ export type Args<
 	timeUntilRoleMaturity?: number;
 	waitForPruneDelay?: number;
 	waitForReplicatorTimeout?: number;
-	sync?: (
+	keep?: (
 		entry: Entry<Operation<T>> | ShallowEntry | EntryReplicated<R>,
 	) => boolean;
 	canAppend?: CanAppend<Operation<T>>;
@@ -130,7 +130,7 @@ export class EventStore<
 			encoding: JSON_ENCODING,
 			timeUntilRoleMaturity: properties?.timeUntilRoleMaturity ?? 3000,
 			waitForPruneDelay: properties?.waitForPruneDelay ?? 300,
-			sync: properties?.sync,
+			keep: properties?.keep,
 			respondToIHaveTimeout: properties?.respondToIHaveTimeout,
 			distributionDebounceTime: 50, // to make tests fast
 			domain: properties?.domain ?? properties?.setup?.domain,

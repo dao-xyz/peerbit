@@ -84,7 +84,7 @@ describe("observer", () => {
 		const observer = await session.peers[1].open(createStore(), {
 			args: {
 				replicate: false,
-				sync: () => true,
+				keep: () => true,
 			},
 		});
 		await waitForResolved(async () =>

@@ -349,7 +349,9 @@ export type SharedLogOptions<
 	replicas?: ReplicationLimitsOptions;
 	respondToIHaveTimeout?: number;
 	canReplicate?: (publicKey: PublicSignKey) => Promise<boolean> | boolean;
-	sync?: (entry: ShallowOrFullEntry<T> | EntryReplicated<R>) => boolean;
+	keep?: (
+		entry: ShallowOrFullEntry<T> | EntryReplicated<R>,
+	) => Promise<boolean> | boolean;
 	syncronizer?: SynchronizerConstructor<R>;
 	timeUntilRoleMaturity?: number;
 	waitForReplicatorTimeout?: number;
@@ -492,7 +494,9 @@ export class SharedLog<
 	private openTime!: number;
 	private oldestOpenTime!: number;
 
-	private sync?: (entry: ShallowOrFullEntry<T> | EntryReplicated<R>) => boolean;
+	private keep?: (
+		entry: ShallowOrFullEntry<T> | EntryReplicated<R>,
+	) => Promise<boolean> | boolean;
 
 	// A fn that we can call many times that recalculates the participation role
 	private rebalanceParticipationDebounced:
@@ -1444,6 +1448,18 @@ export class SharedLog<
 		return set;
 	}
 
+	private async pruneDebouncedFnAddIfNotKeeping(args: {
+		key: string;
+		value: {
+			entry: Entry<T> | ShallowEntry | EntryReplicated<R>;
+			leaders: Map<string, any>;
+		};
+	}) {
+		if (!this.keep || !(await this.keep(args.value.entry))) {
+			return this.pruneDebouncedFn.add(args);
+		}
+	}
+
 	async append(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
@@ -1552,7 +1568,7 @@ export class SharedLog<
 		}
 
 		if (!isLeader) {
-			this.pruneDebouncedFn.add({
+			this.pruneDebouncedFnAddIfNotKeeping({
 				key: result.entry.hash,
 				value: { entry: result.entry, leaders },
 			});
@@ -1613,7 +1629,7 @@ export class SharedLog<
 
 		this._closeController = new AbortController();
 		this._isTrustedReplicator = options?.canReplicate;
-		this.sync = options?.sync;
+		this.keep = options?.keep;
 		this.pendingMaturity = new Map();
 
 		const id = sha256Base64Sync(this.log.id);
@@ -2311,7 +2327,7 @@ export class SharedLog<
 							}
 
 							outer: for (const entry of entries) {
-								if (isLeader || this.sync?.(entry.entry)) {
+								if (isLeader || (await this.keep?.(entry.entry))) {
 									toMerge.push(entry.entry);
 								} else {
 									for (const ref of entry.gidRefrences) {
@@ -2340,7 +2356,7 @@ export class SharedLog<
 
 								toDelete?.map((x) =>
 									// TODO types
-									this.pruneDebouncedFn.add({
+									this.pruneDebouncedFnAddIfNotKeeping({
 										key: x.hash,
 										value: { entry: x, leaders: leaders as Map<string, any> },
 									}),
@@ -2366,7 +2382,7 @@ export class SharedLog<
 
 										if (!isLeader) {
 											for (const x of entries) {
-												this.pruneDebouncedFn.add({
+												this.pruneDebouncedFnAddIfNotKeeping({
 													key: x.entry.hash,
 													// TODO types
 													value: {
@@ -3784,12 +3800,10 @@ export class SharedLog<
 				);
 
 				if (!isLeader) {
-					if (!this.sync || this.sync(entryReplicated) === false) {
-						this.pruneDebouncedFn.add({
-							key: entryReplicated.hash,
-							value: { entry: entryReplicated, leaders: currentPeers },
-						});
-					}
+					this.pruneDebouncedFnAddIfNotKeeping({
+						key: entryReplicated.hash,
+						value: { entry: entryReplicated, leaders: currentPeers },
+					});
 
 					this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
 				} else {
