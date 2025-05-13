@@ -2987,7 +2987,9 @@ export class SharedLog<
 		const subscribers = await this.node.services.pubsub.getSubscribers(
 			this.rpc.topic,
 		);
-		if (!options?.waitForNewPeers && (subscribers?.length ?? 0) <= 1) {
+		let waitForNewPeers =
+			options?.waitForNewPeers || (await this.isReplicating()) === false;
+		if (!waitForNewPeers && (subscribers?.length ?? 0) <= 1) {
 			throw new NoPeersError(this.rpc.topic);
 		}
 

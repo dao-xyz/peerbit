@@ -201,12 +201,12 @@ describe("events", () => {
 	});
 
 	describe("waitForReplicators", async () => {
-		it("times out immediately is offline", async () => {
+		it("times out immediately is offline and replicating", async () => {
 			session = await TestSession.connected(1);
 			const store = new EventStore();
 			const store1 = await session.peers[0].open(store, {
 				args: {
-					replicate: false,
+					replicate: true,
 				},
 			});
 			let timeout = 1e4;
