@@ -785,6 +785,7 @@ export class Documents<
 								options?.approximate.eager) ||
 							false,
 					},
+					resolve: false,
 				},
 			);
 			const one = await iterator.next(1);
