@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.6.1](https://github.com/dao-xyz/peerbit/compare/document-v9.6.0...document-v9.6.1) (2025-05-13)
+
+
+### Bug Fixes
+
+* don't resolve when counting ([8d1952b](https://github.com/dao-xyz/peerbit/commit/8d1952b2263d590f0c1efd03e9153e4a41293106))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 11.2.0 to 11.2.1
+
 ## [9.6.0](https://github.com/dao-xyz/peerbit/compare/document-v9.5.6...document-v9.6.0) (2025-05-08)
 
 

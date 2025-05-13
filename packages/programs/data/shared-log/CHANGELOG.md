@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.2.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.0...shared-log-v11.2.1) (2025-05-13)
+
+
+### Bug Fixes
+
+* waitForReplicators wait for remote peers if not replicating by default ([719b001](https://github.com/dao-xyz/peerbit/commit/719b0011c7ae5973ebfc33121b521564bbf806ae))
+
 ## [11.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.5...shared-log-v11.2.0) (2025-05-08)
 
 
