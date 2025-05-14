@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.2.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.1...shared-log-v11.2.2) (2025-05-14)
+
+
+### Bug Fixes
+
+* don't deliver when missing to in set on append ([902158c](https://github.com/dao-xyz/peerbit/commit/902158c54b7dcbd15e23fff7c0815de1a5c11cc4))
+
 ## [11.2.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.0...shared-log-v11.2.1) (2025-05-13)
 
 
