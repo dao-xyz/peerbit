@@ -3042,16 +3042,12 @@ testSetups.forEach((setup) => {
 						await db1.add("hello" + i, { meta: { next: [] } });
 					}
 
-					try {
-						await waitForResolved(() =>
-							expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 30),
-						);
-						await waitForResolved(() =>
-							expect(db2.log.log.length).to.be.closeTo(entryCount / 2, 30),
-						);
-					} catch (error) {
-						throw error;
-					}
+					await waitForResolved(() =>
+						expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 30),
+					);
+					await waitForResolved(() =>
+						expect(db2.log.log.length).to.be.closeTo(entryCount / 2, 30),
+					);
 
 					/* 
 					// TODO assert findLeaders call count strict
