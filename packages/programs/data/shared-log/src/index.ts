@@ -40,7 +40,6 @@ import { RPC, type RequestContext } from "@peerbit/rpc";
 import {
 	AcknowledgeDelivery,
 	AnyWhere,
-	DeliveryMode,
 	NotStartedError,
 	SeekDelivery,
 	SilentDelivery,
@@ -1504,8 +1503,6 @@ export class SharedLog<
 
 		const result = await this.log.append(data, appendOptions);
 
-		let mode: DeliveryMode | undefined = undefined;
-
 		if (options?.replicate) {
 			await this.replicate(result.entry, { checkDuplicates: true });
 		}
@@ -1555,15 +1552,22 @@ export class SharedLog<
 						result.entry.meta.gid,
 						leaders.keys(),
 					);
-					mode = isLeader
-						? new SilentDelivery({ redundancy: 1, to: set })
-						: new AcknowledgeDelivery({ redundancy: 1, to: set });
+					let hasRemotePeers = set.has(this.node.identity.publicKey.hashcode())
+						? set.size > 1
+						: set.size > 0;
+					if (hasRemotePeers) {
+						this.rpc.send(message, {
+							mode: isLeader
+								? new SilentDelivery({ redundancy: 1, to: set })
+								: new AcknowledgeDelivery({ redundancy: 1, to: set }),
+						});
+					} else {
+						// no peers to send to
+					}
+				} else {
+					// TODO add options for waiting ?
+					this.rpc.send(message); // send to all participants
 				}
-
-				// TODO add options for waiting ?
-				this.rpc.send(message, {
-					mode,
-				});
 			}
 		}
 
