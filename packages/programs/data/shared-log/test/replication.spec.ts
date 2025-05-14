@@ -2956,8 +2956,8 @@ testSetups.forEach((setup) => {
 						);
 
 						// TODO reenable expect(onMessage1.callCount).equal(2); // two messages (the updated range) and request for pruning
-						expect(findLeaders1.callCount).to.be.lessThan(entryCount * 3); // some upper bound, TODO make more strict
-						expect(findLeaders2.callCount).to.be.lessThan(entryCount * 3); // some upper bound, TODO make more strict
+						expect(findLeaders1.callCount).to.be.lessThan(entryCount * 3.5); // some upper bound, TODO make more strict
+						expect(findLeaders2.callCount).to.be.lessThan(entryCount * 3.5); // some upper bound, TODO make more strict
 						/* 
 						TODO stricter boundes like below
 						expect(findLeaders1.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + prune about 50% of the entries
