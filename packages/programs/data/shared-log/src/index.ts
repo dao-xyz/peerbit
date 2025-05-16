@@ -2991,14 +2991,14 @@ export class SharedLog<
 		const subscribers = await this.node.services.pubsub.getSubscribers(
 			this.rpc.topic,
 		);
-		let waitForNewPeers =
-			options?.waitForNewPeers || (await this.isReplicating()) === false;
-		if (!waitForNewPeers && (subscribers?.length ?? 0) <= 1) {
+		let waitForNewPeers = options?.waitForNewPeers;
+		if (!waitForNewPeers && (subscribers?.length ?? 0) === 0) {
 			throw new NoPeersError(this.rpc.topic);
 		}
 
 		let coverageThreshold = options?.coverageThreshold ?? 1;
 		let deferred = pDefer<void>();
+
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
 		const providedCustomRoleAge = options?.roleAge != null;
 
@@ -3006,6 +3006,7 @@ export class SharedLog<
 			const coverage = await this.calculateCoverage({
 				roleAge,
 			});
+
 			if (coverage >= coverageThreshold) {
 				deferred.resolve();
 				return true;

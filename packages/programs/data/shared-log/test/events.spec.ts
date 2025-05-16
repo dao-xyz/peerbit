@@ -3,7 +3,6 @@ import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { v4 as uuid } from "uuid";
-import { NoPeersError } from "../src/errors.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("events", () => {
@@ -201,23 +200,48 @@ describe("events", () => {
 	});
 
 	describe("waitForReplicators", async () => {
-		it("times out immediately is offline and replicating", async () => {
+		it("resolves immediately is offline and replicating and mature", async () => {
 			session = await TestSession.connected(1);
 			const store = new EventStore();
 			const store1 = await session.peers[0].open(store, {
 				args: {
-					replicate: true,
+					replicate: {
+						factor: 1,
+					},
+					timeUntilRoleMaturity: 0,
 				},
 			});
 			let timeout = 1e4;
 			let t0 = Date.now();
-			await expect(
-				store1.log.waitForReplicators({
-					timeout,
-				}),
-			).to.be.eventually.rejectedWith(NoPeersError);
+			await store1.log.waitForReplicators({
+				timeout,
+			});
 			let t1 = Date.now();
 			expect(t1 - t0).to.be.lessThan(1e3); // "immediately"
+		});
+
+		it("times out after mature when is offline and replicating and unmature", async () => {
+			session = await TestSession.connected(1);
+			const store = new EventStore();
+
+			let t0 = Date.now();
+			const store1 = await session.peers[0].open(store, {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+					timeUntilRoleMaturity: 3e3,
+				},
+			});
+
+			let timeout = 1e4;
+
+			await store1.log.waitForReplicators({
+				timeout,
+			});
+
+			let t1 = Date.now();
+			expect(t1 - t0).to.be.greaterThan(3e3); // should wait for maturity
 		});
 
 		it("times out after timeout if online", async () => {
