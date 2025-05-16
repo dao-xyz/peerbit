@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.2.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.2...shared-log-v11.2.3) (2025-05-16)
+
+
+### Bug Fixes
+
+* waitForReplicators wait for self maturity ([2292bf0](https://github.com/dao-xyz/peerbit/commit/2292bf052020e5b2dd638a2df61d75d2f2bd6b3b))
+
 ## [11.2.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.1...shared-log-v11.2.2) (2025-05-14)
 
 
