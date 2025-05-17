@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.6.4](https://github.com/dao-xyz/peerbit/compare/document-v9.6.3...document-v9.6.4) (2025-05-17)
+
+
+### Bug Fixes
+
+* allow use id annotation property for fields with any name ([a547831](https://github.com/dao-xyz/peerbit/commit/a5478317abb03fdd64faa711654e6b4147847499))
+
 ## [9.6.3](https://github.com/dao-xyz/peerbit/compare/document-v9.6.2...document-v9.6.3) (2025-05-16)
 
 
