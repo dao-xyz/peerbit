@@ -188,7 +188,10 @@ export class Documents<
 		}
 
 		this._optionCanPerform = options.canPerform;
-		const idProperty = options.index?.idProperty || "id";
+		const idProperty =
+			options.index?.idProperty ||
+			indexerTypes.getIdProperty(this._clazz) ||
+			"id";
 		const idResolver =
 			options.id ||
 			(typeof idProperty === "string"

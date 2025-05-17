@@ -3490,6 +3490,85 @@ describe("index", () => {
 		});
 	});
 
+	describe("indexBy", () => {
+		class CustomIdDocument {
+			@id({ type: "string" })
+			custom: string;
+
+			constructor(properties: { custom: string }) {
+				this.custom = properties.custom;
+			}
+		}
+
+		/* class AnotherCustomIdDocument {
+			@id({ type: 'string' })
+			anotherIdProperty: string
+
+			constructor(properties: CustomIdDocument) {
+				this.anotherIdProperty = properties.custom;
+			}
+		} */
+
+		@variant("test_id_annotation")
+		class CustomIDDocumentStore extends Program {
+			@field({ type: Documents })
+			documents: Documents<CustomIdDocument, CustomIdDocument>;
+
+			constructor() {
+				super();
+				this.documents = new Documents<CustomIdDocument, CustomIdDocument>();
+			}
+			async open(): Promise<void> {
+				await this.documents.open({
+					type: CustomIdDocument,
+				});
+			}
+		}
+
+		/* @variant("test_id_annotation_indexed_type")
+		class CustomIdCustomIndexdDocumentStore extends Program {
+
+			@field({ type: Documents })
+			documents: Documents<CustomIdDocument, AnotherCustomIdDocument>;
+
+			constructor() {
+				super();
+				this.documents = new Documents<CustomIdDocument, AnotherCustomIdDocument>();
+			}
+			async open(): Promise<void> {
+				await this.documents.open({
+					type: CustomIdDocument,
+					index: {
+						type: AnotherCustomIdDocument
+					}
+				});
+			}
+		} */
+
+		before(async () => {
+			session = await TestSession.connected(1);
+		});
+
+		after(async () => {
+			await session.stop();
+		});
+
+		it("id annotation on the document type", async () => {
+			const store = await session.peers[0].open(new CustomIDDocumentStore());
+			const q = new CustomIdDocument({ custom: "1" });
+			await store.documents.put(q);
+		});
+
+		/* TODO feat 
+	
+		it("id annotation on the indexed type", async () => {
+			const store = await session.peers[0].open(new CustomIdCustomIndexdDocumentStore());
+			const q = new CustomIdDocument({ custom: "1" });
+			await store.documents.put(q);
+		});
+		 */
+	});
+
 	describe("custom index", () => {
 		let peersCount = 2,
 			stores: TestStore<Indexable>[] = [];
@@ -4440,10 +4519,10 @@ describe("index", () => {
 
 		/* TODO improve this speed test 
 		it("using prefetch is faster than not using it", async () => {
-
+	
 			const data = randomBytes(1e4)
 			let setup = await setupInitialStoresAndPrefetch({ data });
-
+	
 			const time = async (store: TestStore<Document, any>) => {
 				const t0 = Date.now();
 				const iterator = store.docs.index.iterate({}, { resolve: false });
@@ -4452,28 +4531,28 @@ describe("index", () => {
 				const t1 = Date.now();
 				await iterator.close();
 				return t1 - t0;
-
+	
 			}
-
-
+	
+	
 			const timeWithPrefetch = await time(setup.store2);
-
-
+	
+	
 			// now we will open the store without prefetch
 			await setup.store.close();
 			await setup.store2.close();
 			setup = await setupInitialStoresAndPrefetch({ data, prefetch: false });
-
+	
 			const timeWithoutPrefetch = await time(setup.store2);
-
+	
 			console.log({
 				timeWithoutPrefetch,
 				timeWithPrefetch
 			})
 			expect(timeWithoutPrefetch).to.be.greaterThan(timeWithPrefetch);
-
+	
 		});
- */
+	*/
 	});
 
 	describe("migration", () => {
@@ -4532,27 +4611,27 @@ describe("index", () => {
 		class OtherDoc {
 			@field({ type: "string" })
 			id: string;
-	
+		
 			constructor(properties: { id: string }) {
 				this.id = properties.id;
 			}
 		}
-	
+		
 		@variant("alternative_store")
 		class AlternativeStore extends Program<Partial<SetupOptions<OtherDoc>>> {
 			@field({ type: Uint8Array })
 			id: Uint8Array;
-	
+		
 			@field({ type: Documents })
 			docs: Documents<OtherDoc>;
-	
+		
 			constructor(properties: { docs: Documents<OtherDoc> }) {
 				super();
-	
+		
 				this.id = randomBytes(32);
 				this.docs = properties.docs;
 			}
-	
+		
 			async open(options?: Partial<SetupOptions<OtherDoc>>): Promise<void> {
 				await this.docs.open({
 					...options,
@@ -4561,46 +4640,46 @@ describe("index", () => {
 				});
 			}
 		}
-	
+		
 		let session: TestSession;
 		let db1: TestStore;
 		let db2: AlternativeStore;
-	
+		
 		beforeEach(async () => {
 			session = await TestSession.connected(1, { directory: "./tmp/document-store/recover/" + uuid() });
-	
+		
 			db1 = await session.peers[0].open(
 				new TestStore({ docs: new Documents() })
 			);
-	
+		
 			db2 = await session.peers[0].open(
 				new AlternativeStore({ docs: new Documents() })
 			);
 		});
-	
+		
 		afterEach(async () => {
 			if (db1) await db1.drop();
 			if (db2) await db2.drop();
-	
+		
 			await session.stop();
 		});
-	
+		
 		it("can recover from too strict acl", async () => {
 			// We are createing two document store for this, because
 			// we want blocks in our block store that will mess the recovery process
-	
+		
 			let sharedId = uuid();
-	
+		
 			await db2.docs.put(new OtherDoc({ id: sharedId }));
 			await db2.docs.put(new OtherDoc({ id: uuid() }));
 			await db2.docs.put(new OtherDoc({ id: uuid() }));
-	
+		
 			await db1.docs.put(new Document({ id: sharedId }));
 			await db1.docs.put(new Document({ id: uuid() }));
 			await db1.docs.put(new Document({ id: uuid() }));
-	
+		
 			await db2.docs.del(sharedId);
-	
+		
 			expect(await db1.docs.index.getSize()).equal(3);
 			await db1.close();
 			let canPerform = false;
@@ -4616,15 +4695,15 @@ describe("index", () => {
 			}
 			expect(count).to.equal(3);
 			await db1.docs.log.reload();
-	
+		
 			expect(await db1.docs.index.getSize()).equal(0);
-	
+		
 			count = 0;
 			for await (const f of db1.docs.log.log.blocks.iterator()) {
 				count++;
 			}
 			expect(count).to.equal(0);
-	
+		
 			canPerform = true;
 			await db1.docs.put(new Document({ id: uuid() }));
 			await db1.close();
@@ -4632,19 +4711,19 @@ describe("index", () => {
 			expect(await db1.docs.index.getSize()).equal(1); // heads are ruined
 			await db1.docs.recover();
 			expect(await db1.docs.index.getSize()).equal(4);
-	
+		
 			// recovering multiple time should work
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(await db1.docs.index.getSize()).equal(4);
 			await db1.docs.recover();
 			expect(await db1.docs.index.getSize()).equal(4);
-	
+		
 			// next time opening db I should not have to recover any more
 			await db1.close();
 			db1 = await session.peers[0].open(db1.clone());
 			expect(await db1.docs.index.getSize()).equal(4);
-	
+		
 		});
 	}); */
 
