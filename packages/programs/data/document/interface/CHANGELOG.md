@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.4...document-interface-v2.2.0) (2025-05-25)
+
+
+### Features
+
+* 'includeIndexed' property ([7ca5c48](https://github.com/dao-xyz/peerbit/commit/7ca5c48bc77022e498d8ed9f7a7f73aa17700e3e))
+
 ## [2.1.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.3...document-interface-v2.1.4) (2025-04-30)
 
 
