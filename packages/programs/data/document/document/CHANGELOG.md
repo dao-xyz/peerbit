@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.7.0](https://github.com/dao-xyz/peerbit/compare/document-v9.6.4...document-v9.7.0) (2025-05-25)
+
+
+### Features
+
+* 'includeIndexed' property ([7ca5c48](https://github.com/dao-xyz/peerbit/commit/7ca5c48bc77022e498d8ed9f7a7f73aa17700e3e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document-interface bumped from ^2.1.4 to ^2.2.0
+
 ## [9.6.4](https://github.com/dao-xyz/peerbit/compare/document-v9.6.3...document-v9.6.4) (2025-05-17)
 
 
