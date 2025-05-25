@@ -13,6 +13,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { expect } from "chai";
 import fs from "fs";
 import type http from "http";
+import { MemoryLevel } from "memory-level";
 import path, { dirname } from "path";
 import type { Peerbit } from "peerbit";
 import sinon from "sinon";
@@ -21,6 +22,7 @@ import { v4 as uuid } from "uuid";
 import { createClient } from "../src/client.js";
 import { getTrustPath } from "../src/config.js";
 import { startApiServer } from "../src/server.js";
+import { Session } from "../src/session.js";
 import { Trust } from "../src/trust.js";
 
 const client = (keypair: Identity<Ed25519PublicKey>, address?: string) => {
@@ -114,6 +116,9 @@ describe("server", () => {
 			fs.mkdirSync(directory, { recursive: true });
 			server = await startApiServer(serverPeer, {
 				trust: new Trust(getTrustPath(directory)),
+				session: new Session(
+					new MemoryLevel({ valueEncoding: "view", keyEncoding: "utf-8" }),
+				),
 			});
 		});
 		afterEach(async () => {
@@ -231,13 +236,40 @@ describe("server", () => {
 				});
 			});
 
-			it("list", async () => {
+			it("list arg value", async () => {
+				const c = await client(session.peers[0].identity);
+				const address = await c.program.open({
+					variant: getSchema(PermissionedString).variant! as string,
+					log: true,
+				});
+				const map = await c.program.list();
+				expect(map[address]).to.deep.eq({ log: true });
+			});
+
+			it("list arg undefined", async () => {
 				const c = await client(session.peers[0].identity);
 				const address = await c.program.open({
 					variant: getSchema(PermissionedString).variant! as string,
 				});
-				expect(await c.program.list()).include(address);
+				const map = await c.program.list();
+				expect(map[address]).to.deep.eq(null);
 			});
+
+			/* TODO tet correctly 
+			it("list args after restart", async () => {
+				const c = await client(session.peers[0].identity);
+				const address = await c.program.open({
+					variant: getSchema(PermissionedString).variant! as string,
+					log: true,
+				});
+				await c.restart();
+				await waitForResolved(async () => {
+					const map = await c.program.list();
+					expect(map[address]).to.deep.eq({ log: true });
+				}, {
+					delayInterval: 5e2,
+				})
+			}) */
 		});
 
 		it("bootstrap", async () => {

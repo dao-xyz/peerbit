@@ -225,13 +225,13 @@ export const createClient = async (
 				await Promise.all(resp.data.map((address: string) => drop(address)));
 			},
 
-			list: async (): Promise<string[]> => {
+			list: async (): Promise<Record<string, Record<string, any> | null>> => {
 				const resp = throwIfNot200(
 					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
 						validateStatus,
 					}),
 				);
-				return resp.data as string[];
+				return resp.data as Record<string, Record<string, any> | null>;
 			},
 			variants: async (): Promise<string[]> => {
 				const resp = throwIfNot200(

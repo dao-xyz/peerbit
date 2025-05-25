@@ -39,7 +39,7 @@ import {
 	TRUST_PATH,
 	VERSIONS_PATH,
 } from "./routes.js";
-import { Session } from "./session.js";
+import { JSONArgs, Session } from "./session.js";
 import { getBody, verifyRequest } from "./signed-request.js";
 import { Trust } from "./trust.js";
 import type {
@@ -154,10 +154,13 @@ export const startServerWithNode = async (properties: {
 		for (const [string] of await session.imports.all()) {
 			await import(string);
 		}
-		for (const [address] of await session.programs.all()) {
+		for (const [address, args] of await session.programs.all()) {
 			// TODO args
 			try {
-				await peer.open(address, { timeout: 3000 });
+				await peer.open<any>(address, {
+					args: args?.length > 0 ? JSONArgs.from(args) : undefined,
+					timeout: 1e4,
+				});
 			} catch (error) {
 				console.error(error);
 			}
@@ -365,10 +368,19 @@ export const startApiServer = async (
 								try {
 									const ref: any =
 										(client as Peerbit).handler?.items?.keys() || [];
-									const keys = JSON.stringify([...ref]);
+									let args: Record<string, Record<string, any> | null> = {};
+									for (const key of ref) {
+										const argsBytes =
+											await properties.session?.programs.get(key);
+										if (argsBytes && argsBytes.length > 0) {
+											args[key] = JSONArgs.from(argsBytes).args;
+										} else {
+											args[key] = null;
+										}
+									}
 									res.setHeader("Content-Type", "application/json");
 									res.writeHead(200);
-									res.end(keys);
+									res.end(JSON.stringify(args));
 								} catch (error: any) {
 									res.writeHead(404);
 									res.end(error.message);
@@ -489,18 +501,19 @@ export const startApiServer = async (
 											Program,
 										);
 									}
+									let extraArgsParsed =
+										Object.keys(extraArgs).length > 0 ? extraArgs : undefined;
 									client
 										.open(program, {
-											args:
-												Object.keys(extraArgs).length > 0
-													? extraArgs
-													: undefined,
+											args: extraArgsParsed,
 										})
 										.then(async (program) => {
 											// TODO what if this is a reopen?
 											await properties?.session?.programs.add(
 												program.address,
-												new Uint8Array(),
+												extraArgsParsed
+													? new JSONArgs(extraArgsParsed).bytes
+													: new Uint8Array(),
 											);
 											res.writeHead(200);
 											res.end(program.address.toString());

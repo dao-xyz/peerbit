@@ -999,10 +999,23 @@ export const cli = async (args?: string[]) => {
 												handler: async (args) => {
 													for (const api of apis) {
 														const list = await api.api.program.list();
-														api.log(`Running programs (${list.length}):`);
-														list.forEach((p) => {
-															api.log(chalk.green(p));
-														});
+														api.log(
+															`Running programs (${[...Object.keys(list)].length}):`,
+														);
+														for (const key of Object.keys(list)) {
+															let programOpenArgs = list[key];
+															let argsString = "";
+															if (
+																programOpenArgs &&
+																Object.keys(programOpenArgs).length > 0
+															) {
+																// show but indent
+																argsString =
+																	"  " + JSON.stringify(programOpenArgs);
+															}
+
+															api.log(chalk.green(key + argsString));
+														}
 													}
 												},
 											})

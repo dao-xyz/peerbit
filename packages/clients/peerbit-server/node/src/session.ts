@@ -1,3 +1,4 @@
+import { deserialize, field, serialize, variant } from "@dao-xyz/borsh";
 import type { AbstractLevel } from "abstract-level";
 
 export class Session {
@@ -30,6 +31,47 @@ export class Session {
 	}
 }
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+@variant(0)
+export class JSONArgs {
+	@field({ type: Uint8Array })
+	private _args: Uint8Array;
+
+	cache: Record<string, any> | undefined;
+	constructor(
+		args: Record<
+			string,
+			string | number | bigint | Uint8Array | boolean | null | undefined
+		>,
+	) {
+		this.cache = args;
+		this._args = this.encode(args);
+	}
+	private encode(obj: any): Uint8Array {
+		return new Uint8Array(encoder.encode(JSON.stringify(obj)));
+	}
+
+	private decode(bytes: Uint8Array) {
+		return (this.cache = JSON.parse(decoder.decode(bytes).toString()));
+	}
+
+	get args(): Record<
+		string,
+		string | number | bigint | Uint8Array | boolean | null | undefined
+	> {
+		return this.cache || this.decode(this._args);
+	}
+
+	get bytes(): Uint8Array {
+		return serialize(this);
+	}
+
+	static from(bytes: Uint8Array): JSONArgs {
+		return deserialize(bytes, JSONArgs);
+	}
+}
 export class KV {
 	constructor(
 		readonly level: AbstractLevel<
@@ -39,6 +81,9 @@ export class KV {
 		>,
 	) {}
 
+	get(key: string): Promise<Uint8Array | undefined> {
+		return this.level.get(key);
+	}
 	add(key: string, arg: Uint8Array) {
 		return this.level.put(key, arg);
 	}
