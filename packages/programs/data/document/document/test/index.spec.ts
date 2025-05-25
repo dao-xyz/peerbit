@@ -20,6 +20,7 @@ import {
 	AbstractSearchResult,
 	CloseIteratorRequest,
 	CollectNextRequest,
+	Context,
 	NoAccess,
 	PredictedSearchRequest,
 	Results,
@@ -3499,8 +3500,20 @@ describe("index", () => {
 				this.custom = properties.custom;
 			}
 		}
+		/*class CustomIdDocumentWrapped {
+			@field({ type: Uint8Array })
+			id: Uint8Array;
 
-		/* class AnotherCustomIdDocument {
+			@field({ type: CustomIdDocument })
+			nested: CustomIdDocument;
+
+			constructor(properties: { id: Uint8Array; nested: CustomIdDocument }) {
+				this.id = properties.id;
+				this.nested = properties.nested;
+			}
+		}
+
+		 class AnotherCustomIdDocument {
 			@id({ type: 'string' })
 			anotherIdProperty: string
 
@@ -3525,6 +3538,25 @@ describe("index", () => {
 			}
 		}
 
+		/* @variant("test_nested_id_annotation")
+		class CustomNestedIDDocumentStore extends Program {
+			@field({ type: Documents })
+			documents: Documents<CustomIdDocumentWrapped, CustomIdDocumentWrapped>;
+
+			constructor() {
+				super();
+				this.documents = new Documents<
+					CustomIdDocumentWrapped,
+					CustomIdDocumentWrapped
+				>();
+			}
+			async open(): Promise<void> {
+				await this.documents.open({
+					type: CustomIdDocumentWrapped,
+				});
+			}
+		}
+ */
 		/* @variant("test_id_annotation_indexed_type")
 		class CustomIdCustomIndexdDocumentStore extends Program {
 
@@ -3557,7 +3589,25 @@ describe("index", () => {
 			const store = await session.peers[0].open(new CustomIDDocumentStore());
 			const q = new CustomIdDocument({ custom: "1" });
 			await store.documents.put(q);
+			expect(await store.documents.index.getSize()).to.eq(1);
+			await store.documents.del(q.custom);
+			expect(await store.documents.index.getSize()).to.eq(0);
 		});
+
+		/* TODO what is expected?
+		it("id annotation on the nested document type", async () => {
+			const store = await session.peers[0].open(
+				new CustomNestedIDDocumentStore(),
+			);
+			const q = new CustomIdDocumentWrapped({
+				id: new Uint8Array([0]),
+				nested: new CustomIdDocument({ custom: "1" }),
+			});
+			await store.documents.put(q);
+			expect(await store.documents.index.getSize()).to.eq(1);
+			await store.documents.del(q.id);
+			expect(await store.documents.index.getSize()).to.eq(0);
+		}); */
 
 		/* TODO feat 
 	
@@ -3567,6 +3617,134 @@ describe("index", () => {
 			await store.documents.put(q);
 		});
 		 */
+	});
+
+	describe("returnIndexed", () => {
+		class Value {
+			@id({ type: "string" })
+			id: string;
+
+			@field({ type: "u32" })
+			number: number;
+
+			constructor(properties: { id: string; number: number }) {
+				this.id = properties.id;
+				this.number = properties.number;
+			}
+		}
+
+		class Indexed {
+			@field({ type: "string" })
+			id: string;
+
+			@field({ type: "u32" })
+			indexedNumber: number;
+
+			constructor(properties: Value) {
+				this.id = properties.id;
+				this.indexedNumber = properties.number;
+			}
+		}
+
+		@variant("test_include_indexed_store")
+		class TestIncludeIndexedStore extends Program {
+			@field({ type: Documents })
+			documents: Documents<Value, Indexed>;
+
+			constructor() {
+				super();
+				this.documents = new Documents<Value, Indexed>();
+			}
+			async open(options?: {
+				replicate: boolean;
+				onTransform?: (arg: Value, context: Context) => void;
+			}): Promise<void> {
+				await this.documents.open({
+					type: Value,
+					replicate: options?.replicate ? { factor: 1 } : false,
+					index: {
+						type: Indexed,
+						includeIndexed: true,
+						transform: (arg, context) => {
+							options?.onTransform?.(arg, context);
+							return new Indexed(arg);
+						},
+					},
+				});
+			}
+		}
+
+		before(async () => {
+			session = await TestSession.connected(2);
+		});
+
+		after(async () => {
+			await session.stop();
+		});
+
+		it("return indexed with value", async () => {
+			const replicator = await session.peers[0].open(
+				new TestIncludeIndexedStore(),
+				{
+					args: {
+						replicate: true,
+						onTransform: (arg, context) => {
+							expect(arg.id).to.be.a("string");
+							expect(context.created).to.be.a("bigint");
+						},
+					},
+				},
+			);
+
+			let transformed = false;
+			const observer = await session.peers[1].open(replicator.clone(), {
+				args: {
+					replicate: false,
+					onTransform: (arg, context) => {
+						transformed = true;
+					},
+				},
+			});
+
+			await observer.documents.waitFor(session.peers[0].identity.publicKey);
+			let docCount = 11;
+			for (let i = 0; i < docCount; i++) {
+				const value = new Value({ id: `${i}`, number: i });
+				await replicator.documents.put(value);
+			}
+
+			expect(await replicator.documents.index.getSize()).to.eq(docCount);
+			await observer.documents.index.waitFor(
+				session.peers[0].identity.publicKey,
+			);
+			expect(await observer.documents.index.getSize()).to.eq(0);
+			const get = await observer.documents.index.get("1");
+			expect(get).to.be.instanceOf(Value);
+
+			const iterator = observer.documents.index.iterate({
+				sort: {
+					key: "indexedNumber",
+					direction: SortDirection.DESC,
+				},
+			});
+
+			const first = await iterator.next(1);
+			expect(first[0]).to.be.instanceOf(Value);
+			expect(first[0].id).to.eq("10");
+			expect(first[0].number).to.eq(10);
+
+			const next = await iterator.next(10);
+			expect(next[0]).to.be.instanceOf(Value);
+			expect(next[0].id).to.eq("9");
+			expect(next[0].number).to.eq(9);
+
+			expect(next[9]).to.be.instanceOf(Value);
+			expect(next[9].id).to.eq("0");
+			expect(next[9].number).to.eq(0);
+			expect(next.length).to.eq(10);
+
+			expect(transformed).to.be.false; // because indexed values where always included
+		});
 	});
 
 	describe("custom index", () => {
@@ -4862,6 +5040,71 @@ describe("index", () => {
 			expect(updatedResults).to.have.length(2);
 			expect(updatedResults[0].id).to.equal("2");
 			expect(updatedResults[1].id).to.equal("3");
+		});
+
+		it("should update existing doc ", async () => {
+			// Open a store with a document store inside (docs)
+			const store = await session.peers[0].open(
+				new TestStore({
+					docs: new Documents<Document, IndexedDocument>(),
+				}),
+				{
+					args: {
+						index: {
+							type: IndexedDocument,
+						},
+					},
+				},
+			);
+
+			// Add two initial documents.
+			await store.docs.put(new Document({ id: "1", name: "name1" }));
+			await store.docs.put(new Document({ id: "2", name: "name2" }));
+
+			// Wait briefly for the index to update (if needed, use waitForResolved or similar).
+			let initialResults = await store.docs.index.search(
+				new SearchRequest({ query: [] }),
+			);
+			expect(initialResults).to.have.length(2);
+
+			// Simulate a change: remove the document with id "1" and add a new document with id "3".
+			let changeEvents: DocumentsChange<WithContext<IndexedDocument>>[] = [];
+			store.docs.events.addEventListener("change", (evt) => {
+				changeEvents.push({
+					added: evt.detail.added.map((x) =>
+						coerceWithContext(new IndexedDocument(x), x.__context),
+					),
+					removed: evt.detail.removed.map((x) =>
+						coerceWithContext(new IndexedDocument(x), x.__context),
+					),
+				});
+			});
+			await store.docs.put(new Document({ id: "2", name: "name2 updated" }));
+			await waitForResolved(() => expect(changeEvents.length).to.equal(1));
+
+			// Use a simple query that sorts by "id" in ascending order.
+			const query = {
+				query: {}, // empty query selects all documents
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			};
+
+			// Call updateResults on the document index.
+			// If updateResults is not directly typed on the index, you may cast index as any.
+			let updatedResults = initialResults;
+			for (const change of changeEvents) {
+				updatedResults = await store.docs.index.updateResults(
+					updatedResults,
+					change,
+					query,
+					true,
+				);
+			}
+
+			// Check that the updated results contain the expected documents.
+			expect(updatedResults).to.have.length(2);
+			expect(updatedResults[0].id).to.equal("1");
+			expect(updatedResults[1].id).to.equal("2");
+			expect(updatedResults[1].name).to.equal("name2 updated");
 		});
 
 		it("it should not add documents in the continued sort order", async () => {

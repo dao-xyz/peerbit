@@ -44,7 +44,7 @@ export class Context {
 }
 
 @variant(0)
-export class ResultValue<T> extends Result {
+export class ResultValue<T, I = Record<string, any>> extends Result {
 	@field({ type: Uint8Array })
 	_source: Uint8Array;
 
@@ -56,7 +56,7 @@ export class ResultValue<T> extends Result {
 		source?: Uint8Array;
 		context: Context;
 		value?: T;
-		indexed?: Record<string, any>;
+		indexed?: I;
 	}) {
 		super();
 		this._source = opts.source;
@@ -82,7 +82,7 @@ export class ResultValue<T> extends Result {
 	}
 
 	// we never send this over the wire since we can always reconstruct it from value
-	indexed?: Record<string, any>;
+	indexed?: I;
 }
 
 @variant(1)
@@ -130,6 +130,80 @@ export class ResultIndexedValue<I> extends Result {
 
 	// we never send this over the wire since we can always reconstruct it from value
 	indexed?: I;
+}
+
+@variant(2)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// @ts-ignore
+class ResultValueWithIndexedResultValue<T, I> extends Result {
+	// not used yet, but
+	@field({ type: Uint8Array })
+	_sourceValue: Uint8Array;
+
+	@field({ type: Uint8Array })
+	_sourceIndexed: Uint8Array;
+
+	@field({ type: vec(Entry) })
+	entries: Entry<any>[];
+
+	@field({ type: Context })
+	context: Context;
+
+	_type: AbstractType<T>;
+	_indexedtype: AbstractType<I>;
+
+	constructor(opts: {
+		context: Context;
+
+		source: Uint8Array;
+		sourceIndexed: Uint8Array;
+		entries: Entry<any>[];
+		value: T;
+		indexed: I;
+	}) {
+		super();
+		this._sourceValue = opts.source;
+		this._sourceIndexed = opts.sourceIndexed;
+		this.context = opts.context;
+		this._value = opts.value;
+		this.entries = opts.entries;
+		this.indexed = opts.indexed;
+	}
+
+	init({
+		type,
+		indexedType,
+	}: {
+		type: AbstractType<T>;
+		indexedType: AbstractType<I>;
+	}) {
+		this._type = type;
+		this._indexedtype = indexedType;
+	}
+
+	_value?: T;
+	get value(): T {
+		if (this._value) {
+			return this._value;
+		}
+		if (!this._sourceValue) {
+			throw new Error("Missing source binary");
+		}
+		this._value = deserialize(this._sourceValue, this._type);
+		return this._value;
+	}
+
+	indexed?: I;
+	get indexedValue(): I {
+		if (this.indexed) {
+			return this.indexed;
+		}
+		if (!this._sourceIndexed) {
+			throw new Error("Missing source binary for indexed value");
+		}
+		this.indexed = deserialize(this._sourceIndexed, this._indexedtype);
+		return this.indexed;
+	}
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -103,6 +103,7 @@ export type SetupOptions<
 			query?: QueryCacheOptions;
 		};
 		prefetch?: boolean | Partial<PrefetchOptions>;
+		includeIndexed?: boolean;
 	} & TransformOptions<T, I>;
 	log?: {
 		trim?: TrimOptions;
@@ -230,6 +231,7 @@ export class Documents<
 			dbType: this.constructor,
 			maybeOpen: this.maybeSubprogramOpen.bind(this),
 			prefetch: options.index?.prefetch,
+			includeIndexed: options.index?.includeIndexed,
 		});
 
 		// document v6 and below need log compatibility of v8 or below
@@ -415,7 +417,7 @@ export class Documents<
 					await this.index.getDetailed(key, {
 						resolve: false,
 						local: true,
-						remote: this.immutable,
+						remote: this.immutable ? { strategy: "fallback" } : false,
 					})
 				)?.[0]?.results[0];
 				if (existingDocument && existingDocument.context.head !== entry.hash) {

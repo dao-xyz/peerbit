@@ -154,10 +154,7 @@ const introduceEntries = async <
 	responses: { response: types.AbstractSearchResult; from?: PublicSignKey }[],
 	documentType: AbstractType<T>,
 	indexedType: AbstractType<I>,
-	sync: (
-		request: types.SearchRequest | types.SearchRequestIndexed,
-		response: types.Results<any>,
-	) => Promise<void>,
+	sync: (request: R, response: types.Results<any>) => Promise<void>,
 	options?: QueryDetailedOptions<T, D, any>,
 ): Promise<
 	RPCResponse<types.Results<types.ResultTypeFromRequest<R, T, I>>>[]
@@ -311,6 +308,7 @@ export type OpenOptions<
 	compatibility: 6 | 7 | 8 | undefined;
 	maybeOpen: (value: T & Program) => Promise<T & Program>;
 	prefetch?: boolean | Partial<PrefetchOptions>;
+	includeIndexed?: boolean; // if true, indexed representations will always be included in the search results
 };
 
 type IndexableClass<I> = new (
@@ -360,6 +358,7 @@ export class DocumentIndex<
 	index: indexerTypes.Index<WithContext<I>>;
 	private _resumableIterators: ResumableIterators<WithContext<I>>;
 	private _prefetch?: PrefetchOptions | undefined;
+	private includeIndexed: boolean | undefined = undefined;
 
 	compatibility: 6 | 7 | 8 | undefined;
 
@@ -441,6 +440,7 @@ export class DocumentIndex<
 		this.compatibility = properties.compatibility;
 		this.canRead = properties.canRead;
 		this.canSearch = properties.canSearch;
+		this.includeIndexed = properties.includeIndexed;
 
 		@variant(0)
 		class IndexedClassWithContext {
@@ -659,6 +659,13 @@ export class DocumentIndex<
 		if (query instanceof types.CloseIteratorRequest) {
 			this.processCloseIteratorRequest(query, ctx.from);
 		} else {
+			const shouldIncludedIndexedResults =
+				this.includeIndexed &&
+				(query instanceof types.SearchRequest ||
+					(query instanceof types.CollectNextRequest &&
+						this._resultQueue.get(query.idString)?.fromQuery instanceof
+							types.SearchRequest)); // we do this check here because this._resultQueue might be emptied when this.processQuery is called
+
 			const results = await this.processQuery(
 				query as
 					| types.SearchRequest
@@ -670,6 +677,32 @@ export class DocumentIndex<
 					canRead: this.canRead,
 				},
 			);
+
+			if (shouldIncludedIndexedResults) {
+				let resultsWithIndexed: (
+					| types.ResultValue<T>
+					| types.ResultIndexedValue<I>
+				)[] = results.results;
+
+				let fromLength = results.results.length;
+				for (let i = 0; i < fromLength; i++) {
+					let result = results.results[i];
+					resultsWithIndexed.push(
+						new types.ResultIndexedValue<I>({
+							source: serialize(result.indexed),
+							indexed: result.indexed as I,
+							context: result.context,
+							entries: [],
+						}),
+					);
+				}
+
+				return new types.Results({
+					// Even if results might have length 0, respond, because then we now at least there are no matching results
+					results: resultsWithIndexed,
+					kept: results.kept,
+				});
+			}
 
 			return new types.Results({
 				// Even if results might have length 0, respond, because then we now at least there are no matching results
@@ -1554,6 +1587,34 @@ export class DocumentIndex<
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
 		};
 
+		let resolveIndexedDefault = async (result: types.ResultValue<T>) =>
+			coerceWithContext(
+				(result.indexed as I) ||
+					(await this.transformer(result.value, result.context)),
+				result.context,
+			);
+
+		let resolveIndexed = this.includeIndexed
+			? (
+					result: types.ResultValue<T>,
+					results: types.ResultTypeFromRequest<R, T, I>[],
+				) => {
+					// look through the search results and see if we can find the indexed representation
+					for (const otherResult of results) {
+						if (otherResult instanceof types.ResultIndexedValue) {
+							if (otherResult.context.head === result.context.head) {
+								otherResult.init(this.indexedType);
+								return coerceWithContext(
+									otherResult.value,
+									otherResult.context,
+								);
+							}
+						}
+					}
+					return resolveIndexedDefault(result);
+				}
+			: (result: types.ResultValue<T>) => resolveIndexedDefault(result);
+
 		const fetchFirst = async (n: number): Promise<boolean> => {
 			done = true; // Assume we are donne
 			queryRequestCoerced.fetch = n;
@@ -1592,15 +1653,12 @@ export class DocumentIndex<
 									continue;
 								}
 								visited.add(indexKey);
+
 								buffer.push({
 									value: result.value as types.ResultTypeFromRequest<R, T, I>,
 									context: result.context,
 									from,
-									indexed: coerceWithContext(
-										(result.indexed as I) ||
-											(await this.transformer(result.value, result.context)),
-										result.context,
-									),
+									indexed: await resolveIndexed(result, results.results),
 								});
 							} else {
 								const indexKey = indexerTypes.toId(
@@ -1713,18 +1771,31 @@ export class DocumentIndex<
 												indexerTypes.toId(this.indexByResolver(result.value))
 													.primitive,
 											);
+											let indexed: WithContext<I>;
+											if (result instanceof types.ResultValue) {
+												indexed = await resolveIndexed(
+													result,
+													results.results as types.ResultTypeFromRequest<
+														R,
+														T,
+														I
+													>[],
+												);
+											} else {
+												indexed = coerceWithContext(
+													result.indexed || result.value,
+													result.context,
+												);
+											}
 											peerBuffer.buffer.push({
-												value: result.value,
+												value: result.value as types.ResultTypeFromRequest<
+													R,
+													T,
+													I
+												>,
 												context: result.context,
 												from: this.node.identity.publicKey,
-												indexed: coerceWithContext(
-													result.indexed ||
-														(await this.transformer(
-															result.value as any as T, // TODO tyes
-															result.context,
-														)),
-													result.context,
-												),
+												indexed: indexed,
 											});
 										}
 									}
@@ -1787,7 +1858,13 @@ export class DocumentIndex<
 															return;
 														}
 														peerBuffer.kept = Number(response.response.kept);
-														for (const result of response.response.results) {
+														for (const result of (
+															response as RPCResponse<
+																types.Results<
+																	types.ResultTypeFromRequest<R, T, I>
+																>
+															>
+														).response.results) {
 															const idPrimitive = indexerTypes.toId(
 																this.indexByResolver(result.value),
 															).primitive;
@@ -1795,6 +1872,24 @@ export class DocumentIndex<
 																continue;
 															}
 															visited.add(idPrimitive);
+
+															let indexed: WithContext<I>;
+															if (result instanceof types.ResultValue) {
+																indexed = await resolveIndexed(
+																	result,
+																	response.response
+																		.results as types.ResultTypeFromRequest<
+																		R,
+																		T,
+																		I
+																	>[],
+																);
+															} else {
+																indexed = coerceWithContext(
+																	result.value,
+																	result.context,
+																);
+															}
 															peerBuffer.buffer.push({
 																value:
 																	result.value as types.ResultTypeFromRequest<
@@ -1804,15 +1899,7 @@ export class DocumentIndex<
 																	>,
 																context: result.context,
 																from: from!,
-																indexed: coerceWithContext(
-																	result instanceof types.ResultIndexedValue
-																		? result.value
-																		: await this.transformer(
-																				result.value,
-																				result.context,
-																			),
-																	result.context,
-																),
+																indexed,
 															});
 														}
 													}

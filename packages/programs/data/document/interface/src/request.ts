@@ -11,7 +11,9 @@ import {
 // for SearchRequest we wnat to return ResultsWithSource<T> for IndexedSearchRequest we want to return ResultsIndexed<T>
 export type ResultTypeFromRequest<R, T, I> = R extends SearchRequest
 	? ResultValue<T>
-	: ResultIndexedValue<I>;
+	: R extends SearchRequestIndexed
+		? ResultIndexedValue<I>
+		: ResultValue<T> | ResultIndexedValue<I>;
 
 /**
  * Search with query and collect with sort conditionss
