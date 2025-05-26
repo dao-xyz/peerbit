@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.8.1](https://github.com/dao-xyz/peerbit/compare/document-v9.8.0...document-v9.8.1) (2025-05-26)
+
+
+### Bug Fixes
+
+* add export for WithIndexedContext ([9c1dc07](https://github.com/dao-xyz/peerbit/commit/9c1dc0742d0440c46b06e0fda7568c4a6a5ce98b))
+
 ## [9.8.0](https://github.com/dao-xyz/peerbit/compare/document-v9.7.0...document-v9.8.0) (2025-05-26)
 
 
