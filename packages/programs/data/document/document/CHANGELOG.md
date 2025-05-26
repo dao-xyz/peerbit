@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.8.0](https://github.com/dao-xyz/peerbit/compare/document-v9.7.0...document-v9.8.0) (2025-05-26)
+
+
+### Features
+
+* returned indexed representation on get and iterate when resolving reconstructed value as a meta property ([077dde4](https://github.com/dao-xyz/peerbit/commit/077dde42e39f80b0b380fc8c3915719a4db5d565))
+
 ## [9.7.0](https://github.com/dao-xyz/peerbit/compare/document-v9.6.4...document-v9.7.0) (2025-05-25)
 
 
