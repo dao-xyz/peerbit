@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.9.0](https://github.com/dao-xyz/peerbit/compare/document-v9.8.1...document-v9.9.0) (2025-05-26)
+
+
+### Features
+
+* emit indexed types on changes events ([b1540c6](https://github.com/dao-xyz/peerbit/commit/b1540c6b3c6ca12b0d073583f663ee954b9ea316))
+
 ## [9.8.1](https://github.com/dao-xyz/peerbit/compare/document-v9.8.0...document-v9.8.1) (2025-05-26)
 
 
