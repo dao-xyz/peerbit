@@ -238,15 +238,22 @@ export type CanReadIndexed<I> = (
 	from: PublicSignKey,
 ) => Promise<boolean> | boolean;
 
+export type WithContext<I> = {
+	__context: types.Context;
+} & I;
+
+export type WithIndexed<T, I> = {
+	// experimental, used to quickly get the indexed representation
+	__indexed: I;
+} & T;
+
+export type WithIndexedContext<T, I> = WithContext<WithIndexed<T, I>>;
+
 export type ValueTypeFromRequest<
 	Resolve extends boolean | undefined,
 	T,
 	I,
-> = Resolve extends false ? WithContext<I> : WithContext<T>;
-
-export type WithContext<I> = {
-	__context: types.Context;
-} & I;
+> = Resolve extends false ? WithContext<I> : WithIndexedContext<T, I>;
 
 export type TransformerAsConstructor<T, I> = {
 	type?: new (arg: T, context: types.Context) => I;
@@ -326,6 +333,22 @@ export const coerceWithContext = <T>(
 
 	let valueWithContext: WithContext<T> = value as any;
 	valueWithContext.__context = context;
+	return valueWithContext;
+};
+
+export const coerceWithIndexed = <T, I>(
+	value: T | WithIndexed<T, I>,
+	indexed: I,
+): WithIndexed<T, I> => {
+	if (value === indexed) {
+		return value;
+	}
+	if ((value as WithIndexed<T, I>).__indexed) {
+		return value as WithIndexed<T, I>;
+	}
+
+	let valueWithContext: WithIndexed<T, I> = value as any;
+	valueWithContext.__indexed = indexed;
 	return valueWithContext;
 };
 
@@ -768,7 +791,7 @@ export class DocumentIndex<
 	public async get<Options extends QueryOptions<T, D, true | undefined>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
-	): Promise<WithContext<T>>;
+	): Promise<WithIndexedContext<T, I>>;
 
 	public async get<Options extends QueryOptions<T, D, false>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
@@ -856,7 +879,7 @@ export class DocumentIndex<
 		Options extends QueryOptions<T, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 		RT extends types.Result = Resolve extends true
-			? types.ResultValue<WithContext<T>>
+			? types.ResultValue<WithIndexedContext<T, I>>
 			: types.ResultIndexedValue<WithContext<I>>,
 	>(
 		key: indexerTypes.IdKey | indexerTypes.IdPrimitive,
@@ -972,7 +995,15 @@ export class DocumentIndex<
 						resolved = value.value as T;
 					}
 					if (resolved) {
-						set.results[i]._value = coerceWithContext(resolved, value.context);
+						let indexed = await this.resolveIndexed<any>(
+							set.results[i],
+							set.results,
+						);
+						let valueWithWindexed = coerceWithIndexed(resolved, indexed);
+						set.results[i]._value = coerceWithContext(
+							valueWithWindexed,
+							set.results[i].context,
+						);
 					} else {
 						missingValues = true;
 					}
@@ -1497,6 +1528,45 @@ export class DocumentIndex<
 		return dedup(allResults, this.indexByResolver);
 	}
 
+	private resolveIndexed<R>(
+		result: types.ResultValue<T> | types.ResultIndexedValue<I>,
+		results: types.ResultTypeFromRequest<R, T, I>[],
+	) {
+		if (result instanceof types.ResultIndexedValue) {
+			return coerceWithContext(result.value as I, result.context);
+		}
+
+		let resolveIndexedDefault = async (result: types.ResultValue<T>) =>
+			coerceWithContext(
+				(result.indexed as I) ||
+					(await this.transformer(result.value, result.context)),
+				result.context,
+			);
+
+		let resolveIndexed = this.includeIndexed
+			? (
+					result: types.ResultValue<T>,
+					results: types.ResultTypeFromRequest<R, T, I>[],
+				) => {
+					// look through the search results and see if we can find the indexed representation
+					for (const otherResult of results) {
+						if (otherResult instanceof types.ResultIndexedValue) {
+							if (otherResult.context.head === result.context.head) {
+								otherResult.init(this.indexedType);
+								return coerceWithContext(
+									otherResult.value,
+									otherResult.context,
+								);
+							}
+						}
+					}
+					return resolveIndexedDefault(result);
+				}
+			: (result: types.ResultValue<T>) => resolveIndexedDefault(result);
+
+		return resolveIndexed(result, results);
+	}
+
 	public iterate(
 		query?: QueryLike,
 		options?: QueryOptions<T, D, undefined>,
@@ -1587,34 +1657,6 @@ export class DocumentIndex<
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
 		};
 
-		let resolveIndexedDefault = async (result: types.ResultValue<T>) =>
-			coerceWithContext(
-				(result.indexed as I) ||
-					(await this.transformer(result.value, result.context)),
-				result.context,
-			);
-
-		let resolveIndexed = this.includeIndexed
-			? (
-					result: types.ResultValue<T>,
-					results: types.ResultTypeFromRequest<R, T, I>[],
-				) => {
-					// look through the search results and see if we can find the indexed representation
-					for (const otherResult of results) {
-						if (otherResult instanceof types.ResultIndexedValue) {
-							if (otherResult.context.head === result.context.head) {
-								otherResult.init(this.indexedType);
-								return coerceWithContext(
-									otherResult.value,
-									otherResult.context,
-								);
-							}
-						}
-					}
-					return resolveIndexedDefault(result);
-				}
-			: (result: types.ResultValue<T>) => resolveIndexedDefault(result);
-
 		const fetchFirst = async (n: number): Promise<boolean> => {
 			done = true; // Assume we are donne
 			queryRequestCoerced.fetch = n;
@@ -1658,7 +1700,10 @@ export class DocumentIndex<
 									value: result.value as types.ResultTypeFromRequest<R, T, I>,
 									context: result.context,
 									from,
-									indexed: await resolveIndexed(result, results.results),
+									indexed: await this.resolveIndexed<R>(
+										result,
+										results.results,
+									),
 								});
 							} else {
 								const indexKey = indexerTypes.toId(
@@ -1773,7 +1818,7 @@ export class DocumentIndex<
 											);
 											let indexed: WithContext<I>;
 											if (result instanceof types.ResultValue) {
-												indexed = await resolveIndexed(
+												indexed = await this.resolveIndexed<R>(
 													result,
 													results.results as types.ResultTypeFromRequest<
 														R,
@@ -1875,7 +1920,7 @@ export class DocumentIndex<
 
 															let indexed: WithContext<I>;
 															if (result instanceof types.ResultValue) {
-																indexed = await resolveIndexed(
+																indexed = await this.resolveIndexed(
 																	result,
 																	response.response
 																		.results as types.ResultTypeFromRequest<
@@ -1970,8 +2015,8 @@ export class DocumentIndex<
 			if (resolve) {
 				coercedBatch = (
 					await Promise.all(
-						batch.map(async (x) =>
-							coerceWithContext(
+						batch.map(async (x) => {
+							const withContext = coerceWithContext(
 								x.value instanceof this.documentType
 									? x.value
 									: (
@@ -1981,13 +2026,15 @@ export class DocumentIndex<
 											})
 										)?.value,
 								x.context,
-							),
-						),
+							);
+							const withIndexed = coerceWithIndexed(withContext, x.indexed);
+							return withIndexed;
+						}),
 					)
 				).filter((x) => !!x) as ValueTypeFromRequest<Resolve, T, I>[];
 			} else {
 				coercedBatch = batch.map((x) =>
-					coerceWithContext(x.value, x.context),
+					coerceWithContext(coerceWithIndexed(x.value, x.indexed), x.context),
 				) as ValueTypeFromRequest<Resolve, T, I>[];
 			}
 

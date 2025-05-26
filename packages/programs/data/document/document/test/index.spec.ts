@@ -3822,6 +3822,8 @@ describe("index", () => {
 
 			const get = await stores[0].docs.index.get("1");
 			expect(get!.name).to.eq("name1");
+			expect(get.__indexed).to.be.instanceOf(Indexable);
+
 			const createdAt = get.__context.created;
 			expect(typeof createdAt).to.eq("bigint");
 
@@ -3832,6 +3834,19 @@ describe("index", () => {
 			expect(getRemote!.name).to.eq("name1");
 			const createdAtRemote = get.__context.created;
 			expect(createdAtRemote).to.eq(createdAt);
+			expect(getRemote.__indexed).to.be.instanceOf(Indexable);
+
+			expect(getRemote.__indexed).to.exist;
+		});
+
+		it("get indexed", async () => {
+			const get = await stores[0].docs.index.get("1", { resolve: false });
+			expect(get!.nameTransformed).to.eq("NAME1");
+			expect((get as any)["__indexed"]).to.not.exist;
+
+			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
+			expect(getRemote!.nameTransformed).to.eq("NAME1");
+			expect((getRemote as any)["__indexed"]).to.not.exist;
 		});
 
 		it("get local first", async () => {
@@ -3850,6 +3865,7 @@ describe("index", () => {
 
 			const get = await stores[1].docs.index.get("1");
 			expect(get!.name).to.eq("name1");
+			expect(get.__indexed).to.be.instanceOf(Indexable);
 
 			expect(requestSpy.callCount).to.eq(0);
 			expect(sendSpy.callCount).to.eq(0);
@@ -3869,10 +3885,13 @@ describe("index", () => {
 				const second = await iterator.next(2);
 				expect(first[0].name).to.eq("name1");
 				expect(first[0] instanceof Document).to.be.true;
+				expect(first[0].__indexed).to.be.instanceOf(Indexable);
+
 				expect(second[0].name).to.eq("name2");
 				expect(second[1].name).to.eq("name3");
 				expect(second[0] instanceof Document).to.be.true;
 				expect(second[1] instanceof Document).to.be.true;
+				expect(second[0].__indexed).to.be.instanceOf(Indexable);
 
 				const firstCreatedAt = first[0].__context.created;
 				expect(typeof firstCreatedAt).to.eq("bigint");
@@ -3987,6 +4006,7 @@ describe("index", () => {
 				const second = await iterator.next(2);
 				expect(first[0].name).to.eq("name1");
 				expect(first[0] instanceof Document).to.be.true;
+
 				expect(second[0].name).to.eq("name2");
 				expect(second[1].name).to.eq("name3");
 				expect(second[0] instanceof Document).to.be.true;
