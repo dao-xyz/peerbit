@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document",
-	"version": "9.7.0",
+	"version": "9.8.0",
 	"description": "Document store implementation",
 	"type": "module",
 	"sideEffects": false,
