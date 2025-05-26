@@ -60,11 +60,7 @@ import {
 	type DocumentsChange,
 	type SetupOptions,
 } from "../src/program.js";
-import {
-	type CanRead,
-	type WithContext,
-	coerceWithContext,
-} from "../src/search.js";
+import { type CanRead } from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
 describe("index", () => {
@@ -90,7 +86,7 @@ describe("index", () => {
 					docs: new Documents<Document>(),
 				});
 				await session.peers[0].open(store);
-				const changes: DocumentsChange<Document>[] = [];
+				const changes: DocumentsChange<Document, Document>[] = [];
 
 				store.docs.events.addEventListener("change", (evt) => {
 					changes.push(evt.detail);
@@ -116,6 +112,7 @@ describe("index", () => {
 				expect(changes[0].added[0].id).equal(doc.id);
 				expect(changes[0].removed).to.be.empty;
 				expect(changes[0].added[0].__context.size).to.exist;
+				expect(changes[0].added[0].__indexed).to.exist;
 
 				const putOperation2 = (await store.docs.put(doc2)).entry;
 				expect(await store.docs.index.getSize()).equal(2);
@@ -125,6 +122,7 @@ describe("index", () => {
 				expect(changes[1].added).to.have.length(1);
 				expect(changes[1].added[0].id).equal(doc2.id);
 				expect(changes[1].added[0].__context.size).to.exist;
+				expect(changes[1].added[0].__indexed).to.exist;
 
 				expect(changes[1].removed).to.be.empty;
 				// delete 1
@@ -137,6 +135,7 @@ describe("index", () => {
 				expect(changes[2].removed).to.have.length(1);
 				expect(changes[2].removed[0].id).equal(doc.id);
 				expect(changes[2].removed[0].__context.size).to.exist;
+				expect(changes[2].removed[0].__indexed).to.exist;
 			});
 
 			it("replication degree", async () => {
@@ -144,7 +143,7 @@ describe("index", () => {
 					docs: new Documents<Document>(),
 				});
 				await session.peers[0].open(store);
-				const changes: DocumentsChange<Document>[] = [];
+				const changes: DocumentsChange<Document, Document>[] = [];
 
 				store.docs.events.addEventListener("change", (evt) => {
 					changes.push(evt.detail);
@@ -392,7 +391,7 @@ describe("index", () => {
 					},
 				});
 
-				let eventsFromStore1: DocumentsChange<Document>[] = [];
+				let eventsFromStore1: DocumentsChange<Document, Document>[] = [];
 				store.docs.events.addEventListener("change", (evt) => {
 					eventsFromStore1.push(evt.detail);
 				});
@@ -1327,7 +1326,7 @@ describe("index", () => {
 					},
 				});
 
-				const changes: DocumentsChange<Document>[] = [];
+				const changes: DocumentsChange<Document, Document>[] = [];
 				store.docs.events.addEventListener("change", (evt) => {
 					changes.push(evt.detail);
 				});
@@ -4777,7 +4776,7 @@ describe("index", () => {
 						compatibility: 6,
 					},
 				});
-				const changes: DocumentsChange<Document>[] = [];
+				const changes: DocumentsChange<Document, Document>[] = [];
 
 				store.docs.events.addEventListener("change", (evt) => {
 					changes.push(evt.detail);
@@ -4952,7 +4951,7 @@ describe("index", () => {
 			expect(initialResults).to.have.length(2);
 
 			// Simulate a change: remove the document with id "1" and add a new document with id "3".
-			let changeEvents: DocumentsChange<Document>[] = [];
+			let changeEvents: DocumentsChange<Document, Document>[] = [];
 			store.docs.events.addEventListener("change", (evt) => {
 				changeEvents.push(evt.detail);
 			});
@@ -5023,15 +5022,11 @@ describe("index", () => {
 			expect(initialResults).to.have.length(2);
 
 			// Simulate a change: remove the document with id "1" and add a new document with id "3".
-			let changeEvents: DocumentsChange<WithContext<IndexedDocument>>[] = [];
+			let changeEvents: DocumentsChange<Document, IndexedDocument>[] = [];
 			store.docs.events.addEventListener("change", (evt) => {
 				changeEvents.push({
-					added: evt.detail.added.map((x) =>
-						coerceWithContext(new IndexedDocument(x), x.__context),
-					),
-					removed: evt.detail.removed.map((x) =>
-						coerceWithContext(new IndexedDocument(x), x.__context),
-					),
+					added: evt.detail.added.map((x) => x),
+					removed: evt.detail.removed.map((x) => x),
 				});
 			});
 			await store.docs.put(new Document({ id: "3", name: "name3" }));
@@ -5088,15 +5083,11 @@ describe("index", () => {
 			expect(initialResults).to.have.length(2);
 
 			// Simulate a change: remove the document with id "1" and add a new document with id "3".
-			let changeEvents: DocumentsChange<WithContext<IndexedDocument>>[] = [];
+			let changeEvents: DocumentsChange<Document, IndexedDocument>[] = [];
 			store.docs.events.addEventListener("change", (evt) => {
 				changeEvents.push({
-					added: evt.detail.added.map((x) =>
-						coerceWithContext(new IndexedDocument(x), x.__context),
-					),
-					removed: evt.detail.removed.map((x) =>
-						coerceWithContext(new IndexedDocument(x), x.__context),
-					),
+					added: evt.detail.added.map((x) => x),
+					removed: evt.detail.removed.map((x) => x),
 				});
 			});
 			await store.docs.put(new Document({ id: "2", name: "name2 updated" }));
@@ -5153,7 +5144,7 @@ describe("index", () => {
 			);
 			expect(initialResults).to.have.length(2);
 
-			let changeEvents: DocumentsChange<Document>[] = [];
+			let changeEvents: DocumentsChange<Document, Document>[] = [];
 			store.docs.events.addEventListener("change", (evt) => {
 				changeEvents.push(evt.detail);
 			});

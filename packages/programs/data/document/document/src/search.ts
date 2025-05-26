@@ -340,9 +340,6 @@ export const coerceWithIndexed = <T, I>(
 	value: T | WithIndexed<T, I>,
 	indexed: I,
 ): WithIndexed<T, I> => {
-	if (value === indexed) {
-		return value;
-	}
 	if ((value as WithIndexed<T, I>).__indexed) {
 		return value as WithIndexed<T, I>;
 	}
@@ -822,7 +819,7 @@ export class DocumentIndex<
 		id: indexerTypes.IdKey,
 		entry: Entry<Operation>,
 		existing: indexerTypes.IndexedResult<WithContext<I>> | null | undefined,
-	) {
+	): Promise<{ context: types.Context; indexable: I }> {
 		const existingDefined =
 			existing === undefined ? await this.index.get(id) : existing;
 		const context = new types.Context({
@@ -841,7 +838,7 @@ export class DocumentIndex<
 		value: T,
 		id: indexerTypes.IdKey,
 		context: types.Context,
-	) {
+	): Promise<{ context: types.Context; indexable: I }> {
 		const idString = id.primitive;
 		if (
 			this.isProgramValued /*
@@ -861,7 +858,7 @@ export class DocumentIndex<
 			context,
 		);
 		await this.index.put(wrappedValueToIndex);
-		return context;
+		return { context, indexable: valueToIndex };
 	}
 
 	public del(key: indexerTypes.IdKey) {

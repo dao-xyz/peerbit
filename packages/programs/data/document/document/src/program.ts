@@ -43,8 +43,9 @@ import {
 	DocumentIndex,
 	type PrefetchOptions,
 	type TransformOptions,
-	type WithContext,
+	type WithIndexedContext,
 	coerceWithContext,
+	coerceWithIndexed,
 } from "./search.js";
 
 const logger = loggerFn({ module: "document" });
@@ -54,12 +55,12 @@ export class OperationError extends Error {
 		super(message);
 	}
 }
-export interface DocumentsChange<T> {
-	added: WithContext<T>[];
-	removed: WithContext<T>[];
+export interface DocumentsChange<T, I> {
+	added: WithIndexedContext<T, I>[];
+	removed: WithIndexedContext<T, I>[];
 }
-export interface DocumentEvents<T> {
-	change: CustomEvent<DocumentsChange<T>>;
+export interface DocumentEvents<T, I> {
+	change: CustomEvent<DocumentsChange<T, I>>;
 }
 
 type MaybePromise<T> = Promise<T> | T;
@@ -128,7 +129,7 @@ export class Documents<
 	T,
 	I extends Record<string, any> = T extends Record<string, any> ? T : any,
 	D extends ReplicationDomain<any, Operation, any> = any,
-> extends Program<SetupOptions<T, I, D>, DocumentEvents<T> & ProgramEvents> {
+> extends Program<SetupOptions<T, I, D>, DocumentEvents<T, I> & ProgramEvents> {
 	@field({ type: SharedLog })
 	log: SharedLog<Operation, D, InferR<D>>;
 
@@ -640,7 +641,7 @@ export class Documents<
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
 		// in combinatpion with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
 
-		let documentsChanged: DocumentsChange<T> = {
+		let documentsChanged: DocumentsChange<T, I> = {
 			added: [],
 			removed: [],
 		};
@@ -694,8 +695,15 @@ export class Documents<
 						// if replicator, then open
 						value = await this.maybeSubprogramOpen(value);
 					}
-					const context = await this._index.put(value, key, item, existing);
-					documentsChanged.added.push(coerceWithContext(value, context));
+					const { context, indexable } = await this._index.put(
+						value,
+						key,
+						item,
+						existing,
+					);
+					documentsChanged.added.push(
+						coerceWithIndexed(coerceWithContext(value, context), indexable),
+					);
 
 					modified.add(key.primitive);
 				} else if (
@@ -703,7 +711,7 @@ export class Documents<
 					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
-					let value: WithContext<T>;
+					let value: WithIndexedContext<T, I>;
 					let key: indexerTypes.IdKey;
 
 					if (isPutOperation(payload)) {
