@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.4.3](https://github.com/dao-xyz/peerbit/compare/server-v5.4.2...server-v5.4.3) (2025-05-28)
+
+
+### Bug Fixes
+
+* close-all and drop-all ([c66c749](https://github.com/dao-xyz/peerbit/commit/c66c749d7d9e0dcb85664eceb34b511fd4af2d44))
+
 ## [5.4.2](https://github.com/dao-xyz/peerbit/compare/server-v5.4.1...server-v5.4.2) (2025-05-25)
 
 
