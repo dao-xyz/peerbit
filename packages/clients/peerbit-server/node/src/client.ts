@@ -208,8 +208,10 @@ export const createClient = async (
 					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
 						validateStatus,
 					}),
+				) as { data: Record<string, any> };
+				await Promise.all(
+					[...Object.keys(resp.data)].map((address: string) => close(address)),
 				);
-				await Promise.all(resp.data.map((address: string) => close(address)));
 			},
 
 			drop: async (address: string): Promise<void> => {
@@ -221,8 +223,10 @@ export const createClient = async (
 					await axiosInstance.get(endpoint + PROGRAMS_PATH, {
 						validateStatus,
 					}),
+				) as { data: Record<string, any> };
+				await Promise.all(
+					[...Object.keys(resp.data)].map((address: string) => drop(address)),
 				);
-				await Promise.all(resp.data.map((address: string) => drop(address)));
 			},
 
 			list: async (): Promise<Record<string, Record<string, any> | null>> => {
