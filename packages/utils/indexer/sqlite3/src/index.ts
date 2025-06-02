@@ -2,6 +2,7 @@ import { BinaryWriter } from "@dao-xyz/borsh";
 import { sha256Sync, toBase58 } from "@peerbit/crypto";
 import { SQLLiteIndex, SQLiteIndices } from "./engine.js";
 import { create as sqlite3 } from "./sqlite3.js";
+export type { Database } from './types.js'
 
 export const encodeName = (name: string): string => {
 	const writer = new BinaryWriter();
