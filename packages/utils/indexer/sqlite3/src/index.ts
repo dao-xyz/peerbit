@@ -14,4 +14,4 @@ const create = async (directory?: string): Promise<SQLiteIndices> => {
 	const db = await sqlite3(directory);
 	return new SQLiteIndices({ db });
 };
-export { create, SQLiteIndices, SQLLiteIndex };
+export { create, sqlite3, SQLiteIndices, SQLLiteIndex };
