@@ -2949,6 +2949,25 @@ export class SharedLog<
 	}
 
 	async waitForReplicator(...keys: PublicSignKey[]) {
+		let deferred = pDefer<void>();
+
+		let timeout = setTimeout(() => {
+			clear();
+			deferred.reject(
+				new TimeoutError(`Timeout waiting for replicators: ${keys.join(", ")}`),
+			);
+		}, this.waitForReplicatorTimeout);
+
+		const clear = () => {
+			clearTimeout(timeout);
+		};
+
+		deferred.promise.finally(() => {
+			clear();
+			this.events.removeEventListener("replicator:mature", check);
+			this.events.removeEventListener("replication:change", check);
+		});
+
 		const check = async () => {
 			for (const k of keys) {
 				const iterator = this.replicationIndex?.iterate(
@@ -2962,22 +2981,15 @@ export class SharedLog<
 					!rect ||
 					!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
 				) {
-					return false;
+					return;
 				}
 			}
-			return true;
+			return deferred.resolve();
 		};
-
-		// TODO do event based
-		return waitFor(() => check(), {
-			signal: this._closeController.signal,
-		}).catch((e) => {
-			if (e instanceof AbortError) {
-				// ignore error
-				return;
-			}
-			throw e;
-		});
+		check();
+		this.events.addEventListener("replicator:mature", check);
+		this.events.addEventListener("replication:change", check);
+		return deferred.promise;
 	}
 
 	async waitForReplicators(options?: {
