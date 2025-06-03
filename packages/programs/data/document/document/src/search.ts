@@ -60,6 +60,7 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 				range: CoverRange<number | bigint>;
 		  };
 	eager?: boolean; // whether to query newly joined peers before they have matured
+	joining?: boolean | { waitFor?: number }; // whether to query peers that are joining the network
 };
 export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
 	remote?:
@@ -97,6 +98,9 @@ type QueryDetailedOptions<
 		response: types.AbstractSearchResult,
 		from: PublicSignKey,
 	) => void | Promise<void>;
+	remote?: {
+		from?: string[]; // if specified, only query these peers
+	};
 };
 
 type QueryLike = {
@@ -1310,13 +1314,12 @@ export class DocumentIndex<
 				throw new Error("Unexpected");
 			}
 
-			const replicatorGroups = await this._log.getCover(
-				remote.domain ?? { args: undefined },
-				{
-					roleAge: remote.minAge,
-					eager: remote.eager,
-				},
-			);
+			const replicatorGroups = options?.remote?.from
+				? options?.remote?.from
+				: await this._log.getCover(remote.domain ?? { args: undefined }, {
+						roleAge: remote.minAge,
+						eager: remote.eager,
+					});
 
 			if (replicatorGroups) {
 				const responseHandler = async (
@@ -1645,6 +1648,8 @@ export class DocumentIndex<
 		// TODO handle join/leave while iterating
 		const controller = new AbortController();
 
+		let totalFetchedCounter = 0;
+
 		const peerBuffers = (): {
 			indexed: WithContext<I>;
 			value: types.ResultTypeFromRequest<R, T, I> | I;
@@ -1654,8 +1659,48 @@ export class DocumentIndex<
 			return [...peerBufferMap.values()].map((x) => x.buffer).flat();
 		};
 
-		const fetchFirst = async (n: number): Promise<boolean> => {
-			done = true; // Assume we are donne
+		let maybeSetDone: () => void;
+		let cleanup = () => {};
+
+		if (typeof options?.remote === "object" && options.remote.joining) {
+			let t0 = +new Date();
+			let waitForTime =
+				typeof options.remote.joining === "boolean"
+					? 1e4
+					: (options.remote.joining.waitFor ?? 1e4);
+			let setDoneIfTimeout = false;
+			maybeSetDone = () => {
+				if (t0 + waitForTime < +new Date()) {
+					cleanup();
+					done = true;
+				} else {
+					setDoneIfTimeout = true;
+				}
+			};
+			let timeout = setTimeout(() => {
+				if (setDoneIfTimeout) {
+					cleanup();
+					done = true;
+				}
+			}, waitForTime);
+			cleanup = () => {
+				clearTimeout(timeout);
+			};
+		} else {
+			maybeSetDone = () => {
+				cleanup();
+				done = true;
+			};
+		}
+
+		const fetchFirst = async (
+			n: number,
+			options?: { from?: string[] },
+		): Promise<boolean> => {
+			if (options?.from == null) {
+				maybeSetDone(); // Assume we are done (but only if we query all peers (not when providing 'from'))
+			}
+
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(queryRequestCoerced, {
 				...options,
@@ -1752,6 +1797,8 @@ export class DocumentIndex<
 			}
 
 			await fetchPromise;
+
+			totalFetchedCounter += n;
 
 			if (!first) {
 				first = true;
@@ -2007,7 +2054,9 @@ export class DocumentIndex<
 				}
 			}
 
-			done = fetchedAll && !pendingMoreResults;
+			if (fetchedAll && !pendingMoreResults) {
+				maybeSetDone();
+			}
 			let coercedBatch: ValueTypeFromRequest<Resolve, T, I>[];
 			if (resolve) {
 				coercedBatch = (
@@ -2038,7 +2087,9 @@ export class DocumentIndex<
 			return dedup(coercedBatch, this.indexByResolver);
 		};
 
-		const close = async () => {
+		let close = async () => {
+			cleanup();
+			done = true;
 			controller.abort(new AbortError("Iterator closed"));
 
 			const closeRequest = new types.CloseIteratorRequest({
@@ -2046,6 +2097,7 @@ export class DocumentIndex<
 			});
 			this.prefetch?.accumulator.clear(queryRequestCoerced);
 			const promises: Promise<any>[] = [];
+
 			for (const [peer, buffer] of peerBufferMap) {
 				if (buffer.kept === 0) {
 					peerBufferMap.delete(peer);
@@ -2072,8 +2124,37 @@ export class DocumentIndex<
 			await Promise.all(promises);
 		};
 		let doneFn = () => {
+			maybeSetDone();
 			return done;
 		};
+
+		let joinListener: ((e: { detail: PublicSignKey }) => void) | undefined;
+
+		if (typeof options?.remote === "object" && options?.remote.joining) {
+			joinListener = async (e: { detail: PublicSignKey }) => {
+				if (totalFetchedCounter > 0) {
+					// wait for the node to become a replicator, then so query
+					await this._log
+						.waitForReplicator(e.detail)
+						.then(() => {
+							if (done) {
+								return;
+							}
+							return fetchFirst(totalFetchedCounter, {
+								from: [e.detail.hashcode()],
+							});
+						})
+						.catch(() => {});
+				}
+			};
+			this._query.events.addEventListener("join", joinListener);
+			const cleanupDefault = cleanup;
+			cleanup = () => {
+				this._query.events.removeEventListener("join", joinListener!);
+				return cleanupDefault();
+			};
+		}
+
 		return {
 			close,
 			next,

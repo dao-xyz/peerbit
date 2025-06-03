@@ -2340,267 +2340,300 @@ describe("index", () => {
 			});
 		});
 
-		describe("sort", () => {
-			let peersCount = 3,
-				stores: TestStore[] = [];
+		describe("iterate", () => {
+			describe("sort", () => {
+				let peersCount = 3,
+					stores: TestStore[] = [];
 
-			let canRead: (
-				| undefined
-				| ((publicKey: PublicSignKey) => Promise<boolean>)
-			)[] = [];
+				let canRead: (
+					| undefined
+					| ((publicKey: PublicSignKey) => Promise<boolean>)
+				)[] = [];
 
-			const put = async (storeIndex: number, id: number) => {
-				let doc = new Document({
-					id: String(id),
-					name: String(id),
-					number: BigInt(id),
-				});
+				const put = async (storeIndex: number, id: number) => {
+					let doc = new Document({
+						id: String(id),
+						name: String(id),
+						number: BigInt(id),
+					});
 
-				// target 'none' so we dont send the entry here to other peers
-				const resp = await stores[storeIndex].docs.put(doc, {
-					target: "none",
-					replicas: new AbsoluteReplicas(1),
-				});
+					// target 'none' so we dont send the entry here to other peers
+					const resp = await stores[storeIndex].docs.put(doc, {
+						target: "none",
+						replicas: new AbsoluteReplicas(1),
+					});
 
-				// --- wait for all others to "want" this entry ---
-				await stores[storeIndex].docs.log.rebalanceAll(); //  we need to call this to make other peers know that they are missing out of this hashes
+					// --- wait for all others to "want" this entry ---
+					await stores[storeIndex].docs.log.rebalanceAll(); //  we need to call this to make other peers know that they are missing out of this hashes
 
-				// because we have overriding the append to not send entries right away
+					// because we have overriding the append to not send entries right away
 
-				for (let i = 0; i < stores.length; i++) {
-					if (i === storeIndex) {
-						continue;
+					for (let i = 0; i < stores.length; i++) {
+						if (i === storeIndex) {
+							continue;
+						}
+						// when blow is true, we will be "forced" to query the other node for the data.
+						// this allows use to test sorting where data is determenstically distributed
+						// i.e put(1,123) will put a document at store 1 with id 123, and will never leave that store
+						// store 0 and 2 who want to fetch all data will always have to ask node 1
+						await waitForResolved(
+							() =>
+								expect(
+									stores[i].docs.log.syncronizer.syncInFlight
+										.get(stores[storeIndex].node.identity.publicKey.hashcode())
+										?.has(resp.entry.hash),
+								).to.be.true,
+						);
 					}
-					// when blow is true, we will be "forced" to query the other node for the data.
-					// this allows use to test sorting where data is determenstically distributed
-					// i.e put(1,123) will put a document at store 1 with id 123, and will never leave that store
-					// store 0 and 2 who want to fetch all data will always have to ask node 1
-					await waitForResolved(
-						() =>
-							expect(
-								stores[i].docs.log.syncronizer.syncInFlight
-									.get(stores[storeIndex].node.identity.publicKey.hashcode())
-									?.has(resp.entry.hash),
-							).to.be.true,
-					);
-				}
-				return resp;
-			};
+					return resp;
+				};
 
-			const checkIterate = async (
-				fromStoreIndex: number,
-				batches: bigint[][],
-				query = new IntegerCompare({
-					key: "number",
-					compare: Compare.GreaterOrEqual,
-					value: 0n,
-				}),
-			) => {
-				await waitForResolved(async () => {
+				const checkIterate = async (
+					fromStoreIndex: number,
+					batches: bigint[][],
+					query = new IntegerCompare({
+						key: "number",
+						compare: Compare.GreaterOrEqual,
+						value: 0n,
+					}),
+				) => {
+					await waitForResolved(async () => {
+						const req = new SearchRequest({
+							query: [query],
+							sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
+						});
+						const iterator = stores[fromStoreIndex].docs.index.iterate(req);
+
+						if (batches.length === 0) {
+							// No fetches has been made, so we don't know whether we are done yet
+							expect(iterator.done()).to.be.false;
+						} else {
+							for (const batch of batches) {
+								expect(iterator.done()).to.be.false;
+								const next = await iterator.next(batch.length);
+								expect(next.map((x) => x.number)).to.deep.equal(batch);
+							}
+							expect(iterator.done()).to.be.true;
+						}
+					});
+				};
+
+				before(async () => {
+					session = await TestSession.connected(peersCount);
+				});
+
+				after(async () => {
+					await session.stop();
+				});
+
+				beforeEach(async () => {
+					canRead = new Array(stores.length).fill(undefined);
+
+					// Create store
+					for (let i = 0; i < peersCount; i++) {
+						const store =
+							i > 0
+								? (await TestStore.load<TestStore>(
+										stores[0].address!,
+										session.peers[i].services.blocks,
+									))!
+								: new TestStore({
+										docs: new Documents<Document>(),
+									});
+
+						await session.peers[i].open(store, {
+							args: {
+								index: {
+									canRead: (_document: any, key: any) => {
+										return canRead[i] ? canRead[i]!(key) : true;
+									},
+								},
+								replicate: {
+									// TODO choose offset so data is perfectly distributed
+									factor: 1,
+								},
+								timeUntilRoleMaturity: 0,
+								replicas: { min: 1 }, // make sure documents only exist once
+							},
+						});
+
+						// Omit synchronization so results are always the same (HACKY)
+						// TODO types
+						const onMessage = store.docs.log.rpc["_responseHandler"];
+						store.docs.log.rpc["_responseHandler"] = (msg: any, ctx: any) => {
+							if (msg.constructor.name === "ExchangeHeadsMessage") {
+								return;
+							}
+							return onMessage(msg, ctx);
+						};
+
+						stores.push(store);
+					}
+					// Wait for ack that everone can connect to each outher through the rpc topic
+					for (let i = 0; i < session.peers.length; i++) {
+						await stores[i].docs.log.waitForReplicator(
+							...session.peers
+								.filter((_v, ix) => ix !== i)
+								.map((x) => x.identity.publicKey),
+						);
+					}
+				});
+
+				afterEach(async () => {
+					await Promise.all(stores.map((x) => x.closed || x.drop()));
+					stores = [];
+				});
+
+				it("empty", async () => {
+					for (let i = 0; i < session.peers.length; i++) {
+						await checkIterate(i, []);
+					}
+				});
+
+				// TODO make sure documents are evenly distrubted before querye
+				it("one peer", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					expect(await stores[0].docs.index.getSize()).equal(3);
+					for (let i = 0; i < session.peers.length; i++) {
+						await checkIterate(i, [[0n], [1n], [2n]]);
+						await checkIterate(i, [[0n, 1n, 2n]]);
+						await checkIterate(i, [[0n, 1n], [2n]]);
+						await checkIterate(i, [[0n], [1n, 2n]]);
+					}
+				});
+
+				it("multiple peers", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					let e2 = await put(0, 2);
+					await stores[1].docs.log.log.join([e2.entry]);
+					await put(1, 3);
+					await put(1, 4);
+					for (let i = 1; i < session.peers.length; i++) {
+						await checkIterate(i, [[0n, 1n, 2n, 3n, 4n]]);
+						await checkIterate(i, [[0n], [1n, 2n, 3n, 4n]]);
+					}
+				});
+
+				it("observer mixed sort", async () => {
+					// TODO separate setup so we don't need to close store 2 test here
+					await stores[2].close();
+					await stores[0].docs.log.replicate(false);
+					await waitForResolved(async () =>
+						expect((await stores[0].docs.log.getReplicators()).size).equal(1),
+					);
+					let data: number[] = [];
+					for (let i = 0; i < 100; i++) {
+						let doc = new Document({
+							id: String(i),
+							name: String(i),
+							number: BigInt(i),
+						});
+						data.push(i);
+						const { entry } = await stores[1].docs.put(doc, { target: "all" });
+						if (i > 30) await stores[0].docs.log.log.join([entry]); // only join some entries to the observer
+					}
+
 					const req = new SearchRequest({
-						query: [query],
+						query: [
+							new IntegerCompare({
+								key: "number",
+								compare: Compare.GreaterOrEqual,
+								value: 0n,
+							}),
+						],
 						sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
 					});
-					const iterator = stores[fromStoreIndex].docs.index.iterate(req);
+					const iterator = stores[0].docs.index.iterate(req);
+					let acc: Document[] = [];
+					while (iterator.done() !== true) {
+						const v = await iterator.next(20);
+						acc = [...acc, ...v];
+					}
+					expect(acc.map((x) => Number(x.number))).to.deep.equal(data);
+				});
 
-					if (batches.length === 0) {
-						// No fetches has been made, so we don't know whether we are done yet
+				it("deduplication on first entry", async () => {
+					let e0 = await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					await stores[1].docs.log.log.join([e0.entry]); // duplication on first entry
+					await put(1, 3);
+					await put(0, 4);
+					await checkIterate(0, [
+						[0n, 1n],
+						[2n, 3n, 4n],
+					]);
+				});
+
+				it("concurrently-multiple peers", async () => {
+					let e0 = await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					await stores[1].docs.log.log.join([e0.entry]);
+					await put(1, 3);
+					await put(0, 4);
+
+					let promises: Promise<any>[] = [];
+					for (let i = 0; i < 1; i++) {
+						promises.push(checkIterate(i, [[0n, 1n, 2n, 3n, 4n]]));
+						promises.push(checkIterate(i, [[0n], [1n, 2n, 3n, 4n]]));
+						promises.push(
+							checkIterate(i, [
+								[0n, 1n],
+								[2n, 3n, 4n],
+							]),
+						);
+						promises.push(
+							checkIterate(i, [
+								[0n, 1n, 2n],
+								[3n, 4n],
+							]),
+						);
+						promises.push(checkIterate(i, [[0n, 1n, 2n, 3n], [4n]]));
+					}
+					await Promise.all(promises);
+				});
+
+				it("sorts by order", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+					{
+						const iterator = await stores[0].docs.index.iterate(
+							new SearchRequest({
+								query: [],
+								sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+							}),
+						);
 						expect(iterator.done()).to.be.false;
-					} else {
-						for (const batch of batches) {
-							expect(iterator.done()).to.be.false;
-							const next = await iterator.next(batch.length);
-							expect(next.map((x) => x.number)).to.deep.equal(batch);
-						}
+						const next = await iterator.next(3);
+						expect(next.map((x) => x.name)).to.deep.equal(["0", "1", "2"]);
+						expect(iterator.done()).to.be.true;
+					}
+					{
+						const iterator = await stores[0].docs.index.iterate(
+							new SearchRequest({
+								query: [],
+								sort: [
+									new Sort({ direction: SortDirection.DESC, key: "name" }),
+								],
+							}),
+						);
+						expect(iterator.done()).to.be.false;
+						const next = await iterator.next(3);
+						expect(next.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
 						expect(iterator.done()).to.be.true;
 					}
 				});
-			};
 
-			before(async () => {
-				session = await TestSession.connected(peersCount);
-			});
+				it("strings", async () => {
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
 
-			after(async () => {
-				await session.stop();
-			});
-
-			beforeEach(async () => {
-				canRead = new Array(stores.length).fill(undefined);
-
-				// Create store
-				for (let i = 0; i < peersCount; i++) {
-					const store =
-						i > 0
-							? (await TestStore.load<TestStore>(
-									stores[0].address!,
-									session.peers[i].services.blocks,
-								))!
-							: new TestStore({
-									docs: new Documents<Document>(),
-								});
-
-					await session.peers[i].open(store, {
-						args: {
-							index: {
-								canRead: (_document: any, key: any) => {
-									return canRead[i] ? canRead[i]!(key) : true;
-								},
-							},
-							replicate: {
-								// TODO choose offset so data is perfectly distributed
-								factor: 1,
-							},
-							timeUntilRoleMaturity: 0,
-							replicas: { min: 1 }, // make sure documents only exist once
-						},
-					});
-
-					// Omit synchronization so results are always the same (HACKY)
-					// TODO types
-					const onMessage = store.docs.log.rpc["_responseHandler"];
-					store.docs.log.rpc["_responseHandler"] = (msg: any, ctx: any) => {
-						if (msg.constructor.name === "ExchangeHeadsMessage") {
-							return;
-						}
-						return onMessage(msg, ctx);
-					};
-
-					stores.push(store);
-				}
-				// Wait for ack that everone can connect to each outher through the rpc topic
-				for (let i = 0; i < session.peers.length; i++) {
-					await stores[i].docs.log.waitForReplicator(
-						...session.peers
-							.filter((_v, ix) => ix !== i)
-							.map((x) => x.identity.publicKey),
-					);
-				}
-			});
-
-			afterEach(async () => {
-				await Promise.all(stores.map((x) => x.closed || x.drop()));
-				stores = [];
-			});
-
-			it("empty", async () => {
-				for (let i = 0; i < session.peers.length; i++) {
-					await checkIterate(i, []);
-				}
-			});
-
-			// TODO make sure documents are evenly distrubted before querye
-			it("one peer", async () => {
-				await put(0, 0);
-				await put(0, 1);
-				await put(0, 2);
-				expect(await stores[0].docs.index.getSize()).equal(3);
-				for (let i = 0; i < session.peers.length; i++) {
-					await checkIterate(i, [[0n], [1n], [2n]]);
-					await checkIterate(i, [[0n, 1n, 2n]]);
-					await checkIterate(i, [[0n, 1n], [2n]]);
-					await checkIterate(i, [[0n], [1n, 2n]]);
-				}
-			});
-
-			it("multiple peers", async () => {
-				await put(0, 0);
-				await put(0, 1);
-				let e2 = await put(0, 2);
-				await stores[1].docs.log.log.join([e2.entry]);
-				await put(1, 3);
-				await put(1, 4);
-				for (let i = 1; i < session.peers.length; i++) {
-					await checkIterate(i, [[0n, 1n, 2n, 3n, 4n]]);
-					await checkIterate(i, [[0n], [1n, 2n, 3n, 4n]]);
-				}
-			});
-
-			it("observer mixed sort", async () => {
-				// TODO separate setup so we don't need to close store 2 test here
-				await stores[2].close();
-				await stores[0].docs.log.replicate(false);
-				await waitForResolved(async () =>
-					expect((await stores[0].docs.log.getReplicators()).size).equal(1),
-				);
-				let data: number[] = [];
-				for (let i = 0; i < 100; i++) {
-					let doc = new Document({
-						id: String(i),
-						name: String(i),
-						number: BigInt(i),
-					});
-					data.push(i);
-					const { entry } = await stores[1].docs.put(doc, { target: "all" });
-					if (i > 30) await stores[0].docs.log.log.join([entry]); // only join some entries to the observer
-				}
-
-				const req = new SearchRequest({
-					query: [
-						new IntegerCompare({
-							key: "number",
-							compare: Compare.GreaterOrEqual,
-							value: 0n,
-						}),
-					],
-					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
-				});
-				const iterator = stores[0].docs.index.iterate(req);
-				let acc: Document[] = [];
-				while (iterator.done() !== true) {
-					const v = await iterator.next(20);
-					acc = [...acc, ...v];
-				}
-				expect(acc.map((x) => Number(x.number))).to.deep.equal(data);
-			});
-
-			it("deduplication on first entry", async () => {
-				let e0 = await put(0, 0);
-				await put(0, 1);
-				await put(0, 2);
-				await stores[1].docs.log.log.join([e0.entry]); // duplication on first entry
-				await put(1, 3);
-				await put(0, 4);
-				await checkIterate(0, [
-					[0n, 1n],
-					[2n, 3n, 4n],
-				]);
-			});
-
-			it("concurrently-multiple peers", async () => {
-				let e0 = await put(0, 0);
-				await put(0, 1);
-				await put(0, 2);
-				await stores[1].docs.log.log.join([e0.entry]);
-				await put(1, 3);
-				await put(0, 4);
-
-				let promises: Promise<any>[] = [];
-				for (let i = 0; i < 1; i++) {
-					promises.push(checkIterate(i, [[0n, 1n, 2n, 3n, 4n]]));
-					promises.push(checkIterate(i, [[0n], [1n, 2n, 3n, 4n]]));
-					promises.push(
-						checkIterate(i, [
-							[0n, 1n],
-							[2n, 3n, 4n],
-						]),
-					);
-					promises.push(
-						checkIterate(i, [
-							[0n, 1n, 2n],
-							[3n, 4n],
-						]),
-					);
-					promises.push(checkIterate(i, [[0n, 1n, 2n, 3n], [4n]]));
-				}
-				await Promise.all(promises);
-			});
-
-			it("sorts by order", async () => {
-				await put(0, 0);
-				await put(0, 1);
-				await put(0, 2);
-				{
 					const iterator = await stores[0].docs.index.iterate(
 						new SearchRequest({
 							query: [],
@@ -2611,260 +2644,376 @@ describe("index", () => {
 					const next = await iterator.next(3);
 					expect(next.map((x) => x.name)).to.deep.equal(["0", "1", "2"]);
 					expect(iterator.done()).to.be.true;
-				}
-				{
-					const iterator = await stores[0].docs.index.iterate(
+				});
+
+				it("uses indexed fields", async () => {
+					const KEY = "ABC";
+					class IndexClass {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: "u64" })
+						[KEY]: bigint;
+
+						constructor(properties: { id: string; [KEY]: bigint }) {
+							this.id = properties.id;
+							this[KEY] = properties[KEY];
+						}
+					}
+
+					// TODO fix types
+					await (stores[0].docs as any).index.open({
+						transform: {
+							type: IndexClass,
+							transform: async (obj: any) => {
+								return new IndexClass({ id: obj.id, [KEY]: obj.number });
+							},
+						},
+						indexBy: ["id"],
+						dbType: Documents,
+						canSearch: () => true,
+						log: stores[0].docs.log,
+						sync: () => undefined as any,
+						documentType: Document,
+					});
+
+					let store = stores[0] as any as TestStore<IndexClass, any>;
+
+					await put(0, 0);
+					await put(0, 1);
+					await put(0, 2);
+
+					const iteratorValues = store.docs.index.iterate(
 						new SearchRequest({
 							query: [],
-							sort: [new Sort({ direction: SortDirection.DESC, key: "name" })],
+							sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
 						}),
-					);
-					expect(iterator.done()).to.be.false;
-					const next = await iterator.next(3);
-					expect(next.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
-					expect(iterator.done()).to.be.true;
-				}
-			});
-
-			it("strings", async () => {
-				await put(0, 0);
-				await put(0, 1);
-				await put(0, 2);
-
-				const iterator = await stores[0].docs.index.iterate(
-					new SearchRequest({
-						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
-					}),
-				);
-				expect(iterator.done()).to.be.false;
-				const next = await iterator.next(3);
-				expect(next.map((x) => x.name)).to.deep.equal(["0", "1", "2"]);
-				expect(iterator.done()).to.be.true;
-			});
-
-			it("uses indexed fields", async () => {
-				const KEY = "ABC";
-				class IndexClass {
-					@field({ type: "string" })
-					id: string;
-
-					@field({ type: "u64" })
-					[KEY]: bigint;
-
-					constructor(properties: { id: string; [KEY]: bigint }) {
-						this.id = properties.id;
-						this[KEY] = properties[KEY];
-					}
-				}
-
-				// TODO fix types
-				await (stores[0].docs as any).index.open({
-					transform: {
-						type: IndexClass,
-						transform: async (obj: any) => {
-							return new IndexClass({ id: obj.id, [KEY]: obj.number });
+						{
+							local: true,
+							remote: false,
 						},
-					},
-					indexBy: ["id"],
-					dbType: Documents,
-					canSearch: () => true,
-					log: stores[0].docs.log,
-					sync: () => undefined as any,
-					documentType: Document,
+					);
+					const nextValues = await iteratorValues.next(3);
+					expect(nextValues.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
+					expect(iteratorValues.done()).to.be.true;
 				});
 
-				let store = stores[0] as any as TestStore<IndexClass, any>;
-
-				await put(0, 0);
-				await put(0, 1);
-				await put(0, 2);
-
-				const iteratorValues = store.docs.index.iterate(
-					new SearchRequest({
-						query: [],
-						sort: [new Sort({ direction: SortDirection.DESC, key: KEY })],
-					}),
-					{
-						local: true,
-						remote: false,
-					},
-				);
-				const nextValues = await iteratorValues.next(3);
-				expect(nextValues.map((x) => x.name)).to.deep.equal(["2", "1", "0"]);
-				expect(iteratorValues.done()).to.be.true;
-			});
-
-			it("will retrieve partial results of not having read access", async () => {
-				await put(0, 0);
-				await put(1, 1);
-				await put(1, 2);
-
-				canRead[0] = () => Promise.resolve(false);
-				const iterator = await stores[2].docs.index.iterate(
-					new SearchRequest({
-						query: [],
-						sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
-					}),
-				);
-				expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal([
-					"1",
-				]);
-				expect(iterator.done()).to.be.false;
-				expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal([
-					"2",
-				]);
-				expect(iterator.done()).to.be.true;
-			});
-
-			describe("close", () => {
-				it("by invoking close()", async () => {
+				it("will retrieve partial results of not having read access", async () => {
 					await put(0, 0);
-					await put(0, 1);
-					await put(0, 2);
-					const request = new SearchRequest({
-						query: [],
-					});
-					const iterator = await stores[1].docs.index.iterate(request);
-					expect(iterator.done()).to.be.false;
-					await iterator.next(2); // fetch some, but not all
-					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
-						1,
-					);
-					await iterator.close();
-					await waitForResolved(
-						async () =>
-							expect(
-								await stores[0].docs.index.getPending(request.idString),
-							).to.eq(undefined),
-						{ timeout: 3000, delayInterval: 50 },
-					);
-				});
+					await put(1, 1);
+					await put(1, 2);
 
-				it("requires correct id", async () => {
-					await put(0, 0);
-					await put(0, 1);
-					const request = new SearchRequest({
-						query: [],
-					});
-					const iterator = await stores[1].docs.index.iterate(request);
-					expect(iterator.done()).to.be.false;
-					await iterator.next(1); // fetch some, but not all
-					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
-						1,
-					);
-
-					const closeRequest = new CloseIteratorRequest({ id: request.id });
-
-					// Try to send from another peer (that is not the owner of the iterator)
-					await stores[2].docs.index["_query"].send(closeRequest, {
-						mode: new SilentDelivery({
-							to: [session.peers[0].identity.publicKey],
-							redundancy: 1,
+					canRead[0] = () => Promise.resolve(false);
+					const iterator = await stores[2].docs.index.iterate(
+						new SearchRequest({
+							query: [],
+							sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
 						}),
-					});
-
-					await delay(2000);
-					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
-						1,
 					);
-
-					// send from the owner
-					await stores[1].docs.index["_query"].send(closeRequest, {
-						mode: new SilentDelivery({
-							to: [session.peers[0].identity.publicKey],
-							redundancy: 1,
-						}),
-					});
-
-					await waitForResolved(
-						async () =>
-							expect(
-								await stores[0].docs.index.getPending(request.idString),
-							).to.eq(undefined),
-						{ timeout: 3000, delayInterval: 50 },
-					);
-				});
-
-				it("end of iterator", async () => {
-					await put(0, 0);
-					await put(0, 1);
-					await put(0, 2);
-					const request = new SearchRequest({
-						query: [],
-					});
-					const iterator = await stores[1].docs.index.iterate(request);
+					expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal([
+						"1",
+					]);
 					expect(iterator.done()).to.be.false;
-					await iterator.next(3); // fetch some, but not all
-					await waitForResolved(
-						async () =>
-							expect(await stores[0].docs.index.getPending(request.idString)).to
-								.be.undefined,
-						{ timeout: 3000, delayInterval: 50 },
-					);
-				});
-
-				it("closing store will result queues", async () => {
-					await put(0, 0);
-					await put(0, 1);
-					await put(0, 2);
-
-					const request = new SearchRequest({
-						query: [],
-					});
-					const iterator = stores[1].docs.index.iterate(request);
-					await iterator.next(1);
-					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
-						2,
-					); // two more results
-					await stores[0].close();
-					expect(await stores[0].docs.index.getPending(request.idString)).to.be
-						.undefined;
-				});
-
-				it("dropping store will result queues", async () => {
-					await put(0, 0);
-					await put(0, 1);
-					await put(0, 2);
-
-					const request = new SearchRequest({
-						query: [],
-					});
-					const iterator = stores[1].docs.index.iterate(request);
-					await iterator.next(1);
-					expect(await stores[0].docs.index.getPending(request.idString)).to.eq(
-						2,
-					); // two more results
-					await stores[0].drop();
-					expect(await stores[0].docs.index.getPending(request.idString)).to.be
-						.undefined;
-				});
-
-				it("end of iterator, multiple nexts", async () => {
-					await put(0, 0);
-					await put(0, 1);
-					await put(0, 2);
-					const request = new SearchRequest({
-						query: [],
-					});
-					const iterator = stores[1].docs.index.iterate(request);
-					await iterator.next(2);
-					await iterator.next(1);
+					expect((await iterator.next(1)).map((x) => x.name)).to.deep.equal([
+						"2",
+					]);
 					expect(iterator.done()).to.be.true;
-					await waitForResolved(
-						async () =>
-							expect(await stores[0].docs.index.getPending(request.idString)).to
-								.be.undefined,
-						{ timeout: 3000, delayInterval: 50 },
-					);
 				});
+
+				describe("close", () => {
+					it("by invoking close()", async () => {
+						await put(0, 0);
+						await put(0, 1);
+						await put(0, 2);
+						const request = new SearchRequest({
+							query: [],
+						});
+						const iterator = await stores[1].docs.index.iterate(request);
+						expect(iterator.done()).to.be.false;
+						await iterator.next(2); // fetch some, but not all
+						expect(
+							await stores[0].docs.index.getPending(request.idString),
+						).to.eq(1);
+						await iterator.close();
+						await waitForResolved(
+							async () =>
+								expect(
+									await stores[0].docs.index.getPending(request.idString),
+								).to.eq(undefined),
+							{ timeout: 3000, delayInterval: 50 },
+						);
+					});
+
+					it("requires correct id", async () => {
+						await put(0, 0);
+						await put(0, 1);
+						const request = new SearchRequest({
+							query: [],
+						});
+						const iterator = await stores[1].docs.index.iterate(request);
+						expect(iterator.done()).to.be.false;
+						await iterator.next(1); // fetch some, but not all
+						expect(
+							await stores[0].docs.index.getPending(request.idString),
+						).to.eq(1);
+
+						const closeRequest = new CloseIteratorRequest({ id: request.id });
+
+						// Try to send from another peer (that is not the owner of the iterator)
+						await stores[2].docs.index["_query"].send(closeRequest, {
+							mode: new SilentDelivery({
+								to: [session.peers[0].identity.publicKey],
+								redundancy: 1,
+							}),
+						});
+
+						await delay(2000);
+						expect(
+							await stores[0].docs.index.getPending(request.idString),
+						).to.eq(1);
+
+						// send from the owner
+						await stores[1].docs.index["_query"].send(closeRequest, {
+							mode: new SilentDelivery({
+								to: [session.peers[0].identity.publicKey],
+								redundancy: 1,
+							}),
+						});
+
+						await waitForResolved(
+							async () =>
+								expect(
+									await stores[0].docs.index.getPending(request.idString),
+								).to.eq(undefined),
+							{ timeout: 3000, delayInterval: 50 },
+						);
+					});
+
+					it("end of iterator", async () => {
+						await put(0, 0);
+						await put(0, 1);
+						await put(0, 2);
+						const request = new SearchRequest({
+							query: [],
+						});
+						const iterator = await stores[1].docs.index.iterate(request);
+						expect(iterator.done()).to.be.false;
+						await iterator.next(3); // fetch some, but not all
+						await waitForResolved(
+							async () =>
+								expect(await stores[0].docs.index.getPending(request.idString))
+									.to.be.undefined,
+							{ timeout: 3000, delayInterval: 50 },
+						);
+					});
+
+					it("closing store will result queues", async () => {
+						await put(0, 0);
+						await put(0, 1);
+						await put(0, 2);
+
+						const request = new SearchRequest({
+							query: [],
+						});
+						const iterator = stores[1].docs.index.iterate(request);
+						await iterator.next(1);
+						expect(
+							await stores[0].docs.index.getPending(request.idString),
+						).to.eq(2); // two more results
+						await stores[0].close();
+						expect(await stores[0].docs.index.getPending(request.idString)).to
+							.be.undefined;
+					});
+
+					it("dropping store will result queues", async () => {
+						await put(0, 0);
+						await put(0, 1);
+						await put(0, 2);
+
+						const request = new SearchRequest({
+							query: [],
+						});
+						const iterator = stores[1].docs.index.iterate(request);
+						await iterator.next(1);
+						expect(
+							await stores[0].docs.index.getPending(request.idString),
+						).to.eq(2); // two more results
+						await stores[0].drop();
+						expect(await stores[0].docs.index.getPending(request.idString)).to
+							.be.undefined;
+					});
+
+					it("end of iterator, multiple nexts", async () => {
+						await put(0, 0);
+						await put(0, 1);
+						await put(0, 2);
+						const request = new SearchRequest({
+							query: [],
+						});
+						const iterator = stores[1].docs.index.iterate(request);
+						await iterator.next(2);
+						await iterator.next(1);
+						expect(iterator.done()).to.be.true;
+						await waitForResolved(
+							async () =>
+								expect(await stores[0].docs.index.getPending(request.idString))
+									.to.be.undefined,
+							{ timeout: 3000, delayInterval: 50 },
+						);
+					});
+				});
+
+				// TODO test iterator.close() to stop pending promises
+
+				// TODO deletion while sort
+
+				// TODO session timeouts?
 			});
 
-			// TODO test iterator.close() to stop pending promises
+			describe("joining", () => {
+				let session: TestSession;
 
-			// TODO deletion while sort
+				afterEach(async () => {
+					await session.stop();
+				});
 
-			// TODO session timeouts?
+				it("keeps iterator open until waitFor", async () => {
+					session = await TestSession.disconnected(1);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const observer = await session.peers[0].open(store, {
+						args: {
+							replicate: false,
+						},
+					});
+
+					let waitFor = 5e3;
+					const iterator = observer.docs.index.iterate(
+						{},
+						{
+							remote: {
+								joining: {
+									waitFor,
+								},
+							},
+						},
+					);
+					expect(iterator.done()).to.be.false;
+					await iterator.next(1);
+					expect(iterator.done()).to.be.false;
+					await delay(waitFor + 1000);
+					expect(iterator.done()).to.be.true;
+				});
+
+				it("can query joining first replicator", async () => {
+					session = await TestSession.disconnected(2);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const observer = await session.peers[0].open(store, {
+						args: {
+							replicate: false,
+						},
+					});
+
+					// in this test we test if we can query joining peers while we are already iterating
+					const writer = await session.peers[1].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					await writer.docs.put(new Document({ id: "1" }));
+
+					const iterator = observer.docs.index.iterate(
+						{},
+						{
+							remote: {
+								joining: {
+									waitFor: 5e3,
+								},
+							},
+						},
+					);
+					const first = await iterator.next(1);
+					expect(first).to.have.length(0);
+					expect(iterator.done()).to.be.false;
+
+					await session.connect(); // connect the nodes!
+
+					await observer.docs.index.waitFor(writer.node.identity.publicKey);
+					expect(iterator.done()).to.be.false;
+					const second = await iterator.next(1);
+					expect(second).to.have.length(1);
+				});
+
+				it("late join will not re-open iterator", async () => {
+					session = await TestSession.disconnected(2);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const observer = await session.peers[0].open(store, {
+						args: {
+							replicate: false,
+						},
+					});
+
+					// in this test we test if we can query joining peers while we are already iterating
+					const writer = await session.peers[1].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					await writer.docs.put(new Document({ id: "1" }));
+
+					let waitFor = 1e2;
+					const iterator = observer.docs.index.iterate(
+						{},
+						{
+							remote: {
+								joining: {
+									waitFor,
+								},
+							},
+						},
+					);
+
+					const first = await iterator.next(1);
+					expect(first).to.have.length(0);
+					expect(iterator.done()).to.be.false;
+
+					await delay(waitFor);
+					let queryCommenceCalls = 0;
+					const queryCommenceFn = observer.docs.index["queryCommence"].bind(
+						observer.docs.index,
+					);
+
+					observer.docs.index["queryCommence"] = (a, b) => {
+						queryCommenceCalls++;
+						return queryCommenceFn(a, b);
+					};
+
+					await session.connect(); // connect the nodes!
+
+					await observer.docs.index.waitFor(writer.node.identity.publicKey);
+					expect(iterator.done()).to.be.true;
+					const second = await iterator.next(0);
+					expect(queryCommenceCalls).to.equal(0); // we should not have re-commenced the query
+					expect(second).to.have.length(0);
+				});
+			});
 		});
 	});
 
