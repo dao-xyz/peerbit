@@ -1850,7 +1850,6 @@ export class DocumentIndex<
 					if (buffer.kept === 0) {
 						if (peerBufferMap.get(peer)?.buffer.length === 0) {
 							peerBufferMap.delete(peer); // No more results
-							console.log("Removed peer from buffer: " + peer);
 						}
 						continue;
 					}
@@ -1979,7 +1978,6 @@ export class DocumentIndex<
 													if (response.response.results.length === 0) {
 														if (peerBufferMap.get(peer)?.buffer.length === 0) {
 															peerBufferMap.delete(peer); // No more results
-															console.log("Removed peer from buffer: " + peer);
 														}
 													} else {
 														const peerBuffer = peerBufferMap.get(peer);
