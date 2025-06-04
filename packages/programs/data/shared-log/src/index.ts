@@ -2948,41 +2948,52 @@ export class SharedLog<
 		}
 	}
 
-	async waitForReplicator(...keys: PublicSignKey[]) {
+	async waitForReplicator(
+		key: PublicSignKey,
+		options?: { signal?: AbortSignal },
+	) {
 		let deferred = pDefer<void>();
 
 		let timeout = setTimeout(() => {
 			clear();
 			deferred.reject(
-				new TimeoutError(`Timeout waiting for replicators: ${keys.join(", ")}`),
+				new TimeoutError(`Timeout waiting for replicator ${key.hashcode()}`),
 			);
 		}, this.waitForReplicatorTimeout);
 
+		if (options?.signal) {
+			options.signal.addEventListener("abort", () => {
+				clear();
+				deferred.reject(new AbortError());
+			});
+		}
+
 		const clear = () => {
+			this.events.removeEventListener("replicator:mature", check);
+			this.events.removeEventListener("replication:change", check);
+			if (options?.signal) {
+				options.signal.removeEventListener("abort", clear);
+			}
 			clearTimeout(timeout);
 		};
 
 		deferred.promise.finally(() => {
 			clear();
-			this.events.removeEventListener("replicator:mature", check);
-			this.events.removeEventListener("replication:change", check);
 		});
 
 		const check = async () => {
-			for (const k of keys) {
-				const iterator = this.replicationIndex?.iterate(
-					{ query: new StringMatch({ key: "hash", value: k.hashcode() }) },
-					{ reference: true },
-				);
-				const rects = await iterator?.next(1);
-				await iterator.close();
-				const rect = rects[0]?.value;
-				if (
-					!rect ||
-					!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
-				) {
-					return;
-				}
+			const iterator = this.replicationIndex?.iterate(
+				{ query: new StringMatch({ key: "hash", value: key.hashcode() }) },
+				{ reference: true },
+			);
+			const rects = await iterator?.next(1);
+			await iterator.close();
+			const rect = rects[0]?.value;
+			if (
+				!rect ||
+				!isMatured(rect, +new Date(), await this.getDefaultMinRoleAge())
+			) {
+				return;
 			}
 			return deferred.resolve();
 		};
