@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.11.1](https://github.com/dao-xyz/peerbit/compare/document-v9.11.0...document-v9.11.1) (2025-06-04)
+
+
+### Bug Fixes
+
+* onMissedResults handle case when no results have previously been fetched ([f511993](https://github.com/dao-xyz/peerbit/commit/f5119936b8fa9a9001563a2db6da07025f39562e))
+
 ## [9.11.0](https://github.com/dao-xyz/peerbit/compare/document-v9.10.1...document-v9.11.0) (2025-06-04)
 
 
