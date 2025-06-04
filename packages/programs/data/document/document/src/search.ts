@@ -72,6 +72,7 @@ export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
 		  >;
 	local?: boolean;
 	resolve?: Resolve;
+	signal?: AbortSignal;
 };
 export type SearchOptions<
 	R,
@@ -767,6 +768,13 @@ export class DocumentIndex<
 		}
 
 		return this._resumableIterators.getPending(cursorId);
+	}
+
+	get hasPending() {
+		if (this._resultQueue.size > 0) {
+			return true;
+		}
+		return false;
 	}
 
 	async close(from?: Program): Promise<boolean> {
@@ -1660,6 +1668,7 @@ export class DocumentIndex<
 		};
 
 		let maybeSetDone: () => void;
+		let unsetDone: () => void;
 		let cleanup = () => {};
 
 		if (typeof options?.remote === "object" && options.remote.joining) {
@@ -1677,13 +1686,19 @@ export class DocumentIndex<
 					setDoneIfTimeout = true;
 				}
 			};
+			unsetDone = () => {
+				setDoneIfTimeout = false;
+				done = false;
+			};
 			let timeout = setTimeout(() => {
 				if (setDoneIfTimeout) {
 					cleanup();
 					done = true;
 				}
 			}, waitForTime);
+
 			cleanup = () => {
+				this.clearResultsQueue(queryRequestCoerced);
 				clearTimeout(timeout);
 			};
 		} else {
@@ -1691,15 +1706,20 @@ export class DocumentIndex<
 				cleanup();
 				done = true;
 			};
+			unsetDone = () => {
+				cleanup();
+				done = false;
+			};
+			cleanup = () => {
+				this.clearResultsQueue(queryRequestCoerced);
+			};
 		}
 
 		const fetchFirst = async (
 			n: number,
 			options?: { from?: string[] },
 		): Promise<boolean> => {
-			if (options?.from == null) {
-				maybeSetDone(); // Assume we are done (but only if we query all peers (not when providing 'from'))
-			}
+			let hasMore = false;
 
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(queryRequestCoerced, {
@@ -1721,7 +1741,7 @@ export class DocumentIndex<
 						}
 
 						if (results.kept > 0n) {
-							done = false; // we have more to do later!
+							hasMore = true;
 						}
 						const buffer: BufferedResult<
 							types.ResultTypeFromRequest<R, T, I> | I,
@@ -1780,11 +1800,11 @@ export class DocumentIndex<
 				},
 			});
 
-			if (done) {
-				this.clearResultsQueue(queryRequestCoerced);
+			if (!hasMore) {
+				maybeSetDone();
 			}
 
-			return done;
+			return !hasMore;
 		};
 
 		const fetchAtLeast = async (n: number) => {
@@ -1914,7 +1934,9 @@ export class DocumentIndex<
 							this._query
 								.request(remoteCollectRequest, {
 									...options,
-									signal: controller.signal,
+									signal: options?.signal
+										? AbortSignal.any([options.signal, controller.signal])
+										: controller.signal,
 									priority: 1,
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 								})
@@ -2054,9 +2076,13 @@ export class DocumentIndex<
 				}
 			}
 
-			if (fetchedAll && !pendingMoreResults) {
+			const hasMore = !fetchedAll || pendingMoreResults;
+			if (hasMore) {
+				unsetDone();
+			} else {
 				maybeSetDone();
 			}
+
 			let coercedBatch: ValueTypeFromRequest<Resolve, T, I>[];
 			if (resolve) {
 				coercedBatch = (
@@ -2123,8 +2149,9 @@ export class DocumentIndex<
 			}
 			await Promise.all(promises);
 		};
+		options?.signal && options.signal.addEventListener("abort", close);
+
 		let doneFn = () => {
-			maybeSetDone();
 			return done;
 		};
 
@@ -2135,7 +2162,11 @@ export class DocumentIndex<
 				if (totalFetchedCounter > 0) {
 					// wait for the node to become a replicator, then so query
 					await this._log
-						.waitForReplicator(e.detail)
+						.waitForReplicator(e.detail, {
+							signal: options?.signal
+								? AbortSignal.any([options.signal, controller.signal])
+								: controller.signal,
+						})
 						.then(() => {
 							if (done) {
 								return;
@@ -2144,7 +2175,9 @@ export class DocumentIndex<
 								from: [e.detail.hashcode()],
 							});
 						})
-						.catch(() => {});
+						.catch(() => {
+							/* TODO error handling */
+						});
 				}
 			};
 			this._query.events.addEventListener("join", joinListener);

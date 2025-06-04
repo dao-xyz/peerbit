@@ -2281,7 +2281,7 @@ describe("index", () => {
 					});
 
 					await store2.docs.put(new Document({ id: "1" }));
-					await store2.docs.log.waitForReplicator();
+					await store2.docs.log.waitForReplicators();
 					await waitForResolved(async () =>
 						expect(await store.docs.index.getSize()).to.eq(1),
 					);
@@ -2326,7 +2326,7 @@ describe("index", () => {
 					});
 
 					await store2.docs.put(new Document({ id: "1" }));
-					await store2.docs.log.waitForReplicator();
+					await store2.docs.log.waitForReplicators();
 					await waitForResolved(async () =>
 						expect(await store.docs.index.getSize()).to.eq(1),
 					);
@@ -2413,9 +2413,11 @@ describe("index", () => {
 								const next = await iterator.next(batch.length);
 								expect(next.map((x) => x.number)).to.deep.equal(batch);
 							}
+
 							expect(iterator.done()).to.be.true;
 						}
 					});
+					expect(stores[fromStoreIndex].docs.index.hasPending).to.be.false;
 				};
 
 				before(async () => {
@@ -2470,12 +2472,13 @@ describe("index", () => {
 						stores.push(store);
 					}
 					// Wait for ack that everone can connect to each outher through the rpc topic
+
 					for (let i = 0; i < session.peers.length; i++) {
-						await stores[i].docs.log.waitForReplicator(
-							...session.peers
-								.filter((_v, ix) => ix !== i)
-								.map((x) => x.identity.publicKey),
-						);
+						for (const key of session.peers
+							.filter((_v, ix) => ix !== i)
+							.map((x) => x.identity.publicKey)) {
+							await stores[i].docs.log.waitForReplicator(key);
+						}
 					}
 				});
 
@@ -2890,7 +2893,7 @@ describe("index", () => {
 						},
 					});
 
-					let waitFor = 5e3;
+					let waitFor = 3e3;
 					const iterator = observer.docs.index.iterate(
 						{},
 						{
@@ -2906,6 +2909,8 @@ describe("index", () => {
 					expect(iterator.done()).to.be.false;
 					await delay(waitFor + 1000);
 					expect(iterator.done()).to.be.true;
+
+					expect(store.docs.index.hasPending).to.be.false;
 				});
 
 				it("can query joining first replicator", async () => {
@@ -2952,6 +2957,9 @@ describe("index", () => {
 					expect(iterator.done()).to.be.false;
 					const second = await iterator.next(1);
 					expect(second).to.have.length(1);
+
+					expect(observer.docs.index.hasPending).to.be.false;
+					expect(writer.docs.index.hasPending).to.be.false;
 				});
 
 				it("late join will not re-open iterator", async () => {
@@ -3012,6 +3020,40 @@ describe("index", () => {
 					const second = await iterator.next(0);
 					expect(queryCommenceCalls).to.equal(0); // we should not have re-commenced the query
 					expect(second).to.have.length(0);
+
+					expect(observer.docs.index.hasPending).to.be.false;
+					expect(writer.docs.index.hasPending).to.be.false;
+				});
+			});
+
+			describe("signal", () => {
+				it("can closes on abort", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+					const controller = new AbortController();
+					const iterator = store.docs.index.iterate(
+						{},
+						{
+							signal: controller.signal,
+						},
+					);
+
+					expect(iterator.done()).to.be.false;
+					controller.abort();
+					expect(iterator.done()).to.be.true;
+
+					expect(store.docs.index.hasPending).to.be.false;
 				});
 			});
 		});
