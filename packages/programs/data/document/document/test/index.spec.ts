@@ -2936,6 +2936,7 @@ describe("index", () => {
 					});
 
 					await writer.docs.put(new Document({ id: "1" }));
+					let onMissedResults: number[] = [];
 
 					const iterator = observer.docs.index.iterate(
 						{},
@@ -2943,6 +2944,9 @@ describe("index", () => {
 							remote: {
 								joining: {
 									waitFor: 5e3,
+									onMissedResults: ({ amount }) => {
+										onMissedResults.push(amount);
+									},
 								},
 							},
 						},
@@ -2957,6 +2961,8 @@ describe("index", () => {
 					expect(iterator.done()).to.be.false;
 					const second = await iterator.next(1);
 					expect(second).to.have.length(1);
+
+					expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
 
 					expect(observer.docs.index.hasPending).to.be.false;
 					expect(writer.docs.index.hasPending).to.be.false;
@@ -3025,7 +3031,7 @@ describe("index", () => {
 					expect(writer.docs.index.hasPending).to.be.false;
 				});
 
-				it("onMissedResults", async () => {
+				it("onMissedResults respects already emitted results", async () => {
 					// test that we will get missed results accuruately
 					session = await TestSession.disconnected(3);
 

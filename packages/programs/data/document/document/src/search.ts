@@ -2208,26 +2208,33 @@ export class DocumentIndex<
 								from: [e.detail.hashcode()],
 							});
 
-							if (lastValueInOrder != null && onMissedResults) {
+							if (onMissedResults) {
 								const pending = peerBufferMap.get(e.detail.hashcode())?.buffer;
 
 								if (pending && pending.length > 0) {
-									const pendingWithLast = [...pending.flat(), lastValueInOrder];
-									const results = pendingWithLast.sort((a, b) =>
-										indexerTypes.extractSortCompare(
-											a.indexed,
-											b.indexed,
-											queryRequestCoerced.sort,
-										),
-									);
+									if (lastValueInOrder) {
+										const pendingWithLast = [
+											...pending.flat(),
+											lastValueInOrder,
+										];
+										const results = pendingWithLast.sort((a, b) =>
+											indexerTypes.extractSortCompare(
+												a.indexed,
+												b.indexed,
+												queryRequestCoerced.sort,
+											),
+										);
 
-									let lateResults = results.findIndex(
-										(x) => x === lastValueInOrder,
-									);
+										let lateResults = results.findIndex(
+											(x) => x === lastValueInOrder,
+										);
 
-									// consume pending
-									if (lateResults > 0) {
-										onMissedResults({ amount: lateResults });
+										// consume pending
+										if (lateResults > 0) {
+											onMissedResults({ amount: lateResults });
+										}
+									} else {
+										onMissedResults({ amount: pending.length });
 									}
 								}
 							}
