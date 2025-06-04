@@ -417,6 +417,34 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [5.4.0](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.4...rpc-v5.4.0) (2025-06-04)
+
+
+### Features
+
+* add response interceptor ([774d4b9](https://github.com/dao-xyz/peerbit/commit/774d4b918e51d60e63052e410f251a21735cc6e8))
+* add response request event handlers ([9084059](https://github.com/dao-xyz/peerbit/commit/90840599cbf46586311e589c83d2764e760fb255))
+* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
+
+
+### Bug Fixes
+
+* always unsubscribe on close ([19ca4a3](https://github.com/dao-xyz/peerbit/commit/19ca4a321a78ed0cdb5b72c4e2e320801f1e246f))
+* don't unsubscribe if we have not subscribed ([79582c9](https://github.com/dao-xyz/peerbit/commit/79582c9f02cd4dbf8e6061d2971283aff9752858))
+* emit DataMessage on request and response event ([e16ac5f](https://github.com/dao-xyz/peerbit/commit/e16ac5f5f1aa01377f29d35ae073611e837c04c9))
+
+
+### Documentation
+
+* add comment ([592398d](https://github.com/dao-xyz/peerbit/commit/592398d86886baa1aa6ba4e0bf63c699fd5ba47d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.47 to ^2.1.48
+
 ## [5.3.4](https://github.com/dao-xyz/peerbit/compare/rpc-v5.3.3...rpc-v5.3.4) (2025-06-04)
 
 

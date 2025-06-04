@@ -456,6 +456,85 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [10.0.0](https://github.com/dao-xyz/peerbit/compare/document-v9.10.0...document-v10.0.0) (2025-06-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* add support for querying indexed values
+* rateless-iblt-sync protocol
+
+### Features
+
+* 'includeIndexed' property ([7ca5c48](https://github.com/dao-xyz/peerbit/commit/7ca5c48bc77022e498d8ed9f7a7f73aa17700e3e))
+* add 'strategy' option for remote queries ([1e362c1](https://github.com/dao-xyz/peerbit/commit/1e362c17028ebd29a24a453d00f8929fa6901879))
+* add approximative document count method ([d9795af](https://github.com/dao-xyz/peerbit/commit/d9795af5c6a8cdafeef3a439e1da0d25f04508d7))
+* add keep property to allow filtering documents to keep without replicating. Passing value of 'self' will keep all entries created by self ([363580e](https://github.com/dao-xyz/peerbit/commit/363580e9dcb627eb47e9424bd52ff33116beb375))
+* add merge functionality for replication domains for documents ([6d2cda9](https://github.com/dao-xyz/peerbit/commit/6d2cda9af75bee473cfb1f203908124d2f9c318c))
+* add prefetch functionality for search ([e747d63](https://github.com/dao-xyz/peerbit/commit/e747d630f1908118fab53942c44af41d3eed8c1b))
+* add support for querying indexed values ([36fe71c](https://github.com/dao-xyz/peerbit/commit/36fe71c047869a74add052612eb641966409354f))
+* disable strictHistory checks by default ([fca6bff](https://github.com/dao-xyz/peerbit/commit/fca6bffbc98ce9eca8b07ef3c342f166c8c071d3))
+* emit indexed types on changes events ([b1540c6](https://github.com/dao-xyz/peerbit/commit/b1540c6b3c6ca12b0d073583f663ee954b9ea316))
+* emitBlocksEagerly options, emit blocks to search result recipients before they request them ([f7fcb37](https://github.com/dao-xyz/peerbit/commit/f7fcb379e50a77e9690e2f98ba2aaa276ab08b69))
+* iterate remote wait for joining peers, and merge the resulting iterators ([6186b7b](https://github.com/dao-xyz/peerbit/commit/6186b7b9e00da26f55ab2bddb96b497e0ae926fc))
+* rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
+* return context for search results ([f0d763d](https://github.com/dao-xyz/peerbit/commit/f0d763dcad9032fd74fa0dd751c8d27e46a0f656))
+* returned indexed representation on get and iterate when resolving reconstructed value as a meta property ([077dde4](https://github.com/dao-xyz/peerbit/commit/077dde42e39f80b0b380fc8c3915719a4db5d565))
+
+
+### Bug Fixes
+
+* add abort signal to iterator ([2bff3a8](https://github.com/dao-xyz/peerbit/commit/2bff3a8baa4b1e3cc0d36d9fc118b2bde78bef58))
+* add export for WithIndexedContext ([9c1dc07](https://github.com/dao-xyz/peerbit/commit/9c1dc0742d0440c46b06e0fda7568c4a6a5ce98b))
+* add exports for CustomDocumentDomain ([43685b6](https://github.com/dao-xyz/peerbit/commit/43685b6f45a87c63ea4c2985387d9f9b72e9c701))
+* add method for merging changes into search result ([1c45a26](https://github.com/dao-xyz/peerbit/commit/1c45a2601a2860038fc1b3ae181e25f1aed03967))
+* add method for waiting for coverage ([d8e5bfb](https://github.com/dao-xyz/peerbit/commit/d8e5bfb9165c91433b323566971da970767b6ce5))
+* allow del program values that where not openend on put ([e0eabcf](https://github.com/dao-xyz/peerbit/commit/e0eabcf8e205f7d96bb602fd358102bfa4dacf1d))
+* allow next pointer to documents with other ids ([5cda03a](https://github.com/dao-xyz/peerbit/commit/5cda03a2fc7cff7e25a64e40530fcd1a5e449df4))
+* allow non-replicators to count documents ([5652381](https://github.com/dao-xyz/peerbit/commit/5652381b74509644f8ff30cd404eb4ce9955c2c3))
+* allow to count with query ([e182140](https://github.com/dao-xyz/peerbit/commit/e182140f7f74389fc3d952a28ebe85478f596b5d))
+* allow use id annotation property for fields with any name ([a547831](https://github.com/dao-xyz/peerbit/commit/a5478317abb03fdd64faa711654e6b4147847499))
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+* correctly clear up iterator queues on iterator drop ([61cfb6d](https://github.com/dao-xyz/peerbit/commit/61cfb6dfb22733a6b5f5086156ef0dc93b9e4360))
+* correctly handle remote iterations when result size exceeds max message size ([115f7aa](https://github.com/dao-xyz/peerbit/commit/115f7aa9456b8a2682d7a5cd42948965c8ff4639))
+* correctly merge overlapping segments ([6b5241d](https://github.com/dao-xyz/peerbit/commit/6b5241de467f57de5acd9573b9e9f103721eb3fe))
+* count approximate apply rounding ([bc7e865](https://github.com/dao-xyz/peerbit/commit/bc7e86500bc34e8e6f003cd150e7a36eb1f3bd27))
+* don't allow iterate on SearchRequest with resolve === false ([327e5c9](https://github.com/dao-xyz/peerbit/commit/327e5c97c97c85f3abdad4ba3f4ea72f72288849))
+* don't create resumable iterators if iterator is ending on first request ([e0d6483](https://github.com/dao-xyz/peerbit/commit/e0d6483fcc0efba72f0decbab932b3cfab14a057))
+* don't reset resolverProgramCache in afterOpen ([961cb66](https://github.com/dao-xyz/peerbit/commit/961cb661b964172d38e6a6f4dc5ebb44b0af979c))
+* don't resolve when counting ([8d1952b](https://github.com/dao-xyz/peerbit/commit/8d1952b2263d590f0c1efd03e9153e4a41293106))
+* don't return PredictedSearchQuery if not replicating ([113a98e](https://github.com/dao-xyz/peerbit/commit/113a98e0c8dbe7961ea4edb12068b548517b92a4))
+* don't use transformer when resolving indexed value on CollectNextRequest ([63e24d5](https://github.com/dao-xyz/peerbit/commit/63e24d546ff88f868df76c93e7e22c7ff4528d5e))
+* esm imports ([f5a378c](https://github.com/dao-xyz/peerbit/commit/f5a378c96c3f99c35673ff0a0cc0234c9210dbe6))
+* export ValueTypeFromRequest ([6335205](https://github.com/dao-xyz/peerbit/commit/633520592bf3c3ddde8e3896861ad47bbcbe0bf4))
+* export WithContext ([e9b2c20](https://github.com/dao-xyz/peerbit/commit/e9b2c20fffb00c9163d47593f8bcac236daba235))
+* improve types for updateResults ([e280087](https://github.com/dao-xyz/peerbit/commit/e2800870d080dcce2fbfb4f9ccf87762e1dd57a4))
+* make Context to take same shape as IndexedContext ([5226a66](https://github.com/dao-xyz/peerbit/commit/5226a66c77c3f3e02804f4ba619dc2df7fae46b6))
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+* re-open indexed program values on restart ([17e5d15](https://github.com/dao-xyz/peerbit/commit/17e5d1574f2f12f0f89b084a6c7ee84d0a7d5b6a))
+* respect canOpen on re-opening programs on program restart ([a97d716](https://github.com/dao-xyz/peerbit/commit/a97d716d7cf7359f9cdbd5f8092b2791df6f1abe))
+* supported indexed items in the updateResults function change set ([ca1f7f3](https://github.com/dao-xyz/peerbit/commit/ca1f7f377820691278322c172e07706752e8b7b1))
+* throw on unexpected type ([b3ef1a2](https://github.com/dao-xyz/peerbit/commit/b3ef1a237e64c4c0f12e0a390245e013005a27c2))
+* use timestamps when changes are not ordered by casuality ([821030a](https://github.com/dao-xyz/peerbit/commit/821030a9912713371c0e253bfd37162dd3304db5))
+
+
+### Documentation
+
+* rm comment ([cb65b4c](https://github.com/dao-xyz/peerbit/commit/cb65b4cbd28f5ffbf451aa6395f47e72449e30b5))
+* typo ([bf22247](https://github.com/dao-xyz/peerbit/commit/bf22247ab46a18a2bbcc9a4c450a98305c30a08a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/rpc bumped from 5.3.4 to 5.4.0
+    * @peerbit/shared-log bumped from 11.2.4 to 12.0.0
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.20 to ^1.3.0
+    * @peerbit/document-interface bumped from ^2.2.1 to ^3.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.47 to 2.1.48
+
 ## [9.10.0](https://github.com/dao-xyz/peerbit/compare/document-v9.9.0...document-v9.10.0) (2025-06-04)
 
 

@@ -308,6 +308,34 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.0.0](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.13...proxy-v6.0.0) (2025-06-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* handle undefined results for getPublicKey
+
+### Features
+
+* hangup ([f877a73](https://github.com/dao-xyz/peerbit/commit/f877a7301a1fef7f21649ef6e4bd0038fa36d9c6))
+* maybePut ([539a323](https://github.com/dao-xyz/peerbit/commit/539a323bf4b77553f26c87451fe4cc1abfaeddbf))
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+* correct handling of pubsub unsubscription event ([d4093c8](https://github.com/dao-xyz/peerbit/commit/d4093c89a971bf20ee5408b3c19a8c0e988c888f))
+* handle undefined results for getPublicKey ([34b8c7b](https://github.com/dao-xyz/peerbit/commit/34b8c7bb6d96a8fc42036bb322304f5d6795d2df))
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+* refactor remote fetch settings ([d2c5598](https://github.com/dao-xyz/peerbit/commit/d2c559879144cbd112e614164d1888d6afe79c2e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.47 to 2.1.48
+
 ## [5.2.13](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.12...proxy-v5.2.13) (2025-06-04)
 
 

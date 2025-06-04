@@ -313,6 +313,36 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.2.0](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.37...peerbit-v4.2.0) (2025-06-04)
+
+
+### Features
+
+* hangup ([f877a73](https://github.com/dao-xyz/peerbit/commit/f877a7301a1fef7f21649ef6e4bd0038fa36d9c6))
+
+
+### Bug Fixes
+
+* bump libp2p ([41cc3d3](https://github.com/dao-xyz/peerbit/commit/41cc3d3bc98f0bac7c56f6489d9c706dcb2e98c5))
+* disable abortConnectionOnPingFailure by default ([58dee0c](https://github.com/dao-xyz/peerbit/commit/58dee0c62ad08a6c22d243551a0c8d41365c4cbf))
+* increate negotiation timeout by defualt ([8cae2b9](https://github.com/dao-xyz/peerbit/commit/8cae2b9f34a2b4aefab9bb7e4ca3191c03bfa7f6))
+* open indexer once on client ([48b4568](https://github.com/dao-xyz/peerbit/commit/48b45685e09dda68dce0cb0e03e88096a4a36609))
+* rm empty import ([51c8640](https://github.com/dao-xyz/peerbit/commit/51c8640d3111ee392d04748a314b788823d87d7d))
+* types ([a762412](https://github.com/dao-xyz/peerbit/commit/a7624121bb0d2af9801ce07f1ce6dd4d372b8018))
+* update bootstrap address ([1a3d976](https://github.com/dao-xyz/peerbit/commit/1a3d9762a240c9e189c69c1003d5a1c7a314c359))
+* update bootstrap address to peerbit.org ([8bec89f](https://github.com/dao-xyz/peerbit/commit/8bec89f6398dca66872828414cb7d2aa5a6552a3))
+* update libp2p ([c842f92](https://github.com/dao-xyz/peerbit/commit/c842f9282c6697dd864b731d7c333abcaf16023d))
+* update libp2p ([8911d7f](https://github.com/dao-xyz/peerbit/commit/8911d7fb8d4329f32bbaf9d6872a2761ffb1d80e))
+* update libp2p ([c679a0d](https://github.com/dao-xyz/peerbit/commit/c679a0df22e2c2927421f16ff7ddd061e514a28a))
+* update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.20 to ^1.3.0
+
 ## [4.1.37](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.36...peerbit-v4.1.37) (2025-06-04)
 
 

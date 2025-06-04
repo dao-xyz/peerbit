@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.3.0](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.20...indexer-sqlite3-v1.3.0) (2025-06-04)
+
+
+### Features
+
+* query planner ([04264c6](https://github.com/dao-xyz/peerbit/commit/04264c66ef120ee0a3fd1d295411018163248fa8))
+
+
+### Bug Fixes
+
+* apply default sorting to make iterators stable ([d6b4d16](https://github.com/dao-xyz/peerbit/commit/d6b4d1642ff30b0e40065397349f0f7bd0600aa5))
+* bump sqlite ([b4531d8](https://github.com/dao-xyz/peerbit/commit/b4531d8fa85a3abea5da87af45bd4d2a13395168))
+* bump sqlite3 ([29724c7](https://github.com/dao-xyz/peerbit/commit/29724c73602ec1dfe0fab251d46be4673dcbe952))
+* bump sqlite3 ([9c181d3](https://github.com/dao-xyz/peerbit/commit/9c181d39404c7fee71c1fc4719bf2d838cd12df6))
+* distinct on id when counting ([5b27470](https://github.com/dao-xyz/peerbit/commit/5b2747053609c524c788fef7331f05ca50889af9))
+* ensure open is not called on db unecessarely ([87d8ff6](https://github.com/dao-xyz/peerbit/commit/87d8ff6355f8fae9f8be268fd4db4dd81d49a1a2))
+* handle many or conditions ([4395991](https://github.com/dao-xyz/peerbit/commit/439599115aa3553f94d9190be7a677ffd84bace6))
+* handle race-condition where multiple invocations to queryplanner yields index creation ([61693b7](https://github.com/dao-xyz/peerbit/commit/61693b796a1bf56eeac9e476c43757096b1b2006))
+* make opfs pool to be installed on a unique place to the directory ([b731f3d](https://github.com/dao-xyz/peerbit/commit/b731f3d7bf4e605053ffa3422190f98902badb5d))
+* Merge branch 'master' into rateless ([01d5af7](https://github.com/dao-xyz/peerbit/commit/01d5af70d493c782a21e80733ec34007d33f843a))
+* prevent kept count to become negative in case of concurrent database mutation ([de947ae](https://github.com/dao-xyz/peerbit/commit/de947ae774f2062afafcfae98a8c43d8be48c152))
+* revert i64  -&gt; u64 shifting changes ([4d7d8ba](https://github.com/dao-xyz/peerbit/commit/4d7d8ba0a90e147ed1c8bffbf55219db521dc853))
+* update better-sqlite3 ([a2796fd](https://github.com/dao-xyz/peerbit/commit/a2796fd586e6060785984b6528787b0fc2907af7))
+* update sqlite ([b241f57](https://github.com/dao-xyz/peerbit/commit/b241f572f4b4bbf55ad83efcbbb8da1dbb96281a))
+* update sqlite ([9aa0186](https://github.com/dao-xyz/peerbit/commit/9aa018610e2c9d49680173a7be430d7e4e2a03d2))
+
+
+### Documentation
+
+* add comment ([d4aee05](https://github.com/dao-xyz/peerbit/commit/d4aee05960dddfa8c143022e817bfd2ec3c980dd))
+
 ## [1.2.20](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.19...indexer-sqlite3-v1.2.20) (2025-06-04)
 
 

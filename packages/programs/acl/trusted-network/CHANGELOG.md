@@ -566,6 +566,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [4.1.103](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.102...trusted-network-v4.1.103) (2025-06-04)
+
+
+### Bug Fixes
+
+* update ethereproject wallet ([2491622](https://github.com/dao-xyz/peerbit/commit/2491622347f2d350554372faf6a359e3c0a579fa))
+* updates types for canRead ([53b49c5](https://github.com/dao-xyz/peerbit/commit/53b49c52ff05371b4f873f85f1eb3a85c2a653d4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document bumped from 9.10.0 to 10.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.47 to ^2.1.48
+
 ## [4.1.102](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.101...trusted-network-v4.1.102) (2025-06-04)
 
 

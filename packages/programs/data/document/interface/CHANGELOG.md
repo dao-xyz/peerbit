@@ -1,5 +1,33 @@
 # Changelog
 
+## [3.0.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.1...document-interface-v3.0.0) (2025-06-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* add support for querying indexed values
+
+### Features
+
+* 'includeIndexed' property ([7ca5c48](https://github.com/dao-xyz/peerbit/commit/7ca5c48bc77022e498d8ed9f7a7f73aa17700e3e))
+* add support for querying indexed values ([36fe71c](https://github.com/dao-xyz/peerbit/commit/36fe71c047869a74add052612eb641966409354f))
+* PredictedSearchRequest ([48778a8](https://github.com/dao-xyz/peerbit/commit/48778a8dfea6cfe855fef9d5152d30f3db9e98a3))
+
+
+### Bug Fixes
+
+* add dependency peerbit/log ([a4ac71a](https://github.com/dao-xyz/peerbit/commit/a4ac71a85b2078eaf66b672d05b0818c91cb8baf))
+* esm imports ([f5a378c](https://github.com/dao-xyz/peerbit/commit/f5a378c96c3f99c35673ff0a0cc0234c9210dbe6))
+* make Context to take same shape as IndexedContext ([5226a66](https://github.com/dao-xyz/peerbit/commit/5226a66c77c3f3e02804f4ba619dc2df7fae46b6))
+* PredictedSearchRequest more generic ([d6033fb](https://github.com/dao-xyz/peerbit/commit/d6033fb40aa7984c7ebc36d1a5bb1644a59c7d59))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.59 to 4.0.60
+
 ## [2.2.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.0...document-interface-v2.2.1) (2025-06-04)
 
 

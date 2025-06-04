@@ -374,6 +374,24 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [3.0.94](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.93...proxy-window-v3.0.94) (2025-06-04)
+
+
+### Bug Fixes
+
+* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
+* reuse existing server ([ba13ed6](https://github.com/dao-xyz/peerbit/commit/ba13ed601cba6b6a41875a13a72f7bfe2a970d59))
+* vite 6 ([39e4541](https://github.com/dao-xyz/peerbit/commit/39e4541074a2d3f8ab03b3ce01947aaad7f31a99))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/proxy bumped from ^5.2.13 to ^6.0.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.47 to 2.1.48
+
 ## [3.0.93](https://github.com/dao-xyz/peerbit/compare/proxy-window-v3.0.92...proxy-window-v3.0.93) (2025-06-04)
 
 

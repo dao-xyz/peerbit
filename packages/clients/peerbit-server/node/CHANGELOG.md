@@ -452,6 +452,35 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.5.0](https://github.com/dao-xyz/peerbit/compare/server-v5.4.4...server-v5.5.0) (2025-06-04)
+
+
+### Features
+
+* add versions endpoint ([951a98f](https://github.com/dao-xyz/peerbit/commit/951a98fa1e38503d9c1da2506ef2aacac5eef96a))
+* allow passing args on opening program ([c709e20](https://github.com/dao-xyz/peerbit/commit/c709e20a6c1198a6c10ec0d632b41e9fdfb351d1))
+* close and drop all ([99d24e0](https://github.com/dao-xyz/peerbit/commit/99d24e080dad220b90cd7f2e0ed89bdba59a84cd))
+* get logs ([ed011b4](https://github.com/dao-xyz/peerbit/commit/ed011b48d948b84f20e510eddd8bc8bf65e3f0a8))
+
+
+### Bug Fixes
+
+* close-all and drop-all ([c66c749](https://github.com/dao-xyz/peerbit/commit/c66c749d7d9e0dcb85664eceb34b511fd4af2d44))
+* disable abortConnectionOnPingFailure by default ([58dee0c](https://github.com/dao-xyz/peerbit/commit/58dee0c62ad08a6c22d243551a0c8d41365c4cbf))
+* handle NODE_PATH on restart ([17866d1](https://github.com/dao-xyz/peerbit/commit/17866d10f04fbff2eac2ed453c891d13ef0477d0))
+* increate negotiation timeout by defualt ([8cae2b9](https://github.com/dao-xyz/peerbit/commit/8cae2b9f34a2b4aefab9bb7e4ca3191c03bfa7f6))
+* restart programs with original args ([b3a3de9](https://github.com/dao-xyz/peerbit/commit/b3a3de9805547d38a890ec550b0ee24a0cec25bc))
+* set max listener limit to 1e5 ([d423a3f](https://github.com/dao-xyz/peerbit/commit/d423a3f2a24b302fd5eb2f138e6e6b0d12edb130))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.37 to 4.2.0
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.47 to 2.1.48
+
 ## [5.4.4](https://github.com/dao-xyz/peerbit/compare/server-v5.4.3...server-v5.4.4) (2025-06-04)
 
 

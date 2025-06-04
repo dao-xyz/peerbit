@@ -389,6 +389,75 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [12.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.4...shared-log-v12.0.0) (2025-06-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* iblt sync using hash instead of gid
+* rateless-iblt-sync protocol
+
+### Features
+
+* add 'default' fallback property for resumable replication ([249b71a](https://github.com/dao-xyz/peerbit/commit/249b71ae9c256ce0ea92f0212a24dc4b493b21ff))
+* add approximative count heads  method ([857e90b](https://github.com/dao-xyz/peerbit/commit/857e90bb278cd77e5b14dec4c87603f0648e6e3a))
+* add options for caching early blocks ([3f42f1b](https://github.com/dao-xyz/peerbit/commit/3f42f1bda75ab7d0f5e726765c80deb0faeb5adc))
+* add replaction segment merging functionality ([630a761](https://github.com/dao-xyz/peerbit/commit/630a761a0a8ccda29090ee6dd62110051c7e701a))
+* rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
+* replicate: 'resume' ([9af6cc5](https://github.com/dao-xyz/peerbit/commit/9af6cc58c0848e0e8f9f9e02e6eda8ceacce8201))
+* rn 'sync' to 'keep', and filter entries using keep before pruning ([56eb14d](https://github.com/dao-xyz/peerbit/commit/56eb14dd9d95133cbb6f5ab587bfed5565b51713))
+
+
+### Bug Fixes
+
+* add calculateCoverage method ([03f5b18](https://github.com/dao-xyz/peerbit/commit/03f5b189ddcdbdbf170adf82325f54c3f465ae25))
+* add method for waiting for coverage ([d8e5bfb](https://github.com/dao-xyz/peerbit/commit/d8e5bfb9165c91433b323566971da970767b6ce5))
+* add start and end parameter for calculating coverage ([d8eb9b0](https://github.com/dao-xyz/peerbit/commit/d8eb9b03f5d1c3a6dd01fac12433844044e30a23))
+* allow passing range as args for getCover ([109adba](https://github.com/dao-xyz/peerbit/commit/109adba7040a982f4adc9da9df551c23817003b0))
+* catch Invalid Degree error ([91b73bd](https://github.com/dao-xyz/peerbit/commit/91b73bdf5882c4e80970ebc666947403c809c2e2))
+* correctly handle default case for resume ([2f92713](https://github.com/dao-xyz/peerbit/commit/2f9271312ac79c045917eb50ec4cc1670cf6ce19))
+* correctly handle unreplicated content where new participants join with non-covering segments ([56ea8ee](https://github.com/dao-xyz/peerbit/commit/56ea8eeb88e83c9998d3ff2ce4d17a5c4911074e))
+* correctly merge overlapping segments ([6b5241d](https://github.com/dao-xyz/peerbit/commit/6b5241de467f57de5acd9573b9e9f103721eb3fe))
+* don't block open when waiting for old replicators ([da51255](https://github.com/dao-xyz/peerbit/commit/da51255210f5fbe3337860222fe03ec4a08b3fba))
+* don't deliver when missing to in set on append ([902158c](https://github.com/dao-xyz/peerbit/commit/902158c54b7dcbd15e23fff7c0815de1a5c11cc4))
+* don't rebalance on strict range maturity ([038d05b](https://github.com/dao-xyz/peerbit/commit/038d05bdd7f82faf23634ae854c829fb010b9c8e))
+* don't throw on Invalid degree error ([f130f6a](https://github.com/dao-xyz/peerbit/commit/f130f6a185677b46509a068b7191a0eccbac9c25))
+* getCoverage handle edge case when self is unmature and replicating full width ([3a4b77c](https://github.com/dao-xyz/peerbit/commit/3a4b77c98d8629379864b2a0c8560235c429dc74))
+* handle no-op for removeReplicationRanges ([5d427a8](https://github.com/dao-xyz/peerbit/commit/5d427a8f179476797bf475d9ca2c6f45d2b91fac))
+* iblt sync using hash instead of gid ([fbb4e31](https://github.com/dao-xyz/peerbit/commit/fbb4e318f46e4968e21765a8f7e271bb61c244cb))
+* InvalidDegree error log correctly ([baf4bd8](https://github.com/dao-xyz/peerbit/commit/baf4bd8fad2cae2abb3d0d9583b5fd0fa9133c77))
+* Merge branch 'master' into rateless ([01d5af7](https://github.com/dao-xyz/peerbit/commit/01d5af70d493c782a21e80733ec34007d33f843a))
+* more sparse handling of RequestIPrune ([39e9da6](https://github.com/dao-xyz/peerbit/commit/39e9da6d397ea3edaa019167f774509213e31bc9))
+* open indexer once on client ([48b4568](https://github.com/dao-xyz/peerbit/commit/48b45685e09dda68dce0cb0e03e88096a4a36609))
+* persist separate replication segments when can not merge ([2ec6eb5](https://github.com/dao-xyz/peerbit/commit/2ec6eb5047ce2679dc16cdc3bd0eb17c42dc5abe))
+* prevent invalid approximative head count calculation for large replication ranges ([6f22b3e](https://github.com/dao-xyz/peerbit/commit/6f22b3ec844ded2fa2a7bef1f7f88fe51b1813f8))
+* prevent pruneOfflineReplicators to throw errors on program closing before resolving ([837e7f1](https://github.com/dao-xyz/peerbit/commit/837e7f19fccc69250d5fe9f4476e21c71384251b))
+* reduce priority for exchange heads message ([5e48036](https://github.com/dao-xyz/peerbit/commit/5e480364d4b5a4b1f77154f2c83c40f352ed1b4a))
+* refactor debounce logic ([03882df](https://github.com/dao-xyz/peerbit/commit/03882dfbfae4112405db8929ccdc1a2a15aaff1b))
+* remove gid parent cache feature when exchanging heads ([5614dfb](https://github.com/dao-xyz/peerbit/commit/5614dfb0f292e2c5c71a07037cf95af05f9ab537))
+* remove wasm init call ([96db150](https://github.com/dao-xyz/peerbit/commit/96db1508398a415a9ca2afc9d7d3a01fd2d620a2))
+* replicate entries while dynamically replicating ([078a794](https://github.com/dao-xyz/peerbit/commit/078a79440b8b1a15e991fb7a86bfbe9b802a4afb))
+* return on closed in afterOpen ([bf9c70f](https://github.com/dao-xyz/peerbit/commit/bf9c70f69e9354151dc232ad2a909c3d81698b5a))
+* return true for failing sync process so that MoreSymbols message get ignored ([cd90eb0](https://github.com/dao-xyz/peerbit/commit/cd90eb08865324a6efac85a5b043ab05e58f2f36))
+* rpc event timestamp type ([d8644b4](https://github.com/dao-xyz/peerbit/commit/d8644b43c8fac4ed64c1afe37ee391e98d1e7dae))
+* simple sync if riblt fails ([4682419](https://github.com/dao-xyz/peerbit/commit/4682419f724528ddf88b589fe181b115cf27e43f))
+* waitForReplicator add AbortSignal ([f646907](https://github.com/dao-xyz/peerbit/commit/f646907292750df4331149a9f912847f46031d75))
+* waitForReplicator event based ([94e2bf6](https://github.com/dao-xyz/peerbit/commit/94e2bf6ce1816c96321aead431919ecc453d6cb8))
+* waitForReplicators coverage threshold ([6c5c73e](https://github.com/dao-xyz/peerbit/commit/6c5c73eeddacb0df4fc9f243694e372a895240e7))
+* waitForReplicators wait for remote peers if not replicating by default ([719b001](https://github.com/dao-xyz/peerbit/commit/719b0011c7ae5973ebfc33121b521564bbf806ae))
+* waitForReplicators wait for self maturity ([2292bf0](https://github.com/dao-xyz/peerbit/commit/2292bf052020e5b2dd638a2df61d75d2f2bd6b3b))
+* waitForReplicators, reject early if no peers ([6c5db3c](https://github.com/dao-xyz/peerbit/commit/6c5db3ce99d15e318a28d9bcc7737cf4f793a63b))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.59 to 4.0.60
+    * @peerbit/rpc bumped from 5.3.4 to 5.4.0
+  * devDependencies
+    * @peerbit/test-utils bumped from ^2.1.47 to ^2.1.48
+
 ## [11.2.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.3...shared-log-v11.2.4) (2025-06-04)
 
 

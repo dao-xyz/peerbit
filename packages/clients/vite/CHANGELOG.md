@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.27](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.26...vite-v1.0.27) (2025-06-04)
+
+
+### Bug Fixes
+
+* add rateless_iblt wasm file ([a4c9ea1](https://github.com/dao-xyz/peerbit/commit/a4c9ea1473b974c5c1b0bb5d617a7c02ca564656))
+* vite 6 ([39e4541](https://github.com/dao-xyz/peerbit/commit/39e4541074a2d3f8ab03b3ce01947aaad7f31a99))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-sqlite3 bumped from 1.2.20 to 1.3.0
+
 ## [1.0.26](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.25...vite-v1.0.26) (2025-06-04)
 
 

@@ -368,6 +368,29 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.60](https://github.com/dao-xyz/peerbit/compare/log-v4.0.59...log-v4.0.60) (2025-06-04)
+
+
+### Bug Fixes
+
+* assign addresses to subprograms and store subprogram in block store if they are opened using a weak reference ([9930e60](https://github.com/dao-xyz/peerbit/commit/9930e60dd6f23bd2473088201dd8ff048521e658))
+* bump libp2p ([a1dd3d8](https://github.com/dao-xyz/peerbit/commit/a1dd3d8306448e2ee97dd9a224ff7d9aafa149da))
+* bump libp2p ([41cc3d3](https://github.com/dao-xyz/peerbit/commit/41cc3d3bc98f0bac7c56f6489d9c706dcb2e98c5))
+* delete after change event are emitted for append and join ([b4bdc4c](https://github.com/dao-xyz/peerbit/commit/b4bdc4ccbc4fb635b7da3155f88640d0e235966c))
+* prevent resolving blocks from remote by default ([a9702cf](https://github.com/dao-xyz/peerbit/commit/a9702cfb813f011771b68501872a64701f4e7bd4))
+* set AccessError message ([38b3a3b](https://github.com/dao-xyz/peerbit/commit/38b3a3bc102e4fcf84bc058045cdc1973c8b8091))
+* update libp2p ([c842f92](https://github.com/dao-xyz/peerbit/commit/c842f9282c6697dd864b731d7c333abcaf16023d))
+* update libp2p ([8911d7f](https://github.com/dao-xyz/peerbit/commit/8911d7fb8d4329f32bbaf9d6872a2761ffb1d80e))
+* update libp2p ([c679a0d](https://github.com/dao-xyz/peerbit/commit/c679a0df22e2c2927421f16ff7ddd061e514a28a))
+* update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.47 to 2.1.48
+
 ## [4.0.59](https://github.com/dao-xyz/peerbit/compare/log-v4.0.58...log-v4.0.59) (2025-06-04)
 
 
