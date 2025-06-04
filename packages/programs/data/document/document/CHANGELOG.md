@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.11.2](https://github.com/dao-xyz/peerbit/compare/document-v9.11.1...document-v9.11.2) (2025-06-04)
+
+
+### Bug Fixes
+
+* rm logs ([1169e60](https://github.com/dao-xyz/peerbit/commit/1169e6007c1de6c72fd0ffe355886477741c3f5d))
+
 ## [9.11.1](https://github.com/dao-xyz/peerbit/compare/document-v9.11.0...document-v9.11.1) (2025-06-04)
 
 
