@@ -3024,6 +3024,79 @@ describe("index", () => {
 					expect(observer.docs.index.hasPending).to.be.false;
 					expect(writer.docs.index.hasPending).to.be.false;
 				});
+
+				it("onMissedResults", async () => {
+					// test that we will get missed results accuruately
+					session = await TestSession.disconnected(3);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const observer = await session.peers[0].open(store, {
+						args: {
+							replicate: false,
+						},
+					});
+
+					// in this test we test if we can query joining peers while we are already iterating
+					const writer1 = await session.peers[1].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					const writer2 = await session.peers[2].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					await writer1.docs.put(new Document({ id: "1" }));
+					await writer1.docs.put(new Document({ id: "4" }));
+
+					await writer2.docs.put(new Document({ id: "2" }));
+					await writer2.docs.put(new Document({ id: "3" }));
+
+					let missedResults: number[] = [];
+
+					await session.connect([[session.peers[0], session.peers[2]]]); // connect the nodes!
+
+					await observer.docs.index.waitFor(writer2.node.identity.publicKey);
+
+					const iterator = observer.docs.index.iterate(
+						{ sort: new Sort({ key: "id", direction: SortDirection.DESC }) }, // 4, 3, 2, 1
+						{
+							remote: {
+								joining: {
+									waitFor: 1e4,
+									onMissedResults: ({ amount }) => {
+										missedResults.push(amount);
+									},
+								},
+							},
+						},
+					);
+
+					const first = await iterator.next(1);
+					const second = await iterator.next(1);
+					expect(first.map((x) => x.id)).to.deep.equal(["3"]);
+					expect(second.map((x) => x.id)).to.deep.equal(["2"]);
+
+					await session.connect([[session.peers[0], session.peers[1]]]); // connect the nodes!
+					await observer.docs.index.waitFor(writer1.node.identity.publicKey);
+
+					await waitForResolved(() => expect(missedResults).to.deep.equal([1]));
+					const third = await iterator.next(1);
+					const fourth = await iterator.next(1);
+
+					expect(third.map((x) => x.id)).to.deep.equal(["4"]); // because we sort DESC
+					expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
+				});
 			});
 
 			describe("signal", () => {
@@ -4032,11 +4105,11 @@ describe("index", () => {
 		it("get indexed", async () => {
 			const get = await stores[0].docs.index.get("1", { resolve: false });
 			expect(get!.nameTransformed).to.eq("NAME1");
-			expect((get as any)["__indexed"]).to.not.exist;
+			expect((get as any)["__indexed"]).to.exist;
 
 			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
 			expect(getRemote!.nameTransformed).to.eq("NAME1");
-			expect((getRemote as any)["__indexed"]).to.not.exist;
+			expect((getRemote as any)["__indexed"]).to.exist;
 		});
 
 		it("get local first", async () => {

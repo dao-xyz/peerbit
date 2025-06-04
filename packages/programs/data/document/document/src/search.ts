@@ -60,7 +60,9 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 				range: CoverRange<number | bigint>;
 		  };
 	eager?: boolean; // whether to query newly joined peers before they have matured
-	joining?: boolean | { waitFor?: number }; // whether to query peers that are joining the network
+	joining?:
+		| boolean
+		| { waitFor?: number; onMissedResults?: (evt: { amount: number }) => void }; // whether to query peers that are joining the network
 };
 export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
 	remote?:
@@ -1657,6 +1659,14 @@ export class DocumentIndex<
 		const controller = new AbortController();
 
 		let totalFetchedCounter = 0;
+		let lastValueInOrder:
+			| {
+					indexed: WithContext<I>;
+					value: types.ResultTypeFromRequest<R, T, I> | I;
+					from: PublicSignKey;
+					context: types.Context;
+			  }
+			| undefined = undefined;
 
 		const peerBuffers = (): {
 			indexed: WithContext<I>;
@@ -1717,13 +1727,18 @@ export class DocumentIndex<
 
 		const fetchFirst = async (
 			n: number,
-			options?: { from?: string[] },
+			fetchOptions?: { from?: string[] },
 		): Promise<boolean> => {
 			let hasMore = false;
 
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(queryRequestCoerced, {
-				...options,
+				local: fetchOptions?.from != null ? false : options?.local,
+				remote: {
+					...(typeof options?.remote === "object" ? options.remote : {}),
+					from: fetchOptions?.from,
+				},
+				resolve,
 				onResponse: async (response, from) => {
 					if (!from) {
 						logger.error("Missing response from");
@@ -1736,6 +1751,7 @@ export class DocumentIndex<
 						const results = response as types.Results<
 							types.ResultTypeFromRequest<R, T, I>
 						>;
+
 						if (results.kept === 0n && results.results.length === 0) {
 							return;
 						}
@@ -1834,6 +1850,7 @@ export class DocumentIndex<
 					if (buffer.kept === 0) {
 						if (peerBufferMap.get(peer)?.buffer.length === 0) {
 							peerBufferMap.delete(peer); // No more results
+							console.log("Removed peer from buffer: " + peer);
 						}
 						continue;
 					}
@@ -1962,6 +1979,7 @@ export class DocumentIndex<
 													if (response.response.results.length === 0) {
 														if (peerBufferMap.get(peer)?.buffer.length === 0) {
 															peerBufferMap.delete(peer); // No more results
+															console.log("Removed peer from buffer: " + peer);
 														}
 													} else {
 														const peerBuffer = peerBufferMap.get(peer);
@@ -2062,6 +2080,8 @@ export class DocumentIndex<
 
 			const pendingMoreResults = n < results.length;
 
+			lastValueInOrder = results[0] || lastValueInOrder;
+
 			const batch = results.splice(0, n);
 
 			for (const result of batch) {
@@ -2158,6 +2178,12 @@ export class DocumentIndex<
 		let joinListener: ((e: { detail: PublicSignKey }) => void) | undefined;
 
 		if (typeof options?.remote === "object" && options?.remote.joining) {
+			let onMissedResults =
+				typeof options?.remote?.joining === "object" &&
+				typeof options?.remote.joining.onMissedResults === "function"
+					? options.remote.joining.onMissedResults
+					: undefined;
+
 			joinListener = async (e: { detail: PublicSignKey }) => {
 				if (totalFetchedCounter > 0) {
 					// wait for the node to become a replicator, then so query
@@ -2167,13 +2193,44 @@ export class DocumentIndex<
 								? AbortSignal.any([options.signal, controller.signal])
 								: controller.signal,
 						})
-						.then(() => {
+						.then(async () => {
+							if (
+								e.detail.equals(this.node.identity.publicKey) ||
+								peerBufferMap.has(e.detail.hashcode())
+							) {
+								return;
+							}
+
 							if (done) {
 								return;
 							}
-							return fetchFirst(totalFetchedCounter, {
+							await fetchFirst(totalFetchedCounter, {
 								from: [e.detail.hashcode()],
 							});
+
+							if (lastValueInOrder != null && onMissedResults) {
+								const pending = peerBufferMap.get(e.detail.hashcode())?.buffer;
+
+								if (pending && pending.length > 0) {
+									const pendingWithLast = [...pending.flat(), lastValueInOrder];
+									const results = pendingWithLast.sort((a, b) =>
+										indexerTypes.extractSortCompare(
+											a.indexed,
+											b.indexed,
+											queryRequestCoerced.sort,
+										),
+									);
+
+									let lateResults = results.findIndex(
+										(x) => x === lastValueInOrder,
+									);
+
+									// consume pending
+									if (lateResults > 0) {
+										onMissedResults({ amount: lateResults });
+									}
+								}
+							}
 						})
 						.catch(() => {
 							/* TODO error handling */
