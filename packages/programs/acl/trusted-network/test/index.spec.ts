@@ -265,7 +265,11 @@ describe("index", () => {
 
 			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[0].identity.publicKey,
+			);
+			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[1].identity.publicKey,
+			);
+			await l0c.trustGraph.log.waitForReplicator(
 				session.peers[3].identity.publicKey,
 			);
 
