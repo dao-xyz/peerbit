@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.11.0](https://github.com/dao-xyz/peerbit/compare/document-v9.10.1...document-v9.11.0) (2025-06-04)
+
+
+### Features
+
+* onMissiedResult callback for when retrieving missed results on joining remote peers ([f2d727c](https://github.com/dao-xyz/peerbit/commit/f2d727c48fda2bbf2d4fdc51faeb3cf037cb359d))
+
 ## [9.10.1](https://github.com/dao-xyz/peerbit/compare/document-v9.10.0...document-v9.10.1) (2025-06-04)
 
 
