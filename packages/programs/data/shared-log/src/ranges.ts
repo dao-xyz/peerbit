@@ -26,7 +26,6 @@ import {
 	SortDirection,
 	StringMatch,
 	iteratorInSeries,
-	/* 	iteratorInSeries, */
 } from "@peerbit/indexer-interface";
 import { id } from "@peerbit/indexer-interface";
 import { Meta, ShallowMeta } from "@peerbit/log";
