@@ -313,6 +313,13 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.40](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.39...peerbit-v4.1.40) (2025-06-17)
+
+
+### Bug Fixes
+
+* stop libp2p on close ([aac6618](https://github.com/dao-xyz/peerbit/commit/aac6618b445aa2330a1866a7d7ef7863df9d2ee4))
+
 ## [4.1.39](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.38...peerbit-v4.1.39) (2025-06-17)
 
 
