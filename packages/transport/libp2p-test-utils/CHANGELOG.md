@@ -54,6 +54,13 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [2.1.18](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.17...libp2p-test-utils-v2.1.18) (2025-06-17)
+
+
+### Bug Fixes
+
+* correctly stop libp2p when closing the client when libp2p client was provided externally ([0d629e5](https://github.com/dao-xyz/peerbit/commit/0d629e534621b8d47ed9a2b808392f631ddbed10))
+
 ## [2.1.17](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.16...libp2p-test-utils-v2.1.17) (2025-06-04)
 
 

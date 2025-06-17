@@ -400,6 +400,21 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.1.49](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.48...test-utils-v2.1.49) (2025-06-17)
+
+
+### Bug Fixes
+
+* correctly stop libp2p when closing the client when libp2p client was provided externally ([0d629e5](https://github.com/dao-xyz/peerbit/commit/0d629e534621b8d47ed9a2b808392f631ddbed10))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.17 to 2.1.18
+    * peerbit bumped from 4.1.38 to 4.1.39
+
 ## [2.1.48](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.47...test-utils-v2.1.48) (2025-06-04)
 
 
