@@ -151,6 +151,7 @@ export class Peerbit implements ProgramClient {
 			await datastore.open();
 		}
 
+		let stopLibp2pOnClose = false;
 		const libp2pExternal = libp2pExtended && isLibp2pInstance(libp2pExtended);
 		if (!libp2pExternal) {
 			const extendedOptions: ClientCreateOptions | undefined =
@@ -197,7 +198,9 @@ export class Peerbit implements ProgramClient {
 				privateKey,
 				services,
 				datastore,
+				start: true,
 			});
+			stopLibp2pOnClose = true; // we created it, so we will stop it
 		}
 		if (datastore) {
 			const stopFn = libp2pExtended.stop.bind(libp2pExtended);
@@ -207,7 +210,6 @@ export class Peerbit implements ProgramClient {
 			};
 		}
 
-		let stopLibp2pOnClose = false;
 		if (
 			libp2pExtended.status === "stopped" ||
 			libp2pExtended.status === "stopping"
@@ -247,7 +249,7 @@ export class Peerbit implements ProgramClient {
 		const peer = new Peerbit(libp2pExtended, {
 			directory,
 			storage,
-			libp2pExternal: stopLibp2pOnClose,
+			libp2pExternal: !stopLibp2pOnClose,
 			identity,
 			indexer,
 		});

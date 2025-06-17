@@ -23,8 +23,10 @@ describe("start-stop", () => {
 		});
 		expect(client.peerId.publicKey!.equals(privateKey.publicKey)).to.be.true;
 		const addressA = (await client.open(new TestP())).address;
-
+		expect(client.libp2p.status).to.equal("started");
 		await client.stop();
+		expect(client.libp2p.status).to.equal("stopped");
+
 		await client.start();
 		const addressB = (await client.open(new TestP())).address;
 
