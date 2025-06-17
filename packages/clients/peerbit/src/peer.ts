@@ -207,10 +207,12 @@ export class Peerbit implements ProgramClient {
 			};
 		}
 
+		let stopLibp2pOnClose = false;
 		if (
 			libp2pExtended.status === "stopped" ||
 			libp2pExtended.status === "stopping"
 		) {
+			stopLibp2pOnClose = true;
 			await libp2pExtended.start();
 		}
 
@@ -245,7 +247,7 @@ export class Peerbit implements ProgramClient {
 		const peer = new Peerbit(libp2pExtended, {
 			directory,
 			storage,
-			libp2pExternal,
+			libp2pExternal: stopLibp2pOnClose,
 			identity,
 			indexer,
 		});

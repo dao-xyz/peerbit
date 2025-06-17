@@ -116,7 +116,9 @@ export class TestSession<T> {
 					streamMuxers: definedOptions?.streamMuxers || [yamux()],
 					start: definedOptions?.start,
 				});
-				await waitFor(() => node.status === "started");
+				if (definedOptions?.start !== false) {
+					await waitFor(() => node.status === "started");
+				}
 				return node;
 			};
 			promises.push(result());

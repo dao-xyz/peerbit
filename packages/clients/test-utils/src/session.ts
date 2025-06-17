@@ -37,7 +37,7 @@ export class TestSession {
 	}
 	async stop() {
 		await Promise.all(this._peers.map((x) => x.stop()));
-		await Promise.all(this._peers.map((x) => x.libp2p.stop())); // beacuse we initialize libp2p externally, we have to close externally
+		await Promise.all(this._peers.map((x) => x.libp2p.stop())); // beacuse we initialize libp2p externally (potentially), we have to close externally
 	}
 
 	static async connected(n: number, options?: CreateOptions | CreateOptions[]) {
@@ -69,6 +69,7 @@ export class TestSession {
 				connectionMonitor: {
 					enabled: false,
 				},
+				start: false, /// make Peerbit.create to start the client instead, this allows also so that Peerbit will terminate the client
 			};
 		};
 		let optionsWithServices:
