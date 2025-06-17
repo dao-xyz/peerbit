@@ -2202,6 +2202,10 @@ export class DocumentIndex<
 							if (done) {
 								return;
 							}
+
+							// TODO what happens if two join events are emitted?
+							// TODO we need to also subscribe to maturity events?
+
 							await fetchFirst(totalFetchedCounter, {
 								from: [e.detail.hashcode()],
 							});
