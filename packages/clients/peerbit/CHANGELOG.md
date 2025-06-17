@@ -313,6 +313,23 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [4.1.39](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.38...peerbit-v4.1.39) (2025-06-17)
+
+
+### Bug Fixes
+
+* correctly stop libp2p when closing the client when libp2p client was provided externally ([0d629e5](https://github.com/dao-xyz/peerbit/commit/0d629e534621b8d47ed9a2b808392f631ddbed10))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.12 to 5.2.13
+    * @peerbit/pubsub bumped from ^4.0.5 to ^4.0.6
+    * @peerbit/blocks bumped from ^3.0.2 to ^3.0.3
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.21 to ^1.2.22
+
 ## [4.1.38](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.37...peerbit-v4.1.38) (2025-06-04)
 
 

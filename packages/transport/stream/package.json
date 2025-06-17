@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream",
-	"version": "4.3.5",
+	"version": "4.3.6",
 	"description": "A building block for direct streaming protocols",
 	"sideEffects": false,
 	"type": "module",
@@ -76,7 +76,7 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.17",
+		"@peerbit/libp2p-test-utils": "2.1.18",
 		"@types/yallist": "^4.0.4",
 		"@types/fast-fifo": "^1.0.2"
 	},
