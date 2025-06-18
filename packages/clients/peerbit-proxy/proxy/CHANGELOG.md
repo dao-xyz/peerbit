@@ -308,6 +308,15 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [5.2.17](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.16...proxy-v5.2.17) (2025-06-18)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.50 to 2.1.51
+
 ## [5.2.16](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.15...proxy-v5.2.16) (2025-06-17)
 
 
