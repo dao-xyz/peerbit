@@ -33,4 +33,25 @@ describe("start-stop", () => {
 		expect(addressA).equal(addressB);
 		expect(addressA).to.exist;
 	});
+
+	it("can create with directory", async () => {
+		let directory = `tmp/peerbit/tests/start-stop-${Math.random()}`;
+		client = await Peerbit.create({
+			directory,
+		});
+		expect(client.directory).to.equal(directory);
+
+		// put block
+		const cid = await client.services.blocks.put(new Uint8Array([1, 2, 3]));
+		expect(cid).to.exist;
+
+		await client.stop();
+		client = await Peerbit.create({
+			directory,
+		});
+		expect(client.directory).to.equal(directory);
+		expect(client.libp2p.status).to.equal("started");
+		const bytes = await client.services.blocks.get(cid);
+		expect(bytes).to.deep.equal(new Uint8Array([1, 2, 3]));
+	});
 });
