@@ -400,6 +400,13 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [2.1.51](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.50...test-utils-v2.1.51) (2025-06-18)
+
+
+### Bug Fixes
+
+* add directory to test session block store ([4a4e38d](https://github.com/dao-xyz/peerbit/commit/4a4e38d7f4dac8f89db0d5827c2e85fdd298a02f))
+
 ## [2.1.50](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.49...test-utils-v2.1.50) (2025-06-17)
 
 

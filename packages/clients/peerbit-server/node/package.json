@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/server",
-	"version": "5.4.7",
+	"version": "5.4.8",
 	"author": "dao.xyz",
 	"repository": {
 		"type": "git",
@@ -67,7 +67,7 @@
 	},
 	"devDependencies": {
 		"@peerbit/test-lib": "^0.0.1",
-		"@peerbit/test-utils": "2.1.50",
+		"@peerbit/test-utils": "2.1.51",
 		"@types/yargs": "17.0.24",
 		"aws-sdk": "^2.1259.0",
 		"dotenv": "^16.1.4",
