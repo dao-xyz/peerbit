@@ -2147,9 +2147,9 @@
   integrity sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw==
 
 "@libp2p/circuit-relay-v2@^3.2.9":
-  version "3.2.17"
-  resolved "https://registry.yarnpkg.com/@libp2p/circuit-relay-v2/-/circuit-relay-v2-3.2.17.tgz#ecd81a78392ab0638848ca2337cbee69f131e2df"
-  integrity sha512-EGhSexfDum+owiGlJaLJgfI9DOgvJ8pE+Gvj4q9cF5tKdBzCYqdUxNSbg9upUHaX6VeMKMGW+6cGcamlHgUElw==
+  version "3.2.18"
+  resolved "https://registry.yarnpkg.com/@libp2p/circuit-relay-v2/-/circuit-relay-v2-3.2.18.tgz#4d0cd2f1e5aac6f46cadf47fc5f2aae2e1940280"
+  integrity sha512-M1XRQgbf9MsVxeVJ5hmHUveCXFhLDsUSk8tQSTw61pZwOzSVCWW94d8L/ZdRFyQRgYR+040HEQG1W5Es7pmVbg==
   dependencies:
     "@libp2p/crypto" "^5.1.6"
     "@libp2p/interface" "^2.10.4"
@@ -2534,9 +2534,9 @@
     "@multiformats/multiaddr" "^12.3.0"
 
 "@multiformats/multiaddr@^12.0.0", "@multiformats/multiaddr@^12.3.0", "@multiformats/multiaddr@^12.4.4":
-  version "12.4.4"
-  resolved "https://registry.yarnpkg.com/@multiformats/multiaddr/-/multiaddr-12.4.4.tgz#f4b2e271356ecc089dbb29decb44783f14a94f11"
-  integrity sha512-7kC3dr5aUhxbZtj+kn0dw56y3pPKPB3biebmB0zBm+RS8TwaxkAbbEZwTn5Inwg3yaR1EA8pA6hA9MzXeFBUMg==
+  version "12.5.0"
+  resolved "https://registry.yarnpkg.com/@multiformats/multiaddr/-/multiaddr-12.5.0.tgz#09056e4f895595c7b653ac1cec2a3d02efca6e3c"
+  integrity sha512-MyxvubZklr2qnCTmmMF7cYK1sJ9WosRleOI++XOyPEJb/9kP3r9cLcb0JR7ddkBwKuh2IkaMEVuP00OdgCjcJQ==
   dependencies:
     "@chainsafe/is-ip" "^2.0.1"
     "@chainsafe/netmask" "^2.0.0"
@@ -6465,9 +6465,9 @@ electron-mocha-main@^11.0.3:
     yargs "^16.2.0"
 
 electron-to-chromium@^1.5.160:
-  version "1.5.169"
-  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.5.169.tgz#6afdfd8e701b7ab744e2bb0cfdec3cefc1072cbe"
-  integrity sha512-q7SQx6mkLy0GTJK9K9OiWeaBMV4XQtBSdf6MJUzDB/H/5tFXfIiX38Lci1Kl6SsgiEhz1SQI1ejEOU5asWEhwQ==
+  version "1.5.170"
+  resolved "https://registry.yarnpkg.com/electron-to-chromium/-/electron-to-chromium-1.5.170.tgz#9f6697de4339e24da8b234e4492a9ecb91f5989c"
+  integrity sha512-GP+M7aeluQo9uAyiTCxgIj/j+PrWhMlY7LFVj8prlsPljd0Fdg9AprlfUi+OCSFWy9Y5/2D/Jrj9HS8Z4rpKWA==
 
 electron-window@^0.8.0:
   version "0.8.1"
