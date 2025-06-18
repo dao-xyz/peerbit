@@ -9,6 +9,7 @@ import {
 	waitForNeighbour as waitForPeersStreams,
 } from "@peerbit/stream";
 import { type Libp2pOptions } from "libp2p";
+import path from "path";
 import {
 	type Libp2pCreateOptions,
 	type Libp2pCreateOptionsWithServices,
@@ -57,10 +58,17 @@ export class TestSession {
 		options?: CreateOptions | CreateOptions[],
 	) {
 		const m = (o?: CreateOptions): Libp2pCreateOptionsWithServices => {
+			const blocksDirectory = o?.directory
+				? path.join(o.directory, "/blocks").toString()
+				: undefined;
+
 			return {
 				...o?.libp2p,
 				services: {
-					blocks: (c: any) => new DirectBlock(c),
+					blocks: (c: any) =>
+						new DirectBlock(c, {
+							directory: blocksDirectory,
+						}),
 					pubsub: (c: any) => new DirectSub(c, { canRelayMessage: true }),
 					keychain: () => new DefaultKeychain(),
 					...o?.libp2p?.services,
@@ -77,6 +85,7 @@ export class TestSession {
 			| Libp2pCreateOptionsWithServices[] = Array.isArray(options)
 			? options.map(m)
 			: m(options);
+
 		const session = await SSession.disconnected(n, optionsWithServices);
 		return new TestSession(
 			session,

@@ -57,4 +57,30 @@ describe("session", () => {
 			"started",
 		]);
 	});
+
+	it("can create with directory", async () => {
+		let directory = `tmp/test-utils/tests/can-create-with-directory-${Math.random()}`;
+		session = await TestSession.connected(1, {
+			directory,
+		});
+
+		let client = session.peers[0] as Peerbit;
+		expect(client.directory).to.equal(directory);
+
+		// put block
+		const cid = await client.services.blocks.put(new Uint8Array([1, 2, 3]));
+		expect(cid).to.exist;
+
+		await session.stop();
+		session = await TestSession.connected(1, {
+			directory,
+		});
+
+		client = session.peers[0] as Peerbit;
+
+		expect(client.directory).to.equal(directory);
+		expect(client.libp2p.status).to.equal("started");
+		const bytes = await client.services.blocks.get(cid);
+		expect(bytes).to.deep.equal(new Uint8Array([1, 2, 3]));
+	});
 });
