@@ -693,10 +693,10 @@ export class SQLLiteIndex<T extends Record<string, any>>
 }
 
 export class SQLiteIndices implements types.Indices {
-	private _scope: string[];
-	private scopes: Map<string, SQLiteIndices>;
-	private indices: { schema: any; index: Index<any, any> }[];
-	private closed = true;
+	protected _scope: string[];
+	protected scopes: Map<string, SQLiteIndices>;
+	protected indices: { schema: any; index: Index<any, any> }[];
+	protected closed = true;
 
 	constructor(
 		readonly properties: {
