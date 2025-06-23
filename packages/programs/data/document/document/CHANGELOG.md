@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.11.6](https://github.com/dao-xyz/peerbit/compare/document-v9.11.5...document-v9.11.6) (2025-06-23)
+
+
+### Bug Fixes
+
+* update cache context and indexed values for Program valued documents ([7ce8142](https://github.com/dao-xyz/peerbit/commit/7ce81423d043370265001f3f3fadbbbeb2770baf))
+
 ## [9.11.5](https://github.com/dao-xyz/peerbit/compare/document-v9.11.4...document-v9.11.5) (2025-06-18)
 
 
