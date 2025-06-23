@@ -3416,11 +3416,19 @@ describe("index", () => {
 			id: Uint8Array;
 
 			@field({ type: "string" })
+			property: string;
+
+			@field({ type: "string" })
 			address: string;
 
-			constructor(properties: { id: Uint8Array; address: string }) {
+			constructor(properties: {
+				id: Uint8Array;
+				property: string;
+				address: string;
+			}) {
 				this.id = properties.id;
 				this.address = properties.address;
+				this.property = properties.property;
 			}
 		}
 		@variant("subprogram")
@@ -3428,13 +3436,21 @@ describe("index", () => {
 			@field({ type: fixedArray("u8", 32) })
 			id: Uint8Array;
 
+			@field({ type: "string" })
+			property: string;
+
 			@field({ type: Log })
 			log: Log<any>;
 
-			constructor() {
+			constructor(properties?: {
+				id?: Uint8Array;
+				log?: Log<any>;
+				property?: string;
+			}) {
 				super();
-				this.id = randomBytes(32);
-				this.log = new Log();
+				this.id = properties?.id ?? randomBytes(32);
+				this.log = properties?.log ?? new Log();
+				this.property = properties?.property ?? "test";
 			}
 			async open() {
 				return this.log.open(this.node.services.blocks, this.node.identity);
@@ -3465,6 +3481,7 @@ describe("index", () => {
 							return new SubProgramIndexable({
 								id: arg.id,
 								address: (await arg.calculateAddress()).address,
+								property: arg.property,
 							});
 						},
 						cache: {
@@ -3688,6 +3705,23 @@ describe("index", () => {
 				.all();
 			expect(programsInIndex2).to.have.length(2);
 			expect(programsInIndex2.map((x) => x.closed)).to.deep.eq([false, false]);
+		});
+
+		it("update", async () => {
+			const subProgram1 = new SubProgram({ property: "x" });
+			await session.peers[0].open(subProgram1, {
+				existing: "reuse",
+			});
+			await stores[0].store.docs.put(subProgram1);
+			let get = await stores[0].store.docs.index.get(subProgram1.id);
+			expect(get.__indexed.property).to.eq("x");
+			const updated = Number(get.__context.modified);
+			subProgram1.property = "y";
+			await stores[0].store.docs.put(subProgram1);
+
+			get = await stores[0].store.docs.index.get(subProgram1.id);
+			expect(get.__indexed.property).to.eq("y");
+			expect(Number(get.__context.modified)).to.be.greaterThan(updated);
 		});
 
 		describe("index", () => {
@@ -4116,6 +4150,23 @@ describe("index", () => {
 			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
 			expect(getRemote!.nameTransformed).to.eq("NAME1");
 			expect((getRemote as any)["__indexed"]).to.exist;
+		});
+
+		it("update", async () => {
+			let get = await stores[0].docs.index.get("1");
+			expect(get!.name).to.eq("name1");
+			expect(get.__indexed.nameTransformed).to.eq("NAME1");
+
+			await stores[0].docs.put(
+				new Document({
+					id: "1",
+					name: "name1_updated",
+				}),
+			);
+
+			get = await stores[0].docs.index.get("1");
+			expect(get!.name).to.eq("name1_updated");
+			expect(get.__indexed.nameTransformed).to.eq("NAME1_UPDATED");
 		});
 
 		it("get local first", async () => {

@@ -334,10 +334,6 @@ export const coerceWithContext = <T>(
 	value: T | WithContext<T>,
 	context: types.Context,
 ): WithContext<T> => {
-	if ((value as WithContext<T>).__context) {
-		return value as WithContext<T>;
-	}
-
 	let valueWithContext: WithContext<T> = value as any;
 	valueWithContext.__context = context;
 	return valueWithContext;
@@ -347,10 +343,6 @@ export const coerceWithIndexed = <T, I>(
 	value: T | WithIndexed<T, I>,
 	indexed: I,
 ): WithIndexed<T, I> => {
-	if ((value as WithIndexed<T, I>).__indexed) {
-		return value as WithIndexed<T, I>;
-	}
-
 	let valueWithContext: WithIndexed<T, I> = value as any;
 	valueWithContext.__indexed = indexed;
 	return valueWithContext;
@@ -871,6 +863,11 @@ export class DocumentIndex<
 			valueToIndex as I,
 			context,
 		);
+
+		coerceWithIndexed(value, valueToIndex);
+
+		coerceWithContext(value, context);
+
 		await this.index.put(wrappedValueToIndex);
 		return { context, indexable: valueToIndex };
 	}
