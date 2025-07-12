@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.4.9](https://github.com/dao-xyz/peerbit/compare/server-v5.4.8...server-v5.4.9) (2025-07-12)
+
+
+### Bug Fixes
+
+* bump nodejs to 22 ([e15a883](https://github.com/dao-xyz/peerbit/commit/e15a883ed903ed9a6c184ca36f1bf3a2bdf79329))
+
 ## [5.4.8](https://github.com/dao-xyz/peerbit/compare/server-v5.4.7...server-v5.4.8) (2025-06-18)
 
 
