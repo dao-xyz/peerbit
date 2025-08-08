@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/dao-xyz/peerbit/compare/time-v2.1.0...time-v2.2.0) (2025-08-08)
+
+
+### Features
+
+* add flush method ([a9a7fc6](https://github.com/dao-xyz/peerbit/commit/a9a7fc626cc58df8a6f5589f44aafadae94c4c95))
+
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/time-v2.0.8...time-v2.1.0) (2025-04-03)
 
 

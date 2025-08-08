@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks",
-	"version": "3.0.3",
+	"version": "3.0.4",
 	"description": "Block store streaming",
 	"type": "module",
 	"types": "./dist/src/index.d.ts",
@@ -74,14 +74,14 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.18"
+		"@peerbit/libp2p-test-utils": "2.1.19"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/any-store": "^2.1.11",
-		"@peerbit/stream": "4.3.6",
-		"@peerbit/blocks-interface": "1.4.6",
-		"@peerbit/crypto": "2.3.9",
+		"@peerbit/any-store": "^2.1.12",
+		"@peerbit/stream": "4.3.7",
+		"@peerbit/blocks-interface": "1.4.7",
+		"@peerbit/crypto": "2.3.10",
 		"@ipld/dag-cbor": "^9.2.1",
 		"multiformats": "^13.0.1"
 	}

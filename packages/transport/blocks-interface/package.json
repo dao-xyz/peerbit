@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/blocks-interface",
-	"version": "1.4.6",
+	"version": "1.4.7",
 	"description": "Block store streaming",
 	"type": "module",
 	"sideEffects": false,
@@ -75,11 +75,11 @@
 		"dao.xyz"
 	],
 	"devDependencies": {
-		"@peerbit/libp2p-test-utils": "2.1.18"
+		"@peerbit/libp2p-test-utils": "2.1.19"
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "2.3.9",
-		"@peerbit/stream-interface": "^5.2.3"
+		"@peerbit/crypto": "2.3.10",
+		"@peerbit/stream-interface": "^5.2.4"
 	}
 }
