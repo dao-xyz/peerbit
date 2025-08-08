@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/crypto",
-	"version": "2.3.9",
+	"version": "2.3.10",
 	"description": "Crypto fn",
 	"sideEffects": false,
 	"type": "module",
@@ -68,7 +68,7 @@
 		"multiformats": "^13.3.6"
 	},
 	"dependencies": {
-		"@peerbit/cache": "^2.1.3",
+		"@peerbit/cache": "^2.1.4",
 		"@dao-xyz/borsh": "^5.2.3",
 		"@stablelib/sha256": "^2.0.1",
 		"@ethersproject/wallet": "^5.8.0",
