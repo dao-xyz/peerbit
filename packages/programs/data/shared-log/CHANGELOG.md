@@ -389,6 +389,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [11.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.9...shared-log-v11.3.0) (2025-08-12)
+
+
+### Features
+
+* getCover reachableOnly option ([5ff4c5b](https://github.com/dao-xyz/peerbit/commit/5ff4c5b750357595e8b9c6bd2434e38ab5de7ca1))
+
 ## [11.2.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.8...shared-log-v11.2.9) (2025-08-08)
 
 
