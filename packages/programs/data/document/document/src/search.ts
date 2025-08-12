@@ -28,6 +28,7 @@ import {
 } from "@peerbit/shared-log";
 import { DataMessage, SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
+import pDefer from "p-defer";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
@@ -820,6 +821,13 @@ export class DocumentIndex<
 		await iterator.close();
 		return one[0];
 	}
+
+	public async getFromHash(hash: string) {
+		const iterator = this.index.iterate({ query: { hash } });
+		const one = await iterator.next(1);
+		await iterator.close();
+		return one[0];
+	}
 	public async put(
 		value: T,
 		id: indexerTypes.IdKey,
@@ -1243,10 +1251,10 @@ export class DocumentIndex<
 		}
 	}
 
-	async processCloseIteratorRequest(
+	processCloseIteratorRequest(
 		query: types.CloseIteratorRequest,
 		publicKey: PublicSignKey,
-	): Promise<void> {
+	): void {
 		const queueData = this._resultQueue.get(query.idString);
 		if (queueData && !queueData.from.equals(publicKey)) {
 			logger.info("Ignoring close iterator request from different peer");
@@ -1326,6 +1334,7 @@ export class DocumentIndex<
 				: await this._log.getCover(remote.domain ?? { args: undefined }, {
 						roleAge: remote.minAge,
 						eager: remote.eager,
+						reachableOnly: !!remote.joining, // when we want to merge joining we can ignore pending to be online peers and instead consider them once they become online
 					});
 
 			if (replicatorGroups) {
@@ -2128,15 +2137,24 @@ export class DocumentIndex<
 			return dedup(coercedBatch, this.indexByResolver);
 		};
 
-		let close = async () => {
+		let cleanupAndDone = () => {
 			cleanup();
-			done = true;
 			controller.abort(new AbortError("Iterator closed"));
+			this.prefetch?.accumulator.clear(queryRequestCoerced);
+			this.processCloseIteratorRequest(
+				queryRequestCoerced,
+				this.node.identity.publicKey,
+			);
+			done = true;
+		};
 
+		let close = async () => {
+			cleanupAndDone();
+
+			// send close to remote
 			const closeRequest = new types.CloseIteratorRequest({
 				id: queryRequestCoerced.id,
 			});
-			this.prefetch?.accumulator.clear(queryRequestCoerced);
 			const promises: Promise<any>[] = [];
 
 			for (const [peer, buffer] of peerBufferMap) {
@@ -2144,15 +2162,7 @@ export class DocumentIndex<
 					peerBufferMap.delete(peer);
 					continue;
 				}
-				// Fetch locally?
-				if (peer === this.node.identity.publicKey.hashcode()) {
-					promises.push(
-						this.processCloseIteratorRequest(
-							closeRequest,
-							this.node.identity.publicKey,
-						),
-					);
-				} else {
+				if (peer !== this.node.identity.publicKey.hashcode()) {
 					// Close remote
 					promises.push(
 						this._query.send(closeRequest, {
@@ -2172,6 +2182,11 @@ export class DocumentIndex<
 
 		let joinListener: ((e: { detail: PublicSignKey }) => void) | undefined;
 
+		let updateDeferred: ReturnType<typeof pDefer> | undefined;
+		const signalUpdate = () => updateDeferred?.resolve();
+		const waitForUpdate = () =>
+			updateDeferred ? updateDeferred.promise : Promise.resolve();
+
 		if (typeof options?.remote === "object" && options?.remote.joining) {
 			let onMissedResults =
 				typeof options?.remote?.joining === "object" &&
@@ -2179,7 +2194,38 @@ export class DocumentIndex<
 					? options.remote.joining.onMissedResults
 					: undefined;
 
+			updateDeferred = pDefer<void>();
+
+			const waitForTime =
+				typeof options.remote.joining === "object" &&
+				options.remote.joining.waitFor;
+
+			const prevMaybeSetDone = maybeSetDone;
+			maybeSetDone = () => {
+				prevMaybeSetDone();
+				if (done) signalUpdate(); // break deferred waits
+			};
+
+			let joinTimeoutId =
+				waitForTime &&
+				setTimeout(() => {
+					signalUpdate();
+				}, waitForTime);
+			controller.signal.addEventListener("abort", () => signalUpdate());
+
+			let activeJoins = new Set<string>();
+
 			joinListener = async (e: { detail: PublicSignKey }) => {
+				if (done) return;
+				const pk = e.detail;
+				const hash = pk.hashcode();
+
+				if (hash === this.node.identity.publicKey.hashcode()) return;
+				if (peerBufferMap.has(hash)) return;
+				if (activeJoins.has(hash)) return;
+
+				activeJoins.add(hash);
+
 				if (totalFetchedCounter > 0) {
 					// wait for the node to become a replicator, then so query
 					await this._log
@@ -2237,9 +2283,13 @@ export class DocumentIndex<
 									}
 								}
 							}
+							signalUpdate();
 						})
 						.catch(() => {
 							/* TODO error handling */
+						})
+						.finally(() => {
+							activeJoins.delete(hash);
 						});
 				}
 			};
@@ -2247,6 +2297,9 @@ export class DocumentIndex<
 			const cleanupDefault = cleanup;
 			cleanup = () => {
 				this._query.events.removeEventListener("join", joinListener!);
+				joinTimeoutId && clearTimeout(joinTimeoutId);
+				updateDeferred?.resolve();
+				updateDeferred = undefined;
 				return cleanupDefault();
 			};
 		}
@@ -2264,10 +2317,27 @@ export class DocumentIndex<
 			},
 			all: async () => {
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
+				let c = 0;
 				while (doneFn() !== true) {
+					c++;
 					let batch = await next(100);
-					result.push(...batch);
+					if (c > 100) {
+						break;
+					}
+					if (batch.length > 0) {
+						result.push(...batch);
+						continue;
+					}
+
+					// wait until: join fetch adds results, cleanup runs, or the join-wait times out
+					await waitForUpdate();
+
+					// re-arm the deferred for the next cycle (only if joining is enabled and we’re not done)
+					if (updateDeferred && !doneFn()) {
+						updateDeferred = pDefer<void>();
+					}
 				}
+				cleanupAndDone();
 				return result;
 			},
 		};

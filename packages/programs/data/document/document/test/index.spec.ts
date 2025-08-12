@@ -3103,6 +3103,63 @@ describe("index", () => {
 					expect(third.map((x) => x.id)).to.deep.equal(["4"]); // because we sort DESC
 					expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
 				});
+
+				it("it will not wait for previous replicator if it can handle joining", async () => {
+					let directory = "./tmp/test-iterate-joining/" + new Date();
+					session = await TestSession.connected(2, [
+						{ directory },
+						{ directory: undefined },
+					]);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const observer = await session.peers[0].open(store, {
+						args: {
+							replicate: false,
+						},
+					});
+
+					// in this test we test if we can query joining peers while we are already iterating
+					const replicator = await session.peers[1].open(store.clone(), {
+						args: {
+							replicate: {
+								factor: 1,
+							},
+						},
+					});
+
+					await waitForResolved(async () =>
+						expect([...(await observer.docs.log.getReplicators())]).to.deep.eq([
+							replicator.node.identity.publicKey.hashcode(),
+						]),
+					);
+
+					await session.peers[0].stop();
+					await session.peers[1].stop();
+					session = await TestSession.connected(1, { directory });
+					const observerAgain = await session.peers[0].open(store.clone(), {
+						args: {
+							replicate: false,
+						},
+					});
+					let waitForMax = 3e3;
+					const iterator = observerAgain.docs.index.iterate(
+						{},
+						{ remote: { joining: { waitFor: waitForMax } } },
+					);
+					let t0 = +new Date();
+					await iterator.next(1);
+					let t1 = +new Date();
+					let delta = 500; // 500ms delta
+					expect(t1 - t0).to.lessThan(delta); // +some delta
+					expect(iterator.done()).to.be.false;
+					await iterator.all();
+					let t2 = +new Date();
+					expect(t2 - t0).to.lessThan(waitForMax + delta); // +some delta
+					expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
+				});
 			});
 
 			describe("signal", () => {
@@ -3134,6 +3191,37 @@ describe("index", () => {
 
 					expect(store.docs.index.hasPending).to.be.false;
 				});
+			});
+
+			it("iterator all terminates when batches are empty but still waiting for joining", async () => {
+				let directory = "./tmp/iterator-all-terminates/" + new Date();
+				session = await TestSession.connected(2, [
+					{ directory },
+					{ directory: undefined },
+				]);
+
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+
+				const observer = await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+
+				let waitForMax = 3e3;
+
+				// count processQuery calls
+				const spyFn = sinon.spy(observer.docs.index.processQuery);
+				observer.docs.index.processQuery = spyFn as any;
+				let t0 = +new Date();
+				await observer.docs.index
+					.iterate({}, { remote: { joining: { waitFor: waitForMax } } })
+					.all();
+				let t1 = +new Date();
+				expect(t1 - t0).to.lessThan(waitForMax + 500); // +some delta
+				expect(spyFn.callCount).to.equal(1); // should only call next once
 			});
 		});
 	});
