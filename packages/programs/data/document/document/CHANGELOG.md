@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.11.8](https://github.com/dao-xyz/peerbit/compare/document-v9.11.7...document-v9.11.8) (2025-08-12)
+
+
+### Bug Fixes
+
+* make sure iteration with remote joining option resolves directly when invoking next, but waits for timeout when waiting for all entries ([c8ca237](https://github.com/dao-xyz/peerbit/commit/c8ca237cdbd1812818702c5715ef84560d983cc3))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/shared-log bumped from 11.2.9 to 11.3.0
+
 ## [9.11.7](https://github.com/dao-xyz/peerbit/compare/document-v9.11.6...document-v9.11.7) (2025-08-08)
 
 
