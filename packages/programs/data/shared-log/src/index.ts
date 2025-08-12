@@ -435,7 +435,7 @@ export class SharedLog<
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
 
-	private uniqueReplicators!: Set<string>;
+	uniqueReplicators!: Set<string>;
 
 	/* private _totalParticipation!: number; */
 
@@ -1950,6 +1950,7 @@ export class SharedLog<
 						checkedIsAlive.has(segment.value.hash) ||
 						this.node.identity.publicKey.hashcode() === segment.value.hash
 					) {
+						this.uniqueReplicators.add(this.node.identity.publicKey.hashcode());
 						continue;
 					}
 
@@ -1971,6 +1972,8 @@ export class SharedLog<
 											segment.value.hash,
 									);
 								}
+
+								this.uniqueReplicators.add(key.hashcode());
 
 								this.events.dispatchEvent(
 									new CustomEvent<ReplicatorJoinEvent>("replicator:join", {
@@ -2060,6 +2063,7 @@ export class SharedLog<
 			| { args?: ExtractDomainArgs<D> }
 			| { range: CoverRange<NumberFromType<R>> },
 		options?: {
+			reachableOnly?: boolean;
 			roleAge?: number;
 			eager?:
 				| {
@@ -2095,6 +2099,16 @@ export class SharedLog<
 		// add all in flight
 		for (const [key, _] of this.syncronizer.syncInFlight) {
 			set.add(key);
+		}
+
+		if (options?.reachableOnly) {
+			let reachableSet: string[] = [];
+			for (const peer of set) {
+				if (this.uniqueReplicators.has(peer)) {
+					reachableSet.push(peer);
+				}
+			}
+			return reachableSet;
 		}
 
 		return [...set];
@@ -3853,6 +3867,10 @@ export class SharedLog<
 
 			return changed;
 		} catch (error: any) {
+			if (isNotStartedError(error)) {
+				return false; // we are not started yet, so no changes
+			}
+
 			logger.error(error.toString());
 			throw error;
 		}

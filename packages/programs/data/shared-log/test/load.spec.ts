@@ -180,4 +180,50 @@ describe("load", function () {
 			expect(removed).equal(0); // no entries were removed
 		});
 	});
+
+	it("will set replicaiton info on load", async () => {
+		session = await TestSession.connected(2, [
+			{
+				directory:
+					"./tmp/shared-log/waitForReplicators/will-set-replicaiton-info-on-load/" +
+					uuid(),
+			},
+			{
+				directory: undefined,
+			},
+		]);
+
+		const store = new EventStore();
+		let store1 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+			},
+		});
+
+		await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+			},
+		});
+
+		await waitForResolved(async () =>
+			expect(store.log.uniqueReplicators.size).equal(2),
+		);
+		expect(await store1.log.replicationIndex.count()).to.equal(2);
+		await store1.close();
+		store1 = await session.peers[0].open(store1.clone(), {
+			args: {
+				replicate: {
+					type: "resume",
+					default: {
+						factor: 1,
+					},
+				},
+			},
+		});
+
+		await waitForResolved(async () =>
+			expect(store1.log.uniqueReplicators.size).equal(2),
+		);
+	});
 });

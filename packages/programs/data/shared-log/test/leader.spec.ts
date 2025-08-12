@@ -657,6 +657,115 @@ describe(`isLeader`, function () {
 			}
 		});
 
+		it("reachableOnly", async () => {
+			await session.stop();
+
+			session = await TestSession.connected(2, [
+				{
+					directory: "./tmp/shared-log/leader-reachable-only/" + Math.random(),
+				},
+				{
+					directory: undefined,
+				},
+			]);
+
+			let db1Factor = 0.3;
+
+			const store = new EventStore<string, any>();
+			db1 = await session.peers[0].open(store, {
+				args: {
+					replicate: {
+						factor: db1Factor, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+					},
+					replicas: {
+						min: 2,
+					},
+					timeUntilRoleMaturity: 10 * 1000,
+				},
+			});
+
+			db2 = await EventStore.open<EventStore<string, any>>(
+				db1.address!,
+				session.peers[1],
+				{
+					args: {
+						replicate: {
+							factor: 0.4999, // numerical accuracy is bad so we need to use 0.5001 to make sure a single node can cover 0.5 of the content space
+							offset: 0.5,
+						},
+						replicas: {
+							min: 2,
+						},
+						timeUntilRoleMaturity: 10 * 1000,
+					},
+				},
+			);
+
+			await waitForResolved(async () => {
+				expect((await db1.log.getReplicators()).size).equal(2);
+			});
+
+			await waitForResolved(async () => {
+				expect((await db2.log.getReplicators()).size).equal(2);
+			});
+
+			expect(
+				[
+					...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
+				].sort(),
+			).to.deep.equal(
+				[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
+			);
+
+			expect(
+				[
+					...(await db1.log.getCover(
+						{ args: undefined },
+						{ roleAge: 0, reachableOnly: true },
+					)),
+				].sort(),
+			).to.deep.equal(
+				[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
+			);
+
+			await db1.close();
+			await db2.close();
+
+			db1 = await session.peers[0].open(store, {
+				args: {
+					replicate: {
+						type: "resume",
+						default: 1,
+					},
+					replicas: {
+						min: 2,
+					},
+					timeUntilRoleMaturity: 10 * 1000,
+				},
+			});
+
+			const db1FactorLoaded = (await db1.log.getMyReplicationSegments()).map(
+				(x) => x.widthNormalized,
+			);
+			expect(db1FactorLoaded[0]).to.be.closeTo(db1Factor, 0.01); // loaded last factor
+			expect(db1FactorLoaded.length).to.equal(1); // only one segment loaded
+
+			expect(
+				[
+					...(await db1.log.getCover({ args: undefined }, { roleAge: 0 })),
+				].sort(),
+			).to.deep.equal(
+				[...session.peers.map((x) => x.identity.publicKey.hashcode())].sort(),
+			); // self and the peer that was previously online
+
+			expect(
+				await db1.log.getCover(
+					{ args: undefined },
+					{ roleAge: 0, reachableOnly: true },
+				),
+			).to.deep.equal([session.peers[0].identity.publicKey.hashcode()]);
+		});
+
 		describe("eager", () => {
 			it("eager, me not-mature, all included", async () => {
 				const store = new EventStore<string, any>();
