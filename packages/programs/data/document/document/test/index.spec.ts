@@ -515,7 +515,28 @@ describe("index", () => {
 		});
 
 		describe("get", () => {
-			it("get document that is to be joined", async () => {
+			it("get waitFor existing", async () => {
+				session = await TestSession.connected(1);
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+				let id = uuid();
+				await store.docs.put(
+					new Document({
+						id,
+						name: "Hello world",
+					}),
+				);
+				const results = await store.docs.index.get(id, { waitFor: 1 });
+				expect(results).to.exist;
+			});
+
+			it("get document that is to be added", async () => {
 				session = await TestSession.connected(1);
 				const store = new TestStore({
 					docs: new Documents<Document>(),
@@ -542,6 +563,92 @@ describe("index", () => {
 
 				await store.docs.put(doc);
 				expect(await getImmediatePromise).to.be.undefined; // not yet available
+				expect(await getPromise).to.exist;
+
+				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
+			});
+
+			it("get document that is to be joined", async () => {
+				session = await TestSession.connected(2);
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+
+				let store2 = await session.peers[1].open<TestStore>(store.clone(), {
+					args: {
+						replicate: 1,
+					},
+				});
+
+				let newId = uuid();
+				let getImmediatePromise = store2.docs.index.get(toId(newId), {
+					waitFor: 1,
+				});
+				let getPromise = store2.docs.index.get(toId(newId), { waitFor: 5e3 });
+
+				let t0 = +new Date();
+				await delay(1e3);
+
+				let doc = new Document({
+					id: newId,
+					name: "Hello world",
+				});
+
+				await store.docs.put(doc);
+				expect(await getImmediatePromise).to.be.undefined; // not yet available
+				expect(await getPromise).to.exist;
+
+				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
+			});
+
+			it("get waitFor document late even if local fetch is slow", async () => {
+				session = await TestSession.connected(1);
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+
+				// in this test we try this flow
+
+				// 1. we call get, where first the local fetch is done (fast). But remote query part is slow.
+				// 2. during it beeing stuck on fetching remote, the document is added
+				// 3. we expect the get to resolve with the document, even if the remote query was slow (and local query was already invoked)
+				const getCover = store.docs.log.getCover.bind(store.docs.log);
+				let deferred = pDefer<void>();
+				let getCoverCalled = pDefer<void>();
+				let once = false;
+				store.docs.log.getCover = async (a, b) => {
+					getCoverCalled.resolve();
+					if (!once) {
+						await deferred.promise;
+					}
+					return getCover(a, b);
+				};
+
+				let newId = uuid();
+
+				let getPromise = store.docs.index.get(toId(newId), { waitFor: 5e3 });
+
+				let t0 = +new Date();
+
+				let doc = new Document({
+					id: newId,
+					name: "Hello world",
+				});
+
+				await getCoverCalled.promise; // wait for the getCover to be called
+				await store.docs.put(doc); // add the document
+				deferred.resolve(); // resolve the getCover, so it can continue
+
 				expect(await getPromise).to.exist;
 
 				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
@@ -1588,10 +1695,10 @@ describe("index", () => {
 						class NestedDocument extends Program<any> {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
-
+	
 							@field({ type: Documents })
 							documents: Documents<Document>;
-
+	
 							constructor(document: Documents<Document>) {
 								super();
 								this.id = randomBytes(32);
@@ -1601,36 +1708,36 @@ describe("index", () => {
 								return this.documents.open({ type: Document });
 							}
 						}
-
+	
 						class NestedDocumentIndexable {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
-
+	
 							@field({ type: 'string' })
 							address: string
-
+	
 							constructor(properties: { id: Uint8Array, address: string }) {
 								this.id = properties.id;
 								this.address = properties.address;
 							}
 						}
-
+	
 						@variant("test-nested-nested-document-store")
 						class NestedDocumentStore extends Program<
 							Partial<SetupOptions<NestedDocument>>
 						> {
 							@field({ type: Uint8Array })
 							id: Uint8Array;
-
+	
 							@field({ type: Documents })
 							documents: Documents<NestedDocument>;
-
+	
 							constructor(properties: { docs: Documents<NestedDocument> }) {
 								super();
 								this.id = randomBytes(32);
 								this.documents = properties.docs;
 							}
-
+	
 							async open(
 								options?: Partial<SetupOptions<NestedDocument>>,
 							): Promise<void> {
@@ -1647,7 +1754,7 @@ describe("index", () => {
 								});
 							}
 						}
-
+	
 						it("nested document store", async () => {
 							const nestedStore = await session.peers[0].open(
 								new NestedDocumentStore({ docs: new Documents() }),
@@ -1660,7 +1767,7 @@ describe("index", () => {
 							});
 							await nestedDoc.documents.put(document);
 							await nestedStore.documents.put(nestedDoc);
-
+	
 							const nestedStore2 =
 								await session.peers[1].open<NestedDocumentStore>(
 									nestedStore.address,
@@ -2054,7 +2161,7 @@ describe("index", () => {
 							},
 						},
 					});
-
+	
 					const writeStore = await session.peers[0].open(
 						new TestStore({
 							docs: new Documents<Document>(),
@@ -2068,7 +2175,7 @@ describe("index", () => {
 							},
 						},
 					);
-
+	
 					for (let i = 0; i < session.peers.length - 1; i++) {
 						await session.connect([[session.peers[i], session.peers[i + 1]]]);
 					}
@@ -2082,14 +2189,14 @@ describe("index", () => {
 							timeUntilRoleMaturity: 1000,
 						},
 					});
-
+	
 					await waitForResolved(async () =>
 						expect((await writeStore.docs.log.getReplicators())?.size).equal(2),
 					);
 					await waitForResolved(async () =>
 						expect((await readStore.docs.log.getReplicators())?.size).equal(2),
 					);
-
+	
 					// introduce lag in the relay
 					let lag = 500;
 					const rawOutboundStream = (session.peers[1].services.pubsub as any)[
@@ -2097,23 +2204,23 @@ describe("index", () => {
 					].get(
 						session.peers[2].identity.publicKey.hashcode(),
 					)!.rawOutboundStream;
-
+	
 					const sendFn = rawOutboundStream.sendData.bind(rawOutboundStream);
 					abortController = new AbortController();
 					rawOutboundStream.sendData = async (data: any, options: any) => {
 						await delay(lag, { signal: abortController.signal });
 						return sendFn(data, options);
 					};
-
+	
 					// start insertion rapidly
 					const ids: string[] = [];
-
+	
 					const outboundStream = (session.peers[1].services.pubsub as any)[
 						"peers"
 					].get(session.peers[2].identity.publicKey.hashcode())!.outboundStream;
-
+	
 					let msgSize = 1e4;
-
+	
 					const insertFn = async () => {
 						const id = uuid();
 						ids.push(id);
@@ -2125,22 +2232,22 @@ describe("index", () => {
 								// We do this so we know for sure trhat reader will query writer (reader needs to know they are "missing out" on something
 								// and the sync protocol have this info)
 								target: 'none',
-
+	
 							}
 						);
 						await writeStore.docs.log.rebalanceAll() // make sure reader knows it is missing out
 						interval = setTimeout(() => insertFn(), lag / 2);
 					};
 					insertFn();
-
-
+	
+	
 					await waitForResolved(() =>
 						expect(outboundStream.readableLength).greaterThan(msgSize * 5),
 					);
 					await waitForResolved(() =>
 						expect(readStore.docs.log["syncInFlight"].size).greaterThan(0),
 					);
-
+	
 					// try two searches, one default (should work anyway)
 					// and now less prioritized, should fail because clogging
 					const prioritizedSearchByDefault = readStore.docs.index.search(
@@ -2158,7 +2265,7 @@ describe("index", () => {
 							},
 						},
 					);
-
+	
 					try {
 						await expect(
 							readStore.docs.index.search(
@@ -2181,7 +2288,7 @@ describe("index", () => {
 					} catch (error) {
 						throw error;
 					}
-
+	
 					try {
 						expect(await prioritizedSearchByDefault).to.have.length(1);
 					} catch (error) {
@@ -3926,20 +4033,20 @@ describe("index", () => {
 		/*class CustomIdDocumentWrapped {
 			@field({ type: Uint8Array })
 			id: Uint8Array;
-
+	
 			@field({ type: CustomIdDocument })
 			nested: CustomIdDocument;
-
+	
 			constructor(properties: { id: Uint8Array; nested: CustomIdDocument }) {
 				this.id = properties.id;
 				this.nested = properties.nested;
 			}
 		}
-
+	
 		 class AnotherCustomIdDocument {
 			@id({ type: 'string' })
 			anotherIdProperty: string
-
+	
 			constructor(properties: CustomIdDocument) {
 				this.anotherIdProperty = properties.custom;
 			}
@@ -3965,7 +4072,7 @@ describe("index", () => {
 		class CustomNestedIDDocumentStore extends Program {
 			@field({ type: Documents })
 			documents: Documents<CustomIdDocumentWrapped, CustomIdDocumentWrapped>;
-
+	
 			constructor() {
 				super();
 				this.documents = new Documents<
@@ -3982,10 +4089,10 @@ describe("index", () => {
  */
 		/* @variant("test_id_annotation_indexed_type")
 		class CustomIdCustomIndexdDocumentStore extends Program {
-
+	
 			@field({ type: Documents })
 			documents: Documents<CustomIdDocument, AnotherCustomIdDocument>;
-
+	
 			constructor() {
 				super();
 				this.documents = new Documents<CustomIdDocument, AnotherCustomIdDocument>();

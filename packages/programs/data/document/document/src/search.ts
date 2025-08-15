@@ -28,7 +28,7 @@ import {
 } from "@peerbit/shared-log";
 import { DataMessage, SilentDelivery } from "@peerbit/stream-interface";
 import { AbortError, waitFor } from "@peerbit/time";
-import pDefer from "p-defer";
+import pDefer, { type DeferredPromise } from "p-defer";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
@@ -828,43 +828,50 @@ export class DocumentIndex<
 		Options extends GetOptions<T, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 	>(key: indexerTypes.Ideable | indexerTypes.IdKey, options?: Options) {
+		let deferred:
+			| DeferredPromise<WithIndexedContext<T, I> | WithContext<I>>
+			| undefined;
+
+		if (options?.waitFor) {
+			// add change listener before query because we might get a concurrent change that matches the query,
+			// that will not be included in the query result
+			deferred = pDefer<WithIndexedContext<T, I> | WithContext<I>>();
+
+			const listener = (evt: CustomEvent<DocumentsChange<T, I>>) => {
+				for (const added of evt.detail.added) {
+					const id = indexerTypes.toId(
+						this.indexByResolver(added.__indexed),
+					).primitive;
+					if (id === idKey.primitive) {
+						deferred!.resolve(added);
+					}
+				}
+			};
+			let cleanup = () => {
+				this.documentEvents.removeEventListener("change", listener);
+				clearTimeout(timeout);
+				this.events.removeEventListener("close", resolveUndefined);
+			};
+
+			let resolveUndefined = () => {
+				deferred!.resolve(undefined);
+			};
+
+			let timeout = setTimeout(resolveUndefined, options.waitFor);
+			this.events.addEventListener("close", resolveUndefined);
+			this.documentEvents.addEventListener("change", listener);
+			deferred.promise.then(cleanup);
+		}
+
 		let idKey =
 			key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key);
 		const result = (await this.getDetailed(idKey, options))?.[0]?.results[0];
 
 		// if no results, and we have remote joining options, we wait for the timout and if there are joining peers we re-query
 		if (!result) {
-			if (options?.waitFor) {
-				let deferred = pDefer<WithIndexedContext<T, I> | WithContext<I>>();
-
-				const listener = (evt: CustomEvent<DocumentsChange<T, I>>) => {
-					for (const added of evt.detail.added) {
-						const id = this.indexByResolver(added.__indexed);
-						if (id === idKey.primitive) {
-							deferred.resolve(added);
-						}
-					}
-				};
-
-				this.documentEvents.addEventListener("change", listener);
-
-				let cleanup = () => {
-					this.documentEvents.removeEventListener("change", listener);
-					clearTimeout(timeout);
-					this.events.removeEventListener("close", resolveUndefined);
-				};
-
-				let resolveUndefined = () => {
-					cleanup();
-					deferred.resolve(undefined);
-				};
-
-				let timeout = setTimeout(resolveUndefined, options.waitFor);
-				this.events.addEventListener("close", resolveUndefined);
-
-				return deferred.promise;
-			}
-			return undefined;
+			return deferred?.promise;
+		} else if (deferred) {
+			deferred.resolve(undefined);
 		}
 		return result?.value;
 	}
