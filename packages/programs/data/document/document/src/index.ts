@@ -26,3 +26,4 @@ export {
 	createDocumentDomain,
 	createDocumentDomainFromProperty,
 } from "./domain.js";
+export * from "./events.js";

@@ -27,6 +27,7 @@ import {
 } from "@peerbit/shared-log";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import type { CustomDocumentDomain } from "./domain.js";
+import type { DocumentEvents, DocumentsChange } from "./events.js";
 import {
 	BORSH_ENCODING_OPERATION,
 	DeleteOperation,
@@ -54,13 +55,6 @@ export class OperationError extends Error {
 	constructor(message?: string) {
 		super(message);
 	}
-}
-export interface DocumentsChange<T, I> {
-	added: WithIndexedContext<T, I>[];
-	removed: WithIndexedContext<T, I>[];
-}
-export interface DocumentEvents<T, I> {
-	change: CustomEvent<DocumentsChange<T, I>>;
 }
 
 type MaybePromise<T> = Promise<T> | T;
@@ -206,6 +200,7 @@ export class Documents<
 		this.strictHistory = options.strictHistory ?? false;
 
 		await this._index.open({
+			documentEvents: this.events,
 			log: this.log,
 			canRead: options?.index?.canRead,
 			canSearch: options.index?.canSearch,

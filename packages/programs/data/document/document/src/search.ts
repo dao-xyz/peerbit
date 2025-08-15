@@ -1,5 +1,5 @@
 import { type AbstractType, field, serialize, variant } from "@dao-xyz/borsh";
-import type { PeerId } from "@libp2p/interface";
+import type { PeerId, TypedEventTarget } from "@libp2p/interface";
 import { Cache } from "@peerbit/cache";
 import {
 	type MaybePromise,
@@ -32,6 +32,7 @@ import pDefer from "p-defer";
 import { concat, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
+import type { DocumentEvents, DocumentsChange } from "./events.js";
 import type { QueryPredictor } from "./most-common-query-predictor.js";
 import MostCommonQueryPredictor from "./most-common-query-predictor.js";
 import { type Operation, isPutOperation } from "./operation.js";
@@ -77,6 +78,21 @@ export type QueryOptions<R, D, Resolve extends boolean | undefined> = {
 	resolve?: Resolve;
 	signal?: AbortSignal;
 };
+
+export type GetOptions<R, D, Resolve extends boolean | undefined> = {
+	remote?:
+		| boolean
+		| RemoteQueryOptions<
+				types.AbstractSearchRequest,
+				types.AbstractSearchResult,
+				D
+		  >;
+	local?: boolean;
+	resolve?: Resolve;
+	signal?: AbortSignal;
+	waitFor?: number; // how long to wait for a non-empty result set
+};
+
 export type SearchOptions<
 	R,
 	D,
@@ -229,6 +245,8 @@ function isSubclassOf(
 	return false;
 }
 
+const DEFAULT_TIMEOUT = 1e4;
+
 const DEFAULT_INDEX_BY = "id";
 
 export type CanSearch = (
@@ -299,6 +317,7 @@ export type OpenOptions<
 	I,
 	D extends ReplicationDomain<any, Operation, any>,
 > = {
+	documentEvents: TypedEventTarget<DocumentEvents<T, I>>;
 	documentType: AbstractType<T>;
 	dbType: AbstractType<types.IDocumentStore<T>>;
 	log: SharedLog<Operation, D, any>;
@@ -400,6 +419,9 @@ export class DocumentIndex<
 	private _maybeOpen: (value: T & Program) => Promise<T & Program>;
 	private canSearch?: CanSearch;
 	private canRead?: CanRead<I>;
+
+	private documentEvents: TypedEventTarget<DocumentEvents<T, I>>;
+
 	private _joinListener?: (e: { detail: PublicSignKey }) => Promise<void>;
 
 	private _resultQueue: Map<
@@ -456,7 +478,7 @@ export class DocumentIndex<
 		this.indexedTypeIsDocumentType =
 			!properties.transform?.type ||
 			properties.transform?.type === properties.documentType;
-
+		this.documentEvents = properties.documentEvents;
 		this.compatibility = properties.compatibility;
 		this.canRead = properties.canRead;
 		this.canSearch = properties.canSearch;
@@ -792,26 +814,58 @@ export class DocumentIndex<
 		return dropped;
 	}
 
-	public async get<Options extends QueryOptions<T, D, true | undefined>>(
+	public async get<Options extends GetOptions<T, D, true | undefined>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
 	): Promise<WithIndexedContext<T, I>>;
 
-	public async get<Options extends QueryOptions<T, D, false>>(
+	public async get<Options extends GetOptions<T, D, false>>(
 		key: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Options,
 	): Promise<WithContext<I>>;
 
 	public async get<
-		Options extends QueryOptions<T, D, Resolve>,
+		Options extends GetOptions<T, D, Resolve>,
 		Resolve extends boolean | undefined = ExtractResolveFromOptions<Options>,
 	>(key: indexerTypes.Ideable | indexerTypes.IdKey, options?: Options) {
-		const result = (
-			await this.getDetailed(
-				key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key),
-				options,
-			)
-		)?.[0]?.results[0];
+		let idKey =
+			key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key);
+		const result = (await this.getDetailed(idKey, options))?.[0]?.results[0];
+
+		// if no results, and we have remote joining options, we wait for the timout and if there are joining peers we re-query
+		if (!result) {
+			if (options?.waitFor) {
+				let deferred = pDefer<WithIndexedContext<T, I> | WithContext<I>>();
+
+				const listener = (evt: CustomEvent<DocumentsChange<T, I>>) => {
+					for (const added of evt.detail.added) {
+						const id = this.indexByResolver(added.__indexed);
+						if (id === idKey.primitive) {
+							deferred.resolve(added);
+						}
+					}
+				};
+
+				this.documentEvents.addEventListener("change", listener);
+
+				let cleanup = () => {
+					this.documentEvents.removeEventListener("change", listener);
+					clearTimeout(timeout);
+					this.events.removeEventListener("close", resolveUndefined);
+				};
+
+				let resolveUndefined = () => {
+					cleanup();
+					deferred.resolve(undefined);
+				};
+
+				let timeout = setTimeout(resolveUndefined, options.waitFor);
+				this.events.addEventListener("close", resolveUndefined);
+
+				return deferred.promise;
+			}
+			return undefined;
+		}
 		return result?.value;
 	}
 
@@ -1691,8 +1745,8 @@ export class DocumentIndex<
 			let t0 = +new Date();
 			let waitForTime =
 				typeof options.remote.joining === "boolean"
-					? 1e4
-					: (options.remote.joining.waitFor ?? 1e4);
+					? DEFAULT_TIMEOUT
+					: (options.remote.joining.waitFor ?? DEFAULT_TIMEOUT);
 			let setDoneIfTimeout = false;
 			maybeSetDone = () => {
 				if (t0 + waitForTime < +new Date()) {

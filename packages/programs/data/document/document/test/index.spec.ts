@@ -36,6 +36,7 @@ import {
 	SortDirection,
 	StringMatch,
 	id,
+	toId,
 } from "@peerbit/indexer-interface";
 import { Entry, Log, createEntry } from "@peerbit/log";
 import { ClosedError, Program } from "@peerbit/program";
@@ -49,17 +50,14 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
+import type { DocumentsChange } from "../src/events.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
 	Operation,
 	PutOperation,
 	PutWithKeyOperation,
 } from "../src/operation.js";
-import {
-	Documents,
-	type DocumentsChange,
-	type SetupOptions,
-} from "../src/program.js";
+import { Documents, type SetupOptions } from "../src/program.js";
 import { type CanRead } from "../src/search.js";
 import { Document, TestStore } from "./data.js";
 
@@ -513,6 +511,40 @@ describe("index", () => {
 					const documentFetched = await store.docs.index.get(doc.id);
 					expect(documentFetched.name).to.eq("Goodbye");
 				});
+			});
+		});
+
+		describe("get", () => {
+			it("get document that is to be joined", async () => {
+				session = await TestSession.connected(1);
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: 1,
+					},
+				});
+
+				let newId = uuid();
+				let getImmediatePromise = store.docs.index.get(toId(newId), {
+					waitFor: 1,
+				});
+				let getPromise = store.docs.index.get(toId(newId), { waitFor: 5e3 });
+
+				let t0 = +new Date();
+				await delay(1e3);
+
+				let doc = new Document({
+					id: newId,
+					name: "Hello world",
+				});
+
+				await store.docs.put(doc);
+				expect(await getImmediatePromise).to.be.undefined; // not yet available
+				expect(await getPromise).to.exist;
+
+				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
 			});
 		});
 
@@ -4203,41 +4235,67 @@ describe("index", () => {
 			await Promise.all(stores.map((x) => x.drop()));
 		});
 
-		it("get", async () => {
-			// should not remote query if local is enough
-			const requestSpy = sinon.spy(stores[0].docs.index._query.request);
-			stores[0].docs.index._query.request = requestSpy;
+		describe("get", () => {
+			it("get", async () => {
+				// should not remote query if local is enough
+				const requestSpy = sinon.spy(stores[0].docs.index._query.request);
+				stores[0].docs.index._query.request = requestSpy;
 
-			const sendSpy = sinon.spy(stores[0].docs.index._query.send);
-			stores[0].docs.index._query.send = sendSpy;
+				const sendSpy = sinon.spy(stores[0].docs.index._query.send);
+				stores[0].docs.index._query.send = sendSpy;
 
-			const get = await stores[0].docs.index.get("1");
-			expect(get!.name).to.eq("name1");
-			expect(get.__indexed).to.be.instanceOf(Indexable);
+				const get = await stores[0].docs.index.get("1");
+				expect(get!.name).to.eq("name1");
+				expect(get.__indexed).to.be.instanceOf(Indexable);
 
-			const createdAt = get.__context.created;
-			expect(typeof createdAt).to.eq("bigint");
+				const createdAt = get.__context.created;
+				expect(typeof createdAt).to.eq("bigint");
 
-			expect(requestSpy.callCount).to.eq(0);
-			expect(sendSpy.callCount).to.eq(0);
+				expect(requestSpy.callCount).to.eq(0);
+				expect(sendSpy.callCount).to.eq(0);
 
-			const getRemote = await stores[1].docs.index.get("1");
-			expect(getRemote!.name).to.eq("name1");
-			const createdAtRemote = get.__context.created;
-			expect(createdAtRemote).to.eq(createdAt);
-			expect(getRemote.__indexed).to.be.instanceOf(Indexable);
+				const getRemote = await stores[1].docs.index.get("1");
+				expect(getRemote!.name).to.eq("name1");
+				const createdAtRemote = get.__context.created;
+				expect(createdAtRemote).to.eq(createdAt);
+				expect(getRemote.__indexed).to.be.instanceOf(Indexable);
 
-			expect(getRemote.__indexed).to.exist;
-		});
+				expect(getRemote.__indexed).to.exist;
+			});
 
-		it("get indexed", async () => {
-			const get = await stores[0].docs.index.get("1", { resolve: false });
-			expect(get!.nameTransformed).to.eq("NAME1");
-			expect((get as any)["__indexed"]).to.exist;
+			it("get indexed", async () => {
+				const get = await stores[0].docs.index.get("1", { resolve: false });
+				expect(get!.nameTransformed).to.eq("NAME1");
+				expect((get as any)["__indexed"]).to.exist;
 
-			const getRemote = await stores[1].docs.index.get("1", { resolve: false });
-			expect(getRemote!.nameTransformed).to.eq("NAME1");
-			expect((getRemote as any)["__indexed"]).to.exist;
+				const getRemote = await stores[1].docs.index.get("1", {
+					resolve: false,
+				});
+				expect(getRemote!.nameTransformed).to.eq("NAME1");
+				expect((getRemote as any)["__indexed"]).to.exist;
+			});
+
+			it("get local first", async () => {
+				await stores[1].docs.log.replicate({ factor: 0.0001 });
+				await waitForResolved(() =>
+					expect(stores[1].docs.log.log.length).to.eq(
+						stores[0].docs.log.log.length,
+					),
+				);
+
+				const requestSpy = sinon.spy(stores[1].docs.index._query.request);
+				stores[1].docs.index._query.request = requestSpy;
+
+				const sendSpy = sinon.spy(stores[1].docs.index._query.send);
+				stores[1].docs.index._query.send = sendSpy;
+
+				const get = await stores[1].docs.index.get("1");
+				expect(get!.name).to.eq("name1");
+				expect(get.__indexed).to.be.instanceOf(Indexable);
+
+				expect(requestSpy.callCount).to.eq(0);
+				expect(sendSpy.callCount).to.eq(0);
+			});
 		});
 
 		it("update", async () => {
@@ -4257,205 +4315,185 @@ describe("index", () => {
 			expect(get.__indexed.nameTransformed).to.eq("NAME1_UPDATED");
 		});
 
-		it("get local first", async () => {
-			await stores[1].docs.log.replicate({ factor: 0.0001 });
-			await waitForResolved(() =>
-				expect(stores[1].docs.log.log.length).to.eq(
-					stores[0].docs.log.log.length,
-				),
-			);
-
-			const requestSpy = sinon.spy(stores[1].docs.index._query.request);
-			stores[1].docs.index._query.request = requestSpy;
-
-			const sendSpy = sinon.spy(stores[1].docs.index._query.send);
-			stores[1].docs.index._query.send = sendSpy;
-
-			const get = await stores[1].docs.index.get("1");
-			expect(get!.name).to.eq("name1");
-			expect(get.__indexed).to.be.instanceOf(Indexable);
-
-			expect(requestSpy.callCount).to.eq(0);
-			expect(sendSpy.callCount).to.eq(0);
-		});
-
-		it("iterate", async () => {
-			for (const iterator of [
-				stores[0].docs.index.iterate({
-					sort: "id",
-				}),
-				stores[1].docs.index.iterate({
-					sort: "id",
-				}),
-			]) {
-				const first = await iterator.next(1);
-
-				const second = await iterator.next(2);
-				expect(first[0].name).to.eq("name1");
-				expect(first[0] instanceof Document).to.be.true;
-				expect(first[0].__indexed).to.be.instanceOf(Indexable);
-
-				expect(second[0].name).to.eq("name2");
-				expect(second[1].name).to.eq("name3");
-				expect(second[0] instanceof Document).to.be.true;
-				expect(second[1] instanceof Document).to.be.true;
-				expect(second[0].__indexed).to.be.instanceOf(Indexable);
-
-				const firstCreatedAt = first[0].__context.created;
-				expect(typeof firstCreatedAt).to.eq("bigint");
-
-				const secondCreatedAt = second[0].__context.created;
-				expect(secondCreatedAt > firstCreatedAt).to.be.true;
-			}
-		});
-
-		it("iterate indexed", async () => {
-			for (const iterator of [
-				stores[0].docs.index.iterate(
-					{
+		describe("iterate", () => {
+			it("iterate", async () => {
+				for (const iterator of [
+					stores[0].docs.index.iterate({
 						sort: "id",
-					},
-					{
-						resolve: false,
-					},
-				),
-				stores[1].docs.index.iterate(
-					{
+					}),
+					stores[1].docs.index.iterate({
 						sort: "id",
-					},
-					{
-						resolve: false,
-					},
-				),
-			]) {
-				const first = await iterator.next(1);
-				const second = await iterator.next(2);
-				expect(first[0].nameTransformed).to.eq("NAME1");
-				expect(first[0] instanceof Indexable).to.be.true;
-				expect(second[0].nameTransformed).to.eq("NAME2");
-				expect(second[1].nameTransformed).to.eq("NAME3");
-				expect(second[0] instanceof Indexable).to.be.true;
-				expect(second[1] instanceof Indexable).to.be.true;
+					}),
+				]) {
+					const first = await iterator.next(1);
 
-				const firstCreatedAt = first[0].__context.created;
-				expect(typeof firstCreatedAt).to.eq("bigint");
+					const second = await iterator.next(2);
+					expect(first[0].name).to.eq("name1");
+					expect(first[0] instanceof Document).to.be.true;
+					expect(first[0].__indexed).to.be.instanceOf(Indexable);
 
-				const secondCreatedAt = second[0].__context.created;
-				expect(secondCreatedAt > firstCreatedAt).to.be.true;
-			}
-		});
+					expect(second[0].name).to.eq("name2");
+					expect(second[1].name).to.eq("name3");
+					expect(second[0] instanceof Document).to.be.true;
+					expect(second[1] instanceof Document).to.be.true;
+					expect(second[0].__indexed).to.be.instanceOf(Indexable);
 
-		it("iterate and sort by context", async () => {
-			for (const iterator of [
-				stores[0].docs.index.iterate(
-					{
-						sort: {
-							key: ["__context", "created"],
-							direction: SortDirection.DESC,
+					const firstCreatedAt = first[0].__context.created;
+					expect(typeof firstCreatedAt).to.eq("bigint");
+
+					const secondCreatedAt = second[0].__context.created;
+					expect(secondCreatedAt > firstCreatedAt).to.be.true;
+				}
+			});
+
+			it("iterate indexed", async () => {
+				for (const iterator of [
+					stores[0].docs.index.iterate(
+						{
+							sort: "id",
 						},
-					},
-					{
-						resolve: false,
-					},
-				),
-				stores[1].docs.index.iterate(
-					{
-						sort: {
-							key: ["__context", "created"],
-							direction: SortDirection.DESC,
+						{
+							resolve: false,
 						},
-					},
-					{
-						resolve: false,
-					},
-				),
-			]) {
-				const first = await iterator.next(1);
-				const second = await iterator.next(2);
-				expect(first[0].nameTransformed).to.eq("NAME3");
-				expect(first[0] instanceof Indexable).to.be.true;
-				expect(second[0].nameTransformed).to.eq("NAME2");
-				expect(second[1].nameTransformed).to.eq("NAME1");
-				expect(second[0] instanceof Indexable).to.be.true;
-				expect(second[1] instanceof Indexable).to.be.true;
-
-				const firstCreatedAt = first[0].__context.created;
-				expect(typeof firstCreatedAt).to.eq("bigint");
-
-				const secondCreatedAt = second[0].__context.created;
-				expect(secondCreatedAt < firstCreatedAt).to.be.true;
-			}
-		});
-
-		it("iterate replicate", async () => {
-			for (const iterator of [
-				stores[0].docs.index.iterate(
-					{
-						sort: "id",
-					},
-					{
-						remote: {
-							replicate: true,
+					),
+					stores[1].docs.index.iterate(
+						{
+							sort: "id",
 						},
-					},
-				),
-				stores[1].docs.index.iterate(
-					{
-						sort: "id",
-					},
-					{
-						remote: {
-							replicate: true,
+						{
+							resolve: false,
 						},
-					},
-				),
-			]) {
-				const first = await iterator.next(1);
-				const second = await iterator.next(2);
-				expect(first[0].name).to.eq("name1");
-				expect(first[0] instanceof Document).to.be.true;
+					),
+				]) {
+					const first = await iterator.next(1);
+					const second = await iterator.next(2);
+					expect(first[0].nameTransformed).to.eq("NAME1");
+					expect(first[0] instanceof Indexable).to.be.true;
+					expect(second[0].nameTransformed).to.eq("NAME2");
+					expect(second[1].nameTransformed).to.eq("NAME3");
+					expect(second[0] instanceof Indexable).to.be.true;
+					expect(second[1] instanceof Indexable).to.be.true;
 
-				expect(second[0].name).to.eq("name2");
-				expect(second[1].name).to.eq("name3");
-				expect(second[0] instanceof Document).to.be.true;
-				expect(second[1] instanceof Document).to.be.true;
-			}
-		});
+					const firstCreatedAt = first[0].__context.created;
+					expect(typeof firstCreatedAt).to.eq("bigint");
 
-		it("iterate replicate indexed", async () => {
-			for (const iterator of [
-				stores[0].docs.index.iterate(
-					{
-						sort: "id",
-					},
-					{
-						resolve: false,
-						remote: {
-							replicate: true,
+					const secondCreatedAt = second[0].__context.created;
+					expect(secondCreatedAt > firstCreatedAt).to.be.true;
+				}
+			});
+
+			it("iterate and sort by context", async () => {
+				for (const iterator of [
+					stores[0].docs.index.iterate(
+						{
+							sort: {
+								key: ["__context", "created"],
+								direction: SortDirection.DESC,
+							},
 						},
-					},
-				),
-				stores[1].docs.index.iterate(
-					{
-						sort: "id",
-					},
-					{
-						resolve: false,
-						remote: {
-							replicate: true,
+						{
+							resolve: false,
 						},
-					},
-				),
-			]) {
-				const first = await iterator.next(1);
-				const second = await iterator.next(2);
-				expect(first[0].nameTransformed).to.eq("NAME1");
-				expect(first[0] instanceof Indexable).to.be.true;
-				expect(second[0].nameTransformed).to.eq("NAME2");
-				expect(second[1].nameTransformed).to.eq("NAME3");
-				expect(second[0] instanceof Indexable).to.be.true;
-				expect(second[1] instanceof Indexable).to.be.true;
-			}
+					),
+					stores[1].docs.index.iterate(
+						{
+							sort: {
+								key: ["__context", "created"],
+								direction: SortDirection.DESC,
+							},
+						},
+						{
+							resolve: false,
+						},
+					),
+				]) {
+					const first = await iterator.next(1);
+					const second = await iterator.next(2);
+					expect(first[0].nameTransformed).to.eq("NAME3");
+					expect(first[0] instanceof Indexable).to.be.true;
+					expect(second[0].nameTransformed).to.eq("NAME2");
+					expect(second[1].nameTransformed).to.eq("NAME1");
+					expect(second[0] instanceof Indexable).to.be.true;
+					expect(second[1] instanceof Indexable).to.be.true;
+
+					const firstCreatedAt = first[0].__context.created;
+					expect(typeof firstCreatedAt).to.eq("bigint");
+
+					const secondCreatedAt = second[0].__context.created;
+					expect(secondCreatedAt < firstCreatedAt).to.be.true;
+				}
+			});
+
+			it("iterate replicate", async () => {
+				for (const iterator of [
+					stores[0].docs.index.iterate(
+						{
+							sort: "id",
+						},
+						{
+							remote: {
+								replicate: true,
+							},
+						},
+					),
+					stores[1].docs.index.iterate(
+						{
+							sort: "id",
+						},
+						{
+							remote: {
+								replicate: true,
+							},
+						},
+					),
+				]) {
+					const first = await iterator.next(1);
+					const second = await iterator.next(2);
+					expect(first[0].name).to.eq("name1");
+					expect(first[0] instanceof Document).to.be.true;
+
+					expect(second[0].name).to.eq("name2");
+					expect(second[1].name).to.eq("name3");
+					expect(second[0] instanceof Document).to.be.true;
+					expect(second[1] instanceof Document).to.be.true;
+				}
+			});
+
+			it("iterate replicate indexed", async () => {
+				for (const iterator of [
+					stores[0].docs.index.iterate(
+						{
+							sort: "id",
+						},
+						{
+							resolve: false,
+							remote: {
+								replicate: true,
+							},
+						},
+					),
+					stores[1].docs.index.iterate(
+						{
+							sort: "id",
+						},
+						{
+							resolve: false,
+							remote: {
+								replicate: true,
+							},
+						},
+					),
+				]) {
+					const first = await iterator.next(1);
+					const second = await iterator.next(2);
+					expect(first[0].nameTransformed).to.eq("NAME1");
+					expect(first[0] instanceof Indexable).to.be.true;
+					expect(second[0].nameTransformed).to.eq("NAME2");
+					expect(second[1].nameTransformed).to.eq("NAME3");
+					expect(second[0] instanceof Indexable).to.be.true;
+					expect(second[1] instanceof Indexable).to.be.true;
+				}
+			});
 		});
 	});
 
