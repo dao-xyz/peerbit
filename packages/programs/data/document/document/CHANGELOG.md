@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.12.1](https://github.com/dao-xyz/peerbit/compare/document-v9.12.0...document-v9.12.1) (2025-08-15)
+
+
+### Bug Fixes
+
+* get waitFor handle race condition ([5930472](https://github.com/dao-xyz/peerbit/commit/593047224f9fdbec898482d8debe59202f3873f3))
+
 ## [9.12.0](https://github.com/dao-xyz/peerbit/compare/document-v9.11.8...document-v9.12.0) (2025-08-15)
 
 
