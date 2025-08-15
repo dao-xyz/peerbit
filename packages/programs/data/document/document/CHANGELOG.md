@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.12.0](https://github.com/dao-xyz/peerbit/compare/document-v9.11.8...document-v9.12.0) (2025-08-15)
+
+
+### Features
+
+* index get waitFor document ([863fe8e](https://github.com/dao-xyz/peerbit/commit/863fe8ede50bfca40cd5311de7e0093bed681540))
+
 ## [9.11.8](https://github.com/dao-xyz/peerbit/compare/document-v9.11.7...document-v9.11.8) (2025-08-12)
 
 
