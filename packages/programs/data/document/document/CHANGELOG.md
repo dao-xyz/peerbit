@@ -456,6 +456,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.12.2](https://github.com/dao-xyz/peerbit/compare/document-v9.12.1...document-v9.12.2) (2025-08-18)
+
+
+### Bug Fixes
+
+* add iterate first utility method ([a61e4b5](https://github.com/dao-xyz/peerbit/commit/a61e4b509ac4b4042d63a88457bb71a335e54387))
+
 ## [9.12.1](https://github.com/dao-xyz/peerbit/compare/document-v9.12.0...document-v9.12.1) (2025-08-15)
 
 
