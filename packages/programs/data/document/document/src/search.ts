@@ -107,6 +107,7 @@ export type ResultsIterator<T> = {
 	done: () => boolean;
 	all: () => Promise<T[]>;
 	pending: () => number | undefined;
+	first: () => Promise<T | undefined>;
 };
 
 type QueryDetailedOptions<
@@ -2400,6 +2401,14 @@ export class DocumentIndex<
 				}
 				cleanupAndDone();
 				return result;
+			},
+			first: async () => {
+				if (doneFn()) {
+					return undefined;
+				}
+				let batch = await next(1);
+				cleanupAndDone();
+				return batch[0];
 			},
 		};
 	}

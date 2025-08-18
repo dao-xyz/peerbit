@@ -3362,6 +3362,38 @@ describe("index", () => {
 				expect(t1 - t0).to.lessThan(waitForMax + 500); // +some delta
 				expect(spyFn.callCount).to.equal(1); // should only call next once
 			});
+
+			it("get first entry", async () => {
+				session = await TestSession.connected(1);
+
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+
+				await session.peers[0].open(store, {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
+
+				const doc = new Document({ id: "1" });
+				const doc2 = new Document({ id: "2" });
+				const doc3 = new Document({ id: "3" });
+
+				await store.docs.put(doc);
+				await store.docs.put(doc2);
+				await store.docs.put(doc3);
+
+				const first = await store.docs.index
+					.iterate({ sort: { key: "id", direction: SortDirection.DESC } })
+					.first();
+				expect(first!.id).to.deep.equal(doc3.id);
+
+				// expect cleanup
+				expect(store.docs.index.hasPending).to.be.false;
+			});
 		});
 	});
 
