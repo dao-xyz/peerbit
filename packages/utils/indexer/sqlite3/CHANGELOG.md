@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.24](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.23...indexer-sqlite3-v1.2.24) (2025-08-19)
+
+
+### Bug Fixes
+
+* add fully qualified name on get primary key to prevent ambigious situations where nested documents have the same primery key ([1beb9da](https://github.com/dao-xyz/peerbit/commit/1beb9dac5d0f0b52affa4839fba206a0727e26bf))
+* add primary table identifiers for count and get to prevent ambigious statements ([7c84377](https://github.com/dao-xyz/peerbit/commit/7c843775e5dca82e27e787ed065a82dcf6fb4bbb))
+
 ## [1.2.23](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.22...indexer-sqlite3-v1.2.23) (2025-08-08)
 
 
