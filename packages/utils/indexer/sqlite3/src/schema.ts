@@ -1359,7 +1359,7 @@ export const convertDeleteRequestToQuery = (
 		table,
 	);
 	return {
-		sql: `DELETE FROM ${table.name} WHERE ${table.primary} IN (SELECT ${table.primary} from ${table.name} ${query}) returning ${table.primary}`,
+		sql: `DELETE FROM ${table.name} WHERE ${table.name}.${table.primary} IN (SELECT ${table.primary} from ${table.name} ${query}) returning ${table.primary}`,
 		bindable,
 	};
 };
@@ -1401,7 +1401,7 @@ export const convertCountRequestToQuery = (
 		table,
 	);
 	return {
-		sql: `SELECT count(DISTINCT ${table.primary!}) as count FROM ${table.name} ${query}`,
+		sql: `SELECT count(DISTINCT ${table.name}.${table.primary!}) as count FROM ${table.name} ${query}`,
 		bindable,
 	};
 };
