@@ -308,7 +308,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 				table,
 				options?.shape,
 			);
-			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${this.primaryKeyString} = ? limit 1`;
+			const sql = `${generateSelectQuery(table, selects)} ${buildJoin(joinMap).join} where ${table.name}.${this.primaryKeyString} = ? limit 1`;
 			try {
 				const stmt = await this.properties.db.prepare(sql, sql);
 				const rows = await stmt.get([
