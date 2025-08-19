@@ -194,6 +194,16 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [1.4.8](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.4.7...blocks-interface-v1.4.8) (2025-08-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from 2.3.10 to 2.3.11
+    * @peerbit/stream-interface bumped from ^5.2.4 to ^5.2.5
+
 ## [1.4.7](https://github.com/dao-xyz/peerbit/compare/blocks-interface-v1.4.6...blocks-interface-v1.4.7) (2025-08-08)
 
 

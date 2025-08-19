@@ -368,6 +368,25 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.66](https://github.com/dao-xyz/peerbit/compare/log-v4.0.65...log-v4.0.66) (2025-08-19)
+
+
+### Bug Fixes
+
+* Uint8array inner generic type ([db9a39b](https://github.com/dao-xyz/peerbit/commit/db9a39bed8501a45212d6130ffeed455422fa613))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.4.7 to ^1.4.8
+    * @peerbit/crypto bumped from 2.3.10 to 2.3.11
+    * @peerbit/indexer-interface bumped from ^2.0.11 to ^2.0.12
+    * @peerbit/indexer-simple bumped from ^1.1.16 to ^1.1.17
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.53 to 2.1.54
+
 ## [4.0.65](https://github.com/dao-xyz/peerbit/compare/log-v4.0.64...log-v4.0.65) (2025-08-19)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.12](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.11...any-store-opfs-v1.0.12) (2025-08-19)
+
+
+### Bug Fixes
+
+* Uint8array inner generic type ([db9a39b](https://github.com/dao-xyz/peerbit/commit/db9a39bed8501a45212d6130ffeed455422fa613))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped from ^2.3.10 to ^2.3.11
+
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.10...any-store-opfs-v1.0.11) (2025-08-08)
 
 
