@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.26](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.25...indexer-sqlite3-v1.2.26) (2025-08-19)
+
+
+### Bug Fixes
+
+* support deeply nested inlining ([5e3fbc8](https://github.com/dao-xyz/peerbit/commit/5e3fbc8881346a1a0bdf23d258aab2c596d9aacd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.1.16 to ^1.1.17
+
 ## [1.2.25](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.24...indexer-sqlite3-v1.2.25) (2025-08-19)
 
 

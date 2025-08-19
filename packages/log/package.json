@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/log",
-	"version": "4.0.66",
+	"version": "4.0.67",
 	"description": "Append-only log CRDT",
 	"author": "dao.xyz",
 	"license": "MIT",
@@ -71,10 +71,10 @@
 		"path-browserify": "^1.0.1",
 		"uuid": "^10.0.0",
 		"@peerbit/indexer-interface": "^2.0.12",
-		"@peerbit/indexer-simple": "^1.1.17"
+		"@peerbit/indexer-simple": "^1.1.18"
 	},
 	"devDependencies": {
-		"@peerbit/test-utils": "2.1.54",
+		"@peerbit/test-utils": "2.1.55",
 		"@types/yallist": "^4.0.4",
 		"assert": "^2.0.0",
 		"json-stringify-deterministic": "^1.0.7"
