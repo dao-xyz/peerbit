@@ -826,8 +826,8 @@ export const insert = async (
 					subTable,
 					getSchema(unwrappedType).fields,
 					(fn) => nestedCallbacks.push(fn),
-					parentId,
-					index,
+					undefined, // parentId is not defined here, we are inserting a nested object inline
+					undefined, // index is not defined here, we are inserting a nested object inline
 				);
 				/* await insert(, obj[field.key], tables, subTable, getSchema(unwrappedType).fields, parentId, index); */
 			} else {

@@ -2373,6 +2373,95 @@ export const tests = (
 							});
 						});
 
+						it("field poly-morph but nested not", () => {
+							@variant(0)
+							class NestedSimple {
+								@field({ type: "u32" })
+								number: number;
+								constructor(number: number) {
+									this.number = number;
+								}
+							}
+
+							abstract class Base {}
+
+							@variant("v0")
+							class V0 extends Base {
+								@field({ type: option("u64") })
+								number?: bigint;
+
+								@field({ type: NestedSimple })
+								nested: NestedSimple;
+
+								constructor(opts: V0) {
+									super();
+									this.number = opts.number;
+									this.nested = opts.nested;
+								}
+							}
+
+							@variant("v1")
+							class V1 extends Base {
+								@field({ type: option("string") })
+								string?: string;
+
+								constructor(opts: V1) {
+									super();
+									this.string = opts.string;
+								}
+							}
+
+							@variant("PolymorphDocument")
+							class PolymorphDocument {
+								@id({ type: "string" })
+								id: string;
+
+								@field({ type: option(Base) })
+								nested?: Base;
+
+								constructor(opts: PolymorphDocument) {
+									this.id = opts.id;
+									this.nested = opts.nested;
+								}
+							}
+
+							beforeEach(async () => {
+								await setup({ schema: PolymorphDocument });
+							});
+
+							it("can query multiple versions at once", async () => {
+								await store.put(
+									new PolymorphDocument({
+										id: "1",
+										nested: new V0({
+											number: 1n,
+											nested: new NestedSimple(1),
+										}),
+									}),
+								);
+								const doc2 = new PolymorphDocument({
+									id: "2",
+									nested: new V1({
+										string: "hello",
+									}),
+								});
+								await store.put(doc2);
+
+								const response = await search(store, {
+									query: [
+										new StringMatch({
+											key: ["nested", "string"],
+											value: "hello",
+										}),
+									],
+								});
+
+								expect(response).to.have.length(1);
+								expect(response[0].value.id).to.equal("2");
+
+								checkDocument(response[0].value, doc2);
+							});
+						});
 						describe("non-array-nested", () => {
 							abstract class Base {}
 
