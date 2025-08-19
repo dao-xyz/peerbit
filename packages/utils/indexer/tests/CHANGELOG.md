@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.17](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.16...indexer-tests-v1.1.17) (2025-08-19)
+
+
+### Bug Fixes
+
+* support deeply nested inlining ([5e3fbc8](https://github.com/dao-xyz/peerbit/commit/5e3fbc8881346a1a0bdf23d258aab2c596d9aacd))
+
 ## [1.1.16](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.15...indexer-tests-v1.1.16) (2025-08-19)
 
 
