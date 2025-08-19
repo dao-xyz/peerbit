@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream-interface",
-	"version": "5.2.4",
+	"version": "5.2.5",
 	"description": "Block store streaming",
 	"sideEffects": false,
 	"type": "module",
@@ -75,6 +75,6 @@
 	],
 	"dependencies": {
 		"@dao-xyz/borsh": "^5.2.3",
-		"@peerbit/crypto": "2.3.10"
+		"@peerbit/crypto": "2.3.11"
 	}
 }

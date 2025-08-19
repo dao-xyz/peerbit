@@ -456,6 +456,23 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.12.4](https://github.com/dao-xyz/peerbit/compare/document-v9.12.3...document-v9.12.4) (2025-08-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.14 to 5.2.15
+    * @peerbit/rpc bumped from 5.3.10 to 5.3.11
+    * @peerbit/shared-log bumped from 11.3.1 to 11.3.2
+    * @peerbit/indexer-interface bumped from ^2.0.11 to ^2.0.12
+    * @peerbit/indexer-simple bumped from ^1.1.16 to ^1.1.17
+    * @peerbit/indexer-sqlite3 bumped from ^1.2.24 to ^1.2.25
+    * @peerbit/document-interface bumped from ^2.2.7 to ^2.2.8
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.53 to 2.1.54
+
 ## [9.12.3](https://github.com/dao-xyz/peerbit/compare/document-v9.12.2...document-v9.12.3) (2025-08-19)
 
 

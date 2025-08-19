@@ -61,6 +61,13 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [2.3.11](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.10...crypto-v2.3.11) (2025-08-19)
+
+
+### Bug Fixes
+
+* Uint8array inner generic type ([db9a39b](https://github.com/dao-xyz/peerbit/commit/db9a39bed8501a45212d6130ffeed455422fa613))
+
 ## [2.3.10](https://github.com/dao-xyz/peerbit/compare/crypto-v2.3.9...crypto-v2.3.10) (2025-08-08)
 
 

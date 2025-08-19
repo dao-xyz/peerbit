@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.25](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.24...indexer-sqlite3-v1.2.25) (2025-08-19)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped from ^2.0.11 to ^2.0.12
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.1.15 to ^1.1.16
+
 ## [1.2.24](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.23...indexer-sqlite3-v1.2.24) (2025-08-19)
 
 
