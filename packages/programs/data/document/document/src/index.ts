@@ -17,7 +17,7 @@ export type {
 	TransformerAsFunction,
 	ValueTypeFromRequest,
 } from "./search.js";
-export { coerceWithContext } from "./search.js";
+export { coerceWithContext, coerceWithIndexed } from "./search.js";
 export * from "./operation.js";
 export { MAX_BATCH_SIZE as MAX_DOCUMENT_SIZE } from "./constants.js";
 export { ClosedError } from "@peerbit/program";
