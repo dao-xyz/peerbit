@@ -58,7 +58,7 @@ export class OPFSStoreWorker {
 
 	private _memoryIterator: Map<
 		string,
-		AsyncIterator<[string, ArrayBuffer], void, void>
+		AsyncIterator<[string, Uint8Array<ArrayBufferLike>], void, void>
 	>;
 
 	constructor() {
