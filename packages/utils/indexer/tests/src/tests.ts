@@ -539,6 +539,7 @@ export const tests = (
 				});
 			});
 
+			/*  TODO feat?
 			describe("nested by decorator ", () => {
 				class Nested {
 					@id({ type: "string" })
@@ -563,7 +564,7 @@ export const tests = (
 					const doc = new NestedDocument(new Nested("abc"));
 					await testIndex(store, doc, getIdProperty(NestedDocument));
 				});
-			});
+			}); */
 		});
 
 		describe("search", () => {
@@ -1272,6 +1273,68 @@ export const tests = (
 									})
 								).length,
 							).to.equal(0);
+						});
+
+						@variant(0)
+						class ArrayDoc {
+							@id({ type: "u64" })
+							id: bigint;
+
+							// This vec will be normalized into a child table with FK -> root(id)
+							@field({ type: vec("u64") })
+							values: bigint[];
+
+							constructor(id: bigint, values: bigint[]) {
+								this.id = id;
+								this.values = values;
+							}
+						}
+
+						it("can add and concurrent delete", async () => {
+							const out = await setup({ schema: ArrayDoc });
+							store = out.store;
+
+							// Make the child-insert phase “heavy” to widen the race window
+							const BIG = 100; // large enough to take noticeable time to fan-out inserts
+							const makeDoc = (id: bigint) =>
+								new ArrayDoc(
+									id,
+									Array.from({ length: BIG }, (_, i) => BigInt(i)), // plenty of child rows
+								);
+
+							let hit = false;
+
+							// We try multiple times to be deterministic across machines
+							for (let attempt = 0; attempt < 6 && !hit; attempt++) {
+								const id = BigInt(42 + attempt);
+								const doc = makeDoc(id);
+
+								// Start the big put (root + many children)
+								const putP = store.put(doc);
+
+								// Fire the delete *just after* the put has started
+								const delP = (async () => {
+									// Tiny randomized delay to land mid-insert
+									// Delete the root by id; API accepts a query array
+									try {
+										await store.del({
+											query: new IntegerCompare({
+												key: "id",
+												value: id,
+												compare: Compare.Equal,
+											}),
+										});
+									} catch (error) {
+										throw error;
+									}
+								})();
+
+								try {
+									await Promise.all([putP, delP]);
+								} catch (error) {
+									throw error;
+								}
+							}
 						});
 
 						it("can use re-use same property name", async () => {

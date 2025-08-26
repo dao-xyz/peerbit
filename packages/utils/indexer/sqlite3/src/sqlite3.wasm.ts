@@ -66,7 +66,29 @@ class Statement implements IStatement {
 	}
 
 	async reset() {
-		await this.statement.reset();
+		try {
+			await this.statement.reset(); // this returns the last rc
+		} catch (e: any) {
+			// sqlite3_reset() can surface the prior step/exec rc.
+			// The statement *is* reset; ignore benign codes.
+			const msg = e?.message || "";
+			const rc = e?.rc;
+			const code = e?.code;
+
+			const isFk =
+				code === "SQLITE_CONSTRAINT_FOREIGNKEY" ||
+				rc === 787 ||
+				msg.includes("SQLITE_CONSTRAINT_FOREIGNKEY") ||
+				msg.includes("FOREIGN KEY constraint failed");
+
+			const isBusy = code === "SQLITE_BUSY" || rc === 5; // optional
+
+			if (isFk || isBusy) {
+				return this as IStatement; // swallow; stmt is reset
+			}
+			// (keep throwing for other unexpected errors)
+			throw e;
+		}
 		return this as IStatement;
 	}
 

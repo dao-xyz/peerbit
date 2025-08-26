@@ -30,6 +30,7 @@ import {
 	selectChildren,
 } from "./schema.js";
 import type { Database, Statement } from "./types.js";
+import { isFKError } from "./utils.js";
 
 const escapePathToSQLName = (path: string[]) => {
 	return path.map((x) => x.replace(/[^a-zA-Z0-9]/g, "_"));
@@ -39,6 +40,49 @@ const putStatementKey = (table: Table) => table.name + "_put";
 const replaceStatementKey = (table: Table) => table.name + "_replicate";
 const resolveChildrenStatement = (table: Table) =>
 	table.name + "_resolve_children";
+
+type FKMode = "strict" | "race-tolerant";
+
+async function safeReset(stmt?: Statement) {
+	if (!stmt || !stmt.reset) return;
+	try {
+		await stmt.reset();
+	} catch (e) {
+		if (isFKError(e)) return; // swallow FK-reset noise
+		throw e;
+	}
+}
+
+async function runIgnoreFK(stmt: Statement, values: any[]) {
+	try {
+		await stmt.run(values);
+		await safeReset(stmt); // success path: reset safely
+		return;
+	} catch (e) {
+		if (isFKError(e)) {
+			await safeReset(stmt); // swallow FK + swallow reset error
+			return; // pretend no-op
+		}
+		// real error
+		await safeReset(stmt); // best effort
+		throw e;
+	}
+}
+
+async function getIgnoreFK(stmt: Statement, values: any[]) {
+	try {
+		const out = await stmt.get(values);
+		await safeReset(stmt); // success path
+		return out;
+	} catch (e) {
+		if (isFKError(e)) {
+			await safeReset(stmt); // swallow FK + reset error
+			return undefined;
+		}
+		await safeReset(stmt);
+		throw e;
+	}
+}
 
 export class SQLLiteIndex<T extends Record<string, any>>
 	implements Index<T, any>
@@ -61,6 +105,7 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 	iteratorTimeout: number;
 	closed: boolean = true;
+	private fkMode: FKMode;
 
 	id: string;
 	constructor(
@@ -71,8 +116,9 @@ export class SQLLiteIndex<T extends Record<string, any>>
 			start?: () => Promise<void> | void;
 			stop?: () => Promise<void> | void;
 		},
-		options?: { iteratorTimeout?: number },
+		options?: { iteratorTimeout?: number; fkMode?: FKMode },
 	) {
+		this.fkMode = options?.fkMode || "race-tolerant";
 		this.closed = true;
 		this.id = uuid();
 		this.scopeString =
@@ -347,26 +393,33 @@ export class SQLLiteIndex<T extends Record<string, any>>
 		return insert(
 			async (values, table) => {
 				let preId = values[table.primaryIndex];
+				let statement: Statement | undefined = undefined;
+				try {
+					if (preId != null) {
+						statement = this.properties.db.statements.get(
+							replaceStatementKey(table),
+						)!;
+						this.fkMode === "race-tolerant"
+							? await runIgnoreFK(statement, values)
+							: await statement.run(values);
+						return preId;
+					} else {
+						statement = this.properties.db.statements.get(
+							putStatementKey(table),
+						)!;
+						const out =
+							this.fkMode === "race-tolerant"
+								? await getIgnoreFK(statement, values)
+								: await statement.get(values);
 
-				if (preId != null) {
-					const statement = this.properties.db.statements.get(
-						replaceStatementKey(table),
-					)!;
-					await statement.run(values);
-					await statement.reset?.();
-					return preId;
-				} else {
-					const statement = this.properties.db.statements.get(
-						putStatementKey(table),
-					)!;
-					const out = await statement.get(values);
-					await statement.reset?.();
-
-					// TODO types
-					if (out == null) {
-						return undefined;
+						// TODO types
+						if (out == null) {
+							return undefined;
+						}
+						return out[table.primary as string];
 					}
-					return out[table.primary as string];
+				} finally {
+					await statement?.reset?.();
 				}
 			},
 			value,
@@ -441,8 +494,6 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 			once = true;
 
-			/* 	console.log("----------------------")
-				console.log(sqlFetch); */
 			const allResults = await planningScope.perform(async () => {
 				const allResults: Record<string, any>[] = await stmt.all([
 					...bindable,
@@ -585,7 +636,14 @@ export class SQLLiteIndex<T extends Record<string, any>>
 
 				// TODO types
 				for (const result of results) {
-					ret.push(types.toId(result[table.primary as string]));
+					ret.push(
+						types.toId(
+							convertFromSQLType(
+								result[table.primary as string],
+								table.primaryField!.from!.type,
+							),
+						),
+					);
 				}
 				once = true;
 			} catch (error) {

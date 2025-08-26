@@ -236,7 +236,7 @@ const init = async (): Promise<DatabaseCreator> => {
 
 		const resolver = resolvers[message.id];
 		if (message.type === "error") {
-			resolver.reject(message.message);
+			resolver.reject(new Error(message.message));
 		} else if (message.type === "response") {
 			resolver.resolve(message.result);
 		}

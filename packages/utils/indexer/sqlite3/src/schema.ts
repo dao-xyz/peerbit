@@ -96,7 +96,7 @@ export class MissingFieldError extends Error {
 
 export const convertFromSQLType = (
 	value: boolean | bigint | string | number | Uint8Array,
-	type?: FieldType,
+	type: FieldType | undefined,
 ) => {
 	if (type === "bool") {
 		if (
@@ -341,7 +341,7 @@ export const getSQLFields = (
 							? sqlFields.find((field) => field.name === primary)
 							: undefined;
 					const parentPrimaryFieldName =
-						parentPrimaryField?.key || CHILD_TABLE_ID;
+						parentPrimaryField?.name || CHILD_TABLE_ID;
 					const parentPrimaryFieldType = parentPrimaryField
 						? parentPrimaryField.type
 						: "INTEGER";
@@ -707,7 +707,9 @@ export const insert = async (
 	tables: Map<string, Table>,
 	table: Table,
 	fields: Field[],
-	handleNestedCallback?: (cb: (parentId: any) => Promise<void>) => void,
+	handleNestedCallback?: (
+		cb: (parentId: any) => Promise<void>,
+	) => Promise<void> | void | number,
 	parentId: any = undefined,
 	index?: number,
 ): Promise<void> => {
@@ -843,7 +845,7 @@ export const insert = async (
 	// we need to know the id of the parent document to insert the foreign key correctly
 	for (const nested of nestedFields) {
 		const isOptional = nested.type instanceof OptionKind;
-		handleNestedCallback!((id) => handleNested(nested, isOptional, id));
+		await handleNestedCallback!((id) => handleNested(nested, isOptional, id));
 	}
 
 	const thisId = await insertFn(bindableValues, table);
