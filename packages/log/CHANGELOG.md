@@ -368,6 +368,17 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [4.0.68](https://github.com/dao-xyz/peerbit/compare/log-v4.0.67...log-v4.0.68) (2025-08-26)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-simple bumped from ^1.1.18 to ^1.1.19
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.55 to 2.1.56
+
 ## [4.0.67](https://github.com/dao-xyz/peerbit/compare/log-v4.0.66...log-v4.0.67) (2025-08-19)
 
 

@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/vite",
-	"version": "1.0.32",
+	"version": "1.0.33",
 	"description": "Plugin for Vite to use Peerbit",
 	"sideEffects": false,
 	"type": "module",
@@ -69,7 +69,7 @@
 		"vite": "^6.0.6"
 	},
 	"devDependencies": {
-		"@peerbit/indexer-sqlite3": "1.2.26",
+		"@peerbit/indexer-sqlite3": "1.2.27",
 		"@peerbit/any-store": "2.1.13",
 		"@peerbit/any-store-opfs": "1.0.12"
 	},

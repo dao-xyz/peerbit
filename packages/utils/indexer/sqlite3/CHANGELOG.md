@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.27](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.26...indexer-sqlite3-v1.2.27) (2025-08-26)
+
+
+### Bug Fixes
+
+* correctly handle put/del race condition with nested documents and arrays ([90b1269](https://github.com/dao-xyz/peerbit/commit/90b12699a0ae6d5bf7b7258b2f0758e693cdc831))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/indexer-tests bumped from ^1.1.17 to ^1.1.18
+
 ## [1.2.26](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v1.2.25...indexer-sqlite3-v1.2.26) (2025-08-19)
 
 

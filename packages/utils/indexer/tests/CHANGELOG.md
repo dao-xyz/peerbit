@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.18](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.17...indexer-tests-v1.1.18) (2025-08-26)
+
+
+### Bug Fixes
+
+* correctly handle put/del race condition with nested documents and arrays ([90b1269](https://github.com/dao-xyz/peerbit/commit/90b12699a0ae6d5bf7b7258b2f0758e693cdc831))
+
 ## [1.1.17](https://github.com/dao-xyz/peerbit/compare/indexer-tests-v1.1.16...indexer-tests-v1.1.17) (2025-08-19)
 
 
