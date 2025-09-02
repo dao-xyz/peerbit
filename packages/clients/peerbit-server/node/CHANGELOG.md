@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.4.15](https://github.com/dao-xyz/peerbit/compare/server-v5.4.14...server-v5.4.15) (2025-09-02)
+
+
+### Bug Fixes
+
+* handle certificate renewal ([a4bcfcf](https://github.com/dao-xyz/peerbit/commit/a4bcfcffba0c2fd6215fe42f87b738f186d898cc))
+
 ## [5.4.14](https://github.com/dao-xyz/peerbit/compare/server-v5.4.13...server-v5.4.14) (2025-08-26)
 
 
