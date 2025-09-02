@@ -1302,10 +1302,8 @@ export const tests = (
 									Array.from({ length: BIG }, (_, i) => BigInt(i)), // plenty of child rows
 								);
 
-							let hit = false;
-
 							// We try multiple times to be deterministic across machines
-							for (let attempt = 0; attempt < 6 && !hit; attempt++) {
+							for (let attempt = 0; attempt < 6; attempt++) {
 								const id = BigInt(42 + attempt);
 								const doc = makeDoc(id);
 
@@ -1316,24 +1314,16 @@ export const tests = (
 								const delP = (async () => {
 									// Tiny randomized delay to land mid-insert
 									// Delete the root by id; API accepts a query array
-									try {
-										await store.del({
-											query: new IntegerCompare({
-												key: "id",
-												value: id,
-												compare: Compare.Equal,
-											}),
-										});
-									} catch (error) {
-										throw error;
-									}
+									await store.del({
+										query: new IntegerCompare({
+											key: "id",
+											value: id,
+											compare: Compare.Equal,
+										}),
+									});
 								})();
 
-								try {
-									await Promise.all([putP, delP]);
-								} catch (error) {
-									throw error;
-								}
+								await Promise.all([putP, delP]);
 							}
 						});
 

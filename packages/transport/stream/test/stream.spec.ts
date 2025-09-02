@@ -172,7 +172,7 @@ const createMetrics = (stream: DirectStream) => {
 const resetMetrics = (streams: ReturnType<typeof createMetrics>[]) => {
 	streams.map((x) => {
 		x.messages = [];
-		(x.processed = new Map()), (x.reachable = []);
+		((x.processed = new Map()), (x.reachable = []));
 		x.received = [];
 		x.unrechable = [];
 	});

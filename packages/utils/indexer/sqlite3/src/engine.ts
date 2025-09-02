@@ -44,7 +44,7 @@ const resolveChildrenStatement = (table: Table) =>
 type FKMode = "strict" | "race-tolerant";
 
 async function safeReset(stmt?: Statement) {
-	if (!stmt || !stmt.reset) return;
+	if (!stmt?.reset) return;
 	try {
 		await stmt.reset();
 	} catch (e) {

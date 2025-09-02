@@ -64,8 +64,8 @@ describe("replication", function () {
 
 		beforeEach(async () => {
 			log1 = new Log({ id: logId });
-			await log1.open(session.peers[0].services.blocks, signKey),
-				{ encoding: JSON_ENCODING };
+			(await log1.open(session.peers[0].services.blocks, signKey),
+				{ encoding: JSON_ENCODING });
 			log2 = new Log({ id: logId });
 			await log2.open(session.peers[1].services.blocks, signKey2, {
 				encoding: JSON_ENCODING,
