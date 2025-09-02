@@ -21,6 +21,6 @@ export const INSTALL_PATH = "/install";
 export const BOOTSTRAP_PATH = "/network/bootstrap";
 export const RESTART_PATH = "/restart";
 export const TERMINATE_PATH = "/terminate";
-export const STOP_PATH = "/path";
+export const STOP_PATH = "/stop";
 export const LOG_PATH = "/log";
 export const VERSIONS_PATH = "/versions";

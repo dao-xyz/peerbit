@@ -29,7 +29,7 @@ export class Trust {
 	}
 
 	remove(hashcode: string) {
-		const existing = this.trusted.findIndex((x) => (x = hashcode));
+		const existing = this.trusted.findIndex((x) => x === hashcode);
 		if (existing >= 0) {
 			this.trusted.splice(existing, 1);
 			return true;

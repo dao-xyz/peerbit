@@ -156,7 +156,8 @@ export const startCertbot = async (
     -v $(pwd)/nginx_secrets:/etc/letsencrypt \
     -v ${nginxConfigPath}:/etc/nginx/user_conf.d:ro \
     -v $(pwd)/ui:/usr/share/nginx/html:ro \
-    --name ${dockerProcessName} jonasal/nginx-certbot:latest`;
+    --name ${dockerProcessName} jonasal/nginx-certbot:latest \
+	--restart unless-stopped`;
 
 	console.log("Starting Certbot");
 	// try two times with some delay, because sometimes the docker daemon is not available immidatel
