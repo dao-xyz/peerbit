@@ -152,12 +152,12 @@ export const startCertbot = async (
 
 	// copy ui from node_modules to home for permission reasons (volume will not work otherwise)
 	const certbotDockerCommand = `cp -r ${uiPath} $(pwd)/ui && docker pull jonasal/nginx-certbot:latest && docker run -d --net=host \
-    --env CERTBOT_EMAIL=${email} ${isTest ? "--env STAGING=1" : ""}\
+	--restart unless-stopped \
+	--env CERTBOT_EMAIL=${email} ${isTest ? "--env STAGING=1" : ""}\
     -v $(pwd)/nginx_secrets:/etc/letsencrypt \
     -v ${nginxConfigPath}:/etc/nginx/user_conf.d:ro \
     -v $(pwd)/ui:/usr/share/nginx/html:ro \
-    --name ${dockerProcessName} jonasal/nginx-certbot:latest \
-	--restart unless-stopped`;
+    --name ${dockerProcessName} jonasal/nginx-certbot:latest`;
 
 	console.log("Starting Certbot");
 	// try two times with some delay, because sometimes the docker daemon is not available immidatel
