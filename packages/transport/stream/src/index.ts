@@ -338,12 +338,19 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
-		// If an outbound stream already exists, gently close it
-		const _prevStream = this.outboundStream;
-		if (_prevStream) {
+		// If an outbound stream already exists and is active, ignore the new one; if a raw stream exists, close it to avoid leaks
+		if (
+			this.outboundStream != null &&
+			stream.id !== this.rawOutboundStream?.id
+		) {
 			logger.info(
-				`Stream already exist. This can be due to that you are opening two or more connections to ${this.peerId.toString()}. A stream will only be created for the first succesfully created connection`,
+				`Outbound stream already exists for ${this.peerId.toString()}, ignoring additional stream`,
 			);
+			try {
+				await stream.abort?.(
+					new AbortError("Superseded outbound stream" as any),
+				);
+			} catch {}
 			return;
 		}
 
@@ -714,8 +721,10 @@ export abstract class DirectStream<
 
 		// unregister protocol and handlers
 		if (this._registrarTopologyIds != null) {
-			this._registrarTopologyIds?.map((id) =>
-				this.components.registrar.unregister(id),
+			await Promise.all(
+				this._registrarTopologyIds.map((id) =>
+					this.components.registrar.unregister(id),
+				),
 			);
 		}
 
