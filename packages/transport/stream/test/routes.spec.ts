@@ -97,6 +97,19 @@ describe("routes", () => {
 					.list.map((x) => x.session),
 			).to.deep.equal([now + 1]);
 		});
+
+		it("cleanup removes empty 'from' maps after expiry", async () => {
+			const routes = new Routes(me);
+			// Add a single route entry
+			routes.add(me, a, b, 0, +new Date(), +new Date());
+			// Manually expire the only relay entry
+			const entry = routes.routes.get(me)!.get(b)!;
+			entry.list[0].expireAt = +new Date() - 1;
+			// Trigger internal cleanup for the target
+			(routes as any)["cleanup"](me, b);
+			// Expect parent 'from' map to be removed when it becomes empty
+			expect(routes.routes.get(me)).to.equal(undefined);
+		});
 	});
 
 	describe("remove", () => {

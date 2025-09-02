@@ -77,7 +77,7 @@ export class Routes {
 					map.list = keepRoutes;
 				} else {
 					fromMap.delete(to);
-					if (fromMap.size === 1) {
+					if (fromMap.size === 0) {
 						this.routes.delete(from);
 					}
 				}
