@@ -80,3 +80,10 @@ export const createHost = async (node: Peerbit, targetOrigin = "*") => {
 	await client.init();
 	return client;
 };
+
+// SharedWorker-based multi-tab APIs
+export { createSharedWorkerClient } from "./sharedworker/client.js";
+export const sharedWorkerHostUrl = new URL(
+	"./sharedworker/host.js",
+	import.meta.url,
+);

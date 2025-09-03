@@ -1,0 +1,42 @@
+{
+	"name": "proxy-test-sharedworker-tabs",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"start": "vite",
+		"build": "tsc && vite build",
+		"preview": "vite preview"
+	},
+	"dependencies": {
+		"react": "^18.2.0",
+		"react-dom": "^18.2.0",
+		"peerbit": "*",
+		"@peerbit/proxy-window": "*",
+		"@peerbit/shared-log": "*",
+		"@peerbit/crypto": "*"
+	},
+	"devDependencies": {
+		"@types/react": "^18.2.12",
+		"@types/react-dom": "^18.2.5",
+		"@vitejs/plugin-react": "^4.2.1",
+		"@peerbit/vite": "*",
+		"vite": "^6.0.6",
+		"typescript": "^5.4.0"
+	},
+	"browserslist": {
+		"production": [
+			"chrome >= 67",
+			"edge >= 79",
+			"firefox >= 68",
+			"opera >= 54",
+			"safari >= 14"
+		],
+		"development": [
+			"last 1 chrome version",
+			"last 1 firefox version",
+			"last 1 safari version"
+		]
+	}
+}

@@ -214,6 +214,6 @@ export class MessageNode extends Node {
 			from: From /* , from: ChannelFrom */,
 		) => void,
 	) {
-		throw new Error("Not implemented");
+		// Not implemented for MessageNode base; concrete nodes may ignore unsubscribe.
 	}
 }

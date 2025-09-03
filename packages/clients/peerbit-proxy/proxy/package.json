@@ -51,6 +51,7 @@
 		"access": "public"
 	},
 	"dependencies": {
+		"@dao-xyz/borsh-rpc": "^1.4.0",
 		"@peerbit/program": "^5.2.16",
 		"@peerbit/any-store-interface": "^1.0.0",
 		"@peerbit/indexer-simple": "^1.1.19",

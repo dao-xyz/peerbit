@@ -64,7 +64,8 @@
 		"@peerbit/log": "4.0.69",
 		"@peerbit/rpc": "5.3.14",
 		"@peerbit/time": "2.2.0",
-		"@peerbit/riblt": "1.0.6"
+		"@peerbit/riblt": "1.0.6",
+		"@dao-xyz/borsh-rpc": "^1.4.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "^2.1.57"

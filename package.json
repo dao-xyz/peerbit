@@ -45,6 +45,7 @@
 		"packages/utils/logger",
 		"packages/utils/keychain",
 		"packages/utils/indexer/*",
+		"packages/utils/indexer/proxy",
 		"packages/utils/rateless-iblt"
 	],
 	"engines": {

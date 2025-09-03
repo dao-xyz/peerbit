@@ -32,6 +32,18 @@
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"
+		},
+		"./src/handler.proxy.js": {
+			"types": "./dist/src/handler.proxy.d.ts",
+			"import": "./dist/src/handler.proxy.js"
+		},
+		"./src/client.proxy.js": {
+			"types": "./dist/src/client.proxy.d.ts",
+			"import": "./dist/src/client.proxy.js"
+		},
+		"./src/client.rpc.js": {
+			"types": "./dist/src/client.rpc.d.ts",
+			"import": "./dist/src/client.rpc.js"
 		}
 	},
 	"eslintConfig": {
