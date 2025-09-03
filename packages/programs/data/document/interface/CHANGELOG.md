@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.10...document-interface-v2.2.11) (2025-09-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/log bumped from 4.0.68 to 4.0.69
+
 ## [2.2.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.9...document-interface-v2.2.10) (2025-08-26)
 
 

@@ -456,6 +456,20 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [9.12.8](https://github.com/dao-xyz/peerbit/compare/document-v9.12.7...document-v9.12.8) (2025-09-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped from 5.2.15 to 5.2.16
+    * @peerbit/rpc bumped from 5.3.13 to 5.3.14
+    * @peerbit/shared-log bumped from 11.3.4 to 11.3.5
+    * @peerbit/document-interface bumped from ^2.2.10 to ^2.2.11
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.56 to 2.1.57
+
 ## [9.12.7](https://github.com/dao-xyz/peerbit/compare/document-v9.12.6...document-v9.12.7) (2025-08-26)
 
 

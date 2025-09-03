@@ -452,6 +452,27 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.5.0](https://github.com/dao-xyz/peerbit/compare/server-v5.4.16...server-v5.5.0) (2025-09-03)
+
+
+### Features
+
+* add uninstall command ([6611d7c](https://github.com/dao-xyz/peerbit/commit/6611d7cafc5d01fa8932c98709cfaa85bda34cdd))
+
+
+### Bug Fixes
+
+* improved isNode check ([ae77b95](https://github.com/dao-xyz/peerbit/commit/ae77b95daae97df250cc88a592cd802a94ef9b45))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * peerbit bumped from 4.1.45 to 4.1.46
+  * devDependencies
+    * @peerbit/test-utils bumped from 2.1.56 to 2.1.57
+
 ## [5.4.16](https://github.com/dao-xyz/peerbit/compare/server-v5.4.15...server-v5.4.16) (2025-09-02)
 
 

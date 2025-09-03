@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.34](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.33...vite-v1.0.34) (2025-09-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/any-store bumped from 2.1.13 to 2.1.14
+    * @peerbit/any-store-opfs bumped from 1.0.12 to 1.0.13
+
 ## [1.0.33](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.32...vite-v1.0.33) (2025-08-26)
 
 

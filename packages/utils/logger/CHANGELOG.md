@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.3...logger-v1.0.4) (2025-09-03)
+
+
+### Bug Fixes
+
+* SharedWorker compatibility ([0769fe6](https://github.com/dao-xyz/peerbit/commit/0769fe67e3c13ea504287aa1c26e41da3b5753eb))
+
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.2...logger-v1.0.3) (2024-07-20)
 
 
