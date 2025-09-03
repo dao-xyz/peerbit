@@ -1,4 +1,5 @@
 import { BorshError, field, variant } from "@dao-xyz/borsh";
+import { method, service, subservice } from "@dao-xyz/borsh-rpc";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
@@ -413,6 +414,7 @@ export interface SharedLogEvents extends ProgramEvents {
 }
 
 @variant("shared_log")
+@service()
 export class SharedLog<
 	T,
 	D extends ReplicationDomain<any, T, R>,

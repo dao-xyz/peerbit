@@ -19,6 +19,8 @@
 		]
 	},
 	"scripts": {
-		"test": "playwright test"
+		"test": "playwright test",
+		"test-shared": "playwright test tests/sharedworker.tabs.spec.ts",
+		"test-iframe": "playwright test tests/iframe.browser.spec.ts"
 	}
 }

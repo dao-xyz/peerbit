@@ -81,5 +81,10 @@ export default defineConfig({
 			url: "http://localhost:5202",
 			reuseExistingServer: true,
 		},
+		{
+			command: "yarn --cwd ./tabs start",
+			url: "http://localhost:5210",
+			reuseExistingServer: true,
+		},
 	],
 });

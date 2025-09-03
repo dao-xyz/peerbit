@@ -1,13 +1,13 @@
 export type MaybePromise<T> = Promise<T> | T;
 
-export interface AnyStore {
-	status(): MaybePromise<"opening" | "open" | "closing" | "closed">;
-	close(): MaybePromise<void>;
-	open(): MaybePromise<void>;
-	get(key: string): MaybePromise<Uint8Array | undefined>;
-	put(key: string, value: Uint8Array): MaybePromise<void>;
-	del(key: string): MaybePromise<void>;
-	sublevel(name: string): MaybePromise<AnyStore>;
+export abstract class AnyStore {
+	abstract status(): MaybePromise<"opening" | "open" | "closing" | "closed">;
+	abstract close(): MaybePromise<void>;
+	abstract open(): MaybePromise<void>;
+	abstract get(key: string): MaybePromise<Uint8Array | undefined>;
+	abstract put(key: string, value: Uint8Array): MaybePromise<void>;
+	abstract del(key: string): MaybePromise<void>;
+	abstract sublevel(name: string): MaybePromise<AnyStore>;
 	iterator: () => {
 		[Symbol.asyncIterator]: () => AsyncIterator<
 			[string, Uint8Array],
@@ -15,7 +15,7 @@ export interface AnyStore {
 			void
 		>;
 	};
-	clear(): MaybePromise<void>;
-	size(): MaybePromise<number>;
-	persisted(): MaybePromise<boolean>;
+	abstract clear(): MaybePromise<void>;
+	abstract size(): MaybePromise<number>;
+	abstract persisted(): MaybePromise<boolean>;
 }
