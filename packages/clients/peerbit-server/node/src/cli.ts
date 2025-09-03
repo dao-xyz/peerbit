@@ -1160,6 +1160,24 @@ export const cli = async (args?: string[]) => {
 											}
 										},
 									})
+									.command({
+										command: "uninstall <package>",
+										describe: "uninstall a previously installed dependency",
+										builder: (yargs: any) => {
+											yargs.positional("package", {
+												type: "string",
+												describe: "NPM package name to uninstall",
+												demandOption: true,
+											});
+											return yargs;
+										},
+										handler: async (args) => {
+											for (const api of apis) {
+												await api.api.dependency.uninstall(args.package);
+												api.log(`Uninstalled ${args.package}`);
+											}
+										},
+									})
 
 									.command({
 										command: "restart",

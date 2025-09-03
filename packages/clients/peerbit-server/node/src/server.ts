@@ -626,6 +626,62 @@ export const startApiServer = async (
 								break;
 							}
 
+							case "DELETE": {
+								try {
+									// Expecting DELETE /install/<packageName>
+									const packageName = getPathValue(req, 1);
+
+									if (!packageName || packageName.length === 0) {
+										res.writeHead(400);
+										res.end("Invalid package name");
+										return;
+									}
+
+									const installDir = getInstallDir();
+									if (!installDir) {
+										res.writeHead(400);
+										res.end("Missing installation directory");
+										return;
+									}
+
+									let permission = "";
+									try {
+										fs.accessSync(installDir, fs.constants.W_OK);
+									} catch (_e) {
+										permission = "sudo";
+									}
+
+									try {
+										console.log("Uninstalling package: " + packageName);
+										execSync(
+											`${permission} npm uninstall ${packageName} --prefix ${installDir} --no-save --no-package-lock`,
+										);
+									} catch (error: any) {
+										res.writeHead(400);
+										res.end(
+											"Failed to uninstall library: " +
+												packageName +
+												". " +
+												error.toString(),
+										);
+										return;
+									}
+
+									try {
+										await properties?.session?.imports.remove(packageName);
+									} catch (e) {
+										// ignore persistence errors; uninstall already done
+									}
+
+									res.writeHead(200);
+									res.end();
+								} catch (error: any) {
+									res.writeHead(400);
+									res.end(error?.message || "Uninstall error");
+								}
+								break;
+							}
+
 							default: {
 								r404();
 								break;

@@ -262,6 +262,19 @@ export const createClient = async (
 				}
 				return resp.data;
 			},
+			uninstall: async (name: string): Promise<void> => {
+				const resp = await axiosInstance.delete(
+					endpoint + INSTALL_PATH + "/" + encodeURIComponent(name),
+					{ validateStatus },
+				);
+				if (resp.status !== 200 && resp.status !== 404) {
+					throw new Error(
+						typeof resp.data === "string"
+							? resp.data
+							: resp.data?.toString?.() || "Uninstall failed",
+					);
+				}
+			},
 			versions: async (): Promise<Record<string, string>> => {
 				const resp = throwIfNot200(
 					await axiosInstance.get(endpoint + VERSIONS_PATH, {
