@@ -1249,7 +1249,7 @@ export const resolveInstanceFromValue = async <
 			}
 
 			if (!subTable) {
-				throw new Error("Sub table not found");
+				throw new Error("Sub table not found from " + tablePrefixed);
 			}
 			/* 
 						for (const field of subTable.fields) {
