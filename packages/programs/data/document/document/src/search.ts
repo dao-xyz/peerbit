@@ -833,6 +833,10 @@ export class DocumentIndex<
 			| DeferredPromise<WithIndexedContext<T, I> | WithContext<I>>
 			| undefined;
 
+		// Normalize the id key early so listeners can use it
+		let idKey =
+			key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key);
+
 		if (options?.waitFor) {
 			// add change listener before query because we might get a concurrent change that matches the query,
 			// that will not be included in the query result
@@ -848,10 +852,14 @@ export class DocumentIndex<
 					}
 				}
 			};
+			let cleanedUp = false;
 			let cleanup = () => {
+				if (cleanedUp) return;
+				cleanedUp = true;
 				this.documentEvents.removeEventListener("change", listener);
 				clearTimeout(timeout);
 				this.events.removeEventListener("close", resolveUndefined);
+				joinListener?.();
 			};
 
 			let resolveUndefined = () => {
@@ -862,10 +870,53 @@ export class DocumentIndex<
 			this.events.addEventListener("close", resolveUndefined);
 			this.documentEvents.addEventListener("change", listener);
 			deferred.promise.then(cleanup);
+
+			// Prepare remote options without mutating caller options
+			const baseRemote =
+				options?.remote === false
+					? undefined
+					: typeof options?.remote === "object"
+						? { ...options.remote }
+						: {};
+			if (baseRemote) {
+				const prevJoining = baseRemote.joining;
+				if (
+					!prevJoining ||
+					prevJoining === true ||
+					(typeof prevJoining === "object" &&
+						(prevJoining.waitFor || 0) < options.waitFor)
+				) {
+					baseRemote.joining = {
+						...(typeof prevJoining === "object" ? prevJoining : {}),
+						waitFor: options.waitFor,
+					};
+				}
+			}
+
+			// Re-query on peer joins (like iterate), scoped to the joining peer
+			let joinListener: (() => void) | undefined;
+			if (baseRemote) {
+				joinListener = this.attachJoinListener({
+					onPeer: async (pk) => {
+						if (cleanedUp) return;
+						const hash = pk.hashcode();
+						const requeryOptions: QueryOptions<T, D, Resolve> = {
+							...(options as any),
+							remote: {
+								...(baseRemote || {}),
+								from: [hash],
+							},
+						};
+						const re = await this.getDetailed(idKey, requeryOptions as any);
+						const first = re?.[0]?.results[0];
+						if (first) {
+							deferred!.resolve(first.value as any);
+						}
+					},
+				});
+			}
 		}
 
-		let idKey =
-			key instanceof indexerTypes.IdKey ? key : indexerTypes.toId(key);
 		const result = (await this.getDetailed(idKey, options))?.[0]?.results[0];
 
 		// if no results, and we have remote joining options, we wait for the timout and if there are joining peers we re-query
@@ -1311,6 +1362,37 @@ export class DocumentIndex<
 			this._resultQueue.delete(key);
 			this._resumableIterators.close({ idString: key });
 		}
+	}
+
+	// Utility: attach a join listener that waits until a peer is a replicator,
+	// then invokes the provided callback. Returns a detach function.
+	private attachJoinListener(params: {
+		signal?: AbortSignal;
+		onPeer: (pk: PublicSignKey) => Promise<void> | void;
+	}): () => void {
+		const active = new Set<string>();
+		const listener = async (e: { detail: PublicSignKey }) => {
+			const pk = e.detail;
+			const hash = pk.hashcode();
+			if (hash === this.node.identity.publicKey.hashcode()) return;
+			if (params.signal?.aborted) return;
+			if (active.has(hash)) return;
+			active.add(hash);
+			try {
+				await this._log
+					.waitForReplicator(pk, {
+						signal: params.signal,
+					})
+					.catch(() => undefined);
+				if (params.signal?.aborted) return;
+				await params.onPeer(pk);
+			} finally {
+				active.delete(hash);
+			}
+		};
+
+		this._query.events.addEventListener("join", listener);
+		return () => this._query.events.removeEventListener("join", listener);
 	}
 
 	processCloseIteratorRequest(
@@ -2242,7 +2324,7 @@ export class DocumentIndex<
 			return done;
 		};
 
-		let joinListener: ((e: { detail: PublicSignKey }) => void) | undefined;
+		let joinListener: (() => void) | undefined;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
 		const signalUpdate = () => updateDeferred?.resolve();
@@ -2250,13 +2332,16 @@ export class DocumentIndex<
 			updateDeferred ? updateDeferred.promise : Promise.resolve();
 
 		if (typeof options?.remote === "object" && options?.remote.joining) {
+			// was used to account for missed results when a peer joins; omitted in this minimal handler
+
+			updateDeferred = pDefer<void>();
+
+			// derive optional onMissedResults callback if provided
 			let onMissedResults =
 				typeof options?.remote?.joining === "object" &&
 				typeof options?.remote.joining.onMissedResults === "function"
 					? options.remote.joining.onMissedResults
 					: undefined;
-
-			updateDeferred = pDefer<void>();
 
 			const waitForTime =
 				typeof options.remote.joining === "object" &&
@@ -2275,90 +2360,45 @@ export class DocumentIndex<
 				}, waitForTime);
 			controller.signal.addEventListener("abort", () => signalUpdate());
 
-			let activeJoins = new Set<string>();
+			joinListener = this.attachJoinListener({
+				signal: controller.signal,
+				onPeer: async (pk) => {
+					if (done) return;
+					const hash = pk.hashcode();
+					if (peerBufferMap.has(hash)) return;
+					if (totalFetchedCounter > 0) {
+						await fetchFirst(totalFetchedCounter, { from: [hash] });
+						if (onMissedResults) {
+							const pending = peerBufferMap.get(hash)?.buffer;
+							if (pending && pending.length > 0) {
+								if (lastValueInOrder) {
+									const pendingWithLast = [...pending.flat(), lastValueInOrder];
+									const results = pendingWithLast.sort((a, b) =>
+										indexerTypes.extractSortCompare(
+											a.indexed,
+											b.indexed,
+											queryRequestCoerced.sort,
+										),
+									);
 
-			joinListener = async (e: { detail: PublicSignKey }) => {
-				if (done) return;
-				const pk = e.detail;
-				const hash = pk.hashcode();
-
-				if (hash === this.node.identity.publicKey.hashcode()) return;
-				if (peerBufferMap.has(hash)) return;
-				if (activeJoins.has(hash)) return;
-
-				activeJoins.add(hash);
-
-				if (totalFetchedCounter > 0) {
-					// wait for the node to become a replicator, then so query
-					await this._log
-						.waitForReplicator(e.detail, {
-							signal: options?.signal
-								? AbortSignal.any([options.signal, controller.signal])
-								: controller.signal,
-						})
-						.then(async () => {
-							if (
-								e.detail.equals(this.node.identity.publicKey) ||
-								peerBufferMap.has(e.detail.hashcode())
-							) {
-								return;
-							}
-
-							if (done) {
-								return;
-							}
-
-							// TODO what happens if two join events are emitted?
-							// TODO we need to also subscribe to maturity events?
-
-							await fetchFirst(totalFetchedCounter, {
-								from: [e.detail.hashcode()],
-							});
-
-							if (onMissedResults) {
-								const pending = peerBufferMap.get(e.detail.hashcode())?.buffer;
-
-								if (pending && pending.length > 0) {
-									if (lastValueInOrder) {
-										const pendingWithLast = [
-											...pending.flat(),
-											lastValueInOrder,
-										];
-										const results = pendingWithLast.sort((a, b) =>
-											indexerTypes.extractSortCompare(
-												a.indexed,
-												b.indexed,
-												queryRequestCoerced.sort,
-											),
-										);
-
-										let lateResults = results.findIndex(
-											(x) => x === lastValueInOrder,
-										);
-
-										// consume pending
-										if (lateResults > 0) {
-											onMissedResults({ amount: lateResults });
-										}
-									} else {
-										onMissedResults({ amount: pending.length });
+									const lateResults = results.findIndex(
+										(x) => x === lastValueInOrder,
+									);
+									if (lateResults > 0) {
+										onMissedResults({ amount: lateResults });
 									}
+								} else {
+									onMissedResults({ amount: pending.length });
 								}
 							}
-							signalUpdate();
-						})
-						.catch(() => {
-							/* TODO error handling */
-						})
-						.finally(() => {
-							activeJoins.delete(hash);
-						});
-				}
-			};
-			this._query.events.addEventListener("join", joinListener);
+						}
+					}
+					signalUpdate();
+				},
+			});
 			const cleanupDefault = cleanup;
 			cleanup = () => {
-				this._query.events.removeEventListener("join", joinListener!);
+				joinListener && joinListener();
 				joinTimeoutId && clearTimeout(joinTimeoutId);
 				updateDeferred?.resolve();
 				updateDeferred = undefined;

@@ -217,6 +217,34 @@ describe("index", () => {
 				).to.deep.equal([deleteOperation.hash]); // the delete operation
 			});
 
+			it("can delete without being replicator", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>({
+						immutable: false,
+					}),
+				});
+				await session.peers[0].open(store, { args: { replicate: true } });
+
+				let id = uuid();
+				await store.docs.put(
+					new Document({
+						id,
+						name: "Hello world",
+					}),
+				);
+
+				const nonReplicator = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+				const docResolved = await nonReplicator.docs.index.get(id, {
+					waitFor: 5e3,
+				});
+				expect(docResolved).to.exist;
+				await nonReplicator.docs.del(docResolved.id);
+			});
+
 			it("reload after delete", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>({
@@ -652,6 +680,39 @@ describe("index", () => {
 				expect(await getPromise).to.exist;
 
 				expect(+new Date() - t0).to.be.lessThan(2000); // should not take longer than 2 seconds. (even if waitFor is set at 5e3)
+			});
+
+			it("waitFor document as non-replicator", async () => {
+				session = await TestSession.connected(2);
+
+				const store = await session.peers[0].open(
+					new TestStore({
+						docs: new Documents<Document>(),
+					}),
+					{
+						args: {
+							replicate: 1,
+						},
+					},
+				);
+
+				const nonReplicator = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+
+				let id = uuid();
+				const getPromise = nonReplicator.docs.index.get(id, { waitFor: 10e3 });
+				await store.docs.put(
+					new Document({
+						id,
+						name: "Hello world",
+					}),
+				);
+
+				const result = await getPromise;
+				expect(result).to.exist;
 			});
 		});
 

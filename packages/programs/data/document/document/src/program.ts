@@ -296,10 +296,24 @@ export class Documents<
 		return this.log.recover();
 	}
 
-	private async _resolveEntry(history: Entry<Operation> | string) {
+	private async _resolveEntry(
+		history: Entry<Operation> | string,
+		options?: {
+			remote?:
+				| {
+						timeout?: number;
+						replicate?: boolean;
+				  }
+				| boolean;
+		},
+	) {
 		return typeof history === "string"
-			? (await this.log.log.get(history)) ||
-					(await Entry.fromMultihash<Operation>(this.log.log.blocks, history))
+			? (await this.log.log.get(history, options)) ||
+					(await Entry.fromMultihash<Operation>(
+						this.log.log.blocks,
+						history,
+						options,
+					))
 			: history;
 	}
 
@@ -592,7 +606,9 @@ export class Documents<
 		}
 
 		this.keepCache?.delete(existing.value.__context.head);
-		const entry = await this._resolveEntry(existing.context.head);
+		const entry = await this._resolveEntry(existing.context.head, {
+			remote: true,
+		});
 
 		return this.log.append(
 			new DeleteOperation({
