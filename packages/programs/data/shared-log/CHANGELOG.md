@@ -389,7 +389,7 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
-## [11.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.4...shared-log-v11.3.5) (2025-09-03)
+## [11.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.4...shared-log-v11.3.5) (2025-09-04)
 
 
 ### Dependencies

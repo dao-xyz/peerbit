@@ -313,7 +313,7 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
-## [4.1.46](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.45...peerbit-v4.1.46) (2025-09-03)
+## [4.1.46](https://github.com/dao-xyz/peerbit/compare/peerbit-v4.1.45...peerbit-v4.1.46) (2025-09-04)
 
 
 ### Dependencies

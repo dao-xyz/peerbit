@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.34](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.33...vite-v1.0.34) (2025-09-03)
+## [1.0.34](https://github.com/dao-xyz/peerbit/compare/vite-v1.0.33...vite-v1.0.34) (2025-09-04)
 
 
 ### Dependencies

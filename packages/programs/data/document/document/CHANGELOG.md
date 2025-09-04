@@ -456,7 +456,12 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
-## [9.12.8](https://github.com/dao-xyz/peerbit/compare/document-v9.12.7...document-v9.12.8) (2025-09-03)
+## [9.12.8](https://github.com/dao-xyz/peerbit/compare/document-v9.12.7...document-v9.12.8) (2025-09-04)
+
+
+### Bug Fixes
+
+* enhance remote operation handling and add tests for non-replicator scenarios ([85edf4c](https://github.com/dao-xyz/peerbit/commit/85edf4cdb9acc0c61dac0c207408c05533d37054))
 
 
 ### Dependencies
