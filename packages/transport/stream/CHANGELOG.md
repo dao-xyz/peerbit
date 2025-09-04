@@ -43,6 +43,21 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.3.9](https://github.com/dao-xyz/peerbit/compare/stream-v4.3.8...stream-v4.3.9) (2025-09-03)
+
+
+### Bug Fixes
+
+* cleanup empty route map correctly ([4ba0a8d](https://github.com/dao-xyz/peerbit/commit/4ba0a8d1638fe5a2e0eca2717f5fb6892e991d07))
+* close outbound stream if stream already exist ([9d4b5be](https://github.com/dao-xyz/peerbit/commit/9d4b5be201dd3db1336e1e51bf8cbfae9181f31e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from ^1.0.3 to ^1.0.4
+
 ## [4.3.8](https://github.com/dao-xyz/peerbit/compare/stream-v4.3.7...stream-v4.3.8) (2025-08-19)
 
 

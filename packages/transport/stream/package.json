@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream",
-	"version": "4.3.8",
+	"version": "4.3.9",
 	"description": "A building block for direct streaming protocols",
 	"sideEffects": false,
 	"type": "module",
@@ -88,7 +88,7 @@
 		"@peerbit/crypto": "2.3.11",
 		"@peerbit/stream-interface": "^5.2.5",
 		"@peerbit/time": "^2.2.0",
-		"@peerbit/logger": "^1.0.3",
+		"@peerbit/logger": "^1.0.4",
 		"libp2p": "^2.8.9",
 		"yallist": "^4.0.0",
 		"abortable-iterator": "^5.0.1"

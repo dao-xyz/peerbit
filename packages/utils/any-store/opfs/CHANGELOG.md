@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.13](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.12...any-store-opfs-v1.0.13) (2025-09-03)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/logger bumped from 1.0.3 to 1.0.4
+
 ## [1.0.12](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.11...any-store-opfs-v1.0.12) (2025-08-19)
 
 
