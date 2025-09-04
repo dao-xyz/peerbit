@@ -1,7 +1,9 @@
 import { deserialize } from "@dao-xyz/borsh";
+import { peerIdFromString } from "@libp2p/peer-id";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import * as filters from "@libp2p/websockets/filters";
+import { multiaddr } from "@multiformats/multiaddr";
 import {
 	Ed25519Keypair,
 	type PublicSignKey,
@@ -172,6 +174,28 @@ describe("pubsub", function () {
 		afterEach(async () => {
 			await Promise.all(streams.map((s) => s.stream.stop()));
 			await session.stop();
+		});
+
+		it("bootstrap-remote", async () => {
+			await session.peers[0].dial(
+				multiaddr(
+					"/dns4/ab27a28609bb6aff6a476d2ceb1a59478eb980fe.peerchecker.com/tcp/4003/wss/p2p/12D3KooWJU6qBFZ5HWcgHuYpHpCVJdkawi1mbtkwDC1KvJHf7Zan",
+				),
+			);
+			await session.peers[0].services.pubsub.waitFor(
+				peerIdFromString(
+					"12D3KooWJU6qBFZ5HWcgHuYpHpCVJdkawi1mbtkwDC1KvJHf7Zan",
+				),
+				{ neighbour: true, timeout: 3e3 },
+			);
+		});
+
+		it("bootstrap-local", async () => {
+			await session.peers[0].dial(session.peers[1].getMultiaddrs()[0]);
+			await session.peers[0].services.pubsub.waitFor(
+				session.peers[1].services.pubsub.peerId,
+				{ neighbour: true, timeout: 3e3 },
+			);
 		});
 
 		it("can share topics when connecting after subscribe, 2 peers", async () => {
