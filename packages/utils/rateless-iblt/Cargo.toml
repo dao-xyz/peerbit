@@ -19,12 +19,12 @@ name = "riblt_bench"
 harness = false
 
 [dev-dependencies]
-criterion = "0.5.1"
-sha2 = "0.10.8"
+criterion = "0.7.0"
+sha2 = "0.10.9"
 
 [dependencies]
-js-sys = "0.3.76"
-wasm-bindgen = { version = "0.2.99" }
+js-sys = "0.3.77"
+wasm-bindgen = { version = "0.2.101" }
 
 
 [package.metadata.wasm-pack.profile.release]
