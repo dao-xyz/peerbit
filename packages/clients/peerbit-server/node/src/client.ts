@@ -22,6 +22,7 @@ import {
 	PROGRAM_VARIANTS_PATH,
 	REMOTE_API_PORT,
 	RESTART_PATH,
+	SELF_UPDATE_PATH,
 	STOP_PATH,
 	TRUST_PATH,
 	VERSIONS_PATH,
@@ -300,6 +301,18 @@ export const createClient = async (
 					validateStatus,
 				}),
 			);
+		},
+		selfUpdate: async (version?: string): Promise<{ version: string }> => {
+			const resp = throwIfNot200(
+				await axiosInstance.post(
+					endpoint + SELF_UPDATE_PATH,
+					version ? JSON.stringify({ version }) : undefined,
+					{
+						validateStatus,
+					},
+				),
+			);
+			return resp.data as { version: string };
 		},
 		stop: async (): Promise<void> => {
 			throwIfNot200(

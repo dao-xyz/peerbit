@@ -35,6 +35,7 @@ import {
 	PROGRAM_PATH,
 	PROGRAM_VARIANTS_PATH,
 	RESTART_PATH,
+	SELF_UPDATE_PATH,
 	STOP_PATH,
 	TRUST_PATH,
 	VERSIONS_PATH,
@@ -712,6 +713,73 @@ export const startApiServer = async (
 						}
 
 						/* keep the remaining else-if blocks (PEER_ID_PATH, etc.) unchanged */
+					} else if (req.url.startsWith(SELF_UPDATE_PATH)) {
+						if (req.method === "POST") {
+							try {
+								// version is optional; default to latest
+								let versionSpec: string | undefined;
+								try {
+									const parsed = JSON.parse(body || "{}");
+									versionSpec = parsed?.version;
+								} catch (_e) {}
+
+								let resolvedVersion = "latest";
+								try {
+									const spec = `@peerbit/server${versionSpec ? "@" + versionSpec : ""}`;
+									const out = execSync(`npm view ${spec} version --json`, {
+										encoding: "utf8",
+									});
+									resolvedVersion = JSON.parse(out);
+								} catch (_e) {
+									resolvedVersion = versionSpec || "latest";
+								}
+
+								console.log(
+									"Self-updating @peerbit/server to version: " +
+										resolvedVersion,
+								);
+								res.setHeader("Content-Type", "application/json");
+								res.writeHead(200);
+								res.end(JSON.stringify({ version: resolvedVersion }));
+
+								process.nextTick(() => {
+									try {
+										const installDir = getInstallDir();
+										let permission = "";
+										if (installDir) {
+											try {
+												fs.accessSync(installDir, fs.constants.W_OK);
+											} catch (_e) {
+												permission = "sudo";
+											}
+											try {
+												execSync(
+													`${permission} npm install -g @peerbit/server@${resolvedVersion}`,
+												);
+											} catch (_globalErr) {
+												execSync(
+													`${permission} npm install @peerbit/server@${resolvedVersion} --prefix ${installDir} --no-save --no-package-lock`,
+												);
+											}
+										} else {
+											execSync(
+												`npm install -g @peerbit/server@${resolvedVersion}`,
+											);
+										}
+									} catch (e) {
+										console.error("Self-update installation failed:", e);
+									}
+									restart();
+								});
+							} catch (error: any) {
+								res.writeHead(500);
+								res.end(
+									"Unexpected self-update error: " + (error?.message || ""),
+								);
+							}
+						} else {
+							r404();
+						}
 					} else if (req.url.startsWith(BOOTSTRAP_PATH)) {
 						switch (req.method) {
 							case "POST":

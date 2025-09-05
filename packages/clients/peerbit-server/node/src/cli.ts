@@ -1189,6 +1189,29 @@ export const cli = async (args?: string[]) => {
 										},
 									})
 									.command({
+										command: "self-update [version]",
+										describe:
+											"Update @peerbit/server on the target node to [version] (default latest) and restart",
+										builder: (yargs) => {
+											yargs.positional("version", {
+												describe:
+													"Version spec for @peerbit/server (e.g. 5.4.16)",
+												type: "string",
+											});
+											return yargs;
+										},
+										handler: async (args) => {
+											for (const api of apis) {
+												const { version } = await api.api.selfUpdate(
+													args.version as string | undefined,
+												);
+												api.log(
+													`Self-update to @peerbit/server@${version} initiated`,
+												);
+											}
+										},
+									})
+									.command({
 										command: "stop",
 										describe: "Stop the server",
 										handler: async () => {

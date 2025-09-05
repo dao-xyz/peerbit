@@ -24,3 +24,4 @@ export const TERMINATE_PATH = "/terminate";
 export const STOP_PATH = "/stop";
 export const LOG_PATH = "/log";
 export const VERSIONS_PATH = "/versions";
+export const SELF_UPDATE_PATH = "/self/update";
