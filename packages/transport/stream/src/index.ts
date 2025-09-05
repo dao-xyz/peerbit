@@ -338,20 +338,35 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
-		// If an outbound stream already exists and is active, ignore the new one; if a raw stream exists, close it to avoid leaks
+		// If an outbound stream already exists and is active, ignore the new one; if the
+		// existing raw stream is closed/stale, allow replacement.
 		if (
 			this.outboundStream != null &&
 			stream.id !== this.rawOutboundStream?.id
 		) {
-			logger.info(
-				`Outbound stream already exists for ${this.peerId.toString()}, ignoring additional stream`,
-			);
-			try {
-				await stream.abort?.(
-					new AbortError("Superseded outbound stream" as any),
+			const prev = this.rawOutboundStream;
+			// Heuristic for "open" status compatible with libp2p interfaces
+			const prevIsOpen = prev?.status
+				? prev.status === "open"
+				: !prev?.timeline?.close;
+
+			if (prevIsOpen) {
+				logger.info(
+					`Outbound stream already exists for ${this.peerId.toString()}, ignoring additional stream`,
 				);
+				try {
+					await stream.abort?.(new AbortError("Superseded outbound stream"));
+				} catch {}
+				return;
+			}
+
+			// Previous stream appears closed/stale; clean up local pushable so we can replace
+			try {
+				logger.error("Cleaning up stale outbound stream");
+				await this.outboundStream?.return?.();
 			} catch {}
-			return;
+			this.outboundStream = undefined;
+			this.rawOutboundStream = undefined;
 		}
 
 		this.rawOutboundStream = stream;
@@ -803,13 +818,20 @@ export abstract class DirectStream<
 	}
 
 	protected async createOutboundStream(peerId: PeerId, connection: Connection) {
+		// Only skip creating a new outbound stream if an existing outbound stream for our
+		// protocol is actually open. Closed/stale streams may be kept in the connection list
+		// by libp2p and must not block re-creation.
 		for (const existingStreams of connection.streams) {
 			if (
 				existingStreams.protocol &&
 				this.multicodecs.includes(existingStreams.protocol) &&
 				existingStreams.direction === "outbound"
 			) {
-				return;
+				const s: any = existingStreams as any;
+				const isOpen = s?.status ? s.status === "open" : !s?.timeline?.close;
+				if (isOpen) {
+					return;
+				}
 			}
 		}
 
