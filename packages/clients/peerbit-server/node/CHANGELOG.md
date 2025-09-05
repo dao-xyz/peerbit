@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.6.0](https://github.com/dao-xyz/peerbit/compare/server-v5.5.0...server-v5.6.0) (2025-09-05)
+
+
+### Features
+
+* add self update command ([aeb9685](https://github.com/dao-xyz/peerbit/commit/aeb96855704c7f72a73ee14bae1c12608f222607))
+
 ## [5.5.0](https://github.com/dao-xyz/peerbit/compare/server-v5.4.16...server-v5.5.0) (2025-09-04)
 
 
