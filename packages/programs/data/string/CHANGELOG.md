@@ -632,7 +632,7 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
-## [5.0.104](https://github.com/dao-xyz/peerbit/compare/string-v5.0.103...string-v5.0.104) (2025-09-03)
+## [5.0.104](https://github.com/dao-xyz/peerbit/compare/string-v5.0.103...string-v5.0.104) (2025-09-04)
 
 
 ### Dependencies

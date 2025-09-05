@@ -33,7 +33,7 @@
   * dependencies
     * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
 
-## [2.1.14](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.13...any-store-v2.1.14) (2025-09-03)
+## [2.1.14](https://github.com/dao-xyz/peerbit/compare/any-store-v2.1.13...any-store-v2.1.14) (2025-09-04)
 
 
 ### Dependencies

@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.13](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.12...any-store-opfs-v1.0.13) (2025-09-03)
+## [1.0.13](https://github.com/dao-xyz/peerbit/compare/any-store-opfs-v1.0.12...any-store-opfs-v1.0.13) (2025-09-04)
 
 
 ### Dependencies

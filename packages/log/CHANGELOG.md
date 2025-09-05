@@ -368,7 +368,12 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
-## [4.0.69](https://github.com/dao-xyz/peerbit/compare/log-v4.0.68...log-v4.0.69) (2025-09-03)
+## [4.0.69](https://github.com/dao-xyz/peerbit/compare/log-v4.0.68...log-v4.0.69) (2025-09-04)
+
+
+### Bug Fixes
+
+* fromMultihash relax option type ([37df426](https://github.com/dao-xyz/peerbit/commit/37df426d546b15fb7fd0aed82d152369f1d24dc7))
 
 
 ### Dependencies

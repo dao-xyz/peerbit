@@ -400,7 +400,7 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
-## [2.1.57](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.56...test-utils-v2.1.57) (2025-09-03)
+## [2.1.57](https://github.com/dao-xyz/peerbit/compare/test-utils-v2.1.56...test-utils-v2.1.57) (2025-09-04)
 
 
 ### Dependencies

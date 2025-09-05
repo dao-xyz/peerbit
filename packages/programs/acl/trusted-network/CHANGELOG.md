@@ -566,7 +566,7 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
-## [4.1.121](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.120...trusted-network-v4.1.121) (2025-09-03)
+## [4.1.121](https://github.com/dao-xyz/peerbit/compare/trusted-network-v4.1.120...trusted-network-v4.1.121) (2025-09-04)
 
 
 ### Dependencies

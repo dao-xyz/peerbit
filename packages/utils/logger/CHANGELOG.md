@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.4](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.3...logger-v1.0.4) (2025-09-03)
+## [1.0.4](https://github.com/dao-xyz/peerbit/compare/logger-v1.0.3...logger-v1.0.4) (2025-09-04)
 
 
 ### Bug Fixes

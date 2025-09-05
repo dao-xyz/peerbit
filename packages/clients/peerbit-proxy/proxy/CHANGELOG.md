@@ -308,7 +308,7 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
-## [5.2.23](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.22...proxy-v5.2.23) (2025-09-03)
+## [5.2.23](https://github.com/dao-xyz/peerbit/compare/proxy-v5.2.22...proxy-v5.2.23) (2025-09-04)
 
 
 ### Dependencies

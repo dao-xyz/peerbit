@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.2.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.10...document-interface-v2.2.11) (2025-09-03)
+## [2.2.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.10...document-interface-v2.2.11) (2025-09-04)
 
 
 ### Dependencies
