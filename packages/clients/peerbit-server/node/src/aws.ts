@@ -249,40 +249,58 @@ export const launchNodes = async (properties: {
 		);
 	}
 
-	// wait for instance ips to become available
-	const info = await client.send(
-		new DescribeInstancesCommand({
-			InstanceIds: instanceOut.Instances.map((x) => x.InstanceId!),
-		}),
-	);
-	const foundInstances = info
-		.Reservations!.map((x) => x.Instances!.map((y) => y))
-		.flat()!;
-	const foundIps: string[] = [];
-	for (const out of instanceOut.Instances) {
-		const foundInstance = foundInstances.find(
-			(x) => x!.InstanceId === out.InstanceId!,
-		);
-		if (!foundInstance!.PublicIpAddress) {
-			await delay(3000);
-			continue;
+	// wait for AWS to recognize the new instance IDs and for public IPs to be assigned
+	const instanceIds = instanceOut.Instances.map((x) => x.InstanceId!);
+	const timeoutMs = 3 * 60 * 1000; // 3 minutes
+	const pollIntervalMs = 5000;
+	const start = Date.now();
+	let foundInstances: Array<{
+		InstanceId?: string;
+		PublicIpAddress?: string;
+	}> = [];
+
+	while (Date.now() - start < timeoutMs) {
+		try {
+			const info = await client.send(
+				new DescribeInstancesCommand({ InstanceIds: instanceIds }),
+			);
+			foundInstances =
+				info.Reservations?.flatMap((r) => r.Instances || []) || [];
+			const allPresent = foundInstances.length >= instanceIds.length;
+			const ips = new Map(
+				foundInstances
+					.filter((i) => i.InstanceId && i.PublicIpAddress)
+					.map((i) => [i.InstanceId!, i.PublicIpAddress!]),
+			);
+			const allHaveIp = instanceIds.every((id) => ips.has(id));
+			if (allPresent && allHaveIp) {
+				// reorder to original order
+				var publicIps = instanceIds.map((id) => ips.get(id)!);
+				if (publicIps.length > 0) {
+					// success
+					return publicIps.map((v, ix) => {
+						return {
+							instanceId: instanceOut.Instances![ix].InstanceId!,
+							publicIp: v,
+							name: names[ix],
+							region: regionString,
+						};
+					});
+				}
+			}
+		} catch (e: any) {
+			// AWS eventual consistency: sometimes returns InvalidInstanceID.NotFound immediately after RunInstances
+			const code = e?.Code || e?.name || e?.code;
+			if (code !== "InvalidInstanceID.NotFound") {
+				throw e;
+			}
 		}
-		foundIps.push(foundInstance!.PublicIpAddress!);
-	}
-	let publicIps: string[] = foundIps;
-
-	if (publicIps.length === 0) {
-		throw new Error("Failed to resolve IPs for created instances");
+		await delay(pollIntervalMs);
 	}
 
-	return publicIps.map((v, ix) => {
-		return {
-			instanceId: instanceOut.Instances![ix].InstanceId!,
-			publicIp: v,
-			name: names[ix],
-			region: regionString,
-		};
-	}); // TODO types
+	throw new Error(
+		"Timed out waiting for instances to be describe-able with public IPs",
+	);
 };
 
 export const terminateNode = async (properties: {
