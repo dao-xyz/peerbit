@@ -188,6 +188,17 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [4.0.10](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.9...pubsub-v4.0.10) (2025-09-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream bumped from 4.3.9 to 4.3.10
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped from 2.1.19 to 2.1.20
+
 ## [4.0.9](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.8...pubsub-v4.0.9) (2025-09-04)
 
 
