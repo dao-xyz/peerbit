@@ -452,6 +452,13 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.31 to 2.0.32
 
+## [5.6.1](https://github.com/dao-xyz/peerbit/compare/server-v5.6.0...server-v5.6.1) (2025-09-09)
+
+
+### Bug Fixes
+
+* add describe instanceid timeout ([45d41e8](https://github.com/dao-xyz/peerbit/commit/45d41e85202c6c7611ca342faa9f6a4512c01f6c))
+
 ## [5.6.0](https://github.com/dao-xyz/peerbit/compare/server-v5.5.0...server-v5.6.0) (2025-09-05)
 
 
