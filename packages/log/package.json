@@ -66,7 +66,7 @@
 		"@peerbit/crypto": "2.3.11",
 		"@peerbit/logger": "1.0.4",
 		"@peerbit/time": "2.2.0",
-		"libp2p": "^2.8.9",
+		"libp2p": "^2.10.0",
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
 		"uuid": "^10.0.0",
