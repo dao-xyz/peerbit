@@ -202,6 +202,16 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [5.2.17](https://github.com/dao-xyz/peerbit/compare/program-v5.2.16...program-v5.2.17) (2025-09-09)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped from ^1.4.8 to ^1.4.9
+    * @peerbit/libp2p-test-utils bumped from ^2.1.19 to ^2.1.20
+
 ## [5.2.16](https://github.com/dao-xyz/peerbit/compare/program-v5.2.15...program-v5.2.16) (2025-09-04)
 
 
