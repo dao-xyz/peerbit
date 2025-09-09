@@ -3455,6 +3455,31 @@ describe("index", () => {
 				// expect cleanup
 				expect(store.docs.index.hasPending).to.be.false;
 			});
+
+			it("local only", async () => {
+				session = await TestSession.connected(2);
+				const store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store);
+				const store2 = await session.peers[1].open(store.clone(), {
+					args: {
+						replicate: false,
+					},
+				});
+				const doc = new Document({ id: "1" });
+				await store.docs.put(doc);
+				await store2.docs.index.waitFor(store.node.identity.publicKey);
+				const localOnly = await store2.docs.index
+					.iterate({}, { local: true, remote: false })
+					.first();
+				expect(localOnly).to.be.undefined;
+
+				const localAndRemote = await store2.docs.index
+					.iterate({}, { local: true, remote: true })
+					.first();
+				expect(localAndRemote?.id).to.equal(doc.id);
+			});
 		});
 	});
 

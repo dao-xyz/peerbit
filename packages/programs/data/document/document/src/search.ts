@@ -1884,10 +1884,13 @@ export class DocumentIndex<
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(queryRequestCoerced, {
 				local: fetchOptions?.from != null ? false : options?.local,
-				remote: {
-					...(typeof options?.remote === "object" ? options.remote : {}),
-					from: fetchOptions?.from,
-				},
+				remote:
+					options?.remote !== false
+						? {
+								...(typeof options?.remote === "object" ? options.remote : {}),
+								from: fetchOptions?.from,
+							}
+						: false,
 				resolve,
 				onResponse: async (response, from) => {
 					if (!from) {
