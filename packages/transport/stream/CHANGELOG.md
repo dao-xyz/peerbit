@@ -43,6 +43,24 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [4.4.0](https://github.com/dao-xyz/peerbit/compare/stream-v4.3.10...stream-v4.4.0) (2025-09-10)
+
+
+### Features
+
+* implement support for multiple inbound streams with pruning and activity tracking ([0a48d65](https://github.com/dao-xyz/peerbit/commit/0a48d658ba314d55fd8fb36457d9e4ef970251d8))
+* refactor outbound stream handling to support multiple streams and improve error management ([ce52b58](https://github.com/dao-xyz/peerbit/commit/ce52b58a4b1ad1413e4037019c398b8522150312))
+
+
+### Bug Fixes
+
+* replace stale outbound stream on new attachOutboundStream ([b9eff78](https://github.com/dao-xyz/peerbit/commit/b9eff78e442a500880c72e65beafb6b3031c0dff))
+
+
+### Refactors
+
+* simplify data processing loop in DirectStream class ([f95be98](https://github.com/dao-xyz/peerbit/commit/f95be98b175b640c62f2c46717a3c3266fc4ffda))
+
 ## [4.3.10](https://github.com/dao-xyz/peerbit/compare/stream-v4.3.9...stream-v4.3.10) (2025-09-09)
 
 
