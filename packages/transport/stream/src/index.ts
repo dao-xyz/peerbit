@@ -23,13 +23,13 @@ import { Circuit } from "@multiformats/multiaddr-matcher";
 import { Cache } from "@peerbit/cache";
 import {
 	PublicSignKey,
-	type SignatureWithKey,
 	getKeypairFromPrivateKey,
 	getPublicKeyFromPeerId,
 	ready,
 	sha256Base64,
 	toBase64,
 } from "@peerbit/crypto";
+import type { SignatureWithKey } from "@peerbit/crypto";
 import {
 	ACK,
 	AcknowledgeDelivery,
@@ -37,27 +37,30 @@ import {
 	DataMessage,
 	DeliveryError,
 	Goodbye,
-	type IdOptions,
 	InvalidMessageError,
 	Message,
 	MessageHeader,
 	MultiAddrinfo,
 	NotStartedError,
-	type PriorityOptions,
-	type PublicKeyFromHashResolver,
 	SeekDelivery,
 	SilentDelivery,
-	type StreamEvents,
 	TracedDelivery,
-	type WaitForPeer,
-	type WithExtraSigners,
-	type WithMode,
-	type WithTo,
 	deliveryModeHasReceiver,
 	getMsgId,
 } from "@peerbit/stream-interface";
+import type {
+	IdOptions,
+	PriorityOptions,
+	PublicKeyFromHashResolver,
+	StreamEvents,
+	WaitForPeer,
+	WithExtraSigners,
+	WithMode,
+	WithTo,
+} from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { abortableSource } from "abortable-iterator";
+import { log } from "console";
 import * as lp from "it-length-prefixed";
 import { pipe } from "it-pipe";
 import { type Pushable, pushable } from "it-pushable";
@@ -142,6 +145,14 @@ interface OutboundCandidate {
 	aborted: boolean;
 	existing: boolean;
 }
+export interface InboundStreamRecord {
+	raw: Stream;
+	iterable: AsyncIterable<Uint8ArrayList>;
+	abortController: AbortController;
+	created: number;
+	lastActivity: number;
+	bytesReceived: number;
+}
 // Hook for tests to override queued length measurement (peerStreams, default impl)
 export let measureOutboundQueuedBytes: (
 	ps: PeerStreams, // return queued bytes for active outbound (lane 0) or 0 if none
@@ -171,17 +182,21 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	// Removed dedicated outboundStream; first element of outboundStreams[] is active
 
 	/**
-	 * Read stream
+	 * Backwards compatible single inbound references (points to first inbound candidate)
 	 */
 	public inboundStream?: AsyncIterable<Uint8ArrayList>;
-	/**
-	 * The raw inbound stream, as retrieved from the callback from libp2p.handle
-	 */
 	public rawInboundStream?: Stream;
+
 	/**
-	 * An AbortController for controlled shutdown of the  treams
+	 * Multiple inbound stream support (more permissive than outbound)
+	 * We retain concurrent inbound streams to avoid races during migration; inactive ones can later be pruned.
 	 */
-	private inboundAbortController: AbortController;
+	public inboundStreams: InboundStreamRecord[] = [];
+
+	private _inboundPruneTimer?: ReturnType<typeof setTimeout>;
+	public static INBOUND_IDLE_MS = 10_000; // configurable grace for inactivity (made public for tests)
+	static MAX_INBOUND_STREAMS = 8; // sensible default to prevent flood
+
 	private outboundAbortController: AbortController;
 
 	private closed: boolean;
@@ -203,6 +218,24 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	}
 	public _getOutboundCount() {
 		return this.outboundStreams.length;
+	}
+
+	public _getInboundCount() {
+		return this.inboundStreams.length;
+	}
+
+	public _debugInboundStats(): {
+		id: string;
+		created: number;
+		lastActivity: number;
+		bytesReceived: number;
+	}[] {
+		return this.inboundStreams.map((c) => ({
+			id: c.raw.id,
+			created: c.created,
+			lastActivity: c.lastActivity,
+			bytesReceived: c.bytesReceived,
+		}));
 	}
 	private _outboundPruneTimer?: ReturnType<typeof setTimeout>;
 	private static readonly OUTBOUND_GRACE_MS = 500; // TODO configurable
@@ -259,7 +292,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.peerId = init.peerId;
 		this.publicKey = init.publicKey;
 		this.protocol = init.protocol;
-		this.inboundAbortController = new AbortController();
 		this.outboundAbortController = new AbortController();
 
 		this.closed = false;
@@ -272,7 +304,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Do we have a connection to read from?
 	 */
 	get isReadable() {
-		return Boolean(this.inboundStream);
+		return this.inboundStreams.length > 0;
 	}
 
 	/**
@@ -421,41 +453,104 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	/**
 	 * Attach a raw inbound stream and setup a read stream
 	 */
-	attachInboundStream(stream: Stream) {
-		// Create and attach a new inbound stream
-		// The inbound stream is:
-		// - abortable, set to only return on abort, rather than throw
-		// - transformed with length-prefix transform
-		this.rawInboundStream = stream;
-		this.inboundStream = abortableSource(
-			pipe(this.rawInboundStream, (source) =>
-				lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
-			),
-			this.inboundAbortController.signal,
-			{
-				returnOnAbort: true,
-				onReturnError: (err) => {
-					logger.error("Inbound stream error", err?.message);
-				},
-			},
+	attachInboundStream(stream: Stream): InboundStreamRecord {
+		// Support multiple concurrent inbound streams with inactivity pruning.
+		// Enforce max inbound streams (drop least recently active)
+		if (this.inboundStreams.length >= PeerStreams.MAX_INBOUND_STREAMS) {
+			let dropIndex = 0;
+			for (let i = 1; i < this.inboundStreams.length; i++) {
+				const a = this.inboundStreams[i];
+				const b = this.inboundStreams[dropIndex];
+				if (
+					a.lastActivity < b.lastActivity ||
+					(a.lastActivity === b.lastActivity && a.created < b.created)
+				) {
+					dropIndex = i;
+				}
+			}
+			const [drop] = this.inboundStreams.splice(dropIndex, 1);
+			try {
+				drop.abortController.abort();
+			} catch {}
+			try {
+				drop.raw.close?.();
+			} catch {}
+		}
+		const abortController = new AbortController();
+		const decoded = pipe(stream, (source) =>
+			lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
 		);
-
-		/* this.rawInboundStream = stream
-		this.inboundAbortController = new AbortController()
-		this.inboundAbortController.signal.addEventListener('abort', () => {
-			this.rawInboundStream!.close()
-				.catch(err => {
-					this.rawInboundStream?.abort(err)
-				})
-		})
-
-		this.inboundStream = pipe(
-			this.rawInboundStream!,
-			(source) => lp.decode(source, { maxDataLength: MAX_DATA_LENGTH_IN }),
-		)
- */
+		const iterable = abortableSource(decoded, abortController.signal, {
+			returnOnAbort: true,
+			onReturnError: (err) => {
+				logger.error("Inbound stream error", err?.message);
+			},
+		});
+		const record: InboundStreamRecord = {
+			raw: stream,
+			iterable,
+			abortController,
+			created: Date.now(),
+			lastActivity: Date.now(),
+			bytesReceived: 0,
+		};
+		this.inboundStreams.push(record);
+		this._scheduleInboundPrune();
+		// Backwards compatibility: keep first inbound as public properties
+		if (this.inboundStreams.length === 1) {
+			this.rawInboundStream = stream;
+			this.inboundStream = iterable;
+		}
 		this.dispatchEvent(new CustomEvent("stream:inbound"));
-		return this.inboundStream;
+		return record;
+	}
+
+	private _scheduleInboundPrune() {
+		if (this._inboundPruneTimer) return; // already scheduled
+		this._inboundPruneTimer = setTimeout(() => {
+			this._inboundPruneTimer = undefined;
+			this._pruneInboundInactive();
+			if (this.inboundStreams.length > 1) {
+				// schedule again if still multiple
+				this._scheduleInboundPrune();
+			}
+		}, PeerStreams.INBOUND_IDLE_MS);
+	}
+
+	private _pruneInboundInactive() {
+		if (this.inboundStreams.length <= 1) return;
+		const now = Date.now();
+		// Keep at least one (the most recently active)
+		this.inboundStreams.sort((a, b) => b.lastActivity - a.lastActivity);
+		const keep = this.inboundStreams[0];
+		const survivors: typeof this.inboundStreams = [keep];
+		for (let i = 1; i < this.inboundStreams.length; i++) {
+			const candidate = this.inboundStreams[i];
+			if (now - candidate.lastActivity <= PeerStreams.INBOUND_IDLE_MS) {
+				survivors.push(candidate);
+				continue; // still active
+			}
+			try {
+				candidate.abortController.abort();
+			} catch {}
+			try {
+				candidate.raw.close?.();
+			} catch {}
+		}
+		this.inboundStreams = survivors;
+		// update legacy references if they were pruned
+		if (!this.inboundStreams.includes(keep)) {
+			this.rawInboundStream = this.inboundStreams[0]?.raw;
+			this.inboundStream = this.inboundStreams[0]?.iterable;
+		}
+	}
+
+	public forcePruneInbound() {
+		if (this._inboundPruneTimer) {
+			clearTimeout(this._inboundPruneTimer);
+			this._inboundPruneTimer = undefined;
+		}
+		this._pruneInboundInactive();
 	}
 
 	/**
@@ -492,7 +587,10 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				for (const c of healthy) {
 					const age = now - c.created || 1;
 					const score = c.bytesDelivered / age;
-					if (score > bestScore) {
+					if (
+						score > bestScore ||
+						(score === bestScore && chosen && c.created > chosen.created)
+					) {
 						bestScore = score;
 						chosen = c;
 					}
@@ -500,16 +598,22 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			}
 			if (!chosen) return;
 			for (const c of candidates) {
-				if (c === chosen) continue;
-				try {
-					c.pushable.return?.();
-				} catch {}
-				try {
-					c.raw.close?.();
-				} catch {}
+				if (c === chosen) continue; // never abort chosen
 				try {
 					c.raw.abort?.(new AbortError("Replaced outbound stream" as any));
-				} catch {}
+				} catch {
+					logger.error("Failed to abort outbound stream");
+				}
+				try {
+					c.pushable.return?.();
+				} catch {
+					logger.error("Failed to close outbound pushable");
+				}
+				try {
+					c.raw.close?.();
+				} catch {
+					logger.error("Failed to close outbound stream");
+				}
 			}
 			this.outboundStreams = [chosen];
 		} catch (e) {
@@ -588,10 +692,20 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			this.outboundAbortController.abort();
 		}
 
-		// End the inbound stream
-		if (this.inboundStream != null) {
-			this.inboundAbortController.abort();
-			await this.rawInboundStream?.close();
+		// End inbound streams
+		if (this.inboundStreams.length) {
+			for (const inbound of this.inboundStreams) {
+				try {
+					inbound.abortController.abort();
+				} catch {
+					logger.error("Failed to abort inbound stream");
+				}
+				try {
+					await inbound.raw.close?.();
+				} catch {
+					logger.error("Failed to close inbound stream");
+				}
+			}
 		}
 
 		this.usedBandWidthTracker.stop();
@@ -602,6 +716,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 		this.rawInboundStream = undefined;
 		this.inboundStream = undefined;
+		this.inboundStreams = [];
 	}
 }
 
@@ -633,6 +748,7 @@ export type DirectStreamOptions = {
 	messageProcessingConcurrency?: number;
 	maxInboundStreams?: number;
 	maxOutboundStreams?: number;
+	inboundIdleTimeout?: number; // override PeerStreams.INBOUND_IDLE_MS
 	connectionManager?: ConnectionManagerArguments;
 	routeSeekInterval?: number;
 	seekTimeout?: number;
@@ -731,6 +847,7 @@ export abstract class DirectStream<
 			routeSeekInterval = ROUTE_UPDATE_DELAY_FACTOR,
 			seekTimeout = SEEK_DELIVERY_TIMEOUT,
 			routeMaxRetentionPeriod = ROUTE_MAX_RETANTION_PERIOD,
+			inboundIdleTimeout,
 		} = options || {};
 
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
@@ -738,6 +855,10 @@ export abstract class DirectStream<
 		this.sign = signKey.sign.bind(signKey);
 		this.peerId = components.peerId;
 		this.publicKey = signKey.publicKey;
+		if (inboundIdleTimeout != null)
+			PeerStreams.INBOUND_IDLE_MS = inboundIdleTimeout;
+		if (maxInboundStreams != null)
+			PeerStreams.MAX_INBOUND_STREAMS = maxInboundStreams;
 		this.publicKeyHash = signKey.publicKey.hashcode();
 		this.multicodecs = multicodecs;
 		this.started = false;
@@ -992,8 +1113,8 @@ export abstract class DirectStream<
 		);
 
 		// handle inbound
-		const inboundStream = peer.attachInboundStream(stream);
-		this.processMessages(peer.publicKey, inboundStream, peer).catch(logError);
+		const inboundRecord = peer.attachInboundStream(stream);
+		this.processMessages(peer.publicKey, inboundRecord, peer).catch(logError);
 
 		// try to create outbound stream
 		await this.outboundInflightQueue.push({ peerId, connection });
@@ -1306,15 +1427,17 @@ export abstract class DirectStream<
 	 */
 	async processMessages(
 		peerId: PublicSignKey,
-		stream: AsyncIterable<Uint8ArrayList>,
+		record: InboundStreamRecord,
 		peerStreams: PeerStreams,
 	) {
 		try {
-			await pipe(stream, async (source) => {
+			await pipe(record.iterable, async (source) => {
 				for await (const data of source) {
-					this.processRpc(peerId, peerStreams, data).catch((e) => {
-						logError(e);
-					});
+					// Find specific inbound record associated with this iterable
+					const now = Date.now();
+					record.lastActivity = now;
+					record.bytesReceived += data.length || data.byteLength || 0;
+					this.processRpc(peerId, peerStreams, data).catch((e) => logError(e));
 				}
 			});
 		} catch (err: any) {
