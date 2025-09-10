@@ -1434,15 +1434,13 @@ export abstract class DirectStream<
 		peerStreams: PeerStreams,
 	) {
 		try {
-			await pipe(record.iterable, async (source) => {
-				for await (const data of source) {
-					// Find specific inbound record associated with this iterable
-					const now = Date.now();
-					record.lastActivity = now;
-					record.bytesReceived += data.length || data.byteLength || 0;
-					this.processRpc(peerId, peerStreams, data).catch((e) => logError(e));
-				}
-			});
+			for await (const data of record.iterable) {
+				const now = Date.now();
+				record.lastActivity = now;
+				record.bytesReceived += data.length || data.byteLength || 0;
+
+				this.processRpc(peerId, peerStreams, data).catch((e) => logError(e));
+			}
 		} catch (err: any) {
 			if (err?.code === "ERR_STREAM_RESET") {
 				// only send stream reset messages to info
