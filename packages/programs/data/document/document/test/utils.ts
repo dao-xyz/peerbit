@@ -13,7 +13,7 @@ export const slowDownSend = (
 			const writeFn = peer.write.bind(peer);
 			peer.write = async (msg, priority) => {
 				await delay(ms);
-				if (peer.outboundStream) {
+				if (peer.rawOutboundStreams?.length > 0) {
 					return writeFn(msg, priority);
 				}
 			};
