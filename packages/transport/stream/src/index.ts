@@ -86,7 +86,7 @@ export const dontThrowIfDeliveryError = (e: any) => {
 	throw e;
 };
 
-const logError = (e?: { message: string }) => {
+const logError = (e?: any) => {
 	if (e?.message === "Cannot push value onto an ended pushable") {
 		return; // ignore since we are trying to push to a closed stream
 	}
@@ -134,6 +134,33 @@ const getLaneFromPriority = (priority: number) => {
 	}
 	return 1;
 };
+interface OutboundCandidate {
+	raw: Stream;
+	pushable: PushableLanes<Uint8Array>;
+	created: number;
+	bytesDelivered: number;
+	aborted: boolean;
+	existing: boolean;
+}
+// Hook for tests to override queued length measurement (peerStreams, default impl)
+export let measureOutboundQueuedBytes: (
+	ps: PeerStreams, // return queued bytes for active outbound (lane 0) or 0 if none
+) => number = (ps: PeerStreams) => {
+	const active = ps._getActiveOutboundPushable();
+	if (!active) return 0;
+	// Prefer lane-aware helper if present
+	// @ts-ignore - optional test helper
+	if (typeof active.getReadableLength === "function") {
+		try {
+			// lane 0 only
+			return active.getReadableLength(0) || 0;
+		} catch {
+			// ignore
+		}
+	}
+	// @ts-ignore fallback for vanilla pushable
+	return active.readableLength || 0;
+};
 /**
  * Thin wrapper around a peer's inbound / outbound pubsub streams
  */
@@ -141,19 +168,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public readonly peerId: PeerId;
 	public readonly publicKey: PublicSignKey;
 	public readonly protocol: string;
-	/**
-	 * Write stream - it's preferable to use the write method
-	 */
-	public outboundStream?: PushableLanes<Uint8Array>;
+	// Removed dedicated outboundStream; first element of outboundStreams[] is active
 
 	/**
 	 * Read stream
 	 */
 	public inboundStream?: AsyncIterable<Uint8ArrayList>;
-	/**
-	 * The raw outbound stream, as retrieved from conn.newStream
-	 */
-	public rawOutboundStream?: Stream;
 	/**
 	 * The raw inbound stream, as retrieved from the callback from libp2p.handle
 	 */
@@ -171,6 +191,68 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public seekedOnce: boolean;
 
 	private usedBandWidthTracker: BandwidthTracker;
+
+	// Unified outbound streams list (during grace may contain >1; after pruning length==1)
+	private outboundStreams: OutboundCandidate[] = [];
+	// Public debug exposure of current raw outbound streams (during grace may contain >1)
+	public get rawOutboundStreams(): Stream[] {
+		return this.outboundStreams.map((c) => c.raw);
+	}
+	public _getActiveOutboundPushable(): PushableLanes<Uint8Array> | undefined {
+		return this.outboundStreams[0]?.pushable;
+	}
+	public _getOutboundCount() {
+		return this.outboundStreams.length;
+	}
+	private _outboundPruneTimer?: ReturnType<typeof setTimeout>;
+	private static readonly OUTBOUND_GRACE_MS = 500; // TODO configurable
+
+	private _addOutboundCandidate(raw: Stream): OutboundCandidate {
+		const existing = this.outboundStreams.find((c) => c.raw === raw);
+		if (existing) return existing;
+		const pushableInst = pushableLanes<Uint8Array>({
+			lanes: 2,
+			onPush: (val: Uint8Array) => {
+				candidate.bytesDelivered += val.length || val.byteLength || 0;
+			},
+		});
+		const candidate: OutboundCandidate = {
+			raw,
+			pushable: pushableInst,
+			created: Date.now(),
+			bytesDelivered: 0,
+			aborted: false,
+			existing: false,
+		};
+		pipe(
+			pushableInst,
+			(source) => lp.encode(source, { maxDataLength: MAX_DATA_LENGTH_OUT }),
+			raw,
+		).catch((e: any) => {
+			candidate.aborted = true;
+			logError(e as { message: string } as any);
+		});
+		this.outboundStreams.push(candidate);
+		const origAbort = raw.abort?.bind(raw);
+		raw.abort = (err?: any) => {
+			candidate.aborted = true;
+			return origAbort?.(err);
+		};
+		return candidate;
+	}
+
+	private _scheduleOutboundPrune(reset = true) {
+		if (this.outboundStreams.length <= 1) return;
+		if (reset && this._outboundPruneTimer) {
+			clearTimeout(this._outboundPruneTimer);
+		}
+		if (!this._outboundPruneTimer) {
+			this._outboundPruneTimer = setTimeout(
+				() => this.pruneOutboundCandidates(),
+				PeerStreams.OUTBOUND_GRACE_MS,
+			);
+		}
+	}
 	constructor(init: PeerStreamsInit) {
 		super();
 
@@ -197,7 +279,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Do we have a connection to write on?
 	 */
 	get isWritable() {
-		return Boolean(this.outboundStream);
+		return this.outboundStreams.length > 0;
 	}
 
 	get usedBandwidth() {
@@ -216,19 +298,62 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				} mb`,
 			);
 		}
-		if (this.outboundStream == null) {
+		if (!this.isWritable) {
 			logger.error("No writable connection to " + this.peerId.toString());
 			throw new Error("No writable connection to " + this.peerId.toString());
 		}
 
 		this.usedBandWidthTracker.add(data.byteLength);
 
-		this.outboundStream.push(
-			data instanceof Uint8Array ? data : data.subarray(),
-			this.outboundStream.getReadableLength(0) === 0
-				? 0
-				: getLaneFromPriority(priority), // TODO use more lanes
-		);
+		// Write to all current outbound streams (normally 1, but >1 during grace)
+		const payload = data instanceof Uint8Array ? data : data.subarray();
+		let successes = 0;
+		let failures: any[] = [];
+		const failed: OutboundCandidate[] = [];
+		for (const c of this.outboundStreams) {
+			try {
+				c.pushable.push(
+					payload,
+					c.pushable.getReadableLength(0) === 0
+						? 0
+						: getLaneFromPriority(priority),
+				);
+				successes++;
+			} catch (e) {
+				failures.push(e);
+				failed.push(c);
+				logError(e);
+			}
+		}
+		if (successes === 0) {
+			throw new Error(
+				"All outbound writes failed (" +
+					failures.map((f) => f?.message).join(", ") +
+					")",
+			);
+		}
+		if (failures.length > 0) {
+			logger.warn(
+				`Partial outbound write failure: ${failures.length} failed, ${successes} succeeded`,
+			);
+			// Remove failed streams immediately (best-effort)
+			if (failed.length) {
+				this.outboundStreams = this.outboundStreams.filter(
+					(c) => !failed.includes(c),
+				);
+				for (const f of failed) {
+					try {
+						f.raw.abort?.(new AbortError("Failed write" as any));
+					} catch {}
+					try {
+						f.raw.close?.();
+					} catch {}
+				}
+				// If more than one remains schedule prune; else ensure outbound event raised
+				if (this.outboundStreams.length > 1) this._scheduleOutboundPrune(true);
+				else this.dispatchEvent(new CustomEvent("stream:outbound"));
+			}
+		}
 	}
 
 	/**
@@ -338,59 +463,102 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
-		// Replacement logic: if existing outbound differs, replace it with the new one
-		if (
-			this.outboundStream != null &&
-			this.rawOutboundStream &&
-			stream.id !== this.rawOutboundStream.id
-		) {
-			logger.debug(
-				`Replacing stale outbound stream ${this.rawOutboundStream.id} -> ${stream.id} for peer ${this.peerId.toString()}`,
-			);
-			try {
-				await this.outboundStream.return?.();
-			} catch {
-				logger.error(
-					`Error closing old outbound stream for peer ${this.peerId.toString()}`,
-				);
-			}
-			try {
-				await this.rawOutboundStream.close?.();
-			} catch {
-				logger.error(
-					`Error closing raw outbound stream for peer ${this.peerId.toString()}`,
-				);
-			}
-			try {
-				await this.rawOutboundStream.abort?.(
-					new AbortError("Replaced outbound stream" as any),
-				);
-			} catch {
-				logger.error(
-					`Error aborting raw outbound stream for peer ${this.peerId.toString()}`,
-				);
-			}
-			this.rawOutboundStream = undefined;
-			this.outboundStream = undefined;
+		if (this.outboundStreams[0] && stream.id === this.outboundStreams[0].raw.id)
+			return; // duplicate
+		this._addOutboundCandidate(stream);
+		if (this.outboundStreams.length === 1) {
+			this.dispatchEvent(new CustomEvent("stream:outbound"));
+			return;
 		}
+		this._scheduleOutboundPrune(true);
+	}
 
-		this.rawOutboundStream = stream;
-		this.outboundStream = pushableLanes({ lanes: 2 });
+	private pruneOutboundCandidates() {
+		try {
+			const candidates = this.outboundStreams;
+			if (!candidates.length) return;
+			const now = Date.now();
+			const healthy = candidates.filter(
+				(c: OutboundCandidate) => !c.aborted && c.bytesDelivered > 0,
+			);
+			let chosen: OutboundCandidate | undefined;
+			if (healthy.length === 0) {
+				chosen = candidates.reduce(
+					(a: OutboundCandidate, b: OutboundCandidate) =>
+						b.created > a.created ? b : a,
+				);
+			} else {
+				let bestScore = -Infinity;
+				for (const c of healthy) {
+					const age = now - c.created || 1;
+					const score = c.bytesDelivered / age;
+					if (score > bestScore) {
+						bestScore = score;
+						chosen = c;
+					}
+				}
+			}
+			if (!chosen) return;
+			for (const c of candidates) {
+				if (c === chosen) continue;
+				try {
+					c.pushable.return?.();
+				} catch {}
+				try {
+					c.raw.close?.();
+				} catch {}
+				try {
+					c.raw.abort?.(new AbortError("Replaced outbound stream" as any));
+				} catch {}
+			}
+			this.outboundStreams = [chosen];
+		} catch (e) {
+			logger.error(
+				"Error promoting outbound candidate: " + (e as any)?.message,
+			);
+		} finally {
+			this.dispatchEvent(new CustomEvent("stream:outbound"));
+		}
+	}
 
-		this.outboundAbortController.signal.addEventListener("abort", () => {
-			this.rawOutboundStream?.close().catch((err) => {
-				this.rawOutboundStream?.abort(err);
-			});
-		});
+	public forcePruneOutbound() {
+		if (this._outboundPruneTimer) {
+			clearTimeout(this._outboundPruneTimer);
+			this._outboundPruneTimer = undefined;
+		}
+		this.pruneOutboundCandidates();
+	}
 
-		pipe(
-			this.outboundStream,
-			(source) => lp.encode(source, { maxDataLength: MAX_DATA_LENGTH_OUT }),
-			this.rawOutboundStream,
-		).catch(logError);
+	/**
+	 * Internal helper to perform the actual outbound replacement & piping.
+	 */
+	// _replaceOutboundStream removed (legacy path)
 
-		// Emit if the connection is new or replaced
-		this.dispatchEvent(new CustomEvent("stream:outbound"));
+	// Debug/testing helper: list active outbound raw stream ids
+	public _debugActiveOutboundIds(): string[] {
+		if (this.outboundStreams.length) {
+			return this.outboundStreams.map((c) => c.raw.id);
+		}
+		return this.outboundStreams.map((c) => c.raw.id);
+	}
+
+	public _debugOutboundStats(): {
+		id: string;
+		bytes: number;
+		aborted: boolean;
+	}[] {
+		if (this.outboundStreams.length) {
+			return this.outboundStreams.map((c) => ({
+				id: c.raw.id,
+				bytes: c.bytesDelivered,
+				aborted: !!c.aborted,
+			}));
+		}
+		return this.outboundStreams.map((c) => ({
+			id: c.raw.id,
+			bytes: c.bytesDelivered,
+			aborted: !!c.aborted,
+		}));
 	}
 
 	/**
@@ -402,11 +570,21 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		}
 
 		this.closed = true;
+		if (this._outboundPruneTimer) {
+			clearTimeout(this._outboundPruneTimer);
+			this._outboundPruneTimer = undefined;
+		}
 
 		// End the outbound stream
-		if (this.outboundStream != null) {
-			await this.outboundStream.return();
-			this.rawOutboundStream?.abort(new AbortError("Closed"));
+		if (this.outboundStreams.length) {
+			for (const c of this.outboundStreams) {
+				try {
+					await c.pushable.return?.();
+				} catch {}
+				try {
+					c.raw.abort?.(new AbortError("Closed"));
+				} catch {}
+			}
 			this.outboundAbortController.abort();
 		}
 
@@ -420,8 +598,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 		this.dispatchEvent(new CustomEvent("close"));
 
-		this.rawOutboundStream = undefined;
-		this.outboundStream = undefined;
+		this.outboundStreams = [];
 
 		this.rawInboundStream = undefined;
 		this.inboundStream = undefined;
@@ -2261,9 +2438,8 @@ export abstract class DirectStream<
 
 	getQueuedBytes(): number {
 		let sum = 0;
-		for (const peer of this.peers) {
-			const out = peer[1].outboundStream;
-			sum += out ? out.readableLength : 0;
+		for (const [_k, ps] of this.peers) {
+			sum += measureOutboundQueuedBytes(ps as any); // cast to access hook
 		}
 		return sum;
 	}

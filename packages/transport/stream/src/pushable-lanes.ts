@@ -70,6 +70,10 @@ export interface Options {
 	 * How many lanes, lane 0 is fastest and will drain before lane 1 is consumed
 	 */
 	lanes?: number;
+	/**
+	 * Optional hook invoked on every successful push with the value and lane
+	 */
+	onPush?(value: { byteLength: number }, lane: number): void;
 }
 
 export interface DoneResult {
@@ -256,7 +260,9 @@ function _pushable<PushType extends Uint8Array, ValueType, ReturnType>(
 			return pushable;
 		}
 
-		return bufferNext({ done: false, value }, lane);
+		const out = bufferNext({ done: false, value }, lane);
+		options?.onPush?.(value, lane);
+		return out;
 	};
 	const end = (err?: Error): ReturnType => {
 		if (ended) return pushable;
