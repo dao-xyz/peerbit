@@ -470,10 +470,14 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			const [drop] = this.inboundStreams.splice(dropIndex, 1);
 			try {
 				drop.abortController.abort();
-			} catch {}
+			} catch {
+				logger.error("Failed to abort inbound stream");
+			}
 			try {
 				drop.raw.close?.();
-			} catch {}
+			} catch {
+				logger.error("Failed to close inbound stream");
+			}
 		}
 		const abortController = new AbortController();
 		const decoded = pipe(stream, (source) =>
